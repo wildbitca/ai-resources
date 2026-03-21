@@ -1,56 +1,46 @@
 ---
-description: Agent skills routing — discover, match, load skills from AGENTS.md before writing code.
+description: Agent skills routing — discover, match, load skills on demand.
 alwaysApply: true
 ---
 
-# Agent Skills Routing Protocol
+# Agent Skills Routing
 
-Zero-Trust environment. Do not rely on pre-training for architecture, styling, testing, or code patterns.
+Zero-Trust: do not rely on pre-training for architecture, styling, testing, or code patterns.
 
-## Mandatory State Machine
-
-Execute these states sequentially before writing code.
-
-### State 1: Task classification
-
-Classify the user's request:
+## Task classification
 
 | Category | Action |
-|---|---|
-| **Simple** (single-file edit, config change, question, quick fix) | Skip to State 4. Use loaded skills from context only (no forced AGENTS.md read). |
-| **Standard** (multi-file edit, feature, bugfix, refactor) | Proceed to State 2. |
-| **Complex** (new feature, architecture change, multi-domain) | Proceed to State 2 (orchestrator handles full workflow). |
+|----------|--------|
+| **Simple** (single-file edit, config change, question) | Skip skill loading. Use skills already in context. |
+| **Standard** (multi-file edit, feature, bugfix) | Search AGENTS.md for matching triggers (Step 2). |
+| **Complex** (architecture, multi-domain) | Orchestrator handles via workflow steps. |
 
-### State 2: Discovery
+## Skill discovery (Standard tasks)
 
-- **Action:** Read `~/.cursor/AGENTS.md` — specifically the `<!-- SKILLS_INDEX_START -->` block.
-- **Pass condition:** You have the skill index loaded.
+Instead of reading the full `~/.cursor/AGENTS.md`, **search** it:
 
-### State 3: Trigger matching + Context loading
+1. Identify 2-3 keywords from the user's request and the files being edited
+2. Search: `grep -i "keyword" ~/.cursor/AGENTS.md` for each keyword
+3. For each matching skill line, extract the skill name (in `[brackets]`)
+4. Read only the matched `~/.cursor/skills/{name}/SKILL.md` files
 
-- **Action:** Cross-reference the user's prompt keywords and involved file globs against trigger lists in AGENTS.md. Read matching `SKILL.md` files.
-- **Pass condition:** Relevant skills are loaded (or none matched, which is fine).
+This avoids loading 149 lines when only 1-3 skills are relevant.
 
-### State 4: Execution
+## Trigger matching
 
-- **Action:** Begin answering or writing code.
-- **First output:** A brief audit log: "Skills loaded: [list]" or "No project-specific skills applicable."
+| Trigger type | Match against |
+|-------------|---------------|
+| **File glob** (`**/*.dart`) | Files currently being edited |
+| **Keyword** (`auth`, `refactor`) | User's request words or intent |
+| **Composite** (`+other/skill`) | Another active skill references it |
 
-## Rule Zero: Zero-Trust Engineering
+Indirect phrasing counts: "make it faster" → `performance`, "broken query" → `database`.
 
-- **Skill Authority:** Loaded skills always override existing code patterns.
-- **Audit Before Write:** Audit every file write against the `common/feedback-reporter` skill.
+## Rule Zero
 
-## Trigger matching guide
+- **Skill Authority:** Loaded skills override existing code patterns.
+- **Audit Before Write:** Audit file writes against `common/feedback-reporter`.
 
-| Trigger Type | What to match | Required Action |
-|---|---|---|
-| **File glob** (e.g. `**/*.ts`) | Files you are currently editing match the pattern | Read the skill's `SKILL.md` |
-| **Keyword** (e.g. `auth`, `refactor`) | These words appear in the user's request | Read the skill's `SKILL.md` |
-| **Composite** (e.g. `+other/skill`) | Another listed skill is already active | Also load this skill |
+## Self-Learning
 
-Indirect phrasing counts. Match keywords by intent: "make it faster" → `performance`, "broken query" → `database`, "login flow" → `auth`.
-
-## Self-Learning Protocol
-
-At the end of any multi-step task with user corrections, load and run `common/common-session-retrospective/SKILL.md` to capture skill gaps.
+After multi-step tasks with user corrections, load `~/.cursor/skills/common/common-session-retrospective/SKILL.md`.
