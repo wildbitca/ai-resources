@@ -44,18 +44,20 @@ If the workspace contains a single stack, default to it. If ambiguous, **ask the
 
 ### Step 2: Workflow selection
 
-Use the project's `.cursorrules` workflow auto-selection table to match user intent to a workflow. Do NOT duplicate that table here — read it from `.cursorrules` at runtime.
+Use the project's `.cursorrules` workflow auto-selection table to match user intent to a workflow. That table contains full paths (`~/.cursor/workflows/` for global, `<repo>/.cursor/workflows/` for project-specific).
+
+**Resolution order:** `<repo>/.cursor/workflows/` first (project-specific), then `~/.cursor/workflows/` (global templates).
 
 Fallback mapping (only if `.cursorrules` has no workflow table):
 
-| Intent | Workflow pattern |
-|-----|----|
-| New feature / functionality | `_feature-template.workflow.yaml` |
-| Bug fix | `_bugfix-template.workflow.yaml` |
-| Security audit / pen test | `security-devsecops.workflow.yaml` |
-| Understand / explore / plan | `explore-and-plan.workflow.yaml` |
-| Release / changelog | `release-{domain}.workflow.yaml` |
-| Cross-domain (app + infra) | `cross-domain-backend-infra.workflow.yaml` |
+| Intent | Workflow path |
+|--------|--------------|
+| New feature / functionality | `~/.cursor/workflows/_feature-template.workflow.yaml` |
+| Bug fix | `~/.cursor/workflows/_bugfix-template.workflow.yaml` |
+| Security audit / pen test | `~/.cursor/workflows/security-devsecops.workflow.yaml` |
+| Understand / explore / plan | `~/.cursor/workflows/explore-and-plan.workflow.yaml` |
+| Release / changelog | `<repo>/.cursor/workflows/release-{domain}.workflow.yaml` |
+| Cross-domain (app + infra) | `<repo>/.cursor/workflows/cross-domain-backend-infra.workflow.yaml` |
 
 If **no workflow matches**, proceed without one (direct execution with skill/rule guidance).
 
