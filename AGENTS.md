@@ -113,7 +113,6 @@
 
 ### Cursor, plans & Git workflow
 
-- **[cursor-agentic-setup]**: Setup and update Cursor for agentic workflows — MCP, subagents, workflows, handoff, and full implementation flow. Use on new or existing projects to apply or refresh best practices. (triggers: Cursor, MCP, subagent, workflow, handoff, agentic, .cursor, setup agentic, cursor agentic setup). Note: skill YAML sets `disable-model-invocation: true` — load when the user explicitly asks to configure or refresh agentic Cursor setup.
 - **[cursor-plan-tracking]**: Cursor plan completion tracking in YAML frontmatter. Use when creating or updating .plan.md files. (triggers: .plan.md, plan frontmatter, status, completedAt, YAML)
 - **[using-git-worktrees]**: Git worktree creation and management for isolated development. (triggers: worktree, git worktree, isolated branch, feature branch setup)
 - **[finishing-a-development-branch]**: Complete development branch lifecycle — merge, PR, or cleanup. (triggers: merge branch, finish feature, finish fix, create PR, cleanup worktree)
