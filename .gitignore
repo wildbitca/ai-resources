@@ -1,0 +1,35 @@
+# Ignore everything by default (Cursor IDE stores lots of local state here)
+*
+
+# === AI Resources (tracked) ===
+
+# Skill index
+!AGENTS.md
+
+# Handoff template
+!handoff.md.template
+
+# Agent roles (universal)
+!agents/
+agents/*
+!agents/roles/
+!agents/roles/**
+
+# Global rules
+!rules/
+!rules/**
+
+# Skills library
+!skills/
+!skills/**
+
+# Templates for /setup-project
+!templates/
+!templates/**
+
+# Workflow templates (domain-agnostic)
+!workflows/
+!workflows/**
+
+# This file
+!.gitignore

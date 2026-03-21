@@ -1,0 +1,131 @@
+---
+description: Main orchestration loop — domain detection, workflow selection, subagent dispatch, handoff lifecycle.
+alwaysApply: true
+---
+
+# Orchestrator (main loop)
+
+Single entry point for all task execution. Connects domain detection, workflow selection, subagent dispatch, skill loading, and handoff lifecycle.
+
+## Execution sequence
+
+On every user message that implies a code change, feature, bugfix, or multi-step task:
+
+### Step 0: Preflight checks
+
+**Skill gate:** Read `.cursor/AGENTS.md` and match triggers per `agent-skill-standard-rule.mdc`. Load matching skills before proceeding.
+
+**MCP check:** Verify `.cursor/mcp.json` exists if the project's `.cursorrules` references MCP servers. If missing, warn the user: "MCP config not found — copy `.cursor/templates/mcp.json.template` to `.cursor/mcp.json` and configure."
+
+**Memory recovery:** If Engram MCP is available, call `mem_context` to load recent session history. This recovers state after compaction or fresh session starts. See `300-engram-memory.mdc`.
+
+**Stale handoff check:** List `.agent-output/handoff-*.md` files. For each:
+- Read the file's modification timestamp (via `ls -la` or `stat`).
+- If older than 24 hours: warn the user — "Stale handoff detected: `handoff-<name>.md` (last modified <date>). Delete it or resume the workflow?"
+- If the user confirms deletion, remove it before proceeding.
+- This prevents zombie handoffs from confusing new workflow runs.
+
+**Specs awareness:** If `specs/project.living.md` exists, note its location for workflow steps. The research step will read relevant specs; the verify step will update them. Do NOT load specs into the orchestrator context — let subagents read them on demand.
+
+### Step 1: Domain detection
+
+Infer the domain from the user message, open files, and workspace structure:
+
+| Signal | Domain |
+|-----|-----|
+| flutter, dart, widget, riverpod, `lib/`, `pubspec.yaml` | `dart-flutter` |
+| angular, component, `src/app/`, `angular.json` | `angular` |
+| symfony, doctrine, twig, `symfony.lock`, `config/packages/` | `symfony` |
+| api platform, `#[ApiResource]`, state provider/processor | `api-platform` |
+| terraform, crossplane, k8s, helm, `*.tf`, infra paths | `devops` |
+| security audit, vulnerability, pen test, OWASP | `security` |
+
+If the workspace contains a single stack, default to it. If ambiguous, **ask the user**.
+
+### Step 2: Workflow selection
+
+Use the project's `.cursorrules` workflow auto-selection table to match user intent to a workflow. Do NOT duplicate that table here — read it from `.cursorrules` at runtime.
+
+Fallback mapping (only if `.cursorrules` has no workflow table):
+
+| Intent | Workflow pattern |
+|-----|----|
+| New feature / functionality | `_feature-template.workflow.yaml` |
+| Bug fix | `_bugfix-template.workflow.yaml` |
+| Security audit / pen test | `security-devsecops.workflow.yaml` |
+| Understand / explore / plan | `explore-and-plan.workflow.yaml` |
+| Release / changelog | `release-{domain}.workflow.yaml` |
+| Cross-domain (app + infra) | `cross-domain-backend-infra.workflow.yaml` |
+
+If **no workflow matches**, proceed without one (direct execution with skill/rule guidance).
+
+### Step 3: Worktree setup + session start (code-change workflows only)
+
+For workflows that modify code (feature, bugfix, cross-domain):
+
+1. Create a git worktree: branch `feature/<short-name>` or `fix/<short-name>`
+2. Set `handoff_file` = `.agent-output/handoff-<branch-sanitized>.md`
+3. If Engram MCP is available: call `mem_session_start` with project name
+4. All subsequent steps execute in the worktree workspace
+
+Skip worktree for read-only workflows (explore-and-plan, security audit).
+
+### Step 4: Step iteration
+
+Read the workflow YAML. For each step in order:
+
+1. **Load persona**: `<repo>/.cursor/agents/personas/{subagent_type}-{domain}.md` → fallback `~/.cursor/agents/roles/{subagent_type}.md`
+2. **Load step skills**: If the workflow step defines `skills:`, load those from `~/.cursor/skills/`. Otherwise, match from `~/.cursor/AGENTS.md` triggers.
+3. **Dispatch subagent** via Task tool with: `subagent_type`, assembled `prompt` (step's `prompt_template` with variables resolved), persona content, skill names, handoff file path
+4. **Read handoff** after subagent completes
+5. **Evaluate handoff**:
+   - If `Blocked=true` and `Return_to_step` is set → re-invoke that step (max 3 retries per step)
+   - If `Blocked=false` → proceed to next step
+
+### Step 5: Conditional branching
+
+At handoff boundaries, evaluate these fields:
+
+| Field | Action |
+|----|-----|
+| `Research_needed=true` | Execute `research` step before `plan` (if not already done) |
+| `Requires_tests=true` | Ensure `test` step runs (do not skip) |
+| `Security_critical_feature=true` | Execute full `security-devsecops.workflow.yaml` inline |
+| `Requires_tests=false` | Skip `test` step |
+
+### Step 6: Completion
+
+When the final step (typically `verify`) completes successfully:
+
+1. **Save to memory**: If Engram MCP is available, call `mem_session_summary` with Goal / Discoveries / Accomplished / Relevant Files
+2. **Merge**: Apply `finishing-a-development-branch` skill — merge worktree branch to base branch, remove worktree
+3. **Delete handoff**: Remove `.agent-output/handoff-<scope>.md`
+4. **Report**: Summarize what was done to the user
+
+If the user prefers a PR instead of merge, follow their preference.
+
+## Dispatch rules
+
+- **Max 4 concurrent subagents** (parallel steps only when independent)
+- **Sequential by default**: Each step depends on the previous handoff
+- **Retry limit**: 3 rollbacks per step before escalating to user
+- **Timeout**: Use maximum available timeout for long-running steps (test, security scan)
+
+## Simplification for small tasks
+
+If the user's request is:
+- A single-file edit → skip workflow, apply skills directly
+- A question → skip workflow, answer directly
+- A 1-2 step task → skip workflow, execute directly with skill guidance
+
+Only activate the full orchestration for **multi-step tasks** (3+ steps, multi-file changes, features, bugfixes).
+
+## Relation to other rules
+
+- **`000-project-bootstrap.mdc`**: Config resolution, persona paths, knowledge directory
+- **`050-subagent-delegation.mdc`**: Subagent dispatch mechanics, handoff schema, rollback protocol
+- **`100-token-economics.mdc`**: Context management per step (fresh context, handoff as bridge)
+- **`200-security-mcp.mdc`**: MCP credential security
+- **`300-engram-memory.mdc`**: Persistent memory — when to save, search, session lifecycle
+- **`agent-skill-standard-rule.mdc`**: Skill discovery and loading (Step 0)
+- **Specs**: `specs/project.living.md` is the project-level spec index; feature specs in `specs/features/`; ADRs in `specs/architecture/`

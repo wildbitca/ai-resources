@@ -1,0 +1,43 @@
+---
+description: Token and context pruning — @file/@symbol preference, no full-dir reads, .cursorignore, reset strategy.
+alwaysApply: true
+---
+
+# Token economics
+
+**Purpose:** Minimize context size and cost. Enforce strict context pruning so sessions stay under ~20k tokens where possible and agents avoid "token inferno" (loading entire repo or noisy paths).
+
+---
+
+## Rules (mandatory)
+
+1. **Mentions:** Prefer `@file` or `@symbol` for targeted context. Use `@codebase` only when the task explicitly requires broad search (e.g. "find all usages of X"). Never default to `@codebase` for single-file or single-symbol tasks.
+2. **Directories:** Never read entire directories. Use targeted search (e.g. grep/codebase search with a specific pattern) or explicit file mentions. If listing is needed, list only the minimal set of paths required.
+3. **File size:** Prefer files under ~200 lines. When editing or reviewing a file that exceeds this, consider suggesting a split or extraction into a separate module; do not load the whole file into context unnecessarily—read only the relevant sections (e.g. by symbol or line range).
+4. **Noise:** Respect `.cursorignore`. Build artifacts (`build/`, `dist/`, `out/`, `node_modules/`, `target/`, `vendor/`, language-tool caches), generated code files (e.g. outputs of codegen, protobuf/gRPC stubs, ORM mappers), build outputs, and logs/symbols are excluded from codebase search. Do not attempt to reason over or edit generated files unless the task is "regenerate" or "fix codegen."
+5. **Reset strategy:** If the session context exceeds ~20k tokens or the agent is stuck in a loop, do not add more context. Instead: (a) Summarize current state and open questions in a handoff (workspace `.agent-output/handoff.md` or repo root `handoff.md`), and (b) Instruct the user to clear the chat and restart from the Master Plan or the handoff file so the new context window begins from a clean summary.
+6. **Conditional loading of project rules:** For simple tasks (single-file edit, quick question), do NOT load the full `.cursorrules`. Instead, read only the relevant section (e.g. "Technology Stack" or "Business Rules" heading). The agent-skill-standard-rule already classifies tasks as simple/standard/complex — use that classification to decide how much context to load. Load `.cursorrules` in full only for standard/complex tasks where project conventions are critical.
+7. **Workflow prompts defer to personas:** Workflow prompt_templates should reference loaded personas for domain-specific conventions rather than inlining them. Domain-specific test/build commands are centralized in `_domain-commands.yaml`. This keeps workflow files lean and avoids context duplication.
+
+---
+
+## Workflow
+
+- **Before** running a broad search or opening many files: Check whether the goal can be achieved with one or two `@file` or `@symbol` references.
+- **After** a multi-file change: Prefer listing only the changed files in the handoff; do not re-paste large file contents into the handoff.
+- **When** suggesting "read the full spec": Point to `.cursorrules` or a specific rule file (e.g. `000-project-bootstrap.mdc`) and, if possible, a section or heading, rather than inlining the full spec.
+
+---
+
+## Tooling and commands
+
+- **Codebase search:** Use semantic or grep search with narrow queries (e.g. symbol name, specific string) instead of loading entire source trees.
+- **Generated files:** To regenerate after schema/codegen changes, use the project's documented codegen command. Do not edit generated outputs by hand unless the generator is broken and a fix is planned.
+- **.cursorignore:** Maintained at repo root. Add new noisy or generated paths when new tooling is introduced (e.g. new codegen, new build outputs).
+
+---
+
+## Relation to other rules
+
+- **000-project-bootstrap.mdc** defines where config lives (submodule vs project vs global); use it to know which rule files to open instead of loading `.cursorrules` in full for small questions.
+- Stack-specific conventions (language, framework) live in the project's `.cursorrules` or optional domain rules under `.cursor/rules/` when the project adds them.

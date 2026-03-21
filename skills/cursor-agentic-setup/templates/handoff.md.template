@@ -1,0 +1,38 @@
+# Handoff
+
+**Git (obligatorio):** Con worktree: al cerrar, finishing-a-development-branch ejecuta Option 1 (merge a rama base) por defecto. Sin worktree: no commit/push salvo petición explícita.
+**Worktree (obligatorio):** Con worktree: SIEMPRE mezclar la rama del worktree a la rama principal de origen (desde la cual se creó el worktree). El usuario realiza el merge manualmente.
+**Handoff cleanup (obligatorio):** Al terminar el trabajo: SIEMPRE eliminar este handoff. Evitar handoffs pending, zombies, orphans.
+
+**Goal reached:** (1–2 sentences)
+
+**Changes made:** (list file paths only, no code)
+- 
+
+**Unresolved / risks:** (open items or blockages)
+- 
+
+**Next assigned role:** (planner | implementer | tester | verifier | software-architect | code-reviewer | security-auditor | explore | shell | …)
+
+**Domain:** (mobile | web | infra)
+
+**Blocked:** (true | false)
+**Return_to_step:** (id del paso a re-invocar si Blocked; ej. plan, architect, implement)
+**Block_reason:** (motivo breve cuando Blocked=true)
+
+---
+
+## Implementation Workflow Fields
+
+**Plan_ref:** (path to YYMMDD-NNN.md in .cursor/agents/planner/analysis/)
+**Architect_approval:** (yes | no | pending)
+**Test_report:** (path to YYMMDD-NNN.md in .cursor/agents/tester/analysis/ if applicable)
+**Code_review_verdict:** (APPROVED | REQUIRES_CHANGES | pending)
+**Security_audit:** (PASS | CONDITIONAL | FAIL | N/A)
+**Requires_tests:** (yes | no)
+**Security_critical_feature:** (yes | no)
+**Git_integration:** `merge_to_base` (worktree) | `none` — Con worktree: merge a rama base al cerrar. Anotar rama y ruta del worktree.
+
+---
+
+*Copy this template to `handoff-<scope>.md` per workflow run. Scope = branch (sanitized: / → -) or workflow name. Orchestrator injects handoff_file; use {{handoff_file}} in workflow prompts. Update after each step; next agent continues from handoff + referenced files. Flow and rules in .cursor/workflows/feature-implementation.workflow.yaml. No git commit/push by agents — working tree only. With worktree: user must merge worktree branch to main/source branch. When task done: DELETE handoff (no pending/zombie/orphan handoffs).*

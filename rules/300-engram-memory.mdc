@@ -1,0 +1,58 @@
+---
+description: Persistent memory via Engram MCP — when to save, search, and manage session lifecycle.
+alwaysApply: false
+globs:
+  - .cursor/mcp.json
+---
+
+# Engram persistent memory
+
+Agents have access to Engram persistent memory via MCP tools. This rule defines **when** and **how** to use them.
+
+## When to save (mandatory)
+
+Call `mem_save` IMMEDIATELY after:
+- Bug fix completed
+- Architecture or design decision made
+- Non-obvious discovery about the codebase
+- Configuration change or environment setup
+- Pattern established (naming, structure, convention)
+- User preference or constraint learned
+- Workflow step completes significant work
+
+Format: `title` (verb + what, short), `type` (decision | architecture | bugfix | pattern | config | discovery | learning), `content` with **What** / **Why** / **Where** / **Learned** sections.
+
+Use `topic_key` for evolving topics (e.g. `architecture/auth-model`, `bug/feed-pagination`). Same key upserts instead of duplicating. Call `mem_suggest_topic_key` if unsure.
+
+## When to search
+
+**Reactive:** User says "remember", "recall", "what did we do", or references past work → `mem_context` first, then `mem_search` with keywords, then `mem_get_observation` for full content.
+
+**Proactive:** Starting work on something that might overlap past sessions → search before exploring the codebase from scratch.
+
+**Progressive disclosure:** search (compact IDs) → timeline (neighborhood) → get_observation (full). Do not dump all memories at once.
+
+## Session lifecycle (workflow integration)
+
+| Event | Action |
+|-------|--------|
+| Workflow starts (Step 3 in orchestrator) | `mem_session_start` with project name |
+| Each workflow step completes | `mem_save` with step summary and topic_key `workflow/{branch-name}/{step-id}` |
+| Workflow ends (Step 6 in orchestrator) | `mem_session_summary` with Goal / Discoveries / Accomplished / Relevant Files |
+| Any significant decision mid-step | `mem_save` immediately — do not defer to end |
+
+## Compaction recovery
+
+After any context compaction or reset: call `mem_context` FIRST to recover session state before continuing work. This is not optional.
+
+## Subagent memory rules
+
+- **Subagents SHOULD save** significant discoveries, decisions, or bug fixes via `mem_save` before returning — they have the full detail; if deferred to the orchestrator, nuance is lost.
+- **Orchestrator reads** `mem_context` at session start and passes relevant context in subagent prompts.
+- **References over content:** Pass engram topic keys or observation IDs in handoffs (~50 tokens) instead of full content (3,000–15,000 tokens).
+
+## Relation to other rules
+
+- **`010-orchestrator.mdc`**: Session lifecycle hooks in Steps 3 and 6
+- **`050-subagent-delegation.mdc`**: Subagent mem_save instruction
+- **`100-token-economics.mdc`**: References over content; progressive disclosure

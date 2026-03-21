@@ -1,0 +1,128 @@
+---
+description: "Scaffold a new project for the agent system. Trigger: user says /setup-project"
+alwaysApply: false
+---
+
+# /setup-project
+
+Scaffolds a new project with `.cursorrules`, `specs/`, `knowledge/`, and project-specific `.cursor/` configuration.
+
+## When triggered
+
+User says `/setup-project` or "set up this project for agents" or "initialize agent config".
+
+## Questions to ask
+
+Before creating files, ask the user:
+
+1. **Project name**: Display name (e.g. "SnoutZone")
+2. **Package name**: For code (e.g. "snoutzone")
+3. **Domains used**: Which from the canonical list? (dart-flutter, angular, symfony, api-platform, devops, php)
+4. **Primary domain**: The main one (for default detection)
+5. **MCP servers**: Which integrations? (clickup, firebase, supabase, sentry, engram, etc.)
+6. **Key business constraints**: Any PROHIBITED items or no-go zones?
+
+## Files to create
+
+After gathering answers, create:
+
+### 1. `.cursorrules` (from template)
+
+Use `~/.cursor/templates/cursorrules.template.md` as base. Fill in:
+- Project Identity (name, package, file convention)
+- Canonical Domains (only the ones the user selected)
+- Workflow Auto-Selection table (standard)
+- Specs pointer
+- MCP Servers (from user's answer)
+- No-Go Zones (from user's constraints)
+- Knowledge Directory (standard)
+- Quick Reference (leave empty for now)
+
+### 2. `specs/` directory
+
+```
+specs/
+├── project.living.md      (from ~/.cursor/templates/project-living.template.md or generate)
+├── architecture/
+│   └── .gitkeep
+├── features/              (one dir per major feature — ask user)
+│   └── {feature}/spec.md  (from ~/.cursor/templates/feature-spec.template.md)
+└── cross-cutting/
+    ├── error-handling.md
+    └── security-auth.md
+```
+
+### 3. `knowledge/` directories
+
+```
+knowledge/
+├── research/
+├── decisions/
+└── searchable/
+```
+
+### 4. `<repo>/.cursor/` project config
+
+```
+.cursor/
+├── mcp.json                              (from template, with selected servers)
+├── agents/personas/                      (create domain-specific personas for selected domains)
+│   ├── implementer-{domain}.md
+│   ├── planner-{domain}.md
+│   ├── tester-{domain}.md
+│   ├── code-reviewer-{domain}.md
+│   └── software-architect-{domain}.md
+└── workflows/
+    ├── _domain-commands.yaml             (with sections for selected domains)
+    └── (project-specific workflows if needed)
+```
+
+### 5. `.gitignore` additions
+
+Append if not present:
+```
+.agent-output/
+.engram/
+```
+
+### 6. `.cursorignore`
+
+Create or update:
+```
+.agent-output/
+.engram/
+build/
+node_modules/
+vendor/
+```
+
+## Persona generation
+
+For each selected domain, generate persona files using this template:
+
+```markdown
+---
+name: {role}-{domain}
+description: {Role} specialist for {domain stack description}.
+domain: {domain}
+---
+
+# {Role} — {Domain Display Name}
+
+## Conventions
+
+- (3-5 domain-specific conventions from _domain-commands.yaml guidance)
+
+## Anti-patterns
+
+- (3-5 things to avoid in this domain)
+```
+
+Populate conventions from `~/.cursor/workflows/_domain-commands.yaml` (the global reference) as a starting point, then let the user customize.
+
+## After setup
+
+Report what was created and remind the user:
+- "Run `/self-update` to keep shared resources current"
+- "Run the specs migration plan when ready: `Execute step 0 of knowledge/decisions/plan-full-specs-migration.md`"
+- "Global resources at `~/.cursor/` — project config at `<repo>/.cursor/`"

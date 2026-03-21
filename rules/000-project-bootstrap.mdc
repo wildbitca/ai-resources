@@ -1,0 +1,64 @@
+---
+description: Project bootstrap — how agents resolve config, find workflows, personas, and project rules.
+alwaysApply: true
+---
+# Project Bootstrap
+
+Defines how agents discover and use shared (global) and project-specific resources.
+
+## Configuration resolution
+
+| Scope | Path | Contents |
+|-------|------|----------|
+| **Global (shared)** | `~/.cursor/` | Rules, roles, skills, workflow templates, AGENTS.md, handoff template. Managed as git repo (ai-resources). |
+| **Project** | `<repo>/.cursor/` | Domain personas, domain commands, project-specific workflows, mcp.json. |
+| **Project root** | `<repo>/` | `.cursorrules` (business config), `specs/` (living specs), `knowledge/` (research/decisions). |
+
+**Resolution order:** Project `<repo>/.cursor/` > Global `~/.cursor/`. Project `.cursorrules` > Global rules.
+
+## Path conventions
+
+| Resource | Global path | Project override |
+|----------|------------|-----------------|
+| Rules | `~/.cursor/rules/*.mdc` | `<repo>/.cursor/rules/*.mdc` |
+| Roles | `~/.cursor/agents/roles/{role}.md` | (no override — roles are universal) |
+| Personas | (none globally) | `<repo>/.cursor/agents/personas/{role}-{domain}.md` |
+| Skills | `~/.cursor/skills/{name}/SKILL.md` | `<repo>/.cursor/skills/{name}/SKILL.md` |
+| Skill index | `~/.cursor/AGENTS.md` | `<repo>/.cursor/AGENTS.md` (if exists) |
+| Workflow templates | `~/.cursor/workflows/_*.workflow.yaml` | (no override) |
+| Project workflows | (none) | `<repo>/.cursor/workflows/*.workflow.yaml` |
+| Domain commands | (none) | `<repo>/.cursor/workflows/_domain-commands.yaml` |
+| Handoff template | `~/.cursor/handoff.md.template` | (no override) |
+| Spec/ADR templates | `~/.cursor/templates/` | (no override) |
+
+## Agent persona loading
+
+When a workflow step specifies a subagent_type (e.g. implementer):
+1. Look for `<repo>/.cursor/agents/personas/{role}-{domain}.md` (domain-specific)
+2. Fall back to `~/.cursor/agents/roles/{role}.md` (universal role definition)
+
+## Skill discovery
+
+Skills index at `~/.cursor/AGENTS.md`. Skills at `~/.cursor/skills/`. Rule `agent-skill-standard-rule.mdc` enforces discovery.
+
+## Knowledge directory
+
+Project-specific, at `<repo>/knowledge/`:
+- `research/` — codebase exploration, bug analysis
+- `decisions/` — plans, architecture decisions
+- `searchable/` — validation reports
+
+## Handoff protocol
+
+See `050-subagent-delegation.mdc`. Handoff files: `<repo>/.agent-output/handoff-{scope}.md`. Template: `~/.cursor/handoff.md.template`.
+
+## Commands
+
+| Command | Rule | What it does |
+|---------|------|-------------|
+| `/self-update` | `self-update.mdc` | Pull latest shared resources from remote |
+| `/setup-project` | `setup-project.mdc` | Scaffold a new project with .cursorrules, specs/, knowledge/ |
+
+## No-go zones
+
+Check the project's `.cursorrules` for project-specific prohibitions.

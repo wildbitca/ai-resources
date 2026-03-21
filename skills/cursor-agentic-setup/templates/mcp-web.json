@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cursor-ide-browser": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/cursor-ide-browser-mcp"]
+    }
+  }
+}
