@@ -35,8 +35,7 @@ globs:
 | Execute plan, write code, atomic edits | `implementer` | Implement steps from plan/handoff; applies skills; does not design or verify. |
 | Run tests, analyze failures, report | `tester` | Execute test commands, interpret failures, hand off to Implementer or Verifier. |
 | Validate acceptance criteria, final sign-off | `verifier` | Confirm all criteria met; marks task done. |
-| System design, dependency mapping, diagrams | `architect` | Architecture decisions, Mermaid diagrams, dependency graphs. Run before Planner when design is missing. |
-| System design, dependency mapping, architecture decisions, diagrams | `software-architect` | Run before Planner when design is missing or needs validation. |
+| System design, dependency mapping, architecture decisions, diagrams | `software-architect` | Architecture decisions, Mermaid diagrams, dependency graphs. Run before Planner when design is missing or needs validation. |
 | Review implemented code, standards, security, merge approval | `code-reviewer` | Review implemented code, validate standards, verify security, give final approval before merge. |
 | Security audit, SAST, DAST, vulnerability scan | `security-auditor` | Security methodology phases within feature/bugfix/dedicated security workflows. |
 | Upgrade dependencies, update packages | `package-upgrade` | Full dependency review, registry lookups, breaking changes. |
@@ -52,7 +51,7 @@ globs:
 ## How to delegate
 
 Use the **Task** tool with:
-- `subagent_type`: One of explore, planner, implementer, tester, verifier, architect, software-architect, code-reviewer, security-auditor, package-upgrade, crashlytics-fixer, sentry-fixer, terraform-maintainer, crossplane-upjet-maintainer, shell, generalPurpose
+- `subagent_type`: One of explore, planner, implementer, tester, verifier, software-architect, code-reviewer, security-auditor, package-upgrade, crashlytics-fixer, sentry-fixer, terraform-maintainer, crossplane-upjet-maintainer, shell, generalPurpose
 - `description`: Short (3–5 words) summary
 - `prompt`: **Detailed** task description; the subagent does NOT see the main chat, so include all context (paths, constraints, handoff state, what to return)
 
@@ -94,7 +93,7 @@ When tasks are independent (e.g. explore two different areas), launch multiple s
 | **Goal reached** | 1–2 sentences: what was accomplished in this step. |
 | **Changes made** | List of file paths only (no code). |
 | **Unresolved / risks** | Open items, blockages, or follow-up needed. |
-| **Next assigned role** | planner \| implementer \| tester \| verifier \| architect \| software-architect \| code-reviewer \| explore \| shell \| etc. Never leave empty when passing work. |
+| **Next assigned role** | planner \| implementer \| tester \| verifier \| software-architect \| code-reviewer \| explore \| shell \| etc. Never leave empty when passing work. |
 | **Domain** | dart-flutter \| angular \| symfony \| api-platform \| devops \| security — so the next agent knows which MCPs/skills apply. |
 | **Blocked** | `true` if there is a blockage that requires returning to a prior step. |
 | **Return_to_step** | ID of the step to re-invoke when Blocked=true (e.g. plan, implement, explore). |
