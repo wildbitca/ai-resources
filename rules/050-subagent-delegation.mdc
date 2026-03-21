@@ -1,8 +1,6 @@
 ---
 description: Delegate tasks to Cursor subagents via Task tool to keep main context small; when and which subagent to use.
-alwaysApply: false
-globs:
-  - .cursor/workflows/**
+alwaysApply: true
 ---
 
 # Subagent delegation (context preservation)
@@ -85,7 +83,7 @@ When tasks are independent (e.g. explore two different areas), launch multiple s
 
 **Fallback:** If orchestrator does not set `handoff_file`, use `.agent-output/handoff.md` for backwards compatibility.
 
-**Required fields (use template from `<repo>/.cursor/handoff.md.template`):**
+**Required fields (use template from `~/.cursor/handoff.md.template`):**
 
 | Field | Description |
 |-------|-------------|
