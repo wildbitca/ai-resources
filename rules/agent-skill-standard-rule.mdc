@@ -1,0 +1,56 @@
+---
+description: Agent skills routing — discover, match, load skills from AGENTS.md before writing code.
+alwaysApply: true
+---
+
+# Agent Skills Routing Protocol
+
+Zero-Trust environment. Do not rely on pre-training for architecture, styling, testing, or code patterns.
+
+## Mandatory State Machine
+
+Execute these states sequentially before writing code.
+
+### State 1: Task classification
+
+Classify the user's request:
+
+| Category | Action |
+|---|---|
+| **Simple** (single-file edit, config change, question, quick fix) | Skip to State 4. Use loaded skills from context only (no forced AGENTS.md read). |
+| **Standard** (multi-file edit, feature, bugfix, refactor) | Proceed to State 2. |
+| **Complex** (new feature, architecture change, multi-domain) | Proceed to State 2 (orchestrator handles full workflow). |
+
+### State 2: Discovery
+
+- **Action:** Read `~/.cursor/AGENTS.md` (global) or `<repo>/.cursor/AGENTS.md` (project override if exists) — specifically the `<!-- SKILLS_INDEX_START -->` block.
+- **Pass condition:** You have the skill index loaded.
+
+### State 3: Trigger matching + Context loading
+
+- **Action:** Cross-reference the user's prompt keywords and involved file globs against trigger lists in AGENTS.md. Read matching `SKILL.md` files.
+- **Pass condition:** Relevant skills are loaded (or none matched, which is fine).
+
+### State 4: Execution
+
+- **Action:** Begin answering or writing code.
+- **First output:** A brief audit log: "Skills loaded: [list]" or "No project-specific skills applicable."
+
+## Rule Zero: Zero-Trust Engineering
+
+- **Skill Authority:** Loaded skills always override existing code patterns.
+- **Audit Before Write:** Audit every file write against the `common/feedback-reporter` skill.
+
+## Trigger matching guide
+
+| Trigger Type | What to match | Required Action |
+|---|---|---|
+| **File glob** (e.g. `**/*.ts`) | Files you are currently editing match the pattern | Read the skill's `SKILL.md` |
+| **Keyword** (e.g. `auth`, `refactor`) | These words appear in the user's request | Read the skill's `SKILL.md` |
+| **Composite** (e.g. `+other/skill`) | Another listed skill is already active | Also load this skill |
+
+Indirect phrasing counts. Match keywords by intent: "make it faster" → `performance`, "broken query" → `database`, "login flow" → `auth`.
+
+## Self-Learning Protocol
+
+At the end of any multi-step task with user corrections, load and run `common/common-session-retrospective/SKILL.md` to capture skill gaps.

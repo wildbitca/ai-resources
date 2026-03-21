@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "example-http": {
+      "type": "http",
+      "url": "https://example-mcp-server.com/mcp"
+    },
+    "example-command": {
+      "command": "npx",
+      "args": ["-y", "example-mcp-package@latest", "mcp"],
+      "env": {}
+    },
+    "example-authenticated": {
+      "url": "https://example-auth-mcp.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:EXAMPLE_API_KEY}"
+      }
+    }
+  }
+}

@@ -1,0 +1,85 @@
+# Flujo: plan → architect → implement → test → review → security → verify
+# handoff_file: Orchestrator MUST inject. With worktree: .cursor/handoff-<branch>.md; without: .cursor/handoff-feature-implementation.md. Per-workflow anti-bottleneck.
+# Reglas: (1) NUNCA implementar sin plan aprobado por architect (2) NUNCA implementer escribe tests
+# (3) SIEMPRE code-review antes de terminar (4) SIEMPRE security-auditor para datos sensibles
+# (5) Reportes en .cursor/agents/<rol>/analysis/YYMMDD-NNN.md
+# (6) NUNCA git commit, git push, ni crear ramas/remotes; cambios solo en working tree; commit/push manual por el usuario.
+# (7) Con worktree: SIEMPRE mezclar la rama del worktree a la rama principal de origen (desde la cual se creó el worktree).
+# (8) Al terminar el trabajo: SIEMPRE eliminar el handoff; evitar handoffs pending, zombies, orphans.
+# Tester: si nueva lógica en services/auth/datos sensibles. No si solo config/docs/UI.
+# Security: si auth, PII, integraciones, uploads, endpoints protegidos.
+# Adapt: domain, TEST_CMD en prompts.
+name: feature-implementation
+description: Plan → architect → implement → test → review → security → verify. Reglas en comentarios arriba; reportes en agents/*/analysis/YYMMDD-NNN.md.
+domain: mobile
+trigger: User asks to implement a feature, new functionality, or multi-step task.
+steps:
+  - id: plan
+    subagent_type: planner
+    handoff_to: architect
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}.
+      Output: Create plan YYMMDD-NNN.md in .cursor/agents/planner/analysis/ with description, files, steps, checklist, security notes, Requires_tests (yes/no), Security_critical_feature (yes/no).
+      Update {{handoff_file}} (Goal reached, Plan_ref, Requires_tests, Security_critical_feature, Next assigned role=software-architect, Domain={{domain}}).
+      If blocked, set Blocked: true, Return_to_step: plan, Block_reason: [reason].
+  - id: architect
+    subagent_type: software-architect
+    handoff_to: implementer
+    on_concern_return_to: plan
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and the plan at Plan_ref. Validate the plan against project architecture and conventions.
+      Generate analysis YYMMDD-NNN.md in .cursor/agents/software-architect/analysis/.
+      If APPROVED: update {{handoff_file}} (Architect_approval: yes, Next assigned role=implementer).
+      If REJECTED: set Blocked: true, Return_to_step: plan, Block_reason: [observations].
+  - id: implement
+    subagent_type: implementer
+    handoff_to: test
+    on_concern_return_to: architect
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and plan at Plan_ref. Verify Architect_approval: yes before implementing.
+      Implement code per the plan. Do NOT write tests. Do NOT git commit or git push.
+      Update {{handoff_file}} (Changes made, Next assigned role=tester if Requires_tests else code-reviewer).
+      If blocked, set Blocked: true, Return_to_step: architect, Block_reason: [reason].
+  - id: test
+    subagent_type: tester
+    handoff_to: review
+    on_concern_return_to: implement
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. If Requires_tests: no, skip tests, update {{handoff_file}} (Next assigned role=code-reviewer) and advance.
+      If Requires_tests: yes, implement tests, run project test command (e.g. flutter test, npm test), create report in .cursor/agents/tester/analysis/.
+      Update {{handoff_file}} (Test_report, Next assigned role=code-reviewer).
+      If tests fail, set Blocked: true, Return_to_step: implement, Block_reason: [failures].
+  - id: review
+    subagent_type: code-reviewer
+    handoff_to: security
+    on_concern_return_to: implement
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and changed files. Run project tests. Review code quality and security.
+      Generate report in .cursor/agents/code-reviewer/analysis/.
+      If APPROVED: update {{handoff_file}} (Code_review_verdict: APPROVED, Next assigned role=security).
+      If REQUIRES_CHANGES: set Blocked: true, Return_to_step: implement, Block_reason: [corrections needed].
+  - id: security
+    subagent_type: security-auditor
+    handoff_to: verify
+    on_concern_return_to: implement
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. If Security_critical_feature: no, skip audit, update {{handoff_file}} (Security_audit: N/A, Next assigned role=verifier) and advance.
+      If Security_critical_feature: yes, perform OWASP-aligned audit, generate report in .cursor/agents/security-auditor/analysis/.
+      Update {{handoff_file}} (Security_audit: PASS|CONDITIONAL|FAIL, Next assigned role=verifier).
+      If FAIL, set Blocked: true, Return_to_step: implement, Block_reason: [critical vulnerabilities].
+  - id: verify
+    subagent_type: verifier
+    handoff_to: null
+    on_concern_return_to: review
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. Validate acceptance criteria from the plan. Confirm Architect_approval, Code_review_verdict, Security_audit (if applicable).
+      Mark task done or return to implementer/reviewer with open items.
+      Update {{handoff_file}} with final state. When task done: DELETE {{handoff_file}} (no pending/zombie/orphan handoffs). Do NOT git commit or git push; user commits manually. With worktree: user must merge worktree branch to main/source branch.
+      If criteria unmet, set Blocked: true, Return_to_step: [implement|review], Block_reason: [reason].

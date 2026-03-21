@@ -1,0 +1,43 @@
+# handoff_file: Orchestrator MUST inject. With worktree: .agent-output/handoff-<branch>.md; without: .agent-output/handoff-explore-and-plan.md.
+#               When task DONE: DELETE handoff file. No pending handoffs, zombies, orphans.
+#
+# Domain-agnostic: orchestrator injects {{domain}} from detection. No hardcoded prerequisites.
+name: explore-and-plan
+description: Discovery and planning only (no implementation). Works for any domain.
+domain: "{{domain}}"
+trigger: User wants to understand the codebase or get a plan before implementing.
+prerequisites: []
+steps:
+  - id: explore
+    subagent_type: generalPurpose
+    skills:
+      - common/best-practices
+      - common/context-optimization
+    entry_criteria: User goal defined
+    exit_criteria: Exploration complete; handoff updated with findings
+    handoff_to: plan
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}.
+      Task: Explore codebase as needed (thoroughness: medium or very thorough per scope).
+      First search knowledge/research/ for existing research on this topic to avoid duplicate work.
+      If new research is needed, generate knowledge/research/YYMMDD-{topic}.md with: summary, file:line references, architecture insights, patterns found, open questions.
+      Return: Summary and key paths. Update {{handoff_file}} (Research_ref if created, Next assigned role=planner, Domain={{domain}}).
+      If you have concern, blockage, or need changes from a previous step, set Blocked: true, Return_to_step: [id], Block_reason: [reason] in {{handoff_file}}. Do not advance until resolved.
+  - id: plan
+    subagent_type: planner
+    skills:
+      - common/product-requirements
+      - common/system-design
+    entry_criteria: Research complete or skipped
+    exit_criteria: Plan with acceptance criteria written
+    handoff_to: null
+    on_concern_return_to: explore
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and Research_ref if available. Goal: {{user_goal}}.
+      Output: PLAN.md or .plan.md with steps and acceptance criteria.
+      Save plan also to knowledge/decisions/YYMMDD-{topic}-plan.md for persistent reference.
+      Update {{handoff_file}} (Plan_ref, Next assigned role=null or implementer if user will continue).
+      If you have concern, blockage, or need more exploration, set Blocked: true, Return_to_step: explore, Block_reason: [reason] in {{handoff_file}}. Do not advance until resolved.
+      When task DONE: DELETE {{handoff_file}}. No pending handoffs, zombies, or orphans.
