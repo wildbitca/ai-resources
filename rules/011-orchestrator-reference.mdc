@@ -1,0 +1,35 @@
+---
+description: Domain detection signals and workflow fallback table. Loaded by orchestrator only when .cursorrules lacks a workflow table or domain is ambiguous.
+alwaysApply: false
+globs:
+  - .cursorrules
+---
+
+# Orchestrator Reference
+
+## Domain detection signals
+
+| Signal | Domain |
+|--------|--------|
+| flutter, dart, widget, riverpod, `lib/`, `pubspec.yaml` | `dart-flutter` |
+| angular, component, `src/app/`, `angular.json` | `angular` |
+| php, composer, `*.php` | `php` |
+| symfony, doctrine, twig, `symfony.lock`, `config/packages/` | `symfony` |
+| api platform, `#[ApiResource]`, state provider/processor | `api-platform` |
+| terraform, crossplane, k8s, helm, `*.tf`, infra paths | `devops` |
+| security audit, vulnerability, pen test, OWASP | `security` |
+
+If the workspace contains a single stack, default to it. If ambiguous, **ask the user**.
+
+## Workflow fallback table
+
+Only used if `.cursorrules` has no workflow auto-selection table:
+
+| Intent | Workflow path |
+|--------|--------------|
+| New feature / functionality | `~/.cursor/workflows/_feature-template.workflow.yaml` |
+| Bug fix | `~/.cursor/workflows/_bugfix-template.workflow.yaml` |
+| Security audit / pen test | `~/.cursor/workflows/security-devsecops.workflow.yaml` |
+| Understand / explore / plan | `~/.cursor/workflows/explore-and-plan.workflow.yaml` |
+| Release / changelog | `~/.cursor/workflows/release-{domain}.workflow.yaml` |
+| Cross-domain (app + infra) | `~/.cursor/workflows/cross-domain-backend-infra.workflow.yaml` |

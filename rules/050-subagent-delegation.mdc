@@ -1,133 +1,42 @@
 ---
-description: Delegate tasks to Cursor subagents via Task tool to keep main context small; when and which subagent to use.
+description: When and how to delegate to subagents via Task tool.
 alwaysApply: true
 ---
 
-# Subagent delegation (context preservation)
+# Subagent Delegation
 
-**Purpose:** Keep the main agent's context window small by delegating well-scoped tasks to specialized subagents. Subagents run in isolation with their own context; they return results without inflating the main session.
-
----
+Delegate well-scoped tasks to keep the main context small. Subagents run in isolation.
 
 ## When to delegate
 
-**Delegate** when:
-- Task matches a subagent's specialty (see mapping below)
-- Task requires broad exploration or multi-step implementation
-- Main context is growing (approaching ~15–20k tokens) and the task can be offloaded
-- User explicitly asks for planning, implementation, testing, or verification as separate steps
+**Delegate** when: task matches a subagent specialty, requires broad exploration, multi-step implementation, or context is growing (>15k tokens).
 
-**Do not delegate** when:
-- Task is narrow (single file edit, quick answer, one grep)
-- User asks a simple question (no code change)
-- Delegation would add unnecessary latency for a trivial task
+**Skip** when: single file edit, quick answer, simple question.
 
----
+## Subagent mapping
 
-## Task → subagent mapping
-
-| Task type | Subagent | Use when |
-|-----------|----------|----------|
-| Broad exploration, find files/patterns, answer "how does X work?" | `explore` | Codebase search, understanding structure, keyword/pattern search. Specify thoroughness: quick, medium, or very thorough. |
-| Requirements → plan, task breakdown, acceptance criteria | `planner` | Create or refine PLAN.md, decompose feature into steps, define handoff points. |
-| Execute plan, write code, atomic edits | `implementer` | Implement steps from plan/handoff; applies skills; does not design or verify. |
-| Run tests, analyze failures, report | `tester` | Execute test commands, interpret failures, hand off to Implementer or Verifier. |
-| Validate acceptance criteria, final sign-off | `verifier` | Confirm all criteria met; marks task done. |
-| System design, dependency mapping, architecture decisions, diagrams | `software-architect` | Architecture decisions, Mermaid diagrams, dependency graphs. Run before Planner when design is missing or needs validation. |
-| Review implemented code, standards, security, merge approval | `code-reviewer` | Review implemented code, validate standards, verify security, give final approval before merge. |
-| Security audit, SAST, DAST, vulnerability scan | `security-auditor` | Security methodology phases within feature/bugfix/dedicated security workflows. |
-| Upgrade dependencies, update packages | `package-upgrade` | Full dependency review, registry lookups, breaking changes. |
-| Fix crash analytics issues (vendor MCP) | `crashlytics-fixer` | Triage production crashes when the project's crash-analytics MCP is available. |
-| Fix error-tracking issues (vendor MCP) | `sentry-fixer` | Triage error-tracking inbox when the project's error-tracking MCP is available. |
-| Terraform maintenance, module release | `terraform-maintainer` | tf-module maintenance, provider upgrades, changelog. |
-| Crossplane provider build, Upjet, KRO | `crossplane-upjet-maintainer` | Upjet provider build, CI fix, pipeline change, CRD generation. |
-| Shell commands, git, CI scripts | `shell` | Git ops, command execution, scripts. |
-| Research, multi-step reasoning | `generalPurpose` | Complex questions, multi-step tasks when no specialist fits. |
-
----
+| Task | Subagent |
+|------|----------|
+| Explore codebase, find patterns | `explore` |
+| Plan, task breakdown, acceptance criteria | `planner` |
+| Write code, atomic edits from plan | `implementer` |
+| Run tests, analyze failures | `tester` |
+| Validate acceptance criteria, sign-off | `verifier` |
+| Architecture decisions, diagrams | `software-architect` |
+| Code review, standards, security check | `code-reviewer` |
+| Security audit, SAST, DAST | `security-auditor` |
+| Upgrade dependencies | `package-upgrade` |
+| Fix Crashlytics issues | `crashlytics-fixer` |
+| Fix Sentry issues | `sentry-fixer` |
+| Terraform maintenance | `terraform-maintainer` |
+| Crossplane/Upjet build | `crossplane-upjet-maintainer` |
+| Shell commands, git, scripts | `shell` |
+| General multi-step reasoning | `generalPurpose` |
 
 ## How to delegate
 
-Use the **Task** tool with:
-- `subagent_type`: One of explore, planner, implementer, tester, verifier, software-architect, code-reviewer, security-auditor, package-upgrade, crashlytics-fixer, sentry-fixer, terraform-maintainer, crossplane-upjet-maintainer, shell, generalPurpose
-- `description`: Short (3–5 words) summary
-- `prompt`: **Detailed** task description; the subagent does NOT see the main chat, so include all context (paths, constraints, handoff state, what to return)
+Task tool with: `subagent_type`, `description` (3-5 words), `prompt` (detailed — subagent has no chat context). Include workspace path, handoff state, what to return. Max 4 concurrent subagents.
 
-**Memory instruction:** Always include in subagent prompts: "If you make important discoveries, decisions, or fix bugs, save them to Engram via `mem_save` with project name before returning."
+## Handoff protocol
 
-**Important:** The subagent runs in isolation. Provide enough context in `prompt` for it to succeed. Example:
-
-```
-prompt: |
-  Workspace: /path/to/repo (brief stack note per project).
-  Handoff: Implementer completed step 2; tests not yet run.
-  Task: Run the test command(s) defined in the plan for the affected modules.
-  Return: Pass/fail summary, any failure details, and recommendation for Next assigned role (Implementer or Verifier).
-```
-
----
-
-## Parallel delegation
-
-When tasks are independent (e.g. explore two different areas), launch multiple subagents in a single message. Prefer parallel delegation when it speeds the workflow. Do not exceed 4 concurrent subagents.
-
----
-
-## Handover Protocol
-
-**Handoff per workflow:** One handoff file per workflow run — avoids bottlenecks when multiple agents or workflows run in parallel. Path: `<repo>/.agent-output/handoff-<scope>.md`.
-
-**Scope rules (orchestrator MUST inject `handoff_file` before each step):**
-- With worktree/branch: scope = branch name sanitized (`/` → `-`), e.g. `feature-auth` → `.agent-output/handoff-feature-auth.md`
-- Without worktree: scope = workflow name, e.g. `.agent-output/handoff-feature-implementation.md` or `.agent-output/handoff-release-mobile.md`
-
-**Fallback:** If orchestrator does not set `handoff_file`, use `.agent-output/handoff.md` for backwards compatibility.
-
-**Required fields (use template from `~/.cursor/handoff.md.template`):**
-
-| Field | Description |
-|-------|-------------|
-| **Status** | `success` \| `partial` \| `blocked` — outcome of this step. |
-| **Goal reached** | 1–2 sentences: what was accomplished in this step. |
-| **Changes made** | List of file paths only (no code). |
-| **Unresolved / risks** | Open items, blockages, or follow-up needed. |
-| **Next assigned role** | planner \| implementer \| tester \| verifier \| software-architect \| code-reviewer \| explore \| shell \| etc. Never leave empty when passing work. |
-| **Domain** | dart-flutter \| angular \| symfony \| api-platform \| devops \| security — so the next agent knows which MCPs/skills apply. |
-| **Blocked** | `true` if there is a blockage that requires returning to a prior step. |
-| **Return_to_step** | ID of the step to re-invoke when Blocked=true (e.g. plan, implement, explore). |
-| **Block_reason** | Brief reason when Blocked=true — what the prior step must correct. |
-| **Git_integration** | `merge_to_base` (worktree workflows) \| `none` \| `pending_human` — For worktree workflows (feature, bugfix, cross-domain): on completion, finishing-a-development-branch executes **Option 1** (merge to base branch) by default. Set `merge_to_base` when worktree was used; record branch and worktree path. |
-
-**Git / completion (mandatory):** For workflows that use worktrees: when the workflow completes, apply `finishing-a-development-branch` and execute **Option 1** (merge to base branch from which worktree was created). Record branch name and worktree path in handoff. If the user prefers PR or keep-as-is, follow their choice.
-
-**Cross-domain handover (e.g. Backend → Infra):** In handoff, set Domain to the target domain. Under Goal/Context, reference only paths or resources (e.g. "See `services/api/`"); do not paste code from the previous domain. The next agent reads handoff plus referenced files only.
-
-**Complex tasks:** For feature, bugfix, or release workflows, consult `~/.cursor/workflows/`. Execute steps in order; after each step, update the handoff file; the next step reads handoff and runs the next Task call. Orchestrator passes `handoff_file` in each step's prompt.
-
----
-
-## Workflow execution with rollback
-
-Before each step, the orchestrator MUST set `handoff_file` (e.g. `.agent-output/handoff-feature-auth.md` from branch when using worktree; else `.agent-output/handoff-<workflow>.md`). Inject it into the step prompt.
-
-After each workflow step:
-
-1. **Read** the handoff file (from `handoff_file` in prompt).
-2. **If Blocked=true** and Return_to_step is defined:
-   - Invoke Task tool for that step (with current handoff as context).
-   - Do **not** advance to the next step.
-   - Re-read handoff after the re-invoked step completes.
-3. **If Blocked=false** (or absent):
-   - Continue to the step indicated in Next assigned role.
-4. **Iteration limit:** Cap rollbacks per step (e.g. 3) to avoid infinite loops. If the limit is reached, surface the Block_reason to the user and stop.
-
-Workflows define `on_concern_return_to` per step; use that as the default Return_to_step when Blocked.
-
----
-
-## Relation to other rules
-
-- **000-project-bootstrap.mdc**: Orchestration flow (Planner → software-architect → Implementer → Tester → Verifier, with variants per workflow). Use Task tool to invoke these roles; they update handoff in the workspace.
-- **100-token-economics.mdc**: Delegation reduces main context. When context grows, delegate rather than loading more files. Pass Engram references (~50 tokens) instead of full content (3,000–15,000 tokens).
-- **300-engram-memory.mdc**: Subagents should `mem_save` significant work before returning. Orchestrator passes relevant `mem_context` in subagent prompts.
-- **Handoff**: Subagents update the handoff file (path from `handoff_file`; per-workflow to avoid parallel bottleneck). Main agent reads handoff to continue or hand off to the next role.
+For workflow execution details (handoff fields, rollback, scope rules), see `051-handoff-protocol.mdc`.
