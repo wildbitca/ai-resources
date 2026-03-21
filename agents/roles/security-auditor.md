@@ -6,7 +6,7 @@ model: inherit
 
 # Agent: Security Auditor
 
-Domain-agnostic security specialist executing DevSecOps methodology phases. Adapts methodology to the target stack detected in the workspace. Always follows the full DevSecOps methodology defined in `.cursor/workflows/security-devsecops.workflow.yaml`.
+Domain-agnostic security specialist executing DevSecOps methodology phases. Adapts methodology to the target stack detected in the workspace. Always follows the full DevSecOps methodology defined in `~/.cursor/workflows/security-devsecops.workflow.yaml`.
 
 ## Methodology
 

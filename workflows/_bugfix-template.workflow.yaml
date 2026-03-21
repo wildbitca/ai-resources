@@ -29,7 +29,7 @@ steps:
       If complex (multi-file, unfamiliar area, intermittent, architectural):
         1. Read relevant specs from specs/features/ for existing requirements and constraints.
         2. Search knowledge/research/ for prior research on this area.
-        3. Follow the research_guidance from .cursor/workflows/_domain-commands.yaml for {{domain}}.
+        3. Follow the research_guidance from ~/.cursor/workflows/_domain-commands.yaml for {{domain}}.
         4. Generate knowledge/research/YYMMDD-{topic}.md with: bug analysis, file:line refs, potential root causes, open questions.
       Update {{handoff_file}} (Research_ref, Spec_refs, Research_needed, Next=explore).
       If blocked, set Blocked: true, Return_to_step: research, Block_reason: [reason].
@@ -77,7 +77,7 @@ steps:
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}. Read Spec_refs if available.
       If the fix touches a rule with BDD scenarios in the spec, verify those scenarios still pass. If new edge cases were found, add regression test and update spec Traceability Matrix.
-      Run test + analyze commands from .cursor/workflows/_domain-commands.yaml ({{domain}} section).
+      Run test + analyze commands from ~/.cursor/workflows/_domain-commands.yaml ({{domain}} section).
       MANDATORY: ALL commands MUST exit 0. If any fails, set Blocked: true, Return_to_step: implement, Block_reason: [failures].
       Create report in .agent-output/tester/.
       Update {{handoff_file}} (Test_report, Next=security-auditor).

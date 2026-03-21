@@ -23,7 +23,7 @@ Classify the user's request:
 
 ### State 2: Discovery
 
-- **Action:** Read `~/.cursor/AGENTS.md` (global) or `<repo>/.cursor/AGENTS.md` (project override if exists) — specifically the `<!-- SKILLS_INDEX_START -->` block.
+- **Action:** Read `~/.cursor/AGENTS.md` — specifically the `<!-- SKILLS_INDEX_START -->` block.
 - **Pass condition:** You have the skill index loaded.
 
 ### State 3: Trigger matching + Context loading

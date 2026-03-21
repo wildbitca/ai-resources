@@ -7,7 +7,7 @@
 # REQUIRES worktree. See .cursorrules.
 #
 # handoff_file: .agent-output/handoff-<branch>.md. DELETE when DONE.
-# Domain commands: .cursor/workflows/_domain-commands.yaml ({{domain}} section)
+# Domain commands: ~/.cursor/workflows/_domain-commands.yaml ({{domain}} section)
 #
 # Rules: (1) NEVER implement without architect-approved plan
 # (2) Implementer NEVER writes tests (tester does)
@@ -35,7 +35,7 @@ steps:
       If complex (new feature, multi-file, unfamiliar area):
         1. Read relevant specs from specs/features/ and specs/architecture/ for existing requirements and constraints.
         2. Search knowledge/research/ for prior research on this topic.
-        3. Follow the research_guidance from .cursor/workflows/_domain-commands.yaml for {{domain}}.
+        3. Follow the research_guidance from ~/.cursor/workflows/_domain-commands.yaml for {{domain}}.
         4. Generate knowledge/research/YYMMDD-{topic}.md with: summary, file:line refs, architecture insights, existing patterns, open questions.
       Update {{handoff_file}} (Research_ref, Spec_refs: list of specs read, Research_needed, Next=planner).
       If blocked, set Blocked: true, Return_to_step: research, Block_reason: [reason].
@@ -86,7 +86,7 @@ steps:
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}} and Plan_ref. Verify Architect_approval: yes before implementing.
-      Follow implement_guidance from .cursor/workflows/_domain-commands.yaml for {{domain}} and your loaded persona.
+      Follow implement_guidance from ~/.cursor/workflows/_domain-commands.yaml for {{domain}} and your loaded persona.
       Implement code per the plan. Do NOT write tests.
       If you discover information affecting the plan, update Plan_ref with '## Implementation Notes'. Set Plan_updated: yes in {{handoff_file}}.
       Run analyze commands from _domain-commands.yaml to verify no lint errors.
@@ -107,7 +107,7 @@ steps:
         1. Read Spec_refs from handoff. If spec has ## Test Scenarios (BDD), implement tests for each [automated] scenario referenced by the plan (use TS-IDs from plan acceptance criteria).
         2. Name test functions to match scenario IDs for traceability (e.g. testTsPet001_mutualExclusivity).
         3. Add comment header in each test file: // Validates: TS-{FEAT}-NNN — {title}
-        4. Run test + analyze commands from .cursor/workflows/_domain-commands.yaml ({{domain}} section).
+        4. Run test + analyze commands from ~/.cursor/workflows/_domain-commands.yaml ({{domain}} section).
         5. After tests pass, update the spec's Traceability Matrix with test file paths and status.
         6. Create report in .agent-output/tester/ with coverage: "{N}/{M} plan scenarios have passing tests".
       MANDATORY: ALL test/analyze commands MUST exit 0. If any fails, set Blocked: true, Return_to_step: implement, Block_reason: [failures with details].
@@ -140,7 +140,7 @@ steps:
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}. If Security_critical_feature: no, set Security_audit: N/A, Next=verifier and advance.
-      If yes, execute the methodology from .cursor/workflows/security-devsecops.workflow.yaml adapted to {{domain}}. Use tools from _domain-commands.yaml security section plus domain-specific tools.
+      If yes, execute the methodology from ~/.cursor/workflows/security-devsecops.workflow.yaml adapted to {{domain}}. Use tools from _domain-commands.yaml security section plus domain-specific tools.
       Generate report in .agent-output/security-auditor/.
       Update {{handoff_file}} (Security_audit: PASS|CONDITIONAL|FAIL, Next=verifier).
       If FAIL, set Blocked: true, Return_to_step: implement, Block_reason: [critical vulnerabilities].
