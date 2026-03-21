@@ -104,7 +104,7 @@ When tasks are independent (e.g. explore two different areas), launch multiple s
 
 **Cross-domain handover (e.g. Backend → Infra):** In handoff, set Domain to the target domain. Under Goal/Context, reference only paths or resources (e.g. "See `services/api/`"); do not paste code from the previous domain. The next agent reads handoff plus referenced files only.
 
-**Complex tasks:** For feature, bugfix, or release workflows, consult `~/.cursor/workflows/` (global templates) and `<repo>/.cursor/workflows/` (project-specific). Execute steps in order; after each step, update the handoff file; the next step reads handoff and runs the next Task call. Orchestrator passes `handoff_file` in each step's prompt.
+**Complex tasks:** For feature, bugfix, or release workflows, consult `~/.cursor/workflows/`. Execute steps in order; after each step, update the handoff file; the next step reads handoff and runs the next Task call. Orchestrator passes `handoff_file` in each step's prompt.
 
 ---
 

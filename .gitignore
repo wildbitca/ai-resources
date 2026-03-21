@@ -9,11 +9,13 @@
 # Handoff template
 !handoff.md.template
 
-# Agent roles (universal)
+# Agent roles and personas
 !agents/
 agents/*
 !agents/roles/
 !agents/roles/**
+!agents/personas/
+!agents/personas/**
 
 # Global rules
 !rules/

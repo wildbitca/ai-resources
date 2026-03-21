@@ -13,9 +13,9 @@ On every user message that implies a code change, feature, bugfix, or multi-step
 
 ### Step 0: Preflight checks
 
-**Skill gate:** Read `.cursor/AGENTS.md` and match triggers per `agent-skill-standard-rule.mdc`. Load matching skills before proceeding.
+**Skill gate:** Read `~/.cursor/AGENTS.md` and match triggers per `agent-skill-standard-rule.mdc`. Load matching skills before proceeding.
 
-**MCP check:** Verify `.cursor/mcp.json` exists if the project's `.cursorrules` references MCP servers. If missing, warn the user: "MCP config not found — copy `.cursor/templates/mcp.json.template` to `.cursor/mcp.json` and configure."
+**MCP check:** Verify `<repo>/.cursor/mcp.json` exists if the project's `.cursorrules` references MCP servers. If missing, warn the user: "MCP config not found — run `/setup-project` or create `.cursor/mcp.json` manually."
 
 **Memory recovery:** If Engram MCP is available, call `mem_context` to load recent session history. This recovers state after compaction or fresh session starts. See `300-engram-memory.mdc`.
 
@@ -44,9 +44,7 @@ If the workspace contains a single stack, default to it. If ambiguous, **ask the
 
 ### Step 2: Workflow selection
 
-Use the project's `.cursorrules` workflow auto-selection table to match user intent to a workflow. That table contains full paths (`~/.cursor/workflows/` for global, `<repo>/.cursor/workflows/` for project-specific).
-
-**Resolution order:** `<repo>/.cursor/workflows/` first (project-specific), then `~/.cursor/workflows/` (global templates).
+Use the project's `.cursorrules` workflow auto-selection table to match user intent to a workflow. All workflows live at `~/.cursor/workflows/`.
 
 Fallback mapping (only if `.cursorrules` has no workflow table):
 
@@ -56,8 +54,8 @@ Fallback mapping (only if `.cursorrules` has no workflow table):
 | Bug fix | `~/.cursor/workflows/_bugfix-template.workflow.yaml` |
 | Security audit / pen test | `~/.cursor/workflows/security-devsecops.workflow.yaml` |
 | Understand / explore / plan | `~/.cursor/workflows/explore-and-plan.workflow.yaml` |
-| Release / changelog | `<repo>/.cursor/workflows/release-{domain}.workflow.yaml` |
-| Cross-domain (app + infra) | `<repo>/.cursor/workflows/cross-domain-backend-infra.workflow.yaml` |
+| Release / changelog | `~/.cursor/workflows/release-{domain}.workflow.yaml` |
+| Cross-domain (app + infra) | `~/.cursor/workflows/cross-domain-backend-infra.workflow.yaml` |
 
 If **no workflow matches**, proceed without one (direct execution with skill/rule guidance).
 
@@ -76,7 +74,7 @@ Skip worktree for read-only workflows (explore-and-plan, security audit).
 
 Read the workflow YAML. For each step in order:
 
-1. **Load persona**: `<repo>/.cursor/agents/personas/{subagent_type}-{domain}.md` → fallback `~/.cursor/agents/roles/{subagent_type}.md`
+1. **Load persona**: `~/.cursor/agents/personas/{subagent_type}-{domain}.md` → fallback `~/.cursor/agents/roles/{subagent_type}.md`
 2. **Load step skills**: If the workflow step defines `skills:`, load those from `~/.cursor/skills/`. Otherwise, match from `~/.cursor/AGENTS.md` triggers.
 3. **Dispatch subagent** via Task tool with: `subagent_type`, assembled `prompt` (step's `prompt_template` with variables resolved), persona content, skill names, handoff file path
 4. **Read handoff** after subagent completes

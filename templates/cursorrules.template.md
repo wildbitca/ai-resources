@@ -1,17 +1,21 @@
-# {{PROJECT_NAME}} — Project-Specific Business Requirements
+# {{PROJECT_NAME}} — Project Configuration
 
 ## Agent System
 
-**Shared resources:** `~/.cursor/` (rules, roles, skills, workflow templates, AGENTS.md). Run `/self-update` to pull latest.
+**Shared resources:** `~/.cursor/` (rules, roles, personas, skills, workflows, templates, AGENTS.md). Run `/self-update` to pull latest.
 
-**Project resources:** `<repo>/.cursor/` (domain personas, domain commands, project-specific workflows, mcp.json).
+**Project resources:** `<repo>/.cursor/` contains only `mcp.json` (Cursor IDE requirement).
 
-**MCP:** Use only MCPs defined in `.cursor/mcp.json`: {{MCP_LIST}}.
+## Project Identity
+
+- **Application Name**: {{APP_NAME}}
+- **Domain**: {{APP_DOMAIN}}
+- **Naming**: "{{DISPLAY_NAME}}" (display), "{{PACKAGE_NAME}}" (package), "{{FILE_CONVENTION}}" (file/directory)
 
 ## Canonical Domains
 
-| Domain | Language | Framework | Inherits |
-|--------|----------|-----------|----------|
+| Domain ID | Stack | Persona suffix | Signals |
+|-----------|-------|----------------|---------|
 {{DOMAIN_TABLE}}
 
 ## Workflow Auto-Selection
@@ -22,45 +26,31 @@
 | Bugfix (any domain) | `~/.cursor/workflows/_bugfix-template.workflow.yaml` |
 | Security audit / pen test | `~/.cursor/workflows/security-devsecops.workflow.yaml` |
 | Explore / plan (any domain) | `~/.cursor/workflows/explore-and-plan.workflow.yaml` |
-{{PROJECT_SPECIFIC_WORKFLOWS}}
+{{EXTRA_WORKFLOWS}}
 
-**Worktree + merge (MANDATORY):** Code-change workflows ALWAYS use git worktree at start and merge to base branch at end.
+Disambiguation: implement now → feature; understand/plan first → explore-and-plan.
 
 ## Specs (Source of Truth)
 
-Living specifications: `specs/`. Feature specs, cross-cutting specs, and ADRs. See `specs/project.living.md` for the master index.
+Living specifications at `specs/`. See `specs/project.living.md` for the master index. Agents MUST read relevant specs before implementing.
 
-## Project Identity
+## MCP Servers
 
-- **Application Name**: {{APP_NAME}}
-- **Domain**: {{APP_DOMAIN}}
-- **Naming Convention**: "{{DISPLAY_NAME}}" for display, "{{PACKAGE_NAME}}" for packages, "{{FILE_CONVENTION}}" for files/dirs
-
-## Technology Stack
-
-| Layer | Technology | Notes |
-|-------|-----------|-------|
-{{TECH_STACK}}
-
-## Directory Structure
-
-{{DIR_STRUCTURE}}
+Defined in `.cursor/mcp.json`: {{MCP_LIST}}.
 
 ## No-Go Zones
 
-| Area | Prohibition | Rationale |
-|------|-------------|-----------|
 {{NO_GO_ZONES}}
-
-## Business Rules — Quick Reference
-
-Business rules live in `specs/`. This section is a quick-lookup summary for the orchestrator.
-
-{{BUSINESS_RULES_SUMMARY}}
 
 ## Knowledge Directory
 
-`knowledge/` at project root:
-- `research/` — codebase exploration, analysis
-- `decisions/` — plans, ADRs, architecture decisions
-- `searchable/` — validation reports, searchable artifacts
+Workflows persist artifacts in `knowledge/` at project root:
+- `knowledge/research/` — codebase exploration, bug analysis (YYMMDD-{topic}.md)
+- `knowledge/decisions/` — plans, architecture decisions (YYMMDD-{topic}-plan.md)
+- `knowledge/searchable/` — validation reports (YYMMDD-{topic}-validation.md)
+
+Every research step MUST check `knowledge/research/` first. Every plan step MUST save to `knowledge/decisions/`. Every verify step MUST save to `knowledge/searchable/`.
+
+## Quick Reference
+
+{{BUSINESS_RULES_SUMMARY}}
