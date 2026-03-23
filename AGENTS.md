@@ -27,7 +27,7 @@
 | **Resolution rules**      | **`rules/050-subagent-delegation.mdc`** (ID → path for workflows and Task prompts)                                                                    |
 
 **Do not** maintain a second, hand-curated duplicate of the full skill list in this file. After **`python3 $AGENT_KIT/scripts/kit.py generate`** (or **`generate --skip-vendor`** when you only changed first-party skills), **`skills-index.json`** stays in sync with **`skills/**/SKILL.md`**. Commit the
-regenerated index when those files change (see **`README.md`** — Generated artifacts).
+regenerated index when those files change (see **`README.md`**).
 
 ### Ad-hoc tasks (no workflow)
 
