@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 # Package version must match an existing Git tag vX.Y.Z on github.com/wildbitca/ai-resources (see CHANGELOG.md).
+# This file is listed in .gitattributes export-ignore so it is not part of the source tarball; sha256 stays stable.
 class AiResources < Formula
   desc "Agent rules, skills, workflows, and kit CLI (generate, setup)"
   homepage "https://github.com/wildbitca/ai-resources"
   url "https://github.com/wildbitca/ai-resources/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "07ae49200c12f08fa546e52189d8fe2e0eb4ef498cd13947331812cbe2c24167"
+  sha256 "528dd2dcc7d1e0dc8c3e13c311f97fb686f9bf53451d3c8731dd9011ced47124"
   version "0.1.0"
   revision 0
 
