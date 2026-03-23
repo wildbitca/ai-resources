@@ -390,6 +390,44 @@ def _kit_refresh_hint(ak: Path) -> str:
     )
 
 
+def _setup_engram_claude(*, dry_run: bool = False) -> None:
+    """Register engram plugin for Claude Code (MCP + hooks + Memory Protocol skill)."""
+    if shutil.which("engram") is None:
+        print(
+            "engram/claude: 'engram' not in PATH — skipping plugin setup "
+            "(run: brew install gentleman-programming/tap/engram)",
+            file=sys.stderr,
+        )
+        return
+    if shutil.which("claude") is None:
+        print(
+            "engram/claude: 'claude' not in PATH — skipping plugin setup "
+            "(run manually: claude plugin marketplace add Gentleman-Programming/engram "
+            "&& claude plugin install engram)",
+            file=sys.stderr,
+        )
+        return
+    if dry_run:
+        print(
+            "would run: claude plugin marketplace add Gentleman-Programming/engram "
+            "&& claude plugin install engram"
+        )
+        return
+    for cmd in [
+        ["claude", "plugin", "marketplace", "add", "Gentleman-Programming/engram"],
+        ["claude", "plugin", "install", "engram"],
+    ]:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(
+                f"engram/claude: {' '.join(cmd)} failed (exit {result.returncode})"
+                f" — {result.stderr.strip()}",
+                file=sys.stderr,
+            )
+            return
+    print("engram/claude: plugin installed (MCP + hooks + Memory Protocol)")
+
+
 def _write_user_file(path: Path, content: str, *, dry_run: bool = False) -> None:
     if dry_run:
         print(f"would write {path}")
@@ -465,6 +503,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
     if target == "all":
         _write_cursor_stub(ak_s, hint, dry_run=dry)
         _write_claude_stub(ak_s, hint, dry_run=dry)
+        _setup_engram_claude(dry_run=dry)
         _write_gemini_stub(ak_s, dry_run=dry)
         _write_opencode_stub(ak_s, dry_run=dry)
         _write_codex_stub(ak_s, dry_run=dry)
@@ -475,6 +514,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
         targets_done.append("cursor")
     elif target == "claude":
         _write_claude_stub(ak_s, hint, dry_run=dry)
+        _setup_engram_claude(dry_run=dry)
         targets_done.append("claude")
     elif target == "gemini":
         _write_gemini_stub(ak_s, dry_run=dry)

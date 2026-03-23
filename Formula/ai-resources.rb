@@ -8,13 +8,13 @@ class AiResources < Formula
   homepage "https://github.com/wildbitca/ai-resources"
   url "https://github.com/wildbitca/ai-resources.git",
       using: :git,
-      tag: "v0.1.0"
-  version "0.1.0"
-  revision 1
+      tag: "v0.2.0"
+  version "0.2.0"
 
   head "https://github.com/wildbitca/ai-resources.git", branch: "main"
 
   depends_on "python@3.12"
+  depends_on "gentleman-programming/tap/engram"
 
   def install
     libexec.install Dir["*"]
