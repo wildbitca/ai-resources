@@ -24,7 +24,6 @@ metadata:
 **If MCP NOT available:** Proceed with test creation based on docs and code analysis.
 
 **Why This Matters:**
-
 - ✅ Precise tests - exact steps needed, no assumptions
 - ✅ Accurate selectors - real DOM structure, not imagined
 - ✅ Real flow validation - verify journey actually works
@@ -45,7 +44,6 @@ tests/
 ```
 
 **File Naming:**
-
 - ✅ `sign-up.spec.ts` (all sign-up tests)
 - ✅ `sign-up-page.ts` (page object)
 - ✅ `sign-up.md` (documentation)
@@ -77,13 +75,12 @@ this.input = page.locator("#email");         // NO
 
 ## Scope Detection (ASK IF AMBIGUOUS)
 
-| User Says                                                          | Action                             |
-|--------------------------------------------------------------------|------------------------------------|
-| "a test", "one test", "new test", "add test"                       | Create ONE test() in existing spec |
-| "comprehensive tests", "all tests", "test suite", "generate tests" | Create full suite                  |
+| User Says | Action |
+|-----------|--------|
+| "a test", "one test", "new test", "add test" | Create ONE test() in existing spec |
+| "comprehensive tests", "all tests", "test suite", "generate tests" | Create full suite |
 
 **Examples:**
-
 - "Create a test for user sign-up" → ONE test only
 - "Generate E2E tests for login page" → Full suite
 - "Add a test to verify form validation" → ONE test to existing spec
@@ -175,7 +172,6 @@ export class SignUpPage extends BasePage {
 ```
 
 **Guidelines:**
-
 - Check `tests/` for existing page objects first
 - Import and reuse existing pages
 - Create page objects only when page doesn't exist
@@ -184,7 +180,6 @@ export class SignUpPage extends BasePage {
 ## Refactoring Guidelines
 
 ### Move to `BasePage` when:
-
 - ✅ Navigation helpers used by multiple pages (`waitForPageLoad()`, `getCurrentUrl()`)
 - ✅ Common UI interactions (notifications, modals, theme toggles)
 - ✅ Verification patterns repeated across pages (`isVisible()`, `waitForVisible()`)
@@ -192,7 +187,6 @@ export class SignUpPage extends BasePage {
 - ✅ Screenshot utilities for debugging
 
 ### Move to `helpers.ts` when:
-
 - ✅ Test data generation (`generateUniqueEmail()`, `generateTestUser()`)
 - ✅ Setup/teardown utilities (`createTestUser()`, `cleanupTestData()`)
 - ✅ Custom assertions (`expectNotificationToContain()`)
@@ -200,7 +194,6 @@ export class SignUpPage extends BasePage {
 - ✅ Time utilities (`waitForCondition()`, `retryAction()`)
 
 **Before (BAD):**
-
 ```typescript
 // Repeated in multiple page objects
 export class SignUpPage extends BasePage {
@@ -216,7 +209,6 @@ export class SignInPage extends BasePage {
 ```
 
 **After (GOOD):**
-
 ```typescript
 // BasePage - shared across all pages
 export class BasePage {
@@ -261,7 +253,6 @@ test.describe("Login", () => {
 ```
 
 **Tag Categories:**
-
 - Priority: `@critical`, `@high`, `@medium`, `@low`
 - Type: `@e2e`
 - Feature: `@signup`, `@signin`, `@dashboard`
@@ -309,7 +300,6 @@ test.describe("Login", () => {
 ```
 
 **Documentation Rules:**
-
 - ❌ NO general test running instructions
 - ❌ NO file structure explanations
 - ❌ NO code examples or tutorials
@@ -328,5 +318,4 @@ npx playwright test tests/login/       # Run specific folder
 ```
 
 ## Keywords
-
 playwright, e2e, testing, page object model, selectors, end-to-end, mcp

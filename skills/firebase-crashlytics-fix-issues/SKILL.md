@@ -32,7 +32,6 @@ Apply this skill when the user asks to:
 ### 1. Resolve Firebase project and app (proyecto a evaluar)
 
 - **Current env:** `firebase_get_environment` → `active_project`, `project_dir`, `active_user_account`.
-- **SnoutZone:** When evaluating this project, **always search in both Firebase projects**: `wildbit-pacha` (production) and `wildbit-pacha-dev` (development). Use `firebase_update_environment(active_project: "...")` to switch between them and run `crashlytics_get_report` for each.
 - **If user specifies another project:**
     - By project ID: `firebase_update_environment(active_project: "<project_id>")`.
     - By project directory (workspace): `firebase_update_environment(project_dir: "<path_to_dir_with_firebase.json>")`.

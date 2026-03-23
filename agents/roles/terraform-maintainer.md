@@ -12,8 +12,8 @@ everything (all upgrades, full release, refresh, commit+push in dependents).
 
 When invoked:
 
-1. Resolve parent directory (e.g. org-iac containing tf-modules and dependents). Use workspace path or path provided by the user.
-2. Run the orchestrator: `$AGENT_KIT/skills/terraform-maintainer/scripts/maintain.sh /path/to/org-iac` with unbuffered output (e.g. PYTHONUNBUFFERED=1). Use maximum allowed timeout (e.g. 600000 ms) when running in-agent.
+1. Resolve parent directory (containing tf-modules and dependents). Use workspace path or path provided by the user.
+2. Run the orchestrator: `$AGENT_KIT/skills/terraform-maintainer/scripts/maintain.sh /path/to/tf-modules-parent` with unbuffered output (e.g. PYTHONUNBUFFERED=1). Use maximum allowed timeout (e.g. 600000 ms) when running in-agent.
 3. If the run times out before completion, output the exact command for the user to run in their terminal (full release often takes 15–45+ minutes).
 4. After tags are pushed, ensure dependents run terraform init -upgrade and that any uncommitted changes in dependents are committed and pushed.
 

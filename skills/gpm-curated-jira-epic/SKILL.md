@@ -12,7 +12,6 @@ metadata:
 ## When to Use
 
 Use this skill when creating Jira epics for:
-
 - Large features spanning multiple components
 - New views/pages in the application
 - Major refactoring initiatives
@@ -78,7 +77,6 @@ Use this skill when creating Jira epics for:
 Format: `[EPIC] Feature Name`
 
 **Examples:**
-
 - `[EPIC] Findings View`
 - `[EPIC] Multi-tenant Support`
 - `[EPIC] Compliance Dashboard Redesign`
@@ -87,33 +85,25 @@ Format: `[EPIC] Feature Name`
 ## Required Sections
 
 ### 1. Feature Overview
-
 Brief but complete description of:
-
 - What the feature does
 - Who uses it
 - Why it's needed
 
 ### 2. Requirements
-
 Organized by functional area:
-
 - Group related requirements together
 - Use clear headers and subheaders
 - Be specific and testable
 
 ### 3. Technical Considerations
-
 Always include:
-
 - **Performance**: Large dataset handling, pagination, caching
 - **Data Integration**: Data sources, APIs, relationships
 - **UI Components**: Reusable components, design system usage
 
 ### 4. Implementation Checklist
-
 High-level deliverables that will become individual tasks:
-
 - Each checkbox = potential Jira task
 - Order by dependency (API before UI)
 - Include testing milestones
@@ -123,7 +113,6 @@ High-level deliverables that will become individual tasks:
 Use Mermaid for:
 
 ### Architecture Diagrams
-
 ```mermaid
 graph TB
     UI[UI Components] --> API[API Endpoints]
@@ -132,7 +121,6 @@ graph TB
 ```
 
 ### Data Flow Diagrams
-
 ```mermaid
 sequenceDiagram
     User->>UI: Apply filters
@@ -144,7 +132,6 @@ sequenceDiagram
 ```
 
 ### State Diagrams
-
 ```mermaid
 stateDiagram-v2
     [*] --> Pending
@@ -155,7 +142,6 @@ stateDiagram-v2
 ```
 
 ### Entity Relationship Diagrams
-
 ```mermaid
 erDiagram
     FINDING ||--o{ RESOURCE : affects
@@ -169,9 +155,7 @@ erDiagram
 After creating the epic, generate individual tasks using the `jira-task` skill:
 
 ### Task Naming Pattern
-
 From epic `[EPIC] Findings View`, create:
-
 - `[FEATURE] Findings table with pagination (UI)`
 - `[FEATURE] Findings filters - provider and account (UI)`
 - `[FEATURE] Findings detail panel - Overview tab (UI)`
@@ -180,9 +164,7 @@ From epic `[EPIC] Findings View`, create:
 - `[FEATURE] Findings search functionality (API + UI)`
 
 ### Task Dependencies
-
 Always specify in each task:
-
 ```markdown
 ## Related Tasks
 - Epic: [EPIC] Findings View
@@ -193,7 +175,6 @@ Always specify in each task:
 ## Figma Integration
 
 When Figma links are provided:
-
 - Include main Figma link at top
 - Reference specific frames in relevant sections
 - Example: `https://www.figma.com/design/xxx?node-id=1830-44712&m=dev`
@@ -263,7 +244,6 @@ Would you like me to generate the full task descriptions?
 ### Team Field (REQUIRED)
 
 The `customfield_10359` (Team) field is **REQUIRED**. Options:
-
 - `"UI"` - Frontend epics
 - `"API"` - Backend epics
 - `"SDK"` - Prowler SDK epics
@@ -273,7 +253,6 @@ The `customfield_10359` (Team) field is **REQUIRED**. Options:
 **IMPORTANT:** The project uses `customfield_10363` (Work Item Description) instead of the standard `description` field for display in the UI.
 
 **CRITICAL:** Use **Jira Wiki markup**, NOT Markdown:
-
 - `h2.` instead of `##`
 - `*text*` for bold instead of `**text**`
 - `* item` for bullets (same)
@@ -309,30 +288,25 @@ Backlog (10037) → To Do (14) → In Progress (11) → Done (21)
 ### MCP Commands Sequence
 
 1. **Create epic:**
-
 ```
 mcp__mcp-atlassian__jira_create_issue (issue_type: "Epic")
 ```
 
 2. **Update Work Item Description:**
-
 ```
 mcp__mcp-atlassian__jira_update_issue with customfield_10363
 ```
 
 3. **Create child tasks:**
-
 ```
 mcp__mcp-atlassian__jira_create_issue with parent: EPIC-KEY
 ```
 
 4. **Assign and transition:**
-
 ```
 mcp__mcp-atlassian__jira_update_issue (assignee)
 mcp__mcp-atlassian__jira_transition_issue (status)
 ```
 
 ## Keywords
-
 jira, epic, feature, initiative, prowler, large feature

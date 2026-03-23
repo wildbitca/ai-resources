@@ -12,7 +12,6 @@ metadata:
 ## When to Use
 
 Use this skill when creating Jira tasks for:
-
 - Bug reports
 - Feature requests
 - Refactoring tasks
@@ -23,7 +22,6 @@ Use this skill when creating Jira tasks for:
 **IMPORTANT:** When work requires changes in multiple components (API, UI, SDK), create **separate tasks for each component** instead of one big task.
 
 ### Why Split?
-
 - Different developers can work in parallel
 - Easier to review and test
 - Better tracking of progress
@@ -32,38 +30,31 @@ Use this skill when creating Jira tasks for:
 ### Bug vs Feature: Different Structures
 
 #### For BUGS: Create separate sibling tasks
-
 Bugs are typically urgent fixes, so create independent tasks per component:
 
 **Task 1 - API:**
-
 - Title: `[BUG] Add aws_region field to AWS provider secrets (API)`
 - Must be done first (UI depends on it)
 
 **Task 2 - UI:**
-
 - Title: `[BUG] Add region selector to AWS provider connection form (UI)`
 - Blocked by API task
 
 #### For FEATURES: Create parent + child tasks
-
 Features need business context for stakeholders, so use a parent-child structure:
 
 **Parent Task (for PM/Stakeholders):**
-
 - Title: `[FEATURE] AWS GovCloud support`
 - Contains: Feature overview, user story, acceptance criteria from USER perspective
 - NO technical details
 - Links to child tasks
 
 **Child Task 1 - API:**
-
 - Title: `[FEATURE] AWS GovCloud support (API)`
 - Contains: Technical details, affected files, API-specific acceptance criteria
 - Links to parent
 
 **Child Task 2 - UI:**
-
 - Title: `[FEATURE] AWS GovCloud support (UI)`
 - Contains: Technical details, component paths, UI-specific acceptance criteria
 - Links to parent, blocked by API task
@@ -142,7 +133,6 @@ Technical implementation of {feature name} for {component}.
 ### Linking Tasks
 
 In each task description, add:
-
 ```markdown
 ## Related Tasks
 - Parent: [Parent task title/link] (for child tasks)
@@ -193,7 +183,6 @@ In each task description, add:
 Format: `[TYPE] Brief description (components)`
 
 **Types:**
-
 - `[BUG]` - Something broken that worked before
 - `[FEATURE]` - New functionality
 - `[ENHANCEMENT]` - Improvement to existing feature
@@ -202,7 +191,6 @@ Format: `[TYPE] Brief description (components)`
 - `[CHORE]` - Maintenance, dependencies, CI/CD
 
 **Components (when multiple affected):**
-
 - `(API)` - Backend only
 - `(UI)` - Frontend only
 - `(SDK)` - Prowler SDK only
@@ -211,7 +199,6 @@ Format: `[TYPE] Brief description (components)`
 - `(Full Stack)` - All components
 
 **Examples:**
-
 - `[BUG] AWS GovCloud accounts cannot connect - STS region hardcoded (API + UI)`
 - `[FEATURE] Add dark mode toggle (UI)`
 - `[REFACTOR] Migrate E2E tests to Page Object Model (UI)`
@@ -219,12 +206,12 @@ Format: `[TYPE] Brief description (components)`
 
 ## Priority Guidelines
 
-| Priority     | Criteria                                           |
-|--------------|----------------------------------------------------|
+| Priority | Criteria |
+|----------|----------|
 | **Critical** | Production down, data loss, security vulnerability |
-| **High**     | Blocks users, no workaround, affects paid features |
-| **Medium**   | Has workaround, affects subset of users            |
-| **Low**      | Nice to have, cosmetic, internal tooling           |
+| **High** | Blocks users, no workaround, affects paid features |
+| **Medium** | Has workaround, affects subset of users |
+| **Low** | Nice to have, cosmetic, internal tooling |
 
 ## Affected Files Section
 
@@ -242,27 +229,21 @@ Always include full paths when known:
 ## Component-Specific Sections
 
 ### API Tasks
-
 Include:
-
 - Serializer changes
 - View/ViewSet changes
 - Migration requirements
 - API spec regeneration needs
 
 ### UI Tasks
-
 Include:
-
 - Component paths
 - Form validation changes
 - State management impact
 - Responsive design considerations
 
 ### SDK Tasks
-
 Include:
-
 - Provider affected
 - Service affected
 - Check changes
@@ -347,7 +328,6 @@ Include:
 ### Team Field (REQUIRED)
 
 The `customfield_10359` (Team) field is **REQUIRED**. Options:
-
 - `"UI"` - Frontend tasks
 - `"API"` - Backend tasks
 - `"SDK"` - Prowler SDK tasks
@@ -357,7 +337,6 @@ The `customfield_10359` (Team) field is **REQUIRED**. Options:
 **IMPORTANT:** The project uses `customfield_10363` (Work Item Description) instead of the standard `description` field for display in the UI.
 
 **CRITICAL:** Use **Jira Wiki markup**, NOT Markdown:
-
 - `h2.` instead of `##`
 - `*text*` for bold instead of `**text**`
 - `* item` for bullets (same)
@@ -373,12 +352,12 @@ After creating the issue, update the description with:
 
 ### Common Epics
 
-| Epic                      | Key         | Use For                |
-|---------------------------|-------------|------------------------|
-| UI - Bugs & Improvements  | PROWLER-193 | UI bugs, enhancements  |
+| Epic | Key | Use For |
+|------|-----|---------|
+| UI - Bugs & Improvements | PROWLER-193 | UI bugs, enhancements |
 | API - Bugs / Improvements | PROWLER-XXX | API bugs, enhancements |
-| LightHouse AI             | PROWLER-594 | AI features            |
-| Technical Debt - UI       | PROWLER-502 | Refactoring            |
+| LightHouse AI | PROWLER-594 | AI features |
+| Technical Debt - UI | PROWLER-502 | Refactoring |
 
 ### Workflow Transitions
 
@@ -390,24 +369,20 @@ Backlog (10037) → To Do (14) → In Progress (11) → Done (21)
 ### MCP Commands Sequence
 
 1. **Create issue:**
-
 ```
 mcp__mcp-atlassian__jira_create_issue
 ```
 
 2. **Update Work Item Description:**
-
 ```
 mcp__mcp-atlassian__jira_update_issue with customfield_10363
 ```
 
 3. **Assign and transition:**
-
 ```
 mcp__mcp-atlassian__jira_update_issue (assignee)
 mcp__mcp-atlassian__jira_transition_issue (status)
 ```
 
 ## Keywords
-
 jira, task, ticket, issue, bug, feature, prowler

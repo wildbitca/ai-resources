@@ -12,7 +12,6 @@ metadata:
 ## When to Use
 
 Use this skill when:
-
 - {Condition 1}
 - {Condition 2}
 - {Condition 3}

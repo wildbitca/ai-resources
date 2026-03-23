@@ -13,15 +13,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Source pattern: app.terraform.io/wildbit/NAME/module
-WILDBIT_MODULE_RE = re.compile(
-    r'source\s*=\s*"app\.terraform\.io/wildbit/([^/]+)/module"',
+# Source pattern: app.terraform.io/<any-org>/NAME/module
+TF_PRIVATE_MODULE_RE = re.compile(
+    r'source\s*=\s*"app\.terraform\.io/[^/]+/([^/]+)/module"',
     re.IGNORECASE,
 )
 
 
 def get_internal_deps(module_dir: Path, all_module_names: set[str]) -> set[str]:
-    """Return set of internal module names (e.g. gcp-kms) this module depends on."""
+    """Return set of internal module names (e.g. module-base) this module depends on."""
     deps: set[str] = set()
     for tf in module_dir.rglob("*.tf"):
         if ".git" in str(tf):
@@ -30,7 +30,7 @@ def get_internal_deps(module_dir: Path, all_module_names: set[str]) -> set[str]:
             content = tf.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
-        for m in WILDBIT_MODULE_RE.finditer(content):
+        for m in TF_PRIVATE_MODULE_RE.finditer(content):
             name = m.group(1)
             if name in all_module_names:
                 deps.add(name)
@@ -39,7 +39,7 @@ def get_internal_deps(module_dir: Path, all_module_names: set[str]) -> set[str]:
 
 def dependency_order(tf_modules_root: Path) -> list[str]:
     """
-    Return list of module names (e.g. gcp-kms, gcp-artifact-registry) in an order
+    Return list of module names (e.g. module-base, module-child) in an order
     such that every dependency is processed before its dependents. Modules with
     no internal deps come first.
     """
@@ -87,7 +87,7 @@ def main() -> int:
         return 1
 
     # Only allow tf-modules root: directory must contain tf-module-* git repos.
-    # This script does commit/tag/push per module; normal repos (org-gitops, pacha/ops)
+    # This script does commit/tag/push per module; normal repos (e.g. infra-gitops, my-project/ops)
     # must use upgrade-providers.py only (no commit/tag/push).
     module_dirs_check = [
         d for d in tf_modules_root.iterdir()
@@ -96,7 +96,7 @@ def main() -> int:
     if not module_dirs_check:
         print(
             "This script is only for the tf-modules root (directory containing tf-module-* git repos).\n"
-            "It runs commit/tag/push per module. For normal Terraform projects (e.g. org-gitops, pacha/ops)\n"
+            "It runs commit/tag/push per module. For normal Terraform projects (e.g. infra-gitops, my-project/ops)\n"
             "use upgrade-providers.py instead; that only updates providers, init and validate (no commit/tag/push).",
             file=sys.stderr,
         )

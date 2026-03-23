@@ -11,7 +11,6 @@ metadata:
 ## When to Use
 
 Load this skill when:
-
 - Building a Spring Boot 3.3+ service or API
 - Wiring beans with dependency injection
 - Defining configuration properties and validation
@@ -141,11 +140,11 @@ public class PaymentService {
 
 ## Quick Reference
 
-| Task                | Pattern                               |
-|---------------------|---------------------------------------|
-| Inject dependencies | Constructor injection only            |
-| Read config         | @ConfigurationProperties + @Validated |
-| Transactions        | @Transactional on services            |
+| Task | Pattern |
+|------|---------|
+| Inject dependencies | Constructor injection only |
+| Read config | @ConfigurationProperties + @Validated |
+| Transactions | @Transactional on services |
 
 ## Resources
 

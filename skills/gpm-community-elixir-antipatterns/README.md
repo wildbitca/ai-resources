@@ -15,11 +15,9 @@ elixir-antipatterns/
 ```
 
 ### SKILL.md (Core - LLM Loaded)
-
 **Optimized for code review and refactoring sessions**
 
 Contains the top 8 most critical anti-patterns:
-
 1. Use `raise` for business errors
 2. Return `nil` for errors
 3. Business logic in LiveView
@@ -30,8 +28,7 @@ Contains the top 8 most critical anti-patterns:
 8. Long `with` chains (>4 steps)
 
 **Why separate files?**
-
-- SKILL.md fits within LLM context windows
+- SKILL.md fits within LLM context windows 
 - Aligns with Gentleman-Skills standard (150-388 line target)
 - Includes ASCII diagram for Phoenix architecture visualization
 - extended.md preserves all knowledge with advanced Ecto patterns
@@ -63,7 +60,6 @@ For comprehensive patterns, reference `extended.md`.
 ## Testing
 
 Validated with:
-
 - ✅ Cursor on Elixir/Phoenix projects
 - ✅ Production applications (2+ years)
 - ✅ Mix format + Credo compliance

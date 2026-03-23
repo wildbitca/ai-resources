@@ -195,7 +195,7 @@ logo = Image.open("assets/images/icon_logo_extracted.png")
 
 # 1. Base icon 432x432 (logo on brand color background)
 # Background color from Material Theme Builder or brand guidelines
-brand_color = "#006a64"  # Example: SnoutZone brand color
+brand_color = "#006a64"  # Example: replace with your app's brand color
 blue_bg = Image.new("RGB", (432, 432), brand_color)
 logo_432 = logo.resize((432, 432), Image.Resampling.LANCZOS)
 blue_bg.paste(logo_432, (0, 0), logo_432 if logo_432.mode == 'RGBA' else None)
@@ -254,7 +254,7 @@ flutter_launcher_icons:
   image_path: "assets/images/icon_432.png"  # Base icon
   
   # Adaptive Icon (Android 8.0+ / API 26+)
-  adaptive_icon_background: "#006a64"  # Brand color (from Material Theme Builder)
+  adaptive_icon_background: "#006a64"  # ← Replace with your brand color (from Material Theme Builder)
   adaptive_icon_foreground: "assets/images/icon_foreground_432.png"  # Transparent logo
   adaptive_icon_monochrome: "assets/images/icon_monochrome_432.png"  # Grayscale for themed icons
   
@@ -287,10 +287,10 @@ flutter_launcher_icons:
 ```yaml
 flutter_native_splash:
   # Background color (matches icon background)
-  color: "#006a64"  # Same as adaptive_icon_background
+  color: "#006a64"  # ← Replace with your brand color (match adaptive_icon_background)
   
   # Splash screen image
-  image: assets/images/splash_snoutzone.png
+  image: assets/images/splash_screen.png
   
   # Android Configuration
   android: true
@@ -430,11 +430,11 @@ generate_launcher_icons() {
 
 ```yaml
 flutter_native_splash:
-  color: "#006a64"  # Background color
-  
+  color: "#006a64"  # ← Replace with your brand color
+
   android_12:
     image: assets/images/splash_android12.png  # 288x288 px
-    icon_background_color: "#006a64"  # Optional
+    icon_background_color: "#006a64"  # ← Replace with your brand color (optional)
 ```
 
 **MainActivity.kt Integration (Flicker Prevention):**
@@ -510,7 +510,7 @@ cat assets/images/icon.svg | grep -o 'data:image/png;base64,[^"]*' | head -c 100
 # Ensure RGB mode (no alpha)
 img = Image.open("icon_1024.png")
 if img.mode == 'RGBA':
-    rgb_img = Image.new("RGB", img.size, "#006a64")  # Use brand color
+    rgb_img = Image.new("RGB", img.size, "#006a64")  # ← Replace with your brand color
     rgb_img.paste(img, (0, 0), img)
     rgb_img.save("icon_1024.png")
 ```

@@ -20,7 +20,7 @@ from pathlib import Path
 CHANGELOG_FILENAME = "CHANGELOG.md"
 MODULE_NAME_PREFIX = "tf-module-"
 
-# Registry: app.terraform.io/wildbit/<module_name>/module
+# Registry: app.terraform.io/<your-org>/<module_name>/module
 REGISTRY_SOURCE_RE = re.compile(
     r'source\s*=\s*["\']app\.terraform\.io/[^/]+/([a-z0-9][a-z0-9-]*)(?:/module)?["\']',
     re.IGNORECASE,
@@ -186,18 +186,14 @@ def commit_and_push_dependent(proj: Path, no_push: bool) -> int:
 
 
 def get_dependent_projects(parent: Path, from_args: list[Path] | None) -> list[Path]:
-    """Return list of dependent project roots (e.g. org-gitops, pacha/ops). from_args if given; else auto-detect parent/org-gitops."""
+    """Return list of dependent project roots from --dependent-projects args. Returns empty list if not provided."""
     if from_args is not None:
         return [p.resolve() for p in from_args if p.resolve().is_dir()]
-    # Auto-detect: parent/org-gitops when present (e.g. org-iac layout)
-    candidates: list[Path] = []
-    if (parent / "org-gitops").is_dir():
-        candidates.append((parent / "org-gitops").resolve())
-    return candidates
+    return []
 
 
 def repo_to_module_name(repo: Path) -> str:
-    """Return registry-style module name from repo dir (e.g. tf-module-gcp-kms -> gcp-kms)."""
+    """Return registry-style module name from repo dir (e.g. tf-module-module-base -> module-base)."""
     name = repo.name
     if name.startswith(MODULE_NAME_PREFIX):
         return name[len(MODULE_NAME_PREFIX):]
@@ -205,7 +201,7 @@ def repo_to_module_name(repo: Path) -> str:
 
 
 def parse_module_dependencies(repo: Path) -> set[str]:
-    """Parse all .tf files in repo and return set of referenced wildbit module names (e.g. gcp-kms)."""
+    """Parse all .tf files in repo and return set of referenced private module names (e.g. module-a)."""
     deps: set[str] = set()
     for tf_path in repo.rglob("*.tf"):
         if ".git" in str(tf_path):
@@ -233,7 +229,7 @@ def build_dep_graph(repos: list[Path]) -> dict[Path, list[Path]]:
 def collect_upgrade_set(needing: list[Path], dep_graph: dict[Path, list[Path]]) -> list[Path]:
     """
     Return needing plus all (transitive) dependencies of needing.
-    Upgrade runs on this set in dependency order (roots first), so e.g. gcp-kms before artifact-registry.
+    Upgrade runs on this set in dependency order (roots first), so e.g. module-base before module-child.
     """
     upgrade_set = set(needing)
     added = True
@@ -1236,7 +1232,7 @@ def main() -> int:
         type=Path,
         default=None,
         metavar="PATH",
-        help="Discover tf-module-* git repos under PATH (e.g. org-iac); release only repos with changes",
+        help="Discover tf-module-* git repos under PATH; release only repos with changes",
     )
     ap.add_argument(
         "--recursive",
@@ -1248,7 +1244,7 @@ def main() -> int:
         type=str,
         default="",
         metavar="PATH1,PATH2",
-        help="With --parent-dir: paths to dependent Terraform projects (e.g. org-gitops, pacha/ops). Upgrade and terraform init -upgrade run on each. If omitted, parent/org-gitops is used when present.",
+        help="With --parent-dir: paths to dependent Terraform projects (comma-separated). Upgrade and terraform init -upgrade run on each. If omitted, auto-detection of common sibling dirs is attempted.",
     )
     ap.add_argument(
         "--release-all-in-upgrade-set",

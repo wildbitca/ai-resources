@@ -12,10 +12,10 @@ metadata:
 
 **"Scope determines structure"** - Where a component lives depends on its usage.
 
-| Usage               | Placement                        |
-|---------------------|----------------------------------|
-| Used by 1 feature   | `features/[feature]/components/` |
-| Used by 2+ features | `features/shared/components/`    |
+| Usage | Placement |
+|-------|-----------|
+| Used by 1 feature | `features/[feature]/components/` |
+| Used by 2+ features | `features/shared/components/` |
 
 ### Example
 
@@ -117,10 +117,10 @@ export class UserProfileComponent {
 
 ### What We Override
 
-| Official Says               | We Do             | Why                              |
-|-----------------------------|-------------------|----------------------------------|
+| Official Says | We Do | Why |
+|---------------|-------|-----|
 | `user-profile.component.ts` | `user-profile.ts` | Redundant - folder tells context |
-| `user.service.ts`           | `user.ts`         | Same                             |
+| `user.service.ts` | `user.ts` | Same |
 
 ---
 

@@ -11,7 +11,6 @@ metadata:
 ## When to Use
 
 Load this skill when:
-
 - Writing Java 21 application or library code
 - Designing immutable DTOs or value objects
 - Modeling closed hierarchies with sealed types
@@ -110,11 +109,11 @@ new Thread(() -> blockingFetch("https://api" )).start();
 
 ## Quick Reference
 
-| Task               | Pattern                        |
-|--------------------|--------------------------------|
-| Immutable DTOs     | Use records with validation    |
+| Task | Pattern |
+|------|---------|
+| Immutable DTOs | Use records with validation |
 | Closed hierarchies | Use sealed interfaces + switch |
-| Blocking I/O scale | Use virtual threads executor   |
+| Blocking I/O scale | Use virtual threads executor |
 
 ## Resources
 
