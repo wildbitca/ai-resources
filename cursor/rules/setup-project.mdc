@@ -1,0 +1,100 @@
+---
+description: "Scaffold a new project for the agent system. Trigger: user says /setup-project"
+alwaysApply: false
+---
+
+# /setup-project
+
+Scaffolds a new project with `specs/` (including **`specs/PROJECT.md`** and `specs/knowledge/`), `.cursor/mcp.json`, and **optionally** `.cursorrules` (not required — see `012-project-context.mdc`).
+
+**Templates** come from **`$AGENT_KIT/cursor/templates/`** (ai-resources repo). Set **`AGENT_KIT`** to that repo root, or resolve from `bin/agent-kit` location.
+
+## When triggered
+
+User says `/setup-project` or "set up this project for agents" or "initialize agent config".
+
+## Questions to ask
+
+Before creating files, ask the user:
+
+1. **Project name**: Display name (e.g. "SnoutZone")
+2. **Package name**: For code (e.g. "snoutzone"), file convention (e.g. "snout_zone")
+3. **Domains used**: Which from the canonical list? (dart-flutter, angular, symfony, api-platform, devops, php, security)
+4. **Primary domain**: The main one (for default detection)
+5. **MCP servers**: Which integrations? (clickup, firebase, supabase, sentry, engram, cloudflare-docs, etc.)
+6. **Key business constraints**: Any PROHIBITED items or no-go zones?
+
+## Files to create
+
+### 1. `<repo>/.cursor/mcp.json`
+
+From **`$AGENT_KIT/cursor/templates/mcp.json.template`**. Configure only the MCP servers the user selected. This is the ONLY file in `<repo>/.cursor/`.
+
+### 2. `<repo>/.cursorrules` (optional)
+
+**Default:** skip — global rules + `specs/PROJECT.md` are enough. Only create from **`$AGENT_KIT/cursor/templates/cursorrules.template.md`** if the team wants extra Cursor-injected instructions or legacy domain/workflow override tables.
+
+### 3. `<repo>/specs/` directory
+
+```
+specs/
+├── PROJECT.md             (from $AGENT_KIT/cursor/templates/PROJECT.template.md — single spec index)
+├── knowledge/             (working artifacts — see §4)
+├── architecture/
+│   └── .gitkeep
+├── features/
+│   └── .gitkeep
+└── cross-cutting/
+    └── .gitkeep
+```
+
+### 4. `<repo>/specs/knowledge/` directories
+
+Working artifacts live **under `specs/`** next to living specs (do **not** create a separate `knowledge/` at repo root).
+
+Copy **`$AGENT_KIT/cursor/templates/specs-knowledge-readme.template.md`** → `specs/knowledge/README.md`.
+
+```
+specs/knowledge/
+├── README.md              (from $AGENT_KIT/cursor/templates/specs-knowledge-readme.template.md)
+├── research/
+│   └── .gitkeep
+├── decisions/
+│   └── .gitkeep
+└── searchable/
+    └── .gitkeep
+```
+
+### 5. `<repo>/.gitignore` additions
+
+Append if not present:
+```
+.agent-output/
+.engram/
+```
+
+### 6. `<repo>/.cursorignore`
+
+Create or update:
+```
+.agent-output/
+.engram/
+build/
+node_modules/
+vendor/
+```
+
+## Verify global setup
+
+Before creating project files, verify the kit exists:
+```bash
+test -f "${AGENT_KIT:?}/cursor/rules/000-project-bootstrap.mdc" && echo "ai-resources OK"
+```
+If **`AGENT_KIT`** is unset, infer from **`ai-resources`** clone path or tell the user: clone **ai-resources** and `export AGENT_KIT=/path/to/ai-resources`.
+
+## After setup
+
+Report what was created and remind the user:
+- "Run **`agent-kit self-update`** from **`$AGENT_KIT/bin/agent-kit`** to pull the repo, sync vendor skills, regenerate **`cursor/skills-index.json`**"
+- "Shared resources live under **`$AGENT_KIT/cursor/`** — project index at `<repo>/specs/PROJECT.md`, MCP at `<repo>/.cursor/mcp.json` (optional `.cursorrules` only if created)"
+- "Workflows, rules, skills, roles, and personas are shared from **ai-resources** across projects"

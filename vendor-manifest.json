@@ -1,0 +1,18 @@
+{
+  "vendors": [
+    {
+      "id": "gentleman-programming",
+      "type": "git",
+      "url": "https://github.com/Gentleman-Programming/Gentleman-Skills.git",
+      "ref": "main",
+      "depth": 1,
+      "copy": [
+        { "src": "curated", "dest": "vendor/gentleman-programming/curated" },
+        { "src": "community", "dest": "vendor/gentleman-programming/community" },
+        { "src": "LICENSE", "dest": "vendor/gentleman-programming/LICENSE" },
+        { "src": "SKILL_TEMPLATE.md", "dest": "vendor/gentleman-programming/SKILL_TEMPLATE.md" },
+        { "src": "README.md", "dest": "vendor/gentleman-programming/README.md" }
+      ]
+    }
+  ]
+}

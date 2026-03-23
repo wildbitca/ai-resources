@@ -1,0 +1,10 @@
+---
+description: Classify .env and env files by content, not filename alone — before git rm, ignore rules, or “secrets” findings
+alwaysApply: false
+---
+
+# Env files — content over pattern
+
+- **Do not** delete, `git rm`, or add blanket `.gitignore` rules for paths **only** because they are named `.env` or `*.env`.
+- **Do** read the file: if it contains only non-sensitive labels (e.g. `COMPOSE_PROJECT_NAME`, public project ids), it may stay **tracked**; if it contains API keys, passwords, tokens, or production URLs with credentials, it must **not** be committed — use env example + secret store / SOPS as per project policy.
+- When auditing or fixing “secrets in repo”, distinguish **filename** from **payload**.

@@ -1,37 +1,5 @@
-# Ignore everything by default (Cursor IDE stores lots of local state here)
-*
-
-# === AI Resources (tracked) ===
-
-# Skill index
-!AGENTS.md
-
-# Handoff template
-!handoff.md.template
-
-# Agent roles and personas
-!agents/
-agents/*
-!agents/roles/
-!agents/roles/**
-!agents/personas/
-!agents/personas/**
-
-# Global rules
-!rules/
-!rules/**
-
-# Skills library
-!skills/
-!skills/**
-
-# Templates for /setup-project
-!templates/
-!templates/**
-
-# Workflow templates (domain-agnostic)
-!workflows/
-!workflows/**
-
-# This file
-!.gitignore
+.DS_Store
+*.generated.md
+skills-index.generated.json
+# Local IDE / install-time (do not commit user machine paths)
+.cursor-install-local/

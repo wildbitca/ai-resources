@@ -1,0 +1,33 @@
+---
+description: Skill roots for Cursor, Claude Code, and other agents — AGENT_SKILLS_ROOT, vendor layout.
+alwaysApply: true
+---
+
+# Agent-agnostic skill paths
+
+Skills and vendor packs live under a **configurable root**. Defaults:
+
+| Environment | Default `AGENT_SKILLS_ROOT` |
+|-------------|---------------------------|
+| **ai-resources** (this repo) | `$AGENT_KIT/cursor/skills` (`AGENT_KIT` = repo root) |
+| Claude Code | `~/.claude/skills` (typical) |
+| Custom | `$AGENT_SKILLS_ROOT` if set |
+
+## Layout
+
+- **First-party skills:** `{root}/<category>/<skill>/SKILL.md` (e.g. `common/common-tdd/SKILL.md`).
+- **Gentleman-Programming (vendor):** `{root}/vendor/gentleman-programming/curated/<name>/SKILL.md` or `…/community/<name>/SKILL.md`.
+- **Shared references:** `{root}/_shared/*.md` (Engram / persistence excerpts).
+
+## Install (any agent)
+
+1. Add **`ai-resources/bin`** to `PATH` and run **`agent-kit self-update`** (or `agent-kit vendor-sync` + `agent-kit generate`).
+2. **`agent-kit setup <cursor|claude|…>`** writes short bootstrap files for that IDE.
+3. Point the agent’s index (`AGENTS.md`, `CLAUDE.md`, etc.) at **`$AGENT_KIT/cursor/skills-registry.md`**, **`$AGENT_KIT/cursor/skills-index.json`**, and/or **`$AGENT_KIT/cursor/AGENTS.md`**.
+
+## ID → path (delegation)
+
+- `vendor/gentleman-programming/curated/typescript` → `{root}/vendor/gentleman-programming/curated/typescript/SKILL.md`
+- No slash → `{root}/{id}/SKILL.md`
+
+See `050-subagent-delegation.mdc` for resolution rules in Cursor.
