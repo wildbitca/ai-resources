@@ -1,0 +1,28 @@
+---
+description: "/delegate — strict orchestrator-only: workflows + Task, minimal main-thread context"
+alwaysApply: false
+---
+
+# /delegate
+
+**Orchestrator-only mode** for this session (until the user says they want inline work, e.g. "modo directo" or "implementa tú en el chat").
+
+## When triggered
+
+User says `/delegate`, "solo orquesta", "orchestrator mode", "delega todo", or opens this rule.
+
+## Required behavior
+
+1. Follow **`010-orchestrator.mdc`**: preflight → domain → workflow → worktree when required → **Task** per workflow step (or one **Task** if a single scoped unit of work fits).
+2. **Do not** implement application code in the main thread. **Do not** run broad multi-file exploration in the main thread — that belongs in the subagent prompt.
+3. Each **Task** prompt must include: workspace path, `handoff_file`, SKILL.md paths to `read_file` first (from the workflow step `skills:` list), and the **Subagent return format** in `050-subagent-delegation.mdc`.
+4. After each **Task**: read the handoff file; reply using **Main thread output contract** in `010-orchestrator.mdc` only (no verbatim dump of subagent logs).
+
+## Edge case
+
+If the request is **trivial** (one literal line in one file, or a pure question with no repo edits), you may answer or edit **inline** without **Task** — see **Small tasks** in `010-orchestrator.mdc`.
+
+## Anti-patterns
+
+- Pasting long subagent output or build logs into the user message.
+- Skipping `.agent-output/handoff-*.md` updates between steps.

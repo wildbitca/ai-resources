@@ -1,0 +1,35 @@
+---
+description: "Refresh ai-resources from git + vendor skills + regenerate indexes. Trigger: /self-update"
+alwaysApply: false
+---
+
+# /self-update
+
+Updates the **ai-resources** repository (git pull), syncs **vendor** skill packs from `vendor-manifest.json`, and regenerates **`cursor/skills-registry.md`** + **`cursor/skills-index.json`**.
+
+## When triggered
+
+User says `/self-update` or runs **`agent-kit self-update`** from the repo.
+
+## Command
+
+```bash
+export AGENT_KIT=/path/to/ai-resources   # optional if using repo bin/agent-kit
+/path/to/ai-resources/bin/agent-kit self-update
+```
+
+With `AGENT_KIT` unset, `bin/agent-kit` sets it to the repository root automatically.
+
+## Steps (what the CLI does)
+
+1. **`git pull`** in **`$AGENT_KIT`** when `.git` exists.
+2. **`vendor-sync`** — vendors → **`$AGENT_KIT/cursor/skills`**.
+3. **`generate`** — registry + JSON index under **`cursor/`**.
+
+## Adding vendors
+
+Edit **`vendor-manifest.json`** at the repo root, then run **`agent-kit vendor-sync`**.
+
+## `~/.cursor`
+
+Rules/skills are **not** stored under `~/.cursor` anymore; they live in **`cursor/`** in this repo. A future **install** script will link into `~/.cursor` for Cursor.

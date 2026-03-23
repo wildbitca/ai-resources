@@ -1,0 +1,101 @@
+---
+description: When and how to delegate to subagents via Task tool.
+alwaysApply: true
+---
+
+# Subagent Delegation
+
+Delegate well-scoped tasks to keep the main context small. Subagents run in isolation.
+
+## Default: delegate
+
+**Prefer `Task`** for any non-trivial work: multi-file, exploration, implementation, tests, or when the orchestrator is active. The main chat stays a **router**; subagents hold execution context.
+
+**Inline (main thread) only** when: one trivial edit in **one** file, or a short factual answer with **no** codebase changes — see `010-orchestrator.mdc` **Small tasks**.
+
+## When to delegate (signals)
+
+**Delegate** when any of: subagent specialty applies; **broad exploration** (many files, wide globs, inventory, or open-ended "how is X wired" — **in any path**: workspace, **`$AGENT_KIT/cursor`**, sibling repos, docs, not only the current project); multi-step implementation; more than one file; tests or CI; or context is growing (e.g. over ~15k tokens).
+
+**Skip** only for: single obvious file edit, quick answer, simple question — as above.
+
+## Subagent mapping
+
+| Task | Subagent |
+|------|----------|
+| Explore codebase, find patterns | `explore` |
+| Plan, task breakdown, acceptance criteria | `planner` |
+| Write code, atomic edits from plan | `implementer` |
+| Run tests, analyze failures | `tester` |
+| Validate acceptance criteria, sign-off | `verifier` |
+| Architecture decisions, diagrams | `software-architect` |
+| Code review, standards, security check | `code-reviewer` |
+| Security audit, SAST, DAST | `security-auditor` |
+| Upgrade dependencies | `package-upgrade` |
+| Fix Crashlytics issues | `crashlytics-fixer` |
+| Fix Sentry issues | `sentry-fixer` |
+| Terraform maintenance | `terraform-maintainer` |
+| Crossplane/Upjet build | `crossplane-upjet-maintainer` |
+| Shell commands, git, scripts | `shell` |
+| General multi-step reasoning | `generalPurpose` |
+
+## How to delegate
+
+Task tool with: `subagent_type`, `description` (3-5 words), `prompt` (detailed — subagent has no chat context).
+
+**Every Task prompt must include:**
+1. **Workspace root** (absolute path).
+2. **`handoff_file`** path (e.g. `.agent-output/handoff-<branch>.md`) and instruction to update it per `051-handoff-protocol.mdc`.
+3. **SKILL.md paths** to read first — for each ID in the workflow step `skills:` list, resolve filesystem path (see **Skill ID → path** below).
+4. **Goal** and constraints (`specs/PROJECT.md`, feature specs, no-go CONs if relevant).
+5. **Engram:** if discoveries or decisions matter across sessions, tell the sub-agent to **mem_save** (see `014-engram-mcp-protocol.mdc`).
+6. **Subagent return format** (below) — subagent must end its work with this block so the parent can stay minimal.
+
+Max 4 concurrent subagents.
+
+## Skill ID → SKILL.md path
+
+Workflow YAML lists IDs like `common/best-practices` or `knowledge-audit`. Resolve to a file the subagent can `read_file`:
+
+| ID pattern | Path |
+|------------|------|
+| No `/` (e.g. `knowledge-audit`) | `{AGENT_SKILLS_ROOT:-$AGENT_KIT/cursor/skills}/{id}/SKILL.md` |
+| `category/rest` (e.g. `common/best-practices`, `flutter/feature-based-clean-architecture`) | `{root}/{category}/{category}-{suffix}/SKILL.md` where **suffix** is everything after the first `/`, with any further `/` replaced by `-` |
+| `vendor/gentleman-programming/...` | `{root}/vendor/gentleman-programming/.../SKILL.md` (exact path under curated or community) |
+
+Examples: `common/tdd` → `$AGENT_KIT/cursor/skills/common/common-tdd/SKILL.md`; `vendor/gentleman-programming/curated/typescript` → `$AGENT_KIT/cursor/skills/vendor/gentleman-programming/curated/typescript/SKILL.md`.
+
+**Registry:** run **`agent-kit generate`** in **ai-resources** → **`$AGENT_KIT/cursor/skills-registry.md`**.
+
+If resolution fails (new skill layout), search under **`$AGENT_KIT/cursor/skills/`** for a `SKILL.md` whose folder name best matches the ID, or consult **`$AGENT_KIT/cursor/AGENTS.md`**.
+
+## Subagent return format
+
+After finishing the assigned step, the subagent must output **only** this structure in its final message (plus updating the handoff file). Keeps the parent thread from ingesting raw logs.
+
+```text
+## Result
+- Status: (success | partial | blocked)
+- Executive summary: (1–3 sentences — required)
+- Summary: (max 5 bullet points)
+- Handoff: (path to updated handoff file)
+
+## Artifacts
+- Files touched: (paths only, one per line)
+- Commands run: (one line each, or "none")
+- Specs/docs read: (paths or "none")
+- Engram: (topic_keys or ids written, or "none")
+
+## Routing
+- Next recommended: (workflow step / phase, or "none")
+- Blocked: (yes/no — if yes, reason and suggested Return_to_step)
+- Risks: (short, or "none")
+```
+
+Unified envelope doc: `$AGENT_KIT/docs/handoff-envelope.md` (ai-resources repo).
+
+**Do not** paste large code blocks, full test output, or stack traces into this block — put details in the handoff file or a path under `.agent-output/` / `specs/knowledge/` as the workflow specifies.
+
+## Handoff protocol
+
+For workflow execution details (handoff fields, rollback, scope rules), see `051-handoff-protocol.mdc`.

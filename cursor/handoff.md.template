@@ -1,0 +1,49 @@
+# Handoff
+
+**Status:** (success | partial | blocked)
+
+**Executive summary:** (1–3 sentences; ATL-compatible)
+
+**Goal reached:** (1–2 sentences)
+
+**Changes made:** (list file paths only, no code)
+- 
+
+**Commands run:** (one line each, or "none")
+- 
+
+**Unresolved / risks:** (open items or blockages)
+- 
+
+**Next recommended:** (next workflow step / SDD phase, or "none")
+
+**Next assigned role:** (planner | implementer | tester | verifier | software-architect | code-reviewer | security-auditor | generalPurpose)
+
+**Domain:** (dart-flutter | angular | symfony | api-platform | devops | security)
+
+**Blocked:** (true | false)
+**Return_to_step:** (step id to re-invoke if Blocked; e.g. plan, architect, implement)
+**Block_reason:** (brief reason when Blocked=true)
+
+---
+
+## Implementation Workflow Fields
+
+**Plan_ref:** (path to YYMMDD-NNN.md in .agent-output/planner/)
+**Architect_approval:** (yes | no | pending)
+**Test_report:** (path to YYMMDD-NNN.md in .agent-output/tester/ if applicable)
+**Code_review_verdict:** (APPROVED | REQUIRES_CHANGES | pending)
+**Security_audit:** (PASS | CONDITIONAL | FAIL | N/A)
+**Spec_refs:** (list of spec paths read or modified in this step)
+**Requirements_preserved:** (key constraints from specs that downstream steps must respect)
+**Engram_refs:** (Engram topic keys for detailed context, if available)
+**Requires_tests:** (yes | no)
+**Security_critical_feature:** (yes | no)
+
+**Git_integration:** `merge_to_base` (worktree workflows) | `none` | `pending_human` — With worktree: on completion, finishing-a-development-branch merges to base branch by default. Set `pending_human` when the user wants to review before merge. Report branch + worktree path.
+
+---
+
+*Copy this template to `.agent-output/handoff-<branch>.md`. Update after each step; next agent continues from handoff + referenced files only. Workflows in `$AGENT_KIT/cursor/workflows/`; working knowledge artifacts in `<repo>/specs/knowledge/` (research, decisions, searchable).*
+
+**When task DONE:** DELETE the handoff file. No pending handoffs, zombies, or orphans.
