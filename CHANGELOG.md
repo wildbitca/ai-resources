@@ -8,13 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [0.1.0] — 2026-03-23
 
-Primera release **usable** con Homebrew. El tag **`v0.1.0`** anterior no permitía instalar bien (tap inexistente / fórmula mal ubicada); este tag apunta al árbol donde el tap vive **en el mismo repo** (`Formula/ai-resources.rb` en la raíz).
+Primera release **usable** con Homebrew. El tag **`v0.1.0`** anterior no permitía instalar bien (tap inexistente / fórmula mal ubicada / `brew tap` sin URL apuntando a otro repo); el tag actual incluye **`Formula/ai-resources.rb`** en la raíz y la orden de tap correcta.
 
 ### Added
 
 - CLI unificado `scripts/kit.py`: **`generate`** (import desde `resources.json` + `skills-index.json`), **`setup`** (MCP, IDE stubs, validación de workflows).
 - Manifiesto `resources.json`; estado opcional `~/.config/ai-resources/state.json` tras `setup`.
-- **Homebrew:** fórmula **`Formula/ai-resources.rb`** en la raíz; **`brew tap wildbitca/ai-resources`** + **`brew install ai-resources`**. Instalación por **git** en el tag (sin `sha256` de tarball). Repo privado: `HOMEBREW_GITHUB_API_TOKEN`.
+- **Homebrew:** fórmula **`Formula/ai-resources.rb`** en la raíz; **`brew tap wildbitca/ai-resources https://github.com/wildbitca/ai-resources.git`** (obligatoria la URL: sin ella Homebrew busca `wildbitca/homebrew-ai-resources`) + **`brew install ai-resources`**. Instalación por **git** en el tag (sin `sha256` de tarball). Repo privado: `HOMEBREW_GITHUB_API_TOKEN`.
 
 ### Changed
 
@@ -32,4 +32,4 @@ When you publish **`vMAJOR.MINOR.PATCH`**, add a new section above `[Unreleased]
 2. Actualizar **`Formula/ai-resources.rb`:** `tag:` y `version` acordes al nuevo tag.
 3. Commit en `main` y **push**.
 4. **Tag y push:** `git tag -a vX.Y.Z -m "Release X.Y.Z"` · `git push origin vX.Y.Z`
-5. Opcional: GitHub Release. Usuarios: `brew update && brew upgrade ai-resources` (privado: `HOMEBREW_GITHUB_API_TOKEN`).
+5. Opcional: GitHub Release. Usuarios: `brew update && brew upgrade ai-resources` (privado: `HOMEBREW_GITHUB_API_TOKEN`). El **README** debe mantener **`brew tap wildbitca/ai-resources https://github.com/wildbitca/ai-resources.git`** (no omitir la URL).

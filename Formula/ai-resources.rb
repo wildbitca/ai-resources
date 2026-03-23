@@ -1,5 +1,6 @@
 # frozen_string_literal: true
-# Tap: same repo as the kit — `brew tap wildbitca/ai-resources` reads this file from repo root.
+# Tap: same repo as the kit. Use: brew tap wildbitca/ai-resources https://github.com/wildbitca/ai-resources.git
+# (without URL, Homebrew looks for github.com/wildbitca/homebrew-ai-resources).
 # Tag vX.Y.Z must exist on github.com/wildbitca/ai-resources (see CHANGELOG.md).
 # Private repo: export HOMEBREW_GITHUB_API_TOKEN=ghp_... so Homebrew can clone over HTTPS.
 class AiResources < Formula

@@ -4,11 +4,13 @@ Kit de Wildbit para agentes (Cursor, etc.): reglas, skills, workflows y el coman
 
 ## Instalar
 
-Requisitos: **Homebrew**. Repo **`wildbitca/ai-resources`** es **privado** → hace falta un token de GitHub con lectura del código.
+Requisitos: **Homebrew**. Repo **`wildbitca/ai-resources`** es **privado** → token de GitHub con lectura del código.
+
+Homebrew, si no le pasas URL, resuelve `brew tap usuario/nombre` como **`github.com/usuario/homebrew-nombre`**, no como `usuario/nombre`. Por eso hay que indicar la URL del repo real:
 
 ```bash
 export HOMEBREW_GITHUB_API_TOKEN="ghp_TU_TOKEN"
-brew tap wildbitca/ai-resources
+brew tap wildbitca/ai-resources https://github.com/wildbitca/ai-resources.git
 brew install ai-resources
 ```
 
