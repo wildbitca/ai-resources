@@ -17,8 +17,8 @@ User says `/setup-project` or "set up this project for agents" or "initialize ag
 
 Before creating files, ask the user:
 
-1. **Project name**: Display name (e.g. "SnoutZone")
-2. **Package name**: For code (e.g. "snoutzone"), file convention (e.g. "snout_zone")
+1. **Project name**: Display name (e.g. "MyApp")
+2. **Package name**: For code (e.g. "myapp"), file convention (e.g. "my_app")
 3. **Domains used**: Which from the canonical list? (dart-flutter, angular, symfony, api-platform, devops, php, security)
 4. **Primary domain**: The main one (for default detection)
 5. **MCP servers**: Which integrations? (clickup, firebase, supabase, sentry, engram, cloudflare-docs, etc.)

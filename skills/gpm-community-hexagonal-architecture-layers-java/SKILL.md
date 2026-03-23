@@ -11,7 +11,6 @@ metadata:
 ## When to Use
 
 Load this skill when:
-
 - Designing a new Java service with clean, testable layers
 - Refactoring Spring code to isolate the domain from frameworks
 - Supporting multiple adapters (REST + messaging, JPA + Mongo)
@@ -153,11 +152,11 @@ public class Order {
 
 ## Quick Reference
 
-| Task                | Pattern                                                        |
-|---------------------|----------------------------------------------------------------|
+| Task | Pattern |
+|------|---------|
 | Persist domain data | Define output port in application, implement in infrastructure |
-| Expose use case     | Define input port and service in application                   |
-| Keep domain pure    | No annotations, no I/O, no framework imports                   |
+| Expose use case | Define input port and service in application |
+| Keep domain pure | No annotations, no I/O, no framework imports |
 
 ## Resources
 

@@ -2,7 +2,7 @@
 """
 Terraform Provider Upgrade Script.
 Finds required_providers in .tf files, fetches latest versions from Registry API,
-updates version constraints. Optionally updates internal wildbit module references
+updates version constraints. Optionally updates internal Terraform Cloud module references
 from sibling repos' latest tags. Runs terraform init and validate.
 """
 from __future__ import annotations
@@ -16,7 +16,6 @@ import urllib.request
 from pathlib import Path
 
 REGISTRY_URL = "https://registry.terraform.io/v1/providers"
-WILDBIT_SOURCE_PREFIX = "app.terraform.io/wildbit/"
 
 
 def _ssl_context():
@@ -101,13 +100,13 @@ def get_internal_module_versions(tf_modules_root: Path) -> dict[str, str]:
     from remote) and return module_name -> "~> X.Y" so the latest released minor
     is strictly specified (e.g. tag v3.1.1 -> "~> 3.1", replacing any existing
     "~> 3.0" so Terraform and editors use the latest).
-    Module name is derived from dir name: tf-module-gcp-kms -> gcp-kms.
+    Module name is derived from dir name: tf-module-module-base -> module-base.
     """
     result: dict[str, str] = {}
     for child in tf_modules_root.iterdir():
         if not child.is_dir() or not child.name.startswith("tf-module-"):
             continue
-        # tf-module-gcp-kms -> gcp-kms
+        # tf-module-module-base -> module-base
         module_name = child.name.replace("tf-module-", "", 1)
         git_dir = child / ".git"
         if not git_dir.is_dir():
@@ -141,14 +140,14 @@ def get_internal_module_versions(tf_modules_root: Path) -> dict[str, str]:
 
 def update_internal_module_versions(content: str, internal_versions: dict[str, str]) -> str:
     """
-    Replace version in module blocks that use app.terraform.io/wildbit/XXX/module
+    Replace version in module blocks that use app.terraform.io/<org>/XXX/module
     with the constraint from internal_versions (e.g. ~> 0.5).
     """
     if not internal_versions:
         return content
-    # Match: source = "app.terraform.io/wildbit/NAME/module" then optional version = "..."
+    # Match: source = "app.terraform.io/<any-org>/NAME/module" then optional version = "..."
     pattern = re.compile(
-        r'(source\s*=\s*"app\.terraform\.io/wildbit/([^/]+)/module")(\s+version\s*=\s*"[^"]*")?',
+        r'(source\s*=\s*"app\.terraform\.io/[^/]+/([^/]+)/module")(\s+version\s*=\s*"[^"]*")?',
         re.DOTALL,
     )
 
@@ -183,9 +182,7 @@ def main() -> int:
     if modules_root is None and "tf-modules" in root.parts:
         idx = list(root.parts).index("tf-modules")
         candidate = Path(*root.parts[: idx + 1])
-        if (candidate / "tf-module-atlas-cluster").is_dir() or any(
-                candidate.joinpath(d).is_dir() for d in ["tf-module-gcp-kms", "tf-module-gcp-waf"]
-        ):
+        if any(d.is_dir() and d.name.startswith("tf-module-") for d in candidate.iterdir()):
             modules_root = candidate
 
     internal_versions: dict[str, str] = {}

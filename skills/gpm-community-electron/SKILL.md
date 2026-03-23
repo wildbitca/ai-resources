@@ -11,7 +11,6 @@ metadata:
 ## When to Use
 
 Load this skill when:
-
 - Building cross-platform desktop applications
 - Working with Electron's main and renderer processes
 - Implementing IPC (Inter-Process Communication)
@@ -511,18 +510,18 @@ contextBridge.exposeInMainWorld('electron', {
 
 ## Quick Reference
 
-| Task                     | Pattern                            |
-|--------------------------|------------------------------------|
-| Create project           | `npm create electron-vite@latest`  |
-| Main process file access | Use Node.js `fs` module in main    |
-| Renderer file access     | IPC through preload                |
-| Persistent storage       | `electron-store` in main process   |
-| Auto-updates             | `electron-updater`                 |
-| Native notifications     | `new Notification()` in main       |
-| System tray              | `Tray` class in main               |
-| Keyboard shortcuts       | `globalShortcut.register()`        |
-| Deep linking             | `app.setAsDefaultProtocolClient()` |
-| Code signing             | `electron-builder` config          |
+| Task | Pattern |
+|------|---------|
+| Create project | `npm create electron-vite@latest` |
+| Main process file access | Use Node.js `fs` module in main |
+| Renderer file access | IPC through preload |
+| Persistent storage | `electron-store` in main process |
+| Auto-updates | `electron-updater` |
+| Native notifications | `new Notification()` in main |
+| System tray | `Tray` class in main |
+| Keyboard shortcuts | `globalShortcut.register()` |
+| Deep linking | `app.setAsDefaultProtocolClient()` |
+| Code signing | `electron-builder` config |
 
 ## Resources
 

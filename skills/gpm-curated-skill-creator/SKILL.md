@@ -13,14 +13,12 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash, WebFetch, WebSearch, Task
 ## When to Create a Skill
 
 Create a skill when:
-
 - A pattern is used repeatedly and AI needs guidance
 - Project-specific conventions differ from generic best practices
 - Complex workflows need step-by-step instructions
 - Decision trees help AI choose the right approach
 
 **Don't create a skill when:**
-
 - Documentation already exists (create a reference instead)
 - Pattern is trivial or self-explanatory
 - It's a one-off task
@@ -77,7 +75,6 @@ metadata:
 
 - **Templates**: See [assets/](assets/) for {description}
 - **Documentation**: See [references/](references/) for local docs
-
 ```
 
 ---
@@ -96,13 +93,11 @@ metadata:
 ## Decision: assets/ vs references/
 
 ```
-
-Need code templates? → assets/
-Need JSON schemas? → assets/
-Need example configs? → assets/
-Link to existing docs? → references/
-Link to external guides? → references/ (with local path)
-
+Need code templates?        → assets/
+Need JSON schemas?          → assets/
+Need example configs?       → assets/
+Link to existing docs?      → references/
+Link to external guides?    → references/ (with local path)
 ```
 
 **Key Rule**: `references/` should point to LOCAL files (`docs/developer-guide/*.mdx`), not web URLs.
@@ -112,11 +107,9 @@ Link to external guides? → references/ (with local path)
 ## Decision: Prowler-Specific vs Generic
 
 ```
-
-Patterns apply to ANY project? → Generic skill (e.g., pytest, typescript)
-Patterns are Prowler-specific? → prowler-{name} skill
-Generic skill needs Prowler info? → Add references/ pointing to Prowler docs
-
+Patterns apply to ANY project?     → Generic skill (e.g., pytest, typescript)
+Patterns are Prowler-specific?     → prowler-{name} skill
+Generic skill needs Prowler info?  → Add references/ pointing to Prowler docs
 ```
 
 ---

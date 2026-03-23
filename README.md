@@ -1,6 +1,6 @@
 # ai-resources
 
-Kit de Wildbit para agentes (Cursor, etc.): reglas, skills, workflows y el comando **`ai-resources`** (`generate`, `setup`). Aquí va lo que versionamos; **`~/.cursor`** es solo estado local del IDE.
+Kit de recursos para agentes de AI (Cursor, etc.): reglas, skills, workflows y el comando **`ai-resources`** (`generate`, `setup`). Aquí va lo que versionamos; **`~/.cursor`** es solo estado local del IDE.
 
 ## Instalar
 

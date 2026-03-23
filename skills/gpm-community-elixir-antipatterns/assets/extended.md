@@ -452,8 +452,7 @@ rescue
 end
 ```
 
-**Why it's bad**:
-
+**Why it's bad**: 
 - Hides error cases from `@spec`
 - Forces try/rescue (not composable)
 - Treats expected failures as unexpected crashes
@@ -526,7 +525,6 @@ end
 ```
 
 **Why it's bad**:
-
 - Can't test validation without Phoenix
 - Can't reuse logic in API controllers
 - Violates separation of concerns

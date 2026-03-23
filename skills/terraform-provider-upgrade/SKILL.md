@@ -61,7 +61,7 @@ Extract: provider key, `source` (namespace/type), current `version`. The `source
 
 ## Scope: normal repos vs tf-modules
 
-- **Normal Terraform projects** (e.g. org-gitops, pacha/ops, any repo that is not a tf-module): use **upgrade-providers.py** only. It updates provider and internal module versions, runs `terraform init -upgrade` and `terraform validate`. It **never** commits, tags, or pushes — you decide when to
+- **Normal Terraform projects** (e.g. my-infra-gitops, my-project/ops, any repo that is not a tf-module): use **upgrade-providers.py** only. It updates provider and internal module versions, runs `terraform init -upgrade` and `terraform validate`. It **never** commits, tags, or pushes — you decide when to
   commit.
 - **tf-modules tree** (directory that contains all `tf-module-*` git repos): use **upgrade-all-with-deps.py** when you want to upgrade every module in dependency order and then commit/tag/push each so the next one can use the new tag. That script is the only one that runs version-commit (commit,
   tag, push).
@@ -82,7 +82,7 @@ The script (use for any Terraform project; **no commit, no tag, no push**):
 - For each provider, fetches latest version from `https://registry.terraform.io/v1/providers/:namespace/:type/versions`
 - Updates version constraints to `~> major.minor`
 - **Internal module versions (optional):** If `modules_root` is passed (path to the directory containing all `tf-module-*` repos), the script runs `git fetch origin --tags --prune` in each sibling repo, then reads the latest git tag and builds a map `module_name -> "~> X.Y"`. It then **replaces**
-  every `module` block’s `version` for `app.terraform.io/wildbit/<name>/module` with that constraint so the **latest released minor is strictly specified** (e.g. latest tag `v3.1.1` → `version = "~> 3.1"`; even if the file had `~> 3.0`, it is updated to `~> 3.1` so Terraform and editors use the
+  every `module` block’s `version` for `app.terraform.io/<your-org>/<name>/module` with that constraint so the **latest released minor is strictly specified** (e.g. latest tag `v3.1.1` → `version = "~> 3.1"`; even if the file had `~> 3.0`, it is updated to `~> 3.1` so Terraform and editors use the
   latest). This keeps dependencies on your own modules in sync after publishing new versions.
 - Runs `terraform init -upgrade` and `terraform validate`
 - **Never use local module references** — always use the registry (e.g. `app.terraform.io/org/name/module`).
@@ -94,7 +94,7 @@ The script (use for any Terraform project; **no commit, no tag, no push**):
 
 - **Arg 1 (required):** Path to the Terraform project (module) root.
 - **Arg 2 (optional):** Report file path. Skipped modules are appended as: `module_name\tpending upgrade of submodules (validate failed in .terraform/modules)`.
-- **Arg 3 (optional):** Path to the parent directory containing all `tf-module-*` repos. When set, the script updates `version` for `app.terraform.io/wildbit/.../module` sources from sibling repos’ latest tags.
+- **Arg 3 (optional):** Path to the parent directory containing all `tf-module-*` repos. When set, the script updates `version` for `app.terraform.io/<your-org>/.../module` sources from sibling repos’ latest tags.
 
 **Example (provider upgrade + internal module refs):**
 
@@ -109,14 +109,14 @@ python3 upgrade-providers.py /path/to/tf-module-gcp-lb /path/to/skipped.txt /pat
 
 ## Dependency-order upgrade (tf-modules only)
 
-**Use only** when the target is the directory that contains all `tf-module-*` repos. If you pass a normal project (e.g. org-gitops, pacha/ops), the script exits with an error.
+**Use only** when the target is the directory that contains all `tf-module-*` repos. If you pass a normal project (e.g. my-infra-gitops, my-project/ops), the script exits with an error.
 
-When upgrading **all** `tf-module-*` repos, internal dependencies must be updated **first**: if module A uses module B (`app.terraform.io/wildbit/B/module`), then B must be upgraded, committed, tagged, and **pushed** before A so that A can resolve the new tag.
+When upgrading **all** `tf-module-*` repos, internal dependencies must be updated **first**: if module A uses module B (`app.terraform.io/<your-org>/B/module`), then B must be upgraded, committed, tagged, and **pushed** before A so that A can resolve the new tag.
 
 Use `scripts/upgrade-all-with-deps.py` to:
 
-1. **Analyze dependencies:** Scan each repo’s `.tf` for `source = "app.terraform.io/wildbit/<name>/module"` and build a dependency graph.
-2. **Topological order:** Process modules in an order where every dependency is handled before its dependents (e.g. `gcp-kms` before `gcp-artifact-registry`).
+1. **Analyze dependencies:** Scan each repo’s `.tf` for `source = "app.terraform.io/<your-org>/<name>/module"` and build a dependency graph.
+2. **Topological order:** Process modules in an order where every dependency is handled before its dependents (e.g. `module-base` before `module-child`).
 3. **Per module in that order:**
     - Run `upgrade-providers.py` (providers + internal module version refs from current tags).
     - Run **terraform-version-commit** `--yes` (commit `.tf`, semver bump, tag). The version-commit script **pushes** the repo and tags by default, so the next module in the chain sees the new version.
