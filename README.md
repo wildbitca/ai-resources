@@ -18,7 +18,7 @@ Comprueba: `ai-resources --help`
 
 **Actualizar:** `brew update && brew upgrade ai-resources`
 
-La fórmula está en **`Formula/ai-resources.rb`** (mismo repo que el código). Homebrew instala también **`python@3.12`** si no lo tienes.
+La fórmula está en **`Formula/ai-resources.rb`**. Declara **`python@3.12`**; el binario del kit suele ser **`python3.12`** (no siempre `python3`). Si `ai-resources --help` falla, prueba `brew reinstall python@3.12` y vuelve a instalar el kit.
 
 ## Uso
 
