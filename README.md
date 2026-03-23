@@ -1,42 +1,28 @@
 # ai-resources
 
-Shared **rules**, **skills**, **workflows**, and a small **`kit.py`** CLI (`generate`, `setup`). Discovery uses **`skills-index.json`**; policy is **`AGENTS.md`**. **`~/.cursor`** is for IDE state only — rules and skills live **here**, not copied into `~/.cursor` unless you choose to.
+Kit de Wildbit para agentes (Cursor, etc.): reglas, skills, workflows y el comando **`ai-resources`** (`generate`, `setup`). Aquí va lo que versionamos; **`~/.cursor`** es solo estado local del IDE.
 
-**`AGENT_KIT`** = repo root (or unset when running `scripts/kit.py` from this tree).
+## Instalar
 
-| What                       | Where                                        |
-|----------------------------|----------------------------------------------|
-| Rules / workflows / skills | `$AGENT_KIT/rules/`, `workflows/`, `skills/` |
-| Index (generated)          | `$AGENT_KIT/skills-index.json`               |
-| Manifest                   | `resources.json` (root)                      |
-| CLI                        | `python3 scripts/kit.py --help`              |
+Requisitos: **Homebrew**. Repo **`wildbitca/ai-resources`** es **privado** → hace falta un token de GitHub con lectura del código.
 
-| Command    | Role                                                                                                               |
-|------------|--------------------------------------------------------------------------------------------------------------------|
-| `generate` | Import from `resources.json` → `skills/`, then build `skills-index.json` (`--skip-vendor`, `--dry-run`, `--force`) |
-| `setup`    | MCP + IDE stubs + workflow check (`--target`, `--dry-run`, `--fix-workflow-ids`, …)                                |
+```bash
+export HOMEBREW_GITHUB_API_TOKEN="ghp_TU_TOKEN"
+brew tap wildbitca/ai-resources
+brew install ai-resources
+```
 
-**Env:** `AGENT_KIT`, `AGENT_SKILLS_ROOT` (default `$AGENT_KIT/skills`), `SKILLS_INDEX_OUT` (default `$AGENT_KIT/skills-index.json`).
+Comprueba: `ai-resources --help`
 
-If you change `skills/**` or imports, run **`generate`** and commit **`skills-index.json`** when appropriate.
+**Actualizar:** `brew update && brew upgrade ai-resources`
 
-## Homebrew
+La fórmula está en **`Formula/ai-resources.rb`** (mismo repo que el código). Homebrew instala también **`python@3.12`** si no lo tienes.
 
-- Formula: **`packaging/homebrew/Formula/ai-resources.rb`** → **git** install at tag **`vX.Y.Z`** (no tarball checksum); exposes **`ai-resources`** (wrapper around `kit.py`). Requires **`python@3.12`**.
-- **Private** GitHub repo: set **`HOMEBREW_GITHUB_API_TOKEN`** to a token with `repo` scope before `brew install`, or use SSH in a tap that points at an SSH remote.
-- Tap: separate repo (e.g. `homebrew-ai-resources`); copy the formula there, then `brew tap` + `brew install ai-resources`.
+## Uso
 
-After each release tag, bump **`tag`** and **`version`** in the formula (see **`CHANGELOG.md` → Release manager checklist**).
+| Comando | Para qué |
+|---------|----------|
+| `ai-resources generate` | Regenerar skills e índice (`--help` para opciones). |
+| `ai-resources setup` | MCP, IDE y workflows (`--help`). |
 
-## Changelog
-
-See **`CHANGELOG.md`** (includes release steps for the maintainer / assistant).
-
-## More
-
-| Topic             | File                             |
-|-------------------|----------------------------------|
-| Orchestration map | `rules/016-kit-architecture.mdc` |
-| Workflow YAML     | `workflows/WORKFLOW_CONTRACT.md` |
-| Skill frontmatter | `skills/SKILL_FRONTMATTER.md`    |
-| Self-update       | `rules/self-update.mdc`          |
+Tras instalar, **`AGENT_KIT`** apunta al kit en disco. Política y detalle: **`AGENTS.md`** · historial de versiones: **`CHANGELOG.md`**.

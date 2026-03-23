@@ -6,20 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
-## [0.1.0] — 2025-03-23
+## [0.1.0] — 2026-03-23
 
-First tagged release. SemVer starts at **0.1.0**; bump **minor** for features, **patch** for fixes, **major** when breaking compatibility (see [SemVer](https://semver.org/)).
+Primera release **usable** con Homebrew. El tag **`v0.1.0`** anterior no permitía instalar bien (tap inexistente / fórmula mal ubicada); este tag apunta al árbol donde el tap vive **en el mismo repo** (`Formula/ai-resources.rb` en la raíz).
 
 ### Added
 
-- Unified CLI `scripts/kit.py`: **`generate`** (vendor import from `resources.json` + `skills-index.json`), **`setup`** (MCP presets, IDE stubs, workflow validation, optional workflow id rewrite).
-- `resources.json` manifest; optional `~/.config/ai-resources/state.json` after `setup`.
-- Homebrew formula template: `packaging/homebrew/Formula/ai-resources.rb` (command **`ai-resources`**).
+- CLI unificado `scripts/kit.py`: **`generate`** (import desde `resources.json` + `skills-index.json`), **`setup`** (MCP, IDE stubs, validación de workflows).
+- Manifiesto `resources.json`; estado opcional `~/.config/ai-resources/state.json` tras `setup`.
+- **Homebrew:** fórmula **`Formula/ai-resources.rb`** en la raíz; **`brew tap wildbitca/ai-resources`** + **`brew install ai-resources`**. Instalación por **git** en el tag (sin `sha256` de tarball). Repo privado: `HOMEBREW_GITHUB_API_TOKEN`.
 
 ### Changed
 
-- **Documentation:** shorter root `README.md`; release history lives in this file. Removed `RELEASING.md`, `packaging/homebrew/README.md`, `tag-release.sh`, and `bump-formula-sha.sh` — releases are driven by the **release manager** (maintainer or assistant); see **Release manager checklist** below.
-- **Homebrew:** `packaging/homebrew/Formula/ai-resources.rb` installs from **git** at tag **`v0.1.0`** (no tarball `sha256`), suitable for a **private** GitHub repo when `HOMEBREW_GITHUB_API_TOKEN` is set.
+- **README** orientado a instalación y uso con comandos mínimos.
+- **Documentación:** historial en este archivo; releases sin scripts auxiliares en repo (ver checklist abajo). Eliminados `RELEASING.md`, `packaging/homebrew/README.md`, `tag-release.sh`, `bump-formula-sha.sh`.
+- **Homebrew:** mismo repositorio que código y tap (ya no hace falta `homebrew-ai-resources` aparte); eliminado `packaging/homebrew/`.
 
 ---
 
@@ -27,14 +28,8 @@ When you publish **`vMAJOR.MINOR.PATCH`**, add a new section above `[Unreleased]
 
 ## Release manager checklist
 
-The person or assistant cutting a release should do this in order (no helper scripts in-repo):
-
-1. **Pick the next SemVer** (e.g. `1.2.0`) from what’s in `[Unreleased]` and team agreement.
-2. **Edit `CHANGELOG.md`:** move items under `[Unreleased]` into a new section `## [1.2.0] — YYYY-MM-DD` (use the real date).
-3. **Commit** the changelog on `main` (and any other release commits).
-4. **Tag and push:**  
-   `git tag -a v1.2.0 -m "Release 1.2.0"`  
-   `git push origin v1.2.0`
-5. **Update `packaging/homebrew/Formula/ai-resources.rb`:** set `tag: "v1.2.0"` and `version "1.2.0"` (formula uses **git** `url` + `tag` — no tarball `sha256`, which avoids checksum churn for private repos). Optionally add `revision: "<full-git-sha>"` if you want `brew audit` reproducibility; that SHA must be the commit the tag points to after the formula change lands.
-6. **Publish the tap:** copy or merge the updated formula into the **homebrew tap** repo; commit and push so users can `brew update && brew upgrade ai-resources`. For a **private** GitHub repo, ensure `HOMEBREW_GITHUB_API_TOKEN` is set when installing so Homebrew can clone over HTTPS.
-7. **Optional:** create a **GitHub Release** on `v1.2.0` with notes from the changelog section.
+1. Elegir SemVer y mover entradas en **`CHANGELOG.md`**.
+2. Actualizar **`Formula/ai-resources.rb`:** `tag:` y `version` acordes al nuevo tag.
+3. Commit en `main` y **push**.
+4. **Tag y push:** `git tag -a vX.Y.Z -m "Release X.Y.Z"` · `git push origin vX.Y.Z`
+5. Opcional: GitHub Release. Usuarios: `brew update && brew upgrade ai-resources` (privado: `HOMEBREW_GITHUB_API_TOKEN`).
