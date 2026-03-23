@@ -10,7 +10,7 @@ class AiResources < Formula
       using: :git,
       tag: "v0.1.0"
   version "0.1.0"
-  revision 0
+  revision 1
 
   head "https://github.com/wildbitca/ai-resources.git", branch: "main"
 
@@ -18,11 +18,20 @@ class AiResources < Formula
 
   def install
     libexec.install Dir["*"]
+    py_bin = Formula["python@3.12"].opt_bin
 
     (bin/"ai-resources").write <<~EOS
       #!/usr/bin/env bash
+      set -e
       export AGENT_KIT="#{libexec}"
-      exec "#{Formula["python@3.12"].opt_bin}/python3" "#{libexec}/scripts/kit.py" "$@"
+      export PATH="#{py_bin}:$PATH"
+      for _py in python3 python3.12; do
+        if command -v "${_py}" >/dev/null 2>&1; then
+          exec "${_py}" "#{libexec}/scripts/kit.py" "$@"
+        fi
+      done
+      echo "ai-resources: no se encontró python3 (prueba: brew reinstall python@3.12)" >&2
+      exit 1
     EOS
   end
 
