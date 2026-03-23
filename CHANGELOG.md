@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [0.1.0] — 2025-03-23
+
+First tagged release. SemVer starts at **0.1.0**; bump **minor** for features, **patch** for fixes, **major** when breaking compatibility (see [SemVer](https://semver.org/)).
+
 ### Added
 
 - Unified CLI `scripts/kit.py`: **`generate`** (vendor import from `resources.json` + `skills-index.json`), **`setup`** (MCP presets, IDE stubs, workflow validation, optional workflow id rewrite).
@@ -30,8 +34,8 @@ The person or assistant cutting a release should do this in order (no helper scr
 4. **Tag and push:**  
    `git tag -a v1.2.0 -m "Release 1.2.0"`  
    `git push origin v1.2.0`
-5. **SHA256 for Homebrew** (after the tag exists on GitHub, replace `wildbit` if needed):  
-   `curl -fsSL "https://github.com/wildbit/ai-resources/archive/refs/tags/v1.2.0.tar.gz" | shasum -a 256`
-6. **Update `packaging/homebrew/Formula/ai-resources.rb`:** set `url` to that tarball, `sha256` to the hash from step 5, `version` to `1.2.0` (and bump `revision` only if you re-release the same version without a new tag).
+5. **SHA256 for Homebrew** (after the tag exists on GitHub, replace `wildbitca` if needed):  
+   `curl -fsSL "https://github.com/wildbitca/ai-resources/archive/refs/tags/v1.2.0.tar.gz" | shasum -a 256`
+6. **Update `packaging/homebrew/Formula/ai-resources.rb`:** set `url` to that tarball, `sha256` to the hash from step 5, `version` to `1.2.0` (and bump `revision` only if you re-release the same version without a new tag). If the hash in the formula changes the tarball, recompute and update until stable, then move the tag to the final commit if needed.
 7. **Publish the tap:** copy or merge the updated formula into the **homebrew tap** repo; commit and push so users can `brew update && brew upgrade ai-resources`.
 8. **Optional:** create a **GitHub Release** on `v1.2.0` with notes from the changelog section.

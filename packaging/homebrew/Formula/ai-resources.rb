@@ -1,14 +1,14 @@
 # frozen_string_literal: true
-# Package version must match an existing Git tag vX.Y.Z on github.com/wildbit/ai-resources (see CHANGELOG.md).
+# Package version must match an existing Git tag vX.Y.Z on github.com/wildbitca/ai-resources (see CHANGELOG.md).
 class AiResources < Formula
   desc "Agent rules, skills, workflows, and kit CLI (generate, setup)"
-  homepage "https://github.com/wildbit/ai-resources"
-  url "https://github.com/wildbit/ai-resources/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "REPLACE_WITH_SHA256_OF_TARBALL"
-  version "1.0.0"
+  homepage "https://github.com/wildbitca/ai-resources"
+  url "https://github.com/wildbitca/ai-resources/archive/refs/tags/v0.1.0.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  version "0.1.0"
   revision 0
 
-  head "https://github.com/wildbit/ai-resources.git", branch: "main"
+  head "https://github.com/wildbitca/ai-resources.git", branch: "main"
 
   # Pin Python for reproducible installs; `brew install python@3.12` if missing.
   depends_on "python@3.12"
