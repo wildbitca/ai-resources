@@ -22,6 +22,10 @@ Primera release **usable** con Homebrew. El tag **`v0.1.0`** anterior no permit�
 - **Documentación:** historial en este archivo; releases sin scripts auxiliares en repo (ver checklist abajo). Eliminados `RELEASING.md`, `packaging/homebrew/README.md`, `tag-release.sh`, `bump-formula-sha.sh`.
 - **Homebrew:** mismo repositorio que código y tap (ya no hace falta `homebrew-ai-resources` aparte); eliminado `packaging/homebrew/`.
 
+### Fixed
+
+- Comando **`ai-resources`**: el wrapper ya no usa una ruta fija a `opt/python@3.12/bin/python3` (podía no existir); añade el `bin` de `python@3.12` al `PATH` y usa **`python3`** o **`python3.12`**. Fórmula **`revision 1`**.
+
 ---
 
 When you publish **`vMAJOR.MINOR.PATCH`**, add a new section above `[Unreleased]` with that version and date, then move the relevant items from `[Unreleased]` into it.
