@@ -4,7 +4,7 @@ class AiResources < Formula
   desc "Agent rules, skills, workflows, and kit CLI (generate, setup)"
   homepage "https://github.com/wildbitca/ai-resources"
   url "https://github.com/wildbitca/ai-resources/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "22e641e7317c0f9262aefd2710041116a30b8d4965202dfd589d1314cf339d99"
+  sha256 "07ae49200c12f08fa546e52189d8fe2e0eb4ef498cd13947331812cbe2c24167"
   version "0.1.0"
   revision 0
 
