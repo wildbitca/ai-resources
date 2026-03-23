@@ -27,7 +27,12 @@
   "mcp": {
     "cursor": {
       "path": "~/.cursor/mcp.json",
-      "mcpServers": {},
+      "mcpServers": {
+        "engram": {
+          "command": "engram",
+          "args": ["mcp"]
+        }
+      },
       "notes": "Written by `kit.py setup`. Per-project overrides stay in <repo>/.cursor/mcp.json. Use env placeholders for secrets (see rules/200-security-mcp.mdc)."
     }
   }
