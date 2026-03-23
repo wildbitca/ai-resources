@@ -1,3 +1,0 @@
-# Excluded from `git archive` / GitHub source tarballs (see packaging/homebrew).
-# Keeps Homebrew `sha256` stable: the formula is not part of the downloaded archive.
-packaging/homebrew/Formula/ai-resources.rb export-ignore
