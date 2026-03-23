@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Kit manifest: external packs (skills/agents/personas), machine presets (MCP). kit.py generate reads skills.*; kit.py setup applies mcp.* to the local machine.",
+  "description": "Kit manifest: external packs (skills/agents/personas), machine presets (MCP). kit.py generate reads skills.*; kit.py setup applies mcp.* to the local machine. The top-level \"version\" field is the manifest schema number only, not the ai-resources release (releases = Git tags vMAJOR.MINOR.PATCH; see CHANGELOG.md).",
   "skills": {
     "sources": [
       {
