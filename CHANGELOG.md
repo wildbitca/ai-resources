@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-03-23
+
+### Added
+
+- **Engram como dependencia Homebrew:** `Formula/ai-resources.rb` declara `depends_on "gentleman-programming/tap/engram"` — `brew install ai-resources` instala el binario `engram` automáticamente.
+- **Setup automático de engram para Claude Code:** `kit.py setup` (targets `claude` y `all`) ejecuta `claude plugin marketplace add Gentleman-Programming/engram && claude plugin install engram`, registrando el servidor MCP, hooks y la Memory Protocol skill sin pasos manuales.
+- **MCP engram en Cursor:** `resources.json` → `mcp.cursor.mcpServers` incluye la entrada `engram` (`engram mcp` stdio); se aplica al correr `kit.py setup`.
+
+### Changed
+
+- `Formula/ai-resources.rb`: tag y version actualizados a `v0.2.0`; eliminado `revision 1` (era un parche de build, no aplica a la nueva versión).
+
 ## [0.1.0] — 2026-03-23
 
 Primera release **usable** con Homebrew. El tag **`v0.1.0`** anterior no permitía instalar bien (tap inexistente / fórmula mal ubicada / `brew tap` sin URL apuntando a otro repo); el tag actual incluye **`Formula/ai-resources.rb`** en la raíz y la orden de tap correcta.
