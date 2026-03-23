@@ -1,0 +1,98 @@
+# REQUIRES worktree: create at start (using-git-worktrees); merge at end to base branch (finishing-a-development-branch Option 1). See .cursorrules.
+# handoff_file: Orchestrator MUST inject. With worktree: .agent-output/handoff-<branch>.md; without: .agent-output/handoff-cross-domain-backend-infra.md.
+#               When task DONE: DELETE handoff file. No pending handoffs, zombies, orphans.
+#
+# Domain-agnostic: orchestrator injects {{domain}} from detection.
+# Flow: [worktree] → app-step → infra-step → test → review → verify → [merge to base]
+name: cross-domain-backend-infra
+description: Task crossing app (backend) and infra — app → infra → test → review → verify.
+domain: "{{domain}}"
+trigger: User asks to deploy, change infra, or run a flow that touches both app and infra.
+prerequisites: [ ]
+steps:
+  - id: app-step
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: User goal defined; worktree ready if required
+    exit_criteria: App-side changes complete; handoff references artifacts only
+    handoff_to: infra-step
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}} (app layer).
+      Goal: {{user_goal}}.
+      Complete the app/backend part only. If this involves non-trivial architectural decisions, save rationale to specs/knowledge/decisions/YYMMDD-{topic}-cross-domain.md.
+      In {{handoff_file}} set Domain=infra, Goal=(next step), and reference only paths or artifacts (e.g. workers/uploader); do not paste large code. Next assigned role=generalPurpose (for infra/deploy execution).
+      If you have concern, blockage, or need changes from a previous step, set Blocked: true, Return_to_step: [id], Block_reason: [reason] in {{handoff_file}}. Do not advance until resolved.
+
+  - id: infra-step
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+      - common-context-optimization
+    entry_criteria: App handoff ready with referenced paths or artifacts
+    exit_criteria: Infra/deploy step complete; handoff finalized
+    handoff_to: test
+    on_concern_return_to: app-step
+    prompt_template: |
+      Workspace: {{workspace}} or infra repo. Domain: infra.
+      Read {{handoff_file}}; context is in the referenced paths. Execute the infra/deploy step (e.g. terraform, wrangler deploy). Update {{handoff_file}} with changes made. Do not load full app code; use {{handoff_file}} + referenced resources only.
+      If you have concern, blockage, or need app-step output fixed, set Blocked: true, Return_to_step: app-step, Block_reason: [reason] in {{handoff_file}}. Do not advance until resolved.
+
+  - id: test
+    subagent_type: tester
+    skills:
+      - common-tdd
+    entry_criteria: App + infra changes complete
+    exit_criteria: Smoke tests and validation pass
+    handoff_to: review
+    on_concern_return_to: infra-step
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and changed files list.
+      Run appropriate tests for each layer:
+        - App layer: project test commands (e.g. flutter test, phpunit, ng test)
+        - Infra layer: terraform validate, terraform plan (dry-run), wrangler deploy --dry-run
+      MANDATORY: All test/validation commands MUST exit 0.
+      Create report in .agent-output/tester/.
+      Update {{handoff_file}} (Test_report_ref, Tests_passed: true, Next=code-reviewer).
+      If ANY fails: Blocked: true, Return_to_step: infra-step or app-step (based on which layer failed), Block_reason: [failure output].
+
+  - id: review
+    subagent_type: code-reviewer
+    skills:
+      - common-code-review
+      - common-security-standards
+    entry_criteria: Tests pass
+    exit_criteria: Code review approved or changes requested
+    handoff_to: verify
+    on_concern_return_to: app-step
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and changed files across both app and infra layers.
+      Review for: cross-layer consistency (env vars, URLs, secrets references match), no hardcoded credentials in infra, proper state management in Terraform/Workers, security of deploy configuration.
+      Report in .agent-output/code-reviewer/.
+      If APPROVED: update {{handoff_file}} (Code_review_verdict: APPROVED, Next=verifier).
+      If REQUIRES_CHANGES: Blocked: true, Return_to_step: app-step or infra-step, Block_reason: [corrections].
+
+  - id: verify
+    subagent_type: verifier
+    skills:
+      - common-protocol-enforcement
+      - knowledge-audit
+    entry_criteria: All prior steps complete
+    exit_criteria: All acceptance criteria met
+    handoff_to: null
+    on_concern_return_to: review
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. Validate:
+        1. App-side changes are complete and tested
+        2. Infra-side changes are validated (plan/dry-run successful)
+        3. Code_review_verdict: APPROVED
+        4. Cross-layer integration points verified (URLs, env vars, secrets references)
+      For human-judgment items (e.g. "deploy to staging and verify"), ASK the user.
+      Generate specs/knowledge/searchable/YYMMDD-{topic}-cross-domain-validation.md.
+      MANDATORY SDD closure (skill knowledge-audit): READ $AGENT_KIT/skills/knowledge-audit/SKILL.md — relink, merge, prune per skill when ALL met. If unmet, skip closure until resolved.
+      If ALL met: mark DONE, DELETE {{handoff_file}}.
+      If unmet: Blocked: true, Return_to_step: [app-step|infra-step|review], Block_reason: [reason].

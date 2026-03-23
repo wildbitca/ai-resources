@@ -1,5 +1,8 @@
+.idea
 .DS_Store
+# Stale duplicate artifacts (safe to delete locally)
 *.generated.md
 skills-index.generated.json
+skills-registry.generated.md
 # Local IDE / install-time (do not commit user machine paths)
 .cursor-install-local/

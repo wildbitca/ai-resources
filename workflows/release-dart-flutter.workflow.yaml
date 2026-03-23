@@ -1,0 +1,72 @@
+# handoff_file: Orchestrator MUST inject. With worktree: .agent-output/handoff-<branch>.md; without: .agent-output/handoff-release-mobile.md.
+#               When task DONE: DELETE handoff file. No pending handoffs, zombies, orphans.
+# Pre-publish hook: before human pushes to GitHub. Generates humanized release notes from
+# diff since latest published (tag). Output: CHANGELOG.md + release_notes_en-US.txt,
+# release_notes_es.txt. Agents must NOT commit or push — human reviews, then commits/pushes. The release
+# automation pipeline uses these files as-is (no note generation in the pipeline).
+#
+name: release-dart-flutter
+description: Pre-publish hook. Diff since latest tag → humanized release notes (CHANGELOG + release_notes_*.txt). No agent commit/push; human integrates. Pipeline trusts these files.
+domain: dart-flutter
+trigger: User asks to prepare a release or generate release notes before publishing to GitHub.
+prerequisites:
+  - flutter
+  - dart
+steps:
+  - id: gather
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+      - common-context-optimization
+    entry_criteria: Release preparation requested
+    exit_criteria: Commit range and metadata captured in release artifact file
+    handoff_to: generate
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: Gather changes between latest published version and current HEAD for release notes.
+      Commands to run:
+      1. Latest published = latest tag matching v*.*.* (e.g. git describe --tags --abbrev=0 2>/dev/null || echo "none")
+      2. If no tag, use main or develop as base (git rev-parse --abbrev-ref HEAD).
+      3. List commits: git log BASE..HEAD --no-merges --pretty=format:"%h|%s|%b" (replace BASE with latest tag or base ref).
+      4. Write result to .cursor/release_commits.txt: first line "BASE_REF=<ref>", then one line per commit (hash|subject|body).
+      If BASE is a tag, include "TAG=<tag>" on line 2. Parse version from pubspec.yaml (line "version: X.Y.Z") and append "CURRENT_VERSION=X.Y.Z" to the file.
+      Update {{handoff_file}} (Goal reached = "Gathered commits", Next assigned role=generate, Domain={{domain}}).
+      If you cannot determine BASE (e.g. no tags), set Blocked: true, Return_to_step: gather, Block_reason: "No previous tag or base ref found".
+  - id: generate
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Gather step complete; commit data available
+    exit_criteria: Release note files written per plan
+    handoff_to: verify
+    on_concern_return_to: gather
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read .cursor/release_commits.txt and {{handoff_file}}.
+      Task: Write a humanized, user-facing summary of what changed. Include ONLY real user-facing features and bug fixes. Exclude: refactors, chore, ci, docs-only, internal/technical changes.
+      Output files (the CI/CD pipeline will use these; do not generate notes in the pipeline):
+      1. CHANGELOG.md — Add or update per Keep a Changelog. Add an [Unreleased] or new version section with "Added", "Fixed", "Changed" bullets in plain language for users.
+      2. release_notes_en-US.txt — Short "What's new" in English (e.g. "What's New in This Version:" then bullet list). No commit hashes or technical jargon.
+      3. release_notes_es.txt — Same content in Spanish (e.g. "Novedades de esta versión:" then bullet list).
+      Use CURRENT_VERSION from .cursor/release_commits.txt for the version in CHANGELOG if adding a new version section. Apply skill changelog-best-practices if available.
+      Update {{handoff_file}} (Changes made = paths to the 3 files, Next assigned role=verify).
+      If .cursor/release_commits.txt is missing or empty, set Blocked: true, Return_to_step: gather, Block_reason: "No commit data".
+  - id: verify
+    subagent_type: verifier
+    skills:
+      - common-protocol-enforcement
+      - knowledge-audit
+    entry_criteria: All prior steps complete
+    exit_criteria: Release artifacts validated; ready for human review
+    handoff_to: null
+    on_concern_return_to: generate
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. Verify that CHANGELOG.md, release_notes_en-US.txt, and release_notes_es.txt exist and contain user-facing text only (no raw commit hashes or technical jargon).
+      Confirm: Release notes are ready for human review. Do NOT run git commit or git push. Human reviews, commits, and pushes when ready; the release automation pipeline uses these files as-is when publishing.
+      Save a release summary to specs/knowledge/decisions/YYMMDD-release-{version}.md with: version, base ref, key changes, files produced.
+      Generate validation report in specs/knowledge/searchable/YYMMDD-release-{version}-validation.md with: release artifacts checklist, pass/fail status.
+      Update {{handoff_file}} with final state. If files are missing or contain inappropriate content, set Blocked: true, Return_to_step: generate, Block_reason: [reason].
+      MANDATORY SDD closure (skill knowledge-audit): READ $AGENT_KIT/skills/knowledge-audit/SKILL.md — merge release notes summary into canonical docs if needed, relink, prune duplicate knowledge, refresh README. If Blocked, skip prune.
+      When task DONE: DELETE {{handoff_file}}. No pending handoffs, zombies, or orphans.

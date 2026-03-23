@@ -1,0 +1,182 @@
+# Standalone DevSecOps security workflow.
+# Also used as methodology reference by security/verify steps in all domain workflows.
+#
+# handoff_file: .agent-output/handoff-security-devsecops.md (standalone) or injected by parent workflow.
+#               When task DONE: DELETE handoff file.
+#
+# Tool matrix (auto-detected per stack):
+#   TypeScript/Angular: semgrep, eslint-plugin-security, npm audit, retire.js
+#   PHP/Symfony/API Platform: phpstan (security rules), psalm --taint-analysis, composer audit, progpilot
+#   Terraform/K8s: tfsec, checkov, trivy config, kubesec, conftest (OPA)
+#   Flutter/Dart: dart analyze (security lints), pub audit, semgrep
+#   General: gitleaks, trufflehog, trivy fs, OWASP ZAP (DAST)
+#
+# Tool availability: Steps MUST check tool availability before running (command -v <tool>).
+#   If a tool is missing: (1) log it in handoff as Missing_tools, (2) fall back to manual code
+#   review for that phase, (3) continue with available tools. Never fail solely because an
+#   optional tool is not installed.
+#
+name: security-devsecops
+description: DevSecOps audit — recon, SAST, dependency scan, secret detection, DAST, exploit validation, report.
+domain: security
+trigger: User asks for security audit, pen test, vulnerability scan, DevSecOps review, or exploit validation.
+prerequisites: [ ]
+steps:
+  - id: recon
+    subagent_type: security-auditor
+    skills:
+      - common-security-audit
+      - common-security-standards
+    entry_criteria: Audit goal defined
+    exit_criteria: Threat model documented; audit targets recorded in handoff
+    handoff_to: sast
+    prompt_template: |
+      Workspace: {{workspace}}. Target domain: {{domain}}.
+      Goal: {{user_goal}}.
+      Task: Threat modeling, reconnaissance, and tool inventory.
+      1. Check tool availability: run `command -v semgrep gitleaks trivy tfsec checkov kubesec` (and stack-specific: phpstan, eslint, dart).
+         Record available and missing tools in {{handoff_file}} as Available_tools and Missing_tools.
+      2. Identify tech stack, entry points, trust boundaries, data flows, sensitive assets.
+      3. Map attack surface: APIs, auth endpoints, file uploads, external integrations, IaC resources, client-side storage.
+      4. Classify assets by risk (critical/high/medium/low) using STRIDE.
+      Output: Create threat model YYMMDD-NNN.md in .agent-output/security-auditor/.
+      Contents: tool inventory, attack surface map, threat list (STRIDE), risk classification, prioritized audit targets.
+      Update {{handoff_file}} (Threat_model_ref, Audit_targets, Stack_detected, Available_tools, Missing_tools, Next=security-auditor[sast]).
+      If blocked, set Blocked: true, Return_to_step: recon, Block_reason: [reason].
+
+  - id: sast
+    subagent_type: security-auditor
+    skills:
+      - common-security-audit
+      - common-security-standards
+    entry_criteria: Threat model available
+    exit_criteria: SAST findings recorded in handoff
+    handoff_to: dependency-scan
+    on_concern_return_to: recon
+    prompt_template: |
+      Workspace: {{workspace}}. Target domain: {{domain}}.
+      Read {{handoff_file}} and Threat_model_ref.
+      Task: Static Application Security Testing on prioritized targets.
+      Read Available_tools and Missing_tools from {{handoff_file}}.
+      For each SAST tool below: if available, run it; if missing, perform manual code review for that category and note "manual-review" in findings.
+      Run stack-appropriate SAST (skip unavailable tools gracefully):
+        - TypeScript/Angular: semgrep --config p/typescript p/owasp-top-ten, eslint --plugin security
+        - PHP/Symfony: phpstan with security extension, psalm --taint-analysis, progpilot
+        - Terraform: tfsec ., checkov --directory .
+        - K8s/Helm: kubesec scan, conftest test, kube-score
+        - Dart/Flutter: dart analyze, semgrep --config p/dart
+        - General fallback: semgrep --config auto
+      For each finding: severity (critical/high/medium/low), CWE ID, file:line, description, remediation, method (tool|manual-review).
+      Output: Append SAST findings to analysis file.
+      Update {{handoff_file}} (SAST_findings=count by severity, Tools_used, Next=security-auditor[dependency-scan]).
+      If critical findings require immediate action, set Blocked: true, Return_to_step: recon, Block_reason: [critical vulns needing scope revision].
+
+  - id: dependency-scan
+    subagent_type: security-auditor
+    skills:
+      - common-security-audit
+      - common-security-standards
+    entry_criteria: SAST phase complete
+    exit_criteria: Dependency findings recorded in handoff
+    handoff_to: secret-detection
+    on_concern_return_to: sast
+    prompt_template: |
+      Workspace: {{workspace}}. Target domain: {{domain}}.
+      Read {{handoff_file}}.
+      Task: Scan dependencies for known CVEs, outdated packages, and license risks.
+      Run stack-appropriate tools:
+        - Node/Angular: npm audit --json, npx retire --js
+        - PHP: composer audit --format=json
+        - Terraform: trivy config ., checkov
+        - Container images: trivy image <image> (if Dockerfile present)
+        - Dart/Flutter: dart pub outdated, flutter pub audit (if available)
+        - General: trivy fs --security-checks vuln .
+      For each CVE: ID, severity, CVSS, affected package@version, fixed version, exploitability.
+      Update {{handoff_file}} (Dependency_findings=count, Exploitable_CVEs=list, Next=security-auditor[secret-detection]).
+
+  - id: secret-detection
+    subagent_type: security-auditor
+    skills:
+      - common-security-audit
+      - common-security-standards
+    entry_criteria: Dependency scan complete
+    exit_criteria: Secret scan findings recorded in handoff
+    handoff_to: dast-probe
+    on_concern_return_to: dependency-scan
+    prompt_template: |
+      Workspace: {{workspace}}. Target domain: {{domain}}.
+      Read {{handoff_file}}.
+      Task: Detect hardcoded secrets, credentials, tokens, API keys in codebase and git history.
+      Read Available_tools from {{handoff_file}}. If gitleaks available, run: gitleaks detect --source . --report-format json. If trufflehog available, run: trufflehog filesystem . . If neither available, perform manual grep-based secret scan (patterns: API_KEY, SECRET, TOKEN, PASSWORD, private_key, -----BEGIN).
+      Also check manually: .env files committed, secrets in CI configs, base64-encoded credentials, private keys in repo, terraform.tfstate with secrets.
+      For each finding: type (API key/password/token/certificate), file:line, whether rotatable, exposure risk.
+      Update {{handoff_file}} (Secret_findings=count, Requires_rotation=list, Next=security-auditor[dast-probe]).
+      If secrets found in production code or git history, flag as critical.
+
+  - id: dast-probe
+    subagent_type: security-auditor
+    skills:
+      - common-security-audit
+      - common-security-standards
+    entry_criteria: Secret detection complete
+    exit_criteria: DAST probe results recorded in handoff
+    handoff_to: exploit-validation
+    on_concern_return_to: secret-detection
+    prompt_template: |
+      Workspace: {{workspace}}. Target domain: {{domain}}.
+      Read {{handoff_file}} and Threat_model_ref.
+      Task: Dynamic/penetration testing probes against identified attack surface.
+      Methodology (adapt to stack):
+        - API endpoints: SQLi, NoSQLi, command injection, auth bypass, BOLA/IDOR, mass assignment, SSRF, rate limit bypass
+        - Angular frontend: XSS (reflected/stored/DOM), CSP bypass, open redirect, CSRF, prototype pollution
+        - PHP backend: deserialization, file inclusion (LFI/RFI), path traversal, session fixation, type juggling
+        - IaC/K8s: privilege escalation, exposed dashboards, misconfigured RBAC, default credentials, network policy gaps
+        - Flutter/mobile: insecure storage, certificate pinning bypass, intent hijacking, deeplink abuse
+      Document each probe: target, technique, payload used, result (vulnerable/safe), evidence.
+      Update {{handoff_file}} (DAST_findings=count, Exploitable_vulns=list, Next=security-auditor[exploit-validation]).
+
+  - id: exploit-validation
+    subagent_type: security-auditor
+    skills:
+      - common-security-audit
+      - common-security-standards
+    entry_criteria: DAST probes complete
+    exit_criteria: Critical/high findings validated or triaged
+    handoff_to: report
+    on_concern_return_to: dast-probe
+    prompt_template: |
+      Workspace: {{workspace}}. Target domain: {{domain}}.
+      Read {{handoff_file}}.
+      Task: Validate and reproduce critical/high findings from all previous steps.
+      For each critical/high finding:
+        1. Attempt minimal PoC (proof of concept) — code snippet or curl command
+        2. Confirm exploitability in current configuration and environment
+        3. Assess real-world impact: data exposure, RCE, privilege escalation, DoS, data integrity
+        4. Classify: Confirmed Exploitable, Confirmed but Mitigated, False Positive, Needs Manual Verification
+      Prioritize by: exploitability × impact × exposure.
+      Update {{handoff_file}} (Validated_findings=list with verdicts, Next=verifier[report]).
+
+  - id: report
+    subagent_type: verifier
+    skills:
+      - common-protocol-enforcement
+      - knowledge-audit
+    entry_criteria: All prior steps complete
+    exit_criteria: Consolidated security report written; verdict recorded
+    handoff_to: null
+    on_concern_return_to: exploit-validation
+    prompt_template: |
+      Workspace: {{workspace}}. Target domain: {{domain}}.
+      Read {{handoff_file}} and all analysis files in .agent-output/security-auditor/.
+      Task: Generate consolidated security report.
+      Output: YYMMDD-NNN-security-report.md in .agent-output/security-auditor/ AND a copy in specs/knowledge/searchable/YYMMDD-security-audit-{topic}.md for persistent reference.
+      Sections:
+        - Executive summary with overall verdict (PASS/CONDITIONAL/FAIL)
+        - Findings table: ID, severity, CWE, description, component, status, remediation
+        - Statistics: total by severity, false positive rate, coverage percentage
+        - OWASP Top 10 / CWE Top 25 coverage mapping
+        - Remediation roadmap: prioritized fix list with effort estimates (quick win / medium / complex)
+      Verdict criteria: PASS = no confirmed critical/high. CONDITIONAL = high findings with documented mitigations. FAIL = unmitigated critical.
+      Update {{handoff_file}} (Security_verdict, Report_ref).
+      MANDATORY SDD closure (skill knowledge-audit): READ $AGENT_KIT/skills/knowledge-audit/SKILL.md — relink; merge critical/high remediations into specs/cross-cutting/security-auth.md (or project issue list) when appropriate; prune duplicate searchable dumps if findings are tracked elsewhere; refresh specs/knowledge/README.md.
+      When task DONE: DELETE {{handoff_file}}.

@@ -1,0 +1,31 @@
+---
+description: Skill discovery — use skills-index.json + SKILL.md; workflows list skills explicitly.
+globs: ['**/*']
+alwaysApply: true
+---
+
+# Agent skills routing protocol
+
+You are in a **zero-trust** setting: do not rely on baseline pretraining for stack-specific architecture, style, or testing when a **skill** exists for that task.
+
+## Discovery order (do not skip)
+
+1. **Workflow active?** If `010-orchestrator.mdc` selected a workflow, each step lists **`skills:`** — resolve IDs to **`SKILL.md`** per **`050-subagent-delegation.mdc`** and read those files **before** acting.
+2. **Else (ad-hoc):** Use **`skills-index.json`** (repo root in **ai-resources**, or path from **`AGENT_KIT`**) to find candidates by `description` / `triggers`. Open the **`path`** listed for each candidate and read **`SKILL.md`**.
+3. **Project context:** Read **`<repo>/specs/PROJECT.md`** when working in a product repo.
+
+You do **not** need to load the entire catalog into context — **search or match**, then **read only relevant `SKILL.md` files**.
+
+## Mandatory behaviors
+
+- **Read before write:** If a skill matches, ingest **`SKILL.md`** before editing code.
+- **Authority:** Loaded skills override generic patterns.
+- **Delegation:** Broad exploration, multi-file work, or heavy discovery → **`Task`** subagent per **`050-subagent-delegation.mdc`** and **`100-token-economics.mdc`** — do not inline huge tree walks in the main thread.
+
+## Optional audit line
+
+When the user asks for traceability, you may state which **`SKILL.md`** paths you applied. This is **not** required on every reply.
+
+## Self-learning
+
+After substantive user corrections, consider **`common/session-retrospective`** per that skill.
