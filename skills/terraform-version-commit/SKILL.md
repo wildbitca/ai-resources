@@ -73,7 +73,7 @@ Use `scripts/version-commit.py`:
 
 ```bash
 python3 /path/to/skills/terraform-version-commit/scripts/version-commit.py [options] [project_root]
-# With org-iac batch: use --parent-dir /path/to/org-iac (project_root ignored)
+# With tf-modules-parent batch: use --parent-dir /path/to/tf-modules-parent (project_root ignored)
 ```
 
 - **--bump:** Override auto-detection.
@@ -86,26 +86,26 @@ python3 /path/to/skills/terraform-version-commit/scripts/version-commit.py [opti
   optional `changelog_entries` (human-focused bullets for CHANGELOG ### Changed). Then run the script again with **--messages-file** to apply those messages. See **references/llm-commit-messages.md**.
 - **--messages-file FILE:** Path to a JSON file with `commit_messages` (list of strings, one per commit group) and optional `changelog_entries` (list of strings for CHANGELOG ### Changed). Use after generating the file from the LLM context (e.g. with Cursor). Overrides auto-generated commit messages
   and CHANGELOG bullets.
-- **--parent-dir PATH:** Discover all `tf-module-*` git repos under PATH (e.g. `org-iac`). Before releasing, runs **terraform-provider-upgrade** (upgrade-providers.py) on all tf-modules and on **dependent projects** so **both provider versions and internal module versions** are updated to latest (
+- **--parent-dir PATH:** Discover all `tf-module-*` git repos under PATH (e.g. `tf-modules-parent`). Before releasing, runs **terraform-provider-upgrade** (upgrade-providers.py) on all tf-modules and on **dependent projects** so **both provider versions and internal module versions** are updated to latest (
   registry + sibling tags). Then **release only repos that have changes** (uncommitted `.tf`, CHANGELOG, or any file; or commits since last tag). After releasing, runs **terraform init -upgrade** in all tf-modules and dependent projects so `.terraform/modules` is refreshed and code editors see the
   latest code. **Requires** the **terraform-provider-upgrade** skill installed as a sibling (or `TERRAFORM_PROVIDER_UPGRADE_SCRIPT` set to the path of `upgrade-providers.py`). Ignores `project_root`.
-- **--dependent-projects PATH1,PATH2:** With `--parent-dir`: paths to dependent Terraform projects (e.g. org-gitops, pacha/ops). Upgrade and `terraform init -upgrade` run on each so they use latest module versions. If omitted, `parent/org-gitops` is used when present.
-- **--release-all-in-upgrade-set:** With `--parent-dir`: release **every** repo in the upgrade set (roots first), not only those with changes. Use when you need **cascade dependency update**: roots (e.g. gcp-kms) are committed/tagged/pushed first so dependents’ upgrade step can see the new tags via
+- **--dependent-projects PATH1,PATH2:** With `--parent-dir`: paths to dependent Terraform projects (comma-separated). Upgrade and `terraform init -upgrade` run on each so they use latest module versions. If omitted, no dependent projects are processed.
+- **--release-all-in-upgrade-set:** With `--parent-dir`: release **every** repo in the upgrade set (roots first), not only those with changes. Use when you need **cascade dependency update**: roots (e.g. module-base) are committed/tagged/pushed first so dependents’ upgrade step can see the new tags via
   `git fetch origin --tags` in sibling repos. Without this flag, roots with no local changes are skipped and dependents keep using the previous tag.
 - **--recursive:** With `--parent-dir` only. **Loop until nothing to release.** Each iteration: (1) runs **terraform-provider-upgrade** on every tf-module repo (in dependency order) and on **dependent projects**; (2) runs **terraform init -upgrade** in all repos and dependents (refresh module cache
   for editors); (3) determines which repos need release; (4) releases them in dependency order (commit, CHANGELOG, tag, push); (5) runs **terraform init -upgrade** again in all tf-modules and dependents so editors see the newly pushed tags. Repeats until nothing to release. Requires the *
   *terraform-provider-upgrade** skill. Use `--yes` with `--recursive` for non-interactive runs.
 
-### All tf-modules in org-iac (batch)
+### All tf-modules in tf-modules-parent (batch)
 
-When the user asks to run **terraform-version-commit on all tf-modules\* dirs/repos inside org-iac**:
+When the user asks to run **terraform-version-commit on all tf-modules\* dirs/repos inside tf-modules-parent**:
 
-1. **Upgrade (with --parent-dir):** Run **terraform-provider-upgrade** (upgrade-providers.py) on all tf-modules (in dependency order) and on **dependent projects**. This updates **both provider versions** (from Terraform Registry) and **internal wildbit module versions** (from sibling repos’ latest
+1. **Upgrade (with --parent-dir):** Run **terraform-provider-upgrade** (upgrade-providers.py) on all tf-modules (in dependency order) and on **dependent projects**. This updates **both provider versions** (from Terraform Registry) and **internal private module versions** (from sibling repos’ latest
    tags) to latest. Then run **terraform init -upgrade** in each so the module cache is refreshed for editors.
 2. **List** all repos: the script looks under `PATH` (or `PATH/tf-modules` if that dir exists) for directories whose name starts with `tf-module-` and that contain a `.git` directory.
 3. **Decide which need a release:** A repo "needs release" if it has uncommitted changes in **any** file (`.tf`, CHANGELOG.md, versions.tf after upgrade, etc.) **or** at least one commit since the last tag (or has commits but no tag yet).
 4. **Dependency tree and release order (reverse traverse, roots first):** The script builds a dependency graph and computes an **upgrade set** = repos that need release **plus** all their transitive dependencies. It then processes in **topological order (roots first)** so that when a root (e.g.
-   gcp-kms) is released and pushed, the next repo’s upgrade step sees the new tag via `git fetch origin --tags` in sibling repos (cascade). If a cycle is detected among tf-modules, the script exits with an error.
+   module-base) is released and pushed, the next repo’s upgrade step sees the new tag via `git fetch origin --tags` in sibling repos (cascade). If a cycle is detected among tf-modules, the script exits with an error.
 5. **Run version-commit:** For each repo in upgrade order: upgrade (providers + module refs) → terraform init -upgrade → if needs release (or `--release-all-in-upgrade-set`), run version-commit (commit, CHANGELOG, tag, push). Repos without changes are skipped unless `--release-all-in-upgrade-set` is
    used.
 6. **Refresh module cache:** After releasing (push), the script runs **terraform init -upgrade** in all tf-modules and dependent projects so `.terraform/modules` has the newly pushed tags and code editors work properly.
@@ -113,19 +113,19 @@ When the user asks to run **terraform-version-commit on all tf-modules\* dirs/re
 Example (dry-run to see which would be released):
 
 ```bash
-python3 /path/to/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/org-iac --dry-run
+python3 /path/to/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/tf-modules-parent --dry-run
 ```
 
 Example (release all that have changes, no prompt):
 
 ```bash
-python3 /path/to/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/org-iac --yes
+python3 /path/to/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/tf-modules-parent --yes
 ```
 
 Example (recursive: upgrade providers and internal module refs, then release; repeat until nothing to release):
 
 ```bash
-python3 /path/to/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/org-iac --recursive --yes
+python3 /path/to/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/tf-modules-parent --recursive --yes
 ```
 
 Output shows: "Discovered N tf-module repo(s), M with changes (need release)", lists each repo with `[RELEASE]` next to those that will be processed, then **Release order (dependencies first)** with numbered steps and each repo's dependencies, then runs version-commit in that order. With

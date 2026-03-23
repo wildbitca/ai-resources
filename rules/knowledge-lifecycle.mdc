@@ -9,7 +9,7 @@ alwaysApply: false
 
 **See also:** `knowledge-audit.mdc` (command **`/knowledge-audit`** and skill **`knowledge-audit`**).
 
-Applies in workspaces that use **`specs/knowledge/`** (SnoutZone pattern).
+Applies in workspaces that use **`specs/knowledge/`**.
 
 - **Canonical product/architecture truth** = `specs/features/`, `specs/cross-cutting/`, `specs/architecture/`, `specs/PROJECT.md`. Not `specs/knowledge/`.
 - **`specs/knowledge/`** = temporary research, plans, audits. When content is **promoted** into specs/ADRs and work is done, **delete** the obsolete markdown and remove any obsolete rows or notes in `specs/PROJECT.md` that pointed only at those files.

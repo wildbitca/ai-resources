@@ -10,11 +10,11 @@ metadata:
 
 ## When to Use What
 
-| Use Case              | Recommendation              |
-|-----------------------|-----------------------------|
+| Use Case | Recommendation |
+|----------|----------------|
 | New apps with signals | Signal Forms (experimental) |
-| Production apps       | Reactive Forms              |
-| Simple forms          | Template-driven             |
+| Production apps | Reactive Forms |
+| Simple forms | Template-driven |
 
 ---
 
@@ -51,7 +51,6 @@ export class LoginComponent {
 ```
 
 ### Signal Forms Benefits
-
 - Automatic two-way binding
 - Type-safe field access
 - Schema-based validation
@@ -91,7 +90,6 @@ export class LoginComponent {
 ```
 
 ### Key Points
-
 - ALWAYS use `fb.nonNullable.group()` for type safety
 - Use `getRawValue()` to get typed values
 - Reactive Forms are synchronous (easier to test)
