@@ -34,8 +34,6 @@ The person or assistant cutting a release should do this in order (no helper scr
 4. **Tag and push:**  
    `git tag -a v1.2.0 -m "Release 1.2.0"`  
    `git push origin v1.2.0`
-5. **SHA256 for Homebrew** (after the tag exists on GitHub, replace `wildbitca` if needed):  
-   `curl -fsSL "https://github.com/wildbitca/ai-resources/archive/refs/tags/v1.2.0.tar.gz" | shasum -a 256`
-6. **Update `packaging/homebrew/Formula/ai-resources.rb`:** set `url` to that tarball, `sha256` to the hash from step 5, `version` to `1.2.0` (and bump `revision` only if you re-release the same version without a new tag). If the hash in the formula changes the tarball, recompute and update until stable, then move the tag to the final commit if needed.
-7. **Publish the tap:** copy or merge the updated formula into the **homebrew tap** repo; commit and push so users can `brew update && brew upgrade ai-resources`.
-8. **Optional:** create a **GitHub Release** on `v1.2.0` with notes from the changelog section.
+5. **Update `packaging/homebrew/Formula/ai-resources.rb`:** set `tag: "v1.2.0"` and `version "1.2.0"` (formula uses **git** `url` + `tag` — no tarball `sha256`, which avoids checksum churn for private repos). Optionally add `revision: "<full-git-sha>"` if you want `brew audit` reproducibility; that SHA must be the commit the tag points to after the formula change lands.
+6. **Publish the tap:** copy or merge the updated formula into the **homebrew tap** repo; commit and push so users can `brew update && brew upgrade ai-resources`. For a **private** GitHub repo, ensure `HOMEBREW_GITHUB_API_TOKEN` is set when installing so Homebrew can clone over HTTPS.
+7. **Optional:** create a **GitHub Release** on `v1.2.0` with notes from the changelog section.

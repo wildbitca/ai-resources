@@ -22,10 +22,11 @@ If you change `skills/**` or imports, run **`generate`** and commit **`skills-in
 
 ## Homebrew
 
-- Formula: **`packaging/homebrew/Formula/ai-resources.rb`** → installs the tree and exposes **`ai-resources`** (wrapper around `kit.py`).
-- Private tap: separate repo (e.g. `homebrew-ai-resources`); employees `brew tap` + `brew install ai-resources` (PAT may be needed for private GitHub).
+- Formula: **`packaging/homebrew/Formula/ai-resources.rb`** → **git** install at tag **`vX.Y.Z`** (no tarball checksum); exposes **`ai-resources`** (wrapper around `kit.py`). Requires **`python@3.12`**.
+- **Private** GitHub repo: set **`HOMEBREW_GITHUB_API_TOKEN`** to a token with `repo` scope before `brew install`, or use SSH in a tap that points at an SSH remote.
+- Tap: separate repo (e.g. `homebrew-ai-resources`); copy the formula there, then `brew tap` + `brew install ai-resources`.
 
-After each **git tag** `vX.Y.Z`, update the formula’s **`url`**, **`sha256`**, and **`version`**, then publish the tap — see **`CHANGELOG.md` → Release manager checklist**.
+After each release tag, bump **`tag`** and **`version`** in the formula (see **`CHANGELOG.md` → Release manager checklist**).
 
 ## Changelog
 
