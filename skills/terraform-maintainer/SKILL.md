@@ -12,7 +12,7 @@ You are the **maintainer** of the Terraform module set and of every project that
 *changelog-best-practices** (normalize-changelog.py), and applies the **terraform-devops-modules** bar (structure, security, naming) when maintaining or auditing modules. Use the bash script `scripts/maintain.sh` or run the documented command sequence (see §3 and workflow B). Use simple bash or
 shell commands to direct and sequence those tools. **The golden line (§ below) defines the mandatory sequence: all four skills’ procedures must run for full maintain.**
 
-**Apply this skill when:** The user asks to maintain tf-modules, release modules, upgrade providers, sync dependent projects (e.g. pacha/ops, org-gitops), normalize changelogs, or bring the Terraform estate up to a “professional set” of standards. **Sin parámetros = hacer todo:** ejecutar todos los
+**Apply this skill when:** The user asks to maintain tf-modules, release modules, upgrade providers, sync dependent projects, normalize changelogs, or bring the Terraform estate up to a “professional set” of standards. **Sin parámetros = hacer todo:** ejecutar todos los
 upgrades, inits, release completo y refresh en todos los repos y dependents; solo limitar (dry-run, projects only, no release) cuando el usuario lo pida explícitamente.
 
 ---
@@ -21,15 +21,15 @@ upgrades, inits, release completo y refresh en todos los repos y dependents; sol
 
 **El maintainer es responsable de mantener todo el código Terraform conocido**, no solo los tf-modules. Eso incluye:
 
-- **tf-modules** (todos los repos `tf-module-*` bajo el parent, e.g. org-iac/tf-modules): upgrade de providers y refs internos, release (commit, CHANGELOG, tag, push), changelog, refresh.
-- **Proyectos dependientes** (org-gitops, pacha/ops, y cualquier otro que consuma módulos wildbit): upgrade de **providers** y de **versiones de módulos internos** (`app.terraform.io/wildbit/.../module`) a las últimas tags, `terraform init -upgrade` y `validate`, y **commit y push** de los cambios
+- **tf-modules** (todos los repos `tf-module-*` bajo el parent, e.g. tf-modules-parent/tf-modules): upgrade de providers y refs internos, release (commit, CHANGELOG, tag, push), changelog, refresh.
+- **Proyectos dependientes** (e.g. my-infra-gitops, my-project/ops, y cualquier otro que consuma módulos privados): upgrade de **providers** y de **versiones de módulos internos** (`app.terraform.io/<your-org>/.../module`) a las últimas tags, `terraform init -upgrade` y `validate`, y **commit y push** de los cambios
   que genere el upgrade en cada dependent.
 
-**Upgrade en dependents:** Al ejecutar upgrade en un proyecto dependiente, hay que usar `upgrade-providers.py` con el **tercer argumento (modules_root)** = path al directorio de tf-modules, para que se actualicen las **versiones de los módulos wildbit** a la última tag publicada — no solo los
-providers. Así los planes (CI, Terraform Cloud, remoto) usan el comportamiento actual de los módulos (ej. nombres KMS con acrónimo PM/CR).
+**Upgrade en dependents:** Al ejecutar upgrade en un proyecto dependiente, hay que usar `upgrade-providers.py` con el **tercer argumento (modules_root)** = path al directorio de tf-modules, para que se actualicen las **versiones de los módulos privados** a la última tag publicada — no solo los
+providers. Así los planes (CI, Terraform Cloud, remoto) usan el comportamiento actual de los módulos.
 
 **Cambios en dependents:** Si el upgrade deja en un dependent cambios sin commit (ej. `version = "~> 3.1"` → `"~> 4.0"` en main.tf), el maintainer debe **commitear y pushear** esos cambios en ese repo. **version-commit.py** (con `--parent-dir`) hace esto **automáticamente** al final del run: tras el
-release y el refresh, hace commit y push en cada dependent con cambios, de modo que el **próximo run de TFC/CI** use ya las versiones de módulos con el fix (ej. gcp-kms v4.0.5).
+release y el refresh, hace commit y push en cada dependent con cambios, de modo que el **próximo run de TFC/CI** use ya las versiones de módulos con el fix (ej. module-base v4.0.5).
 
 ---
 
@@ -40,7 +40,7 @@ release y el refresh, hace commit y push en cada dependent con cambios, de modo 
 | Order | Skill                          | Procedure (what must run)                                                                                                                                                                                                                                                                               |
 |-------|--------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 1     | **terraform-devops-modules**   | Apply or verify: module structure (main.tf, variables.tf, outputs.tf, versions.tf), required_providers, composition, security (no secrets, sensitive outputs, least privilege), naming, HCL style. When maintaining: audit each module against this bar; when creating/refactoring: apply the full bar. |
-| 2     | **terraform-provider-upgrade** | Bump provider versions (Registry) and internal wildbit module refs (sibling tags). Run `upgrade-providers.py` per project or `upgrade-all-with-deps.py` on tf-modules root. Then `terraform init -upgrade` and `terraform validate`.                                                                    |
+| 2     | **terraform-provider-upgrade** | Bump provider versions (Registry) and internal private module refs (sibling tags). Run `upgrade-providers.py` per project or `upgrade-all-with-deps.py` on tf-modules root. Then `terraform init -upgrade` and `terraform validate`.                                                                    |
 | 3     | **terraform-version-commit**   | Commit .tf changes, update CHANGELOG, compute semver (major/minor/patch), tag, push. Single repo: `version-commit.py --yes .` Batch: `version-commit.py --parent-dir <path> --yes` (dependency order).                                                                                                  |
 | 4     | **changelog-best-practices**   | Normalize or fix CHANGELOG.md (Keep a Changelog, human-focused entries). Run `normalize-changelog.py` when CHANGELOG is script-generated or noisy; commit if changed.                                                                                                                                   |
 
@@ -56,7 +56,7 @@ says so** (e.g. "dry-run only", "projects only", "no release").
 **When the user runs terraform-maintainer with no argument** (e.g. “run terraform-maintainer”, “maintain tf-modules”), the intended behavior is **maintain** = full maintenance of the **tf-modules** tree following the **golden line** above:
 
 1. **terraform-devops-modules:** Apply or verify standards (structure, versions.tf, security, naming) for each module being maintained.
-2. **terraform-provider-upgrade:** Run **all** upgrades: provider versions and internal wildbit module refs in every tf-module (and dependents when using `--parent-dir`). Run `terraform init -upgrade` and `terraform validate` in each repo.
+2. **terraform-provider-upgrade:** Run **all** upgrades: provider versions and internal private module refs in every tf-module (and dependents when using `--parent-dir`). Run `terraform init -upgrade` and `terraform validate` in each repo.
 3. **terraform-version-commit:** Run the **full** release: commit .tf, update CHANGELOG, semver tag, push — in **dependency order (small to big)**. Release every repo that has changes.
 4. **changelog-best-practices:** Normalize CHANGELOG.md when script-generated or noisy; commit if needed.
 5. **Refresh everything:** After tags are pushed, run `terraform init -upgrade` in **all** tf-modules and in **all** dependent projects so they resolve the new versions.
@@ -75,8 +75,8 @@ These four skills form the **golden line**: every full maintain run must execute
 | Skill                          | Use it for                                                                                                                                                                                                                                              |
 |--------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **terraform-devops-modules**   | Module structure (main.tf, variables.tf, outputs.tf, versions.tf), composition, provider constraints, security (state, IAM, networking), HCL style. Apply when creating or refactoring a module, or auditing that a module meets the standard.          |
-| **terraform-provider-upgrade** | Bump provider versions (Registry API) and internal wildbit module refs (from sibling tags). Use `upgrade-providers.py` on a single project; use `upgrade-all-with-deps.py` only on the **tf-modules root** (dependency-order upgrade + version-commit). |
-| **terraform-version-commit**   | Commit .tf changes, update CHANGELOG, compute semver bump (major/minor/patch), tag, push. Use on a single tf-module or with `--parent-dir` for the whole org-iac tree (batch release in dependency order).                                              |
+| **terraform-provider-upgrade** | Bump provider versions (Registry API) and internal private module refs (from sibling tags). Use `upgrade-providers.py` on a single project; use `upgrade-all-with-deps.py` only on the **tf-modules root** (dependency-order upgrade + version-commit). |
+| **terraform-version-commit**   | Commit .tf changes, update CHANGELOG, compute semver bump (major/minor/patch), tag, push. Use on a single tf-module or with `--parent-dir` for the whole tf-modules-parent tree (batch release in dependency order).                                              |
 | **changelog-best-practices**   | Keep a Changelog format, human-focused entries, normalize script-generated CHANGELOGs (e.g. after version-commit). Use when writing, maintaining, or fixing CHANGELOG.md.                                                                               |
 
 **Rule:** Read and follow each skill’s SKILL.md when you are about to perform that skill’s task. Do not only “mention” a skill—invoke its workflow and scripts with correct paths and options. **Foreground execution mandatory:** run all version-commit and upgrade-providers (or upgrade-all-with-deps)
@@ -94,14 +94,14 @@ commands in the foreground; do not use `nohup`, `&`, or background execution.
 
 1. **Bash orchestrator (recommended):** Run the skill’s script, which only calls the existing tools in sequence with clear step messages:
    ```bash
-   .cursor/skills/terraform-maintainer/scripts/maintain.sh /path/to/org-iac
+   .cursor/skills/terraform-maintainer/scripts/maintain.sh /path/to/tf-modules-parent
    ```
    Optional: `--dry-run-only` to only discover repos and order (no release).  
    **Timeout:** When running maintain.sh in-agent, use the **maximum allowed timeout (600000 ms / 10 minutes)** so the script can progress as far as possible. The full release step often takes 15–45+ minutes; for **complete** runs (all commit/tag/push), run the same command in a terminal. Optional:
    `TIMEOUT_SEC=2700 ./maintain.sh ...` (45 min cap) when run in terminal.
 
 2. **Exact command sequence (no reimplementation):**
-    - Step 1 (dry-run): `python3 -u .cursor/skills/terraform-version-commit/scripts/version-commit.py --parent-dir <PATH> --dry-run [--dependent-projects <PATH>/org-gitops]`
+    - Step 1 (dry-run): `python3 -u .cursor/skills/terraform-version-commit/scripts/version-commit.py --parent-dir <PATH> --dry-run [--dependent-projects <PATH>/infra-gitops]`
     - Step 2 (release): `python3 -u .cursor/skills/terraform-version-commit/scripts/version-commit.py --parent-dir <PATH> --yes [--dependent-projects ...]`
       Summarize dry-run output for the user; then run the release step in the foreground. If it times out, output the same command for the user to run in their terminal.
 
@@ -115,7 +115,7 @@ commands in the foreground; do not use `nohup`, `&`, or background execution.
 
 - **maintain.sh:**  
   `.cursor/skills/terraform-maintainer/scripts/maintain.sh`  
-  Usage: `maintain.sh /path/to/org-iac [--dry-run-only]`
+  Usage: `maintain.sh /path/to/tf-modules-parent [--dry-run-only]`
 
 **Tools invoked by the orchestrator (do not reimplement; call these):**
 
@@ -127,8 +127,8 @@ commands in the foreground; do not use `nohup`, `&`, or background execution.
 - **changelog-best-practices:**  
   `.cursor/skills/changelog-best-practices/scripts/normalize-changelog.py`
 
-**Typical layout:** tf-modules live under e.g. `org-iac/tf-modules/` (each `tf-module-*` is a git repo). Dependent projects: `org-iac/org-gitops`, `pacha/ops`, etc. Para mantener **todo** el código Terraform conocido, pasar todos los dependents en `--dependent-projects` (rutas separadas por coma), o
-definir `DEPENDENT_PROJECTS` (ej. `org-iac/org-gitops,/path/to/pacha/ops`) antes de ejecutar `maintain.sh`.
+**Typical layout:** tf-modules live under e.g. `tf-modules-parent/tf-modules/` (each `tf-module-*` is a git repo). Dependent projects live alongside (e.g. `tf-modules-parent/infra-gitops`, `my-project/ops`). Para mantener **todo** el código Terraform conocido, pasar todos los dependents en `--dependent-projects` (rutas separadas por coma), o
+definir `DEPENDENT_PROJECTS` (ej. `/path/to/infra-gitops,/path/to/my-project/ops`) antes de ejecutar `maintain.sh`.
 
 ---
 
@@ -138,7 +138,7 @@ definir `DEPENDENT_PROJECTS` (ej. `org-iac/org-gitops,/path/to/pacha/ops`) antes
 |------------------------------------------------------------------|-------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | No argument / “maintain” / “maintain tf-modules”                 | **Maintain tf-modules** | Full maintenance of tf-modules: upgrade → maintain (standards) → fix (changelog) → commit → publish, in **dependency order (small to big)**. Then refresh dependents (`terraform init -upgrade`). See workflow B. |
 | “Create a new module”                                            | **New module**          | Apply terraform-devops-modules bar, README, then upgrade + version-commit as in A or B. See workflow D.                                                                                                           |
-| “Projects only” / “only on projects” / “dependent projects only” | **Projects only**       | Upgrade and refresh **only** consuming projects (e.g. org-gitops, pacha/ops). No tf-module release. See workflow C.                                                                                               |
+| “Projects only” / “only on projects” / “dependent projects only” | **Projects only**       | Upgrade and refresh **only** consuming projects (e.g. my-infra-gitops, my-project/ops). No tf-module release. See workflow C.                                                                                               |
 
 ---
 
@@ -158,10 +158,10 @@ This is the **maintain** path (no argument) and implements the **golden line**: 
 1. **Upgrade + release in order:** The **version-commit.py** script (from terraform-version-commit) already runs upgrade on all tf-modules and dependents when given `--parent-dir`, then releases in **dependency order**. Invoke it; do not reimplement.
    ```bash
    # Option A: use the bash orchestrator (recommended; shows step messages)
-   .cursor/skills/terraform-maintainer/scripts/maintain.sh /path/to/org-iac
+   .cursor/skills/terraform-maintainer/scripts/maintain.sh /path/to/tf-modules-parent
 
    # Option B: call version-commit directly (use python3 -u for visible output)
-   python3 -u .cursor/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/org-iac --yes --dependent-projects /path/to/org-iac/org-gitops
+   python3 -u .cursor/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/tf-modules-parent --yes --dependent-projects /path/to/infra-gitops
    ```  
    Use `--recursive` on version-commit.py to repeat until nothing to release. If upgrade script is missing, version-commit skips the upgrade step and still discovers/releases in order.
 2. **Dependents:** After tags are pushed, run `terraform init -upgrade` in each dependent project so they resolve new module versions. version-commit with `--parent-dir` already runs upgrade-providers (with modules_root) on dependents, so internal module refs are updated. If a dependent has *
@@ -172,7 +172,7 @@ This is the **maintain** path (no argument) and implements the **golden line**: 
 
 **Use when the user says “projects only” or “only on projects”.** Do not release any tf-module; only upgrade and refresh consuming projects.
 
-1. Run **upgrade-providers.py** on each consuming project with the third argument = path to tf-modules, so provider versions and internal wildbit module versions are updated from sibling tags.
+1. Run **upgrade-providers.py** on each consuming project with the third argument = path to tf-modules, so provider versions and internal private module versions are updated from sibling tags.
 2. Run `terraform init -upgrade` and `terraform validate`. If a module version is not yet published (e.g. tag created with --no-push), keep that module’s version constraint at the last published version until the tag is pushed.
 
 ### D. New module or big refactor (professional bar)
@@ -187,8 +187,8 @@ This is the **maintain** path (no argument) and implements the **golden line**: 
 
 ## 6. Dependency order (tf-modules)
 
-Releasing or upgrading must respect dependencies: a module that uses `app.terraform.io/wildbit/B/module` must be upgraded or released **after** B is tagged and pushed. version-commit with `--parent-dir` computes this order. If you run upgrades manually, process in the same order (e.g. gcp-kms before
-gcp-cloudrun-service, gcp-parameter-manager).
+Releasing or upgrading must respect dependencies: a module that uses `app.terraform.io/<your-org>/B/module` must be upgraded or released **after** B is tagged and pushed. version-commit with `--parent-dir` computes this order. If you run upgrades manually, process in the same order (e.g. module-base before
+module-service-a, module-service-b).
 
 ---
 
@@ -196,8 +196,8 @@ gcp-cloudrun-service, gcp-parameter-manager).
 
 - [ ] Every tf-module has `versions.tf` with explicit `required_providers` (terraform-devops-modules).
 - [ ] Provider constraints are latest compatible (~> major.minor); no stale pins unless justified.
-- [ ] Internal module refs (app.terraform.io/wildbit/.../module) match published tags; dependents run `terraform init -upgrade` after releases.
-- [ ] Dependent projects (org-gitops, pacha/ops) have upgrade-induced changes committed and pushed so CI/remote plans use current module versions.
+- [ ] Internal module refs (app.terraform.io/<your-org>/.../module) match published tags; dependents run `terraform init -upgrade` after releases.
+- [ ] Dependent projects have upgrade-induced changes committed and pushed so CI/remote plans use current module versions.
 - [ ] Releases use strict semver (terraform-version-commit); tags are pushed so registry and dependents can consume.
 - [ ] CHANGELOG.md exists and follows Keep a Changelog; entries are human-focused (changelog-best-practices).
 - [ ] No secrets in .tf or state in repo; sensitive outputs marked; remote state, encryption, least privilege (terraform-devops-modules).

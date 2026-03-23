@@ -107,5 +107,4 @@ import { createUser, type Config } from "./utils";
 ```
 
 ## Keywords
-
 typescript, ts, types, interfaces, generics, strict mode, utility types

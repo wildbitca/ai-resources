@@ -219,5 +219,4 @@ const unsubscribe = useCounterStore.subscribe(
 ```
 
 ## Keywords
-
 zustand, state management, react, store, persist, middleware

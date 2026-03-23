@@ -11,7 +11,6 @@ metadata:
 ## When to Use
 
 Load this skill when:
-
 - Building mobile applications with React Native
 - Working with Expo managed or bare workflow
 - Implementing navigation with React Navigation
@@ -341,18 +340,18 @@ export function UserProfile({ userId }: { userId: string }) {
 
 ## Quick Reference
 
-| Task                    | Pattern                                                     |
-|-------------------------|-------------------------------------------------------------|
-| Create new Expo project | `npx create-expo-app@latest --template tabs`                |
-| Add NativeWind          | `npx expo install nativewind tailwindcss`                   |
-| Platform check          | `Platform.OS === 'ios'`                                     |
-| Safe insets             | `useSafeAreaInsets()` from `react-native-safe-area-context` |
-| Navigation              | `router.push('/screen')` with Expo Router                   |
-| Deep linking            | Configure in `app.json` under `expo.scheme`                 |
-| Environment vars        | Use `expo-constants` or `react-native-dotenv`               |
-| Icons                   | `@expo/vector-icons` (included in Expo)                     |
-| Animations              | `react-native-reanimated` for 60fps animations              |
-| Gestures                | `react-native-gesture-handler`                              |
+| Task | Pattern |
+|------|---------|
+| Create new Expo project | `npx create-expo-app@latest --template tabs` |
+| Add NativeWind | `npx expo install nativewind tailwindcss` |
+| Platform check | `Platform.OS === 'ios'` |
+| Safe insets | `useSafeAreaInsets()` from `react-native-safe-area-context` |
+| Navigation | `router.push('/screen')` with Expo Router |
+| Deep linking | Configure in `app.json` under `expo.scheme` |
+| Environment vars | Use `expo-constants` or `react-native-dotenv` |
+| Icons | `@expo/vector-icons` (included in Expo) |
+| Animations | `react-native-reanimated` for 60fps animations |
+| Gestures | `react-native-gesture-handler` |
 
 ## Resources
 

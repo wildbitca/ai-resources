@@ -196,5 +196,4 @@ const CHART_COLORS = {
 ```
 
 ## Keywords
-
 tailwind, css, styling, cn, utility classes, responsive

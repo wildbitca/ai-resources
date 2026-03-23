@@ -37,10 +37,10 @@ refs) + init -upgrade + validate everywhere, (3) commit/publish in dependency or
 
 ```bash
 # 1. Upgrade providers + internal module refs (from sibling tf-modules tags)
-python3 upgrade-providers.py /path/to/org-iac/tf-modules/tf-module-XXX /tmp/skipped.txt /path/to/org-iac/tf-modules
+python3 upgrade-providers.py /path/to/tf-modules-parent/tf-modules/tf-module-XXX /tmp/skipped.txt /path/to/tf-modules-parent/tf-modules
 
 # 2. Release (commit .tf, CHANGELOG, tag, push)
-cd /path/to/org-iac/tf-modules/tf-module-XXX
+cd /path/to/tf-modules-parent/tf-modules/tf-module-XXX
 python3 version-commit.py --yes .
 
 # 3. Optional: normalize CHANGELOG
@@ -50,38 +50,38 @@ python3 normalize-changelog.py CHANGELOG.md
 
 ---
 
-## Batch: all tf-modules + dependents (org-iac)
+## Batch: all tf-modules + dependents (tf-modules-parent)
 
 **Recommended:** Run the bash orchestrator so output is unbuffered and progress is visible. It runs dry-run then release; use `--dry-run-only` to only dry-run.
 
 ```bash
-.cursor/skills/terraform-maintainer/scripts/maintain.sh /path/to/org-iac
+.cursor/skills/terraform-maintainer/scripts/maintain.sh /path/to/tf-modules-parent
 # Dry-run only (no commit/tag/push):
-.cursor/skills/terraform-maintainer/scripts/maintain.sh /path/to/org-iac --dry-run-only
+.cursor/skills/terraform-maintainer/scripts/maintain.sh /path/to/tf-modules-parent --dry-run-only
 ```
 
 Alternative (run in foreground; use `python3 -u` for visible output):
 
 ```bash
-python3 -u .cursor/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/org-iac --dry-run --dependent-projects /path/to/org-iac/org-gitops
-python3 -u .cursor/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/org-iac --yes --dependent-projects /path/to/org-iac/org-gitops
+python3 -u .cursor/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/tf-modules-parent --dry-run --dependent-projects /path/to/tf-modules-parent/infra-gitops
+python3 -u .cursor/skills/terraform-version-commit/scripts/version-commit.py --parent-dir /path/to/tf-modules-parent --yes --dependent-projects /path/to/tf-modules-parent/infra-gitops
 ```
 
 **Note:** version-commit.py with `--parent-dir` runs upgrade-providers (with modules_root) on all tf-modules and dependents; releases in dependency order; then runs `terraform init -upgrade` everywhere. **It then automatically commits and pushes** any uncommitted changes in dependents (e.g. module
-version bumps), so the **next TFC/CI run uses the fixed module versions** (e.g. gcp-kms v4.0.5). Use `--dependent-projects` with comma-separated paths (e.g. `org-gitops,pacha/ops`) or set `DEPENDENT_PROJECTS` when running maintain.sh.
+version bumps), so the **next TFC/CI run uses the fixed module versions** (e.g. module-base v4.0.5). Use `--dependent-projects` with comma-separated paths (e.g. `infra-gitops,my-project/ops`) or set `DEPENDENT_PROJECTS` when running maintain.sh.
 
 ---
 
-## Only upgrade a dependent project (e.g. pacha/ops)
+## Only upgrade a dependent project (e.g. my-project/ops)
 
 ```bash
-python3 upgrade-providers.py /path/to/pacha/ops /tmp/skipped.txt /path/to/org-iac/tf-modules
-# Then: cd /path/to/pacha/ops && terraform init -upgrade && terraform validate
+python3 upgrade-providers.py /path/to/my-project/ops /tmp/skipped.txt /path/to/tf-modules-parent/tf-modules
+# Then: cd /path/to/my-project/ops && terraform init -upgrade && terraform validate
 # If there are changes (e.g. version bumps), commit and push so CI/remote plans use current versions:
 # git add -A && git commit -m "chore(terraform): upgrade provider and module versions" && git push
 ```
 
-If a module version (e.g. gcp-kms ~> 4.0) is not yet on the registry, keep version at last published (e.g. ~> 3.0) until the tag is pushed.
+If a module version (e.g. module-base ~> 4.0) is not yet on the registry, keep version at last published (e.g. ~> 3.0) until the tag is pushed.
 
 ---
 
@@ -90,7 +90,7 @@ If a module version (e.g. gcp-kms ~> 4.0) is not yet on the registry, keep versi
 Use only when you want to bump providers and internal refs in every tf-module **and** then release each (commit, tag, push). Otherwise use version-commit with --parent-dir.
 
 ```bash
-python3 upgrade-all-with-deps.py /path/to/org-iac/tf-modules [report_path] [--dry-run]
+python3 upgrade-all-with-deps.py /path/to/tf-modules-parent/tf-modules [report_path] [--dry-run]
 ```
 
 ---

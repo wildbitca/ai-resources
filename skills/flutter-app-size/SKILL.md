@@ -19,7 +19,7 @@ Applies practices that keep release APK/AAB/IPA size small. Reference: [I Shrunk
 
 - **REQUIRED** in `buildTypes.release`: `isMinifyEnabled = true`, `isShrinkResources = true`
 - **REQUIRED**: ProGuard files `proguard-android-optimize.txt` + `proguard-rules.pro`
-- ProGuard rules must keep Flutter, Room, WorkManager; update app package (e.g. `dev.wildbit.pacha.**`)
+- ProGuard rules must keep Flutter, Room, WorkManager; update app package (e.g. `com.example.myapp.**`)
 
 ## Flutter build flags (CI)
 
@@ -43,7 +43,7 @@ Applies practices that keep release APK/AAB/IPA size small. Reference: [I Shrunk
 
 ## ProGuard rules
 
-- Keep app package: `-keep class dev.wildbit.pacha.** { *; }`
+- Keep app package: `-keep class com.example.myapp.** { *; }`
 - Keep Flutter, Room, WorkManager per Flutter/Android docs
 - Do not use obsolete package names (e.g. `resource_frontier` if obsolete)
 
