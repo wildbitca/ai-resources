@@ -19,6 +19,7 @@ First tagged release. SemVer starts at **0.1.0**; bump **minor** for features, *
 ### Changed
 
 - **Documentation:** shorter root `README.md`; release history lives in this file. Removed `RELEASING.md`, `packaging/homebrew/README.md`, `tag-release.sh`, and `bump-formula-sha.sh` — releases are driven by the **release manager** (maintainer or assistant); see **Release manager checklist** below.
+- **Homebrew:** `packaging/homebrew/Formula/ai-resources.rb` installs from **git** at tag **`v0.1.0`** (no tarball `sha256`), suitable for a **private** GitHub repo when `HOMEBREW_GITHUB_API_TOKEN` is set.
 
 ---
 
