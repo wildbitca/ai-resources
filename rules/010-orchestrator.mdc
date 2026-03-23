@@ -1,0 +1,85 @@
+---
+description: Main orchestration loop — workflow selection, subagent dispatch, handoff lifecycle.
+alwaysApply: true
+---
+
+# Orchestrator
+
+On every user message implying code change, feature, bugfix, or multi-step task:
+
+## Step 0: Preflight
+
+- **Skills:** Classify task (simple → skip, standard/complex → discover skills via **`skills-index.json`** in **ai-resources**, then read matching **`SKILL.md`** files). **Workflows** (`$AGENT_KIT/workflows/`) list `skills:` per step — that list overrides ad-hoc discovery for those steps. See `agent-skill-standard-rule.mdc`.
+- **MCP:** Use `<repo>/.cursor/mcp.json` when present (minimal `.cursorrules` does not need to mention it).
+- **Memory / Engram:** If Engram MCP available, `mem_context` to recover session state; follow **two-step read** for large artifacts (`mem_search` → `mem_get_observation`). See `014-engram-mcp-protocol.mdc`.
+- **Agent-agnostic paths:** `015-agent-agnostic-paths.mdc` (`AGENT_SKILLS_ROOT`).
+- **Stale handoffs:** List `.agent-output/handoff-*.md`; warn if any > 24h old.
+- **Specs:** Read `<workspace>/specs/PROJECT.md` when present (`013-specs-project-entry.mdc`) — subagents read on demand.
+- **Knowledge hygiene:** User says `/knowledge-audit` or asks to prune `specs/knowledge/` → load `knowledge-audit.mdc` + skill **`$AGENT_KIT/skills/knowledge-audit/SKILL.md`**.
+
+## Step 1: Domain detection
+
+1. Read **Technologies** / **Stack** from `specs/PROJECT.md` first; if absent, from `.cursorrules`. Add user message + open files. Optional **Canonical Domains** table only in `.cursorrules` if present.
+2. Use **Domain detection signals** in `011-orchestrator-reference.mdc`. If ambiguous, **ask once**.
+
+## Step 2: Workflow selection
+
+1. If `.cursorrules` has an explicit **Workflow Auto-Selection** section with a table, use it.
+2. Otherwise use **Global workflow map** in `011-orchestrator-reference.mdc`. If intent does not match any row, proceed without workflow.
+
+Project context format is defined in `012-project-context.mdc`.
+
+## Step 3: Worktree setup (code-change workflows)
+
+For feature, bugfix, cross-domain: create git worktree (`feature/<name>` or `fix/<name>`), set `handoff_file` = `.agent-output/handoff-<branch>.md`. If Engram: `mem_session_start`. Skip for read-only workflows.
+
+## Step 4: Step iteration
+
+Read workflow YAML. For each step:
+1. **Persona**: `$AGENT_KIT/agents/personas/{role}-{domain}.md` → fallback `$AGENT_KIT/agents/roles/{role}.md`
+2. **Skills**: Step's `skills:` list → resolve each ID to `SKILL.md` using **Skill ID → SKILL.md path** in `050-subagent-delegation.mdc`. Subagent has **no** chat context; it must **read_file** those SKILL.md files before acting.
+3. **Dispatch**: Task tool with `subagent_type`, assembled prompt **must** include: workspace absolute path, `handoff_file` path, list of SKILL.md paths to read first, goal, and **mandatory return format** from `050-subagent-delegation.mdc` § Subagent return format.
+4. **Handoff**: Read after completion (file + short subagent summary only). If `Blocked=true` + `Return_to_step` → re-invoke (max 3 retries). Else proceed. **Do not** paste full subagent logs into the user-facing reply — see Main thread output contract.
+
+## Step 5: Conditional branching
+
+| Handoff field | Action |
+|---------------|--------|
+| `Research_needed=true` | Run research step before plan |
+| `Requires_tests=true` | Ensure test step runs |
+| `Security_critical_feature=true` | Run security-devsecops inline |
+
+## Step 6: Completion
+
+1. If Engram: `mem_session_summary`
+2. Merge worktree to base branch (or PR if user prefers)
+3. Delete handoff file
+4. Report to user
+
+## Dispatch rules
+
+Max 4 concurrent subagents. Sequential by default. 3 retries per step. Max timeout for test/security.
+
+## Delegation-first default
+
+**Default:** delegate (workflow + `Task` per step, or a single `Task` for scoped work). The main thread **orchestrates** — domain/workflow selection, handoff lifecycle, short user updates.
+
+### Broad exploration (not tied to "the project")
+
+**Broad exploration** means needing **many reads**, wide listing/globs, or open-ended discovery — **regardless of location**: current workspace, another checkout, **`$AGENT_KIT/`** (ai-resources) or other agent tooling, infra repos, docs, or fetched web content. That load belongs in a **subagent**; the main thread keeps a short summary. See `100-token-economics.mdc` rule 3.
+
+**Exception — inline in main thread only when ALL hold:**
+- Single-file change **or** a direct answer with **no** repo edits; **and**
+- No broad exploration (any scope), no multi-package touch, no security/architecture ambiguity; **and**
+- Estimated under two tool rounds.
+
+Anything else: **use a subagent** (`Task`). If unsure, delegate.
+
+## Main thread output contract
+
+Replies to the user after delegation should be **short**:
+
+- Status + next step (or done)
+- **No** large code dumps or full logs — point to paths or handoff
+
+Full detail lives in **handoff files**, **specs/**, or **Engram** when configured.

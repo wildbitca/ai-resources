@@ -1,0 +1,47 @@
+---
+description: Token and context pruning — @file/@symbol preference, no full-dir reads, broad exploration (any path) → subagent, .cursorignore, reset strategy.
+alwaysApply: true
+---
+
+# Token economics
+
+**Purpose:** Minimize context size and cost. Enforce strict context pruning so sessions stay under ~20k tokens where possible and agents avoid "token inferno" (loading entire repo or noisy paths).
+
+---
+
+## Rules (mandatory)
+
+1. **Mentions:** Prefer `@file` or `@symbol` for targeted context. Use `@codebase` only when the task explicitly requires broad search (e.g. "find all usages of X"). Never default to `@codebase` for single-file or single-symbol tasks.
+2. **Directories:** Never read entire directories. Use targeted search (e.g. grep/codebase search with a specific pattern) or explicit file mentions. If listing is needed, list only the minimal set of paths required.
+3. **Broad exploration (any scope):** "Exploration" is not limited to the current workspace, repo, or a particular tree. It means **any** open-ended or high-volume discovery: many files, wide globs, inventory of **ai-resources** (`$AGENT_KIT/`) or other agent tooling, sibling repos, generated trees, docs fetched for review, multi-path comparison, or "figure out how X is set up" without a single known file. **Absorb that work in a subagent** (`Task`) so the main thread stays a short router; see `010-orchestrator.mdc` **Delegation-first default** and `050-subagent-delegation.mdc`. The main thread should receive a compact summary (and optional artifact paths), not the full read trace.
+4. **File size:** Prefer files under ~200 lines. When editing or reviewing a file that exceeds this, consider suggesting a split or extraction into a separate module; do not load the whole file into context unnecessarily—read only the relevant sections (e.g. by symbol or line range).
+5. **Noise:** Respect `.cursorignore`. Build artifacts (`build/`, `dist/`, `out/`, `node_modules/`, `target/`, `vendor/`, language-tool caches), generated code files (e.g. outputs of codegen, protobuf/gRPC stubs, ORM mappers), build outputs, and logs/symbols are excluded from codebase search. Do not attempt to reason over or edit generated files unless the task is "regenerate" or "fix codegen."
+6. **Reset strategy:** If the session context exceeds ~20k tokens or the agent is stuck in a loop, do not add more context. Instead: (a) Summarize current state and open questions in a handoff (workspace `.agent-output/handoff.md` or repo root `handoff.md`), and (b) Instruct the user to clear the chat and restart from the Master Plan or the handoff file so the new context window begins from a clean summary.
+7. **Conditional loading of project context:** For simple tasks (single-file edit, quick question), read only **`specs/PROJECT.md`** sections needed (**Intent**, **Technologies**, one spec link) instead of loading long rule packs. For standard/complex work, load `specs/PROJECT.md` and relevant feature specs as needed.
+8. **Workflow prompts defer to personas:** Workflow prompt_templates should reference loaded personas for domain-specific conventions rather than inlining them. Domain-specific test/build commands are centralized in `_domain-commands.yaml`. This keeps workflow files lean and avoids context duplication.
+9. **Main thread after `Task`:** Do not paste subagent transcripts or long logs into the user reply. Summarize using **Main thread output contract** in `010-orchestrator.mdc`; point to `handoff_file` or diffs for detail.
+
+---
+
+## Workflow
+
+- **Before** running a broad search, opening many files, or scanning any large path (including outside the repo): Prefer a **subagent** unless the task is a single known file or two targeted reads — see rule 3 **Broad exploration (any scope)**.
+- **Before** a narrower search: Check whether the goal can be achieved with one or two `@file` or `@symbol` references.
+- **After** a multi-file change: Prefer listing only the changed files in the handoff; do not re-paste large file contents into the handoff.
+- **When** suggesting "read the full spec": Point to `.cursorrules` or a specific rule file (e.g. `000-project-bootstrap.mdc`) and, if possible, a section or heading, rather than inlining the full spec.
+
+---
+
+## Tooling and commands
+
+- **Codebase search:** Use semantic or grep search with narrow queries (e.g. symbol name, specific string) instead of loading entire source trees.
+- **Generated files:** To regenerate after schema/codegen changes, use the project's documented codegen command. Do not edit generated outputs by hand unless the generator is broken and a fix is planned.
+- **.cursorignore:** Maintained at repo root. Add new noisy or generated paths when new tooling is introduced (e.g. new codegen, new build outputs).
+
+---
+
+## Relation to other rules
+
+- **000-project-bootstrap.mdc** defines where config lives (shared **ai-resources** kit vs project vs global); use it to know which rule files to open instead of loading `.cursorrules` in full for small questions.
+- Stack-specific conventions (language, framework) live in `specs/PROJECT.md`, feature specs, and optional rules under `<repo>/.cursor/rules/` when the project adds them.
+- **Architecture map:** `$AGENT_KIT/rules/016-kit-architecture.mdc` in **ai-resources** (orchestration + discovery).

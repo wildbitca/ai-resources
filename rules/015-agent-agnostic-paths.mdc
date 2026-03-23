@@ -1,0 +1,32 @@
+---
+description: Skill roots for Cursor, Claude Code, and other agents — AGENT_SKILLS_ROOT, flat skill layout.
+alwaysApply: true
+---
+
+# Agent-agnostic skill paths
+
+Skills live under a **configurable root**. Defaults:
+
+| Environment | Default `AGENT_SKILLS_ROOT` |
+|-------------|---------------------------|
+| **ai-resources** (this repo) | `$AGENT_KIT/skills` (`AGENT_KIT` = repo root) |
+| Claude Code | `~/.claude/skills` (typical) |
+| Custom | `$AGENT_SKILLS_ROOT` if set |
+
+## Layout
+
+- **First-party skills:** `{root}/<category>/<skill>/SKILL.md` (e.g. `common/common-tdd/SKILL.md`).
+- **Imported skills (flat):** `{root}/{skill_id}/SKILL.md` (e.g. `gpm-curated-typescript/SKILL.md`).
+- **Shared references:** `{root}/_shared/*.md` (Engram / persistence excerpts).
+
+## Install (any agent)
+
+1. Update the kit (**`brew upgrade <formula>`** or **`git pull`**), then run **`python3 $AGENT_KIT/scripts/kit.py generate`**.
+2. **`python3 $AGENT_KIT/scripts/kit.py setup`** (or **`setup --target cursor`**, etc.) applies MCP, writes IDE stubs, and validates workflows.
+3. Point the agent at **`$AGENT_KIT/skills-index.json`** (discovery) and **`$AGENT_KIT/AGENTS.md`** (policy). Same for `CLAUDE.md` / project copies.
+
+## ID → path (delegation)
+
+- Flat id → `{root}/{id}/SKILL.md` (e.g. `gpm-curated-typescript`)
+
+See `050-subagent-delegation.mdc` for resolution rules in Cursor.

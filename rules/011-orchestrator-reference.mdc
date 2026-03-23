@@ -1,0 +1,44 @@
+---
+description: Global domain signals, Technologies-line parsing, and default workflow map.
+alwaysApply: true
+---
+
+# Orchestrator Reference
+
+Used by `010-orchestrator.mdc` for **every** workspace unless `.cursorrules` defines optional override tables (see `012-project-context.mdc`).
+
+## Parsing project context for domain
+
+1. Read `<workspace>/specs/PROJECT.md` if it exists. From **Technologies** (or **Stack**), extract keywords and map rows below (case-insensitive).
+2. If **Technologies** is missing there, fall back to `<workspace>/.cursorrules` (same keys) for older repos.
+3. Combine with **open editor files** + **user message** (e.g. “fix the Terraform module” → `devops` even if the app is Flutter).
+4. If **Technologies** lists multiple stacks, prefer the stack that matches the current task; if still ambiguous, **ask once**.
+
+## Domain detection signals
+
+| Signal | Domain |
+|--------|--------|
+| flutter, dart, widget, riverpod, `lib/`, `pubspec.yaml` | `dart-flutter` |
+| angular, component, `src/app/`, `angular.json` | `angular` |
+| php, composer, `*.php` | `php` |
+| symfony, doctrine, twig, `symfony.lock`, `config/packages/` | `symfony` |
+| api platform, `#[ApiResource]`, state provider/processor | `api-platform` |
+| terraform, crossplane, k8s, helm, `*.tf`, infra paths | `devops` |
+| security audit, vulnerability, pen test, OWASP | `security` |
+
+If the workspace clearly contains a **single** stack and the task does not mention another, default to that stack’s domain. If ambiguous, **ask the user**.
+
+## Global workflow map (default)
+
+Use this table **unless** `.cursorrules` contains an explicit `## Workflow Auto-Selection` section with its own table.
+
+| User intent | Workflow path |
+|-------------|----------------|
+| New feature / capability / user-visible behavior | `$AGENT_KIT/workflows/_feature-template.workflow.yaml` |
+| Bugfix, regression, “fix error”, crash, broken behavior | `$AGENT_KIT/workflows/_bugfix-template.workflow.yaml` |
+| Explore codebase, plan, spike, “how does X work” | `$AGENT_KIT/workflows/explore-and-plan.workflow.yaml` |
+| Release, version bump, changelog, ship app | `$AGENT_KIT/workflows/release-dart-flutter.workflow.yaml` if domain is `dart-flutter` or Technologies include Flutter; else resolve `$AGENT_KIT/workflows/release-<domain>.workflow.yaml` when it exists, otherwise ask or use explore-and-plan |
+| App + infra / cross-repo change | `$AGENT_KIT/workflows/cross-domain-backend-infra.workflow.yaml` |
+| Security assessment / DevSecOps pass | `$AGENT_KIT/workflows/security-devsecops.workflow.yaml` |
+
+Orchestrator details: `010-orchestrator.mdc`. Strict delegation-only chat: `/delegate` (`delegate.mdc`).

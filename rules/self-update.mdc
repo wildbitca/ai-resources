@@ -1,0 +1,38 @@
+---
+description: "Refresh ai-resources install + vendor skills + regenerate indexes. Trigger: /self-update"
+alwaysApply: false
+---
+
+# /self-update
+
+Updates the **ai-resources** install (Homebrew or git), then runs **`python3 $AGENT_KIT/scripts/kit.py generate`** — vendor import from **`resources.json`** (third-party skills merged into flat **`skills/`**; **`agents`** / **`personas`** sections reserved) and **`skills-index.json`**.
+
+## When triggered
+
+User says `/self-update` or runs the commands below from a shell.
+
+## Command
+
+```bash
+export AGENT_KIT=/path/to/ai-resources   # Homebrew: e.g. $(brew --prefix <formula>) or the path your formula documents
+
+brew upgrade <formula>   # when installed via Homebrew; or:
+# git -C "$AGENT_KIT" pull --ff-only   # when using a git checkout
+
+python3 "$AGENT_KIT/scripts/kit.py" generate
+```
+
+If **`AGENT_KIT`** is unset, run **`kit.py`** from the repo so it resolves the root from **`scripts/kit.py`**.
+
+## Steps
+
+1. **Update** the kit tree (**`brew upgrade`** or **`git pull`**).
+2. **`generate`** — vendors → **`$AGENT_KIT/skills`**, then **`skills-index.json`**.
+
+## Adding / updating remote skill packs
+
+Edit **`resources.json`** (repo root), then run **`python3 $AGENT_KIT/scripts/kit.py generate`** (`--dry-run` first). On conflicts, the CLI **exits with an error** so a human can rename skills or use **`--force`** deliberately.
+
+## `~/.cursor`
+
+Rules/skills live in this **ai-resources** install (e.g. **`rules/`**, **`skills/`**). **`~/.cursor`** holds IDE state; optional **`python3 $AGENT_KIT/scripts/kit.py setup`** (or **`setup --target cursor`**) writes **`AGENT_KIT.md`**, applies **`mcp.cursor`** when configured, and validates workflows.

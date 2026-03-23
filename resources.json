@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "description": "Kit manifest: external packs (skills/agents/personas), machine presets (MCP). kit.py generate reads skills.*; kit.py setup applies mcp.* to the local machine.",
+  "skills": {
+    "sources": [
+      {
+        "id": "gentleman-programming",
+        "type": "git",
+        "url": "https://github.com/Gentleman-Programming/Gentleman-Skills.git",
+        "ref": "main",
+        "depth": 1,
+        "skill_id_prefix": "gpm",
+        "import_roots": [
+          "curated",
+          "community"
+        ],
+        "notes": "Each SKILL.md under import_roots is copied to skills/{prefix}-{path-with-dashes}/. Conflicts with first-party dirs (no .skill-source.yaml) abort unless --force."
+      }
+    ]
+  },
+  "agents": {
+    "sources": []
+  },
+  "personas": {
+    "sources": []
+  },
+  "mcp": {
+    "cursor": {
+      "path": "~/.cursor/mcp.json",
+      "mcpServers": {},
+      "notes": "Written by `kit.py setup`. Per-project overrides stay in <repo>/.cursor/mcp.json. Use env placeholders for secrets (see rules/200-security-mcp.mdc)."
+    }
+  }
+}

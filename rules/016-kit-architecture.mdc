@@ -1,0 +1,21 @@
+---
+description: High-level map of ai-resources — orchestration, skills, manifest, pointers.
+alwaysApply: false
+---
+
+# Kit architecture (summary)
+
+**Narrative + CLI:** **`README.md`** at repo root. This file is the compact map only.
+
+- **Orchestration:** `010-orchestrator.mdc`, YAML workflows under **`workflows/`**, **`Task`** subagents (`050-subagent-delegation.mdc`), handoff (`051-handoff-protocol.mdc`).
+- **Skills:** Flat tree under **`skills/**`; generated index **`skills-index.json`** at repo root.
+- **Unified manifest:** **`resources.json`** — **`skills.sources`**, **`mcp.cursor`** (via **`kit.py setup`**), **`agents`** / **`personas`** reserved — summarized in **`README.md`**.
+
+## Pointers
+
+| Topic | Location |
+|-------|----------|
+| Workflow YAML shape | **`workflows/WORKFLOW_CONTRACT.md`** |
+| Unified manifest (`skills`, `mcp`, …) | **`resources.json`**, **`README.md`** |
+| Token economics | **`100-token-economics.mdc`** |
+| Engram / persistence | **`014-engram-mcp-protocol.mdc`**, **`skills/_shared/persistence-contract.md`** |

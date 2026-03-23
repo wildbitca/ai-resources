@@ -1,0 +1,46 @@
+---
+description: Handoff file protocol for workflow step communication — fields, scope, rollback.
+alwaysApply: false
+---
+
+# Handoff Protocol
+
+One handoff file per workflow run at `<repo>/.agent-output/handoff-<scope>.md`.
+
+## Scope rules
+
+- With worktree: scope = branch name sanitized (`/` → `-`), e.g. `handoff-feature-auth.md`
+- Without worktree: scope = workflow name, e.g. `handoff-release-mobile.md`
+- Fallback: `.agent-output/handoff.md`
+
+## Required fields
+
+Template: `$AGENT_KIT/handoff.md.template`
+
+| Field | Description |
+|-------|-------------|
+| **Status** | `success` \| `partial` \| `blocked` |
+| **Executive summary** | 1–3 sentences (ATL-compatible; optional if redundant with Goal reached) |
+| **Goal reached** | 1–2 sentences |
+| **Next recommended** | Next workflow step or phase, or `none` |
+| **Changes made** | File paths only (no code) |
+| **Commands run** | Build/test/analyze commands executed (one line each), or `none` |
+| **Unresolved / risks** | Open items or follow-up needed |
+| **Next assigned role** | planner \| implementer \| tester \| verifier \| software-architect \| code-reviewer \| explore \| shell |
+| **Domain** | dart-flutter \| angular \| symfony \| api-platform \| devops \| security |
+| **Blocked** | `true` if returning to a prior step |
+| **Return_to_step** | Step ID to re-invoke when Blocked |
+| **Block_reason** | What the prior step must correct |
+| **Git_integration** | `merge_to_base` \| `none` \| `pending_human` |
+
+## Rollback
+
+After each step: read handoff → if `Blocked=true`, re-invoke `Return_to_step` (max 3 retries) → if not blocked, proceed to next step.
+
+## Completion
+
+Worktree workflows: merge to base branch via `finishing-a-development-branch`. Delete handoff file. No zombies.
+
+## Cross-domain
+
+Set Domain to target domain. Reference paths only — no code pasting between domains.

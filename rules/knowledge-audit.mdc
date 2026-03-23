@@ -1,0 +1,25 @@
+---
+description: "/knowledge-audit — SDD closure + prune specs/knowledge (skill knowledge-audit)"
+alwaysApply: false
+---
+
+# /knowledge-audit
+
+**See also:** `knowledge-lifecycle.mdc` (globs + policy for `specs/knowledge/`).
+
+Runs **`$AGENT_KIT/skills/knowledge-audit/SKILL.md`**: active sync (not a passive report) — inventory, relink `knowledge/...` → `specs/knowledge/...`, merge gaps into `specs/features/`, `specs/cross-cutting/`, ADRs, update `specs/knowledge/README.md` and `specs/PROJECT.md`, **`git rm`** obsolete files when Tier B safe.
+
+## When triggered
+
+- User says `/knowledge-audit`, "SDD closure", "audit specs knowledge", "prune knowledge", "clean knowledge"
+- **Implicitly:** completing any workflow step that lists skill `knowledge-audit` (see skill **SDD closure** table)
+
+## Action
+
+1. `view_file` on **`$AGENT_KIT/skills/knowledge-audit/SKILL.md`** (and `references/audit-detail.md` if needed).
+2. Execute all steps in the **current workspace repo root**.
+3. If Tier C (conflict / huge scope), stop prune and report to user.
+
+## Post-run
+
+Summarize: relinks fixed, files removed, remaining knowledge files + rationale. Suggested commit message: `chore(specs): knowledge-audit SDD closure` (when changes are committed).
