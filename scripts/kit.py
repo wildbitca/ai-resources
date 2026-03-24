@@ -390,9 +390,53 @@ def _kit_refresh_hint(ak: Path) -> str:
     )
 
 
-def _discovery_recipe(ak_s: str) -> str:
-    """Return the universal skill discovery instructions shared by all agent stubs."""
+def _scan_workflow_triggers(ak_s: str) -> list[tuple[str, str, str]]:
+    """Scan workflow YAML files and extract (filename, name, trigger) tuples."""
+    wf_dir = Path(ak_s) / "workflows"
+    if not wf_dir.is_dir():
+        return []
+    rows: list[tuple[str, str, str]] = []
+    for wf in sorted(wf_dir.glob("*.workflow.yaml")):
+        text = wf.read_text(encoding="utf-8", errors="replace")
+        name_m = re.search(r"^name:\s*(.+)$", text, re.MULTILINE)
+        trigger_m = re.search(r"^trigger:\s*(.+)$", text, re.MULTILINE)
+        if name_m and trigger_m:
+            rows.append((wf.name, name_m.group(1).strip(), trigger_m.group(1).strip()))
+    return rows
+
+
+def _workflow_recipe(ak_s: str) -> str:
+    """Return the workflow discovery protocol section for agent stubs."""
+    rows = _scan_workflow_triggers(ak_s)
+    if not rows:
+        return ""
+
+    table_lines = "| Workflow | Trigger |\n|----------|--------|\n"
+    for filename, _name, trigger in rows:
+        table_lines += f"| `{filename}` | {trigger} |\n"
+
     return (
+        f"## Workflow Discovery Protocol (MANDATORY — checked FIRST)\n\n"
+        f"**Before starting ANY non-trivial task**, check if a workflow applies:\n\n"
+        f"1. **Match** — Compare the user's task against the workflow triggers below:\n\n"
+        f"{table_lines}\n"
+        f"2. **Load** — If a workflow matches, read its full YAML at `{ak_s}/workflows/` "
+        f"and follow it phase by phase.\n"
+        f"3. **MANDATORY**: When a workflow matches, you MUST follow its defined phases "
+        f"(e.g. research → plan → architect → implement → test → review → security → verify). "
+        f"Do NOT substitute built-in tools (EnterPlanMode, ad-hoc Plan agents, improvised flows) "
+        f"for workflow-defined phases. The workflow is the single source of truth for orchestration.\n"
+        f"4. **Handoff** — Use `.agent-output/handoff-<branch>.md` as defined in "
+        f"`{ak_s}/workflows/WORKFLOW_CONTRACT.md`. Generate artifacts in `.agent-output/<role>/` per phase.\n"
+        f"5. **No match?** — For trivial tasks (single-file edits, quick questions, config changes), "
+        f"proceed without a workflow.\n\n"
+    )
+
+
+def _discovery_recipe(ak_s: str) -> str:
+    """Return the universal workflow + skill discovery instructions shared by all agent stubs."""
+    return (
+        f"{_workflow_recipe(ak_s)}"
         f"## Skill Discovery Protocol\n\n"
         f"This environment uses a centralized AI skills library ([Agent Skills](https://agentskills.io) standard).\n\n"
         f"**On every task**, follow this protocol:\n\n"
@@ -408,6 +452,7 @@ def _discovery_recipe(ak_s: str) -> str:
         f"| Skills index | `{ak_s}/skills-index.json` |\n"
         f"| Skills root | `{ak_s}/skills/` |\n"
         f"| Workflows | `{ak_s}/workflows/` |\n"
+        f"| Workflow contract | `{ak_s}/workflows/WORKFLOW_CONTRACT.md` |\n"
         f"| Kit docs | `{ak_s}/AGENTS.md` |\n"
     )
 
