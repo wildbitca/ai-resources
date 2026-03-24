@@ -1,6 +1,7 @@
 ---
 name: cursor-plan-tracking
 description: Cursor plan completion tracking in YAML frontmatter. Use when creating or updating .plan.md files.
+triggers: "**/*.plan.md, cursor plan, plan tracking, plan completion, todo tracking, plan status"
 ---
 
 # Cursor Plan Completion Tracking

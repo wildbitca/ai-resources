@@ -1,9 +1,10 @@
 ---
 name: firebase-crashlytics-fix-issues
 description: Uses Firebase MCP to fetch Crashlytics top issues for a given project/app, get issue details and event stack traces, and fix them one by one in the codebase. Use when the user wants to fix Crashlytics crashes, triage production errors, or evaluate a specific Firebase project's stability.
+triggers: "crashlytics, firebase crash, production crash, crash report, stack trace, fix crash, triage crashes, app stability, firebase issues"
 ---
 
-# Firebase Crashlytics: Fix Issues (evaluar proyecto)
+# Firebase Crashlytics: Fix Issues
 
 ## Quick start
 
@@ -29,7 +30,7 @@ Apply this skill when the user asks to:
 
 ## Workflow
 
-### 1. Resolve Firebase project and app (proyecto a evaluar)
+### 1. Resolve Firebase project and app
 
 - **Current env:** `firebase_get_environment` → `active_project`, `project_dir`, `active_user_account`.
 - **If user specifies another project:**
@@ -108,7 +109,7 @@ Apply this skill when the user asks to:
 
 - **In-app vs system frames:** Prefer frames from the project’s `lib/`, `src/`, or app package. Ignore or down-rank SDK, runtime, and third‑party package frames when locating project code.
 - **Flutter/Dart:** Look for `package:app_name/` or `package:your_project/` in the stack. Symbolication may depend on uploaded dSYM (iOS) and Proguard/mapping (Android); ensure symbols are uploaded for readable stack traces.
-- **Proyecto especificado:** If the user says “evalúa el proyecto X”, set that project with `firebase_update_environment(active_project: "X")` or `firebase_update_environment(project_dir: "path/to/X")` before listing apps and issues.
+- **Specific project:** If the user says “evaluate project X”, set that project with `firebase_update_environment(active_project: “X”)` or `firebase_update_environment(project_dir: “path/to/X”)` before listing apps and issues.
 - **Batching:** If there are many issues, fix 5–10, run the full test suite, then continue. Document all fixed issueIds for the user.
 - **Duplicates / similar:** If several issues share the same root cause, fix once and document all related issueIds.
 - **Time range:** Use `filter.intervalStartTime` and `filter.intervalEndTime` (ISO 8601, within last 90 days) to focus on recent crashes.

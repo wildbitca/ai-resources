@@ -1,6 +1,7 @@
 ---
 name: changelog-best-practices
 description: Write, maintain, and migrate CHANGELOG.md files using Keep a Changelog format and best practices. Use when creating a changelog from scratch, updating an existing one, fixing/migrating a badly written changelog, or rechecking changelogs version-by-version with an LLM agent (e.g. Cursor) to regenerate human-readable CHANGELOG.md from commits and changed files.
+triggers: "CHANGELOG.md, changelog, release notes, keep a changelog, semver, version history, write changelog, update changelog, fix changelog, migrate changelog"
 ---
 
 # Changelog Best Practices

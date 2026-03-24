@@ -1,6 +1,7 @@
 ---
 name: sentry-fix-unresolved-issues
 description: Uses Sentry MCP to fetch unresolved issues, get details and Seer analysis, and fix them one by one in the codebase. Use when the user wants to fix Sentry issues, triage production errors, work through unresolved bugs, or clear the Sentry inbox.
+triggers: "sentry, unresolved issues, production error, sentry inbox, triage errors, fix sentry, seer analysis, error monitoring, sentry issue"
 ---
 
 # Sentry: Fix Unresolved Issues

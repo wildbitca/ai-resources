@@ -3,6 +3,7 @@ name: angular-performance
 description: >
   Angular performance: NgOptimizedImage, @defer, lazy loading, SSR.
   Trigger: When optimizing Angular app performance, images, or lazy loading.
+  (triggers: **/*.component.ts, **/*.component.html, angular performance, NgOptimizedImage, @defer, lazy loading angular, SSR angular, ngSrc, loadChildren, prerender, hydration, Core Web Vitals angular)
 metadata:
   author: gentleman-programming
   version: "1.0"

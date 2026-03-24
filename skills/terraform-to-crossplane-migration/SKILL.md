@@ -2,6 +2,7 @@
 name: terraform-to-crossplane-migration
 description: Migrate infrastructure from Terraform (HCL) to Crossplane (Kubernetes CRDs). Use when converting Terraform modules or resources to Crossplane managed resources (ProviderConfig, Composition, XRD), or when moving IaC from Terraform to GitOps with Crossplane.
 globs: "**/*.tf", "**/terraform/**", "infra/**"
+triggers: "**/*.tf, terraform to crossplane, migrate terraform, HCL to CRD, crossplane migration, ProviderConfig, Composition, XRD, GitOps migration, managed resource"
 ---
 
 # Terraform to Crossplane Migration

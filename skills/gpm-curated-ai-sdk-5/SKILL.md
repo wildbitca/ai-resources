@@ -3,6 +3,7 @@ name: ai-sdk-5
 description: >
   Vercel AI SDK 5 patterns.
   Trigger: When building AI chat features - breaking changes from v4.
+  (triggers: ai sdk, vercel ai, useChat, useCompletion, streamText, generateText, ai/react, ai/rsc, AI chat, LLM integration, @ai-sdk/*, package.json)
 license: Apache-2.0
 metadata:
   author: gentleman-programming

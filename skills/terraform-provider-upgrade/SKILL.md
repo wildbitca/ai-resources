@@ -2,6 +2,7 @@
 name: terraform-provider-upgrade
 description: Workflow for upgrading Terraform provider versions across modules. Use when the user wants to update providers, upgrade provider versions, run terraform init and validate to confirm nothing broke, or search for latest provider versions in the Terraform Registry.
 globs: "**/*.tf", "**/terraform/**", "infra/**"
+triggers: "**/*.tf, terraform provider, upgrade provider, provider version, terraform registry, terraform init, terraform validate, required_providers, provider update"
 ---
 
 # Terraform Provider Upgrade

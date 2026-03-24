@@ -1,6 +1,7 @@
 ---
 name: flutter-ios-distribution-launch
 description: Prevents and fixes iOS distribution launch failures (sysctl sandbox denials, Scene creation failed). Use when changing iOS entitlements, AppDelegate, Info.plist scene config, or debugging app failing to launch on Firebase App Distribution or TestFlight.
+triggers: "**/*.plist, **/*.entitlements, **/AppDelegate*, iOS launch, distribution crash, TestFlight crash, sandbox denial, scene creation failed, firebase app distribution, app not launching"
 ---
 
 # Flutter iOS Distribution Launch

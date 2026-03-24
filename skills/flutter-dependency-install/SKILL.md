@@ -1,6 +1,7 @@
 ---
 name: flutter-dependency-install
 description: Adds or updates Flutter/Dart dependencies using the latest possible version and official pub.dev documentation for correct installation and configuration. Use when adding packages to pubspec.yaml, installing dependencies, or when the user asks to add or update a Flutter/Dart package.
+triggers: "**/*.dart, **/pubspec.yaml, pub.dev, flutter pub add, add package, install dependency, update package, pubspec, dart dependency"
 ---
 
 # Flutter Dependency Install

@@ -3,6 +3,7 @@ name: react-native
 description: >
   React Native patterns for mobile app development with Expo and bare workflow.
   Trigger: When building mobile apps, working with React Native components, using Expo, React Navigation, or NativeWind.
+  (triggers: **/*.tsx, **/*.jsx, react native, react-native, expo, React Navigation, NativeWind, metro.config.*, app.json, app.config.*, StyleSheet, FlatList, native module, react native mobile, iOS, Android)
 metadata:
   author: gentleman-programming
   version: "1.0"

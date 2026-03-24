@@ -5,11 +5,11 @@ alwaysApply: false
 
 # /delegate
 
-**Orchestrator-only mode** for this session (until the user says they want inline work, e.g. "modo directo" or "implementa tú en el chat").
+**Orchestrator-only mode** for this session (until the user says they want inline work, e.g. "direct mode" or "implement yourself in the chat").
 
 ## When triggered
 
-User says `/delegate`, "solo orquesta", "orchestrator mode", "delega todo", or opens this rule.
+User says `/delegate`, "orchestrator mode", "delegate everything", or opens this rule.
 
 ## Required behavior
 

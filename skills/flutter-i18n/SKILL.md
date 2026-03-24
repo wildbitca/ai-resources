@@ -1,6 +1,7 @@
 ---
 name: flutter-i18n
 description: Enforces internationalization with AppLocalizations and ARB files in Flutter. Use when adding or changing user-facing strings, or when setting up or fixing Flutter l10n.
+triggers: "**/*.dart, **/*.arb, i18n, l10n, localization, internationalization, AppLocalizations, translate, user-facing string, hardcoded string, ARB file"
 ---
 
 # Flutter Internationalization (i18n)

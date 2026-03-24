@@ -3,6 +3,7 @@ name: angular-architecture
 description: >
   Angular architecture: Scope Rule, project structure, file naming, style guide.
   Trigger: When structuring Angular projects or deciding where to place components.
+  (triggers: **/*.component.ts, **/*.module.ts, angular.json, angular, angular architecture, project structure angular, scope rule, feature module, shared module, component placement, file naming angular)
 metadata:
   author: gentleman-programming
   version: "1.0"

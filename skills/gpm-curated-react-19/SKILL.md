@@ -3,6 +3,7 @@ name: react-19
 description: >
   React 19 patterns with React Compiler.
   Trigger: When writing React components - no useMemo/useCallback needed.
+  (triggers: **/*.tsx, **/*.jsx, react, react 19, React Compiler, useActionState, useFormStatus, useOptimistic, use, server component, client component, suspense, concurrent)
 license: Apache-2.0
 metadata:
   author: gentleman-programming

@@ -3,6 +3,7 @@ name: zod-4
 description: >
   Zod 4 schema validation patterns.
   Trigger: When using Zod for validation - breaking changes from v3.
+  (triggers: **/*.ts, **/*.tsx, zod, z.object, z.string, z.number, schema validation, z.infer, z.pipe, z.coerce, zod 4, form validation zod, parse, safeParse)
 license: Apache-2.0
 metadata:
   author: gentleman-programming
