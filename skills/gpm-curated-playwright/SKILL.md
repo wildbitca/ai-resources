@@ -3,6 +3,7 @@ name: playwright
 description: >
   Playwright E2E testing patterns.
   Trigger: When writing E2E tests - Page Objects, selectors, MCP workflow.
+  (triggers: **/*.spec.ts, **/*.test.ts, playwright.config.*, playwright, e2e test, end-to-end, page object, getByRole, getByTestId, locator, expect, browser test, integration test)
 license: Apache-2.0
 metadata:
   author: gentleman-programming

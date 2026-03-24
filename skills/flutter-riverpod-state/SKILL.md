@@ -1,6 +1,7 @@
 ---
 name: flutter-riverpod-state
 description: Applies Riverpod patterns for state, Notifiers, state classes with copyWith, and Result-based async handling. Use when adding or refactoring Riverpod providers, state classes, or async logic in Notifiers.
+triggers: "**/*.dart, riverpod, provider, notifier, state management, copyWith, StateNotifier, AsyncNotifier, ConsumerWidget, ref.watch"
 ---
 
 # Flutter Riverpod State

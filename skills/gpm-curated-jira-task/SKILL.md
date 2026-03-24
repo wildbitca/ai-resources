@@ -3,6 +3,7 @@ name: jira-task
 description: >
   Creates Jira tasks following Prowler's standard format.
   Trigger: When user asks to create a Jira task, ticket, or issue.
+  (triggers: jira task, create task, jira ticket, create ticket, jira issue, bug report jira, task template, story points, acceptance criteria)
 license: Apache-2.0
 metadata:
   author: gentleman-programming

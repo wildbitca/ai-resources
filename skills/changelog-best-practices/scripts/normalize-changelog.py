@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 """
 
 SUMMARY_TO_LINE = {
+    "minor .tf changes (patch)": "Minor Terraform and config changes.",
+    "changes since last tag (patch by default)": "Minor Terraform and config changes.",
+    "new variable(s) (additive)": "New optional variable(s).",
+    "new resource(s) (additive)": "New resource(s).",
+    "new output(s) (additive)": "New output(s).",
+    "major provider upgrade (breaking)": "Major provider upgrade (breaking).",
+    "removed resource(s) (breaking)": "Removed resource(s) (breaking).",
+    "removed variable(s) (breaking)": "Removed variable(s) (breaking).",
+    "manual override (--bump)": "Manual version bump.",
+    # Legacy Spanish keys (for existing changelogs generated before translation)
     "cambios menores en .tf (patch)": "Minor Terraform and config changes.",
     "cambios desde último tag (patch por defecto)": "Minor Terraform and config changes.",
     "nueva(s) variable(s) (additive)": "New optional variable(s).",

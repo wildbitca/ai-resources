@@ -2,6 +2,7 @@
 name: kro-rgd-from-crossplane
 description: Create kro ResourceGraphDefinitions (RGDs) from Crossplane resources. Use when designing custom APIs that wrap Crossplane CRs, bundling related resources into unified RGDs (e.g. GitHubProject = teams + repos + team-repos), or when you need flexible schemas with defaults and parameter passing to sub-resources.
 globs: "**/crossplane/**", "infra/**"
+triggers: "kro, RGD, ResourceGraphDefinition, custom API, bundle resources, crossplane wrapper, kubernetes CRD, composite resource"
 ---
 
 # kro RGD from Crossplane Resources

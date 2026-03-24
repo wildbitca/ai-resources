@@ -1,6 +1,7 @@
 ---
 name: flutter-dart-standards
 description: Enforces Dart type safety, immutability, naming, and widget composition in Flutter projects. Use when writing or reviewing Dart/Flutter code.
+triggers: "**/*.dart, dart standards, type safety, immutability, naming conventions, dynamic, const, final, widget composition, dart best practices"
 ---
 
 # Flutter Dart Standards

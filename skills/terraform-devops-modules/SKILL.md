@@ -2,6 +2,7 @@
 name: terraform-devops-modules
 description: DevOps Terraform and Cloud specialist for creating reusable, composable Terraform modules. Use when designing or implementing Terraform infrastructure, creating modules, or refactoring IaC. Enforces: module composition (child modules that use other modules), latest provider versions, power and flexibility with sensible defaults, and security-first posture from day 0.
 globs: "**/*.tf", "**/terraform/**", "infra/**"
+triggers: "**/*.tf, terraform, module, IaC, infrastructure, reusable module, module composition, required_providers, terraform module, HCL, cloud infrastructure"
 ---
 
 # Terraform DevOps Modules

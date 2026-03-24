@@ -30,7 +30,7 @@ class AiResources < Formula
           exec "${_py}" "#{libexec}/scripts/kit.py" "$@"
         fi
       done
-      echo "ai-resources: no se encontró python3 (prueba: brew reinstall python@3.12)" >&2
+      echo "ai-resources: python3 not found (try: brew reinstall python@3.12)" >&2
       exit 1
     EOS
   end

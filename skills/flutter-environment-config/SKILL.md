@@ -1,6 +1,7 @@
 ---
 name: flutter-environment-config
 description: Enforces flavor support, env files, AppConfig singleton, and no hardcoded URLs/keys in Flutter. Use when configuring environments, flavors, or build variants.
+triggers: "**/*.dart, **/*.env, **/AppConfig*, flavor, environment, build variant, dev env, prd env, hardcoded URL, API key config, flutter flavor"
 ---
 
 # Flutter Environment Configuration

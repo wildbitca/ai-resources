@@ -2,6 +2,7 @@
 name: terraform-version-commit
 description: Workflow for committing Terraform changes with strict semver versioning. Use when the user wants to commit Terraform changes, increment version from last tag following semver, intelligently bump major/minor/patch based on accumulated changes, or use an LLM (e.g. Cursor on the local machine) to generate commit messages and changelog entries.
 globs: "**/*.tf", "**/terraform/**", "infra/**"
+triggers: "**/*.tf, terraform commit, version bump, semver, git tag, terraform release, major minor patch, version-commit, terraform version"
 ---
 
 # Terraform Version Commit
@@ -48,7 +49,7 @@ Commit Terraform changes, read the last tag, increment to the next version follo
 3. **Bump from committed history:** Learn what changed between the latest tag and HEAD: `git diff <last_tag>..HEAD -- *.tf` plus conventional commits since tag. That determines major/minor/patch.
 4. Get last tag; parse version; if none, start at `v1.0.0`.
 5. After confirmation (or `--yes`): **CHANGELOG.md** is created or updated (see below), committed, then the tag is created.
-6. **Push:** Tras crear el tag, el script ejecuta `git push` y `git push --tags` (use `--no-push` para omitir).
+6. **Push:** After creating the tag, the script runs `git push` and `git push --tags` (use `--no-push` to skip).
 
 ## CHANGELOG.md
 
@@ -57,7 +58,7 @@ The script **generates and maintains** a `CHANGELOG.md` file in the repo root (K
 - **If there is no CHANGELOG.md:** One is created with a `# Changelog` header and a new release section `## [X.Y.Z] - YYYY-MM-DD` containing:
     - **Changed:** commit one-liners since the previous tag (or all commits if no tag), capped at 50.
     - If no commits: list of changed `.tf` files (capped at 30).
-    - **Summary:** the semver bump reason (e.g. "nuevo(s) recurso(s) (additive)").
+    - **Summary:** the semver bump reason (e.g. "new resource(s) (additive)").
 - **If CHANGELOG.md exists:** A new release section is **inserted** after the first `## [` (e.g. after `## [Unreleased]` or the previous top release), so the newest release stays at the top. Content is the same: commits since last tag, optional file list, and summary.
 - The CHANGELOG update is committed with message `chore: update CHANGELOG for vX.Y.Z` before the tag is created, so the tag points at a commit that includes the changelog.
 - Use **`--no-changelog`** to skip creating or updating CHANGELOG.md.
@@ -77,10 +78,10 @@ python3 /path/to/skills/terraform-version-commit/scripts/version-commit.py [opti
 ```
 
 - **--bump:** Override auto-detection.
-- **--dry-run:** Show tag anterior, nuevo tag y razón; no commit ni tag.
-- **--yes / -y:** No preguntar; aplicar tag directamente (útil en CI).
-- **--no-push:** No hacer `git push` ni `git push --tags` después de crear el tag (por defecto sí hace push para que los módulos que dependen de este puedan usar la nueva versión).
-- **--no-changelog:** No crear ni actualizar CHANGELOG.md al crear el tag.
+- **--dry-run:** Show previous tag, new tag, and reason; no commit or tag.
+- **--yes / -y:** Skip confirmation; apply tag directly (useful in CI).
+- **--no-push:** Do not run `git push` or `git push --tags` after creating the tag (by default it pushes so that modules depending on this one can use the new version).
+- **--no-changelog:** Do not create or update CHANGELOG.md when creating the tag.
 - **--message "text":** Custom commit message for the first (or only) commit. When split commits are used, only the first group gets this message; later groups use auto-generated messages. When omitted, messages are generated from the diff (e.g. `refactor(variables): require X, Y; remove defaults`).
 - **--write-llm-context FILE:** Write an LLM context file and exit (no commit/tag). The file describes repo, version, bump, and each commit group (files, change items, diff). Use **Cursor (or another LLM on the same machine)** to generate a JSON file with `commit_messages` (one per group) and
   optional `changelog_entries` (human-focused bullets for CHANGELOG ### Changed). Then run the script again with **--messages-file** to apply those messages. See **references/llm-commit-messages.md**.
@@ -131,11 +132,11 @@ python3 /path/to/skills/terraform-version-commit/scripts/version-commit.py --par
 Output shows: "Discovered N tf-module repo(s), M with changes (need release)", lists each repo with `[RELEASE]` next to those that will be processed, then **Release order (dependencies first)** with numbered steps and each repo's dependencies, then runs version-commit in that order. With
 `--recursive`, each iteration prints "Recursive iteration K", runs upgrade on all repos, then releases in order until no repo needs release.
 
-El script imprime para **cada repo** (single-repo mode):
+The script prints for **each repo** (single-repo mode):
 
-- **Repo**, **tag anterior**, **cálculo semver** (versión actual + bump → nuevo tag), **nuevo tag** y **razón** del bump.
-- Luego pregunta: **¿Usar la versión X.Y.Z y crear el tag? (s/n) [n]**.
-  Solo si el usuario responde afirmativamente (o se usa `--yes`) se crea el tag. El semver se calcula a partir de `last_tag..HEAD` (diff de `.tf` + conventional commits); se toma el bump de mayor impacto (major > minor > patch).
+- **Repo**, **previous tag**, **semver calculation** (current version + bump → new tag), **new tag**, and **reason** for the bump.
+- Then asks: **Use version X.Y.Z and create the tag? (y/n) [n]**.
+  The tag is created only if the user confirms (or `--yes` is used). The semver is calculated from `last_tag..HEAD` (`.tf` diff + conventional commits); the highest-impact bump is chosen (major > minor > patch).
 
 ## Manual Fallback
 

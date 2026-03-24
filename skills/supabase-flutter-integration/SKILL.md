@@ -1,6 +1,7 @@
 ---
 name: supabase-flutter-integration
 description: Supabase Postgres integration strategy: direct client vs backend proxy, RLS, JWT. Use when designing data access or backend integration for Flutter + Supabase.
+triggers: "**/*.dart, supabase, PostgREST, RLS, row level security, direct client, backend proxy, supabase client, real-time subscription, data access layer"
 ---
 
 # Supabase Postgres Integration Strategy

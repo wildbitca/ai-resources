@@ -3,6 +3,7 @@ name: hexagonal-architecture-layers-java
 description: >
   Hexagonal architecture layering for Java services with strict boundaries.
   Trigger: When structuring Java apps by Domain/Application/Infrastructure, or refactoring toward clean architecture.
+  (triggers: **/*.java, hexagonal architecture, ports and adapters, clean architecture java, domain layer, application layer, infrastructure layer, dependency inversion, pom.xml, build.gradle, adapter, port, use case java)
 metadata:
   author: diegnghrmr
   version: "1.0"

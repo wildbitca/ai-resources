@@ -5,7 +5,7 @@ procedures in order).
 
 **Foreground execution mandatory:** Run all commands in the foreground. Use `python3 -u` or `PYTHONUNBUFFERED=1` when calling version-commit.py so progress is visible (otherwise output can be buffered and the run can appear to do nothing).
 
-## Golden line (línea de oro)
+## Golden line
 
 Full maintain **must** run: (1) **terraform-devops-modules** — audit/apply structure, versions.tf, security, naming; (2) **terraform-provider-upgrade** — upgrade-providers.py / upgrade-all-with-deps.py, then init -upgrade and validate; (3) **terraform-version-commit** — commit, CHANGELOG, semver
 tag, push in dependency order; (4) **changelog-best-practices** — normalize-changelog.py when needed. Then refresh dependents and **commit+push in dependents** (version-commit does this automatically so the next TFC/CI run picks up fixed module versions). Do not skip any.

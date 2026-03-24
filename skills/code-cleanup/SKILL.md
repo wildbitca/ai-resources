@@ -1,6 +1,7 @@
 ---
 name: code-cleanup
 description: Applies generic code cleanup (comments, unused code, empty dirs, linters, config, duplicates) for any language (Dart, Bash, Python, Java, Kotlin, Swift, TS/JS, etc.) and, for Flutter/Dart, a combined quality check. Use when the user asks to clean up code, remove dead code, empty dirs, reduce technical debt, or run a full project quality check.
+triggers: "clean up, cleanup, dead code, unused code, remove comments, empty directories, technical debt, lint, refactor, unused imports, duplicates, code quality check"
 ---
 
 # Code Cleanup (Any Language)
