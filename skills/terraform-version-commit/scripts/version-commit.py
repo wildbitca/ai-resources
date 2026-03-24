@@ -667,31 +667,31 @@ def analyze_commits_since_tag(repo: Path, tag: str) -> str:
 def reason_from_diff(diff: str) -> str:
     """Human-readable reason for bump from diff content."""
     if re.search(r'^-resource\s+"', diff, re.MULTILINE):
-        return "recurso(s) eliminado(s) (breaking)"
+        return "removed resource(s) (breaking)"
     if re.search(r'^-data\s+"', diff, re.MULTILINE):
-        return "data source(s) eliminado(s) (breaking)"
+        return "removed data source(s) (breaking)"
     if re.search(r'^-module\s+"', diff, re.MULTILINE):
-        return "módulo(s) eliminado(s) (breaking)"
+        return "removed module(s) (breaking)"
     if re.search(r'^-variable\s+"', diff, re.MULTILINE):
-        return "variable(s) eliminada(s) (breaking)"
+        return "removed variable(s) (breaking)"
     if re.search(r'^-output\s+"', diff, re.MULTILINE):
-        return "output(s) eliminado(s) (breaking)"
+        return "removed output(s) (breaking)"
     old_vers = re.findall(r'-\s*version\s*=\s*"~>\s*(\d+)\.', diff)
     new_vers = re.findall(r'\+\s*version\s*=\s*"~>\s*(\d+)\.', diff)
     for o, n in zip(old_vers, new_vers):
         if int(n) > int(o):
-            return "upgrade mayor de provider (breaking)"
+            return "major provider upgrade (breaking)"
     if re.search(r'^\+resource\s+"', diff, re.MULTILINE):
-        return "nuevo(s) recurso(s) (additive)"
+        return "new resource(s) (additive)"
     if re.search(r'^\+data\s+"', diff, re.MULTILINE):
-        return "nuevo(s) data source(s) (additive)"
+        return "new data source(s) (additive)"
     if re.search(r'^\+module\s+"', diff, re.MULTILINE):
-        return "nuevo(s) módulo(s) (additive)"
+        return "new module(s) (additive)"
     if re.search(r'^\+variable\s+"', diff, re.MULTILINE):
-        return "nueva(s) variable(s) (additive)"
+        return "new variable(s) (additive)"
     if re.search(r'^\+output\s+"', diff, re.MULTILINE):
-        return "nuevo(s) output(s) (additive)"
-    return "cambios menores en .tf (patch)"
+        return "new output(s) (additive)"
+    return "minor .tf changes (patch)"
 
 
 def get_commits_since_tag(repo: Path, tag: str | None) -> list[str]:
@@ -942,25 +942,25 @@ def _print_semver_summary(
         new_ver: str,
         reason_why: str,
 ) -> None:
-    """Print repo, tag anterior, semver calculation, nuevo tag and reason."""
+    """Print repo, previous tag, semver calculation, new tag, and reason."""
     current_ver = f"v{major}.{minor}.{patch}"
     repo_name = repo.name or (repo.resolve().name if repo.resolve() != repo else ".")
     print("---")
     print(f"Repo:          {repo_name}")
-    print(f"Tag anterior:  {last_tag or '(ninguno)'}")
-    print(f"Cálculo:       {current_ver} + bump {bump} → {new_ver}")
-    print(f"Nuevo tag:     {new_ver}")
-    print(f"Razón:         {reason_why}")
+    print(f"Previous tag:  {last_tag or '(none)'}")
+    print(f"Calculation:   {current_ver} + bump {bump} → {new_ver}")
+    print(f"New tag:       {new_ver}")
+    print(f"Reason:        {reason_why}")
     print("---")
 
 
 def get_bump_reason(repo: Path, last_tag: str | None, bump: str, from_override: bool) -> str:
     """Return human-readable reason for the chosen bump."""
     if from_override:
-        return "override manual (--bump)"
+        return "manual override (--bump)"
     paths = _tf_paths(repo)
     if not paths:
-        return "sin archivos .tf (patch por defecto)"
+        return "no .tf files (patch by default)"
     if last_tag:
         if paths:
             code, diff = run(
@@ -977,10 +977,10 @@ def get_bump_reason(repo: Path, last_tag: str | None, bump: str, from_override: 
             for line in out.strip().splitlines():
                 msg = (line.split(" ", 1)[-1] if " " in line else line).lower()
                 if "breaking" in msg or "!" in msg or msg.startswith("break:"):
-                    return "commit(s) con breaking change"
+                    return "commit(s) with breaking change"
                 if msg.startswith(("feat", "feature")):
                     return "commit(s) feat (additive)"
-    return "cambios desde último tag (patch por defecto)"
+    return "changes since last tag (patch by default)"
 
 
 def run_single_repo(repo: Path, args: argparse.Namespace) -> int:
@@ -1154,16 +1154,16 @@ def run_single_repo(repo: Path, args: argparse.Namespace) -> int:
     new_ver = f"v{nmaj}.{nmin}.{npatch}"
     reason_why = get_bump_reason(repo, last_tag, bump, bool(args.bump))
 
-    # Resumen y confirmación: imprimir semver calculado y preguntar si usar esta versión
+    # Summary and confirmation: print calculated semver and ask whether to use this version
     _print_semver_summary(repo, last_tag, major, minor, patch, bump, new_ver, reason_why)
 
     if not args.yes:
         try:
-            resp = input(f"¿Usar la versión {new_ver} y crear el tag? (s/n) [n]: ").strip().lower() or "n"
+            resp = input(f"Use version {new_ver} and create the tag? (y/n) [n]: ").strip().lower() or "n"
         except EOFError:
             resp = "n"
-        if resp not in ("s", "si", "y", "yes"):
-            print("No se aplicó el tag.")
+        if resp not in ("y", "yes"):
+            print("Tag not applied.")
             return 0
 
     # 5b. Update or create CHANGELOG.md with this release, then commit it (unless --no-changelog)

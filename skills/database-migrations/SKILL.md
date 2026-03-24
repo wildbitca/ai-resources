@@ -1,6 +1,7 @@
 ---
 name: database-migrations
 description: Enforces schema migration practices for Supabase (or similar) with file-based migrations, naming, idempotency, and a standard workflow. Use when creating or modifying database schema, or when working with Supabase migrations.
+triggers: "**/*.sql, **/supabase/migrations/**, migration, schema change, database schema, supabase migration, alter table, create table, add column, RLS policy"
 ---
 
 # Database Migrations

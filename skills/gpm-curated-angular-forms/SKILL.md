@@ -3,6 +3,7 @@ name: angular-forms
 description: >
   Angular forms: Signal Forms (experimental) and Reactive Forms.
   Trigger: When working with forms, validation, or form state in Angular.
+  (triggers: **/*.component.ts, angular form, reactive form, FormGroup, FormControl, FormBuilder, Validators, signal form, template-driven form, form validation angular, ngModel, patchValue)
 metadata:
   author: gentleman-programming
   version: "1.0"

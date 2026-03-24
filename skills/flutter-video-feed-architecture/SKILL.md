@@ -1,6 +1,7 @@
 ---
 name: flutter-video-feed-architecture
 description: Vertical video feed architecture: controller pool, sliding window, LRU cache, media carousel, ad preloading. Use when building TikTok/Instagram-style feeds in Flutter. Apply flutter-resource-management for disposal patterns.
+triggers: "**/*.dart, video feed, video player, PageView, TikTok feed, reels, vertical scroll, controller pool, sliding window, media carousel, video preload"
 ---
 
 # Flutter Video Feed Architecture

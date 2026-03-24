@@ -1,6 +1,7 @@
 ---
 name: flutter-logging
 description: Enforces structured logging, log levels, and PII sanitization in Flutter/Dart apps. Use when adding logs, debugging, or configuring production-safe logging.
+triggers: "**/*.dart, logging, logger, log level, print, debugPrint, PII, sanitize logs, structured logging, production logging"
 ---
 
 # Flutter Logging

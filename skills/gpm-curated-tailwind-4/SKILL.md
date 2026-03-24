@@ -3,6 +3,7 @@ name: tailwind-4
 description: >
   Tailwind CSS 4 patterns and best practices.
   Trigger: When styling with Tailwind - cn(), theme variables, no var() in className.
+  (triggers: **/*.tsx, **/*.jsx, **/*.css, tailwind.config.*, tailwind, tailwind css, cn(), clsx, cva, theme variable, utility class, @apply, postcss, tailwind 4)
 license: Apache-2.0
 metadata:
   author: gentleman-programming

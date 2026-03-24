@@ -52,33 +52,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ### Added
 
-- **Engram como dependencia Homebrew:** `Formula/ai-resources.rb` declara `depends_on "gentleman-programming/tap/engram"` — `brew install ai-resources` instala el binario `engram` automáticamente.
-- **Setup automático de engram para Claude Code:** `kit.py setup` (targets `claude` y `all`) ejecuta `claude plugin marketplace add Gentleman-Programming/engram && claude plugin install engram`, registrando el servidor MCP, hooks y la Memory Protocol skill sin pasos manuales.
-- **MCP engram en Cursor:** `resources.json` → `mcp.cursor.mcpServers` incluye la entrada `engram` (`engram mcp` stdio); se aplica al correr `kit.py setup`.
+- **Engram as Homebrew dependency:** `Formula/ai-resources.rb` declares `depends_on "gentleman-programming/tap/engram"` — `brew install ai-resources` installs the `engram` binary automatically.
+- **Automatic engram setup for Claude Code:** `kit.py setup` (targets `claude` and `all`) runs `claude plugin marketplace add Gentleman-Programming/engram && claude plugin install engram`, registering the MCP server, hooks, and the Memory Protocol skill without manual steps.
+- **MCP engram in Cursor:** `resources.json` → `mcp.cursor.mcpServers` includes the `engram` entry (`engram mcp` stdio); applied when running `kit.py setup`.
 
 ### Changed
 
-- `Formula/ai-resources.rb`: tag y version actualizados a `v0.2.0`; eliminado `revision 1` (era un parche de build, no aplica a la nueva versión).
+- `Formula/ai-resources.rb`: tag and version updated to `v0.2.0`; removed `revision 1` (it was a build patch, not applicable to the new version).
 
 ## [0.1.0] — 2026-03-23
 
-Primera release **usable** con Homebrew. El tag **`v0.1.0`** anterior no permitía instalar bien (tap inexistente / fórmula mal ubicada / `brew tap` sin URL apuntando a otro repo); el tag actual incluye **`Formula/ai-resources.rb`** en la raíz y la orden de tap correcta.
+First **usable** release with Homebrew. The previous **`v0.1.0`** tag did not install correctly (nonexistent tap / misplaced formula / `brew tap` without URL pointing to another repo); the current tag includes **`Formula/ai-resources.rb`** at the root and the correct tap command.
 
 ### Added
 
-- CLI unificado `scripts/kit.py`: **`generate`** (import desde `resources.json` + `skills-index.json`), **`setup`** (MCP, IDE stubs, validación de workflows).
-- Manifiesto `resources.json`; estado opcional `~/.config/ai-resources/state.json` tras `setup`.
-- **Homebrew:** fórmula **`Formula/ai-resources.rb`** en la raíz; **`brew tap wildbitca/ai-resources https://github.com/wildbitca/ai-resources.git`** (obligatoria la URL: sin ella Homebrew busca `wildbitca/homebrew-ai-resources`) + **`brew install ai-resources`**. Instalación por **git** en el tag (sin `sha256` de tarball). Repo privado: `HOMEBREW_GITHUB_API_TOKEN`.
+- Unified CLI `scripts/kit.py`: **`generate`** (import from `resources.json` + `skills-index.json`), **`setup`** (MCP, IDE stubs, workflow validation).
+- Manifest `resources.json`; optional state `~/.config/ai-resources/state.json` after `setup`.
+- **Homebrew:** formula **`Formula/ai-resources.rb`** at the root; **`brew tap wildbitca/ai-resources https://github.com/wildbitca/ai-resources.git`** (URL is required: without it Homebrew looks for `wildbitca/homebrew-ai-resources`) + **`brew install ai-resources`**. Installation via **git** at the tag (no `sha256` tarball). Private repo: `HOMEBREW_GITHUB_API_TOKEN`.
 
 ### Changed
 
-- **README** orientado a instalación y uso con comandos mínimos.
-- **Documentación:** historial en este archivo; releases sin scripts auxiliares en repo (ver checklist abajo). Eliminados `RELEASING.md`, `packaging/homebrew/README.md`, `tag-release.sh`, `bump-formula-sha.sh`.
-- **Homebrew:** mismo repositorio que código y tap (ya no hace falta `homebrew-ai-resources` aparte); eliminado `packaging/homebrew/`.
+- **README** focused on installation and usage with minimal commands.
+- **Documentation:** history in this file; releases without helper scripts in repo (see checklist below). Removed `RELEASING.md`, `packaging/homebrew/README.md`, `tag-release.sh`, `bump-formula-sha.sh`.
+- **Homebrew:** same repository for code and tap (separate `homebrew-ai-resources` no longer needed); removed `packaging/homebrew/`.
 
 ### Fixed
 
-- Comando **`ai-resources`**: el wrapper ya no usa una ruta fija a `opt/python@3.12/bin/python3` (podía no existir); añade el `bin` de `python@3.12` al `PATH` y usa **`python3`** o **`python3.12`**. Fórmula **`revision 1`**.
+- **`ai-resources` command:** the wrapper no longer uses a fixed path to `opt/python@3.12/bin/python3` (which might not exist); it adds the `bin` of `python@3.12` to `PATH` and uses **`python3`** or **`python3.12`**. Formula **`revision 1`**.
 
 ---
 
@@ -86,8 +86,8 @@ When you publish **`vMAJOR.MINOR.PATCH`**, add a new section above `[Unreleased]
 
 ## Release manager checklist
 
-1. Elegir SemVer y mover entradas en **`CHANGELOG.md`**.
-2. Actualizar **`Formula/ai-resources.rb`:** `tag:` y `version` acordes al nuevo tag.
-3. Commit en `main` y **push**.
-4. **Tag y push:** `git tag -a vX.Y.Z -m "Release X.Y.Z"` · `git push origin vX.Y.Z`
-5. Opcional: GitHub Release. Usuarios: `brew update && brew upgrade ai-resources` (privado: `HOMEBREW_GITHUB_API_TOKEN`). El **README** debe mantener **`brew tap wildbitca/ai-resources https://github.com/wildbitca/ai-resources.git`** (no omitir la URL).
+1. Choose SemVer and move entries in **`CHANGELOG.md`**.
+2. Update **`Formula/ai-resources.rb`:** `tag:` and `version` matching the new tag.
+3. Commit to `main` and **push**.
+4. **Tag and push:** `git tag -a vX.Y.Z -m "Release X.Y.Z"` · `git push origin vX.Y.Z`
+5. Optional: GitHub Release. Users: `brew update && brew upgrade ai-resources` (private: `HOMEBREW_GITHUB_API_TOKEN`). The **README** must keep **`brew tap wildbitca/ai-resources https://github.com/wildbitca/ai-resources.git`** (do not omit the URL).

@@ -1,6 +1,7 @@
 ---
 name: package-upgrade-review
 description: Reviews every package/dependency in the project, finds latest versions (pub.dev for Dart/Flutter, Maven for Java/Kotlin, CocoaPods/SPM for iOS), upgrades config files, and aligns code with changelogs and docs for breaking changes and new APIs. Use when the user asks to upgrade dependencies, update packages, or keep the project on latest versions.
+triggers: "**/pubspec.yaml, **/build.gradle*, **/Podfile, upgrade dependencies, update packages, latest versions, breaking changes, migration guide, pub.dev, maven, cocoapods"
 ---
 
 # Package Upgrade Review

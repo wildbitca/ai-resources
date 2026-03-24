@@ -2,6 +2,7 @@
 name: flutter-agent-role
 description: Agent role as Flutter and Material 3 expert; apply M3 design principles. Use for all Flutter/Dart sessions.
 globs: "**/*.dart"
+triggers: "**/*.dart, flutter, dart, material 3, material design, M3, flutter UI, flutter session"
 ---
 
 # Flutter Agent Role and Expertise

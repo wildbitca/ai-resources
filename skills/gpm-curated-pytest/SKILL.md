@@ -3,6 +3,7 @@ name: pytest
 description: >
   Pytest testing patterns for Python.
   Trigger: When writing Python tests - fixtures, mocking, markers.
+  (triggers: **/test_*.py, **/*_test.py, conftest.py, pytest.ini, pyproject.toml, pytest, fixture, @pytest.mark, parametrize, monkeypatch, mock, assert, python test)
 license: Apache-2.0
 metadata:
   author: gentleman-programming

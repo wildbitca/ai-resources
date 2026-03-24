@@ -3,6 +3,7 @@ name: nextjs-15
 description: >
   Next.js 15 App Router patterns.
   Trigger: When working with Next.js - routing, Server Actions, data fetching.
+  (triggers: **/app/**/page.tsx, **/app/**/layout.tsx, **/app/**/route.ts, next.config.*, nextjs, next.js, App Router, Server Actions, server component, client component, use server, use client, middleware.ts, loading.tsx, error.tsx)
 license: Apache-2.0
 metadata:
   author: gentleman-programming
