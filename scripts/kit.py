@@ -390,6 +390,28 @@ def _kit_refresh_hint(ak: Path) -> str:
     )
 
 
+def _discovery_recipe(ak_s: str) -> str:
+    """Return the universal skill discovery instructions shared by all agent stubs."""
+    return (
+        f"## Skill Discovery Protocol\n\n"
+        f"This environment uses a centralized AI skills library ([Agent Skills](https://agentskills.io) standard).\n\n"
+        f"**On every task**, follow this protocol:\n\n"
+        f"1. **Read the catalog** — `{ak_s}/skills-index.json` contains all available skills "
+        f"with `id`, `description`, `triggers`, and `path` fields.\n"
+        f"2. **Match** — Compare your current task against each skill's `description` and `triggers`.\n"
+        f"3. **Load** — For each matching skill, read its full `SKILL.md` at the `path` listed in the index.\n"
+        f"4. **Apply** — Follow the skill's instructions. Skill authority overrides generic patterns.\n"
+        f"5. **No match?** — Proceed normally without skills.\n\n"
+        f"### Key paths\n\n"
+        f"| Resource | Path |\n"
+        f"|----------|------|\n"
+        f"| Skills index | `{ak_s}/skills-index.json` |\n"
+        f"| Skills root | `{ak_s}/skills/` |\n"
+        f"| Workflows | `{ak_s}/workflows/` |\n"
+        f"| Kit docs | `{ak_s}/AGENTS.md` |\n"
+    )
+
+
 def _setup_engram_claude(*, dry_run: bool = False) -> None:
     """Register engram plugin for Claude Code (MCP + hooks + Memory Protocol skill)."""
     if shutil.which("engram") is None:
@@ -439,10 +461,11 @@ def _write_user_file(path: Path, content: str, *, dry_run: bool = False) -> None
 
 def _write_cursor_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
     md = (
-        f"# ai-resources\n\n"
+        f"# ai-resources (Cursor)\n\n"
         f"- **Repository:** `{ak_s}` — set `export AGENT_KIT={ak_s}` in shell if needed.\n"
-        f"- **Layout, CLI, env:** see `{ak_s}/README.md`\n"
-        f"- **Refresh:** {hint}\n"
+        f"- **Rules:** `{ak_s}/rules/*.mdc` (loaded via alwaysApply / globs)\n"
+        f"- **Refresh:** {hint}\n\n"
+        f"{_discovery_recipe(ak_s)}"
     )
     _write_user_file(Path.home() / ".cursor" / "AGENT_KIT.md", md, dry_run=dry_run)
 
@@ -450,38 +473,116 @@ def _write_cursor_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
 def _write_claude_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
     md = (
         f"# ai-resources (Claude Code)\n\n"
-        f"1. **Repo:** `{ak_s}`\n"
-        f"2. **Skills:** `{ak_s}/skills` — set `export AGENT_SKILLS_ROOT={ak_s}/skills`\n"
-        f"3. **Index:** `{ak_s}/skills-index.json`\n\n"
-        f"{hint}\n"
+        f"Set `export AGENT_SKILLS_ROOT={ak_s}/skills` in your shell profile.\n\n"
+        f"**Refresh:** {hint}\n\n"
+        f"{_discovery_recipe(ak_s)}"
     )
     _write_user_file(Path.home() / ".claude" / "CLAUDE.md", md, dry_run=dry_run)
 
 
-def _write_gemini_stub(ak_s: str, *, dry_run: bool = False) -> None:
+def _write_gemini_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
     md = (
-        f"# ai-resources (Gemini)\n\n"
-        f"Repo: `{ak_s}` — Skills: `{ak_s}/skills` — Index: `{ak_s}/skills-index.json`\n"
+        f"# ai-resources (Gemini CLI)\n\n"
+        f"**Refresh:** {hint}\n\n"
+        f"{_discovery_recipe(ak_s)}"
     )
     _write_user_file(Path.home() / ".gemini" / "GEMINI.md", md, dry_run=dry_run)
 
 
-def _write_opencode_stub(ak_s: str, *, dry_run: bool = False) -> None:
+def _write_opencode_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
     md = (
         f"# ai-resources (OpenCode)\n\n"
-        f"Repo: `{ak_s}` — `{ak_s}/skills-index.json` — details: `{ak_s}/README.md`\n"
+        f"**Refresh:** {hint}\n\n"
+        f"{_discovery_recipe(ak_s)}"
     )
     _write_user_file(Path.home() / ".config" / "opencode" / "AGENT_KIT.md", md, dry_run=dry_run)
 
 
-def _write_codex_stub(ak_s: str, *, dry_run: bool = False) -> None:
-    md = f"# ai-resources (Codex)\n\nRepo: `{ak_s}` — Discovery: `{ak_s}/skills-index.json`\n"
+def _write_codex_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
+    md = (
+        f"# ai-resources (Codex)\n\n"
+        f"**Refresh:** {hint}\n\n"
+        f"{_discovery_recipe(ak_s)}"
+    )
     _write_user_file(Path.home() / ".codex" / "AGENTS.md", md, dry_run=dry_run)
 
 
-def _write_vscode_stub(ak_s: str, *, dry_run: bool = False) -> None:
-    md = f"# ai-resources (Copilot)\n\nSkills: `{ak_s}/skills` — `{ak_s}/README.md`\n"
+def _write_vscode_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
+    md = (
+        f"# ai-resources (GitHub Copilot)\n\n"
+        f"**Refresh:** {hint}\n\n"
+        f"{_discovery_recipe(ak_s)}"
+    )
     _write_user_file(Path.home() / ".vscode" / "copilot-instructions.md", md, dry_run=dry_run)
+
+
+def _write_windsurf_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
+    md = (
+        f"# ai-resources (Windsurf)\n\n"
+        f"**Refresh:** {hint}\n\n"
+        f"{_discovery_recipe(ak_s)}"
+    )
+    # Windsurf global rules location
+    _write_user_file(
+        Path.home() / ".codeium" / "windsurf" / "memories" / "global_rules.md",
+        md, dry_run=dry_run,
+    )
+
+
+def _write_continue_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
+    md = (
+        f"# ai-resources (Continue.dev)\n\n"
+        f"**Refresh:** {hint}\n\n"
+        f"{_discovery_recipe(ak_s)}"
+    )
+    _write_user_file(Path.home() / ".continue" / "AGENT_KIT.md", md, dry_run=dry_run)
+
+
+def _write_aider_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
+    md = (
+        f"# ai-resources (Aider)\n\n"
+        f"Load this file with `/read` at session start, or add to `.aider.conf.yml`:\n"
+        f"```yaml\nread:\n  - {Path.home()}/.aider/CONVENTIONS.md\n```\n\n"
+        f"**Refresh:** {hint}\n\n"
+        f"{_discovery_recipe(ak_s)}"
+    )
+    _write_user_file(Path.home() / ".aider" / "CONVENTIONS.md", md, dry_run=dry_run)
+
+
+def _setup_skill_symlinks(ak: Path, *, dry_run: bool = False) -> None:
+    """Create symlinks from native agent skill discovery paths to the centralized skills dir."""
+    skills_src = ak / "skills"
+    if not skills_src.is_dir():
+        print(f"Skills dir not found: {skills_src}", file=sys.stderr)
+        return
+
+    # Map of: symlink_location -> description
+    symlink_targets: dict[Path, str] = {
+        # Claude Code: personal skills via --add-dir equivalent
+        Path.home() / ".claude" / "skills" / "ai-resources": "Claude Code",
+        # Codex: user-level skills
+        Path.home() / ".agents" / "skills" / "ai-resources": "Codex",
+    }
+
+    for link_path, agent_name in symlink_targets.items():
+        if dry_run:
+            print(f"would symlink {link_path} -> {skills_src} ({agent_name})")
+            continue
+        link_path.parent.mkdir(parents=True, exist_ok=True)
+        # Remove existing symlink or dir if it points somewhere else
+        if link_path.is_symlink():
+            if link_path.resolve() == skills_src.resolve():
+                print(f"symlink OK: {link_path} ({agent_name})")
+                continue
+            link_path.unlink()
+        elif link_path.exists():
+            print(
+                f"skip symlink {link_path}: path exists and is not a symlink ({agent_name})",
+                file=sys.stderr,
+            )
+            continue
+        link_path.symlink_to(skills_src)
+        print(f"symlinked {link_path} -> {skills_src} ({agent_name})")
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -492,7 +593,21 @@ def cmd_setup(args: argparse.Namespace) -> int:
     dry = getattr(args, "dry_run", False)
     targets_done: list[str] = []
 
-    # MCP presets from resources.json (cursor is the only implemented target today; "all" uses same block)
+    # Dispatch table: target name -> (writer_func, extra_setup_funcs)
+    # All writers now receive (ak_s, hint, dry_run=) for consistency.
+    _writers: dict[str, tuple] = {
+        "cursor":   (_write_cursor_stub,),
+        "claude":   (_write_claude_stub, lambda: _setup_engram_claude(dry_run=dry)),
+        "gemini":   (_write_gemini_stub,),
+        "opencode": (_write_opencode_stub,),
+        "codex":    (_write_codex_stub,),
+        "vscode":   (_write_vscode_stub,),
+        "windsurf": (_write_windsurf_stub,),
+        "continue": (_write_continue_stub,),
+        "aider":    (_write_aider_stub,),
+    }
+
+    # MCP presets from resources.json
     if target in ("all", "cursor", "mcp"):
         mcp_t = "all" if target in ("all", "mcp") else "cursor"
         rc = _apply_mcp_config(argparse.Namespace(target=mcp_t, dry_run=dry))
@@ -501,35 +616,26 @@ def cmd_setup(args: argparse.Namespace) -> int:
         targets_done.append("mcp")
 
     if target == "all":
-        _write_cursor_stub(ak_s, hint, dry_run=dry)
-        _write_claude_stub(ak_s, hint, dry_run=dry)
-        _setup_engram_claude(dry_run=dry)
-        _write_gemini_stub(ak_s, dry_run=dry)
-        _write_opencode_stub(ak_s, dry_run=dry)
-        _write_codex_stub(ak_s, dry_run=dry)
-        _write_vscode_stub(ak_s, dry_run=dry)
-        targets_done.extend(["cursor", "claude", "gemini", "opencode", "codex", "vscode"])
-    elif target == "cursor":
-        _write_cursor_stub(ak_s, hint, dry_run=dry)
-        targets_done.append("cursor")
-    elif target == "claude":
-        _write_claude_stub(ak_s, hint, dry_run=dry)
-        _setup_engram_claude(dry_run=dry)
-        targets_done.append("claude")
-    elif target == "gemini":
-        _write_gemini_stub(ak_s, dry_run=dry)
-        targets_done.append("gemini")
-    elif target == "opencode":
-        _write_opencode_stub(ak_s, dry_run=dry)
-        targets_done.append("opencode")
-    elif target == "codex":
-        _write_codex_stub(ak_s, dry_run=dry)
-        targets_done.append("codex")
-    elif target == "vscode":
-        _write_vscode_stub(ak_s, dry_run=dry)
-        targets_done.append("vscode")
+        for name, fns in _writers.items():
+            fns[0](ak_s, hint, dry_run=dry)
+            for extra in fns[1:]:
+                extra()
+            targets_done.append(name)
+        # Skill symlinks for agents with native SKILL.md discovery
+        _setup_skill_symlinks(ak, dry_run=dry)
+        targets_done.append("symlinks")
     elif target == "mcp":
         pass  # MCP already applied above
+    elif target in _writers:
+        fns = _writers[target]
+        fns[0](ak_s, hint, dry_run=dry)
+        for extra in fns[1:]:
+            extra()
+        targets_done.append(target)
+        # Symlinks when setting up agents that support native SKILL.md
+        if target in ("claude", "codex"):
+            _setup_skill_symlinks(ak, dry_run=dry)
+            targets_done.append("symlinks")
     else:
         print(f"Unknown target: {target!r}", file=sys.stderr)
         return 1
@@ -661,9 +767,13 @@ _EPILOG = """Typical flows:
     python3 scripts/kit.py generate
 
   Machine + IDE + validate workflows (writes ~/.config/ai-resources/state.json):
-    python3 scripts/kit.py setup
-    python3 scripts/kit.py setup --target cursor
-    python3 scripts/kit.py setup --fix-workflow-ids   # optional: rewrite workflow skill ids in-place
+    python3 scripts/kit.py setup                       # all agents + MCP + symlinks
+    python3 scripts/kit.py setup --target cursor       # Cursor only
+    python3 scripts/kit.py setup --target claude       # Claude Code + engram + symlinks
+    python3 scripts/kit.py setup --target windsurf     # Windsurf only
+    python3 scripts/kit.py setup --fix-workflow-ids    # optional: rewrite workflow skill ids in-place
+
+  Supported targets: cursor, claude, gemini, opencode, codex, vscode, windsurf, continue, aider, mcp
 
 Environment (optional):
   AGENT_KIT          Repo root (default: parent of scripts/)
@@ -729,7 +839,8 @@ def main() -> int:
     )
     p_st.add_argument(
         "--target",
-        choices=["all", "cursor", "claude", "gemini", "opencode", "codex", "vscode", "mcp"],
+        choices=["all", "cursor", "claude", "gemini", "opencode", "codex", "vscode",
+                 "windsurf", "continue", "aider", "mcp"],
         default="all",
         help="Bootstrap scope (default: all)",
     )
