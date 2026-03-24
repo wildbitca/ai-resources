@@ -3,6 +3,7 @@ name: spring-boot-3
 description: >
   Spring Boot 3 patterns for configuration, DI, and web services.
   Trigger: When building or refactoring Spring Boot 3 applications.
+  (triggers: **/*.java, spring boot, spring boot 3, @SpringBootApplication, @RestController, @Service, @Bean, @Configuration, application.yml, application.properties, pom.xml, build.gradle, dependency injection, spring web)
 metadata:
   author: diegnghrmr
   version: "1.0"

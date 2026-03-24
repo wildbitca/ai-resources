@@ -1,6 +1,7 @@
 ---
 name: flutter-supabase-oauth
 description: Google Sign-In OIDC flow with Supabase Auth. Use when implementing OAuth (Google, Apple) in Flutter + Supabase apps.
+triggers: "**/*.dart, oauth, google sign in, apple sign in, OIDC, supabase auth, social login, sign in with google, authentication flow, ID token"
 ---
 
 # Flutter Supabase OAuth

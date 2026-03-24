@@ -3,6 +3,7 @@ name: typescript
 description: >
   TypeScript strict patterns and best practices.
   Trigger: When writing TypeScript code - types, interfaces, generics.
+  (triggers: **/*.ts, **/*.tsx, tsconfig.json, typescript, type, interface, generic, enum, as const, discriminated union, type guard, strict mode, type inference)
 license: Apache-2.0
 metadata:
   author: gentleman-programming

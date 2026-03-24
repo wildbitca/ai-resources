@@ -1,6 +1,7 @@
 ---
 name: clickup-feature-tracking
 description: Every feature must belong to a ClickUp card. Use when starting feature work, creating tasks, or tracking work in ClickUp. Requires ClickUp MCP tools.
+triggers: "clickup, feature tracking, create task, task card, work tracking, project management, epic, sprint"
 ---
 
 # ClickUp Feature Tracking

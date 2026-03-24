@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-03-23T23:34:33.238168+00:00",
+  "generated_at": "2026-03-24T22:15:48.615385+00:00",
   "skills_root": "/Volumes/Docker/Development/wildbit/ai-resources/skills",
   "count": 116,
   "skills": [
@@ -9,7 +9,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/changelog-best-practices/SKILL.md",
       "name": "changelog-best-practices",
       "description": "Write, maintain, and migrate CHANGELOG.md files using Keep a Changelog format and best practices. Use when creating a changelog from scratch, updating an existing one, fixing/migrating a badly written changelog, or rechecking changelogs version-by-version with an LLM agent (e.g. Cursor) to regenerate human-readable CHANGELOG.md from commits and changed files.",
-      "triggers": [],
+      "triggers": [
+        "CHANGELOG.md, changelog, release notes, keep a changelog, semver, version history, write changelog, update changelog, fix changelog, migrate changelog"
+      ],
       "globs": []
     },
     {
@@ -17,7 +19,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/clickup-feature-tracking/SKILL.md",
       "name": "clickup-feature-tracking",
       "description": "Every feature must belong to a ClickUp card. Use when starting feature work, creating tasks, or tracking work in ClickUp. Requires ClickUp MCP tools.",
-      "triggers": [],
+      "triggers": [
+        "clickup, feature tracking, create task, task card, work tracking, project management, epic, sprint"
+      ],
       "globs": []
     },
     {
@@ -25,7 +29,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/cloudflare-workers-auth/SKILL.md",
       "name": "cloudflare-workers-auth",
       "description": "JWT validation and presigned URL security for Cloudflare Workers with Supabase. Use when implementing protected endpoints or upload flows in Workers.",
-      "triggers": [],
+      "triggers": [
+        "**/*.ts, **/wrangler.toml, cloudflare, workers, JWT, presigned URL, edge auth, token validation, upload endpoint, supabase auth worker"
+      ],
       "globs": []
     },
     {
@@ -33,7 +39,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/code-cleanup/SKILL.md",
       "name": "code-cleanup",
       "description": "Applies generic code cleanup (comments, unused code, empty dirs, linters, config, duplicates) for any language (Dart, Bash, Python, Java, Kotlin, Swift, TS/JS, etc.) and, for Flutter/Dart, a combined quality check. Use when the user asks to clean up code, remove dead code, empty dirs, reduce technical debt, or run a full project quality check.",
-      "triggers": [],
+      "triggers": [
+        "clean up, cleanup, dead code, unused code, remove comments, empty directories, technical debt, lint, refactor, unused imports, duplicates, code quality check"
+      ],
       "globs": []
     },
     {
@@ -300,8 +308,10 @@
       "id": "common-ui-design",
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-ui-design/SKILL.md",
       "name": "common-ui-design",
-      "description": "Create distinctive, production-grade frontend UI with bold aesthetic choices. Use when building web components, pages, interfaces, dashboards, or applications in any framework (React, Next.js, Angular, Vue, HTML/CSS). Triggers: 'build a page', 'create a component', 'design a dashboard', 'landing page', 'UI for', 'build a layout', 'make it look good', 'improve the design', build UI, create interface, design screen",
-      "triggers": [],
+      "description": "Create distinctive, production-grade frontend UI with bold aesthetic choices. Use when building web components, pages, interfaces, dashboards, or applications in any framework (React, Next.js, Angular, Vue, HTML/CSS).",
+      "triggers": [
+        "build a page, create a component, design a dashboard, landing page, UI for, build a layout, make it look good, improve the design, build UI, create interface, design screen, **/*.tsx, **/*.jsx, **/*.vue, **/*.html, **/*.css, react, next.js, angular, vue, frontend"
+      ],
       "globs": []
     },
     {
@@ -319,15 +329,21 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/crossplane-upjet-building/SKILL.md",
       "name": "crossplane-upjet-building",
       "description": "Build, configure, and maintain Crossplane providers with Upjet. Use when setting up or scaffolding a new upjet provider from the template, generating CRDs and controllers from Terraform/OpenTofu provider schemas, fixing CI (check-diff, lint), configuring publish pipelines (Upbound Marketplace, GHCR), migrating Terraform to Crossplane managed resources, or debugging schema/codegen issues. Integrates with terraform-to-crossplane-migration and kro-rgd-from-crossplane when converting Terraform or designing custom APIs over Crossplane CRs.",
-      "triggers": [],
-      "globs": []
+      "triggers": [
+        "crossplane, upjet, provider, CRD, controller, codegen, scaffold provider, upbound, GHCR, terraform schema, managed resource, crossplane build"
+      ],
+      "globs": [
+        "**/crossplane/**\", \"infra/**\", \"**/*.tf"
+      ]
     },
     {
       "id": "cursor-plan-tracking",
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/cursor-plan-tracking/SKILL.md",
       "name": "cursor-plan-tracking",
       "description": "Cursor plan completion tracking in YAML frontmatter. Use when creating or updating .plan.md files.",
-      "triggers": [],
+      "triggers": [
+        "**/*.plan.md, cursor plan, plan tracking, plan completion, todo tracking, plan status"
+      ],
       "globs": []
     },
     {
@@ -365,7 +381,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/database-migrations/SKILL.md",
       "name": "database-migrations",
       "description": "Enforces schema migration practices for Supabase (or similar) with file-based migrations, naming, idempotency, and a standard workflow. Use when creating or modifying database schema, or when working with Supabase migrations.",
-      "triggers": [],
+      "triggers": [
+        "**/*.sql, **/supabase/migrations/**, migration, schema change, database schema, supabase migration, alter table, create table, add column, RLS policy"
+      ],
       "globs": []
     },
     {
@@ -383,7 +401,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/firebase-crashlytics-fix-issues/SKILL.md",
       "name": "firebase-crashlytics-fix-issues",
       "description": "Uses Firebase MCP to fetch Crashlytics top issues for a given project/app, get issue details and event stack traces, and fix them one by one in the codebase. Use when the user wants to fix Crashlytics crashes, triage production errors, or evaluate a specific Firebase project's stability.",
-      "triggers": [],
+      "triggers": [
+        "crashlytics, firebase crash, production crash, crash report, stack trace, fix crash, triage crashes, app stability, firebase issues"
+      ],
       "globs": []
     },
     {
@@ -391,7 +411,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-accessibility-semantics/SKILL.md",
       "name": "flutter-accessibility-semantics",
       "description": "Enforces semantic identifiers for E2E tests, Maestro, and accessibility in Flutter. Use when adding testable widgets, implementing E2E flows, or improving accessibility.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, semantics, accessibility, a11y, semantic ID, maestro, E2E test, screen reader, testable widget, flutter accessibility"
+      ],
       "globs": []
     },
     {
@@ -399,15 +421,21 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-agent-role/SKILL.md",
       "name": "flutter-agent-role",
       "description": "Agent role as Flutter and Material 3 expert; apply M3 design principles. Use for all Flutter/Dart sessions.",
-      "triggers": [],
-      "globs": []
+      "triggers": [
+        "**/*.dart, flutter, dart, material 3, material design, M3, flutter UI, flutter session"
+      ],
+      "globs": [
+        "**/*.dart"
+      ]
     },
     {
       "id": "flutter-app-size",
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-app-size/SKILL.md",
       "name": "flutter-app-size",
       "description": "Reduces Flutter release APK/AAB/IPA size via R8, tree-shake-icons, asset diet, HTTP consolidation, deferred loading. Use when optimizing app size, reducing APK/AAB size, modifying build config, adding assets, or when the user mentions app size, binary size, or install size.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, **/build.gradle*, **/proguard-rules.pro, app size, APK size, AAB size, IPA size, binary size, install size, reduce size, R8, tree shake, deferred loading, asset optimization"
+      ],
       "globs": []
     },
     {
@@ -445,7 +473,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-clean-architecture/SKILL.md",
       "name": "flutter-clean-architecture",
       "description": "Enforces feature-based modular structure, dependency rules, and widget composition (avoid Widget Hell) for Flutter apps. Use when organizing or adding features, refactoring large build methods, or deciding where to put new code.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, flutter architecture, clean architecture, feature structure, widget hell, modular, SOLID, refactor widget, organize code, folder structure, separation of concerns"
+      ],
       "globs": []
     },
     {
@@ -453,7 +483,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-code-quality/SKILL.md",
       "name": "flutter-code-quality",
       "description": "Enforces Dart/Flutter code quality via analyzer, cleanup, and dependency rules. Use when completing Flutter coding tasks, before considering work done, or when the user asks to run analyzer or fix lint issues.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, flutter analyze, dart analyze, lint, analyzer, fix warnings, code quality, unused imports, deprecated API"
+      ],
       "globs": []
     },
     {
@@ -461,7 +493,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-dart-standards/SKILL.md",
       "name": "flutter-dart-standards",
       "description": "Enforces Dart type safety, immutability, naming, and widget composition in Flutter projects. Use when writing or reviewing Dart/Flutter code.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, dart standards, type safety, immutability, naming conventions, dynamic, const, final, widget composition, dart best practices"
+      ],
       "globs": []
     },
     {
@@ -479,7 +513,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-dependency-install/SKILL.md",
       "name": "flutter-dependency-install",
       "description": "Adds or updates Flutter/Dart dependencies using the latest possible version and official pub.dev documentation for correct installation and configuration. Use when adding packages to pubspec.yaml, installing dependencies, or when the user asks to add or update a Flutter/Dart package.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, **/pubspec.yaml, pub.dev, flutter pub add, add package, install dependency, update package, pubspec, dart dependency"
+      ],
       "globs": []
     },
     {
@@ -497,7 +533,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-environment-config/SKILL.md",
       "name": "flutter-environment-config",
       "description": "Enforces flavor support, env files, AppConfig singleton, and no hardcoded URLs/keys in Flutter. Use when configuring environments, flavors, or build variants.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, **/*.env, **/AppConfig*, flavor, environment, build variant, dev env, prd env, hardcoded URL, API key config, flutter flavor"
+      ],
       "globs": []
     },
     {
@@ -515,7 +553,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-error-handling-result/SKILL.md",
       "name": "flutter-error-handling-result",
       "description": "Applies Result-type error handling, central error processing, and UI error display patterns in Flutter/Dart. Use when implementing async services, Notifiers, or user-facing error messages.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, Result type, error handling, try catch, AppError, failure, success, async service, error display, snackbar error"
+      ],
       "globs": []
     },
     {
@@ -563,7 +603,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-http-dio/SKILL.md",
       "name": "flutter-http-dio",
       "description": "Enforces Dio-based HTTP client patterns with factory constructors and interceptors in Flutter. Use when implementing API clients, upload services, or authenticated requests.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, dio, HTTP client, API client, interceptor, upload service, authenticated request, REST API, network layer, http request"
+      ],
       "globs": []
     },
     {
@@ -571,7 +613,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-i18n/SKILL.md",
       "name": "flutter-i18n",
       "description": "Enforces internationalization with AppLocalizations and ARB files in Flutter. Use when adding or changing user-facing strings, or when setting up or fixing Flutter l10n.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, **/*.arb, i18n, l10n, localization, internationalization, AppLocalizations, translate, user-facing string, hardcoded string, ARB file"
+      ],
       "globs": []
     },
     {
@@ -599,7 +643,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-ios-distribution-launch/SKILL.md",
       "name": "flutter-ios-distribution-launch",
       "description": "Prevents and fixes iOS distribution launch failures (sysctl sandbox denials, Scene creation failed). Use when changing iOS entitlements, AppDelegate, Info.plist scene config, or debugging app failing to launch on Firebase App Distribution or TestFlight.",
-      "triggers": [],
+      "triggers": [
+        "**/*.plist, **/*.entitlements, **/AppDelegate*, iOS launch, distribution crash, TestFlight crash, sandbox denial, scene creation failed, firebase app distribution, app not launching"
+      ],
       "globs": []
     },
     {
@@ -627,7 +673,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-logging/SKILL.md",
       "name": "flutter-logging",
       "description": "Enforces structured logging, log levels, and PII sanitization in Flutter/Dart apps. Use when adding logs, debugging, or configuring production-safe logging.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, logging, logger, log level, print, debugPrint, PII, sanitize logs, structured logging, production logging"
+      ],
       "globs": []
     },
     {
@@ -665,7 +713,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-performance-layout/SKILL.md",
       "name": "flutter-performance-layout",
       "description": "Applies Flutter performance and layout rules to prevent jank and overflow. Use when building or refactoring Flutter UI, lists, scroll views, or when optimizing layout or scroll performance.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, performance, jank, overflow, ListView, scroll, layout, FPS, frame budget, widget rebuild, const widget, lazy loading"
+      ],
       "globs": []
     },
     {
@@ -673,7 +723,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-resource-management/SKILL.md",
       "name": "flutter-resource-management",
       "description": "Enforces controller disposal, mounted checks, nullification, guard pattern, and listener cleanup in Flutter. Use when using AnimationController, ScrollController, VideoPlayerController, StreamSubscription, or any disposable resource.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, dispose, controller, AnimationController, ScrollController, StreamSubscription, memory leak, listener cleanup, mounted check, resource cleanup"
+      ],
       "globs": []
     },
     {
@@ -691,7 +743,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-riverpod-state/SKILL.md",
       "name": "flutter-riverpod-state",
       "description": "Applies Riverpod patterns for state, Notifiers, state classes with copyWith, and Result-based async handling. Use when adding or refactoring Riverpod providers, state classes, or async logic in Notifiers.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, riverpod, provider, notifier, state management, copyWith, StateNotifier, AsyncNotifier, ConsumerWidget, ref.watch"
+      ],
       "globs": []
     },
     {
@@ -719,7 +773,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-supabase-oauth/SKILL.md",
       "name": "flutter-supabase-oauth",
       "description": "Google Sign-In OIDC flow with Supabase Auth. Use when implementing OAuth (Google, Apple) in Flutter + Supabase apps.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, oauth, google sign in, apple sign in, OIDC, supabase auth, social login, sign in with google, authentication flow, ID token"
+      ],
       "globs": []
     },
     {
@@ -737,7 +793,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-theme-colors/SKILL.md",
       "name": "flutter-theme-colors",
       "description": "Enforces theme-based colors and typography in Flutter; prohibits hardcoded colors. Use when implementing or refactoring UI, Material 3 components, or theming.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, theme, colorScheme, textTheme, hardcoded color, Colors., Color(0x, dark mode, light mode, Material 3 theme, typography"
+      ],
       "globs": []
     },
     {
@@ -745,7 +803,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-video-feed-architecture/SKILL.md",
       "name": "flutter-video-feed-architecture",
       "description": "Vertical video feed architecture: controller pool, sliding window, LRU cache, media carousel, ad preloading. Use when building TikTok/Instagram-style feeds in Flutter. Apply flutter-resource-management for disposal patterns.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, video feed, video player, PageView, TikTok feed, reels, vertical scroll, controller pool, sliding window, media carousel, video preload"
+      ],
       "globs": []
     },
     {
@@ -763,7 +823,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-electron/SKILL.md",
       "name": "electron",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "electron, desktop app, main process, renderer process, IPC, ipcMain, ipcRenderer, BrowserWindow, preload, electron-builder, auto-update, native integration, cross-platform desktop, **/main.ts, **/preload.ts, electron.config.*"
+      ],
       "globs": []
     },
     {
@@ -771,7 +833,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-elixir-antipatterns/SKILL.md",
       "name": "elixir-antipatterns",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.ex, **/*.exs, elixir, phoenix, ecto, anti-pattern, antipattern, GenServer, code review elixir, refactor elixir, mix.exs, with clause, pattern match, Repo, changeset"
+      ],
       "globs": []
     },
     {
@@ -779,7 +843,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-hexagonal-architecture-layers-java/SKILL.md",
       "name": "hexagonal-architecture-layers-java",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.java, hexagonal architecture, ports and adapters, clean architecture java, domain layer, application layer, infrastructure layer, dependency inversion, pom.xml, build.gradle, adapter, port, use case java"
+      ],
       "globs": []
     },
     {
@@ -787,7 +853,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-java-21/SKILL.md",
       "name": "java-21",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.java, java 21, record, sealed class, sealed interface, virtual thread, pattern matching, switch expression, text block, SequencedCollection, structured concurrency, pom.xml, build.gradle"
+      ],
       "globs": []
     },
     {
@@ -795,7 +863,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-react-native/SKILL.md",
       "name": "react-native",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.tsx, **/*.jsx, react native, react-native, expo, React Navigation, NativeWind, metro.config.*, app.json, app.config.*, StyleSheet, FlatList, native module, react native mobile, iOS, Android"
+      ],
       "globs": []
     },
     {
@@ -803,7 +873,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-spring-boot-3/SKILL.md",
       "name": "spring-boot-3",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.java, spring boot, spring boot 3, @SpringBootApplication, @RestController, @Service, @Bean, @Configuration, application.yml, application.properties, pom.xml, build.gradle, dependency injection, spring web"
+      ],
       "globs": []
     },
     {
@@ -811,7 +883,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-ai-sdk-5/SKILL.md",
       "name": "ai-sdk-5",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "ai sdk, vercel ai, useChat, useCompletion, streamText, generateText, ai/react, ai/rsc, AI chat, LLM integration, @ai-sdk/*, package.json"
+      ],
       "globs": []
     },
     {
@@ -819,7 +893,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-angular-architecture/SKILL.md",
       "name": "angular-architecture",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.component.ts, **/*.module.ts, angular.json, angular, angular architecture, project structure angular, scope rule, feature module, shared module, component placement, file naming angular"
+      ],
       "globs": []
     },
     {
@@ -827,7 +903,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-angular-core/SKILL.md",
       "name": "angular-core",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.component.ts, **/*.service.ts, angular, standalone component, signal, inject, @Component, ChangeDetectionStrategy, OnPush, zoneless, @if, @for, @switch, control flow angular"
+      ],
       "globs": []
     },
     {
@@ -835,7 +913,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-angular-forms/SKILL.md",
       "name": "angular-forms",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.component.ts, angular form, reactive form, FormGroup, FormControl, FormBuilder, Validators, signal form, template-driven form, form validation angular, ngModel, patchValue"
+      ],
       "globs": []
     },
     {
@@ -843,7 +923,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-angular-performance/SKILL.md",
       "name": "angular-performance",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.component.ts, **/*.component.html, angular performance, NgOptimizedImage, @defer, lazy loading angular, SSR angular, ngSrc, loadChildren, prerender, hydration, Core Web Vitals angular"
+      ],
       "globs": []
     },
     {
@@ -851,7 +933,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-django-drf/SKILL.md",
       "name": "django-drf",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.py, django, rest framework, DRF, ViewSet, ModelViewSet, Serializer, ModelSerializer, APIView, urls.py, views.py, serializers.py, permissions.py, FilterSet, django rest"
+      ],
       "globs": []
     },
     {
@@ -859,7 +943,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-github-pr/SKILL.md",
       "name": "github-pr",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "pull request, PR, gh pr create, conventional commit, PR description, PR template, code review, merge request, github PR, commit message"
+      ],
       "globs": []
     },
     {
@@ -867,7 +953,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-jira-epic/SKILL.md",
       "name": "jira-epic",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "jira epic, create epic, large feature, multi-task, initiative, epic template, jira, feature breakdown, acceptance criteria epic"
+      ],
       "globs": []
     },
     {
@@ -875,7 +963,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-jira-task/SKILL.md",
       "name": "jira-task",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "jira task, create task, jira ticket, create ticket, jira issue, bug report jira, task template, story points, acceptance criteria"
+      ],
       "globs": []
     },
     {
@@ -883,7 +973,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-nextjs-15/SKILL.md",
       "name": "nextjs-15",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/app/**/page.tsx, **/app/**/layout.tsx, **/app/**/route.ts, next.config.*, nextjs, next.js, App Router, Server Actions, server component, client component, use server, use client, middleware.ts, loading.tsx, error.tsx"
+      ],
       "globs": []
     },
     {
@@ -891,7 +983,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-playwright/SKILL.md",
       "name": "playwright",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.spec.ts, **/*.test.ts, playwright.config.*, playwright, e2e test, end-to-end, page object, getByRole, getByTestId, locator, expect, browser test, integration test"
+      ],
       "globs": []
     },
     {
@@ -899,7 +993,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-pytest/SKILL.md",
       "name": "pytest",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/test_*.py, **/*_test.py, conftest.py, pytest.ini, pyproject.toml, pytest, fixture, @pytest.mark, parametrize, monkeypatch, mock, assert, python test"
+      ],
       "globs": []
     },
     {
@@ -907,7 +1003,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-react-19/SKILL.md",
       "name": "react-19",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.tsx, **/*.jsx, react, react 19, React Compiler, useActionState, useFormStatus, useOptimistic, use, server component, client component, suspense, concurrent"
+      ],
       "globs": []
     },
     {
@@ -915,7 +1013,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-skill-creator/SKILL.md",
       "name": "skill-creator",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "SKILL.md, create skill, new skill, agent skill, add skill, document patterns, skill template, agent instructions, skills-index.json"
+      ],
       "globs": []
     },
     {
@@ -923,7 +1023,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-tailwind-4/SKILL.md",
       "name": "tailwind-4",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.tsx, **/*.jsx, **/*.css, tailwind.config.*, tailwind, tailwind css, cn("
+      ],
       "globs": []
     },
     {
@@ -931,7 +1033,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-typescript/SKILL.md",
       "name": "typescript",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.ts, **/*.tsx, tsconfig.json, typescript, type, interface, generic, enum, as const, discriminated union, type guard, strict mode, type inference"
+      ],
       "globs": []
     },
     {
@@ -939,7 +1043,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-zod-4/SKILL.md",
       "name": "zod-4",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.ts, **/*.tsx, zod, z.object, z.string, z.number, schema validation, z.infer, z.pipe, z.coerce, zod 4, form validation zod, parse, safeParse"
+      ],
       "globs": []
     },
     {
@@ -947,7 +1053,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-zustand-5/SKILL.md",
       "name": "zustand-5",
       "description": ">",
-      "triggers": [],
+      "triggers": [
+        "**/*.ts, **/*.tsx, zustand, create store, useStore, state management react, persist middleware, immer middleware, devtools, zustand 5, slice pattern"
+      ],
       "globs": []
     },
     {
@@ -965,15 +1073,21 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/kro-rgd-from-crossplane/SKILL.md",
       "name": "kro-rgd-from-crossplane",
       "description": "Create kro ResourceGraphDefinitions (RGDs) from Crossplane resources. Use when designing custom APIs that wrap Crossplane CRs, bundling related resources into unified RGDs (e.g. GitHubProject = teams + repos + team-repos), or when you need flexible schemas with defaults and parameter passing to sub-resources.",
-      "triggers": [],
-      "globs": []
+      "triggers": [
+        "kro, RGD, ResourceGraphDefinition, custom API, bundle resources, crossplane wrapper, kubernetes CRD, composite resource"
+      ],
+      "globs": [
+        "**/crossplane/**\", \"infra/**"
+      ]
     },
     {
       "id": "package-upgrade-review",
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/package-upgrade-review/SKILL.md",
       "name": "package-upgrade-review",
       "description": "Reviews every package/dependency in the project, finds latest versions (pub.dev for Dart/Flutter, Maven for Java/Kotlin, CocoaPods/SPM for iOS), upgrades config files, and aligns code with changelogs and docs for breaking changes and new APIs. Use when the user asks to upgrade dependencies, update packages, or keep the project on latest versions.",
-      "triggers": [],
+      "triggers": [
+        "**/pubspec.yaml, **/build.gradle*, **/Podfile, upgrade dependencies, update packages, latest versions, breaking changes, migration guide, pub.dev, maven, cocoapods"
+      ],
       "globs": []
     },
     {
@@ -981,7 +1095,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/sentry-fix-unresolved-issues/SKILL.md",
       "name": "sentry-fix-unresolved-issues",
       "description": "Uses Sentry MCP to fetch unresolved issues, get details and Seer analysis, and fix them one by one in the codebase. Use when the user wants to fix Sentry issues, triage production errors, work through unresolved bugs, or clear the Sentry inbox.",
-      "triggers": [],
+      "triggers": [
+        "sentry, unresolved issues, production error, sentry inbox, triage errors, fix sentry, seer analysis, error monitoring, sentry issue"
+      ],
       "globs": []
     },
     {
@@ -989,7 +1105,9 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/supabase-flutter-integration/SKILL.md",
       "name": "supabase-flutter-integration",
       "description": "Supabase Postgres integration strategy: direct client vs backend proxy, RLS, JWT. Use when designing data access or backend integration for Flutter + Supabase.",
-      "triggers": [],
+      "triggers": [
+        "**/*.dart, supabase, PostgREST, RLS, row level security, direct client, backend proxy, supabase client, real-time subscription, data access layer"
+      ],
       "globs": []
     },
     {
@@ -997,40 +1115,60 @@
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/terraform-devops-modules/SKILL.md",
       "name": "terraform-devops-modules",
       "description": "DevOps Terraform and Cloud specialist for creating reusable, composable Terraform modules. Use when designing or implementing Terraform infrastructure, creating modules, or refactoring IaC. Enforces: module composition (child modules that use other modules), latest provider versions, power and flexibility with sensible defaults, and security-first posture from day 0.",
-      "triggers": [],
-      "globs": []
+      "triggers": [
+        "**/*.tf, terraform, module, IaC, infrastructure, reusable module, module composition, required_providers, terraform module, HCL, cloud infrastructure"
+      ],
+      "globs": [
+        "**/*.tf\", \"**/terraform/**\", \"infra/**"
+      ]
     },
     {
       "id": "terraform-maintainer",
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/terraform-maintainer/SKILL.md",
       "name": "terraform-maintainer",
       "description": "Orchestrates Terraform module and consumer maintenance so tf-modules and all projects using them stay professional and in sync. Use when maintaining or releasing tf-module-* repos, upgrading providers or internal module refs, versioning with semver, normalizing changelogs, or applying DevOps/module standards across the Terraform estate. Integrates terraform-devops-modules, terraform-provider-upgrade, terraform-version-commit, and changelog-best-practices.",
-      "triggers": [],
-      "globs": []
+      "triggers": [
+        "**/*.tf, terraform maintain, release module, upgrade providers, sync projects, normalize changelog, tf-modules, terraform estate, module maintenance, professional modules"
+      ],
+      "globs": [
+        "**/*.tf\", \"**/terraform/**\", \"infra/**"
+      ]
     },
     {
       "id": "terraform-provider-upgrade",
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/terraform-provider-upgrade/SKILL.md",
       "name": "terraform-provider-upgrade",
       "description": "Workflow for upgrading Terraform provider versions across modules. Use when the user wants to update providers, upgrade provider versions, run terraform init and validate to confirm nothing broke, or search for latest provider versions in the Terraform Registry.",
-      "triggers": [],
-      "globs": []
+      "triggers": [
+        "**/*.tf, terraform provider, upgrade provider, provider version, terraform registry, terraform init, terraform validate, required_providers, provider update"
+      ],
+      "globs": [
+        "**/*.tf\", \"**/terraform/**\", \"infra/**"
+      ]
     },
     {
       "id": "terraform-to-crossplane-migration",
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/terraform-to-crossplane-migration/SKILL.md",
       "name": "terraform-to-crossplane-migration",
       "description": "Migrate infrastructure from Terraform (HCL) to Crossplane (Kubernetes CRDs). Use when converting Terraform modules or resources to Crossplane managed resources (ProviderConfig, Composition, XRD), or when moving IaC from Terraform to GitOps with Crossplane.",
-      "triggers": [],
-      "globs": []
+      "triggers": [
+        "**/*.tf, terraform to crossplane, migrate terraform, HCL to CRD, crossplane migration, ProviderConfig, Composition, XRD, GitOps migration, managed resource"
+      ],
+      "globs": [
+        "**/*.tf\", \"**/terraform/**\", \"infra/**"
+      ]
     },
     {
       "id": "terraform-version-commit",
       "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/terraform-version-commit/SKILL.md",
       "name": "terraform-version-commit",
       "description": "Workflow for committing Terraform changes with strict semver versioning. Use when the user wants to commit Terraform changes, increment version from last tag following semver, intelligently bump major/minor/patch based on accumulated changes, or use an LLM (e.g. Cursor on the local machine) to generate commit messages and changelog entries.",
-      "triggers": [],
-      "globs": []
+      "triggers": [
+        "**/*.tf, terraform commit, version bump, semver, git tag, terraform release, major minor patch, version-commit, terraform version"
+      ],
+      "globs": [
+        "**/*.tf\", \"**/terraform/**\", \"infra/**"
+      ]
     },
     {
       "id": "using-git-worktrees",

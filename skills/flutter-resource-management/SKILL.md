@@ -1,6 +1,7 @@
 ---
 name: flutter-resource-management
 description: Enforces controller disposal, mounted checks, nullification, guard pattern, and listener cleanup in Flutter. Use when using AnimationController, ScrollController, VideoPlayerController, StreamSubscription, or any disposable resource.
+triggers: "**/*.dart, dispose, controller, AnimationController, ScrollController, StreamSubscription, memory leak, listener cleanup, mounted check, resource cleanup"
 ---
 
 # Flutter Resource Management

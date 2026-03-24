@@ -1,6 +1,7 @@
 ---
 name: flutter-performance-layout
 description: Applies Flutter performance and layout rules to prevent jank and overflow. Use when building or refactoring Flutter UI, lists, scroll views, or when optimizing layout or scroll performance.
+triggers: "**/*.dart, performance, jank, overflow, ListView, scroll, layout, FPS, frame budget, widget rebuild, const widget, lazy loading"
 ---
 
 # Flutter Performance & Layout

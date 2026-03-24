@@ -1,6 +1,7 @@
 ---
 name: flutter-app-size
 description: Reduces Flutter release APK/AAB/IPA size via R8, tree-shake-icons, asset diet, HTTP consolidation, deferred loading. Use when optimizing app size, reducing APK/AAB size, modifying build config, adding assets, or when the user mentions app size, binary size, or install size.
+triggers: "**/*.dart, **/build.gradle*, **/proguard-rules.pro, app size, APK size, AAB size, IPA size, binary size, install size, reduce size, R8, tree shake, deferred loading, asset optimization"
 ---
 
 # Flutter App Size Optimization

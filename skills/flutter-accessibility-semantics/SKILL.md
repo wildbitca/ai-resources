@@ -1,6 +1,7 @@
 ---
 name: flutter-accessibility-semantics
 description: Enforces semantic identifiers for E2E tests, Maestro, and accessibility in Flutter. Use when adding testable widgets, implementing E2E flows, or improving accessibility.
+triggers: "**/*.dart, semantics, accessibility, a11y, semantic ID, maestro, E2E test, screen reader, testable widget, flutter accessibility"
 ---
 
 # Flutter Accessibility & Semantic IDs

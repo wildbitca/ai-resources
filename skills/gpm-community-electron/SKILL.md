@@ -3,6 +3,7 @@ name: electron
 description: >
   Electron patterns for building cross-platform desktop applications.
   Trigger: When building desktop apps, working with Electron main/renderer processes, IPC communication, or native integrations.
+  (triggers: electron, desktop app, main process, renderer process, IPC, ipcMain, ipcRenderer, BrowserWindow, preload, electron-builder, auto-update, native integration, cross-platform desktop, **/main.ts, **/preload.ts, electron.config.*)
 metadata:
   author: gentleman-programming
   version: "1.0"

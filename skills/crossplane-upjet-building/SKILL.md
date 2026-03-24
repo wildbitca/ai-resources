@@ -2,6 +2,7 @@
 name: crossplane-upjet-building
 description: Build, configure, and maintain Crossplane providers with Upjet. Use when setting up or scaffolding a new upjet provider from the template, generating CRDs and controllers from Terraform/OpenTofu provider schemas, fixing CI (check-diff, lint), configuring publish pipelines (Upbound Marketplace, GHCR), migrating Terraform to Crossplane managed resources, or debugging schema/codegen issues. Integrates with terraform-to-crossplane-migration and kro-rgd-from-crossplane when converting Terraform or designing custom APIs over Crossplane CRs.
 globs: "**/crossplane/**", "infra/**", "**/*.tf"
+triggers: "crossplane, upjet, provider, CRD, controller, codegen, scaffold provider, upbound, GHCR, terraform schema, managed resource, crossplane build"
 ---
 
 # Crossplane & Upjet Provider Building

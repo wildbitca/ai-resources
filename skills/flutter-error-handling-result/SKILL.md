@@ -1,6 +1,7 @@
 ---
 name: flutter-error-handling-result
 description: Applies Result-type error handling, central error processing, and UI error display patterns in Flutter/Dart. Use when implementing async services, Notifiers, or user-facing error messages.
+triggers: "**/*.dart, Result type, error handling, try catch, AppError, failure, success, async service, error display, snackbar error"
 ---
 
 # Flutter Error Handling

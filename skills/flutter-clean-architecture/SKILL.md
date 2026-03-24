@@ -1,6 +1,7 @@
 ---
 name: flutter-clean-architecture
 description: Enforces feature-based modular structure, dependency rules, and widget composition (avoid Widget Hell) for Flutter apps. Use when organizing or adding features, refactoring large build methods, or deciding where to put new code.
+triggers: "**/*.dart, flutter architecture, clean architecture, feature structure, widget hell, modular, SOLID, refactor widget, organize code, folder structure, separation of concerns"
 ---
 
 # Flutter Clean Architecture

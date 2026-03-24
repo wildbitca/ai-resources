@@ -3,6 +3,7 @@ name: java-21
 description: >
   Java 21 language and runtime patterns for modern, safe code.
   Trigger: When writing Java 21 code using records, sealed types, or virtual threads.
+  (triggers: **/*.java, java 21, record, sealed class, sealed interface, virtual thread, pattern matching, switch expression, text block, SequencedCollection, structured concurrency, pom.xml, build.gradle)
 metadata:
   author: diegnghrmr
   version: "1.0"

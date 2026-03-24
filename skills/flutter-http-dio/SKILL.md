@@ -1,6 +1,7 @@
 ---
 name: flutter-http-dio
 description: Enforces Dio-based HTTP client patterns with factory constructors and interceptors in Flutter. Use when implementing API clients, upload services, or authenticated requests.
+triggers: "**/*.dart, dio, HTTP client, API client, interceptor, upload service, authenticated request, REST API, network layer, http request"
 ---
 
 # Flutter HTTP Client (Dio)

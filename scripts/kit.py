@@ -120,7 +120,7 @@ def _parse_list_field(block: str, field: str) -> list[str]:
     return out
 
 
-def _extract_triggers_from_description(meta: dict[str, object], body: str) -> list[str]:
+def _extract_triggers_from_description(meta: dict[str, object], body: str, block: str = "") -> list[str]:
     out: list[str] = []
     desc = str(meta.get("description", "") or "")
     if "Trigger:" in desc:
@@ -128,6 +128,11 @@ def _extract_triggers_from_description(meta: dict[str, object], body: str) -> li
         out.append(part[:500])
     if "(triggers:" in desc:
         m = re.search(r"\(triggers?:\s*([^)]+)\)", desc, re.I)
+        if m:
+            out.append(m.group(1).strip()[:500])
+    # Check raw frontmatter block (handles multi-line YAML scalars like description: >)
+    if not out and block:
+        m = re.search(r"\(triggers?:\s*([^)]+)\)", block, re.I)
         if m:
             out.append(m.group(1).strip()[:500])
     m = re.search(r"\(triggers?:\s*([^)]+)\)", body[:5000], re.I)
@@ -162,7 +167,13 @@ def _cmd_generate_index() -> int:
 
         triggers_list = _parse_list_field(block, "triggers") if block else []
         globs_list = _parse_list_field(block, "globs") if block else []
-        triggers = triggers_list if triggers_list else _extract_triggers_from_description(meta, body)
+        # Support inline triggers field (triggers: "val1, val2") in addition to YAML list
+        if not triggers_list and meta.get("triggers"):
+            triggers_list = [str(meta["triggers"])[:500]]
+        triggers = triggers_list if triggers_list else _extract_triggers_from_description(meta, body, block or "")
+        # Support inline globs field (globs: "val1", "val2") in addition to YAML list
+        if not globs_list and meta.get("globs"):
+            globs_list = [str(meta["globs"])[:500]]
         globs = globs_list
 
         entries.append(

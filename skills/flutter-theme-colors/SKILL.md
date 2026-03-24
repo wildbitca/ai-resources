@@ -1,6 +1,7 @@
 ---
 name: flutter-theme-colors
 description: Enforces theme-based colors and typography in Flutter; prohibits hardcoded colors. Use when implementing or refactoring UI, Material 3 components, or theming.
+triggers: "**/*.dart, theme, colorScheme, textTheme, hardcoded color, Colors., Color(0x, dark mode, light mode, Material 3 theme, typography"
 ---
 
 # Flutter Theme & Colors

@@ -1,6 +1,7 @@
 ---
 name: flutter-code-quality
 description: Enforces Dart/Flutter code quality via analyzer, cleanup, and dependency rules. Use when completing Flutter coding tasks, before considering work done, or when the user asks to run analyzer or fix lint issues.
+triggers: "**/*.dart, flutter analyze, dart analyze, lint, analyzer, fix warnings, code quality, unused imports, deprecated API"
 ---
 
 # Flutter Code Quality

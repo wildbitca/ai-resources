@@ -1,6 +1,7 @@
 ---
 name: cloudflare-workers-auth
 description: JWT validation and presigned URL security for Cloudflare Workers with Supabase. Use when implementing protected endpoints or upload flows in Workers.
+triggers: "**/*.ts, **/wrangler.toml, cloudflare, workers, JWT, presigned URL, edge auth, token validation, upload endpoint, supabase auth worker"
 ---
 
 # Cloudflare Workers Security
