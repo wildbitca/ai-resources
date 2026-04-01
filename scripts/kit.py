@@ -597,8 +597,242 @@ _ROLE_TOOLS: dict[str, str | None] = {
     "software-architect": "Read, Grep, Glob, Bash",
     "verifier":      "Read, Bash, Grep, Glob",
     "generalPurpose": None,
+    # Specialists — full tool access (self-contained workflows)
+    "crashlytics-fixer":          None,
+    "sentry-fixer":               None,
+    "package-upgrade":            None,
+    "terraform-maintainer":       None,
+    "crossplane-upjet-maintainer": None,
 }
 _MODEL_MAP = {"strong": "opus", "fast": "haiku", "inherit": "inherit"}
+
+# ---------------------------------------------------------------------------
+# Agent Team blueprints — pre-defined team compositions for Claude Code.
+# These get rendered into the CLAUDE.md stub so the lead agent knows when
+# and how to create teams via TeamCreate.
+# ---------------------------------------------------------------------------
+_TEAM_BLUEPRINTS: list[dict] = [
+    {
+        "name": "Feature Development",
+        "id": "feature",
+        "when": (
+            "User asks to implement a feature, new functionality, or a multi-step task "
+            "that benefits from planning, architecture review, and validation."
+        ),
+        "lead_role": "You (the lead) coordinate the overall workflow.",
+        "teammates": [
+            ("planner", "Decomposes the request into PLAN.md with steps and acceptance criteria."),
+            ("software-architect", "Validates plan for architecture, separation of concerns, and scalability."),
+            ("implementer", "Executes the approved plan with atomic, test-driven edits."),
+            ("tester", "Runs the project test suite and analyzes failures."),
+            ("code-reviewer", "Reviews changes for standards, security, and maintainability."),
+            ("security-auditor", "Scans for vulnerabilities (SAST, secrets, dependencies)."),
+            ("verifier", "Checks deliverables against acceptance criteria — only role that marks done."),
+        ],
+        "workflow": (
+            "1. **planner** produces PLAN.md → hands off to **software-architect**\n"
+            "2. **software-architect** validates (approve/block) → hands off to **implementer**\n"
+            "3. **implementer** codes the plan → hands off to parallel group\n"
+            "4. **tester** + **code-reviewer** + **security-auditor** run in parallel\n"
+            "5. **verifier** runs after the parallel group completes — marks done or returns gaps"
+        ),
+        "parallel_groups": "tester, code-reviewer, security-auditor (after implement)",
+        "persona_hint": "If the project has a known domain (dart-flutter, symfony, angular, devops), "
+                        "teammates should load their domain persona from the personas directory.",
+    },
+    {
+        "name": "Bug Fix",
+        "id": "bugfix",
+        "when": (
+            "User asks to fix a bug, resolve an issue, or correct broken behavior."
+        ),
+        "lead_role": "You (the lead) triage the bug and coordinate the fix.",
+        "teammates": [
+            ("explore", "Investigates the codebase to locate the root cause."),
+            ("implementer", "Applies the fix with minimal, focused edits."),
+            ("tester", "Runs tests to confirm the fix and check for regressions."),
+            ("security-auditor", "Verifies the fix doesn't introduce vulnerabilities."),
+            ("verifier", "Validates the fix against the reported issue — marks done."),
+        ],
+        "workflow": (
+            "1. **explore** researches the bug, reads code, identifies root cause\n"
+            "2. **implementer** applies the fix\n"
+            "3. **tester** + **security-auditor** run in parallel\n"
+            "4. **verifier** confirms the issue is resolved"
+        ),
+        "parallel_groups": "tester, security-auditor (after implement)",
+    },
+    {
+        "name": "Security Audit",
+        "id": "security",
+        "when": (
+            "User asks for a security audit, penetration test, vulnerability scan, "
+            "or DevSecOps review."
+        ),
+        "lead_role": "You (the lead) present findings and coordinate remediation.",
+        "teammates": [
+            ("security-auditor", "Runs the full SAST/DAST/dependency/secrets pipeline."),
+            ("code-reviewer", "Reviews code paths flagged by the auditor for exploitability."),
+            ("implementer", "Applies remediation patches for confirmed vulnerabilities."),
+            ("verifier", "Confirms all critical/high findings are resolved."),
+        ],
+        "workflow": (
+            "1. **security-auditor** runs recon → SAST → dependency scan → secret detection → DAST\n"
+            "2. **code-reviewer** reviews flagged code paths in parallel with auditor\n"
+            "3. **implementer** applies fixes for confirmed vulnerabilities\n"
+            "4. **verifier** validates remediation and produces final report"
+        ),
+        "parallel_groups": "security-auditor, code-reviewer (initial scan phase)",
+    },
+    {
+        "name": "Production Triage",
+        "id": "triage",
+        "when": (
+            "User asks to fix Crashlytics issues, Sentry errors, or triage production incidents."
+        ),
+        "lead_role": "You (the lead) prioritize issues and coordinate the response.",
+        "teammates": [
+            ("sentry-fixer", "Fetches unresolved Sentry issues, analyzes with Seer, applies fixes."),
+            ("crashlytics-fixer", "Fetches top Crashlytics crashes, analyzes stack traces, applies fixes."),
+            ("tester", "Validates fixes don't introduce regressions."),
+            ("verifier", "Confirms issues are resolved in the monitoring platform."),
+        ],
+        "workflow": (
+            "1. **sentry-fixer** and/or **crashlytics-fixer** triage and fix (pick based on platform)\n"
+            "2. **tester** runs tests on the affected code paths\n"
+            "3. **verifier** confirms the fixes and checks monitoring status"
+        ),
+        "note": "Spawn only the relevant fixer (sentry-fixer OR crashlytics-fixer) based on the platform.",
+    },
+    {
+        "name": "Infrastructure & Platform",
+        "id": "infra",
+        "when": (
+            "User asks to deploy, change infrastructure, migrate Terraform to Crossplane, "
+            "maintain providers, or make changes that span app and infra layers."
+        ),
+        "lead_role": "You (the lead) coordinate cross-layer changes.",
+        "teammates": [
+            ("planner", "Plans the infrastructure change with clear steps."),
+            ("software-architect", "Validates architecture: module boundaries, state isolation, GitOps."),
+            ("crossplane-upjet-maintainer", "Handles Crossplane provider builds, compositions, XRDs, CI/CD."),
+            ("terraform-maintainer", "Runs the full Terraform maintenance workflow: audit, upgrade, release."),
+            ("security-auditor", "Scans IaC for misconfigurations (tfsec, checkov, kubeconform)."),
+            ("verifier", "Validates infra changes against plan and security requirements."),
+        ],
+        "workflow": (
+            "1. **planner** defines the infra change plan\n"
+            "2. **software-architect** validates (module boundaries, state, GitOps patterns)\n"
+            "3. **crossplane-upjet-maintainer** or **terraform-maintainer** executes (pick based on stack)\n"
+            "4. **security-auditor** scans IaC artifacts\n"
+            "5. **verifier** confirms all changes are applied and secure"
+        ),
+        "note": "Spawn the relevant specialist (crossplane or terraform) based on the target stack.",
+    },
+    {
+        "name": "Dependency Maintenance",
+        "id": "maintenance",
+        "when": (
+            "User asks to upgrade dependencies, update packages, or run maintenance across the project."
+        ),
+        "lead_role": "You (the lead) approve upgrades and coordinate validation.",
+        "teammates": [
+            ("package-upgrade", "Discovers latest versions, upgrades configs, aligns code with changelogs."),
+            ("tester", "Runs the full test suite after upgrades to catch regressions."),
+            ("code-reviewer", "Reviews upgrade changes for breaking changes and compatibility."),
+        ],
+        "workflow": (
+            "1. **package-upgrade** runs the full upgrade cycle (discover → upgrade → align code)\n"
+            "2. **tester** + **code-reviewer** validate in parallel\n"
+            "3. Lead synthesizes results and reports"
+        ),
+        "parallel_groups": "tester, code-reviewer (after upgrade)",
+    },
+    {
+        "name": "Code Review",
+        "id": "review",
+        "when": (
+            "User asks for a thorough PR review, pre-merge quality check, or code critique."
+        ),
+        "lead_role": "You (the lead) synthesize findings into a single review verdict.",
+        "teammates": [
+            ("code-reviewer", "Reviews standards, performance, maintainability, and correctness."),
+            ("security-auditor", "Reviews security implications, injection risks, auth flows."),
+        ],
+        "workflow": (
+            "1. **code-reviewer** + **security-auditor** review in parallel\n"
+            "2. Lead consolidates findings into approve / request-changes / block"
+        ),
+        "parallel_groups": "code-reviewer, security-auditor (full review)",
+    },
+]
+
+
+def _build_teams_section(agents_dir: Path) -> str:
+    """Build the Agent Teams documentation for the CLAUDE.md stub."""
+    names = sorted(p.stem for p in agents_dir.glob("*.md")) if agents_dir.is_dir() else []
+    if not names:
+        return ""
+
+    # --- Agent table ---
+    rows = "| Agent | Use for |\n|-------|--------|\n"
+    for n in names:
+        try:
+            m, _ = _parse_simple_frontmatter(
+                (agents_dir / f"{n}.md").read_text(encoding="utf-8", errors="replace")
+            )
+            d = str(m.get("description", "")).strip('"')[:100]
+        except OSError:
+            d = ""
+        rows += f"| `{n}` | {d} |\n"
+
+    # --- Teams section ---
+    teams_md = ""
+    for bp in _TEAM_BLUEPRINTS:
+        teammates_list = "\n".join(
+            f"   - **{name}** — {desc}" for name, desc in bp["teammates"]
+        )
+        team_block = (
+            f"#### {bp['name']} (`{bp['id']}`)\n\n"
+            f"**When:** {bp['when']}\n\n"
+            f"**Teammates:**\n{teammates_list}\n\n"
+            f"**Workflow:**\n{bp['workflow']}\n\n"
+        )
+        if bp.get("parallel_groups"):
+            team_block += f"**Parallel group:** {bp['parallel_groups']}\n\n"
+        if bp.get("note"):
+            team_block += f"**Note:** {bp['note']}\n\n"
+        if bp.get("persona_hint"):
+            team_block += f"**Personas:** {bp['persona_hint']}\n\n"
+        teams_md += team_block
+
+    return (
+        f"## Subagent Definitions (auto-generated)\n\n{rows}\n"
+        f"These agents work as **subagents** (via Agent tool) and as **Agent Team teammates** "
+        f"(via TeamCreate + SendMessage).\n\n"
+        f"### Agent Teams\n\n"
+        f"Agent Teams are **enabled automatically** by `kit.py setup`. "
+        f"Teams allow multiple agents to work in parallel with direct peer-to-peer "
+        f"communication and a shared task list.\n\n"
+        f"#### When to use Teams vs Subagents\n\n"
+        f"| Use | When |\n"
+        f"|-----|------|\n"
+        f"| **Subagents** | Quick, focused tasks: single-file exploration, one-shot code review, "
+        f"a targeted fix. Sequential — result returns to you. |\n"
+        f"| **Agent Teams** | Multi-step workflows with parallel phases: feature development, "
+        f"security audits, production triage. Teammates communicate directly and self-coordinate. |\n\n"
+        f"#### How to create a team\n\n"
+        f"1. Match the user's request to a team blueprint below.\n"
+        f"2. Use `TeamCreate` to spawn the team with the listed teammates.\n"
+        f"3. Assign initial work via `SendMessage` — include full context "
+        f"(teammates don't see your conversation history).\n"
+        f"4. Teammates coordinate via the shared task list and direct messages.\n"
+        f"5. For **parallel groups**, spawn those teammates simultaneously "
+        f"and let them work concurrently.\n"
+        f"6. The **verifier** always runs last — it is the only role that can mark work done.\n\n"
+        f"#### Team Blueprints\n\n"
+        f"{teams_md}"
+    )
 
 
 def _setup_claude(ak: Path, ak_s: str, hint: str, *, dry_run: bool = False) -> None:
@@ -661,27 +895,7 @@ def _setup_claude(ak: Path, ak_s: str, hint: str, *, dry_run: bool = False) -> N
         print(f"  agents: {', '.join(generated)}")
 
     # 3. CLAUDE.md stub (with agents table + Agent Teams section)
-    agents_footer = ""
-    if agents_dir.is_dir():
-        names = sorted(p.stem for p in agents_dir.glob("*.md"))
-        if names:
-            rows = "| Agent | Use for |\n|-------|--------|\n"
-            for n in names:
-                try:
-                    m, _ = _parse_simple_frontmatter(
-                        (agents_dir / f"{n}.md").read_text(encoding="utf-8", errors="replace")
-                    )
-                    d = str(m.get("description", "")).strip('"')[:100]
-                except OSError:
-                    d = ""
-                rows += f"| `{n}` | {d} |\n"
-            agents_footer = (
-                f"## Subagent Definitions (auto-generated)\n\n{rows}\n"
-                f"These agents work as **subagents** and as **Agent Team teammates**.\n\n"
-                f"### Agent Teams\n\n"
-                f"Enabled automatically by `kit.py setup`. "
-                f"Teammates communicate directly, share a task list, and self-coordinate.\n\n"
-            )
+    agents_footer = _build_teams_section(agents_dir)
 
     _write_stub("claude", ak_s, hint, extra_footer=agents_footer, dry_run=dry_run)
 
