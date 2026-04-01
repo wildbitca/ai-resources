@@ -14,6 +14,11 @@
 # (3) ALWAYS code-review before considering done
 # (4) ALWAYS security-auditor for features with sensitive data
 #
+# execution_hints: optional metadata for runtimes that support parallel execution.
+#   parallel_group: steps sharing the same group name CAN run concurrently.
+#   Runtimes that don't support parallelism (or when Agent Teams is off) ignore hints
+#   and execute sequentially as before.
+#
 name: feature-implementation
 description: Domain-agnostic feature workflow. research → plan → architect → implement → test → review → security → verify.
 domain: "{{domain}}"
@@ -100,6 +105,8 @@ steps:
     exit_criteria: All tests pass
     handoff_to: review
     on_concern_return_to: implement
+    execution_hints:
+      parallel_group: post-implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}. If Requires_tests: no, skip tests, update {{handoff_file}} (Next=code-reviewer) and advance.
@@ -121,6 +128,8 @@ steps:
     exit_criteria: Code review approved or changes requested
     handoff_to: security
     on_concern_return_to: implement
+    execution_hints:
+      parallel_group: post-implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}, changed files, and Spec_refs. Apply domain review checklist from your loaded persona. Run test commands from _domain-commands.yaml.
@@ -137,6 +146,8 @@ steps:
     exit_criteria: No critical/high findings
     handoff_to: verify
     on_concern_return_to: implement
+    execution_hints:
+      parallel_group: post-implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}. If Security_critical_feature: no, set Security_audit: N/A, Next=verifier and advance.
