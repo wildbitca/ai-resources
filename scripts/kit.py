@@ -468,44 +468,6 @@ def _discovery_recipe(ak_s: str) -> str:
     )
 
 
-def _setup_engram_claude(*, dry_run: bool = False) -> None:
-    """Register engram plugin for Claude Code (MCP + hooks + Memory Protocol skill)."""
-    if shutil.which("engram") is None:
-        print(
-            "engram/claude: 'engram' not in PATH — skipping plugin setup "
-            "(run: brew install gentleman-programming/tap/engram)",
-            file=sys.stderr,
-        )
-        return
-    if shutil.which("claude") is None:
-        print(
-            "engram/claude: 'claude' not in PATH — skipping plugin setup "
-            "(run manually: claude plugin marketplace add Gentleman-Programming/engram "
-            "&& claude plugin install engram)",
-            file=sys.stderr,
-        )
-        return
-    if dry_run:
-        print(
-            "would run: claude plugin marketplace add Gentleman-Programming/engram "
-            "&& claude plugin install engram"
-        )
-        return
-    for cmd in [
-        ["claude", "plugin", "marketplace", "add", "Gentleman-Programming/engram"],
-        ["claude", "plugin", "install", "engram"],
-    ]:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            print(
-                f"engram/claude: {' '.join(cmd)} failed (exit {result.returncode})"
-                f" — {result.stderr.strip()}",
-                file=sys.stderr,
-            )
-            return
-    print("engram/claude: plugin installed (MCP + hooks + Memory Protocol)")
-
-
 def _write_user_file(path: Path, content: str, *, dry_run: bool = False) -> None:
     if dry_run:
         print(f"would write {path}")
@@ -515,130 +477,227 @@ def _write_user_file(path: Path, content: str, *, dry_run: bool = False) -> None
     print(f"Wrote {path}")
 
 
-def _write_cursor_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
-    md = (
-        f"# ai-resources (Cursor)\n\n"
-        f"- **Repository:** `{ak_s}` — set `export AGENT_KIT={ak_s}` in shell if needed.\n"
-        f"- **Rules:** `{ak_s}/rules/*.mdc` (loaded via alwaysApply / globs)\n"
-        f"- **Refresh:** {hint}\n\n"
-        f"{_discovery_recipe(ak_s)}"
-    )
-    _write_user_file(Path.home() / ".cursor" / "AGENT_KIT.md", md, dry_run=dry_run)
+def _merge_json_file(path: Path, patch: dict, *, dry_run: bool = False) -> None:
+    """Idempotent deep-merge *patch* into an existing JSON file (or create it)."""
+    existing: dict = {}
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            existing = {}
 
+    changed = False
+    for section, entries in patch.items():
+        sub = existing.setdefault(section, {})
+        for k, v in entries.items():
+            if sub.get(k) != v:
+                sub[k] = v
+                changed = True
 
-def _write_claude_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
-    md = (
-        f"# ai-resources (Claude Code)\n\n"
-        f"Set `export AGENT_SKILLS_ROOT={ak_s}/skills` in your shell profile.\n\n"
-        f"**Refresh:** {hint}\n\n"
-        f"{_discovery_recipe(ak_s)}"
-    )
-    _write_user_file(Path.home() / ".claude" / "CLAUDE.md", md, dry_run=dry_run)
-
-
-def _write_gemini_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
-    md = (
-        f"# ai-resources (Gemini CLI)\n\n"
-        f"**Refresh:** {hint}\n\n"
-        f"{_discovery_recipe(ak_s)}"
-    )
-    _write_user_file(Path.home() / ".gemini" / "GEMINI.md", md, dry_run=dry_run)
-
-
-def _write_opencode_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
-    md = (
-        f"# ai-resources (OpenCode)\n\n"
-        f"**Refresh:** {hint}\n\n"
-        f"{_discovery_recipe(ak_s)}"
-    )
-    _write_user_file(Path.home() / ".config" / "opencode" / "AGENT_KIT.md", md, dry_run=dry_run)
-
-
-def _write_codex_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
-    md = (
-        f"# ai-resources (Codex)\n\n"
-        f"**Refresh:** {hint}\n\n"
-        f"{_discovery_recipe(ak_s)}"
-    )
-    _write_user_file(Path.home() / ".codex" / "AGENTS.md", md, dry_run=dry_run)
-
-
-def _write_vscode_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
-    md = (
-        f"# ai-resources (GitHub Copilot)\n\n"
-        f"**Refresh:** {hint}\n\n"
-        f"{_discovery_recipe(ak_s)}"
-    )
-    _write_user_file(Path.home() / ".vscode" / "copilot-instructions.md", md, dry_run=dry_run)
-
-
-def _write_windsurf_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
-    md = (
-        f"# ai-resources (Windsurf)\n\n"
-        f"**Refresh:** {hint}\n\n"
-        f"{_discovery_recipe(ak_s)}"
-    )
-    # Windsurf global rules location
-    _write_user_file(
-        Path.home() / ".codeium" / "windsurf" / "memories" / "global_rules.md",
-        md, dry_run=dry_run,
-    )
-
-
-def _write_continue_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
-    md = (
-        f"# ai-resources (Continue.dev)\n\n"
-        f"**Refresh:** {hint}\n\n"
-        f"{_discovery_recipe(ak_s)}"
-    )
-    _write_user_file(Path.home() / ".continue" / "AGENT_KIT.md", md, dry_run=dry_run)
-
-
-def _write_aider_stub(ak_s: str, hint: str, *, dry_run: bool = False) -> None:
-    md = (
-        f"# ai-resources (Aider)\n\n"
-        f"Load this file with `/read` at session start, or add to `.aider.conf.yml`:\n"
-        f"```yaml\nread:\n  - {Path.home()}/.aider/CONVENTIONS.md\n```\n\n"
-        f"**Refresh:** {hint}\n\n"
-        f"{_discovery_recipe(ak_s)}"
-    )
-    _write_user_file(Path.home() / ".aider" / "CONVENTIONS.md", md, dry_run=dry_run)
-
-
-def _setup_skill_symlinks(ak: Path, *, dry_run: bool = False) -> None:
-    """Create symlinks from native agent skill discovery paths to the centralized skills dir."""
-    skills_src = ak / "skills"
-    if not skills_src.is_dir():
-        print(f"Skills dir not found: {skills_src}", file=sys.stderr)
+    if not changed:
+        print(f"json merge: {path} already up to date")
         return
+    if dry_run:
+        print(f"would update {path}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"Updated {path}")
 
-    # Map of: symlink_location -> description
-    symlink_targets: dict[Path, str] = {
-        # Claude Code: personal skills via --add-dir equivalent
-        Path.home() / ".claude" / "skills" / "ai-resources": "Claude Code",
-        # Codex: user-level skills
-        Path.home() / ".agents" / "skills" / "ai-resources": "Codex",
-    }
 
-    for link_path, agent_name in symlink_targets.items():
-        if dry_run:
-            print(f"would symlink {link_path} -> {skills_src} ({agent_name})")
-            continue
-        link_path.parent.mkdir(parents=True, exist_ok=True)
-        # Remove existing symlink or dir if it points somewhere else
-        if link_path.is_symlink():
-            if link_path.resolve() == skills_src.resolve():
-                print(f"symlink OK: {link_path} ({agent_name})")
+def _ensure_symlink(link: Path, target: Path, label: str, *, dry_run: bool = False) -> None:
+    """Create or verify a symlink. Idempotent."""
+    if dry_run:
+        print(f"would symlink {link} -> {target} ({label})")
+        return
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        if link.resolve() == target.resolve():
+            print(f"symlink OK: {link} ({label})")
+            return
+        link.unlink()
+    elif link.exists():
+        print(f"skip symlink {link}: path exists and is not a symlink ({label})", file=sys.stderr)
+        return
+    link.symlink_to(target)
+    print(f"symlinked {link} -> {target} ({label})")
+
+
+def _install_claude_plugin(repo: str, name: str, *, dry_run: bool = False) -> None:
+    """Install a Claude Code plugin (marketplace add + install). Idempotent / best-effort."""
+    for binary in ("engram", "claude"):
+        if shutil.which(binary) is None:
+            print(f"{name}: '{binary}' not in PATH — skipping", file=sys.stderr)
+            return
+    if dry_run:
+        print(f"would run: claude plugin marketplace add {repo} && claude plugin install {name}")
+        return
+    for cmd in [
+        ["claude", "plugin", "marketplace", "add", repo],
+        ["claude", "plugin", "install", name],
+    ]:
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"{name}: {' '.join(cmd)} failed — {r.stderr.strip()}", file=sys.stderr)
+            return
+    print(f"{name}: plugin installed")
+
+
+# --- setup: stub generation -------------------------------------------------------
+# Each target entry: (stub_path_relative_to_home, display_title, optional_header)
+_STUB_TARGETS: dict[str, tuple[str, str, str]] = {
+    "cursor":   (".cursor/AGENT_KIT.md",    "Cursor",        ""),
+    "gemini":   (".gemini/GEMINI.md",        "Gemini CLI",    ""),
+    "opencode": (".config/opencode/AGENT_KIT.md", "OpenCode", ""),
+    "codex":    (".codex/AGENTS.md",         "Codex",         ""),
+    "vscode":   (".vscode/copilot-instructions.md", "GitHub Copilot", ""),
+    "windsurf": (".codeium/windsurf/memories/global_rules.md", "Windsurf", ""),
+    "continue": (".continue/AGENT_KIT.md",   "Continue.dev",  ""),
+    "aider":    (".aider/CONVENTIONS.md",     "Aider",         ""),
+}
+
+
+def _stub_header(target: str, ak_s: str) -> str:
+    """Return target-specific header lines (empty string for most targets)."""
+    if target == "cursor":
+        return (
+            f"- **Repository:** `{ak_s}` — set `export AGENT_KIT={ak_s}` in shell if needed.\n"
+            f"- **Rules:** `{ak_s}/rules/*.mdc` (loaded via alwaysApply / globs)\n"
+        )
+    if target == "aider":
+        return (
+            f"Load this file with `/read` at session start, or add to `.aider.conf.yml`:\n"
+            f"```yaml\nread:\n  - {Path.home()}/.aider/CONVENTIONS.md\n```\n\n"
+        )
+    return ""
+
+
+def _write_stub(target: str, ak_s: str, hint: str, *, extra_footer: str = "", dry_run: bool = False) -> None:
+    """Write the discovery-recipe stub for any target."""
+    rel_path, title, _ = _STUB_TARGETS[target]
+    header = _stub_header(target, ak_s)
+    md = (
+        f"# ai-resources ({title})\n\n"
+        f"{header}"
+        f"**Refresh:** {hint}\n\n"
+        f"{_discovery_recipe(ak_s)}\n"
+        f"{extra_footer}"
+    )
+    _write_user_file(Path.home() / rel_path, md, dry_run=dry_run)
+
+
+# --- setup: Claude Code (all-in-one) -----------------------------------------------
+_ROLE_TOOLS: dict[str, str | None] = {
+    "explore":       "Read, Grep, Glob",
+    "planner":       "Read, Grep, Glob, Bash",
+    "implementer":   "Read, Edit, Write, Bash, Grep, Glob",
+    "tester":        "Read, Edit, Write, Bash, Grep, Glob",
+    "code-reviewer": "Read, Bash, Grep, Glob",
+    "security-auditor": "Read, Bash, Grep, Glob",
+    "software-architect": "Read, Grep, Glob, Bash",
+    "verifier":      "Read, Bash, Grep, Glob",
+    "generalPurpose": None,
+}
+_MODEL_MAP = {"strong": "opus", "fast": "haiku", "inherit": "inherit"}
+
+
+def _setup_claude(ak: Path, ak_s: str, hint: str, *, dry_run: bool = False) -> None:
+    """Full Claude Code setup: settings.json env, subagent definitions, stub, engram, symlinks."""
+
+    # 1. settings.json — env vars (idempotent merge)
+    _merge_json_file(
+        Path.home() / ".claude" / "settings.json",
+        {"env": {
+            "AGENT_SKILLS_ROOT": f"{ak_s}/skills",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+        }},
+        dry_run=dry_run,
+    )
+
+    # 2. Subagent definitions from agents/roles/*.md
+    roles_dir = ak / "agents" / "roles"
+    agents_dir = Path.home() / ".claude" / "agents"
+    generated: list[str] = []
+    if roles_dir.is_dir():
+        for role_md in sorted(roles_dir.glob("*.md")):
+            try:
+                text = role_md.read_text(encoding="utf-8", errors="replace")
+            except OSError:
                 continue
-            link_path.unlink()
-        elif link_path.exists():
-            print(
-                f"skip symlink {link_path}: path exists and is not a symlink ({agent_name})",
-                file=sys.stderr,
+            meta, body = _parse_simple_frontmatter(text)
+            name = str(meta.get("name", role_md.stem))
+            desc = str(meta.get("description", ""))
+            model = _MODEL_MAP.get(str(meta.get("model", "inherit")), "inherit")
+            tools = _ROLE_TOOLS.get(name)
+
+            fm = [f"name: {name}", f'description: "{desc}"']
+            if tools is not None:
+                fm.append(f"tools: {tools}")
+            fm.append(f"model: {model}")
+
+            # Rewrite Cursor-isms → Claude Code equivalents
+            for old, new in (
+                ("$AGENT_KIT", ak_s),
+                ("**the project's `.cursorrules`**", "project CLAUDE.md"),
+                ("`.cursorrules`", "CLAUDE.md"),
+                (".cursorrules", "CLAUDE.md"),
+                ("`@file`", "Read"), ("`@symbol`", "Grep"),
+                ("@file", "Read"), ("@symbol", "Grep"),
+            ):
+                body = body.replace(old, new)
+
+            body += (
+                f"\n\n---\n\n## Kit context\n\n"
+                f"- **Skills index:** `{ak_s}/skills-index.json`\n"
+                f"- **Skills root:** `{ak_s}/skills/`\n"
+                f"- **Workflows:** `{ak_s}/workflows/`\n"
             )
-            continue
-        link_path.symlink_to(skills_src)
-        print(f"symlinked {link_path} -> {skills_src} ({agent_name})")
+
+            out_path = agents_dir / f"{name}.md"
+            _write_user_file(out_path, f"---\n{chr(10).join(fm)}\n---\n\n{body}", dry_run=dry_run)
+            generated.append(name)
+
+    if generated and not dry_run:
+        print(f"  agents: {', '.join(generated)}")
+
+    # 3. CLAUDE.md stub (with agents table + Agent Teams section)
+    agents_footer = ""
+    if agents_dir.is_dir():
+        names = sorted(p.stem for p in agents_dir.glob("*.md"))
+        if names:
+            rows = "| Agent | Use for |\n|-------|--------|\n"
+            for n in names:
+                try:
+                    m, _ = _parse_simple_frontmatter(
+                        (agents_dir / f"{n}.md").read_text(encoding="utf-8", errors="replace")
+                    )
+                    d = str(m.get("description", "")).strip('"')[:100]
+                except OSError:
+                    d = ""
+                rows += f"| `{n}` | {d} |\n"
+            agents_footer = (
+                f"## Subagent Definitions (auto-generated)\n\n{rows}\n"
+                f"These agents work as **subagents** and as **Agent Team teammates**.\n\n"
+                f"### Agent Teams\n\n"
+                f"Enabled automatically by `kit.py setup`. "
+                f"Teammates communicate directly, share a task list, and self-coordinate.\n\n"
+            )
+
+    _write_stub("claude", ak_s, hint, extra_footer=agents_footer, dry_run=dry_run)
+
+    # 4. Engram plugin
+    _install_claude_plugin("Gentleman-Programming/engram", "engram", dry_run=dry_run)
+
+    # 5. Skill symlinks
+    _ensure_symlink(
+        Path.home() / ".claude" / "skills" / "ai-resources",
+        ak / "skills", "Claude Code", dry_run=dry_run,
+    )
+
+
+# --- setup: dispatch ----------------------------------------------------------------
+# Add "claude" to _STUB_TARGETS so _write_stub can resolve its path/title.
+_STUB_TARGETS["claude"] = (".claude/CLAUDE.md", "Claude Code", "")
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -649,20 +708,6 @@ def cmd_setup(args: argparse.Namespace) -> int:
     dry = getattr(args, "dry_run", False)
     targets_done: list[str] = []
 
-    # Dispatch table: target name -> (writer_func, extra_setup_funcs)
-    # All writers now receive (ak_s, hint, dry_run=) for consistency.
-    _writers: dict[str, tuple] = {
-        "cursor":   (_write_cursor_stub,),
-        "claude":   (_write_claude_stub, lambda: _setup_engram_claude(dry_run=dry)),
-        "gemini":   (_write_gemini_stub,),
-        "opencode": (_write_opencode_stub,),
-        "codex":    (_write_codex_stub,),
-        "vscode":   (_write_vscode_stub,),
-        "windsurf": (_write_windsurf_stub,),
-        "continue": (_write_continue_stub,),
-        "aider":    (_write_aider_stub,),
-    }
-
     # MCP presets from resources.json
     if target in ("all", "cursor", "mcp"):
         mcp_t = "all" if target in ("all", "mcp") else "cursor"
@@ -671,26 +716,31 @@ def cmd_setup(args: argparse.Namespace) -> int:
             return rc
         targets_done.append("mcp")
 
+    def _run_target(name: str) -> None:
+        if name == "claude":
+            _setup_claude(ak, ak_s, hint, dry_run=dry)
+        else:
+            _write_stub(name, ak_s, hint, dry_run=dry)
+        targets_done.append(name)
+
     if target == "all":
-        for name, fns in _writers.items():
-            fns[0](ak_s, hint, dry_run=dry)
-            for extra in fns[1:]:
-                extra()
-            targets_done.append(name)
-        # Skill symlinks for agents with native SKILL.md discovery
-        _setup_skill_symlinks(ak, dry_run=dry)
+        for name in _STUB_TARGETS:
+            _run_target(name)
+        # Codex skill symlinks (Claude symlinks handled inside _setup_claude)
+        _ensure_symlink(
+            Path.home() / ".agents" / "skills" / "ai-resources",
+            ak / "skills", "Codex", dry_run=dry,
+        )
         targets_done.append("symlinks")
     elif target == "mcp":
-        pass  # MCP already applied above
-    elif target in _writers:
-        fns = _writers[target]
-        fns[0](ak_s, hint, dry_run=dry)
-        for extra in fns[1:]:
-            extra()
-        targets_done.append(target)
-        # Symlinks when setting up agents that support native SKILL.md
-        if target in ("claude", "codex"):
-            _setup_skill_symlinks(ak, dry_run=dry)
+        pass
+    elif target in _STUB_TARGETS:
+        _run_target(target)
+        if target == "codex":
+            _ensure_symlink(
+                Path.home() / ".agents" / "skills" / "ai-resources",
+                ak / "skills", "Codex", dry_run=dry,
+            )
             targets_done.append("symlinks")
     else:
         print(f"Unknown target: {target!r}", file=sys.stderr)

@@ -73,6 +73,8 @@ steps:
     exit_criteria: All tests pass
     handoff_to: security
     on_concern_return_to: implement
+    execution_hints:
+      parallel_group: post-fix
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}. Read Spec_refs if available.
@@ -90,6 +92,8 @@ steps:
     exit_criteria: No regressions introduced
     handoff_to: verify
     on_concern_return_to: implement
+    execution_hints:
+      parallel_group: post-fix
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}. If the fix touches security-sensitive code (auth, permissions, uploads, PII), run abbreviated security review adapted to {{domain}}.
