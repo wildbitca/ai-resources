@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ai-resources kit CLI — two commands: generate (skills + index), setup (machine + IDE + validation).
+ai-resources kit CLI — generate (skills + index), setup (IDE + validation), version.
 
   python3 scripts/kit.py --help
   python3 scripts/kit.py COMMAND --help
@@ -17,6 +17,8 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+
+__version__ = "0.6.1"
 
 # Repo root = parent of scripts/
 REPO = Path(__file__).resolve().parents[1]
@@ -1208,10 +1210,15 @@ def main() -> int:
     )
     p_st.set_defaults(func=cmd_setup)
 
+    sub.add_parser("version", help="Print the current ai-resources version.")
+
     args = ap.parse_args()
     if not args.command:
         ap.print_help()
         return 1
+    if args.command == "version":
+        print(f"ai-resources {__version__}")
+        return 0
     return int(args.func(args))
 
 
