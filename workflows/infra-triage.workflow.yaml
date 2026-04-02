@@ -1,0 +1,208 @@
+# Infrastructure triage & stabilization workflow.
+# Use when Crossplane/K8s/IaC resources are broken, not syncing, providers failing,
+# or infrastructure needs debugging and repair.
+#
+# Flow: investigate → analyze → plan → implement → review → monitor → verify
+# Parallel groups: investigate (cluster + code), review+monitor (post-implement)
+#
+# Key principle: OBSERVE FIRST, CHANGE LATER.
+# All resources MUST be set to Observe-only before any destructive action.
+# Never modify external-name or managementPolicies on resources with existing tfState
+# without first understanding the blast radius.
+#
+# handoff_file: .agent-output/handoff-infra-triage.md. DELETE when DONE.
+#
+name: infra-triage
+description: Infrastructure triage and stabilization. Diagnose broken IaC resources, fix provider/composition issues, monitor until healthy.
+domain: devops
+trigger: User reports broken infrastructure, resources not syncing, provider errors, Crossplane composition failures, or needs to debug and stabilize IaC resources.
+prerequisites: []
+steps:
+  - id: investigate-cluster
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+      - common-context-optimization
+    entry_criteria: Infrastructure issue reported
+    exit_criteria: Cluster state documented — claims, XRs, managed resources, provider health, CRD status, events, logs
+    handoff_to: analyze
+    execution_hints:
+      parallel_group: investigate
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Issue: {{user_goal}}.
+
+      Investigate the CLUSTER STATE. Collect and document:
+      1. All relevant claims and their SYNCED/READY status
+      2. Composite resources (XRs) and their conditions/events
+      3. Managed resources — count ready vs not-ready, group by type
+      4. Provider health (installed, healthy, versions, pods running)
+      5. CRD status — any terminating, missing, or conflicting CRDs
+      6. Recent events and provider pod logs for errors
+      7. ProviderConfig existence and RBAC (can sub-providers read ProviderConfigs?)
+      8. Flux/GitOps reconciliation status
+
+      Write findings to .agent-output/investigator/cluster-state.md.
+      Update {{handoff_file}} with: Cluster_state_ref, Broken_resources (list), Error_summary.
+
+  - id: investigate-code
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+      - common-context-optimization
+    entry_criteria: Infrastructure issue reported
+    exit_criteria: Relevant IaC code reviewed — compositions, XRDs, claims, provider config
+    handoff_to: analyze
+    execution_hints:
+      parallel_group: investigate
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Issue: {{user_goal}}.
+
+      Investigate the IaC CODE. Review and document:
+      1. Composition templates — Go template logic, whitespace handling, resource generation
+      2. XRD schemas — field types, defaults, enum values
+      3. Claim YAML — managementPolicies, deletionPolicy, external-name annotations
+      4. Provider configuration — versions, runtime configs, RBAC
+      5. Any recent git changes that might have introduced the issue
+
+      If the composition uses Go templating, render the template mentally or with a script
+      to verify the YAML output is valid (document separators, indentation, quoting).
+
+      Write findings to .agent-output/investigator/code-review.md.
+      Update {{handoff_file}} with: Code_review_ref, Suspected_issues (list).
+
+  - id: analyze
+    subagent_type: software-architect
+    skills:
+      - common-best-practices
+    entry_criteria: Both investigation steps complete
+    exit_criteria: Root cause identified, fix strategy with explicit blast radius documented
+    handoff_to: implement
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}, .agent-output/investigator/cluster-state.md, .agent-output/investigator/code-review.md.
+
+      Analyze root cause and propose a fix strategy. You MUST address:
+      1. **Root cause** — what exactly is broken and why
+      2. **Blast radius** — which resources/claims/zones are affected
+      3. **Safety check** — are there resources with existing tfState that could break?
+      4. **Fix order** — what to fix first (always: observe-only → fix → verify → escalate)
+      5. **Rollback plan** — how to undo if the fix makes things worse
+
+      RULES (non-negotiable):
+      - Set ALL affected resources to Observe-only BEFORE any fix
+      - Never change external-name format on resources that already have tfState
+      - Never delete managed resources unless all are Observe-only with deletionPolicy: Orphan
+      - Test composition template changes with a render script before deploying
+      - Fix one thing at a time — don't batch unrelated fixes
+
+      Write plan to .agent-output/architect/fix-plan.md.
+      Update {{handoff_file}} with: Fix_plan_ref, Root_cause, Blast_radius, Safety_status.
+
+  - id: implement
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Fix plan approved by architect
+    exit_criteria: Fix applied, pushed, Flux reconciled
+    handoff_to: review
+    on_concern_return_to: analyze
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and .agent-output/architect/fix-plan.md.
+
+      Execute the fix plan step by step. For each change:
+      1. Make the edit
+      2. Verify locally (render templates, validate YAML)
+      3. Commit with clear message explaining what and why
+      4. Push and wait for Flux to reconcile
+      5. Verify the specific fix took effect before moving to the next
+
+      If a fix doesn't work or causes unexpected side effects, STOP and update
+      {{handoff_file}} with Blocked: true, Return_to_step: analyze.
+
+      Update {{handoff_file}} with: Changes_made (list), Commits (list), Next=review.
+
+  - id: review
+    subagent_type: code-reviewer
+    skills:
+      - common-best-practices
+    entry_criteria: Fix applied
+    exit_criteria: No regressions, no blast radius beyond expected
+    handoff_to: monitor
+    on_concern_return_to: implement
+    execution_hints:
+      parallel_group: post-fix
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}.
+
+      Review ALL changes made. Specifically check:
+      1. Do any changes affect resources outside the broken scope?
+      2. Are external-name formats consistent across all claims?
+      3. Are managementPolicies correct for the current phase?
+      4. Could any change trigger unintended creates/updates/deletes?
+      5. Are RBAC permissions minimal and correct?
+
+      Write review to .agent-output/code-reviewer/review.md.
+      Update {{handoff_file}} with: Review_result (approve/block), Review_ref.
+
+  - id: monitor
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+    entry_criteria: Fix applied
+    exit_criteria: All affected resources SYNCED + READY, or issues documented
+    handoff_to: verify
+    on_concern_return_to: implement
+    execution_hints:
+      parallel_group: post-fix
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}.
+
+      Monitor the cluster until resources stabilize:
+      1. Check claims SYNCED/READY status every 30 seconds
+      2. Check managed resources ready count
+      3. Watch for new errors in events/conditions
+      4. Verify providers remain HEALTHY
+      5. Continue until ALL affected resources are READY or 5 minutes pass
+
+      If resources are stuck, document the specific error and remaining count.
+      Write monitoring log to .agent-output/monitor/status.md.
+      Update {{handoff_file}} with: Final_status, Resources_ready, Resources_stuck (if any).
+
+  - id: verify
+    subagent_type: verifier
+    skills:
+      - common-protocol-enforcement
+      - knowledge-audit
+    entry_criteria: All prior steps complete
+    exit_criteria: Infrastructure stable, all resources healthy
+    handoff_to: null
+    on_concern_return_to: implement
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}.
+
+      Final verification:
+      1. ALL claims must be SYNCED=True READY=True
+      2. ALL managed resources must be SYNCED=True READY=True
+      3. ALL providers must be INSTALLED=True HEALTHY=True
+      4. No CRDs in terminating state
+      5. No duplicate providers
+      6. Flux kustomizations applied and healthy
+
+      If any resource is still not ready, document why and whether it needs
+      a follow-up action (e.g., KV/R2 buckets deferred, management escalation pending).
+
+      Generate specs/knowledge/searchable/YYMMDD-infra-triage-resolution.md with:
+      - What broke
+      - Root cause
+      - What was fixed
+      - Lessons learned
+
+      MANDATORY SDD closure (skill knowledge-audit): READ $AGENT_KIT/skills/knowledge-audit/SKILL.md and execute in repo root — relink, merge, prune per skill (Tier B when safe). If Blocked with no spec promotion, skip prune.
+      When task DONE: DELETE {{handoff_file}}.
