@@ -749,6 +749,37 @@ _TEAM_BLUEPRINTS: list[dict] = [
         "parallel_groups": "tester, code-reviewer (after upgrade)",
     },
     {
+        "name": "Infrastructure Triage",
+        "id": "infra-triage",
+        "when": (
+            "User reports broken infrastructure, resources not syncing, provider errors, "
+            "Crossplane composition failures, CRD issues, or needs to debug and stabilize "
+            "IaC resources in a Kubernetes cluster."
+        ),
+        "lead_role": "You (the lead) coordinate diagnosis and repair.",
+        "teammates": [
+            ("explore", "Investigates cluster state: claims, XRs, managed resources, providers, CRDs, events."),
+            ("software-architect", "Analyzes root cause, proposes fix strategy with explicit blast radius."),
+            ("implementer", "Applies fixes to compositions, claims, provider config — one at a time."),
+            ("code-reviewer", "Reviews each fix for blast radius: external-name changes, managementPolicies, RBAC."),
+            ("verifier", "Monitors until all resources are SYNCED+READY — only role that marks done."),
+        ],
+        "workflow": (
+            "1. **explore** investigates cluster state + IaC code in parallel\n"
+            "2. **software-architect** analyzes root cause, proposes fix plan (Observe-first rule)\n"
+            "3. **implementer** applies fixes one at a time, waits for Flux between each\n"
+            "4. **code-reviewer** + **verifier** validate in parallel (review + monitor)\n"
+            "5. **verifier** confirms all resources healthy — marks done"
+        ),
+        "parallel_groups": "code-reviewer, verifier (after implement)",
+        "note": (
+            "CRITICAL RULES: (1) Set all affected resources to Observe-only BEFORE any fix. "
+            "(2) Never change external-name on resources with existing tfState. "
+            "(3) Never delete managed resources unless all have deletionPolicy: Orphan. "
+            "(4) Fix one thing at a time — don't batch unrelated fixes."
+        ),
+    },
+    {
         "name": "Code Review",
         "id": "review",
         "when": (
