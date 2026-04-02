@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "generated_at": "2026-03-24T22:15:48.615385+00:00",
-  "skills_root": "/Volumes/Docker/Development/wildbit/ai-resources/skills",
+  "generated_at": "2026-04-02T14:26:31.350002+00:00",
+  "skills_root": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills",
   "count": 116,
   "skills": [
     {
       "id": "changelog-best-practices",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/changelog-best-practices/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/changelog-best-practices/SKILL.md",
       "name": "changelog-best-practices",
       "description": "Write, maintain, and migrate CHANGELOG.md files using Keep a Changelog format and best practices. Use when creating a changelog from scratch, updating an existing one, fixing/migrating a badly written changelog, or rechecking changelogs version-by-version with an LLM agent (e.g. Cursor) to regenerate human-readable CHANGELOG.md from commits and changed files.",
       "triggers": [
@@ -16,7 +16,7 @@
     },
     {
       "id": "clickup-feature-tracking",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/clickup-feature-tracking/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/clickup-feature-tracking/SKILL.md",
       "name": "clickup-feature-tracking",
       "description": "Every feature must belong to a ClickUp card. Use when starting feature work, creating tasks, or tracking work in ClickUp. Requires ClickUp MCP tools.",
       "triggers": [
@@ -26,7 +26,7 @@
     },
     {
       "id": "cloudflare-workers-auth",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/cloudflare-workers-auth/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/cloudflare-workers-auth/SKILL.md",
       "name": "cloudflare-workers-auth",
       "description": "JWT validation and presigned URL security for Cloudflare Workers with Supabase. Use when implementing protected endpoints or upload flows in Workers.",
       "triggers": [
@@ -36,7 +36,7 @@
     },
     {
       "id": "code-cleanup",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/code-cleanup/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/code-cleanup/SKILL.md",
       "name": "code-cleanup",
       "description": "Applies generic code cleanup (comments, unused code, empty dirs, linters, config, duplicates) for any language (Dart, Bash, Python, Java, Kotlin, Swift, TS/JS, etc.) and, for Flutter/Dart, a combined quality check. Use when the user asks to clean up code, remove dead code, empty dirs, reduce technical debt, or run a full project quality check.",
       "triggers": [
@@ -46,7 +46,7 @@
     },
     {
       "id": "common-accessibility",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-accessibility/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-accessibility/SKILL.md",
       "name": "common-accessibility",
       "description": "WCAG 2.2, ARIA, semantic HTML, keyboard navigation, and color contrast standards for web UIs. Legal compliance baseline. (triggers: **/*.tsx, **/*.jsx, **/*.html, **/*.vue, **/*.component.html, accessibility, a11y, wcag, aria, screen reader, focus, alt text)",
       "triggers": [
@@ -56,7 +56,7 @@
     },
     {
       "id": "common-api-design",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-api-design/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-api-design/SKILL.md",
       "name": "common-api-design",
       "description": "REST API conventions — HTTP semantics, status codes, versioning, pagination, and OpenAPI standards applicable to any framework. (triggers: **/*.controller.ts, **/*.router.ts, **/*.routes.ts, **/routes/**, **/controllers/**, **/handlers/**, rest api, endpoint, http method, status code, versioning, pagination, openapi, api design, api contract)",
       "triggers": [
@@ -66,7 +66,7 @@
     },
     {
       "id": "common-architecture-audit",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-architecture-audit/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-architecture-audit/SKILL.md",
       "name": "common-architecture-audit",
       "description": "Protocol for auditing structural debt, logic leakage, and fragmentation across Web, Mobile, and Backend. (triggers: package.json, pubspec.yaml, go.mod, pom.xml, nest-cli.json, architecture audit, code review, tech debt, logic leakage, refactor)",
       "triggers": [
@@ -76,7 +76,7 @@
     },
     {
       "id": "common-architecture-diagramming",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-architecture-diagramming/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-architecture-diagramming/SKILL.md",
       "name": "common-architecture-diagramming",
       "description": "Standards for creating clear, effective, and formalized software architecture diagrams (C4, UML). (triggers: ARCHITECTURE.md, **/*.mermaid, **/*.drawio, diagram, architecture, c4, system design, mermaid)",
       "triggers": [
@@ -86,7 +86,7 @@
     },
     {
       "id": "common-best-practices",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-best-practices/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-best-practices/SKILL.md",
       "name": "common-best-practices",
       "description": "Universal clean-code principles for any environment. (triggers: **/*.ts, **/*.tsx, **/*.go, **/*.dart, **/*.java, **/*.kt, **/*.swift, **/*.py, solid, kiss, dry, yagni, naming, conventions, refactor, clean code)",
       "triggers": [
@@ -96,7 +96,7 @@
     },
     {
       "id": "common-code-review",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-code-review/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-code-review/SKILL.md",
       "name": "common-code-review",
       "description": "Standards for high-quality, persona-driven code reviews. Use when reviewing PRs, critiquing code quality, or analyzing changes for team feedback. (triggers: review, pr, critique, analyze code)",
       "triggers": [
@@ -106,7 +106,7 @@
     },
     {
       "id": "common-context-optimization",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-context-optimization/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-context-optimization/SKILL.md",
       "name": "common-context-optimization",
       "description": "Techniques to maximize context window efficiency, reduce latency, and prevent 'lost in middle' issues through strategic masking and compaction. (triggers: *.log, chat-history.json, reduce tokens, optimize context, summarize history, clear output)",
       "triggers": [
@@ -116,7 +116,7 @@
     },
     {
       "id": "common-debugging",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-debugging/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-debugging/SKILL.md",
       "name": "common-debugging",
       "description": "Systematic troubleshooting using the Scientific Method. Use when debugging crashes, tracing errors, diagnosing unexpected behavior, or investigating exceptions. (triggers: debug, fix bug, crash, error, exception, troubleshooting)",
       "triggers": [
@@ -126,7 +126,7 @@
     },
     {
       "id": "common-documentation",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-documentation/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-documentation/SKILL.md",
       "name": "common-documentation",
       "description": "Essential rules for code comments, READMEs, and technical docs. Use when adding comments, writing docstrings, creating READMEs, or updating any documentation. (triggers: comment, docstring, readme, documentation)",
       "triggers": [
@@ -136,7 +136,7 @@
     },
     {
       "id": "common-error-handling",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-error-handling/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-error-handling/SKILL.md",
       "name": "common-error-handling",
       "description": "Cross-cutting standards for error design, response shapes, error codes, and boundary placement. (triggers: **/*.service.ts, **/*.handler.ts, **/*.controller.ts, **/*.go, **/*.java, **/*.kt, **/*.py, error handling, exception, try catch, error boundary, error response, error code, throw)",
       "triggers": [
@@ -146,7 +146,7 @@
     },
     {
       "id": "common-feedback-reporter",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-feedback-reporter/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-feedback-reporter/SKILL.md",
       "name": "common-feedback-reporter",
       "description": "Pre-write skill violation audit. Checks planned code against loaded skill anti-patterns before any file write. Use when writing Flutter/Dart code, editing SKILL.md files, or generating any code where project skills are active. Load as composite alongside other skills. (triggers: skill violation, pre-write audit, audit violations, SKILL.md, **/*.dart, **/*.ts, **/*.tsx)",
       "triggers": [
@@ -156,7 +156,7 @@
     },
     {
       "id": "common-git-collaboration",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-git-collaboration/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-git-collaboration/SKILL.md",
       "name": "common-git-collaboration",
       "description": "Universal standards for version control, branching, and team collaboration. Use when writing commits, creating branches, merging, or opening pull requests. (triggers: commit, branch, merge, pull-request, git)",
       "triggers": [
@@ -166,7 +166,7 @@
     },
     {
       "id": "common-llm-security",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-llm-security/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-llm-security/SKILL.md",
       "name": "common-llm-security",
       "description": "OWASP LLM Top 10 (2025) audit checklist for AI applications, agent tools, RAG pipelines, and prompt construction. Load during any security review touching LLM client code, prompt templates, agent tools, or vector stores. (triggers: LLM security, prompt injection, agent security, RAG security, AI security, openai, anthropic, langchain, LLM review)",
       "triggers": [
@@ -176,7 +176,7 @@
     },
     {
       "id": "common-mobile-animation",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-mobile-animation/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-mobile-animation/SKILL.md",
       "name": "common-mobile-animation",
       "description": "Motion design principles for mobile apps. Covers timing curves, transitions, gestures, and performance-conscious animations. (triggers: **/*_page.dart, **/*_screen.dart, **/*.swift, **/*Activity.kt, **/*Screen.tsx, Animation, AnimationController, Animated, MotionLayout, transition, gesture)",
       "triggers": [
@@ -186,7 +186,7 @@
     },
     {
       "id": "common-mobile-ux-core",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-mobile-ux-core/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-mobile-ux-core/SKILL.md",
       "name": "common-mobile-ux-core",
       "description": "Universal mobile UX principles for touch-first interfaces. Enforces touch targets, safe areas, and mobile-specific interaction patterns. (triggers: **/*_page.dart, **/*_screen.dart, **/*_view.dart, **/*.swift, **/*Activity.kt, **/*Screen.tsx, mobile, responsive, SafeArea, touch, gesture, viewport)",
       "triggers": [
@@ -196,7 +196,7 @@
     },
     {
       "id": "common-observability",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-observability/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-observability/SKILL.md",
       "name": "common-observability",
       "description": "Standards for structured logging, distributed tracing, and metrics. (triggers: **/*.service.ts, **/*.handler.ts, **/*.middleware.ts, **/*.interceptor.ts, **/*.go, **/*.java, **/*.kt, **/*.py, logging, tracing, metrics, opentelemetry, observability, slo)",
       "triggers": [
@@ -206,7 +206,7 @@
     },
     {
       "id": "common-owasp",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-owasp/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-owasp/SKILL.md",
       "name": "common-owasp",
       "description": "OWASP Top 10 audit checklist for Web Applications (2021) and APIs (2023). Load during any security review, PR review, or codebase audit touching web, mobile backend, or API code. (triggers: security review, OWASP, broken access control, IDOR, BOLA, injection, broken auth, API review, authorization, access control)",
       "triggers": [
@@ -216,7 +216,7 @@
     },
     {
       "id": "common-performance-engineering",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-performance-engineering/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-performance-engineering/SKILL.md",
       "name": "common-performance-engineering",
       "description": "Universal standards for high-performance development. Use when optimizing, reducing latency, fixing memory leaks, profiling, or improving throughput. (triggers: **/*.ts, **/*.tsx, **/*.go, **/*.dart, **/*.java, **/*.kt, **/*.swift, **/*.py, performance, optimize, profile, scalability, latency, throughput, memory leak, bottleneck)",
       "triggers": [
@@ -226,7 +226,7 @@
     },
     {
       "id": "common-product-requirements",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-product-requirements/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-product-requirements/SKILL.md",
       "name": "common-product-requirements",
       "description": "Expert process for gathering requirements and drafting PRDs (Iterative Discovery). Use when creating a PRD, speccing a new feature, or clarifying requirements. (triggers: PRD.md, specs/*.md, create prd, draft requirements, new feature spec)",
       "triggers": [
@@ -236,7 +236,7 @@
     },
     {
       "id": "common-protocol-enforcement",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-protocol-enforcement/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-protocol-enforcement/SKILL.md",
       "name": "common-protocol-enforcement",
       "description": "Standards for Red-Team verification and adversarial protocol audit. Use when verifying tasks, performing self-scans, or checking for protocol violations. Load as composite for all sessions. (triggers: verify done, protocol check, self-scan, pre-write audit, task complete, audit violations, retrospective, scan, red-team)",
       "triggers": [
@@ -246,7 +246,7 @@
     },
     {
       "id": "common-security-audit",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-security-audit/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-security-audit/SKILL.md",
       "name": "common-security-audit",
       "description": "Adversarial security probing and vulnerability assessments across Node, Go, Dart, Java, Python, and Rust. (triggers: package.json, go.mod, pubspec.yaml, pom.xml, Dockerfile, security audit, vulnerability scan, secrets detection, injection probe, pentest)",
       "triggers": [
@@ -256,7 +256,7 @@
     },
     {
       "id": "common-security-standards",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-security-standards/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-security-standards/SKILL.md",
       "name": "common-security-standards",
       "description": "Universal security protocols for safe, resilient software. Use when implementing authentication, encryption, authorization, or any security-sensitive feature. (triggers: **/*.ts, **/*.tsx, **/*.go, **/*.dart, **/*.java, **/*.kt, **/*.swift, **/*.py, security, encrypt, authenticate, authorize)",
       "triggers": [
@@ -266,7 +266,7 @@
     },
     {
       "id": "common-session-retrospective",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-session-retrospective/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-session-retrospective/SKILL.md",
       "name": "common-session-retrospective",
       "description": "Analyze conversation corrections to detect skill gaps and auto-improve the skills library. Use after any session with user corrections, rework, or retrospective requests. (triggers: **/*.spec.ts, **/*.test.ts, SKILL.md, AGENTS.md, retrospective, self-learning, improve skills, session review, correction, rework)",
       "triggers": [
@@ -276,7 +276,7 @@
     },
     {
       "id": "common-skill-creator",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-skill-creator/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-skill-creator/SKILL.md",
       "name": "common-skill-creator",
       "description": "Standards for creating, testing, and optimizing Agent Skills for any AI Agent (Claude, Cursor, Windsurf, Copilot). Use when: writing SKILL.md, auditing a skill, improving trigger accuracy, checking size limits, structuring references/, writing anti-patterns, starting a new skill from scratch, or reviewing skill quality.",
       "triggers": [
@@ -286,7 +286,7 @@
     },
     {
       "id": "common-system-design",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-system-design/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-system-design/SKILL.md",
       "name": "common-system-design",
       "description": "Universal architectural standards for robust, scalable systems. Use when designing new features, evaluating architecture, or resolving scalability concerns. (triggers: architecture, design, system, scalability)",
       "triggers": [
@@ -296,7 +296,7 @@
     },
     {
       "id": "common-tdd",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-tdd/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-tdd/SKILL.md",
       "name": "common-tdd",
       "description": "Enforces Test-Driven Development (Red-Green-Refactor). Use when writing unit tests, implementing TDD, or improving test coverage for any feature. (triggers: **/*.test.ts, **/*.spec.ts, **/*_test.go, **/*Test.java, **/*_test.dart, **/*_spec.rb, tdd, unit test, write test, red green refactor, failing test, test coverage)",
       "triggers": [
@@ -306,7 +306,7 @@
     },
     {
       "id": "common-ui-design",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-ui-design/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-ui-design/SKILL.md",
       "name": "common-ui-design",
       "description": "Create distinctive, production-grade frontend UI with bold aesthetic choices. Use when building web components, pages, interfaces, dashboards, or applications in any framework (React, Next.js, Angular, Vue, HTML/CSS).",
       "triggers": [
@@ -316,7 +316,7 @@
     },
     {
       "id": "common-workflow-writing",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/common-workflow-writing/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/common-workflow-writing/SKILL.md",
       "name": "common-workflow-writing",
       "description": "Rules for writing concise, token-efficient workflow and skill files. Prevents over-building that requires costly optimization passes. (triggers: .agent/workflows/*.md, SKILL.md, create workflow, write workflow, new skill, new workflow)",
       "triggers": [
@@ -326,7 +326,7 @@
     },
     {
       "id": "crossplane-upjet-building",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/crossplane-upjet-building/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/crossplane-upjet-building/SKILL.md",
       "name": "crossplane-upjet-building",
       "description": "Build, configure, and maintain Crossplane providers with Upjet. Use when setting up or scaffolding a new upjet provider from the template, generating CRDs and controllers from Terraform/OpenTofu provider schemas, fixing CI (check-diff, lint), configuring publish pipelines (Upbound Marketplace, GHCR), migrating Terraform to Crossplane managed resources, or debugging schema/codegen issues. Integrates with terraform-to-crossplane-migration and kro-rgd-from-crossplane when converting Terraform or designing custom APIs over Crossplane CRs.",
       "triggers": [
@@ -338,7 +338,7 @@
     },
     {
       "id": "cursor-plan-tracking",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/cursor-plan-tracking/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/cursor-plan-tracking/SKILL.md",
       "name": "cursor-plan-tracking",
       "description": "Cursor plan completion tracking in YAML frontmatter. Use when creating or updating .plan.md files.",
       "triggers": [
@@ -348,7 +348,7 @@
     },
     {
       "id": "dart-best-practices",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/dart-best-practices/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/dart-best-practices/SKILL.md",
       "name": "dart-best-practices",
       "description": "Dart code quality conventions: naming, const/final/var hierarchy, single quotes, trailing commas, collection idioms, tear-offs, and import organization. Use when writing new Dart code or reviewing for style violations — wrong import style, global variables, var misuse, anonymous lambdas where tear-offs fit, or missing trailing commas. (triggers: **/*.dart, naming, convention, trailing comma, import, tear-off)",
       "triggers": [
@@ -358,7 +358,7 @@
     },
     {
       "id": "dart-language",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/dart-language/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/dart-language/SKILL.md",
       "name": "dart-language",
       "description": "Dart 3.x language feature standards: null safety, records, sealed classes, switch pattern matching, extensions, and async/await. ALWAYS consult when using !, ?., ??, late, sealed classes, record types, switch expressions, or async patterns — and before introducing any new Dart 3.x construct to confirm the modern idiomatic approach. (triggers: **/*.dart, sealed, record, switch, pattern, !, late, async, extension)",
       "triggers": [
@@ -368,7 +368,7 @@
     },
     {
       "id": "dart-tooling",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/dart-tooling/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/dart-tooling/SKILL.md",
       "name": "dart-tooling",
       "description": "Dart static analysis, linting, formatting, and code-generation standards. Use when touching analysis_options.yaml, running build_runner, configuring dart format line length, setting up DCM metrics, or adding pre-commit hooks via lefthook — and whenever a CI job fails on analyze or format steps. (triggers: analysis_options.yaml, build.yaml, build_runner, lefthook.yml, dart format, dart_code_metrics)",
       "triggers": [
@@ -378,7 +378,7 @@
     },
     {
       "id": "database-migrations",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/database-migrations/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/database-migrations/SKILL.md",
       "name": "database-migrations",
       "description": "Enforces schema migration practices for Supabase (or similar) with file-based migrations, naming, idempotency, and a standard workflow. Use when creating or modifying database schema, or when working with Supabase migrations.",
       "triggers": [
@@ -388,7 +388,7 @@
     },
     {
       "id": "finishing-a-development-branch",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/finishing-a-development-branch/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/finishing-a-development-branch/SKILL.md",
       "name": "finishing-a-development-branch",
       "description": "Complete work on a development branch: merge locally, open a PR, or keep the branch; clean up worktrees and handoff files. Use when closing a feature/fix workflow or finishing isolated work. (triggers: merge branch, finish branch, worktree remove, handoff, close workflow)",
       "triggers": [
@@ -398,7 +398,7 @@
     },
     {
       "id": "firebase-crashlytics-fix-issues",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/firebase-crashlytics-fix-issues/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/firebase-crashlytics-fix-issues/SKILL.md",
       "name": "firebase-crashlytics-fix-issues",
       "description": "Uses Firebase MCP to fetch Crashlytics top issues for a given project/app, get issue details and event stack traces, and fix them one by one in the codebase. Use when the user wants to fix Crashlytics crashes, triage production errors, or evaluate a specific Firebase project's stability.",
       "triggers": [
@@ -408,7 +408,7 @@
     },
     {
       "id": "flutter-accessibility-semantics",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-accessibility-semantics/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-accessibility-semantics/SKILL.md",
       "name": "flutter-accessibility-semantics",
       "description": "Enforces semantic identifiers for E2E tests, Maestro, and accessibility in Flutter. Use when adding testable widgets, implementing E2E flows, or improving accessibility.",
       "triggers": [
@@ -418,7 +418,7 @@
     },
     {
       "id": "flutter-agent-role",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-agent-role/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-agent-role/SKILL.md",
       "name": "flutter-agent-role",
       "description": "Agent role as Flutter and Material 3 expert; apply M3 design principles. Use for all Flutter/Dart sessions.",
       "triggers": [
@@ -430,7 +430,7 @@
     },
     {
       "id": "flutter-app-size",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-app-size/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-app-size/SKILL.md",
       "name": "flutter-app-size",
       "description": "Reduces Flutter release APK/AAB/IPA size via R8, tree-shake-icons, asset diet, HTTP consolidation, deferred loading. Use when optimizing app size, reducing APK/AAB size, modifying build config, adding assets, or when the user mentions app size, binary size, or install size.",
       "triggers": [
@@ -440,7 +440,7 @@
     },
     {
       "id": "flutter-auto-route-navigation",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-auto-route-navigation/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-auto-route-navigation/SKILL.md",
       "name": "flutter-auto-route-navigation",
       "description": "Typed routing, nested routes, and guards using auto_route. Use when implementing typed navigation, nested routes, or route guards with auto_route in Flutter. (triggers: **/router.dart, **/app_router.dart, AutoRoute, AutoRouter, router, guards, navigate, push)",
       "triggers": [
@@ -450,7 +450,7 @@
     },
     {
       "id": "flutter-bloc-state-management",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-bloc-state-management/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-bloc-state-management/SKILL.md",
       "name": "flutter-bloc-state-management",
       "description": "BLoC/Cubit state management standards. ALWAYS consult when writing, modifying, reviewing, or testing any BLoC, Cubit, state, or event Dart file — even for small changes. (triggers: **_bloc.dart, **_cubit.dart, **_state.dart, **_event.dart, BlocProvider, BlocBuilder, BlocListener, Cubit, Emitter)",
       "triggers": [
@@ -460,7 +460,7 @@
     },
     {
       "id": "flutter-cicd",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-cicd/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-cicd/SKILL.md",
       "name": "flutter-cicd",
       "description": "Continuous Integration and Deployment standards for Flutter apps. Use when setting up CI/CD pipelines, automated testing, or deployment workflows for Flutter. (triggers: .github/workflows/**.yml, fastlane/**, android/fastlane/**, ios/fastlane/**, ci, cd, pipeline, build, deploy, release, action, workflow)",
       "triggers": [
@@ -470,7 +470,7 @@
     },
     {
       "id": "flutter-clean-architecture",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-clean-architecture/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-clean-architecture/SKILL.md",
       "name": "flutter-clean-architecture",
       "description": "Enforces feature-based modular structure, dependency rules, and widget composition (avoid Widget Hell) for Flutter apps. Use when organizing or adding features, refactoring large build methods, or deciding where to put new code.",
       "triggers": [
@@ -480,7 +480,7 @@
     },
     {
       "id": "flutter-code-quality",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-code-quality/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-code-quality/SKILL.md",
       "name": "flutter-code-quality",
       "description": "Enforces Dart/Flutter code quality via analyzer, cleanup, and dependency rules. Use when completing Flutter coding tasks, before considering work done, or when the user asks to run analyzer or fix lint issues.",
       "triggers": [
@@ -490,7 +490,7 @@
     },
     {
       "id": "flutter-dart-standards",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-dart-standards/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-dart-standards/SKILL.md",
       "name": "flutter-dart-standards",
       "description": "Enforces Dart type safety, immutability, naming, and widget composition in Flutter projects. Use when writing or reviewing Dart/Flutter code.",
       "triggers": [
@@ -500,7 +500,7 @@
     },
     {
       "id": "flutter-dependency-injection",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-dependency-injection/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-dependency-injection/SKILL.md",
       "name": "flutter-dependency-injection",
       "description": "Standards for automated service locator setup using injectable and get_it. Use when configuring dependency injection with injectable and get_it in Flutter. (triggers: **/injection.dart, **/locator.dart, GetIt, injectable, singleton, module, lazySingleton, factory)",
       "triggers": [
@@ -510,7 +510,7 @@
     },
     {
       "id": "flutter-dependency-install",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-dependency-install/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-dependency-install/SKILL.md",
       "name": "flutter-dependency-install",
       "description": "Adds or updates Flutter/Dart dependencies using the latest possible version and official pub.dev documentation for correct installation and configuration. Use when adding packages to pubspec.yaml, installing dependencies, or when the user asks to add or update a Flutter/Dart package.",
       "triggers": [
@@ -520,7 +520,7 @@
     },
     {
       "id": "flutter-design-system",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-design-system/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-design-system/SKILL.md",
       "name": "flutter-design-system",
       "description": "Enforce Design Language System adherence in Flutter. Use when enforcing design tokens, preventing hardcoded colors/spacing, or implementing a DLS in Flutter. (triggers: **/theme/**, **/*_theme.dart, **/*_colors.dart, **/*_dls/**, **/foundation/**, **/presentation/**, **/ui/**, **/widgets/**, ThemeData, ColorScheme, AppColors, VColors, VSpacing, AppTheme, design token)",
       "triggers": [
@@ -530,7 +530,7 @@
     },
     {
       "id": "flutter-environment-config",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-environment-config/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-environment-config/SKILL.md",
       "name": "flutter-environment-config",
       "description": "Enforces flavor support, env files, AppConfig singleton, and no hardcoded URLs/keys in Flutter. Use when configuring environments, flavors, or build variants.",
       "triggers": [
@@ -540,7 +540,7 @@
     },
     {
       "id": "flutter-error-handling-either",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-error-handling-either/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-error-handling-either/SKILL.md",
       "name": "flutter-error-handling-either",
       "description": "Functional error handling with Either/Failure. ALWAYS consult when writing repositories, handling exceptions, defining failures, or using Either in any Flutter layer — not just when setting up error handling. (triggers: lib/domain/**, lib/infrastructure/**, Either, fold, Left, Right, Failure, dartz)",
       "triggers": [
@@ -550,7 +550,7 @@
     },
     {
       "id": "flutter-error-handling-result",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-error-handling-result/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-error-handling-result/SKILL.md",
       "name": "flutter-error-handling-result",
       "description": "Applies Result-type error handling, central error processing, and UI error display patterns in Flutter/Dart. Use when implementing async services, Notifiers, or user-facing error messages.",
       "triggers": [
@@ -560,7 +560,7 @@
     },
     {
       "id": "flutter-feature-based-clean-architecture",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-feature-based-clean-architecture/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-feature-based-clean-architecture/SKILL.md",
       "name": "flutter-feature-based-clean-architecture",
       "description": "Feature-based clean architecture standards. ALWAYS consult when creating or modifying any file under lib/features/ — new features, domain entities, repositories, data sources, or screens. (triggers: lib/features/**, feature, domain, infrastructure, application, presentation)",
       "triggers": [
@@ -570,7 +570,7 @@
     },
     {
       "id": "flutter-getx-navigation",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-getx-navigation/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-getx-navigation/SKILL.md",
       "name": "flutter-getx-navigation",
       "description": "Context-less navigation, named routes, and middleware using GetX. Use when implementing navigation or route middleware with GetX in Flutter. (triggers: **/app_pages.dart, **/app_routes.dart, GetPage, Get.to, Get.off, Get.offAll, Get.toNamed, GetMiddleware)",
       "triggers": [
@@ -580,7 +580,7 @@
     },
     {
       "id": "flutter-getx-state-management",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-getx-state-management/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-getx-state-management/SKILL.md",
       "name": "flutter-getx-state-management",
       "description": "Simple and powerful reactive state management using GetX. Use when managing reactive state with GetX controllers or observables in Flutter. (triggers: **_controller.dart, **/bindings/*.dart, GetxController, Obx, GetBuilder, .obs, Get.put, Get.find, Get.lazyPut)",
       "triggers": [
@@ -590,7 +590,7 @@
     },
     {
       "id": "flutter-go-router-navigation",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-go-router-navigation/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-go-router-navigation/SKILL.md",
       "name": "flutter-go-router-navigation",
       "description": "Typed routes, route state, and redirection using go_router. Use when implementing go_router typed routes, guards, or redirects in Flutter. (triggers: **/router.dart, **/app_router.dart, GoRouter, GoRoute, StatefulShellRoute, redirection, typed-routes)",
       "triggers": [
@@ -600,7 +600,7 @@
     },
     {
       "id": "flutter-http-dio",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-http-dio/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-http-dio/SKILL.md",
       "name": "flutter-http-dio",
       "description": "Enforces Dio-based HTTP client patterns with factory constructors and interceptors in Flutter. Use when implementing API clients, upload services, or authenticated requests.",
       "triggers": [
@@ -610,7 +610,7 @@
     },
     {
       "id": "flutter-i18n",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-i18n/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-i18n/SKILL.md",
       "name": "flutter-i18n",
       "description": "Enforces internationalization with AppLocalizations and ARB files in Flutter. Use when adding or changing user-facing strings, or when setting up or fixing Flutter l10n.",
       "triggers": [
@@ -620,7 +620,7 @@
     },
     {
       "id": "flutter-icons",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-icons/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-icons/SKILL.md",
       "name": "flutter-icons",
       "description": "Cross-platform Flutter launcher icons and splash screens — adaptive Android, iOS 18 variants, Material 3 safe zones, flutter_launcher_icons, flutter_native_splash. (triggers: app icon, splash screen, adaptive icon, flutter_launcher_icons, iOS icon, AppIcon)",
       "triggers": [
@@ -630,7 +630,7 @@
     },
     {
       "id": "flutter-idiomatic-flutter",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-idiomatic-flutter/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-idiomatic-flutter/SKILL.md",
       "name": "flutter-idiomatic-flutter",
       "description": "Modern layout and widget composition standards. Use when composing Flutter widget trees, managing layout constraints, or following idiomatic Flutter patterns. (triggers: lib/presentation/**/*.dart, context.mounted, SizedBox, Gap, composition, shrink)",
       "triggers": [
@@ -640,7 +640,7 @@
     },
     {
       "id": "flutter-ios-distribution-launch",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-ios-distribution-launch/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-ios-distribution-launch/SKILL.md",
       "name": "flutter-ios-distribution-launch",
       "description": "Prevents and fixes iOS distribution launch failures (sysctl sandbox denials, Scene creation failed). Use when changing iOS entitlements, AppDelegate, Info.plist scene config, or debugging app failing to launch on Firebase App Distribution or TestFlight.",
       "triggers": [
@@ -650,7 +650,7 @@
     },
     {
       "id": "flutter-layer-based-clean-architecture",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-layer-based-clean-architecture/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-layer-based-clean-architecture/SKILL.md",
       "name": "flutter-layer-based-clean-architecture",
       "description": "Layer separation and DDD standards. ALWAYS consult when working in lib/domain/, lib/infrastructure/, lib/application/, or lib/presentation/ — for entities, repositories, mappers, BLoCs, or screens. (triggers: lib/domain/**, lib/infrastructure/**, lib/application/**, dto, mapper, Either, Failure)",
       "triggers": [
@@ -660,7 +660,7 @@
     },
     {
       "id": "flutter-localization",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-localization/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-localization/SKILL.md",
       "name": "flutter-localization",
       "description": "Standards for multi-language support using easy_localization with CSV or JSON. Use when adding localization or multi-language support to Flutter apps. (triggers: **/assets/translations/*.json, **/assets/langs/*.csv, main.dart, localization, multi-language, translation, tr(), easy_localization, sheet_loader)",
       "triggers": [
@@ -670,7 +670,7 @@
     },
     {
       "id": "flutter-logging",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-logging/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-logging/SKILL.md",
       "name": "flutter-logging",
       "description": "Enforces structured logging, log levels, and PII sanitization in Flutter/Dart apps. Use when adding logs, debugging, or configuring production-safe logging.",
       "triggers": [
@@ -680,7 +680,7 @@
     },
     {
       "id": "flutter-navigation",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-navigation/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-navigation/SKILL.md",
       "name": "flutter-navigation",
       "description": "Flutter navigation patterns including go_router, deep linking, and named routes. Use when implementing navigation, deep linking, or named routes in Flutter. (triggers: **/*_route.dart, **/*_router.dart, **/main.dart, Navigator, GoRouter, routes, deep link, go_router, AutoRoute)",
       "triggers": [
@@ -690,7 +690,7 @@
     },
     {
       "id": "flutter-notifications",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-notifications/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-notifications/SKILL.md",
       "name": "flutter-notifications",
       "description": "Push and local notifications for Flutter using FCM and flutter_local_notifications. Use when integrating push or local notifications in Flutter apps. (triggers: **/*notification*.dart, **/main.dart, FirebaseMessaging, FlutterLocalNotificationsPlugin, FCM, notification, push)",
       "triggers": [
@@ -700,7 +700,7 @@
     },
     {
       "id": "flutter-performance",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-performance/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-performance/SKILL.md",
       "name": "flutter-performance",
       "description": "Optimization standards for rebuilds and memory. Use when optimizing Flutter widget rebuilds, reducing memory usage, or improving rendering performance. (triggers: lib/presentation/**, pubspec.yaml, const, buildWhen, ListView.builder, Isolate, RepaintBoundary)",
       "triggers": [
@@ -710,7 +710,7 @@
     },
     {
       "id": "flutter-performance-layout",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-performance-layout/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-performance-layout/SKILL.md",
       "name": "flutter-performance-layout",
       "description": "Applies Flutter performance and layout rules to prevent jank and overflow. Use when building or refactoring Flutter UI, lists, scroll views, or when optimizing layout or scroll performance.",
       "triggers": [
@@ -720,7 +720,7 @@
     },
     {
       "id": "flutter-resource-management",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-resource-management/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-resource-management/SKILL.md",
       "name": "flutter-resource-management",
       "description": "Enforces controller disposal, mounted checks, nullification, guard pattern, and listener cleanup in Flutter. Use when using AnimationController, ScrollController, VideoPlayerController, StreamSubscription, or any disposable resource.",
       "triggers": [
@@ -730,7 +730,7 @@
     },
     {
       "id": "flutter-retrofit-networking",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-retrofit-networking/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-retrofit-networking/SKILL.md",
       "name": "flutter-retrofit-networking",
       "description": "HTTP networking standards using Dio and Retrofit with Auth interceptors. Use when integrating Dio, Retrofit, or API auth interceptors in Flutter. (triggers: **/data_sources/**, **/api/**, Retrofit, Dio, RestClient, GET, POST, Interceptor, refreshing)",
       "triggers": [
@@ -740,7 +740,7 @@
     },
     {
       "id": "flutter-riverpod-state",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-riverpod-state/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-riverpod-state/SKILL.md",
       "name": "flutter-riverpod-state",
       "description": "Applies Riverpod patterns for state, Notifiers, state classes with copyWith, and Result-based async handling. Use when adding or refactoring Riverpod providers, state classes, or async logic in Notifiers.",
       "triggers": [
@@ -750,7 +750,7 @@
     },
     {
       "id": "flutter-riverpod-state-management",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-riverpod-state-management/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-riverpod-state-management/SKILL.md",
       "name": "flutter-riverpod-state-management",
       "description": "Reactive state management using Riverpod 2.0 with code generation. Use when managing state with Riverpod providers or using riverpod_generator in Flutter. (triggers: **_provider.dart, **_notifier.dart, riverpod, ProviderScope, ConsumerWidget, Notifier, AsyncValue, ref.watch, @riverpod)",
       "triggers": [
@@ -760,7 +760,7 @@
     },
     {
       "id": "flutter-security",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-security/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-security/SKILL.md",
       "name": "flutter-security",
       "description": "OWASP Mobile security standards for Flutter. ALWAYS consult when storing data, making network calls, handling tokens/PII, or preparing a release build — not just dedicated security tasks. (triggers: lib/infrastructure/**, pubspec.yaml, secure_storage, obfuscate, jailbreak, pinning, PII, OWASP)",
       "triggers": [
@@ -770,7 +770,7 @@
     },
     {
       "id": "flutter-supabase-oauth",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-supabase-oauth/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-supabase-oauth/SKILL.md",
       "name": "flutter-supabase-oauth",
       "description": "Google Sign-In OIDC flow with Supabase Auth. Use when implementing OAuth (Google, Apple) in Flutter + Supabase apps.",
       "triggers": [
@@ -780,7 +780,7 @@
     },
     {
       "id": "flutter-testing",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-testing/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-testing/SKILL.md",
       "name": "flutter-testing",
       "description": "Unit, widget, and integration testing with robots, widget keys, and Patrol. Use when writing Flutter unit tests, widget tests, or integration tests with Patrol. (triggers: **/test/**.dart, **/integration_test/**.dart, **/robots/**.dart, lib/core/keys/**.dart, test, patrol, robot, WidgetKeys, patrolTest, blocTest, mocktail)",
       "triggers": [
@@ -790,7 +790,7 @@
     },
     {
       "id": "flutter-theme-colors",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-theme-colors/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-theme-colors/SKILL.md",
       "name": "flutter-theme-colors",
       "description": "Enforces theme-based colors and typography in Flutter; prohibits hardcoded colors. Use when implementing or refactoring UI, Material 3 components, or theming.",
       "triggers": [
@@ -800,7 +800,7 @@
     },
     {
       "id": "flutter-video-feed-architecture",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-video-feed-architecture/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-video-feed-architecture/SKILL.md",
       "name": "flutter-video-feed-architecture",
       "description": "Vertical video feed architecture: controller pool, sliding window, LRU cache, media carousel, ad preloading. Use when building TikTok/Instagram-style feeds in Flutter. Apply flutter-resource-management for disposal patterns.",
       "triggers": [
@@ -810,7 +810,7 @@
     },
     {
       "id": "flutter-widgets",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/flutter-widgets/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/flutter-widgets/SKILL.md",
       "name": "flutter-widgets",
       "description": "Principles for maintainable UI components. Use when building, refactoring, or reviewing Flutter widget implementations for maintainability. (triggers: **_page.dart, **_screen.dart, **/widgets/**, StatelessWidget, const, Theme, ListView)",
       "triggers": [
@@ -820,247 +820,199 @@
     },
     {
       "id": "gpm-community-electron",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-electron/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-community-electron/SKILL.md",
       "name": "electron",
       "description": ">",
-      "triggers": [
-        "electron, desktop app, main process, renderer process, IPC, ipcMain, ipcRenderer, BrowserWindow, preload, electron-builder, auto-update, native integration, cross-platform desktop, **/main.ts, **/preload.ts, electron.config.*"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-community-elixir-antipatterns",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-elixir-antipatterns/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-community-elixir-antipatterns/SKILL.md",
       "name": "elixir-antipatterns",
       "description": ">",
-      "triggers": [
-        "**/*.ex, **/*.exs, elixir, phoenix, ecto, anti-pattern, antipattern, GenServer, code review elixir, refactor elixir, mix.exs, with clause, pattern match, Repo, changeset"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-community-hexagonal-architecture-layers-java",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-hexagonal-architecture-layers-java/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-community-hexagonal-architecture-layers-java/SKILL.md",
       "name": "hexagonal-architecture-layers-java",
       "description": ">",
-      "triggers": [
-        "**/*.java, hexagonal architecture, ports and adapters, clean architecture java, domain layer, application layer, infrastructure layer, dependency inversion, pom.xml, build.gradle, adapter, port, use case java"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-community-java-21",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-java-21/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-community-java-21/SKILL.md",
       "name": "java-21",
       "description": ">",
-      "triggers": [
-        "**/*.java, java 21, record, sealed class, sealed interface, virtual thread, pattern matching, switch expression, text block, SequencedCollection, structured concurrency, pom.xml, build.gradle"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-community-react-native",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-react-native/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-community-react-native/SKILL.md",
       "name": "react-native",
       "description": ">",
-      "triggers": [
-        "**/*.tsx, **/*.jsx, react native, react-native, expo, React Navigation, NativeWind, metro.config.*, app.json, app.config.*, StyleSheet, FlatList, native module, react native mobile, iOS, Android"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-community-spring-boot-3",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-community-spring-boot-3/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-community-spring-boot-3/SKILL.md",
       "name": "spring-boot-3",
       "description": ">",
-      "triggers": [
-        "**/*.java, spring boot, spring boot 3, @SpringBootApplication, @RestController, @Service, @Bean, @Configuration, application.yml, application.properties, pom.xml, build.gradle, dependency injection, spring web"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-ai-sdk-5",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-ai-sdk-5/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-ai-sdk-5/SKILL.md",
       "name": "ai-sdk-5",
       "description": ">",
-      "triggers": [
-        "ai sdk, vercel ai, useChat, useCompletion, streamText, generateText, ai/react, ai/rsc, AI chat, LLM integration, @ai-sdk/*, package.json"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-angular-architecture",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-angular-architecture/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-angular-architecture/SKILL.md",
       "name": "angular-architecture",
       "description": ">",
-      "triggers": [
-        "**/*.component.ts, **/*.module.ts, angular.json, angular, angular architecture, project structure angular, scope rule, feature module, shared module, component placement, file naming angular"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-angular-core",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-angular-core/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-angular-core/SKILL.md",
       "name": "angular-core",
       "description": ">",
-      "triggers": [
-        "**/*.component.ts, **/*.service.ts, angular, standalone component, signal, inject, @Component, ChangeDetectionStrategy, OnPush, zoneless, @if, @for, @switch, control flow angular"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-angular-forms",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-angular-forms/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-angular-forms/SKILL.md",
       "name": "angular-forms",
       "description": ">",
-      "triggers": [
-        "**/*.component.ts, angular form, reactive form, FormGroup, FormControl, FormBuilder, Validators, signal form, template-driven form, form validation angular, ngModel, patchValue"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-angular-performance",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-angular-performance/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-angular-performance/SKILL.md",
       "name": "angular-performance",
       "description": ">",
-      "triggers": [
-        "**/*.component.ts, **/*.component.html, angular performance, NgOptimizedImage, @defer, lazy loading angular, SSR angular, ngSrc, loadChildren, prerender, hydration, Core Web Vitals angular"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-django-drf",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-django-drf/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-django-drf/SKILL.md",
       "name": "django-drf",
       "description": ">",
-      "triggers": [
-        "**/*.py, django, rest framework, DRF, ViewSet, ModelViewSet, Serializer, ModelSerializer, APIView, urls.py, views.py, serializers.py, permissions.py, FilterSet, django rest"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-github-pr",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-github-pr/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-github-pr/SKILL.md",
       "name": "github-pr",
       "description": ">",
-      "triggers": [
-        "pull request, PR, gh pr create, conventional commit, PR description, PR template, code review, merge request, github PR, commit message"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-jira-epic",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-jira-epic/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-jira-epic/SKILL.md",
       "name": "jira-epic",
       "description": ">",
-      "triggers": [
-        "jira epic, create epic, large feature, multi-task, initiative, epic template, jira, feature breakdown, acceptance criteria epic"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-jira-task",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-jira-task/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-jira-task/SKILL.md",
       "name": "jira-task",
       "description": ">",
-      "triggers": [
-        "jira task, create task, jira ticket, create ticket, jira issue, bug report jira, task template, story points, acceptance criteria"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-nextjs-15",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-nextjs-15/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-nextjs-15/SKILL.md",
       "name": "nextjs-15",
       "description": ">",
-      "triggers": [
-        "**/app/**/page.tsx, **/app/**/layout.tsx, **/app/**/route.ts, next.config.*, nextjs, next.js, App Router, Server Actions, server component, client component, use server, use client, middleware.ts, loading.tsx, error.tsx"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-playwright",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-playwright/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-playwright/SKILL.md",
       "name": "playwright",
       "description": ">",
-      "triggers": [
-        "**/*.spec.ts, **/*.test.ts, playwright.config.*, playwright, e2e test, end-to-end, page object, getByRole, getByTestId, locator, expect, browser test, integration test"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-pytest",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-pytest/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-pytest/SKILL.md",
       "name": "pytest",
       "description": ">",
-      "triggers": [
-        "**/test_*.py, **/*_test.py, conftest.py, pytest.ini, pyproject.toml, pytest, fixture, @pytest.mark, parametrize, monkeypatch, mock, assert, python test"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-react-19",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-react-19/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-react-19/SKILL.md",
       "name": "react-19",
       "description": ">",
-      "triggers": [
-        "**/*.tsx, **/*.jsx, react, react 19, React Compiler, useActionState, useFormStatus, useOptimistic, use, server component, client component, suspense, concurrent"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-skill-creator",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-skill-creator/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-skill-creator/SKILL.md",
       "name": "skill-creator",
       "description": ">",
-      "triggers": [
-        "SKILL.md, create skill, new skill, agent skill, add skill, document patterns, skill template, agent instructions, skills-index.json"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-tailwind-4",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-tailwind-4/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-tailwind-4/SKILL.md",
       "name": "tailwind-4",
       "description": ">",
-      "triggers": [
-        "**/*.tsx, **/*.jsx, **/*.css, tailwind.config.*, tailwind, tailwind css, cn("
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-typescript",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-typescript/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-typescript/SKILL.md",
       "name": "typescript",
       "description": ">",
-      "triggers": [
-        "**/*.ts, **/*.tsx, tsconfig.json, typescript, type, interface, generic, enum, as const, discriminated union, type guard, strict mode, type inference"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-zod-4",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-zod-4/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-zod-4/SKILL.md",
       "name": "zod-4",
       "description": ">",
-      "triggers": [
-        "**/*.ts, **/*.tsx, zod, z.object, z.string, z.number, schema validation, z.infer, z.pipe, z.coerce, zod 4, form validation zod, parse, safeParse"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "gpm-curated-zustand-5",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/gpm-curated-zustand-5/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/gpm-curated-zustand-5/SKILL.md",
       "name": "zustand-5",
       "description": ">",
-      "triggers": [
-        "**/*.ts, **/*.tsx, zustand, create store, useStore, state management react, persist middleware, immer middleware, devtools, zustand 5, slice pattern"
-      ],
+      "triggers": [],
       "globs": []
     },
     {
       "id": "knowledge-audit",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/knowledge-audit/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/knowledge-audit/SKILL.md",
       "name": "knowledge-audit",
       "description": "SDD closure + full specs/knowledge sync: relink, merge into canonical specs, rewrite README, prune — mandatory after workflows that write knowledge. (triggers: specs/knowledge, knowledge audit, SDD closure, /knowledge-audit, obsolete research)",
       "triggers": [
@@ -1070,7 +1022,7 @@
     },
     {
       "id": "kro-rgd-from-crossplane",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/kro-rgd-from-crossplane/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/kro-rgd-from-crossplane/SKILL.md",
       "name": "kro-rgd-from-crossplane",
       "description": "Create kro ResourceGraphDefinitions (RGDs) from Crossplane resources. Use when designing custom APIs that wrap Crossplane CRs, bundling related resources into unified RGDs (e.g. GitHubProject = teams + repos + team-repos), or when you need flexible schemas with defaults and parameter passing to sub-resources.",
       "triggers": [
@@ -1082,7 +1034,7 @@
     },
     {
       "id": "package-upgrade-review",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/package-upgrade-review/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/package-upgrade-review/SKILL.md",
       "name": "package-upgrade-review",
       "description": "Reviews every package/dependency in the project, finds latest versions (pub.dev for Dart/Flutter, Maven for Java/Kotlin, CocoaPods/SPM for iOS), upgrades config files, and aligns code with changelogs and docs for breaking changes and new APIs. Use when the user asks to upgrade dependencies, update packages, or keep the project on latest versions.",
       "triggers": [
@@ -1092,7 +1044,7 @@
     },
     {
       "id": "sentry-fix-unresolved-issues",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/sentry-fix-unresolved-issues/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/sentry-fix-unresolved-issues/SKILL.md",
       "name": "sentry-fix-unresolved-issues",
       "description": "Uses Sentry MCP to fetch unresolved issues, get details and Seer analysis, and fix them one by one in the codebase. Use when the user wants to fix Sentry issues, triage production errors, work through unresolved bugs, or clear the Sentry inbox.",
       "triggers": [
@@ -1102,7 +1054,7 @@
     },
     {
       "id": "supabase-flutter-integration",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/supabase-flutter-integration/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/supabase-flutter-integration/SKILL.md",
       "name": "supabase-flutter-integration",
       "description": "Supabase Postgres integration strategy: direct client vs backend proxy, RLS, JWT. Use when designing data access or backend integration for Flutter + Supabase.",
       "triggers": [
@@ -1112,7 +1064,7 @@
     },
     {
       "id": "terraform-devops-modules",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/terraform-devops-modules/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/terraform-devops-modules/SKILL.md",
       "name": "terraform-devops-modules",
       "description": "DevOps Terraform and Cloud specialist for creating reusable, composable Terraform modules. Use when designing or implementing Terraform infrastructure, creating modules, or refactoring IaC. Enforces: module composition (child modules that use other modules), latest provider versions, power and flexibility with sensible defaults, and security-first posture from day 0.",
       "triggers": [
@@ -1124,7 +1076,7 @@
     },
     {
       "id": "terraform-maintainer",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/terraform-maintainer/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/terraform-maintainer/SKILL.md",
       "name": "terraform-maintainer",
       "description": "Orchestrates Terraform module and consumer maintenance so tf-modules and all projects using them stay professional and in sync. Use when maintaining or releasing tf-module-* repos, upgrading providers or internal module refs, versioning with semver, normalizing changelogs, or applying DevOps/module standards across the Terraform estate. Integrates terraform-devops-modules, terraform-provider-upgrade, terraform-version-commit, and changelog-best-practices.",
       "triggers": [
@@ -1136,7 +1088,7 @@
     },
     {
       "id": "terraform-provider-upgrade",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/terraform-provider-upgrade/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/terraform-provider-upgrade/SKILL.md",
       "name": "terraform-provider-upgrade",
       "description": "Workflow for upgrading Terraform provider versions across modules. Use when the user wants to update providers, upgrade provider versions, run terraform init and validate to confirm nothing broke, or search for latest provider versions in the Terraform Registry.",
       "triggers": [
@@ -1148,7 +1100,7 @@
     },
     {
       "id": "terraform-to-crossplane-migration",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/terraform-to-crossplane-migration/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/terraform-to-crossplane-migration/SKILL.md",
       "name": "terraform-to-crossplane-migration",
       "description": "Migrate infrastructure from Terraform (HCL) to Crossplane (Kubernetes CRDs). Use when converting Terraform modules or resources to Crossplane managed resources (ProviderConfig, Composition, XRD), or when moving IaC from Terraform to GitOps with Crossplane.",
       "triggers": [
@@ -1160,7 +1112,7 @@
     },
     {
       "id": "terraform-version-commit",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/terraform-version-commit/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/terraform-version-commit/SKILL.md",
       "name": "terraform-version-commit",
       "description": "Workflow for committing Terraform changes with strict semver versioning. Use when the user wants to commit Terraform changes, increment version from last tag following semver, intelligently bump major/minor/patch based on accumulated changes, or use an LLM (e.g. Cursor on the local machine) to generate commit messages and changelog entries.",
       "triggers": [
@@ -1172,7 +1124,7 @@
     },
     {
       "id": "using-git-worktrees",
-      "path": "/Volumes/Docker/Development/wildbit/ai-resources/skills/using-git-worktrees/SKILL.md",
+      "path": "/opt/homebrew/Cellar/ai-resources/0.5.1/libexec/skills/using-git-worktrees/SKILL.md",
       "name": "using-git-worktrees",
       "description": "Create and manage git worktrees for isolated development. Use when starting parallel or isolated work, workflow branches, or avoiding dirty main checkout. (triggers: git worktree, worktree, isolated branch, parallel development)",
       "triggers": [
