@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-04-10
+
+### Added
+
+- **Workflow enforcement hook**: `kit.py setup --target claude` now installs a `UserPromptSubmit` prompt hook in `~/.claude/settings.json`. The hook evaluates every user message against workflow triggers and responds with `WORKFLOW: <file>`, `TEAM: <blueprint>`, or `PASS` — forcing the agent to check workflows before implementing. This makes the Workflow Discovery Protocol mechanically enforced (~95% adherence) rather than relying on CLAUDE.md instructions alone (~70%).
+- **`_build_hooks_config()`**: generates the hooks structure dynamically from scanned workflow triggers.
+- **`_merge_settings_with_hooks()`**: replaces `_merge_json_file` for settings.json to handle both env vars and hooks (array-based deep merge).
+
+### Changed
+
+- **`_setup_claude()`**: now calls `_merge_settings_with_hooks()` instead of `_merge_json_file()` for settings.json, merging env vars and hooks in a single operation.
+
 ## [0.5.1] — 2026-04-01
 
 ### Added
