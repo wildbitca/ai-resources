@@ -18,7 +18,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 # Repo root = parent of scripts/
 REPO = Path(__file__).resolve().parents[1]
@@ -868,96 +868,48 @@ def _build_teams_section(agents_dir: Path) -> str:
     )
 
 
-def _build_hooks_config(ak_s: str) -> dict:
-    """Build Claude Code hooks configuration for workflow enforcement."""
-    workflow_triggers = _scan_workflow_triggers(ak_s)
-    trigger_table = " | ".join(f"{name} ({filename})" for filename, name, _trigger in workflow_triggers)
+def _cleanup_stale_hooks(path: Path, *, dry_run: bool = False) -> None:
+    """Remove stale workflow-enforcement hooks from settings.json.
 
-    prompt = (
-        "You are a workflow gate. Evaluate whether the user's message describes a task that "
-        "matches one of these workflow triggers:\n\n"
-    )
-    for filename, _name, trigger in workflow_triggers:
-        prompt += f"- {filename}: {trigger}\n"
-    prompt += (
-        "\nAlso check: does the task touch >5 files or have >2 logical phases? "
-        "If yes, it needs a workflow or Agent Team.\n\n"
-        "Respond with ONLY one of:\n"
-        "- 'WORKFLOW: <filename>' if a workflow matches\n"
-        "- 'TEAM: <blueprint>' if it needs a team (feature/bugfix/security/triage/infra/maintenance/review) "
-        "but no specific workflow matches\n"
-        "- 'PASS' if the task is trivial (single-file edit, quick question, config change, "
-        "conversational question)\n\n"
-        "Be concise. One line only."
-    )
-
-    return {
-        "hooks": {
-            "UserPromptSubmit": [
-                {
-                    "hooks": [
-                        {
-                            "type": "prompt",
-                            "prompt": prompt,
-                        }
-                    ]
-                }
-            ]
-        }
-    }
-
-
-def _merge_settings_with_hooks(path: Path, env_patch: dict, hooks_config: dict, *, dry_run: bool = False) -> None:
-    """Merge env vars and hooks into settings.json. Hooks use set-by-key replacement."""
-    existing: dict = {}
-    if path.is_file():
-        try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            existing = {}
-
-    changed = False
-
-    # Merge env
-    env = existing.setdefault("env", {})
-    for k, v in env_patch.items():
-        if env.get(k) != v:
-            env[k] = v
-            changed = True
-
-    # Merge hooks — replace entire hook events by key (UserPromptSubmit, etc.)
-    if "hooks" in hooks_config:
-        existing_hooks = existing.setdefault("hooks", {})
-        for event, hook_list in hooks_config["hooks"].items():
-            if existing_hooks.get(event) != hook_list:
-                existing_hooks[event] = hook_list
-                changed = True
-
-    if not changed:
-        print(f"settings merge: {path} already up to date")
+    Earlier versions installed a UserPromptSubmit prompt hook that blocked
+    trivial messages.  This helper cleans that up so ``setup`` is safe to
+    re-run on machines that still carry the old config.
+    """
+    if not path.is_file():
         return
-    if dry_run:
-        print(f"would update {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"Updated {path}")
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return
+    # Remove only the key we previously owned
+    if "UserPromptSubmit" in hooks:
+        if dry_run:
+            print(f"would remove stale UserPromptSubmit hook from {path}")
+            return
+        del hooks["UserPromptSubmit"]
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"Removed stale UserPromptSubmit hook from {path}")
 
 
 def _setup_claude(ak: Path, ak_s: str, hint: str, *, dry_run: bool = False) -> None:
-    """Full Claude Code setup: settings.json env + hooks, subagent definitions, stub, engram, symlinks."""
+    """Full Claude Code setup: settings.json env, subagent definitions, stub, engram, symlinks."""
 
-    # 1. settings.json — env vars + workflow enforcement hooks (idempotent merge)
-    env_patch = {
-        "AGENT_SKILLS_ROOT": f"{ak_s}/skills",
-        "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    }
-    hooks_config = _build_hooks_config(ak_s)
-    _merge_settings_with_hooks(
-        Path.home() / ".claude" / "settings.json",
-        env_patch, hooks_config,
+    # 1. settings.json — env vars (idempotent merge)
+    settings_path = Path.home() / ".claude" / "settings.json"
+    _merge_json_file(
+        settings_path,
+        {"env": {
+            "AGENT_SKILLS_ROOT": f"{ak_s}/skills",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+        }},
         dry_run=dry_run,
     )
+
+    # 1b. Clean up stale hooks from earlier versions
+    _cleanup_stale_hooks(settings_path, dry_run=dry_run)
 
     # 2. Subagent definitions from agents/roles/*.md
     roles_dir = ak / "agents" / "roles"

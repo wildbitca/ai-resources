@@ -6,11 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
-## [0.7.0] — 2026-04-10
+## [0.7.1] — 2026-04-10
+
+### Removed
+
+- **Workflow enforcement hook**: removed the `UserPromptSubmit` prompt hook that blocked trivial/conversational messages. The hook ran an LLM without conversation context on every message, causing false positives that blocked simple questions with "Operation stopped by hook". Workflow routing is already handled by the Workflow Discovery Protocol in CLAUDE.md — which has full conversation context and is more accurate.
+- **`_build_hooks_config()`** and **`_merge_settings_with_hooks()`**: no longer needed without the hook.
 
 ### Added
 
-- **Workflow enforcement hook**: `kit.py setup --target claude` now installs a `UserPromptSubmit` prompt hook in `~/.claude/settings.json`. The hook evaluates every user message against workflow triggers and responds with `WORKFLOW: <file>`, `TEAM: <blueprint>`, or `PASS` — forcing the agent to check workflows before implementing. This makes the Workflow Discovery Protocol mechanically enforced (~95% adherence) rather than relying on CLAUDE.md instructions alone (~70%).
+- **`_cleanup_stale_hooks()`**: `kit.py setup` now removes stale `UserPromptSubmit` hooks from `settings.json` left by v0.7.0, so users don't need to manually clean up.
+
+## [0.7.0] — 2026-04-10 [YANKED]
+
+### Added
+
+- **Workflow enforcement hook** _(yanked — blocked conversational messages)_: `kit.py setup --target claude` installed a `UserPromptSubmit` prompt hook. Removed in v0.7.1 due to false positives.
 - **`_build_hooks_config()`**: generates the hooks structure dynamically from scanned workflow triggers.
 - **`_merge_settings_with_hooks()`**: replaces `_merge_json_file` for settings.json to handle both env vars and hooks (array-based deep merge).
 
