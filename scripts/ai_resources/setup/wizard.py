@@ -230,16 +230,16 @@ def _step3_litellm(s: state.SetupState) -> int:
 def _step3_local(s: state.SetupState) -> int:
     ui.console().print()
 
-    # Choose runtime: pipx (default) or pip-venv
+    # Choose runtime: pip-venv (default — universal) or pipx
     runtime_choices = [
-        ui.Choice("pipx-managed (recommended — clean isolation)",
-                  value="pipx"),
-        ui.Choice("pip + dedicated venv at ~/.config/ai-resources/venv",
+        ui.Choice("pip + dedicated venv at ~/.config/ai-resources/venv  (recommended — only needs python3)",
                   value="pip-venv"),
+        ui.Choice("pipx-managed (cleaner if you already use pipx)",
+                  value="pipx"),
     ]
     runtime = ui.select(
         "Run mode:", runtime_choices,
-        default=s.litellm.local.runtime if s.litellm.local.runtime in ("pipx", "pip-venv") else "pipx",
+        default=s.litellm.local.runtime if s.litellm.local.runtime in ("pipx", "pip-venv") else "pip-venv",
     )
     if runtime is None:
         return 130
@@ -314,19 +314,43 @@ def _step3_pipx(s: state.SetupState) -> int:
 
 
 def _step3_pipvenv(s: state.SetupState) -> int:
-    """Install LiteLLM into a dedicated venv."""
+    """Install LiteLLM into a dedicated venv at ~/.config/ai-resources/venv/."""
     py = detection.detect_python()
     if not py.installed:
         ui.error("python3 not found.")
         return 1
-    ui.ok(f"python3 {py.version}")
-    if not ui.confirm(f"Create venv at ~/.config/ai-resources/venv and pip install LiteLLM?",
+    ui.ok(f"python3 {py.version}  {py.binary_path}")
+
+    # If venv already exists with litellm, skip
+    existing_bin = litellm.venv_dir() / "bin" / "litellm"
+    if existing_bin.is_file():
+        ui.ok(f"LiteLLM already installed at {existing_bin}")
+        s.litellm.local.binary_path = str(existing_bin)
+        s.litellm.local.venv_path = str(litellm.venv_dir())
+        if ui.confirm("Reinstall to ensure latest?", default=False):
+            with ui.spinner("Reinstalling LiteLLM via pip"):
+                ok, msg = litellm.install_litellm_venv()
+            if not ok:
+                ui.error("LiteLLM reinstall failed:")
+                for line in msg.splitlines():
+                    ui.detail(line)
+                return 1
+            ui.ok("LiteLLM updated")
+        return 0
+
+    if not ui.confirm("Create venv at ~/.config/ai-resources/venv and pip install LiteLLM?",
                       default=True):
         return 1
-    with ui.spinner("Creating venv + installing LiteLLM"):
+    with ui.spinner("Creating venv + installing LiteLLM (this may take 1-3 minutes)"):
         ok, msg = litellm.install_litellm_venv()
     if not ok:
-        ui.error(f"Install failed: {msg[:200]}")
+        ui.error("LiteLLM install failed:")
+        for line in msg.splitlines():
+            ui.detail(line)
+        ui.console().print()
+        ui.detail(f"To debug manually:")
+        ui.detail(f"  source {litellm.venv_dir()}/bin/activate")
+        ui.detail(f"  pip install 'litellm[proxy]' --verbose")
         return 1
     s.litellm.local.binary_path = msg
     s.litellm.local.venv_path = str(litellm.venv_dir())

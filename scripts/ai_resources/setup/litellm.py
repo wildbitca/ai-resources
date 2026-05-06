@@ -275,21 +275,50 @@ def _extract_pip_error(text: str) -> str:
 
 
 def install_litellm_venv() -> tuple[bool, str]:
-    """Create a dedicated venv at ~/.config/ai-resources/venv/ and pip install LiteLLM."""
+    """Create a dedicated venv at ~/.config/ai-resources/venv/ and pip install LiteLLM.
+
+    On failure, dumps full pip output to ~/.config/ai-resources/logs/install.log.
+    """
     import sys
     venv = venv_dir()
     if not venv.exists():
-        rc, _, err = _run([sys.executable, "-m", "venv", str(venv)], timeout=60)
+        rc, out, err = _run([sys.executable, "-m", "venv", str(venv)], timeout=60)
         if rc != 0:
-            return False, err
+            return False, f"venv creation failed: {err or out}"
+
     pip = venv / "bin" / "pip"
-    rc, _, err = _run([str(pip), "install", "--upgrade", "pip"], timeout=60)
+    if not pip.is_file():
+        return False, f"pip not found inside venv at {pip}"
+
+    # Upgrade pip + install build essentials
+    rc, out, err = _run(
+        [str(pip), "install", "--upgrade", "pip", "setuptools", "wheel"],
+        timeout=120,
+    )
     if rc != 0:
-        return False, err
-    rc, _, err = _run([str(pip), "install", DEFAULT_LITELLM_PIP_SPEC], timeout=600)
+        log_path = log_dir() / "install.log"
+        log_path.write_text(f"=== pip upgrade ===\nrc={rc}\n\nstdout:\n{out}\n\nstderr:\n{err}\n",
+                            encoding="utf-8")
+        return False, f"pip upgrade failed.\n{_extract_pip_error(err+out)}\n\nFull log: {log_path}"
+
+    # Install LiteLLM
+    rc, out, err = _run(
+        [str(pip), "install", "--verbose", DEFAULT_LITELLM_PIP_SPEC],
+        timeout=900,
+    )
     if rc != 0:
-        return False, err
-    return True, str(venv / "bin" / "litellm")
+        log_path = log_dir() / "install.log"
+        log_path.write_text(
+            f"=== pip install '{DEFAULT_LITELLM_PIP_SPEC}' --verbose ===\nrc={rc}\n\n"
+            f"stdout:\n{out}\n\nstderr:\n{err}\n",
+            encoding="utf-8",
+        )
+        return False, f"{_extract_pip_error(err + out)}\n\nFull log: {log_path}"
+
+    bin_path = venv / "bin" / "litellm"
+    if not bin_path.is_file():
+        return False, f"litellm not found at {bin_path} after install (unusual — check log)"
+    return True, str(bin_path)
 
 
 # ============================================================
