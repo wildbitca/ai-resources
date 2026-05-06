@@ -295,10 +295,14 @@ def _step3_pipx(s: state.SetupState) -> int:
         if not ui.confirm(f"Install LiteLLM via `pipx install '{litellm.DEFAULT_LITELLM_PIP_SPEC}'`?",
                           default=True):
             return 1
-        with ui.spinner("Installing LiteLLM (this may take 1-2 minutes)"):
+        with ui.spinner("Installing LiteLLM (this may take 1-3 minutes)"):
             ok, msg = litellm.install_litellm_pipx()
         if not ok:
-            ui.error(f"Install failed: {msg[:200]}")
+            ui.error("LiteLLM install failed:")
+            for line in msg.splitlines():
+                ui.detail(line)
+            ui.console().print()
+            ui.detail("To debug manually, run: pipx install 'litellm[proxy]' --verbose")
             return 1
         new_det = detection.detect_litellm_binary()
         if not new_det.installed:

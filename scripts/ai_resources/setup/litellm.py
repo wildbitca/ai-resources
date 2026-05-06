@@ -217,16 +217,61 @@ def write_wrapper_script(litellm_bin: Path, port: int = 4000,
 # pipx install
 # ============================================================
 def install_litellm_pipx() -> tuple[bool, str]:
-    """Install LiteLLM via pipx. Idempotent (re-runs are safe)."""
+    """Install LiteLLM via pipx. Idempotent (re-runs are safe).
+
+    On failure, dumps the full pipx output to ~/.config/ai-resources/logs/install.log
+    and returns the path in the error message so the user can investigate.
+    """
     if not shutil.which("pipx"):
         return False, "pipx not installed (try: brew install pipx — or python3 -m pip install --user pipx && pipx ensurepath)"
 
-    rc, out, err = _run(["pipx", "install", DEFAULT_LITELLM_PIP_SPEC, "--force"], timeout=600)
+    rc, out, err = _run(
+        ["pipx", "install", DEFAULT_LITELLM_PIP_SPEC, "--force", "--verbose"],
+        timeout=900,
+    )
     if rc != 0 and "already installed" not in (out + err).lower():
-        return False, err or out
-    rc, out, _ = _run(["pipx", "list", "--json"], timeout=10)
+        # Persist the full output for debugging
+        log_path = log_dir() / "install.log"
+        log_path.write_text(
+            f"=== pipx install '{DEFAULT_LITELLM_PIP_SPEC}' --force --verbose ===\n"
+            f"return code: {rc}\n\n"
+            f"--- stdout ---\n{out}\n\n"
+            f"--- stderr ---\n{err}\n",
+            encoding="utf-8",
+        )
+        # Try to extract the most useful line from the error
+        useful = _extract_pip_error(err + "\n" + out)
+        return False, f"{useful}\n\nFull log: {log_path}"
     bin_path = shutil.which("litellm") or str(Path.home() / ".local" / "bin" / "litellm")
     return True, bin_path
+
+
+def _extract_pip_error(text: str) -> str:
+    """Pull the most-actionable line out of a pip/pipx error blob."""
+    if not text:
+        return "(no output captured)"
+    lines = text.splitlines()
+    # Common failure markers
+    markers = (
+        "error: ", "ERROR: ", "Fatal error", "RuntimeError:",
+        "Could not build wheels",
+        "Failed building wheel",
+        "Requires-Python",
+        "No matching distribution",
+        "metadata-generation-failed",
+        "command 'clang' failed",
+        "command 'gcc' failed",
+        "Connection error",
+        "could not be installed",
+        "Permission denied",
+    )
+    matches = [ln.strip() for ln in lines if any(m in ln for m in markers)]
+    if matches:
+        # Show last 3 marker matches (most relevant)
+        return "\n".join(matches[-3:])
+    # Fallback: last 5 non-empty lines
+    nonempty = [ln for ln in lines if ln.strip()]
+    return "\n".join(nonempty[-5:])
 
 
 def install_litellm_venv() -> tuple[bool, str]:
