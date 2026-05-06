@@ -252,6 +252,65 @@ def detect_python() -> Detected:
     return Detected("python3", rc == 0, _version_from(out), p)
 
 
+def find_compatible_python(min_minor: int = 10, max_minor: int = 13) -> Detected:
+    """Find a Python interpreter in the supported version range (3.10-3.13).
+
+    LiteLLM's transitive deps (orjson via pyo3, etc.) currently support up to
+    Python 3.13. Newer interpreters (3.14+) fail at build time. This function
+    walks common locations and returns the highest minor version in range.
+
+    Returns Detected(installed=False, ...) if nothing in range is found.
+    """
+    from pathlib import Path
+
+    # Try in descending order — prefer newest compatible
+    seen_paths: set[str] = set()
+    candidates: list[str] = []
+    for minor in range(max_minor, min_minor - 1, -1):
+        # PATH lookups first
+        candidates.append(f"python3.{minor}")
+        # Common absolute locations
+        candidates.extend([
+            f"/opt/homebrew/bin/python3.{minor}",
+            f"/opt/homebrew/opt/python@3.{minor}/bin/python3.{minor}",
+            f"/usr/local/bin/python3.{minor}",
+            f"/usr/local/opt/python@3.{minor}/bin/python3.{minor}",
+            f"/Library/Frameworks/Python.framework/Versions/3.{minor}/bin/python3.{minor}",
+            f"/usr/bin/python3.{minor}",
+        ])
+
+    for cmd in candidates:
+        if cmd.startswith("/"):
+            if cmd in seen_paths:
+                continue
+            seen_paths.add(cmd)
+            if not Path(cmd).is_file():
+                continue
+            path = cmd
+        else:
+            resolved = _which(cmd)
+            if not resolved or resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
+            path = resolved
+
+        rc, out = _run([path, "--version"], timeout=5)
+        if rc != 0:
+            continue
+        ver = _version_from(out)
+        if not ver:
+            continue
+        try:
+            parts = [int(x) for x in ver.split(".")[:2]]
+        except ValueError:
+            continue
+        if len(parts) >= 2 and parts[0] == 3 and min_minor <= parts[1] <= max_minor:
+            return Detected("python-compatible", True, ver, path)
+
+    return Detected("python-compatible", False, "", "",
+                    "brew install python@3.12  (or any python 3.10-3.13)")
+
+
 def detect_launchctl() -> Detected:
     """macOS launchctl for service management."""
     p = _which("launchctl")

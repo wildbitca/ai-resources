@@ -216,8 +216,12 @@ def write_wrapper_script(litellm_bin: Path, port: int = 4000,
 # ============================================================
 # pipx install
 # ============================================================
-def install_litellm_pipx() -> tuple[bool, str]:
+def install_litellm_pipx(python_path: str = "") -> tuple[bool, str]:
     """Install LiteLLM via pipx. Idempotent (re-runs are safe).
+
+    Args:
+      python_path: explicit Python interpreter to use (e.g. /opt/homebrew/bin/python3.12).
+                   Required when system default is 3.14+ (pyo3 maxes at 3.13).
 
     On failure, dumps the full pipx output to ~/.config/ai-resources/logs/install.log
     and returns the path in the error message so the user can investigate.
@@ -225,10 +229,10 @@ def install_litellm_pipx() -> tuple[bool, str]:
     if not shutil.which("pipx"):
         return False, "pipx not installed (try: brew install pipx — or python3 -m pip install --user pipx && pipx ensurepath)"
 
-    rc, out, err = _run(
-        ["pipx", "install", DEFAULT_LITELLM_PIP_SPEC, "--force", "--verbose"],
-        timeout=900,
-    )
+    cmd = ["pipx", "install", DEFAULT_LITELLM_PIP_SPEC, "--force", "--verbose"]
+    if python_path:
+        cmd.extend(["--python", python_path])
+    rc, out, err = _run(cmd, timeout=900)
     if rc != 0 and "already installed" not in (out + err).lower():
         # Persist the full output for debugging
         log_path = log_dir() / "install.log"
@@ -274,15 +278,20 @@ def _extract_pip_error(text: str) -> str:
     return "\n".join(nonempty[-5:])
 
 
-def install_litellm_venv() -> tuple[bool, str]:
+def install_litellm_venv(python_path: str = "") -> tuple[bool, str]:
     """Create a dedicated venv at ~/.config/ai-resources/venv/ and pip install LiteLLM.
+
+    Args:
+      python_path: explicit Python interpreter to use for venv creation.
+                   Required when system default is 3.14+ (litellm deps max at 3.13).
 
     On failure, dumps full pip output to ~/.config/ai-resources/logs/install.log.
     """
     import sys
     venv = venv_dir()
+    py = python_path or sys.executable
     if not venv.exists():
-        rc, out, err = _run([sys.executable, "-m", "venv", str(venv)], timeout=60)
+        rc, out, err = _run([py, "-m", "venv", str(venv)], timeout=60)
         if rc != 0:
             return False, f"venv creation failed: {err or out}"
 
@@ -604,6 +613,119 @@ def smoke_test_model(model: str, gateway_url: str, master_key: str) -> tuple[boo
 # ============================================================
 # Update (re-pull pipx package or docker image)
 # ============================================================
+def _render_compose_yaml() -> str:
+    """Generate docker-compose.yaml for the LiteLLM container."""
+    s = state.load()
+    bind = s.litellm.local.bind_address or "127.0.0.1"
+    port = s.litellm.local.port or 4000
+    image = s.litellm.local.image or DEFAULT_DOCKER_IMAGE
+    body = {
+        "services": {
+            "ai-resources-litellm": {
+                "image": image,
+                "container_name": "ai-resources-litellm",
+                "command": ["--config", "/app/config.yaml", "--port", "4000",
+                            "--host", "0.0.0.0"],
+                "ports": [f"{bind}:{port}:4000"],
+                "volumes": [
+                    f"{state.litellm_path()}:/app/config.yaml:ro",
+                    f"{state.env_path()}:/app/.env:ro",
+                ],
+                "env_file": [str(state.env_path())],
+                "restart": "unless-stopped",
+                "healthcheck": {
+                    "test": ["CMD", "curl", "-fsS",
+                             "http://localhost:4000/health/liveliness"],
+                    "interval": "30s",
+                    "timeout": "5s",
+                    "retries": 3,
+                    "start_period": "30s",
+                },
+            }
+        }
+    }
+    if yaml is None:
+        raise RuntimeError("PyYAML required to render docker-compose.yaml")
+    return yaml.safe_dump(body, default_flow_style=False, sort_keys=False)
+
+
+def write_compose_yaml() -> Path:
+    state.compose_path().parent.mkdir(parents=True, exist_ok=True)
+    state.compose_path().write_text(_render_compose_yaml(), encoding="utf-8")
+    return state.compose_path()
+
+
+def pull_image(image: str = DEFAULT_DOCKER_IMAGE) -> tuple[bool, str]:
+    s = state.load()
+    runtime = s.litellm.local.runtime if s.litellm.local.runtime in ("docker", "podman") else "docker"
+    rc, out, err = _run([runtime, "pull", image], timeout=900)
+    return rc == 0, (err or out)[:1000]
+
+
+def install_docker_lifecycle(compose_path: Path) -> Path:
+    """Write platform plist/systemd unit that runs `docker compose up -d` at login."""
+    path = lifecycle_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    s = state.load()
+    runtime = s.litellm.local.runtime if s.litellm.local.runtime in ("docker", "podman") else "docker"
+
+    if is_macos():
+        # plist runs `docker compose up -d` and exits — Docker's restart policy keeps it alive
+        plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{SERVICE_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>until {runtime} info &gt;/dev/null 2&gt;&amp;1; do sleep 5; done; {runtime} compose -f {compose_path} up -d --wait</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{log_dir()}/litellm.log</string>
+  <key>StandardErrorPath</key>
+  <string>{log_dir()}/litellm.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:{Path.home()}/.docker/bin</string>
+  </dict>
+</dict>
+</plist>
+"""
+        path.write_text(plist, encoding="utf-8")
+        _run(["launchctl", "unload", str(path)])
+        rc, _, err = _run(["launchctl", "load", str(path)])
+        if rc != 0 and "already loaded" not in err.lower():
+            raise RuntimeError(f"launchctl load failed: {err}")
+    else:
+        unit = f"""[Unit]
+Description=ai-resources LiteLLM gateway (docker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/bin/sh -c 'until {runtime} info >/dev/null 2>&1; do sleep 5; done'
+ExecStart=/usr/bin/env {runtime} compose -f {compose_path} up -d --wait
+ExecStop=/usr/bin/env {runtime} compose -f {compose_path} down
+
+[Install]
+WantedBy=default.target
+"""
+        path.write_text(unit, encoding="utf-8")
+        _run(["systemctl", "--user", "daemon-reload"])
+        rc, _, err = _run(["systemctl", "--user", "enable", "--now", path.name])
+        if rc != 0:
+            raise RuntimeError(f"systemctl enable failed: {err}")
+    return path
+
+
 def update_litellm() -> tuple[bool, str]:
     mode = runtime_mode()
     if mode == "pipx":

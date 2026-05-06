@@ -230,17 +230,31 @@ def _step3_litellm(s: state.SetupState) -> int:
 def _step3_local(s: state.SetupState) -> int:
     ui.console().print()
 
-    # Choose runtime: pip-venv (default — universal) or pipx
-    runtime_choices = [
-        ui.Choice("pip + dedicated venv at ~/.config/ai-resources/venv  (recommended — only needs python3)",
-                  value="pip-venv"),
-        ui.Choice("pipx-managed (cleaner if you already use pipx)",
-                  value="pipx"),
-    ]
-    runtime = ui.select(
-        "Run mode:", runtime_choices,
-        default=s.litellm.local.runtime if s.litellm.local.runtime in ("pipx", "pip-venv") else "pip-venv",
-    )
+    # Build runtime choices dynamically based on what's available
+    runtime_choices: list[Any] = []
+
+    docker_runtime, docker_det = detection.detect_container_runtime()
+    if docker_det.installed:
+        runtime_choices.append(ui.Choice(
+            f"Docker container  ({docker_runtime} {docker_det.version} — recommended, sidesteps Python compat)",
+            value="docker"))
+    else:
+        runtime_choices.append(ui.Choice(
+            "Docker container  (recommended — install Docker Desktop / Colima first)",
+            value="docker", disabled="docker/podman/colima not detected"))
+
+    runtime_choices.append(ui.Choice(
+        "pip + dedicated venv at ~/.config/ai-resources/venv  (universal — needs python 3.10-3.13)",
+        value="pip-venv"))
+    runtime_choices.append(ui.Choice(
+        "pipx-managed  (cleanest if you already use pipx)",
+        value="pipx"))
+
+    default_runtime = s.litellm.local.runtime
+    if default_runtime not in ("docker", "pip-venv", "pipx"):
+        default_runtime = "docker" if docker_det.installed else "pip-venv"
+
+    runtime = ui.select("Run mode:", runtime_choices, default=default_runtime)
     if runtime is None:
         return 130
     s.litellm.local.runtime = runtime
@@ -258,11 +272,43 @@ def _step3_local(s: state.SetupState) -> int:
         "Port", default=str(s.litellm.local.port or 4000),
     ) or 4000)
 
-    if runtime == "pipx":
-        return _step3_pipx(s)
+    if runtime == "docker":
+        return _step3_docker(s)
     if runtime == "pip-venv":
         return _step3_pipvenv(s)
+    if runtime == "pipx":
+        return _step3_pipx(s)
     return 1
+
+
+def _step3_docker(s: state.SetupState) -> int:
+    """Docker mode — pull image, container managed via docker compose."""
+    runtime, det = detection.detect_container_runtime()
+    if not det.installed:
+        ui.error("No container runtime found. Install Docker Desktop / Colima / Podman first.")
+        ui.detail("macOS:  brew install --cask docker  (or)  brew install colima && colima start")
+        ui.detail("Linux:  https://docs.docker.com/engine/install/")
+        return 1
+    ui.ok(f"{runtime} {det.version}  {det.binary_path}")
+    s.litellm.local.runtime = runtime  # docker | podman
+    if runtime == "docker" and not detection.detect_compose():
+        ui.error("docker compose plugin not found. Install Docker Desktop or `docker-compose-plugin`.")
+        return 1
+
+    image = ui.text(
+        "Container image",
+        default=s.litellm.local.image or litellm.DEFAULT_DOCKER_IMAGE,
+    ) or litellm.DEFAULT_DOCKER_IMAGE
+    s.litellm.local.image = image
+
+    if ui.confirm(f"Pull {image} now?  (~400MB, takes 30-90s)", default=True):
+        with ui.spinner(f"Pulling {image}"):
+            ok, msg = litellm.pull_image(image)
+        if not ok:
+            ui.error(f"Pull failed: {msg[:300]}")
+            return 1
+        ui.ok("Image pulled")
+    return 0
 
 
 def _step3_pipx(s: state.SetupState) -> int:
@@ -279,6 +325,17 @@ def _step3_pipx(s: state.SetupState) -> int:
             return 1
     ui.ok(f"pipx {pipx_det.version}  {pipx_det.binary_path}")
 
+    # LiteLLM's transitive deps (orjson via pyo3, etc.) max out at Python 3.13.
+    # If the system default python is 3.14+, force a compatible interpreter.
+    py = detection.find_compatible_python()
+    if not py.installed:
+        ui.error("No compatible Python found (need 3.10–3.13 for LiteLLM deps).")
+        ui.detail("Install one:  brew install python@3.12  (macOS)")
+        ui.detail("              sudo apt install python3.12  (Debian/Ubuntu)")
+        return 1
+    ui.ok(f"Using Python {py.version} for the install  ({py.binary_path})")
+    s.litellm.local.python_path = py.binary_path
+
     # Check if litellm is already installed
     existing = detection.detect_litellm_binary()
     if existing.installed:
@@ -292,11 +349,11 @@ def _step3_pipx(s: state.SetupState) -> int:
                 return 1
             ui.ok("LiteLLM updated")
     else:
-        if not ui.confirm(f"Install LiteLLM via `pipx install '{litellm.DEFAULT_LITELLM_PIP_SPEC}'`?",
+        if not ui.confirm(f"Install LiteLLM via `pipx install '{litellm.DEFAULT_LITELLM_PIP_SPEC}' --python {py.binary_path}`?",
                           default=True):
             return 1
         with ui.spinner("Installing LiteLLM (this may take 1-3 minutes)"):
-            ok, msg = litellm.install_litellm_pipx()
+            ok, msg = litellm.install_litellm_pipx(python_path=py.binary_path)
         if not ok:
             ui.error("LiteLLM install failed:")
             for line in msg.splitlines():
@@ -315,11 +372,15 @@ def _step3_pipx(s: state.SetupState) -> int:
 
 def _step3_pipvenv(s: state.SetupState) -> int:
     """Install LiteLLM into a dedicated venv at ~/.config/ai-resources/venv/."""
-    py = detection.detect_python()
+    # Need Python 3.10-3.13 for litellm (pyo3 maxes at 3.13)
+    py = detection.find_compatible_python()
     if not py.installed:
-        ui.error("python3 not found.")
+        ui.error("No compatible Python found (need 3.10–3.13 for LiteLLM deps).")
+        ui.detail("Install one:  brew install python@3.12  (macOS)")
+        ui.detail("              sudo apt install python3.12  (Debian/Ubuntu)")
         return 1
-    ui.ok(f"python3 {py.version}  {py.binary_path}")
+    ui.ok(f"Using Python {py.version}  ({py.binary_path})")
+    s.litellm.local.python_path = py.binary_path
 
     # If venv already exists with litellm, skip
     existing_bin = litellm.venv_dir() / "bin" / "litellm"
@@ -329,7 +390,7 @@ def _step3_pipvenv(s: state.SetupState) -> int:
         s.litellm.local.venv_path = str(litellm.venv_dir())
         if ui.confirm("Reinstall to ensure latest?", default=False):
             with ui.spinner("Reinstalling LiteLLM via pip"):
-                ok, msg = litellm.install_litellm_venv()
+                ok, msg = litellm.install_litellm_venv(python_path=py.binary_path)
             if not ok:
                 ui.error("LiteLLM reinstall failed:")
                 for line in msg.splitlines():
@@ -342,7 +403,7 @@ def _step3_pipvenv(s: state.SetupState) -> int:
                       default=True):
         return 1
     with ui.spinner("Creating venv + installing LiteLLM (this may take 1-3 minutes)"):
-        ok, msg = litellm.install_litellm_venv()
+        ok, msg = litellm.install_litellm_venv(python_path=py.binary_path)
     if not ok:
         ui.error("LiteLLM install failed:")
         for line in msg.splitlines():
@@ -719,10 +780,32 @@ def _step9_apply(s: state.SetupState) -> int:
                                   stdout=open(litellm.log_dir() / "litellm.log", "ab"),
                                   stderr=open(litellm.log_dir() / "litellm.err", "ab"))
                 ui.ok("LiteLLM started in background (will not auto-restart on logout)")
-        # 3. Wait for health
+
+        elif s.litellm.local.runtime in ("docker", "podman"):
+            # Docker mode — write compose, start container, install auto-start
+            try:
+                cp = litellm.write_compose_yaml()
+                ui.ok(str(cp))
+            except Exception as e:
+                ui.error(f"Compose file write failed: {e}")
+                return 1
+            with ui.spinner(f"Starting container via {s.litellm.local.runtime} compose up"):
+                if not litellm.start_service():
+                    ui.error("Container start failed")
+                    ui.detail("Run `ai-resources daemon logs` to investigate")
+                    return 1
+            if s.litellm.local.auto_start:
+                try:
+                    p = litellm.install_docker_lifecycle(cp)
+                    s.litellm.local.lifecycle_path = str(p)
+                    ui.ok(f"Auto-start installed: {p}")
+                except (OSError, RuntimeError) as e:
+                    ui.warn(f"Auto-start setup failed (container still running): {e}")
+
+        # Wait for gateway health regardless of mode
         with ui.spinner("Waiting for gateway to become healthy"):
             healthy = litellm.wait_for_health(
-                f"{gateway_url}/health/liveliness", max_attempts=30,
+                f"{gateway_url}/health/liveliness", max_attempts=60, delay=1.0,
             )
         if healthy:
             ui.ok(f"Gateway running at {gateway_url}")

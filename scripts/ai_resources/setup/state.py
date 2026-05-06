@@ -53,9 +53,10 @@ class CockpitState:
 
 @dataclass
 class LiteLLMLocal:
-    runtime: str = "pipx"            # pipx | pip-venv | docker | podman
-    binary_path: str = ""             # absolute path to litellm executable (pipx/pip mode)
+    runtime: str = "pip-venv"         # pip-venv | pipx | docker | podman
+    binary_path: str = ""             # absolute path to litellm executable
     venv_path: str = ""               # for pip-venv mode
+    python_path: str = ""             # python interpreter used for the install (3.10-3.13)
     image: str = "ghcr.io/berriai/litellm:main-stable"  # docker mode only
     bind_address: str = "127.0.0.1"
     port: int = 4000
