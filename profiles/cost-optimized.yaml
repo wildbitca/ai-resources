@@ -1,0 +1,27 @@
+name: cost-optimized
+description: |
+  Maximum cost reduction. Gemini 2.5 Flash everywhere except code/architect
+  (still on Claude Sonnet for quality). Verifier on Flash-Lite. Suitable
+  for low-stakes or experimental projects.
+
+defaults:
+  fallbacks: [gemini-2.5-flash]
+  max_retries: 3
+  timeout_seconds: 600
+
+by_role:
+  research:           { provider: google,    model: gemini-2.5-flash }
+  explore:            { provider: google,    model: gemini-2.5-flash }
+  generalPurpose:     { provider: google,    model: gemini-2.5-flash }
+  planner:            { provider: google,    model: gemini-2.5-pro }
+  software-architect: { provider: anthropic, model: claude-sonnet-4-6 }
+  implementer:        { provider: anthropic, model: claude-sonnet-4-6 }
+  code-reviewer:      { provider: google,    model: gemini-2.5-pro }
+  security-auditor:   { provider: anthropic, model: claude-sonnet-4-6 }
+  tester:             { provider: google,    model: gemini-2.5-flash }
+  verifier:           { provider: google,    model: gemini-2.5-flash-lite }
+  package-upgrade:             { provider: anthropic, model: claude-sonnet-4-6 }
+  crashlytics-fixer:           { provider: google,    model: gemini-2.5-pro }
+  sentry-fixer:                { provider: google,    model: gemini-2.5-pro }
+  terraform-maintainer:        { provider: anthropic, model: claude-sonnet-4-6 }
+  crossplane-upjet-maintainer: { provider: anthropic, model: claude-sonnet-4-6 }

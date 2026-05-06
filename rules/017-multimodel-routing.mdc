@@ -1,0 +1,120 @@
+---
+description: Multi-model routing — per-subagent model assignment via LiteLLM gateway passthrough.
+alwaysApply: false
+globs:
+  - "**/.claude/agents/**"
+  - "**/executors.yaml"
+---
+
+# Multi-Model Routing
+
+**Applies when:** the kit is configured in `multi-model` mode (set by `ai-resources setup`).
+
+## Architecture
+
+```
+Cockpit (Claude Code / Cursor / Gemini CLI / etc.)
+    │  ANTHROPIC_BASE_URL=http://127.0.0.1:4000
+    ▼
+LiteLLM gateway (local container or remote)
+    │  inspects {"model": "..."} field
+    ▼
+Provider (Anthropic / Google / OpenAI / Vertex / Ollama)
+```
+
+The cockpit's HTTP calls hit LiteLLM at the configured `gateway.url` (default
+`127.0.0.1:4000`). LiteLLM reads the `model` field from each request and
+routes to the matching provider, translating between API formats as needed.
+
+## Single source of truth: `~/.config/ai-resources/executors.yaml`
+
+```yaml
+version: 1
+profile_name: unified-default
+gateway:
+  url: http://127.0.0.1:4000
+  api_key_env: LITELLM_MASTER_KEY
+by_role:
+  research:           { provider: google,    model: gemini-2.5-pro }
+  planner:            { provider: anthropic, model: claude-sonnet-4-6 }
+  software-architect: { provider: anthropic, model: claude-opus-4-7 }
+  implementer:        { provider: anthropic, model: claude-sonnet-4-6 }
+  ...
+```
+
+Each role's `model` value is sent **verbatim** to the gateway. To change which
+model runs a role, edit this file and re-run `ai-resources setup` (or run
+`ai-resources daemon restart` if only the gateway config changed).
+
+## How subagents inherit models
+
+In Claude Code, subagent files at `~/.claude/agents/<role>.md` declare:
+
+```yaml
+---
+name: research
+description: ...
+model: gemini-2.5-pro      # ← string passes through to gateway
+tools: Read, Grep, Glob
+---
+```
+
+The `model:` value is **not validated** by Claude Code against an Anthropic
+allowlist (verified empirically). Any string the gateway recognizes works:
+`claude-sonnet-4-6`, `gemini-2.5-pro`, `gpt-5`, `vertex_ai/claude-sonnet-...`,
+etc.
+
+For other cockpits (Cursor, Aider, etc.), the equivalent assignment lives in
+their own config (e.g. Aider's `architect-model` / `model` / `weak-model`).
+
+## What works cross-provider
+
+- ✅ **Tools** (Read, Write, Bash, Grep, Edit) — Claude Code executes locally;
+  only the model's tool-use call format is translated by LiteLLM.
+- ✅ **MCP servers** (Engram, etc.) — appear as standard tools to the model;
+  format-translated by LiteLLM.
+- ✅ **Skills** — text injected into context; agnostic to provider.
+- ✅ **Workspace access** — same as native Claude Code.
+- ✅ **Workflow YAML iteration** — orchestrator behavior unchanged.
+
+## What does NOT work cross-provider
+
+- ❌ **Anthropic prompt caching** — `cache_control` headers are Anthropic-only.
+  When routing to Gemini/OpenAI, caching is lost (Gemini and OpenAI have their
+  own caching, format-specific).
+- ❌ **Anthropic-only beta features** — computer-use, code-execution betas,
+  citations. Use Claude models for subagents that depend on these.
+- ⚠️ **Edge-case translation** — parallel tool calls, complex JSON Schema
+  with refs/oneOf, streaming + tools may have variance. Most basic flows work.
+
+## Single source for cost / observability
+
+LiteLLM logs every call. Use:
+
+- `ai-resources daemon logs` — raw logs
+- `ai-resources audit` — cost breakdown per role/model
+- `ai-resources executors test <role>` — round-trip a single role
+
+## When mode is `single-model`
+
+Multi-model routing is bypassed. The cockpit talks directly to its native
+provider (e.g. Claude Code → Anthropic). `executors.yaml` is not used. The
+legacy `model:` mapping (`strong`/`fast`/`inherit` → opus/haiku/inherit) still
+applies for subagent files.
+
+## Health check
+
+Run `ai-resources doctor` to verify:
+- LiteLLM gateway is reachable
+- Each configured model accepts a tiny round-trip
+- All credentials are loaded
+- Cockpits are configured
+
+## Relation to other rules
+
+- `010-orchestrator.mdc` — workflow iteration is unchanged; only the model
+  behind each subagent changes.
+- `050-subagent-delegation.mdc` — subagent dispatch is unchanged; the
+  Task tool still spawns subagents; their `model:` is multi-provider-aware.
+- `200-security-mcp.mdc` — credentials in `~/.config/ai-resources/.env`
+  (chmod 600); never committed; `${env:VAR}` references in YAML.

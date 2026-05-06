@@ -39,6 +39,14 @@ Delegate well-scoped tasks to keep the main context small. Subagents run in isol
 | Shell commands, git, scripts | `shell` |
 | General multi-step reasoning | `generalPurpose` |
 
+## Multi-model routing (when configured)
+
+When `ai-resources setup` is run in `multi-model` mode, each subagent file at
+`~/.claude/agents/<role>.md` declares a `model:` whose value passes through
+LiteLLM to the configured provider. See **`017-multimodel-routing.mdc`** for
+architecture. Delegation behavior here is unchanged — only the LLM running
+each subagent differs per `~/.config/ai-resources/executors.yaml`.
+
 ## How to delegate
 
 Task tool with: `subagent_type`, `description` (3-5 words), `prompt` (detailed — subagent has no chat context).
@@ -61,7 +69,7 @@ Examples: `common-tdd`, `knowledge-audit`, `gpm-curated-typescript`, `flutter-er
 
 Slash-style ids (e.g. `common/tdd`) are **not** resolved here — use **flat** ids in workflows and prompts (e.g. `gpm-curated-typescript`).
 
-**Index:** run **`python3 $AGENT_KIT/scripts/kit.py generate`** → **`skills-index.json`**.
+**Index:** run **`ai-resources generate`** (or `python3 $AGENT_KIT/scripts/kit.py generate`) → **`skills-index.json`**.
 
 If resolution fails, look up **`skills-index.json`**.
 

@@ -1,0 +1,27 @@
+name: vertex-enterprise
+description: |
+  All traffic routed through Vertex AI (GCP) — single billing line, audit log,
+  VPC-SC compliance. Same model selection as unified-default but using
+  Vertex-hosted Anthropic and Gemini endpoints.
+
+defaults:
+  fallbacks: []
+  max_retries: 3
+  timeout_seconds: 600
+
+by_role:
+  research:           { provider: vertex, model: gemini-2.5-pro }
+  explore:            { provider: vertex, model: gemini-2.5-flash }
+  generalPurpose:     { provider: vertex, model: gemini-2.5-pro }
+  planner:            { provider: vertex, model: claude-sonnet-4-6@20260101 }
+  software-architect: { provider: vertex, model: claude-opus-4-7@20260101 }
+  implementer:        { provider: vertex, model: claude-sonnet-4-6@20260101 }
+  code-reviewer:      { provider: vertex, model: claude-sonnet-4-6@20260101 }
+  security-auditor:   { provider: vertex, model: claude-sonnet-4-6@20260101 }
+  tester:             { provider: vertex, model: gemini-2.5-flash }
+  verifier:           { provider: vertex, model: gemini-2.5-flash-lite }
+  package-upgrade:             { provider: vertex, model: claude-sonnet-4-6@20260101 }
+  crashlytics-fixer:           { provider: vertex, model: claude-sonnet-4-6@20260101 }
+  sentry-fixer:                { provider: vertex, model: claude-sonnet-4-6@20260101 }
+  terraform-maintainer:        { provider: vertex, model: claude-sonnet-4-6@20260101 }
+  crossplane-upjet-maintainer: { provider: vertex, model: claude-sonnet-4-6@20260101 }

@@ -6,6 +6,73 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.0.0] — UNRELEASED — Multi-model orchestration
+
+Major refactor introducing per-role LLM routing via local LiteLLM gateway.
+**Breaking changes** in CLI surface; one-time migration via `ai-resources setup`.
+
+### Added
+
+- **Multi-model mode** — each subagent role runs on a different LLM (Claude,
+  Gemini, GPT, Vertex, Ollama) routed through LiteLLM. See
+  `docs/multi-model.md` for the full guide.
+- **Interactive setup wizard** (`ai-resources setup`) — 9-step `rich` +
+  `questionary` UI: cockpit detection, LiteLLM install, provider creds,
+  profile selection, per-role customization, lifecycle, smoke tests.
+  Re-runs use prior answers as defaults.
+- **LiteLLM gateway** — local Docker container or remote endpoint. Container
+  lifecycle managed via `ai-resources daemon {start,stop,status,logs,update}`.
+  Auto-start via launchd (macOS) or systemd-user (Linux).
+- **Profiles** — `unified-default`, `all-claude`, `all-gemini`,
+  `cost-optimized`, `vertex-enterprise` at `<kit>/profiles/*.yaml`.
+- **`ai-resources doctor`** — full health check across config, credentials,
+  gateway, cockpits, and live model round-trips.
+- **`ai-resources executors {show,edit,test}`** — inspect or edit role→model
+  mapping; test a single role's round-trip.
+- **`ai-resources audit`** — cost report from gateway logs (per role / model).
+- **Cockpit configurators** — modular per-cockpit setup for Claude Code,
+  Cursor, Gemini CLI, Codex, Aider, Copilot, Windsurf, Continue.dev,
+  OpenCode. Each writes its canonical config + multi-model protocol section.
+- **Engram MCP in Gemini CLI** — same schema as Claude Code; both clients
+  hit the same memory backend regardless of cockpit.
+- **`rules/017-multimodel-routing.mdc`** — kit-internal rule explaining
+  the multi-model architecture.
+- **Setup state** — `~/.config/ai-resources/setup-state.yaml` persists
+  wizard answers; `executors.yaml`, `litellm.yaml`, `docker-compose.yaml`,
+  `.env` (chmod 600) live alongside.
+
+### Changed
+
+- **Package layout** — `scripts/kit.py` is now a thin shim. All logic moved
+  to `scripts/ai_resources/` package: `cli.py`, `generate.py`, `daemon.py`,
+  `doctor.py`, `executors_cmd.py`, `audit.py`, plus `setup/` subpackage with
+  `wizard.py`, `state.py`, `detection.py`, `ui.py`, `credentials.py`,
+  `litellm.py`, `providers.py`, `profiles.py`, `smoke.py`, `install.py`,
+  and `cockpits/{claude,gemini,cursor,codex,aider,copilot,windsurf,continue_dev,opencode}.py`.
+- **Subagent `model:` field** — now passes through verbatim to the gateway.
+  Legacy `strong`/`fast`/`inherit` mapping preserved for single-model mode.
+- **Homebrew formula** — uses `Language::Python::Virtualenv` to install
+  `rich`, `questionary`, `prompt_toolkit`, `pyyaml`, `httpx` (and transitive
+  deps) into a venv at `libexec/venv/`. The `ai-resources` wrapper uses
+  this venv.
+- **`rules/050-subagent-delegation.mdc`** — new section linking to
+  multi-model routing rule.
+
+### Removed
+
+- `_MODEL_MAP` constraint to opus/haiku/inherit — replaced by passthrough.
+- `_STUB_TARGETS` monolithic dict and `_setup_*` per-target functions —
+  replaced by `cockpits/*.py` module registry.
+- `cmd_setup` monolith from `kit.py` — replaced by `wizard.py`.
+- Argparse-only CLI surface — `setup` is now interactive by default.
+
+### Migration
+
+- v0.7.x users: `ai-resources setup` detects existing single-mode config and
+  offers to upgrade. State is migrated to new `setup-state.yaml`.
+- The legacy `python3 scripts/kit.py setup --target claude` style still
+  works (delegated to the new wizard).
+
 ## [0.7.1] — 2026-04-10
 
 ### Removed

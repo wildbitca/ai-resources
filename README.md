@@ -1,6 +1,8 @@
 # ai-resources
 
-Resource kit for AI coding agents: skills, workflows, orchestration rules, agent roles, and the **`ai-resources`** CLI (`generate`, `setup`). Works with **Cursor, Claude Code, Gemini CLI, Codex, GitHub Copilot, Windsurf, Continue.dev, Aider, and OpenCode**.
+Resource kit for AI coding agents: skills, workflows, orchestration rules, agent roles, and the **`ai-resources`** CLI. Works with **Cursor, Claude Code, Gemini CLI, Codex, GitHub Copilot, Windsurf, Continue.dev, Aider, and OpenCode**.
+
+**v1.0 highlight:** multi-model orchestration via LiteLLM — each subagent role can run on a different LLM (Claude, Gemini, GPT, Vertex, Ollama). See [docs/multi-model.md](docs/multi-model.md).
 
 ## Install
 
@@ -23,10 +25,25 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 
 | Command | Purpose |
 |---------|---------|
-| `ai-resources setup` | Configure MCP servers, IDE stubs, and workflows for your agent (`--help`). |
-| `ai-resources setup --target claude` | Setup for Claude Code specifically. |
-| `ai-resources setup --target cursor` | Setup for Cursor specifically. |
-| `ai-resources generate` | Regenerate skills index and import vendor skills (`--help` for options). |
+| `ai-resources setup` | Interactive wizard: cockpit detection, LiteLLM gateway, providers, profiles, per-cockpit config. |
+| `ai-resources doctor` | Full health check across config, credentials, gateway, cockpits, smoke tests. |
+| `ai-resources executors show` | Display current role → model mapping. |
+| `ai-resources executors edit` | Open `executors.yaml` in `$EDITOR`. |
+| `ai-resources executors test <role>` | Round-trip a single role's model through the gateway. |
+| `ai-resources daemon {start,stop,status,logs,update}` | Manage local LiteLLM container. |
+| `ai-resources audit` | Cost report from gateway logs. |
+| `ai-resources generate` | Regenerate skills index, import vendor skills. |
+| `ai-resources version` | Print version. |
+
+### First run
+
+```sh
+ai-resources setup       # wizard walks you through everything
+ai-resources doctor      # verify
+```
+
+Choose **single-model** mode for the legacy single-provider behavior, or
+**multi-model** for per-role routing via LiteLLM gateway.
 
 After installing, the `AGENT_KIT` env var points to the kit on disk. Set `AGENT_SKILLS_ROOT` in your shell profile to the skills directory path shown by `ai-resources --help`.
 

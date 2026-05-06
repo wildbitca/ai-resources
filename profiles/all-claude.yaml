@@ -1,0 +1,27 @@
+name: all-claude
+description: |
+  Every role on Anthropic Claude — Opus for hardest reasoning, Sonnet for
+  code/review, Haiku for cheap deterministic checks. No Gemini key required.
+  Highest reliability, highest cost.
+
+defaults:
+  fallbacks: [claude-haiku-4-5]
+  max_retries: 3
+  timeout_seconds: 600
+
+by_role:
+  research:           { provider: anthropic, model: claude-sonnet-4-6 }
+  explore:            { provider: anthropic, model: claude-sonnet-4-6 }
+  generalPurpose:     { provider: anthropic, model: claude-sonnet-4-6 }
+  planner:            { provider: anthropic, model: claude-sonnet-4-6 }
+  software-architect: { provider: anthropic, model: claude-opus-4-7, fallbacks: [claude-sonnet-4-6] }
+  implementer:        { provider: anthropic, model: claude-sonnet-4-6 }
+  code-reviewer:      { provider: anthropic, model: claude-sonnet-4-6 }
+  security-auditor:   { provider: anthropic, model: claude-sonnet-4-6 }
+  tester:             { provider: anthropic, model: claude-haiku-4-5 }
+  verifier:           { provider: anthropic, model: claude-haiku-4-5 }
+  package-upgrade:             { provider: anthropic, model: claude-sonnet-4-6 }
+  crashlytics-fixer:           { provider: anthropic, model: claude-sonnet-4-6 }
+  sentry-fixer:                { provider: anthropic, model: claude-sonnet-4-6 }
+  terraform-maintainer:        { provider: anthropic, model: claude-sonnet-4-6 }
+  crossplane-upjet-maintainer: { provider: anthropic, model: claude-sonnet-4-6 }
