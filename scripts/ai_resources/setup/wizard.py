@@ -208,58 +208,52 @@ def _step2_cockpits(s: state.SetupState) -> int:
 def _step3_litellm(s: state.SetupState) -> int:
     ui.section(3, TOTAL_STEPS, "LiteLLM gateway")
 
+    # Detect what's available so we can flag disabled options
+    docker_runtime, docker_det = detection.detect_container_runtime()
+
+    docker_label = (f"Local — Docker container  ({docker_runtime} {docker_det.version}"
+                    f"  recommended, sidesteps Python compat)") if docker_det.installed \
+                   else "Local — Docker container  (recommended — install Docker Desktop / Colima first)"
+
     choices = [
-        ui.Choice("Local install (pipx + native service)", value="local",
-                  description="◀ recommended — no Docker required"),
-        ui.Choice("Use existing remote endpoint (URL + master key)", value="remote"),
-        ui.Choice("Skip (advanced — direct API calls without gateway)", value="skipped"),
+        ui.Choice(docker_label, value="local-docker",
+                  disabled=None if docker_det.installed else "docker/podman/colima not detected"),
+        ui.Choice("Local — without Docker  (pip + venv, or pipx)", value="local-nodocker"),
+        ui.Choice("Use existing remote endpoint  (URL + master key)", value="remote"),
+        ui.Choice("Skip  (advanced — direct API calls without gateway)", value="skipped"),
     ]
-    default = s.litellm.deployment or "local"
+
+    # Map saved deployment → choice value for default
+    saved = s.litellm.deployment
+    if saved == "local":
+        default = "local-docker" if s.litellm.local.runtime in ("docker", "podman") else "local-nodocker"
+    elif saved == "remote":
+        default = "remote"
+    elif saved == "skipped":
+        default = "skipped"
+    else:
+        default = "local-docker" if docker_det.installed else "local-nodocker"
+
     choice = ui.select("Where is your gateway?", choices, default=default)
     if choice is None:
         return 130
-    s.litellm.deployment = choice
 
-    if choice == "local":
-        return _step3_local(s)
+    if choice == "local-docker":
+        s.litellm.deployment = "local"
+        s.litellm.local.runtime = docker_runtime or "docker"
+        return _step3_docker(s)
+    if choice == "local-nodocker":
+        s.litellm.deployment = "local"
+        return _step3_local_nodocker(s)
     if choice == "remote":
+        s.litellm.deployment = "remote"
         return _step3_remote(s)
+    s.litellm.deployment = "skipped"
     return 0  # skipped
 
 
-def _step3_local(s: state.SetupState) -> int:
-    ui.console().print()
-
-    # Build runtime choices dynamically based on what's available
-    runtime_choices: list[Any] = []
-
-    docker_runtime, docker_det = detection.detect_container_runtime()
-    if docker_det.installed:
-        runtime_choices.append(ui.Choice(
-            f"Docker container  ({docker_runtime} {docker_det.version} — recommended, sidesteps Python compat)",
-            value="docker"))
-    else:
-        runtime_choices.append(ui.Choice(
-            "Docker container  (recommended — install Docker Desktop / Colima first)",
-            value="docker", disabled="docker/podman/colima not detected"))
-
-    runtime_choices.append(ui.Choice(
-        "pip + dedicated venv at ~/.config/ai-resources/venv  (universal — needs python 3.10-3.13)",
-        value="pip-venv"))
-    runtime_choices.append(ui.Choice(
-        "pipx-managed  (cleanest if you already use pipx)",
-        value="pipx"))
-
-    default_runtime = s.litellm.local.runtime
-    if default_runtime not in ("docker", "pip-venv", "pipx"):
-        default_runtime = "docker" if docker_det.installed else "pip-venv"
-
-    runtime = ui.select("Run mode:", runtime_choices, default=default_runtime)
-    if runtime is None:
-        return 130
-    s.litellm.local.runtime = runtime
-
-    # Bind interface
+def _ask_bind_and_port(s: state.SetupState) -> None:
+    """Shared prompt for bind address + port — used by all local modes."""
     bind_choices = [
         ui.Choice("127.0.0.1  (localhost only — recommended)", value="127.0.0.1"),
         ui.Choice("0.0.0.0  (DANGEROUS — exposes to LAN)", value="0.0.0.0"),
@@ -271,14 +265,6 @@ def _step3_local(s: state.SetupState) -> int:
     s.litellm.local.port = int(ui.text(
         "Port", default=str(s.litellm.local.port or 4000),
     ) or 4000)
-
-    if runtime == "docker":
-        return _step3_docker(s)
-    if runtime == "pip-venv":
-        return _step3_pipvenv(s)
-    if runtime == "pipx":
-        return _step3_pipx(s)
-    return 1
 
 
 def _step3_docker(s: state.SetupState) -> int:
@@ -295,11 +281,16 @@ def _step3_docker(s: state.SetupState) -> int:
         ui.error("docker compose plugin not found. Install Docker Desktop or `docker-compose-plugin`.")
         return 1
 
+    _ask_bind_and_port(s)
+
     image = ui.text(
         "Container image",
         default=s.litellm.local.image or litellm.DEFAULT_DOCKER_IMAGE,
     ) or litellm.DEFAULT_DOCKER_IMAGE
     s.litellm.local.image = image
+
+    # Save state NOW so pull_image() can read s.litellm.local.runtime
+    state.save(s)
 
     if ui.confirm(f"Pull {image} now?  (~400MB, takes 30-90s)", default=True):
         with ui.spinner(f"Pulling {image}"):
@@ -309,6 +300,29 @@ def _step3_docker(s: state.SetupState) -> int:
             return 1
         ui.ok("Image pulled")
     return 0
+
+
+def _step3_local_nodocker(s: state.SetupState) -> int:
+    """Local install without Docker — choose pip-venv or pipx."""
+    ui.console().print()
+
+    runtime_choices = [
+        ui.Choice("pip + dedicated venv at ~/.config/ai-resources/venv  (universal — needs python 3.10-3.13)",
+                  value="pip-venv"),
+        ui.Choice("pipx-managed  (cleanest if you already use pipx)",
+                  value="pipx"),
+    ]
+    default = s.litellm.local.runtime if s.litellm.local.runtime in ("pip-venv", "pipx") else "pip-venv"
+    runtime = ui.select("Local mode (no Docker):", runtime_choices, default=default)
+    if runtime is None:
+        return 130
+    s.litellm.local.runtime = runtime
+
+    _ask_bind_and_port(s)
+
+    if runtime == "pip-venv":
+        return _step3_pipvenv(s)
+    return _step3_pipx(s)
 
 
 def _step3_pipx(s: state.SetupState) -> int:

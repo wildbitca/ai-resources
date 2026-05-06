@@ -118,22 +118,47 @@ def _to_dict(obj: Any) -> Any:
 
 
 def _from_dict(cls: type, data: dict) -> Any:
+    """Recursively rebuild a dataclass instance from a dict.
+
+    Note: with `from __future__ import annotations`, fld.type is a string,
+    not the actual class. We must resolve it via the dataclass's default
+    factory, or hardcode known nested types. Below uses an explicit map
+    for the known dataclasses — the simplest and most reliable approach.
+    """
     if not isinstance(data, dict):
         return cls()
+
+    NESTED: dict[type, dict[str, type]] = {
+        SetupState: {
+            "litellm": LiteLLMState,
+            "profile": ProfileState,
+        },
+        LiteLLMState: {
+            "local": LiteLLMLocal,
+            "remote": LiteLLMRemote,
+        },
+    }
+    DICT_OF: dict[type, dict[str, type]] = {
+        SetupState: {
+            "cockpits": CockpitState,
+            "providers": ProviderState,
+        },
+    }
+
+    nested_map = NESTED.get(cls, {})
+    dict_map = DICT_OF.get(cls, {})
+
     fields = cls.__dataclass_fields__  # type: ignore[attr-defined]
     kwargs = {}
-    for name, fld in fields.items():
+    for name in fields:
         if name not in data:
             continue
         val = data[name]
-        ftype = fld.type
-        # Handle nested dataclasses
-        if hasattr(ftype, "__dataclass_fields__"):
-            kwargs[name] = _from_dict(ftype, val)
-        elif name == "cockpits" and isinstance(val, dict):
-            kwargs[name] = {k: _from_dict(CockpitState, v) for k, v in val.items()}
-        elif name == "providers" and isinstance(val, dict):
-            kwargs[name] = {k: _from_dict(ProviderState, v) for k, v in val.items()}
+        if name in nested_map:
+            kwargs[name] = _from_dict(nested_map[name], val) if isinstance(val, dict) else nested_map[name]()
+        elif name in dict_map and isinstance(val, dict):
+            sub_cls = dict_map[name]
+            kwargs[name] = {k: _from_dict(sub_cls, v) for k, v in val.items()}
         else:
             kwargs[name] = val
     return cls(**kwargs)
