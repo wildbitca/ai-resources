@@ -11,7 +11,6 @@ from . import (
     state,
     detection,
     credentials,
-    install,
     litellm,
     profiles,
     providers,
@@ -134,34 +133,26 @@ def _step2_cockpits(s: state.SetupState) -> int:
     ui.detected_table(rows)
 
     # Persist detection results
+    installed_count = 0
     for cid, det in detected.items():
         cs = s.cockpits.get(cid) or state.CockpitState()
         cs.installed = det.installed
         cs.version = det.version
         cs.binary_path = det.binary_path
         s.cockpits[cid] = cs
+        if det.installed:
+            installed_count += 1
 
-    # Offer to install missing
-    missing = [cid for cid, det in detected.items() if not det.installed]
-    if missing:
+    if installed_count == 0:
         ui.console().print()
-        ui.info("Install missing cockpits? (we ask before each one)")
-        for cid in missing:
-            spec = install.INSTALLERS.get(cid)
-            if not spec:
-                continue
-            name, fn, hint = spec
-            method = "auto" if fn else "manual"
-            label = f"  {name}  [{method}: {hint}]"
-            if ui.confirm(label, default=False):
-                if install.offer_install(cid):
-                    # Re-detect
-                    new_det = detection.detect_all_cockpits().get(cid)
-                    if new_det and new_det.installed:
-                        cs = s.cockpits[cid]
-                        cs.installed = True
-                        cs.version = new_det.version
-                        cs.binary_path = new_det.binary_path
+        ui.warn("No cockpits detected. Install at least one (e.g. Claude Code) and re-run setup.")
+        return 1
+
+    ui.console().print()
+    ui.info(
+        f"Configuring {installed_count} detected cockpit(s). "
+        f"To add another, install it via your usual method, then re-run `ai-resources setup`."
+    )
     return 0
 
 
