@@ -161,10 +161,9 @@ def _step3_litellm(s: state.SetupState) -> int:
     ui.section(3, TOTAL_STEPS, "LiteLLM gateway")
 
     choices = [
-        ui.Choice("Install local container (Docker/Podman/Colima required)", value="local",
-                  description="◀ recommended"),
+        ui.Choice("Local install (pipx + native service)", value="local",
+                  description="◀ recommended — no Docker required"),
         ui.Choice("Use existing remote endpoint (URL + master key)", value="remote"),
-        ui.Choice("Show install instructions only (manual)", value="instructions"),
         ui.Choice("Skip (advanced — direct API calls without gateway)", value="skipped"),
     ]
     default = s.litellm.deployment or "local"
@@ -177,43 +176,28 @@ def _step3_litellm(s: state.SetupState) -> int:
         return _step3_local(s)
     if choice == "remote":
         return _step3_remote(s)
-    if choice == "instructions":
-        _step3_instructions(s)
-        s.litellm.deployment = "skipped"  # downgrade to skipped
-        return 0
     return 0  # skipped
 
 
 def _step3_local(s: state.SetupState) -> int:
     ui.console().print()
-    ui.info("Detecting container runtime...")
-    runtime, det = detection.detect_container_runtime()
-    if not runtime:
-        ui.error("No container runtime found (docker/podman/colima).")
-        ui.detail("Install Docker Desktop: https://docs.docker.com/get-docker/")
-        ui.detail("Or Colima: brew install colima && colima start")
-        return 1
-    ui.ok(f"{runtime} {det.version}  {det.binary_path}")
+
+    # Choose runtime: pipx (default) or pip-venv
+    runtime_choices = [
+        ui.Choice("pipx-managed (recommended — clean isolation)",
+                  value="pipx"),
+        ui.Choice("pip + dedicated venv at ~/.config/ai-resources/venv",
+                  value="pip-venv"),
+    ]
+    runtime = ui.select(
+        "Run mode:", runtime_choices,
+        default=s.litellm.local.runtime if s.litellm.local.runtime in ("pipx", "pip-venv") else "pipx",
+    )
+    if runtime is None:
+        return 130
     s.litellm.local.runtime = runtime
 
-    if runtime == "docker" and not detection.detect_compose():
-        ui.error("docker compose plugin not detected. Install or use podman.")
-        return 1
-
-    image = ui.text(
-        "LiteLLM image tag",
-        default=s.litellm.local.image or litellm.DEFAULT_IMAGE,
-    )
-    s.litellm.local.image = image or litellm.DEFAULT_IMAGE
-
-    if ui.confirm(f"Pull {s.litellm.local.image}?", default=True):
-        with ui.spinner("Pulling image"):
-            if not litellm.pull_image(s.litellm.local.image):
-                ui.error("Image pull failed")
-                return 1
-        ui.ok("Image ready")
-
-    # Bind interface (default 127.0.0.1)
+    # Bind interface
     bind_choices = [
         ui.Choice("127.0.0.1  (localhost only — recommended)", value="127.0.0.1"),
         ui.Choice("0.0.0.0  (DANGEROUS — exposes to LAN)", value="0.0.0.0"),
@@ -222,12 +206,82 @@ def _step3_local(s: state.SetupState) -> int:
         "Bind interface:", bind_choices,
         default=s.litellm.local.bind_address or "127.0.0.1",
     )
-
     s.litellm.local.port = int(ui.text(
-        "Container port",
-        default=str(s.litellm.local.port or 4000),
+        "Port", default=str(s.litellm.local.port or 4000),
     ) or 4000)
 
+    if runtime == "pipx":
+        return _step3_pipx(s)
+    if runtime == "pip-venv":
+        return _step3_pipvenv(s)
+    return 1
+
+
+def _step3_pipx(s: state.SetupState) -> int:
+    """Install LiteLLM via pipx + verify."""
+    pipx_det = detection.detect_pipx()
+    if not pipx_det.installed:
+        ui.warn("pipx not detected.")
+        ui.detail("Install with one of:")
+        ui.detail("  brew install pipx")
+        ui.detail("  python3 -m pip install --user pipx && python3 -m pipx ensurepath")
+        if not ui.confirm("Continue once pipx is installed?", default=True):
+            return 1
+        # Re-check
+        pipx_det = detection.detect_pipx()
+        if not pipx_det.installed:
+            ui.error("pipx still not in PATH. Aborting.")
+            return 1
+    ui.ok(f"pipx {pipx_det.version}  {pipx_det.binary_path}")
+
+    # Check if litellm is already installed
+    existing = detection.detect_litellm_binary()
+    if existing.installed:
+        ui.ok(f"litellm already installed: {existing.binary_path} v{existing.version}")
+        s.litellm.local.binary_path = existing.binary_path
+        if ui.confirm("Reinstall to ensure latest?", default=False):
+            with ui.spinner("Reinstalling LiteLLM via pipx"):
+                ok, msg = litellm.install_litellm_pipx()
+            if not ok:
+                ui.error(f"Install failed: {msg[:200]}")
+                return 1
+            ui.ok("LiteLLM updated")
+    else:
+        if not ui.confirm(f"Install LiteLLM via `pipx install '{litellm.DEFAULT_LITELLM_PIP_SPEC}'`?",
+                          default=True):
+            return 1
+        with ui.spinner("Installing LiteLLM (this may take 1-2 minutes)"):
+            ok, msg = litellm.install_litellm_pipx()
+        if not ok:
+            ui.error(f"Install failed: {msg[:200]}")
+            return 1
+        new_det = detection.detect_litellm_binary()
+        if not new_det.installed:
+            ui.error("Installation completed but litellm not in PATH. Run `pipx ensurepath` and re-run.")
+            return 1
+        s.litellm.local.binary_path = new_det.binary_path
+        ui.ok(f"LiteLLM installed at {new_det.binary_path}")
+    return 0
+
+
+def _step3_pipvenv(s: state.SetupState) -> int:
+    """Install LiteLLM into a dedicated venv."""
+    py = detection.detect_python()
+    if not py.installed:
+        ui.error("python3 not found.")
+        return 1
+    ui.ok(f"python3 {py.version}")
+    if not ui.confirm(f"Create venv at ~/.config/ai-resources/venv and pip install LiteLLM?",
+                      default=True):
+        return 1
+    with ui.spinner("Creating venv + installing LiteLLM"):
+        ok, msg = litellm.install_litellm_venv()
+    if not ok:
+        ui.error(f"Install failed: {msg[:200]}")
+        return 1
+    s.litellm.local.binary_path = msg
+    s.litellm.local.venv_path = str(litellm.venv_dir())
+    ui.ok(f"LiteLLM installed at {msg}")
     return 0
 
 
@@ -257,20 +311,6 @@ def _step3_remote(s: state.SetupState) -> int:
     else:
         ui.ok("Remote endpoint reachable")
     return 0
-
-
-def _step3_instructions(s: state.SetupState) -> None:
-    ui.console().print()
-    ui.info("LiteLLM install instructions:")
-    ui.detail("Local container:")
-    ui.detail(f"  docker run -d -p 127.0.0.1:4000:4000 \\")
-    ui.detail(f"    -v ~/.config/ai-resources/litellm.yaml:/app/config.yaml:ro \\")
-    ui.detail(f"    -v ~/.config/ai-resources/.env:/app/.env:ro \\")
-    ui.detail(f"    --name {litellm.CONTAINER_NAME} \\")
-    ui.detail(f"    {litellm.DEFAULT_IMAGE} \\")
-    ui.detail(f"    --config /app/config.yaml --port 4000")
-    ui.detail("")
-    ui.detail("Or as a hosted service: see https://docs.litellm.ai/docs/proxy/quick_start")
 
 
 # --- Step 4 — Providers ----------------------------------------------------------
@@ -487,21 +527,25 @@ def _step7_cockpit_config(s: state.SetupState) -> int:
 
 # --- Step 8 — Lifecycle ---------------------------------------------------------
 def _step8_lifecycle(s: state.SetupState) -> int:
-    ui.section(8, TOTAL_STEPS, "Lifecycle")
+    ui.section(8, TOTAL_STEPS, "Lifecycle (auto-start at login)")
 
     if s.litellm.deployment != "local":
         ui.info("Skipped (gateway is not local).")
         return 0
 
     s.litellm.local.auto_start = ui.confirm(
-        "Auto-start LiteLLM at login?",
+        "Auto-start LiteLLM at every login?",
         default=s.litellm.local.auto_start,
     )
 
     if s.litellm.local.auto_start:
         path = litellm.lifecycle_path()
         s.litellm.local.lifecycle_path = str(path)
-        ui.detail(f"Lifecycle file: {path}")
+        s.litellm.local.log_dir = str(litellm.log_dir())
+        if litellm.is_macos():
+            ui.detail(f"Will install macOS LaunchAgent: {path}")
+        else:
+            ui.detail(f"Will install systemd-user service: {path}")
     return 0
 
 
@@ -569,25 +613,50 @@ def _step9_apply(s: state.SetupState) -> int:
     # Cleanup: remove __targets__ stash
     s.profile.customizations.pop("__targets__", None)
 
-    # Start container if local
+    # Local install path: write wrapper + lifecycle, start service
     if s.mode == "multi-model" and s.litellm.deployment == "local":
         ui.console().print()
-        with ui.spinner("Starting LiteLLM container"):
-            ok = litellm.start_container() and litellm.wait_for_health()
-        if ok:
-            ui.ok(f"Container running at {gateway_url}")
+
+        if s.litellm.local.runtime in ("pipx", "pip-venv"):
+            # 1. Write the wrapper script
+            bin_path = Path(s.litellm.local.binary_path or "")
+            if not bin_path.is_file():
+                ui.error(f"litellm binary not found at {bin_path}")
+                return 1
+            wrapper = litellm.write_wrapper_script(
+                bin_path,
+                port=s.litellm.local.port,
+                host=s.litellm.local.bind_address,
+            )
+            ui.ok(str(wrapper))
+
+            # 2. Install lifecycle (always — auto-start determines whether it actually starts)
+            if s.litellm.local.auto_start:
+                try:
+                    p = litellm.install_lifecycle(wrapper)
+                    s.litellm.local.lifecycle_path = str(p)
+                    ui.ok(f"Service installed: {p}")
+                except (OSError, RuntimeError) as e:
+                    ui.error(f"Lifecycle install failed: {e}")
+                    return 1
+            else:
+                # Start once now, no auto-start
+                import subprocess
+                subprocess.Popen([str(wrapper)],
+                                  stdout=open(litellm.log_dir() / "litellm.log", "ab"),
+                                  stderr=open(litellm.log_dir() / "litellm.err", "ab"))
+                ui.ok("LiteLLM started in background (will not auto-restart on logout)")
+        # 3. Wait for health
+        with ui.spinner("Waiting for gateway to become healthy"):
+            healthy = litellm.wait_for_health(
+                f"{gateway_url}/health/liveliness", max_attempts=30,
+            )
+        if healthy:
+            ui.ok(f"Gateway running at {gateway_url}")
         else:
-            ui.error("Container failed to start or didn't pass health check")
+            ui.error("Gateway didn't pass health check")
             ui.detail("Run `ai-resources daemon logs` to investigate")
             return 1
-
-        # Lifecycle (auto-start)
-        if s.litellm.local.auto_start:
-            try:
-                p = litellm.install_lifecycle()
-                ui.ok(f"Auto-start: {p}")
-            except (OSError, RuntimeError) as e:
-                ui.warn(f"Lifecycle install skipped: {e}")
 
     # Smoke tests (multi-model only)
     if s.mode == "multi-model":

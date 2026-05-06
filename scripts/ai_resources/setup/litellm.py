@@ -1,8 +1,19 @@
-"""LiteLLM gateway lifecycle (local container) and remote validation."""
+"""LiteLLM gateway — pipx-managed process via launchd (macOS) / systemd-user (Linux).
+
+Default deployment: pipx install 'litellm[proxy]', auto-start via the platform's
+native service manager. No Docker required.
+
+Alternative modes (kept as escape hatches for users who prefer them):
+  - pip-venv: dedicated venv at ~/.config/ai-resources/venv/
+  - docker:   container via docker compose
+  - remote:   apunte a un endpoint LiteLLM ya hospedado
+"""
 from __future__ import annotations
 
-import json
+import os
 import platform
+import shutil
+import stat
 import subprocess
 import time
 import urllib.request
@@ -18,31 +29,52 @@ except ImportError:
     httpx = None  # type: ignore
 
 from . import state, credentials, ui
-from .. import repo_root
 
 
-CONTAINER_NAME = "ai-resources-litellm"
-DEFAULT_IMAGE = "ghcr.io/berriai/litellm:main-stable"
+SERVICE_LABEL = "com.ai-resources.litellm"
+SERVICE_NAME = "ai-resources-litellm"
+DEFAULT_LITELLM_PIP_SPEC = "litellm[proxy]"
+DEFAULT_DOCKER_IMAGE = "ghcr.io/berriai/litellm:main-stable"
 
 
-def _runtime() -> str:
-    return state.load().litellm.local.runtime or "docker"
+# ============================================================
+# Path helpers
+# ============================================================
+def runtime_mode() -> str:
+    return state.load().litellm.local.runtime or "pipx"
 
 
-def _compose_cmd() -> list[str]:
-    runtime = _runtime()
-    if runtime == "podman":
-        return ["podman", "compose"]
-    return ["docker", "compose"]
+def litellm_binary() -> Path:
+    """Resolve the litellm executable based on configured mode."""
+    s = state.load()
+    if s.litellm.local.binary_path:
+        return Path(s.litellm.local.binary_path)
+    p = shutil.which("litellm")
+    return Path(p) if p else Path("litellm")
 
 
-def _docker_cmd() -> list[str]:
-    return [_runtime()]
+def log_dir() -> Path:
+    d = state.config_root() / "logs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
-def _run(cmd: list[str], timeout: int = 60, check: bool = False) -> tuple[int, str, str]:
+def venv_dir() -> Path:
+    return state.config_root() / "venv"
+
+
+def wrapper_script_path() -> Path:
+    return state.config_root() / "bin" / "litellm-run"
+
+
+# ============================================================
+# Subprocess helper
+# ============================================================
+def _run(cmd: list[str], timeout: int = 60, check: bool = False,
+         env: dict | None = None) -> tuple[int, str, str]:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=timeout, env=env)
         if check and r.returncode != 0:
             raise RuntimeError(f"{' '.join(cmd)} failed: {r.stderr.strip()}")
         return r.returncode, r.stdout.strip(), r.stderr.strip()
@@ -52,11 +84,9 @@ def _run(cmd: list[str], timeout: int = 60, check: bool = False) -> tuple[int, s
         return 127, "", "command not found"
 
 
-# --- template rendering -------------------------------------------------------
-def _templates_dir() -> Path:
-    return repo_root() / "templates"
-
-
+# ============================================================
+# Config rendering (litellm.yaml — same regardless of runtime mode)
+# ============================================================
 def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) -> str:
     """Build litellm.yaml content from executors.yaml + providers config."""
     model_list: list[dict] = []
@@ -94,7 +124,7 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
         elif provider == "ollama":
             litellm_params = {
                 "model": f"ollama/{model_name}",
-                "api_base": "http://host.docker.internal:11434",
+                "api_base": "http://127.0.0.1:11434",
             }
         else:
             continue
@@ -104,7 +134,6 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
             "litellm_params": litellm_params,
         })
 
-    # Deduplicate fallbacks per model — multiple roles may share a model
     fallback_map: dict[str, list[str]] = {}
     for role, cfg in executors.get("by_role", {}).items():
         fbs = cfg.get("fallbacks") or []
@@ -124,10 +153,7 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
             "drop_params": True,
             "set_verbose": False,
             "cache": True,
-            "cache_params": {
-                "type": "local",
-                "ttl": 600,
-            },
+            "cache_params": {"type": "local", "ttl": 600},
         },
         "general_settings": {
             "master_key": credentials.secret_ref(master_key_env),
@@ -138,101 +164,293 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
     return yaml.safe_dump(doc, default_flow_style=False, sort_keys=False)
 
 
-def _render_compose_yaml(image: str, bind_address: str, port: int) -> str:
-    body = {
-        "services": {
-            CONTAINER_NAME: {
-                "image": image,
-                "container_name": CONTAINER_NAME,
-                "command": ["--config", "/app/config.yaml", "--port", "4000"],
-                "ports": [f"{bind_address}:{port}:4000"],
-                "volumes": [
-                    f"{state.litellm_path()}:/app/config.yaml:ro",
-                    f"{state.env_path()}:/app/.env:ro",
-                ],
-                "env_file": [str(state.env_path())],
-                "restart": "unless-stopped",
-                "healthcheck": {
-                    "test": ["CMD", "curl", "-fsS", "http://localhost:4000/health/liveliness"],
-                    "interval": "30s",
-                    "timeout": "5s",
-                    "retries": 3,
-                    "start_period": "10s",
-                },
-            }
-        }
-    }
-    if yaml is None:
-        raise RuntimeError("PyYAML required to render docker-compose.yaml")
-    return yaml.safe_dump(body, default_flow_style=False, sort_keys=False)
-
-
-def write_configs(executors: dict, providers: dict, master_key_env: str = "LITELLM_MASTER_KEY") -> dict:
-    """Write litellm.yaml + docker-compose.yaml. Returns dict of written paths."""
+def write_configs(executors: dict, providers: dict,
+                  master_key_env: str = "LITELLM_MASTER_KEY") -> dict:
+    """Write litellm.yaml. Wrapper script + lifecycle written separately."""
     state.config_root().mkdir(parents=True, exist_ok=True)
-    paths = {}
-
-    litellm_yaml = _render_litellm_yaml(executors, providers, master_key_env)
-    state.litellm_path().write_text(litellm_yaml, encoding="utf-8")
-    paths["litellm.yaml"] = state.litellm_path()
-
-    s = state.load()
-    compose_yaml = _render_compose_yaml(
-        image=s.litellm.local.image or DEFAULT_IMAGE,
-        bind_address=s.litellm.local.bind_address or "127.0.0.1",
-        port=s.litellm.local.port or 4000,
-    )
-    state.compose_path().write_text(compose_yaml, encoding="utf-8")
-    paths["docker-compose.yaml"] = state.compose_path()
-
-    return paths
+    yaml_text = _render_litellm_yaml(executors, providers, master_key_env)
+    state.litellm_path().write_text(yaml_text, encoding="utf-8")
+    return {"litellm.yaml": state.litellm_path()}
 
 
-# --- container lifecycle -------------------------------------------------------
-def pull_image(image: str = DEFAULT_IMAGE) -> bool:
-    rc, out, err = _run([*_docker_cmd(), "pull", image], timeout=600)
-    return rc == 0
+# ============================================================
+# Wrapper script — sources .env + execs litellm
+# ============================================================
+def _render_wrapper_script(litellm_bin: Path, port: int, host: str) -> str:
+    return f"""#!/usr/bin/env bash
+# ai-resources LiteLLM wrapper — sources .env then exec's litellm
+# Generated by `ai-resources setup`. Do not edit by hand.
+set -euo pipefail
+
+ENV_FILE="{state.env_path()}"
+CONFIG="{state.litellm_path()}"
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "Missing $ENV_FILE — run: ai-resources setup" >&2
+  exit 1
+fi
+if [ ! -f "$CONFIG" ]; then
+  echo "Missing $CONFIG — run: ai-resources setup" >&2
+  exit 1
+fi
+
+# Export every key=value pair in .env
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+exec "{litellm_bin}" --config "$CONFIG" --port {port} --host {host}
+"""
 
 
-def start_container() -> bool:
-    rc, out, err = _run([*_compose_cmd(), "-f", str(state.compose_path()), "up", "-d"], timeout=120)
+def write_wrapper_script(litellm_bin: Path, port: int = 4000,
+                         host: str = "127.0.0.1") -> Path:
+    path = wrapper_script_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_render_wrapper_script(litellm_bin, port, host), encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return path
+
+
+# ============================================================
+# pipx install
+# ============================================================
+def install_litellm_pipx() -> tuple[bool, str]:
+    """Install LiteLLM via pipx. Idempotent (re-runs are safe)."""
+    if not shutil.which("pipx"):
+        return False, "pipx not installed (try: brew install pipx — or python3 -m pip install --user pipx && pipx ensurepath)"
+
+    rc, out, err = _run(["pipx", "install", DEFAULT_LITELLM_PIP_SPEC, "--force"], timeout=600)
+    if rc != 0 and "already installed" not in (out + err).lower():
+        return False, err or out
+    rc, out, _ = _run(["pipx", "list", "--json"], timeout=10)
+    bin_path = shutil.which("litellm") or str(Path.home() / ".local" / "bin" / "litellm")
+    return True, bin_path
+
+
+def install_litellm_venv() -> tuple[bool, str]:
+    """Create a dedicated venv at ~/.config/ai-resources/venv/ and pip install LiteLLM."""
+    import sys
+    venv = venv_dir()
+    if not venv.exists():
+        rc, _, err = _run([sys.executable, "-m", "venv", str(venv)], timeout=60)
+        if rc != 0:
+            return False, err
+    pip = venv / "bin" / "pip"
+    rc, _, err = _run([str(pip), "install", "--upgrade", "pip"], timeout=60)
     if rc != 0:
-        ui.error(f"Failed to start container: {err or out}")
+        return False, err
+    rc, _, err = _run([str(pip), "install", DEFAULT_LITELLM_PIP_SPEC], timeout=600)
+    if rc != 0:
+        return False, err
+    return True, str(venv / "bin" / "litellm")
+
+
+# ============================================================
+# Lifecycle: launchd (macOS) / systemd-user (Linux)
+# ============================================================
+def is_macos() -> bool:
+    return platform.system() == "Darwin"
+
+
+def lifecycle_path() -> Path:
+    if is_macos():
+        return Path.home() / "Library" / "LaunchAgents" / f"{SERVICE_LABEL}.plist"
+    return Path.home() / ".config" / "systemd" / "user" / f"{SERVICE_NAME}.service"
+
+
+def _render_launchd_plist(wrapper: Path) -> str:
+    logs = log_dir()
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{SERVICE_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{wrapper}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>{logs}/litellm.log</string>
+  <key>StandardErrorPath</key>
+  <string>{logs}/litellm.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:{Path.home()}/.local/bin</string>
+  </dict>
+</dict>
+</plist>
+"""
+
+
+def _render_systemd_unit(wrapper: Path) -> str:
+    return f"""[Unit]
+Description=ai-resources LiteLLM gateway (pipx-managed)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={wrapper}
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def install_lifecycle(wrapper: Path) -> Path:
+    """Write platform-appropriate lifecycle file and load/enable it."""
+    path = lifecycle_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if is_macos():
+        path.write_text(_render_launchd_plist(wrapper), encoding="utf-8")
+        # Reload (unload then load — bootstrap is the modern way but bootstrap requires gui domain)
+        _run(["launchctl", "unload", str(path)])
+        rc, _, err = _run(["launchctl", "load", str(path)])
+        if rc != 0 and "already loaded" not in err.lower():
+            raise RuntimeError(f"launchctl load failed: {err}")
+    else:
+        path.write_text(_render_systemd_unit(wrapper), encoding="utf-8")
+        _run(["systemctl", "--user", "daemon-reload"])
+        rc, _, err = _run(["systemctl", "--user", "enable", "--now", path.name])
+        if rc != 0:
+            raise RuntimeError(f"systemctl enable failed: {err}")
+    return path
+
+
+def uninstall_lifecycle() -> None:
+    path = lifecycle_path()
+    if not path.exists():
+        return
+    if is_macos():
+        _run(["launchctl", "unload", str(path)])
+    else:
+        _run(["systemctl", "--user", "stop", path.name])
+        _run(["systemctl", "--user", "disable", path.name])
+    path.unlink(missing_ok=True)
+
+
+# ============================================================
+# Service control (mode-aware: pipx/pip-venv via launchd/systemd, docker via compose)
+# ============================================================
+def start_service() -> bool:
+    mode = runtime_mode()
+    if mode in ("pipx", "pip-venv"):
+        path = lifecycle_path()
+        if not path.exists():
+            ui.error(f"Lifecycle file missing: {path}. Re-run setup.")
+            return False
+        if is_macos():
+            rc, _, err = _run(["launchctl", "load", str(path)])
+            return rc == 0 or "already loaded" in err.lower()
+        rc, _, _ = _run(["systemctl", "--user", "start", path.name])
+        return rc == 0
+    if mode == "docker":
+        rc, _, _ = _run(["docker", "compose", "-f", str(state.compose_path()),
+                         "up", "-d"], timeout=120)
+        return rc == 0
+    return False
+
+
+def stop_service() -> bool:
+    mode = runtime_mode()
+    if mode in ("pipx", "pip-venv"):
+        path = lifecycle_path()
+        if is_macos():
+            _run(["launchctl", "unload", str(path)])
+            return True
+        rc, _, _ = _run(["systemctl", "--user", "stop", path.name])
+        return rc == 0
+    if mode == "docker":
+        rc, _, _ = _run(["docker", "compose", "-f", str(state.compose_path()),
+                         "down"], timeout=60)
+        return rc == 0
+    return False
+
+
+def restart_service() -> bool:
+    if not stop_service():
         return False
-    return True
+    time.sleep(1)
+    return start_service()
 
 
-def stop_container() -> bool:
-    rc, _, err = _run([*_compose_cmd(), "-f", str(state.compose_path()), "down"], timeout=60)
-    return rc == 0
-
-
-def restart_container() -> bool:
-    rc, _, _ = _run([*_compose_cmd(), "-f", str(state.compose_path()), "restart"], timeout=60)
-    return rc == 0
-
-
-def container_status() -> str:
+def service_status() -> str:
     """Return 'running' | 'stopped' | 'absent' | 'unhealthy'."""
-    rc, out, _ = _run([*_docker_cmd(), "inspect", "--format", "{{.State.Status}}", CONTAINER_NAME])
-    if rc != 0:
-        return "absent"
-    state_str = out.strip()
-    if state_str == "running":
-        rc, healthy, _ = _run([*_docker_cmd(), "inspect", "--format", "{{.State.Health.Status}}", CONTAINER_NAME])
-        if rc == 0 and healthy.strip() and healthy.strip() != "healthy":
-            return "unhealthy"
-        return "running"
-    return state_str or "absent"
+    mode = runtime_mode()
+    if mode in ("pipx", "pip-venv"):
+        path = lifecycle_path()
+        if not path.exists():
+            return "absent"
+        if is_macos():
+            rc, out, _ = _run(["launchctl", "list", SERVICE_LABEL])
+            if rc != 0:
+                return "stopped"
+            # Output format: PID Status Label
+            parts = out.splitlines()[0].split() if out else []
+            if parts and parts[0] != "-" and parts[0].isdigit():
+                return "running"
+            return "stopped"
+        rc, out, _ = _run(["systemctl", "--user", "is-active", path.name])
+        s = out.strip()
+        if s == "active":
+            return "running"
+        if s == "inactive":
+            return "stopped"
+        return s or "absent"
+    if mode == "docker":
+        rc, out, _ = _run(["docker", "inspect", "--format",
+                           "{{.State.Status}}", "ai-resources-litellm"])
+        return out.strip() or "absent"
+    return "absent"
 
 
-def container_logs(tail: int = 100) -> str:
-    rc, out, _ = _run([*_docker_cmd(), "logs", "--tail", str(tail), CONTAINER_NAME], timeout=10)
-    return out if rc == 0 else ""
+def service_logs(tail: int = 100) -> str:
+    mode = runtime_mode()
+    if mode in ("pipx", "pip-venv"):
+        if is_macos():
+            log_file = log_dir() / "litellm.log"
+            err_file = log_dir() / "litellm.err"
+            out_lines = []
+            for f in (err_file, log_file):
+                if f.exists():
+                    rc, out, _ = _run(["tail", "-n", str(tail), str(f)])
+                    if rc == 0 and out:
+                        out_lines.append(f"--- {f.name} ---\n{out}")
+            return "\n".join(out_lines)
+        rc, out, _ = _run(["journalctl", "--user", "-u", lifecycle_path().name,
+                           "-n", str(tail), "--no-pager"])
+        return out
+    if mode == "docker":
+        rc, out, _ = _run(["docker", "logs", "--tail", str(tail),
+                           "ai-resources-litellm"], timeout=10)
+        return out
+    return ""
 
 
-# --- health & probes -----------------------------------------------------------
-def health_check(url: str = "http://127.0.0.1:4000/health/liveliness", timeout: int = 5) -> bool:
+# ============================================================
+# Health check
+# ============================================================
+def health_check(url: str = "http://127.0.0.1:4000/health/liveliness",
+                 timeout: int = 5) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
             return r.status == 200
@@ -250,9 +468,8 @@ def wait_for_health(url: str = "http://127.0.0.1:4000/health/liveliness",
 
 
 def validate_remote(url: str, master_key: str) -> tuple[bool, str]:
-    """Test reachability of a remote LiteLLM endpoint."""
+    """Test a remote LiteLLM endpoint."""
     if httpx is None:
-        # Fallback to urllib
         try:
             req = urllib.request.Request(
                 url.rstrip("/") + "/health/liveliness",
@@ -260,25 +477,23 @@ def validate_remote(url: str, master_key: str) -> tuple[bool, str]:
             )
             with urllib.request.urlopen(req, timeout=5) as r:
                 return r.status == 200, ""
-        except urllib.error.URLError as e:
-            return False, str(e)
-        except OSError as e:
+        except (urllib.error.URLError, OSError) as e:
             return False, str(e)
     try:
         r = httpx.get(
             url.rstrip("/") + "/health/liveliness",
-            headers={"Authorization": f"Bearer {master_key}"},
+            headers={"Authorization": f"Bearer {master_key}"} if master_key else {},
             timeout=5.0,
         )
-        if r.status_code == 200:
-            return True, ""
-        return False, f"HTTP {r.status_code}: {r.text[:200]}"
+        return r.status_code == 200, ("" if r.status_code == 200
+                                       else f"HTTP {r.status_code}: {r.text[:200]}")
     except httpx.HTTPError as e:
         return False, str(e)
 
 
 def smoke_test_model(model: str, gateway_url: str, master_key: str) -> tuple[bool, str]:
-    """Round-trip a tiny prompt through the gateway. Returns (ok, detail)."""
+    """Round-trip a tiny prompt through the gateway."""
+    import json
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": "Reply with just OK"}],
@@ -312,92 +527,22 @@ def smoke_test_model(model: str, gateway_url: str, master_key: str) -> tuple[boo
         return False, str(e)
 
 
-# --- lifecycle scripts (launchd / systemd) ------------------------------------
-def lifecycle_path() -> Path:
-    if platform.system() == "Darwin":
-        return Path.home() / "Library" / "LaunchAgents" / "com.ai-resources.litellm.plist"
-    return Path.home() / ".config" / "systemd" / "user" / "ai-resources-litellm.service"
-
-
-def _render_launchd_plist() -> str:
-    compose = state.compose_path()
-    runtime = _runtime()
-    log_dir = state.config_root() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.ai-resources.litellm</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/sh</string>
-    <string>-c</string>
-    <string>while ! {runtime} info &gt;/dev/null 2&gt;&amp;1; do sleep 5; done; {runtime} compose -f {compose} up -d --wait || true; tail -f /dev/null</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>{log_dir}/litellm.log</string>
-  <key>StandardErrorPath</key>
-  <string>{log_dir}/litellm.err</string>
-</dict>
-</plist>
-"""
-
-
-def _render_systemd_unit() -> str:
-    compose = state.compose_path()
-    runtime = _runtime()
-    return f"""[Unit]
-Description=ai-resources LiteLLM gateway
-After=network-online.target docker.service
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStartPre=/bin/sh -c 'until {runtime} info >/dev/null 2>&1; do sleep 5; done'
-ExecStart=/usr/bin/env {runtime} compose -f {compose} up -d --wait
-ExecStop=/usr/bin/env {runtime} compose -f {compose} down
-
-[Install]
-WantedBy=default.target
-"""
-
-
-def install_lifecycle() -> Path:
-    """Write platform-appropriate lifecycle file. Returns path."""
-    path = lifecycle_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if platform.system() == "Darwin":
-        path.write_text(_render_launchd_plist(), encoding="utf-8")
-        _run(["launchctl", "unload", str(path)])
-        _run(["launchctl", "load", str(path)])
-    else:
-        path.write_text(_render_systemd_unit(), encoding="utf-8")
-        _run(["systemctl", "--user", "daemon-reload"])
-        _run(["systemctl", "--user", "enable", path.name])
-        _run(["systemctl", "--user", "start", path.name])
-    return path
-
-
-def uninstall_lifecycle() -> None:
-    path = lifecycle_path()
-    if not path.exists():
-        return
-    if platform.system() == "Darwin":
-        _run(["launchctl", "unload", str(path)])
-    else:
-        _run(["systemctl", "--user", "stop", path.name])
-        _run(["systemctl", "--user", "disable", path.name])
-    path.unlink(missing_ok=True)
-
-
-def update_image(image: str = DEFAULT_IMAGE) -> bool:
-    if not pull_image(image):
-        return False
-    return restart_container()
+# ============================================================
+# Update (re-pull pipx package or docker image)
+# ============================================================
+def update_litellm() -> tuple[bool, str]:
+    mode = runtime_mode()
+    if mode == "pipx":
+        rc, out, err = _run(["pipx", "upgrade", "litellm"], timeout=600)
+        return rc == 0, out + err
+    if mode == "pip-venv":
+        pip = venv_dir() / "bin" / "pip"
+        rc, out, err = _run([str(pip), "install", "--upgrade", DEFAULT_LITELLM_PIP_SPEC],
+                            timeout=600)
+        return rc == 0, out + err
+    if mode == "docker":
+        rc, _, err = _run(["docker", "pull", DEFAULT_DOCKER_IMAGE], timeout=600)
+        if rc != 0:
+            return False, err
+        return restart_service(), ""
+    return False, "unknown mode"

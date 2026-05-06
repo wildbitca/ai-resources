@@ -230,3 +230,40 @@ def detect_gcloud() -> Detected:
                         "https://cloud.google.com/sdk/docs/install")
     rc, out = _run(["gcloud", "--version"])
     return Detected("gcloud", rc == 0, _version_from(out), p)
+
+
+def detect_litellm_binary() -> Detected:
+    """Detect a working `litellm` command (installed via pipx, pip, or system)."""
+    p = _which("litellm")
+    if not p:
+        return Detected("litellm", False, "", "",
+                        "pipx install 'litellm[proxy]'")
+    rc, out = _run([p, "--version"], timeout=10)
+    return Detected("litellm", rc == 0, _version_from(out), p)
+
+
+def detect_python() -> Detected:
+    """Detect python3 binary for venv-based install."""
+    import sys
+    p = _which("python3") or sys.executable
+    if not p:
+        return Detected("python3", False, "", "")
+    rc, out = _run([p, "--version"])
+    return Detected("python3", rc == 0, _version_from(out), p)
+
+
+def detect_launchctl() -> Detected:
+    """macOS launchctl for service management."""
+    p = _which("launchctl")
+    if not p:
+        return Detected("launchctl", False, "", "")
+    return Detected("launchctl", True, "", p)
+
+
+def detect_systemctl_user() -> Detected:
+    """Linux systemctl --user for service management."""
+    p = _which("systemctl")
+    if not p:
+        return Detected("systemctl", False, "", "")
+    rc, _ = _run(["systemctl", "--user", "is-system-running"])
+    return Detected("systemctl", True, "", p)

@@ -67,23 +67,41 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if s.mode != "multi-model":
         ui.detail("Skipped (single-model mode)")
     elif s.litellm.deployment == "local":
-        runtime, det = detection.detect_container_runtime()
-        if det.installed and det.version:
-            ui.ok(f"{runtime} {det.version}")
-        else:
-            ui.error("Container runtime unhealthy")
-            issues += 1
-        status = litellm.container_status()
-        if status == "running":
-            ui.ok(f"Container '{litellm.CONTAINER_NAME}' running")
-            url = f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}"
-            if litellm.health_check(url + "/health/liveliness"):
-                ui.ok(f"Health check passed at {url}")
+        mode = s.litellm.local.runtime
+        if mode in ("pipx", "pip-venv"):
+            det = detection.detect_litellm_binary()
+            if det.installed:
+                ui.ok(f"litellm v{det.version or '?'}  {det.binary_path}")
             else:
-                ui.warn("Health check failed")
+                ui.error("litellm binary not found in PATH")
                 issues += 1
+            lc = litellm.lifecycle_path()
+            if lc.exists():
+                ui.ok(f"Service file: {lc}")
+            else:
+                ui.warn(f"Service file missing: {lc}")
+                issues += 1
+        elif mode == "docker":
+            runtime, det = detection.detect_container_runtime()
+            if det.installed:
+                ui.ok(f"{runtime} {det.version}")
+            else:
+                ui.error("Container runtime unhealthy")
+                issues += 1
+
+        status = litellm.service_status()
+        url = f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}"
+        if status == "running":
+            if litellm.health_check(url + "/health/liveliness"):
+                ui.ok(f"Gateway healthy at {url}")
+            else:
+                ui.warn("Service running but health check failed")
+                issues += 1
+        elif status == "stopped":
+            ui.warn("Service stopped — run `ai-resources daemon start`")
+            issues += 1
         else:
-            ui.error(f"Container status: {status}")
+            ui.error(f"Service status: {status}")
             issues += 1
     elif s.litellm.deployment == "remote":
         master = credentials.get_key("LITELLM_MASTER_KEY")

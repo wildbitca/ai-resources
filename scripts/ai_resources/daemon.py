@@ -1,8 +1,7 @@
-"""ai-resources daemon — manage the LiteLLM container lifecycle."""
+"""ai-resources daemon — manage the LiteLLM gateway lifecycle."""
 from __future__ import annotations
 
 import argparse
-import sys
 
 from .setup import litellm, ui, state
 
@@ -21,15 +20,19 @@ def cmd_status(args: argparse.Namespace) -> int:
         ui.warn("LiteLLM not configured. Run: ai-resources setup")
         return 1
 
-    status = litellm.container_status()
+    status = litellm.service_status()
+    url = f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}"
     if status == "running":
-        if litellm.health_check():
-            ui.ok(f"Container '{litellm.CONTAINER_NAME}' running, healthy")
-            ui.detail(f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}")
+        if litellm.health_check(url + "/health/liveliness"):
+            ui.ok(f"Service running, healthy ({s.litellm.local.runtime})")
+            ui.detail(url)
             return 0
-        ui.warn(f"Container running but health check failed")
+        ui.warn("Service running but health check failed")
         return 2
-    ui.error(f"Container status: {status}")
+    if status == "stopped":
+        ui.warn("Service stopped — start with: ai-resources daemon start")
+        return 1
+    ui.error(f"Service status: {status}")
     return 1
 
 
@@ -39,13 +42,14 @@ def cmd_start(args: argparse.Namespace) -> int:
     if s.litellm.deployment != "local":
         ui.warn("LiteLLM is not configured for local deployment.")
         return 1
-    with ui.spinner("Starting LiteLLM container"):
-        if not litellm.start_container():
+    with ui.spinner("Starting LiteLLM service"):
+        if not litellm.start_service():
             return 1
-    if litellm.wait_for_health():
-        ui.ok("LiteLLM container running and healthy")
+    url = f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}"
+    if litellm.wait_for_health(url + "/health/liveliness"):
+        ui.ok(f"Service running and healthy at {url}")
         return 0
-    ui.error("Container started but health check timed out")
+    ui.error("Service started but health check timed out")
     return 2
 
 
@@ -55,11 +59,11 @@ def cmd_stop(args: argparse.Namespace) -> int:
     if s.litellm.deployment != "local":
         ui.warn("Nothing to stop (not local deployment).")
         return 0
-    with ui.spinner("Stopping LiteLLM container"):
-        if litellm.stop_container():
-            ui.ok("Container stopped")
+    with ui.spinner("Stopping LiteLLM service"):
+        if litellm.stop_service():
+            ui.ok("Service stopped")
             return 0
-    ui.error("Failed to stop container")
+    ui.error("Failed to stop service")
     return 1
 
 
@@ -70,9 +74,9 @@ def cmd_restart(args: argparse.Namespace) -> int:
 
 def cmd_logs(args: argparse.Namespace) -> int:
     ui.require_deps()
-    out = litellm.container_logs(tail=args.tail)
+    out = litellm.service_logs(tail=args.tail)
     if not out:
-        ui.warn("No logs available (container may be down)")
+        ui.warn("No logs available (service may be down)")
         return 1
     print(out)
     return 0
@@ -80,33 +84,28 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 def cmd_update(args: argparse.Namespace) -> int:
     ui.require_deps()
-    s = state.load()
-    image = args.image or s.litellm.local.image or litellm.DEFAULT_IMAGE
-    with ui.spinner(f"Pulling {image}"):
-        if not litellm.pull_image(image):
-            ui.error("Image pull failed")
-            return 1
-    ui.ok(f"Pulled {image}")
-    if litellm.update_image(image):
-        ui.ok("Container restarted with new image")
-        return 0
-    ui.error("Restart failed")
-    return 1
+    with ui.spinner("Updating LiteLLM"):
+        ok, msg = litellm.update_litellm()
+    if not ok:
+        ui.error(f"Update failed: {msg[:200]}")
+        return 1
+    ui.ok("LiteLLM updated")
+    if litellm.restart_service():
+        ui.ok("Service restarted with new version")
+    return 0
 
 
 def add_subparser(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("daemon", help="Manage LiteLLM container lifecycle")
+    p = sub.add_parser("daemon", help="Manage LiteLLM gateway lifecycle")
     sp = p.add_subparsers(dest="action", required=True)
 
-    sp.add_parser("status", help="Show container status").set_defaults(func=cmd_status)
-    sp.add_parser("start",  help="Start container").set_defaults(func=cmd_start)
-    sp.add_parser("stop",   help="Stop container").set_defaults(func=cmd_stop)
-    sp.add_parser("restart",help="Restart container").set_defaults(func=cmd_restart)
+    sp.add_parser("status", help="Show service status").set_defaults(func=cmd_status)
+    sp.add_parser("start",  help="Start service").set_defaults(func=cmd_start)
+    sp.add_parser("stop",   help="Stop service").set_defaults(func=cmd_stop)
+    sp.add_parser("restart",help="Restart service").set_defaults(func=cmd_restart)
 
-    p_logs = sp.add_parser("logs", help="Show container logs")
+    p_logs = sp.add_parser("logs", help="Show service logs (tail)")
     p_logs.add_argument("--tail", type=int, default=100)
     p_logs.set_defaults(func=cmd_logs)
 
-    p_up = sp.add_parser("update", help="Pull latest image and restart")
-    p_up.add_argument("--image", default="")
-    p_up.set_defaults(func=cmd_update)
+    sp.add_parser("update", help="Update LiteLLM (pipx/pip upgrade) and restart").set_defaults(func=cmd_update)

@@ -45,10 +45,11 @@ are all preserved — only the LLM behind each subagent changes.
 | `~/.config/ai-resources/setup-state.yaml` | Wizard answers (re-runs use this as defaults) |
 | `~/.config/ai-resources/executors.yaml` | **Single source of truth** for role → model mapping |
 | `~/.config/ai-resources/litellm.yaml` | Generated from executors.yaml — gateway routing |
-| `~/.config/ai-resources/docker-compose.yaml` | Container definition for local LiteLLM |
+| `~/.config/ai-resources/bin/litellm-run` | Wrapper script (sources .env, execs litellm) |
 | `~/.config/ai-resources/.env` | Credentials (chmod 600, never commit) |
-| `~/Library/LaunchAgents/com.ai-resources.litellm.plist` (macOS) | Auto-start |
-| `~/.config/systemd/user/ai-resources-litellm.service` (Linux) | Auto-start |
+| `~/.config/ai-resources/logs/` | Service logs (macOS only — Linux uses journald) |
+| `~/Library/LaunchAgents/com.ai-resources.litellm.plist` (macOS) | Auto-start LaunchAgent |
+| `~/.config/systemd/user/ai-resources-litellm.service` (Linux) | Auto-start systemd-user service |
 
 ## Profiles
 
@@ -143,5 +144,5 @@ docker ps -a | grep ai-resources-litellm
 ## See also
 
 - `rules/017-multimodel-routing.mdc` — kit-internal rule
-- `docs/litellm-container.md` — gateway operations
+- `docs/litellm-service.md` — gateway operations
 - `https://docs.litellm.ai/` — upstream LiteLLM docs

@@ -53,12 +53,15 @@ class CockpitState:
 
 @dataclass
 class LiteLLMLocal:
-    runtime: str = "docker"          # docker | podman | colima
-    image: str = "ghcr.io/berriai/litellm:main-stable"
+    runtime: str = "pipx"            # pipx | pip-venv | docker | podman
+    binary_path: str = ""             # absolute path to litellm executable (pipx/pip mode)
+    venv_path: str = ""               # for pip-venv mode
+    image: str = "ghcr.io/berriai/litellm:main-stable"  # docker mode only
     bind_address: str = "127.0.0.1"
     port: int = 4000
     auto_start: bool = True
     lifecycle_path: str = ""
+    log_dir: str = ""
 
 
 @dataclass

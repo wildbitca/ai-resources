@@ -5,7 +5,7 @@
 class AiResources < Formula
   include Language::Python::Virtualenv
 
-  desc "Multi-model AI agent kit: skills, workflows, orchestration, LiteLLM gateway"
+  desc "Multi-model AI agent kit: skills, workflows, orchestration, LiteLLM (via pipx, no Docker)"
   homepage "https://github.com/wildbitca/ai-resources"
   url "https://github.com/wildbitca/ai-resources.git",
       using: :git,
@@ -15,6 +15,7 @@ class AiResources < Formula
   head "https://github.com/wildbitca/ai-resources.git", branch: "main"
 
   depends_on "python@3.12"
+  depends_on "pipx"
   depends_on "gentleman-programming/tap/engram"
 
   # Python deps for the wizard UI + LiteLLM HTTP client + YAML parsing.

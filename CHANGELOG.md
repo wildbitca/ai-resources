@@ -20,9 +20,11 @@ Major refactor introducing per-role LLM routing via local LiteLLM gateway.
   `questionary` UI: cockpit detection, LiteLLM install, provider creds,
   profile selection, per-role customization, lifecycle, smoke tests.
   Re-runs use prior answers as defaults.
-- **LiteLLM gateway** — local Docker container or remote endpoint. Container
-  lifecycle managed via `ai-resources daemon {start,stop,status,logs,update}`.
-  Auto-start via launchd (macOS) or systemd-user (Linux).
+- **LiteLLM gateway** — pipx-managed process (default) or remote endpoint.
+  No Docker required. Service managed by launchd (macOS) / systemd-user (Linux).
+  Lifecycle via `ai-resources daemon {start,stop,status,logs,update}`.
+  Auto-start at every login. Wrapper script sources `.env` (chmod 600) and
+  execs `litellm` directly — secrets never touch the service file.
 - **Profiles** — `unified-default`, `all-claude`, `all-gemini`,
   `cost-optimized`, `vertex-enterprise` at `<kit>/profiles/*.yaml`.
 - **`ai-resources doctor`** — full health check across config, credentials,
