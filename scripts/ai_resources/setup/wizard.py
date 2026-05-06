@@ -103,6 +103,54 @@ def run(args: argparse.Namespace) -> int:
 
 
 # --- Step 1 — Mode ---------------------------------------------------------------
+def _try_install_pipx() -> bool:
+    """Offer to install pipx automatically. Returns True if attempt succeeded."""
+    import platform
+    import subprocess
+
+    options: list[tuple[str, list[str], str]] = []
+    if platform.system() == "Darwin" and detection._which("brew"):
+        options.append(("brew install pipx", ["brew", "install", "pipx"],
+                        "Homebrew (macOS) — recommended"))
+    if detection._which("apt"):
+        options.append(("apt install pipx (sudo)", ["sudo", "apt", "install", "-y", "pipx"],
+                        "Debian/Ubuntu apt"))
+    if detection._which("dnf"):
+        options.append(("dnf install pipx (sudo)", ["sudo", "dnf", "install", "-y", "pipx"],
+                        "Fedora/RHEL dnf"))
+    # Always available: pip --user
+    options.append(("python3 -m pip install --user pipx",
+                    ["python3", "-m", "pip", "install", "--user", "pipx"],
+                    "Universal — pip user install"))
+    options.append(("Skip — I'll install manually", [], ""))
+
+    choices = [ui.Choice(f"{label}  {hint}", value=i) for i, (label, _, hint) in enumerate(options)]
+    pick = ui.select("How should I install pipx?", choices, default=0)
+    if pick is None:
+        return False
+    label, cmd, _ = options[pick]
+    if not cmd:
+        ui.detail("Install pipx manually then re-run `ai-resources setup`.")
+        return False
+
+    with ui.spinner(f"Running: {' '.join(cmd)}"):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            ui.error(f"Install failed: {e}")
+            return False
+    if r.returncode != 0:
+        ui.error(f"Install failed: {(r.stderr or r.stdout)[:200]}")
+        return False
+    ui.ok("pipx installed")
+
+    # Run pipx ensurepath so the binary lands in PATH for future shells
+    pipx_path = detection._which("pipx") or str(Path.home() / ".local" / "bin" / "pipx")
+    if Path(pipx_path).exists():
+        subprocess.run([pipx_path, "ensurepath"], capture_output=True, text=True)
+    return True
+
+
 def _step1_mode(s: state.SetupState) -> int:
     ui.section(1, TOTAL_STEPS, "Setup mode")
     choices = [
@@ -221,16 +269,13 @@ def _step3_pipx(s: state.SetupState) -> int:
     """Install LiteLLM via pipx + verify."""
     pipx_det = detection.detect_pipx()
     if not pipx_det.installed:
-        ui.warn("pipx not detected.")
-        ui.detail("Install with one of:")
-        ui.detail("  brew install pipx")
-        ui.detail("  python3 -m pip install --user pipx && python3 -m pipx ensurepath")
-        if not ui.confirm("Continue once pipx is installed?", default=True):
+        ui.warn("pipx not detected on this system.")
+        if not _try_install_pipx():
             return 1
-        # Re-check
         pipx_det = detection.detect_pipx()
         if not pipx_det.installed:
-            ui.error("pipx still not in PATH. Aborting.")
+            ui.error("pipx still not on PATH after install attempt.")
+            ui.detail("Run `pipx ensurepath` and start a new shell, then re-run setup.")
             return 1
     ui.ok(f"pipx {pipx_det.version}  {pipx_det.binary_path}")
 
