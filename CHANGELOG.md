@@ -6,6 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-05-07 — README refresh & version command fix
+
+### Added
+
+- **Orchestrator Delegation Protocol** — added explicit delegation rules to
+  `CLAUDE.md`: when to spawn `explore`, `generalPurpose`, or `doc-writer`
+  instead of reading files directly, plus a token budget check heuristic.
+- **`doc-writer` subagent (Gemini Flash)** — new agent definition for
+  documentation update tasks. Handles all reading + drafting; orchestrator
+  applies final diffs only.
+
+### Changed
+
+- **`software-architect` routed to `gemini-2.5-pro`** in `executors.yaml`
+  and agent frontmatter (was `claude-sonnet-4-6`).
+
+### Documentation
+
+- **README** — comprehensive update for v1.1.x: highlights banner, new CLI
+  flags (`--dry-run`, `--non-interactive`, `--profile`), `setup --dry-run`
+  example, mode-switching teardown explanation, Claude Code OAuth section,
+  expanded directory map (full `setup/` subpackage), new Profiles table,
+  and `docs/multi-model.md` / `docs/litellm-service.md` in Further Reading.
+- **`ai-resources version`** — now correctly reports `1.1.2` (working-tree
+  `__init__.py` was inadvertently left at `1.0.0` after the v1.1.1 release).
+
 ## [1.1.1] — 2026-05-07
 
 ### Fixed

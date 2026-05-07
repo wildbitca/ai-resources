@@ -2,7 +2,13 @@
 
 Resource kit for AI coding agents: skills, workflows, orchestration rules, agent roles, and the **`ai-resources`** CLI. Works with **Cursor, Claude Code, Gemini CLI, Codex, GitHub Copilot, Windsurf, Continue.dev, Aider, and OpenCode**.
 
-**v1.0 highlight:** multi-model orchestration via LiteLLM — each subagent role can run on a different LLM (Claude, Gemini, GPT, Vertex, Ollama). See [docs/multi-model.md](docs/multi-model.md).
+**v1.1 highlights:**
+- **`--dry-run` for setup** — preview all generated configs and run live gateway smoke tests without writing anything to disk.
+- **Teardown when switching modes** — multi-model → single-model (or vice versa) cleanly removes every artifact the wizard installed; pre-existing config is never touched.
+- **OAuth + LiteLLM fix** — `allow_requests_on_db_unavailable: true` is auto-added to the gateway config so Claude Code OAuth session tokens pass through without a DB lookup error.
+- **`quality-first` profile** — replaces `unified-default`; same routing strategy, clearer name.
+
+**v1.0:** multi-model orchestration via LiteLLM — each subagent role can run on a different LLM (Claude, Gemini, GPT, Vertex, Ollama). See [docs/multi-model.md](docs/multi-model.md).
 
 ## Install
 
@@ -26,6 +32,9 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 | Command | Purpose |
 |---------|---------|
 | `ai-resources setup` | Interactive wizard: cockpit detection, LiteLLM gateway, providers, profiles, per-cockpit config. |
+| `ai-resources setup --dry-run` | Preview all generated configs + run live smoke tests without writing anything to disk. |
+| `ai-resources setup --non-interactive` | Re-apply saved answers without prompting (useful in CI or scripted re-runs). |
+| `ai-resources setup --profile <name>` | Skip profile prompt and use the named profile directly. |
 | `ai-resources doctor` | Full health check across config, credentials, gateway, cockpits, smoke tests. |
 | `ai-resources executors show` | Display current role → model mapping. |
 | `ai-resources executors edit` | Open `executors.yaml` in `$EDITOR`. |
@@ -45,7 +54,19 @@ ai-resources doctor      # verify
 Choose **single-model** mode for the legacy single-provider behavior, or
 **multi-model** for per-role routing via LiteLLM gateway.
 
-After installing, the `AGENT_KIT` env var points to the kit on disk. Set `AGENT_SKILLS_ROOT` in your shell profile to the skills directory path shown by `ai-resources --help`.
+**Preview before committing:**
+```sh
+ai-resources setup --dry-run   # renders configs + runs smoke tests, writes nothing
+```
+
+**Switching modes later:**
+Running `ai-resources setup` again and switching mode (e.g. multi-model → single-model) presents a confirmation list of tracked artifacts and removes only what the wizard installed. Pre-existing config files are never touched.
+
+After installing, the `AGENT_KIT` env var points to the kit on disk. The wizard sets `AGENT_SKILLS_ROOT` automatically for each configured cockpit.
+
+### Claude Code + OAuth
+
+If Claude Code is in OAuth mode (`claude /login`), the wizard detects this and auto-adds `allow_requests_on_db_unavailable: true` to the LiteLLM gateway config. This lets Claude Code's session token pass through the local gateway without hitting a "db not found" error. Run `ai-resources doctor` to verify the setup is clean.
 
 ---
 
@@ -63,12 +84,32 @@ ai-resources/
 │   ├── gpm-community-*     # Imported community skills
 │   └── _shared/            # Shared conventions and contracts
 ├── workflows/              # 6 workflow definitions (YAML)
+├── profiles/               # LiteLLM routing profiles (quality-first, all-claude, cost-optimized, …)
 ├── agents/
 │   ├── roles/              # 14 base agent roles (domain-agnostic)
 │   └── personas/           # 25 domain-specific personas (role x domain)
 ├── rules/                  # 22 orchestration rules (.mdc format)
 ├── templates/              # 6 project templates (ADR, spec, etc.)
-├── scripts/                # CLI tooling (kit.py)
+├── docs/                   # Guides (multi-model.md, orchestration.md, litellm-service.md)
+├── scripts/
+│   └── ai_resources/       # CLI package
+│       ├── cli.py           # Argument parser + command dispatch
+│       ├── generate.py      # skills-index.json builder + vendor importer
+│       ├── daemon.py        # LiteLLM container lifecycle
+│       ├── doctor.py        # Health check
+│       ├── executors_cmd.py # Role → model map management
+│       ├── audit.py         # Cost report
+│       └── setup/           # Interactive wizard
+│           ├── wizard.py    # Main wizard loop (9 steps)
+│           ├── state.py     # SetupState + InstallTracking (audit trail for teardown)
+│           ├── credentials.py
+│           ├── litellm.py   # litellm.yaml / docker-compose.yaml generation
+│           ├── providers.py # Provider model lists
+│           ├── profiles.py  # Profile loader
+│           ├── smoke.py     # Live gateway smoke tests
+│           ├── detection.py # Cockpit auto-detection
+│           ├── ui.py        # Rich/questionary UI helpers
+│           └── cockpits/    # Per-cockpit configurators (claude, gemini, cursor, …)
 ├── Formula/                # Homebrew formula
 ├── skills-index.json       # Auto-generated skill catalog (machine-readable)
 ├── resources.json          # Kit manifest (external skill sources, MCP config)
@@ -106,6 +147,18 @@ Workflow YAML files define multi-phase execution pipelines. Each phase specifies
 | `cross-domain-backend-infra` | Changes spanning app and infrastructure |
 | `release-dart-flutter` | Prepare a Dart/Flutter release |
 | `security-devsecops` | Security audit, pen test, or vulnerability scan |
+
+### Profiles (`profiles/`)
+
+Profiles define the default role → model mapping for the LiteLLM gateway. Select one during setup or pass `--profile <name>` to override.
+
+| Profile | Strategy |
+|---------|----------|
+| `quality-first` | Balanced quality/cost — strong models for plan/review, fast models for exploration |
+| `all-claude` | Every role uses a Claude model (Anthropic only) |
+| `all-gemini` | Every role uses a Gemini model |
+| `cost-optimized` | Cheapest viable model per role |
+| `vertex-enterprise` | Google Vertex AI models throughout |
 
 ### Agent Roles (`agents/roles/`)
 
@@ -213,6 +266,8 @@ Before starting any non-trivial task, agents check if a workflow applies:
 
 | Document | Purpose |
 |----------|---------|
+| [Multi-model Guide](docs/multi-model.md) | LiteLLM gateway setup, per-role routing, OAuth integration |
+| [LiteLLM Service](docs/litellm-service.md) | Running and managing the local LiteLLM container |
 | [Orchestration Guide](docs/orchestration.md) | Detailed workflow diagrams, agent roles, and handoff protocol |
 | [AGENTS.md](AGENTS.md) | Orchestration policy and skill discovery rules |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
