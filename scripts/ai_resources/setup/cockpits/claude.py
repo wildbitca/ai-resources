@@ -25,6 +25,11 @@ SETTINGS_PATH = CONFIG_ROOT / "settings.json"
 CLAUDE_MD_PATH = CONFIG_ROOT / "CLAUDE.md"
 AGENTS_DIR = CONFIG_ROOT / "agents"
 
+# Env keys only meaningful in multi-model mode — must be removed on teardown or
+# when re-configuring in single-model mode, even if they were pre-existing at
+# the time of the last multi-model setup (and therefore not in the tracking record).
+_MULTI_MODEL_ONLY_ENV_KEYS: list[str] = ["ANTHROPIC_BASE_URL"]
+
 
 # Tools each role may use — used when generating subagent files.
 ROLE_TOOLS: dict[str, str | None] = {
@@ -402,11 +407,13 @@ def configure(ctx: dict) -> list[Path]:
         except (json.JSONDecodeError, OSError):
             existing = {}
 
-    # Record which env keys are net-new (so we can later remove only those on teardown)
+    # Record env keys that teardown must remove.
+    # Always include the known multi-model-only keys regardless of whether they were
+    # pre-existing (older installs may have written them before tracking existed).
     newly_added = _shared.env_keys_added_by_patch(SETTINGS_PATH, settings_patch.get("env", {}))
-    if mode == "multi-model" and newly_added:
+    if mode == "multi-model":
         s.tracking.cockpit_env_keys_added.setdefault(ID, [])
-        for k in newly_added:
+        for k in _MULTI_MODEL_ONLY_ENV_KEYS + newly_added:
             if k not in s.tracking.cockpit_env_keys_added[ID]:
                 s.tracking.cockpit_env_keys_added[ID].append(k)
 
@@ -422,6 +429,13 @@ def configure(ctx: dict) -> list[Path]:
                                          encoding="utf-8")
         except (json.JSONDecodeError, OSError):
             pass
+
+    # Single-model: proactively remove multi-model-only env keys that may linger
+    # from a prior multi-model setup when the tracking record was empty (e.g. the
+    # key was pre-existing at setup time so it was never added to cockpit_env_keys_added).
+    if mode == "single-model":
+        _shared.remove_env_keys_from_settings(SETTINGS_PATH, _MULTI_MODEL_ONLY_ENV_KEYS)
+
     written.append(SETTINGS_PATH)
 
     # 2. Subagent files

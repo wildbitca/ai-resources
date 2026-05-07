@@ -6,6 +6,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.1.7] — 2026-05-07 — fix single-model teardown leaves ANTHROPIC_BASE_URL
+
+### Fixed
+
+- **`ai-resources setup` single-model now cleans up `ANTHROPIC_BASE_URL`** from
+  `~/.claude/settings.json` when switching from multi-model mode.
+
+  Previously, two conditions could leave `ANTHROPIC_BASE_URL` behind after
+  selecting single-model:
+  1. The tracking record (`cockpit_env_keys_added`) was empty because the key was
+     already present in `settings.json` at the time of the multi-model setup (e.g.
+     written by an older kit version before tracking existed), so `env_keys_added_by_patch`
+     returned nothing → teardown skipped it.
+  2. `configure()` in single-model mode applied a patch without `ANTHROPIC_BASE_URL`
+     but `deep_merge_json` never removes keys — only adds or updates them.
+
+  Fix (both applied in `cockpits/claude.py`):
+  - **Tracking**: multi-model setup now always adds `_MULTI_MODEL_ONLY_ENV_KEYS`
+    (`["ANTHROPIC_BASE_URL"]`) to the teardown record regardless of whether the key
+    was pre-existing, ensuring teardown can find it.
+  - **Defensive cleanup**: `configure()` in single-model mode explicitly calls
+    `remove_env_keys_from_settings` for all multi-model-only keys after applying the
+    patch, catching any leftovers even when the tracking record was empty.
+
 ## [1.1.6] — 2026-05-07 — fix ai-resources audit
 
 ### Fixed
