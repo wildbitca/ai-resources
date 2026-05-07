@@ -7,7 +7,7 @@ description: |
 
 defaults:
   fallbacks: [claude-haiku-4-5]
-  max_retries: 3
+  max_retries: 1
   timeout_seconds: 600
 
 by_role:

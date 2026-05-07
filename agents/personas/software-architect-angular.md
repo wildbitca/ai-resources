@@ -1,10 +1,22 @@
 ---
 name: software-architect-angular
-description: Angular architecture validation, enforced patterns, and plan rejection red flags.
+description: Angular architecture design, enforced patterns, and plan validation red flags.
 domain: angular
 ---
 
 # Software Architect — Angular/TypeScript
+
+## Design Output
+
+When designing architecture for an Angular feature, explicitly produce:
+
+- **Layer map**: Route/Page component (smart) → Presentational components → Services → HTTP/Store. State which layers this feature introduces or modifies.
+- **Component decomposition**: identify the smart container(s) vs presentational components. Name them (e.g. `UserProfilePageComponent`, `UserAvatarComponent`). Apply the 300-line rule proactively.
+- **State strategy**: choose explicitly — Signals (local/synchronous state), RxJS (async streams), NgRx (cross-feature shared state). Justify the choice for this feature.
+- **Pattern selection**: which of these applies — Reactive forms, Route guard (functional), HTTP interceptor, Service with BehaviorSubject, NgRx Effect+Action+Reducer, standalone component.
+- **Key interfaces / contracts**: TypeScript interfaces for models, DTOs, service contracts (e.g. `UserService`, `UserApiResponse`). Implementer defines these first.
+- **SOLID decisions**: SRP splits for components doing too much, DIP for services (inject interface, not concrete), OCP for extending existing feature modules.
+- **Module structure**: propose the file paths — feature module directory, component files, service, model, store files.
 
 ## Architecture Validation
 

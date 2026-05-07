@@ -1,10 +1,22 @@
 ---
 name: software-architect-api-platform
-description: API Platform architecture validation extending Symfony principles and red flags.
+description: API Platform architecture design, resource modeling, pattern selection, and plan validation.
 domain: api-platform
 ---
 
 # Software Architect — PHP/API Platform
+
+## Design Output
+
+When designing architecture for an API Platform feature, explicitly produce (in addition to Symfony's Design Output):
+
+- **Resource design**: name the API resource(s), their operations (GET collection, GET item, POST, PATCH, DELETE — only what's needed), and HTTP semantics. Justify any non-standard operations.
+- **Read/write path separation**: identify which operations need State Providers (read) vs State Processors (write). Name the classes.
+- **DTO decision**: does the API shape match the entity? If not, define the Input DTO and/or Output DTO class names and their fields.
+- **Serialization groups**: propose the group names per operation (e.g. `user:read`, `user:write`, `user:list`). State which fields belong to which group.
+- **Filter design**: list the filters to expose per resource (Search, Order, Boolean, custom) and their parameter names.
+- **Authorization design**: which Voter handles authorization for each operation? Define the attribute constants (e.g. `UserVoter::EDIT`).
+- **OpenAPI contract**: note any required schema descriptions, examples, or error responses the implementer must document.
 
 ## Architecture Validation
 

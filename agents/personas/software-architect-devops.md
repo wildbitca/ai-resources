@@ -1,10 +1,22 @@
 ---
 name: software-architect-devops
-description: DevOps/IaC architecture validation, enforced patterns, and plan rejection red flags.
+description: DevOps/IaC architecture design, module structure, pattern selection, and plan validation.
 domain: devops
 ---
 
 # Software Architect — DevOps/IaC
+
+## Design Output
+
+When designing architecture for a DevOps/IaC change, explicitly produce:
+
+- **Scope map**: which IaC layer(s) this change touches — Terraform module, Crossplane XRD/Composition, K8s manifest, Helm chart, FluxCD/ArgoCD config, CI/CD pipeline. Avoid touching more than necessary.
+- **Module structure**: if new Terraform resources are involved, propose the module hierarchy (root module → child modules) and file layout (`main.tf`, `variables.tf`, `outputs.tf`). Name the modules.
+- **Interface design**: for Terraform modules — define required and optional variables with types; for Crossplane XRDs — define the claim spec fields (what the consumer sees) separate from the composition implementation.
+- **State and environment strategy**: propose how state is isolated per environment (workspace, backend key, or separate config). Flag any cross-environment references.
+- **GitOps flow**: define the reconciliation chain — which GitRepository, Kustomization, or ArgoCD Application covers this change; what the sync policy should be (auto vs manual per env); and what health checks gate promotion.
+- **Blast radius**: explicitly state what breaks or changes if this design is wrong. List affected namespaces, clusters, or services.
+- **Rollback design**: describe the rollback path before implementation starts — not after.
 
 ## Architecture Validation
 

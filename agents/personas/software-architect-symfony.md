@@ -1,10 +1,21 @@
 ---
 name: software-architect-symfony
-description: Symfony architecture validation, enforced patterns, and plan rejection red flags.
+description: Symfony architecture design, enforced patterns, and plan validation red flags.
 domain: symfony
 ---
 
 # Software Architect — PHP/Symfony
+
+## Design Output
+
+When designing architecture for a Symfony feature, explicitly produce:
+
+- **Layer map**: Controller (HTTP boundary) → Service (business logic) → Repository (data access) → Entity (domain model). State which layers this feature touches and why.
+- **Pattern selection**: name which of these applies — Repository for data access, Command+Handler via Messenger for async operations, EventSubscriber for side effects, Voter for authorization, DTO for API boundaries.
+- **Key interfaces / contracts**: list the PHP interfaces or abstract classes that must be defined (e.g. `UserRepositoryInterface`, `NotificationSenderInterface`). Implementer creates these first.
+- **SOLID decisions**: identify any DIP inversions (which service should depend on an interface, not a concrete class), SRP splits (if a class is doing more than one thing), OCP extensions (where to extend without modifying).
+- **Module structure**: propose the file paths — `src/Service/`, `src/Repository/`, `src/Entity/`, `src/EventSubscriber/`, etc.
+- **Doctrine mapping**: if entities are involved, note aggregate roots, cascade rules, and whether a migration is needed.
 
 ## Architecture Validation
 

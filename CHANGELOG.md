@@ -6,6 +6,41 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-05-07 — software-architect as designer + cost optimizations
+
+### Changed
+
+- **`software-architect` redesigned — Design Mode + Validate Mode** — the agent now
+  produces an explicit architecture design *before* validating the planner's plan.
+  Mode 1 (Design): layer map, pattern selection, SOLID decisions (DIP/SRP/OCP),
+  key interfaces/contracts the implementer must define first, proposed module/file
+  structure, Mermaid diagram. Mode 2 (Validate): checks the plan for consistency
+  with the design. Output artifact includes `Architecture_design_ref` and
+  `Design_summary` fields in the handoff.
+
+- **All 5 stack personas updated** — `software-architect-symfony`, `-angular`,
+  `-dart-flutter`, `-api-platform`, `-devops` each have a new `## Design Output`
+  section specifying what to produce per stack (layer maps, provider trees,
+  resource models, module structure, IaC interface design).
+
+- **`_feature-template.workflow.yaml` architect step** — prompt now has explicit
+  Step 1 (design) and Step 2 (validate) so the agent cannot skip design and
+  go straight to approve/reject.
+
+- **`infra-triage.workflow.yaml` analyze step** — added architecture design phase
+  (module structure, IaC pattern selection, rollback design) before the fix
+  strategy, so infrastructure fixes also get proper design upfront.
+
+- **`cost-optimized` profile** — `security-auditor` moved from
+  `anthropic/claude-sonnet-4-6` to `google/gemini-2.5-pro`. The audit role is
+  read-heavy scanning; Gemini Pro handles it at ~70% lower cost with equivalent
+  quality for SAST/dependency/secret detection work.
+
+- **All profiles** — `max_retries` reduced from `3` to `1`. Under rate limiting,
+  retrying a 30 K-token request 3× bills the full token count each attempt.
+  One retry is sufficient; repeated failures indicate a real issue requiring
+  attention, not more retries.
+
 ## [1.1.2] — 2026-05-07 — README refresh & version command fix
 
 ### Added

@@ -70,15 +70,33 @@ steps:
       - common-architecture-diagramming
       - common-system-design
     entry_criteria: Plan exists
-    exit_criteria: Architecture validated or concerns raised
+    exit_criteria: Architecture designed and plan validated
     handoff_to: implement
     on_concern_return_to: plan
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}}, Plan_ref, and Spec_refs. Validate plan against project architecture, existing specs, and ADRs in specs/architecture/.
-      Generate analysis YYMMDD-NNN.md in .agent-output/architect/.
-      If APPROVED: update {{handoff_file}} (Architect_approval: yes, Next=implementer).
-      If REJECTED: set Blocked: true, Return_to_step: plan, Block_reason: [observations].
+      Read {{handoff_file}}, Plan_ref, Spec_refs, and existing ADRs in specs/architecture/.
+
+      ## Step 1 — Design (MANDATORY, do first)
+      Produce an explicit architecture design for this feature. Output in .agent-output/architect/YYMMDD-NNN.md:
+      - Layer map: which layers this feature touches and what lives in each
+      - Pattern selection: which patterns apply (Repository, Service, Factory, Strategy, CQRS, etc.) and why
+      - SOLID application: interfaces to invert (DIP), responsibilities to split (SRP), extension points (OCP)
+      - Key interfaces / contracts: names of interfaces/abstract classes the implementer must define FIRST
+      - Module structure: proposed directory layout and file names for new/modified code
+      - Mermaid diagram: component or layer diagram if it clarifies the structure
+
+      ## Step 2 — Validate plan against design
+      Review Plan_ref against the architecture designed above:
+      - Does the file list match the proposed module structure?
+      - Are layer boundaries respected in the implementation steps?
+      - Are required interfaces listed before their concrete implementations?
+
+      Update {{handoff_file}}:
+      - Architecture_design_ref: path to design artifact
+      - Design_summary: 3–5 bullets (layers, patterns, key interfaces)
+      If APPROVED: Architect_approval: yes, Next=implementer.
+      If REJECTED: Blocked: true, Return_to_step: plan, Block_reason: [specific violations].
   - id: implement
     subagent_type: implementer
     skills:

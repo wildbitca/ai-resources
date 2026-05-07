@@ -6,7 +6,7 @@ description: |
 
 defaults:
   fallbacks: [gemini-2.5-flash]
-  max_retries: 3
+  max_retries: 1
   timeout_seconds: 600
 
 by_role:
@@ -17,7 +17,7 @@ by_role:
   software-architect: { provider: anthropic, model: claude-sonnet-4-6 }
   implementer:        { provider: anthropic, model: claude-sonnet-4-6 }
   code-reviewer:      { provider: google,    model: gemini-2.5-pro }
-  security-auditor:   { provider: anthropic, model: claude-sonnet-4-6 }
+  security-auditor:   { provider: google,    model: gemini-2.5-pro }
   tester:             { provider: google,    model: gemini-2.5-flash }
   verifier:           { provider: google,    model: gemini-2.5-flash-lite }
   package-upgrade:             { provider: anthropic, model: claude-sonnet-4-6 }

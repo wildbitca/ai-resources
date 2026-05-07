@@ -77,13 +77,22 @@ steps:
     skills:
       - common-best-practices
     entry_criteria: Both investigation steps complete
-    exit_criteria: Root cause identified, fix strategy with explicit blast radius documented
+    exit_criteria: Root cause identified, fix strategy with architecture design and explicit blast radius documented
     handoff_to: implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}, .agent-output/investigator/cluster-state.md, .agent-output/investigator/code-review.md.
 
-      Analyze root cause and propose a fix strategy. You MUST address:
+      ## Step 1 — Architecture Design for the fix
+      Before proposing a fix, design the correct structure:
+      - **Module/resource structure**: which Terraform modules, Crossplane XRDs, or K8s manifests need to change and how they should be organized
+      - **Pattern selection**: which IaC pattern applies (module composition, XRD claim interface, Kustomization patch, etc.)
+      - **Interface design**: if XRDs are involved, define the claim spec fields; if Terraform, define variable interfaces
+      - **Dependency direction**: which resources depend on which; fix order follows dependency order
+      - **Rollback design**: how to undo this design if it makes things worse (define before implementing)
+
+      ## Step 2 — Fix strategy
+      Analyze root cause and propose the fix strategy against the design above:
       1. **Root cause** — what exactly is broken and why
       2. **Blast radius** — which resources/claims/zones are affected
       3. **Safety check** — are there resources with existing tfState that could break?
@@ -98,7 +107,7 @@ steps:
       - Fix one thing at a time — don't batch unrelated fixes
 
       Write plan to .agent-output/architect/fix-plan.md.
-      Update {{handoff_file}} with: Fix_plan_ref, Root_cause, Blast_radius, Safety_status.
+      Update {{handoff_file}} with: Fix_plan_ref, Architecture_design_ref, Root_cause, Blast_radius, Safety_status.
 
   - id: implement
     subagent_type: implementer
