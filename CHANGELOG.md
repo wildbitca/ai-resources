@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.1.6] — 2026-05-07 — fix ai-resources audit
+
+### Fixed
+
+- **`ai-resources audit` rewritten from scratch** — the previous implementation
+  called `litellm.container_logs()` (a function that never existed) and expected
+  LiteLLM to emit cost lines in a specific log format it never produced. The
+  command crashed immediately on every invocation.
+
+  The new implementation reads directly from Claude Code's JSONL session files
+  (`~/.claude/projects/<slug>/*.jsonl`), which contain the authoritative token
+  usage and model name for every API call made by the cockpit and all subagents.
+
+  New flags:
+  - `--days N` — limit report to last N days (default: all time)
+  - `--verbose` / `-v` — show per-session breakdown table (date, model, calls,
+    output, cache-read, cost)
+
+  Cost estimates use a built-in price table (Anthropic + Google public list
+  prices). Gemini calls routed via LiteLLM appear with their correct provider
+  model name when the gateway returns it, confirming delegation is working.
+
 ## [1.1.5] — 2026-05-07 — full workflow coverage + orchestrator delegation rules
 
 ### Added
