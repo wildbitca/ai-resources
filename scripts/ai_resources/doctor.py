@@ -121,6 +121,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for cid, cs in configured:
         ui.ok(f"{cid}  v{cs.version or '?'}  → {cs.config_root}")
 
+    # 4b. Claude Code OAuth session — informational, not an error
+    if s.mode == "multi-model":
+        claude_cs = s.cockpits.get("claude")
+        if claude_cs and claude_cs.configured:
+            from .setup.cockpits import claude as _claude_cockpit
+            if _claude_cockpit.is_logged_in_via_oauth():
+                ui.info("Claude Code is signed in via OAuth (claude.ai subscription).")
+                ui.detail("Gateway uses allow_requests_on_db_unavailable=true — works as-is.")
+                ui.detail("To switch to API key mode: claude /logout → new terminal → ai-resources doctor")
+
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")
     if state.executors_path().is_file():

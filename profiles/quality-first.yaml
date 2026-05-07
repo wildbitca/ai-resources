@@ -1,9 +1,9 @@
-name: unified-default
+name: quality-first
 description: |
-  Mixed routing: large-context/research roles to Gemini 2.5 (Pro for reasoning,
-  Flash for high-volume), code-quality critical roles to Claude. Best balance
-  for the kit's workflows. Roughly 35-50% cheaper than all-Claude on typical
-  feature-implementation runs.
+  Quality-first routing: Claude for all code-critical roles (planner, architect,
+  implementer, reviewer, security, specialists), Gemini for high-volume support
+  roles (research, explore, tester). Roughly 35-50% cheaper than all-Claude on
+  typical feature-implementation runs without sacrificing code quality.
 
 defaults:
   fallbacks: [claude-haiku-4-5]

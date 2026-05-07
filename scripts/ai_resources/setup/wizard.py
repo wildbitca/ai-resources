@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import platform
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,12 +28,16 @@ TOTAL_STEPS = 9
 def run(args: argparse.Namespace) -> int:
     """Main wizard entry point."""
     ui.require_deps()
+    dry_run = getattr(args, "dry_run", False)
     ui.banner(
         "AI Resources Kit — Setup Wizard",
         subtitle="Multi-model orchestration via LiteLLM gateway",
         version=f"v{__version__}",
     )
+    if dry_run:
+        ui.console().print("[bold yellow]DRY RUN — no files will be written.[/bold yellow]\n")
 
+    prev_s = state.load()  # frozen snapshot of the previous run (used for teardown)
     s = state.load()
     is_first = state.is_first_run()
     if not is_first:
@@ -48,6 +53,15 @@ def run(args: argparse.Namespace) -> int:
     rc = _step1_mode(s)
     if rc != 0:
         return rc
+
+    # If the user just switched multi-model → single-model, offer to clean up
+    # everything we previously installed (tracking record drives the actions).
+    if (prev_s.mode == "multi-model"
+            and s.mode == "single-model"
+            and not is_first):
+        rc = _teardown_multi_model(prev_s, s)
+        if rc != 0:
+            return rc
 
     rc = _step2_cockpits(s)
     if rc != 0:
@@ -79,7 +93,7 @@ def run(args: argparse.Namespace) -> int:
         ui.section(6, TOTAL_STEPS, "Per-role model assignment")
         ui.info("Skipped.")
         # Set default profile for single-mode (legacy behavior)
-        s.profile = state.ProfileState(name="all-claude", customized=False)
+        s.profile = state.ProfileState(name="cost-optimized", customized=False)
 
     rc = _step7_cockpit_config(s)
     if rc != 0:
@@ -93,12 +107,13 @@ def run(args: argparse.Namespace) -> int:
         ui.section(8, TOTAL_STEPS, "Lifecycle")
         ui.info("Skipped (single-model mode).")
 
-    rc = _step9_apply(s)
+    rc = _step9_apply(s, dry_run=dry_run)
     if rc != 0:
         return rc
 
-    state.save(s)
-    _print_completion(s)
+    if not dry_run:
+        state.save(s)
+        _print_completion(s)
     return 0
 
 
@@ -164,6 +179,53 @@ def _step1_mode(s: state.SetupState) -> int:
     if s.mode is None:
         ui.warn("Setup cancelled.")
         return 130
+    return 0
+
+
+# --- Teardown — multi-model → single-model ---------------------------------------
+def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
+    """When switching multi-model → single-model, undo what we previously installed.
+
+    Drives off `prev_s.tracking` (the audit trail from the prior run). Asks once
+    for confirmation, listing every action it will take. On approval, executes
+    each action and resets the relevant `s` fields so the wizard continues with
+    a clean slate.
+    """
+    ui.console().print()
+    if hasattr(ui.console(), "rule"):
+        ui.console().rule("[bold yellow]Switching to single-model — cleanup[/]",
+                          style="yellow", align="left")
+    else:
+        ui.info("Switching to single-model — cleanup")
+
+    actions = litellm.plan_multi_model_teardown(prev_s)
+    if not actions:
+        ui.info("Nothing to clean up (no tracked artifacts from previous run).")
+        return 0
+
+    ui.info("The previous setup installed the following artifacts. "
+            "Switching to single-model will undo them:")
+    for _aid, desc in actions:
+        ui.detail(f"  • {desc}")
+    ui.console().print()
+
+    if not ui.confirm("Proceed with cleanup?", default=True):
+        ui.warn("Cleanup skipped — multi-model artifacts will remain on disk.")
+        ui.detail("You can re-run setup later or remove them manually.")
+        return 0
+
+    results = litellm.execute_multi_model_teardown(prev_s)
+    for aid, ok, msg in results:
+        if ok:
+            ui.ok(f"{aid}: {msg}")
+        else:
+            ui.warn(f"{aid}: {msg}")
+
+    # Reset the parts of `s` that no longer apply in single-model
+    s.litellm = state.LiteLLMState()
+    s.providers = {}
+    s.profile = state.ProfileState(name="cost-optimized", customized=False)
+    s.tracking = state.InstallTracking()
     return 0
 
 
@@ -298,6 +360,10 @@ def _step3_docker(s: state.SetupState) -> int:
         if not ok:
             ui.error(f"Pull failed: {msg[:300]}")
             return 1
+        # Track only if image wasn't already cached locally before this run.
+        if "Already exists" not in msg and "Image is up to date" not in msg:
+            s.tracking.docker_image_pulled_by_us = True
+            s.tracking.docker_image = image
         ui.ok("Image pulled")
     return 0
 
@@ -355,6 +421,7 @@ def _step3_pipx(s: state.SetupState) -> int:
     if existing.installed:
         ui.ok(f"litellm already installed: {existing.binary_path} v{existing.version}")
         s.litellm.local.binary_path = existing.binary_path
+        # Pre-existing — do NOT track as our install (don't uninstall on teardown)
         if ui.confirm("Reinstall to ensure latest?", default=False):
             with ui.spinner("Reinstalling LiteLLM via pipx"):
                 ok, msg = litellm.install_litellm_pipx()
@@ -380,6 +447,9 @@ def _step3_pipx(s: state.SetupState) -> int:
             ui.error("Installation completed but litellm not in PATH. Run `pipx ensurepath` and re-run.")
             return 1
         s.litellm.local.binary_path = new_det.binary_path
+        # Track that WE installed this — teardown is allowed to uninstall it.
+        s.tracking.litellm_installed_by_us = True
+        s.tracking.litellm_install_method = "pipx"
         ui.ok(f"LiteLLM installed at {new_det.binary_path}")
     return 0
 
@@ -402,6 +472,9 @@ def _step3_pipvenv(s: state.SetupState) -> int:
         ui.ok(f"LiteLLM already installed at {existing_bin}")
         s.litellm.local.binary_path = str(existing_bin)
         s.litellm.local.venv_path = str(litellm.venv_dir())
+        # Pre-existing venv — already tracked by an earlier setup run; if tracking
+        # is missing (e.g. user hand-created it), leave the flag alone so teardown
+        # won't blow away a venv we didn't make.
         if ui.confirm("Reinstall to ensure latest?", default=False):
             with ui.spinner("Reinstalling LiteLLM via pip"):
                 ok, msg = litellm.install_litellm_venv(python_path=py.binary_path)
@@ -429,6 +502,9 @@ def _step3_pipvenv(s: state.SetupState) -> int:
         return 1
     s.litellm.local.binary_path = msg
     s.litellm.local.venv_path = str(litellm.venv_dir())
+    # Track that WE created this venv — teardown may delete it.
+    s.tracking.litellm_installed_by_us = True
+    s.tracking.litellm_install_method = "pip-venv"
     ui.ok(f"LiteLLM installed at {msg}")
     return 0
 
@@ -448,7 +524,10 @@ def _step3_remote(s: state.SetupState) -> int:
     if not master_key:
         ui.error("Master key required for remote endpoint.")
         return 1
-    credentials.update_env({s.litellm.remote.master_key_env: master_key})
+    _, newly_added = credentials.update_env_tracked({s.litellm.remote.master_key_env: master_key})
+    for k in newly_added:
+        if k not in s.tracking.env_keys_added:
+            s.tracking.env_keys_added.append(k)
 
     with ui.spinner(f"Validating {url}"):
         ok, msg = litellm.validate_remote(url, master_key)
@@ -511,8 +590,19 @@ def _step5_credentials(s: state.SetupState) -> int:
 
     updates: dict[str, str] = {}
 
-    # Master key for LiteLLM (always)
-    if not credentials.has_key("LITELLM_MASTER_KEY"):
+    # Master key for LiteLLM.
+    # Claude Code v2+ reads its API key from the macOS Keychain ("Claude Code"
+    # service) and sends it verbatim — it ignores ANTHROPIC_API_KEY in settings.json.
+    # The gateway master key must equal that Keychain key for auth to succeed.
+    keychain_key = credentials.get_claude_code_keychain_key()
+    current_master = credentials.get_key("LITELLM_MASTER_KEY")
+    if keychain_key:
+        if current_master != keychain_key:
+            updates["LITELLM_MASTER_KEY"] = keychain_key
+            ui.detail(f"LITELLM_MASTER_KEY synced from Claude Code Keychain ({credentials.mask(keychain_key)})")
+        else:
+            ui.detail(f"LITELLM_MASTER_KEY already matches Keychain ({credentials.mask(current_master)})")
+    elif not current_master:
         master = credentials.generate_master_key()
         updates["LITELLM_MASTER_KEY"] = master
         ui.detail(f"Generated LITELLM_MASTER_KEY ({credentials.mask(master)})")
@@ -556,7 +646,10 @@ def _step5_credentials(s: state.SetupState) -> int:
                 updates[env_var] = new_val
 
     if updates:
-        credentials.update_env(updates)
+        _, newly_added = credentials.update_env_tracked(updates)
+        for k in newly_added:
+            if k not in s.tracking.env_keys_added:
+                s.tracking.env_keys_added.append(k)
         ui.ok(f"Credentials written to {state.env_path()}")
 
     return 0
@@ -585,15 +678,15 @@ def _step6_profile(s: state.SetupState) -> int:
         choices.append(ui.Choice(label, value=name))
     choices.append(ui.Choice("custom — Configure each role individually", value="__custom__"))
 
-    default = s.profile.name if s.profile.name in available else "unified-default"
+    default = s.profile.name if s.profile.name in available else "quality-first"
     chosen = ui.select("Choose profile:", choices, default=default)
     if chosen is None:
         return 130
 
     if chosen == "__custom__":
-        # Start from unified-default, then customize each role
-        base = profiles.load_profile("unified-default")
-        chosen = "unified-default"
+        # Start from quality-first, then customize each role
+        base = profiles.load_profile("quality-first")
+        chosen = "quality-first"
     else:
         base = profiles.load_profile(chosen)
 
@@ -681,6 +774,16 @@ def _step8_lifecycle(s: state.SetupState) -> int:
         ui.info("Skipped (gateway is not local).")
         return 0
 
+    # Docker / Podman containers self-restart via compose's `restart: always`
+    # whenever the runtime comes back up — no LaunchAgent / systemd unit needed.
+    if s.litellm.local.runtime in ("docker", "podman"):
+        s.litellm.local.auto_start = True  # implicit via container restart policy
+        s.litellm.local.log_dir = str(litellm.log_dir())
+        ui.info(f"Skipped — {s.litellm.local.runtime} container uses "
+                f"`restart: always` (no LaunchAgent needed).")
+        ui.detail("Container starts automatically when the Docker daemon is running.")
+        return 0
+
     s.litellm.local.auto_start = ui.confirm(
         "Auto-start LiteLLM at every login?",
         default=s.litellm.local.auto_start,
@@ -698,7 +801,9 @@ def _step8_lifecycle(s: state.SetupState) -> int:
 
 
 # --- Step 9 — Apply -------------------------------------------------------------
-def _step9_apply(s: state.SetupState) -> int:
+def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
+    if dry_run:
+        return _step9_dry_run(s)
     ui.section(9, TOTAL_STEPS, "Apply")
     ui.console().print()
     ui.info("Generating configuration files...")
@@ -719,14 +824,19 @@ def _step9_apply(s: state.SetupState) -> int:
         # Write LiteLLM configs (litellm.yaml + docker-compose.yaml)
         if s.litellm.deployment == "local":
             try:
-                paths = litellm.write_configs(executors_doc, dict(s.providers))
+                paths = litellm.write_configs(executors_doc, {k: asdict(v) for k, v in s.providers.items()})
                 for label, p in paths.items():
                     ui.ok(str(p))
+                    if str(p) not in s.tracking.config_files_written:
+                        s.tracking.config_files_written.append(str(p))
             except (RuntimeError, OSError) as e:
                 ui.error(f"Failed to write LiteLLM config: {e}")
                 return 1
+        # Always track the executors.yaml we just wrote
+        if str(state.executors_path()) not in s.tracking.config_files_written:
+            s.tracking.config_files_written.append(str(state.executors_path()))
     else:
-        executors_doc = profiles.to_executors(profiles.load_profile("all-claude"))
+        executors_doc = profiles.to_executors(profiles.load_profile("cost-optimized"))
 
     # Master key from .env
     master_key = credentials.get_key("LITELLM_MASTER_KEY")
@@ -776,6 +886,7 @@ def _step9_apply(s: state.SetupState) -> int:
                 port=s.litellm.local.port,
                 host=s.litellm.local.bind_address,
             )
+            s.tracking.wrapper_path = str(wrapper)
             ui.ok(str(wrapper))
 
             # 2. Install lifecycle (always — auto-start determines whether it actually starts)
@@ -783,6 +894,8 @@ def _step9_apply(s: state.SetupState) -> int:
                 try:
                     p = litellm.install_lifecycle(wrapper)
                     s.litellm.local.lifecycle_path = str(p)
+                    s.tracking.lifecycle_installed = True
+                    s.tracking.lifecycle_path_written = str(p)
                     ui.ok(f"Service installed: {p}")
                 except (OSError, RuntimeError) as e:
                     ui.error(f"Lifecycle install failed: {e}")
@@ -796,9 +909,13 @@ def _step9_apply(s: state.SetupState) -> int:
                 ui.ok("LiteLLM started in background (will not auto-restart on logout)")
 
         elif s.litellm.local.runtime in ("docker", "podman"):
-            # Docker mode — write compose, start container, install auto-start
+            # Docker mode — write compose, start container. Auto-start is handled
+            # entirely by the container's `restart: always` policy; no LaunchAgent
+            # / systemd unit gets installed for this runtime.
             try:
                 cp = litellm.write_compose_yaml()
+                if str(cp) not in s.tracking.config_files_written:
+                    s.tracking.config_files_written.append(str(cp))
                 ui.ok(str(cp))
             except Exception as e:
                 ui.error(f"Compose file write failed: {e}")
@@ -808,13 +925,8 @@ def _step9_apply(s: state.SetupState) -> int:
                     ui.error("Container start failed")
                     ui.detail("Run `ai-resources daemon logs` to investigate")
                     return 1
-            if s.litellm.local.auto_start:
-                try:
-                    p = litellm.install_docker_lifecycle(cp)
-                    s.litellm.local.lifecycle_path = str(p)
-                    ui.ok(f"Auto-start installed: {p}")
-                except (OSError, RuntimeError) as e:
-                    ui.warn(f"Auto-start setup failed (container still running): {e}")
+            ui.ok(f"Container running with restart policy — auto-restarts when "
+                  f"{s.litellm.local.runtime} comes up.")
 
         # Wait for gateway health regardless of mode
         with ui.spinner("Waiting for gateway to become healthy"):
@@ -833,11 +945,32 @@ def _step9_apply(s: state.SetupState) -> int:
         ui.console().print()
         ui.info("Running smoke tests (~$0.001 of tokens)...")
         results = smoke.run_all(executors_doc, gateway_url, master_key)
+
+        # Persist full results so users can investigate truncated errors
+        smoke_log = litellm.log_dir() / "smoke.log"
+        try:
+            with smoke_log.open("a", encoding="utf-8") as fp:
+                fp.write(f"\n=== {datetime.now(timezone.utc).isoformat()} ===\n")
+                for label, ok, msg in results:
+                    status = "PASS" if ok else "FAIL"
+                    fp.write(f"[{status}] {label}\n")
+                    if msg:
+                        fp.write(f"  {msg}\n")
+        except OSError:
+            pass
+
+        had_failures = False
         for label, ok, msg in results:
             if ok:
                 ui.ok(label)
             else:
-                ui.warn(f"{label}  ({msg[:80]})")
+                had_failures = True
+                ui.warn(f"{label}")
+                # Show first 300 chars across multiple lines so the cause is visible
+                for line in (msg or "(no detail)").splitlines():
+                    ui.detail(f"  {line[:300]}")
+        if had_failures:
+            ui.detail(f"  Full smoke log: {smoke_log}")
 
         s.smoke_tests = {
             "last_run": datetime.now(timezone.utc).isoformat(),
@@ -847,8 +980,260 @@ def _step9_apply(s: state.SetupState) -> int:
     return 0
 
 
+# --- Step 9 dry-run preview ------------------------------------------------------
+def _step9_dry_run(s: state.SetupState) -> int:
+    """Render all configs to a temp dir, print them, start the gateway, run smoke tests, tear down."""
+    import json
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+
+    from .. import repo_root as _repo_root
+    from .cockpits import claude as _claude_cockpit
+
+    console = ui.console()
+    ui.section(9, TOTAL_STEPS, "Apply (DRY RUN)")
+    console.print()
+    console.print("[bold yellow]DRY RUN — configs shown below will NOT be written.[/]")
+    console.print("[bold yellow]Gateway will be started temporarily for smoke tests, then stopped.[/]")
+    console.print()
+
+    # Build executors
+    if s.mode == "multi-model":
+        base = profiles.load_profile(s.profile.name)
+        if s.profile.customized and s.profile.customizations:
+            customizations = {k: v for k, v in s.profile.customizations.items()
+                              if k in profiles.KNOWN_ROLES}
+            base = profiles.merge_customizations(base, customizations)
+        executors_doc = profiles.to_executors(base)
+    else:
+        executors_doc = profiles.to_executors(profiles.load_profile("cost-optimized"))
+
+    master_key = credentials.get_key("LITELLM_MASTER_KEY") or ""
+    bind = s.litellm.local.bind_address or "127.0.0.1"
+    port = s.litellm.local.port or 4000
+    gateway_url = (
+        s.litellm.remote.url if s.litellm.deployment == "remote"
+        else f"http://{bind}:{port}"
+    )
+    ak_path = str(_repo_root())
+    mode = s.mode
+
+    # Role table
+    ui.role_table(profiles.role_table(executors_doc), title=f"Profile: {s.profile.name}")
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="ai-resources-dryrun-"))
+    tmp_litellm_yaml = tmp_dir / "litellm.yaml"
+    tmp_compose_yaml = tmp_dir / "docker-compose.yaml"
+    proc = None
+    started_docker = False
+
+    try:
+        # ── litellm.yaml ──────────────────────────────────────────────────────
+        if s.mode == "multi-model" and s.litellm.deployment == "local":
+            try:
+                yaml_content = litellm._render_litellm_yaml(
+                    executors_doc, dict(s.providers), "LITELLM_MASTER_KEY",
+                )
+                tmp_litellm_yaml.write_text(yaml_content, encoding="utf-8")
+                console.print(f"\n[bold cyan]── litellm.yaml  (would write → {state.litellm_path()})[/]")
+                for line in yaml_content.splitlines():
+                    console.print(f"  {line}")
+            except Exception as e:
+                ui.warn(f"Cannot render litellm.yaml: {e}")
+
+        # ── docker-compose.yaml ───────────────────────────────────────────────
+        runtime = s.litellm.local.runtime
+        if (s.mode == "multi-model" and s.litellm.deployment == "local"
+                and runtime in ("docker", "podman") and tmp_litellm_yaml.is_file()):
+            try:
+                import yaml as _yaml
+                image = s.litellm.local.image or litellm.DEFAULT_DOCKER_IMAGE
+                compose_body = {
+                    "services": {
+                        "ai-resources-litellm-dryrun": {
+                            "image": image,
+                            "container_name": "ai-resources-litellm-dryrun",
+                            "command": ["--config", "/app/config.yaml", "--port", "4000",
+                                        "--host", "0.0.0.0"],
+                            "ports": [f"{bind}:{port}:4000"],
+                            "volumes": [
+                                f"{tmp_litellm_yaml}:/app/config.yaml:ro",
+                                f"{state.env_path()}:/app/.env:ro",
+                            ],
+                            "env_file": [str(state.env_path())],
+                            "restart": "no",
+                            "networks": ["ai-resources"],
+                            # Use python3 (always available in Python-based images) instead of
+                            # curl (absent from slim images) to avoid false unhealthy status.
+                            "healthcheck": {
+                                "test": ["CMD-SHELL",
+                                         "python3 -c \"import urllib.request; "
+                                         "urllib.request.urlopen("
+                                         "'http://localhost:4000/health/liveliness', timeout=3)"
+                                         "\" 2>/dev/null || exit 1"],
+                                "interval": "30s",
+                                "timeout": "5s",
+                                "retries": 3,
+                                "start_period": "30s",
+                            },
+                        }
+                    },
+                    "networks": {"ai-resources": {"driver": "bridge"}},
+                }
+                compose_content = _yaml.safe_dump(compose_body, default_flow_style=False, sort_keys=False)
+                tmp_compose_yaml.write_text(compose_content, encoding="utf-8")
+                console.print(f"\n[bold cyan]── docker-compose.yaml  (would write → {state.compose_path()})[/]")
+                for line in compose_content.splitlines():
+                    console.print(f"  {line}")
+            except Exception as e:
+                ui.warn(f"Cannot render compose YAML: {e}")
+
+        # ── settings.json patch ───────────────────────────────────────────────
+        console.print(f"\n[bold cyan]── settings.json patch  (→ {_claude_cockpit.SETTINGS_PATH})[/]")
+        patch = _claude_cockpit._build_settings_patch(
+            executors_doc, master_key, gateway_url, ak_path, mode,
+        )
+        env_patch = patch.get("env", {})
+        existing_env: dict = {}
+        if _claude_cockpit.SETTINGS_PATH.is_file():
+            try:
+                existing_env = json.loads(
+                    _claude_cockpit.SETTINGS_PATH.read_text(encoding="utf-8")
+                ).get("env", {})
+            except (json.JSONDecodeError, OSError):
+                pass
+        for k, v in env_patch.items():
+            display_v = credentials.mask(v) if ("KEY" in k or "TOKEN" in k) else v
+            if k not in existing_env:
+                console.print(f"  [green]+ {k} = {display_v}  (new)[/]")
+            elif existing_env[k] == v:
+                console.print(f"  [dim]= {k} = {display_v}  (unchanged)[/]")
+            else:
+                console.print(f"  [yellow]~ {k} = {display_v}  (update)[/]")
+
+        # ── start gateway for testing ─────────────────────────────────────────
+        if s.mode == "multi-model" and tmp_litellm_yaml.is_file():
+            console.print()
+            ui.info("Starting gateway temporarily for smoke tests…")
+
+            if runtime in ("pipx", "pip-venv"):
+                # Resolve litellm binary
+                bin_path = Path(s.litellm.local.binary_path or "")
+                if not bin_path.is_file():
+                    if runtime == "pip-venv":
+                        bin_path = litellm.venv_dir() / "bin" / "litellm"
+                    candidate = shutil.which("litellm")
+                    if candidate and not bin_path.is_file():
+                        bin_path = Path(candidate)
+                if not bin_path.is_file():
+                    ui.warn("litellm binary not found — skipping live gateway test")
+                    ui.detail(f"Expected: {bin_path}")
+                    ui.detail("Run `ai-resources setup` (without --dry-run) to install it first.")
+                else:
+                    env_for_proc = {**os.environ, **credentials.load_env()}
+                    proc = subprocess.Popen(
+                        [str(bin_path), "--config", str(tmp_litellm_yaml),
+                         "--port", str(port), "--host", bind],
+                        env=env_for_proc,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    with ui.spinner("Waiting for gateway health"):
+                        healthy = litellm.wait_for_health(
+                            f"{gateway_url}/health/liveliness",
+                            max_attempts=60, delay=1.0,
+                        )
+                    if healthy:
+                        ui.ok(f"Gateway healthy at {gateway_url}")
+                    else:
+                        ui.error("Gateway did not become healthy within 60 s")
+                        ui.detail("Check logs above or try starting manually:")
+                        ui.detail(f"  source {state.env_path()} && {bin_path} "
+                                  f"--config {tmp_litellm_yaml} --port {port}")
+
+            elif runtime in ("docker", "podman") and tmp_compose_yaml.is_file():
+                with ui.spinner(f"docker compose up -d (dry-run container)"):
+                    rc, _, err = litellm._run(
+                        [runtime, "compose", "-f", str(tmp_compose_yaml), "up", "-d"],
+                        timeout=120,
+                    )
+                if rc != 0:
+                    ui.error(f"Container start failed: {err[:200]}")
+                else:
+                    started_docker = True
+                    with ui.spinner("Waiting for gateway health"):
+                        healthy = litellm.wait_for_health(
+                            f"{gateway_url}/health/liveliness",
+                            max_attempts=60, delay=1.0,
+                        )
+                    if healthy:
+                        ui.ok(f"Gateway healthy at {gateway_url}")
+                    else:
+                        ui.error("Gateway did not become healthy within 60 s")
+                        ui.detail(f"  {runtime} logs ai-resources-litellm-dryrun")
+
+        elif s.mode == "multi-model" and s.litellm.deployment == "remote":
+            with ui.spinner(f"Validating remote {s.litellm.remote.url}"):
+                ok, msg = litellm.validate_remote(s.litellm.remote.url, master_key)
+            if ok:
+                ui.ok("Remote endpoint reachable")
+            else:
+                ui.error(f"Remote unreachable: {msg}")
+
+        # ── smoke tests ───────────────────────────────────────────────────────
+        if s.mode == "multi-model":
+            console.print()
+            ui.info("Running smoke tests…")
+            results = smoke.run_all(executors_doc, gateway_url, master_key)
+            for label, ok, msg in results:
+                if ok:
+                    ui.ok(label)
+                else:
+                    ui.warn(label)
+                    for line in (msg or "(no detail)").splitlines():
+                        ui.detail(f"  {line[:300]}")
+
+    finally:
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        if started_docker and tmp_compose_yaml.is_file():
+            litellm._run(
+                [runtime, "compose", "-f", str(tmp_compose_yaml), "down"],
+                timeout=60,
+            )
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    console.print()
+    ui.info("Dry run complete — no permanent changes made.")
+    ui.detail("Remove --dry-run to apply.")
+    return 0
+
+
 # --- Completion banner -----------------------------------------------------------
 def _print_completion(s: state.SetupState) -> None:
+    # Multi-model + Claude Code OAuth session = gateway auth failures.
+    # Surface this warning before the banner so users see it.
+    if s.mode == "multi-model":
+        claude_cs = s.cockpits.get("claude")
+        if claude_cs and claude_cs.configured:
+            from .cockpits import claude as _claude_cockpit
+            if _claude_cockpit.is_logged_in_via_oauth():
+                ui.console().print()
+                ui.info("Claude Code is signed in via OAuth (claude.ai subscription).")
+                ui.detail("The gateway runs with allow_requests_on_db_unavailable=true,")
+                ui.detail("so your current setup works as-is.")
+                ui.detail("")
+                ui.detail("To switch to API key mode (cancel subscription):")
+                ui.detail("  1. claude /logout")
+                ui.detail("  2. Open a new terminal")
+                ui.detail("  3. ai-resources doctor")
+
     ui.console().print()
     ui.banner(
         "✓ Setup complete",

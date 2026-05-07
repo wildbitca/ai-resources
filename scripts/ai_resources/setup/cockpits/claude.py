@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
 import shutil
 import subprocess
@@ -67,7 +68,10 @@ def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
     }
     if mode == "multi-model":
         env["ANTHROPIC_BASE_URL"] = gateway_url
-        env["ANTHROPIC_API_KEY"] = master_key
+        # ANTHROPIC_API_KEY is intentionally not set here: Claude Code reads its
+        # API key from the macOS Keychain ("Claude Code" service) and sends it as
+        # x-api-key, ignoring any value in the env block. The gateway master key
+        # must equal that Keychain key (handled in the credentials wizard step).
 
     return {
         "env": env,
@@ -233,6 +237,130 @@ def _build_agent_teams_section() -> str:
     )
 
 
+def is_logged_in_via_oauth() -> bool:
+    """Detect OAuth/firstParty mode by querying `claude auth status`.
+
+    Matters in multi-model mode: firstParty auth sends the OAuth session token
+    to the LiteLLM gateway instead of the API key, causing 'db not found' errors
+    (the gateway has no DB to validate session tokens).
+
+    Primary:  `claude auth status` JSON (apiProvider == "firstParty").
+    Fallback: Keychain / credentials-file check (older Claude Code versions).
+    """
+    claude_bin = shutil.which("claude")
+    if claude_bin:
+        try:
+            r = subprocess.run(
+                ["claude", "auth", "status"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                try:
+                    data = json.loads(r.stdout.strip())
+                    if not data.get("loggedIn", False):
+                        return False
+                    return (data.get("apiProvider") == "firstParty"
+                            or data.get("authMethod") == "claude.ai")
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+    # Fallback for older versions: keychain / credential-file inspection
+    sysname = platform.system()
+    if sysname == "Darwin":
+        try:
+            r = subprocess.run(
+                ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode != 0:
+                return False
+            try:
+                creds = json.loads(r.stdout.strip())
+                # MCP-only entries have only "mcpOAuth" — not a Claude account session.
+                return bool(creds.get("oauthToken") or creds.get("sessionToken")
+                            or creds.get("claudeAi") or creds.get("claudeAI"))
+            except (json.JSONDecodeError, AttributeError):
+                val = r.stdout.strip()
+                return bool(val and not val.startswith("sk-ant-") and len(val) > 20)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+    if sysname == "Linux":
+        for p in (
+            Path.home() / ".config" / "Claude" / "credentials.json",
+            Path.home() / ".config" / "claude" / "credentials.json",
+            Path.home() / ".local" / "share" / "Claude" / "credentials.json",
+        ):
+            if p.is_file():
+                return True
+    return False
+
+
+def _get_keychain_account() -> str:
+    """Return the account name stored in the 'Claude Code' Keychain entry."""
+    try:
+        r = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            for line in r.stdout.splitlines():
+                if '"acct"' in line:
+                    m = re.search(r'"acct"<blob>="([^"]+)"', line)
+                    if m:
+                        return m.group(1)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return Path.home().name
+
+
+def fix_oauth_for_gateway() -> tuple[bool, str]:
+    """Exit OAuth mode and restore the API key for LiteLLM gateway auth.
+
+    In OAuth/firstParty mode Claude Code sends its session token to the gateway
+    instead of the API key.  The gateway has no DB to validate session tokens,
+    so every request fails with 'db not found'.  This function:
+
+      1. Saves the current API key from Keychain BEFORE logout (logout clears it).
+      2. Runs `claude logout` to clear the OAuth session.
+      3. Writes the saved key back to Keychain so Claude Code starts in API key
+         mode on next launch (no login prompt, no OAuth override).
+
+    Returns (success: bool, message: str).
+    """
+    from . import _shared as _sh  # noqa: F401 — ensure relative import works
+    from .. import credentials as _creds
+
+    if platform.system() != "Darwin":
+        return False, "automatic OAuth fix is macOS-only"
+
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        return False, "`claude` binary not found"
+
+    # Step 1 — snapshot key + account before anything changes
+    saved_key = _creds.get_claude_code_keychain_key()
+    account = _get_keychain_account()
+
+    # Step 2 — logout (clears OAuth session and Keychain entry)
+    r = subprocess.run(["claude", "logout"], capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        return False, f"`claude logout` failed: {r.stderr.strip() or 'non-zero exit'}"
+
+    # Step 3 — restore API key so Claude Code doesn't prompt for login
+    if saved_key:
+        ok = _creds.write_claude_code_keychain_key(saved_key, account)
+        if not ok:
+            return (False,
+                    "logged out OK but could not restore API key to Keychain — "
+                    f"run manually: security add-generic-password -U -s 'Claude Code' "
+                    f"-a {account} -w <your-key>")
+        return True, "ok-with-key"
+
+    return True, "ok-no-key"
+
+
 def _install_engram_plugin() -> bool:
     """Install Engram plugin if claude binary is available."""
     if not (shutil.which("engram") and shutil.which("claude")):
@@ -273,6 +401,14 @@ def configure(ctx: dict) -> list[Path]:
             existing = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             existing = {}
+
+    # Record which env keys are net-new (so we can later remove only those on teardown)
+    newly_added = _shared.env_keys_added_by_patch(SETTINGS_PATH, settings_patch.get("env", {}))
+    if mode == "multi-model" and newly_added:
+        s.tracking.cockpit_env_keys_added.setdefault(ID, [])
+        for k in newly_added:
+            if k not in s.tracking.cockpit_env_keys_added[ID]:
+                s.tracking.cockpit_env_keys_added[ID].append(k)
 
     # Apply patch
     _shared.deep_merge_json(SETTINGS_PATH, settings_patch)
@@ -317,3 +453,8 @@ def configure(ctx: dict) -> list[Path]:
     s.cockpits[ID] = cs
 
     return written
+
+
+def teardown(env_keys: list[str]) -> list[str]:
+    """Remove the listed env keys from settings.json. Returns keys actually removed."""
+    return _shared.remove_env_keys_from_settings(SETTINGS_PATH, env_keys)

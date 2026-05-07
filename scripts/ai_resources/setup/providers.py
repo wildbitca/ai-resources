@@ -75,15 +75,21 @@ KNOWN_MODELS: dict[str, list[str]] = {
         "gemini-2.5-flash-lite",
     ],
     "vertex": [
-        "claude-opus-4-7@20260101",
-        "claude-sonnet-4-6@20260101",
+        # Vertex IDs verified against docs.anthropic.com — Opus 4.7 / Sonnet 4.6
+        # use bare alias (no @date suffix); Haiku 4.5 still requires @date.
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5@20251001",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
     ],
     "openai": [
         "gpt-5",
         "gpt-5-mini",
+        "gpt-5-nano",
         "gpt-4o",
+        "gpt-4o-mini",
     ],
     "ollama": [
         "qwen2.5-coder:32b",

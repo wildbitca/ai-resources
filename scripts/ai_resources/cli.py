@@ -75,6 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Use saved answers without prompting (for CI)")
     p_st.add_argument("--profile", default="",
                       help="Skip prompts and use this profile")
+    p_st.add_argument("--dry-run", action="store_true",
+                      help="Preview generated configs + test gateway without writing anything")
     p_st.set_defaults(func=cmd_setup)
 
     # version

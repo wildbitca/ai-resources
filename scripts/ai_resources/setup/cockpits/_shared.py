@@ -39,6 +39,42 @@ def deep_merge_json(path: Path, patch: dict, *, dry_run: bool = False) -> bool:
     return True
 
 
+def env_keys_added_by_patch(path: Path, patch_env: dict[str, str]) -> list[str]:
+    """Return env keys from patch_env that aren't already present at path['env'].
+
+    Used by cockpit configurators to record exactly which keys they're introducing
+    (so we can later remove only those, not user-set values).
+    """
+    if not path.is_file():
+        return list(patch_env.keys())
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return list(patch_env.keys())
+    existing_env = existing.get("env") or {}
+    return [k for k in patch_env if k not in existing_env]
+
+
+def remove_env_keys_from_settings(path: Path, keys: list[str]) -> list[str]:
+    """Remove the given keys from the settings.json `env` block. Returns keys actually removed."""
+    if not path.is_file() or not keys:
+        return []
+    try:
+        cur = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    env_block = cur.get("env")
+    if not isinstance(env_block, dict):
+        return []
+    removed = [k for k in keys if k in env_block]
+    for k in removed:
+        env_block.pop(k, None)
+    if not env_block:
+        cur.pop("env", None)
+    path.write_text(json.dumps(cur, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return removed
+
+
 def write_text(path: Path, content: str, *, dry_run: bool = False) -> bool:
     """Write text file, creating parent dirs. Returns True if written/changed."""
     if path.is_file():

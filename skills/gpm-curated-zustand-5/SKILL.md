@@ -3,7 +3,6 @@ name: zustand-5
 description: >
   Zustand 5 state management patterns.
   Trigger: When managing React state with Zustand.
-  (triggers: **/*.ts, **/*.tsx, zustand, create store, useStore, state management react, persist middleware, immer middleware, devtools, zustand 5, slice pattern)
 license: Apache-2.0
 metadata:
   author: gentleman-programming

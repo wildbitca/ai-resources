@@ -87,10 +87,28 @@ def _run(cmd: list[str], timeout: int = 60, check: bool = False,
 # ============================================================
 # Config rendering (litellm.yaml — same regardless of runtime mode)
 # ============================================================
+# Claude models Claude Code uses internally (main session + background tasks).
+# Added as passthrough entries whenever Anthropic is a configured provider so
+# requests with these model names don't hit ProxyModelNotFoundError.
+_CLAUDE_PASSTHROUGH_MODELS = [
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",
+]
+
+
 def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) -> str:
-    """Build litellm.yaml content from executors.yaml + providers config."""
+    """Build litellm.yaml content from executors.yaml + providers config.
+
+    No master_key is set in general_settings: the gateway listens only on
+    127.0.0.1 (localhost), so there is no external exposure and auth is
+    unnecessary.  Claude Code in OAuth mode sends its session token rather than
+    the API key — removing master_key avoids the key-mismatch 'db not found'
+    error without requiring the user to logout.
+    """
     model_list: list[dict] = []
     seen_models: set[str] = set()
+    has_anthropic = providers.get("anthropic", {}).get("enabled", False)
 
     for role, cfg in executors.get("by_role", {}).items():
         model_name = cfg.get("model", "")
@@ -134,6 +152,21 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
             "litellm_params": litellm_params,
         })
 
+    # Add passthrough entries for all current Claude models so Claude Code's
+    # internal requests (haiku for background tasks, sonnet/opus for main)
+    # always resolve even if the executor config only mentions some of them.
+    if has_anthropic:
+        for claude_model in _CLAUDE_PASSTHROUGH_MODELS:
+            if claude_model not in seen_models:
+                model_list.append({
+                    "model_name": claude_model,
+                    "litellm_params": {
+                        "model": f"anthropic/{claude_model}",
+                        "api_key": credentials.secret_ref("ANTHROPIC_API_KEY"),
+                    },
+                })
+                seen_models.add(claude_model)
+
     fallback_map: dict[str, list[str]] = {}
     for role, cfg in executors.get("by_role", {}).items():
         fbs = cfg.get("fallbacks") or []
@@ -157,6 +190,13 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
         },
         "general_settings": {
             "master_key": credentials.secret_ref(master_key_env),
+            # Claude Code in OAuth mode sends its session token instead of the
+            # LITELLM_MASTER_KEY (the session token changes on every re-auth).
+            # allow_requests_on_db_unavailable=true makes LiteLLM pass through
+            # requests whose key doesn't match master_key and can't be looked up
+            # in a DB (no DB is configured). The gateway is localhost-only so
+            # this is safe — no external process can reach 127.0.0.1:4000.
+            "allow_requests_on_db_unavailable": True,
         },
     }
     if yaml is None:
@@ -432,6 +472,180 @@ def uninstall_lifecycle() -> None:
 
 
 # ============================================================
+# Uninstall helpers — remove what we put in place
+# ============================================================
+def pipx_uninstall_litellm() -> tuple[bool, str]:
+    """`pipx uninstall litellm` — best-effort, returns (ok, message)."""
+    if not shutil.which("pipx"):
+        return False, "pipx not on PATH"
+    rc, out, err = _run(["pipx", "uninstall", "litellm"], timeout=120)
+    return rc == 0, (err or out).strip()[:300]
+
+
+def remove_venv() -> bool:
+    """Delete the dedicated venv at ~/.config/ai-resources/venv/."""
+    venv = venv_dir()
+    if not venv.exists():
+        return True
+    try:
+        shutil.rmtree(venv)
+        return True
+    except OSError:
+        return False
+
+
+def docker_compose_down(remove_image: bool = False) -> bool:
+    """`docker compose down` — optionally also remove the image we pulled."""
+    s = state.load()
+    runtime = s.litellm.local.runtime if s.litellm.local.runtime in ("docker", "podman") else "docker"
+    cmd = [runtime, "compose", "-f", str(state.compose_path()), "down"]
+    if remove_image:
+        cmd += ["--rmi", "local", "--volumes"]
+    rc, _, _ = _run(cmd, timeout=120)
+    return rc == 0
+
+
+def remove_wrapper_script() -> bool:
+    """Delete the wrapper script + its parent bin/ if empty."""
+    path = wrapper_script_path()
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            return False
+    bin_dir = path.parent
+    if bin_dir.is_dir():
+        try:
+            bin_dir.rmdir()  # only succeeds when empty
+        except OSError:
+            pass
+    return True
+
+
+def remove_config_files(paths: list[str]) -> list[str]:
+    """Delete each given config file path. Returns paths that were actually removed."""
+    removed: list[str] = []
+    for p in paths:
+        path = Path(p)
+        if path.is_file():
+            try:
+                path.unlink()
+                removed.append(p)
+            except OSError:
+                pass
+    return removed
+
+
+def plan_multi_model_teardown(prev: state.SetupState) -> list[tuple[str, str]]:
+    """Compute teardown actions from the previous state's tracking record.
+
+    Returns list of (action_id, human_description) tuples. Pure — performs no I/O.
+    Caller is expected to display these, get confirmation, then call execute_multi_model_teardown().
+    """
+    t = prev.tracking
+    actions: list[tuple[str, str]] = []
+
+    if t.lifecycle_installed and t.lifecycle_path_written:
+        actions.append(("lifecycle",
+                        f"Unload + remove background runner: {t.lifecycle_path_written}"))
+
+    runtime = prev.litellm.local.runtime
+    if runtime in ("docker", "podman"):
+        actions.append(("docker_down", "Stop LiteLLM container (docker compose down)"))
+        if t.docker_image_pulled_by_us and t.docker_image:
+            actions.append(("docker_image",
+                            f"Remove pulled image: {t.docker_image}"))
+    if t.litellm_installed_by_us:
+        if t.litellm_install_method == "pipx":
+            actions.append(("pipx_uninstall", "Uninstall LiteLLM (pipx uninstall litellm)"))
+        elif t.litellm_install_method == "pip-venv":
+            actions.append(("remove_venv", f"Delete venv: {venv_dir()}"))
+
+    if t.wrapper_path:
+        actions.append(("wrapper", f"Delete wrapper script: {t.wrapper_path}"))
+
+    if t.config_files_written:
+        actions.append(("configs",
+                        f"Delete {len(t.config_files_written)} generated config file(s)"))
+
+    if t.env_keys_added:
+        actions.append(("env_keys",
+                        f"Remove {len(t.env_keys_added)} key(s) from .env: "
+                        + ", ".join(t.env_keys_added)))
+
+    if t.cockpit_env_keys_added:
+        total = sum(len(v) for v in t.cockpit_env_keys_added.values())
+        cockpits = ", ".join(t.cockpit_env_keys_added.keys())
+        actions.append(("cockpit_env",
+                        f"Remove {total} env key(s) from cockpit configs ({cockpits})"))
+
+    return actions
+
+
+def execute_multi_model_teardown(prev: state.SetupState) -> list[tuple[str, bool, str]]:
+    """Perform all teardown actions from `plan_multi_model_teardown()`.
+
+    Returns list of (action_id, ok, message) for each action attempted.
+    Caller is responsible for displaying results and resetting/saving state.
+    """
+    t = prev.tracking
+    results: list[tuple[str, bool, str]] = []
+    runtime = prev.litellm.local.runtime
+
+    # Order matters: stop runners first, then remove their backing artifacts.
+    if runtime in ("docker", "podman"):
+        ok = docker_compose_down(remove_image=t.docker_image_pulled_by_us)
+        results.append(("docker_down", ok,
+                        "container stopped" if ok else "compose down failed"))
+
+    if t.lifecycle_installed and t.lifecycle_path_written:
+        try:
+            uninstall_lifecycle()
+            results.append(("lifecycle", True, "background runner removed"))
+        except (OSError, RuntimeError) as e:
+            results.append(("lifecycle", False, str(e)))
+
+    if t.litellm_installed_by_us:
+        if t.litellm_install_method == "pipx":
+            ok, msg = pipx_uninstall_litellm()
+            results.append(("pipx_uninstall", ok, msg or "litellm uninstalled"))
+        elif t.litellm_install_method == "pip-venv":
+            ok = remove_venv()
+            results.append(("remove_venv", ok,
+                            f"deleted {venv_dir()}" if ok else "rmtree failed"))
+
+    if t.wrapper_path:
+        ok = remove_wrapper_script()
+        results.append(("wrapper", ok,
+                        f"deleted {t.wrapper_path}" if ok else "delete failed"))
+
+    if t.config_files_written:
+        removed = remove_config_files(t.config_files_written)
+        results.append(("configs", True, f"removed {len(removed)} file(s)"))
+
+    if t.env_keys_added:
+        _, removed_keys = credentials.remove_keys(t.env_keys_added)
+        results.append(("env_keys", True,
+                        f"removed {len(removed_keys)} key(s) from .env"))
+
+    # Per-cockpit settings.json env keys (e.g. ANTHROPIC_BASE_URL set by claude.py)
+    if t.cockpit_env_keys_added:
+        from .cockpits import ALL as _ALL_COCKPITS
+        for cid, keys in t.cockpit_env_keys_added.items():
+            mod = _ALL_COCKPITS.get(cid)
+            if not mod or not hasattr(mod, "teardown"):
+                continue
+            try:
+                removed = mod.teardown(keys)
+                results.append((f"cockpit:{cid}", True,
+                                f"removed {len(removed)} key(s) from {cid} settings"))
+            except Exception as e:  # noqa: BLE001
+                results.append((f"cockpit:{cid}", False, str(e)))
+
+    return results
+
+
+# ============================================================
 # Service control (mode-aware: pipx/pip-venv via launchd/systemd, docker via compose)
 # ============================================================
 def start_service() -> bool:
@@ -626,23 +840,39 @@ def _render_compose_yaml() -> str:
                 "container_name": "ai-resources-litellm",
                 "command": ["--config", "/app/config.yaml", "--port", "4000",
                             "--host", "0.0.0.0"],
+                # Bind only to the requested host:port — no LAN exposure, no
+                # collision with other containers running on different ports.
                 "ports": [f"{bind}:{port}:4000"],
                 "volumes": [
                     f"{state.litellm_path()}:/app/config.yaml:ro",
                     f"{state.env_path()}:/app/.env:ro",
                 ],
                 "env_file": [str(state.env_path())],
-                "restart": "unless-stopped",
+                # `always` covers the user's case where Docker daemon restarts
+                # without us — no LaunchAgent / systemd unit needed for docker mode.
+                "restart": "always",
+                # Dedicated network so this stack stays isolated from any other
+                # compose project on the same host.
+                "networks": ["ai-resources"],
+                # Use python3 (guaranteed in Python-based images) — curl is absent
+                # from slim images and causes the container to be marked unhealthy
+                # even when LiteLLM is serving normally.
                 "healthcheck": {
-                    "test": ["CMD", "curl", "-fsS",
-                             "http://localhost:4000/health/liveliness"],
+                    "test": ["CMD-SHELL",
+                             "python3 -c \"import urllib.request; "
+                             "urllib.request.urlopen("
+                             "'http://localhost:4000/health/liveliness', timeout=3)"
+                             "\" 2>/dev/null || exit 1"],
                     "interval": "30s",
                     "timeout": "5s",
                     "retries": 3,
                     "start_period": "30s",
                 },
             }
-        }
+        },
+        "networks": {
+            "ai-resources": {"driver": "bridge"},
+        },
     }
     if yaml is None:
         raise RuntimeError("PyYAML required to render docker-compose.yaml")

@@ -90,9 +90,36 @@ class ProviderState:
 
 @dataclass
 class ProfileState:
-    name: str = "all-claude"
+    name: str = "cost-optimized"
     customized: bool = False
     customizations: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+@dataclass
+class InstallTracking:
+    """Audit trail of artifacts the wizard created — used to cleanly undo on mode switch.
+
+    Each flag/path records something the wizard was responsible for installing.
+    Pre-existing artifacts (e.g. a litellm already on PATH before setup) are NOT
+    tracked here, so teardown only removes what we put there.
+    """
+    # LiteLLM Python package
+    litellm_installed_by_us: bool = False
+    litellm_install_method: str = ""           # "pipx" | "pip-venv" | ""
+    # Docker image
+    docker_image_pulled_by_us: bool = False
+    docker_image: str = ""
+    # Background runner (launchd plist / systemd unit)
+    lifecycle_installed: bool = False
+    lifecycle_path_written: str = ""
+    # Wrapper script
+    wrapper_path: str = ""
+    # Generated YAMLs (litellm.yaml, docker-compose.yaml, executors.yaml, …)
+    config_files_written: list[str] = field(default_factory=list)
+    # .env keys added by the wizard (only those not pre-existing)
+    env_keys_added: list[str] = field(default_factory=list)
+    # Per-cockpit settings.json env keys we inserted
+    cockpit_env_keys_added: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -105,6 +132,7 @@ class SetupState:
     providers: dict[str, ProviderState] = field(default_factory=dict)
     profile: ProfileState = field(default_factory=ProfileState)
     smoke_tests: dict[str, Any] = field(default_factory=lambda: {"last_run": "", "status": "unknown"})
+    tracking: InstallTracking = field(default_factory=InstallTracking)
 
 
 def _to_dict(obj: Any) -> Any:
@@ -132,6 +160,7 @@ def _from_dict(cls: type, data: dict) -> Any:
         SetupState: {
             "litellm": LiteLLMState,
             "profile": ProfileState,
+            "tracking": InstallTracking,
         },
         LiteLLMState: {
             "local": LiteLLMLocal,

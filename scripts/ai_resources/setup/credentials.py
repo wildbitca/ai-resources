@@ -72,6 +72,27 @@ def update_env(updates: dict[str, str]) -> Path:
     return save_env(current)
 
 
+def update_env_tracked(updates: dict[str, str]) -> tuple[Path, list[str]]:
+    """Merge updates and return (env_path, newly_added_keys).
+
+    A key is "newly added" only if it wasn't present before — letting callers
+    record exactly what the wizard introduced (vs pre-existing user values).
+    """
+    current = load_env()
+    newly_added = [k for k in updates if k not in current]
+    current.update(updates)
+    return save_env(current), newly_added
+
+
+def remove_keys(keys: list[str]) -> tuple[Path, list[str]]:
+    """Delete the given keys from .env (if present). Returns (env_path, keys_removed)."""
+    current = load_env()
+    removed = [k for k in keys if k in current]
+    for k in removed:
+        current.pop(k, None)
+    return save_env(current), removed
+
+
 def mask(value: str, visible: int = 4) -> str:
     if not value:
         return "(empty)"
@@ -93,6 +114,56 @@ def generate_master_key(prefix: str = "sk-litellm-master-") -> str:
     alphabet = string.ascii_letters + string.digits
     body = "".join(secrets.choice(alphabet) for _ in range(40))
     return f"{prefix}{body}"
+
+
+def get_claude_code_keychain_key() -> str:
+    """Return the Anthropic API key Claude Code stores in the macOS Keychain.
+
+    Claude Code reads its API key from the "Claude Code" Keychain service
+    and sends it as x-api-key, ignoring ANTHROPIC_API_KEY in settings.json env
+    block. The gateway master key must match this key for authentication to work.
+
+    Returns the key string, or "" if not macOS / not found / not an Anthropic key.
+    """
+    import platform
+    if platform.system() != "Darwin":
+        return ""
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code", "-w"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            key = r.stdout.strip()
+            if key.startswith("sk-ant-"):
+                return key
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def write_claude_code_keychain_key(key: str, account: str = "") -> bool:
+    """Write an API key to the 'Claude Code' Keychain service (macOS only).
+
+    Used to restore the key after `claude logout` clears the Keychain entry so
+    Claude Code starts in API key mode instead of prompting for OAuth login.
+    Returns True on success.
+    """
+    import platform, subprocess
+    if platform.system() != "Darwin":
+        return False
+    if not account:
+        account = Path.home().name
+    try:
+        r = subprocess.run(
+            ["security", "add-generic-password", "-U",
+             "-s", "Claude Code", "-a", account, "-w", key],
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
 
 
 def secret_ref(env_var: str) -> str:

@@ -6,7 +6,75 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
-## [1.0.0] — UNRELEASED — Multi-model orchestration
+## [1.1.0] — 2026-05-07 — Dry-run, teardown & OAuth fixes
+
+### Added
+
+- **`--dry-run` flag** for `ai-resources setup` — renders all generated configs
+  (`litellm.yaml`, `docker-compose.yaml`, `settings.json` patch) and starts a
+  temporary gateway for live smoke tests, without writing anything to disk.
+- **`InstallTracking` audit trail** (`state.py`) — records exactly what the wizard
+  installed (LiteLLM method, Docker image, lifecycle unit, env keys, cockpit env
+  patches). Pre-existing artifacts are never tracked, so teardown only undoes wizard
+  work.
+- **Multi-model → single-model teardown** — when the user switches modes, the wizard
+  presents a confirmation list and cleanly removes every tracked artifact.
+- **Claude passthrough models** in `litellm.yaml` — all current Claude model IDs
+  (`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) are
+  auto-added as passthrough entries when Anthropic is enabled, preventing
+  `ProxyModelNotFoundError` for Claude Code internal requests.
+- **`allow_requests_on_db_unavailable: true`** in gateway `general_settings` —
+  lets OAuth session tokens pass through the localhost gateway without a DB lookup.
+- **`credentials.update_env_tracked()` / `credentials.remove_keys()`** — new
+  helpers that return which keys were net-new / removed, enabling precise teardown.
+- **`_shared.env_keys_added_by_patch()` / `_shared.remove_env_keys_from_settings()`**
+  — cockpit-level env teardown helpers.
+- **`claude.teardown()`** — removes gateway env keys from `settings.json` on mode
+  switch.
+- **`claude.is_logged_in_via_oauth()`** — detects OAuth/firstParty mode via
+  `claude auth status` JSON (with Keychain/credential-file fallback for older Claude
+  Code versions). Used by wizard completion banner and `ai-resources doctor`.
+- **`credentials.get_claude_code_keychain_key()` / `credentials.write_claude_code_keychain_key()`**
+  — macOS Keychain helpers for reading/restoring the Claude Code API key.
+- **`claude.fix_oauth_for_gateway()`** — automated logout → restore flow on macOS:
+  saves key from Keychain, runs `claude logout`, writes key back so Claude Code
+  starts in API key mode without prompting.
+- **New profile `quality-first.yaml`** — replaces `unified-default.yaml`.
+  Identical routing strategy; renamed for clarity.
+- **`doctor` OAuth awareness** — in multi-model mode, shows an info notice when
+  Claude Code is in OAuth mode with actionable guidance.
+
+### Fixed
+
+- **`vertex-enterprise.yaml` model IDs** — removed incorrect `@date` suffix from
+  `claude-opus-4-7` and `claude-sonnet-4-6` (bare alias is correct per Vertex AI
+  docs); `claude-haiku-4-5@20251001` retains the required suffix.
+- **Provider model lists** (`providers.py`) — added `gpt-5-nano`, `gpt-4o-mini`,
+  `gemini-2.5-flash-lite`; Vertex list now mirrors these.
+- **Default profile in single-model mode** changed from `all-claude` to
+  `cost-optimized`.
+- **State deserialization** for nested dataclasses (`SetupState` → `InstallTracking`
+  and other nested fields) now handled correctly via `_from_dict` registry.
+- **Python 3.14+ compatibility** in dependency detection.
+- **pip-venv as default LiteLLM install mode** — `pipx` no longer required for
+  first-time installs; a dedicated virtualenv at
+  `~/.config/ai-resources/venv/` is used instead.
+- **Better LiteLLM install error reporting** — verbose log dump on failure.
+- **Wizard auto-installs pipx** when selected as install method and pipx is absent
+  (cross-platform: Homebrew on macOS, `pip install --user pipx` elsewhere).
+
+### Changed
+
+- `ANTHROPIC_API_KEY` removed from the Claude Code `settings.json` env patch in
+  multi-model mode — Claude Code reads its key from the macOS Keychain and the
+  gateway now uses `allow_requests_on_db_unavailable` instead.
+
+### Skills
+
+- All community and curated skills: bumped upstream `git_revision` to latest;
+  removed redundant `(triggers: …)` inline comment from SKILL.md descriptions.
+
+## [1.0.0] — 2026-05-07 — Multi-model orchestration
 
 Major refactor introducing per-role LLM routing via local LiteLLM gateway.
 **Breaking changes** in CLI surface; one-time migration via `ai-resources setup`.
