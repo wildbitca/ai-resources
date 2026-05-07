@@ -455,6 +455,15 @@ def configure(ctx: dict) -> list[Path]:
     return written
 
 
+def regenerate_agents(executors: dict, mode: str = "multi-model") -> list[str]:
+    """Regenerate ~/.claude/agents/*.md from executors.yaml without running full setup.
+
+    Returns list of role names written. Safe to call standalone after updating executors.
+    """
+    ak_path = str(repo_root())
+    return _generate_subagent_files(executors, ak_path, mode)
+
+
 def teardown(env_keys: list[str]) -> list[str]:
     """Remove the listed env keys from settings.json. Returns keys actually removed."""
     return _shared.remove_env_keys_from_settings(SETTINGS_PATH, env_keys)

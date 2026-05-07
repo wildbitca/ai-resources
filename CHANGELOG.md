@@ -6,6 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.1.4] — 2026-05-07 — executors set / apply / tune
+
+### Added
+
+- **`ai-resources executors set <role> [model]`** — reassign a single role's
+  model without running the full setup wizard. If `model` is omitted, an
+  interactive provider → model menu is shown. Provider is auto-inferred from
+  the model name (e.g. `gemini-2.5-pro` → `google`). Writes `executors.yaml`
+  and regenerates `~/.claude/agents/*.md` automatically.
+
+- **`ai-resources executors apply [profile]`** — switch all role assignments
+  to a named profile in one command (e.g. `cost-optimized`, `quality-first`,
+  `all-gemini`). Omit the profile name for an interactive selection menu that
+  shows each profile's description. Displays a before/after diff table and
+  asks for confirmation before writing.
+
+- **`ai-resources executors tune`** — interactive bulk editor: shows the
+  current role table, lets you checkbox multiple roles to reassign, then
+  walks through provider + model selection for each. Optionally edits
+  `defaults` (max_retries, timeout). Writes and regenerates on confirm.
+
+- **`cockpits/claude.regenerate_agents(executors, mode)`** — public function
+  that regenerates `~/.claude/agents/*.md` from `executors.yaml` without
+  running the full setup. Used by the new executors subcommands; can also be
+  called programmatically.
+
 ## [1.1.3] — 2026-05-07 — software-architect as designer + cost optimizations
 
 ### Changed
