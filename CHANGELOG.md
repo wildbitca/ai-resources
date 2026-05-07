@@ -325,6 +325,9 @@ When you publish **`vMAJOR.MINOR.PATCH`**, add a new section above `[Unreleased]
 
 1. Choose SemVer and move entries in **`CHANGELOG.md`**.
 2. Update **`Formula/ai-resources.rb`:** `tag:` and `version` matching the new tag.
-3. Commit to `main` and **push**.
-4. **Tag and push:** `git tag -a vX.Y.Z -m "Release X.Y.Z"` · `git push origin vX.Y.Z`
-5. Optional: GitHub Release. Users: `brew update && brew upgrade ai-resources` (private: `HOMEBREW_GITHUB_API_TOKEN`). The **README** must keep **`brew tap wildbitca/ai-resources https://github.com/wildbitca/ai-resources.git`** (do not omit the URL).
+3. Bump **`scripts/ai_resources/__init__.py`** `__version__` to match.
+4. Commit to `main` and **push**.
+5. **Tag and push:** `git tag -a vX.Y.Z -m "Release X.Y.Z"` · `git push origin vX.Y.Z`
+6. **GitHub Release is created automatically** by `.github/workflows/release.yml` when the tag is pushed. Release notes are extracted from the matching `## [X.Y.Z]` block in this file.
+
+Users upgrade with: `brew update && brew upgrade ai-resources` (private repo: `HOMEBREW_GITHUB_API_TOKEN`). The **README** must keep **`brew tap wildbitca/ai-resources https://github.com/wildbitca/ai-resources.git`** (do not omit the URL).
