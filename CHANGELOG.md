@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-05-07
+
+### Fixed
+
+- **Formula PyPI URLs** — all 16 resource URLs updated to the hash-based path
+  format now required by PyPI (legacy `/source/<letter>/…` paths return 404).
+  Also corrects the `questionary` sha256 which was wrong in v1.1.0.
+
 ## [1.1.0] — 2026-05-07 — Dry-run, teardown & OAuth fixes
 
 ### Added
