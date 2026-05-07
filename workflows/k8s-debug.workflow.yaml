@@ -1,0 +1,128 @@
+# Kubernetes debugging and monitoring workflow.
+# Covers: pod crashes, OOMKilled, pending pods, service/ingress issues, resource exhaustion,
+# event storms, config errors, scaling problems, cluster health checks.
+#
+# Model routing:
+#   gather  → explore (gemini-2.5-flash)    — kubectl reads, log fetching, event collection
+#   diagnose → generalPurpose (gemini-2.5-pro) — root cause analysis, pattern matching
+#   fix     → implementer (claude-sonnet-4-6) — YAML patches, config changes, rollbacks
+#
+# handoff_file: .agent-output/handoff-k8s-<slug>.md — DELETE when DONE.
+#
+name: k8s-debug
+description: Kubernetes cluster debugging and monitoring. Gathers cluster state, diagnoses root cause, optionally applies fix.
+domain: kubernetes
+trigger: User asks to debug, monitor, or investigate Kubernetes resources — pods, deployments, services, ingress, nodes, events, PVCs, HPA, RBAC, or cluster health.
+prerequisites: []
+steps:
+  - id: gather
+    subagent_type: explore
+    skills:
+      - common-context-optimization
+    entry_criteria: Target namespace or resource name known (or "cluster-wide")
+    exit_criteria: Full cluster state snapshot written; symptoms documented
+    handoff_to: diagnose
+    prompt_template: |
+      Workspace: {{workspace}}. Cluster: {{cluster}}. Namespace: {{namespace}}.
+      Goal: {{user_goal}}.
+
+      Collect all relevant cluster state. Run commands in this order, skipping irrelevant ones:
+
+      Pod-level:
+        kubectl get pods -n {{namespace}} -o wide
+        kubectl describe pod <name> -n {{namespace}}
+        kubectl logs <name> -n {{namespace}} --tail=200 --previous (if CrashLoopBackOff)
+        kubectl get events -n {{namespace}} --sort-by=.lastTimestamp | tail -40
+
+      Workload-level:
+        kubectl get deployments,statefulsets,daemonsets -n {{namespace}}
+        kubectl describe deployment <name> -n {{namespace}} (if relevant)
+
+      Networking:
+        kubectl get svc,ingress,networkpolicies -n {{namespace}}
+
+      Resource pressure:
+        kubectl top pods -n {{namespace}} (if metrics-server available)
+        kubectl top nodes
+        kubectl get nodes -o wide
+
+      Config:
+        kubectl get configmaps,secrets -n {{namespace}} (names only, no values)
+        kubectl get pvc -n {{namespace}}
+        kubectl get hpa -n {{namespace}}
+
+      Write findings to .agent-output/k8s-debug/<slug>-snapshot.md:
+        - Symptom summary (what is wrong)
+        - Raw command outputs (paste key sections)
+        - Resource states (pod statuses, restart counts, conditions)
+        - Relevant events (errors, warnings, scale events)
+
+      Update {{handoff_file}}:
+        Snapshot_ref: .agent-output/k8s-debug/<slug>-snapshot.md
+        Symptoms: [bullet list]
+        Fix_needed: yes | no | unknown
+        Next: diagnose
+
+  - id: diagnose
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+    entry_criteria: Snapshot available
+    exit_criteria: Root cause identified; fix options listed
+    handoff_to: fix
+    prompt_template: |
+      Read {{handoff_file}} and Snapshot_ref.
+
+      Analyze the snapshot and identify:
+        1. Root cause (be specific: OOMKilled due to memory limit X, ImagePullBackOff due to registry auth, etc.)
+        2. Contributing factors (misconfigured resources, missing secrets, network policy block, etc.)
+        3. Fix options ranked by risk (least-invasive first):
+           - Option A: [action] — Risk: low/medium/high — Reversible: yes/no
+           - Option B: ...
+        4. Immediate mitigation if service is degraded (restart, scale down, rollback).
+
+      If diagnosis is complete and NO fix is needed (informational request):
+        Write full analysis to .agent-output/k8s-debug/<slug>-diagnosis.md.
+        Update {{handoff_file}}: Diagnosis_ref, Fix_needed: no, Completed: true.
+        DELETE {{handoff_file}} and STOP — do not advance to fix.
+
+      If fix IS needed:
+        Write diagnosis + recommended fix to .agent-output/k8s-debug/<slug>-diagnosis.md.
+        Update {{handoff_file}}:
+          Diagnosis_ref: path
+          Recommended_fix: [one-line description]
+          Fix_risk: low | medium | high
+          Next: fix
+
+  - id: fix
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Root cause identified; fix approved (orchestrator must confirm if Fix_risk is high)
+    exit_criteria: Fix applied; resources healthy
+    handoff_to: null
+    prompt_template: |
+      Read {{handoff_file}}, Snapshot_ref, and Diagnosis_ref.
+
+      STOP if Fix_risk is "high" and orchestrator has not set Fix_approved: yes — ask for confirmation first.
+
+      Apply the recommended fix:
+        - kubectl patch / kubectl apply / kubectl rollout restart / kubectl scale
+        - For config changes: edit the manifest and kubectl apply -f
+        - For rollbacks: kubectl rollout undo deployment/<name>
+
+      After applying:
+        kubectl rollout status deployment/<name> -n {{namespace}} --timeout=120s
+        kubectl get pods -n {{namespace}}
+        kubectl get events -n {{namespace}} --sort-by=.lastTimestamp | tail -20
+
+      Document what was changed and the before/after state in .agent-output/k8s-debug/<slug>-fix.md.
+
+      Update {{handoff_file}}:
+        Fix_applied: [description]
+        Post_fix_status: healthy | degraded | unknown
+        Fix_ref: path
+        Completed: true
+
+      When DONE: DELETE {{handoff_file}}.

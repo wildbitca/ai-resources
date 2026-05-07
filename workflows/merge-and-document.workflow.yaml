@@ -1,0 +1,113 @@
+# Workflow: merge a feature branch to develop and write/update SDD specs from agent-output.
+#
+# The orchestrator MUST NOT read large files directly. All heavy work is delegated:
+#   - explore (gemini-2.5-flash):  reads diffs, agent-output, existing specs → research doc
+#   - doc-writer (gemini-2.5-flash): writes/updates SDD specs, PROJECT.md entries
+#   - implementer (claude-sonnet-4-6): stages unstaged changes, commits specs, merges to target
+#
+# Flow: gather-context → document → merge
+# handoff_file: .agent-output/handoff-<branch>.md — DELETE when DONE.
+#
+# Context discipline:
+#   Orchestrator ONLY reads the handoff file (< 100 lines).
+#   Never read full diffs, spec files, or research docs in the main thread.
+#
+name: merge-and-document
+description: Merge feature branch to develop and write/update SDD specs. Delegates all heavy work to cheap models.
+domain: "{{domain}}"
+trigger: User asks to merge a branch and write docs, SDD specs, or handoff documents. Includes "merge + document", "merge and write specs/docs", "merge and update SDD".
+prerequisites: []
+steps:
+  - id: gather-context
+    subagent_type: explore
+    skills:
+      - common-context-optimization
+    entry_criteria: Branch and target branch known
+    exit_criteria: Research doc written summarizing all changes and which specs to create/update
+    handoff_to: document
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Branch: {{branch}} (feature). Target: {{target_branch}} (e.g. develop).
+
+      Your job: understand what changed and what docs need to be written. Do NOT write docs yet.
+
+      1. If .agent-output/handoff-{{branch}}.md exists, read it — it has the implementation summary.
+      2. Run: git -C {{workspace}} log --oneline {{target_branch}}..{{branch}} (for each affected repo).
+      3. Run: git -C {{workspace}} diff --stat {{target_branch}}...{{branch}} to find changed files.
+      4. Read changed source files (routes, middleware, migrations, UI components, services) to understand what was implemented.
+      5. List specs/features/ to find which spec files already exist for these features.
+      6. Read each relevant spec file to understand the current state.
+
+      Output: Write specs/knowledge/research/YYMMDD-merge-{{branch}}.md with:
+        - Summary of all changes grouped by subsystem (routes, DB, UI, etc.)
+        - Which spec files to UPDATE (path + bullet list of what changed)
+        - Which spec files to CREATE (feature name + key facts to include)
+        - Raw facts: new endpoints, new DB columns/constraints, new roles, new UI pages/components, i18n keys
+
+      Update {{handoff_file}}:
+        Research_ref: specs/knowledge/research/YYMMDD-merge-{{branch}}.md
+        Repos_changed: [list of repo dirs with changes]
+        Specs_to_update: [list of spec file paths]
+        Specs_to_create: [list of new spec names]
+        Unstaged_changes: [list of files that are unstaged per repo]
+        Next: doc-writer
+
+  - id: document
+    subagent_type: doc-writer
+    skills:
+      - knowledge-audit
+    entry_criteria: Research doc with change summary available
+    exit_criteria: All specs created/updated; PROJECT.md changelog entries added
+    handoff_to: merge
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and Research_ref.
+
+      For each spec in Specs_to_update:
+        1. Read the current spec file in full.
+        2. Apply only the changes described in Research_ref — update requirements, scenarios, changelog, security notes.
+        3. Preserve all existing sections and content not mentioned in Research_ref.
+
+      For each spec in Specs_to_create:
+        1. Read an existing spec in the same repo for format reference.
+        2. Create a new spec file following the same SDD format.
+        3. Include: Overview, Stakeholder View (with verification table), Functional Requirements, Business Rules, Constraints, Data Model, Architecture diagram, API Contracts, BDD scenarios, Changelog.
+
+      For each repo with changed specs:
+        1. Update specs/PROJECT.md Feature specs table (add/update row).
+        2. Add a Decision Log entry with date and summary.
+
+      BDD feature files: create or update the .feature file alongside each spec.md.
+        - Use Scenario Outline for parameterized cases (e.g. multiple roles).
+        - Tag each scenario: @TS-{FEAT}-NNN @traces:REQ-{FEAT}-NNN @must @integration @pending.
+
+      Update {{handoff_file}}:
+        Specs_written: [list of files created/updated]
+        Next: implementer
+
+  - id: merge
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+    entry_criteria: All specs written; research doc written
+    exit_criteria: Unstaged changes committed, specs committed, branch merged to target
+    handoff_to: null
+    prompt_template: |
+      Workspace: {{workspace}}. Branch: {{branch}}. Target: {{target_branch}}.
+      Read {{handoff_file}}.
+
+      For each repo in Repos_changed:
+        1. If Unstaged_changes lists files for this repo, stage and commit them:
+           - Stage specific files (not git add -A).
+           - Use conventional commit: feat(<scope>): <summary>
+           - Pre-commit hooks must pass; fix lint errors if they appear.
+        2. Check out {{target_branch}} and merge --no-ff {{branch}}:
+           - Commit message: "Merge {{branch}} into {{target_branch}}"
+        3. If Specs_written contains files for this repo that were committed after the first merge,
+           do a second merge to carry the docs commit.
+
+      After all repos are merged, update {{handoff_file}}:
+        Commits_made: [list with sha + message]
+        Merges_done: [list with repo + merge sha]
+
+      When DONE: DELETE {{handoff_file}}.

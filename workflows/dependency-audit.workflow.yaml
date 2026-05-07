@@ -1,0 +1,159 @@
+# Dependency audit and upgrade workflow.
+# Covers: security vulnerabilities (CVEs), outdated packages, breaking API changes,
+# license compliance, bundle size impact, transitive dependency conflicts.
+# Works with: npm/pnpm/yarn, cargo, pip/uv, go mod, maven/gradle, pub (Flutter/Dart).
+#
+# Model routing:
+#   audit    → explore (gemini-2.5-flash)      — list deps, check versions, fetch CVE data
+#   plan     → generalPurpose (gemini-2.5-flash) — rank updates by risk/urgency
+#   upgrade  → implementer (claude-sonnet-4-6)  — apply updates, fix breaking changes
+#   test     → tester (gemini-2.5-flash)        — verify nothing broke
+#
+# handoff_file: .agent-output/handoff-deps-<slug>.md — DELETE when DONE.
+#
+name: dependency-audit
+description: Audit dependencies for vulnerabilities and outdated packages, plan upgrades by risk, apply and verify.
+domain: "{{domain}}"
+trigger: User asks to audit dependencies, check for vulnerabilities, update packages, upgrade libraries, review CVEs, check outdated deps, or reduce bundle size.
+prerequisites: []
+steps:
+  - id: audit
+    subagent_type: explore
+    skills:
+      - common-context-optimization
+    entry_criteria: Package manifest files exist
+    exit_criteria: Full dependency report with CVEs and version lag written
+    handoff_to: plan
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}.
+
+      Run audit commands for the detected package manager(s):
+
+      npm/pnpm/yarn:
+        npm audit --json > /tmp/npm-audit.json
+        npm outdated --json > /tmp/npm-outdated.json
+        (or pnpm audit / yarn audit)
+
+      Cargo (Rust):
+        cargo audit (if installed) else cargo update --dry-run
+
+      pip/uv:
+        pip list --outdated --format=json
+        safety check (if installed) or pip audit
+
+      go mod:
+        go list -m -u all
+        govulncheck ./... (if installed)
+
+      pub (Dart/Flutter):
+        dart pub outdated
+        flutter pub outdated
+
+      For each dependency in the report, classify:
+        - CRITICAL/HIGH CVE: must fix now
+        - Outdated (major version behind): should update
+        - Outdated (minor/patch): nice to update
+        - No action: current
+
+      Write full report to .agent-output/deps/<slug>-audit.md:
+        | Package | Current | Latest | Severity | CVE | Notes |
+
+      Update {{handoff_file}}:
+        Audit_ref: path
+        Critical_count: N
+        High_count: N
+        Outdated_count: N
+        Next: plan
+
+  - id: plan
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+    entry_criteria: Audit report complete
+    exit_criteria: Upgrade plan ranked by risk; breaking changes documented
+    handoff_to: upgrade
+    prompt_template: |
+      Read {{handoff_file}} and Audit_ref.
+
+      Create an upgrade plan:
+        Batch 1 (patch updates, no breaking changes): list packages — risk LOW
+        Batch 2 (minor updates, check changelogs): list packages — risk LOW-MEDIUM
+        Batch 3 (major updates with breaking API changes): list packages — risk HIGH, needs manual review
+
+      For each Batch 3 package:
+        - Read the package's CHANGELOG or migration guide (web search if needed)
+        - List the specific API changes that affect this codebase
+        - Grep the codebase for usages of the changed APIs
+
+      If Critical_count > 0: Batch 1 must include those packages regardless of version jump.
+
+      Write plan to .agent-output/deps/<slug>-plan.md.
+
+      Update {{handoff_file}}:
+        Plan_ref: path
+        Batch1: [list]
+        Batch2: [list]
+        Batch3: [list — requires manual review]
+        Skip_batch3: true (unless user explicitly approved)
+        Next: upgrade
+
+  - id: upgrade
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Plan approved
+    exit_criteria: Batch 1 and 2 applied; build passes
+    handoff_to: test
+    on_concern_return_to: plan
+    prompt_template: |
+      Read {{handoff_file}} and Plan_ref.
+
+      Apply Batch 1 (patch):
+        npm update <packages> / cargo update <crates> / pip install -U <packages>
+        Run build/type-check immediately after.
+
+      Apply Batch 2 (minor):
+        Same commands for minor updates.
+        Fix any compile errors or deprecated-API warnings introduced.
+        Commit: chore(deps): update <packages> to minor/patch versions
+
+      Batch 3: SKIP unless Skip_batch3 is false and user explicitly approved each package.
+        If approved, apply one package at a time, fix breaking changes, commit separately.
+        Commit: chore(deps): upgrade <package> v<old> → v<new> (BREAKING)
+
+      Do NOT proceed if build/type-check fails — set Blocked: true.
+
+      Update {{handoff_file}}:
+        Batches_applied: [1 | 1,2 | 1,2,3]
+        Commits: [list]
+        Build_status: passing | failing
+        Next: test
+
+  - id: test
+    subagent_type: tester
+    skills:
+      - common-tdd
+    entry_criteria: Updates applied; build passes
+    exit_criteria: Test suite passes; no regressions from upgrades
+    handoff_to: null
+    on_concern_return_to: upgrade
+    prompt_template: |
+      Read {{handoff_file}}.
+
+      Run the full test suite for {{domain}}.
+
+      If tests fail:
+        - Determine: is the failure from the upgrade (regression) or pre-existing?
+        - For regressions: set Blocked: true, Return_to_step: upgrade, Block_reason: [test + package].
+
+      Write test report to .agent-output/deps/<slug>-test.md.
+
+      Update {{handoff_file}}:
+        Test_ref: path
+        Tests_passed: yes | no
+        Regressions: [package name + test name or "none"]
+        Completed: true
+
+      When DONE: DELETE {{handoff_file}}.

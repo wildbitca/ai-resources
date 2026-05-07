@@ -6,6 +6,71 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.1.5] — 2026-05-07 — full workflow coverage + orchestrator delegation rules
+
+### Added
+
+- **10 new delegation workflows** — the orchestrator now has a matching workflow
+  for every common engineering task category. All delegate heavy work to cheap
+  models (gemini-2.5-flash for reading/reporting, gemini-2.5-pro for analysis,
+  claude-sonnet-4-6 for implementation). New workflows:
+
+  - **`_auto-delegate`** — catch-all for any non-trivial task not covered by a
+    specific workflow. Assesses task type (read-only vs write), then delegates
+    to `generalPurpose` or `implementer` accordingly. Prevents the orchestrator
+    from ever doing multi-step work directly in the main thread.
+
+  - **`merge-and-document`** — merge a feature branch to develop and write/update
+    SDD specs from agent-output. Phases: `explore` (gemini-flash) reads diffs and
+    existing specs → `doc-writer` (gemini-flash) writes all SDD + BDD files →
+    `implementer` (sonnet) commits and merges.
+
+  - **`k8s-debug`** — Kubernetes cluster debugging. Covers pod crashes, OOMKilled,
+    pending pods, service/ingress issues, resource pressure, event storms.
+    Phases: `explore` gathers kubectl state → `generalPurpose` diagnoses → 
+    `implementer` applies fix.
+
+  - **`cloud-ops`** — Cloud resource queries and external API integration
+    (AWS, GCP, Azure, Stripe, Twilio, GitHub, etc.). Gather resource state →
+    analyze → optionally act.
+
+  - **`incident-response`** — Full production incident lifecycle. Phases: `explore`
+    (fast triage, all signals) → `generalPurpose` (root cause, blast radius) →
+    `implementer` (hotfix/rollback) → `doc-writer` (postmortem).
+
+  - **`log-triage`** — Log collection and analysis from any source (local files,
+    Docker, kubectl, CloudWatch, Datadog, Loki, GCP Logging). Read-only:
+    `explore` collects → `generalPurpose` analyzes patterns and root cause.
+
+  - **`ci-debug`** — CI/CD pipeline failure diagnosis. Covers GitHub Actions,
+    GitLab CI, failing builds, flaky tests, missing env vars.
+    Fetch logs → diagnose → fix.
+
+  - **`refactor`** — Structured code refactoring without behavior change.
+    Assess technical debt → plan atomic steps → implement → test for regressions
+    → review. First step adds characterization tests if coverage is absent.
+
+  - **`dependency-audit`** — Dependency security and version audit. Runs
+    `npm audit`, `cargo audit`, `pip audit`, etc. Plans batched upgrades by
+    risk (patch/minor/major). Applies Batch 1+2 automatically; Batch 3
+    (breaking) requires explicit user approval per package.
+
+  - **`db-investigation`** — Database performance and schema investigation.
+    Covers slow queries (EXPLAIN ANALYZE), missing indexes, N+1 ORM patterns,
+    schema drift, migration conflicts, data integrity.
+
+- **Orchestrator context discipline rule** in CLAUDE.md — explicit protocol
+  stating the orchestrator must ONLY read handoff files between phases and must
+  never use `Read`/`Bash`/`Edit` on project files directly when a workflow is active.
+
+- **Model routing guide** in CLAUDE.md — explicit table mapping each subagent
+  type to its model tier with a budget heuristic (< 500 tokens per phase
+  transition for the orchestrator).
+
+- **Updated workflow trigger table** in CLAUDE.md — now lists all 17 workflows
+  including the new ones. `_auto-delegate` is always last (catch-all). Match
+  order is defined; trivial tasks are the only case that skips workflow loading.
+
 ## [1.1.4] — 2026-05-07 — executors set / apply / tune
 
 ### Added

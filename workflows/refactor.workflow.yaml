@@ -1,0 +1,168 @@
+# Refactoring workflow.
+# Distinct from feature-implementation: no new requirements, scope is contained,
+# external behavior must be preserved. Focus on structure, naming, duplication,
+# coupling, performance, and technical debt reduction.
+#
+# Model routing:
+#   assess    → explore (gemini-2.5-flash)      — map current structure, find smells
+#   plan      → planner (gemini-2.5-pro)         — refactor strategy, scope, acceptance criteria
+#   implement → implementer (claude-sonnet-4-6)  — atomic edits preserving behavior
+#   test      → tester (gemini-2.5-flash)        — run tests, confirm no regressions
+#   review    → code-reviewer (gemini-2.5-pro)   — confirm refactor goals met
+#
+# handoff_file: .agent-output/handoff-refactor-<slug>.md — DELETE when DONE.
+#
+name: refactor
+description: Structured code refactoring — assess technical debt → plan atomic steps → implement without behavior change → verify no regressions.
+domain: "{{domain}}"
+trigger: User asks to refactor, clean up, restructure, deduplicate, rename, extract, simplify, reduce coupling, improve readability, or pay down technical debt — without adding new functionality.
+prerequisites: []
+steps:
+  - id: assess
+    subagent_type: explore
+    skills:
+      - common-context-optimization
+      - common-best-practices
+    entry_criteria: Target code area or smell type known
+    exit_criteria: Technical debt map written; scope confirmed
+    handoff_to: plan
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}.
+
+      Map the current structure of the code to be refactored:
+        1. List all files in scope (glob the area, read key files).
+        2. Identify the specific smells present:
+           - Duplication (DRY violations): paste the duplicated sections
+           - God classes/functions (> 200 lines, too many responsibilities)
+           - Deep nesting (> 3 levels)
+           - Primitive obsession (raw strings/numbers that should be types)
+           - Inappropriate intimacy (class A reaches into class B's internals)
+           - Long parameter lists (> 4 params)
+           - Dead code / unused imports
+           - Naming issues (misleading, inconsistent, too generic)
+        3. External surface: which public interfaces / exports must NOT change?
+        4. Test coverage: does the target code have tests? (run: grep -r "describe\|it(\|test(" <dir>)
+        5. Risk assessment: what is the blast radius if we break something?
+
+      Write findings to .agent-output/refactor/<slug>-assessment.md.
+
+      Update {{handoff_file}}:
+        Assessment_ref: path
+        Smells: [list]
+        External_surface: [list of exports/APIs that must not change]
+        Has_tests: yes | no | partial
+        Risk: low | medium | high
+        Next: plan
+
+  - id: plan
+    subagent_type: planner
+    skills:
+      - common-system-design
+      - common-best-practices
+    entry_criteria: Assessment complete
+    exit_criteria: Atomic refactor steps with acceptance criteria; external behavior preservation confirmed
+    handoff_to: implement
+    prompt_template: |
+      Read {{handoff_file}} and Assessment_ref.
+
+      Plan the refactoring as a sequence of atomic, independently-verifiable steps.
+      Each step must: (a) keep tests passing, (b) preserve external surface, (c) be a single commit.
+
+      Rules:
+        - NEVER change behavior in a refactor step. If a behavior change is needed, flag it separately.
+        - Order steps from lowest to highest risk (rename last, extract first).
+        - If Has_tests is "no", the first step MUST add characterization tests before any refactoring.
+        - Each step must have: description + files touched + acceptance criteria (how to verify behavior preserved).
+
+      Write plan to .agent-output/refactor/<slug>-plan.md.
+
+      Update {{handoff_file}}:
+        Plan_ref: path
+        Step_count: N
+        Requires_new_tests: yes | no
+        Next: implement
+
+  - id: implement
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Plan approved
+    exit_criteria: All refactor steps applied; lint/build passes; external surface unchanged
+    handoff_to: test
+    on_concern_return_to: plan
+    prompt_template: |
+      Read {{handoff_file}} and Plan_ref.
+
+      Execute each step in order. After EACH step:
+        - Run lint: [domain-appropriate lint command]
+        - Run build/type-check: [domain-appropriate command]
+        - If tests exist, run them: [domain-appropriate test command]
+        - Commit: refactor(<scope>): <step description>
+
+      DO NOT:
+        - Change behavior (return values, error types, public API)
+        - Add new features
+        - Combine multiple steps into one commit
+
+      If you discover that a step would require a behavior change, STOP and write a note in Plan_ref
+      under ## Blocked Steps. Set Blocked: true in {{handoff_file}}.
+
+      Update {{handoff_file}}:
+        Steps_completed: N/M
+        Commits: [list of SHAs]
+        Next: test
+
+  - id: test
+    subagent_type: tester
+    skills:
+      - common-tdd
+    entry_criteria: All refactor commits applied
+    exit_criteria: Test suite passes; no regressions
+    handoff_to: review
+    on_concern_return_to: implement
+    prompt_template: |
+      Read {{handoff_file}} and Plan_ref.
+
+      Run the full test suite for the domain:
+        [domain-appropriate: npm test / cargo test / pytest / go test ./... / flutter test]
+
+      If any test fails:
+        - Determine: is this a pre-existing failure or a regression from the refactor?
+        - For regressions: set Blocked: true, Return_to_step: implement, Block_reason: [test + error].
+        - For pre-existing failures: document and note as out-of-scope.
+
+      Write test report to .agent-output/refactor/<slug>-test.md.
+
+      Update {{handoff_file}}:
+        Test_ref: path
+        Tests_passed: yes | no | partial
+        Regressions: [list or "none"]
+        Next: review
+
+  - id: review
+    subagent_type: code-reviewer
+    skills:
+      - common-code-review
+    entry_criteria: Tests pass
+    exit_criteria: Refactor goals confirmed met; external surface verified unchanged
+    handoff_to: null
+    prompt_template: |
+      Read {{handoff_file}}, Assessment_ref, Plan_ref.
+
+      Verify the refactoring:
+        1. Were all identified smells from Assessment addressed?
+        2. Is External_surface still intact? (check exports/public APIs)
+        3. Did any step accidentally change behavior?
+        4. Is the code objectively simpler/better than before? (not just different)
+        5. Are naming and structure consistent with the surrounding codebase?
+
+      Write review to .agent-output/refactor/<slug>-review.md.
+
+      Update {{handoff_file}}:
+        Review_verdict: APPROVED | REQUIRES_CHANGES
+        Review_ref: path
+        Completed: true
+
+      When DONE: DELETE {{handoff_file}}.

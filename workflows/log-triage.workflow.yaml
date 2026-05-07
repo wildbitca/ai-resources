@@ -1,0 +1,99 @@
+# Log triage and analysis workflow.
+# Covers: error pattern detection, performance regression in logs, trace ID lookup,
+# user journey reconstruction, volume anomalies, finding root cause from logs alone.
+# Works with: local files, Docker logs, kubectl logs, CloudWatch, Datadog, Loki, GCP Logging.
+#
+# Model routing:
+#   collect  → explore (gemini-2.5-flash)      — grep, filter, fetch, deduplicate
+#   analyze  → generalPurpose (gemini-2.5-pro)  — pattern analysis, root cause from logs
+#   (no fix phase — hands off to _bugfix or incident-response if fix needed)
+#
+# handoff_file: .agent-output/handoff-logs-<slug>.md — DELETE when DONE.
+#
+name: log-triage
+description: Collect, filter, and analyze logs from any source to identify error patterns, root causes, or user journeys.
+domain: "{{domain}}"
+trigger: User asks to search logs, analyze errors in logs, find what caused something in logs, trace a request, investigate log anomalies, or understand log patterns.
+prerequisites: []
+steps:
+  - id: collect
+    subagent_type: explore
+    skills:
+      - common-context-optimization
+    entry_criteria: Log source known (file path, service name, or time window)
+    exit_criteria: Relevant log lines collected, deduplicated, and written to file
+    handoff_to: analyze
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}. Time window: {{time_window}}.
+
+      Collect relevant logs from the appropriate source:
+
+      Local / Docker:
+        tail -n 5000 <log-file> | grep -E "<pattern>"
+        docker logs <container> --since <time> 2>&1 | grep -E "<pattern>"
+
+      Kubernetes:
+        kubectl logs <pod> -n <ns> --since=<duration> | grep -E "<pattern>"
+        kubectl logs <pod> -n <ns> --previous (for crashed pods)
+
+      CloudWatch:
+        aws logs filter-log-events --log-group-name <name> --start-time <epoch> \
+          --filter-pattern "<pattern>" --limit 500
+
+      Datadog / Loki / GCP: use appropriate CLI or API with time filter and query.
+
+      Filtering strategy:
+        1. Start with ERROR|WARN|CRITICAL|Exception|Traceback|panic|fatal
+        2. Narrow by trace ID, user ID, or request path if provided
+        3. Capture context lines (grep -B2 -A5) for each error
+        4. Count occurrences: sort | uniq -c | sort -rn (to find high-frequency errors)
+
+      Write collected logs to .agent-output/log-triage/<slug>-raw.md:
+        - Top error messages by frequency (count + first occurrence)
+        - Full context for the top 10 unique errors
+        - Timeline of errors (when they started, frequency over time)
+        - Any anomalous patterns (sudden spike, new error type, etc.)
+
+      Update {{handoff_file}}:
+        Raw_ref: path
+        Log_sources: [list]
+        Error_count: [total unique error types found]
+        Time_range: [actual range of logs collected]
+        Next: analyze
+
+  - id: analyze
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+    entry_criteria: Log collection complete
+    exit_criteria: Root cause or error pattern identified; actionable summary written
+    handoff_to: null
+    prompt_template: |
+      Read {{handoff_file}} and Raw_ref.
+
+      Analyze the collected logs:
+        1. Primary error: most frequent / most impactful error class
+        2. Root cause hypothesis: what is causing these errors (code path, dependency, config)
+        3. First occurrence: when did this error first appear? Correlates with any deployment?
+        4. Blast radius: how many users/requests affected? Is it growing or stable?
+        5. Error chain: are secondary errors caused by a primary failure?
+        6. Anomalies: anything unexpected that doesn't fit the primary pattern
+
+      If a trace ID or user ID was provided, reconstruct the full request journey.
+
+      Write analysis to .agent-output/log-triage/<slug>-analysis.md:
+        ## Summary
+        ## Root Cause Hypothesis
+        ## Error Timeline
+        ## Affected Scope
+        ## Recommended Next Step (link to _bugfix or incident-response workflow if fix needed)
+
+      Update {{handoff_file}}:
+        Analysis_ref: path
+        Root_cause: [one-line or "inconclusive"]
+        Action_required: yes | no
+        Recommended_workflow: _bugfix | incident-response | none
+        Completed: true
+
+      When DONE: DELETE {{handoff_file}}.

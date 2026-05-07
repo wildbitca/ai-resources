@@ -1,0 +1,175 @@
+# Production incident response workflow.
+# Covers: service outages, degraded performance, data errors, cascade failures,
+# alerting storms, SLO breaches, rollback decisions, hotfixes.
+#
+# Model routing:
+#   triage   → explore (gemini-2.5-flash)      — gather all signals fast, no analysis
+#   diagnose → generalPurpose (gemini-2.5-pro)  — root cause, blast radius, options
+#   fix      → implementer (claude-sonnet-4-6)  — hotfix, rollback, config change
+#   document → doc-writer (gemini-2.5-flash)    — incident timeline + postmortem
+#
+# Speed note: triage and diagnose can overlap in time — orchestrator may spawn both
+# with execution_hints.parallel_group if initial symptoms are already known.
+#
+# handoff_file: .agent-output/handoff-incident-<slug>.md — keep until postmortem done.
+#
+name: incident-response
+description: Full incident lifecycle — triage (gather signals) → diagnose (root cause) → fix (apply resolution) → document (postmortem).
+domain: "{{domain}}"
+trigger: User reports a production incident, outage, degraded service, SLO breach, alert storm, or asks for emergency rollback or hotfix.
+prerequisites: []
+steps:
+  - id: triage
+    subagent_type: explore
+    skills:
+      - common-context-optimization
+    entry_criteria: Incident reported (symptom or alert known)
+    exit_criteria: All available signals gathered; blast radius estimated
+    handoff_to: diagnose
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Incident: {{user_goal}}.
+      Start time (if known): {{incident_start}}.
+
+      SPEED IS CRITICAL. Gather all signals in parallel where possible.
+
+      Application signals:
+        - Recent error logs (last 30 min): check app logs, Sentry, Datadog, CloudWatch
+        - HTTP error rates: check APM or load balancer access logs
+        - Recent deployments: git log --oneline -20, check CI/CD for deploys in last 2h
+
+      Infrastructure signals:
+        - Service health: kubectl get pods / aws ecs list-tasks / gcloud run services list
+        - Resource pressure: CPU, memory, disk, connection pool exhaustion
+        - External dependencies: DB reachability, cache status, downstream APIs
+
+      Recent changes (likely causes):
+        - git log --oneline --since="2 hours ago" (all repos)
+        - Recent config/env changes
+        - Recent dependency updates
+
+      Write ALL raw signals to .agent-output/incident/<slug>-triage.md (do not analyze yet — just facts).
+
+      Update {{handoff_file}}:
+        Triage_ref: path
+        Incident_start: [datetime or "unknown"]
+        Affected_services: [list]
+        Error_rate: [if known]
+        Recent_changes: [list of deploys/changes in last 2h]
+        Next: diagnose
+
+  - id: diagnose
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+    entry_criteria: Triage data available
+    exit_criteria: Root cause identified or best hypothesis formed; remediation options ranked
+    handoff_to: fix
+    prompt_template: |
+      Read {{handoff_file}} and Triage_ref. Time matters — be decisive.
+
+      Analyze:
+        1. Most likely root cause (hypothesis with confidence %)
+        2. Blast radius: which users/services are affected and how
+        3. Is this a code bug, config error, infra failure, or dependency outage?
+        4. Is there a recent change that correlates with the incident start?
+
+      Remediation options (fastest first):
+        - Option A (< 5 min): [rollback / feature flag / config change] — Risk: low
+        - Option B (5-30 min): [hotfix] — Risk: medium
+        - Option C (> 30 min): [deeper fix] — Risk: low but slow
+
+      Write diagnosis to .agent-output/incident/<slug>-diagnosis.md.
+
+      If root cause is an EXTERNAL dependency outage (not fixable by us):
+        Set Fix_type: wait, Completed: false in {{handoff_file}} — escalate to user.
+
+      Update {{handoff_file}}:
+        Diagnosis_ref: path
+        Root_cause: [one-line]
+        Confidence: [%]
+        Recommended_fix: [option A/B/C description]
+        Fix_type: rollback | hotfix | config | wait
+        Next: fix
+
+  - id: fix
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Diagnosis complete; fix type known
+    exit_criteria: Fix applied; service health confirmed
+    handoff_to: document
+    prompt_template: |
+      Read {{handoff_file}}, Triage_ref, and Diagnosis_ref.
+
+      Apply the recommended fix immediately:
+
+      If Fix_type is rollback:
+        git revert <bad-commit> OR git checkout <last-good-tag>
+        Redeploy: follow deploy commands for {{domain}}
+
+      If Fix_type is hotfix:
+        Make the minimal code/config change that resolves the root cause.
+        Commit: fix(<scope>): [incident slug] — [description]
+        Deploy immediately (skip non-critical CI steps if Fix_risk is high — document why).
+
+      If Fix_type is config:
+        Update env var / feature flag / cloud config.
+        Restart affected services.
+
+      After applying fix:
+        - Monitor error rate for 5 minutes: check logs, APM
+        - Confirm affected services report healthy
+        - Check no new errors introduced
+
+      Write fix details + before/after evidence to .agent-output/incident/<slug>-fix.md.
+
+      Update {{handoff_file}}:
+        Fix_ref: path
+        Fix_applied: [description]
+        Recovery_time: [datetime or "pending"]
+        Service_status: recovering | healthy | still-degraded
+        Next: document
+
+  - id: document
+    subagent_type: doc-writer
+    skills:
+      - knowledge-audit
+    entry_criteria: Incident resolved (or in recovery)
+    exit_criteria: Incident timeline + postmortem draft written
+    handoff_to: null
+    prompt_template: |
+      Read {{handoff_file}}, Triage_ref, Diagnosis_ref, and Fix_ref.
+
+      Write a postmortem to .agent-output/incident/<slug>-postmortem.md with:
+
+        ## Incident Summary
+        - Title, severity, affected services, duration, impact (users/requests affected)
+
+        ## Timeline
+        - [datetime] — [event] (detection, escalation, diagnosis, fix applied, recovery)
+
+        ## Root Cause
+        - Technical description of what went wrong and why
+
+        ## Contributing Factors
+        - Gaps in monitoring, missing tests, deployment process issues, etc.
+
+        ## Resolution
+        - What was done to resolve; was it rollback/hotfix/config
+
+        ## Action Items
+        | Item | Owner | Priority | Due |
+        |------|-------|----------|-----|
+        | Add alert for X | TBD | P1 | |
+        | Write regression test for Y | TBD | P2 | |
+
+        ## Lessons Learned
+        - What we'll do differently
+
+      Update {{handoff_file}}:
+        Postmortem_ref: path
+        Completed: true
+
+      When DONE: DELETE {{handoff_file}}.

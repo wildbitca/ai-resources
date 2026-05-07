@@ -1,0 +1,124 @@
+# CI/CD pipeline debugging workflow.
+# Covers: failing GitHub Actions / GitLab CI / CircleCI / Jenkins jobs,
+# broken deploys, flaky tests in CI, Docker build failures, lint/type errors in CI,
+# environment variable issues, missing secrets, caching problems.
+#
+# Model routing:
+#   fetch   → explore (gemini-2.5-flash)      — download/read CI logs, identify failing step
+#   diagnose → generalPurpose (gemini-2.5-flash) — simple failures; gemini-pro for complex
+#   fix     → implementer (claude-sonnet-4-6)  — workflow YAML fix, code fix, config fix
+#
+# handoff_file: .agent-output/handoff-ci-<slug>.md — DELETE when DONE.
+#
+name: ci-debug
+description: Diagnose and fix CI/CD pipeline failures. Fetch CI logs → identify failing step → fix cause.
+domain: "{{domain}}"
+trigger: User reports a failing CI pipeline, broken GitHub Actions workflow, failing deployment job, flaky test in CI, or CI environment error.
+prerequisites: []
+steps:
+  - id: fetch
+    subagent_type: explore
+    skills:
+      - common-context-optimization
+    entry_criteria: CI run URL, job name, or branch name known
+    exit_criteria: Failing step and error message identified; relevant log section extracted
+    handoff_to: diagnose
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}. CI run: {{ci_run_url}}.
+
+      Fetch CI pipeline state:
+
+      GitHub Actions:
+        gh run list --branch <branch> --limit 5
+        gh run view <run-id> --log-failed
+        gh run view <run-id> (for step-level status)
+
+      GitLab CI:
+        glab ci view (or use API: gitlab.com/api/v4/projects/<id>/pipelines/<pid>/jobs)
+
+      If CI logs not accessible via CLI, read them from:
+        - .github/workflows/*.yml (to understand what steps run)
+        - Any cached log files in .agent-output/ or /tmp/
+
+      Also read the local code that the CI job runs:
+        - The failing step's command (e.g. npm test, cargo build, docker build)
+        - The relevant source files if it's a lint/type/test failure
+
+      Write extracted failure to .agent-output/ci-debug/<slug>-failure.md:
+        - Failing step name and command
+        - Full error output (last 100 lines minimum)
+        - Which files/tests are mentioned in the error
+        - Any environment/secret references in the failing step
+
+      Update {{handoff_file}}:
+        Failure_ref: path
+        Failing_step: [step name]
+        Error_type: lint | type | test | build | deploy | env | network | other
+        Next: diagnose
+
+  - id: diagnose
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+    entry_criteria: Failure log available
+    exit_criteria: Fix identified and written; type classified
+    handoff_to: fix
+    prompt_template: |
+      Read {{handoff_file}} and Failure_ref.
+
+      Diagnose the failure:
+        1. What exactly is failing (specific file, line, test, package)?
+        2. Is this a new failure or pre-existing (check if same error on main branch)?
+        3. Fix type:
+           - code: bug in source file
+           - ci-config: error in .github/workflows/*.yml or CI config
+           - dependency: missing package, wrong version
+           - env: missing env var or secret
+           - flaky: test is non-deterministic (mark as flaky, don't "fix" the underlying test)
+           - infra: CI runner issue, network timeout (retry may resolve)
+
+      Write diagnosis to .agent-output/ci-debug/<slug>-diagnosis.md with:
+        - Root cause (specific)
+        - Minimal fix description
+        - Files to change
+
+      If Fix_type is "flaky" or "infra": set Fix_needed: no, suggest retry or skip.
+
+      Update {{handoff_file}}:
+        Diagnosis_ref: path
+        Fix_type: code | ci-config | dependency | env | flaky | infra
+        Fix_needed: yes | no
+        Fix_description: [one-line]
+        Next: fix
+
+  - id: fix
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Fix needed and type known
+    exit_criteria: Fix applied; CI passes or fix committed for CI to rerun
+    handoff_to: null
+    prompt_template: |
+      Read {{handoff_file}}, Failure_ref, and Diagnosis_ref.
+
+      Apply the fix based on Fix_type:
+
+      code: Edit the failing source file. Run the failing command locally to verify fix.
+      ci-config: Edit .github/workflows/*.yml or equivalent. Validate YAML syntax.
+      dependency: Update package.json/Cargo.toml/requirements.txt. Run install locally.
+      env: Document the missing env var and where to add it (do NOT hardcode secrets).
+
+      After fixing:
+        - Run the failing command locally: npm test / cargo build / docker build etc.
+        - Commit with: fix(ci): <description>
+        - Do NOT push — leave for user to push after review.
+
+      Update {{handoff_file}}:
+        Fix_applied: [description]
+        Files_changed: [list]
+        Local_verified: yes | no
+        Completed: true
+
+      When DONE: DELETE {{handoff_file}}.

@@ -1,0 +1,80 @@
+# CATCH-ALL workflow. Matches when NO specific workflow applies but the task is non-trivial.
+#
+# Rule: orchestrator MUST use this workflow for any task that requires more than 2 steps or
+# touches more than 2 files — even if it "seems simple". The orchestrator NEVER does work
+# directly in the main thread.
+#
+# Model routing:
+#   assess → generalPurpose (gemini-2.5-flash) — cheap, fast task analysis
+#   execute → generalPurpose or implementer depending on assess verdict
+#   If code changes: implementer (claude-sonnet-4-6)
+#   If read/report/query only: generalPurpose (gemini-2.5-flash)
+#
+# handoff_file: .agent-output/handoff-auto-<task-slug>.md — DELETE when DONE.
+#
+name: auto-delegate
+description: Catch-all delegation for any non-trivial task not covered by a specific workflow. Orchestrator reads only handoff files.
+domain: "{{domain}}"
+trigger: Any task requiring more than 2 steps or touching more than 2 files, when no more specific workflow matches.
+prerequisites: []
+steps:
+  - id: assess
+    subagent_type: generalPurpose
+    skills:
+      - common-context-optimization
+    entry_criteria: User goal defined
+    exit_criteria: Task assessed; work type classified; mini-plan written to handoff
+    handoff_to: execute
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}.
+
+      Assess the task in full before doing any work:
+        1. Classify work type: read-only (query/investigate/report) OR write (code/config/docs changes).
+        2. List the specific files, resources, or systems you need to touch.
+        3. Break the goal into at most 5 steps.
+        4. Identify risks or blockers.
+
+      If the task is read-only (query, investigate, report, summarize):
+        - Do the full work yourself in this step.
+        - Write findings to .agent-output/auto-delegate/<slug>.md.
+        - Set Work_type: read-only, Completed: true in {{handoff_file}}.
+        - No need to advance to execute.
+
+      If the task requires writes (code, config, infra, docs):
+        - Write a mini-plan (steps + file list + exit criteria) to .agent-output/auto-delegate/<slug>-plan.md.
+        - Set Work_type: write, Plan_ref: <path>, Next: execute in {{handoff_file}}.
+
+      Update {{handoff_file}}:
+        Work_type: read-only | write
+        Completed: true | false
+        Plan_ref: path if write
+        Output_ref: path if read-only
+        Next: execute | null
+
+  - id: execute
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Work_type is write and Plan_ref exists
+    exit_criteria: All planned changes applied; lint/build passes
+    handoff_to: null
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and Plan_ref.
+
+      Execute the plan step by step. For each step:
+        - Apply the change (code, config, docs, migration, etc.).
+        - Run any verification commands listed in the plan.
+        - Record what you did in .agent-output/auto-delegate/<slug>-result.md.
+
+      If you discover the plan is wrong or incomplete, update Plan_ref with ## Implementation Notes.
+      Run lint/build commands appropriate for {{domain}} to confirm no errors.
+
+      Update {{handoff_file}}:
+        Changes_made: [list of files changed]
+        Result_ref: .agent-output/auto-delegate/<slug>-result.md
+        Completed: true
+
+      When DONE: DELETE {{handoff_file}}.

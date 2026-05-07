@@ -1,0 +1,149 @@
+# Database investigation workflow.
+# Covers: slow queries, missing indexes, N+1 queries, schema drift, migration conflicts,
+# data integrity issues, query plan analysis, connection pool exhaustion,
+# replication lag, database size growth.
+# Works with: PostgreSQL, MySQL/MariaDB, SQLite, MongoDB, Redis, Supabase.
+#
+# Model routing:
+#   inspect  → explore (gemini-2.5-flash)      — run EXPLAIN, query pg_stat, list schema
+#   analyze  → generalPurpose (gemini-2.5-pro)  — query plan analysis, index recommendations
+#   fix      → implementer (claude-sonnet-4-6)  — migration, index, query rewrite
+#
+# handoff_file: .agent-output/handoff-db-<slug>.md — DELETE when DONE.
+#
+name: db-investigation
+description: Investigate database performance, schema, data integrity, or migration issues. Inspect → analyze → fix.
+domain: "{{domain}}"
+trigger: User asks to investigate slow queries, missing indexes, N+1 queries, database schema, migration conflicts, data integrity issues, connection pool problems, or DB performance.
+prerequisites: []
+steps:
+  - id: inspect
+    subagent_type: explore
+    skills:
+      - common-context-optimization
+    entry_criteria: Database connection available or schema files accessible
+    exit_criteria: Query plans, schema state, and performance data collected
+    handoff_to: analyze
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}. Database: {{db_type}}.
+
+      Collect database state. Use the appropriate method:
+
+      For schema analysis (always do this):
+        - Read migration files: ls supabase/migrations/ | sort, then read the last 5
+        - Or read schema files: find . -name "*.sql" -o -name "schema.prisma"
+
+      For slow query analysis (if performance issue):
+        PostgreSQL:
+          EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) <slow-query>;
+          SELECT query, calls, total_time, mean_time FROM pg_stat_statements
+          ORDER BY mean_time DESC LIMIT 20;
+
+        Supabase (via SQL editor or psql):
+          SELECT * FROM pg_stat_user_tables ORDER BY seq_scan DESC LIMIT 20;
+          SELECT schemaname, tablename, attname, n_distinct, correlation
+          FROM pg_stats WHERE tablename = '<table>';
+
+        MySQL:
+          EXPLAIN FORMAT=JSON <slow-query>;
+          SHOW STATUS LIKE 'Slow_queries';
+
+      For migration conflicts:
+        Read all pending migration files chronologically.
+        Check for: duplicate column adds, conflicting constraint names, table drops.
+
+      For N+1 detection (app-level):
+        Grep the codebase for ORM patterns that indicate N+1:
+          grep -r "\.find\|\.findOne\|\.where" --include="*.ts" src/ | grep -v "include\|join\|eager"
+
+      Write all findings to .agent-output/db-investigation/<slug>-inspection.md.
+
+      Update {{handoff_file}}:
+        Inspection_ref: path
+        Issue_type: slow-query | missing-index | n+1 | schema-conflict | data-integrity | other
+        Next: analyze
+
+  - id: analyze
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+    entry_criteria: Inspection data available
+    exit_criteria: Root cause and fix recommendations written
+    handoff_to: fix
+    prompt_template: |
+      Read {{handoff_file}} and Inspection_ref.
+
+      Analyze the database issue:
+
+      Slow query / missing index:
+        - Read the EXPLAIN ANALYZE output. Identify: Seq Scans on large tables, high row estimates vs actual.
+        - Recommend specific indexes: CREATE INDEX ON <table> (<columns>) WHERE <condition>;
+        - Estimate impact: how many rows, what query time reduction expected.
+
+      N+1 queries:
+        - Map the ORM call chain that causes the extra queries.
+        - Recommend: eager loading, select_related, include, or batch loading pattern.
+        - Show the before/after query count.
+
+      Schema conflict / migration:
+        - Identify the conflicting migrations.
+        - Propose resolution order or a corrective migration.
+
+      Data integrity:
+        - Identify rows violating constraints.
+        - Propose: DELETE, UPDATE, or migration to add missing constraints.
+
+      Write analysis to .agent-output/db-investigation/<slug>-analysis.md.
+
+      If the finding is informational only (no fix needed):
+        Set Fix_needed: no in {{handoff_file}}. DELETE {{handoff_file}} and STOP.
+
+      Update {{handoff_file}}:
+        Analysis_ref: path
+        Fix_type: migration | index | query-rewrite | orm-pattern | data-cleanup
+        Fix_needed: yes | no
+        Fix_risk: low | medium | high
+        Next: fix
+
+  - id: fix
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Analysis complete; fix type and risk known
+    exit_criteria: Fix applied (migration written or query rewritten); verified
+    handoff_to: null
+    prompt_template: |
+      Read {{handoff_file}}, Inspection_ref, and Analysis_ref.
+
+      STOP if Fix_risk is "high" and orchestrator has not set Fix_approved: yes.
+
+      Apply the fix based on Fix_type:
+
+      migration (index or schema change):
+        Create a new migration file with the recommended changes.
+        File name: YYYYMMDDHHMMSS_<description>.sql
+        Test locally: psql/mysql < migration.sql (on a dev DB, never prod directly).
+
+      query-rewrite:
+        Find the slow query in source code.
+        Rewrite with JOIN or subquery as recommended.
+        Keep the original as a comment for reference.
+
+      orm-pattern (N+1):
+        Add include/select_related/eager to the ORM query.
+        Verify the query count dropped with EXPLAIN or logging.
+
+      data-cleanup:
+        Write the DELETE/UPDATE as a migration, not ad-hoc.
+        Add a comment explaining the data issue.
+
+      Commit: fix(db): <description>
+
+      Update {{handoff_file}}:
+        Fix_applied: [description]
+        Files_changed: [list]
+        Completed: true
+
+      When DONE: DELETE {{handoff_file}}.

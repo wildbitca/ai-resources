@@ -1,0 +1,124 @@
+# Cloud resource operations and external API workflow.
+# Covers: AWS/GCP/Azure resource queries, external REST/GraphQL API calls, cloud cost checks,
+# IAM/permissions, storage, databases, queues, event streams, CDN, DNS, certificates.
+# Also handles: external SaaS API integration (Stripe, Twilio, SendGrid, etc.)
+#
+# Model routing:
+#   query  → explore (gemini-2.5-flash)    — API calls, resource listing, data fetching
+#   analyze → generalPurpose (gemini-2.5-pro) — interpretation, recommendations
+#   act    → implementer (claude-sonnet-4-6) — config changes, resource creation/update
+#
+# handoff_file: .agent-output/handoff-cloud-<slug>.md — DELETE when DONE.
+#
+name: cloud-ops
+description: Cloud resource query, management, and external API integration. Gather resource state → analyze → optionally act.
+domain: cloud
+trigger: User asks to query, check, manage, or integrate with cloud resources (AWS, GCP, Azure) or external APIs (Stripe, Twilio, GitHub, Slack, etc.). Includes cost checks, IAM, storage, queues, DNS, certificates.
+prerequisites: []
+steps:
+  - id: query
+    subagent_type: explore
+    skills:
+      - common-context-optimization
+    entry_criteria: Provider, resource type, or API endpoint known
+    exit_criteria: Resource state or API response documented
+    handoff_to: analyze
+    prompt_template: |
+      Workspace: {{workspace}}. Provider: {{provider}}. Region: {{region}}.
+      Goal: {{user_goal}}.
+
+      Fetch all relevant resource state or API data. Examples:
+
+      AWS:
+        aws <service> list-<resources> --region {{region}}
+        aws <service> describe-<resource> --<id> <value>
+        aws cloudwatch get-metric-statistics ... (for monitoring)
+        aws logs filter-log-events --log-group-name <name> --filter-pattern <pattern>
+
+      GCP:
+        gcloud <service> list / describe
+        gcloud logging read "<filter>" --limit=50
+
+      Azure:
+        az <service> list / show
+
+      External APIs (use curl with appropriate auth from env):
+        curl -H "Authorization: Bearer $API_KEY" https://api.<service>.com/v1/<resource>
+
+      Write all fetched data to .agent-output/cloud-ops/<slug>-data.md:
+        - Resource list with key attributes
+        - Current status/health
+        - Relevant metrics or recent events
+        - Raw API responses (truncate if > 200 lines)
+
+      If the task is purely informational (list, describe, check):
+        Do full analysis here. Set Completed: true, Action_needed: no in {{handoff_file}}.
+
+      Update {{handoff_file}}:
+        Data_ref: path
+        Action_needed: yes | no
+        Symptoms: [if debugging]
+        Next: analyze
+
+  - id: analyze
+    subagent_type: generalPurpose
+    skills:
+      - common-best-practices
+    entry_criteria: Resource data collected
+    exit_criteria: Analysis complete; recommendations written
+    handoff_to: act
+    prompt_template: |
+      Read {{handoff_file}} and Data_ref.
+
+      Analyze the collected data:
+        1. Current state assessment (healthy / degraded / misconfigured / expensive)
+        2. Root cause if something is wrong
+        3. Recommendations (ranked by impact and risk)
+        4. Estimated cost impact if relevant
+        5. Security or compliance concerns if visible
+
+      If analysis is the final deliverable (no changes needed):
+        Write full report to .agent-output/cloud-ops/<slug>-analysis.md.
+        Update {{handoff_file}}: Analysis_ref, Action_needed: no, Completed: true.
+        DELETE {{handoff_file}} and STOP.
+
+      If changes ARE needed:
+        Write analysis + action plan to .agent-output/cloud-ops/<slug>-analysis.md.
+        Update {{handoff_file}}:
+          Analysis_ref: path
+          Action_plan: [bullet list of changes]
+          Action_risk: low | medium | high
+          Next: act
+
+  - id: act
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Analysis complete; action approved (orchestrator must confirm if Action_risk is high)
+    exit_criteria: Changes applied; resources verified
+    handoff_to: null
+    prompt_template: |
+      Read {{handoff_file}}, Data_ref, and Analysis_ref.
+
+      STOP if Action_risk is "high" and orchestrator has not set Action_approved: yes.
+
+      Execute each action in Action_plan:
+        - For infrastructure changes: use provider CLI with --dry-run first if available
+        - For API calls: use curl or provider SDK
+        - For Terraform/Crossplane: plan first, then apply
+        - For config files: edit and commit with appropriate message
+
+      Verify each change:
+        - Query the resource again to confirm expected state
+        - Check dependent resources are unaffected
+
+      Document before/after state in .agent-output/cloud-ops/<slug>-result.md.
+
+      Update {{handoff_file}}:
+        Actions_taken: [list]
+        Verification: passed | failed | partial
+        Result_ref: path
+        Completed: true
+
+      When DONE: DELETE {{handoff_file}}.
