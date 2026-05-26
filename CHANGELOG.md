@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.1.8] — 2026-05-26 — mandatory multi-model routing enforcement policy
+
+### Added
+
+- **Mandatory routing enforcement policy** in `rules/017-multimodel-routing.mdc` —
+  codifies which agent/model handles each task type and hard-bans inline exploration
+  from the main Claude session.
+
+  Key rules:
+  - Main Claude session = orchestration + synthesis + edits only. NEVER exploration.
+  - All read/grep/glob/find tasks → `explore` subagent (gemini-2.5-flash).
+  - `Read` inline allowed ONLY as an immediate precondition for `Edit`/`Write`.
+  - `Bash grep/find` inline NEVER for exploration — always spawn `explore`.
+
+  Routing table (task type → agent → model) covers: codebase exploration, SDD
+  reads, web research, documentation, test runs, verification, planning, code
+  review, security audit, architecture, code editing, infra, and final synthesis.
+
 ## [1.1.7] — 2026-05-07 — fix single-model teardown leaves ANTHROPIC_BASE_URL
 
 ### Fixed
