@@ -9,8 +9,8 @@ class AiResources < Formula
   homepage "https://github.com/wildbitca/ai-resources"
   url "https://github.com/wildbitca/ai-resources.git",
       using: :git,
-      tag: "v1.1.8"
-  version "1.1.8"
+      tag: "v1.1.9"
+  version "1.1.9"
 
   head "https://github.com/wildbitca/ai-resources.git", branch: "main"
 

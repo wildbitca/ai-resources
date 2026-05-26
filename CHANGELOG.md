@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.1.9] — 2026-05-26 — package-upgrade on Haiku + routing policy in generated context files
+
+### Changed
+
+- **`cost-optimized` profile: `package-upgrade` → `claude-haiku-4-5-20251001`** (`profiles/cost-optimized.yaml`).
+  Dependency upgrade work is mechanical (version bumping, changelog scanning) and does not
+  require Sonnet-level reasoning. Haiku 4.5 handles it at ~5× lower cost.
+
+### Added
+
+- **Routing policy table injected into generated `CLAUDE.md` and `GEMINI.md`** (`cockpits/_shared.py`).
+  `ai-resources generate` now embeds the mandatory delegation table (task type → agent → model)
+  and the inline-Read/Bash-exploration ban into every cockpit context file, so enforcement
+  rules travel with the install rather than requiring manual edits.
+
 ## [1.1.8] — 2026-05-26 — mandatory multi-model routing enforcement policy
 
 ### Added

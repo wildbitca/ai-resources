@@ -133,6 +133,33 @@ to the configured LiteLLM gateway, which routes to the actual provider.
 4. **Routing config:** see `~/.config/ai-resources/executors.yaml` for the
    role → model mapping. Edit there or run `ai-resources setup` to change.
 
+### MANDATORY routing policy (enforced always)
+
+**Main session = orchestration + synthesis + edits only. NEVER exploration.**
+
+| Task type | Agent | Model |
+|-----------|-------|-------|
+| Read files / grep / glob / find / understand codebase | `explore` | gemini-2.5-flash |
+| Read SDDs / specs / docs to summarize | `explore` | gemini-2.5-flash |
+| "Where is X?", "What files do Y?" | `explore` | gemini-2.5-flash |
+| Web research, external docs | `generalPurpose` | gemini-2.5-flash |
+| Write documentation | `generalPurpose` | gemini-2.5-flash |
+| Run tests + report | `tester` | gemini-2.5-flash |
+| Validate acceptance criteria | `verifier` | gemini-2.5-flash-lite |
+| Decompose into plan | `planner` | gemini-2.5-pro |
+| Code review | `code-reviewer` | gemini-2.5-pro |
+| Security audit | `security-auditor` | gemini-2.5-pro |
+| Architecture design / ADRs | `software-architect` | claude-sonnet-4-6 |
+| Write / edit code | `implementer` | claude-sonnet-4-6 |
+| Infra / Terraform / Crossplane | `terraform-maintainer` / `crossplane-upjet-maintainer` | claude-sonnet-4-6 |
+| **Synthesize results → final answer** | **main session** | *(configured model)* |
+
+**Rules:**
+1. `Read` inline → ONLY allowed immediately before a required `Edit`/`Write` (technical precondition). For all other reads, spawn `explore`.
+2. `Bash grep/find` inline → NEVER for exploration. Spawn `explore`.
+3. If unsure whether something is "exploration": it is. Delegate it.
+4. Exploration breadth hint: `"quick"` (1 lookup), `"medium"` (moderate), `"very thorough"` (multi-location).
+
 ### When you spawn a subagent
 
 - Read the agent's frontmatter `model:` field — that's the model that role uses
