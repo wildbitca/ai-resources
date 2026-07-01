@@ -1,0 +1,18 @@
+# Snyk policy file — wildbitca/ai-resources
+# This repo is a local developer tooling kit (Homebrew formula + skills/rules/
+# profiles). It has no deployed/runtime component — every Python file here is a
+# CLI helper run by a developer on their own machine and inputs.
+version: v1.25.0
+
+# Accepted-risk SAST exclusions (Snyk Code only; SCA/IaC still scan).
+#
+# Snyk flags Command Injection (python/CommandInjection) and Path Traversal
+# (python/PT) in these helper scripts via taint analysis. In practice they use
+# the safe subprocess pattern — argument LISTS with shell=False (e.g.
+# subprocess.run(["git", "rev-list", f"{tag}..HEAD"])), so there is no shell to
+# inject into; the "tainted" values are the developer's own CLI args/env. These
+# are dev-only tools, not a deployed service, so the findings are accepted risk.
+exclude:
+  code:
+    - skills/**/scripts/**
+    - scripts/ai_resources/**
