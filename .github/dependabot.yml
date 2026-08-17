@@ -1,0 +1,19 @@
+# Solo github-actions: este repo no versiona dependencias de codigo. Lo que hay es una
+# formula de Homebrew, scripts de shell y markdown — no hay package.json, pyproject ni
+# go.mod que Dependabot pueda leer. Declararlos igualmente solo produciria ruido de
+# ecosistemas vacios.
+#
+# Las actualizaciones de SEGURIDAD son ajuste de repo y ya llegaban; esto anade las de
+# VERSION para las actions, que es la unica superficie versionada que tiene.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels: [dependencies, ci]
+    groups:
+      actions:
+        update-types: [minor, patch]
