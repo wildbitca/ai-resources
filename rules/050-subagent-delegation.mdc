@@ -36,8 +36,8 @@ Delegate well-scoped tasks to keep the main context small. Subagents run in isol
 | Fix Sentry issues | `sentry-fixer` |
 | Terraform maintenance | `terraform-maintainer` |
 | Crossplane/Upjet build | `crossplane-upjet-maintainer` |
-| Shell commands, git, scripts | `shell` |
-| General multi-step reasoning | `generalPurpose` |
+| Write/update specs, ADRs, postmortems | `doc-writer` |
+| General multi-step reasoning, shell and git chores | `generalPurpose` |
 
 ## Multi-model routing (when configured)
 

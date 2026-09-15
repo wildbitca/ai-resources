@@ -3,7 +3,9 @@
 # or infrastructure needs debugging and repair.
 #
 # Flow: investigate → analyze → plan → implement → review → monitor → verify
-# Parallel groups: investigate (cluster + code), review+monitor (post-implement)
+# Parallel groups: investigate (cluster + code), review+monitor (post-fix).
+# Parallel steps do NOT edit the handoff: each ends its report with its fields and the
+# orchestrator copies them into the handoff once the group has returned.
 #
 # Key principle: OBSERVE FIRST, CHANGE LATER.
 # All resources MUST be set to Observe-only before any destructive action.
@@ -43,7 +45,8 @@ steps:
       8. Flux/GitOps reconciliation status
 
       Write findings to .agent-output/investigator/cluster-state.md.
-      Update {{handoff_file}} with: Cluster_state_ref, Broken_resources (list), Error_summary.
+      Runs concurrently with investigate-code: do NOT edit {{handoff_file}}.
+      End the findings file with: Cluster_state_ref, Broken_resources (list), Error_summary.
 
   - id: investigate-code
     subagent_type: generalPurpose
@@ -70,7 +73,8 @@ steps:
       to verify the YAML output is valid (document separators, indentation, quoting).
 
       Write findings to .agent-output/investigator/code-review.md.
-      Update {{handoff_file}} with: Code_review_ref, Suspected_issues (list).
+      Runs concurrently with investigate-cluster: do NOT edit {{handoff_file}}.
+      End the findings file with: Code_review_ref, Suspected_issues (list).
 
   - id: analyze
     subagent_type: software-architect
@@ -140,7 +144,7 @@ steps:
       - common-best-practices
     entry_criteria: Fix applied
     exit_criteria: No regressions, no blast radius beyond expected
-    handoff_to: monitor
+    handoff_to: verify
     on_concern_return_to: implement
     execution_hints:
       parallel_group: post-fix
@@ -156,7 +160,8 @@ steps:
       5. Are RBAC permissions minimal and correct?
 
       Write review to .agent-output/code-reviewer/review.md.
-      Update {{handoff_file}} with: Review_result (approve/block), Review_ref.
+      Runs concurrently with monitor: do NOT edit {{handoff_file}}.
+      End the review with: Review_result (approve/block), Review_ref.
 
   - id: monitor
     subagent_type: generalPurpose
@@ -181,7 +186,8 @@ steps:
 
       If resources are stuck, document the specific error and remaining count.
       Write monitoring log to .agent-output/monitor/status.md.
-      Update {{handoff_file}} with: Final_status, Resources_ready, Resources_stuck (if any).
+      Runs concurrently with review: do NOT edit {{handoff_file}}.
+      End the monitoring log with: Final_status, Resources_ready, Resources_stuck (if any).
 
   - id: verify
     subagent_type: verifier

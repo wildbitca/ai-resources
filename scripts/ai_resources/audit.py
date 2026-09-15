@@ -26,39 +26,74 @@ from .setup import ui
 
 
 # ---------------------------------------------------------------------------
-# Public list prices per million tokens (approximate, 2026-05).
-# Format: (input, output, cache_read, cache_write)
+# Public list prices per million tokens, verified 2026-09-15 against
+#   https://platform.claude.com/docs/en/about-claude/pricing
+#   https://ai.google.dev/gemini-api/docs/pricing (paid tier, prompts <= 200k)
+# Format: (input, output, cache_read, cache_write_5m, cache_write_1h)
+# Claude cache writes are 1.25x (5m) / 2x (1h) input. Gemini context-cache storage
+# (per token-hour) is not modeled. Update this table whenever list prices change.
 # ---------------------------------------------------------------------------
-PRICES: dict[str, tuple[float, float, float, float]] = {
-    "claude-opus-4-7":        (15.00, 75.00,  1.50, 18.75),
-    "claude-opus-4-6":        (15.00, 75.00,  1.50, 18.75),
-    "claude-opus-4-5":        (15.00, 75.00,  1.50, 18.75),
-    "claude-sonnet-4-6":      ( 3.00, 15.00,  0.30,  3.75),
-    "claude-sonnet-4-5":      ( 3.00, 15.00,  0.30,  3.75),
-    "claude-haiku-4-5":       ( 0.80,  4.00,  0.08,  1.00),
-    "gemini-2.5-pro":         ( 1.25, 10.00,  0.00,  0.00),
-    "gemini-2.5-flash":       ( 0.075, 0.30,  0.00,  0.00),
-    "gemini-2.5-flash-lite":  ( 0.015, 0.075, 0.00,  0.00),
-    "gpt-4o":                 ( 2.50, 10.00,  0.00,  0.00),
-    "gpt-4o-mini":            ( 0.15,  0.60,  0.00,  0.00),
+PRICES: dict[str, tuple[float, float, float, float, float]] = {
+    "claude-fable-5-1":       (10.00, 50.00, 0.25, 12.50, 20.00),
+    "claude-mythos-5-1":      (10.00, 50.00, 0.25, 12.50, 20.00),
+    "claude-fable-5":         (10.00, 50.00, 1.00, 12.50, 20.00),
+    "claude-mythos-5":        (10.00, 50.00, 1.00, 12.50, 20.00),
+    "claude-opus-5":          ( 5.00, 25.00, 0.50,  6.25, 10.00),
+    "claude-opus-4-8":        ( 5.00, 25.00, 0.50,  6.25, 10.00),
+    "claude-opus-4-7":        ( 5.00, 25.00, 0.50,  6.25, 10.00),
+    "claude-opus-4-6":        ( 5.00, 25.00, 0.50,  6.25, 10.00),
+    "claude-opus-4-5":        ( 5.00, 25.00, 0.50,  6.25, 10.00),
+    "claude-opus-4-1":        (15.00, 75.00, 1.50, 18.75, 30.00),
+    "claude-opus-4":          (15.00, 75.00, 1.50, 18.75, 30.00),
+    "claude-sonnet-5":        ( 2.00, 10.00, 0.20,  2.50,  4.00),
+    "claude-sonnet-4-6":      ( 3.00, 15.00, 0.30,  3.75,  6.00),
+    "claude-sonnet-4-5":      ( 3.00, 15.00, 0.30,  3.75,  6.00),
+    "claude-sonnet-4":        ( 3.00, 15.00, 0.30,  3.75,  6.00),
+    "claude-haiku-4-5":       ( 1.00,  5.00, 0.10,  1.25,  2.00),
+    "claude-3-5-haiku":       ( 0.80,  4.00, 0.08,  1.00,  1.60),
+    "gemini-3.8-flash":       ( 0.75,  3.75, 0.075, 0.00,  0.00),  # through 2026-12-31
+    "gemini-3.5-flash":       ( 1.50,  9.00, 0.15,  0.00,  0.00),
+    "gemini-2.5-pro":         ( 1.25, 10.00, 0.125, 0.00,  0.00),
+    "gemini-2.5-flash":       ( 0.30,  2.50, 0.03,  0.00,  0.00),
+    "gemini-2.5-flash-lite":  ( 0.10,  0.40, 0.01,  0.00,  0.00),
+}
+
+# Claude Code aliases that can appear as the model name; they resolve to the newest model.
+ALIASES: dict[str, str] = {
+    "fable": "claude-fable-5-1",
+    "opus": "claude-opus-5",
+    "sonnet": "claude-sonnet-5",
+    "haiku": "claude-haiku-4-5",
 }
 
 
-def _price(model: str) -> tuple[float, float, float, float] | None:
+def _price(model: str) -> tuple[float, float, float, float, float] | None:
+    base = model.split("[", 1)[0]  # "opus[1m]" → "opus"; context suffixes don't change price
+    model = ALIASES.get(base, model)
     if model in PRICES:
         return PRICES[model]
-    # prefix match (e.g. "claude-sonnet-4-6-20251101" → "claude-sonnet-4-6")
-    for key, p in PRICES.items():
-        if model.startswith(key):
-            return p
-    return None
+    # Longest prefix wins ("claude-fable-5-1[1m]" → "claude-fable-5-1", not "claude-fable-5").
+    matches = [key for key in PRICES if model.startswith(key)]
+    return PRICES[max(matches, key=len)] if matches else None
 
 
-def _estimate(model: str, inp: int, out: int, cr: int, cw: int) -> float:
+def _estimate(model: str, inp: int, out: int, cr: int, cw5: int, cw1h: int) -> float:
     p = _price(model)
     if p is None:
         return 0.0
-    return (inp * p[0] + out * p[1] + cr * p[2] + cw * p[3]) / 1_000_000
+    return (inp * p[0] + out * p[1] + cr * p[2] + cw5 * p[3] + cw1h * p[4]) / 1_000_000
+
+
+def _cache_writes(usage: dict) -> tuple[int, int]:
+    """Split cache-creation tokens into (5-minute, 1-hour) writes; unknown TTL counts as 5m."""
+    total = usage.get("cache_creation_input_tokens") or 0
+    detail = usage.get("cache_creation")
+    if isinstance(detail, dict):
+        five_min = detail.get("ephemeral_5m_input_tokens") or 0
+        one_hour = detail.get("ephemeral_1h_input_tokens") or 0
+        if five_min or one_hour:
+            return five_min, one_hour
+    return total, 0
 
 
 def _project_jsonl_dir(cwd: str | None = None) -> Path | None:
@@ -97,9 +132,10 @@ def _parse(jsonl_dir: Path, since: datetime | None) -> tuple[dict, list]:
                         if i + o == 0:
                             continue
                         cr = usage.get("cache_read_input_tokens", 0)
-                        cw = usage.get("cache_creation_input_tokens", 0)
+                        cw5, cw1h = _cache_writes(usage)
+                        cw = cw5 + cw1h
                         model = inner.get("model", "unknown")
-                        cost = _estimate(model, i, o, cr, cw)
+                        cost = _estimate(model, i, o, cr, cw5, cw1h)
                         ms = model_stats[model]
                         ms["inp"] += i; ms["out"] += o
                         ms["cr"] += cr; ms["cw"] += cw
@@ -216,7 +252,8 @@ def cmd_audit(args: argparse.Namespace) -> int:
 
     # ── Notes ─────────────────────────────────────────────────────────────
     con.print()
-    ui.detail("Prices are public Anthropic/Google list prices — actual cost depends on your plan.")
+    ui.detail("Prices are public Anthropic/Google list prices — actual cost depends on your plan; "
+              "on a Pro/Max subscription usage is not billed per token.")
     ui.detail("Gemini calls via LiteLLM show their provider model name when the gateway returns it.")
     if total_cr > 0:
         cache_pct = 100.0 * (total_cr / (total_cr + total_out + sum(v["inp"] for v in model_stats.values()) + 1))

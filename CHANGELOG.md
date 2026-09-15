@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Fixed
+
+- **Claude Code and Codex now discover kit skills.** Setup linked the whole `skills/`
+  directory as `~/.claude/skills/ai-resources` (and `~/.agents/skills/ai-resources`), one
+  level deeper than agents look, so no kit skill was ever discovered. Setup now links each
+  skill as `<skills-dir>/<skill-id>`, removes the legacy aggregate link and stale kit links,
+  and never overwrites a user's own skill with the same name. Links target the
+  version-independent Homebrew `opt/` path so they survive `brew upgrade`.
+- **Removed `TeamCreate` guidance from the generated `CLAUDE.md`.** The tool no longer
+  exists; the section now describes parallel subagents, and the model-routing note reflects
+  the configured mode instead of always pointing to `executors.yaml`.
+- **Added the missing `doc-writer` role** used by `merge-and-document` and
+  `incident-response`, registered in every profile and in `KNOWN_ROLES`; dropped the
+  nonexistent `shell` role from the delegation map.
+- **`parallel_group` hints no longer contradict entry criteria.** Feature: `test` is a
+  sequential gate, then `review` and `security` run in parallel (`post-test`). Bugfix: the
+  test → security chain is sequential. Parallel steps (feature, infra-triage) no longer edit
+  the shared handoff concurrently; `WORKFLOW_CONTRACT.md` defines the join rules.
+- **`ai-resources audit` prices corrected** against official list prices (2026-09-15): Opus
+  4.5+ was 3× too high, Haiku and Gemini were too low, current models (Fable 5.1, Opus 5,
+  Sonnet 5, Gemini 3.x) were missing. Adds 1-hour cache writes, alias resolution, and
+  longest-prefix model matching.
+
 ## [1.1.9] — 2026-05-26 — package-upgrade on Haiku + routing policy in generated context files
 
 ### Changed

@@ -26,7 +26,7 @@ Template: `$AGENT_KIT/handoff.md.template`
 | **Changes made** | File paths only (no code) |
 | **Commands run** | Build/test/analyze commands executed (one line each), or `none` |
 | **Unresolved / risks** | Open items or follow-up needed |
-| **Next assigned role** | planner \| implementer \| tester \| verifier \| software-architect \| code-reviewer \| explore \| shell |
+| **Next assigned role** | planner \| implementer \| tester \| verifier \| software-architect \| code-reviewer \| security-auditor \| explore \| doc-writer \| generalPurpose |
 | **Domain** | dart-flutter \| angular \| symfony \| api-platform \| devops \| security |
 | **Blocked** | `true` if returning to a prior step |
 | **Return_to_step** | Step ID to re-invoke when Blocked |
@@ -36,6 +36,8 @@ Template: `$AGENT_KIT/handoff.md.template`
 ## Rollback
 
 After each step: read handoff → if `Blocked=true`, re-invoke `Return_to_step` (max 3 retries) → if not blocked, proceed to next step.
+
+Parallel groups: steps do not write the handoff; after the whole group returns, copy the fields each report ends with into the handoff, then apply the rule above (see `workflows/WORKFLOW_CONTRACT.md` § Rules for parallel steps).
 
 ## Completion
 

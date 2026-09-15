@@ -17,7 +17,7 @@
 
 **Next recommended:** (next workflow step / SDD phase, or "none")
 
-**Next assigned role:** (planner | implementer | tester | verifier | software-architect | code-reviewer | security-auditor | generalPurpose)
+**Next assigned role:** (planner | implementer | tester | verifier | software-architect | code-reviewer | security-auditor | explore | doc-writer | generalPurpose)
 
 **Domain:** (dart-flutter | angular | symfony | api-platform | devops | security)
 

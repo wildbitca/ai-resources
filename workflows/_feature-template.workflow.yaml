@@ -3,7 +3,7 @@
 #   - _domain-commands.yaml (commands, research_guidance, implement_guidance)
 #   - Persona files (personas/{role}-{domain}.md → roles/{role}.md)
 #
-# Flow: [worktree] → research → plan → architect → implement → test → review → security → verify → [merge]
+# Flow: [worktree] → research → plan → architect → implement → test → (review ‖ security) → verify → [merge]
 # REQUIRES worktree. See .cursorrules.
 #
 # handoff_file: .agent-output/handoff-<branch>.md. DELETE when DONE.
@@ -16,11 +16,13 @@
 #
 # execution_hints: optional metadata for runtimes that support parallel execution.
 #   parallel_group: steps sharing the same group name CAN run concurrently.
-#   Runtimes that don't support parallelism (or when Agent Teams is off) ignore hints
-#   and execute sequentially as before.
+#   Runtimes that can't run subagents concurrently ignore hints and execute sequentially.
+#   Parallel steps do NOT edit {{handoff_file}}: each ends its report with its verdict fields,
+#   and the orchestrator copies them into the handoff once the whole group has returned
+#   (see WORKFLOW_CONTRACT.md § Rules for parallel steps).
 #
 name: feature-implementation
-description: Domain-agnostic feature workflow. research → plan → architect → implement → test → review → security → verify.
+description: Domain-agnostic feature workflow. research → plan → architect → implement → test → (review ‖ security) → verify.
 domain: "{{domain}}"
 trigger: User asks to implement a feature, new functionality, or multi-step task.
 prerequisites: [ ]
@@ -113,7 +115,7 @@ steps:
       Implement code per the plan. Do NOT write tests.
       If you discover information affecting the plan, update Plan_ref with '## Implementation Notes'. Set Plan_updated: yes in {{handoff_file}}.
       Run analyze commands from _domain-commands.yaml to verify no lint errors.
-      Update {{handoff_file}} (Changes made, Next=tester if Requires_tests else code-reviewer).
+      Update {{handoff_file}} (Changes made, Next=tester).
       If blocked, set Blocked: true, Return_to_step: architect, Block_reason: [reason].
   - id: test
     subagent_type: tester
@@ -123,11 +125,9 @@ steps:
     exit_criteria: All tests pass
     handoff_to: review
     on_concern_return_to: implement
-    execution_hints:
-      parallel_group: post-implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}}. If Requires_tests: no, skip tests, update {{handoff_file}} (Next=code-reviewer) and advance.
+      Read {{handoff_file}}. If Requires_tests: no, skip tests, update {{handoff_file}} (Next=post-test group: code-reviewer + security-auditor) and advance.
       If Requires_tests: yes:
         1. Read Spec_refs from handoff. If spec has ## Test Scenarios (BDD), implement tests for each [automated] scenario referenced by the plan (use TS-IDs from plan acceptance criteria).
         2. Name test functions to match scenario IDs for traceability (e.g. testTsPet001_mutualExclusivity).
@@ -136,43 +136,45 @@ steps:
         5. After tests pass, update the spec's Traceability Matrix with test file paths and status.
         6. Create report in .agent-output/tester/ with coverage: "{N}/{M} plan scenarios have passing tests".
       MANDATORY: ALL test/analyze commands MUST exit 0. If any fails, set Blocked: true, Return_to_step: implement, Block_reason: [failures with details].
-      Update {{handoff_file}} (Test_report, Next=code-reviewer).
+      Update {{handoff_file}} (Test_report, Next=post-test group: code-reviewer + security-auditor).
   - id: review
     subagent_type: code-reviewer
     skills:
       - common-code-review
       - common-security-standards
-    entry_criteria: Tests pass
+    entry_criteria: Tests pass (or Requires_tests is no)
     exit_criteria: Code review approved or changes requested
-    handoff_to: security
+    handoff_to: verify
     on_concern_return_to: implement
     execution_hints:
-      parallel_group: post-implement
+      parallel_group: post-test
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}, changed files, and Spec_refs. Apply domain review checklist from your loaded persona. Run test commands from _domain-commands.yaml.
       Check that implementation respects Requirements_preserved from handoff.
-      Generate report in .agent-output/code-reviewer/.
-      If APPROVED: update {{handoff_file}} (Code_review_verdict: APPROVED, Next=security-auditor).
-      If REQUIRES_CHANGES: set Blocked: true, Return_to_step: implement, Block_reason: [corrections].
+      This step runs concurrently with security: do NOT edit {{handoff_file}}.
+      Generate report in .agent-output/code-reviewer/ ending with these fields:
+        Code_review_verdict: APPROVED | REQUIRES_CHANGES
+        Block_reason: [corrections] (only if REQUIRES_CHANGES)
   - id: security
     subagent_type: security-auditor
     skills:
       - common-security-audit
       - common-security-standards
-    entry_criteria: Code review approved
+    entry_criteria: Tests pass (or Requires_tests is no)
     exit_criteria: No critical/high findings
     handoff_to: verify
     on_concern_return_to: implement
     execution_hints:
-      parallel_group: post-implement
+      parallel_group: post-test
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}}. If Security_critical_feature: no, set Security_audit: N/A, Next=verifier and advance.
+      Read {{handoff_file}}. This step runs concurrently with review: do NOT edit {{handoff_file}}.
+      If Security_critical_feature: no, return Security_audit: N/A without a scan.
       If yes, execute the methodology from $AGENT_KIT/workflows/security-devsecops.workflow.yaml adapted to {{domain}}. Use tools from _domain-commands.yaml security section plus domain-specific tools.
-      Generate report in .agent-output/security-auditor/.
-      Update {{handoff_file}} (Security_audit: PASS|CONDITIONAL|FAIL, Next=verifier).
-      If FAIL, set Blocked: true, Return_to_step: implement, Block_reason: [critical vulnerabilities].
+      Generate report in .agent-output/security-auditor/ ending with these fields:
+        Security_audit: PASS | CONDITIONAL | FAIL | N/A
+        Block_reason: [critical vulnerabilities] (only if FAIL)
   - id: verify
     subagent_type: verifier
     skills:

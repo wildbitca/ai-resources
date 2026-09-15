@@ -15,6 +15,7 @@ by_role:
   research:           { provider: google,    model: gemini-2.5-pro,   fallbacks: [claude-sonnet-4-6] }
   explore:            { provider: google,    model: gemini-2.5-flash, fallbacks: [claude-sonnet-4-6] }
   generalPurpose:     { provider: google,    model: gemini-2.5-pro,   fallbacks: [claude-sonnet-4-6] }
+  doc-writer:         { provider: google,    model: gemini-2.5-flash, fallbacks: [claude-sonnet-4-6] }
 
   # Reasoning + instruction-following → Claude
   planner:            { provider: anthropic, model: claude-sonnet-4-6 }

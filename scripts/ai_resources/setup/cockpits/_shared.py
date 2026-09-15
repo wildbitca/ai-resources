@@ -91,6 +91,81 @@ def write_text(path: Path, content: str, *, dry_run: bool = False) -> bool:
     return True
 
 
+LEGACY_SKILLS_LINK = "ai-resources"
+
+
+def stable_kit_root(root: Path) -> Path:
+    """Map a versioned Homebrew Cellar path to its version-independent opt/ path.
+
+    `.../Cellar/ai-resources/1.1.9/libexec` → `.../opt/ai-resources/libexec`, so links
+    written by setup keep resolving after `brew upgrade`. Non-Homebrew roots are returned as-is.
+    """
+    parts = root.parts
+    if "Cellar" not in parts:
+        return root
+    i = parts.index("Cellar")
+    if len(parts) < i + 3:
+        return root
+    opt = Path(*parts[:i], "opt", parts[i + 1], *parts[i + 3:])
+    return opt if opt.exists() else root
+
+
+def _link_target(link: Path) -> Path:
+    """Lexically normalized target of a symlink (the target may not exist)."""
+    raw = os.readlink(link)
+    return Path(os.path.normpath(raw if os.path.isabs(raw) else os.path.join(link.parent, raw)))
+
+
+def _is_kit_skills_dir(d: Path, skills_root: Path) -> bool:
+    """True for the current kit skills dir or a Homebrew install of this kit (any version)."""
+    if d == skills_root:
+        return True
+    p = d.parts
+    return p[-2:] == ("libexec", "skills") and (
+        p[-5:-3] == ("Cellar", "ai-resources") or p[-4:-2] == ("opt", "ai-resources")
+    )
+
+
+def sync_skill_links(links_dir: Path, skills_root: Path, *, dry_run: bool = False) -> dict[str, list[str]]:
+    """Link every kit skill as `links_dir/<skill-id>` → `skills_root/<skill-id>`.
+
+    Agents discover skills one directory level below their skills dir, so a single link to
+    the whole kit (`links_dir/ai-resources`) hides every skill. This replaces that legacy link,
+    prunes kit links whose skill no longer exists, and never touches the user's own skills:
+    a name already taken by a real directory or a foreign link is reported as skipped.
+    """
+    result: dict[str, list[str]] = {"linked": [], "removed": [], "skipped": []}
+    skills_root = Path(os.path.normpath(skills_root))
+    if not skills_root.is_dir():
+        return result
+    wanted = {d.name: d for d in sorted(skills_root.iterdir()) if (d / "SKILL.md").is_file()}
+
+    if links_dir.is_dir():
+        for entry in sorted(links_dir.iterdir()):
+            if not entry.is_symlink():
+                continue
+            target = _link_target(entry)
+            legacy = entry.name == LEGACY_SKILLS_LINK and _is_kit_skills_dir(target, skills_root)
+            kit_link = _is_kit_skills_dir(target.parent, skills_root)
+            if legacy or (kit_link and wanted.get(entry.name) != target):
+                if not dry_run:
+                    entry.unlink()
+                result["removed"].append(entry.name)
+
+    for name, src in wanted.items():
+        link = links_dir / name
+        if name not in result["removed"] and (link.is_symlink() or link.exists()):
+            if link.is_symlink() and _link_target(link) == src:
+                continue
+            result["skipped"].append(name)
+            continue
+        if not dry_run:
+            links_dir.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(src, target_is_directory=True)
+        result["linked"].append(name)
+    return result
+
+
 def ensure_symlink(link: Path, target: Path, *, dry_run: bool = False) -> bool:
     if dry_run:
         return False

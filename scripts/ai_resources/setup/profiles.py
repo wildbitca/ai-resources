@@ -27,6 +27,7 @@ KNOWN_ROLES = [
     "code-reviewer",
     "security-auditor",
     "verifier",
+    "doc-writer",
     "package-upgrade",
     "crashlytics-fixer",
     "sentry-fixer",

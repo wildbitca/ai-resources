@@ -32,6 +32,10 @@ by_role:
     provider: google
     model: gemini-2.5-flash
     fallbacks: [gemini-2.5-flash-lite]  # downgrade only
+  doc-writer:
+    provider: google
+    model: gemini-2.5-flash
+    fallbacks: [gemini-2.5-flash-lite]  # downgrade only
   tester:
     provider: google
     model: gemini-2.5-flash

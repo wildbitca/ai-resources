@@ -13,6 +13,7 @@ by_role:
   research:           { provider: anthropic, model: claude-sonnet-4-6 }
   explore:            { provider: anthropic, model: claude-sonnet-4-6 }
   generalPurpose:     { provider: anthropic, model: claude-sonnet-4-6 }
+  doc-writer:         { provider: anthropic, model: claude-sonnet-4-6 }
   planner:            { provider: anthropic, model: claude-sonnet-4-6 }
   software-architect: { provider: anthropic, model: claude-opus-4-7, fallbacks: [claude-sonnet-4-6] }
   implementer:        { provider: anthropic, model: claude-sonnet-4-6 }

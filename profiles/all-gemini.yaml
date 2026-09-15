@@ -13,6 +13,7 @@ by_role:
   research:           { provider: google, model: gemini-2.5-pro }
   explore:            { provider: google, model: gemini-2.5-flash }
   generalPurpose:     { provider: google, model: gemini-2.5-pro }
+  doc-writer:         { provider: google, model: gemini-2.5-flash }
   planner:            { provider: google, model: gemini-2.5-pro }
   software-architect: { provider: google, model: gemini-2.5-pro }
   implementer:        { provider: google, model: gemini-2.5-pro }

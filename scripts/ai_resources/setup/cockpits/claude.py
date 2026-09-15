@@ -41,6 +41,7 @@ ROLE_TOOLS: dict[str, str | None] = {
     "security-auditor":   "Read, Bash, Grep, Glob",
     "software-architect": "Read, Grep, Glob, Bash",
     "verifier":           "Read, Bash, Grep, Glob",
+    "doc-writer":         "Read, Edit, Write, Bash, Grep, Glob",
     # Specialists get full tool access (None = inherit all)
     "generalPurpose":              None,
     "crashlytics-fixer":           None,
@@ -201,7 +202,7 @@ def _claude_md(ak_path: str, gateway_url: str, mode: str) -> str:
 
     multimodel = _shared.multimodel_protocol_md(ak_path, gateway_url, mode)
 
-    agents_section = _build_agent_teams_section()
+    agents_section = _build_agent_teams_section(mode)
 
     return (
         f"# ai-resources (Claude Code)\n\n"
@@ -213,8 +214,8 @@ def _claude_md(ak_path: str, gateway_url: str, mode: str) -> str:
     )
 
 
-def _build_agent_teams_section() -> str:
-    """Build the Subagent Definitions + Agent Teams section."""
+def _build_agent_teams_section(mode: str) -> str:
+    """Build the Subagent Definitions + parallel work section."""
     if not AGENTS_DIR.is_dir():
         return ""
     names = sorted(p.stem for p in AGENTS_DIR.glob("*.md"))
@@ -232,13 +233,25 @@ def _build_agent_teams_section() -> str:
             mdl = "inherit"
         rows += f"| `{n}` | `{mdl}` | {d} |\n"
 
+    if mode == "multi-model":
+        routing = (
+            "Each subagent's `model:` is mapped via `~/.config/ai-resources/executors.yaml`.\n"
+            "Change it with `ai-resources executors set <role> <model>`.\n\n"
+        )
+    else:
+        routing = (
+            "Single-model mode: each subagent's `model:` comes from its role definition "
+            "(`inherit` = the session model).\n\n"
+        )
+
     return (
         f"## Subagent Definitions (auto-generated)\n\n{rows}\n"
-        f"Each subagent's `model:` is mapped via `~/.config/ai-resources/executors.yaml`.\n"
-        f"Edit there and re-run `ai-resources setup` to change the assignment.\n\n"
-        f"### Agent Teams\n\n"
-        f"Spawn teams via `TeamCreate` for parallel multi-step workflows. "
-        f"See `{repo_root()}/workflows/` for blueprints.\n"
+        f"{routing}"
+        f"### Parallel work\n\n"
+        f"Workflow steps sharing `execution_hints.parallel_group` may run as concurrent subagents "
+        f"(several Agent calls in one turn). Parallel steps never edit the shared handoff file — "
+        f"see `WORKFLOW_CONTRACT.md`. There is no `TeamCreate` tool; Agent Teams are experimental, "
+        f"so default to subagents.\n"
     )
 
 
@@ -451,10 +464,14 @@ def configure(ctx: dict) -> list[Path]:
     # 4. Engram plugin (best-effort)
     _install_engram_plugin()
 
-    # 5. Skill symlink
-    link = CONFIG_ROOT / "skills" / "ai-resources"
-    target = repo_root() / "skills"
-    _shared.ensure_symlink(link, target)
+    # 5. Skill links — one per skill, so Claude Code discovers them natively
+    links = _shared.sync_skill_links(CONFIG_ROOT / "skills",
+                                     _shared.stable_kit_root(repo_root()) / "skills")
+    if links["removed"]:
+        ui.info(f"Removed outdated kit skill links: {', '.join(links['removed'])}")
+    if links["skipped"]:
+        ui.warn(f"Skills not linked (name already used in {CONFIG_ROOT / 'skills'}): "
+                f"{', '.join(links['skipped'])}")
 
     # Update state with cockpit configuration record
     cs = s.cockpits.get(ID) or state.CockpitState()

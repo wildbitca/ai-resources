@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import state
+from .. import state, ui
 from ..detection import detect_codex
 from ... import repo_root
 from . import _shared
@@ -39,10 +39,14 @@ def configure(ctx: dict) -> list[Path]:
     if _shared.write_text(INSTRUCTIONS_PATH, md):
         written.append(INSTRUCTIONS_PATH)
 
-    # Codex skill symlink
-    link = Path.home() / ".agents" / "skills" / "ai-resources"
-    target = repo_root() / "skills"
-    _shared.ensure_symlink(link, target)
+    # Skill links in the shared Agent Skills location (~/.agents/skills), one per skill
+    agents_skills = Path.home() / ".agents" / "skills"
+    links = _shared.sync_skill_links(agents_skills, _shared.stable_kit_root(repo_root()) / "skills")
+    if links["removed"]:
+        ui.info(f"Removed outdated kit skill links: {', '.join(links['removed'])}")
+    if links["skipped"]:
+        ui.warn(f"Skills not linked (name already used in {agents_skills}): "
+                f"{', '.join(links['skipped'])}")
 
     cs = s.cockpits.get(ID) or state.CockpitState()
     cs.installed = True
