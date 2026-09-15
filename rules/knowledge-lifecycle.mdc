@@ -7,7 +7,7 @@ alwaysApply: false
 
 # Knowledge lifecycle
 
-**See also:** `knowledge-audit.mdc` (command **`/knowledge-audit`** and skill **`knowledge-audit`**).
+**See also:** skill **`knowledge-audit`** (command **`/knowledge-audit`**).
 
 Applies in workspaces that use **`specs/knowledge/`**.
 

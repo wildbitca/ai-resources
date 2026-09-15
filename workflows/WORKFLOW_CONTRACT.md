@@ -1,6 +1,6 @@
 # Workflow YAML contract
 
-Workflow files live under **`workflows/*.workflow.yaml`**. They are consumed by **`rules/010-orchestrator.mdc`** and **`rules/011-orchestrator-reference.mdc`** (workflow map).
+Workflow files live under **`workflows/*.workflow.yaml`**. `ai-resources generate` turns each one into a `workflow-<name>` skill (its `trigger` becomes the skill description), and the **`kit-orchestration`** skill defines how an agent runs the steps.
 
 ## Top-level fields (typical)
 
@@ -19,7 +19,7 @@ Workflow files live under **`workflows/*.workflow.yaml`**. They are consumed by 
 |------------------------|----------|--------------------------------------------------------------------------------------------|
 | `id`                   | yes      | Step id (e.g. `research`, `implement`)                                                     |
 | `subagent_type`        | yes      | e.g. `planner`, `implementer`, `generalPurpose`                                            |
-| `skills`               | yes      | List of flat skill ids — resolve to `SKILL.md` per **`rules/050-subagent-delegation.mdc`** |
+| `skills`               | yes      | List of flat skill ids — `$AGENT_KIT/skills/<id>/SKILL.md` (see skill **`kit-orchestration`**) |
 | `entry_criteria`       | optional |                                                                                            |
 | `exit_criteria`        | optional |                                                                                            |
 | `handoff_to`           | optional | Next step id                                                                               |
@@ -69,6 +69,6 @@ Steps may include an `execution_hints` block with **optional** metadata that run
 
 `review` and `security` share `post-test`, so a capable runtime runs them concurrently once `test` passes. The `verify` step (no hint) runs after the join.
 
-Handoff files and placeholders (e.g. `{{workspace}}`, `{{handoff_file}}`) are documented in workflow comments and **`rules/051-handoff-protocol.mdc`**.
+Handoff files and placeholders (e.g. `{{workspace}}`, `{{handoff_file}}`) are documented in workflow comments and the **`kit-orchestration`** skill (`references/handoff.md`).
 
 See **`workflows/_feature-template.workflow.yaml`** for a full example.

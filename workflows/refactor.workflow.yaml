@@ -3,12 +3,12 @@
 # external behavior must be preserved. Focus on structure, naming, duplication,
 # coupling, performance, and technical debt reduction.
 #
-# Model routing:
-#   assess    → explore (gemini-2.5-flash)      — map current structure, find smells
-#   plan      → planner (gemini-2.5-pro)         — refactor strategy, scope, acceptance criteria
-#   implement → implementer (claude-sonnet-4-6)  — atomic edits preserving behavior
-#   test      → tester (gemini-2.5-flash)        — run tests, confirm no regressions
-#   review    → code-reviewer (gemini-2.5-pro)   — confirm refactor goals met
+# Steps:
+#   assess    → explore      — map current structure, find smells
+#   plan      → planner         — refactor strategy, scope, acceptance criteria
+#   implement → implementer  — atomic edits preserving behavior
+#   test      → tester        — run tests, confirm no regressions
+#   review    → code-reviewer   — confirm refactor goals met
 #
 # handoff_file: .agent-output/handoff-refactor-<slug>.md — DELETE when DONE.
 #

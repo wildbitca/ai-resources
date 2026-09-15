@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from .. import state
+from .. import state, ui
 
 
 def deep_merge_json(path: Path, patch: dict, *, dry_run: bool = False) -> bool:
@@ -16,7 +18,11 @@ def deep_merge_json(path: Path, patch: dict, *, dry_run: bool = False) -> bool:
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            existing = {}
+            ui.warn(f"{path} is not valid JSON — left unchanged; fix it and re-run setup.")
+            return False
+        if not isinstance(existing, dict):
+            ui.warn(f"{path} is not a JSON object — left unchanged.")
+            return False
 
     def _merge(dst: dict, src: dict) -> bool:
         changed = False
@@ -180,98 +186,226 @@ def ensure_symlink(link: Path, target: Path, *, dry_run: bool = False) -> bool:
     return True
 
 
+MANAGED_BEGIN = ("<!-- BEGIN ai-resources: managed by `ai-resources setup`; "
+                 "edits inside this block are overwritten -->")
+MANAGED_END = "<!-- END ai-resources -->"
+_BEGIN_LINE = re.compile(r"^<!-- BEGIN ai-resources\b.*-->\s*$")
+_END_LINE = re.compile(r"^<!-- END ai-resources -->\s*$")
+_KIT_TITLE = "# ai-resources ("
+_LEGACY_TITLE = re.compile(r"^# ai-resources \(", re.MULTILINE)
+
+# `## ` headings written under the `# ai-resources (<tool>)` title by kit versions up to 1.1.x.
+LEGACY_KIT_HEADINGS = frozenset({
+    "Multi-Model Routing Protocol (ai-resources)",
+    "Workflow Discovery Protocol (MANDATORY — checked FIRST)",
+    "Skill Discovery Protocol",
+    "Skill Discovery",
+    "Subagent Definitions (auto-generated)",
+    "Memory (Engram MCP)",
+})
+# `## ` headings of the current block; used to clean up a block whose END marker was deleted.
+CURRENT_KIT_HEADINGS = frozenset({"Using the kit", "Delegation", "Multi-model routing"})
+
+
+def _is_fence(bare: str) -> bool:
+    return bare.lstrip().startswith(("```", "~~~"))
+
+
+def strip_legacy_kit_sections(text: str, headings: frozenset[str] = LEGACY_KIT_HEADINGS) -> str:
+    """Remove kit sections written without markers, keeping the user's content.
+
+    Only text under a `# ai-resources (<tool>)` title is considered: the title's own lines and
+    each `## ` section whose heading is in `headings`, up to the next `#`/`##` heading outside a
+    code fence. A same-named section under any other `# ` heading is the user's and is kept.
+    """
+    kept: list[str] = []
+    skipping = in_fence = under_kit_title = False
+    for line in text.splitlines(keepends=True):
+        bare = line.rstrip("\r\n")
+        if not in_fence:
+            if bare.startswith("# "):
+                under_kit_title = bare.startswith(_KIT_TITLE)
+                skipping = under_kit_title
+            elif bare.startswith("## "):
+                skipping = under_kit_title and bare[3:].strip() in headings
+        if _is_fence(bare):
+            in_fence = not in_fence
+        if not skipping:
+            kept.append(line)
+    return "".join(kept).strip("\r\n")
+
+
+def _managed_block_span(lines: list[str]) -> tuple[int | None, int | None]:
+    """Indexes of the BEGIN and END marker lines, matched as whole lines outside code fences."""
+    in_fence = False
+    begin: int | None = None
+    for i, line in enumerate(lines):
+        bare = line.rstrip("\r\n")
+        if _is_fence(bare):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if begin is None and _BEGIN_LINE.match(bare):
+            begin = i
+        elif begin is not None and _END_LINE.match(bare):
+            return begin, i
+    return begin, None
+
+
+def write_managed_block(path: Path, body: str, *, dry_run: bool = False) -> bool:
+    """Write `body` between the kit markers in `path`, preserving everything outside them.
+
+    With markers present only the block is replaced. Otherwise the block is prepended and kit
+    text written without markers (by kit versions up to 1.1.x, or a block whose END marker was
+    deleted) is removed. Whenever text outside the block changes, the original is saved as
+    `<name>.ai-resources-backup-<timestamp>` and the user is told. Line endings are preserved.
+    Returns True if the file changed.
+    """
+    raw = ""
+    if path.is_file():
+        with open(path, encoding="utf-8", newline="") as fh:
+            raw = fh.read()
+    nl = "\r\n" if "\r\n" in raw else "\n"
+    block = nl.join([MANAGED_BEGIN, *body.strip().splitlines(), MANAGED_END]) + nl
+    lines = raw.splitlines(keepends=True)
+    begin, end = _managed_block_span(lines)
+    if begin is not None and end is not None:
+        updated = "".join(lines[:begin]) + block + "".join(lines[end + 1:])
+        outside_changed = False
+    else:
+        rest = raw
+        if begin is not None:  # BEGIN without END: drop the orphan marker and the kit text after it
+            rest = "".join(lines[:begin] + lines[begin + 1:])
+            rest = strip_legacy_kit_sections(rest, LEGACY_KIT_HEADINGS | CURRENT_KIT_HEADINGS)
+        elif _LEGACY_TITLE.search(rest):
+            rest = strip_legacy_kit_sections(rest)
+        rest = rest.strip("\r\n")
+        updated = block + (f"{nl}{rest}{nl}" if rest else "")
+        outside_changed = rest != raw.strip("\r\n")
+    if updated == raw or dry_run:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if outside_changed and raw.strip():
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = path.with_name(f"{path.name}.ai-resources-backup-{stamp}")
+        with open(backup, "w", encoding="utf-8", newline="") as fh:
+            fh.write(raw)
+        ui.warn(f"{path}: old kit sections moved into a managed block; original saved as {backup.name}")
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(updated)
+    return True
+
+
+def merge_kit_hooks(path: Path, kit_hooks: dict[str, list[dict]],
+                    is_kit_command: Callable[[str], bool], *, dry_run: bool = False) -> bool:
+    """Install the kit's hook entries in a settings.json, replacing only earlier kit entries.
+
+    `deep_merge_json` replaces lists wholesale, which would drop the user's own hooks, so
+    hooks are merged per event: entries whose command `is_kit_command` are replaced and
+    every other entry is kept in place. Returns True if the file changed.
+    """
+    settings: Any = {}
+    if path.is_file():
+        try:
+            settings = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            ui.warn(f"{path} is not valid JSON — kit hooks not installed.")
+            return False
+    if not isinstance(settings, dict) or not isinstance(settings.get("hooks", {}), dict):
+        ui.warn(f"{path} has an unexpected shape — kit hooks not installed.")
+        return False
+    hooks = settings.get("hooks", {})
+
+    def without_kit_hooks(entry: Any) -> Any:
+        """The entry minus kit commands; None when nothing but kit commands was in it."""
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list) or not entry["hooks"]:
+            return entry
+        kept = [h for h in entry["hooks"]
+                if not (isinstance(h, dict) and is_kit_command(str(h.get("command", ""))))]
+        if not kept:
+            return None
+        return entry if len(kept) == len(entry["hooks"]) else {**entry, "hooks": kept}
+
+    merged: dict[str, Any] = {}
+    for event in list(hooks) + [e for e in kit_hooks if e not in hooks]:
+        current = hooks.get(event, [])
+        if not isinstance(current, list):
+            merged[event] = current
+            continue
+        entries = [e for e in map(without_kit_hooks, current) if e is not None]
+        entries += list(kit_hooks.get(event, []))
+        if entries:
+            merged[event] = entries
+    if merged == hooks or dry_run:
+        return False
+    if merged:
+        settings["hooks"] = merged
+    else:
+        settings.pop("hooks", None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return True
+
+
+def link_agents_skills(ak_path: str) -> None:
+    """Link kit skills into ~/.agents/skills, the shared Agent Skills location."""
+    agents_skills = Path.home() / ".agents" / "skills"
+    links = sync_skill_links(agents_skills, Path(ak_path) / "skills")
+    if links["removed"]:
+        ui.info(f"Removed outdated kit skill links: {', '.join(links['removed'])}")
+    if links["skipped"]:
+        ui.warn(f"Skills not linked (name already used in {agents_skills}): "
+                f"{', '.join(links['skipped'])}")
+
+
 def multimodel_protocol_md(ak_path: str, gateway_url: str, mode: str = "multi-model") -> str:
-    """Return the multi-model protocol section to inject into cockpit instruction files."""
+    """Return the multi-model section for instruction files (empty in single-model mode)."""
     if mode == "single-model":
         return ""
+    return (
+        "## Multi-model routing\n\n"
+        f"Model calls go through the LiteLLM gateway at `{gateway_url}`. Each kit subagent's `model:` "
+        "is routed to its provider; the role → model map is `~/.config/ai-resources/executors.yaml` "
+        "(`ai-resources executors show` / `set`).\n\n"
+        "- Anthropic does not support routing Claude Code to non-Claude models; check the gateway "
+        "with `ai-resources doctor`.\n"
+        "- Prompt caching is lost on non-Anthropic routes, so a cheaper model can cost more per task. "
+        "Keep review, security and verification on strong models.\n"
+    )
 
-    return f"""## Multi-Model Routing Protocol (ai-resources)
 
-**Mode:** multi-model via LiteLLM gateway at `{gateway_url}`
-
-This environment uses per-role model routing. The kit ships with N subagent
-definitions at `~/.claude/agents/*.md` (or equivalent for your cockpit). Each
-agent declares a `model:` in its frontmatter — that string is sent verbatim
-to the configured LiteLLM gateway, which routes to the actual provider.
-
-### How it works
-
-1. **Gateway (LiteLLM):** local container at `{gateway_url}` exposes an
-   Anthropic-compatible `/v1/messages` endpoint. It auto-translates calls to
-   the right provider (Anthropic, Google, OpenAI, Vertex) based on the
-   `model` field.
-2. **Cockpit env:** `ANTHROPIC_BASE_URL` is set to the gateway. Your cockpit
-   sends every API call to the gateway instead of Anthropic directly.
-3. **Per-subagent model:** subagent frontmatter `model:` is passthrough — set
-   it to `claude-sonnet-4-6`, `gemini-2.5-pro`, `gpt-5`, etc. The gateway
-   handles translation.
-4. **Routing config:** see `~/.config/ai-resources/executors.yaml` for the
-   role → model mapping. Edit there or run `ai-resources setup` to change.
-
-### MANDATORY routing policy (enforced always)
-
-**Main session = orchestration + synthesis + edits only. NEVER exploration.**
-
-| Task type | Agent | Model |
-|-----------|-------|-------|
-| Read files / grep / glob / find / understand codebase | `explore` | gemini-2.5-flash |
-| Read SDDs / specs / docs to summarize | `explore` | gemini-2.5-flash |
-| "Where is X?", "What files do Y?" | `explore` | gemini-2.5-flash |
-| Web research, external docs | `generalPurpose` | gemini-2.5-flash |
-| Write documentation | `generalPurpose` | gemini-2.5-flash |
-| Run tests + report | `tester` | gemini-2.5-flash |
-| Validate acceptance criteria | `verifier` | gemini-2.5-flash-lite |
-| Decompose into plan | `planner` | gemini-2.5-pro |
-| Code review | `code-reviewer` | gemini-2.5-pro |
-| Security audit | `security-auditor` | gemini-2.5-pro |
-| Architecture design / ADRs | `software-architect` | claude-sonnet-4-6 |
-| Write / edit code | `implementer` | claude-sonnet-4-6 |
-| Infra / Terraform / Crossplane | `terraform-maintainer` / `crossplane-upjet-maintainer` | claude-sonnet-4-6 |
-| **Synthesize results → final answer** | **main session** | *(configured model)* |
-
-**Rules:**
-1. `Read` inline → ONLY allowed immediately before a required `Edit`/`Write` (technical precondition). For all other reads, spawn `explore`.
-2. `Bash grep/find` inline → NEVER for exploration. Spawn `explore`.
-3. If unsure whether something is "exploration": it is. Delegate it.
-4. Exploration breadth hint: `"quick"` (1 lookup), `"medium"` (moderate), `"very thorough"` (multi-location).
-
-### When you spawn a subagent
-
-- Read the agent's frontmatter `model:` field — that's the model that role uses
-- Tools, MCP, skills, file access all work normally — the gateway only changes
-  which model receives the request
-- Engram MCP for persistent memory works for ALL subagents regardless of model
-
-### Limits to know
-
-- Anthropic prompt caching is preserved when routing to Claude. Lost when
-  routing to Gemini/OpenAI (their own caching applies but format-specific).
-- Some Anthropic-only beta features (computer-use, code-execution) won't work
-  cross-provider. Use Claude models for those subagents.
-- Gateway must be running: `ai-resources daemon status` to verify.
-
-### Manage
-
-```sh
-ai-resources doctor          # full health check
-ai-resources executors       # show role → model mapping
-ai-resources daemon status   # gateway health
-ai-resources daemon logs     # gateway logs
-ai-resources audit           # cost report per role
-```
-
-Kit root: `{ak_path}`.
-"""
+def kit_instructions_md(tool: str, ak_path: str, gateway_url: str, mode: str, *,
+                        native_skills: bool, extra: str = "") -> str:
+    """Kit block for the instruction files of cockpits other than Claude Code."""
+    if native_skills:
+        skills = ("- **Skills** are linked into `~/.agents/skills/`, which this tool discovers natively. "
+                  "Load a skill when its description matches the task; a loaded skill overrides "
+                  "generic habits.\n")
+    else:
+        skills = (f"- **Skills:** search `{ak_path}/skills-index.json` for skills whose description "
+                  "matches the task, then read only those `SKILL.md` files (paths are relative to "
+                  "the kit root).\n")
+    return (
+        f"# ai-resources ({tool})\n\n"
+        f"Kit root: `{ak_path}`. After `brew upgrade ai-resources`, run `ai-resources setup`.\n\n"
+        f"{extra}"
+        "## Using the kit\n\n"
+        f"{skills}"
+        "- **Workflows** for multi-step work are the `workflow-*` skills; the `kit-orchestration` "
+        f"skill explains how to run them (definitions in `{ak_path}/workflows/`).\n\n"
+        f"{multimodel_protocol_md(ak_path, gateway_url, mode)}"
+    )
 
 
 def kit_context_block(ak_path: str) -> str:
     """Return the standard kit-context footer used in subagent files."""
     return (
         f"\n\n---\n\n## Kit context\n\n"
-        f"- **Skills index:** `{ak_path}/skills-index.json`\n"
-        f"- **Skills root:** `{ak_path}/skills/`\n"
-        f"- **Workflows:** `{ak_path}/workflows/`\n"
-        f"- **Routing:** `~/.config/ai-resources/executors.yaml`\n"
+        f"- **Kit root (`$AGENT_KIT`):** `{ak_path}` — skills, workflows, `handoff.md.template`.\n"
+        f"- **In a workflow step:** read the skills named in your prompt, update the handoff file "
+        f"(unless your step runs in a parallel group), and end with the return block from the "
+        f"`kit-orchestration` skill.\n"
     )
 
 

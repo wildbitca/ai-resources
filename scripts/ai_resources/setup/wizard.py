@@ -23,6 +23,7 @@ from .. import __version__, repo_root
 
 
 TOTAL_STEPS = 9
+SINGLE_MODEL_DEFAULT_PROFILE = "claude-native"
 
 
 def run(args: argparse.Namespace) -> int:
@@ -90,10 +91,9 @@ def run(args: argparse.Namespace) -> int:
         ui.info("Skipped (single-model uses cockpit's native auth).")
         ui.section(5, TOTAL_STEPS, "Credentials")
         ui.info("Skipped.")
-        ui.section(6, TOTAL_STEPS, "Per-role model assignment")
-        ui.info("Skipped.")
-        # Set default profile for single-mode (legacy behavior)
-        s.profile = state.ProfileState(name="cost-optimized", customized=False)
+        rc = _step6_single_model_profile(s)
+        if rc != 0:
+            return rc
 
     rc = _step7_cockpit_config(s)
     if rc != 0:
@@ -169,12 +169,12 @@ def _try_install_pipx() -> bool:
 def _step1_mode(s: state.SetupState) -> int:
     ui.section(1, TOTAL_STEPS, "Setup mode")
     choices = [
-        ui.Choice("single-model — One provider, current behavior", value="single-model",
-                  description=" "),
-        ui.Choice("multi-model — Per-role routing via LiteLLM gateway", value="multi-model",
-                  description="◀ recommended"),
+        ui.Choice("single-model — Each cockpit talks to its own provider; Claude subagents pick "
+                  "Claude models by role", value="single-model", description=" "),
+        ui.Choice("multi-model — Per-role routing to several providers via a LiteLLM gateway",
+                  value="multi-model", description=" "),
     ]
-    default = s.mode or "multi-model"
+    default = s.mode or "single-model"
     s.mode = ui.select("Choose mode:", choices, default=default)
     if s.mode is None:
         ui.warn("Setup cancelled.")
@@ -224,7 +224,7 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
     # Reset the parts of `s` that no longer apply in single-model
     s.litellm = state.LiteLLMState()
     s.providers = {}
-    s.profile = state.ProfileState(name="cost-optimized", customized=False)
+    s.profile = state.ProfileState(name=SINGLE_MODEL_DEFAULT_PROFILE, customized=False)
     s.tracking = state.InstallTracking()
     return 0
 
@@ -659,7 +659,7 @@ def _step5_credentials(s: state.SetupState) -> int:
 def _step6_profile(s: state.SetupState) -> int:
     ui.section(6, TOTAL_STEPS, "Per-role model assignment")
 
-    available = profiles.list_profiles()
+    available = profiles.list_profiles(mode="multi-model")
     if not available:
         ui.error(f"No profiles found at {profiles.profiles_dir()}")
         return 1
@@ -738,6 +738,40 @@ def _step6_profile(s: state.SetupState) -> int:
     executors = profiles.to_executors(merged)
     ui.role_table(profiles.role_table(executors), title="Final mapping")
     return 0
+
+
+def _step6_single_model_profile(s: state.SetupState) -> int:
+    """Single-model: choose how kit subagents pick a Claude model (no gateway involved)."""
+    ui.section(6, TOTAL_STEPS, "Per-role model assignment")
+    available = profiles.list_profiles(mode="single-model")
+    if not available:
+        ui.info("No single-model profiles found — kit subagents inherit the session model.")
+        return 0
+
+    choices = []
+    for name in available:
+        desc = profiles.load_profile(name).get("description", "").split("\n")[0][:80]
+        choices.append(ui.Choice(f"{name}  — {desc}" if desc else name, value=name))
+    if s.profile.name in available:
+        default = s.profile.name
+    else:
+        default = SINGLE_MODEL_DEFAULT_PROFILE if SINGLE_MODEL_DEFAULT_PROFILE in available else available[0]
+    chosen = ui.select("How should kit subagents pick their Claude model?", choices, default=default)
+    if chosen is None:
+        return 130
+    s.profile = state.ProfileState(name=chosen, customized=False)
+    ui.role_table(profiles.role_table(_single_model_executors(s)), title=f"Profile: {chosen}")
+    return 0
+
+
+def _single_model_executors(s: state.SetupState) -> dict:
+    """Executors for single-model mode: the chosen single-model profile, else the default one."""
+    available = profiles.list_profiles(mode="single-model")
+    if s.profile.name in available:
+        return profiles.to_executors(profiles.load_profile(s.profile.name))
+    if SINGLE_MODEL_DEFAULT_PROFILE in available:
+        return profiles.to_executors(profiles.load_profile(SINGLE_MODEL_DEFAULT_PROFILE))
+    return {"by_role": {}}
 
 
 # --- Step 7 — Cockpit configuration ----------------------------------------------
@@ -836,7 +870,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
         if str(state.executors_path()) not in s.tracking.config_files_written:
             s.tracking.config_files_written.append(str(state.executors_path()))
     else:
-        executors_doc = profiles.to_executors(profiles.load_profile("cost-optimized"))
+        executors_doc = _single_model_executors(s)
 
     # Master key from .env
     master_key = credentials.get_key("LITELLM_MASTER_KEY")
@@ -1008,7 +1042,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
             base = profiles.merge_customizations(base, customizations)
         executors_doc = profiles.to_executors(base)
     else:
-        executors_doc = profiles.to_executors(profiles.load_profile("cost-optimized"))
+        executors_doc = _single_model_executors(s)
 
     master_key = credentials.get_key("LITELLM_MASTER_KEY") or ""
     bind = s.litellm.local.bind_address or "127.0.0.1"

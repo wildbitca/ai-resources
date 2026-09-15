@@ -1,0 +1,24 @@
+name: claude-native
+mode: single-model
+description: |
+  Claude Code without a gateway: each kit subagent uses a Claude alias, which always
+  resolves to the newest model of that family. Haiku for read-only exploration and
+  mechanical upgrades, Sonnet for implementation, tests, verification and docs,
+  Opus for planning, architecture, code review and security.
+
+by_role:
+  explore:            { provider: anthropic, model: haiku }
+  generalPurpose:     { provider: anthropic, model: sonnet }
+  planner:            { provider: anthropic, model: opus }
+  software-architect: { provider: anthropic, model: opus }
+  implementer:        { provider: anthropic, model: sonnet }
+  tester:             { provider: anthropic, model: sonnet }
+  code-reviewer:      { provider: anthropic, model: opus }
+  security-auditor:   { provider: anthropic, model: opus }
+  verifier:           { provider: anthropic, model: sonnet }
+  doc-writer:         { provider: anthropic, model: sonnet }
+  package-upgrade:             { provider: anthropic, model: haiku }
+  crashlytics-fixer:           { provider: anthropic, model: sonnet }
+  sentry-fixer:                { provider: anthropic, model: sonnet }
+  terraform-maintainer:        { provider: anthropic, model: sonnet }
+  crossplane-upjet-maintainer: { provider: anthropic, model: sonnet }

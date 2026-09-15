@@ -380,11 +380,10 @@ steps:
 
 ## Token Economics
 
-The orchestrator manages context window usage following `rules/100-token-economics.mdc`:
+The orchestrator manages context window usage following the `kit-orchestration` skill:
 
-- The **main thread** stays minimal: routing, workflow selection, short user updates
-- **Subagents** hold execution context (code, diffs, test output)
-- Broad exploration (many file reads, wide globs) always goes to a subagent
+- Delegation is decided by task shape: context-heavy work (broad searches, long logs, test output), independent review and parallel fan-out go to subagents; targeted reads and small edits stay in the main thread
+- **Subagents** hold execution context (code, diffs, test output) and return a short structured block
 - Handoff files and `.agent-output/` directories carry context between phases instead of chat history
 
 ## Quick Reference
@@ -397,8 +396,9 @@ The orchestrator manages context window usage following `rules/100-token-economi
 | Workflow contract | `workflows/WORKFLOW_CONTRACT.md` |
 | Agent roles | `agents/roles/` |
 | Agent personas | `agents/personas/` |
-| Orchestration rules | `rules/010-orchestrator.mdc` |
-| Delegation rules | `rules/050-subagent-delegation.mdc` |
-| Handoff protocol | `rules/051-handoff-protocol.mdc` |
-| Token economics | `rules/100-token-economics.mdc` |
+| Orchestration (steps, delegation, parallel groups, return format) | `skills/kit-orchestration/SKILL.md` |
+| Handoff protocol | `skills/kit-orchestration/references/handoff.md` |
+| Domain detection | `skills/kit-orchestration/references/domains.md` |
+| Workflow skills (generated) | `skills/workflow-*/SKILL.md` |
+| Kit hooks | `hooks/` |
 | Kit architecture | `rules/016-kit-architecture.mdc` |

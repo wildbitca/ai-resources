@@ -2,10 +2,10 @@
 # Covers: pod crashes, OOMKilled, pending pods, service/ingress issues, resource exhaustion,
 # event storms, config errors, scaling problems, cluster health checks.
 #
-# Model routing:
-#   gather  → explore (gemini-2.5-flash)    — kubectl reads, log fetching, event collection
-#   diagnose → generalPurpose (gemini-2.5-pro) — root cause analysis, pattern matching
-#   fix     → implementer (claude-sonnet-4-6) — YAML patches, config changes, rollbacks
+# Steps:
+#   gather  → explore    — kubectl reads, log fetching, event collection
+#   diagnose → generalPurpose — root cause analysis, pattern matching
+#   fix     → implementer — YAML patches, config changes, rollbacks
 #
 # handoff_file: .agent-output/handoff-k8s-<slug>.md — DELETE when DONE.
 #

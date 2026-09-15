@@ -22,35 +22,18 @@ def detect():
 
 
 def _instructions(ak_path: str, gateway_url: str, mode: str) -> str:
-    multimodel = _shared.multimodel_protocol_md(ak_path, gateway_url, mode)
-    return (
-        f"# ai-resources (Cursor)\n\n"
-        f"- **Repository:** `{ak_path}` — set `export AGENT_KIT={ak_path}` in shell if needed.\n"
-        f"- **Rules:** `{ak_path}/rules/*.mdc` (loaded via alwaysApply / globs)\n"
-        f"- **Refresh:** After updating the kit, run `ai-resources generate`.\n\n"
-        f"{multimodel}"
-        f"## Skill Discovery Protocol\n\n"
-        f"1. Read `{ak_path}/skills-index.json`\n"
-        f"2. Match task against skill triggers\n"
-        f"3. Read matching SKILL.md files\n"
-        f"4. Apply skill instructions (override generic patterns)\n\n"
-        f"### Key paths\n\n"
-        f"| Resource | Path |\n"
-        f"|----------|------|\n"
-        f"| Skills | `{ak_path}/skills/` |\n"
-        f"| Workflows | `{ak_path}/workflows/` |\n"
-        f"| Rules | `{ak_path}/rules/` |\n"
-    )
+    return _shared.kit_instructions_md("Cursor", ak_path, gateway_url, mode, native_skills=True)
 
 
 def configure(ctx: dict) -> list[Path]:
     s = ctx["state"]
-    ak_path = str(repo_root())
+    ak_path = str(_shared.stable_kit_root(repo_root()))
     gateway_url = ctx.get("gateway_url", "http://127.0.0.1:4000")
     written: list[Path] = []
 
-    if _shared.write_text(INSTRUCTIONS_PATH, _instructions(ak_path, gateway_url, s.mode)):
+    if _shared.write_managed_block(INSTRUCTIONS_PATH, _instructions(ak_path, gateway_url, s.mode)):
         written.append(INSTRUCTIONS_PATH)
+    _shared.link_agents_skills(ak_path)
 
     # MCP servers (Engram)
     _shared.deep_merge_json(MCP_PATH, {"mcpServers": _shared.mcp_engram_block()})

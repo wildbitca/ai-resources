@@ -41,7 +41,7 @@ Save only when the signal is **reusable** and **not** already the right home for
 
 ## Session lifecycle
 
-- `mem_session_start` / `mem_session_end` / `mem_session_summary`: use for **long or multi-agent** work and **orchestrator workflows** (see `010-orchestrator.mdc`), not for every short reply.
+- `mem_session_start` / `mem_session_end` / `mem_session_summary`: use for **long or multi-agent** work and **workflows** (skill `kit-orchestration`), not for every short reply.
 - Orchestrator Step 6 may still call `mem_session_summary` for **substantive** workflow completion; skip empty noise.
 
 ## Compaction recovery
@@ -51,10 +51,9 @@ After context compaction or reset: `mem_context` first to recover thread before 
 ## Subagent memory
 
 - Subagents **may** `mem_save` significant discoveries or decisions before returning; skip trivial steps.
-- Orchestrator can pass **observation IDs or topic_key** in handoffs (tokens), not full blobs — see `100-token-economics.mdc`.
+- Orchestrator can pass **observation IDs or topic_key** in handoffs (references), not full blobs.
 
-## Related rules
+## Related
 
-- `010-orchestrator.mdc` — session hooks
-- `050-subagent-delegation.mdc` — subagent handoff
-- `100-token-economics.mdc` — references over content
+- Skill `kit-orchestration` — workflow runs, subagent prompts, handoff file
+- `014-engram-mcp-protocol.mdc` — tool protocol and two-step reads

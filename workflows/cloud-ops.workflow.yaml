@@ -3,10 +3,10 @@
 # IAM/permissions, storage, databases, queues, event streams, CDN, DNS, certificates.
 # Also handles: external SaaS API integration (Stripe, Twilio, SendGrid, etc.)
 #
-# Model routing:
-#   query  → explore (gemini-2.5-flash)    — API calls, resource listing, data fetching
-#   analyze → generalPurpose (gemini-2.5-pro) — interpretation, recommendations
-#   act    → implementer (claude-sonnet-4-6) — config changes, resource creation/update
+# Steps:
+#   query  → explore    — API calls, resource listing, data fetching
+#   analyze → generalPurpose — interpretation, recommendations
+#   act    → implementer — config changes, resource creation/update
 #
 # handoff_file: .agent-output/handoff-cloud-<slug>.md — DELETE when DONE.
 #

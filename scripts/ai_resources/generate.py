@@ -132,25 +132,105 @@ def _build_index() -> int:
         if not globs_list and meta.get("globs"):
             globs_list = [str(meta["globs"])[:500]]
 
+        try:
+            path_str = skill_md.relative_to(ak).as_posix()  # relative to the kit root: portable
+        except ValueError:
+            path_str = str(skill_md)
         entries.append({
             "id": sid,
-            "path": str(skill_md),
+            "path": path_str,
             "name": name,
             "description": desc,
             "triggers": triggers,
             "globs": globs_list,
         })
 
+    try:
+        skills_root = root.relative_to(ak).as_posix()
+    except ValueError:
+        skills_root = str(root.resolve())
     doc = {
         "version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "skills_root": str(root.resolve()),
+        "skills_root": skills_root,
         "count": len(entries),
         "skills": entries,
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"Wrote {out_path} ({len(entries)} skills)")
+    return 0
+
+
+WORKFLOW_SKILL_MARKER = ".generated-workflow-skill"
+
+
+def _workflow_skill_md(filename: str, doc: dict) -> str:
+    name = str(doc["name"])
+    trigger = " ".join(str(doc.get("trigger", "")).split())
+    summary = " ".join(str(doc.get("description", "")).split())
+    description = f"{trigger} Runs the kit workflow '{name}': {summary}".replace('"', "'")[:1000]
+    rows = ["| Step | Agent | Parallel group |", "|------|-------|----------------|"]
+    for step in doc.get("steps") or []:
+        group = (step.get("execution_hints") or {}).get("parallel_group") or "—"
+        rows.append(f"| `{step.get('id')}` | `{step.get('subagent_type')}` | {group} |")
+    table = "\n".join(rows)
+    return (
+        "---\n"
+        f"name: workflow-{name}\n"
+        f'description: "{description}"\n'
+        'argument-hint: "[goal]"\n'
+        "---\n\n"
+        f"<!-- Generated from workflows/{filename} by `ai-resources generate`. Edit the YAML, not this file. -->\n\n"
+        f"# Workflow: {name}\n\n"
+        f"{summary}\n\n"
+        "**Goal:** $ARGUMENTS\n\n"
+        "1. Load the `kit-orchestration` skill: it defines how to run steps, the handoff file, "
+        "parallel groups, and the subagent return format.\n"
+        f"2. Read the full definition at `$AGENT_KIT/workflows/{filename}` (`kit-orchestration` "
+        "explains how to locate `$AGENT_KIT`) and run its steps in order.\n\n"
+        "## Steps\n\n"
+        f"{table}\n"
+    )
+
+
+def _build_workflow_skills() -> int:
+    """Generate one `workflow-<name>` skill per workflows/*.workflow.yaml.
+
+    Agents discover skills natively by description, so each workflow becomes a skill whose
+    description is the workflow's trigger. Stale generated skills are removed; hand-written
+    skills (no marker file) are never touched.
+    """
+    try:
+        import yaml
+    except ImportError:
+        print("PyYAML is required to generate workflow skills", file=sys.stderr)
+        return 1
+    ak = repo_root()
+    skills_root = ak / "skills"
+    expected: set[str] = set()
+    for wf in sorted((ak / "workflows").glob("*.workflow.yaml")):
+        doc = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
+        if not doc.get("name"):
+            print(f"skip {wf.name}: no name", file=sys.stderr)
+            continue
+        skill_id = f"workflow-{doc['name']}"
+        expected.add(skill_id)
+        dest = skills_root / skill_id
+        if dest.is_dir() and not (dest / WORKFLOW_SKILL_MARKER).is_file():
+            print(f"CONFLICT: skills/{skill_id} exists and is not a generated workflow skill", file=sys.stderr)
+            return 2
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / WORKFLOW_SKILL_MARKER).write_text(f"source: workflows/{wf.name}\n", encoding="utf-8")
+        content = _workflow_skill_md(wf.name, doc)
+        skill_md = dest / "SKILL.md"
+        if not skill_md.is_file() or skill_md.read_text(encoding="utf-8") != content:
+            skill_md.write_text(content, encoding="utf-8")
+            print(f"workflow skill {skill_id} <= workflows/{wf.name}")
+    for dest in sorted(skills_root.glob("workflow-*")):
+        if dest.name not in expected and (dest / WORKFLOW_SKILL_MARKER).is_file():
+            shutil.rmtree(dest)
+            print(f"removed stale workflow skill {dest.name}")
     return 0
 
 
@@ -278,10 +358,14 @@ def _import_skills(args: argparse.Namespace) -> int:
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
-    """Vendor-sync (unless --skip-vendor) then rebuild skills-index.json."""
+    """Vendor-sync (unless --skip-vendor), generate workflow skills, rebuild skills-index.json."""
     if not getattr(args, "skip_vendor", False):
         rc = _import_skills(args)
         if rc != 0:
             return rc
-        print("==> skills-index.json", file=sys.stderr)
+    print("==> workflow skills", file=sys.stderr)
+    rc = _build_workflow_skills()
+    if rc != 0:
+        return rc
+    print("==> skills-index.json", file=sys.stderr)
     return _build_index()

@@ -21,12 +21,12 @@ Skills live under a **configurable root**. Defaults:
 
 ## Install (any agent)
 
-1. Update the kit (**`brew upgrade <formula>`** or **`git pull`**), then run **`python3 $AGENT_KIT/scripts/kit.py generate`**.
-2. **`python3 $AGENT_KIT/scripts/kit.py setup`** (or **`setup --target cursor`**, etc.) applies MCP, writes IDE stubs, and validates workflows.
-3. Point the agent at **`$AGENT_KIT/skills-index.json`** (discovery) and **`$AGENT_KIT/AGENTS.md`** (policy). Same for `CLAUDE.md` / project copies.
+1. Update the kit (**`brew upgrade ai-resources`** or **`git pull`**), then run **`ai-resources generate`**.
+2. **`ai-resources setup`** links each skill into the agent's native skills directory (`~/.claude/skills/<id>`, `~/.agents/skills/<id>`), writes the managed instruction block, and installs MCP and hooks.
+3. Tools without native skill discovery read **`$AGENT_KIT/skills-index.json`** (paths relative to the kit root).
 
 ## ID → path (delegation)
 
 - Flat id → `{root}/{id}/SKILL.md` (e.g. `gpm-curated-typescript`)
 
-See `050-subagent-delegation.mdc` for resolution rules in Cursor.
+Workflow step resolution: skill **`kit-orchestration`**.

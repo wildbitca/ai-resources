@@ -61,24 +61,18 @@ def _conf_yaml(executors: dict, gateway_url: str, master_key: str) -> str:
 
 def configure(ctx: dict) -> list[Path]:
     s = ctx["state"]
-    ak_path = str(repo_root())
+    ak_path = str(_shared.stable_kit_root(repo_root()))
     gateway_url = ctx.get("gateway_url", "http://127.0.0.1:4000")
     master_key = ctx.get("master_key", "")
     executors = ctx.get("executors", {})
     written: list[Path] = []
 
     # Conventions file
-    multimodel = _shared.multimodel_protocol_md(ak_path, gateway_url, s.mode)
-    md = (
-        f"# ai-resources (Aider)\n\n"
-        f"Loaded automatically via `~/.aider.conf.yml` (`read:` directive).\n\n"
-        f"**Refresh:** After updating the kit, run `ai-resources generate`.\n\n"
-        f"{multimodel}"
-        f"## Skill Discovery\n\n"
-        f"- Skills index: `{ak_path}/skills-index.json`\n"
-        f"- Workflows: `{ak_path}/workflows/`\n"
+    md = _shared.kit_instructions_md(
+        "Aider", ak_path, gateway_url, s.mode, native_skills=False,
+        extra="Loaded automatically via `~/.aider.conf.yml` (`read:` directive).\n\n",
     )
-    if _shared.write_text(CONVENTIONS_PATH, md):
+    if _shared.write_managed_block(CONVENTIONS_PATH, md):
         written.append(CONVENTIONS_PATH)
 
     # ~/.aider.conf.yml only when multi-model

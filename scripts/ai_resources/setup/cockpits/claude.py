@@ -56,13 +56,61 @@ def detect():
     return detect_claude_code()
 
 
+NATIVE_MODELS = ("inherit", "opus", "sonnet", "haiku", "fable", "opusplan")
+KIT_HOOK_SCRIPTS = ("kit_session_start.py", "kit_subagent_return.py", "kit_handoff_guard.py")
+
+
+def _is_native_model(model: str) -> bool:
+    """True for values Claude Code resolves without a gateway."""
+    return model in NATIVE_MODELS or model.startswith("claude-")
+
+
+def _is_kit_hook_command(command: str) -> bool:
+    return any(f"/hooks/{script}" in command for script in KIT_HOOK_SCRIPTS)
+
+
+def _kit_hooks(ak_path: str) -> dict[str, list[dict]]:
+    """Hook entries the kit installs in ~/.claude/settings.json (scripts live in <kit>/hooks/).
+
+    `python3` is resolved at hook run time: a path frozen at setup (a venv or pyenv shim)
+    could disappear and break every tool call.
+    """
+
+    def entry(script: str, matcher: str = "") -> dict:
+        hook = {"type": "command", "command": f'python3 "{ak_path}/hooks/{script}"', "timeout": 10}
+        return {"matcher": matcher, "hooks": [hook]} if matcher else {"hooks": [hook]}
+
+    return {
+        "SessionStart": [entry("kit_session_start.py")],
+        "SubagentStop": [entry("kit_subagent_return.py")],
+        "PreToolUse": [entry("kit_handoff_guard.py", "Write|Edit|MultiEdit|NotebookEdit|Bash")],
+    }
+
+
 def _cleanup_stale_hooks(settings: dict) -> bool:
-    """Remove deprecated UserPromptSubmit hook (legacy from earlier kit versions)."""
+    """Remove the workflow-enforcement prompt hook installed by kit v0.7.0 (removed in v0.7.1).
+
+    Only prompt-type UserPromptSubmit entries about workflows are removed; user hooks stay.
+    """
     hooks = settings.get("hooks")
-    if isinstance(hooks, dict) and "UserPromptSubmit" in hooks:
+    entries = hooks.get("UserPromptSubmit") if isinstance(hooks, dict) else None
+    if not isinstance(entries, list):
+        return False
+
+    def legacy(entry: Any) -> bool:
+        return isinstance(entry, dict) and any(
+            isinstance(h, dict) and h.get("type") == "prompt" and "workflow" in str(h.get("prompt", "")).lower()
+            for h in entry.get("hooks") or []
+        )
+
+    kept = [e for e in entries if not legacy(e)]
+    if len(kept) == len(entries):
+        return False
+    if kept:
+        hooks["UserPromptSubmit"] = kept
+    else:
         del hooks["UserPromptSubmit"]
-        return True
-    return False
+    return True
 
 
 def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
@@ -107,12 +155,14 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str) -> list[s
         desc = str(meta.get("description", ""))
         tools = ROLE_TOOLS.get(name)
 
-        # Resolve model: from executors mapping (multi-model) or fallback to inherit (single)
+        # Resolve model: the profile's value (any string through the gateway in multi-model;
+        # only Claude-native values in single-model), else the role's legacy frontmatter.
+        configured = str(by_role.get(name, {}).get("model", "") or "")
         if mode == "multi-model":
-            cfg = by_role.get(name, {})
-            model = cfg.get("model", "inherit")
+            model = configured or "inherit"
+        elif configured and _is_native_model(configured):
+            model = configured
         else:
-            # single-model: keep legacy inherit/opus/haiku behavior
             legacy = str(meta.get("model", "inherit")).lower()
             model = {"strong": "opus", "fast": "haiku"}.get(legacy, legacy or "inherit")
 
@@ -144,114 +194,29 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str) -> list[s
     return generated
 
 
-def _scan_workflow_triggers(ak_path: str) -> list[tuple[str, str, str]]:
-    wf_dir = Path(ak_path) / "workflows"
-    if not wf_dir.is_dir():
-        return []
-    rows: list[tuple[str, str, str]] = []
-    for wf in sorted(wf_dir.glob("*.workflow.yaml")):
-        text = wf.read_text(encoding="utf-8", errors="replace")
-        name_m = re.search(r"^name:\s*(.+)$", text, re.MULTILINE)
-        trig_m = re.search(r"^trigger:\s*(.+)$", text, re.MULTILINE)
-        if name_m and trig_m:
-            rows.append((wf.name, name_m.group(1).strip(), trig_m.group(1).strip()))
-    return rows
-
-
 def _claude_md(ak_path: str, gateway_url: str, mode: str) -> str:
-    """Build CLAUDE.md content."""
-    refresh = (
-        f"After updating the kit (e.g. `brew upgrade ai-resources` or `git pull`), "
-        f"run `ai-resources generate`."
-    )
-
-    rows = _scan_workflow_triggers(ak_path)
-    workflow_table = ""
-    if rows:
-        workflow_table = "| Workflow | Trigger |\n|----------|--------|\n"
-        for filename, _name, trigger in rows:
-            workflow_table += f"| `{filename}` | {trigger} |\n"
-        workflow_table = (
-            f"## Workflow Discovery Protocol (MANDATORY — checked FIRST)\n\n"
-            f"**Before starting ANY non-trivial task**, check if a workflow applies:\n\n"
-            f"1. **Match** — Compare the user's task against the workflow triggers below:\n\n"
-            f"{workflow_table}\n"
-            f"2. **Load** — Read its full YAML at `{ak_path}/workflows/` and follow phase by phase.\n"
-            f"3. **MANDATORY** — Follow the workflow's defined phases. Do NOT substitute built-in tools.\n"
-            f"4. **Handoff** — Use `.agent-output/handoff-<branch>.md` per `WORKFLOW_CONTRACT.md`.\n"
-            f"5. **No match?** — For trivial tasks, proceed without a workflow.\n\n"
-        )
-
-    skill_recipe = (
-        f"## Skill Discovery Protocol\n\n"
-        f"**On every task**, follow this protocol:\n\n"
-        f"1. **Read the catalog** — `{ak_path}/skills-index.json`\n"
-        f"2. **Match** — Compare your current task against each skill's description and triggers.\n"
-        f"3. **Load** — For each matching skill, read its full SKILL.md.\n"
-        f"4. **Apply** — Skill authority overrides generic patterns.\n"
-        f"5. **No match?** — Proceed normally.\n\n"
-        f"### Key paths\n\n"
-        f"| Resource | Path |\n"
-        f"|----------|------|\n"
-        f"| Skills index | `{ak_path}/skills-index.json` |\n"
-        f"| Skills root | `{ak_path}/skills/` |\n"
-        f"| Workflows | `{ak_path}/workflows/` |\n"
-        f"| Workflow contract | `{ak_path}/workflows/WORKFLOW_CONTRACT.md` |\n"
-        f"| Kit docs | `{ak_path}/AGENTS.md` |\n\n"
-    )
-
-    multimodel = _shared.multimodel_protocol_md(ak_path, gateway_url, mode)
-
-    agents_section = _build_agent_teams_section(mode)
-
+    """Kit block for ~/.claude/CLAUDE.md — a short map; details live in skills."""
     return (
-        f"# ai-resources (Claude Code)\n\n"
-        f"**Refresh:** {refresh}\n\n"
-        f"{multimodel}"
-        f"{workflow_table}"
-        f"{skill_recipe}"
-        f"{agents_section}"
-    )
-
-
-def _build_agent_teams_section(mode: str) -> str:
-    """Build the Subagent Definitions + parallel work section."""
-    if not AGENTS_DIR.is_dir():
-        return ""
-    names = sorted(p.stem for p in AGENTS_DIR.glob("*.md"))
-    if not names:
-        return ""
-
-    rows = "| Agent | Model | Use for |\n|-------|-------|--------|\n"
-    for n in names:
-        try:
-            m, _ = parse_simple_frontmatter((AGENTS_DIR / f"{n}.md").read_text(encoding="utf-8", errors="replace"))
-            d = str(m.get("description", "")).strip('"')[:80]
-            mdl = str(m.get("model", "inherit"))
-        except OSError:
-            d = ""
-            mdl = "inherit"
-        rows += f"| `{n}` | `{mdl}` | {d} |\n"
-
-    if mode == "multi-model":
-        routing = (
-            "Each subagent's `model:` is mapped via `~/.config/ai-resources/executors.yaml`.\n"
-            "Change it with `ai-resources executors set <role> <model>`.\n\n"
-        )
-    else:
-        routing = (
-            "Single-model mode: each subagent's `model:` comes from its role definition "
-            "(`inherit` = the session model).\n\n"
-        )
-
-    return (
-        f"## Subagent Definitions (auto-generated)\n\n{rows}\n"
-        f"{routing}"
-        f"### Parallel work\n\n"
-        f"Workflow steps sharing `execution_hints.parallel_group` may run as concurrent subagents "
-        f"(several Agent calls in one turn). Parallel steps never edit the shared handoff file — "
-        f"see `WORKFLOW_CONTRACT.md`. There is no `TeamCreate` tool; Agent Teams are experimental, "
-        f"so default to subagents.\n"
+        "# ai-resources (Claude Code)\n\n"
+        f"Kit root: `{ak_path}`. After `brew upgrade ai-resources`, run `ai-resources setup` to refresh "
+        "skills, subagents and hooks.\n\n"
+        "## Using the kit\n\n"
+        "- **Skills** are installed as native skills. Load one when its description matches the task; "
+        "a loaded skill overrides generic habits.\n"
+        "- **Workflows** are the `workflow-*` skills (feature, bugfix, refactor, incident response, …). "
+        "Use one for multi-step work that matches its description; the `kit-orchestration` skill "
+        "explains how to run steps, handoffs and parallel groups.\n"
+        "- **Subagents** for the kit roles are in `~/.claude/agents/` (planner, software-architect, "
+        "implementer, tester, code-reviewer, security-auditor, verifier, doc-writer, …).\n"
+        "- **Commands:** `/delegate`, `/setup-project`, `/knowledge-audit`, `/self-update`.\n\n"
+        "## Delegation\n\n"
+        "Decide by task shape, not by step or file count:\n\n"
+        "- Delegate work that would flood the context (broad searches, long logs, test output), "
+        "independent review, and parallelizable fan-out.\n"
+        "- Do targeted reads and small edits directly.\n"
+        "- A delegated prompt carries the workspace path, the goal, the skills to read first, and the "
+        "return format from `kit-orchestration`.\n\n"
+        f"{_shared.multimodel_protocol_md(ak_path, gateway_url, mode)}"
     )
 
 
@@ -405,7 +370,7 @@ def configure(ctx: dict) -> list[Path]:
     executors = ctx["executors"]
     master_key = ctx.get("master_key", "")
     gateway_url = ctx.get("gateway_url", "http://127.0.0.1:4000")
-    ak_path = str(repo_root())
+    ak_path = str(_shared.stable_kit_root(repo_root()))
     mode = s.mode
 
     written: list[Path] = []
@@ -433,6 +398,9 @@ def configure(ctx: dict) -> list[Path]:
     # Apply patch
     _shared.deep_merge_json(SETTINGS_PATH, settings_patch)
 
+    # Kit hooks: replace earlier kit entries, keep the user's own hooks
+    _shared.merge_kit_hooks(SETTINGS_PATH, _kit_hooks(ak_path), _is_kit_hook_command)
+
     # Cleanup stale hooks
     if SETTINGS_PATH.is_file():
         try:
@@ -456,17 +424,16 @@ def configure(ctx: dict) -> list[Path]:
     if agents:
         written.append(AGENTS_DIR)
 
-    # 3. CLAUDE.md
+    # 3. CLAUDE.md — only the kit's managed block; the user's content is preserved
     md = _claude_md(ak_path, gateway_url, mode)
-    if _shared.write_text(CLAUDE_MD_PATH, md):
+    if _shared.write_managed_block(CLAUDE_MD_PATH, md):
         written.append(CLAUDE_MD_PATH)
 
     # 4. Engram plugin (best-effort)
     _install_engram_plugin()
 
     # 5. Skill links — one per skill, so Claude Code discovers them natively
-    links = _shared.sync_skill_links(CONFIG_ROOT / "skills",
-                                     _shared.stable_kit_root(repo_root()) / "skills")
+    links = _shared.sync_skill_links(CONFIG_ROOT / "skills", Path(ak_path) / "skills")
     if links["removed"]:
         ui.info(f"Removed outdated kit skill links: {', '.join(links['removed'])}")
     if links["skipped"]:
@@ -491,7 +458,7 @@ def regenerate_agents(executors: dict, mode: str = "multi-model") -> list[str]:
 
     Returns list of role names written. Safe to call standalone after updating executors.
     """
-    ak_path = str(repo_root())
+    ak_path = str(_shared.stable_kit_root(repo_root()))
     return _generate_subagent_files(executors, ak_path, mode)
 
 

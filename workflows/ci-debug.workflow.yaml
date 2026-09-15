@@ -3,10 +3,10 @@
 # broken deploys, flaky tests in CI, Docker build failures, lint/type errors in CI,
 # environment variable issues, missing secrets, caching problems.
 #
-# Model routing:
-#   fetch   → explore (gemini-2.5-flash)      — download/read CI logs, identify failing step
-#   diagnose → generalPurpose (gemini-2.5-flash) — simple failures; gemini-pro for complex
-#   fix     → implementer (claude-sonnet-4-6)  — workflow YAML fix, code fix, config fix
+# Steps:
+#   fetch   → explore      — download/read CI logs, identify failing step
+#   diagnose → generalPurpose — simple failures
+#   fix     → implementer  — workflow YAML fix, code fix, config fix
 #
 # handoff_file: .agent-output/handoff-ci-<slug>.md — DELETE when DONE.
 #

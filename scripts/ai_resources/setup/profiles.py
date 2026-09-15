@@ -40,11 +40,15 @@ def profiles_dir() -> Path:
     return repo_root() / "profiles"
 
 
-def list_profiles() -> list[str]:
+def list_profiles(mode: str | None = None) -> list[str]:
+    """Profile names, optionally only those for `mode` (a profile's `mode:` defaults to multi-model)."""
     d = profiles_dir()
     if not d.is_dir():
         return []
-    return sorted(p.stem for p in d.glob("*.yaml"))
+    names = sorted(p.stem for p in d.glob("*.yaml"))
+    if mode is None:
+        return names
+    return [n for n in names if load_profile(n).get("mode", "multi-model") == mode]
 
 
 def load_profile(name: str) -> dict[str, Any]:

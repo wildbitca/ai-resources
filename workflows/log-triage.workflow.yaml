@@ -3,9 +3,9 @@
 # user journey reconstruction, volume anomalies, finding root cause from logs alone.
 # Works with: local files, Docker logs, kubectl logs, CloudWatch, Datadog, Loki, GCP Logging.
 #
-# Model routing:
-#   collect  → explore (gemini-2.5-flash)      — grep, filter, fetch, deduplicate
-#   analyze  → generalPurpose (gemini-2.5-pro)  — pattern analysis, root cause from logs
+# Steps:
+#   collect  → explore      — grep, filter, fetch, deduplicate
+#   analyze  → generalPurpose  — pattern analysis, root cause from logs
 #   (no fix phase — hands off to _bugfix or incident-response if fix needed)
 #
 # handoff_file: .agent-output/handoff-logs-<slug>.md — DELETE when DONE.

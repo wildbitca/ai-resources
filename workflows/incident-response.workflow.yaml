@@ -2,11 +2,11 @@
 # Covers: service outages, degraded performance, data errors, cascade failures,
 # alerting storms, SLO breaches, rollback decisions, hotfixes.
 #
-# Model routing:
-#   triage   → explore (gemini-2.5-flash)      — gather all signals fast, no analysis
-#   diagnose → generalPurpose (gemini-2.5-pro)  — root cause, blast radius, options
-#   fix      → implementer (claude-sonnet-4-6)  — hotfix, rollback, config change
-#   document → doc-writer (gemini-2.5-flash)    — incident timeline + postmortem
+# Steps:
+#   triage   → explore      — gather all signals fast, no analysis
+#   diagnose → generalPurpose  — root cause, blast radius, options
+#   fix      → implementer  — hotfix, rollback, config change
+#   document → doc-writer    — incident timeline + postmortem
 #
 # Speed note: triage and diagnose can overlap in time — orchestrator may spawn both
 # with execution_hints.parallel_group if initial symptoms are already known.

@@ -32,41 +32,17 @@ def _settings_patch(auth_method: str = "gemini-api-key") -> dict:
 
 
 def _gemini_md(ak_path: str, gateway_url: str, mode: str) -> str:
-    refresh = (
-        f"After updating the kit, run `ai-resources generate`."
+    memory = (
+        "Memory: Engram MCP is configured in `~/.gemini/settings.json`. Search it before redoing "
+        "past investigations; save decisions and gotchas that are not already in code or specs.\n\n"
     )
-    multimodel = _shared.multimodel_protocol_md(ak_path, gateway_url, mode)
-
-    return (
-        f"# ai-resources (Gemini CLI)\n\n"
-        f"**Refresh:** {refresh}\n\n"
-        f"{multimodel}"
-        f"## Skill Discovery Protocol\n\n"
-        f"This environment uses a centralized AI skills library.\n\n"
-        f"1. **Read the catalog** — `{ak_path}/skills-index.json`\n"
-        f"2. **Match** — Compare your task against each skill's description and triggers.\n"
-        f"3. **Load** — For each match, read its SKILL.md.\n"
-        f"4. **Apply** — Skill authority overrides generic patterns.\n\n"
-        f"### Key paths\n\n"
-        f"| Resource | Path |\n"
-        f"|----------|------|\n"
-        f"| Skills index | `{ak_path}/skills-index.json` |\n"
-        f"| Skills root | `{ak_path}/skills/` |\n"
-        f"| Workflows | `{ak_path}/workflows/` |\n"
-        f"| Kit docs | `{ak_path}/AGENTS.md` |\n\n"
-        f"## Memory (Engram MCP)\n\n"
-        f"Engram MCP is configured at `~/.gemini/settings.json` and provides:\n\n"
-        f"- `mem_search` — find past decisions, patterns, observations\n"
-        f"- `mem_save` — persist decisions and discoveries proactively\n"
-        f"- `mem_context` — recall recent session history\n"
-        f"- `mem_session_summary` — close sessions with structured summaries\n\n"
-        f"Save proactively after decisions, bug fixes, conventions discovered.\n"
-    )
+    return _shared.kit_instructions_md("Gemini CLI", ak_path, gateway_url, mode,
+                                       native_skills=True, extra=memory)
 
 
 def configure(ctx: dict) -> list[Path]:
     s = ctx["state"]
-    ak_path = str(repo_root())
+    ak_path = str(_shared.stable_kit_root(repo_root()))
     gateway_url = ctx.get("gateway_url", "http://127.0.0.1:4000")
     mode = s.mode
 
@@ -77,8 +53,9 @@ def configure(ctx: dict) -> list[Path]:
     written.append(SETTINGS_PATH)
 
     md = _gemini_md(ak_path, gateway_url, mode)
-    if _shared.write_text(GEMINI_MD_PATH, md):
+    if _shared.write_managed_block(GEMINI_MD_PATH, md):
         written.append(GEMINI_MD_PATH)
+    _shared.link_agents_skills(ak_path)
 
     cs = s.cockpits.get(ID) or state.CockpitState()
     cs.installed = True

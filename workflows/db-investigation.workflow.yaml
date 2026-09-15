@@ -4,10 +4,10 @@
 # replication lag, database size growth.
 # Works with: PostgreSQL, MySQL/MariaDB, SQLite, MongoDB, Redis, Supabase.
 #
-# Model routing:
-#   inspect  → explore (gemini-2.5-flash)      — run EXPLAIN, query pg_stat, list schema
-#   analyze  → generalPurpose (gemini-2.5-pro)  — query plan analysis, index recommendations
-#   fix      → implementer (claude-sonnet-4-6)  — migration, index, query rewrite
+# Steps:
+#   inspect  → explore      — run EXPLAIN, query pg_stat, list schema
+#   analyze  → generalPurpose  — query plan analysis, index recommendations
+#   fix      → implementer  — migration, index, query rewrite
 #
 # handoff_file: .agent-output/handoff-db-<slug>.md — DELETE when DONE.
 #

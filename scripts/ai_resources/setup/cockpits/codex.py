@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import state, ui
+from .. import state
 from ..detection import detect_codex
 from ... import repo_root
 from . import _shared
@@ -22,31 +22,14 @@ def detect():
 
 def configure(ctx: dict) -> list[Path]:
     s = ctx["state"]
-    ak_path = str(repo_root())
+    ak_path = str(_shared.stable_kit_root(repo_root()))
     gateway_url = ctx.get("gateway_url", "http://127.0.0.1:4000")
     written: list[Path] = []
 
-    multimodel = _shared.multimodel_protocol_md(ak_path, gateway_url, s.mode)
-    md = (
-        f"# ai-resources (Codex)\n\n"
-        f"**Refresh:** After updating the kit, run `ai-resources generate`.\n\n"
-        f"{multimodel}"
-        f"## Skill Discovery\n\n"
-        f"Skills index: `{ak_path}/skills-index.json`\n"
-        f"Workflows: `{ak_path}/workflows/`\n"
-        f"Skills root: `{ak_path}/skills/`\n"
-    )
-    if _shared.write_text(INSTRUCTIONS_PATH, md):
+    md = _shared.kit_instructions_md("Codex", ak_path, gateway_url, s.mode, native_skills=True)
+    if _shared.write_managed_block(INSTRUCTIONS_PATH, md):
         written.append(INSTRUCTIONS_PATH)
-
-    # Skill links in the shared Agent Skills location (~/.agents/skills), one per skill
-    agents_skills = Path.home() / ".agents" / "skills"
-    links = _shared.sync_skill_links(agents_skills, _shared.stable_kit_root(repo_root()) / "skills")
-    if links["removed"]:
-        ui.info(f"Removed outdated kit skill links: {', '.join(links['removed'])}")
-    if links["skipped"]:
-        ui.warn(f"Skills not linked (name already used in {agents_skills}): "
-                f"{', '.join(links['skipped'])}")
+    _shared.link_agents_skills(ak_path)
 
     cs = s.cockpits.get(ID) or state.CockpitState()
     cs.installed = True

@@ -3,11 +3,11 @@
 # license compliance, bundle size impact, transitive dependency conflicts.
 # Works with: npm/pnpm/yarn, cargo, pip/uv, go mod, maven/gradle, pub (Flutter/Dart).
 #
-# Model routing:
-#   audit    → explore (gemini-2.5-flash)      — list deps, check versions, fetch CVE data
-#   plan     → generalPurpose (gemini-2.5-flash) — rank updates by risk/urgency
-#   upgrade  → implementer (claude-sonnet-4-6)  — apply updates, fix breaking changes
-#   test     → tester (gemini-2.5-flash)        — verify nothing broke
+# Steps:
+#   audit    → explore      — list deps, check versions, fetch CVE data
+#   plan     → generalPurpose — rank updates by risk/urgency
+#   upgrade  → implementer  — apply updates, fix breaking changes
+#   test     → tester        — verify nothing broke
 #
 # handoff_file: .agent-output/handoff-deps-<slug>.md — DELETE when DONE.
 #

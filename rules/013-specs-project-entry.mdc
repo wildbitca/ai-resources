@@ -7,19 +7,19 @@ alwaysApply: true
 
 On **session start** or before **non-trivial** code/spec work, read **`<workspace>/specs/PROJECT.md`** when it exists. There is **no** alternate filename — do not look for `project.living.md` or other aliases.
 
-If `specs/PROJECT.md` is missing, treat the repo as **specs-light**: use optional `.cursorrules` (for **Technologies** if present) + `011-orchestrator-reference.mdc`.
+If `specs/PROJECT.md` is missing, treat the repo as **specs-light**: use optional `.cursorrules` (for **Technologies** if present) + domain signals in skill `kit-orchestration`.
 
 ## What `PROJECT.md` should contain (convention)
 
 | Section | Purpose |
 |---------|---------|
-| **Intent** / **Technologies** | Short lines at the top — drive **domain** detection with `011-orchestrator-reference.mdc` (no `.cursorrules` required). |
+| **Intent** / **Technologies** | Short lines at the top — drive **domain** detection (skill `kit-orchestration`; no `.cursorrules` required). |
 | **AI routing** (recommended) | Where domain/workflows are defined globally; table of **next files** (ADRs, cross-cutting, features) — not a duplicate of `011`. |
 | **Feature / cross-cutting / ADR indexes** | Pointers or embedded tables so agents know which `specs/**` files exist. |
 | **Optional: org hints** | e.g. ClickUp for features, `knowledge-audit` for SDD closure — short bullets. |
 
-Keep **workflow YAML paths** and **domain matrices** in global rules (`011-orchestrator-reference.mdc`), not in `PROJECT.md`, unless the repo overrides with rare monorepo tables in optional `.cursorrules`.
+Keep **workflow YAML paths** and **domain matrices** in the kit (`workflow-*` skills, `kit-orchestration`), not in `PROJECT.md`, unless the repo overrides with rare monorepo tables in optional `.cursorrules`.
 
 ## Orchestrator
 
-`010-orchestrator.mdc` Step 0 preflight references this rule for the **Specs** bullet.
+The `kit-orchestration` skill reads `PROJECT.md` before the first workflow step.

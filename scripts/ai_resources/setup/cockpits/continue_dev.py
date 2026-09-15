@@ -22,20 +22,12 @@ def detect():
 
 def configure(ctx: dict) -> list[Path]:
     s = ctx["state"]
-    ak_path = str(repo_root())
+    ak_path = str(_shared.stable_kit_root(repo_root()))
     gateway_url = ctx.get("gateway_url", "http://127.0.0.1:4000")
     written: list[Path] = []
 
-    multimodel = _shared.multimodel_protocol_md(ak_path, gateway_url, s.mode)
-    md = (
-        f"# ai-resources (Continue.dev)\n\n"
-        f"**Refresh:** After updating the kit, run `ai-resources generate`.\n\n"
-        f"{multimodel}"
-        f"## Skill Discovery\n\n"
-        f"- Skills index: `{ak_path}/skills-index.json`\n"
-        f"- Workflows: `{ak_path}/workflows/`\n"
-    )
-    if _shared.write_text(INSTRUCTIONS_PATH, md):
+    md = _shared.kit_instructions_md("Continue.dev", ak_path, gateway_url, s.mode, native_skills=False)
+    if _shared.write_managed_block(INSTRUCTIONS_PATH, md):
         written.append(INSTRUCTIONS_PATH)
 
     cs = s.cockpits.get(ID) or state.CockpitState()

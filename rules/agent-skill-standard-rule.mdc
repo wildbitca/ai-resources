@@ -10,8 +10,8 @@ You are in a **zero-trust** setting: do not rely on baseline pretraining for sta
 
 ## Discovery order (do not skip)
 
-1. **Workflow active?** If `010-orchestrator.mdc` selected a workflow, each step lists **`skills:`** — resolve IDs to **`SKILL.md`** per **`050-subagent-delegation.mdc`** and read those files **before** acting.
-2. **Else (ad-hoc):** Use **`skills-index.json`** (repo root in **ai-resources**, or path from **`AGENT_KIT`**) to find candidates by `description` / `triggers`. Open the **`path`** listed for each candidate and read **`SKILL.md`**.
+1. **Workflow active?** Each step lists **`skills:`** — resolve IDs to **`SKILL.md`** per the **`kit-orchestration`** skill and read those files **before** acting.
+2. **Else (ad-hoc):** Use the agent's native skill list (descriptions); tools without native discovery search **`skills-index.json`** by `description` / `triggers` and open the listed **`path`** (relative to the kit root).
 3. **Project context:** Read **`<repo>/specs/PROJECT.md`** when working in a product repo.
 
 You do **not** need to load the entire catalog into context — **search or match**, then **read only relevant `SKILL.md` files**.
@@ -20,7 +20,7 @@ You do **not** need to load the entire catalog into context — **search or matc
 
 - **Read before write:** If a skill matches, ingest **`SKILL.md`** before editing code.
 - **Authority:** Loaded skills override generic patterns.
-- **Delegation:** Broad exploration, multi-file work, or heavy discovery → **`Task`** subagent per **`050-subagent-delegation.mdc`** and **`100-token-economics.mdc`** — do not inline huge tree walks in the main thread.
+- **Delegation:** Context-heavy discovery (wide searches, long logs) → subagent per the **`kit-orchestration`** skill; targeted reads stay in the main thread.
 
 ## Optional audit line
 

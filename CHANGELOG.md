@@ -6,6 +6,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Changed
+
+- **Instruction files use a managed block.** Setup writes the kit's text only between
+  `<!-- BEGIN ai-resources … -->` and `<!-- END ai-resources -->` in `~/.claude/CLAUDE.md`,
+  `~/.gemini/GEMINI.md`, Codex/Windsurf/Copilot/Aider/Cursor/Continue/OpenCode files.
+  Previously setup overwrote the whole file, deleting any user content. Files from older
+  kit versions are migrated once (legacy kit sections removed, user sections kept) with a
+  `*.ai-resources-backup-<timestamp>` copy.
+- **Kit hooks merge with user hooks.** Hook entries are replaced per event only when they
+  are the kit's own; the legacy cleanup no longer deletes every `UserPromptSubmit` hook.
+- **Generated `CLAUDE.md` block cut from ~110 lines to ~25.** No workflow trigger table,
+  no "read skills-index.json" recipe, no subagent table — skills, workflows and agents are
+  discovered natively. Other cockpits share one template.
+- **Orchestration moved from rules to skills.** New `kit-orchestration` skill (steps,
+  delegation by task shape, handoff, parallel groups, return format) replaces rules 010,
+  011, 050, 051 and 100. Commands are skills: `delegate`, `setup-project`, `self-update`
+  (plus the existing `knowledge-audit`); their `.mdc` rules are removed.
+- **Workflows are native skills.** `ai-resources generate` creates one `workflow-<name>`
+  skill per workflow YAML (description = trigger) and removes stale ones.
+- **Removed the `_auto-delegate` workflow** and the "never read inline / always explore on
+  Gemini" policy (rule 017 and generated files); delegation is decided by task shape.
+- **Setup mode prompt is neutral and defaults to single-model** (it recommended multi-model).
+- **Model routing depends on the setup mode.** Single-model setup offers `claude-native`
+  (Claude aliases per role, default) or `claude-inherit`; gateway profiles are only offered
+  in multi-model mode, and gateway-only model names are never written to agents in
+  single-model mode.
+- **`skills-index.json` paths are relative to the kit root.**
+- **Kit paths in generated files use the Homebrew `opt/` path**, so they survive upgrades.
+
+### Added
+
+- **Kit hooks for Claude Code** (`hooks/`): `kit_session_start.py` reports in-progress and
+  stale handoff files; `kit_subagent_return.py` sends a kit role subagent back when it ends
+  a workflow step without the return block; `kit_handoff_guard.py` blocks subagents from
+  writing the shared handoff while `.agent-output/parallel-group.json` exists.
+
 ### Fixed
 
 - **Claude Code and Codex now discover kit skills.** Setup linked the whole `skills/`

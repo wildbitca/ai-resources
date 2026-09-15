@@ -7,9 +7,9 @@ alwaysApply: false
 
 **Narrative + CLI:** **`README.md`** at repo root. This file is the compact map only.
 
-- **Orchestration:** `010-orchestrator.mdc`, YAML workflows under **`workflows/`**, **`Task`** subagents (`050-subagent-delegation.mdc`), handoff (`051-handoff-protocol.mdc`).
-- **Skills:** Flat tree under **`skills/**`; generated index **`skills-index.json`** at repo root.
-- **Unified manifest:** **`resources.json`** — **`skills.sources`**, **`mcp.cursor`** (via **`kit.py setup`**), **`agents`** / **`personas`** reserved — summarized in **`README.md`**.
+- **Orchestration:** YAML workflows under **`workflows/`**, each exposed as a generated `workflow-<name>` skill; how to run them (steps, subagents, handoff, parallel groups) is the **`kit-orchestration`** skill. Kit hooks in **`hooks/`** enforce the handoff and return-format rules.
+- **Skills:** Flat tree under **`skills/`**, linked per skill into agents' native skills directories; generated index **`skills-index.json`** for tools without native discovery.
+- **Unified manifest:** **`resources.json`** — **`skills.sources`**, **`mcp.cursor`**, **`agents`** / **`personas`** reserved — summarized in **`README.md`**.
 
 ## Pointers
 
@@ -17,5 +17,5 @@ alwaysApply: false
 |-------|----------|
 | Workflow YAML shape | **`workflows/WORKFLOW_CONTRACT.md`** |
 | Unified manifest (`skills`, `mcp`, …) | **`resources.json`**, **`README.md`** |
-| Token economics | **`100-token-economics.mdc`** |
+| Delegation and context hygiene | skill **`kit-orchestration`** |
 | Engram / persistence | **`014-engram-mcp-protocol.mdc`**, **`skills/_shared/persistence-contract.md`** |

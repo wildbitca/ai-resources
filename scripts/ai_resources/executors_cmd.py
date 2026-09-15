@@ -233,7 +233,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     ui.require_deps()
     data, path = _load_executors()
 
-    available = profiles.list_profiles()
+    available = profiles.list_profiles(mode="multi-model")
     if not available:
         ui.error("No profiles found in kit profiles/ directory.")
         return 1

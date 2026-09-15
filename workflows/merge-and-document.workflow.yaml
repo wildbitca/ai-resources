@@ -1,9 +1,9 @@
 # Workflow: merge a feature branch to develop and write/update SDD specs from agent-output.
 #
 # The orchestrator MUST NOT read large files directly. All heavy work is delegated:
-#   - explore (gemini-2.5-flash):  reads diffs, agent-output, existing specs → research doc
-#   - doc-writer (gemini-2.5-flash): writes/updates SDD specs, PROJECT.md entries
-#   - implementer (claude-sonnet-4-6): stages unstaged changes, commits specs, merges to target
+#   - explore:  reads diffs, agent-output, existing specs → research doc
+#   - doc-writer: writes/updates SDD specs, PROJECT.md entries
+#   - implementer: stages unstaged changes, commits specs, merges to target
 #
 # Flow: gather-context → document → merge
 # handoff_file: .agent-output/handoff-<branch>.md — DELETE when DONE.
