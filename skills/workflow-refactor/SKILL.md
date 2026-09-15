@@ -24,3 +24,7 @@ Structured code refactoring — assess technical debt → plan atomic steps → 
 | `implement` | `implementer` | — |
 | `test` | `tester` | — |
 | `review` | `code-reviewer` | — |
+
+## Deterministic alternative
+
+`/kit-plan` with kind "refactor", then `/kit-implement` runs this loop as workflow scripts: one writer, a test gate, parallel review lenses and findings verified before they are fixed. Prefer it unless a step needs judgement mid-run (workflow scripts cannot ask the user anything until they finish).

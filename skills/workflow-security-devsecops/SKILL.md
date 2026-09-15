@@ -26,3 +26,4 @@ DevSecOps audit — recon, SAST, dependency scan, secret detection, DAST, exploi
 | `dast-probe` | `security-auditor` | — |
 | `exploit-validation` | `security-auditor` | — |
 | `report` | `verifier` | — |
+| `document` | `doc-writer` | — |

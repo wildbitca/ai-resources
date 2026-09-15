@@ -1,3 +1,35 @@
+---
+# Machine-readable state. Keep these fields in sync with the notes below; a step reads them first.
+workflow: ""            # workflow name, e.g. feature-implementation
+step: ""                # step id that last wrote this file
+status: pending         # pending | success | partial | blocked
+blocked: false
+return_to_step: ""      # step id to re-run when blocked
+block_reason: ""
+domain: ""              # dart-flutter | angular | symfony | api-platform | devops | security
+requires_tests: unknown # true | false | unknown
+security_critical: unknown
+refs:                   # paths written by steps, not the content
+  plan: ""
+  architecture: ""
+  test_report: ""
+  review: ""
+  security: ""
+verdicts:               # pending until the owning step reports
+  architect: pending    # yes | no | pending
+  code_review: pending  # APPROVED | REQUIRES_CHANGES | pending
+  security: pending     # PASS | CONDITIONAL | FAIL | N/A | pending
+  verification: pending # PASS | GAPS | pending
+next: ""                # step id to run next, or none
+docs_updated: ""        # paths written by the document step, or none
+git_integration: none   # merge_to_base | none | pending_human
+---
+
+<!-- The front matter above is authoritative: steps read it and the orchestrator joins parallel
+     results into it. The notes below are commentary for humans — when they disagree, the front
+     matter wins, and whoever wrote the note should fix it. -->
+
+
 # Handoff
 
 **Status:** (success | partial | blocked)
@@ -44,6 +76,6 @@
 
 ---
 
-*Copy this template to `.agent-output/handoff-<branch>.md`. Update after each step; next agent continues from handoff + referenced files only. Workflows in `$AGENT_KIT/workflows/`; working knowledge artifacts in `<repo>/specs/knowledge/` (research, decisions, searchable).*
+*Copy this template to `.agent-output/handoff-<branch>.md`. Update the front matter and the notes after each step; the next agent continues from the handoff + referenced files only. Workflows in `$AGENT_KIT/workflows/`; working knowledge artifacts in `<repo>/specs/knowledge/` (research, decisions, searchable).*
 
 **When task DONE:** DELETE the handoff file. No pending handoffs, zombies, or orphans.

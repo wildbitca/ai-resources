@@ -61,7 +61,8 @@ steps:
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}. Follow implement_guidance from _domain-commands.yaml for {{domain}} and your loaded persona.
-      Apply the fix. Do NOT write tests (tester does).
+      Write a regression test that reproduces the bug and fails first, then apply the fix and watch it pass.
+      Never weaken or skip an existing assertion to get a green run.
       Run analyze commands from _domain-commands.yaml to verify no lint errors.
       Update {{handoff_file}} (Changes made, Next=tester).
       If blocked, set Blocked: true, Return_to_step: explore, Block_reason: [reason].
@@ -75,8 +76,9 @@ steps:
     on_concern_return_to: implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}}. Read Spec_refs if available.
-      If the fix touches a rule with BDD scenarios in the spec, verify those scenarios still pass. If new edge cases were found, add regression test and update spec Traceability Matrix.
+      Read {{handoff_file}}. Read Spec_refs if available. You are the gate: the implementer wrote the regression test.
+      Confirm that test fails without the fix (git stash the source change, or revert it in a scratch copy) and passes with it.
+      If the fix touches a rule with BDD scenarios in the spec, verify those scenarios still pass; add any missing edge-case test and update the spec Traceability Matrix.
       Run test + analyze commands from $AGENT_KIT/workflows/_domain-commands.yaml ({{domain}} section).
       MANDATORY: ALL commands MUST exit 0. If any fails, set Blocked: true, Return_to_step: implement, Block_reason: [failures].
       Create report in .agent-output/tester/.
@@ -99,20 +101,32 @@ steps:
     subagent_type: verifier
     skills:
       - common-protocol-enforcement
-      - knowledge-audit
     entry_criteria: All prior steps complete
-    exit_criteria: Bug confirmed fixed; specs updated if needed
-    handoff_to: null
+    exit_criteria: Bug confirmed fixed, with evidence; no regressions
+    handoff_to: document
     on_concern_return_to: implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}}. Verify the bug is fixed and no regressions introduced.
-      For Manual_verification items, ASK the user.
+      Read {{handoff_file}}. Verify the bug is fixed and no regressions were introduced, with your own evidence:
+      run the domain's test and analyze commands, and confirm the regression test covers the reported symptom.
+      Report each check as met or not with the command and result. For Manual_verification items, ASK the user.
+      Update {{handoff_file}} (Verification: PASS | GAPS, gap list, Next=doc-writer if the project keeps specs, else none).
+      If the bug is not fixed: Blocked: true, Return_to_step: implement, Block_reason: [gaps].
+  - id: document
+    subagent_type: doc-writer
+    skills:
+      - knowledge-audit
+    entry_criteria: Verification passed and the project keeps specs
+    exit_criteria: Spec and knowledge reflect the fix
+    handoff_to: null
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. Skip this step (set Docs_updated: none) if the project has no specs/.
       If the fix changes existing requirements or reveals a spec gap:
-        1. Update the relevant spec in specs/features/ (add/modify RULE, add BDD scenario for the bug)
-        2. Add a regression test scenario: TS-{FEAT}-ENNN with the bug's Given/When/Then
-        3. Update Traceability Matrix if test was added
-      Update specs/PROJECT.md (Decision Log or metrics) if a non-trivial decision was made.
-      Generate specs/knowledge/searchable/YYMMDD-{topic}-bugfix-validation.md.
-      MANDATORY SDD closure (skill knowledge-audit): READ $AGENT_KIT/skills/knowledge-audit/SKILL.md and execute in repo root — relink, merge, prune per skill (Tier B when safe). If Blocked with no spec promotion, skip prune.
-      When task DONE: DELETE {{handoff_file}}.
+        1. Update the relevant spec in specs/features/ (add/modify RULE, add a BDD scenario for the bug)
+        2. Add the regression scenario TS-{FEAT}-ENNN with the bug's Given/When/Then
+        3. Update the Traceability Matrix with the regression test path
+      Update specs/PROJECT.md (Decision Log) if a non-trivial decision was made.
+      Write specs/knowledge/searchable/YYMMDD-{topic}-bugfix-validation.md.
+      SDD closure: READ $AGENT_KIT/skills/knowledge-audit/SKILL.md and execute it in the repo root (relink, merge, prune Tier B when safe; skip the prune if nothing was promoted).
+      When the task is DONE: DELETE {{handoff_file}}.

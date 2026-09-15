@@ -5,6 +5,15 @@ description: "How to run an ai-resources workflow: resolve each step's agent, pe
 
 # Kit orchestration
 
+## Prefer the deterministic loop for code changes
+
+For a feature, bugfix or refactor, run the kit's workflow scripts instead of driving the steps by hand:
+
+1. `/kit-plan <goal>` — parallel readers map the code, specs and tests; three planners draft from different angles; judges pick one; a plan file is written for the user to approve.
+2. `/kit-implement` with `{"plan_path": "…", "goal": "…", "kind": "feature|bugfix|refactor"}` — one writer implements with tests, a tester gate runs the suite, three review lenses (correctness, security, test integrity) run in parallel, each finding is verified by a skeptic before it is fixed, and a verifier signs off against the acceptance criteria.
+
+A workflow script cannot ask the user anything mid-run, which is why approval sits between the two. Use the YAML workflows below when a run needs judgement in the middle, when the task is not a code change, or when workflow scripts are unavailable.
+
 ## Locate the kit (`$AGENT_KIT`)
 
 Workflows and prompts refer to `$AGENT_KIT`, the kit root (`workflows/`, `agents/`, `skills/`, `templates/`, `handoff.md.template`). Resolve it in this order:
@@ -18,7 +27,8 @@ Workflows and prompts refer to `$AGENT_KIT`, the kit root (`workflows/`, `agents
 1. Read `specs/PROJECT.md` when it exists (Intent, Technologies, spec index).
 2. Detect the domain with [references/domains.md](references/domains.md). If it is ambiguous, ask the user once.
 3. For workflows that change code (feature, bugfix, refactor, cross-domain), work in a git worktree on `feature/<name>` or `fix/<name>` (skill `using-git-worktrees`).
-4. Create the handoff file from `$AGENT_KIT/handoff.md.template` — naming, fields and rollback are in [references/handoff.md](references/handoff.md).
+4. Create the handoff file from `$AGENT_KIT/handoff.md.template` — naming, front matter, fields and rollback are in [references/handoff.md](references/handoff.md).
+5. For a code-changing workflow, show the plan to the user before the first step that writes code.
 
 ## Running a step
 
@@ -69,6 +79,13 @@ Every kit role subagent working on a workflow ends its final message with this b
 ```
 
 Code, logs and stack traces go in the handoff or under `.agent-output/`, never in the block.
+
+## Who writes what
+
+- **One writer per run.** The implementer makes the code changes and writes the tests for what it changes (test first, watch it fail). Reviewers, testers and verifiers only read and run commands.
+- **The tester is a gate**, not the test author: it runs the full suite, separates new failures from pre-existing ones, and fills coverage gaps the plan requires.
+- **The reviewer audits the test diff** as well as the code: assertions deleted or weakened, tests skipped, tests that cannot fail.
+- **The verifier checks acceptance criteria against evidence** it produces itself, and reports gaps. Spec, ADR and knowledge updates belong to a separate `document` step (skill `knowledge-audit`), not to the verifier.
 
 ## Finishing
 

@@ -27,6 +27,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   skill per workflow YAML (description = trigger) and removes stale ones.
 - **Removed the `_auto-delegate` workflow** and the "never read inline / always explore on
   Gemini" policy (rule 017 and generated files); delegation is decided by task shape.
+- **Core workflow loop follows the 2026 evidence**: the implementer writes the tests for what it
+  changes (TDD) instead of handing that to a separate author, the tester becomes the gate that
+  separates new failures from pre-existing ones, the reviewer audits the test diff for weakened or
+  skipped assertions, and the verifier checks acceptance criteria against evidence only — spec,
+  ADR and knowledge-audit work moved to a new `document` step run by `doc-writer` (feature, bugfix,
+  cross-domain, release and security-devsecops; `refactor` keeps `review` as its gate, since a
+  refactor changes no external behaviour and promotes nothing into specs).
+- **The handoff file starts with YAML front matter** (`status`, `blocked`, `return_to_step`,
+  `refs`, `verdicts`, …) so a step reads state without parsing prose.
 - **Setup mode prompt is neutral and defaults to single-model** (it recommended multi-model).
 - **Model routing depends on the setup mode.** Single-model setup offers `claude-native`
   (Claude aliases per role, default) or `claude-inherit`; gateway profiles are only offered
@@ -37,6 +46,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ### Added
 
+- **Deterministic core loop as dynamic workflow scripts** (`workflows/scripts/`, installed by setup
+  into `~/.claude/workflows/`): `/kit-plan` runs parallel readers (code, specs, tests and risk),
+  three planners with different biases, two judges and a synthesis step that writes one plan file;
+  `/kit-implement` runs one writer with TDD, a test gate with a bounded fix loop, three review
+  lenses in parallel (correctness, security, test integrity), a skeptic per finding before anything
+  is fixed, and a verifier that signs off against the acceptance criteria. Approval sits between the
+  two because a workflow script cannot ask the user anything mid-run.
+  Setup records which workflow scripts it installed, so a later run prunes only its own and never
+  a `/kit-*` workflow the user wrote; switching back to single-model removes them again.
 - **Kit hooks for Claude Code** (`hooks/`): `kit_session_start.py` reports in-progress and
   stale handoff files; `kit_subagent_return.py` sends a kit role subagent back when it ends
   a workflow step without the return block; `kit_handoff_guard.py` blocks subagents from

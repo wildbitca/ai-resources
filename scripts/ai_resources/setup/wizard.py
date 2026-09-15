@@ -905,6 +905,11 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     # Cleanup: remove __targets__ stash
     s.profile.customizations.pop("__targets__", None)
 
+    # Persist what the cockpits just installed (skill links, workflow scripts, env keys) before the
+    # gateway steps below can fail: otherwise those files exist on disk with no tracking record,
+    # and a later run would treat them as the user's and never clean them up.
+    state.save(s)
+
     # Local install path: write wrapper + lifecycle, start service
     if s.mode == "multi-model" and s.litellm.deployment == "local":
         ui.console().print()

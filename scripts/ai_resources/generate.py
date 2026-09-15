@@ -164,6 +164,13 @@ def _build_index() -> int:
 
 WORKFLOW_SKILL_MARKER = ".generated-workflow-skill"
 
+# Workflows that also ship as dynamic workflow scripts (installed as /kit-* commands by setup).
+WORKFLOW_SCRIPTS: dict[str, str] = {
+    "feature-implementation": "`/kit-plan <goal>` then `/kit-implement`",
+    "bugfix": "`/kit-plan` with kind \"bugfix\", then `/kit-implement`",
+    "refactor": "`/kit-plan` with kind \"refactor\", then `/kit-implement`",
+}
+
 
 def _workflow_skill_md(filename: str, doc: dict) -> str:
     name = str(doc["name"])
@@ -175,6 +182,14 @@ def _workflow_skill_md(filename: str, doc: dict) -> str:
         group = (step.get("execution_hints") or {}).get("parallel_group") or "—"
         rows.append(f"| `{step.get('id')}` | `{step.get('subagent_type')}` | {group} |")
     table = "\n".join(rows)
+    script = WORKFLOW_SCRIPTS.get(name)
+    deterministic = (
+        f"\n## Deterministic alternative\n\n"
+        f"{script} runs this loop as workflow scripts: one writer, a test gate, parallel review lenses "
+        f"and findings verified before they are fixed. Prefer it unless a step needs judgement mid-run "
+        f"(workflow scripts cannot ask the user anything until they finish).\n"
+        if script else ""
+    )
     return (
         "---\n"
         f"name: workflow-{name}\n"
@@ -191,6 +206,7 @@ def _workflow_skill_md(filename: str, doc: dict) -> str:
         "explains how to locate `$AGENT_KIT`) and run its steps in order.\n\n"
         "## Steps\n\n"
         f"{table}\n"
+        f"{deterministic}"
     )
 
 

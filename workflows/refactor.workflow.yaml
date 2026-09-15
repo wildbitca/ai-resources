@@ -10,6 +10,15 @@
 #   test      → tester        — run tests, confirm no regressions
 #   review    → code-reviewer   — confirm refactor goals met
 #
+# Deterministic alternative: `/kit-plan` with kind "refactor", then `/kit-implement` — same loop as
+# workflow scripts (one writer, test gate, parallel review lenses, verified findings).
+#
+# No verify/document step, unlike the feature and bugfix workflows: a refactor changes no external
+# behaviour, so there are no acceptance criteria to sign off and no requirement to promote into
+# specs. The review step is the gate — it confirms the smells are gone, the external surface is
+# intact and no assertion was weakened. If a refactor does change behaviour, it is a feature or a
+# bugfix and belongs in those workflows.
+#
 # handoff_file: .agent-output/handoff-refactor-<slug>.md — DELETE when DONE.
 #
 name: refactor
@@ -157,6 +166,7 @@ steps:
         3. Did any step accidentally change behavior?
         4. Is the code objectively simpler/better than before? (not just different)
         5. Are naming and structure consistent with the surrounding codebase?
+        6. Test diff audit: no assertion deleted, weakened or skipped to keep the suite green, and characterization tests still assert the old behaviour.
 
       Write review to .agent-output/refactor/<slug>-review.md.
 

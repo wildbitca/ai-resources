@@ -160,23 +160,37 @@ steps:
     subagent_type: verifier
     skills:
       - common-protocol-enforcement
-      - knowledge-audit
     entry_criteria: All prior steps complete
-    exit_criteria: Consolidated security report written; verdict recorded
-    handoff_to: null
+    exit_criteria: Consolidated security report written; verdict recorded with evidence
+    handoff_to: document
     on_concern_return_to: exploit-validation
     prompt_template: |
       Workspace: {{workspace}}. Target domain: {{domain}}.
       Read {{handoff_file}} and all analysis files in .agent-output/security-auditor/.
-      Task: Generate consolidated security report.
-      Output: YYMMDD-NNN-security-report.md in .agent-output/security-auditor/ AND a copy in specs/knowledge/searchable/YYMMDD-security-audit-{topic}.md for persistent reference.
-      Sections:
+      Task: Consolidate the findings and issue the verdict. Check each finding before it reaches the report:
+      it names a file:line or an endpoint, and its status comes from exploit-validation (Confirmed Exploitable,
+      Confirmed but Mitigated, False Positive, Needs Manual Verification). Drop or downgrade anything unsupported,
+      and list the coverage gaps (targets not scanned, tools missing) instead of implying full coverage.
+      Output: YYMMDD-NNN-security-report.md in .agent-output/security-auditor/ with:
         - Executive summary with overall verdict (PASS/CONDITIONAL/FAIL)
-        - Findings table: ID, severity, CWE, description, component, status, remediation
-        - Statistics: total by severity, false positive rate, coverage percentage
+        - Findings table: ID, severity, CWE, description, component, status, evidence, remediation
+        - Statistics: total by severity, false positive rate, coverage percentage, Missing_tools
         - OWASP Top 10 / CWE Top 25 coverage mapping
         - Remediation roadmap: prioritized fix list with effort estimates (quick win / medium / complex)
       Verdict criteria: PASS = no confirmed critical/high. CONDITIONAL = high findings with documented mitigations. FAIL = unmitigated critical.
-      Update {{handoff_file}} (Security_verdict, Report_ref).
-      MANDATORY SDD closure (skill knowledge-audit): READ $AGENT_KIT/skills/knowledge-audit/SKILL.md — relink; merge critical/high remediations into specs/cross-cutting/security-auth.md (or project issue list) when appropriate; prune duplicate searchable dumps if findings are tracked elsewhere; refresh specs/knowledge/README.md.
-      When task DONE: DELETE {{handoff_file}}.
+      Update {{handoff_file}} (Security_verdict, Report_ref, Next=doc-writer[document]).
+
+  - id: document
+    subagent_type: doc-writer
+    skills:
+      - knowledge-audit
+    entry_criteria: Security report written and verdict recorded
+    exit_criteria: Findings and remediations recorded where the project tracks them
+    handoff_to: null
+    prompt_template: |
+      Workspace: {{workspace}}. Target domain: {{domain}}.
+      Read {{handoff_file}} and Report_ref. Skip (set Docs_updated: none) if the project has no specs/.
+      1. Copy the report to specs/knowledge/searchable/YYMMDD-security-audit-{topic}.md for persistent reference.
+      2. Merge confirmed critical/high remediations into specs/cross-cutting/security-auth.md (or the project's issue list) — reference them, do not paste exploit payloads.
+      3. SDD closure: READ $AGENT_KIT/skills/knowledge-audit/SKILL.md — relink, prune duplicate searchable dumps when the findings are tracked elsewhere, refresh specs/knowledge/README.md.
+      When the task is DONE: DELETE {{handoff_file}}.

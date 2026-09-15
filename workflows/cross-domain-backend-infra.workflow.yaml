@@ -79,20 +79,31 @@ steps:
     subagent_type: verifier
     skills:
       - common-protocol-enforcement
-      - knowledge-audit
     entry_criteria: All prior steps complete
-    exit_criteria: All acceptance criteria met
-    handoff_to: null
+    exit_criteria: All acceptance criteria met, with evidence
+    handoff_to: document
     on_concern_return_to: review
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}}. Validate:
+      Read {{handoff_file}}. Validate, producing your own evidence (commands and their output):
         1. App-side changes are complete and tested
         2. Infra-side changes are validated (plan/dry-run successful)
         3. Code_review_verdict: APPROVED
         4. Cross-layer integration points verified (URLs, env vars, secrets references)
       For human-judgment items (e.g. "deploy to staging and verify"), ASK the user.
-      Generate specs/knowledge/searchable/YYMMDD-{topic}-cross-domain-validation.md.
-      MANDATORY SDD closure (skill knowledge-audit): READ $AGENT_KIT/skills/knowledge-audit/SKILL.md — relink, merge, prune per skill when ALL met. If unmet, skip closure until resolved.
-      If ALL met: mark DONE, DELETE {{handoff_file}}.
+      Update {{handoff_file}} (Verification: PASS | GAPS with the evidence, Next=doc-writer).
       If unmet: Blocked: true, Return_to_step: [app-step|infra-step|review], Block_reason: [reason].
+
+  - id: document
+    subagent_type: doc-writer
+    skills:
+      - knowledge-audit
+    entry_criteria: Verification passed
+    exit_criteria: Knowledge and specs reflect the cross-domain change
+    handoff_to: null
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and the verification result. Skip (set Docs_updated: none) if the project has no specs/.
+      Write specs/knowledge/searchable/YYMMDD-{topic}-cross-domain-validation.md: what changed in each layer, validation evidence, integration points.
+      SDD closure: READ $AGENT_KIT/skills/knowledge-audit/SKILL.md and execute it in the repo root — relink, merge, prune Tier B when safe.
+      When the task is DONE: DELETE {{handoff_file}}.

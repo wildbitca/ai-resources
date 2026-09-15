@@ -24,3 +24,4 @@ Task crossing app (backend) and infra — app → infra → test → review → 
 | `test` | `tester` | — |
 | `review` | `code-reviewer` | — |
 | `verify` | `verifier` | — |
+| `document` | `doc-writer` | — |

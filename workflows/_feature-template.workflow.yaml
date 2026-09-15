@@ -9,8 +9,13 @@
 # handoff_file: .agent-output/handoff-<branch>.md. DELETE when DONE.
 # Domain commands: $AGENT_KIT/workflows/_domain-commands.yaml ({{domain}} section)
 #
-# Rules: (1) NEVER implement without architect-approved plan
-# (2) Implementer NEVER writes tests (tester does)
+# Deterministic alternative: `/kit-plan` then `/kit-implement` run this loop as workflow scripts
+# (one writer, test gate, parallel review lenses, verified findings). Use this YAML when running
+# the steps from the session, or when a step needs judgement the script cannot encode.
+#
+# Rules: (1) NEVER implement without an approved plan
+# (2) The implementer writes the tests for what it changes (TDD); the tester is the gate that runs
+#     the full suite, and the review step audits the test diff for weakened assertions
 # (3) ALWAYS code-review before considering done
 # (4) ALWAYS security-auditor for features with sensitive data
 #
@@ -112,7 +117,8 @@ steps:
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}} and Plan_ref. Verify Architect_approval: yes before implementing.
       Follow implement_guidance from $AGENT_KIT/workflows/_domain-commands.yaml for {{domain}} and your loaded persona.
-      Implement code per the plan. Do NOT write tests.
+      Implement code per the plan, test-first: for each behaviour you change, write or update its test, watch it fail, then make it pass.
+      Never delete, skip or weaken an existing assertion to get a green run — if a test is wrong, say so in the handoff instead.
       If you discover information affecting the plan, update Plan_ref with '## Implementation Notes'. Set Plan_updated: yes in {{handoff_file}}.
       Run analyze commands from _domain-commands.yaml to verify no lint errors.
       Update {{handoff_file}} (Changes made, Next=tester).
@@ -122,20 +128,18 @@ steps:
     skills:
       - common-tdd
     entry_criteria: Implementation complete
-    exit_criteria: All tests pass
+    exit_criteria: Full suite and analyzers pass; plan scenarios covered
     handoff_to: review
     on_concern_return_to: implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}}. If Requires_tests: no, skip tests, update {{handoff_file}} (Next=post-test group: code-reviewer + security-auditor) and advance.
-      If Requires_tests: yes:
-        1. Read Spec_refs from handoff. If spec has ## Test Scenarios (BDD), implement tests for each [automated] scenario referenced by the plan (use TS-IDs from plan acceptance criteria).
-        2. Name test functions to match scenario IDs for traceability (e.g. testTsPet001_mutualExclusivity).
-        3. Add comment header in each test file: // Validates: TS-{FEAT}-NNN — {title}
-        4. Run test + analyze commands from $AGENT_KIT/workflows/_domain-commands.yaml ({{domain}} section).
-        5. After tests pass, update the spec's Traceability Matrix with test file paths and status.
-        6. Create report in .agent-output/tester/ with coverage: "{N}/{M} plan scenarios have passing tests".
-      MANDATORY: ALL test/analyze commands MUST exit 0. If any fails, set Blocked: true, Return_to_step: implement, Block_reason: [failures with details].
+      Read {{handoff_file}}. You are the gate, not the author: the implementer wrote the tests for what it changed.
+      1. Run the full test + analyze commands from $AGENT_KIT/workflows/_domain-commands.yaml ({{domain}} section).
+      2. Separate failures caused by this change from failures that were already there (check with git stash or the base branch if unsure).
+      3. Read Spec_refs. For each [automated] scenario the plan references, confirm a test exists and covers it; add the missing ones, naming test functions after the TS-IDs and adding the header comment `// Validates: TS-{FEAT}-NNN — {title}`.
+      4. Update the spec's Traceability Matrix with test file paths and status.
+      5. Create report in .agent-output/tester/ with coverage "{N}/{M} plan scenarios have passing tests" and the commands you ran.
+      MANDATORY: ALL test/analyze commands MUST exit 0. If any fails because of this change, set Blocked: true, Return_to_step: implement, Block_reason: [failures with details].
       Update {{handoff_file}} (Test_report, Next=post-test group: code-reviewer + security-auditor).
   - id: review
     subagent_type: code-reviewer
@@ -150,8 +154,10 @@ steps:
       parallel_group: post-test
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}}, changed files, and Spec_refs. Apply domain review checklist from your loaded persona. Run test commands from _domain-commands.yaml.
-      Check that implementation respects Requirements_preserved from handoff.
+      Read {{handoff_file}}, the diff (git diff), and Spec_refs. Apply the domain review checklist from your loaded persona.
+      Check that the implementation respects Requirements_preserved from the handoff.
+      Audit the test diff as well: assertions deleted or weakened, tests skipped or marked pending, tests that assert implementation detail instead of behaviour, acceptance criteria with no test, tests written so they cannot fail.
+      Report only defects you can point at in the diff; an empty list is a valid result.
       This step runs concurrently with security: do NOT edit {{handoff_file}}.
       Generate report in .agent-output/code-reviewer/ ending with these fields:
         Code_review_verdict: APPROVED | REQUIRES_CHANGES
@@ -179,26 +185,34 @@ steps:
     subagent_type: verifier
     skills:
       - common-protocol-enforcement
-      - knowledge-audit
     entry_criteria: All prior steps complete
-    exit_criteria: All acceptance criteria met; specs updated
-    handoff_to: null
-    on_concern_return_to: review
+    exit_criteria: Every acceptance criterion met with evidence, or reported as a gap
+    handoff_to: document
+    on_concern_return_to: implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}}. Validate acceptance criteria from Plan_ref.
-      Confirm: Architect_approval, Code_review_verdict, Security_audit.
-      For Manual_verification items: verify programmatically if possible, else ASK user. Do NOT mark done until all resolved.
-      Traceability check (if specs exist for this feature):
-        1. Read the spec's Traceability Matrix
-        2. Verify: every RULE in the spec that was touched has a TS scenario
-        3. Verify: every [automated] TS referenced by the plan has a test file in the matrix
-        4. Verify: every test file listed is passing (from Tester's report)
-        5. Report gaps: "RULE-{FEAT}-NNN has no scenario" or "TS-{FEAT}-NNN has no test"
-        6. Update spec's Coverage line with current counts
-      Update affected specs in specs/features/ to reflect new/changed requirements.
-      If an architecture decision was made, create ADR in specs/architecture/ using .cursor/templates/adr.template.md.
-      Update specs/PROJECT.md (Decision Log or metrics) with a summary of what was decided.
-      Generate specs/knowledge/searchable/YYMMDD-{topic}-validation.md with: implemented changes, automated results, traceability coverage, specs updated.
-      MANDATORY SDD closure (skill knowledge-audit): READ $AGENT_KIT/skills/knowledge-audit/SKILL.md and execute it in repo root — relink stale paths, merge unique knowledge into canonical specs, refresh specs/knowledge/README.md, sync specs/PROJECT.md tables, git rm obsolete knowledge when Tier B safe (no half-finished dumps). See references/audit-detail.md. If Blocked earlier with no promotion, skip prune.
-      When task DONE: DELETE {{handoff_file}}.
+      Read {{handoff_file}}. Validate the acceptance criteria from Plan_ref — nothing else; do not add requirements.
+      Produce your own evidence: run the commands the plan names and the domain's test/analyze commands, read the diff.
+      Report each criterion as met or not with its evidence (command + result, or file:line). Prefer reporting a gap over assuming.
+      Confirm the recorded verdicts: Architect_approval, Code_review_verdict, Security_audit.
+      Traceability check (if specs exist for this feature): every touched RULE-{FEAT}-NNN has a TS scenario, every [automated] TS the plan references has a test file in the matrix, and those tests pass. Report gaps; do not fix them here.
+      For Manual_verification items: verify programmatically if possible, else ASK the user. Do NOT mark done until all are resolved.
+      Update {{handoff_file}} (Verification: PASS | GAPS, gap list, Next=doc-writer).
+      If criteria are unmet: Blocked: true, Return_to_step: implement, Block_reason: [gaps].
+  - id: document
+    subagent_type: doc-writer
+    skills:
+      - knowledge-audit
+    entry_criteria: Verification passed
+    exit_criteria: Specs, ADRs and knowledge reflect what shipped
+    handoff_to: null
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}, Plan_ref and the verification result. Document only what actually shipped.
+      1. Update affected specs in specs/features/ (requirements, scenarios, Coverage line).
+      2. If an architecture decision was made, write an ADR in specs/architecture/ from $AGENT_KIT/templates/adr.template.md.
+      3. Update specs/PROJECT.md (Decision Log or metrics) with a one-line summary.
+      4. Write specs/knowledge/searchable/YYMMDD-{topic}-validation.md: changes, automated results, traceability coverage, specs updated.
+      5. SDD closure: READ $AGENT_KIT/skills/knowledge-audit/SKILL.md and execute it in the repo root — relink stale paths, merge unique knowledge into canonical specs, refresh specs/knowledge/README.md, sync specs/PROJECT.md tables, git rm obsolete knowledge when Tier B safe. Skip the prune if the run was blocked and nothing was promoted.
+      Update {{handoff_file}} (Docs_updated, Next=none).
+      When the task is DONE: DELETE {{handoff_file}}.

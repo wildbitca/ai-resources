@@ -142,6 +142,17 @@ Workflow YAML files define multi-phase execution pipelines. Each phase specifies
 
 Workflows: `feature-implementation`, `bugfix`, `refactor`, `explore-and-plan`, `cross-domain-backend-infra`, `merge-and-document`, `release-dart-flutter`, `security-devsecops`, `dependency-audit`, `ci-debug`, `incident-response`, `infra-triage`, `k8s-debug`, `log-triage`, `db-investigation`, `cloud-ops`.
 
+### Deterministic core loop (`workflows/scripts/`)
+
+Feature, bugfix and refactor work also ships as two [dynamic workflow](https://code.claude.com/docs/en/workflows) scripts, installed by setup into `~/.claude/workflows/`:
+
+| Command | What it runs |
+|---------|--------------|
+| `/kit-plan <goal>` | Parallel readers (code, specs, tests and risk) → three planners with different biases → two judges → one plan file for you to approve |
+| `/kit-implement` | One writer implementing with TDD → test gate with a bounded fix loop → three review lenses in parallel (correctness, security, test integrity) → a skeptic per finding → fix what survives → verifier signs off against the acceptance criteria |
+
+The script holds the ordering, retries and fan-out, so they don't depend on the model following prose. A script can't ask you anything while it runs, which is why approval sits between the two commands.
+
 ### Profiles (`profiles/`)
 
 Profiles define the role → model mapping for kit subagents. Setup offers the profiles that match the chosen mode.

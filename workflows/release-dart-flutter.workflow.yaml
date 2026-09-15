@@ -56,17 +56,29 @@ steps:
     subagent_type: verifier
     skills:
       - common-protocol-enforcement
-      - knowledge-audit
     entry_criteria: All prior steps complete
     exit_criteria: Release artifacts validated; ready for human review
-    handoff_to: null
+    handoff_to: document
     on_concern_return_to: generate
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}. Verify that CHANGELOG.md, release_notes_en-US.txt, and release_notes_es.txt exist and contain user-facing text only (no raw commit hashes or technical jargon).
+      Cross-check the notes against the commit list in .cursor/release_commits.txt: every user-facing change is mentioned, and nothing is claimed that is not in the range.
       Confirm: Release notes are ready for human review. Do NOT run git commit or git push. Human reviews, commits, and pushes when ready; the release automation pipeline uses these files as-is when publishing.
-      Save a release summary to specs/knowledge/decisions/YYMMDD-release-{version}.md with: version, base ref, key changes, files produced.
-      Generate validation report in specs/knowledge/searchable/YYMMDD-release-{version}-validation.md with: release artifacts checklist, pass/fail status.
-      Update {{handoff_file}} with final state. If files are missing or contain inappropriate content, set Blocked: true, Return_to_step: generate, Block_reason: [reason].
-      MANDATORY SDD closure (skill knowledge-audit): READ $AGENT_KIT/skills/knowledge-audit/SKILL.md — merge release notes summary into canonical docs if needed, relink, prune duplicate knowledge, refresh README. If Blocked, skip prune.
-      When task DONE: DELETE {{handoff_file}}. No pending handoffs, zombies, or orphans.
+      Update {{handoff_file}} (Verification: PASS | GAPS with the checklist, Next=doc-writer).
+      If files are missing or contain inappropriate content, set Blocked: true, Return_to_step: generate, Block_reason: [reason].
+
+  - id: document
+    subagent_type: doc-writer
+    skills:
+      - knowledge-audit
+    entry_criteria: Release artifacts validated
+    exit_criteria: Release recorded in the project's knowledge
+    handoff_to: null
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. Skip (set Docs_updated: none) if the project has no specs/.
+      Save a release summary to specs/knowledge/decisions/YYMMDD-release-{version}.md: version, base ref, key changes, files produced.
+      Write specs/knowledge/searchable/YYMMDD-release-{version}-validation.md: release artifacts checklist and pass/fail status.
+      SDD closure: READ $AGENT_KIT/skills/knowledge-audit/SKILL.md — merge the summary into canonical docs when it belongs there, relink, prune duplicates, refresh the README.
+      Do NOT commit or push. When the task is DONE: DELETE {{handoff_file}}.

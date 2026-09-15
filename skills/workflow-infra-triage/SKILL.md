@@ -26,3 +26,4 @@ Infrastructure triage and stabilization. Diagnose broken IaC resources, fix prov
 | `review` | `code-reviewer` | post-fix |
 | `monitor` | `generalPurpose` | post-fix |
 | `verify` | `verifier` | — |
+| `document` | `doc-writer` | — |

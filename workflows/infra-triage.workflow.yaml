@@ -193,10 +193,9 @@ steps:
     subagent_type: verifier
     skills:
       - common-protocol-enforcement
-      - knowledge-audit
     entry_criteria: All prior steps complete
     exit_criteria: Infrastructure stable, all resources healthy
-    handoff_to: null
+    handoff_to: document
     on_concern_return_to: implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
@@ -210,14 +209,26 @@ steps:
       5. No duplicate providers
       6. Flux kustomizations applied and healthy
 
-      If any resource is still not ready, document why and whether it needs
+      If any resource is still not ready, report why and whether it needs
       a follow-up action (e.g., KV/R2 buckets deferred, management escalation pending).
 
-      Generate specs/knowledge/searchable/YYMMDD-infra-triage-resolution.md with:
+      Update {{handoff_file}} (Verification: PASS | GAPS with the evidence per check, Next=doc-writer).
+      If resources are still broken: Blocked: true, Return_to_step: implement, Block_reason: [what is unhealthy].
+
+  - id: document
+    subagent_type: doc-writer
+    skills:
+      - knowledge-audit
+    entry_criteria: Infrastructure verified healthy
+    exit_criteria: Incident knowledge recorded
+    handoff_to: null
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}, the investigator findings and the verification result.
+      Write specs/knowledge/searchable/YYMMDD-infra-triage-resolution.md with:
       - What broke
       - Root cause
       - What was fixed
-      - Lessons learned
-
-      MANDATORY SDD closure (skill knowledge-audit): READ $AGENT_KIT/skills/knowledge-audit/SKILL.md and execute in repo root — relink, merge, prune per skill (Tier B when safe). If Blocked with no spec promotion, skip prune.
-      When task DONE: DELETE {{handoff_file}}.
+      - Lessons learned (and any follow-up actions still open)
+      SDD closure: READ $AGENT_KIT/skills/knowledge-audit/SKILL.md and execute it in the repo root — relink, merge, prune Tier B when safe. Skip the prune if nothing was promoted.
+      When the task is DONE: DELETE {{handoff_file}}.

@@ -22,3 +22,4 @@ Pre-publish hook. Diff since latest tag → humanized release notes (CHANGELOG +
 | `gather` | `generalPurpose` | — |
 | `generate` | `implementer` | — |
 | `verify` | `verifier` | — |
+| `document` | `doc-writer` | — |

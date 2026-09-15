@@ -2,6 +2,8 @@
 
 One handoff file per workflow run: `<repo>/.agent-output/handoff-<scope>.md`, created from `$AGENT_KIT/handoff.md.template`.
 
+The file starts with YAML front matter holding the state a step needs to read (`workflow`, `step`, `status`, `blocked`, `return_to_step`, `block_reason`, `domain`, `requires_tests`, `security_critical`, `refs`, `verdicts`, `next`, `docs_updated`, `git_integration`), followed by the human-readable notes. Update both: the front matter is what the next step and the join of a parallel group read.
+
 ## Scope (file name)
 
 - With a worktree: the branch name with `/` replaced by `-` — `handoff-feature-auth.md`.

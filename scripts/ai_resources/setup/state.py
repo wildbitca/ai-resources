@@ -120,6 +120,9 @@ class InstallTracking:
     env_keys_added: list[str] = field(default_factory=list)
     # Per-cockpit settings.json env keys we inserted
     cockpit_env_keys_added: dict[str, list[str]] = field(default_factory=dict)
+    # Workflow script file names we copied into the cockpit's workflows dir (e.g. kit-plan.js).
+    # Only these may be pruned later: a user's own kit-*.js is never touched.
+    workflow_scripts_installed: list[str] = field(default_factory=list)
 
 
 @dataclass

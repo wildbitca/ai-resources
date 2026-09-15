@@ -66,17 +66,19 @@ The most comprehensive workflow. All others are subsets of this pattern.
 graph LR
     R[Research<br/><i>generalPurpose</i>] -->|handoff| PL[Plan<br/><i>planner</i>]
     PL -->|handoff| AR[Architect<br/><i>software-architect</i>]
-    AR -->|approved| IM[Implement<br/><i>implementer</i>]
+    AR -->|approved| IM[Implement + tests<br/><i>implementer</i>]
     AR -->|rejected| PL
-    IM -->|handoff| TE[Test<br/><i>tester</i>]
-    TE -->|pass| RE[Review<br/><i>code-reviewer</i>]
+    IM -->|handoff| TE[Test gate<br/><i>tester</i>]
     TE -->|fail| IM
-    RE -->|approved| SE[Security<br/><i>security-auditor</i>]
-    RE -->|changes needed| IM
-    SE -->|pass| VE[Verify<br/><i>verifier</i>]
-    SE -->|fail| IM
-    VE -->|concern| RE
-    VE -->|done| DONE[Merge & Cleanup]
+    TE -->|pass| RE[Review<br/><i>code-reviewer</i>]
+    TE -->|pass| SE[Security<br/><i>security-auditor</i>]
+    RE -->|findings| IM
+    SE -->|findings| IM
+    RE -->|approved| VE[Verify<br/><i>verifier</i>]
+    SE -->|pass| VE
+    VE -->|gaps| IM
+    VE -->|met| DOC[Document<br/><i>doc-writer</i>]
+    DOC --> DONE[Merge & Cleanup]
 
     style R fill:#e1f5fe
     style PL fill:#e8f5e9
@@ -86,7 +88,10 @@ graph LR
     style RE fill:#e0f2f1
     style SE fill:#fff8e1
     style VE fill:#e8eaf6
+    style DOC fill:#ede7f6
 ```
+
+`review` and `security` share the `post-test` parallel group: they run concurrently on the same diff and write their own reports, and the orchestrator joins their verdicts into the handoff (see [WORKFLOW_CONTRACT.md](../workflows/WORKFLOW_CONTRACT.md)).
 
 **Skills loaded per phase:**
 
@@ -99,7 +104,39 @@ graph LR
 | Test | tester | common-tdd |
 | Review | code-reviewer | common-code-review, common-security-standards |
 | Security | security-auditor | common-security-audit, common-security-standards |
-| Verify | verifier | common-protocol-enforcement, knowledge-audit |
+| Verify | verifier | common-protocol-enforcement |
+| Document | doc-writer | knowledge-audit |
+
+### Deterministic core loop (workflow scripts)
+
+For feature, bugfix and refactor work the same loop also ships as two dynamic workflow scripts, installed by setup as `/kit-plan` and `/kit-implement`:
+
+```mermaid
+graph LR
+    subgraph P["/kit-plan"]
+        U1[Read code] --> J[Judge]
+        U2[Read specs] --> J
+        U3[Read tests + risk] --> J
+        J --> PLN[Write plan]
+    end
+    PLN --> OK{User approves}
+    subgraph I["/kit-implement"]
+        W[Implement + tests<br/><i>one writer</i>] --> G[Test gate]
+        G -->|fail, max 2 rounds| W
+        G --> C[Correctness]
+        G --> S[Security]
+        G --> T[Test integrity]
+        C --> V[Verify each finding]
+        S --> V
+        T --> V
+        V -->|survives| F[Fix]
+        F --> SO[Sign off]
+        V -->|refuted| SO
+    end
+    OK --> W
+```
+
+The script holds the control flow, so ordering, the retry bound and the fan-out do not depend on the model remembering them. A script cannot ask the user anything mid-run, which is why approval sits between the two.
 
 ### Bugfix
 
@@ -107,14 +144,16 @@ Similar to feature but starts with research + exploration instead of planning.
 
 ```mermaid
 graph LR
-    R[Research<br/><i>generalPurpose</i>] -->|handoff| EX[Explore<br/><i>explore</i>]
-    EX -->|handoff| IM[Implement<br/><i>implementer</i>]
-    IM -->|handoff| TE[Test<br/><i>tester</i>]
+    R[Research<br/><i>generalPurpose</i>] -->|handoff| EX[Explore<br/><i>generalPurpose</i>]
+    EX -->|handoff| IM[Fix + regression test<br/><i>implementer</i>]
+    IM -->|handoff| TE[Test gate<br/><i>tester</i>]
     TE -->|pass| SE[Security<br/><i>security-auditor</i>]
     TE -->|fail| IM
     SE -->|pass| VE[Verify<br/><i>verifier</i>]
     SE -->|fail| IM
-    VE -->|done| DONE[Merge & Cleanup]
+    VE -->|gaps| IM
+    VE -->|met| DOC[Document<br/><i>doc-writer</i>]
+    DOC --> DONE[Merge & Cleanup]
 
     style R fill:#e1f5fe
     style EX fill:#e8f5e9
@@ -122,6 +161,7 @@ graph LR
     style TE fill:#f3e5f5
     style SE fill:#fff8e1
     style VE fill:#e8eaf6
+    style DOC fill:#ede7f6
 ```
 
 ### Explore and Plan
@@ -149,13 +189,16 @@ graph LR
     TE -->|fail| AP
     RE -->|approved| VE[Verify<br/><i>verifier</i>]
     RE -->|changes needed| AP
-    VE -->|done| DONE[Merge & Cleanup]
+    VE -->|gaps| AP
+    VE -->|met| DOC[Document<br/><i>doc-writer</i>]
+    DOC --> DONE[Merge & Cleanup]
 
     style AP fill:#fce4ec
     style IN fill:#fff3e0
     style TE fill:#f3e5f5
     style RE fill:#e0f2f1
     style VE fill:#e8eaf6
+    style DOC fill:#ede7f6
 ```
 
 ### Security / DevSecOps Audit
@@ -169,8 +212,9 @@ graph LR
     DS -->|handoff| SD[Secret Detection<br/><i>security-auditor</i>]
     SD -->|handoff| DP[DAST Probe<br/><i>security-auditor</i>]
     DP -->|handoff| EV[Exploit Validation<br/><i>security-auditor</i>]
-    EV -->|handoff| RP[Report<br/><i>security-auditor</i>]
-    RP --> DONE[Report delivered]
+    EV -->|handoff| RP[Report + verdict<br/><i>verifier</i>]
+    RP -->|handoff| DOC[Document<br/><i>doc-writer</i>]
+    DOC --> DONE[Report delivered]
 
     style RC fill:#fff8e1
     style SA fill:#fff8e1
@@ -178,7 +222,8 @@ graph LR
     style SD fill:#fff8e1
     style DP fill:#fff8e1
     style EV fill:#fff8e1
-    style RP fill:#fff8e1
+    style RP fill:#e8eaf6
+    style DOC fill:#ede7f6
 ```
 
 ### Dart/Flutter Release
@@ -187,13 +232,16 @@ Gather release info, generate notes, and verify before publishing.
 
 ```mermaid
 graph LR
-    GA[Gather<br/><i>generalPurpose</i>] -->|handoff| GE[Generate<br/><i>generalPurpose</i>]
+    GA[Gather<br/><i>generalPurpose</i>] -->|handoff| GE[Generate<br/><i>implementer</i>]
     GE -->|handoff| VE[Verify<br/><i>verifier</i>]
-    VE --> DONE[Ready to publish]
+    VE -->|gaps| GE
+    VE -->|met| DOC[Document<br/><i>doc-writer</i>]
+    DOC --> DONE[Ready to publish]
 
     style GA fill:#e1f5fe
     style GE fill:#e8f5e9
     style VE fill:#e8eaf6
+    style DOC fill:#ede7f6
 ```
 
 ## Skill Discovery Flow
@@ -270,39 +318,45 @@ sequenceDiagram
 
 ## Handoff Protocol
 
-Handoff files are the communication channel between workflow phases. They live at `.agent-output/handoff-<branch>.md` and contain structured fields that each phase reads and updates.
+Handoff files are the communication channel between workflow phases. They live at `.agent-output/handoff-<branch>.md`, created from `handoff.md.template`. The file opens with YAML front matter — the authoritative state each phase reads and updates — followed by human-readable notes. When the two disagree, the front matter wins.
 
 ```mermaid
 graph TB
-    subgraph Phase 1
-        S1[Subagent writes:<br/>Research_ref, Domain,<br/>Research_needed, Next]
+    subgraph Phase1["Phase 1"]
+        S1[Subagent writes:<br/>step, status,<br/>refs.plan, next]
     end
 
-    subgraph Handoff File
-        HF[".agent-output/handoff-feature-auth.md"<br/><br/>Domain: dart-flutter<br/>Research_ref: specs/knowledge/research/...<br/>Plan_ref: .agent-output/planner/...<br/>Architect_approval: yes<br/>Requires_tests: true<br/>Security_critical_feature: no<br/>Code_review_verdict: APPROVED<br/>Next: verifier]
+    subgraph HandoffFile["Handoff file"]
+        HF[".agent-output/handoff-feature-auth.md"<br/><br/>--- front matter ---<br/>workflow: feature-implementation<br/>step: architect<br/>status: success<br/>domain: dart-flutter<br/>requires_tests: true<br/>refs.plan: .agent-output/planner/...<br/>verdicts.architect: yes<br/>verdicts.code_review: pending<br/>next: implement<br/>--- notes ---<br/>prose commentary]
     end
 
-    subgraph Phase 2
-        S2[Subagent reads handoff,<br/>continues from Phase 1's output]
+    subgraph Phase2["Phase 2"]
+        S2[Subagent reads the front matter,<br/>continues from Phase 1's output]
     end
 
     S1 -->|writes| HF
     HF -->|reads| S2
 ```
 
-**Key handoff fields:**
+**Key front-matter fields:**
 
 | Field | Set by | Purpose |
 |-------|--------|---------|
-| `Domain` | Orchestrator | Detected technology domain |
-| `Research_ref` | Research phase | Path to research document |
-| `Plan_ref` | Plan phase | Path to plan document |
-| `Architect_approval` | Architect | yes/no |
-| `Requires_tests` | Planner | Whether test phase runs |
-| `Security_critical_feature` | Planner | Whether security audit runs |
-| `Code_review_verdict` | Reviewer | APPROVED / REQUIRES_CHANGES |
-| `Blocked` | Any phase | true if phase cannot proceed |
-| `Return_to_step` | Any phase | Which phase to retry |
+| `workflow` / `step` | Orchestrator | Which workflow is running and which step wrote last |
+| `domain` | Orchestrator | Detected technology domain |
+| `status` | Any step | `pending` / `success` / `partial` / `blocked` |
+| `requires_tests` | Planner | Whether the test step runs |
+| `security_critical` | Planner | Whether the security audit runs |
+| `refs.*` | Owning step | Paths to plan, architecture, test report, review, security report |
+| `verdicts.architect` | Architect | `yes` / `no` / `pending` |
+| `verdicts.code_review` | Reviewer | `APPROVED` / `REQUIRES_CHANGES` / `pending` |
+| `verdicts.security` | Security auditor | `PASS` / `CONDITIONAL` / `FAIL` / `N/A` |
+| `verdicts.verification` | Verifier | `PASS` / `GAPS` |
+| `blocked` / `return_to_step` / `block_reason` | Any step | Rollback target and why |
+| `next` | Any step | Step id to run next |
+| `docs_updated` | Document step | Paths written, or `none` |
+
+Steps in a parallel group never write this file: each ends its own report with the fields it would have set, and the orchestrator joins them into the front matter once the whole group returns.
 
 **Lifecycle:** Handoff files are created when a workflow starts and **deleted** when the workflow completes successfully.
 
@@ -312,21 +366,25 @@ Workflows support dynamic routing based on handoff fields:
 
 ```mermaid
 graph TB
-    PL[Plan Phase] -->|Requires_tests: true| TE[Test Phase]
-    PL -->|Requires_tests: false| RE[Review Phase]
-    PL -->|Security_critical_feature: true| SE[Security Phase]
-    PL -->|Security_critical_feature: false| VE[Verify Phase]
+    PL[Plan Phase] -->|requires_tests: true| TE[Test gate]
+    PL -->|requires_tests: false| RE[Review]
+    PL -->|security_critical: false| SKIP[Security returns N/A]
 
-    TE -->|All tests pass| RE
-    TE -->|Tests fail| IM[Implement Phase<br/>retry up to 3x]
+    TE -->|tests pass| RE
+    TE -->|tests pass| SE[Security]
+    TE -->|tests fail| IM[Implement<br/>retry up to 3x]
     IM --> TE
 
-    RE -->|APPROVED| SE
-    RE -->|REQUIRES_CHANGES| IM
+    RE -->|verdicts.code_review: REQUIRES_CHANGES| IM
+    SE -->|verdicts.security: FAIL| IM
+    RE -->|APPROVED| VE[Verify]
+    SE -->|PASS or N/A| VE
 
-    SE -->|PASS| VE
-    SE -->|FAIL| IM
+    VE -->|verdicts.verification: GAPS| IM
+    VE -->|PASS| DOC[Document]
 ```
+
+`review` and `security` share the `post-test` parallel group, so they branch off the same gate and their verdicts are joined into the front matter before `verify` starts.
 
 **Retry policy:** Each phase can retry up to 3 times when blocked. If retries are exhausted, the workflow stops and reports to the user.
 

@@ -24,6 +24,7 @@ CONFIG_ROOT = Path.home() / ".claude"
 SETTINGS_PATH = CONFIG_ROOT / "settings.json"
 CLAUDE_MD_PATH = CONFIG_ROOT / "CLAUDE.md"
 AGENTS_DIR = CONFIG_ROOT / "agents"
+WORKFLOWS_DIR = CONFIG_ROOT / "workflows"
 
 # Env keys only meaningful in multi-model mode — must be removed on teardown or
 # when re-configuring in single-model mode, even if they were pre-existing at
@@ -194,6 +195,43 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str) -> list[s
     return generated
 
 
+def _shipped_workflow_scripts(ak_path: str) -> list[Path]:
+    src_dir = Path(ak_path) / "workflows" / "scripts"
+    return sorted(src_dir.glob("kit-*.js")) if src_dir.is_dir() else []
+
+
+def _install_workflow_scripts(ak_path: str, tracking: state.InstallTracking) -> tuple[list[str], list[str]]:
+    """Copy the kit's dynamic workflow scripts to ~/.claude/workflows/ as `/kit-*` commands.
+
+    Copies rather than symlinks: Claude Code rejects a symlinked workflow file. Only scripts a
+    previous run of setup installed (recorded in `tracking`) are pruned when the kit stops
+    shipping them — a workflow the user wrote themselves is never touched, whatever its name.
+    Returns (installed stems, pruned stems).
+    """
+    scripts = _shipped_workflow_scripts(ak_path)
+    if not scripts:
+        return [], []
+    shipped = {p.name for p in scripts}
+    installed: list[str] = []
+    for script in scripts:
+        if _shared.write_text(WORKFLOWS_DIR / script.name, script.read_text(encoding="utf-8")):
+            installed.append(script.stem)
+
+    pruned: list[str] = []
+    for name in list(tracking.workflow_scripts_installed):
+        if name in shipped:
+            continue
+        stale = WORKFLOWS_DIR / name
+        if stale.is_file():
+            stale.unlink()
+            pruned.append(stale.stem)
+        tracking.workflow_scripts_installed.remove(name)
+    for name in sorted(shipped):
+        if name not in tracking.workflow_scripts_installed:
+            tracking.workflow_scripts_installed.append(name)
+    return installed, pruned
+
+
 def _claude_md(ak_path: str, gateway_url: str, mode: str) -> str:
     """Kit block for ~/.claude/CLAUDE.md — a short map; details live in skills."""
     return (
@@ -206,6 +244,10 @@ def _claude_md(ak_path: str, gateway_url: str, mode: str) -> str:
         "- **Workflows** are the `workflow-*` skills (feature, bugfix, refactor, incident response, …). "
         "Use one for multi-step work that matches its description; the `kit-orchestration` skill "
         "explains how to run steps, handoffs and parallel groups.\n"
+        "- **Deterministic core loop:** `/kit-plan <goal>` explores, drafts plans from three angles and "
+        "writes one for you to approve; `/kit-implement` then implements it with tests, reviews the diff "
+        "from three lenses, verifies each finding and signs off. Use them for feature, bugfix and refactor "
+        "work instead of running those steps by hand.\n"
         "- **Subagents** for the kit roles are in `~/.claude/agents/` (planner, software-architect, "
         "implementer, tester, code-reviewer, security-auditor, verifier, doc-writer, …).\n"
         "- **Commands:** `/delegate`, `/setup-project`, `/knowledge-audit`, `/self-update`.\n\n"
@@ -429,10 +471,16 @@ def configure(ctx: dict) -> list[Path]:
     if _shared.write_managed_block(CLAUDE_MD_PATH, md):
         written.append(CLAUDE_MD_PATH)
 
-    # 4. Engram plugin (best-effort)
+    # 4. Dynamic workflow scripts (/kit-plan, /kit-implement)
+    scripts, pruned_scripts = _install_workflow_scripts(ak_path, s.tracking)
+    written.extend(WORKFLOWS_DIR / f"{name}.js" for name in scripts)
+    if pruned_scripts:
+        ui.info(f"Removed kit workflow scripts no longer shipped: {', '.join(pruned_scripts)}")
+
+    # 5. Engram plugin (best-effort)
     _install_engram_plugin()
 
-    # 5. Skill links — one per skill, so Claude Code discovers them natively
+    # 6. Skill links — one per skill, so Claude Code discovers them natively
     links = _shared.sync_skill_links(CONFIG_ROOT / "skills", Path(ak_path) / "skills")
     if links["removed"]:
         ui.info(f"Removed outdated kit skill links: {', '.join(links['removed'])}")
@@ -463,5 +511,20 @@ def regenerate_agents(executors: dict, mode: str = "multi-model") -> list[str]:
 
 
 def teardown(env_keys: list[str]) -> list[str]:
-    """Remove the listed env keys from settings.json. Returns keys actually removed."""
+    """Undo what setup put in place for this cockpit. Returns the env keys actually removed.
+
+    Removes the kit's workflow scripts too: they call kit role subagents, so leaving them behind
+    after the agents are gone would give the user `/kit-*` commands that fail mid-run. Only scripts
+    a previous setup recorded as installed are deleted, so a file the user happens to name
+    `kit-plan.js` survives. Note that `brew uninstall` runs nothing — this path is the mode switch,
+    so a full uninstall still leaves the generated files in place.
+    """
+    try:
+        tracked = set(state.load().tracking.workflow_scripts_installed)
+    except Exception:  # noqa: BLE001 — a missing or unreadable state file must not block teardown
+        tracked = set()
+    for script in _shipped_workflow_scripts(str(_shared.stable_kit_root(repo_root()))):
+        installed = WORKFLOWS_DIR / script.name
+        if script.name in tracked and installed.is_file():
+            installed.unlink()
     return _shared.remove_env_keys_from_settings(SETTINGS_PATH, env_keys)
