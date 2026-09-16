@@ -146,6 +146,32 @@ def check_roles() -> set[str]:
     return names
 
 
+def check_personas(role_names: set[str]) -> int:
+    """Every persona must name a real role, or it generates nothing at all.
+
+    Personas are `<role>-<domain>.md` and the setup step resolves the role by
+    longest prefix match. A typo in the role half matches nothing, so the file
+    is skipped silently: no subagent, no warning, no failing command. This turns
+    that into a build error.
+    """
+    personas_dir = ROOT / "agents" / "personas"
+    if not personas_dir.is_dir():
+        return 0
+    count = 0
+    for persona_path in sorted(personas_dir.glob("*.md")):
+        name = persona_path.stem
+        if not any(name.startswith(f"{role}-") for role in role_names):
+            fail("personas", f"{persona_path.relative_to(ROOT)}: no role matches the '<role>-<domain>' prefix")
+            continue
+        meta = frontmatter(persona_path)
+        if str(meta.get("name", "")) != name:
+            fail("personas", f"{persona_path.relative_to(ROOT)}: frontmatter name '{meta.get('name','')}' != file name")
+        if not str(meta.get("description", "")).strip():
+            fail("personas", f"{persona_path.relative_to(ROOT)}: no description")
+        count += 1
+    return count
+
+
 def check_workflow_scripts() -> None:
     """Dynamic workflow scripts must satisfy the runtime's rules."""
     forbidden = ("Date.now(", "Math.random(", "new Date(", "import(", "require(", "process.")
@@ -304,6 +330,7 @@ def main() -> int:
 
     skill_ids = check_skills()
     role_names = check_roles()
+    persona_count = check_personas(role_names)
     check_workflows(skill_ids, role_names)
     check_workflow_scripts()
     check_hooks()
@@ -318,6 +345,7 @@ def main() -> int:
             print(f"  {line}", file=sys.stderr)
         return 1
     print(f"kit OK — {len(skill_ids)} skills, {len(role_names)} roles, "
+          f"{persona_count} personas, "
           f"{len(list((ROOT / 'workflows').glob('*.workflow.yaml')))} workflows")
     return 0
 

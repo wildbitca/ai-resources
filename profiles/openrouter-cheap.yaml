@@ -24,6 +24,14 @@ defaults:
   max_retries: 3
   timeout_seconds: 600
 
+# Per-persona overrides. Empty by default so personas inherit their base role.
+# The obvious use here is the reverse of economising: promoting one domain's
+# review while the rest stay cheap.
+#
+# by_persona:
+#   code-reviewer-devops: { provider: openrouter, model: anthropic/claude-opus-5 }
+by_persona: {}
+
 by_role:
   # Cheapest tier — bulk reading and mechanical checks
   explore:

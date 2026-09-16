@@ -203,9 +203,10 @@ def cmd_set(args: argparse.Namespace) -> int:
     by_role: dict = data.setdefault("by_role", {})
 
     role = args.role
-    if role not in profiles.KNOWN_ROLES:
-        # Accept unknown roles but warn
-        ui.warn(f"'{role}' is not a standard role — proceeding anyway.")
+    if role not in profiles.KNOWN_ROLES and role not in profiles.known_personas():
+        # Accept unknown names but warn. Personas count as known: they are
+        # generated as subagents in their own right and carry their own model.
+        ui.warn(f"'{role}' is not a standard role or persona — proceeding anyway.")
 
     current = by_role.get(role, {})
     current_provider = current.get("provider", "")

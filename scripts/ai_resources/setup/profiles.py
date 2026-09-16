@@ -40,6 +40,31 @@ def profiles_dir() -> Path:
     return repo_root() / "profiles"
 
 
+def personas_dir() -> Path:
+    return repo_root() / "agents" / "personas"
+
+
+def known_personas() -> dict[str, str]:
+    """Map persona name -> base role, read from disk.
+
+    Personas are named `<role>-<domain>`, and both halves can contain hyphens
+    (`code-reviewer-api-platform`), so the split is resolved by matching against
+    the known roles and taking the longest match rather than by cutting on a
+    separator. A file whose prefix matches no role is skipped: it would generate
+    a subagent with no role body behind it.
+    """
+    d = personas_dir()
+    if not d.is_dir():
+        return {}
+    out: dict[str, str] = {}
+    for path in sorted(d.glob("*.md")):
+        name = path.stem
+        matches = [r for r in KNOWN_ROLES if name.startswith(f"{r}-")]
+        if matches:
+            out[name] = max(matches, key=len)
+    return out
+
+
 def list_profiles(mode: str | None = None, backend: str | None = None) -> list[str]:
     """Profile names, optionally filtered by `mode` and `backend`.
 
@@ -98,6 +123,11 @@ def to_executors(profile: dict[str, Any], backend: str = "litellm") -> dict[str,
         # IDs, which a namespaced catalogue does not recognise. Subagents are
         # unaffected — their frontmatter `model:` goes out verbatim.
         "classes": profile.get("classes", {}),
+        # Per-persona overrides, keyed by persona name (e.g. implementer-angular).
+        # A persona with no entry inherits its base role's model, so an empty
+        # block changes nothing — it only opens the door to routing, say, an
+        # Angular review and an infrastructure review to different models.
+        "by_persona": profile.get("by_persona", {}),
         "defaults": profile.get("defaults", {
             "fallbacks": [],
             "max_retries": 3,

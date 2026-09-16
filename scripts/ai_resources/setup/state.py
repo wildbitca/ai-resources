@@ -123,6 +123,12 @@ class InstallTracking:
     # Workflow script file names we copied into the cockpit's workflows dir (e.g. kit-plan.js).
     # Only these may be pruned later: a user's own kit-*.js is never touched.
     workflow_scripts_installed: list[str] = field(default_factory=list)
+    # Subagent names we generated into the cockpit's agents dir. Same contract as
+    # above: only these may be pruned, so an agent the user wrote by hand survives
+    # even when its name matches one the kit used to ship. Without this record a
+    # persona that is renamed or removed upstream would leave its subagent behind
+    # forever, and the cockpit would keep offering an agent with no definition.
+    subagent_files_installed: list[str] = field(default_factory=list)
 
 
 @dataclass
