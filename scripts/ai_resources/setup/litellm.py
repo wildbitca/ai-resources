@@ -90,11 +90,78 @@ def _run(cmd: list[str], timeout: int = 60, check: bool = False,
 # Claude models Claude Code uses internally (main session + background tasks).
 # Added as passthrough entries whenever Anthropic is a configured provider so
 # requests with these model names don't hit ProxyModelNotFoundError.
+# Claude Code resolves its own aliases to these bare IDs, so the gateway needs an
+# entry for each even when no role uses it. Kept in step with KNOWN_MODELS: this
+# list was missed in the 2026-09-16 refresh and still pointed two generations
+# back, which silently routed the main conversation to retired models.
 _CLAUDE_PASSTHROUGH_MODELS = [
-    "claude-opus-4-7",
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5-20251001",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5",
+    "claude-fable-5-1",
 ]
+
+
+# vendor -> how LiteLLM reaches it. Keys match PROVIDERS ids, so a profile names
+# WHICH model (`<vendor>/<model>`) and this table says HOW to get there. That
+# split is what lets one profile serve both gateways: OpenRouter consumes the
+# canonical ID unchanged, LiteLLM registers it as an alias and resolves it here.
+_VENDOR_UPSTREAM: dict[str, tuple[str, str]] = {
+    "anthropic": ("anthropic", "ANTHROPIC_API_KEY"),
+    "google":    ("gemini",    "GEMINI_API_KEY"),
+    "openai":    ("openai",    "OPENAI_API_KEY"),
+    "deepseek":  ("deepseek",  "DEEPSEEK_API_KEY"),
+    "moonshot":  ("moonshot",  "MOONSHOT_API_KEY"),
+    "x-ai":      ("xai",       "XAI_API_KEY"),
+}
+
+
+def _split_model(model: str, provider: str) -> tuple[str, str]:
+    """Split a canonical `<vendor>/<model>` ID; fall back to the legacy bare form.
+
+    Older profiles carry a bare model with the vendor in a separate `provider`
+    field. Both shapes resolve to the same pair so a half-converted profile set
+    keeps working.
+    """
+    if "/" in model:
+        vendor, bare = model.split("/", 1)
+        return vendor, bare
+    return provider, model
+
+
+def _upstream_params(model_name: str, provider: str, role: str) -> dict:
+    """Translate one model reference into litellm_params, or refuse loudly.
+
+    The previous version skipped anything it did not recognise, so a profile
+    naming an unconfigured vendor produced a gateway config silently missing
+    that role — the failure only surfaced later as a request for a model the
+    gateway had never heard of.
+    """
+    vendor, bare = _split_model(model_name, provider)
+
+    if vendor == "vertex":
+        return {
+            "model": f"vertex_ai/{bare}",
+            "vertex_project": credentials.secret_ref("GOOGLE_CLOUD_PROJECT"),
+            "vertex_location": credentials.secret_ref("GOOGLE_CLOUD_LOCATION"),
+        }
+    if vendor == "ollama":
+        return {"model": f"ollama/{bare}", "api_base": "http://127.0.0.1:11434"}
+    if vendor == "openrouter":
+        # Already namespaced for OpenRouter; hand the whole thing over.
+        return {
+            "model": f"openrouter/{bare}",
+            "api_key": credentials.secret_ref("OPENROUTER_API_KEY"),
+        }
+    if vendor in _VENDOR_UPSTREAM:
+        prefix, env_var = _VENDOR_UPSTREAM[vendor]
+        return {"model": f"{prefix}/{bare}", "api_key": credentials.secret_ref(env_var)}
+
+    raise RuntimeError(
+        f"Role '{role}' asks for '{model_name}', and vendor '{vendor}' has no "
+        f"upstream mapping. Add it to _VENDOR_UPSTREAM and PROVIDERS, or point "
+        f"the role at a vendor the gateway can reach."
+    )
 
 
 def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) -> str:
@@ -117,55 +184,36 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
             continue
         seen_models.add(model_name)
 
-        litellm_params: dict = {}
-        if provider == "anthropic":
-            litellm_params = {
-                "model": f"anthropic/{model_name}",
-                "api_key": credentials.secret_ref("ANTHROPIC_API_KEY"),
-            }
-        elif provider == "google":
-            litellm_params = {
-                "model": f"gemini/{model_name}",
-                "api_key": credentials.secret_ref("GEMINI_API_KEY"),
-            }
-        elif provider == "vertex":
-            litellm_params = {
-                "model": f"vertex_ai/{model_name}",
-                "vertex_project": credentials.secret_ref("GOOGLE_CLOUD_PROJECT"),
-                "vertex_location": credentials.secret_ref("GOOGLE_CLOUD_LOCATION"),
-            }
-        elif provider == "openai":
-            litellm_params = {
-                "model": f"openai/{model_name}",
-                "api_key": credentials.secret_ref("OPENAI_API_KEY"),
-            }
-        elif provider == "ollama":
-            litellm_params = {
-                "model": f"ollama/{model_name}",
-                "api_base": "http://127.0.0.1:11434",
-            }
-        else:
-            continue
-
         model_list.append({
             "model_name": model_name,
-            "litellm_params": litellm_params,
+            "litellm_params": _upstream_params(model_name, provider, role),
         })
 
     # Add passthrough entries for all current Claude models so Claude Code's
     # internal requests (haiku for background tasks, sonnet/opus for main)
     # always resolve even if the executor config only mentions some of them.
-    if has_anthropic:
-        for claude_model in _CLAUDE_PASSTHROUGH_MODELS:
-            if claude_model not in seen_models:
-                model_list.append({
-                    "model_name": claude_model,
-                    "litellm_params": {
-                        "model": f"anthropic/{claude_model}",
-                        "api_key": credentials.secret_ref("ANTHROPIC_API_KEY"),
-                    },
-                })
-                seen_models.add(claude_model)
+    # No longer gated on the anthropic provider being enabled: with only a hosted
+    # gateway configured, that gate left the main conversation with no entry at
+    # all while the subagents worked. The profile's `classes` block decides what
+    # each alias resolves to — the same block the openrouter backend uses — so
+    # both gateways answer Claude Code's internal aliases identically.
+    classes = executors.get("classes") or {}
+    _ALIAS_OF = {
+        "claude-opus-5":   "opus",
+        "claude-sonnet-5": "sonnet",
+        "claude-haiku-4-5": "haiku",
+        "claude-fable-5-1": "fable",
+    }
+    for claude_model in _CLAUDE_PASSTHROUGH_MODELS:
+        if claude_model in seen_models:
+            continue
+        pinned = classes.get(_ALIAS_OF.get(claude_model, ""), "")
+        target = pinned or f"anthropic/{claude_model}"
+        model_list.append({
+            "model_name": claude_model,
+            "litellm_params": _upstream_params(target, "anthropic", f"alias:{claude_model}"),
+        })
+        seen_models.add(claude_model)
 
     fallback_map: dict[str, list[str]] = {}
     for role, cfg in executors.get("by_role", {}).items():

@@ -67,6 +67,22 @@ PROVIDERS: dict[str, Provider] = {
         docs_url="https://openrouter.ai/keys",
         description="400+ models behind one key — no local gateway to run",
     ),
+    "deepseek": Provider(
+        id="deepseek",
+        name="DeepSeek",
+        auth_methods=["api_key"],
+        primary_env_var="DEEPSEEK_API_KEY",
+        docs_url="https://platform.deepseek.com/api_keys",
+        description="deepseek-* — best measured value for architecture work",
+    ),
+    "moonshot": Provider(
+        id="moonshot",
+        name="Moonshot AI (Kimi)",
+        auth_methods=["api_key"],
+        primary_env_var="MOONSHOT_API_KEY",
+        docs_url="https://platform.moonshot.ai/console/api-keys",
+        description="kimi-* — cheap long-context coding models",
+    ),
 }
 
 
@@ -111,6 +127,15 @@ KNOWN_MODELS: dict[str, list[str]] = {
         "qwen2.5-coder:32b",
         "deepseek-coder-v2:16b",
         "llama3.3:70b",
+    ],
+    # Bare IDs for direct access. The namespaced spellings under "openrouter"
+    # below reach the same models through that gateway instead.
+    "deepseek": [
+        "deepseek-v4-pro",      # 1.60 / 3.20
+        "deepseek-v4-flash",    # 0.087 / 0.174
+    ],
+    "moonshot": [
+        "kimi-k2.7-code",       # 0.71 / 3.21
     ],
     # OpenRouter IDs are namespaced <vendor>/<model>. Every entry below was
     # round-tripped against OpenRouter's Anthropic surface on 2026-09-16.

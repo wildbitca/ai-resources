@@ -177,4 +177,6 @@ PROVIDER_KEYS: dict[str, list[str]] = {
     "openai":     ["OPENAI_API_KEY"],
     "vertex":     ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"],
     "openrouter": ["OPENROUTER_API_KEY"],
+    "deepseek":   ["DEEPSEEK_API_KEY"],
+    "moonshot":   ["MOONSHOT_API_KEY"],
 }
