@@ -22,6 +22,17 @@ defaults:
   max_retries: 2
   timeout_seconds: 600
 
+# Per-persona overrides, keyed by persona name. A persona with no entry here
+# inherits its base role's model below, which is why this starts empty: adding
+# the mechanism should not silently re-route anyone. Uncomment to split a role
+# by domain, for example when one stack's reviews need more judgement than
+# another's:
+#
+# by_persona:
+#   code-reviewer-devops:  { provider: openrouter, model: anthropic/claude-opus-5 }
+#   code-reviewer-angular: { provider: openrouter, model: anthropic/claude-sonnet-5 }
+by_persona: {}
+
 by_role:
   # Reading-heavy, cheap — context in, summary out
   explore:            { provider: openrouter, model: google/gemini-3.7-flash }      # 0.75 / 3.75
