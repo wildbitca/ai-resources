@@ -14,7 +14,9 @@ This file is **shared by all CLIs** and **project-specific directories**. No loc
 
 The kit ships with several profiles in `/profiles/`:
 
-- `cost-optimized.yaml` — Recommended. Smart retry + tier-based downgrade fallbacks
+- `measured-best.yaml` — **Recommended.** The assignment that measured best across
+  three instrumented workflow runs; gateway-agnostic, so it works with either backend
+- `cost-optimized.yaml` — Smart retry + tier-based downgrade fallbacks
 - `all-claude.yaml` — All requests use Claude (expensive)
 - `all-gemini.yaml` — All requests use Gemini (cheaper)
 - `quality-first.yaml` — Prioritize quality, higher cost

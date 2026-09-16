@@ -1,6 +1,5 @@
 name: openrouter-cheap
 mode: multi-model
-backend: openrouter
 description: |
   Maximum savings. Everything runs on budget models except review and security,
   which stay on Claude Sonnet — a cheap reviewer that misses a flaw costs more than

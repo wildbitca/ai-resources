@@ -1,6 +1,5 @@
 name: openrouter-balanced
 mode: multi-model
-backend: openrouter
 description: |
   Default OpenRouter profile. Judgement stays on Claude; high-volume reading and
   mechanical checks move to Gemini Flash. Roughly half the cost of all-Claude on a

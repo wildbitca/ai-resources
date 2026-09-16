@@ -82,11 +82,11 @@ def list_profiles(mode: str | None = None, backend: str | None = None) -> list[s
         doc = load_profile(n)
         if mode is not None and doc.get("mode", "multi-model") != mode:
             continue
-        # Backend only discriminates multi-model profiles; single-model ones
-        # never touch a gateway, so they are returned whatever the backend.
-        if (backend is not None
-                and doc.get("mode", "multi-model") == "multi-model"
-                and doc.get("backend", "litellm") != backend):
+        # A profile that names no backend is gateway-agnostic: its models are
+        # canonical `<vendor>/<model>` IDs that either gateway resolves, so it is
+        # offered whatever the backend. Only a profile that pins one is filtered.
+        declared = doc.get("backend")
+        if backend is not None and declared is not None and declared != backend:
             continue
         out.append(n)
     return out
