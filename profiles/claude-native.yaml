@@ -7,18 +7,18 @@ description: |
   Opus for planning, architecture, code review and security.
 
 by_role:
-  explore:            { provider: anthropic, model: haiku }
-  generalPurpose:     { provider: anthropic, model: sonnet }
-  planner:            { provider: anthropic, model: opus }
-  software-architect: { provider: anthropic, model: opus }
-  implementer:        { provider: anthropic, model: sonnet }
-  tester:             { provider: anthropic, model: sonnet }
-  code-reviewer:      { provider: anthropic, model: opus }
-  security-auditor:   { provider: anthropic, model: opus }
-  verifier:           { provider: anthropic, model: sonnet }
-  doc-writer:         { provider: anthropic, model: sonnet }
-  package-upgrade:             { provider: anthropic, model: haiku }
-  crashlytics-fixer:           { provider: anthropic, model: sonnet }
-  sentry-fixer:                { provider: anthropic, model: sonnet }
-  terraform-maintainer:        { provider: anthropic, model: sonnet }
-  crossplane-upjet-maintainer: { provider: anthropic, model: sonnet }
+  explore:            { model: haiku }
+  generalPurpose:     { model: sonnet }
+  planner:            { model: opus }
+  software-architect: { model: opus }
+  implementer:        { model: sonnet }
+  tester:             { model: sonnet }
+  code-reviewer:      { model: opus }
+  security-auditor:   { model: opus }
+  verifier:           { model: sonnet }
+  doc-writer:         { model: sonnet }
+  package-upgrade:             { model: haiku }
+  crashlytics-fixer:           { model: sonnet }
+  sentry-fixer:                { model: sonnet }
+  terraform-maintainer:        { model: sonnet }
+  crossplane-upjet-maintainer: { model: sonnet }

@@ -5,18 +5,18 @@ description: |
   (the model you picked with /model). Simplest and most predictable; no per-role savings.
 
 by_role:
-  explore:            { provider: anthropic, model: inherit }
-  generalPurpose:     { provider: anthropic, model: inherit }
-  planner:            { provider: anthropic, model: inherit }
-  software-architect: { provider: anthropic, model: inherit }
-  implementer:        { provider: anthropic, model: inherit }
-  tester:             { provider: anthropic, model: inherit }
-  code-reviewer:      { provider: anthropic, model: inherit }
-  security-auditor:   { provider: anthropic, model: inherit }
-  verifier:           { provider: anthropic, model: inherit }
-  doc-writer:         { provider: anthropic, model: inherit }
-  package-upgrade:             { provider: anthropic, model: inherit }
-  crashlytics-fixer:           { provider: anthropic, model: inherit }
-  sentry-fixer:                { provider: anthropic, model: inherit }
-  terraform-maintainer:        { provider: anthropic, model: inherit }
-  crossplane-upjet-maintainer: { provider: anthropic, model: inherit }
+  explore:            { model: inherit }
+  generalPurpose:     { model: inherit }
+  planner:            { model: inherit }
+  software-architect: { model: inherit }
+  implementer:        { model: inherit }
+  tester:             { model: inherit }
+  code-reviewer:      { model: inherit }
+  security-auditor:   { model: inherit }
+  verifier:           { model: inherit }
+  doc-writer:         { model: inherit }
+  package-upgrade:             { model: inherit }
+  crashlytics-fixer:           { model: inherit }
+  sentry-fixer:                { model: inherit }
+  terraform-maintainer:        { model: inherit }
+  crossplane-upjet-maintainer: { model: inherit }
