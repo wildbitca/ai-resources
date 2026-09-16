@@ -130,6 +130,10 @@ class SetupState:
     schema_version: str = SCHEMA_VERSION
     last_run: str = ""
     mode: str = "single-model"        # single-model | multi-model
+    # Which gateway serves multi-model routing. Meaningless in single-model.
+    # litellm    = self-hosted gateway this kit installs and supervises
+    # openrouter = hosted gateway; nothing to install, one key, no lifecycle
+    backend: str = "litellm"          # litellm | openrouter
     cockpits: dict[str, CockpitState] = field(default_factory=dict)
     litellm: LiteLLMState = field(default_factory=LiteLLMState)
     providers: dict[str, ProviderState] = field(default_factory=dict)

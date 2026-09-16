@@ -10,7 +10,6 @@ defaults:
   timeout_seconds: 600
 
 by_role:
-  research:           { provider: google, model: gemini-2.5-pro }
   explore:            { provider: google, model: gemini-2.5-flash }
   generalPurpose:     { provider: google, model: gemini-2.5-pro }
   doc-writer:         { provider: google, model: gemini-2.5-flash }

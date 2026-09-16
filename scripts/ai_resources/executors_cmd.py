@@ -11,7 +11,7 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
-from .setup import state, ui, profiles, credentials, litellm
+from .setup import state, ui, profiles, credentials, litellm, smoke
 from .setup.providers import PROVIDERS, KNOWN_MODELS
 
 
@@ -171,13 +171,20 @@ def cmd_test(args: argparse.Namespace) -> int:
         return 1
 
     model = by_role[args.role].get("model")
-    gateway = (s.litellm.remote.url if s.litellm.deployment == "remote"
-               else f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}")
-    master = credentials.get_key("LITELLM_MASTER_KEY")
+    backend = getattr(s, "backend", "litellm")
+    if backend == "openrouter":
+        gw = profiles.GATEWAYS["openrouter"]
+        gateway, master = gw["url"], credentials.get_key(gw["api_key_env"])
+    else:
+        gateway = (s.litellm.remote.url if s.litellm.deployment == "remote"
+                   else f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}")
+        master = credentials.get_key("LITELLM_MASTER_KEY")
 
     ui.info(f"Testing role={args.role}  model={model}  via {gateway}")
     with ui.spinner(f"Round-trip {model}"):
-        ok, msg = litellm.smoke_test_model(model, gateway, master)
+        # Probe the surface Claude Code actually uses for this backend — see smoke.py.
+        ok, msg = smoke.run_all({"by_role": {args.role: {"model": model}}},
+                                gateway, master, backend)[-1][1:]
     if ok:
         ui.ok(f"{model}: round-trip succeeded")
         return 0
@@ -233,7 +240,9 @@ def cmd_apply(args: argparse.Namespace) -> int:
     ui.require_deps()
     data, path = _load_executors()
 
-    available = profiles.list_profiles(mode="multi-model")
+    available = profiles.list_profiles(
+        mode="multi-model", backend=getattr(state.load(), "backend", "litellm"),
+    )
     if not available:
         ui.error("No profiles found in kit profiles/ directory.")
         return 1
@@ -261,7 +270,9 @@ def cmd_apply(args: argparse.Namespace) -> int:
         ui.detail(f"Available: {', '.join(available)}")
         return 1
 
-    new_executors = profiles.to_executors(profile_data)
+    new_executors = profiles.to_executors(
+        profile_data, getattr(state.load(), "backend", "litellm"),
+    )
     # Preserve gateway settings from current config
     new_executors["gateway"] = data.get("gateway", new_executors["gateway"])
 

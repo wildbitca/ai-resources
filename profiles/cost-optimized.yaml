@@ -20,10 +20,6 @@ defaults:
 
 by_role:
   # TIER 1 — Flash (cheapest, exploration)
-  research:
-    provider: google
-    model: gemini-2.5-flash
-    fallbacks: [gemini-2.5-flash-lite]  # downgrade only, never pro
   explore:
     provider: google
     model: gemini-2.5-flash

@@ -59,20 +59,30 @@ PROVIDERS: dict[str, Provider] = {
         docs_url="https://ollama.com/",
         description="Local models on localhost:11434 (offline-capable)",
     ),
+    "openrouter": Provider(
+        id="openrouter",
+        name="OpenRouter (hosted gateway)",
+        auth_methods=["api_key"],
+        primary_env_var="OPENROUTER_API_KEY",
+        docs_url="https://openrouter.ai/keys",
+        description="400+ models behind one key — no local gateway to run",
+    ),
 }
 
 
 KNOWN_MODELS: dict[str, list[str]] = {
-    # Latest as of 2026-Q2 — wizard offers these but allows free input
+    # Refreshed 2026-09-16 — the wizard offers these but allows free input.
+    # Direct-provider IDs are bare; only the openrouter entry is namespaced.
     "anthropic": [
-        "claude-opus-4-7",
-        "claude-sonnet-4-6",
+        "claude-opus-5",
+        "claude-sonnet-5",
         "claude-haiku-4-5",
+        "claude-fable-5-1",
     ],
     "google": [
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
+        "gemini-3.1-pro-preview",
+        "gemini-3.7-flash",
+        "gemini-3.5-flash-lite",
     ],
     "vertex": [
         # Vertex IDs verified against docs.anthropic.com — Opus 4.7 / Sonnet 4.6
@@ -85,16 +95,34 @@ KNOWN_MODELS: dict[str, list[str]] = {
         "gemini-2.5-flash-lite",
     ],
     "openai": [
-        "gpt-5",
-        "gpt-5-mini",
-        "gpt-5-nano",
-        "gpt-4o",
-        "gpt-4o-mini",
+        "gpt-6-astra",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
     ],
     "ollama": [
         "qwen2.5-coder:32b",
         "deepseek-coder-v2:16b",
         "llama3.3:70b",
+    ],
+    # OpenRouter IDs are namespaced <vendor>/<model>. Every entry below was
+    # round-tripped against OpenRouter's Anthropic surface on 2026-09-16.
+    # Use explicit IDs, not aliases: an alias such as claude-opus-latest needs a
+    # "[1m]" suffix for the 1M window to be detected.
+    "openrouter": [
+        # $/1M in-out, resolved against the live catalogue on 2026-09-16.
+        "anthropic/claude-opus-5",        # 5 / 25
+        "anthropic/claude-sonnet-5",      # 2 / 10
+        "anthropic/claude-haiku-4.5",     # 1 / 5   — dotted, "4-5" does not exist
+        "anthropic/claude-fable-5.1",     # 10 / 50
+        "google/gemini-3.1-pro-preview",  # 2 / 12  — only the -preview id exists
+        "google/gemini-3.7-flash",        # 0.75 / 3.75
+        "google/gemini-3.5-flash-lite",   # 0.30 / 2.50
+        "deepseek/deepseek-v4-pro",       # 1.60 / 3.20
+        "deepseek/deepseek-v4-flash",     # 0.087 / 0.174
+        "moonshotai/kimi-k2.7-code",      # 0.71 / 3.21
+        "x-ai/grok-4.6",                  # 2 / 6
+        "openai/gpt-5.6-terra",           # 2 / 12
     ],
 }
 

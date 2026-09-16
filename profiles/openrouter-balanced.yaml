@@ -1,0 +1,49 @@
+name: openrouter-balanced
+mode: multi-model
+backend: openrouter
+description: |
+  Default OpenRouter profile. Judgement stays on Claude; high-volume reading and
+  mechanical checks move to Gemini Flash. Roughly half the cost of all-Claude on a
+  feature run, with review, architecture and security untouched.
+
+  Model IDs are namespaced and were round-tripped against OpenRouter on 2026-09-16.
+  Prices below are $/1M input-output at that date.
+
+# Alias -> concrete model for the MAIN conversation (/model, and any subagent that
+# says `inherit`). Subagents with an explicit model: override these.
+classes:
+  opus:   anthropic/claude-opus-5
+  sonnet: anthropic/claude-sonnet-5
+  haiku:  anthropic/claude-haiku-4.5
+  fable:  anthropic/claude-fable-5.1
+
+defaults:
+  fallbacks: [anthropic/claude-haiku-4.5]
+  max_retries: 2
+  timeout_seconds: 600
+
+by_role:
+  # Reading-heavy, cheap — context in, summary out
+  explore:            { provider: openrouter, model: google/gemini-3.7-flash }      # 0.75 / 3.75
+  doc-writer:         { provider: openrouter, model: google/gemini-3.7-flash }
+  tester:             { provider: openrouter, model: google/gemini-3.7-flash }
+  generalPurpose:     { provider: openrouter, model: anthropic/claude-sonnet-5 }    # 2 / 10
+
+  # Judgement — worth the tokens
+  planner:            { provider: openrouter, model: anthropic/claude-opus-5 }      # 5 / 25
+  software-architect: { provider: openrouter, model: anthropic/claude-opus-5 }
+  code-reviewer:      { provider: openrouter, model: anthropic/claude-opus-5 }
+  security-auditor:   { provider: openrouter, model: anthropic/claude-opus-5 }
+
+  # Writing code — Sonnet is the sweet spot
+  implementer:        { provider: openrouter, model: anthropic/claude-sonnet-5 }
+
+  # Mechanical verification
+  verifier:           { provider: openrouter, model: anthropic/claude-haiku-4.5 }   # 1 / 5
+  package-upgrade:    { provider: openrouter, model: anthropic/claude-haiku-4.5 }
+
+  # Domain specialists — code-heavy
+  crashlytics-fixer:           { provider: openrouter, model: anthropic/claude-sonnet-5 }
+  sentry-fixer:                { provider: openrouter, model: anthropic/claude-sonnet-5 }
+  terraform-maintainer:        { provider: openrouter, model: anthropic/claude-sonnet-5 }
+  crossplane-upjet-maintainer: { provider: openrouter, model: anthropic/claude-sonnet-5 }
