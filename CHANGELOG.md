@@ -107,6 +107,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   different profile without a word. An explicitly requested profile that is not offered now stops
   setup and lists what is available; a saved one still degrades quietly.
 
+- **The rendered LiteLLM config ignored the profile's retry, timeout and default fallbacks.**
+  `num_retries` and `timeout` were literals, so `measured-best`'s `max_retries: 2` came out as 3,
+  and `defaults.fallbacks` was never rendered. They now come from the profile, and
+  `defaults.fallbacks` becomes the router's `default_fallbacks`, with a deployment registered for
+  any fallback-only model.
+- **`executors set` and `tune` offered model IDs the active backend rejects.** Bare IDs under
+  OpenRouter, OpenRouter spellings under LiteLLM. The menus now follow the configured backend and
+  store the canonical `<vendor>/<model>` ID, the same shape profiles use.
+- **`executors test` read the smoke result by position.** A failed health or credential probe, or
+  a run with no round-trip at all, could be reported as success; an empty result raised
+  `IndexError`. It now fails on any failed probe and when no round-trip ran.
+- **The `--dry-run` preview showed the LiteLLM settings patch under OpenRouter**, omitting
+  `ANTHROPIC_AUTH_TOKEN` and the `ANTHROPIC_DEFAULT_*_MODEL` keys the real run writes.
+
 ### Removed
 
 - **The `vertex-enterprise` profile.** Its purpose — single billing line, audit log, VPC-SC — is
