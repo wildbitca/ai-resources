@@ -6,6 +6,8 @@ skills-index.generated.json
 skills-registry.generated.md
 # Local IDE / install-time (do not commit user machine paths)
 .cursor-install-local/
+# Per-machine Claude Code permissions — local to whoever ran setup
+.claude/settings.local.json
 scripts/__pycache__/
 scripts/**/__pycache__/
 **/__pycache__/
