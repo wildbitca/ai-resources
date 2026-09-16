@@ -118,6 +118,10 @@ _VENDOR_UPSTREAM: dict[str, tuple[str, str]] = {
     "openai":    ("openai",    "OPENAI_API_KEY"),
     "deepseek":  ("deepseek",  "DEEPSEEK_API_KEY"),
     "moonshot":  ("moonshot",  "MOONSHOT_API_KEY"),
+    # OpenRouter namespaces the same vendor as `moonshotai`, and that spelling is
+    # what the catalogue — and therefore the wizard — offers. Without this row a
+    # profile picking Kimi as a primary raises and takes down the whole render.
+    "moonshotai": ("moonshot", "MOONSHOT_API_KEY"),
     "x-ai":      ("xai",       "XAI_API_KEY"),
 }
 
@@ -228,11 +232,34 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
         })
         seen_models.add(claude_model)
 
+    # LiteLLM's router keys fallbacks by model_name; it has no per-role
+    # dimension, so two roles sharing a model necessarily share one entry.
+    # setdefault let the first role win and dropped the second role's list
+    # without a word. Union them instead: a fallback nobody asked for is a far
+    # smaller fault than one that was configured and never registered.
     fallback_map: dict[str, list[str]] = {}
     for role, cfg in executors.get("by_role", {}).items():
         fbs = cfg.get("fallbacks") or []
-        if fbs and cfg.get("model"):
-            fallback_map.setdefault(cfg["model"], list(fbs))
+        if not (fbs and cfg.get("model")):
+            continue
+        target = fallback_map.setdefault(cfg["model"], [])
+        for fb in fbs:
+            if fb not in target:
+                target.append(fb)
+
+    # A model named only as a fallback still needs a deployment of its own: the
+    # router resolves the name against model_list, so an unregistered name turns
+    # the fallback into a second failure at the exact moment the primary is down.
+    for fbs in fallback_map.values():
+        for fb in fbs:
+            if fb in seen_models:
+                continue
+            model_list.append({
+                "model_name": fb,
+                "litellm_params": _upstream_params(fb, "", f"fallback:{fb}"),
+            })
+            seen_models.add(fb)
+
     fallbacks = [{m: fbs} for m, fbs in fallback_map.items()]
 
     doc = {
