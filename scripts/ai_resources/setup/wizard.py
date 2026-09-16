@@ -45,8 +45,6 @@ def run(args: argparse.Namespace) -> int:
         ui.error("No terminal to prompt on. Re-run with --non-interactive to use "
                  "saved answers, or from an interactive shell.")
         return 1
-    if getattr(args, "profile", ""):
-        s.profile.name = args.profile
     ui.banner(
         "AI Resources Kit — Setup Wizard",
         subtitle="Multi-model orchestration via LiteLLM gateway",
@@ -66,6 +64,11 @@ def run(args: argparse.Namespace) -> int:
             s = state.SetupState()
     else:
         ui.info("First-time setup detected.")
+
+    # After state.load() and after the branch that discards previous answers,
+    # or the assignment is either an UnboundLocalError or silently overwritten.
+    if getattr(args, "profile", ""):
+        s.profile.name = args.profile
 
     # ------------------------------------------------------------------
     rc = _step1_mode(s)
@@ -827,21 +830,28 @@ def _step6_profile(s: state.SetupState) -> int:
         )
         if role is None or role == "__done__":
             break
-        provider = ui.select(
-            f"Provider for {role}:",
+        # The vendor is still asked, because it narrows the model list — but it
+        # is no longer stored. What gets written is the canonical
+        # `<vendor>/<model>` ID, which is the only thing that decides routing.
+        current = executors["by_role"].get(role, {}).get("model", "")
+        vendor = ui.select(
+            f"Vendor for {role}:",
             [ui.Choice(p, value=p) for p in enabled_providers],
-            default=executors["by_role"].get(role, {}).get("provider"),
+            default=current.split("/", 1)[0] if "/" in current else None,
         )
-        if provider is None:
+        if vendor is None:
             continue
-        models = providers.models_for(provider)
+        models = providers.models_for(vendor)
         model = ui.select(
             f"Model for {role}:",
             [ui.Choice(m, value=m) for m in models] + [ui.Choice("(custom — type below)", value="__custom__")],
         )
         if model == "__custom__":
             model = ui.text(f"Model id for {role}")
-        customizations[role] = {"provider": provider, "model": model}
+        if not model:
+            continue
+        canonical = model if "/" in model else f"{vendor}/{model}"
+        customizations[role] = {"model": canonical}
 
     s.profile.customizations = customizations
     # Show updated table

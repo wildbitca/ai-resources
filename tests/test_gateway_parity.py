@@ -230,6 +230,14 @@ def test_pruning_removes_tracked_agents_but_not_the_users(agents_dir):
     tracking.subagent_files_installed.append("retired-persona")
     (agents_dir / "retired-persona.md").write_text("---\nname: retired-persona\n---\n")
 
+    before = {p.name for p in agents_dir.glob("*.md")}
     claude_cockpit._generate_subagent_files(_executors(), str(REPO), "multi-model", tracking)
     assert not (agents_dir / "retired-persona.md").exists()
     assert (agents_dir / "mine.md").exists()
+    # The two witness files above both pass under a total wipe: the user's file
+    # survives because it was never tracked, and the retired one is meant to go.
+    # Assert the whole population instead — a second run with nothing changed
+    # must leave every generated agent on disk, not delete the ones whose
+    # content happened to be identical.
+    assert {p.name for p in agents_dir.glob("*.md")} == before - {"retired-persona.md"}
+    assert len(tracking.subagent_files_installed) > 10

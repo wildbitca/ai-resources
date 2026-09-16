@@ -35,10 +35,15 @@ WORKFLOWS_DIR = CONFIG_ROOT / "workflows"
 # Leaving any of them behind on teardown would keep Claude Code pointed away
 # from the user's own subscription, so every key this cockpit can write is
 # listed here — removal is a no-op for the ones absent from settings.json.
+#
+# ANTHROPIC_API_KEY is deliberately NOT in this list. It is the one key here
+# that has a legitimate meaning the kit never gave it: the user's own API key,
+# which the LiteLLM backend never writes. Listing it unconditionally marked that
+# key as ours and deleted it on teardown. It is reclaimed only through
+# `newly_added` below, i.e. only when this run actually introduced it.
 _MULTI_MODEL_ONLY_ENV_KEYS: list[str] = [
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_API_KEY",
     "ANTHROPIC_DEFAULT_FABLE_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -254,10 +259,14 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         role_bodies[name] = body
 
         model = _resolve_model(str(by_role.get(name, {}).get("model", "") or ""), meta, mode)
-        if _write_subagent(name, str(meta.get("description", "")),
-                           ROLE_TOOLS.get(name), model,
-                           body + _shared.kit_context_block(ak_path)):
-            generated.append(name)
+        # Append unconditionally: `_write_subagent` reports whether the file
+        # changed, which is not the same as whether it should exist. Treating a
+        # no-op rewrite as "not produced" made the pruning below delete every
+        # agent on any re-run where content was identical.
+        _write_subagent(name, str(meta.get("description", "")),
+                        ROLE_TOOLS.get(name), model,
+                        body + _shared.kit_context_block(ak_path))
+        generated.append(name)
 
     personas_dir = repo_root() / "agents" / "personas"
     for persona_md in sorted(personas_dir.glob("*.md")) if personas_dir.is_dir() else []:
@@ -283,9 +292,9 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         model = _resolve_model(configured, meta, mode)
         body = (role_bodies[base] + "\n\n---\n\n" + _rewrite_body(overlay, ak_path)
                 + _shared.kit_context_block(ak_path))
-        if _write_subagent(name, str(meta.get("description", "")),
-                           ROLE_TOOLS.get(base), model, body):
-            generated.append(name)
+        _write_subagent(name, str(meta.get("description", "")),
+                        ROLE_TOOLS.get(base), model, body)
+        generated.append(name)
 
     if tracking is not None:
         for stale in sorted(set(getattr(tracking, "subagent_files_installed", [])) - set(generated)):
