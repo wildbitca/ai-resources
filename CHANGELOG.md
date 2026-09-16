@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-16 — native skills, deterministic core loop, plugin packaging
+
 ### Changed
 
 - **Instruction files use a managed block.** Setup writes the kit's text only between

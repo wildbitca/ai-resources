@@ -1,7 +1,7 @@
 """ai-resources kit — Python package."""
 from __future__ import annotations
 
-__version__ = "1.1.8"
+__version__ = "1.2.0"
 
 import os
 from pathlib import Path
