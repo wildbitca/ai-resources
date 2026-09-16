@@ -268,10 +268,20 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
             if fb not in target:
                 target.append(fb)
 
+    # `defaults.fallbacks` in the profile is a catch-all, not a per-model list:
+    # it is meant for every role that declared no fallback of its own. LiteLLM's
+    # router has a dedicated `default_fallbacks` key for exactly that — a
+    # deployment only falls through to it when `fallbacks` has no entry keyed by
+    # its own model_name — so one router-level setting covers every model
+    # without duplicating the same list into `fallbacks` for each of them.
+    defaults = executors.get("defaults") or {}
+    default_fallbacks = list(defaults.get("fallbacks") or [])
+
     # A model named only as a fallback still needs a deployment of its own: the
     # router resolves the name against model_list, so an unregistered name turns
     # the fallback into a second failure at the exact moment the primary is down.
-    for fbs in fallback_map.values():
+    # Covers both the per-role fallback lists and the profile-wide default.
+    for fbs in list(fallback_map.values()) + [default_fallbacks]:
         for fb in fbs:
             if fb in seen_models:
                 continue
@@ -287,9 +297,12 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
         "model_list": model_list,
         "router_settings": {
             "routing_strategy": "simple-shuffle",
-            "num_retries": 3,
-            "timeout": 600,
+            # The profile sets these; the literals are only the fallback for a
+            # profile that omits `defaults` entirely (legacy / hand-written).
+            "num_retries": defaults.get("max_retries", 3),
+            "timeout": defaults.get("timeout_seconds", 600),
             "fallbacks": fallbacks,
+            "default_fallbacks": default_fallbacks,
         },
         "litellm_settings": {
             "drop_params": True,
