@@ -241,3 +241,64 @@ def test_pruning_removes_tracked_agents_but_not_the_users(agents_dir):
     # content happened to be identical.
     assert {p.name for p in agents_dir.glob("*.md")} == before - {"retired-persona.md"}
     assert len(tracking.subagent_files_installed) > 10
+
+
+def test_container_cli_drives_colima_with_docker_and_podman_with_itself():
+    from ai_resources.setup import litellm as lite
+    assert lite.container_cli("docker") == "docker"
+    assert lite.container_cli("podman") == "podman"
+    # Colima is a container runtime you drive with the docker CLI: it exposes
+    # the docker socket and ships no `colima compose`.
+    assert lite.container_cli("colima") == "docker"
+    for rt in ("docker", "podman", "colima"):
+        assert lite.is_container_mode(rt)
+    for rt in ("pipx", "pip-venv", ""):
+        assert not lite.is_container_mode(rt)
+
+
+def test_service_control_works_for_every_container_runtime(monkeypatch):
+    """Service control used to compare the runtime against the literal "docker".
+
+    Podman and colima matched no branch, so start/stop/status/logs returned
+    their empty defaults without running anything — while the login-time unit,
+    which interpolates the runtime correctly, kept the gateway up. The gateway
+    ran and the kit reported it absent.
+    """
+    from ai_resources.setup import litellm as lite
+
+    for runtime, expected in (("docker", "docker"), ("podman", "podman"), ("colima", "docker")):
+        calls = []
+
+        def fake_run(cmd, *a, **kw):
+            calls.append(cmd)
+            return (0, "running", "")
+
+        monkeypatch.setattr(lite, "runtime_mode", lambda r=runtime: r)
+        monkeypatch.setattr(lite, "_run", fake_run)
+
+        assert lite.start_service() is True, f"{runtime}: start did nothing"
+        assert lite.stop_service() is True, f"{runtime}: stop did nothing"
+        assert lite.service_status() == "running", f"{runtime}: status reported absent"
+        assert lite.service_logs() == "running", f"{runtime}: logs came back empty"
+
+        assert len(calls) == 4, f"{runtime}: expected 4 commands, got {calls}"
+        assert all(c[0] == expected for c in calls), \
+            f"{runtime}: should be driven by {expected}, got {[c[0] for c in calls]}"
+
+
+def test_teardown_stops_the_container_for_every_container_runtime():
+    """Teardown skipped colima, leaving the gateway running and the image pulled.
+
+    `plan_multi_model_teardown` is pure, so the whole decision is checkable here:
+    a container runtime must always produce the stop action, and a pip
+    deployment must never produce it.
+    """
+    from ai_resources.setup import litellm as lite, state as st
+
+    for runtime, should_stop in (("docker", True), ("podman", True),
+                                 ("colima", True), ("pip-venv", False)):
+        prev = st.SetupState()
+        prev.litellm.local.runtime = runtime
+        ids = [a[0] for a in lite.plan_multi_model_teardown(prev)]
+        assert ("docker_down" in ids) is should_stop, \
+            f"{runtime}: expected docker_down={should_stop}, plan was {ids}"

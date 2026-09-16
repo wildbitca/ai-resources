@@ -99,7 +99,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             else:
                 ui.warn(f"Service file missing: {lc}")
                 issues += 1
-        elif mode == "docker":
+        elif litellm.is_container_mode(mode):
             runtime, det = detection.detect_container_runtime()
             if det.installed:
                 ui.ok(f"{runtime} {det.version}")

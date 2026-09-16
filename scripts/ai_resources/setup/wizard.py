@@ -335,7 +335,7 @@ def _step3_litellm(s: state.SetupState, dry_run: bool = False) -> int:
     # Map saved deployment → choice value for default
     saved = s.litellm.deployment
     if saved == "local":
-        default = "local-docker" if s.litellm.local.runtime in ("docker", "podman") else "local-nodocker"
+        default = "local-docker" if litellm.is_container_mode(s.litellm.local.runtime) else "local-nodocker"
     elif saved == "remote":
         default = "remote"
     elif saved == "skipped":
@@ -386,8 +386,11 @@ def _step3_docker(s: state.SetupState) -> int:
         return 1
     ui.ok(f"{runtime} {det.version}  {det.binary_path}")
     s.litellm.local.runtime = runtime  # docker | podman
-    if runtime == "docker" and not detection.detect_compose():
-        ui.error("docker compose plugin not found. Install Docker Desktop or `docker-compose-plugin`.")
+    compose_cli = litellm.container_cli(runtime)
+    if not detection.detect_compose(compose_cli):
+        ui.error(f"{compose_cli} compose not found. Install the compose plugin for {runtime}.")
+        ui.detail("Docker:  Docker Desktop, or the `docker-compose-plugin` package")
+        ui.detail("Podman:  the `podman-compose` package")
         return 1
 
     _ask_bind_and_port(s)
@@ -931,7 +934,7 @@ def _step8_lifecycle(s: state.SetupState) -> int:
 
     # Docker / Podman containers self-restart via compose's `restart: always`
     # whenever the runtime comes back up — no LaunchAgent / systemd unit needed.
-    if s.litellm.local.runtime in ("docker", "podman"):
+    if litellm.is_container_mode(s.litellm.local.runtime):
         s.litellm.local.auto_start = True  # implicit via container restart policy
         s.litellm.local.log_dir = str(litellm.log_dir())
         ui.info(f"Skipped — {s.litellm.local.runtime} container uses "
@@ -1073,7 +1076,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                                   stderr=open(litellm.log_dir() / "litellm.err", "ab"))
                 ui.ok("LiteLLM started in background (will not auto-restart on logout)")
 
-        elif s.litellm.local.runtime in ("docker", "podman"):
+        elif litellm.is_container_mode(s.litellm.local.runtime):
             # Docker mode — write compose, start container. Auto-start is handled
             # entirely by the container's `restart: always` policy; no LaunchAgent
             # / systemd unit gets installed for this runtime.
@@ -1218,7 +1221,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
         runtime = s.litellm.local.runtime
         if (s.mode == "multi-model" and s.backend == "litellm"
                 and s.litellm.deployment == "local"
-                and runtime in ("docker", "podman") and tmp_litellm_yaml.is_file()):
+                and litellm.is_container_mode(runtime) and tmp_litellm_yaml.is_file()):
             try:
                 import yaml as _yaml
                 image = s.litellm.local.image or litellm.DEFAULT_DOCKER_IMAGE
@@ -1325,10 +1328,13 @@ def _step9_dry_run(s: state.SetupState) -> int:
                         ui.detail(f"  source {state.env_path()} && {bin_path} "
                                   f"--config {tmp_litellm_yaml} --port {port}")
 
-            elif runtime in ("docker", "podman") and tmp_compose_yaml.is_file():
-                with ui.spinner(f"docker compose up -d (dry-run container)"):
+            elif litellm.is_container_mode(runtime) and tmp_compose_yaml.is_file():
+                # Drive through the runtime's CLI, not its name: `colima compose`
+                # is not a command — colima is driven by docker's.
+                compose_cli = litellm.container_cli(runtime)
+                with ui.spinner(f"{compose_cli} compose up -d (dry-run container)"):
                     rc, _, err = litellm._run(
-                        [runtime, "compose", "-f", str(tmp_compose_yaml), "up", "-d"],
+                        [compose_cli, "compose", "-f", str(tmp_compose_yaml), "up", "-d"],
                         timeout=120,
                     )
                 if rc != 0:
