@@ -27,6 +27,31 @@ except ImportError:  # pragma: no cover
     _HAS_QUESTIONARY = False
 
 
+# --- non-interactive mode --------------------------------------------------------
+# Every prompt consults this instead of the flag being threaded through the
+# twenty call sites in the wizard. Prompts return their default rather than
+# asking; where there is no defensible default they abort, because a prompt that
+# silently answers itself produces a broken setup nobody was told about.
+_NON_INTERACTIVE = False
+
+
+def set_non_interactive(enabled: bool = True) -> None:
+    global _NON_INTERACTIVE
+    _NON_INTERACTIVE = enabled
+
+
+def is_non_interactive() -> bool:
+    return _NON_INTERACTIVE
+
+
+def stdin_is_a_terminal() -> bool:
+    """False when nothing can answer a prompt — a pipe, a CI job, a background run."""
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):  # pragma: no cover - closed stdin
+        return False
+
+
 # --- console -------------------------------------------------------------------
 _console: "Console | None" = None
 
@@ -207,6 +232,13 @@ _QSTYLE = Style([
 def select(message: str, choices: list[Any], default: Any | None = None,
            instruction: str = "") -> Any:
     """Single-select. choices can be strings or questionary.Choice objects."""
+    if _NON_INTERACTIVE:
+        if default is not None:
+            return default
+        raise SystemExit(
+            f"--non-interactive: '{message}' has no saved answer to fall back on. "
+            f"Run the wizard once interactively, or pass --profile."
+        )
     if not _HAS_QUESTIONARY:
         for i, c in enumerate(choices):
             label = c.title if hasattr(c, "title") else str(c)
@@ -225,6 +257,8 @@ def select(message: str, choices: list[Any], default: Any | None = None,
 
 def checkbox(message: str, choices: list[Any], default: list[Any] | None = None,
              instruction: str = "") -> list[Any]:
+    if _NON_INTERACTIVE:
+        return list(default or [])
     if not _HAS_QUESTIONARY:
         print(message)
         for i, c in enumerate(choices):
@@ -246,6 +280,8 @@ def checkbox(message: str, choices: list[Any], default: list[Any] | None = None,
 
 
 def text(message: str, default: str = "", validate: Callable[[str], bool | str] | None = None) -> str:
+    if _NON_INTERACTIVE:
+        return default
     if not _HAS_QUESTIONARY:
         prompt = f"{message}"
         if default:
@@ -261,6 +297,14 @@ def text(message: str, default: str = "", validate: Callable[[str], bool | str] 
 
 
 def password(message: str, validate: Callable[[str], bool | str] | None = None) -> str:
+    if _NON_INTERACTIVE:
+        # Callers read the stored value first and only prompt when it is absent,
+        # so reaching here means the credential exists nowhere. Returning "" would
+        # write an empty key and fail later at the gateway, far from the cause.
+        raise SystemExit(
+            f"--non-interactive: no stored credential for '{message}'. "
+            f"Add it to {'~/.config/ai-resources/.env'} or export it, then re-run."
+        )
     if not _HAS_QUESTIONARY:
         import getpass
         return getpass.getpass(f"{message}: ")
@@ -268,6 +312,8 @@ def password(message: str, validate: Callable[[str], bool | str] | None = None) 
 
 
 def confirm(message: str, default: bool = True) -> bool:
+    if _NON_INTERACTIVE:
+        return default
     if not _HAS_QUESTIONARY:
         suf = "Y/n" if default else "y/N"
         ans = input(f"{message} [{suf}]: ").strip().lower()
