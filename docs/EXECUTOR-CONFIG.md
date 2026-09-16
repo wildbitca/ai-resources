@@ -18,7 +18,6 @@ The kit ships with several profiles in `/profiles/`:
 - `all-claude.yaml` — All requests use Claude (expensive)
 - `all-gemini.yaml` — All requests use Gemini (cheaper)
 - `quality-first.yaml` — Prioritize quality, higher cost
-- `vertex-enterprise.yaml` — GCP Vertex integration
 
 ## Cost-Optimized Profile (Recommended)
 

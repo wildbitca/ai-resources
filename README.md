@@ -170,7 +170,6 @@ Multi-model (LiteLLM gateway) profiles:
 | `all-claude` | Every role uses a Claude model (Anthropic only) |
 | `all-gemini` | Every role uses a Gemini model |
 | `cost-optimized` | Cheapest viable model per role |
-| `vertex-enterprise` | Google Vertex AI models throughout |
 
 ### Agent Roles (`agents/roles/`)
 
