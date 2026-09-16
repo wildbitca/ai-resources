@@ -119,7 +119,6 @@ service, so `ai-resources daemon` has nothing to manage and says so.
 | `all-claude` | LiteLLM | Every role on Claude. Highest reliability, highest cost. |
 | `all-gemini` | LiteLLM | Every role on Gemini. Cheapest. |
 | `cost-optimized` | LiteLLM | Aggressively biased toward Flash and Haiku. |
-| `vertex-enterprise` | LiteLLM | All traffic via Google Cloud's Agent Platform, for compliance. |
 | `claude-native` | — | Single-model: each role picks a Claude alias. No gateway. |
 | `claude-inherit` | — | Single-model: every role inherits the session model. |
 
@@ -218,7 +217,10 @@ docker ps -a | grep ai-resources-litellm
 **Nothing current works on Vertex.**
 Regional endpoints such as `us-east5` serve Claude Sonnet 4.6 and earlier only.
 Set `GOOGLE_CLOUD_LOCATION=global`, which is also the tier without the 10%
-premium that multi-region and regional endpoints carry.
+premium that multi-region and regional endpoints carry. The `vertex` provider is
+still selectable in the wizard; only the prebuilt `vertex-enterprise` profile was
+retired, so a Vertex setup is now assembled per role rather than picked as a
+preset.
 
 **Prompt caching seems off.**
 Caching survives when routing to Claude and is lost when routing elsewhere, so a
