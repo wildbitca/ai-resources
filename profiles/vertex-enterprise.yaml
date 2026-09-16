@@ -1,8 +1,16 @@
 name: vertex-enterprise
 description: |
-  All traffic routed through Vertex AI (GCP) — single billing line, audit log,
-  VPC-SC compliance. Same model selection as quality-first but using
-  Vertex-hosted Anthropic and Gemini endpoints.
+  All traffic routed through Google Cloud's Agent Platform (ex-Vertex AI) —
+  single billing line, audit log, VPC-SC compliance. Same model selection as
+  quality-first but using Google-hosted Anthropic and Gemini endpoints.
+
+  Requires GOOGLE_CLOUD_LOCATION=global (or a multi-region "us"/"eu"). Regional
+  endpoints such as us-east5 serve Claude Sonnet 4.6 and earlier only, so a
+  regional value silently rules out every model below. Multi-region and regional
+  endpoints also carry a 10% premium over global.
+
+  Claude IDs here are bare, except Haiku 4.5 which keeps its @date suffix —
+  that asymmetry is Google's, not a typo.
 
 defaults:
   fallbacks: []
@@ -10,18 +18,18 @@ defaults:
   timeout_seconds: 600
 
 by_role:
-  explore:            { provider: vertex, model: gemini-2.5-flash }
-  generalPurpose:     { provider: vertex, model: gemini-2.5-pro }
-  doc-writer:         { provider: vertex, model: gemini-2.5-flash }
-  planner:            { provider: vertex, model: claude-sonnet-4-6 }
-  software-architect: { provider: vertex, model: claude-opus-4-7 }
-  implementer:        { provider: vertex, model: claude-sonnet-4-6 }
-  code-reviewer:      { provider: vertex, model: claude-sonnet-4-6 }
-  security-auditor:   { provider: vertex, model: claude-sonnet-4-6 }
-  tester:             { provider: vertex, model: gemini-2.5-flash }
-  verifier:           { provider: vertex, model: gemini-2.5-flash-lite }
-  package-upgrade:             { provider: vertex, model: claude-sonnet-4-6 }
-  crashlytics-fixer:           { provider: vertex, model: claude-sonnet-4-6 }
-  sentry-fixer:                { provider: vertex, model: claude-sonnet-4-6 }
-  terraform-maintainer:        { provider: vertex, model: claude-sonnet-4-6 }
-  crossplane-upjet-maintainer: { provider: vertex, model: claude-sonnet-4-6 }
+  explore:            { provider: vertex, model: gemini-3.7-flash }
+  generalPurpose:     { provider: vertex, model: gemini-3.1-pro-preview }
+  doc-writer:         { provider: vertex, model: gemini-3.7-flash }
+  planner:            { provider: vertex, model: claude-sonnet-5 }
+  software-architect: { provider: vertex, model: claude-opus-5 }
+  implementer:        { provider: vertex, model: claude-sonnet-5 }
+  code-reviewer:      { provider: vertex, model: claude-sonnet-5 }
+  security-auditor:   { provider: vertex, model: claude-sonnet-5 }
+  tester:             { provider: vertex, model: gemini-3.7-flash }
+  verifier:           { provider: vertex, model: gemini-3.5-flash-lite }
+  package-upgrade:             { provider: vertex, model: claude-sonnet-5 }
+  crashlytics-fixer:           { provider: vertex, model: claude-sonnet-5 }
+  sentry-fixer:                { provider: vertex, model: claude-sonnet-5 }
+  terraform-maintainer:        { provider: vertex, model: claude-sonnet-5 }
+  crossplane-upjet-maintainer: { provider: vertex, model: claude-sonnet-5 }

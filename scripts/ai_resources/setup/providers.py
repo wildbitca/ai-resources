@@ -80,19 +80,26 @@ KNOWN_MODELS: dict[str, list[str]] = {
         "claude-fable-5-1",
     ],
     "google": [
+        # gemini-3.1-pro-preview is the only Pro tier currently published; the
+        # rest are stable. Verified against ai.google.dev 2026-09-16.
         "gemini-3.1-pro-preview",
+        "gemini-3.8-flash",
         "gemini-3.7-flash",
         "gemini-3.5-flash-lite",
     ],
     "vertex": [
-        # Vertex IDs verified against docs.anthropic.com — Opus 4.7 / Sonnet 4.6
-        # use bare alias (no @date suffix); Haiku 4.5 still requires @date.
-        "claude-opus-4-7",
-        "claude-sonnet-4-6",
+        # Verified against platform.claude.com 2026-09-16. The current generation
+        # uses a bare alias; Haiku 4.5 still carries its @date suffix.
+        # Note: regional endpoints (us-east5 and friends) serve Sonnet 4.6 and
+        # earlier only — the models below need the global or a multi-region
+        # endpoint, which is why GOOGLE_CLOUD_LOCATION defaults to "global".
+        "claude-opus-5",
+        "claude-sonnet-5",
         "claude-haiku-4-5@20251001",
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
+        "claude-fable-5-1",
+        "gemini-3.1-pro-preview",
+        "gemini-3.7-flash",
+        "gemini-3.5-flash-lite",
     ],
     "openai": [
         "gpt-6-astra",
