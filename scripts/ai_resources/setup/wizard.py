@@ -1294,6 +1294,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
         console.print(f"\n[bold cyan]── settings.json patch  (→ {_claude_cockpit.SETTINGS_PATH})[/]")
         patch = _claude_cockpit._build_settings_patch(
             executors_doc, master_key, gateway_url, ak_path, mode,
+            backend=s.backend,
         )
         env_patch = patch.get("env", {})
         existing_env: dict = {}
