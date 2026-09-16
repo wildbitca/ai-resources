@@ -50,12 +50,17 @@ _MULTI_MODEL_ONLY_ENV_KEYS: list[str] = [
 # Tools each role may use — used when generating subagent files.
 ROLE_TOOLS: dict[str, str | None] = {
     "explore":            "Read, Grep, Glob",
-    "planner":            "Read, Grep, Glob, Bash",
+    # Write, because the role is told to update the handoff and had no tool for
+    # it: with Bash denied it went mute and the orchestrator transcribed for it.
+    # Sequential step, so there is no concurrent-writer hazard.
+    "planner":            "Read, Edit, Write, Grep, Glob, Bash",
     "implementer":        "Read, Edit, Write, Bash, Grep, Glob",
     "tester":             "Read, Edit, Write, Bash, Grep, Glob",
     "code-reviewer":      "Read, Bash, Grep, Glob",
     "security-auditor":   "Read, Bash, Grep, Glob",
-    "software-architect": "Read, Grep, Glob, Bash",
+    # Same reason as planner: instructed to record Architecture_design_ref and
+    # Architect_approval in the handoff, with no way to write them.
+    "software-architect": "Read, Edit, Write, Grep, Glob, Bash",
     "verifier":           "Read, Bash, Grep, Glob",
     "doc-writer":         "Read, Edit, Write, Bash, Grep, Glob",
     # Specialists get full tool access (None = inherit all)

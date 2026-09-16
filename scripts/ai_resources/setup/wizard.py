@@ -70,7 +70,7 @@ def run(args: argparse.Namespace) -> int:
 
     if s.mode == "multi-model":
         if s.backend == "litellm":
-            rc = _step3_litellm(s)
+            rc = _step3_litellm(s, dry_run)
             if rc != 0:
                 return rc
         else:
@@ -81,7 +81,7 @@ def run(args: argparse.Namespace) -> int:
         if rc != 0:
             return rc
 
-        rc = _step5_credentials(s)
+        rc = _step5_credentials(s, dry_run)
         if rc != 0:
             return rc
 
@@ -294,7 +294,7 @@ def _step2_cockpits(s: state.SetupState) -> int:
 
 
 # --- Step 3 — LiteLLM gateway ----------------------------------------------------
-def _step3_litellm(s: state.SetupState) -> int:
+def _step3_litellm(s: state.SetupState, dry_run: bool = False) -> int:
     ui.section(3, TOTAL_STEPS, "LiteLLM gateway")
 
     # Detect what's available so we can flag disabled options
@@ -336,7 +336,7 @@ def _step3_litellm(s: state.SetupState) -> int:
         return _step3_local_nodocker(s)
     if choice == "remote":
         s.litellm.deployment = "remote"
-        return _step3_remote(s)
+        return _step3_remote(s, dry_run)
     s.litellm.deployment = "skipped"
     return 0  # skipped
 
@@ -536,7 +536,7 @@ def _step3_pipvenv(s: state.SetupState) -> int:
     return 0
 
 
-def _step3_remote(s: state.SetupState) -> int:
+def _step3_remote(s: state.SetupState, dry_run: bool = False) -> int:
     ui.console().print()
     url = ui.text(
         "Remote LiteLLM URL (e.g. https://litellm.example.com)",
@@ -551,10 +551,15 @@ def _step3_remote(s: state.SetupState) -> int:
     if not master_key:
         ui.error("Master key required for remote endpoint.")
         return 1
-    _, newly_added = credentials.update_env_tracked({s.litellm.remote.master_key_env: master_key})
-    for k in newly_added:
-        if k not in s.tracking.env_keys_added:
-            s.tracking.env_keys_added.append(k)
+    if dry_run:
+        ui.detail(f"(dry run) would store {s.litellm.remote.master_key_env} "
+                  f"in {state.env_path()}")
+    else:
+        _, newly_added = credentials.update_env_tracked(
+            {s.litellm.remote.master_key_env: master_key})
+        for k in newly_added:
+            if k not in s.tracking.env_keys_added:
+                s.tracking.env_keys_added.append(k)
 
     with ui.spinner(f"Validating {url}"):
         ok, msg = litellm.validate_remote(url, master_key)
@@ -621,7 +626,7 @@ def _step4_providers(s: state.SetupState) -> int:
 
 
 # --- Step 5 — Credentials --------------------------------------------------------
-def _step5_credentials(s: state.SetupState) -> int:
+def _step5_credentials(s: state.SetupState, dry_run: bool = False) -> int:
     ui.section(5, TOTAL_STEPS, "Credentials")
     ui.info(f"Stored in {state.env_path()} (chmod 600)")
     ui.info("Press Enter to keep an existing value")
@@ -645,7 +650,10 @@ def _step5_credentials(s: state.SetupState) -> int:
             updates[env_var] = new_val
         ui.detail("Set a spend limit on this key at https://openrouter.ai/settings/keys — "
                   "it is the only budget ceiling that applies in this mode.")
-        if updates:
+        if updates and dry_run:
+            ui.detail(f"(dry run) would write {', '.join(sorted(updates))} "
+                      f"to {state.env_path()}")
+        elif updates:
             _, newly_added = credentials.update_env_tracked(updates)
             for k in newly_added:
                 if k not in s.tracking.env_keys_added:
@@ -713,7 +721,10 @@ def _step5_credentials(s: state.SetupState) -> int:
             else:
                 updates[env_var] = new_val
 
-    if updates:
+    if updates and dry_run:
+        ui.detail(f"(dry run) would write {', '.join(sorted(updates))} "
+                  f"to {state.env_path()}")
+    elif updates:
         _, newly_added = credentials.update_env_tracked(updates)
         for k in newly_added:
             if k not in s.tracking.env_keys_added:
@@ -746,17 +757,30 @@ def _step6_profile(s: state.SetupState) -> int:
         choices.append(ui.Choice(label, value=name))
     choices.append(ui.Choice("custom — Configure each role individually", value="__custom__"))
 
-    default = s.profile.name if s.profile.name in available else "quality-first"
+    # The default has to exist in `available`, and `available` is now filtered by
+    # backend: a LiteLLM profile is not offered under openrouter, nor the reverse.
+    # A hardcoded name here crashed the wizard for anyone whose saved profile
+    # belonged to the other backend.
+    preferred = {"openrouter": "openrouter-balanced",
+                 "litellm": "quality-first"}.get(s.backend, "")
+    if s.profile.name in available:
+        default = s.profile.name
+    elif preferred in available:
+        default = preferred
+    else:
+        default = available[0]
+
     chosen = ui.select("Choose profile:", choices, default=default)
     if chosen is None:
         return 130
 
     if chosen == "__custom__":
-        # Start from quality-first, then customize each role
-        base = profiles.load_profile("quality-first")
-        chosen = "quality-first"
-    else:
-        base = profiles.load_profile(chosen)
+        # Start from the backend's own recommended profile. Hardcoding
+        # quality-first here loaded bare model IDs under the openrouter backend,
+        # whose namespaced catalogue rejects them — the same defect as the
+        # default above, except this one corrupts the config instead of crashing.
+        chosen = default if default in available else available[0]
+    base = profiles.load_profile(chosen)
 
     s.profile.name = chosen
 
