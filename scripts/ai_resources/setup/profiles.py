@@ -152,7 +152,12 @@ def role_table(executors: dict[str, Any]) -> list[tuple[str, str, str]]:
     rows = []
     for role in KNOWN_ROLES:
         cfg = executors.get("by_role", {}).get(role, {})
-        rows.append((role, cfg.get("provider", "-"), cfg.get("model", "-")))
+        model = cfg.get("model", "-")
+        # Derived, not stored: the vendor is the first segment of the canonical
+        # ID, so there is one source of truth. The old `provider` field was
+        # still displayed and edited after it stopped deciding anything.
+        vendor = model.split("/", 1)[0] if "/" in model else cfg.get("provider", "-")
+        rows.append((role, vendor, model))
     return rows
 
 

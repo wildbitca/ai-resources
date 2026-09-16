@@ -14,18 +14,18 @@ defaults:
   timeout_seconds: 600
 
 by_role:
-  explore:            { provider: google, model: google/gemini-3.7-flash }
-  generalPurpose:     { provider: google, model: google/gemini-3.1-pro-preview }
-  doc-writer:         { provider: google, model: google/gemini-3.7-flash }
-  planner:            { provider: google, model: google/gemini-3.1-pro-preview }
-  software-architect: { provider: google, model: google/gemini-3.1-pro-preview }
-  implementer:        { provider: google, model: google/gemini-3.1-pro-preview }
-  code-reviewer:      { provider: google, model: google/gemini-3.7-flash }
-  security-auditor:   { provider: google, model: google/gemini-3.1-pro-preview }
-  tester:             { provider: google, model: google/gemini-3.7-flash }
-  verifier:           { provider: google, model: google/gemini-3.5-flash-lite }
-  package-upgrade:             { provider: google, model: google/gemini-3.1-pro-preview }
-  crashlytics-fixer:           { provider: google, model: google/gemini-3.1-pro-preview }
-  sentry-fixer:                { provider: google, model: google/gemini-3.1-pro-preview }
-  terraform-maintainer:        { provider: google, model: google/gemini-3.1-pro-preview }
-  crossplane-upjet-maintainer: { provider: google, model: google/gemini-3.1-pro-preview }
+  explore:            { model: google/gemini-3.7-flash }
+  generalPurpose:     { model: google/gemini-3.1-pro-preview }
+  doc-writer:         { model: google/gemini-3.7-flash }
+  planner:            { model: google/gemini-3.1-pro-preview }
+  software-architect: { model: google/gemini-3.1-pro-preview }
+  implementer:        { model: google/gemini-3.1-pro-preview }
+  code-reviewer:      { model: google/gemini-3.7-flash }
+  security-auditor:   { model: google/gemini-3.1-pro-preview }
+  tester:             { model: google/gemini-3.7-flash }
+  verifier:           { model: google/gemini-3.5-flash-lite }
+  package-upgrade:             { model: google/gemini-3.1-pro-preview }
+  crashlytics-fixer:           { model: google/gemini-3.1-pro-preview }
+  sentry-fixer:                { model: google/gemini-3.1-pro-preview }
+  terraform-maintainer:        { model: google/gemini-3.1-pro-preview }
+  crossplane-upjet-maintainer: { model: google/gemini-3.1-pro-preview }

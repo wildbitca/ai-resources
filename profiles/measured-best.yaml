@@ -30,36 +30,36 @@ defaults:
 by_role:
   # Reading-heavy and mechanical: context in, summary out. Cheapest tier that
   # still supports tool use.
-  explore:            { provider: google,    model: google/gemini-3.5-flash-lite }   # 0.30 / 2.50
-  doc-writer:         { provider: google,    model: google/gemini-3.7-flash }        # 0.75 / 3.75
-  tester:             { provider: google,    model: google/gemini-3.7-flash }
-  generalPurpose:     { provider: google,    model: google/gemini-3.7-flash }
-  verifier:           { provider: anthropic, model: anthropic/claude-haiku-4.5 }
-  package-upgrade:    { provider: anthropic, model: anthropic/claude-haiku-4.5 }
+  explore:            { model: google/gemini-3.5-flash-lite }   # 0.30 / 2.50
+  doc-writer:         { model: google/gemini-3.7-flash }        # 0.75 / 3.75
+  tester:             { model: google/gemini-3.7-flash }
+  generalPurpose:     { model: google/gemini-3.7-flash }
+  verifier:           { model: anthropic/claude-haiku-4.5 }
+  package-upgrade:    { model: anthropic/claude-haiku-4.5 }
 
   # Judgement. The planner sets the acceptance criteria everything else is
   # measured against, so it keeps the strongest model.
-  planner:            { provider: anthropic, model: anthropic/claude-opus-5 }
+  planner:            { model: anthropic/claude-opus-5 }
 
   # Best value measured: produced a correct layered design for $0.027, the
   # cheapest useful result of the whole set.
-  software-architect: { provider: deepseek,  model: deepseek/deepseek-v4-pro }       # 1.60 / 3.20
+  software-architect: { model: deepseek/deepseek-v4-pro }       # 1.60 / 3.20
 
   # Wrote the code that passed every adversarial case in all three runs.
-  implementer:        { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  implementer:        { model: anthropic/claude-sonnet-5 }
 
   # Deliberately NOT economised. Kimi K2.7 costs $0.039 against Sonnet's $0.105
   # and reviewed the same change, but missed a latent unicode word-fusion bug
   # that a different run caught. Saving $0.07 on the one role whose entire job
   # is catching defects is the saving that does not pay.
-  code-reviewer:      { provider: anthropic, model: anthropic/claude-sonnet-5 }
-  security-auditor:   { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  code-reviewer:      { model: anthropic/claude-sonnet-5 }
+  security-auditor:   { model: anthropic/claude-sonnet-5 }
 
   # Domain specialists: code-heavy, same reasoning as the implementer.
-  crashlytics-fixer:           { provider: anthropic, model: anthropic/claude-sonnet-5 }
-  sentry-fixer:                { provider: anthropic, model: anthropic/claude-sonnet-5 }
-  terraform-maintainer:        { provider: anthropic, model: anthropic/claude-sonnet-5 }
-  crossplane-upjet-maintainer: { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  crashlytics-fixer:           { model: anthropic/claude-sonnet-5 }
+  sentry-fixer:                { model: anthropic/claude-sonnet-5 }
+  terraform-maintainer:        { model: anthropic/claude-sonnet-5 }
+  crossplane-upjet-maintainer: { model: anthropic/claude-sonnet-5 }
 
 # Per-persona overrides, keyed by persona name. Empty so personas inherit their
 # base role and adding the mechanism re-routes nobody. Fill it in when one
@@ -67,6 +67,6 @@ by_role:
 # have no reason to cost the same:
 #
 # by_persona:
-#   code-reviewer-devops:  { provider: anthropic, model: anthropic/claude-opus-5 }
-#   code-reviewer-angular: { provider: google,    model: google/gemini-3.7-flash }
+#   code-reviewer-devops:  { model: anthropic/claude-opus-5 }
+#   code-reviewer-angular: { model: google/gemini-3.7-flash }
 by_persona: {}

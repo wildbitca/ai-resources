@@ -28,32 +28,32 @@ defaults:
 # another's:
 #
 # by_persona:
-#   code-reviewer-devops:  { provider: openrouter, model: anthropic/claude-opus-5 }
-#   code-reviewer-angular: { provider: openrouter, model: anthropic/claude-sonnet-5 }
+#   code-reviewer-devops:  { model: anthropic/claude-opus-5 }
+#   code-reviewer-angular: { model: anthropic/claude-sonnet-5 }
 by_persona: {}
 
 by_role:
   # Reading-heavy, cheap — context in, summary out
-  explore:            { provider: openrouter, model: google/gemini-3.7-flash }      # 0.75 / 3.75
-  doc-writer:         { provider: openrouter, model: google/gemini-3.7-flash }
-  tester:             { provider: openrouter, model: google/gemini-3.7-flash }
-  generalPurpose:     { provider: openrouter, model: anthropic/claude-sonnet-5 }    # 2 / 10
+  explore:            { model: google/gemini-3.7-flash }      # 0.75 / 3.75
+  doc-writer:         { model: google/gemini-3.7-flash }
+  tester:             { model: google/gemini-3.7-flash }
+  generalPurpose:     { model: anthropic/claude-sonnet-5 }    # 2 / 10
 
   # Judgement — worth the tokens
-  planner:            { provider: openrouter, model: anthropic/claude-opus-5 }      # 5 / 25
-  software-architect: { provider: openrouter, model: anthropic/claude-opus-5 }
-  code-reviewer:      { provider: openrouter, model: anthropic/claude-opus-5 }
-  security-auditor:   { provider: openrouter, model: anthropic/claude-opus-5 }
+  planner:            { model: anthropic/claude-opus-5 }      # 5 / 25
+  software-architect: { model: anthropic/claude-opus-5 }
+  code-reviewer:      { model: anthropic/claude-opus-5 }
+  security-auditor:   { model: anthropic/claude-opus-5 }
 
   # Writing code — Sonnet is the sweet spot
-  implementer:        { provider: openrouter, model: anthropic/claude-sonnet-5 }
+  implementer:        { model: anthropic/claude-sonnet-5 }
 
   # Mechanical verification
-  verifier:           { provider: openrouter, model: anthropic/claude-haiku-4.5 }   # 1 / 5
-  package-upgrade:    { provider: openrouter, model: anthropic/claude-haiku-4.5 }
+  verifier:           { model: anthropic/claude-haiku-4.5 }   # 1 / 5
+  package-upgrade:    { model: anthropic/claude-haiku-4.5 }
 
   # Domain specialists — code-heavy
-  crashlytics-fixer:           { provider: openrouter, model: anthropic/claude-sonnet-5 }
-  sentry-fixer:                { provider: openrouter, model: anthropic/claude-sonnet-5 }
-  terraform-maintainer:        { provider: openrouter, model: anthropic/claude-sonnet-5 }
-  crossplane-upjet-maintainer: { provider: openrouter, model: anthropic/claude-sonnet-5 }
+  crashlytics-fixer:           { model: anthropic/claude-sonnet-5 }
+  sentry-fixer:                { model: anthropic/claude-sonnet-5 }
+  terraform-maintainer:        { model: anthropic/claude-sonnet-5 }
+  crossplane-upjet-maintainer: { model: anthropic/claude-sonnet-5 }
