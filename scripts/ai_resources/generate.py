@@ -17,6 +17,36 @@ from . import repo_root
 META_NAME = ".skill-source.yaml"
 
 
+class SkillsRootError(RuntimeError):
+    """`AGENT_SKILLS_ROOT` points somewhere `generate` must not read or write."""
+
+
+def _skills_root() -> Path:
+    """The skills tree `generate` may use — always inside the kit.
+
+    `AGENT_SKILLS_ROOT` is written by setup so agents can find the installed skills, and it
+    outlives the install it names: after an upgrade it still points at the previous version.
+    Honouring a stale or foreign value let the vendor import recreate a deleted tree with
+    `copytree` and then build the index from one root while writing it into another, which
+    is how a 136-skill kit produced a 24-skill index. The variable may only narrow the path
+    to somewhere inside the kit; anything else is refused.
+    """
+    ak = repo_root().resolve()
+    configured = os.environ.get("AGENT_SKILLS_ROOT")
+    if not configured:
+        return ak / "skills"
+    root = Path(configured).resolve()
+    if root == ak or ak in root.parents:
+        return root
+    raise SkillsRootError(
+        f"AGENT_SKILLS_ROOT points outside this kit:\n"
+        f"  AGENT_SKILLS_ROOT = {root}\n"
+        f"  kit root          = {ak}\n"
+        f"generate only reads and writes inside the kit. Unset the variable for this command "
+        f"(`env -u AGENT_SKILLS_ROOT ai-resources generate`), or point it at this kit's skills/."
+    )
+
+
 def workflow_skill_id_to_flat(sid: str) -> str:
     sid = sid.strip()
     if "/" not in sid:
@@ -117,7 +147,11 @@ def _extract_triggers(meta: dict[str, object], body: str, block: str = "") -> li
 
 def _build_index() -> int:
     ak = repo_root()
-    root = Path(os.environ.get("AGENT_SKILLS_ROOT", ak / "skills"))
+    try:
+        root = _skills_root()
+    except SkillsRootError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if not root.is_dir():
         print(f"Skills root not found: {root}", file=sys.stderr)
         return 1
@@ -428,8 +462,13 @@ def _import_skills(args: argparse.Namespace) -> int:
         print(str(e), file=sys.stderr)
         return 1
 
-    skills_root = Path(os.environ.get("AGENT_SKILLS_ROOT", repo_root() / "skills"))
-    os.environ.setdefault("AGENT_SKILLS_ROOT", str(skills_root))
+    try:
+        skills_root = _skills_root()
+    except SkillsRootError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    skills_root.mkdir(parents=True, exist_ok=True)
+    os.environ["AGENT_SKILLS_ROOT"] = str(skills_root)
 
     if cfg.get("agents", {}).get("sources") or cfg.get("personas", {}).get("sources"):
         print("Note: agents/personas sources not yet implemented — only skills are processed.", file=sys.stderr)

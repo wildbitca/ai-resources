@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ai-resources generate` no longer obeys an `AGENT_SKILLS_ROOT` that points outside the kit.**
+  Setup writes that variable so agents can find the installed skills, and it outlives the install
+  it names: after `brew upgrade` it still pointed at the previous Cellar version, which Homebrew
+  had just deleted. The vendor import then recreated that deleted tree with `copytree`, wrote the
+  24 vendored skills into it, and built the index from that root while saving it into the new one —
+  leaving the fresh install with a 24-skill index instead of 136. `generate` now resolves the root,
+  accepts it only when it is inside the kit, and otherwise fails with both paths and the fix.
+
 ## [1.2.0] — 2026-09-16 — native skills, deterministic core loop, plugin packaging
 
 ### Changed
