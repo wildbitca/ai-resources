@@ -172,8 +172,9 @@ def secret_ref(env_var: str) -> str:
 
 
 PROVIDER_KEYS: dict[str, list[str]] = {
-    "anthropic": ["ANTHROPIC_API_KEY"],
-    "google":    ["GEMINI_API_KEY"],
-    "openai":    ["OPENAI_API_KEY"],
-    "vertex":    ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"],
+    "anthropic":  ["ANTHROPIC_API_KEY"],
+    "google":     ["GEMINI_API_KEY"],
+    "openai":     ["OPENAI_API_KEY"],
+    "vertex":     ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"],
+    "openrouter": ["OPENROUTER_API_KEY"],
 }

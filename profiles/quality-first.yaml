@@ -2,7 +2,7 @@ name: quality-first
 description: |
   Quality-first routing: Claude for all code-critical roles (planner, architect,
   implementer, reviewer, security, specialists), Gemini for high-volume support
-  roles (research, explore, tester). Roughly 35-50% cheaper than all-Claude on
+  roles (explore, doc-writer, tester). Roughly 35-50% cheaper than all-Claude on
   typical feature-implementation runs without sacrificing code quality.
 
 defaults:
@@ -12,7 +12,6 @@ defaults:
 
 by_role:
   # Large context / web search / exploration → Gemini 2.5 Pro
-  research:           { provider: google,    model: gemini-2.5-pro,   fallbacks: [claude-sonnet-4-6] }
   explore:            { provider: google,    model: gemini-2.5-flash, fallbacks: [claude-sonnet-4-6] }
   generalPurpose:     { provider: google,    model: gemini-2.5-pro,   fallbacks: [claude-sonnet-4-6] }
   doc-writer:         { provider: google,    model: gemini-2.5-flash, fallbacks: [claude-sonnet-4-6] }

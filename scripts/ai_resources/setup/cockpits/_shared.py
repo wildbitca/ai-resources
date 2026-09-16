@@ -360,18 +360,32 @@ def link_agents_skills(ak_path: str) -> None:
 
 
 def multimodel_protocol_md(ak_path: str, gateway_url: str, mode: str = "multi-model") -> str:
-    """Return the multi-model section for instruction files (empty in single-model mode)."""
+    """Return the multi-model section for instruction files (empty in single-model mode).
+
+    The backend is read off the gateway URL rather than passed in: nine call sites
+    across the cockpits already hand us the URL, and threading a parallel `backend`
+    argument through all of them would let the two drift apart.
+    """
     if mode == "single-model":
         return ""
+    backend = "openrouter" if "openrouter.ai" in gateway_url else "litellm"
+    name = "OpenRouter" if backend == "openrouter" else "LiteLLM gateway"
+    cost = (
+        "- Claude Code prices every figure it shows (`/usage`, the status line, `--max-budget-usd`) "
+        "at Anthropic list price, so under OpenRouter those numbers are wrong. The spend limit on "
+        "the OpenRouter key is the real ceiling.\n"
+        if backend == "openrouter" else ""
+    )
     return (
         "## Multi-model routing\n\n"
-        f"Model calls go through the LiteLLM gateway at `{gateway_url}`. Each kit subagent's `model:` "
+        f"Model calls go through {name} at `{gateway_url}`. Each kit subagent's `model:` "
         "is routed to its provider; the role → model map is `~/.config/ai-resources/executors.yaml` "
         "(`ai-resources executors show` / `set`).\n\n"
         "- Anthropic does not support routing Claude Code to non-Claude models; check the gateway "
         "with `ai-resources doctor`.\n"
         "- Prompt caching is lost on non-Anthropic routes, so a cheaper model can cost more per task. "
         "Keep review, security and verification on strong models.\n"
+        f"{cost}"
     )
 
 

@@ -29,7 +29,22 @@ WORKFLOWS_DIR = CONFIG_ROOT / "workflows"
 # Env keys only meaningful in multi-model mode — must be removed on teardown or
 # when re-configuring in single-model mode, even if they were pre-existing at
 # the time of the last multi-model setup (and therefore not in the tracking record).
-_MULTI_MODEL_ONLY_ENV_KEYS: list[str] = ["ANTHROPIC_BASE_URL"]
+#
+# The openrouter backend writes more than the LiteLLM one: a bearer credential,
+# a deliberately blank ANTHROPIC_API_KEY, and the class-level model overrides.
+# Leaving any of them behind on teardown would keep Claude Code pointed away
+# from the user's own subscription, so every key this cockpit can write is
+# listed here — removal is a no-op for the ones absent from settings.json.
+_MULTI_MODEL_ONLY_ENV_KEYS: list[str] = [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+]
 
 
 # Tools each role may use — used when generating subagent files.
@@ -115,7 +130,7 @@ def _cleanup_stale_hooks(settings: dict) -> bool:
 
 
 def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
-                          ak_path: str, mode: str) -> dict:
+                          ak_path: str, mode: str, backend: str = "litellm") -> dict:
     """Compute the settings.json patch for Claude Code."""
     env: dict[str, str] = {
         "AGENT_SKILLS_ROOT": f"{ak_path}/skills",
@@ -123,10 +138,31 @@ def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
     }
     if mode == "multi-model":
         env["ANTHROPIC_BASE_URL"] = gateway_url
-        # ANTHROPIC_API_KEY is intentionally not set here: Claude Code reads its
-        # API key from the macOS Keychain ("Claude Code" service) and sends it as
-        # x-api-key, ignoring any value in the env block. The gateway master key
-        # must equal that Keychain key (handled in the credentials wizard step).
+
+        if backend == "openrouter":
+            # OpenRouter authenticates with a bearer token, not x-api-key, and
+            # rejects the request outright unless ANTHROPIC_API_KEY is blank —
+            # a non-empty value makes Claude Code send both credentials.
+            env["ANTHROPIC_AUTH_TOKEN"] = master_key
+            env["ANTHROPIC_API_KEY"] = ""
+            # Claude Code resolves `/model` aliases to bare Claude IDs, which
+            # OpenRouter's namespaced catalogue does not recognise. These pin
+            # each alias to a real catalogue entry so the main conversation
+            # works. A subagent's frontmatter `model:` overrides them (verified
+            # on the wire, 2026-09-16), so they are only the floor.
+            for alias, var in (
+                ("opus", "ANTHROPIC_DEFAULT_OPUS_MODEL"),
+                ("sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
+                ("haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+                ("fable", "ANTHROPIC_DEFAULT_FABLE_MODEL"),
+            ):
+                pinned = executors.get("classes", {}).get(alias, "")
+                if pinned:
+                    env[var] = str(pinned)
+        # LiteLLM backend: ANTHROPIC_API_KEY is intentionally not set. Claude Code
+        # reads its API key from the macOS Keychain ("Claude Code" service) and
+        # sends it as x-api-key, ignoring any value in the env block. The gateway
+        # master key must equal that Keychain key (handled in the credentials step).
 
     return {
         "env": env,
@@ -417,11 +453,12 @@ def configure(ctx: dict) -> list[Path]:
     gateway_url = ctx.get("gateway_url", "http://127.0.0.1:4000")
     ak_path = str(_shared.stable_kit_root(repo_root()))
     mode = s.mode
+    backend = getattr(s, "backend", "litellm")
 
     written: list[Path] = []
 
     # 1. settings.json (env vars + MCP servers)
-    settings_patch = _build_settings_patch(executors, master_key, gateway_url, ak_path, mode)
+    settings_patch = _build_settings_patch(executors, master_key, gateway_url, ak_path, mode, backend)
 
     existing: dict = {}
     if SETTINGS_PATH.is_file():

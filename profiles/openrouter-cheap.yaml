@@ -1,0 +1,82 @@
+name: openrouter-cheap
+mode: multi-model
+backend: openrouter
+description: |
+  Maximum savings. Everything runs on budget models except review and security,
+  which stay on Claude Sonnet — a cheap reviewer that misses a flaw costs more than
+  it saves, so this profile economises everywhere else instead.
+
+  Expect roughly an order of magnitude less per run than all-Claude, with weaker
+  instruction-following on long agentic steps. Suitable for low-stakes or
+  experimental work, not for code you are about to ship.
+
+  Model IDs round-tripped against OpenRouter on 2026-09-16; prices are $/1M in-out.
+
+classes:
+  opus:   anthropic/claude-sonnet-5
+  sonnet: deepseek/deepseek-v4-pro
+  haiku:  google/gemini-3.5-flash-lite
+  fable:  anthropic/claude-sonnet-5
+
+defaults:
+  # More retries than the balanced profile: budget endpoints are busier, and a
+  # retry is far cheaper here than a tier upgrade would be.
+  max_retries: 3
+  timeout_seconds: 600
+
+by_role:
+  # Cheapest tier — bulk reading and mechanical checks
+  explore:
+    provider: openrouter
+    model: google/gemini-3.5-flash-lite                 # 0.30 / 2.50
+    fallbacks: [deepseek/deepseek-v4-flash]             # downgrade only
+  doc-writer:
+    provider: openrouter
+    model: google/gemini-3.5-flash-lite
+    fallbacks: [deepseek/deepseek-v4-flash]
+  verifier:
+    provider: openrouter
+    model: google/gemini-3.5-flash-lite
+    fallbacks: []
+  package-upgrade:
+    provider: openrouter
+    model: deepseek/deepseek-v4-flash                   # 0.087 / 0.174
+    fallbacks: []
+
+  # Mid tier — reasoning on a budget
+  generalPurpose:
+    provider: openrouter
+    model: google/gemini-3.7-flash                      # 0.75 / 3.75
+    fallbacks: [google/gemini-3.5-flash-lite]
+  tester:
+    provider: openrouter
+    model: google/gemini-3.7-flash
+    fallbacks: [google/gemini-3.5-flash-lite]
+  planner:
+    provider: openrouter
+    model: deepseek/deepseek-v4-pro                     # 1.60 / 3.20
+    fallbacks: [google/gemini-3.7-flash]
+  software-architect:
+    provider: openrouter
+    model: deepseek/deepseek-v4-pro
+    fallbacks: [google/gemini-3.7-flash]
+  implementer:
+    provider: openrouter
+    model: deepseek/deepseek-v4-pro
+    fallbacks: [moonshotai/kimi-k2.7-code]              # 0.71 / 3.21
+
+  # Not economised: a missed bug or vulnerability outweighs the saving
+  code-reviewer:
+    provider: openrouter
+    model: anthropic/claude-sonnet-5                    # 2 / 10
+    fallbacks: [deepseek/deepseek-v4-pro]
+  security-auditor:
+    provider: openrouter
+    model: anthropic/claude-sonnet-5
+    fallbacks: [deepseek/deepseek-v4-pro]
+
+  # Domain specialists
+  crashlytics-fixer:           { provider: openrouter, model: deepseek/deepseek-v4-pro }
+  sentry-fixer:                { provider: openrouter, model: deepseek/deepseek-v4-pro }
+  terraform-maintainer:        { provider: openrouter, model: deepseek/deepseek-v4-pro }
+  crossplane-upjet-maintainer: { provider: openrouter, model: deepseek/deepseek-v4-pro }

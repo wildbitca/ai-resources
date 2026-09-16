@@ -10,7 +10,6 @@ defaults:
   timeout_seconds: 600
 
 by_role:
-  research:           { provider: anthropic, model: claude-sonnet-4-6 }
   explore:            { provider: anthropic, model: claude-sonnet-4-6 }
   generalPurpose:     { provider: anthropic, model: claude-sonnet-4-6 }
   doc-writer:         { provider: anthropic, model: claude-sonnet-4-6 }

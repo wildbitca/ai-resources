@@ -69,9 +69,13 @@ def run(args: argparse.Namespace) -> int:
         return rc
 
     if s.mode == "multi-model":
-        rc = _step3_litellm(s)
-        if rc != 0:
-            return rc
+        if s.backend == "litellm":
+            rc = _step3_litellm(s)
+            if rc != 0:
+                return rc
+        else:
+            ui.section(3, TOTAL_STEPS, "Gateway")
+            ui.info("Skipped — OpenRouter is hosted; there is nothing to install or supervise.")
 
         rc = _step4_providers(s)
         if rc != 0:
@@ -99,13 +103,14 @@ def run(args: argparse.Namespace) -> int:
     if rc != 0:
         return rc
 
-    if s.mode == "multi-model":
+    if s.mode == "multi-model" and s.backend == "litellm":
         rc = _step8_lifecycle(s)
         if rc != 0:
             return rc
     else:
         ui.section(8, TOTAL_STEPS, "Lifecycle")
-        ui.info("Skipped (single-model mode).")
+        ui.info("Skipped (no local gateway to supervise)." if s.mode == "multi-model"
+                else "Skipped (single-model mode).")
 
     rc = _step9_apply(s, dry_run=dry_run)
     if rc != 0:
@@ -171,14 +176,35 @@ def _step1_mode(s: state.SetupState) -> int:
     choices = [
         ui.Choice("single-model — Each cockpit talks to its own provider; Claude subagents pick "
                   "Claude models by role", value="single-model", description=" "),
-        ui.Choice("multi-model — Per-role routing to several providers via a LiteLLM gateway",
-                  value="multi-model", description=" "),
+        ui.Choice("multi-model via OpenRouter — Per-role routing, one key, nothing to install",
+                  value="multi-model:openrouter", description=" "),
+        ui.Choice("multi-model via LiteLLM — Per-role routing through a gateway this kit installs "
+                  "and supervises (adds local models and per-key budgets)",
+                  value="multi-model:litellm", description=" "),
     ]
-    default = s.mode or "single-model"
-    s.mode = ui.select("Choose mode:", choices, default=default)
-    if s.mode is None:
+    default = ("single-model" if s.mode == "single-model"
+               else f"multi-model:{getattr(s, 'backend', 'litellm')}")
+    picked = ui.select("Choose mode:", choices, default=default)
+    if picked is None:
         ui.warn("Setup cancelled.")
         return 130
+
+    if picked == "single-model":
+        s.mode = "single-model"
+    else:
+        s.mode = "multi-model"
+        s.backend = picked.split(":", 1)[1]
+
+    if s.mode == "multi-model":
+        # Stated up front because it is irreversible in practice and surprises
+        # people: a gateway credential replaces the claude.ai login, so the
+        # subscription stops applying and every token is billed to the gateway.
+        ui.warn("A gateway credential replaces your claude.ai subscription for Claude Code: "
+                "usage is billed per token to the gateway, not to your plan.")
+        if s.backend == "openrouter":
+            ui.detail("Claude Code's own cost figures (/usage, statusline, --max-budget-usd) are "
+                      "computed at Anthropic list price and will be wrong. Set spend limits on the "
+                      "OpenRouter key instead.")
     return 0
 
 
@@ -222,6 +248,7 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
             ui.warn(f"{aid}: {msg}")
 
     # Reset the parts of `s` that no longer apply in single-model
+    s.backend = "litellm"
     s.litellm = state.LiteLLMState()
     s.providers = {}
     s.profile = state.ProfileState(name=SINGLE_MODEL_DEFAULT_PROFILE, customized=False)
@@ -544,6 +571,17 @@ def _step3_remote(s: state.SetupState) -> int:
 def _step4_providers(s: state.SetupState) -> int:
     ui.section(4, TOTAL_STEPS, "Provider backends")
 
+    if s.backend == "openrouter":
+        # One upstream key fans out to the whole catalogue, so there is nothing
+        # to choose here: picking providers is a LiteLLM-only concern.
+        ps = s.providers.get("openrouter") or state.ProviderState()
+        ps.enabled = True
+        ps.auth_method = "api_key"
+        ps.env_var = providers.get("openrouter").primary_env_var
+        s.providers = {"openrouter": ps}
+        ui.info("OpenRouter reaches every provider with one key — no per-provider selection needed.")
+        return 0
+
     enabled_now = {p for p, ps in s.providers.items() if ps.enabled}
     choices = [
         ui.Choice(f"{providers.get(pid).name}  — {providers.get(pid).description}",
@@ -589,6 +627,31 @@ def _step5_credentials(s: state.SetupState) -> int:
     ui.info("Press Enter to keep an existing value")
 
     updates: dict[str, str] = {}
+
+    if s.backend == "openrouter":
+        env_var = "OPENROUTER_API_KEY"
+        existing = credentials.get_key(env_var)
+        if existing:
+            ui.detail(f"{env_var}: {credentials.mask(existing)}  (saved)")
+            if ui.confirm(f"Update {env_var}?", default=False):
+                new_val = ui.password(env_var)
+                if new_val:
+                    updates[env_var] = new_val
+        else:
+            new_val = ui.password(env_var)
+            if not new_val:
+                ui.error(f"{env_var} is required for the OpenRouter backend.")
+                return 1
+            updates[env_var] = new_val
+        ui.detail("Set a spend limit on this key at https://openrouter.ai/settings/keys — "
+                  "it is the only budget ceiling that applies in this mode.")
+        if updates:
+            _, newly_added = credentials.update_env_tracked(updates)
+            for k in newly_added:
+                if k not in s.tracking.env_keys_added:
+                    s.tracking.env_keys_added.append(k)
+            ui.ok(f"Credentials written to {state.env_path()}")
+        return 0
 
     # Master key for LiteLLM.
     # Claude Code v2+ reads its API key from the macOS Keychain ("Claude Code"
@@ -659,7 +722,7 @@ def _step5_credentials(s: state.SetupState) -> int:
 def _step6_profile(s: state.SetupState) -> int:
     ui.section(6, TOTAL_STEPS, "Per-role model assignment")
 
-    available = profiles.list_profiles(mode="multi-model")
+    available = profiles.list_profiles(mode="multi-model", backend=s.backend)
     if not available:
         ui.error(f"No profiles found at {profiles.profiles_dir()}")
         return 1
@@ -693,7 +756,7 @@ def _step6_profile(s: state.SetupState) -> int:
     s.profile.name = chosen
 
     # Show proposed mapping
-    executors = profiles.to_executors(base)
+    executors = profiles.to_executors(base, s.backend)
     rows = profiles.role_table(executors)
     ui.console().print()
     ui.role_table(rows, title=f"Profile: {chosen}")
@@ -735,7 +798,7 @@ def _step6_profile(s: state.SetupState) -> int:
     s.profile.customizations = customizations
     # Show updated table
     merged = profiles.merge_customizations(base, customizations)
-    executors = profiles.to_executors(merged)
+    executors = profiles.to_executors(merged, s.backend)
     ui.role_table(profiles.role_table(executors), title="Final mapping")
     return 0
 
@@ -849,14 +912,14 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
             customizations = {k: v for k, v in s.profile.customizations.items()
                               if k in profiles.KNOWN_ROLES}
             base = profiles.merge_customizations(base, customizations)
-        executors_doc = profiles.to_executors(base)
+        executors_doc = profiles.to_executors(base, s.backend)
 
         # Write executors.yaml
         profiles.write_executors(executors_doc, state.executors_path())
         ui.ok(str(state.executors_path()))
 
         # Write LiteLLM configs (litellm.yaml + docker-compose.yaml)
-        if s.litellm.deployment == "local":
+        if s.backend == "litellm" and s.litellm.deployment == "local":
             try:
                 paths = litellm.write_configs(executors_doc, {k: asdict(v) for k, v in s.providers.items()})
                 for label, p in paths.items():
@@ -872,12 +935,17 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     else:
         executors_doc = _single_model_executors(s)
 
-    # Master key from .env
-    master_key = credentials.get_key("LITELLM_MASTER_KEY")
-    gateway_url = (
-        s.litellm.remote.url if s.litellm.deployment == "remote"
-        else f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}"
-    )
+    # Gateway endpoint + credential, per backend.
+    if s.mode == "multi-model" and s.backend == "openrouter":
+        gw = profiles.GATEWAYS["openrouter"]
+        master_key = credentials.get_key(gw["api_key_env"])
+        gateway_url = gw["url"]
+    else:
+        master_key = credentials.get_key("LITELLM_MASTER_KEY")
+        gateway_url = (
+            s.litellm.remote.url if s.litellm.deployment == "remote"
+            else f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}"
+        )
 
     # Apply per-cockpit configurators
     targets = s.profile.customizations.get("__targets__", {}).get("selected", [])
@@ -911,7 +979,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     state.save(s)
 
     # Local install path: write wrapper + lifecycle, start service
-    if s.mode == "multi-model" and s.litellm.deployment == "local":
+    if s.mode == "multi-model" and s.backend == "litellm" and s.litellm.deployment == "local":
         ui.console().print()
 
         if s.litellm.local.runtime in ("pipx", "pip-venv"):
@@ -983,7 +1051,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     if s.mode == "multi-model":
         ui.console().print()
         ui.info("Running smoke tests (~$0.001 of tokens)...")
-        results = smoke.run_all(executors_doc, gateway_url, master_key)
+        results = smoke.run_all(executors_doc, gateway_url, master_key, s.backend)
 
         # Persist full results so users can investigate truncated errors
         smoke_log = litellm.log_dir() / "smoke.log"
@@ -1045,17 +1113,22 @@ def _step9_dry_run(s: state.SetupState) -> int:
             customizations = {k: v for k, v in s.profile.customizations.items()
                               if k in profiles.KNOWN_ROLES}
             base = profiles.merge_customizations(base, customizations)
-        executors_doc = profiles.to_executors(base)
+        executors_doc = profiles.to_executors(base, s.backend)
     else:
         executors_doc = _single_model_executors(s)
 
-    master_key = credentials.get_key("LITELLM_MASTER_KEY") or ""
     bind = s.litellm.local.bind_address or "127.0.0.1"
     port = s.litellm.local.port or 4000
-    gateway_url = (
-        s.litellm.remote.url if s.litellm.deployment == "remote"
-        else f"http://{bind}:{port}"
-    )
+    if s.mode == "multi-model" and s.backend == "openrouter":
+        gw = profiles.GATEWAYS["openrouter"]
+        master_key = credentials.get_key(gw["api_key_env"]) or ""
+        gateway_url = gw["url"]
+    else:
+        master_key = credentials.get_key("LITELLM_MASTER_KEY") or ""
+        gateway_url = (
+            s.litellm.remote.url if s.litellm.deployment == "remote"
+            else f"http://{bind}:{port}"
+        )
     ak_path = str(_repo_root())
     mode = s.mode
 
@@ -1070,7 +1143,8 @@ def _step9_dry_run(s: state.SetupState) -> int:
 
     try:
         # ── litellm.yaml ──────────────────────────────────────────────────────
-        if s.mode == "multi-model" and s.litellm.deployment == "local":
+        if (s.mode == "multi-model" and s.backend == "litellm"
+                and s.litellm.deployment == "local"):
             try:
                 yaml_content = litellm._render_litellm_yaml(
                     executors_doc, dict(s.providers), "LITELLM_MASTER_KEY",
@@ -1084,7 +1158,8 @@ def _step9_dry_run(s: state.SetupState) -> int:
 
         # ── docker-compose.yaml ───────────────────────────────────────────────
         runtime = s.litellm.local.runtime
-        if (s.mode == "multi-model" and s.litellm.deployment == "local"
+        if (s.mode == "multi-model" and s.backend == "litellm"
+                and s.litellm.deployment == "local"
                 and runtime in ("docker", "podman") and tmp_litellm_yaml.is_file()):
             try:
                 import yaml as _yaml
@@ -1213,7 +1288,8 @@ def _step9_dry_run(s: state.SetupState) -> int:
                         ui.error("Gateway did not become healthy within 60 s")
                         ui.detail(f"  {runtime} logs ai-resources-litellm-dryrun")
 
-        elif s.mode == "multi-model" and s.litellm.deployment == "remote":
+        elif (s.mode == "multi-model" and s.backend == "litellm"
+                and s.litellm.deployment == "remote"):
             with ui.spinner(f"Validating remote {s.litellm.remote.url}"):
                 ok, msg = litellm.validate_remote(s.litellm.remote.url, master_key)
             if ok:
@@ -1225,7 +1301,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
         if s.mode == "multi-model":
             console.print()
             ui.info("Running smoke tests…")
-            results = smoke.run_all(executors_doc, gateway_url, master_key)
+            results = smoke.run_all(executors_doc, gateway_url, master_key, s.backend)
             for label, ok, msg in results:
                 if ok:
                     ui.ok(label)
@@ -1265,14 +1341,24 @@ def _print_completion(s: state.SetupState) -> None:
             if _claude_cockpit.is_logged_in_via_oauth():
                 ui.console().print()
                 ui.info("Claude Code is signed in via OAuth (claude.ai subscription).")
-                ui.detail("The gateway runs with allow_requests_on_db_unavailable=true,")
-                ui.detail("so your current setup works as-is.")
-                ui.detail("")
-                ui.detail("To switch to API key mode (cancel subscription):")
-                ui.detail("  1. claude /logout")
-                ui.detail("  2. Open a new terminal")
-                ui.detail("  3. ai-resources doctor")
+                if s.backend == "openrouter":
+                    # Not optional here: OpenRouter rejects a request that carries
+                    # both a bearer token and an OAuth login.
+                    ui.warn("Log out before using Claude Code, or every request fails:")
+                    ui.detail("  1. claude /logout")
+                    ui.detail("  2. Open a new terminal")
+                    ui.detail("  3. ai-resources doctor")
+                else:
+                    ui.detail("The gateway runs with allow_requests_on_db_unavailable=true,")
+                    ui.detail("so your current setup works as-is.")
+                    ui.detail("")
+                    ui.detail("To switch to API key mode (cancel subscription):")
+                    ui.detail("  1. claude /logout")
+                    ui.detail("  2. Open a new terminal")
+                    ui.detail("  3. ai-resources doctor")
 
+    gateway_line = ("" if s.mode == "multi-model" and s.backend == "openrouter"
+                    else "  ai-resources daemon logs     LiteLLM logs\n")
     ui.console().print()
     ui.banner(
         "✓ Setup complete",
@@ -1280,6 +1366,6 @@ def _print_completion(s: state.SetupState) -> None:
                  "  claude                       open Claude Code as cockpit\n"
                  "  ai-resources doctor          full health check\n"
                  "  ai-resources executors       show role → model map\n"
-                 "  ai-resources daemon logs     LiteLLM logs\n"
+                 f"{gateway_line}"
                  "  ai-resources audit           cost report",
     )

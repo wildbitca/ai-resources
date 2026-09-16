@@ -52,20 +52,33 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             else:
                 ui.warn(f"{prov.name}: {prov.primary_env_var} missing")
                 issues += 1
-        if env.get("LITELLM_MASTER_KEY"):
-            ui.ok("LITELLM_MASTER_KEY set")
+        gw_key = ("OPENROUTER_API_KEY" if getattr(s, "backend", "litellm") == "openrouter"
+                  else "LITELLM_MASTER_KEY")
+        if env.get(gw_key):
+            ui.ok(f"{gw_key} set")
         else:
-            ui.warn("LITELLM_MASTER_KEY missing — gateway auth will fail")
+            ui.warn(f"{gw_key} missing — gateway auth will fail")
             issues += 1
     else:
         ui.warn(f".env not found at {env_path}")
         if s.mode == "multi-model":
             issues += 1
 
-    # 3. LiteLLM gateway
-    ui.section(3, 6, "LiteLLM gateway")
+    # 3. Gateway
+    ui.section(3, 6, "Gateway")
     if s.mode != "multi-model":
         ui.detail("Skipped (single-model mode)")
+    elif getattr(s, "backend", "litellm") == "openrouter":
+        # Hosted: nothing is installed or supervised here, so the only local
+        # precondition is the credential. Reachability is proven by the
+        # round-trip in section 6 rather than by a health endpoint.
+        if credentials.get_key("OPENROUTER_API_KEY"):
+            ui.ok("OpenRouter (hosted) — credential present")
+            ui.detail("Nothing to install or supervise; `ai-resources daemon` does not apply.")
+            ui.detail("Spend limits live on the key: https://openrouter.ai/settings/keys")
+        else:
+            ui.error("OPENROUTER_API_KEY missing — every request will fail")
+            issues += 1
     elif s.litellm.deployment == "local":
         mode = s.litellm.local.runtime
         if mode in ("pipx", "pip-venv"):
@@ -128,8 +141,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             from .setup.cockpits import claude as _claude_cockpit
             if _claude_cockpit.is_logged_in_via_oauth():
                 ui.info("Claude Code is signed in via OAuth (claude.ai subscription).")
-                ui.detail("Gateway uses allow_requests_on_db_unavailable=true — works as-is.")
-                ui.detail("To switch to API key mode: claude /logout → new terminal → ai-resources doctor")
+                if getattr(s, "backend", "litellm") == "openrouter":
+                    # OpenRouter authenticates with a bearer token; a leftover OAuth
+                    # login makes Claude Code send both credentials and the request
+                    # is rejected. Unlike the LiteLLM path, this does not work as-is.
+                    ui.warn("OpenRouter rejects requests that also carry an OAuth login.")
+                    ui.detail("Run: claude /logout → new terminal → ai-resources doctor")
+                    issues += 1
+                else:
+                    ui.detail("Gateway uses allow_requests_on_db_unavailable=true — works as-is.")
+                    ui.detail("To switch to API key mode: claude /logout → new terminal → ai-resources doctor")
 
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")
@@ -147,19 +168,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if not args.skip_smoke and s.mode == "multi-model":
         try:
             from .setup import profiles
-            executors = profiles.to_executors(profiles.load_profile(s.profile.name))
+            backend = getattr(s, "backend", "litellm")
+            executors = profiles.to_executors(profiles.load_profile(s.profile.name), backend)
             if s.profile.customized:
                 executors = profiles.to_executors(
                     profiles.merge_customizations(
                         profiles.load_profile(s.profile.name),
                         {k: v for k, v in s.profile.customizations.items()
                          if k in profiles.KNOWN_ROLES},
-                    )
+                    ),
+                    backend,
                 )
-            gateway = (s.litellm.remote.url if s.litellm.deployment == "remote"
-                       else f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}")
-            master = credentials.get_key("LITELLM_MASTER_KEY")
-            results = smoke.run_all(executors, gateway, master)
+            if backend == "openrouter":
+                gw = profiles.GATEWAYS["openrouter"]
+                gateway, master = gw["url"], credentials.get_key(gw["api_key_env"])
+            else:
+                gateway = (s.litellm.remote.url if s.litellm.deployment == "remote"
+                           else f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}")
+                master = credentials.get_key("LITELLM_MASTER_KEY")
+            results = smoke.run_all(executors, gateway, master, backend)
             for label, ok, msg in results:
                 if ok:
                     ui.ok(label)

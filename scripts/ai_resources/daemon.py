@@ -6,9 +6,25 @@ import argparse
 from .setup import litellm, ui, state
 
 
+def _hosted_gateway(s: state.SetupState) -> bool:
+    """True when routing goes through a hosted gateway with no local service.
+
+    Every command here supervises the LiteLLM process. Under a hosted backend
+    there is no process, and the generic "not configured, run setup" message
+    would be misleading — setup did run; it just installed nothing to manage.
+    """
+    if getattr(s, "backend", "litellm") != "openrouter":
+        return False
+    ui.info("Routing goes through OpenRouter (hosted) — there is no local service to manage.")
+    ui.detail("Check it with `ai-resources doctor` instead.")
+    return True
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     ui.require_deps()
     s = state.load()
+    if _hosted_gateway(s):
+        return 0
     if s.litellm.deployment == "remote":
         ok, msg = litellm.validate_remote(s.litellm.remote.url, "")
         if ok:
@@ -39,6 +55,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 def cmd_start(args: argparse.Namespace) -> int:
     ui.require_deps()
     s = state.load()
+    if _hosted_gateway(s):
+        return 0
     if s.litellm.deployment != "local":
         ui.warn("LiteLLM is not configured for local deployment.")
         return 1
@@ -56,6 +74,8 @@ def cmd_start(args: argparse.Namespace) -> int:
 def cmd_stop(args: argparse.Namespace) -> int:
     ui.require_deps()
     s = state.load()
+    if _hosted_gateway(s):
+        return 0
     if s.litellm.deployment != "local":
         ui.warn("Nothing to stop (not local deployment).")
         return 0
@@ -74,6 +94,8 @@ def cmd_restart(args: argparse.Namespace) -> int:
 
 def cmd_logs(args: argparse.Namespace) -> int:
     ui.require_deps()
+    if _hosted_gateway(state.load()):
+        return 0
     out = litellm.service_logs(tail=args.tail)
     if not out:
         ui.warn("No logs available (service may be down)")
@@ -84,6 +106,8 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 def cmd_update(args: argparse.Namespace) -> int:
     ui.require_deps()
+    if _hosted_gateway(state.load()):
+        return 0
     with ui.spinner("Updating LiteLLM"):
         ok, msg = litellm.update_litellm()
     if not ok:
