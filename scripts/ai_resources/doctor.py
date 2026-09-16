@@ -52,13 +52,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             else:
                 ui.warn(f"{prov.name}: {prov.primary_env_var} missing")
                 issues += 1
-        gw_key = ("OPENROUTER_API_KEY" if getattr(s, "backend", "litellm") == "openrouter"
-                  else "LITELLM_MASTER_KEY")
-        if env.get(gw_key):
-            ui.ok(f"{gw_key} set")
-        else:
-            ui.warn(f"{gw_key} missing — gateway auth will fail")
-            issues += 1
+        # Under the openrouter backend the gateway credential IS the provider
+        # credential, so the provider loop above has already reported it.
+        # Repeating the check here printed the line twice and, when the key was
+        # missing, counted one problem as two issues.
+        if getattr(s, "backend", "litellm") != "openrouter":
+            if env.get("LITELLM_MASTER_KEY"):
+                ui.ok("LITELLM_MASTER_KEY set")
+            else:
+                ui.warn("LITELLM_MASTER_KEY missing — gateway auth will fail")
+                issues += 1
     else:
         ui.warn(f".env not found at {env_path}")
         if s.mode == "multi-model":
@@ -77,8 +80,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ui.detail("Nothing to install or supervise; `ai-resources daemon` does not apply.")
             ui.detail("Spend limits live on the key: https://openrouter.ai/settings/keys")
         else:
-            ui.error("OPENROUTER_API_KEY missing — every request will fail")
-            issues += 1
+            # Section 2 already counted the missing credential. Repeating the
+            # count here would report one root cause as two problems, so state
+            # the consequence and leave the tally alone.
+            ui.warn("No credential — every request will fail (see Credentials above)")
     elif s.litellm.deployment == "local":
         mode = s.litellm.local.runtime
         if mode in ("pipx", "pip-venv"):
