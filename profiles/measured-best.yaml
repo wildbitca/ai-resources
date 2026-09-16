@@ -1,0 +1,72 @@
+name: measured-best
+mode: multi-model
+description: |
+  Recommended. The assignment that measured best across three instrumented
+  workflow runs on 2026-09-16, rather than a guess at what each role needs.
+
+  Gateway-agnostic on purpose: every model is named <vendor>/<model>, which says
+  WHICH model, not HOW to reach it. The gateway is chosen during setup —
+  OpenRouter passes these IDs through unchanged, LiteLLM registers them as
+  aliases and resolves each one to a direct provider or through OpenRouter.
+  Switching gateway does not change which model any role, persona or team uses.
+
+  Prices are $/1M input-output, verified against the live catalogue that day.
+
+# Alias -> concrete model for the MAIN conversation, which the kit does not
+# otherwise control. Measured note: the orchestrator is the single largest cost
+# in a workflow run, and Haiku 4.5 directing cost 77% less than Opus 5 while
+# finishing in 12 turns instead of 37 — pick it with `/model haiku`.
+classes:
+  opus:   anthropic/claude-opus-5        # 5 / 25
+  sonnet: anthropic/claude-sonnet-5      # 2 / 10
+  haiku:  anthropic/claude-haiku-4.5     # 1 / 5
+  fable:  anthropic/claude-fable-5.1     # 10 / 50
+
+defaults:
+  fallbacks: [anthropic/claude-haiku-4.5]
+  max_retries: 2
+  timeout_seconds: 600
+
+by_role:
+  # Reading-heavy and mechanical: context in, summary out. Cheapest tier that
+  # still supports tool use.
+  explore:            { provider: google,    model: google/gemini-3.5-flash-lite }   # 0.30 / 2.50
+  doc-writer:         { provider: google,    model: google/gemini-3.7-flash }        # 0.75 / 3.75
+  tester:             { provider: google,    model: google/gemini-3.7-flash }
+  generalPurpose:     { provider: google,    model: google/gemini-3.7-flash }
+  verifier:           { provider: anthropic, model: anthropic/claude-haiku-4.5 }
+  package-upgrade:    { provider: anthropic, model: anthropic/claude-haiku-4.5 }
+
+  # Judgement. The planner sets the acceptance criteria everything else is
+  # measured against, so it keeps the strongest model.
+  planner:            { provider: anthropic, model: anthropic/claude-opus-5 }
+
+  # Best value measured: produced a correct layered design for $0.027, the
+  # cheapest useful result of the whole set.
+  software-architect: { provider: deepseek,  model: deepseek/deepseek-v4-pro }       # 1.60 / 3.20
+
+  # Wrote the code that passed every adversarial case in all three runs.
+  implementer:        { provider: anthropic, model: anthropic/claude-sonnet-5 }
+
+  # Deliberately NOT economised. Kimi K2.7 costs $0.039 against Sonnet's $0.105
+  # and reviewed the same change, but missed a latent unicode word-fusion bug
+  # that a different run caught. Saving $0.07 on the one role whose entire job
+  # is catching defects is the saving that does not pay.
+  code-reviewer:      { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  security-auditor:   { provider: anthropic, model: anthropic/claude-sonnet-5 }
+
+  # Domain specialists: code-heavy, same reasoning as the implementer.
+  crashlytics-fixer:           { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  sentry-fixer:                { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  terraform-maintainer:        { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  crossplane-upjet-maintainer: { provider: anthropic, model: anthropic/claude-sonnet-5 }
+
+# Per-persona overrides, keyed by persona name. Empty so personas inherit their
+# base role and adding the mechanism re-routes nobody. Fill it in when one
+# domain's work genuinely differs — an infrastructure review and a CSS review
+# have no reason to cost the same:
+#
+# by_persona:
+#   code-reviewer-devops:  { provider: anthropic, model: anthropic/claude-opus-5 }
+#   code-reviewer-angular: { provider: google,    model: google/gemini-3.7-flash }
+by_persona: {}

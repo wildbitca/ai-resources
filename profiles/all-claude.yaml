@@ -5,23 +5,23 @@ description: |
   Highest reliability, highest cost.
 
 defaults:
-  fallbacks: [claude-haiku-4-5]
+  fallbacks: [anthropic/claude-haiku-4.5]
   max_retries: 1
   timeout_seconds: 600
 
 by_role:
-  explore:            { provider: anthropic, model: claude-sonnet-5 }
-  generalPurpose:     { provider: anthropic, model: claude-sonnet-5 }
-  doc-writer:         { provider: anthropic, model: claude-sonnet-5 }
-  planner:            { provider: anthropic, model: claude-sonnet-5 }
-  software-architect: { provider: anthropic, model: claude-opus-5, fallbacks: [claude-sonnet-5] }
-  implementer:        { provider: anthropic, model: claude-sonnet-5 }
-  code-reviewer:      { provider: anthropic, model: claude-sonnet-5 }
-  security-auditor:   { provider: anthropic, model: claude-sonnet-5 }
-  tester:             { provider: anthropic, model: claude-haiku-4-5 }
-  verifier:           { provider: anthropic, model: claude-haiku-4-5 }
-  package-upgrade:             { provider: anthropic, model: claude-sonnet-5 }
-  crashlytics-fixer:           { provider: anthropic, model: claude-sonnet-5 }
-  sentry-fixer:                { provider: anthropic, model: claude-sonnet-5 }
-  terraform-maintainer:        { provider: anthropic, model: claude-sonnet-5 }
-  crossplane-upjet-maintainer: { provider: anthropic, model: claude-sonnet-5 }
+  explore:            { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  generalPurpose:     { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  doc-writer:         { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  planner:            { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  software-architect: { provider: anthropic, model: anthropic/claude-opus-5, fallbacks: [anthropic/claude-sonnet-5] }
+  implementer:        { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  code-reviewer:      { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  security-auditor:   { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  tester:             { provider: anthropic, model: anthropic/claude-haiku-4.5 }
+  verifier:           { provider: anthropic, model: anthropic/claude-haiku-4.5 }
+  package-upgrade:             { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  crashlytics-fixer:           { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  sentry-fixer:                { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  terraform-maintainer:        { provider: anthropic, model: anthropic/claude-sonnet-5 }
+  crossplane-upjet-maintainer: { provider: anthropic, model: anthropic/claude-sonnet-5 }

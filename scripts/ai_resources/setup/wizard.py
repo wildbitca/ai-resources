@@ -24,12 +24,29 @@ from .. import __version__, repo_root
 
 TOTAL_STEPS = 9
 SINGLE_MODEL_DEFAULT_PROFILE = "claude-native"
+# The assignment that measured best across three instrumented workflow runs on
+# 2026-09-16, and gateway-agnostic, so it is the recommendation for either one.
+RECOMMENDED_PROFILE = "measured-best"
 
 
 def run(args: argparse.Namespace) -> int:
     """Main wizard entry point."""
     ui.require_deps()
     dry_run = getattr(args, "dry_run", False)
+
+    # Both flags were declared in the CLI and never read, so they accepted input
+    # and changed nothing. Non-interactive makes every prompt answer with its
+    # saved value; --profile seeds the profile step's default, which that mode
+    # then returns. Without a terminal and without the flag the wizard would
+    # block forever on the first prompt, so say so instead of hanging.
+    if getattr(args, "non_interactive", False):
+        ui.set_non_interactive(True)
+    elif not ui.stdin_is_a_terminal():
+        ui.error("No terminal to prompt on. Re-run with --non-interactive to use "
+                 "saved answers, or from an interactive shell.")
+        return 1
+    if getattr(args, "profile", ""):
+        s.profile.name = args.profile
     ui.banner(
         "AI Resources Kit — Setup Wizard",
         subtitle="Multi-model orchestration via LiteLLM gateway",
@@ -752,6 +769,8 @@ def _step6_profile(s: state.SetupState) -> int:
         except (FileNotFoundError, RuntimeError):
             desc = ""
         label = f"{name}"
+        if name == RECOMMENDED_PROFILE:
+            label += "  (recommended)"
         if desc:
             label += f"  — {desc}"
         choices.append(ui.Choice(label, value=name))
@@ -761,8 +780,8 @@ def _step6_profile(s: state.SetupState) -> int:
     # backend: a LiteLLM profile is not offered under openrouter, nor the reverse.
     # A hardcoded name here crashed the wizard for anyone whose saved profile
     # belonged to the other backend.
-    preferred = {"openrouter": "openrouter-balanced",
-                 "litellm": "quality-first"}.get(s.backend, "")
+    # Gateway-agnostic, so the same recommendation holds for either backend.
+    preferred = RECOMMENDED_PROFILE
     if s.profile.name in available:
         default = s.profile.name
     elif preferred in available:

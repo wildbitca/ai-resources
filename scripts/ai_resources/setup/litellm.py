@@ -155,6 +155,13 @@ def _upstream_params(model_name: str, provider: str, role: str) -> dict:
         }
     if vendor in _VENDOR_UPSTREAM:
         prefix, env_var = _VENDOR_UPSTREAM[vendor]
+        # Anthropic spells its own versions with dashes (claude-haiku-4-5) while
+        # the namespaced catalogue uses dots (anthropic/claude-haiku-4.5). The
+        # canonical ID follows the catalogue, so reaching Anthropic directly
+        # needs that one substitution — without it the direct route 404s on a
+        # model name that only exists on the gateway.
+        if vendor == "anthropic":
+            bare = bare.replace(".", "-")
         return {"model": f"{prefix}/{bare}", "api_key": credentials.secret_ref(env_var)}
 
     raise RuntimeError(
