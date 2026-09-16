@@ -20,13 +20,22 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install pyyaml
+        # httpx too: the LiteLLM module imports it, and the gateway-rendering
+        # tests exercise that module.
+        run: pip install pyyaml pytest httpx
 
       - name: Validate skills, workflows, roles, scripts and references
         run: python3 scripts/validate_kit.py
 
       - name: Compile the CLI and hooks
         run: python3 -m compileall -q scripts hooks
+
+      # validate_kit checks structure and compileall checks syntax; neither
+      # exercises behaviour. These cover the gateway translation, profile
+      # selection, non-interactive prompts and subagent generation — the paths
+      # where silent breakage would otherwise reach a release unnoticed.
+      - name: Run unit tests
+        run: python3 -m pytest tests/ -q
 
       # The plugin and marketplace manifests are checked by validate_kit.py above: it verifies
       # every declared path exists and that the agents list matches agents/roles/. Running

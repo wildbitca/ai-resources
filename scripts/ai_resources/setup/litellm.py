@@ -21,11 +21,17 @@ import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 
+# One try per dependency: grouped, a missing httpx also set yaml to None, so
+# rendering litellm.yaml failed with "PyYAML required" on a machine that had
+# PyYAML installed. Optional dependencies must not take each other down.
 try:
     import yaml
-    import httpx  # type: ignore
 except ImportError:
     yaml = None  # type: ignore
+
+try:
+    import httpx  # type: ignore
+except ImportError:
     httpx = None  # type: ignore
 
 from . import state, credentials, ui
