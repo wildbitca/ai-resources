@@ -28,6 +28,23 @@ SINGLE_MODEL_DEFAULT_PROFILE = "claude-native"
 # 2026-09-16, and gateway-agnostic, so it is the recommendation for either one.
 RECOMMENDED_PROFILE = "measured-best"
 
+# Set when the profile was named on the command line, which is not the same as
+# a profile carried over in the saved state. A saved name that no longer fits
+# the resolved mode or backend must degrade quietly — that is what keeps step 6
+# from crashing on a state written under the other backend. A name the user
+# typed must not: substituting it silently ran setup under a profile they did
+# not ask for and never mentioned it.
+_REQUESTED_PROFILE = ""
+
+
+def _reject_unavailable_requested_profile(available: list[str], context: str) -> int | None:
+    """1 if an explicitly requested profile is not offered here, else None."""
+    if _REQUESTED_PROFILE and _REQUESTED_PROFILE not in available:
+        ui.error(f"--profile {_REQUESTED_PROFILE} is not available for {context}.")
+        ui.detail(f"Available: {', '.join(available)}")
+        return 1
+    return None
+
 
 def run(args: argparse.Namespace) -> int:
     """Main wizard entry point."""
@@ -68,6 +85,8 @@ def run(args: argparse.Namespace) -> int:
     # After state.load() and after the branch that discards previous answers,
     # or the assignment is either an UnboundLocalError or silently overwritten.
     if getattr(args, "profile", ""):
+        global _REQUESTED_PROFILE
+        _REQUESTED_PROFILE = args.profile
         s.profile.name = args.profile
 
     # ------------------------------------------------------------------
@@ -765,6 +784,9 @@ def _step6_profile(s: state.SetupState) -> int:
     if not available:
         ui.error(f"No profiles found at {profiles.profiles_dir()}")
         return 1
+    rc = _reject_unavailable_requested_profile(available, f"the {s.backend} backend")
+    if rc is not None:
+        return rc
 
     # Build choices with descriptions
     choices = []
@@ -871,6 +893,9 @@ def _step6_single_model_profile(s: state.SetupState) -> int:
     if not available:
         ui.info("No single-model profiles found — kit subagents inherit the session model.")
         return 0
+    rc = _reject_unavailable_requested_profile(available, "single-model mode")
+    if rc is not None:
+        return rc
 
     choices = []
     for name in available:

@@ -100,6 +100,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   step 9's compose branch (container never started), and would have tried to exec `colima compose`,
   which is not a command — colima is driven by docker's CLI. Compose detection, hardcoded to
   `docker compose`, now probes the runtime's own.
+- **`--profile` was read and then silently overwritten.** Step 6 filters the profile list by the
+  resolved mode and backend and falls back to its own default when the saved name is not in it —
+  which is right for a name carried over in the saved state, and wrong for one the user typed:
+  naming a multi-model profile while the saved state said single-model ran the whole setup under a
+  different profile without a word. An explicitly requested profile that is not offered now stops
+  setup and lists what is available; a saved one still degrades quietly.
 
 ### Removed
 
