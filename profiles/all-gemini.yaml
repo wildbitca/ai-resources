@@ -1,27 +1,31 @@
 name: all-gemini
 description: |
-  Every role on Google Gemini 2.5 — Pro for reasoning, Flash for code/review,
+  Every role on Google Gemini 3.x — Pro for reasoning, Flash for code/review,
   Flash-Lite for verifier. Lowest cost; some loss of code-quality precision
   on tool use compared to Claude.
 
+  Note that gemini-3.1-pro-preview is the only Pro tier Google publishes right
+  now, and it is a preview: expect it to be renamed or retired on Google's
+  schedule rather than ours.
+
 defaults:
-  fallbacks: [gemini-2.5-flash]
+  fallbacks: [gemini-3.7-flash]
   max_retries: 1
   timeout_seconds: 600
 
 by_role:
-  explore:            { provider: google, model: gemini-2.5-flash }
-  generalPurpose:     { provider: google, model: gemini-2.5-pro }
-  doc-writer:         { provider: google, model: gemini-2.5-flash }
-  planner:            { provider: google, model: gemini-2.5-pro }
-  software-architect: { provider: google, model: gemini-2.5-pro }
-  implementer:        { provider: google, model: gemini-2.5-pro }
-  code-reviewer:      { provider: google, model: gemini-2.5-flash }
-  security-auditor:   { provider: google, model: gemini-2.5-pro }
-  tester:             { provider: google, model: gemini-2.5-flash }
-  verifier:           { provider: google, model: gemini-2.5-flash-lite }
-  package-upgrade:             { provider: google, model: gemini-2.5-pro }
-  crashlytics-fixer:           { provider: google, model: gemini-2.5-pro }
-  sentry-fixer:                { provider: google, model: gemini-2.5-pro }
-  terraform-maintainer:        { provider: google, model: gemini-2.5-pro }
-  crossplane-upjet-maintainer: { provider: google, model: gemini-2.5-pro }
+  explore:            { provider: google, model: gemini-3.7-flash }
+  generalPurpose:     { provider: google, model: gemini-3.1-pro-preview }
+  doc-writer:         { provider: google, model: gemini-3.7-flash }
+  planner:            { provider: google, model: gemini-3.1-pro-preview }
+  software-architect: { provider: google, model: gemini-3.1-pro-preview }
+  implementer:        { provider: google, model: gemini-3.1-pro-preview }
+  code-reviewer:      { provider: google, model: gemini-3.7-flash }
+  security-auditor:   { provider: google, model: gemini-3.1-pro-preview }
+  tester:             { provider: google, model: gemini-3.7-flash }
+  verifier:           { provider: google, model: gemini-3.5-flash-lite }
+  package-upgrade:             { provider: google, model: gemini-3.1-pro-preview }
+  crashlytics-fixer:           { provider: google, model: gemini-3.1-pro-preview }
+  sentry-fixer:                { provider: google, model: gemini-3.1-pro-preview }
+  terraform-maintainer:        { provider: google, model: gemini-3.1-pro-preview }
+  crossplane-upjet-maintainer: { provider: google, model: gemini-3.1-pro-preview }

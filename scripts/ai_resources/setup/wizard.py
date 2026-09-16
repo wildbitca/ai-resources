@@ -682,8 +682,13 @@ def _step5_credentials(s: state.SetupState) -> int:
             project = ui.text("GOOGLE_CLOUD_PROJECT (GCP project ID)", default=existing_proj)
             if project:
                 updates["GOOGLE_CLOUD_PROJECT"] = project
-            existing_loc = credentials.get_key("GOOGLE_CLOUD_LOCATION") or "us-east5"
-            location = ui.text("GOOGLE_CLOUD_LOCATION (region)", default=existing_loc)
+            # "global" rather than a specific region: regional endpoints serve
+            # Claude Sonnet 4.6 and earlier only, so a regional default silently
+            # rules out every current model. Multi-region ("us"/"eu") and
+            # regional endpoints also carry a 10% premium over global.
+            existing_loc = credentials.get_key("GOOGLE_CLOUD_LOCATION") or "global"
+            location = ui.text("GOOGLE_CLOUD_LOCATION (global, us, eu, or a region)",
+                               default=existing_loc)
             if location:
                 updates["GOOGLE_CLOUD_LOCATION"] = location
             ui.info("Run `gcloud auth application-default login` if you haven't already.")
