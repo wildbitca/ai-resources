@@ -6,8 +6,67 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-09-16 — OpenRouter as a second backend, one profile set for both
+
+### Added
+
+- **OpenRouter as a second multi-model backend alongside LiteLLM.** OpenRouter is hosted: one key,
+  nothing to install, no lifecycle to supervise. The wizard's mode step offers both backends and
+  warns up front that a gateway credential replaces the claude.ai subscription, so usage is billed
+  per token rather than to the plan.
+- **`measured-best` profile, marked recommended.** The assignment that measured best across three
+  instrumented workflow runs; the "(recommended)" label previously sat on `cost-optimized` in the
+  wizard and in EXECUTOR-CONFIG, contradicting the measurements.
+- **One subagent per persona.** Personas (`agents/personas/<role>-<domain>.md`) now generate their
+  own subagent — role body plus overlay — instead of being composed at dispatch time, so each one
+  can carry its own model. Fifteen role subagents become forty.
+- **DeepSeek and Moonshot as first-class providers**, with their own env vars and model catalogues,
+  needed to resolve canonical IDs to direct upstreams per vendor.
+- **`--non-interactive` and `--profile` now work.** Both flags were declared and never read;
+  `--non-interactive` puts every wizard prompt into saved-answer mode, and `--profile` seeds the
+  default that mode returns. Without a terminal and without the flag, the wizard used to block
+  forever on the first prompt — it now says so and exits.
+- **Unit tests in CI.**
+
+### Changed
+
+- **Every multi-model profile carries a canonical `<vendor>/<model>` ID and names no backend.**
+  OpenRouter consumes the ID unchanged; LiteLLM registers it as an alias and resolves it through a
+  vendor table. All profiles are now offered whichever gateway is configured, instead of being
+  split into an OpenRouter set and a LiteLLM set.
+- **Model IDs refreshed to the current generation** across `KNOWN_MODELS` for anthropic, google,
+  vertex and openai, replacing `claude-opus-4-7`, `claude-sonnet-4-6` and `gemini-2.5-*`.
+- **`GOOGLE_CLOUD_LOCATION` now defaults to `global`.** The previous default, `us-east5`, is a
+  regional endpoint that serves Claude Sonnet 4.6 and earlier only, which silently ruled out every
+  current model on the vertex profile; `global` also carries no multi-region/regional premium.
+- **`docs/multi-model.md` rewritten** around two backends presented as a choice, the precedence
+  chain that actually resolves a model (subagent frontmatter, then classes, then the session
+  model), and the forty generated subagents.
+
 ### Fixed
 
+- **Wizard step 6 crashed when the saved profile belonged to the other backend.** The default
+  profile choice was hardcoded and not filtered by backend, so `questionary` rejected a default
+  outside the offered list; the default is now taken from the backend-filtered list, preferring
+  that backend's recommended profile and falling back to its first entry.
+- **`--dry-run` wrote credentials to disk.** Only the final step consulted the flag; two earlier
+  steps stored an API key on a run whose purpose was to touch nothing. The flag now guards every
+  write, and a dry run reports what it would have stored instead.
+- **Unrecognized vendors were dropped from the rendered config without warning.** The provider
+  chain's `else: continue` silently skipped any vendor it did not know, so a profile naming an
+  unconfigured vendor produced a gateway config quietly missing that role; the failure only
+  surfaced later as a request for a model the gateway had never heard of. An unmapped vendor now
+  raises, naming the role and the vendor.
+- **The Claude-alias passthrough depended on the anthropic provider being enabled.** With only a
+  hosted gateway configured, that gate left the main conversation with no entry while subagents
+  worked. It now resolves each alias through the profile's `classes` block on either backend.
+- **`_CLAUDE_PASSTHROUGH_MODELS` still listed retired models** (`claude-opus-4-7`,
+  `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) after the model refresh, so the main
+  conversation under LiteLLM was being pointed at models no longer served.
+- **`doctor` reported one missing gateway credential twice under the openrouter backend**, where
+  the gateway credential and the provider credential are the same key: once from the provider loop
+  and once from the gateway check, inflating the issue count. The Credentials section now owns the
+  check and the count.
 - **`ai-resources generate` no longer obeys an `AGENT_SKILLS_ROOT` that points outside the kit.**
   Setup writes that variable so agents can find the installed skills, and it outlives the install
   it names: after `brew upgrade` it still pointed at the previous Cellar version, which Homebrew
@@ -15,6 +74,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   24 vendored skills into it, and built the index from that root while saving it into the new one —
   leaving the fresh install with a 24-skill index instead of 136. `generate` now resolves the root,
   accepts it only when it is inside the kit, and otherwise fails with both paths and the fix.
+- **A second `setup` run deleted every generated subagent.** The prune step asked whether each file
+  *changed*, not whether it *should exist*, so a run with nothing to rewrite produced an empty list
+  and removed all forty tracked agents — including the twenty-five personas. Measured: forty files
+  on the first run, zero on the second. The regression test passed throughout, because both of its
+  witness files survive a total wipe by construction; it now asserts the whole population.
+- **Teardown deleted the user's own `ANTHROPIC_API_KEY`.** It was listed among the keys the kit
+  adds, but only the openrouter backend writes it; under LiteLLM the kit claimed a credential it
+  had never set and removed it on the way back to single-model. It is now reclaimed only when the
+  run actually introduced it.
+- **`--profile` raised `UnboundLocalError`.** The assignment read the state object before
+  `state.load()` bound it, so naming a profile on the command line aborted setup outright.
+- **Router fallbacks were silently dropped.** LiteLLM keys fallbacks by model, so two roles sharing
+  a model shared one entry and the second role's list was discarded; the lists are unioned now. A
+  model named only as a fallback was also never registered in `model_list`, which turned the
+  fallback into a second failure at the moment the primary was down. `moonshotai` — OpenRouter's
+  spelling, and the one the catalogue offers — was missing from the vendor table, so choosing Kimi
+  as a primary raised and took down the whole render.
+- **Podman and colima were configured but never driven.** Service control compared the runtime
+  against the literal `"docker"`, so both matched no branch and start, stop, status, logs and
+  update did nothing — while the login-time unit, which interpolates the runtime correctly, kept
+  the gateway up: it ran and the kit reported it absent. Image pull coerced the runtime and the
+  container start did not, which is why a podman setup downloaded the image and then failed at step
+  9. Colima was additionally skipped by teardown (gateway left running, image left pulled) and by
+  step 9's compose branch (container never started), and would have tried to exec `colima compose`,
+  which is not a command — colima is driven by docker's CLI. Compose detection, hardcoded to
+  `docker compose`, now probes the runtime's own.
+
+### Removed
+
+- **The `vertex-enterprise` profile.** Its purpose — single billing line, audit log, VPC-SC — is
+  tied to the `vertex` provider, not to a preset, and the preset invited the one mistake that
+  defeats it: picking `vertex-enterprise` while the gateway routes elsewhere, keeping the name and
+  losing the compliance. The `vertex` provider itself is untouched and still selectable in the
+  wizard; a Vertex setup is now assembled per role instead of chosen as a preset.
 
 ## [1.2.0] — 2026-09-16 — native skills, deterministic core loop, plugin packaging
 
