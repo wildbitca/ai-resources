@@ -50,6 +50,27 @@ def runtime_mode() -> str:
     return state.load().litellm.local.runtime or "pipx"
 
 
+# The runtime answers two separate questions and conflating them broke podman
+# and colima: "is this a container deployment?" and "which CLI drives it?".
+# Colima is a container runtime you drive with the *docker* CLI — it exposes the
+# docker socket — while podman has its own. Service control used to compare the
+# runtime against the literal "docker", so podman and colima matched no branch:
+# start/stop/status/logs silently did nothing while the login-time unit, which
+# interpolates the runtime correctly, kept the gateway up. The gateway ran and
+# the kit reported it absent.
+_CONTAINER_RUNTIMES = ("docker", "podman", "colima")
+
+
+def is_container_mode(mode: str) -> bool:
+    """Whether `mode` is a container deployment, whatever CLI drives it."""
+    return mode in _CONTAINER_RUNTIMES
+
+
+def container_cli(runtime: str) -> str:
+    """The CLI that drives `runtime` — colima is driven by docker's."""
+    return "podman" if runtime == "podman" else "docker"
+
+
 def litellm_binary() -> Path:
     """Resolve the litellm executable based on configured mode."""
     s = state.load()
@@ -585,7 +606,7 @@ def remove_venv() -> bool:
 def docker_compose_down(remove_image: bool = False) -> bool:
     """`docker compose down` — optionally also remove the image we pulled."""
     s = state.load()
-    runtime = s.litellm.local.runtime if s.litellm.local.runtime in ("docker", "podman") else "docker"
+    runtime = container_cli(s.litellm.local.runtime)
     cmd = [runtime, "compose", "-f", str(state.compose_path()), "down"]
     if remove_image:
         cmd += ["--rmi", "local", "--volumes"]
@@ -638,7 +659,7 @@ def plan_multi_model_teardown(prev: state.SetupState) -> list[tuple[str, str]]:
                         f"Unload + remove background runner: {t.lifecycle_path_written}"))
 
     runtime = prev.litellm.local.runtime
-    if runtime in ("docker", "podman"):
+    if is_container_mode(runtime):
         actions.append(("docker_down", "Stop LiteLLM container (docker compose down)"))
         if t.docker_image_pulled_by_us and t.docker_image:
             actions.append(("docker_image",
@@ -681,7 +702,7 @@ def execute_multi_model_teardown(prev: state.SetupState) -> list[tuple[str, bool
     runtime = prev.litellm.local.runtime
 
     # Order matters: stop runners first, then remove their backing artifacts.
-    if runtime in ("docker", "podman"):
+    if is_container_mode(runtime):
         ok = docker_compose_down(remove_image=t.docker_image_pulled_by_us)
         results.append(("docker_down", ok,
                         "container stopped" if ok else "compose down failed"))
@@ -748,8 +769,8 @@ def start_service() -> bool:
             return rc == 0 or "already loaded" in err.lower()
         rc, _, _ = _run(["systemctl", "--user", "start", path.name])
         return rc == 0
-    if mode == "docker":
-        rc, _, _ = _run(["docker", "compose", "-f", str(state.compose_path()),
+    if is_container_mode(mode):
+        rc, _, _ = _run([container_cli(mode), "compose", "-f", str(state.compose_path()),
                          "up", "-d"], timeout=120)
         return rc == 0
     return False
@@ -764,8 +785,8 @@ def stop_service() -> bool:
             return True
         rc, _, _ = _run(["systemctl", "--user", "stop", path.name])
         return rc == 0
-    if mode == "docker":
-        rc, _, _ = _run(["docker", "compose", "-f", str(state.compose_path()),
+    if is_container_mode(mode):
+        rc, _, _ = _run([container_cli(mode), "compose", "-f", str(state.compose_path()),
                          "down"], timeout=60)
         return rc == 0
     return False
@@ -801,8 +822,8 @@ def service_status() -> str:
         if s == "inactive":
             return "stopped"
         return s or "absent"
-    if mode == "docker":
-        rc, out, _ = _run(["docker", "inspect", "--format",
+    if is_container_mode(mode):
+        rc, out, _ = _run([container_cli(mode), "inspect", "--format",
                            "{{.State.Status}}", "ai-resources-litellm"])
         return out.strip() or "absent"
     return "absent"
@@ -824,8 +845,8 @@ def service_logs(tail: int = 100) -> str:
         rc, out, _ = _run(["journalctl", "--user", "-u", lifecycle_path().name,
                            "-n", str(tail), "--no-pager"])
         return out
-    if mode == "docker":
-        rc, out, _ = _run(["docker", "logs", "--tail", str(tail),
+    if is_container_mode(mode):
+        rc, out, _ = _run([container_cli(mode), "logs", "--tail", str(tail),
                            "ai-resources-litellm"], timeout=10)
         return out
     return ""
@@ -975,7 +996,7 @@ def write_compose_yaml() -> Path:
 
 def pull_image(image: str = DEFAULT_DOCKER_IMAGE) -> tuple[bool, str]:
     s = state.load()
-    runtime = s.litellm.local.runtime if s.litellm.local.runtime in ("docker", "podman") else "docker"
+    runtime = container_cli(s.litellm.local.runtime)
     rc, out, err = _run([runtime, "pull", image], timeout=900)
     return rc == 0, (err or out)[:1000]
 
@@ -985,7 +1006,7 @@ def install_docker_lifecycle(compose_path: Path) -> Path:
     path = lifecycle_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     s = state.load()
-    runtime = s.litellm.local.runtime if s.litellm.local.runtime in ("docker", "podman") else "docker"
+    runtime = container_cli(s.litellm.local.runtime)
 
     if is_macos():
         # plist runs `docker compose up -d` and exits — Docker's restart policy keeps it alive
@@ -1054,8 +1075,8 @@ def update_litellm() -> tuple[bool, str]:
         rc, out, err = _run([str(pip), "install", "--upgrade", DEFAULT_LITELLM_PIP_SPEC],
                             timeout=600)
         return rc == 0, out + err
-    if mode == "docker":
-        rc, _, err = _run(["docker", "pull", DEFAULT_DOCKER_IMAGE], timeout=600)
+    if is_container_mode(mode):
+        rc, _, err = _run([container_cli(mode), "pull", DEFAULT_DOCKER_IMAGE], timeout=600)
         if rc != 0:
             return False, err
         return restart_service(), ""

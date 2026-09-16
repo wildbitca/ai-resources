@@ -189,11 +189,17 @@ def detect_container_runtime() -> tuple[str, Detected]:
     return ("", Detected("none", False, "", ""))
 
 
-def detect_compose() -> bool:
-    rc, _ = _run(["docker", "compose", "version"])
+def detect_compose(cli: str = "docker") -> bool:
+    """Whether `cli` has compose available, as a subcommand or a standalone.
+
+    Parameterised because podman ships its own compose; probing `docker compose`
+    on a podman host answered for the wrong binary, so the check was skipped for
+    every runtime but docker and podman users met the failure at apply time.
+    """
+    rc, _ = _run([cli, "compose", "version"])
     if rc == 0:
         return True
-    rc, _ = _run(["docker-compose", "--version"])
+    rc, _ = _run([f"{cli}-compose", "--version"])
     return rc == 0
 
 
