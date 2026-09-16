@@ -302,3 +302,31 @@ def test_teardown_stops_the_container_for_every_container_runtime():
         ids = [a[0] for a in lite.plan_multi_model_teardown(prev)]
         assert ("docker_down" in ids) is should_stop, \
             f"{runtime}: expected docker_down={should_stop}, plan was {ids}"
+
+
+def test_an_explicitly_requested_profile_is_never_silently_substituted():
+    """`--profile` used to be overwritten by the step-6 default without a word.
+
+    A profile carried over in the saved state must still degrade quietly — that
+    is what stops step 6 crashing on a state written under the other backend —
+    so the two cases have to stay distinguishable.
+    """
+    from ai_resources.setup import wizard
+
+    saved = wizard._REQUESTED_PROFILE
+    try:
+        # Nothing requested: the saved-state path, which must not be blocked.
+        wizard._REQUESTED_PROFILE = ""
+        assert wizard._reject_unavailable_requested_profile(["claude-native"], "x") is None
+
+        # Requested and offered: proceed.
+        wizard._REQUESTED_PROFILE = "measured-best"
+        assert wizard._reject_unavailable_requested_profile(
+            ["measured-best", "cost-optimized"], "x") is None
+
+        # Requested and not offered: stop, rather than run under another profile.
+        wizard._REQUESTED_PROFILE = "measured-best"
+        assert wizard._reject_unavailable_requested_profile(
+            ["claude-native"], "single-model mode") == 1
+    finally:
+        wizard._REQUESTED_PROFILE = saved
