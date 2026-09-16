@@ -8,13 +8,14 @@
         "type": "git",
         "url": "https://github.com/Gentleman-Programming/Gentleman-Skills.git",
         "ref": "main",
+        "sha": "c8036a37893679dc5e942484975405d39689c63b",
         "depth": 1,
         "skill_id_prefix": "gpm",
         "import_roots": [
           "curated",
           "community"
         ],
-        "notes": "Each SKILL.md under import_roots is copied to skills/{prefix}-{path-with-dashes}/. Conflicts with first-party dirs (no .skill-source.yaml) abort unless --force."
+        "notes": "Each SKILL.md under import_roots is copied to skills/{prefix}-{path-with-dashes}/ and its frontmatter name is rewritten to that id. Conflicts with first-party dirs (no .skill-source.yaml) abort unless --force. `sha` pins the import: review the diff and bump it deliberately, since these prompts run in the user's agent."
       }
     ]
   },

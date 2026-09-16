@@ -1,7 +1,7 @@
 ---
-name: terraform-version-commit
-description: Workflow for committing Terraform changes with strict semver versioning. Use when the user wants to commit Terraform changes, increment version from last tag following semver, intelligently bump major/minor/patch based on accumulated changes, or use an LLM (e.g. Cursor on the local machine) to generate commit messages and changelog entries.
-globs: "**/*.tf", "**/terraform/**", "infra/**"
+name: "terraform-version-commit"
+description: "Workflow for committing Terraform changes with strict semver versioning. Use when the user wants to commit Terraform changes, increment version from last tag following semver, intelligently bump major/minor/patch based on accumulated changes, or use an LLM (e.g. Cursor on the local machine) to generate commit messages and changelog entries."
+globs: ["**/*.tf", "**/terraform/**", "infra/**"]
 triggers: "**/*.tf, terraform commit, version bump, semver, git tag, terraform release, major minor patch, version-commit, terraform version"
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: spring-boot-3
+name: gpm-community-spring-boot-3
 description: >
   Spring Boot 3 patterns for configuration, DI, and web services.
   Trigger: When building or refactoring Spring Boot 3 applications.

@@ -1,5 +1,5 @@
 ---
-name: elixir-antipatterns
+name: gpm-community-elixir-antipatterns
 description: >
   Core catalog of 8 critical Elixir/Phoenix anti-patterns covering error handling,
   separation of concerns, Ecto queries, and testing. 

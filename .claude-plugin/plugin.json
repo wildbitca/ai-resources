@@ -1,0 +1,33 @@
+{
+  "name": "ai-resources",
+  "displayName": "ai-resources kit",
+  "description": "Skills, workflows, role subagents and hooks for spec-driven work across Flutter, Angular, Symfony/API Platform and DevOps stacks.",
+  "version": "1.2.0",
+  "author": {
+    "name": "Wildbit",
+    "url": "https://github.com/wildbitca"
+  },
+  "homepage": "https://github.com/wildbitca/ai-resources",
+  "repository": "https://github.com/wildbitca/ai-resources",
+  "license": "MIT",
+  "keywords": ["skills", "workflows", "orchestration", "flutter", "terraform", "spec-driven"],
+  "agents": [
+    "./agents/roles/code-reviewer.md",
+    "./agents/roles/crashlytics-fixer.md",
+    "./agents/roles/crossplane-upjet-maintainer.md",
+    "./agents/roles/doc-writer.md",
+    "./agents/roles/explore.md",
+    "./agents/roles/generalPurpose.md",
+    "./agents/roles/implementer.md",
+    "./agents/roles/package-upgrade.md",
+    "./agents/roles/planner.md",
+    "./agents/roles/security-auditor.md",
+    "./agents/roles/sentry-fixer.md",
+    "./agents/roles/software-architect.md",
+    "./agents/roles/terraform-maintainer.md",
+    "./agents/roles/tester.md",
+    "./agents/roles/verifier.md"
+  ],
+  "workflows": ["./workflows/scripts"],
+  "hooks": "./hooks/hooks.json"
+}

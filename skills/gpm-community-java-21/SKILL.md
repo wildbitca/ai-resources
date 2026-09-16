@@ -1,5 +1,5 @@
 ---
-name: java-21
+name: gpm-community-java-21
 description: >
   Java 21 language and runtime patterns for modern, safe code.
   Trigger: When writing Java 21 code using records, sealed types, or virtual threads.

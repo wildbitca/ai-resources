@@ -1,5 +1,5 @@
 ---
-name: nextjs-15
+name: gpm-curated-nextjs-15
 description: >
   Next.js 15 App Router patterns.
   Trigger: When working with Next.js - routing, Server Actions, data fetching.

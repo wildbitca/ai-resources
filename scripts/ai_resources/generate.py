@@ -50,13 +50,28 @@ def _frontmatter_raw(text: str) -> str:
 
 
 def parse_simple_frontmatter(text: str) -> tuple[dict[str, object], str]:
-    """Parse YAML-ish frontmatter. Used kit-wide; kept here so other modules import it."""
+    """Parse frontmatter as YAML, falling back to a line parser.
+
+    YAML first because the line parser cannot read block scalars: `description: >` gave back
+    the literal ">", which left every skill written that way with no usable description in
+    `skills-index.json`. The fallback keeps malformed third-party frontmatter importable.
+    """
     if not text.startswith("---"):
         return {}, text
     end = text.find("\n---", 3)
     if end == -1:
         return {}, text
     block = text[3:end].strip()
+    body_text = text[end + 4:].lstrip()
+
+    try:
+        import yaml  # local import: the CLI runs without PyYAML for other commands
+        parsed = yaml.safe_load(block)
+        if isinstance(parsed, dict):
+            return {k: v for k, v in parsed.items() if k is not None}, body_text
+    except Exception:  # noqa: BLE001 — malformed frontmatter falls back to the line parser
+        pass
+
     meta: dict[str, object] = {}
     for line in block.splitlines():
         line = line.strip()
@@ -121,16 +136,21 @@ def _build_index() -> int:
         rel_parent = skill_md.parent.relative_to(root).as_posix()
         sid = rel_parent
         name = str(meta.get("name", rel_parent.replace("/", "-")))
-        desc = str(meta.get("description", ""))[:2000]
+        desc = " ".join(str(meta.get("description", "")).split())[:2000]
+
+        def _as_list(value: object) -> list[str]:
+            if isinstance(value, (list, tuple)):
+                return [str(v)[:500] for v in value]
+            return [str(value)[:500]] if value else []
 
         triggers_list = _parse_list_field(block, "triggers") if block else []
         if not triggers_list and meta.get("triggers"):
-            triggers_list = [str(meta["triggers"])[:500]]
+            triggers_list = _as_list(meta["triggers"])
         triggers = triggers_list or _extract_triggers(meta, body, block or "")
 
         globs_list = _parse_list_field(block, "globs") if block else []
         if not globs_list and meta.get("globs"):
-            globs_list = [str(meta["globs"])[:500]]
+            globs_list = _as_list(meta["globs"])
 
         try:
             path_str = skill_md.relative_to(ak).as_posix()  # relative to the kit root: portable
@@ -260,11 +280,29 @@ def _normalize_config(data: dict) -> dict:
     return out
 
 
-def _git_clone(url: str, ref: str, depth: int, dest: Path) -> None:
+def _git_clone(url: str, ref: str, depth: int, dest: Path, sha: str = "") -> None:
+    """Clone `ref`, then check out `sha` when the source pins one.
+
+    A pinned sha is what makes an import reproducible: these files are prompts that run in
+    the user's agent, so the revision must change only when someone reviews the diff.
+    """
     subprocess.run(
         ["git", "clone", "--depth", str(depth), "--branch", ref, url, str(dest)],
         check=True, capture_output=True, text=True,
     )
+    if sha:
+        fetch = subprocess.run(["git", "-C", str(dest), "fetch", "--depth", "1", "origin", sha],
+                               capture_output=True, text=True)
+        if fetch.returncode != 0:  # shallow fetch by sha is not always allowed; deepen instead
+            subprocess.run(["git", "-C", str(dest), "fetch", "--unshallow"],
+                           capture_output=True, text=True)
+        checkout = subprocess.run(["git", "-C", str(dest), "checkout", "--quiet", sha],
+                                  capture_output=True, text=True)
+        if checkout.returncode != 0:
+            raise RuntimeError(
+                f"pinned sha {sha[:8]} is not reachable from {ref}: "
+                f"{(checkout.stderr or '').strip().splitlines()[-1] if checkout.stderr else 'checkout failed'}"
+            )
 
 
 def _git_head(clone: Path) -> str:
@@ -274,6 +312,32 @@ def _git_head(clone: Path) -> str:
 
 def _skill_id_for(prefix: str, rel: Path) -> str:
     return f"{prefix}-{rel.as_posix().replace('/', '-')}"
+
+
+def _normalize_skill_name(skill_md: Path, skill_id: str) -> None:
+    """Set the frontmatter `name` to the directory id.
+
+    Agents derive a skill's identity from its directory, and the Agent Skills spec requires the
+    two to match; upstream names like `typescript` would collide once vendored as `gpm-*`.
+    """
+    try:
+        text = skill_md.read_text(encoding="utf-8")
+    except OSError:
+        return
+    if not text.startswith("---"):
+        skill_md.write_text(f"---\nname: {skill_id}\n---\n\n{text}", encoding="utf-8")
+        return
+    end = text.find("\n---", 3)
+    if end == -1:
+        return
+    # `body` keeps the newline that ends the closing `---` line, so it is appended as-is:
+    # adding another one inserts a blank line into every skill on every import.
+    block, body = text[3:end], text[end + 4:]
+    if re.search(r"^name:\s*.*$", block, re.MULTILINE):
+        block = re.sub(r"^name:\s*.*$", f"name: {skill_id}", block, count=1, flags=re.MULTILINE)
+    else:
+        block = f"\nname: {skill_id}{block}"
+    skill_md.write_text(f"---{block}\n---{body}", encoding="utf-8")
 
 
 def _write_meta(dest: Path, source_id: str, from_rel: str, revision: str) -> None:
@@ -296,10 +360,22 @@ def _sync_source(src: dict, skills_root: Path, dry_run: bool, force: bool) -> li
     roots = src.get("import_roots", ["curated", "community"])
     managed_prefix = f"{prefix}-"
 
+    pinned = str(src.get("sha", "") or "")
+
     with tempfile.TemporaryDirectory(prefix=f"skill-src-{sid}-") as tmp:
         clone = Path(tmp) / "src"
-        _git_clone(url, ref, depth, clone)
+        try:
+            _git_clone(url, ref, depth, clone, pinned)
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            errors.append(f"{sid}: {exc}")
+            return errors
         rev = _git_head(clone)
+        if pinned and rev != pinned:
+            errors.append(f"{sid}: checked out {rev[:8]}, expected pinned {pinned[:8]}")
+            return errors
+        if not pinned:
+            print(f"WARNING: source '{sid}' is not pinned to a sha; imported {rev[:8]} from {ref}",
+                  file=sys.stderr)
 
         for root_name in roots:
             base = clone / root_name
@@ -333,6 +409,7 @@ def _sync_source(src: dict, skills_root: Path, dry_run: bool, force: bool) -> li
                 if dest.exists():
                     shutil.rmtree(dest)
                 shutil.copytree(skill_md.parent, dest)
+                _normalize_skill_name(dest / "SKILL.md", sk_id)
                 _write_meta(dest, sid, from_rel, rev)
                 print(f"synced {sk_id} <= {from_rel} ({rev[:8]})")
 
@@ -373,6 +450,31 @@ def _import_skills(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sync_plugin_agents() -> None:
+    """Keep `.claude-plugin/plugin.json` agents in step with agents/roles/.
+
+    The plugin schema takes a list of agent files, not a directory, so the list has to be
+    enumerated — and would rot silently every time a role is added or removed.
+    """
+    manifest_path = repo_root() / ".claude-plugin" / "plugin.json"
+    roles_dir = repo_root() / "agents" / "roles"
+    if not manifest_path.is_file() or not roles_dir.is_dir():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"WARNING: {manifest_path.name} is not valid JSON ({exc}); agents not synced",
+              file=sys.stderr)
+        return
+    agents = [f"./agents/roles/{p.name}" for p in sorted(roles_dir.glob("*.md"))]
+    if manifest.get("agents") == agents:
+        return
+    manifest["agents"] = agents
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+                             encoding="utf-8")
+    print(f"plugin.json: agents synced ({len(agents)} roles)")
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     """Vendor-sync (unless --skip-vendor), generate workflow skills, rebuild skills-index.json."""
     if not getattr(args, "skip_vendor", False):
@@ -383,5 +485,6 @@ def cmd_generate(args: argparse.Namespace) -> int:
     rc = _build_workflow_skills()
     if rc != 0:
         return rc
+    _sync_plugin_agents()
     print("==> skills-index.json", file=sys.stderr)
     return _build_index()

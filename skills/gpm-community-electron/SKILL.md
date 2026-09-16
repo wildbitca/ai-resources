@@ -1,5 +1,5 @@
 ---
-name: electron
+name: gpm-community-electron
 description: >
   Electron patterns for building cross-platform desktop applications.
   Trigger: When building desktop apps, working with Electron main/renderer processes, IPC communication, or native integrations.

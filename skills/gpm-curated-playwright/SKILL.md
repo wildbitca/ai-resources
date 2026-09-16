@@ -1,5 +1,5 @@
 ---
-name: playwright
+name: gpm-curated-playwright
 description: >
   Playwright E2E testing patterns.
   Trigger: When writing E2E tests - Page Objects, selectors, MCP workflow.

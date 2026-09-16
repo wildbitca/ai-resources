@@ -1,5 +1,5 @@
 ---
-name: angular-forms
+name: gpm-curated-angular-forms
 description: >
   Angular forms: Signal Forms (experimental) and Reactive Forms.
   Trigger: When working with forms, validation, or form state in Angular.

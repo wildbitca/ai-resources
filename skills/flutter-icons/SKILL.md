@@ -1,6 +1,6 @@
 ---
-name: flutter-icons
-description: Cross-platform Flutter launcher icons and splash screens — adaptive Android, iOS 18 variants, Material 3 safe zones, flutter_launcher_icons, flutter_native_splash. (triggers: app icon, splash screen, adaptive icon, flutter_launcher_icons, iOS icon, AppIcon)
+name: "flutter-icons"
+description: "Cross-platform Flutter launcher icons and splash screens — adaptive Android, iOS 18 variants, Material 3 safe zones, flutter_launcher_icons, flutter_native_splash. (triggers: app icon, splash screen, adaptive icon, flutter_launcher_icons, iOS icon, AppIcon)"
 ---
 
 # Flutter Cross-Platform Icon & Splash Screen Management

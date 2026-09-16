@@ -1,5 +1,5 @@
 ---
-name: zod-4
+name: gpm-curated-zod-4
 description: >
   Zod 4 schema validation patterns.
   Trigger: When using Zod for validation - breaking changes from v3.

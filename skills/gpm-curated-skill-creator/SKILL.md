@@ -1,5 +1,5 @@
 ---
-name: skill-creator
+name: gpm-curated-skill-creator
 description: >
   Creates new AI agent skills following the Agent Skills spec.
   Trigger: When user asks to create a new skill, add agent instructions, or document patterns for AI.

@@ -1,5 +1,5 @@
 ---
-name: pytest
+name: gpm-curated-pytest
 description: >
   Pytest testing patterns for Python.
   Trigger: When writing Python tests - fixtures, mocking, markers.

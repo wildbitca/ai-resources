@@ -1,5 +1,5 @@
 ---
-name: zustand-5
+name: gpm-curated-zustand-5
 description: >
   Zustand 5 state management patterns.
   Trigger: When managing React state with Zustand.

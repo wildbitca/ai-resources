@@ -1,5 +1,5 @@
 ---
-name: react-19
+name: gpm-curated-react-19
 description: >
   React 19 patterns with React Compiler.
   Trigger: When writing React components - no useMemo/useCallback needed.

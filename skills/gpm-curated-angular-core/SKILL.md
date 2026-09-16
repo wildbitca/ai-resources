@@ -1,5 +1,5 @@
 ---
-name: angular-core
+name: gpm-curated-angular-core
 description: >
   Angular core patterns: standalone components, signals, inject, control flow, zoneless.
   Trigger: When creating Angular components, using signals, or setting up zoneless.

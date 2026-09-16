@@ -1,7 +1,7 @@
 ---
-name: terraform-maintainer
-description: Orchestrates Terraform module and consumer maintenance so tf-modules and all projects using them stay professional and in sync. Use when maintaining or releasing tf-module-* repos, upgrading providers or internal module refs, versioning with semver, normalizing changelogs, or applying DevOps/module standards across the Terraform estate. Integrates terraform-devops-modules, terraform-provider-upgrade, terraform-version-commit, and changelog-best-practices.
-globs: "**/*.tf", "**/terraform/**", "infra/**"
+name: "terraform-maintainer"
+description: "Orchestrates Terraform module and consumer maintenance so tf-modules and all projects using them stay professional and in sync. Use when maintaining or releasing tf-module-* repos, upgrading providers or internal module refs, versioning with semver, normalizing changelogs, or applying DevOps/module standards across the Terraform estate. Integrates terraform-devops-modules, terraform-provider-upgrade, terraform-version-commit, and changelog-best-practices."
+globs: ["**/*.tf", "**/terraform/**", "infra/**"]
 triggers: "**/*.tf, terraform maintain, release module, upgrade providers, sync projects, normalize changelog, tf-modules, terraform estate, module maintenance, professional modules"
 ---
 

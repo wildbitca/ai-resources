@@ -1,5 +1,5 @@
 ---
-name: tailwind-4
+name: gpm-curated-tailwind-4
 description: >
   Tailwind CSS 4 patterns and best practices.
   Trigger: When styling with Tailwind - cn(), theme variables, no var() in className.

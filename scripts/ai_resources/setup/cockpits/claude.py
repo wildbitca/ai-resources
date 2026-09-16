@@ -167,7 +167,10 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str) -> list[s
             legacy = str(meta.get("model", "inherit")).lower()
             model = {"strong": "opus", "fast": "haiku"}.get(legacy, legacy or "inherit")
 
-        fm_lines = [f"name: {name}", f'description: "{desc}"']
+        # Quote defensively: frontmatter is parsed as YAML now, so a role description
+        # containing a quote or a newline would otherwise emit a broken subagent file.
+        safe_desc = " ".join(desc.split()).replace("\\", "\\\\").replace('"', '\\"')
+        fm_lines = [f"name: {name}", f'description: "{safe_desc}"']
         if tools is not None:
             fm_lines.append(f"tools: {tools}")
         fm_lines.append(f"model: {model}")

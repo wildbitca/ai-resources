@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-09-15T23:30:10.550199+00:00",
+  "generated_at": "2026-09-16T00:38:01.847994+00:00",
   "skills_root": "skills",
   "count": 136,
   "skills": [
@@ -333,7 +333,9 @@
         "crossplane, upjet, provider, CRD, controller, codegen, scaffold provider, upbound, GHCR, terraform schema, managed resource, crossplane build"
       ],
       "globs": [
-        "**/crossplane/**\", \"infra/**\", \"**/*.tf"
+        "**/crossplane/**",
+        "infra/**",
+        "**/*.tf"
       ]
     },
     {
@@ -829,193 +831,241 @@
     {
       "id": "gpm-community-electron",
       "path": "skills/gpm-community-electron/SKILL.md",
-      "name": "electron",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-community-electron",
+      "description": "Electron patterns for building cross-platform desktop applications. Trigger: When building desktop apps, working with Electron main/renderer processes, IPC communication, or native integrations.",
+      "triggers": [
+        "When building desktop apps, working with Electron main/renderer processes, IPC communication, or native integrations."
+      ],
       "globs": []
     },
     {
       "id": "gpm-community-elixir-antipatterns",
       "path": "skills/gpm-community-elixir-antipatterns/SKILL.md",
-      "name": "elixir-antipatterns",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-community-elixir-antipatterns",
+      "description": "Core catalog of 8 critical Elixir/Phoenix anti-patterns covering error handling, separation of concerns, Ecto queries, and testing. Trigger: During Elixir code review, refactoring sessions, or when writing Phoenix/Ecto code.",
+      "triggers": [
+        "During Elixir code review, refactoring sessions, or when writing Phoenix/Ecto code."
+      ],
       "globs": []
     },
     {
       "id": "gpm-community-hexagonal-architecture-layers-java",
       "path": "skills/gpm-community-hexagonal-architecture-layers-java/SKILL.md",
-      "name": "hexagonal-architecture-layers-java",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-community-hexagonal-architecture-layers-java",
+      "description": "Hexagonal architecture layering for Java services with strict boundaries. Trigger: When structuring Java apps by Domain/Application/Infrastructure, or refactoring toward clean architecture.",
+      "triggers": [
+        "When structuring Java apps by Domain/Application/Infrastructure, or refactoring toward clean architecture."
+      ],
       "globs": []
     },
     {
       "id": "gpm-community-java-21",
       "path": "skills/gpm-community-java-21/SKILL.md",
-      "name": "java-21",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-community-java-21",
+      "description": "Java 21 language and runtime patterns for modern, safe code. Trigger: When writing Java 21 code using records, sealed types, or virtual threads.",
+      "triggers": [
+        "When writing Java 21 code using records, sealed types, or virtual threads."
+      ],
       "globs": []
     },
     {
       "id": "gpm-community-react-native",
       "path": "skills/gpm-community-react-native/SKILL.md",
-      "name": "react-native",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-community-react-native",
+      "description": "React Native patterns for mobile app development with Expo and bare workflow. Trigger: When building mobile apps, working with React Native components, using Expo, React Navigation, or NativeWind.",
+      "triggers": [
+        "When building mobile apps, working with React Native components, using Expo, React Navigation, or NativeWind."
+      ],
       "globs": []
     },
     {
       "id": "gpm-community-spring-boot-3",
       "path": "skills/gpm-community-spring-boot-3/SKILL.md",
-      "name": "spring-boot-3",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-community-spring-boot-3",
+      "description": "Spring Boot 3 patterns for configuration, DI, and web services. Trigger: When building or refactoring Spring Boot 3 applications.",
+      "triggers": [
+        "When building or refactoring Spring Boot 3 applications."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-ai-sdk-5",
       "path": "skills/gpm-curated-ai-sdk-5/SKILL.md",
-      "name": "ai-sdk-5",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-ai-sdk-5",
+      "description": "Vercel AI SDK 5 patterns. Trigger: When building AI chat features - breaking changes from v4.",
+      "triggers": [
+        "When building AI chat features - breaking changes from v4."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-angular-architecture",
       "path": "skills/gpm-curated-angular-architecture/SKILL.md",
-      "name": "angular-architecture",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-angular-architecture",
+      "description": "Angular architecture: Scope Rule, project structure, file naming, style guide. Trigger: When structuring Angular projects or deciding where to place components.",
+      "triggers": [
+        "When structuring Angular projects or deciding where to place components."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-angular-core",
       "path": "skills/gpm-curated-angular-core/SKILL.md",
-      "name": "angular-core",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-angular-core",
+      "description": "Angular core patterns: standalone components, signals, inject, control flow, zoneless. Trigger: When creating Angular components, using signals, or setting up zoneless.",
+      "triggers": [
+        "When creating Angular components, using signals, or setting up zoneless."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-angular-forms",
       "path": "skills/gpm-curated-angular-forms/SKILL.md",
-      "name": "angular-forms",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-angular-forms",
+      "description": "Angular forms: Signal Forms (experimental) and Reactive Forms. Trigger: When working with forms, validation, or form state in Angular.",
+      "triggers": [
+        "When working with forms, validation, or form state in Angular."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-angular-performance",
       "path": "skills/gpm-curated-angular-performance/SKILL.md",
-      "name": "angular-performance",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-angular-performance",
+      "description": "Angular performance: NgOptimizedImage, @defer, lazy loading, SSR. Trigger: When optimizing Angular app performance, images, or lazy loading.",
+      "triggers": [
+        "When optimizing Angular app performance, images, or lazy loading."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-django-drf",
       "path": "skills/gpm-curated-django-drf/SKILL.md",
-      "name": "django-drf",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-django-drf",
+      "description": "Django REST Framework patterns. Trigger: When building REST APIs with Django - ViewSets, Serializers, Filters.",
+      "triggers": [
+        "When building REST APIs with Django - ViewSets, Serializers, Filters."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-github-pr",
       "path": "skills/gpm-curated-github-pr/SKILL.md",
-      "name": "github-pr",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-github-pr",
+      "description": "Create high-quality Pull Requests with conventional commits and proper descriptions. Trigger: When creating PRs, writing PR descriptions, or using gh CLI for pull requests.",
+      "triggers": [
+        "When creating PRs, writing PR descriptions, or using gh CLI for pull requests."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-jira-epic",
       "path": "skills/gpm-curated-jira-epic/SKILL.md",
-      "name": "jira-epic",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-jira-epic",
+      "description": "Creates Jira epics for large features following Prowler's standard format. Trigger: When user asks to create an epic, large feature, or multi-task initiative.",
+      "triggers": [
+        "When user asks to create an epic, large feature, or multi-task initiative."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-jira-task",
       "path": "skills/gpm-curated-jira-task/SKILL.md",
-      "name": "jira-task",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-jira-task",
+      "description": "Creates Jira tasks following Prowler's standard format. Trigger: When user asks to create a Jira task, ticket, or issue.",
+      "triggers": [
+        "When user asks to create a Jira task, ticket, or issue."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-nextjs-15",
       "path": "skills/gpm-curated-nextjs-15/SKILL.md",
-      "name": "nextjs-15",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-nextjs-15",
+      "description": "Next.js 15 App Router patterns. Trigger: When working with Next.js - routing, Server Actions, data fetching.",
+      "triggers": [
+        "When working with Next.js - routing, Server Actions, data fetching."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-playwright",
       "path": "skills/gpm-curated-playwright/SKILL.md",
-      "name": "playwright",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-playwright",
+      "description": "Playwright E2E testing patterns. Trigger: When writing E2E tests - Page Objects, selectors, MCP workflow.",
+      "triggers": [
+        "When writing E2E tests - Page Objects, selectors, MCP workflow."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-pytest",
       "path": "skills/gpm-curated-pytest/SKILL.md",
-      "name": "pytest",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-pytest",
+      "description": "Pytest testing patterns for Python. Trigger: When writing Python tests - fixtures, mocking, markers.",
+      "triggers": [
+        "When writing Python tests - fixtures, mocking, markers."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-react-19",
       "path": "skills/gpm-curated-react-19/SKILL.md",
-      "name": "react-19",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-react-19",
+      "description": "React 19 patterns with React Compiler. Trigger: When writing React components - no useMemo/useCallback needed.",
+      "triggers": [
+        "When writing React components - no useMemo/useCallback needed."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-skill-creator",
       "path": "skills/gpm-curated-skill-creator/SKILL.md",
-      "name": "skill-creator",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-skill-creator",
+      "description": "Creates new AI agent skills following the Agent Skills spec. Trigger: When user asks to create a new skill, add agent instructions, or document patterns for AI.",
+      "triggers": [
+        "When user asks to create a new skill, add agent instructions, or document patterns for AI."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-tailwind-4",
       "path": "skills/gpm-curated-tailwind-4/SKILL.md",
-      "name": "tailwind-4",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-tailwind-4",
+      "description": "Tailwind CSS 4 patterns and best practices. Trigger: When styling with Tailwind - cn(), theme variables, no var() in className.",
+      "triggers": [
+        "When styling with Tailwind - cn(), theme variables, no var() in className."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-typescript",
       "path": "skills/gpm-curated-typescript/SKILL.md",
-      "name": "typescript",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-typescript",
+      "description": "TypeScript strict patterns and best practices. Trigger: When writing TypeScript code - types, interfaces, generics.",
+      "triggers": [
+        "When writing TypeScript code - types, interfaces, generics."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-zod-4",
       "path": "skills/gpm-curated-zod-4/SKILL.md",
-      "name": "zod-4",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-zod-4",
+      "description": "Zod 4 schema validation patterns. Trigger: When using Zod for validation - breaking changes from v3.",
+      "triggers": [
+        "When using Zod for validation - breaking changes from v3."
+      ],
       "globs": []
     },
     {
       "id": "gpm-curated-zustand-5",
       "path": "skills/gpm-curated-zustand-5/SKILL.md",
-      "name": "zustand-5",
-      "description": ">",
-      "triggers": [],
+      "name": "gpm-curated-zustand-5",
+      "description": "Zustand 5 state management patterns. Trigger: When managing React state with Zustand.",
+      "triggers": [
+        "When managing React state with Zustand."
+      ],
       "globs": []
     },
     {
@@ -1045,7 +1095,8 @@
         "kro, RGD, ResourceGraphDefinition, custom API, bundle resources, crossplane wrapper, kubernetes CRD, composite resource"
       ],
       "globs": [
-        "**/crossplane/**\", \"infra/**"
+        "**/crossplane/**",
+        "infra/**"
       ]
     },
     {
@@ -1103,7 +1154,9 @@
         "**/*.tf, terraform, module, IaC, infrastructure, reusable module, module composition, required_providers, terraform module, HCL, cloud infrastructure"
       ],
       "globs": [
-        "**/*.tf\", \"**/terraform/**\", \"infra/**"
+        "**/*.tf",
+        "**/terraform/**",
+        "infra/**"
       ]
     },
     {
@@ -1115,7 +1168,9 @@
         "**/*.tf, terraform maintain, release module, upgrade providers, sync projects, normalize changelog, tf-modules, terraform estate, module maintenance, professional modules"
       ],
       "globs": [
-        "**/*.tf\", \"**/terraform/**\", \"infra/**"
+        "**/*.tf",
+        "**/terraform/**",
+        "infra/**"
       ]
     },
     {
@@ -1127,7 +1182,9 @@
         "**/*.tf, terraform provider, upgrade provider, provider version, terraform registry, terraform init, terraform validate, required_providers, provider update"
       ],
       "globs": [
-        "**/*.tf\", \"**/terraform/**\", \"infra/**"
+        "**/*.tf",
+        "**/terraform/**",
+        "infra/**"
       ]
     },
     {
@@ -1139,7 +1196,9 @@
         "**/*.tf, terraform to crossplane, migrate terraform, HCL to CRD, crossplane migration, ProviderConfig, Composition, XRD, GitOps migration, managed resource"
       ],
       "globs": [
-        "**/*.tf\", \"**/terraform/**\", \"infra/**"
+        "**/*.tf",
+        "**/terraform/**",
+        "infra/**"
       ]
     },
     {
@@ -1151,7 +1210,9 @@
         "**/*.tf, terraform commit, version bump, semver, git tag, terraform release, major minor patch, version-commit, terraform version"
       ],
       "globs": [
-        "**/*.tf\", \"**/terraform/**\", \"infra/**"
+        "**/*.tf",
+        "**/terraform/**",
+        "infra/**"
       ]
     },
     {

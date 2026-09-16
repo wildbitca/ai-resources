@@ -1,5 +1,5 @@
 ---
-name: hexagonal-architecture-layers-java
+name: gpm-community-hexagonal-architecture-layers-java
 description: >
   Hexagonal architecture layering for Java services with strict boundaries.
   Trigger: When structuring Java apps by Domain/Application/Infrastructure, or refactoring toward clean architecture.

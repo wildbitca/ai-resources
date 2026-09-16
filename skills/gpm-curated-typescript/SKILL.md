@@ -1,5 +1,5 @@
 ---
-name: typescript
+name: gpm-curated-typescript
 description: >
   TypeScript strict patterns and best practices.
   Trigger: When writing TypeScript code - types, interfaces, generics.

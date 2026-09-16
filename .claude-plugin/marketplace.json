@@ -1,0 +1,17 @@
+{
+  "name": "wildbit-ai-resources",
+  "description": "The ai-resources kit: skills, workflows, role subagents and hooks.",
+  "owner": {
+    "name": "Wildbit",
+    "url": "https://github.com/wildbitca"
+  },
+  "plugins": [
+    {
+      "name": "ai-resources",
+      "source": "./",
+      "description": "Skills, workflows, role subagents and hooks for spec-driven work.",
+      "category": "workflow",
+      "keywords": ["skills", "workflows", "orchestration"]
+    }
+  ]
+}

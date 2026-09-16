@@ -213,6 +213,30 @@ Installed into `~/.claude/settings.json` by setup (your own hooks are kept):
 - `kit_subagent_return.py` (SubagentStop) — during a workflow, sends a kit role subagent back if it did not end with the return block
 - `kit_handoff_guard.py` (PreToolUse) — while `.agent-output/parallel-group.json` exists, blocks subagents from writing the shared handoff
 
+### Install as a Claude Code plugin
+
+The repository is also a plugin and its own marketplace (`.claude-plugin/`), so Claude Code can install the skills, role subagents, workflow scripts and hooks without the Homebrew CLI:
+
+```shell
+/plugin marketplace add wildbitca/ai-resources
+/plugin install ai-resources@wildbit-ai-resources
+```
+
+Use the Homebrew CLI when you also want the wizard (`ai-resources setup`), multi-model routing, or the other cockpits; use the plugin when you only want the content in Claude Code. `claude plugin validate .` checks the manifests.
+
+### Quality gates
+
+| Command | What it checks |
+|---------|----------------|
+| `python3 scripts/validate_kit.py` | Skill frontmatter (valid YAML, name matches directory, description present and within budget), workflow steps (roles, skills, routing targets, parallel-group rules, verifier/document split), workflow script rules, hook compilation, `$AGENT_KIT` references, plugin manifests, vendored provenance, and that `skills-index.json` matches the tree |
+| `claude plugin eval .` | Behaviour: whether the kit actually steers Claude on realistic prompts, scored against a no-plugin baseline (see `evals/`) |
+
+CI runs the validator and the manifest check on every pull request (`.github/workflows/ci.yml`). Evals are run locally because they make real model calls.
+
+### Vendored skills
+
+Third-party skills are imported by `ai-resources generate` from the sources in `resources.json`, pinned to a commit `sha`. The import rewrites each skill's frontmatter `name` to its flat id and records the upstream revision in `.skill-source.yaml`. Bump the `sha` deliberately: these files are prompts that run inside your agent, so review the diff first.
+
 ### Templates (`templates/`)
 
 Project scaffolding templates:

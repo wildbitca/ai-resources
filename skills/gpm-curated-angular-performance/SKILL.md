@@ -1,5 +1,5 @@
 ---
-name: angular-performance
+name: gpm-curated-angular-performance
 description: >
   Angular performance: NgOptimizedImage, @defer, lazy loading, SSR.
   Trigger: When optimizing Angular app performance, images, or lazy loading.

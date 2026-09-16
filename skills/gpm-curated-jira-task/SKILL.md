@@ -1,5 +1,5 @@
 ---
-name: jira-task
+name: gpm-curated-jira-task
 description: >
   Creates Jira tasks following Prowler's standard format.
   Trigger: When user asks to create a Jira task, ticket, or issue.

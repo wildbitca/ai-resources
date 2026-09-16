@@ -1,5 +1,5 @@
 ---
-name: angular-architecture
+name: gpm-curated-angular-architecture
 description: >
   Angular architecture: Scope Rule, project structure, file naming, style guide.
   Trigger: When structuring Angular projects or deciding where to place components.

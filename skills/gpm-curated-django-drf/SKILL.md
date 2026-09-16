@@ -1,5 +1,5 @@
 ---
-name: django-drf
+name: gpm-curated-django-drf
 description: >
   Django REST Framework patterns.
   Trigger: When building REST APIs with Django - ViewSets, Serializers, Filters.

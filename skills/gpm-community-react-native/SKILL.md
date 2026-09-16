@@ -1,5 +1,5 @@
 ---
-name: react-native
+name: gpm-community-react-native
 description: >
   React Native patterns for mobile app development with Expo and bare workflow.
   Trigger: When building mobile apps, working with React Native components, using Expo, React Navigation, or NativeWind.

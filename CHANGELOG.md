@@ -46,6 +46,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ### Added
 
+- **The repository is a Claude Code plugin and its own marketplace** (`.claude-plugin/`), so the
+  skills, role subagents, workflow scripts and hooks can be installed with
+  `/plugin marketplace add wildbitca/ai-resources` and `/plugin install ai-resources@wildbit-ai-resources`,
+  without the Homebrew CLI. `ai-resources generate` keeps the manifest's `agents` list in step with
+  `agents/roles/` (the plugin schema takes files, not a directory).
+- **`scripts/validate_kit.py` and a CI workflow** that gate every pull request: skill frontmatter is
+  valid YAML with a name matching its directory and a description within budget; workflow steps
+  reference real roles, skills and routing targets; parallel groups share entry criteria and never
+  write the handoff; verifiers never own `knowledge-audit`; workflow scripts obey the runtime's
+  rules; hooks compile; `$AGENT_KIT` references resolve; the plugin manifests are consistent; and
+  `skills-index.json` matches the tree.
+- **An eval suite** (`evals/`) for `claude plugin eval`: one case that should trigger the kit's
+  planning loop and one conversational case that must not trigger anything.
 - **Deterministic core loop as dynamic workflow scripts** (`workflows/scripts/`, installed by setup
   into `~/.claude/workflows/`): `/kit-plan` runs parallel readers (code, specs, tests and risk),
   three planners with different biases, two judges and a synthesis step that writes one plan file;
@@ -78,6 +91,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   sequential gate, then `review` and `security` run in parallel (`post-test`). Bugfix: the
   test → security chain is sequential. Parallel steps (feature, infra-triage) no longer edit
   the shared handoff concurrently; `WORKFLOW_CONTRACT.md` defines the join rules.
+- **The 24 vendored skills had no usable description.** Frontmatter was parsed line by line, which
+  cannot read a YAML block scalar, so every skill written as `description: >` was indexed with the
+  literal `">"` — leaving them undiscoverable, since an agent matches on the description. Frontmatter
+  is now parsed as YAML, with the line parser kept as a fallback for malformed third-party files.
+- **Ten skills had frontmatter that is not valid YAML** (`globs: "a", "b"` instead of a list, and
+  unquoted descriptions containing `: `). The kit's tolerant parser hid this; agents that parse YAML
+  properly would have lost the name and description. Fixed, and the validator now rejects it.
+- **Vendored imports are pinned.** `resources.json` gained a `sha` for the Gentleman-Skills source;
+  the import checks out that commit, fails if it resolves to anything else, warns when a source is
+  unpinned, and rewrites each imported skill's `name` to match its directory.
 - **`ai-resources audit` prices corrected** against official list prices (2026-09-15): Opus
   4.5+ was 3× too high, Haiku and Gemini were too low, current models (Fable 5.1, Opus 5,
   Sonnet 5, Gemini 3.x) were missing. Adds 1-hour cache writes, alias resolution, and

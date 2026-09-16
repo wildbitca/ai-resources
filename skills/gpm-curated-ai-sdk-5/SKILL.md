@@ -1,5 +1,5 @@
 ---
-name: ai-sdk-5
+name: gpm-curated-ai-sdk-5
 description: >
   Vercel AI SDK 5 patterns.
   Trigger: When building AI chat features - breaking changes from v4.
