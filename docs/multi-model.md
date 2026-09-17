@@ -187,8 +187,13 @@ The kit never writes `openclaw.json` itself: every change goes through
 (`--non-interactive`) with no saved answer keeps the current engine, so a live bot
 is never repointed by accident.
 
-Claude Code in multi-model mode: OpenClaw passes the model to Claude Code without
-its vendor prefix, so the gateway must accept that ID.
+Switching the kit's mode carries the bot along: OpenClaw starts Claude Code with
+your user settings, so single-model keeps it on your Claude subscription and
+multi-model routes it through the gateway, subagent models included. OpenClaw
+always passes the bare Anthropic ID (`--model claude-sonnet-5`); LiteLLM
+registers those IDs, and under OpenRouter setup writes a `modelOverrides` map to
+the catalogue IDs (Claude Code 2.1.200 or later). Under OpenRouter you still need
+`claude /logout`, which moves the bot off the subscription too.
 
 ## Operations
 
@@ -228,6 +233,13 @@ Run `claude /logout`, open a new terminal, then `ai-resources doctor`.
 **`[claude-code:unrecognized_model]` on every start.**
 Expected noise, not a failure. Claude Code does not recognise namespaced IDs
 such as `anthropic/claude-sonnet-5`, warns, and sends them anyway.
+
+**`claude --model claude-sonnet-5` fails under OpenRouter, or a bot on the
+claude-cli runtime cannot answer.**
+OpenRouter rejects bare Anthropic IDs. Setup maps them with `modelOverrides` in
+`~/.claude/settings.json`; re-run `ai-resources setup` if the map is missing, and
+check `claude --version` is 2.1.200 or later — older versions ignore the map for
+`--model`.
 
 **The main conversation fails but subagents work (OpenRouter).**
 The profile has no `classes` block, so `/model` aliases resolve to bare Claude

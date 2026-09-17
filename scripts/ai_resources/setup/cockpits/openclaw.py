@@ -260,9 +260,9 @@ def prompt(s: state.SetupState) -> None:
         [ui.Choice(m, value=m) for m in engine.models],
         default=saved,
     )
-    if engine.id == "claude-code" and s.mode == "multi-model":
-        ui.warn("Claude Code is in multi-model mode: OpenClaw passes this model to it bare, "
-                "so the gateway must accept that ID.")
+    # OpenClaw hands Claude Code the bare Anthropic ID (claude-sonnet-5) whatever the
+    # ref says. That works under either gateway: LiteLLM registers bare Claude IDs,
+    # and under OpenRouter the Claude Code cockpit maps them with `modelOverrides`.
 
 
 def configure(ctx: dict) -> list[Path]:

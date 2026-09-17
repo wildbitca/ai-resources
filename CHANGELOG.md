@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Fixed
+
+- **A bare Anthropic model ID failed under OpenRouter.** `claude --model claude-sonnet-5` sent the
+  ID verbatim and OpenRouter only knows namespaced ones. OpenClaw's claude-cli runtime always
+  launches Claude Code that way, so a chat bot lost its main conversation once setup switched to
+  OpenRouter. Setup now writes a `modelOverrides` map to the catalogue IDs under OpenRouter
+  (Claude Code 2.1.200 or later) and removes only its own entries on any other route.
+
 ## [1.4.0] — 2026-09-17 — OpenClaw runs its chat agent on the kit
 
 ### Added
