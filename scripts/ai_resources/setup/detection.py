@@ -123,6 +123,15 @@ def detect_opencode() -> Detected:
     return Detected("OpenCode", rc == 0, _version_from(out), p)
 
 
+def detect_openclaw() -> Detected:
+    p = _which("openclaw")
+    if not p:
+        return Detected("OpenClaw", False, "", "", "npm i -g openclaw")
+    # `--version` prints "OpenClaw 2026.9.4 (sha)"; a slow start is normal.
+    rc, out = _run(["openclaw", "--version"], timeout=30)
+    return Detected("OpenClaw", rc == 0, _version_from(out, r"(\d+\.\d+\.\d+)"), p)
+
+
 def detect_all_cockpits() -> dict[str, Detected]:
     return {
         "claude":   detect_claude_code(),
@@ -134,6 +143,7 @@ def detect_all_cockpits() -> dict[str, Detected]:
         "windsurf": detect_windsurf(),
         "continue": detect_continue(),
         "opencode": detect_opencode(),
+        "openclaw": detect_openclaw(),
     }
 
 

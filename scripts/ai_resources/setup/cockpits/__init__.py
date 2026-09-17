@@ -9,7 +9,7 @@ Each module exposes:
 """
 from __future__ import annotations
 
-from . import claude, gemini, cursor, codex, aider, copilot, windsurf, continue_dev, opencode
+from . import claude, gemini, cursor, codex, aider, copilot, windsurf, continue_dev, opencode, openclaw
 
 ALL = {
     "claude": claude,
@@ -21,4 +21,6 @@ ALL = {
     "windsurf": windsurf,
     "continue": continue_dev,
     "opencode": opencode,
+    # Last on purpose: its engines reuse what the coding-CLI cockpits above install.
+    "openclaw": openclaw,
 }
