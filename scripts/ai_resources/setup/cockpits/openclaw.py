@@ -23,6 +23,9 @@ Separately, setup asks how voice notes are transcribed (see `_openclaw_voice`): 
 transcriber is registered as a `tools.media` CLI model and the voice rule joins the
 workspace AGENTS.md block.
 
+With the Claude Code engine, setup also offers to mirror Claude Code's user-level MCP servers
+into `mcp.servers` (see `_openclaw_mcp`), because the bot sees no others.
+
 Verified against OpenClaw 2026.9.4. OpenClaw starts CLI runtimes with
 `--strict-mcp-config`, so MCP servers from the CLI's own config never reach the
 bot; Engram is therefore always declared in OpenClaw's `mcp.servers`.
@@ -45,6 +48,7 @@ from .. import state, ui
 from ..detection import detect_openclaw
 from ... import repo_root
 from . import _shared
+from . import _openclaw_mcp as mcp
 from . import _openclaw_voice as voice
 
 
@@ -246,9 +250,11 @@ def _remove_managed_block(path: Path) -> bool:
 # --- setup entry points ------------------------------------------------------------
 
 def prompt(s: state.SetupState) -> None:
-    """Ask which engine runs the bot, which model it uses and how it hears voice notes.
-    Called from step 7."""
+    """Ask which engine runs the bot, which model it uses, which MCP servers it gets and how it
+    hears voice notes. Called from step 7."""
     _prompt_engine(s)
+    if s.openclaw.engine == "claude-code":
+        mcp.prompt(s, _get(read_config(config_path()), "mcp", "servers") or {})
     voice.prompt(s)
 
 
@@ -303,8 +309,9 @@ def configure(ctx: dict) -> list[Path]:
     ak_path = str(_shared.stable_kit_root(repo_root()))
 
     engine_changed = _configure_engine(ctx, doc, path, ak_path, written)
+    mcp_changed = _configure_mcp(s, doc, path, written, dry_run=dry_run)
     voice_changed = _configure_voice(s, doc, path, ak_path, written, dry_run=dry_run)
-    if dry_run or not (engine_changed or voice_changed):
+    if dry_run or not (engine_changed or mcp_changed or voice_changed):
         return written
 
     agents_md = workspace_dir(doc) / "AGENTS.md"
@@ -357,6 +364,32 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
     s.openclaw.config_path = str(path)
     ui.ok(f"OpenClaw default agent → {model} via {engine.runtime}")
     return True
+
+
+def _configure_mcp(s: state.SetupState, doc: dict, path: Path, written: list[Path], *,
+                   dry_run: bool) -> bool:
+    """Mirror Claude Code's MCP servers when the bot runs on it. True when openclaw.json changed."""
+    engine = applied_engine(s) if s.openclaw.engine == "keep" else ENGINES.get(s.openclaw.engine)
+    if s.openclaw.mcp != "mirror" or not engine or engine.id != "claude-code":
+        if s.openclaw.mcp_mirrored and s.openclaw.mcp == "keep" and not dry_run and ui.confirm(
+                "The kit mirrored Claude Code's MCP servers into OpenClaw earlier. Restore the "
+                "servers it replaced?", default=False):
+            return _teardown_mcp(s)
+        return False
+    if not mcp.configure(s, doc, _openclaw, dry_run=dry_run):
+        return False
+    s.openclaw.config_path = str(path)
+    if path not in written:
+        written.append(path)
+    return True
+
+
+def _teardown_mcp(s: state.SetupState) -> bool:
+    """Remove or restore the MCP servers the kit mirrored. True when it finished."""
+    if not s.openclaw.mcp_mirrored:
+        return False
+    servers = _get(read_config(config_path()), "mcp", "servers") or {}
+    return mcp.teardown(s, servers, _openclaw)
 
 
 def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
@@ -504,13 +537,14 @@ def _teardown_voice(s: state.SetupState) -> bool:
 
 def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
-    if not (s.openclaw.applied or s.openclaw.voice_applied):
+    if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored):
         return []
     doc = read_config(config_path())
     engine_ok = _teardown_engine(s) if s.openclaw.applied else True
+    mcp_ok = _teardown_mcp(s) if s.openclaw.mcp_mirrored else True
     voice_ok = _teardown_voice(s) if s.openclaw.voice_applied else True
     removed: list[str] = []
-    if not (engine_ok and voice_ok):
+    if not (engine_ok and mcp_ok and voice_ok):
         return removed
     removed.append(str(config_path()))
     agents_md = workspace_dir(doc) / "AGENTS.md"
