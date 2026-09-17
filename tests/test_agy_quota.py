@@ -157,3 +157,33 @@ def test_report_with_no_applied_model_never_raises_severity():
     pools = q.parse_usage(FIXTURE)
     lines = q.report(pools)
     assert all(sev == "ok" for sev, _ in lines)
+
+
+def test_remedy_points_at_the_pool_that_still_has_room():
+    pools = [q.Pool(q.POOL_GEMINI, 0, "x"), q.Pool(q.POOL_CLAUDE_GPT, 78, "y")]
+    assert '"Claude and GPT models"' in q.remedy(pools, q.POOL_GEMINI)
+    assert "Every other pool is spent" not in q.remedy(pools, q.POOL_GEMINI)
+
+
+def test_remedy_never_sends_the_user_to_an_equally_dead_pool():
+    """Both weekly pools are independent and both can sit at 0% at once."""
+    pools = [q.Pool(q.POOL_GEMINI, 0, "x"), q.Pool(q.POOL_CLAUDE_GPT, 0, "y")]
+    text = q.remedy(pools, q.POOL_GEMINI)
+    assert "Every other pool is spent too" in text
+    assert '"Claude and GPT models" at 0%' in text
+    assert "Re-run" not in text
+
+
+def test_remedy_flags_an_alternative_that_is_itself_nearly_spent():
+    pools = [q.Pool(q.POOL_GEMINI, 0, "x"), q.Pool(q.POOL_CLAUDE_GPT, 4, "y")]
+    text = q.remedy(pools, q.POOL_GEMINI)
+    assert '"Claude and GPT models"' in text
+    assert "also nearly spent" in text
+
+
+def test_remedy_only_offers_pools_usage_actually_reported():
+    """No inversion: an unreported pool must never be invented as the way out."""
+    pools = [q.Pool(q.POOL_GEMINI, 0, "x")]
+    text = q.remedy(pools, q.POOL_GEMINI)
+    assert q.POOL_CLAUDE_GPT not in text
+    assert "No other pool was reported" in text

@@ -39,11 +39,8 @@ def _check_antigravity_quota(s: state.SetupState) -> int:
     applied_pool = _agy_quota.pool_for_model(applied_model) if applied_model else ""
     for severity, message in _agy_quota.report(pools, applied_model=applied_model):
         if severity == "error":
-            other = (_agy_quota.POOL_CLAUDE_GPT if applied_pool == _agy_quota.POOL_GEMINI
-                     else _agy_quota.POOL_GEMINI)
             ui.error(message)
-            ui.detail(f"Re-run `ai-resources setup` and pick a model from the "
-                      f"\"{other}\" pool.")
+            ui.detail(_agy_quota.remedy(pools, applied_pool))
             if applied_pool == _agy_quota.POOL_GEMINI:
                 ui.detail("Voice notes on agy share this same Gemini pool — consider "
                           "switching voice notes off agy too.")

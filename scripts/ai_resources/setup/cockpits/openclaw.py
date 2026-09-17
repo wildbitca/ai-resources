@@ -558,17 +558,21 @@ def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
         # skipped under non-interactive and dry-run so an unattended run stays
         # byte-identical to today and never gains a subprocess that can hang on a
         # machine where agy is not signed in.
-        if not ui.is_non_interactive() and not dry_run and detection._which_extra("agy"):
-            pools, _reason = _agy_quota.read_usage()
+        agy_bin = (not ui.is_non_interactive() and not dry_run
+                   and detection._which_extra("agy"))
+        if agy_bin:
+            # Pass the resolved absolute path: agy commonly lives only in ~/.local/bin,
+            # which _which_extra() searches but the inherited PATH may not carry. Letting
+            # read_usage() fall back to a bare "agy" would make the annotation vanish
+            # silently on exactly the machines the extra-bin lookup exists for.
+            pools, _reason = _agy_quota.read_usage(agy_bin=agy_bin)
             # report()'s severity is scoped to an applied model (doctor's job, S4); here
             # nothing is chosen yet, so any pool at 0% warns on sight — reuse report()
             # only for its message text, one call per pool, so the wording never drifts.
             for pool in pools:
                 message = _agy_quota.report([pool])[0][1]
                 if pool.remaining_pct == 0:
-                    other = (_agy_quota.POOL_CLAUDE_GPT if pool.name == _agy_quota.POOL_GEMINI
-                             else _agy_quota.POOL_GEMINI)
-                    ui.warn(f"{message} — pick a model from the \"{other}\" pool instead.")
+                    ui.warn(f"{message} — {_agy_quota.remedy(pools, pool.name)}")
                 else:
                     ui.detail(message)
     else:

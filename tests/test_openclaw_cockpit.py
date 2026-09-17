@@ -413,7 +413,7 @@ def test_s3_warns_once_for_a_zero_percent_pool_and_still_offers_all_choices(monk
         _agy_quota.Pool(_agy_quota.POOL_GEMINI, 0, "2026-09-24T15:45:01Z"),
         _agy_quota.Pool(_agy_quota.POOL_CLAUDE_GPT, 81, "2026-09-24T21:01:59Z"),
     ]
-    monkeypatch.setattr(_agy_quota, "read_usage", lambda: (pools, ""))
+    monkeypatch.setattr(_agy_quota, "read_usage", lambda **_kw: (pools, ""))
 
     offered = {}
 
@@ -440,7 +440,7 @@ def test_s3_skips_the_read_under_non_interactive(monkeypatch):
     from ai_resources.setup.cockpits import _agy_quota
 
     calls = []
-    monkeypatch.setattr(_agy_quota, "read_usage", lambda: calls.append(1) or ([], ""))
+    monkeypatch.setattr(_agy_quota, "read_usage", lambda **_kw: calls.append(1) or ([], ""))
     monkeypatch.setattr(ui, "is_non_interactive", lambda: True)
     monkeypatch.setattr(openclaw.detection, "_which_extra", lambda _b: "/usr/local/bin/agy")
     monkeypatch.setattr(ui, "select", lambda _msg, choices, default=None, **_k: default)
@@ -456,7 +456,7 @@ def test_s3_skips_the_read_under_dry_run(monkeypatch):
     from ai_resources.setup.cockpits import _agy_quota
 
     calls = []
-    monkeypatch.setattr(_agy_quota, "read_usage", lambda: calls.append(1) or ([], ""))
+    monkeypatch.setattr(_agy_quota, "read_usage", lambda **_kw: calls.append(1) or ([], ""))
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
     monkeypatch.setattr(openclaw.detection, "_which_extra", lambda _b: "/usr/local/bin/agy")
     monkeypatch.setattr(ui, "select", lambda _msg, choices, default=None, **_k: default)
@@ -472,7 +472,7 @@ def test_s3_agy_absent_prints_nothing_extra_and_completes(monkeypatch):
     from ai_resources.setup.cockpits import _agy_quota
 
     calls = []
-    monkeypatch.setattr(_agy_quota, "read_usage", lambda: calls.append(1) or ([], ""))
+    monkeypatch.setattr(_agy_quota, "read_usage", lambda **_kw: calls.append(1) or ([], ""))
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
     monkeypatch.setattr(openclaw.detection, "_which_extra", lambda _b: "")
     monkeypatch.setattr(ui, "select", lambda _msg, choices, default=None, **_k: default)
@@ -1105,3 +1105,65 @@ def test_a_stale_plugin_triggers_a_restart_even_though_the_backend_answers(jarvi
     monkeypatch.setattr(openclaw, "restart_gateway", restart)
     assert openclaw._register_plugin_and_backends(_antigravity_state(), "/kit") is True
     assert seen["restarts"] == 1
+
+
+def test_s3_passes_the_resolved_agy_path_not_a_bare_name(monkeypatch):
+    """agy commonly lives only in ~/.local/bin, which _which_extra() finds but PATH
+    may not carry. Falling back to a bare "agy" would make the annotation vanish
+    silently on exactly the machines the extra-bin lookup exists for."""
+    from ai_resources.setup.cockpits import _agy_quota
+
+    seen = {}
+
+    def read_usage(agy_bin=None, **_kw):
+        seen["agy_bin"] = agy_bin
+        return [], ""
+
+    monkeypatch.setattr(_agy_quota, "read_usage", read_usage)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "warn", lambda _msg: None)
+    monkeypatch.setattr(ui, "detail", lambda _msg: None)
+    monkeypatch.setattr(ui, "text", lambda _msg, default="", **_k: default)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    monkeypatch.setattr(openclaw.detection, "_which_extra",
+                        lambda _b: "/home/someone/.local/bin/agy")
+
+    def select(_msg, choices, default=None, **_k):
+        return "antigravity" if "engine" in _msg.lower() else default
+
+    monkeypatch.setattr(ui, "select", select)
+    s = _state("agy", "claude")
+    s.openclaw.engine = "antigravity"
+    openclaw._prompt_engine(s, dry_run=False)
+    assert seen["agy_bin"] == "/home/someone/.local/bin/agy"
+
+
+def test_s3_zero_percent_warning_never_points_at_an_equally_dead_pool(monkeypatch):
+    from ai_resources.setup.cockpits import _agy_quota
+
+    warnings = []
+    pools = [
+        _agy_quota.Pool(_agy_quota.POOL_GEMINI, 0, "2026-09-24T15:45:01Z"),
+        _agy_quota.Pool(_agy_quota.POOL_CLAUDE_GPT, 0, "2026-09-24T21:01:59Z"),
+    ]
+    monkeypatch.setattr(_agy_quota, "read_usage", lambda **_kw: (pools, ""))
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "warn", lambda msg: warnings.append(msg))
+    monkeypatch.setattr(ui, "detail", lambda _msg: None)
+    monkeypatch.setattr(ui, "text", lambda _msg, default="", **_k: default)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    monkeypatch.setattr(openclaw.detection, "_which_extra", lambda _b: "/usr/local/bin/agy")
+
+    def select(_msg, choices, default=None, **_k):
+        return "antigravity" if "engine" in _msg.lower() else default
+
+    monkeypatch.setattr(ui, "select", select)
+    s = _state("agy", "claude")
+    s.openclaw.engine = "antigravity"
+    openclaw._prompt_engine(s, dry_run=False)
+
+    quota_warnings = [w for w in warnings if "remaining" in w]
+    assert len(quota_warnings) == 2
+    for w in quota_warnings:
+        assert "Every other pool is spent too" in w
+        assert "Re-run `ai-resources setup` and pick" not in w

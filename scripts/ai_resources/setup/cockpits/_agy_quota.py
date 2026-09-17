@@ -151,3 +151,33 @@ def report(
                 continue
         lines.append(("ok", message))
     return lines
+
+
+def remedy(pools: list[Pool], exhausted_pool: str, low_pct: int = 10) -> str:
+    """The one sentence telling a user where to go when `exhausted_pool` is spent.
+
+    It never points at a pool that is itself spent. The two weekly pools are
+    independent and both can sit at 0% at once — a Workspace account on the FREE
+    tier burns Gemini in hours — so a blind "pick the other pool" would send the
+    user to an equally dead bucket. Only pools actually reported by /usage are
+    offered, so an unrecognised third pool can never be invented by inversion.
+    """
+    others = [p for p in pools if p.name and p.name != exhausted_pool]
+    usable = [p for p in others if p.remaining_pct is None or p.remaining_pct > 0]
+    if not usable:
+        if others:
+            detail = ", ".join(
+                f'"{p.name}" at {p.remaining_pct}%' if p.remaining_pct is not None
+                else f'"{p.name}"'
+                for p in others
+            )
+            return (f"Every other pool is spent too ({detail}) — wait for the weekly "
+                    f"reset, or move this agent off agy.")
+        return ("No other pool was reported — wait for the weekly reset, or move this "
+                "agent off agy.")
+    names = " or ".join(f'"{p.name}"' for p in usable)
+    nearly = all(
+        p.remaining_pct is not None and p.remaining_pct <= low_pct for p in usable
+    )
+    tail = " (also nearly spent)" if nearly else ""
+    return f"Re-run `ai-resources setup` and pick a model from the {names} pool{tail}."
