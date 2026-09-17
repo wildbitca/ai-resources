@@ -19,6 +19,10 @@ the bot can use, so this module's one real decision is which engine runs it:
                  workspace AGENTS.md, which OpenClaw injects into every turn.
     keep         change nothing.
 
+Separately, setup asks how voice notes are transcribed (see `_openclaw_voice`): the kit's
+transcriber is registered as a `tools.media` CLI model and the voice rule joins the
+workspace AGENTS.md block.
+
 Verified against OpenClaw 2026.9.4. OpenClaw starts CLI runtimes with
 `--strict-mcp-config`, so MCP servers from the CLI's own config never reach the
 bot; Engram is therefore always declared in OpenClaw's `mcp.servers`.
@@ -41,11 +45,13 @@ from .. import state, ui
 from ..detection import detect_openclaw
 from ... import repo_root
 from . import _shared
+from . import _openclaw_voice as voice
 
 
 NAME = "OpenClaw"
 ID = "openclaw"
 CONFIG_ROOT = Path.home() / ".openclaw"
+VOICE_SCRIPT = "scripts/ai_resources/voice/openclaw_transcribe.py"
 
 
 @dataclass(frozen=True)
@@ -240,7 +246,13 @@ def _remove_managed_block(path: Path) -> bool:
 # --- setup entry points ------------------------------------------------------------
 
 def prompt(s: state.SetupState) -> None:
-    """Ask which engine runs the bot and which model it uses. Called from step 7."""
+    """Ask which engine runs the bot, which model it uses and how it hears voice notes.
+    Called from step 7."""
+    _prompt_engine(s)
+    voice.prompt(s)
+
+
+def _prompt_engine(s: state.SetupState) -> None:
     engines = available_engines(s)
     missing = [e for e in ENGINES.values() if e.requires and e not in engines]
     if missing:
@@ -265,6 +277,16 @@ def prompt(s: state.SetupState) -> None:
     # and under OpenRouter the Claude Code cockpit maps them with `modelOverrides`.
 
 
+def applied_engine(s: state.SetupState) -> Engine | None:
+    """The engine the kit's last write pointed OpenClaw at, None when it never wrote one."""
+    if not s.openclaw.applied:
+        return None
+    for eng in ENGINES.values():
+        if s.openclaw.model in eng.models:
+            return eng
+    return None
+
+
 def configure(ctx: dict) -> list[Path]:
     s = ctx["state"]
     dry_run = ctx.get("dry_run", False)
@@ -276,24 +298,45 @@ def configure(ctx: dict) -> list[Path]:
     cs.binary_path = ctx.get("detected_path", cs.binary_path)
     cs.config_root = str(CONFIG_ROOT)
 
-    engine = ENGINES.get(s.openclaw.engine or "keep", ENGINES["keep"])
     path = config_path()
     doc = read_config(path)
+    ak_path = str(_shared.stable_kit_root(repo_root()))
+
+    engine_changed = _configure_engine(ctx, doc, path, ak_path, written)
+    voice_changed = _configure_voice(s, doc, path, ak_path, written, dry_run=dry_run)
+    if dry_run or not (engine_changed or voice_changed):
+        return written
+
+    agents_md = workspace_dir(doc) / "AGENTS.md"
+    if _write_workspace_block(s, agents_md, ak_path, ctx.get("gateway_url", "")):
+        written.append(agents_md)
+
+    cs.configured = True
+    cs.last_configured_at = datetime.now(timezone.utc).isoformat()
+    s.cockpits[ID] = cs
+    return written
+
+
+def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
+                      written: list[Path]) -> bool:
+    """Point the default agent at the chosen engine. True when openclaw.json changed."""
+    s = ctx["state"]
+    dry_run = ctx.get("dry_run", False)
+    engine = ENGINES.get(s.openclaw.engine or "keep", ENGINES["keep"])
 
     if engine.id == "keep":
         if s.openclaw.applied and not dry_run and ui.confirm(
                 "The kit configured OpenClaw's engine earlier. Restore the engine it replaced?",
                 default=False):
-            return [Path(p) for p in teardown(s)]
+            return _teardown_engine(s)
         ui.info("OpenClaw: engine left unchanged.")
-        return written
+        return False
 
     if engine.requires and not (s.cockpits.get(engine.requires) or state.CockpitState()).installed:
         ui.error(f"OpenClaw: engine {engine.id} needs {engine.requires}, which is not installed.")
-        return written
+        return False
 
     model = s.openclaw.model if s.openclaw.model in engine.models else engine.models[0]
-    ak_path = str(_shared.stable_kit_root(repo_root()))
     kit_skills = str(Path(ak_path) / "skills")
     engram = shutil.which("engram") or "engram"
 
@@ -304,39 +347,111 @@ def configure(ctx: dict) -> list[Path]:
     ok, out = apply_patch(patch, dry_run=dry_run)
     if not ok:
         ui.error(f"OpenClaw rejected the config patch: {out[-400:]}")
-        return written
+        return False
     if dry_run:
-        return written
+        return False
     written.append(path)
-
-    # Instructions: CLI runtimes already load the kit block from their own config
-    # (CLAUDE.md, AGENTS.md, GEMINI.md), so repeating it here would inject it twice;
-    # only OpenClaw's own runtime needs the whole block. The memory rule goes in for
-    # every engine: OpenClaw injects this file into all of them, and its native
-    # memory tools would otherwise compete with Engram.
-    agents_md = workspace_dir(doc) / "AGENTS.md"
-    if engine.id == "direct":
-        md = _shared.kit_instructions_md("OpenClaw", ak_path, ctx.get("gateway_url", ""), "single-model",
-                                         native_skills=False) + "\n" + MEMORY_MD
-    else:
-        md = f"# ai-resources (OpenClaw)\n\nEngine: {engine.label.split(' — ')[0]}.\n\n{MEMORY_MD}"
-    if _shared.write_managed_block(agents_md, md):
-        written.append(agents_md)
 
     s.openclaw.applied = True
     s.openclaw.model = model
     s.openclaw.config_path = str(path)
-    cs.configured = True
-    cs.last_configured_at = datetime.now(timezone.utc).isoformat()
-    s.cockpits[ID] = cs
     ui.ok(f"OpenClaw default agent → {model} via {engine.runtime}")
-    return written
+    return True
 
 
-def teardown(s: state.SetupState) -> list[str]:
-    """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
+def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
+                     written: list[Path], *, dry_run: bool) -> bool:
+    """Write tools.media for the chosen voice mode. True when openclaw.json changed."""
+    mode = s.openclaw.voice or "keep"
+    if mode == "keep":
+        if s.openclaw.voice_applied and not dry_run and ui.confirm(
+                "The kit configured OpenClaw's voice notes earlier. Restore the setup it replaced?",
+                default=False):
+            return _teardown_voice(s)
+        return False
+
+    if mode in ("cloud", "local") and not dry_run:
+        if not voice.ensure_local_engine(required=mode == "local"):
+            ui.error("OpenClaw: voice notes left unchanged; the local engine is not ready.")
+            return False
+        if voice.ensure_glossary():
+            ui.ok(f"Voice glossary → {voice.transcriber.glossary_path()} (edit it freely)")
+
+    current = _get(doc, "tools", "media")
+    media = voice.build_media(mode, voice.interpreter(ak_path),
+                              str(Path(ak_path) / VOICE_SCRIPT),
+                              s.openclaw.voice_language or "auto", current)
+    ok, out = apply_patch({"tools": {"media": media}}, dry_run=dry_run)
+    if not ok:
+        ui.error(f"OpenClaw rejected the voice-notes patch: {out[-400:]}")
+        return False
+    if dry_run:
+        return False
+    if not s.openclaw.voice_applied:
+        s.openclaw.voice_previous = current
+    s.openclaw.voice_applied = mode
+    s.openclaw.config_path = str(path)
+    if path not in written:
+        written.append(path)
+    ui.ok(f"OpenClaw voice notes → {mode}")
+    return True
+
+
+def _write_workspace_block(s: state.SetupState, agents_md: Path, ak_path: str,
+                           gateway_url: str) -> bool:
+    """The kit block in the workspace AGENTS.md, built from what the kit has applied.
+
+    CLI runtimes already load the kit block from their own config (CLAUDE.md, AGENTS.md,
+    GEMINI.md), so repeating it here would inject it twice; only OpenClaw's own runtime needs
+    the whole block. The memory rule goes in for every engine: OpenClaw injects this file into
+    all of them, and its native memory tools would otherwise compete with Engram.
+    """
+    engine = applied_engine(s)
+    if engine and engine.id == "direct":
+        md = _shared.kit_instructions_md("OpenClaw", ak_path, gateway_url, "single-model",
+                                         native_skills=False) + "\n" + MEMORY_MD
+    elif engine:
+        md = f"# ai-resources (OpenClaw)\n\nEngine: {engine.label.split(' — ')[0]}.\n\n{MEMORY_MD}"
+    else:
+        md = "# ai-resources (OpenClaw)\n"
+
+    with_voice = s.openclaw.voice_applied in ("cloud", "local") and _claim_voice_section(agents_md)
+    if with_voice:
+        md += "\n" + voice.VOICE_MD
+    if not engine and not with_voice:
+        return _remove_managed_block(agents_md)
+    return _shared.write_managed_block(agents_md, md)
+
+
+def _claim_voice_section(agents_md: Path) -> bool:
+    """Whether the kit block may carry the voice rule.
+
+    A hand-written `## Voice notes` section outside the block would say the same thing twice.
+    Interactively the user may hand it over (a backup is kept); otherwise it stays theirs and
+    the block leaves the rule out.
+    """
+    if not agents_md.is_file():
+        return True
+    raw = agents_md.read_text(encoding="utf-8")
+    if not voice.hand_written_section(raw):
+        return True
+    if ui.is_non_interactive() or not ui.confirm(
+            f"{agents_md} has its own '## Voice notes' section. Replace it with the kit-managed "
+            "rule (the original file is backed up)?", default=True):
+        ui.info("OpenClaw: your '## Voice notes' section is kept; the kit block leaves it out.")
+        return False
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup = agents_md.with_name(f"{agents_md.name}.ai-resources-backup-{stamp}")
+    backup.write_text(raw, encoding="utf-8")
+    agents_md.write_text(voice.remove_hand_written_section(raw), encoding="utf-8")
+    ui.warn(f"{agents_md}: '## Voice notes' moved into the kit block; original saved as {backup.name}")
+    return True
+
+
+def _teardown_engine(s: state.SetupState) -> bool:
+    """Restore the engine settings the kit replaced. True when openclaw.json changed."""
     if not s.openclaw.applied:
-        return []
+        return False
     prev = s.openclaw.previous or {}
     doc = read_config(config_path())
     ak_path = str(_shared.stable_kit_root(repo_root()))
@@ -356,12 +471,47 @@ def teardown(s: state.SetupState) -> list[str]:
     args = ["config", "patch", "--stdin",
             "--replace-path", "agents.defaults.model", "--replace-path", "agents.defaults.models"]
     rc, out = _openclaw(args, stdin=json.dumps(patch))
-    removed: list[str] = []
     if rc != 0:
         ui.error(f"OpenClaw teardown failed: {out[-400:]}")
+        return False
+    s.openclaw.applied = False
+    s.openclaw.previous = {}
+    s.openclaw.model = ""
+    return True
+
+
+def _teardown_voice(s: state.SetupState) -> bool:
+    """Restore tools.media as it was before the kit's first voice write."""
+    if not s.openclaw.voice_applied:
+        return False
+    prev = s.openclaw.voice_previous
+    if prev is None:
+        rc, out = _openclaw(["config", "patch", "--stdin"],
+                            stdin=json.dumps({"tools": {"media": None}}))
+    else:
+        rc, out = _openclaw(["config", "patch", "--stdin", "--replace-path", "tools.media"],
+                            stdin=json.dumps({"tools": {"media": prev}}))
+    if rc != 0:
+        ui.error(f"OpenClaw voice-notes teardown failed: {out[-400:]}")
+        return False
+    s.openclaw.voice_applied = ""
+    s.openclaw.voice_previous = None
+    return True
+
+
+def teardown(s: state.SetupState) -> list[str]:
+    """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
+    if not (s.openclaw.applied or s.openclaw.voice_applied):
+        return []
+    doc = read_config(config_path())
+    engine_ok = _teardown_engine(s) if s.openclaw.applied else True
+    voice_ok = _teardown_voice(s) if s.openclaw.voice_applied else True
+    removed: list[str] = []
+    if not (engine_ok and voice_ok):
         return removed
     removed.append(str(config_path()))
-    if _remove_managed_block(workspace_dir(doc) / "AGENTS.md"):
-        removed.append(str(workspace_dir(doc) / "AGENTS.md"))
+    agents_md = workspace_dir(doc) / "AGENTS.md"
+    if _remove_managed_block(agents_md):
+        removed.append(str(agents_md))
     s.openclaw = state.OpenClawState()
     return removed

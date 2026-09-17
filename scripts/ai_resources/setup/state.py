@@ -141,6 +141,13 @@ class OpenClawState:
     # openclaw.json values before the kit's first write (model, models, engram,
     # extra_dirs), restored verbatim on teardown. None means the key was absent.
     previous: dict[str, Any] = field(default_factory=dict)
+    # Voice notes. `voice` is the last answer (cloud | local | off | keep); `voice_applied`
+    # is the mode the kit last wrote into tools.media, "" when it never did.
+    voice: str = ""
+    voice_language: str = ""          # ISO code passed to the transcriber, or auto
+    voice_applied: str = ""
+    # tools.media before the kit's first voice write, restored on teardown. None: absent.
+    voice_previous: Any = None
 
 
 @dataclass
