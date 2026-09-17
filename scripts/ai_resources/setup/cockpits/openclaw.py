@@ -65,6 +65,7 @@ NAME = "OpenClaw"
 ID = "openclaw"
 CONFIG_ROOT = Path.home() / ".openclaw"
 # How long to wait for a just-linked plugin's CLI backends to appear.
+PLUGIN_ID = "ai-resources"
 BACKEND_WAIT_TRIES = 15
 BACKEND_WAIT_SECONDS = 2.0
 
@@ -585,9 +586,24 @@ def configure(ctx: dict) -> list[Path]:
 
 
 def backend_registered(backend: str) -> bool:
-    """Whether the running gateway knows `backend` as a model-ref prefix."""
-    rc, out = _openclaw(["models", "list"])
-    return rc == 0 and f"{backend}/" in out
+    """Whether the running gateway has loaded the plugin that registers `backend`.
+
+    NOT `openclaw models list`: that lists provider models and never prints CLI-backend
+    refs, so it reports "missing" for a backend the gateway is happily using (seen on a
+    real run, 2026-09-17). The plugin's runtime inspection is the honest source.
+    """
+    rc, out = _openclaw(["plugins", "inspect", PLUGIN_ID, "--runtime", "--json"])
+    if rc != 0:
+        return False
+    start = out.find("{")
+    if start < 0:
+        return False
+    try:
+        report, _ = json.JSONDecoder().raw_decode(out[start:])
+    except ValueError:
+        return False
+    plugin = report.get("plugin") or {}
+    return plugin.get("status") == "loaded" and backend in (plugin.get("cliBackendIds") or [])
 
 
 def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
@@ -709,7 +725,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
 
     if switching_away_from_antigravity:
         if s.openclaw.plugin_linked:
-            rc_unlink, out_unlink = _openclaw(["plugins", "uninstall", "ai-resources"])
+            rc_unlink, out_unlink = _openclaw(["plugins", "uninstall", PLUGIN_ID])
             if rc_unlink != 0:
                 ui.warn(f"OpenClaw: could not unlink the ai-resources plugin ({out_unlink[-200:]})")
             s.openclaw.plugin_linked = False
@@ -947,7 +963,7 @@ def teardown(s: state.SetupState) -> list[str]:
     removed.append(str(config_path()))
 
     if s.openclaw.plugin_linked:
-        rc_unlink, _out = _openclaw(["plugins", "uninstall", "ai-resources"])
+        rc_unlink, _out = _openclaw(["plugins", "uninstall", PLUGIN_ID])
         if rc_unlink == 0:
             removed.append("plugin:ai-resources")
         s.openclaw.plugin_linked = False

@@ -828,3 +828,39 @@ def test_the_engine_patch_is_skipped_when_the_backend_never_registers(jarvis, mo
     cfg, _ws, rec = jarvis
     openclaw.configure({"state": _antigravity_state()})
     assert not any(c[0][:2] == ["config", "patch"] for c in rec.calls), rec.calls
+
+
+def test_backend_registered_reads_the_plugin_runtime_not_models_list(monkeypatch):
+    """`openclaw models list` lists provider models and never prints CLI-backend refs, so
+    it reports a loaded backend as missing (real run, 2026-09-17). The readiness check
+    must come from the plugin's own runtime inspection."""
+    seen: list[list[str]] = []
+
+    def fake(args, stdin=None, timeout=120):
+        seen.append(args)
+        if args[:2] == ["plugins", "inspect"]:
+            return 0, json.dumps({"plugin": {"status": "loaded",
+                                             "cliBackendIds": ["agy-cli", "claude-kit"]}})
+        return 0, "anthropic/claude-sonnet-5\ngoogle/gemini-3.8-flash\n"
+
+    monkeypatch.setattr(openclaw, "_openclaw", fake)
+    assert openclaw.backend_registered("agy-cli") is True
+    assert not any(a[:2] == ["models", "list"] for a in seen), seen
+
+
+@pytest.mark.parametrize("payload", [
+    {"plugin": {"status": "loaded", "cliBackendIds": ["claude-kit"]}},   # other backend only
+    {"plugin": {"status": "error", "cliBackendIds": ["agy-cli"]}},       # loaded it is not
+    {"plugin": {}},
+    {},
+])
+def test_backend_registered_is_false_for_anything_short_of_a_loaded_backend(monkeypatch, payload):
+    monkeypatch.setattr(openclaw, "_openclaw",
+                        lambda *_a, **_k: (0, json.dumps(payload)))
+    assert openclaw.backend_registered("agy-cli") is False
+
+
+def test_backend_registered_survives_junk_output(monkeypatch):
+    for rc, out in ((1, "gateway down"), (0, "not json at all"), (0, "")):
+        monkeypatch.setattr(openclaw, "_openclaw", lambda *_a, rc=rc, out=out, **_k: (rc, out))
+        assert openclaw.backend_registered("agy-cli") is False

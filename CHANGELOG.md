@@ -4,6 +4,16 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.7.2] — 2026-09-17 — The engine step stops mistaking a loaded backend for a missing one
+
+### Fixed
+
+- **Setup refused to patch the `antigravity` engine even with the plugin loaded.** The
+  readiness check asked `openclaw models list`, which lists provider models and never
+  prints CLI-backend refs, so a working `agy-cli` looked missing and the engine step gave
+  up after restarting the gateway. It now reads `openclaw plugins inspect ai-resources
+  --runtime --json` and requires the plugin to be loaded with the backend registered.
+
 ## [1.7.1] — 2026-09-17 — The antigravity engine applies on a first run
 
 ### Fixed
