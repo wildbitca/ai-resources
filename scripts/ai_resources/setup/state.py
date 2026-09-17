@@ -148,8 +148,10 @@ class OpenClawState:
     """Which engine the kit pointed OpenClaw's default agent at, and what it replaced."""
     engine: str = ""                  # antigravity | claude-code | codex | gemini-cli | keep
     model: str = ""                   # OpenClaw model ref (bare id for antigravity, e.g.
-                                       # gemini-3.8-flash-low; namespaced otherwise, e.g.
-                                       # anthropic/claude-sonnet-5)
+                                       # gemini-3.8-flash-low, claude-sonnet-4-6 or
+                                       # gpt-oss-120b-medium — antigravity's two weekly
+                                       # quota pools, see _agy_quota.py; namespaced
+                                       # otherwise, e.g. anthropic/claude-sonnet-5)
     applied: bool = False             # the kit has written openclaw.json at least once
     config_path: str = ""
     # openclaw.json values before the kit's first write (model, models, engram,

@@ -224,6 +224,50 @@ Telegram → OpenClaw → agy (agy-cli backend) → sessions_spawn → claude-ki
   (step 2), and to remove a superseded hand-rolled `~/.local/bin/openclaw-transcribe`.
   Both `claude` and `agy` logins stay interactive — the kit never automates them.
 
+#### Antigravity's two weekly quota pools
+
+Antigravity serves **two independent weekly quota pools**: one for Gemini models, one
+shared by Claude and GPT models. `ai-resources setup` labels each antigravity model
+choice with its pool, and offers Claude/GPT models (`claude-sonnet-4-6`,
+`claude-opus-4-6-thinking`, `gpt-oss-120b-medium`) alongside the default Gemini ones —
+so a Gemini pool at 0% is no longer a dead end.
+
+The failure mode is deceptive if you don't know this: agy retries a 429
+`RESOURCE_EXHAUSTED` five times with backoff (~93s total), then OpenClaw's stall
+detector kills the turn — *"This turn was interrupted because it stopped making
+progress"* — and respawns it, with no quota error ever shown. agy's own background
+quota refresh is broken (`Singleflight refresh failed: You are not logged into
+Antigravity`), so an on-demand check is the only reliable signal.
+
+Run `ai-resources doctor` to see both pools' remaining percentage and reset time. A
+healthy pool looks like:
+
+```
+[4] Cockpits
+  ✓ Gemini Models: 81% remaining (resets 2026-09-24T21:01:59Z)
+```
+
+An exhausted one that's backing your applied model looks like:
+
+```
+[4] Cockpits
+  ✗ Gemini Models: 0% remaining (resets 2026-09-24T15:45:01Z)
+    Re-run `ai-resources setup` and pick a model from the "Claude and GPT models" pool.
+    Voice notes on agy share this same Gemini pool — consider switching voice notes off agy too.
+```
+
+Voice notes transcribed through `agy` are pinned to `gemini-3.8-flash-low`
+(`voice/openclaw_transcribe.py`) — no Claude/GPT model accepts audio, so agy voice can
+never leave the Gemini pool. If the main agent also runs a gemini-* model, the two
+exhaust together; setup warns about this when you pick `agy` for voice, but does not
+change the default (agy-first) for you.
+
+**Known limitation, documented and not detected:** Google Workspace accounts
+(`hd=<domain>`, token `auth_method=consumer`) cannot hold Google AI Pro/Ultra and
+silently sit on the FREE weekly tier — this is not visible in any token claim the kit
+can read, so it is not something `ai-resources doctor` can flag; the quota pools above
+are what you can check.
+
 Whatever the engine, Engram is declared in OpenClaw's `mcp.servers`, and the
 workspace `AGENTS.md` names Engram as the memory of record, with OpenClaw's
 native memory kept for recent chat context.

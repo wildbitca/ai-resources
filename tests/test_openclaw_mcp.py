@@ -390,7 +390,7 @@ def test_no_secret_value_reaches_any_output(home, monkeypatch, capsys, tmp_path)
 
 def test_openclaw_prompt_asks_only_for_the_claude_code_engine(monkeypatch, tmp_path):
     asked: list[str] = []
-    monkeypatch.setattr(openclaw, "_prompt_engine", lambda s: None)
+    monkeypatch.setattr(openclaw, "_prompt_engine", lambda s, **_k: None)
     monkeypatch.setattr(openclaw.voice, "prompt", lambda s: None)
     monkeypatch.setattr(openclaw, "config_path", lambda: tmp_path / "missing.json")
     monkeypatch.setattr(mcp, "prompt", lambda s, servers, home=None: asked.append(s.openclaw.engine))

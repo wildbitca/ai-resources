@@ -322,6 +322,168 @@ def test_never_offers_the_flash_medium_model():
     assert "gemini-3.8-flash-medium" not in openclaw.ENGINES["antigravity"].models
 
 
+# --- S2: the two antigravity quota pools ------------------------------------------
+
+def test_antigravity_tuple_holds_at_least_one_id_from_each_pool():
+    models = openclaw.ENGINES["antigravity"].models
+    assert models[0] == "gemini-3.8-flash-low", "default is unchanged"
+    assert any(m.startswith("gemini-") for m in models)
+    assert any(m.startswith("claude-") or m.startswith("gpt-") for m in models)
+
+
+def test_build_patch_with_a_claude_gpt_pool_model_yields_a_two_segment_ref():
+    gemini_patch = openclaw.build_patch(
+        openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", {}, KIT_SKILLS, "e",
+        worker_model="claude-sonnet-5",
+    )
+    claude_patch = openclaw.build_patch(
+        openclaw.ENGINES["antigravity"], "claude-sonnet-4-6", {}, KIT_SKILLS, "e",
+        worker_model="claude-sonnet-5",
+    )
+    assert claude_patch["agents"]["defaults"]["model"]["primary"] == "agy-cli/claude-sonnet-4-6"
+    # Rest of the patch is byte-identical to the gemini case once the primary ref differs.
+    gemini_patch["agents"]["defaults"]["model"]["primary"] = "SENTINEL"
+    claude_patch["agents"]["defaults"]["model"]["primary"] = "SENTINEL"
+    assert gemini_patch == claude_patch
+
+
+def test_applied_engine_resolves_a_bare_claude_sonnet_4_6_to_antigravity_never_claude_code():
+    """Regression test only (no code change): claude-code and codex ids are namespaced
+    (`anthropic/...`, `openai/...`), so a bare vendor id landing in the antigravity tuple
+    is safe today only because of that. Pins the invariant `applied_engine()` relies on
+    (its model-string-membership scan, `openclaw.py`) for whoever changes it next."""
+    s = state.SetupState()
+    s.openclaw.applied = True
+    s.openclaw.model = "claude-sonnet-4-6"
+    assert openclaw.applied_engine(s) is openclaw.ENGINES["antigravity"]
+
+
+def test_non_antigravity_model_labels_are_byte_identical_to_today(monkeypatch):
+    seen = {}
+
+    def select(_msg, choices, default=None, **_k):
+        seen["choices"] = [(c.title if hasattr(c, "title") else c["title"]) for c in choices]
+        return default
+
+    monkeypatch.setattr(ui, "select", select)
+    monkeypatch.setattr(ui, "text", lambda _msg, default="", **_k: default)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    s = _state("claude")
+    s.openclaw.engine = "claude-code"
+    openclaw._prompt_engine(s)
+    assert seen["choices"] == list(openclaw.ENGINES["claude-code"].models)
+
+
+def test_antigravity_model_labels_carry_the_pool_name_value_stays_bare_id(monkeypatch):
+    seen = {}
+
+    def select(_msg, choices, default=None, **_k):
+        if "engine" in _msg.lower():
+            return "antigravity"
+        seen["choices"] = choices
+        return default
+
+    monkeypatch.setattr(ui, "select", select)
+    monkeypatch.setattr(ui, "text", lambda _msg, default="", **_k: default)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    monkeypatch.setattr(openclaw.detection, "_which_extra", lambda _b: "")
+    s = _state("agy", "claude")
+    s.openclaw.engine = "antigravity"
+    openclaw._prompt_engine(s)
+    labels = {c.value: c.title for c in seen["choices"]}
+    assert labels["gemini-3.8-flash-low"] == "gemini-3.8-flash-low — Gemini Models pool"
+    assert labels["claude-sonnet-4-6"] == "claude-sonnet-4-6 — Claude and GPT models pool"
+    assert [c.value for c in seen["choices"]] == list(openclaw.ENGINES["antigravity"].models)
+
+
+# --- S3: live pool state at antigravity model-choice time -------------------------
+
+def test_s3_warns_once_for_a_zero_percent_pool_and_still_offers_all_choices(monkeypatch):
+    from ai_resources.setup.cockpits import _agy_quota
+
+    warnings, details = [], []
+    monkeypatch.setattr(ui, "warn", lambda msg: warnings.append(msg))
+    monkeypatch.setattr(ui, "detail", lambda msg: details.append(msg))
+    monkeypatch.setattr(ui, "text", lambda _msg, default="", **_k: default)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(openclaw.detection, "_which_extra", lambda _b: "/usr/local/bin/agy")
+
+    pools = [
+        _agy_quota.Pool(_agy_quota.POOL_GEMINI, 0, "2026-09-24T15:45:01Z"),
+        _agy_quota.Pool(_agy_quota.POOL_CLAUDE_GPT, 81, "2026-09-24T21:01:59Z"),
+    ]
+    monkeypatch.setattr(_agy_quota, "read_usage", lambda: (pools, ""))
+
+    offered = {}
+
+    def select(_msg, choices, default=None, **_k):
+        if "engine" in _msg.lower():
+            return "antigravity"
+        offered["values"] = [c.value for c in choices]
+        return default
+
+    monkeypatch.setattr(ui, "select", select)
+    s = _state("agy", "claude")
+    s.openclaw.engine = "antigravity"
+    openclaw._prompt_engine(s, dry_run=False)
+
+    # Only the quota warning below — not the unrelated risk-acknowledgement warning
+    # `_prompt_engine` also emits for the antigravity engine.
+    quota_warnings = [w for w in warnings if "remaining" in w]
+    assert len(quota_warnings) == 1
+    assert "Gemini Models" in quota_warnings[0] and "Claude and GPT" in quota_warnings[0]
+    assert offered["values"] == list(openclaw.ENGINES["antigravity"].models)
+
+
+def test_s3_skips_the_read_under_non_interactive(monkeypatch):
+    from ai_resources.setup.cockpits import _agy_quota
+
+    calls = []
+    monkeypatch.setattr(_agy_quota, "read_usage", lambda: calls.append(1) or ([], ""))
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: True)
+    monkeypatch.setattr(openclaw.detection, "_which_extra", lambda _b: "/usr/local/bin/agy")
+    monkeypatch.setattr(ui, "select", lambda _msg, choices, default=None, **_k: default)
+    monkeypatch.setattr(ui, "text", lambda _msg, default="", **_k: default)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    s = _state("agy", "claude")
+    s.openclaw.engine = "antigravity"
+    openclaw._prompt_engine(s, dry_run=False)
+    assert calls == []
+
+
+def test_s3_skips_the_read_under_dry_run(monkeypatch):
+    from ai_resources.setup.cockpits import _agy_quota
+
+    calls = []
+    monkeypatch.setattr(_agy_quota, "read_usage", lambda: calls.append(1) or ([], ""))
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(openclaw.detection, "_which_extra", lambda _b: "/usr/local/bin/agy")
+    monkeypatch.setattr(ui, "select", lambda _msg, choices, default=None, **_k: default)
+    monkeypatch.setattr(ui, "text", lambda _msg, default="", **_k: default)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    s = _state("agy", "claude")
+    s.openclaw.engine = "antigravity"
+    openclaw._prompt_engine(s, dry_run=True)
+    assert calls == []
+
+
+def test_s3_agy_absent_prints_nothing_extra_and_completes(monkeypatch):
+    from ai_resources.setup.cockpits import _agy_quota
+
+    calls = []
+    monkeypatch.setattr(_agy_quota, "read_usage", lambda: calls.append(1) or ([], ""))
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(openclaw.detection, "_which_extra", lambda _b: "")
+    monkeypatch.setattr(ui, "select", lambda _msg, choices, default=None, **_k: default)
+    monkeypatch.setattr(ui, "text", lambda _msg, default="", **_k: default)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    s = _state("agy", "claude")
+    s.openclaw.engine = "antigravity"
+    openclaw._prompt_engine(s, dry_run=False)
+    assert calls == []
+
+
 def test_a_saved_direct_engine_is_not_offered_and_falls_back_to_keep_with_a_warning(monkeypatch):
     warnings = []
     monkeypatch.setattr(ui, "warn", lambda msg: warnings.append(msg))
@@ -658,6 +820,8 @@ def _stub_ui_answers_for_prompt(monkeypatch):
     monkeypatch.setattr(ui, "confirm", lambda _msg, default=True, **_k: True)
     monkeypatch.setattr(ui, "detail", lambda *_a, **_k: None)
     monkeypatch.setattr(ui, "warn", lambda *_a, **_k: None)
+    # S3's live quota read must never touch a real agy binary from a test.
+    monkeypatch.setattr(openclaw.detection, "_which_extra", lambda _binary: "")
 
 
 def test_ac18_parity_prompt_plus_configure_produce_the_same_patch_and_never_touch_claude_settings_json(
@@ -703,7 +867,7 @@ def test_step7_cockpit_config_prompts_openclaw_in_both_modes(monkeypatch):
     from ai_resources.setup import wizard
 
     prompted = []
-    monkeypatch.setattr(openclaw, "prompt", lambda s: prompted.append(s.mode))
+    monkeypatch.setattr(openclaw, "prompt", lambda s, **_k: prompted.append(s.mode))
     monkeypatch.setattr(ui, "checkbox", lambda *_a, **_k: ["openclaw"])
 
     for mode in ("single-model", "multi-model"):

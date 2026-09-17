@@ -28,6 +28,15 @@ Separately, setup asks how voice notes are transcribed (see `_openclaw_voice`): 
 transcriber is registered as a `tools.media` CLI model and the voice rule joins the
 workspace AGENTS.md block.
 
+Antigravity serves **two independent weekly quota pools** — one for Gemini models, one
+shared by Claude and GPT models (see `_agy_quota.py`) — so `ENGINES["antigravity"].models`
+offers ids from both, each labelled with its pool at choice time (`_prompt_engine`).
+Exhaustion is deceptive if you don't know this: agy retries a 429 `RESOURCE_EXHAUSTED`
+five times with backoff (~93s total), then OpenClaw's stall detector kills the turn —
+"This turn was interrupted because it stopped making progress" — and respawns it, with
+no quota error ever surfaced. `ai-resources doctor` reads `agy -p "/usage"` on demand
+(agy's own background quota refresh is broken) and is the only reliable signal.
+
 With the Claude Code engine, setup also offers to mirror Claude Code's user-level MCP servers
 into `mcp.servers` (see `_openclaw_mcp`), because the bot sees no others.
 
@@ -59,6 +68,7 @@ from ... import repo_root
 from . import _shared
 from . import _openclaw_mcp as mcp
 from . import _openclaw_voice as voice
+from . import _agy_quota
 
 
 NAME = "OpenClaw"
@@ -87,8 +97,19 @@ ENGINES: dict[str, Engine] = {
         "Antigravity CLI (agy) — chat-facing orchestrator that hears voice notes and "
         "hands code/team work to an unrestricted Claude Code sub-agent",
         "agy-cli", "agy",
-        ("gemini-3.8-flash-low", "gemini-3.8-flash-high", "gemini-3.1-pro-low"),
+        ("gemini-3.8-flash-low", "gemini-3.8-flash-high", "gemini-3.1-pro-low",
+         "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"),
         # gemini-3.8-flash-medium leaks its reasoning into replies (S0) — never offered.
+        # Antigravity serves TWO independent weekly quota pools: Gemini models share one,
+        # Claude and GPT models share the other (see `_agy_quota.py`). `gemini-3.8-flash-low`
+        # stays first only for backwards compatibility — it is still the default. The
+        # three ids after it were verified live 2026-09-17 with a real one-token turn each
+        # (`agy --model <id> -p "say ok"`): claude-sonnet-4-6 in 4.6s, claude-opus-4-6-thinking
+        # in 7.2s, gpt-oss-120b-medium in 3.9s. `claude-sonnet-4-6-thinking` was tried too and
+        # rejected (agy printed its model catalogue instead of running), so it is not offered.
+        # `agy models` cannot be queried on this machine — its background quota refresh is
+        # broken (`Singleflight refresh failed: You are not logged into Antigravity`), the
+        # same auth-refresh path `_agy_quota.py`'s docstring notes for `/usage`.
     ),
     "claude-code": Engine(
         "claude-code", "Claude Code — the bot runs the full kit (subagents, skills, hooks, workflows)",
@@ -486,16 +507,16 @@ def unregister_agy_mcp_bridge() -> bool:
 
 # --- setup entry points ------------------------------------------------------------
 
-def prompt(s: state.SetupState) -> None:
+def prompt(s: state.SetupState, *, dry_run: bool = False) -> None:
     """Ask which engine runs the bot, which model it uses, which MCP servers it gets and how it
     hears voice notes. Called from step 7."""
-    _prompt_engine(s)
+    _prompt_engine(s, dry_run=dry_run)
     if s.openclaw.engine == "claude-code":
         mcp.prompt(s, _get(read_config(config_path()), "mcp", "servers") or {})
     voice.prompt(s)
 
 
-def _prompt_engine(s: state.SetupState) -> None:
+def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
     engines = available_engines(s)
     missing = [e for e in ENGINES.values()
               if e.requires and not e.disabled_reason and e not in engines]
@@ -524,9 +545,38 @@ def _prompt_engine(s: state.SetupState) -> None:
     if not engine.models:
         return
     saved = s.openclaw.model if s.openclaw.model in engine.models else engine.models[0]
+
+    if engine_id == "antigravity":
+        # Antigravity serves two independent weekly quota pools (see `_agy_quota.py`);
+        # label each choice with its pool. `value=` stays the bare id so the patch and
+        # state formats are untouched — only the label changes.
+        choices = [
+            ui.Choice(f"{m} — {_agy_quota.pool_for_model(m)} pool", value=m)
+            for m in engine.models
+        ]
+        # Best-effort live pool state, read-only, at most once, never blocking:
+        # skipped under non-interactive and dry-run so an unattended run stays
+        # byte-identical to today and never gains a subprocess that can hang on a
+        # machine where agy is not signed in.
+        if not ui.is_non_interactive() and not dry_run and detection._which_extra("agy"):
+            pools, _reason = _agy_quota.read_usage()
+            # report()'s severity is scoped to an applied model (doctor's job, S4); here
+            # nothing is chosen yet, so any pool at 0% warns on sight — reuse report()
+            # only for its message text, one call per pool, so the wording never drifts.
+            for pool in pools:
+                message = _agy_quota.report([pool])[0][1]
+                if pool.remaining_pct == 0:
+                    other = (_agy_quota.POOL_CLAUDE_GPT if pool.name == _agy_quota.POOL_GEMINI
+                             else _agy_quota.POOL_GEMINI)
+                    ui.warn(f"{message} — pick a model from the \"{other}\" pool instead.")
+                else:
+                    ui.detail(message)
+    else:
+        choices = [ui.Choice(m, value=m) for m in engine.models]
+
     s.openclaw.model = ui.select(
         "Model for OpenClaw's default agent:",
-        [ui.Choice(m, value=m) for m in engine.models],
+        choices,
         default=saved,
     )
     # OpenClaw hands Claude Code the bare Anthropic ID (claude-sonnet-5) whatever the

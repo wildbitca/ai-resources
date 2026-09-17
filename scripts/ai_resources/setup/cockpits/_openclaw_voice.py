@@ -10,6 +10,12 @@
 
 Both transcribing modes run the kit's `voice/openclaw_transcribe.py` as a `tools.media`
 CLI model, so the chain and its measured defaults live in one place.
+
+`agy` mode is pinned to `AGY_MODEL = "gemini-3.8-flash-low"` and cannot be repointed: no
+Claude/GPT model accepts audio. That model draws on antigravity's Gemini weekly quota
+pool (see `cockpits/_agy_quota.py`), the same pool a gemini-* main agent uses — the two
+exhaust together, and exhaustion looks like a stalled turn, not a quota error. `agy`
+still comes first in `default_mode()`; see that function's docstring for why.
 """
 from __future__ import annotations
 
@@ -24,9 +30,11 @@ from typing import Any
 
 from .. import credentials, state, ui
 from ...voice import openclaw_transcribe as transcriber
+from . import _agy_quota
 
 MODES = {
-    "agy": "Antigravity CLI (agy) — your own Google account, no OpenRouter key, no whisper",
+    "agy": "Antigravity CLI (agy) — your own Google account, no OpenRouter key, no whisper "
+           "(shares its weekly Gemini quota pool with a gemini-* main agent)",
     "cloud": "Cloud — OpenRouter audio model (needs OPENROUTER_API_KEY), local whisper.cpp fallback",
     "local": "Local only — whisper.cpp on this machine",
     "off": "Off — do not transcribe voice notes",
@@ -62,11 +70,28 @@ def has_agy() -> bool:
     return bool(os.environ.get("AGY_BIN") or transcriber.find_binary("agy", Path.home() / ".local" / "bin"))
 
 
+def main_agent_uses_gemini(s: state.SetupState) -> bool:
+    """True when OpenClaw's default agent is antigravity running a gemini-* model —
+    the same weekly quota pool agy voice transcription is pinned to (see below)."""
+    return (s.openclaw.engine == "antigravity"
+            and _agy_quota.pool_for_model(s.openclaw.model or "gemini-3.8-flash-low")
+            == _agy_quota.POOL_GEMINI)
+
+
 def default_mode(s: state.SetupState) -> str:
     """The saved answer; unattended first runs keep; else agy, then cloud, then local.
 
     agy comes first because it needs no per-token key and no local model: it runs on a
-    Google subscription the user already has."""
+    Google subscription the user already has. This is true and incomplete: agy's
+    transcriber is pinned to `AGY_MODEL = gemini-3.8-flash-low`
+    (`voice/openclaw_transcribe.py`) and no Claude/GPT model accepts audio, so agy voice
+    can never leave the Gemini pool. When the main agent also runs a gemini-* model, the
+    two share one weekly bucket and exhaust together — deceptively, since exhaustion
+    surfaces as OpenClaw's stall detector killing the turn for "no progress," not as a
+    quota error (see `_agy_quota.py`). **DECIDED 2026-09-17: this is a deliberate
+    warn-only choice, made with that cost known** — the default stays agy-first;
+    `prompt()` below is what surfaces the warning instead of silently changing anyone's
+    setup out from under them."""
     if s.openclaw.voice in MODES:
         return s.openclaw.voice
     if ui.is_non_interactive():
@@ -117,6 +142,11 @@ def prompt(s: state.SetupState) -> None:
     if mode == "agy" and not has_agy():
         ui.warn("No agy binary found (install Antigravity CLI and run `agy` once to sign in): "
                 "every note will report that it could not be understood until then.")
+    if mode == "agy" and main_agent_uses_gemini(s):
+        ui.warn("Voice notes and the main agent share one weekly Gemini pool. When it runs "
+                "out, a turn doesn't show a quota error — it just stops making progress and "
+                "OpenClaw interrupts it. Local mode is measured at 6.0 s offline with zero "
+                "quota use.")
     if mode == "cloud" and not has_openrouter_key():
         ui.warn("No OPENROUTER_API_KEY in the environment or the kit credentials: "
                 "every note will fall back to local whisper.cpp until one is added.")

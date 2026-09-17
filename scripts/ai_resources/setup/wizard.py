@@ -139,7 +139,7 @@ def run(args: argparse.Namespace) -> int:
         if rc != 0:
             return rc
 
-    rc = _step7_cockpit_config(s)
+    rc = _step7_cockpit_config(s, dry_run=dry_run)
     if rc != 0:
         return rc
 
@@ -949,7 +949,7 @@ def _single_model_executors(s: state.SetupState) -> dict:
 
 
 # --- Step 7 — Cockpit configuration ----------------------------------------------
-def _step7_cockpit_config(s: state.SetupState) -> int:
+def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
     ui.section(7, TOTAL_STEPS, "Cockpit configuration")
 
     detected_ids = [cid for cid, cs in s.cockpits.items() if cs.installed]
@@ -973,7 +973,7 @@ def _step7_cockpit_config(s: state.SetupState) -> int:
     s.profile.customizations.setdefault("__targets__", {})["selected"] = selected  # stash for apply step
     if "openclaw" in selected:
         from .cockpits import openclaw as _openclaw_cockpit
-        _openclaw_cockpit.prompt(s)
+        _openclaw_cockpit.prompt(s, dry_run=dry_run)
     return 0
 
 

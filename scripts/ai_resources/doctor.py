@@ -7,6 +7,55 @@ from pathlib import Path
 from .setup import state, detection, credentials, litellm, providers, smoke, ui
 
 
+def _check_antigravity_quota(s: state.SetupState) -> int:
+    """Doctor sub-check 4d: Antigravity's two weekly quota pools.
+
+    Exhaustion is otherwise indistinguishable from a hang: agy retries a 429
+    RESOURCE_EXHAUSTED five times with backoff (~93 s), then OpenClaw's stall detector
+    kills the turn ("This turn was interrupted because it stopped making progress") and
+    respawns — no quota error ever reaches the user. agy's own background refresh is
+    broken ("Singleflight refresh failed: You are not logged into Antigravity"), so this
+    on-demand `/usage` read is the only reliable signal.
+
+    Only called when `s.openclaw.antigravity_applied`. Returns the number of new issues
+    (0, 1, or one per pool at/near its limit) — never raises.
+    """
+    from .setup.cockpits import _agy_quota
+
+    issues = 0
+    agy_bin = detection._which_extra("agy")
+    if not agy_bin:
+        ui.detail("agy not found — skipping quota check.")
+        return issues
+
+    pools, reason = _agy_quota.read_usage(agy_bin=agy_bin, timeout=30)
+    if reason:
+        ui.warn(f"Could not read Antigravity quota: {reason}")
+        ui.detail("agy's background quota refresh is known broken (Singleflight refresh "
+                  "failed) — this on-demand read is the only reliable source.")
+        return issues
+
+    applied_model = s.openclaw.model
+    applied_pool = _agy_quota.pool_for_model(applied_model) if applied_model else ""
+    for severity, message in _agy_quota.report(pools, applied_model=applied_model):
+        if severity == "error":
+            other = (_agy_quota.POOL_CLAUDE_GPT if applied_pool == _agy_quota.POOL_GEMINI
+                     else _agy_quota.POOL_GEMINI)
+            ui.error(message)
+            ui.detail(f"Re-run `ai-resources setup` and pick a model from the "
+                      f"\"{other}\" pool.")
+            if applied_pool == _agy_quota.POOL_GEMINI:
+                ui.detail("Voice notes on agy share this same Gemini pool — consider "
+                          "switching voice notes off agy too.")
+            issues += 1
+        elif severity == "warn":
+            ui.warn(message)
+            issues += 1
+        else:
+            ui.detail(message)
+    return issues
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     ui.require_deps()
     ui.banner("ai-resources doctor", subtitle="Health check across all components")
@@ -176,6 +225,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             issues += 1
         else:
             ui.ok("OpenClaw runs the kit plugin (agy-cli backend registered)")
+
+        # 4d. Antigravity quota.
+        issues += _check_antigravity_quota(s)
 
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")

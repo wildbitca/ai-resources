@@ -108,7 +108,7 @@ def _answers(monkeypatch, *answers):
 
 
 def test_openclaw_prompt_asks_about_voice_notes(monkeypatch):
-    monkeypatch.setattr(openclaw, "_prompt_engine", lambda s: None)
+    monkeypatch.setattr(openclaw, "_prompt_engine", lambda s, **_k: None)
     asked = _answers(monkeypatch, "cloud", "es")
     s = state.SetupState()
     openclaw.prompt(s)
@@ -523,3 +523,86 @@ def test_a_saved_answer_still_wins_over_agy(monkeypatch):
     s = state.SetupState()
     s.openclaw.voice = "local"
     assert voice.default_mode(s) == "local"
+
+
+# --- S5: the default stays agy-first — AC15-AC18 (warn only, never demoted) --------
+
+@pytest.mark.parametrize("has_openrouter_key", [True, False])
+def test_ac15_engine_antigravity_gemini_model_agy_installed_default_is_still_agy(
+        monkeypatch, has_openrouter_key):
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(voice, "has_agy", lambda: True)
+    monkeypatch.setattr(voice, "has_openrouter_key", lambda: has_openrouter_key)
+    s = state.SetupState()
+    s.openclaw.engine, s.openclaw.model = "antigravity", "gemini-3.8-flash-low"
+    assert voice.default_mode(s) == "agy"
+
+
+def test_ac16_engine_antigravity_claude_sonnet_4_6_default_is_still_agy(monkeypatch):
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(voice, "has_agy", lambda: True)
+    s = state.SetupState()
+    s.openclaw.engine, s.openclaw.model = "antigravity", "claude-sonnet-4-6"
+    assert voice.default_mode(s) == "agy"
+
+
+def test_ac16b_engine_claude_code_default_is_still_agy_when_agy_is_installed(monkeypatch):
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(voice, "has_agy", lambda: True)
+    s = state.SetupState()
+    s.openclaw.engine = "claude-code"
+    assert voice.default_mode(s) == "agy"
+
+
+def test_ac17_saved_answer_or_non_interactive_first_run_still_wins(monkeypatch):
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: True)
+    assert voice.default_mode(state.SetupState()) == "keep"
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(voice, "has_agy", lambda: True)
+    s = state.SetupState()
+    s.openclaw.voice = "off"
+    assert voice.default_mode(s) == "off"
+
+
+def test_main_agent_uses_gemini_helper():
+    s = state.SetupState()
+    s.openclaw.engine, s.openclaw.model = "antigravity", "gemini-3.8-flash-low"
+    assert voice.main_agent_uses_gemini(s) is True
+    s.openclaw.model = "claude-sonnet-4-6"
+    assert voice.main_agent_uses_gemini(s) is False
+    s.openclaw.engine = "claude-code"
+    s.openclaw.model = "gemini-3.8-flash-low"  # irrelevant off antigravity
+    assert voice.main_agent_uses_gemini(s) is False
+    # No model saved yet still defaults to the antigravity default, which is gemini.
+    s2 = state.SetupState()
+    s2.openclaw.engine = "antigravity"
+    assert voice.main_agent_uses_gemini(s2) is True
+
+
+def test_ac18_shared_pool_warning_fires_only_for_agy_plus_gemini_and_never_blocks_the_choice(monkeypatch):
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(voice, "has_agy", lambda: True)
+    monkeypatch.setattr(voice, "default_language", lambda _s: "es")
+
+    def run_prompt(engine, model, answer):
+        warnings = []
+        monkeypatch.setattr(ui, "warn", lambda msg: warnings.append(msg))
+        monkeypatch.setattr(ui, "select", lambda _msg, _choices, default=None, **_k: answer)
+        s = state.SetupState()
+        s.openclaw.engine, s.openclaw.model = engine, model
+        voice.prompt(s)
+        return s, warnings
+
+    # agy + gemini main agent: exactly one shared-pool warning, mode still set to agy.
+    s, warnings = run_prompt("antigravity", "gemini-3.8-flash-low", "agy")
+    pool_warnings = [w for w in warnings if "Gemini pool" in w]
+    assert len(pool_warnings) == 1
+    assert s.openclaw.voice == "agy"
+
+    # agy + claude-sonnet-4-6 main agent: no shared-pool warning.
+    _s, warnings = run_prompt("antigravity", "claude-sonnet-4-6", "agy")
+    assert not [w for w in warnings if "Gemini pool" in w]
+
+    # local + gemini main agent: no shared-pool warning (not agy mode).
+    _s, warnings = run_prompt("antigravity", "gemini-3.8-flash-low", "local")
+    assert not [w for w in warnings if "Gemini pool" in w]
