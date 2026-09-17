@@ -302,3 +302,9 @@ Agents discover skills — including the `workflow-*` skills — natively from t
 | [AGENTS.md](AGENTS.md) | Orchestration policy and skill discovery rules |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [workflows/WORKFLOW_CONTRACT.md](workflows/WORKFLOW_CONTRACT.md) | Workflow YAML specification |
+
+---
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

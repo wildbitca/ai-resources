@@ -11,6 +11,7 @@ class AiResources < Formula
       using: :git,
       tag: "v1.5.0"
   version "1.5.0"
+  license "Apache-2.0"
 
   head "https://github.com/wildbitca/ai-resources.git", branch: "main"
 
