@@ -77,7 +77,8 @@ def test_read_usage_timeout():
         return 124, "timed out"
     pools, reason = q.read_usage(run=run)
     assert pools == []
-    assert "timed out" in reason or reason
+    assert "timed out" in reason
+    assert "124" in reason
 
 
 def test_read_usage_success_uses_injected_runner_no_subprocess_mocking():

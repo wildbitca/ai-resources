@@ -6,6 +6,7 @@ tests/test_agy_quota.py). Run with: pytest tests/test_doctor_quota.py -q
 """
 from __future__ import annotations
 
+import argparse
 import pathlib
 import sys
 
@@ -27,15 +28,55 @@ def _state(applied: bool, model: str = "") -> state.SetupState:
     return s
 
 
+class _FakeConsole:
+    """Stand-in for `ui.console()`, which hard-requires rich (absent in CI).
+
+    `rule` (not just `print`) because `cmd_doctor` calls `ui.section`, which is
+    styled output rich provides no plain-text fallback for.
+    """
+
+    def print(self, *_a, **_k):
+        pass
+
+    def rule(self, *_a, **_k):
+        pass
+
+
+def _drive_cmd_doctor(monkeypatch, s: state.SetupState) -> None:
+    """Run the real `cmd_doctor` entry point against a stubbed environment.
+
+    `require_deps` and `console` are stubbed because CI runs pytest without
+    rich/questionary installed (see tests/test_openclaw_cockpit.py's identical
+    `_FakeConsole`), not because cmd_doctor's own behaviour is being narrowed.
+    """
+    monkeypatch.setattr(ui, "require_deps", lambda: None)
+    monkeypatch.setattr(ui, "console", lambda: _FakeConsole())
+    monkeypatch.setattr(state, "load", lambda: s)
+    doctor.cmd_doctor(argparse.Namespace(skip_smoke=True))
+
+
 def test_antigravity_applied_false_means_no_agy_call_at_all(monkeypatch):
+    # Drive the real entry point (cmd_doctor) rather than re-implementing its
+    # `if s.openclaw.antigravity_applied:` guard (doctor.py:210) here — a test that
+    # re-implements the guard passes even if the production guard is removed.
     calls = []
-    monkeypatch.setattr(detection, "_which_extra", lambda _b: calls.append(1) or "/usr/local/bin/agy")
-    s = _state(applied=False)
-    # The helper is only ever invoked from cmd_doctor's `if s.openclaw.antigravity_applied:`
-    # guard — assert that guard, not just the helper in isolation.
-    if s.openclaw.antigravity_applied:
-        doctor._check_antigravity_quota(s)
+    monkeypatch.setattr(doctor, "_check_antigravity_quota", lambda s: calls.append(1) or 0)
+
+    _drive_cmd_doctor(monkeypatch, _state(applied=False))
+
     assert calls == []
+
+
+def test_antigravity_applied_true_means_the_guard_is_taken(monkeypatch):
+    # Mirror of the test above: with the guard's condition true, the sub-check must
+    # run exactly once. Together the two pin the guard in both directions, so either
+    # removing it or inverting it fails one of them.
+    calls = []
+    monkeypatch.setattr(doctor, "_check_antigravity_quota", lambda s: calls.append(1) or 0)
+
+    _drive_cmd_doctor(monkeypatch, _state(applied=True, model="gemini-3.8-flash-low"))
+
+    assert calls == [1]
 
 
 def test_gemini_applied_model_at_zero_percent_is_one_issue_with_pool_reset_and_remedy(monkeypatch):
