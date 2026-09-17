@@ -1,0 +1,18 @@
+{
+  "id": "ai-resources",
+  "name": "ai-resources",
+  "description": "ai-resources kit: agy-cli (Antigravity CLI) and claude-kit (unrestricted Claude Code) CLI backends, plus the /claude and /equipo shortcut commands.",
+  "minGatewayVersion": "2026.9.4",
+  "cliBackends": ["agy-cli", "claude-kit"],
+  "setup": { "cliBackends": ["agy-cli", "claude-kit"], "requiresRuntime": false },
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "agyBin": { "type": "string", "description": "Absolute path to the agy binary." },
+      "claudeBin": { "type": "string", "description": "Absolute path to the claude binary." },
+      "python3Bin": { "type": "string", "description": "Absolute path to python3, used by the agy MCP bridge." }
+    },
+    "additionalProperties": false
+  }
+}

@@ -16,6 +16,7 @@ from . import (
     profiles,
     providers,
     smoke,
+    tools,
     ui,
 )
 from .cockpits import ALL as ALL_COCKPITS
@@ -286,12 +287,24 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
         else:
             ui.warn(f"{aid}: {msg}")
 
-    # Reset the parts of `s` that no longer apply in single-model
+    # Reset the parts of `s` that no longer apply in single-model. `tracking` carries
+    # the claude/agy/openclaw tool-install record (S4) alongside the multi-model
+    # artifacts this function just tore down; those tools are mode-agnostic (step 2
+    # offers them regardless of single- vs multi-model), so a plain reset here would
+    # silently orphan that record and leave a later `ai-resources setup` teardown
+    # unable to find what it installed. OpenClaw's own orchestration state
+    # (`s.openclaw`) is untouched entirely — this function only undoes the LiteLLM/
+    # OpenRouter gateway setup, never the chat-facing engine the kit pointed OpenClaw at.
     s.backend = "litellm"
     s.litellm = state.LiteLLMState()
     s.providers = {}
     s.profile = state.ProfileState(name=SINGLE_MODEL_DEFAULT_PROFILE, customized=False)
-    s.tracking = state.InstallTracking()
+    s.tracking = state.InstallTracking(
+        tools_installed_by_us=list(s.tracking.tools_installed_by_us),
+        tool_install_methods=dict(s.tracking.tool_install_methods),
+        rc_lines_added={k: list(v) for k, v in s.tracking.rc_lines_added.items()},
+        install_tools_answer=s.tracking.install_tools_answer,
+    )
     return 0
 
 
@@ -329,6 +342,18 @@ def _step2_cockpits(s: state.SetupState) -> int:
         f"Configuring {installed_count} detected cockpit(s). "
         f"To add another, install it via your usual method, then re-run `ai-resources setup`."
     )
+
+    # Offer to install claude, agy and openclaw when missing — the antigravity OpenClaw
+    # engine (step 7) needs all three, and re-detecting here means step 7 sees them.
+    installed_tools = tools.offer(s)
+    if installed_tools:
+        for cid, det in detection.detect_all_cockpits().items():
+            cs = s.cockpits.get(cid) or state.CockpitState()
+            cs.installed = det.installed
+            cs.version = det.version
+            cs.binary_path = det.binary_path
+            s.cockpits[cid] = cs
+
     return 0
 
 
@@ -1175,7 +1200,23 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
             "status": "pass" if all(ok for _, ok, _ in results) else "partial",
         }
 
+    line = _openclaw_status_line(s)
+    if line:
+        ui.console().print()
+        ui.info(line)
+
     return 0
+
+
+def _openclaw_status_line(s: state.SetupState) -> str:
+    """One-line OpenClaw summary for the end of step 9, in either setup mode. "" if unapplied."""
+    if not s.openclaw.applied:
+        return ""
+    worker = f", worker {s.openclaw.worker_model}" if s.openclaw.engine == "antigravity" else ""
+    return (
+        f"OpenClaw: engine {s.openclaw.engine} → {s.openclaw.model}{worker}  "
+        f"(plugin linked: {s.openclaw.plugin_linked}, risk acknowledged: {s.openclaw.risk_acknowledged})"
+    )
 
 
 # --- Step 9 dry-run preview ------------------------------------------------------

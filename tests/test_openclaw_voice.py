@@ -84,6 +84,7 @@ def test_an_unattended_first_run_never_changes_how_a_live_bot_hears(monkeypatch)
 def test_an_interactive_first_run_proposes_cloud_only_with_a_key(monkeypatch, has_key, expected):
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
     monkeypatch.setattr(voice, "has_openrouter_key", lambda: has_key)
+    monkeypatch.setattr(voice, "has_agy", lambda: False)  # agy would win outright
     assert voice.default_mode(state.SetupState()) == expected
 
 
@@ -504,3 +505,21 @@ def test_voice_teardown_removes_what_setup_installed(bot, brew, tmp_path, monkey
     openclaw.teardown(s)
     assert b.calls == [["uninstall", "whisper-cpp"]]
     assert not model.exists()
+
+
+def test_agy_is_the_first_choice_when_it_is_installed(monkeypatch):
+    """agy needs no per-token key and no local model, so it outranks cloud and local."""
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(voice, "has_agy", lambda: True)
+    monkeypatch.setattr(voice, "has_openrouter_key", lambda: True)
+    assert voice.default_mode(state.SetupState()) == "agy"
+    monkeypatch.setattr(voice, "has_agy", lambda: False)
+    assert voice.default_mode(state.SetupState()) == "cloud"
+
+
+def test_a_saved_answer_still_wins_over_agy(monkeypatch):
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(voice, "has_agy", lambda: True)
+    s = state.SetupState()
+    s.openclaw.voice = "local"
+    assert voice.default_mode(s) == "local"

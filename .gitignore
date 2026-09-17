@@ -15,3 +15,5 @@ scripts/**/__pycache__/
 
 # eval runs write reports here
 evals/results/
+# Workflow artifacts (plans, handoffs, spike captures — may hold real user content)
+.agent-output/

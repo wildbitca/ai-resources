@@ -167,19 +167,66 @@ agent, offering only engines whose CLI is installed:
 
 | Engine | OpenClaw runtime | What the bot gets |
 |---|---|---|
+| Antigravity CLI (agy) | `agy-cli` | agy (a personal Google account) as chat-facing orchestrator: talks, hears voice notes, finds the project, and hands code/team work to a `claude` worker agent running unrestricted Claude Code. **Unrestricted code execution — read the Security section below before enabling this.** |
 | Claude Code | `claude-cli` | Everything the Claude Code cockpit installs: subagents, skills, hooks, `/kit-plan`, `/kit-implement`, the CLAUDE.md block |
 | Codex CLI | `codex` | What the Codex cockpit installs |
-| Gemini CLI | `google-gemini-cli` | What the Gemini cockpit installs |
-| Direct model | `openclaw` (OpenRouter by default) | Kit skills through `skills.load.extraDirs` and the kit block in the workspace `AGENTS.md` |
+| Gemini CLI | — | Not offered: Google retired CLI access for personal accounts on 2026-06-18 |
 | Keep | — | Nothing changes; if the kit configured OpenClaw before, it offers to restore the original |
 
-The chain is the point: pick Claude Code and the bot runs the same setup as your
-terminal, so a Telegram message can plan, delegate to subagents and load skills.
+The chain for Claude Code is the point: pick it and the bot runs the same setup as
+your terminal, so a Telegram message can plan, delegate to subagents and load
+skills. The `direct` engine (OpenClaw's own runtime, wired to OpenRouter) was
+removed from the kit; OpenRouter itself is still a supported multi-model backend
+(see above), it is just no longer wired through OpenClaw's own runtime. A
+`setup-state.yaml` saved with the old `direct` engine falls back to `keep` on the
+next run, with a warning.
 
-Whatever the engine, Engram is declared in OpenClaw's `mcp.servers` — CLI runtimes
-start with `--strict-mcp-config`, so the CLI's own MCP servers never reach the
-bot — and the workspace `AGENTS.md` names Engram as the memory of record, with
-OpenClaw's native memory kept for recent chat context.
+### antigravity: agy → OpenClaw → Claude Code, unrestricted
+
+Picking `antigravity` wires the whole chain:
+
+```
+Telegram → OpenClaw → agy (agy-cli backend) → sessions_spawn → claude-kit backend (claude, --dangerously-skip-permissions)
+```
+
+- **agy is the orchestrator** for every chat topic: it replies directly to
+  anything that is not code or team work, reads voice notes via its own
+  `view_file` tool (the `agy` voice mode: no ffmpeg, no whisper), and
+  discovers projects under `~/Development/**`.
+- **`claude` is the worker agent**: a second OpenClaw agent running the kit's own
+  `claude-kit` CLI backend (not the bundled `claude-cli` one Claude Code uses), so
+  none of core's restrictions on the bundled backend
+  (`--strict-mcp-config`, `--setting-sources user`) apply. It runs with
+  `--dangerously-skip-permissions` and the user's full tooling, workspace
+  `~/Development`, no `operator.admin`.
+- **Delegation**: agy calls `sessions_spawn agentId=claude cwd=<project>
+  thread=true` (directly, or through the kit's `/claude` and `/equipo` shortcut
+  commands — see `openclaw-plugin/ai-resources/`), which keeps the reply bound to
+  the Telegram thread it started from.
+- **The kit plugin** (`openclaw-plugin/ai-resources/`, linked by setup with
+  `openclaw plugins install --link`) registers both CLI backends and the shortcut
+  commands. It also ships a small stdio MCP bridge (`bridge.py`) that agy is
+  pointed at once (`agy mcp add openclaw …`), because agy has no per-run MCP flag;
+  each turn the bridge reads the MCP endpoint OpenClaw wrote for that run and
+  forwards to it.
+- **Voice** is the transcriber's third mode, `agy`, alongside `cloud` (OpenRouter)
+  and `local` (whisper.cpp): agy hears the raw `.ogg` itself, with a 45s timeout,
+  one retry (~90s worst case) and a fixed `[voice note could not be understood]`
+  marker on failure — OpenClaw always gets a non-empty reply, and the marker is
+  relayed to the user as "please resend it or type it". It is the default mode when
+  `agy` is installed, because it needs neither an OpenRouter key nor a local model.
+  Three details are load-bearing and were each found by running a real note: `-p`
+  must be the last flag (agy takes the next argv element as the prompt), the note's
+  directory needs `--add-dir` plus `--dangerously-skip-permissions` (it is staged
+  outside agy's workspace, and a denied read prints nothing and exits 0), and
+  `--json-schema` must not be combined with audio (it hung for 124s).
+- Setup offers to install `claude`, `agy` and `openclaw` themselves if missing
+  (step 2), and to remove a superseded hand-rolled `~/.local/bin/openclaw-transcribe`.
+  Both `claude` and `agy` logins stay interactive — the kit never automates them.
+
+Whatever the engine, Engram is declared in OpenClaw's `mcp.servers`, and the
+workspace `AGENTS.md` names Engram as the memory of record, with OpenClaw's
+native memory kept for recent chat context.
 
 ### MCP servers
 
@@ -231,10 +278,16 @@ it replaced; a server you edited by hand since is left as it is. An unattended r
 with no saved answer changes nothing.
 
 The kit never writes `openclaw.json` itself: every change goes through
-`openclaw config patch`, which validates it. The values it replaces are saved in
-`setup-state.yaml` and restored when you choose to restore. An unattended run
-(`--non-interactive`) with no saved answer keeps the current engine, so a live bot
-is never repointed by accident.
+`openclaw config patch`, which validates it. `channels` (Telegram allowlists,
+topic-to-agent bindings) is never part of any patch the kit builds. The values a
+patch replaces are saved in `setup-state.yaml` and restored exactly on teardown,
+including the antigravity-only keys (`tools.media`, the openrouter/llama-cpp
+plugin entries, per-agent `subagents.allowAgents`, the `claude` agent entry) and
+unlinking the plugin, only if the kit itself linked it. An unattended run
+(`--non-interactive`) with no saved answer keeps the current engine, and applying
+`antigravity` needs an explicit, saved risk acknowledgement — with neither, the
+patch is skipped and the reason is printed, so a live bot is never repointed or
+armed with unrestricted execution by accident.
 
 Switching the kit's mode carries the bot along: OpenClaw starts Claude Code with
 your user settings, so single-model keeps it on your Claude subscription and

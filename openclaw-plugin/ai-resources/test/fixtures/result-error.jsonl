@@ -1,0 +1,2 @@
+{"event":"init","conversation_id":"conv-synthetic-003"}
+{"result":{"status":"ERROR","response":"","conversation_id":"conv-synthetic-003","error":{"message":"synthetic failure for testing"}}}

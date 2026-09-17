@@ -4,7 +4,69 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
-## [Unreleased]
+## [1.7.0] — 2026-09-17 — Antigravity CLI orchestrates OpenClaw, Claude Code delegates unrestricted
+
+### Added
+
+- **`antigravity` OpenClaw engine: Antigravity CLI (agy) as chat-facing orchestrator, Claude
+  Code as an unrestricted delegate.** A new kit-shipped OpenClaw plugin
+  (`openclaw-plugin/ai-resources/`) registers two CLI backends — `agy-cli` (agy, a personal
+  Google account) and `claude-kit` (the kit's own unrestricted Claude Code backend, run with
+  `--dangerously-skip-permissions` and none of the restrictions core applies to the bundled
+  `claude-cli` backend) — plus `/claude` and `/equipo` shortcut commands. agy is the
+  orchestrator for every chat topic: it replies directly, reads voice notes via its own
+  `view_file` tool, and hands code/team work to a `claude` worker agent
+  (`sessions_spawn agentId=claude cwd=<project> thread=true`, workspace `~/Development`, no
+  `operator.admin`). Voice notes get a third transcriber mode, `agy`
+  (45s timeout, one retry, no ffmpeg/whisper/OpenRouter, always a non-empty reply), which
+  is the default when `agy` is installed; `cloud` and `local` are untouched. Setup can also detect and offer to install `claude`, `agy` and `openclaw`
+  themselves (`ai_resources/setup/tools.py`), and offers to remove a superseded hand-rolled
+  `~/.local/bin/openclaw-transcribe`.
+- **`gemini-3.8-flash-medium` is never offered** as an OpenClaw model — it leaks its reasoning
+  into replies.
+
+### Changed
+
+- **The OpenClaw `direct` engine was removed.** It routed OpenClaw's own runtime through
+  OpenRouter; OpenRouter remains a fully supported multi-model backend elsewhere in the kit,
+  it is just no longer wired through OpenClaw's own runtime. A `setup-state.yaml` saved with
+  the old `direct` engine falls back to `keep` on the next run, with a warning.
+  `gemini-cli` is no longer offered as an OpenClaw engine either: Google retired CLI access
+  for personal Google accounts on 2026-06-18.
+- **The OpenClaw `openrouter` plugin is toggled by the kit's own multi-model backend choice**
+  (on under `backend: openrouter`, off otherwise, restored exactly on teardown) for every
+  OpenClaw engine, not only `antigravity`.
+- Legacy `voice_*` fields (`voice`, `voice_formulas_installed`, `voice_models_downloaded`) left
+  over from an earlier whisper-based voice chain are dropped silently on load and never written
+  back to `setup-state.yaml`.
+
+### Fixed
+
+- **Four config shapes the kit built were rejected by OpenClaw's own schema**, found with
+  `openclaw config patch --dry-run` against a live 2026.9.4 gateway: an `agentRuntime` key on
+  `agents.defaults` and on an agent entry (the CLI backend is resolved from the model ref's
+  first segment instead), `tools.exec: {enabled, ask: false}` (the schema takes
+  `{mode: "full"}`, and `mode` cannot be combined with `ask`), and a three-segment model ref
+  (`claude-kit/anthropic/claude-sonnet-5` does not resolve, so the worker model is stored as a
+  bare id). The kit also no longer sets `commands.plugins`: it is a boolean that enables the
+  `/plugins` **chat** command, letting anyone in the channel toggle plugins, and
+  plugin-registered commands never needed it.
+- **The plugin could not be installed at all:** its `package.json` had no
+  `openclaw.extensions`, so `openclaw plugins install` refused it.
+- **Every voice note would have failed, silently.** Two separate bugs in the `agy` mode,
+  both found only by running a real note: `--model` sat between `-p` and the prompt, so agy
+  took `--model` as the prompt and exited 2; and the note is staged outside agy's workspace,
+  so `view_file` needs both `--add-dir <the note's directory>` and
+  `--dangerously-skip-permissions` — without them headless agy auto-denies the read, prints
+  nothing and exits 0.
+
+### Security
+
+- The `antigravity` engine runs both the orchestrator and the worker agent with
+  `--dangerously-skip-permissions`; anyone who reaches the bot (via OpenClaw's
+  `channels.telegram.allowFrom`, or by taking over that Telegram account) gets unrestricted
+  code execution as whichever OS user runs the gateway. The wizard shows this risk and
+  requires an explicit, saved acknowledgement before applying the engine; see SECURITY.md.
 
 ## [1.6.0] — 2026-09-17 — OpenClaw gets Claude Code's MCP servers
 

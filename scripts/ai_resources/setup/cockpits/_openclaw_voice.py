@@ -1,5 +1,7 @@
 """OpenClaw voice notes: which engine transcribes audio attachments before the agent sees them.
 
+    agy     Antigravity CLI on the user's own Google account: the model hears the note,
+            nothing is billed per token and no audio leaves for a gateway key
     cloud   an audio-native model through OpenRouter, with local whisper.cpp as the fallback
     local   whisper.cpp only; audio never leaves the machine (the transcript's text-only
             correction pass still uses OpenRouter or Claude Code when available)
@@ -24,6 +26,7 @@ from .. import credentials, state, ui
 from ...voice import openclaw_transcribe as transcriber
 
 MODES = {
+    "agy": "Antigravity CLI (agy) — your own Google account, no OpenRouter key, no whisper",
     "cloud": "Cloud — OpenRouter audio model (needs OPENROUTER_API_KEY), local whisper.cpp fallback",
     "local": "Local only — whisper.cpp on this machine",
     "off": "Off — do not transcribe voice notes",
@@ -55,13 +58,22 @@ def has_openrouter_key() -> bool:
     return bool(os.environ.get("OPENROUTER_API_KEY") or credentials.has_key("OPENROUTER_API_KEY"))
 
 
+def has_agy() -> bool:
+    return bool(os.environ.get("AGY_BIN") or transcriber.find_binary("agy", Path.home() / ".local" / "bin"))
+
+
 def default_mode(s: state.SetupState) -> str:
-    """The saved answer; unattended first runs keep; otherwise cloud when a key exists."""
+    """The saved answer; unattended first runs keep; else agy, then cloud, then local.
+
+    agy comes first because it needs no per-token key and no local model: it runs on a
+    Google subscription the user already has."""
     if s.openclaw.voice in MODES:
         return s.openclaw.voice
     if ui.is_non_interactive():
         # Never change how a live bot hears its user from an unattended run.
         return "keep"
+    if has_agy():
+        return "agy"
     return "cloud" if has_openrouter_key() else "local"
 
 
@@ -102,10 +114,13 @@ def prompt(s: state.SetupState) -> None:
         default=default_mode(s),
     )
     s.openclaw.voice = mode
+    if mode == "agy" and not has_agy():
+        ui.warn("No agy binary found (install Antigravity CLI and run `agy` once to sign in): "
+                "every note will report that it could not be understood until then.")
     if mode == "cloud" and not has_openrouter_key():
         ui.warn("No OPENROUTER_API_KEY in the environment or the kit credentials: "
                 "every note will fall back to local whisper.cpp until one is added.")
-    if mode not in ("cloud", "local"):
+    if mode not in ("agy", "cloud", "local"):
         return
     default = default_language(s)
     codes = {default: LANGUAGES.get(default, default), **LANGUAGES}

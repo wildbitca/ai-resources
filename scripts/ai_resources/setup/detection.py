@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -132,6 +133,50 @@ def detect_openclaw() -> Detected:
     return Detected("OpenClaw", rc == 0, _version_from(out, r"(\d+\.\d+\.\d+)"), p)
 
 
+def _extra_bin_dirs() -> list[Path]:
+    """Directories a login shell would have on PATH but a systemd/launchd unit might not.
+
+    `~/.local/bin` is where the official installers for claude and agy default to, and
+    fnm (a common Node version manager) keeps the active Node's bin dir under
+    ~/.local/share/fnm/node-versions/<ver>/installation/bin, neither of which a
+    non-login service unit necessarily inherits.
+    """
+    home = Path.home()
+    dirs = [home / ".local" / "bin"]
+    fnm_root = home / ".local" / "share" / "fnm" / "node-versions"
+    if fnm_root.is_dir():
+        for version_dir in sorted(fnm_root.iterdir(), reverse=True):
+            bin_dir = version_dir / "installation" / "bin"
+            if bin_dir.is_dir():
+                dirs.append(bin_dir)
+    return dirs
+
+
+def _which_extra(binary: str) -> str:
+    """Like `_which`, but also checks common dirs a service unit's PATH might miss.
+
+    Returns an absolute path either way (PATH hits from `shutil.which` already are).
+    """
+    found = _which(binary)
+    if found:
+        return found
+    for d in _extra_bin_dirs():
+        candidate = d / binary
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return ""
+
+
+def detect_agy() -> Detected:
+    """Detect the Antigravity CLI (agy), the antigravity OpenClaw engine's orchestrator."""
+    p = _which_extra("agy")
+    if not p:
+        return Detected("Antigravity CLI (agy)", False, "", "",
+                        "curl -fsSL https://antigravity.google/cli/install.sh | bash")
+    rc, out = _run([p, "--version"])
+    return Detected("Antigravity CLI (agy)", rc == 0, _version_from(out), p)
+
+
 def detect_all_cockpits() -> dict[str, Detected]:
     return {
         "claude":   detect_claude_code(),
@@ -144,6 +189,7 @@ def detect_all_cockpits() -> dict[str, Detected]:
         "continue": detect_continue(),
         "opencode": detect_opencode(),
         "openclaw": detect_openclaw(),
+        "agy":      detect_agy(),
     }
 
 

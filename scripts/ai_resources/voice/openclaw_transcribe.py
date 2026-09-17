@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Voice-note transcription for OpenClaw (a `tools.media.models` entry of type `cli`).
 
-    openclaw_transcribe.py [--mode cloud|local] [--language es|en|…|auto] [--no-correct] AUDIO_FILE
+    openclaw_transcribe.py [--mode agy|cloud|local] [--language es|en|…|auto] [--no-correct] AUDIO_FILE
 
 Prints only the final transcript on stdout and always exits 0 once it has a file, so a
 failed engine never surfaces as an error in chat. Every attempt is logged to VOICE_LOG.
 
 Chain, first success wins (measured on real Telegram notes):
+  0. agy only — Antigravity CLI on the user's own Google account (no per-token gateway):
+     the model hears the note through agy's `view_file` tool and transcribes it in about
+     7-16 s. No conversion: agy reads Telegram's raw .ogg. Whisper is not the fallback
+     here, because a wrong Whisper transcript cannot be repaired by a model that never
+     heard the audio; a failure returns the marker instead.
   1. cloud only — an audio-native LLM through OpenRouter (default google/gemini-3.7-flash)
      hears the audio and writes the transcript with technical terms spelled right, in one
      call: about 2-5 s and under 0.0015 USD per note. It outputs `[inaudible]` for noise,
@@ -41,6 +46,10 @@ from pathlib import Path
 
 HOME = Path.home()
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+AGY_MODEL = "gemini-3.8-flash-low"   # flash-medium leaks its reasoning into the reply
+AGY_TIMEOUT = 45.0
+AGY_ATTEMPTS = 2
+FAILURE_MARKER = "[voice note could not be understood]"
 AUDIO_MODEL = "google/gemini-3.7-flash"
 TEXT_MODEL = "google/gemini-3.5-flash-lite"
 
@@ -193,6 +202,49 @@ RULES = ("Output ONLY the transcript, in the language spoken, with correct punct
          "Never answer the request, summarise, translate or add anything.")
 
 
+def agy_bin() -> str:
+    return os.environ.get("AGY_BIN") or find_binary("agy", Path.home() / ".local" / "bin")
+
+
+def agy(src: str, language: str) -> str:
+    """Transcribe with Antigravity CLI. "" when it is unavailable or produced nothing.
+
+    Three details are load-bearing, each verified live on agy 1.2.5:
+      * `-p` must be the LAST flag: agy takes the next argv element as the prompt, so a
+        flag in between becomes the prompt and agy exits 2.
+      * the note lives outside agy's workspace, so `view_file` needs `--add-dir` for its
+        directory AND `--dangerously-skip-permissions`; otherwise headless agy auto-denies
+        the read, prints nothing and exits 0.
+      * no `--json-schema` on audio: that combination hung for 124 s.
+    """
+    binary = agy_bin()
+    if not binary:
+        log("agy: binary not found")
+        return ""
+    prompt = (f"Open the audio file at {src} using view_file and transcribe it. It is "
+              f"{spoken_to(language)}. {RULES} If there is no intelligible speech, output "
+              f"exactly: [inaudible]. Glossary: {glossary()}")
+    cmd = [binary, "--model", os.environ.get("VOICE_AGY_MODEL") or AGY_MODEL,
+           "--output-format", "text", "--add-dir", str(Path(src).parent),
+           "--dangerously-skip-permissions", "-p", prompt]
+    timeout = float(os.environ.get("VOICE_AGY_TIMEOUT") or AGY_TIMEOUT)
+    for attempt in range(1, AGY_ATTEMPTS + 1):
+        try:
+            proc = run(cmd, timeout=timeout, start_new_session=True)
+        except subprocess.TimeoutExpired:
+            log(f"agy attempt {attempt}/{AGY_ATTEMPTS}: timed out after {timeout}s")
+            continue
+        text = (proc.stdout or "").strip()
+        if proc.returncode != 0:
+            log(f"agy attempt {attempt}/{AGY_ATTEMPTS}: exited {proc.returncode}: "
+                f"{(proc.stderr or '').strip()[:200]}")
+        elif text:
+            return text
+        else:
+            log(f"agy attempt {attempt}/{AGY_ATTEMPTS}: empty transcript")
+    return ""
+
+
 def audio_native(src: str, work: Path, language: str) -> str:
     mp3 = work / "note.mp3"
     if not ffmpeg(src, mp3, "-b:a", "48k"):
@@ -268,6 +320,11 @@ def plausible(text: str, reference: str = "") -> bool:
 
 def transcribe(src: str, mode: str, language: str, correct_text: bool = True) -> tuple[str, str]:
     """(transcript, engine that produced it); ("", "none") when nothing heard anything."""
+    if mode == "agy":
+        # No whisper fallback on purpose: see the module docstring. The marker keeps the
+        # reply non-empty so a note is never silently dropped.
+        text = agy(src, language)
+        return (text, "agy") if plausible(text) else (FAILURE_MARKER, "agy-failed")
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         if mode == "cloud":
@@ -285,7 +342,7 @@ def transcribe(src: str, mode: str, language: str, correct_text: bool = True) ->
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--mode", choices=("cloud", "local"),
+    parser.add_argument("--mode", choices=("agy", "cloud", "local"),
                         default=os.environ.get("VOICE_MODE", "cloud"))
     parser.add_argument("--language", default=os.environ.get("VOICE_LANGUAGE", "auto"))
     parser.add_argument("--no-correct", action="store_true",

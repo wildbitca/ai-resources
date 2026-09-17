@@ -69,13 +69,73 @@ def jarvis(tmp_path, monkeypatch):
     return cfg, ws, rec
 
 
+@pytest.fixture
+def jarvis_with_existing_extras(tmp_path, monkeypatch):
+    """A config shaped like a bot that already has its own openrouter/llama-cpp plugin
+    config, a hand-set-up media transcriber, another agent entry, non-default
+    a restricted default allowAgents list, and a second OpenRouter
+    model alias — all BEFORE the kit ever touches it.
+
+    The `jarvis` fixture above has none of these keys, so a teardown test built on it
+    only proves restoration writes `null` — the same broken restore-to-null code path
+    would also pass trivially, and a broken snapshot that never captured a prior value
+    in the first place would too. This fixture exists so AC-13b/AC-16's 'restored
+    exactly' claim is tested against real, non-empty prior values.
+    """
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    (ws / "AGENTS.md").write_text("# Jarvis rules\n", encoding="utf-8")
+    cfg = tmp_path / "openclaw.json"
+    cfg.write_text(json.dumps({
+        "agents": {
+            "defaults": {
+                "workspace": str(ws),
+                "model": {"primary": "openrouter/auto"},
+                "models": {
+                    "openrouter/auto": {"alias": "OpenRouter"},
+                    "openrouter/claude-3": {"alias": "Claude via OR"},
+                },
+                "subagents": {"allowAgents": ["research"]},
+            },
+            "entries": {"support": {"workspace": "/srv/support"}},
+        },
+        "mcp": {"servers": {"engram": {"command": "/usr/bin/engram", "args": ["mcp"]}}},
+        "plugins": {"entries": {
+            "openrouter": {"enabled": True, "apiKey": "sk-or-xxx"},
+            "llama-cpp": {"enabled": True, "modelPath": "/models/llama.gguf"},
+        }},
+        "commands": {"plugins": {"enabled": False}},
+        "tools": {"media": {
+            "audio": {"enabled": False},
+            "models": [{"type": "cli", "command": "/usr/local/bin/my-transcribe",
+                        "args": ["{{AttachmentPath}}"]}],
+        }},
+    }), encoding="utf-8")
+    rec = _Recorder(cfg)
+    monkeypatch.delenv("OPENCLAW_CONFIG_PATH", raising=False)
+    monkeypatch.setattr(openclaw, "_openclaw", rec)
+    monkeypatch.setattr(openclaw._shared, "stable_kit_root", lambda _root: pathlib.Path("/kit"))
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: False)
+    return cfg, ws, rec
+
+
 def test_openclaw_is_registered_last_so_its_engines_are_configured_first():
     assert list(ALL)[-1] == "openclaw"
 
 
 def test_only_engines_with_an_installed_cli_are_offered():
     ids = [e.id for e in openclaw.available_engines(_state("claude"))]
-    assert ids == ["claude-code", "direct", "keep"]
+    assert ids == ["claude-code", "keep"]
+
+
+def test_antigravity_is_offered_once_agy_is_installed():
+    ids = [e.id for e in openclaw.available_engines(_state("agy"))]
+    assert ids == ["antigravity", "keep"]
+
+
+def test_gemini_cli_is_never_offered_even_when_gemini_is_installed():
+    ids = [e.id for e in openclaw.available_engines(_state("gemini"))]
+    assert "gemini-cli" not in ids
 
 
 def test_an_unattended_first_run_never_repoints_a_live_bot(monkeypatch):
@@ -110,15 +170,19 @@ def test_an_existing_engram_server_is_left_alone():
     assert "mcp" not in patch
 
 
-def test_direct_engine_adds_kit_skills_and_cli_engines_take_them_back_out():
-    direct = openclaw.build_patch(openclaw.ENGINES["direct"], "openrouter/auto",
-                                  {"skills": {"load": {"extraDirs": ["/mine"]}}}, KIT_SKILLS, "e")
-    assert direct["skills"]["load"]["extraDirs"] == ["/mine", KIT_SKILLS]
-
+def test_kit_skills_left_over_from_an_old_direct_setup_are_cleaned_up():
+    """The "direct" engine that used to add kit_skills to extraDirs was removed; no
+    remaining engine adds it, but claude-code still cleans up a stale entry."""
     back = openclaw.build_patch(openclaw.ENGINES["claude-code"], "anthropic/claude-sonnet-5",
                                 {"skills": {"load": {"extraDirs": ["/mine", KIT_SKILLS]}}},
                                 KIT_SKILLS, "e")
     assert back["skills"]["load"]["extraDirs"] == ["/mine"]
+
+
+def test_claude_code_never_adds_kit_skills_to_extradirs():
+    patch = openclaw.build_patch(openclaw.ENGINES["claude-code"], "anthropic/claude-sonnet-5",
+                                 {"skills": {"load": {"extraDirs": ["/mine"]}}}, KIT_SKILLS, "e")
+    assert "skills" not in patch
 
 
 def test_a_runtime_pin_from_a_previous_engine_is_cleared():
@@ -150,25 +214,34 @@ def test_configure_goes_through_openclaw_and_snapshots_what_it_replaces(jarvis):
     assert "## Using the kit" not in text, "Claude Code already loads the kit block from CLAUDE.md"
 
 
-def test_a_second_run_keeps_the_original_snapshot(jarvis):
+def _antigravity_state(*extra_installed: str) -> state.SetupState:
+    s = _state("agy", "claude", "openclaw", *extra_installed)
+    s.openclaw.engine = "antigravity"
+    s.openclaw.risk_acknowledged = True
+    return s
+
+
+def test_a_second_run_keeps_the_original_snapshot(jarvis, monkeypatch):
     _cfg, _ws, _rec = jarvis
-    s = _state("claude", "openclaw")
-    s.openclaw.engine = "claude-code"
+    monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
+    s = _antigravity_state()
     openclaw.configure({"state": s})
     first = dict(s.openclaw.previous)
-    s.openclaw.engine = "direct"
+    s.openclaw.model = "gemini-3.8-flash-high"  # a second run, e.g. a different model choice
     openclaw.configure({"state": s})
     assert s.openclaw.previous == first
 
 
-def test_direct_engine_writes_the_kit_block_into_the_workspace_agents_md(jarvis):
+def test_antigravity_engine_writes_the_kit_block_into_the_workspace_agents_md(jarvis, monkeypatch):
     _cfg, ws, _rec = jarvis
-    s = _state("openclaw")
-    s.openclaw.engine = "direct"
+    monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
+    s = _antigravity_state()
     openclaw.configure({"state": s})
     text = (ws / "AGENTS.md").read_text()
-    assert "## Using the kit" in text and "# Jarvis rules" in text
+    assert "You (agy) are the orchestrator" in text and "# Jarvis rules" in text
     assert "Engram is the memory of record" in text
+    assert "sessions_spawn agentId=claude" in text
+    assert "--context" in text
 
 
 def test_a_rejected_patch_is_not_recorded_as_applied(jarvis, monkeypatch):
@@ -180,10 +253,10 @@ def test_a_rejected_patch_is_not_recorded_as_applied(jarvis, monkeypatch):
     assert not s.openclaw.applied
 
 
-def test_teardown_restores_the_snapshot_and_removes_the_kit_block(jarvis):
+def test_teardown_restores_the_snapshot_and_removes_the_kit_block(jarvis, monkeypatch):
     _cfg, ws, rec = jarvis
-    s = _state("openclaw")
-    s.openclaw.engine = "direct"
+    monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
+    s = _antigravity_state()
     openclaw.configure({"state": s})
 
     openclaw.teardown(s)
@@ -207,11 +280,14 @@ def test_openclaw_state_survives_a_save_and_load(tmp_path, monkeypatch):
     assert loaded.openclaw.previous == {"model": {"primary": "openrouter/auto"}}
 
 
-def test_every_engine_makes_engram_the_memory_of_record(jarvis):
+
+def test_every_engine_makes_engram_the_memory_of_record(jarvis, monkeypatch):
     _cfg, ws, _rec = jarvis
-    for engine in ("claude-code", "direct"):
-        s = _state("claude", "openclaw")
+    monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
+    for engine in ("claude-code", "antigravity"):
+        s = _state("claude", "openclaw", "agy")
         s.openclaw.engine = engine
+        s.openclaw.risk_acknowledged = True
         openclaw.configure({"state": s})
         assert "Engram is the memory of record" in (ws / "AGENTS.md").read_text(), engine
 
@@ -232,3 +308,475 @@ def test_no_allowlist_change_when_absent_or_already_covered(doc):
     patch = openclaw.build_patch(openclaw.ENGINES["claude-code"], "anthropic/claude-sonnet-5",
                                  doc, KIT_SKILLS, "e")
     assert "modelPolicy" not in patch["agents"]["defaults"]
+
+
+# --- antigravity engine (S5) ------------------------------------------------------
+
+def test_never_offers_the_flash_medium_model():
+    assert "gemini-3.8-flash-medium" not in openclaw.ENGINES["antigravity"].models
+
+
+def test_a_saved_direct_engine_is_not_offered_and_falls_back_to_keep_with_a_warning(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(ui, "warn", lambda msg: warnings.append(msg))
+    s = _state("claude")
+    s.openclaw.engine = "direct"
+    assert openclaw.default_engine(s) == "keep"
+    assert warnings and "direct" in warnings[0].lower()
+
+
+def test_ac13_antigravity_build_patch_shape():
+    """Given engine antigravity and a config with several topic-bound agents."""
+    doc = {"agents": {"entries": {
+        "main": {}, "snoutzone": {"subagents": {"allowAgents": ["codex"]}},
+        "elinvo": {}, "devops": {}, "X": {},
+    }}}
+    patch = openclaw.build_patch(
+        openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", doc, KIT_SKILLS, "e",
+        openrouter_enabled=False, worker_model="claude-sonnet-5",
+        python3_bin="/usr/bin/python3", agy_bin="/kit/bin/agy",
+    )
+    assert patch["agents"]["defaults"]["model"] == {"primary": "agy-cli/gemini-3.8-flash-low"}
+    entries = patch["agents"]["entries"]
+    for name in ("main", "elinvo", "devops", "X"):
+        assert entries[name]["subagents"]["allowAgents"] == ["claude"], name
+    assert entries["snoutzone"]["subagents"]["allowAgents"] == ["codex", "claude"]
+
+    claude_entry = entries["claude"]
+    # `openclaw config patch --dry-run` rejects an agent-level `agentRuntime`, a
+    # three-segment model ref, and `tools.exec.enabled`/`ask: false` (verified against
+    # the live 2026.9.4 schema); the backend comes from the ref's first segment.
+    assert "agentRuntime" not in claude_entry
+    assert claude_entry["model"] == {"primary": "claude-kit/claude-sonnet-5"}
+    assert claude_entry["tools"]["exec"] == {"mode": "full"}
+    assert claude_entry["workspace"] == str(pathlib.Path.home() / "Development")
+
+    # Voice notes are NOT part of the engine patch: `_openclaw_voice` owns tools.media
+    # for every engine, so the two never fight over the same key.
+    assert "tools" not in patch
+
+    assert patch["plugins"]["entries"]["openrouter"]["enabled"] is False
+    assert "channels" not in patch
+
+
+
+def test_ac13b_openrouter_plugin_toggle_applies_to_every_engine():
+    doc = {"agents": {"defaults": {"models": {"openrouter/auto": {"alias": "x"}}}}}
+
+    enabled = openclaw.build_patch(openclaw.ENGINES["claude-code"], "anthropic/claude-sonnet-5",
+                                   doc, KIT_SKILLS, "e", openrouter_enabled=True)
+    assert enabled["plugins"]["entries"]["openrouter"]["enabled"] is True
+    assert "openrouter/auto" not in enabled["agents"]["defaults"].get("models", {})
+
+    disabled = openclaw.build_patch(
+        openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", doc, KIT_SKILLS, "e",
+        openrouter_enabled=False, worker_model="claude-sonnet-5",
+    )
+    assert disabled["plugins"]["entries"]["openrouter"]["enabled"] is False
+    assert disabled["agents"]["defaults"]["models"]["openrouter/auto"] is None
+
+
+def test_ac14_no_patch_ever_mentions_channels_or_the_legacy_voice_chain():
+    doc = {}
+    for engine_id in ("claude-code", "codex", "antigravity"):
+        kwargs = {"openrouter_enabled": True}
+        if engine_id == "antigravity":
+            kwargs.update(worker_model="claude-sonnet-5")
+        model = openclaw.ENGINES[engine_id].models[0]
+        patch = openclaw.build_patch(openclaw.ENGINES[engine_id], model, doc, KIT_SKILLS, "e", **kwargs)
+        assert "channels" not in patch, engine_id
+        dumped = json.dumps(patch)
+        assert "openclaw-transcribe" not in dumped
+        assert "whisper" not in dumped
+        assert "{{MediaPath}}" not in dumped
+
+
+def test_ac15_configure_skips_the_patch_when_risk_is_not_acknowledged(jarvis, monkeypatch):
+    _cfg, _ws, rec = jarvis
+    monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
+    s = _state("agy", "claude", "openclaw")
+    s.openclaw.engine = "antigravity"
+    assert s.openclaw.risk_acknowledged is False
+
+    openclaw.configure({"state": s})
+
+    assert rec.patches() == []
+    assert not s.openclaw.applied
+
+
+def test_ac16_teardown_restores_plugins_subagents_and_the_claude_agent(jarvis, monkeypatch):
+    _cfg, ws, rec = jarvis
+    monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
+    s = _antigravity_state()
+    openclaw.configure({"state": s})
+    assert s.openclaw.plugin_linked is True
+
+    removed = openclaw.teardown(s)
+
+    restore = rec.patches()[-1]
+    assert restore["plugins"]["entries"]["openrouter"] is None
+    assert restore["plugins"]["entries"]["llama-cpp"] is None
+    assert restore["agents"]["entries"] is None
+    assert "plugin:ai-resources" in removed
+    assert not s.openclaw.applied
+    assert s.openclaw.plugin_linked is False
+
+    plugin_calls = [a for a, _p in rec.calls if a[:2] == ["plugins", "uninstall"]]
+    assert plugin_calls == [["plugins", "uninstall", "ai-resources"]]
+
+
+def test_ac13b_and_ac16_preexisting_config_is_restored_exactly_by_teardown(
+        jarvis_with_existing_extras, monkeypatch):
+    """AC-13b + AC-16, against real prior values (see jarvis_with_existing_extras):
+    the openrouter plugin config (including its apiKey), the untouched llama-cpp entry,
+    another agent's entry, the restricted default allowAgents list, both OpenRouter
+    model aliases, and the hand-set-up media transcriber must all come
+    back byte-for-byte, not as nulls."""
+    _cfg, _ws, rec = jarvis_with_existing_extras
+    monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
+    s = _antigravity_state()  # single-model default -> openrouter_selected(s) is False
+
+    openclaw.configure({"state": s})
+    assert s.openclaw.applied
+
+    openclaw.teardown(s)
+    restore = rec.patches()[-1]
+
+    assert restore["plugins"]["entries"]["openrouter"] == {"enabled": True, "apiKey": "sk-or-xxx"}
+    assert restore["plugins"]["entries"]["llama-cpp"] == {"enabled": True, "modelPath": "/models/llama.gguf"}
+    assert restore["agents"]["entries"] == {"support": {"workspace": "/srv/support"}}
+    assert restore["agents"]["defaults"]["subagents"] == {"allowAgents": ["research"]}
+    assert restore["agents"]["defaults"]["models"] == {
+        "openrouter/auto": {"alias": "OpenRouter"},
+        "openrouter/claude-3": {"alias": "Claude via OR"},
+    }
+    assert restore["agents"]["defaults"]["model"] == {"primary": "openrouter/auto"}
+    # The antigravity patch no longer writes agents.defaults.agentRuntime (the schema
+    # rejects it), so teardown has nothing of ours to restore there.
+    assert "agentRuntime" not in restore["agents"]["defaults"]
+
+
+def test_ac16_teardown_only_unlinks_the_plugin_if_the_kit_linked_it(jarvis, monkeypatch):
+    _cfg, _ws, rec = jarvis
+    monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
+    s = _state("claude", "openclaw")
+    s.openclaw.engine = "claude-code"
+    openclaw.configure({"state": s})
+    assert s.openclaw.plugin_linked is False
+
+    openclaw.teardown(s)
+    plugin_calls = [a for a, _p in rec.calls if a[:2] == ["plugins", "uninstall"]]
+    assert plugin_calls == []
+
+
+def test_configure_registers_the_agy_mcp_bridge_once_when_no_entry_preexisted(jarvis, monkeypatch):
+    _cfg, _ws, _rec = jarvis
+    calls = []
+    monkeypatch.setattr(openclaw, "_agy", lambda args, timeout=30: (calls.append(args), (1, ""))[1]
+                        if args[:2] == ["mcp", "list"] else (calls.append(args), (0, ""))[1])
+    s = _antigravity_state()
+    openclaw.configure({"state": s})
+    add_calls = [c for c in calls if c[:2] == ["mcp", "add"]]
+    assert len(add_calls) == 1
+    assert add_calls[0][2] == "openclaw"
+    assert s.openclaw.previous["agy_mcp_bridge_preexisted"] is False
+
+
+def test_configure_does_not_overwrite_a_preexisting_agy_mcp_entry(jarvis, monkeypatch):
+    _cfg, _ws, _rec = jarvis
+    calls = []
+
+    def fake_agy(args, timeout=30):
+        calls.append(args)
+        if args[:2] == ["mcp", "list"]:
+            return 0, "openclaw  python3  /some/bridge.py"
+        return 0, ""
+
+    monkeypatch.setattr(openclaw, "_agy", fake_agy)
+    s = _antigravity_state()
+    openclaw.configure({"state": s})
+    add_calls = [c for c in calls if c[:2] == ["mcp", "add"]]
+    assert add_calls == []
+    assert s.openclaw.previous["agy_mcp_bridge_preexisted"] is True
+
+    calls.clear()
+    openclaw.teardown(s)
+    remove_calls = [c for c in calls if c[:2] == ["mcp", "remove"]]
+    assert remove_calls == [], "a pre-existing agy MCP entry must never be removed by teardown"
+
+
+def test_configure_resolves_agy_and_claude_bins_via_which_extra_not_plain_which(jarvis, monkeypatch):
+    """Finding 4: shutil.which alone misses ~/.local/bin and fnm shims — the same dirs
+    detect_agy() already checks via detection._which_extra."""
+    _cfg, _ws, rec = jarvis
+    monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
+    monkeypatch.setattr(openclaw.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        openclaw.detection, "_which_extra",
+        lambda name: {"agy": "/home/user/.local/bin/agy", "claude": "/home/user/.local/bin/claude"}.get(name, ""),
+    )
+    s = _antigravity_state()
+    openclaw.configure({"state": s})
+    patch = rec.patches()[0]
+    plugin_config = patch["plugins"]["entries"]["ai-resources"]["config"]
+    assert plugin_config["agyBin"] == "/home/user/.local/bin/agy"
+    assert plugin_config["claudeBin"] == "/home/user/.local/bin/claude"
+
+
+def test_configure_does_not_record_the_bridge_marker_on_registration_failure_and_warns(jarvis, monkeypatch):
+    """Finding 4: a failed registration (e.g. agy not resolvable) must not be recorded
+    as 'preexisted', or the next run's guard would skip retrying forever, silently."""
+    _cfg, _ws, _rec = jarvis
+    warnings = []
+    monkeypatch.setattr(ui, "warn", lambda msg: warnings.append(msg))
+
+    def failing_agy(args, timeout=30):
+        if args[:2] == ["mcp", "list"]:
+            return 1, ""  # no existing "openclaw" entry
+        return 127, "agy not found on PATH"  # `mcp add` itself fails
+
+    monkeypatch.setattr(openclaw, "_agy", failing_agy)
+    s = _antigravity_state()
+    openclaw.configure({"state": s})
+    assert "agy_mcp_bridge_preexisted" not in s.openclaw.previous
+    assert any("agy MCP bridge" in w for w in warnings)
+
+    # A second run must retry registration, not skip it because of a stale marker.
+    add_calls = []
+
+    def now_working_agy(args, timeout=30):
+        if args[:2] == ["mcp", "list"]:
+            return 1, ""
+        add_calls.append(args)
+        return 0, ""
+
+    monkeypatch.setattr(openclaw, "_agy", now_working_agy)
+    openclaw.configure({"state": s})
+    assert len(add_calls) == 1
+    assert s.openclaw.previous["agy_mcp_bridge_preexisted"] is False
+
+
+def test_switching_away_from_antigravity_restores_its_keys_unlinks_plugin_and_unregisters_bridge(jarvis, monkeypatch):
+    """Finding 5: a re-run that picks a different engine after antigravity must not
+    leave agents.entries.claude, the ai-resources plugin
+    config, the linked plugin or the registered agy MCP bridge behind — restoration
+    must be keyed on what was actually applied, not on the *current* engine choice."""
+    _cfg, ws, rec = jarvis
+    bridge_calls = []
+
+    def fake_agy(args, timeout=30):
+        bridge_calls.append(args)
+        if args[:2] == ["mcp", "list"]:
+            return 1, ""
+        return 0, ""
+
+    monkeypatch.setattr(openclaw, "_agy", fake_agy)
+    s = _antigravity_state()
+    openclaw.configure({"state": s})
+    assert s.openclaw.antigravity_applied is True
+    assert s.openclaw.plugin_linked is True
+    assert len([c for c in bridge_calls if c[:2] == ["mcp", "add"]]) == 1
+
+    bridge_calls.clear()
+    s.openclaw.engine = "claude-code"
+    openclaw.configure({"state": s})
+
+    restore = rec.patches()[-1]
+    assert restore["agents"]["entries"] is None
+    assert restore["plugins"]["entries"]["ai-resources"] is None
+    # The newly selected engine's own patch still applies alongside the restore.
+    assert restore["agents"]["defaults"]["model"] == {"primary": "anthropic/claude-sonnet-5"}
+
+    assert s.openclaw.antigravity_applied is False
+    assert s.openclaw.plugin_linked is False
+    assert [c for c in bridge_calls if c[:2] == ["mcp", "remove"]] == [["mcp", "remove", "openclaw"]]
+    plugin_calls = [a for a, _p in rec.calls if a[:2] == ["plugins", "uninstall"]]
+    assert plugin_calls == [["plugins", "uninstall", "ai-resources"]]
+
+    # A later teardown() must not restore the antigravity-only keys a second time —
+    # that already happened during the switch above.
+    rec.calls.clear()
+    openclaw.teardown(s)
+    final = rec.patches()[-1]
+    assert "entries" not in final["agents"]
+    assert "commands" not in final
+    assert "tools" not in final
+
+
+def test_the_claude_worker_agent_never_gets_operator_admin():
+    patch = openclaw.build_patch(
+        openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", {}, KIT_SKILLS, "e",
+        openrouter_enabled=False, worker_model="claude-sonnet-5",
+    )
+    dumped = json.dumps(patch)
+    assert "operator.admin" not in dumped
+    assert "operator" not in json.dumps(patch["agents"]["entries"]["claude"])
+
+
+# --- S6: single-model / multi-model parity (AC-18) ---------------------------------
+# Proof command per the plan: `pytest tests/test_openclaw_cockpit.py -k parity`. Every
+# test name below carries "parity" so that selector actually picks them up — `-k ac18`
+# selected zero tests before this fix (the word "parity" only appeared in a comment).
+
+def test_ac18_parity_single_model_and_multimodel_litellm_produce_identical_antigravity_patches():
+    doc = {}
+    single = state.SetupState()
+    single.mode = "single-model"
+    multi = state.SetupState()
+    multi.mode, multi.backend = "multi-model", "litellm"
+
+    def patch_for(s):
+        return openclaw.build_patch(
+            openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", doc, KIT_SKILLS, "e",
+            openrouter_enabled=openclaw.openrouter_selected(s),
+            worker_model="claude-sonnet-5",
+        )
+
+    assert patch_for(single) == patch_for(multi)
+
+
+def test_ac18_parity_openrouter_backend_alone_flips_the_openrouter_plugin_on():
+    openrouter = state.SetupState()
+    openrouter.mode, openrouter.backend = "multi-model", "openrouter"
+    litellm_mode = state.SetupState()
+    litellm_mode.mode, litellm_mode.backend = "multi-model", "litellm"
+    assert openclaw.openrouter_selected(openrouter) is True
+    assert openclaw.openrouter_selected(litellm_mode) is False
+
+
+def _stub_ui_answers_for_prompt(monkeypatch):
+    """Drive `openclaw.prompt()` without a terminal: every prompt just returns its own
+    default, the way an operator accepting every suggested answer would."""
+    monkeypatch.setattr(ui, "select", lambda _msg, _choices, default=None, **_k: default)
+    monkeypatch.setattr(ui, "text", lambda _msg, default="", **_k: default)
+    monkeypatch.setattr(ui, "confirm", lambda _msg, default=True, **_k: True)
+    monkeypatch.setattr(ui, "detail", lambda *_a, **_k: None)
+    monkeypatch.setattr(ui, "warn", lambda *_a, **_k: None)
+
+
+def test_ac18_parity_prompt_plus_configure_produce_the_same_patch_and_never_touch_claude_settings_json(
+        monkeypatch, tmp_path):
+    """Given single-model and multi-model:litellm modes, when prompt + build_patch run
+    (through the real `openclaw.prompt()`, not just `build_patch` called by hand), then
+    the resulting patches are identical and the OpenClaw configurator writes nothing to
+    `~/.claude/settings.json` — that file belongs to the Claude Code cockpit, never to
+    this one, in either mode."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OPENCLAW_CONFIG_PATH", raising=False)
+    cfg_path = tmp_path / "openclaw.json"
+    cfg_path.write_text("{}", encoding="utf-8")
+    rec = _Recorder(cfg_path)
+    monkeypatch.setattr(openclaw, "_openclaw", rec)
+    monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
+    monkeypatch.setattr(openclaw._shared, "stable_kit_root", lambda _root: pathlib.Path("/kit"))
+    _stub_ui_answers_for_prompt(monkeypatch)
+
+    patches = {}
+    for mode in ("single-model", "multi-model"):
+        s = _state("agy", "claude", "openclaw")
+        s.mode = mode
+        if mode == "multi-model":
+            s.backend = "litellm"
+        openclaw.prompt(s)
+        assert s.openclaw.engine == "antigravity"
+        assert s.openclaw.risk_acknowledged is True
+
+        rec.calls.clear()
+        openclaw.configure({"state": s})
+        patches[mode] = rec.patches()[0]
+
+    assert patches["single-model"] == patches["multi-model"]
+    settings_path = tmp_path / ".claude" / "settings.json"
+    assert not settings_path.exists()
+
+
+def test_step7_cockpit_config_prompts_openclaw_in_both_modes(monkeypatch):
+    from ai_resources.setup import wizard
+
+    prompted = []
+    monkeypatch.setattr(openclaw, "prompt", lambda s: prompted.append(s.mode))
+    monkeypatch.setattr(ui, "checkbox", lambda *_a, **_k: ["openclaw"])
+
+    for mode in ("single-model", "multi-model"):
+        s = _state("openclaw")
+        s.mode = mode
+        wizard._step7_cockpit_config(s)
+
+    assert prompted == ["single-model", "multi-model"]
+
+
+class _FakeConsole:
+    """Stand-in for `ui.console()`, which hard-requires rich (absent in CI)."""
+
+    def print(self, *_a, **_k):
+        pass
+
+
+def test_teardown_multi_model_preserves_the_tool_install_record_and_openclaw_state(monkeypatch):
+    from ai_resources.setup import wizard, litellm
+
+    monkeypatch.setattr(ui, "console", lambda: _FakeConsole())
+    monkeypatch.setattr(litellm, "plan_multi_model_teardown",
+                        lambda _prev: [("pipx_uninstall", "Uninstall LiteLLM")])
+    monkeypatch.setattr(litellm, "execute_multi_model_teardown",
+                        lambda _prev: [("pipx_uninstall", True, "removed")])
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+
+    prev = state.SetupState()
+    prev.mode = "multi-model"
+    prev.tracking.tools_installed_by_us = ["agy"]
+    prev.tracking.rc_lines_added = {"agy": ['export AGY_HOME="$HOME/.agy"']}
+    prev.tracking.install_tools_answer = "yes"
+    prev.openclaw.engine = "antigravity"
+    prev.openclaw.applied = True
+
+    s = state.SetupState()
+    s.mode = "single-model"
+    s.tracking = state.InstallTracking(
+        tools_installed_by_us=list(prev.tracking.tools_installed_by_us),
+        rc_lines_added=dict(prev.tracking.rc_lines_added),
+        install_tools_answer=prev.tracking.install_tools_answer,
+    )
+    s.openclaw = prev.openclaw
+
+    rc = wizard._teardown_multi_model(prev, s)
+    assert rc == 0
+    # The LiteLLM-specific fields were reset (a fresh InstallTracking()'s defaults)...
+    assert s.tracking.litellm_installed_by_us is False
+    # ...but the tool-install record (S4, mode-agnostic) survived the reset.
+    assert s.tracking.tools_installed_by_us == ["agy"]
+    assert s.tracking.rc_lines_added == {"agy": ['export AGY_HOME="$HOME/.agy"']}
+    assert s.tracking.install_tools_answer == "yes"
+    # OpenClaw's own orchestration state is untouched by multi-model teardown entirely.
+    assert s.openclaw.engine == "antigravity"
+    assert s.openclaw.applied is True
+
+
+def test_step9_openclaw_status_line_is_empty_when_not_applied():
+    from ai_resources.setup import wizard
+    assert wizard._openclaw_status_line(state.SetupState()) == ""
+
+
+def test_step9_openclaw_status_line_shows_engine_model_and_flags():
+    from ai_resources.setup import wizard
+    s = state.SetupState()
+    s.openclaw.applied = True
+    s.openclaw.engine = "antigravity"
+    s.openclaw.model = "gemini-3.8-flash-low"
+    s.openclaw.worker_model = "claude-sonnet-5"
+    s.openclaw.plugin_linked = True
+    s.openclaw.risk_acknowledged = True
+    line = wizard._openclaw_status_line(s)
+    assert "antigravity" in line and "gemini-3.8-flash-low" in line
+    assert "claude-sonnet-5" in line
+    assert "plugin linked: True" in line and "risk acknowledged: True" in line
+
+
+def test_step9_openclaw_status_line_omits_worker_for_non_antigravity_engines():
+    from ai_resources.setup import wizard
+    s = state.SetupState()
+    s.openclaw.applied = True
+    s.openclaw.engine = "claude-code"
+    s.openclaw.model = "anthropic/claude-sonnet-5"
+    line = wizard._openclaw_status_line(s)
+    assert "worker" not in line

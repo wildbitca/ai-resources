@@ -111,6 +111,10 @@ ai-resources/
 │           ├── detection.py # Cockpit auto-detection
 │           ├── ui.py        # Rich/questionary UI helpers
 │           └── cockpits/    # Per-cockpit configurators (claude, gemini, cursor, …)
+├── openclaw-plugin/
+│   └── ai-resources/        # OpenClaw plugin: agy-cli + claude-kit CLI backends, /claude shortcut
+│       ├── index.js         # Plain JS, no build step — linked via `openclaw plugins install --link`
+│       └── bridge.py        # stdio MCP bridge agy uses to reach OpenClaw's tools
 ├── Formula/                # Homebrew formula
 ├── skills-index.json       # Auto-generated skill catalog (machine-readable)
 ├── resources.json          # Kit manifest (external skill sources, MCP config)
@@ -272,6 +276,16 @@ Each workflow phase:
 
 For the full orchestration guide with detailed workflow diagrams, see **[docs/orchestration.md](docs/orchestration.md)**.
 
+### OpenClaw chat bot (optional)
+
+If OpenClaw is installed, setup step 7 offers to point its default
+agent at one of the kit's engines — including `antigravity`: the Antigravity CLI (agy) as
+a chat-facing orchestrator over Telegram, delegating code and team work to an
+**unrestricted** Claude Code worker agent (`--dangerously-skip-permissions`). Voice notes
+are transcribed through agy only. See **[docs/multi-model.md](docs/multi-model.md#openclaw-chat-bots)**
+for the full chain and config keys, and **[SECURITY.md](SECURITY.md)** before enabling it —
+the wizard requires an explicit, saved risk acknowledgement either way.
+
 ---
 
 ## Key Concepts
@@ -296,10 +310,11 @@ Agents discover skills — including the `workflow-*` skills — natively from t
 
 | Document | Purpose |
 |----------|---------|
-| [Multi-model Guide](docs/multi-model.md) | LiteLLM gateway setup, per-role routing, OAuth integration |
+| [Multi-model Guide](docs/multi-model.md) | LiteLLM gateway setup, per-role routing, OAuth integration, OpenClaw chat-bot engines |
 | [LiteLLM Service](docs/litellm-service.md) | Running and managing the local LiteLLM container |
 | [Orchestration Guide](docs/orchestration.md) | Detailed workflow diagrams, agent roles, and handoff protocol |
 | [AGENTS.md](AGENTS.md) | Orchestration policy and skill discovery rules |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting, and the unrestricted-execution risk of OpenClaw's `antigravity` engine |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [workflows/WORKFLOW_CONTRACT.md](workflows/WORKFLOW_CONTRACT.md) | Workflow YAML specification |
 

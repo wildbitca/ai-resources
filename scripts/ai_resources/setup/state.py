@@ -129,17 +129,34 @@ class InstallTracking:
     # persona that is renamed or removed upstream would leave its subagent behind
     # forever, and the cockpit would keep offering an agent with no definition.
     subagent_files_installed: list[str] = field(default_factory=list)
+    # External tools (claude, agy, openclaw) the wizard installed via their own official
+    # installer — never a pre-existing binary. Teardown only ever touches these ids.
+    tools_installed_by_us: list[str] = field(default_factory=list)
+    # tool id -> the exact install command that was run, for audit / re-display.
+    tool_install_methods: dict[str, str] = field(default_factory=dict)
+    # tool id -> rc-file lines its installer appended (across ~/.bashrc, ~/.zshrc,
+    # ~/.zprofile, ~/.profile), minus any that duplicated a pre-existing line. Only
+    # these exact lines are ever removed on teardown.
+    rc_lines_added: dict[str, list[str]] = field(default_factory=dict)
+    # "yes" | "no" | None (never asked). Replayed under --non-interactive so a second
+    # unattended run doesn't re-prompt for something already answered once.
+    install_tools_answer: str | None = None
 
 
 @dataclass
 class OpenClawState:
     """Which engine the kit pointed OpenClaw's default agent at, and what it replaced."""
-    engine: str = ""                  # claude-code | codex | gemini-cli | direct | keep
-    model: str = ""                   # OpenClaw model ref, e.g. anthropic/claude-sonnet-5
+    engine: str = ""                  # antigravity | claude-code | codex | gemini-cli | keep
+    model: str = ""                   # OpenClaw model ref (bare id for antigravity, e.g.
+                                       # gemini-3.8-flash-low; namespaced otherwise, e.g.
+                                       # anthropic/claude-sonnet-5)
     applied: bool = False             # the kit has written openclaw.json at least once
     config_path: str = ""
     # openclaw.json values before the kit's first write (model, models, engram,
-    # extra_dirs), restored verbatim on teardown. None means the key was absent.
+    # extra_dirs, plus the antigravity-only keys), restored verbatim on teardown.
+    # None means the key was absent. Also carries the one-off marker
+    # "agy_mcp_bridge_preexisted" recorded when the antigravity engine registers the
+    # agy MCP bridge, so teardown only removes an entry the kit itself created.
     previous: dict[str, Any] = field(default_factory=dict)
     # Voice notes. `voice` is the last answer (cloud | local | off | keep); `voice_applied`
     # is the mode the kit last wrote into tools.media, "" when it never did.
@@ -159,6 +176,22 @@ class OpenClawState:
     mcp: str = ""
     mcp_skipped: list[str] = field(default_factory=list)
     mcp_mirrored: dict[str, Any] = field(default_factory=dict)
+    # antigravity engine only, below:
+    orchestrator_model: str = "gemini-3.8-flash-low"
+    # Bare model id: the ref is built as `claude-kit/<worker_model>`, and OpenClaw
+    # only resolves two-segment refs (`claude-kit/anthropic/claude-sonnet-5` is
+    # rejected by `config patch --dry-run`).
+    worker_model: str = "claude-sonnet-5"
+    plugin_linked: bool = False       # the kit ran `openclaw plugins install --link ...`
+    risk_acknowledged: bool = False   # explicit consent to unrestricted code execution
+    # True once `configure()` has successfully applied the antigravity engine's own
+    # patch (agents.entries.claude, subagents.allowAgents, tools.media and
+    # plugins.entries.ai-resources), independent of `engine` above.
+    # `engine` reflects the *current* choice and is overwritten as soon as the wizard
+    # picks a different one; this flag is what gates restoring antigravity-only keys
+    # (in `configure()` when switching away, and in `teardown()`), so a switch from
+    # antigravity to any other engine is never mistaken for "nothing to restore".
+    antigravity_applied: bool = False
 
 
 @dataclass

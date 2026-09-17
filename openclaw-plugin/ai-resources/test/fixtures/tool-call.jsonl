@@ -1,0 +1,4 @@
+{"event":"init","conversation_id":"conv-synthetic-002"}
+{"step_update":{"step_type":"tool","state":"ACTIVE","conversation_id":"conv-synthetic-002","step_index":2,"tool_name":"sessions_spawn","tool_info":{"parameters":{"agentId":"claude","cwd":"/home/example/Development/example-project"}}}}
+{"step_update":{"step_type":"tool","state":"DONE","conversation_id":"conv-synthetic-002","step_index":2,"tool_name":"sessions_spawn"}}
+{"result":{"status":"SUCCESS","response":"Delegated to claude.","conversation_id":"conv-synthetic-002","usage":{"input_tokens":120,"output_tokens":45}}}
