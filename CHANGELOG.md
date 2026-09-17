@@ -4,6 +4,40 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.8.0] — 2026-09-17 — Antigravity's two weekly pools are visible, choosable and diagnosable
+
+Antigravity serves two **independent** weekly quota pools — one for Gemini models, one
+shared by Claude and GPT models — and a pool at 0% used to present as an unexplained
+hang: agy retries a 429 `RESOURCE_EXHAUSTED` five times with backoff (~93 s), then
+OpenClaw's stall detector kills the turn for "no progress" and respawns it, with no quota
+error ever shown.
+
+### Added
+
+- Claude/GPT models (`claude-sonnet-4-6`, `claude-opus-4-6-thinking`,
+  `gpt-oss-120b-medium`) are now selectable for the antigravity engine, alongside the
+  existing Gemini ones — so a Gemini pool at 0% is no longer a dead end. Each choice in
+  the wizard is labelled with its weekly pool, and a live read of `agy -p "/usage"` warns
+  at choice time when a pool is exhausted, naming the other pool as the way out.
+- `ai-resources doctor` gained a quota check: it reports both pools' remaining
+  percentage and reset time, and raises an issue when the pool backing the applied model
+  is at or near its limit — the same signal the wizard shows, in one place, on demand.
+
+### Changed
+
+- Choosing `agy` for voice notes while the main agent runs a gemini-* model now warns
+  that both share one weekly Gemini pool and exhaust together. The default stays
+  agy-first, unchanged — the warning is what surfaces the shared pool, not a silent
+  change to anyone's setup.
+
+### Documented
+
+- The deceptive failure mode (429 × 5, ~93 s backoff, then a turn interrupted for "no
+  progress" instead of a quota error), agy's broken background quota refresh
+  (`Singleflight refresh failed`), and that Google Workspace accounts
+  (`hd=<domain>`, `auth_method=consumer`) silently sit on the FREE weekly tier —
+  documented this release, detected never.
+
 ## [1.7.3] — 2026-09-17 — A kit upgrade no longer leaves the bot answering "Unknown CLI backend"
 
 ### Fixed
