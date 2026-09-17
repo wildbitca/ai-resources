@@ -864,3 +864,80 @@ def test_backend_registered_survives_junk_output(monkeypatch):
     for rc, out in ((1, "gateway down"), (0, "not json at all"), (0, "")):
         monkeypatch.setattr(openclaw, "_openclaw", lambda *_a, rc=rc, out=out, **_k: (rc, out))
         assert openclaw.backend_registered("agy-cli") is False
+
+
+def _inspect_reply(monkeypatch, plugin: dict, restart_rc: int = 0, on_restart=None):
+    """Stub `_openclaw` so `plugins inspect` answers with `plugin` and restarts are seen."""
+    calls: list[list[str]] = []
+
+    def fake(args, stdin=None, timeout=120):
+        calls.append(args)
+        if args[:2] == ["plugins", "inspect"]:
+            return 0, json.dumps({"plugin": plugin() if callable(plugin) else plugin})
+        if args[:2] == ["gateway", "restart"]:
+            if on_restart:
+                on_restart()
+            return restart_rc, "restarted" if restart_rc == 0 else "boom"
+        return 0, "ok"
+
+    monkeypatch.setattr(openclaw, "_openclaw", fake)
+    monkeypatch.setattr(openclaw.time, "sleep", lambda _s: None)
+    return calls
+
+
+def test_plugin_is_stale_when_the_gateway_runs_another_directory(monkeypatch, tmp_path):
+    """`brew upgrade` moves the kit; a gateway still running the previous Cellar path
+    answers "Unknown CLI backend" to every message until it restarts (2026-09-17)."""
+    linked = tmp_path / "1.7.2" / "openclaw-plugin" / "ai-resources"
+    stale = tmp_path / "1.7.1" / "openclaw-plugin" / "ai-resources"
+    for d in (linked, stale):
+        d.mkdir(parents=True)
+    _inspect_reply(monkeypatch, {"status": "loaded", "cliBackendIds": ["agy-cli"],
+                                 "rootDir": str(stale)})
+    assert openclaw.plugin_is_stale(str(linked)) is True
+    _inspect_reply(monkeypatch, {"status": "loaded", "cliBackendIds": ["agy-cli"],
+                                 "rootDir": str(linked)})
+    assert openclaw.plugin_is_stale(str(linked)) is False
+
+
+def test_plugin_is_stale_is_false_when_the_runtime_says_nothing(monkeypatch):
+    _inspect_reply(monkeypatch, {})
+    assert openclaw.plugin_is_stale("/kit/openclaw-plugin/ai-resources") is False
+
+
+def test_restart_gateway_reports_success_once_the_backend_is_back(monkeypatch):
+    state_ = {"up": False}
+    calls = _inspect_reply(
+        monkeypatch,
+        lambda: {"status": "loaded", "cliBackendIds": ["agy-cli"]} if state_["up"] else {},
+        on_restart=lambda: state_.__setitem__("up", True),
+    )
+    assert openclaw.restart_gateway() is True
+    assert ["gateway", "restart"] in calls
+
+
+def test_restart_gateway_reports_failure_when_the_command_fails(monkeypatch):
+    _inspect_reply(monkeypatch, {}, restart_rc=1)
+    assert openclaw.restart_gateway() is False
+
+
+def test_restart_gateway_reports_failure_when_the_backend_never_returns(monkeypatch):
+    _inspect_reply(monkeypatch, {"status": "loaded", "cliBackendIds": []})
+    assert openclaw.restart_gateway() is False
+
+
+def test_a_stale_plugin_triggers_a_restart_even_though_the_backend_answers(jarvis, monkeypatch):
+    """The stale gateway still reports the backend, so readiness alone is not enough."""
+    cfg, _ws, rec = jarvis
+    seen = {"restarts": 0}
+    monkeypatch.setattr(openclaw, "backend_registered", lambda _b: True)
+    monkeypatch.setattr(openclaw, "plugin_is_stale", lambda _d: seen["restarts"] == 0)
+    monkeypatch.setattr(openclaw, "register_agy_mcp_bridge", lambda *_a: (True, False, ""))
+
+    def restart(_backend="agy-cli"):
+        seen["restarts"] += 1
+        return True
+
+    monkeypatch.setattr(openclaw, "restart_gateway", restart)
+    assert openclaw._register_plugin_and_backends(_antigravity_state(), "/kit") is True
+    assert seen["restarts"] == 1

@@ -4,6 +4,18 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.7.3] — 2026-09-17 — A kit upgrade no longer leaves the bot answering "Unknown CLI backend"
+
+### Fixed
+
+- **After `brew upgrade`, OpenClaw kept running the plugin from the previous kit
+  directory** and answered `Unknown CLI backend: agy-cli` to every chat message until the
+  gateway was restarted by hand. Setup now compares the directory it links with the one
+  the gateway reports, restarts the gateway when they differ or the backend is missing,
+  verifies the backend came back, and says which of the two happened — including the exact
+  command to run when the restart did not help. `ai-resources doctor` reports the same
+  condition instead of leaving a silent, fully broken bot.
+
 ## [1.7.2] — 2026-09-17 — The engine step stops mistaking a loaded backend for a missing one
 
 ### Fixed

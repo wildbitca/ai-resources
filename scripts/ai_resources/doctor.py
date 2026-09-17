@@ -157,6 +157,26 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     ui.detail("Gateway uses allow_requests_on_db_unavailable=true — works as-is.")
                     ui.detail("To switch to API key mode: claude /logout → new terminal → ai-resources doctor")
 
+    # 4c. OpenClaw antigravity engine: the gateway must run the plugin the kit links.
+    if s.openclaw.antigravity_applied:
+        from .setup.cockpits import openclaw as _openclaw_cockpit
+        from .setup.cockpits import _shared as _shared_cockpit
+        from . import repo_root as _repo_root
+        plugin_dir = str(Path(_shared_cockpit.stable_kit_root(_repo_root()))
+                         / "openclaw-plugin" / "ai-resources")
+        if _openclaw_cockpit.plugin_is_stale(plugin_dir):
+            # `brew upgrade` moves the kit; until the gateway restarts it holds the old
+            # path and answers "Unknown CLI backend" to every chat message.
+            ui.warn("OpenClaw is running the ai-resources plugin from an older kit directory.")
+            ui.detail("Run: openclaw gateway restart")
+            issues += 1
+        elif not _openclaw_cockpit.backend_registered("agy-cli"):
+            ui.warn("OpenClaw has not loaded the ai-resources plugin (no agy-cli backend).")
+            ui.detail("Run: openclaw gateway restart")
+            issues += 1
+        else:
+            ui.ok("OpenClaw runs the kit plugin (agy-cli backend registered)")
+
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")
     if state.executors_path().is_file():

@@ -585,8 +585,8 @@ def configure(ctx: dict) -> list[Path]:
     return written
 
 
-def backend_registered(backend: str) -> bool:
-    """Whether the running gateway has loaded the plugin that registers `backend`.
+def plugin_runtime() -> dict:
+    """The running gateway's view of the kit plugin; {} when it cannot be read.
 
     NOT `openclaw models list`: that lists provider models and never prints CLI-backend
     refs, so it reports "missing" for a backend the gateway is happily using (seen on a
@@ -594,16 +594,50 @@ def backend_registered(backend: str) -> bool:
     """
     rc, out = _openclaw(["plugins", "inspect", PLUGIN_ID, "--runtime", "--json"])
     if rc != 0:
-        return False
+        return {}
     start = out.find("{")
     if start < 0:
-        return False
+        return {}
     try:
         report, _ = json.JSONDecoder().raw_decode(out[start:])
     except ValueError:
-        return False
-    plugin = report.get("plugin") or {}
+        return {}
+    return (report.get("plugin") or {}) if isinstance(report, dict) else {}
+
+
+def backend_registered(backend: str) -> bool:
+    """Whether the running gateway has loaded the plugin that registers `backend`."""
+    plugin = plugin_runtime()
     return plugin.get("status") == "loaded" and backend in (plugin.get("cliBackendIds") or [])
+
+
+def plugin_is_stale(plugin_dir: str) -> bool:
+    """Whether the gateway is running a copy of the plugin from somewhere else.
+
+    `brew upgrade` moves the kit into a new Cellar directory, so a gateway that is still
+    running keeps a path that no longer exists and answers `Unknown CLI backend` to every
+    message until it restarts (seen after upgrading to 1.7.2 on 2026-09-17).
+    """
+    root = (plugin_runtime().get("rootDir") or "").strip()
+    if not root:
+        return False
+    try:
+        return Path(root).resolve() != Path(plugin_dir).resolve()
+    except OSError:
+        return root != plugin_dir
+
+
+def restart_gateway(backend: str = "agy-cli") -> bool:
+    """Restart the gateway and report whether the backend came back registered."""
+    rc, out = _openclaw(["gateway", "restart"], timeout=180)
+    if rc != 0:
+        ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")
+        return False
+    for _ in range(BACKEND_WAIT_TRIES):
+        if backend_registered(backend):
+            return True
+        time.sleep(BACKEND_WAIT_SECONDS)
+    return False
 
 
 def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
@@ -638,16 +672,22 @@ def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
             ui.warn(f"OpenClaw: could not register the agy MCP bridge "
                     f"({bridge_out[-200:]}); will retry on the next run.")
 
-    if backend_registered("agy-cli"):
+    plugin_dir = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
+    stale = plugin_is_stale(plugin_dir)
+    if backend_registered("agy-cli") and not stale:
         return True
-    # A plugin linked from another shell only takes effect on the next gateway start.
-    _openclaw(["gateway", "restart"])
-    for _ in range(BACKEND_WAIT_TRIES):
-        if backend_registered("agy-cli"):
-            return True
-        time.sleep(BACKEND_WAIT_SECONDS)
-    ui.error("OpenClaw: the agy-cli backend is still not registered after restarting the "
-             "gateway — check `openclaw plugins inspect ai-resources --runtime`.")
+
+    # A plugin linked from another shell only takes effect on the next gateway start, and
+    # after `brew upgrade` the running gateway holds a path from the previous version.
+    if stale:
+        ui.info("OpenClaw is running the plugin from an older kit directory "
+                "(`brew upgrade` moves it) — restarting the gateway.")
+    if restart_gateway():
+        ui.ok("OpenClaw gateway restarted; the agy-cli backend is registered.")
+        return True
+    ui.error("OpenClaw: the agy-cli backend is still not registered. Restart the gateway "
+             "yourself with `openclaw gateway restart`, then check `openclaw plugins "
+             f"inspect {PLUGIN_ID} --runtime`.")
     return False
 
 
