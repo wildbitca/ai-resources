@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-09-17 — Bare Anthropic model IDs work under OpenRouter
+
 ### Fixed
 
 - **A bare Anthropic model ID failed under OpenRouter.** `claude --model claude-sonnet-5` sent the
