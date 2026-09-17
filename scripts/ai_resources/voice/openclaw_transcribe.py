@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Voice-note transcription for OpenClaw (a `tools.media.models` entry of type `cli`).
 
-    openclaw_transcribe.py [--mode cloud|local] [--language es|en|…|auto] AUDIO_FILE
+    openclaw_transcribe.py [--mode cloud|local] [--language es|en|…|auto] [--no-correct] AUDIO_FILE
 
 Prints only the final transcript on stdout and always exits 0 once it has a file, so a
 failed engine never surfaces as an error in chat. Every attempt is logged to VOICE_LOG.
@@ -14,7 +14,8 @@ Chain, first success wins (measured on real Telegram notes):
   2. Local whisper.cpp large-v3-turbo q5_0 (forced language, temperature 0, beam 5,
      loudness normalisation, short prompt; VAD and long prompts measured worse), then a
      text-only correction pass: an OpenRouter fast model, else Claude Code on the user's
-     subscription.
+     subscription. `--no-correct` (or VOICE_CORRECT=0) skips it, so nothing leaves the
+     machine in local mode.
   3. The raw Whisper transcript, so a voice note is never lost.
 
 Stdlib only: OpenClaw runs this outside the kit's virtualenv as well as inside it.
@@ -265,7 +266,7 @@ def plausible(text: str, reference: str = "") -> bool:
     return bool(text) and (not reference or len(text) < len(reference) * 3 + 200)
 
 
-def transcribe(src: str, mode: str, language: str) -> tuple[str, str]:
+def transcribe(src: str, mode: str, language: str, correct_text: bool = True) -> tuple[str, str]:
     """(transcript, engine that produced it); ("", "none") when nothing heard anything."""
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -276,7 +277,7 @@ def transcribe(src: str, mode: str, language: str) -> tuple[str, str]:
         raw = whisper(src, work, language)
         if not raw:
             return "", "none"
-        fixed = correct(raw, work, language)
+        fixed = correct(raw, work, language) if correct_text else ""
         if plausible(fixed, raw):
             return fixed, "whisper+llm"
         return raw, "whisper-raw"
@@ -287,10 +288,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=("cloud", "local"),
                         default=os.environ.get("VOICE_MODE", "cloud"))
     parser.add_argument("--language", default=os.environ.get("VOICE_LANGUAGE", "auto"))
+    parser.add_argument("--no-correct", action="store_true",
+                        help="skip the text correction pass (fully offline in local mode)")
     parser.add_argument("audio")
     args = parser.parse_args(argv)
-    text, via = transcribe(args.audio, args.mode, args.language)
-    log(f"final via={via} mode={args.mode} language={args.language} chars={len(text)}")
+    text, via = transcribe(args.audio, args.mode, args.language, correct_text=not args.no_correct)
+    log(f"final via={via} mode={args.mode} language={args.language} correct={not args.no_correct} "
+        f"chars={len(text)}")
     if text:
         print(text)
     return 0

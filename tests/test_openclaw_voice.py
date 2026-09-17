@@ -58,7 +58,7 @@ def bot(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENCLAW_CONFIG_PATH", raising=False)
     monkeypatch.setattr(openclaw, "_openclaw", rec)
     monkeypatch.setattr(openclaw._shared, "stable_kit_root", lambda _root: pathlib.Path("/kit"))
-    monkeypatch.setattr(voice, "ensure_local_engine", lambda required: True)
+    monkeypatch.setattr(voice, "ensure_local_engine", lambda s, required: True)
     monkeypatch.setattr(voice, "ensure_glossary", lambda dest=None: False)
     monkeypatch.setattr(voice, "interpreter", lambda _ak: "/kit/venv/bin/python")
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
@@ -94,15 +94,72 @@ def test_the_saved_answer_wins(monkeypatch):
     assert voice.default_mode(s) == "local"
 
 
+def _answers(monkeypatch, *answers):
+    """Script ui.select: answers in order; records (message, choice values, default)."""
+    asked, queue = [], list(answers)
+
+    def select(msg, choices, default=None, **_k):
+        asked.append((msg, [c.value if hasattr(c, "value") else c["value"] for c in choices], default))
+        return queue.pop(0)
+
+    monkeypatch.setattr(ui, "select", select)
+    return asked
+
+
 def test_openclaw_prompt_asks_about_voice_notes(monkeypatch):
-    asked = []
     monkeypatch.setattr(openclaw, "_prompt_engine", lambda s: None)
-    monkeypatch.setattr(ui, "select", lambda msg, choices, default=None, **_k: asked.append(msg) or "local")
-    monkeypatch.setattr(ui, "text", lambda msg, default="", **_k: "es")
+    asked = _answers(monkeypatch, "cloud", "es")
     s = state.SetupState()
     openclaw.prompt(s)
-    assert asked == ["Voice notes: how should OpenClaw transcribe them?"]
-    assert (s.openclaw.voice, s.openclaw.voice_language) == ("local", "es")
+    assert asked[0][0] == "Voice notes: how should OpenClaw transcribe them?"
+    assert len(asked) == 2, "cloud asks the language, not the correction"
+    assert (s.openclaw.voice, s.openclaw.voice_language) == ("cloud", "es")
+
+
+def test_local_asks_whether_to_correct_with_an_llm_and_explains_it(monkeypatch):
+    asked = _answers(monkeypatch, "local", "es", "offline")
+    s = state.SetupState()
+    voice.prompt(s)
+    msg, values, default = asked[2]
+    assert values == ["llm", "offline"] and default == "llm"
+    for fact in ("technical terms", "never the audio", "OpenRouter", "Claude Code", "$0.0001"):
+        assert fact in msg
+    assert s.openclaw.voice_correction == "offline"
+
+
+@pytest.mark.parametrize("env, expected", [
+    ({"LANG": "es_ES.UTF-8"}, "es"),
+    ({"LANG": "en_US.UTF-8"}, "en"),
+    ({"LC_ALL": "pt_BR.UTF-8", "LANG": "en_US.UTF-8"}, "pt"),
+    ({"LANG": "C.UTF-8"}, ""),
+    ({"LANG": "POSIX"}, ""),
+    ({}, ""),
+])
+def test_the_language_comes_from_the_system_locale(monkeypatch, env, expected):
+    for var in ("LC_ALL", "LANG"):
+        monkeypatch.delenv(var, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    assert voice.locale_language() == expected
+
+
+def test_spanish_is_the_default_without_a_usable_locale(monkeypatch):
+    monkeypatch.setenv("LANG", "C")
+    monkeypatch.delenv("LC_ALL", raising=False)
+    assert voice.default_language(state.SetupState()) == "es"
+    s = state.SetupState()
+    s.openclaw.voice_language = "auto"
+    assert voice.default_language(s) == "auto", "a saved answer wins"
+
+
+def test_auto_is_an_explicit_choice_that_warns_about_short_clips(monkeypatch):
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    monkeypatch.delenv("LC_ALL", raising=False)
+    asked = _answers(monkeypatch, "cloud", "auto")
+    voice.prompt(state.SetupState())
+    _msg, values, default = asked[1]
+    assert default == "en" and values[-1] == "auto"
+    assert "misdetected" in voice.AUTO_LABEL and "Russian" in voice.AUTO_LABEL
 
 
 # --- tools.media -----------------------------------------------------------------------
@@ -121,6 +178,15 @@ def test_models_for_other_capabilities_survive():
     media = voice.build_media("local", "/py", "/kit/t.py", "auto",
                               {"models": [IMAGE_MODEL, *HAND_BUILT["models"]]})
     assert media["models"][1:] == [IMAGE_MODEL]
+
+
+@pytest.mark.parametrize("mode, correction, offline", [
+    ("local", "offline", True), ("local", "llm", False), ("cloud", "offline", False),
+])
+def test_fully_offline_local_mode_passes_no_correct(mode, correction, offline):
+    args = voice.build_media(mode, "/py", "/kit/t.py", "es", None, correction)["models"][0]["args"]
+    assert ("--no-correct" in args) is offline
+    assert args[-1] == "{{AttachmentPath}}"
 
 
 def test_off_only_disables_audio():
@@ -160,7 +226,7 @@ def test_keep_changes_nothing(bot):
 
 def test_a_local_engine_that_cannot_be_installed_leaves_voice_untouched(bot, monkeypatch):
     _cfg, _ws, rec = bot
-    monkeypatch.setattr(voice, "ensure_local_engine", lambda required: not required)
+    monkeypatch.setattr(voice, "ensure_local_engine", lambda s, required: not required)
     s = _state("local")
     openclaw.configure({"state": s})
     assert rec.patches() == [] and not s.openclaw.voice_applied
@@ -326,6 +392,115 @@ def test_a_verified_model_is_not_downloaded_again(tmp_path, monkeypatch):
 
 
 def test_cloud_tolerates_a_missing_local_fallback_but_local_does_not(monkeypatch):
-    monkeypatch.setattr(voice, "ensure_binaries", lambda: False)
-    assert voice.ensure_local_engine(required=False) is True
-    assert voice.ensure_local_engine(required=True) is False
+    monkeypatch.setattr(voice, "ensure_binaries", lambda s: False)
+    assert voice.ensure_local_engine(state.SetupState(), required=False) is True
+    assert voice.ensure_local_engine(state.SetupState(), required=True) is False
+
+
+# --- what setup installs, and teardown of it ---------------------------------------------
+
+class _Brew:
+    """Homebrew stand-in: `present` is what is installed; records every command."""
+
+    def __init__(self, present: set[str], fail_uninstall: bool = False):
+        self.present, self.fail_uninstall, self.calls = set(present), fail_uninstall, []
+
+    def which(self, binary, *_extra):
+        if binary == "brew":
+            return "/brew/bin/brew"
+        formula = {v: k for k, v in voice.LOCAL_FORMULAS.items()}[binary]
+        return f"/brew/bin/{binary}" if formula in self.present else ""
+
+    def run(self, cmd, **_kw):
+        self.calls.append(cmd[1:])
+        verb, *formulas = cmd[1:]
+        if verb == "install":
+            self.present.update(formulas)
+        elif verb == "uninstall" and not self.fail_uninstall:
+            self.present.difference_update(formulas)
+        return type("P", (), {"returncode": 1 if verb == "uninstall" and self.fail_uninstall else 0,
+                              "stdout": "", "stderr": ""})()
+
+
+@pytest.fixture
+def brew(monkeypatch):
+    def make(present, **kw):
+        b = _Brew(present, **kw)
+        monkeypatch.setattr(voice.transcriber, "find_binary", b.which)
+        monkeypatch.setattr(voice.subprocess, "run", b.run)
+        return b
+    return make
+
+
+def test_only_formulas_setup_installed_are_recorded(brew):
+    b = brew({"ffmpeg"})
+    s = state.SetupState()
+    assert voice.ensure_binaries(s)
+    assert b.calls == [["install", "whisper-cpp"]]
+    assert s.openclaw.voice_formulas_installed == ["whisper-cpp"]
+
+
+def test_pre_existing_formulas_are_never_recorded_or_uninstalled(brew, tmp_path):
+    b = brew({"ffmpeg", "whisper-cpp"})
+    s = state.SetupState()
+    assert voice.ensure_binaries(s)
+    voice.remove_installed(s)
+    assert b.calls == [] and s.openclaw.voice_formulas_installed == []
+
+
+def test_teardown_uninstalls_tracked_formulas_after_confirmation(brew, monkeypatch):
+    b = brew(set())
+    s = state.SetupState()
+    voice.ensure_binaries(s)
+    prompts = []
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: prompts.append(msg) or True)
+    voice.remove_installed(s)
+    assert ["uninstall", "ffmpeg"] in b.calls and ["uninstall", "whisper-cpp"] in b.calls
+    assert len(prompts) == 1 and "ffmpeg" in prompts[0]
+    assert s.openclaw.voice_formulas_installed == []
+
+
+def test_declining_keeps_the_formulas(brew, monkeypatch):
+    b = brew(set())
+    s = state.SetupState()
+    voice.ensure_binaries(s)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: False)
+    voice.remove_installed(s)
+    assert not [c for c in b.calls if c[0] == "uninstall"]
+
+
+def test_a_failed_uninstall_only_warns(brew, monkeypatch):
+    brew(set(), fail_uninstall=True)
+    s = state.SetupState()
+    voice.ensure_binaries(s)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    voice.remove_installed(s)
+    assert s.openclaw.voice_formulas_installed == []
+
+
+def test_a_downloaded_model_is_recorded_and_removed_but_an_existing_one_is_not(tmp_path, monkeypatch):
+    payload = b"model"
+    digest = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(voice.urllib.request, "urlopen", lambda *_a, **_k: _Download(payload))
+    s = state.SetupState()
+    downloaded = tmp_path / "new.bin"
+    existing = tmp_path / "old.bin"
+    existing.write_bytes(payload)
+    assert voice.ensure_model(downloaded, "https://x", digest, s=s)
+    assert voice.ensure_model(existing, "https://x", digest, s=s)
+    assert s.openclaw.voice_models_downloaded == [str(downloaded)]
+    voice.remove_installed(s)
+    assert not downloaded.exists() and existing.exists()
+
+
+def test_voice_teardown_removes_what_setup_installed(bot, brew, tmp_path, monkeypatch):
+    b = brew({"ffmpeg"})
+    model = tmp_path / "ggml.bin"
+    model.write_bytes(b"m")
+    s = _state("local")
+    s.openclaw.voice_formulas_installed = ["whisper-cpp"]
+    s.openclaw.voice_models_downloaded = [str(model)]
+    openclaw.configure({"state": s})
+    openclaw.teardown(s)
+    assert b.calls == [["uninstall", "whisper-cpp"]]
+    assert not model.exists()

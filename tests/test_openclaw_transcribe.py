@@ -200,6 +200,13 @@ def test_whisper_runs_with_the_measured_settings(chain, monkeypatch):
     assert "--prompt" in cmd and "--vad" not in cmd
 
 
+def test_no_correct_keeps_local_mode_fully_offline(chain, capsys):
+    router, bins = chain
+    assert t.main(["--mode", "local", "--language", "es", "--no-correct", "note.ogg"]) == 0
+    assert capsys.readouterr().out == bins.whisper + "\n"
+    assert router.calls == [] and "claude" not in bins.calls
+
+
 def test_main_prints_only_the_transcript(chain, capsys):
     router, _bins = chain
     router.queue[AUDIO] = ["hola"]
