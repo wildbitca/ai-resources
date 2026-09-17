@@ -195,6 +195,61 @@ registers those IDs, and under OpenRouter setup writes a `modelOverrides` map to
 the catalogue IDs (Claude Code 2.1.200 or later). Under OpenRouter you still need
 `claude /logout`, which moves the bot off the subscription too.
 
+### Voice notes
+
+Step 7 also asks how OpenClaw transcribes voice notes before the agent sees them:
+
+| Answer | What happens |
+|---|---|
+| Cloud (needs `OPENROUTER_API_KEY`) | An audio-native model on OpenRouter hears the note; local whisper.cpp is the fallback |
+| Local only | whisper.cpp on this machine; the audio never leaves it |
+| Off | `tools.media.audio.enabled: false` |
+| Keep | Nothing changes; if the kit configured voice notes before, it offers to restore the original |
+
+Both transcribing answers register the kit's
+`scripts/ai_resources/voice/openclaw_transcribe.py` as a `tools.media` CLI model, run
+with the kit's own Python. It prints only the transcript, and the first step that
+produces one wins:
+
+1. **Cloud only:** `google/gemini-3.7-flash` gets the note as MP3 `input_audio` with the
+   glossary in its prompt. It answers `[inaudible]` for noise, and that answer is passed
+   on as is. A network error or 5xx is retried once; a 4xx is not.
+2. **whisper.cpp** `large-v3-turbo` q5_0 with a forced language, temperature 0, beam 5,
+   loudness normalisation and a short prompt, followed by a text-only correction pass:
+   `google/gemini-3.5-flash-lite` on OpenRouter, else Claude Code (`claude -p --model haiku`)
+   on your subscription. In local mode this pass still sends the transcript text, not the
+   audio; set `VOICE_CORRECT=0` to skip it.
+3. **The raw Whisper transcript**, so a note is never lost.
+
+These choices were measured on real Telegram notes in Spanish mixed with English
+technical terms. The audio model was the only engine that got notes like "me listes los
+tópicos… ¿eres capaz de hacerlo?" right; Whisper heard "añadiste… eres capaz de acudir".
+A cloud note takes 3–6 s and typically costs $0.0004–0.0014 (from $0.0001 for a
+one-liner to $0.0024 for a 30-second note); Whisper plus correction takes about 5 s, and
+the correction costs about $0.0001–0.0002. Whisper's VAD and longer prompts
+both made results worse.
+
+Setup installs `whisper-cpp` and `ffmpeg` with Homebrew when they are missing, and
+downloads the Whisper model to `~/.local/share/whisper-models/`. The file is written
+under a `.part` name and renamed only after its SHA-256 matches. With cloud, a local
+engine that fails to install is only a warning. Teardown does not uninstall these.
+
+The glossary at `~/.config/openclaw-voice/glossary.txt` lists terms the transcriber
+should spell right. Setup writes a default only when the file is missing, so your edits
+are kept. The language you give (`es`, `en`, … or `auto`) goes on the command line. You
+can tune the rest through the environment: `VOICE_AUDIO_MODEL`, `VOICE_TEXT_MODEL`,
+`VOICE_WHISPER_PROMPT`, `WHISPER_MODELS`, `WHISPER_MODEL`, `VOICE_GLOSSARY` and
+`VOICE_LOG`. The log (`~/.cache/openclaw-voice.log`) records the route, timings and cost
+of each note, never its words.
+
+The rule that tells the agent to act on a transcript at once goes into the kit block in
+the workspace `AGENTS.md`: don't ask to confirm, don't repeat the note back, don't
+transcribe again, and ask only when the note is `[inaudible]` or empty. If `AGENTS.md`
+already has a `## Voice notes` section of its own, an interactive run offers to move it
+into the block and backs up the original first. Decline, or run unattended, and your
+section stays while the block leaves the rule out, so it never appears twice. Teardown
+puts back the `tools.media` the kit replaced and removes the block.
+
 ## Operations
 
 ```sh

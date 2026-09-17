@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Added
+
+- **OpenClaw voice notes.** When OpenClaw is installed, setup asks how voice notes are
+  transcribed: cloud (an OpenRouter audio model, with local whisper.cpp as the fallback), local
+  whisper.cpp only, off, or keep. The kit ships the transcriber, registers it through
+  `openclaw config patch`, installs whisper.cpp, ffmpeg and a checksum-verified Whisper model
+  when needed, and adds the "act on the transcript" rule to the workspace `AGENTS.md` block. The
+  `tools.media` it replaced is restored on teardown, and an unattended first run changes nothing.
+
 ## [1.4.1] — 2026-09-17 — Bare Anthropic model IDs work under OpenRouter
 
 ### Fixed

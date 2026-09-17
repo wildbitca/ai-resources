@@ -1,0 +1,4 @@
+OpenClaw, Telegram, Claude Code, Claude, Anthropic, Sonnet, Opus, Haiku, OpenRouter, LiteLLM,
+Gemini CLI, Codex, Cursor, Copilot, Engram, ai-resources, kit, setup, skill, subagent, workflow,
+prompt, MCP, hook, Kubernetes, kubectl, Helm, Terraform, OpenTofu, Docker, Podman, Homebrew, brew,
+GitHub, pull request, PR, merge, rebase, commit, branch, main, release, tag, issue, deploy
