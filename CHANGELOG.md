@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-09-17 — OpenClaw voice notes
+
 ### Added
 
 - **OpenClaw voice notes.** When OpenClaw is installed, setup asks how voice notes are
@@ -14,6 +16,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   `openclaw config patch`, installs whisper.cpp, ffmpeg and a checksum-verified Whisper model
   when needed, and adds the "act on the transcript" rule to the workspace `AGENTS.md` block. The
   `tools.media` it replaced is restored on teardown, and an unattended first run changes nothing.
+  - Setup asks for the language: the system locale's by default, else Spanish, with `auto` as an
+    explicit choice.
+  - Local mode asks whether to correct transcripts with an LLM, which sends the text but never
+    the audio, or to stay fully offline.
+  - Teardown deletes the Whisper models it downloaded. It uninstalls only the Homebrew formulas
+    setup installed itself, and asks first when interactive.
 
 ## [1.4.1] — 2026-09-17 — Bare Anthropic model IDs work under OpenRouter
 
