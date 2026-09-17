@@ -181,6 +181,55 @@ start with `--strict-mcp-config`, so the CLI's own MCP servers never reach the
 bot — and the workspace `AGENTS.md` names Engram as the memory of record, with
 OpenClaw's native memory kept for recent chat context.
 
+### MCP servers
+
+Because of `--strict-mcp-config`, the bot sees only the servers in OpenClaw's
+`mcp.servers`, never the ones you use in Claude Code. With the Claude Code engine,
+step 7 lists Claude Code's user-level servers and asks **Give the bot the same MCP
+servers as Claude Code?**, then lets you untick any of them. It reads:
+
+| Source | What is mirrored |
+|---|---|
+| `~/.claude.json` `mcpServers` (user scope) | stdio and HTTP servers; project scopes are skipped |
+| `~/.claude/settings.json` `mcpServers` | same |
+| Enabled plugins' `.mcp.json` | same, with `${CLAUDE_PLUGIN_ROOT}` expanded |
+| claude.ai connectors | only those with a public MCP endpoint (ClickUp → `https://mcp.clickup.com/mcp`); the rest are reported |
+
+The preview shows each server's name, kind and action, never a value:
+
+| Action | Meaning |
+|---|---|
+| add | Not in OpenClaw yet; the kit writes it |
+| adopt | Already in OpenClaw exactly as the kit would write it; recorded as kit-managed, nothing written |
+| update | Kit-managed and changed in Claude Code |
+| remove | Kit-managed and gone from Claude Code; what it replaced is put back |
+| skip | Defined differently in OpenClaw (or edited by hand after the kit wrote it), Engram (the engine step owns it), or not mirrorable |
+| needs attention | Holds a literal credential; not mirrored |
+
+**Credentials never reach `openclaw.json`.** `${VAR}` references are copied as they
+are and OpenClaw resolves them from the gateway's environment. A literal value in a
+secret-named env var (`*TOKEN*`, `*KEY*`, `*SECRET*`, …), a `KEY=value` argument such
+as `docker -e GRAFANA_SERVICE_ACCOUNT_TOKEN=…`, a value after `--token`, a string with
+a known token prefix (`glsa_`, `sk-`, `ghp_`, `sbp_`, …), an `Authorization` header or a
+secret URL parameter marks the server as needing attention. The message names the
+variable to use: for the Docker case, pass `-e GRAFANA_SERVICE_ACCOUNT_TOKEN` with no
+value and set `"env": {"GRAFANA_SERVICE_ACCOUNT_TOKEN": "${GRAFANA_SERVICE_ACCOUNT_TOKEN}"}`
+in Claude Code's config. Harmless literals such as `LOG_LEVEL=debug` are copied.
+
+After applying, setup names any referenced variable the gateway lacks (on Linux it
+checks the running gateway's environment by name) and tells you where to put it:
+`NAME=value` in `~/.openclaw/.env`, then `openclaw gateway restart`. HTTP servers get
+`auth: oauth`, which needs a browser, so setup lists the commands to run once:
+
+```
+openclaw mcp login <name>
+```
+
+Writes go through one validated `openclaw config patch`, retried while OpenClaw's
+state database settles. Teardown removes servers the kit added and restores the ones
+it replaced; a server you edited by hand since is left as it is. An unattended run
+with no saved answer changes nothing.
+
 The kit never writes `openclaw.json` itself: every change goes through
 `openclaw config patch`, which validates it. The values it replaces are saved in
 `setup-state.yaml` and restored when you choose to restore. An unattended run

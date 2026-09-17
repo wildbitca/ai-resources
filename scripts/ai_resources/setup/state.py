@@ -153,6 +153,12 @@ class OpenClawState:
     # Homebrew formulas that were missing before, and Whisper model files it downloaded.
     voice_formulas_installed: list[str] = field(default_factory=list)
     voice_models_downloaded: list[str] = field(default_factory=list)
+    # MCP servers mirrored from Claude Code. `mcp` is the last answer (mirror | keep);
+    # `mcp_skipped` the servers the user unticked. `mcp_mirrored` holds each server the kit
+    # manages: {name: {"previous": definition before the kit (None: absent), "applied": ...}}.
+    mcp: str = ""
+    mcp_skipped: list[str] = field(default_factory=list)
+    mcp_mirrored: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

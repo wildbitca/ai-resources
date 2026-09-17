@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ### Added
 
+- OpenClaw: with the Claude Code engine, setup offers to give the bot the same MCP servers as Claude Code. It mirrors user-level servers from `~/.claude.json`, `~/.claude/settings.json` and enabled plugins, maps the claude.ai ClickUp connector to its public endpoint, adopts identical servers you added by hand, never overwrites different ones, and refuses to copy literal credentials: those servers are reported with the env var to use instead. Setup lists the gateway variables that are missing and the `openclaw mcp login` commands to run; teardown removes or restores only what the kit wrote.
 - `LICENSE`: the kit is now published under the Apache License 2.0, matching the organisation's other open-source repositories, and the Homebrew formula declares `license "Apache-2.0"`.
 
 ## [1.5.0] — 2026-09-17 — OpenClaw voice notes
