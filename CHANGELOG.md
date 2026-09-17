@@ -4,6 +4,30 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.8.1] — 2026-09-17 — the quota remedy stops pointing at dead pools
+
+Follow-up to 1.8.0. Two defects found by review after that tag was already
+pushed, plus two tests that could never fail.
+
+### Fixed
+
+- The "pick a model from the other pool" remedy never checked whether the other
+  pool had anything left. Both weekly pools are independent and both can sit at
+  0% at once, so `ai-resources doctor` and the setup wizard could send a user to
+  an equally exhausted bucket. The wizard could also name a pool that
+  `agy -p "/usage"` never reported, by inverting an unrecognised label. The
+  remedy now offers only reported pools that still have room, flags one that is
+  itself nearly spent, and says plainly when every pool is gone.
+- The wizard's live quota read resolved `agy` through `PATH` after the guard had
+  already resolved its absolute path with `_which_extra()`. Where agy lives only
+  in `~/.local/bin` and that directory is off `PATH`, the quota annotation
+  vanished with no warning and no detail line — the exact machines the extra-bin
+  lookup exists for. `doctor.py` was already correct; the wizard now matches it.
+- Two tests shipped in 1.8.0 passed vacuously: the doctor guard test
+  re-implemented the production condition inside the test body (so it stayed
+  green with the real guard deleted), and a `read_usage` timeout assertion
+  short-circuited through `or reason`, which any non-empty string satisfies.
+
 ## [1.8.0] — 2026-09-17 — Antigravity's two weekly pools are visible, choosable and diagnosable
 
 Antigravity serves two **independent** weekly quota pools — one for Gemini models, one
