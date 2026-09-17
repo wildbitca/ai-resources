@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-09-17 — OpenClaw runs its chat agent on the kit
+
 ### Added
 
 - **OpenClaw as a cockpit.** When OpenClaw is installed, setup asks which engine runs its default
