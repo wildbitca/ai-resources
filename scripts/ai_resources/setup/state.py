@@ -145,9 +145,14 @@ class OpenClawState:
     # is the mode the kit last wrote into tools.media, "" when it never did.
     voice: str = ""
     voice_language: str = ""          # ISO code passed to the transcriber, or auto
+    voice_correction: str = ""        # local mode only: llm | offline
     voice_applied: str = ""
     # tools.media before the kit's first voice write, restored on teardown. None: absent.
     voice_previous: Any = None
+    # What setup itself installed for voice notes, and only that, is removed on teardown:
+    # Homebrew formulas that were missing before, and Whisper model files it downloaded.
+    voice_formulas_installed: list[str] = field(default_factory=list)
+    voice_models_downloaded: list[str] = field(default_factory=list)
 
 
 @dataclass

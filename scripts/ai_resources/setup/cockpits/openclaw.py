@@ -371,7 +371,7 @@ def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
         return False
 
     if mode in ("cloud", "local") and not dry_run:
-        if not voice.ensure_local_engine(required=mode == "local"):
+        if not voice.ensure_local_engine(s, required=mode == "local"):
             ui.error("OpenClaw: voice notes left unchanged; the local engine is not ready.")
             return False
         if voice.ensure_glossary():
@@ -380,7 +380,8 @@ def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
     current = _get(doc, "tools", "media")
     media = voice.build_media(mode, voice.interpreter(ak_path),
                               str(Path(ak_path) / VOICE_SCRIPT),
-                              s.openclaw.voice_language or "auto", current)
+                              s.openclaw.voice_language or "auto", current,
+                              s.openclaw.voice_correction or "llm")
     ok, out = apply_patch({"tools": {"media": media}}, dry_run=dry_run)
     if not ok:
         ui.error(f"OpenClaw rejected the voice-notes patch: {out[-400:]}")
@@ -481,7 +482,8 @@ def _teardown_engine(s: state.SetupState) -> bool:
 
 
 def _teardown_voice(s: state.SetupState) -> bool:
-    """Restore tools.media as it was before the kit's first voice write."""
+    """Restore tools.media as it was before the kit's first voice write, then remove what
+    setup installed for voice notes."""
     if not s.openclaw.voice_applied:
         return False
     prev = s.openclaw.voice_previous
@@ -496,6 +498,7 @@ def _teardown_voice(s: state.SetupState) -> bool:
         return False
     s.openclaw.voice_applied = ""
     s.openclaw.voice_previous = None
+    voice.remove_installed(s)
     return True
 
 

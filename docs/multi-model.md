@@ -217,8 +217,10 @@ produces one wins:
 2. **whisper.cpp** `large-v3-turbo` q5_0 with a forced language, temperature 0, beam 5,
    loudness normalisation and a short prompt, followed by a text-only correction pass:
    `google/gemini-3.5-flash-lite` on OpenRouter, else Claude Code (`claude -p --model haiku`)
-   on your subscription. In local mode this pass still sends the transcript text, not the
-   audio; set `VOICE_CORRECT=0` to skip it.
+   on your subscription. When you choose local, setup asks whether to keep this pass:
+   "Correct with an LLM" sends only the transcript text, never the audio (about 1 s through
+   OpenRouter or about 10 s through Claude Code, about $0.0001 a note). "Fully offline"
+   adds `--no-correct` to the command, so nothing leaves the machine.
 3. **The raw Whisper transcript**, so a note is never lost.
 
 These choices were measured on real Telegram notes in Spanish mixed with English
@@ -232,11 +234,16 @@ both made results worse.
 Setup installs `whisper-cpp` and `ffmpeg` with Homebrew when they are missing, and
 downloads the Whisper model to `~/.local/share/whisper-models/`. The file is written
 under a `.part` name and renamed only after its SHA-256 matches. With cloud, a local
-engine that fails to install is only a warning. Teardown does not uninstall these.
+engine that fails to install is only a warning. Setup records what it installed itself.
+Teardown deletes the model files it downloaded. It offers to `brew uninstall` only the
+formulas that setup installed, and never ones that were already there.
 
 The glossary at `~/.config/openclaw-voice/glossary.txt` lists terms the transcriber
 should spell right. Setup writes a default only when the file is missing, so your edits
-are kept. The language you give (`es`, `en`, … or `auto`) goes on the command line. You
+are kept. Setup asks for the language and passes it on the command line. The default is
+the system locale's language (`LC_ALL`, then `LANG`), or Spanish if the locale is unset,
+C or POSIX. `auto` is available, but short clips can be misdetected: in testing,
+"¿Puedes escucharme?" came out in Russian. You
 can tune the rest through the environment: `VOICE_AUDIO_MODEL`, `VOICE_TEXT_MODEL`,
 `VOICE_WHISPER_PROMPT`, `WHISPER_MODELS`, `WHISPER_MODEL`, `VOICE_GLOSSARY` and
 `VOICE_LOG`. The log (`~/.cache/openclaw-voice.log`) records the route, timings and cost
