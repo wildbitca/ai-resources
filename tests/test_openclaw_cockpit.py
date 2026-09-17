@@ -66,6 +66,9 @@ def jarvis(tmp_path, monkeypatch):
     monkeypatch.setattr(openclaw, "_openclaw", rec)
     monkeypatch.setattr(openclaw._shared, "stable_kit_root", lambda _root: pathlib.Path("/kit"))
     monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: False)
+    # A live gateway would answer this; without the stub every antigravity test would
+    # wait out the real backend poll (see test_the_engine_patch_waits_for_the_backend).
+    monkeypatch.setattr(openclaw, "backend_registered", lambda _backend: True)
     return cfg, ws, rec
 
 
@@ -116,6 +119,9 @@ def jarvis_with_existing_extras(tmp_path, monkeypatch):
     monkeypatch.setattr(openclaw, "_openclaw", rec)
     monkeypatch.setattr(openclaw._shared, "stable_kit_root", lambda _root: pathlib.Path("/kit"))
     monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: False)
+    # A live gateway would answer this; without the stub every antigravity test would
+    # wait out the real backend poll (see test_the_engine_patch_waits_for_the_backend).
+    monkeypatch.setattr(openclaw, "backend_registered", lambda _backend: True)
     return cfg, ws, rec
 
 
@@ -669,6 +675,9 @@ def test_ac18_parity_prompt_plus_configure_produce_the_same_patch_and_never_touc
     monkeypatch.setattr(openclaw, "_openclaw", rec)
     monkeypatch.setattr(openclaw, "_agy", lambda *_a, **_k: (127, "agy not found"))
     monkeypatch.setattr(openclaw._shared, "stable_kit_root", lambda _root: pathlib.Path("/kit"))
+    # As in the other fixtures: a live gateway answers this, and without the stub the
+    # backend poll would run for real in both modes.
+    monkeypatch.setattr(openclaw, "backend_registered", lambda _backend: True)
     _stub_ui_answers_for_prompt(monkeypatch)
 
     patches = {}
@@ -780,3 +789,42 @@ def test_step9_openclaw_status_line_omits_worker_for_non_antigravity_engines():
     s.openclaw.model = "anthropic/claude-sonnet-5"
     line = wizard._openclaw_status_line(s)
     assert "worker" not in line
+
+
+def test_the_engine_patch_waits_for_the_backend_and_restarts_the_gateway(jarvis, monkeypatch):
+    """`config patch` validates model refs, so `agy-cli/<model>` must already be
+    registered: a fresh run otherwise dies with "Unknown model: agy-cli/…" (seen on a
+    real setup run, 2026-09-17). The plugin is linked, then the gateway restarted, before
+    the patch goes out."""
+    cfg, _ws, rec = jarvis
+    seen = {"restarted": False, "checks": 0}
+
+    def backend(_b):
+        seen["checks"] += 1
+        return seen["restarted"]
+
+    monkeypatch.setattr(openclaw, "backend_registered", backend)
+    monkeypatch.setattr(openclaw.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(openclaw, "register_agy_mcp_bridge", lambda *_a: (True, False, ""))
+    def record(args, stdin=None, timeout=120):
+        if args[:2] == ["gateway", "restart"]:
+            seen["restarted"] = True
+        return rec(args, stdin, timeout)
+
+    monkeypatch.setattr(openclaw, "_openclaw", record)
+    assert openclaw.configure({"state": _antigravity_state()})
+    calls = [c[0] for c in rec.calls]
+    link = next(i for i, c in enumerate(calls) if c[:2] == ["plugins", "install"])
+    restart = next(i for i, c in enumerate(calls) if c[:2] == ["gateway", "restart"])
+    patched = next(i for i, c in enumerate(calls) if c[:2] == ["config", "patch"])
+    assert link < restart < patched, calls
+    assert seen["checks"] >= 2
+
+
+def test_the_engine_patch_is_skipped_when_the_backend_never_registers(jarvis, monkeypatch):
+    monkeypatch.setattr(openclaw, "backend_registered", lambda _b: False)
+    monkeypatch.setattr(openclaw.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(openclaw, "register_agy_mcp_bridge", lambda *_a: (True, False, ""))
+    cfg, _ws, rec = jarvis
+    openclaw.configure({"state": _antigravity_state()})
+    assert not any(c[0][:2] == ["config", "patch"] for c in rec.calls), rec.calls

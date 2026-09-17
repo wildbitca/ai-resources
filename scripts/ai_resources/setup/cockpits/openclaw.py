@@ -46,6 +46,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,6 +64,10 @@ from . import _openclaw_voice as voice
 NAME = "OpenClaw"
 ID = "openclaw"
 CONFIG_ROOT = Path.home() / ".openclaw"
+# How long to wait for a just-linked plugin's CLI backends to appear.
+BACKEND_WAIT_TRIES = 15
+BACKEND_WAIT_SECONDS = 2.0
+
 VOICE_SCRIPT = "scripts/ai_resources/voice/openclaw_transcribe.py"
 
 @dataclass(frozen=True)
@@ -579,6 +584,57 @@ def configure(ctx: dict) -> list[Path]:
     return written
 
 
+def backend_registered(backend: str) -> bool:
+    """Whether the running gateway knows `backend` as a model-ref prefix."""
+    rc, out = _openclaw(["models", "list"])
+    return rc == 0 and f"{backend}/" in out
+
+
+def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
+    """Link the kit plugin, register the agy MCP bridge, and make the gateway load them.
+
+    This MUST run before the engine patch: `openclaw config patch` validates model
+    references, and `agy-cli/<model>` is unknown until the plugin that registers the
+    backend is both linked and loaded by a (re)started gateway — a fresh setup run
+    otherwise fails with "Unknown model: agy-cli/…" (seen on a real run, 2026-09-17).
+    Returns whether the backends are usable.
+    """
+    s.openclaw.antigravity_applied = True
+    if not s.openclaw.plugin_linked:
+        plugin_dir = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
+        rc_link, out_link = _openclaw([
+            "plugins", "install", "--link", "--force", "--accept-capabilities", plugin_dir])
+        if rc_link == 0:
+            s.openclaw.plugin_linked = True
+        else:
+            ui.warn(f"OpenClaw: could not link the ai-resources plugin ({out_link[-200:]})")
+
+    if "agy_mcp_bridge_preexisted" not in (s.openclaw.previous or {}):
+        bridge_path = str(Path(ak_path) / "openclaw-plugin" / "ai-resources" / "bridge.py")
+        python3_bin = shutil.which("python3") or "python3"
+        changed, pre_existed, bridge_out = register_agy_mcp_bridge(python3_bin, bridge_path)
+        if changed or pre_existed:
+            s.openclaw.previous["agy_mcp_bridge_preexisted"] = pre_existed
+        else:
+            # Do NOT record the marker on failure: leaving it unset means the next
+            # `configure()` run retries registration instead of silently giving up
+            # forever (the guard above only skips once the key is actually present).
+            ui.warn(f"OpenClaw: could not register the agy MCP bridge "
+                    f"({bridge_out[-200:]}); will retry on the next run.")
+
+    if backend_registered("agy-cli"):
+        return True
+    # A plugin linked from another shell only takes effect on the next gateway start.
+    _openclaw(["gateway", "restart"])
+    for _ in range(BACKEND_WAIT_TRIES):
+        if backend_registered("agy-cli"):
+            return True
+        time.sleep(BACKEND_WAIT_SECONDS)
+    ui.error("OpenClaw: the agy-cli backend is still not registered after restarting the "
+             "gateway — check `openclaw plugins inspect ai-resources --runtime`.")
+    return False
+
+
 def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
                       written: list[Path]) -> bool:
     """Point the default agent at the chosen engine. True when openclaw.json changed."""
@@ -640,6 +696,9 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
         frag, replace_paths = _antigravity_restore_fragment(s.openclaw.previous or {})
         _deep_merge(patch, frag)
 
+    if engine.id == "antigravity" and not dry_run and not _register_plugin_and_backends(s, ak_path):
+        return False
+
     ok, out = apply_patch(patch, dry_run=dry_run, replace_paths=replace_paths)
     if not ok:
         ui.error(f"OpenClaw rejected the config patch: {out[-400:]}")
@@ -663,29 +722,8 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
         s.openclaw.antigravity_applied = False
 
 
+
     if engine.id == "antigravity":
-        s.openclaw.antigravity_applied = True
-        if not s.openclaw.plugin_linked:
-            plugin_dir = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
-            rc_link, _out_link = _openclaw(["plugins", "install", "--link", plugin_dir])
-            if rc_link == 0:
-                s.openclaw.plugin_linked = True
-            else:
-                ui.warn(f"OpenClaw: could not link the ai-resources plugin ({_out_link[-200:]})")
-
-        if "agy_mcp_bridge_preexisted" not in (s.openclaw.previous or {}):
-            bridge_path = str(Path(ak_path) / "openclaw-plugin" / "ai-resources" / "bridge.py")
-            python3_bin = shutil.which("python3") or "python3"
-            changed, pre_existed, bridge_out = register_agy_mcp_bridge(python3_bin, bridge_path)
-            if changed or pre_existed:
-                s.openclaw.previous["agy_mcp_bridge_preexisted"] = pre_existed
-            else:
-                # Do NOT record the marker on failure: leaving it unset means the next
-                # `configure()` run retries registration instead of silently giving up
-                # forever (the guard above only skips once the key is actually present).
-                ui.warn(f"OpenClaw: could not register the agy MCP bridge "
-                        f"({bridge_out[-200:]}); will retry on the next run.")
-
         legacy_transcriber = Path.home() / ".local" / "bin" / "openclaw-transcribe"
         if legacy_transcriber.is_file() and ui.confirm(
                 f"Found {legacy_transcriber}, superseded by the kit's agy-only voice "

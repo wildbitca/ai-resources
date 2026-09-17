@@ -4,6 +4,18 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.7.1] — 2026-09-17 — The antigravity engine applies on a first run
+
+### Fixed
+
+- **`ai-resources setup` could not apply the `antigravity` engine on a machine where the
+  plugin was not linked yet**: the engine patch went out first and `openclaw config patch`
+  validates model references, so it was rejected with `Unknown model:
+  agy-cli/gemini-3.8-flash-low`. Setup now links the plugin, registers the agy MCP bridge
+  and restarts the gateway **before** patching, then waits (up to 30 s) for the `agy-cli`
+  backend to register and stops with a clear error if it never does. Voice notes were
+  unaffected — that step applied correctly on the same run.
+
 ## [1.7.0] — 2026-09-17 — Antigravity CLI orchestrates OpenClaw, Claude Code delegates unrestricted
 
 ### Added
