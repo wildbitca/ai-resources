@@ -139,6 +139,53 @@ def _cleanup_stale_hooks(settings: dict) -> bool:
     return True
 
 
+def _openrouter_model_overrides() -> dict[str, str]:
+    """Bare Anthropic model ID -> OpenRouter catalogue ID, for `modelOverrides`.
+
+    Claude Code sends a full model ID it is handed through `--model` verbatim, and
+    OpenRouter only knows namespaced ones: `claude --model claude-sonnet-5` fails
+    under the openrouter backend even though every alias works. That is exactly
+    how OpenClaw launches Claude Code — it normalises its model ref to the bare
+    Anthropic ID — so without this map a chat bot on the claude-cli runtime loses
+    its main conversation the moment setup switches to OpenRouter. `modelOverrides`
+    applies to `--model` from Claude Code 2.1.200. The catalogue spells versions
+    with dots (claude-haiku-4.5); Anthropic's own IDs use dashes (claude-haiku-4-5).
+    """
+    from ..providers import KNOWN_MODELS
+    return {
+        ref.split("/", 1)[1].replace(".", "-"): ref
+        for ref in KNOWN_MODELS.get("openrouter", [])
+        if ref.startswith("anthropic/")
+    }
+
+
+def _remove_kit_model_overrides(path: Path) -> list[str]:
+    """Drop the `modelOverrides` entries this cockpit writes, keeping the user's own.
+
+    An entry counts as the kit's only when both its key and value match the map
+    above, so a user who pointed claude-opus-5 somewhere else keeps that mapping.
+    """
+    if not path.is_file():
+        return []
+    try:
+        cur = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    overrides = cur.get("modelOverrides")
+    if not isinstance(overrides, dict):
+        return []
+    ours = _openrouter_model_overrides()
+    removed = [k for k, v in overrides.items() if ours.get(k) == v]
+    if not removed:
+        return []
+    for k in removed:
+        overrides.pop(k)
+    if not overrides:
+        cur.pop("modelOverrides")
+    path.write_text(json.dumps(cur, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return removed
+
+
 def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
                           ak_path: str, mode: str, backend: str = "litellm") -> dict:
     """Compute the settings.json patch for Claude Code."""
@@ -174,10 +221,14 @@ def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
         # sends it as x-api-key, ignoring any value in the env block. The gateway
         # master key must equal that Keychain key (handled in the credentials step).
 
-    return {
+    patch: dict[str, Any] = {
         "env": env,
         "mcpServers": _shared.mcp_engram_block(),
     }
+    if mode == "multi-model" and backend == "openrouter":
+        # LiteLLM needs no equivalent: it registers every bare Claude ID itself.
+        patch["modelOverrides"] = _openrouter_model_overrides()
+    return patch
 
 
 def _resolve_model(configured: str, meta: dict, mode: str) -> str:
@@ -570,6 +621,10 @@ def configure(ctx: dict) -> list[Path]:
     # key was pre-existing at setup time so it was never added to cockpit_env_keys_added).
     if mode == "single-model":
         _shared.remove_env_keys_from_settings(SETTINGS_PATH, _MULTI_MODEL_ONLY_ENV_KEYS)
+    # Pointing a bare ID at OpenRouter breaks every other route: the Anthropic API
+    # and LiteLLM both expect the bare ID itself.
+    if not (mode == "multi-model" and backend == "openrouter"):
+        _remove_kit_model_overrides(SETTINGS_PATH)
 
     written.append(SETTINGS_PATH)
 
@@ -645,4 +700,5 @@ def teardown(env_keys: list[str]) -> list[str]:
         installed = WORKFLOWS_DIR / script.name
         if script.name in tracked and installed.is_file():
             installed.unlink()
+    _remove_kit_model_overrides(SETTINGS_PATH)
     return _shared.remove_env_keys_from_settings(SETTINGS_PATH, env_keys)
