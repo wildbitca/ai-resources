@@ -132,6 +132,18 @@ class InstallTracking:
 
 
 @dataclass
+class OpenClawState:
+    """Which engine the kit pointed OpenClaw's default agent at, and what it replaced."""
+    engine: str = ""                  # claude-code | codex | gemini-cli | direct | keep
+    model: str = ""                   # OpenClaw model ref, e.g. anthropic/claude-sonnet-5
+    applied: bool = False             # the kit has written openclaw.json at least once
+    config_path: str = ""
+    # openclaw.json values before the kit's first write (model, models, engram,
+    # extra_dirs), restored verbatim on teardown. None means the key was absent.
+    previous: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class SetupState:
     schema_version: str = SCHEMA_VERSION
     last_run: str = ""
@@ -146,6 +158,7 @@ class SetupState:
     profile: ProfileState = field(default_factory=ProfileState)
     smoke_tests: dict[str, Any] = field(default_factory=lambda: {"last_run": "", "status": "unknown"})
     tracking: InstallTracking = field(default_factory=InstallTracking)
+    openclaw: OpenClawState = field(default_factory=OpenClawState)
 
 
 def _to_dict(obj: Any) -> Any:
@@ -174,6 +187,7 @@ def _from_dict(cls: type, data: dict) -> Any:
             "litellm": LiteLLMState,
             "profile": ProfileState,
             "tracking": InstallTracking,
+            "openclaw": OpenClawState,
         },
         LiteLLMState: {
             "local": LiteLLMLocal,

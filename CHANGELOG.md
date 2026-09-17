@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Added
+
+- **OpenClaw as a cockpit.** When OpenClaw is installed, setup asks which engine runs its default
+  agent — Claude Code, Codex CLI, Gemini CLI, a direct model through OpenRouter, or keep — and
+  offers only engines whose CLI is installed. With Claude Code the bot runs the full kit (subagents,
+  skills, hooks, workflow scripts); with a direct model it gets the kit skills and instructions.
+  Engram is always registered and named the memory of record. Changes go through
+  `openclaw config patch`, the replaced values are saved for restore, and an unattended first run
+  never repoints a live bot.
+
 ## [1.3.0] — 2026-09-16 — OpenRouter as a second backend, one profile set for both
 
 ### Added

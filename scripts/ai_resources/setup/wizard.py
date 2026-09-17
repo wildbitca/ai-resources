@@ -946,6 +946,9 @@ def _step7_cockpit_config(s: state.SetupState) -> int:
         default=detected_ids,
     )
     s.profile.customizations.setdefault("__targets__", {})["selected"] = selected  # stash for apply step
+    if "openclaw" in selected:
+        from .cockpits import openclaw as _openclaw_cockpit
+        _openclaw_cockpit.prompt(s)
     return 0
 
 
@@ -1037,6 +1040,8 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     targets = s.profile.customizations.get("__targets__", {}).get("selected", [])
     if not targets:
         targets = [cid for cid, cs in s.cockpits.items() if cs.installed]
+    # Dict order, not selection order: OpenClaw's engines reuse what the other cockpits install.
+    targets = [cid for cid in ALL_COCKPITS if cid in targets]
     for cid in targets:
         mod = ALL_COCKPITS.get(cid)
         if not mod:

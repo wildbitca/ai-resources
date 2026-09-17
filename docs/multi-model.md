@@ -157,6 +157,38 @@ ai-resources daemon restart   # LiteLLM backend only, if just the gateway change
 | Continue.dev | `~/.continue/AGENT_KIT.md` | |
 | Copilot | `~/.vscode/copilot-instructions.md` | |
 | OpenCode | `~/.config/opencode/AGENT_KIT.md` | |
+| OpenClaw | `openclaw.json` via `openclaw config patch`, workspace `AGENTS.md` | Engine picked in setup; see below |
+
+## OpenClaw (chat bots)
+
+OpenClaw fronts chat channels such as Telegram and hands every turn to an agent
+runtime. When OpenClaw is installed, step 7 asks which engine runs its default
+agent, offering only engines whose CLI is installed:
+
+| Engine | OpenClaw runtime | What the bot gets |
+|---|---|---|
+| Claude Code | `claude-cli` | Everything the Claude Code cockpit installs: subagents, skills, hooks, `/kit-plan`, `/kit-implement`, the CLAUDE.md block |
+| Codex CLI | `codex` | What the Codex cockpit installs |
+| Gemini CLI | `google-gemini-cli` | What the Gemini cockpit installs |
+| Direct model | `openclaw` (OpenRouter by default) | Kit skills through `skills.load.extraDirs` and the kit block in the workspace `AGENTS.md` |
+| Keep | — | Nothing changes; if the kit configured OpenClaw before, it offers to restore the original |
+
+The chain is the point: pick Claude Code and the bot runs the same setup as your
+terminal, so a Telegram message can plan, delegate to subagents and load skills.
+
+Whatever the engine, Engram is declared in OpenClaw's `mcp.servers` — CLI runtimes
+start with `--strict-mcp-config`, so the CLI's own MCP servers never reach the
+bot — and the workspace `AGENTS.md` names Engram as the memory of record, with
+OpenClaw's native memory kept for recent chat context.
+
+The kit never writes `openclaw.json` itself: every change goes through
+`openclaw config patch`, which validates it. The values it replaces are saved in
+`setup-state.yaml` and restored when you choose to restore. An unattended run
+(`--non-interactive`) with no saved answer keeps the current engine, so a live bot
+is never repointed by accident.
+
+Claude Code in multi-model mode: OpenClaw passes the model to Claude Code without
+its vendor prefix, so the gateway must accept that ID.
 
 ## Operations
 
