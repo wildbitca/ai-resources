@@ -4,6 +4,44 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.8.2] — 2026-09-18 — the OpenClaw setup stops living in one person's head
+
+Documentation only: no code, no skills, no formula behaviour changes. It lands
+because the setup it describes spent a day being repaired and the repairs were
+worth more than the fixes — several of the failures are silent, and one of them
+left the gateway dead for half an hour without anyone noticing.
+
+### Added
+
+- `docs/openclaw/` with an index and three documents, written from a live system
+  and marked `VERIFIED`, `SESSION` or `UNVERIFIED` line by line so a reader knows
+  what to re-check:
+  - `inventory.md` — the six agents with their model and workspace, all 48
+    configuration changes with the command that produced each one and the reason
+    it exists, what was installed, what was written, what was cleaned up, the
+    decisions taken, and the command behind every claim.
+  - `pitfalls.md` — 31 traps with the literal symptom, the verified cause, the
+    fix, and how to spot it next time. The expensive ones: `openclaw doctor --fix`
+    stops the gateway and leaves it dead when the cgroup has not drained; a
+    project's `CLAUDE.md` is never loaded in a topic session because
+    `--setting-sources user` is forced in code; OpenClaw receives every Claude
+    Code subagent record and discards it on purpose, so team activity cannot be
+    surfaced by configuration; and a DNS record without its `recordId` is named by
+    list position, which is a time bomb in that Crossplane composition.
+  - `runbook.md` — six phases from a clean machine, recovery from the backup
+    tarball, a daily cheat sheet and a 34-box checklist. Every command is marked
+    idempotent or once-only, and the eight steps that need a human say so instead
+    of hiding inside a block.
+
+### Notes
+
+- Section C of `pitfalls.md` proposes ten customizations that would make this
+  setup reproducible *from the kit* rather than only documented — the three host
+  scripts as versioned artifacts, a wrapper that drains before calling
+  `openclaw doctor --fix`, and the canonical configuration block. None of them are
+  implemented here. Until they are, those scripts live on a single disk and are
+  recoverable only from a backup tarball.
+
 ## [1.8.1] — 2026-09-17 — the quota remedy stops pointing at dead pools
 
 Follow-up to 1.8.0. Two defects found by review after that tag was already
