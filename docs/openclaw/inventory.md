@@ -276,7 +276,7 @@ GitHub-projects warning clears from any shell.
 | Change | File | Why |
 |---|---|---|
 | `cleanupPeriodDays: 14` | `~/.claude/settings.json` | transcript retention; chosen by the user against the recommendation to keep 30 |
-| `PreToolUse` matcher `Agent|Workflow` → `openclaw-team-progress.py` | `~/.claude/settings.json` | publish one line to the topic when a team member or workflow starts |
+| `PreToolUse` matcher `Agent|Workflow` → `openclaw-team-progress.py` (kit: `hooks/openclaw_team_progress.py`, registered by `ai-resources setup`, off unless `OPENCLAW_NARRATION` is set) | `~/.claude/settings.json` | publish one line to the topic when a team member or workflow starts |
 | `SubagentStop` → `openclaw-team-progress.py` | `~/.claude/settings.json` | publish one line when a member finishes |
 | `export WHISPER_CPP_MODEL=...` (guarded by a file test) | `~/.config/shell/paths.env` | doctor evaluates this variable against the **CLI's** environment, not the gateway's |
 
@@ -373,16 +373,32 @@ completion; never narrate individual tool calls (streaming already shows those);
 
 ### 4.2 Host automation `VERIFIED`
 
-| Path | Lines | Content |
+**Implemented in the kit since 1.9.0.** The scripts below are now `scripts/openclaw/*` in the
+ai-resources repo and the units are rendered from `templates/systemd/*.template`; the team hook is
+`hooks/openclaw_team_progress.py`. The `~/.local/bin` and `~/.claude/hooks` paths in the first column
+are **historical**: where the files lived when this inventory was taken, on one disk. Line counts are
+those of the originals.
+
+| Path (as taken; kit location in the last column) | Lines | Content |
 |---|---|---|
-| `~/.local/bin/openclaw-backup.sh` | 149 | tiered backup (`daily|weekly|monthly|manual`), local retention 7/4/3. Bundles openclaw's own verified backup, an engram `VACUUM INTO` snapshot, the config that lives in no repo, and an `INVENTORY.txt` with versions plus restore steps. Stages under `/srv`, writes `.sha256` last, asserts size + listability + checksum, notifies failures over Telegram |
-| `~/.local/bin/openclaw-maintenance.sh` | 103 | weekly window: pause watchdog → stop → **wait for the cgroup to drain** → `doctor --fix` → `sessions cleanup --all-agents` → start → poll health up to 2 min → check backup age → report a new OpenClaw version → Telegram only when something is off |
-| `~/.local/bin/openclaw-watchdog.sh` | 40 | starts the gateway when it is not active and **says so** on Telegram; paused by `touch ~/.openclaw/watchdog.off` |
-| `~/.claude/hooks/openclaw-team-progress.py` | 125 | maps `cwd → agent → topic` from `openclaw.json` and posts one line when a subagent/workflow starts and when a member stops. Only speaks when `OPENCLAW_CLI=1`, never publishes raw tool input, always exits 0 |
+| `~/.local/bin/openclaw-backup.sh` → `scripts/openclaw/openclaw-backup.sh` | 149 | tiered backup (`daily|weekly|monthly|manual`), local retention 7/4/3. Bundles openclaw's own verified backup, an engram `VACUUM INTO` snapshot, the config that lives in no repo, and an `INVENTORY.txt` with versions plus restore steps. Stages under `/srv`, writes `.sha256` last, asserts size + listability + checksum, notifies failures over Telegram |
+| `~/.local/bin/openclaw-maintenance.sh` → `scripts/openclaw/openclaw-maintenance.sh` | 103 | weekly window: pause watchdog → stop → **wait for the cgroup to drain** → `doctor --fix` → `sessions cleanup --all-agents` → start → poll health up to 2 min → check backup age → report a new OpenClaw version → Telegram only when something is off |
+| `~/.local/bin/openclaw-watchdog.sh` → `scripts/openclaw/openclaw-watchdog.sh` | 40 | starts the gateway when it is not active and **says so** on Telegram; paused by `touch ~/.openclaw/watchdog.off` |
+| `~/.local/bin/openclaw-verify.sh` → `scripts/openclaw/openclaw-verify.sh` | — | read-only one-pass check of the setup (daily timer with `--notify`); it was missing from the first version of this table |
+| `~/.local/bin/openclaw-team-watch.py` → `scripts/openclaw/openclaw-team-watch.py` | — | the per-member live message launched by the team hook; also missing from the first version |
+| `~/.claude/hooks/openclaw-team-progress.py` → `hooks/openclaw_team_progress.py` | 125 | maps `cwd → agent → topic` from `openclaw.json` and posts one line when a subagent/workflow starts and when a member stops. Only speaks when `OPENCLAW_CLI=1`, never publishes raw tool input, always exits 0 |
 
 Systemd units, all `VERIFIED`: `openclaw-watchdog.service` + `.timer` (every 2 min),
 `openclaw-backup@.service` (templated by tier) + `openclaw-backup-{daily,weekly,monthly}.timer`,
-`openclaw-maintenance.service` + `.timer`.
+`openclaw-maintenance.service` + `.timer`, and `openclaw-verify.service` + `.timer` (six timers in
+all, ten unit files, not counting `openclaw-gateway.service`, which openclaw generates).
+
+**What the backup left out.** Before 1.9.0 the list in `openclaw-backup.sh` held only
+`openclaw.json`, `gateway.systemd.env`, the gateway and watchdog units, and the backup and
+maintenance scripts. The watchdog, verify and team-watch scripts and the newer unit files were
+omitted **by accident, not by design**. From 1.9.0 the list is complete and includes
+`~/.openclaw/kit-host.env`; a restore from an older tarball regenerates the units with
+`ai-resources openclaw install-units`.
 
 ### 4.3 GitOps (org-gitops, on `main`) `VERIFIED`
 
@@ -469,7 +485,7 @@ Also written but **not** committed: nothing. The working tree of `org-gitops` is
 | BotFather privacy mode | Bot API `getMe` | `can_read_all_group_messages: true` `VERIFIED` |
 | **The team hook publishes** | audit vs gateway log correlation | `ai Agent started 18:46:51` ↔ `outbound send ok … threadId=315 messageId=507` at **18:46:51**, same second `VERIFIED` |
 | Workboard is loaded | startup line in the gateway log | `15 plugins: … workboard …` `VERIFIED` |
-| Timers armed | `systemctl --user list-timers 'openclaw-*'` | 5 timers, all enabled and active, with their next run `VERIFIED` |
+| Timers armed | `systemctl --user list-timers 'openclaw-*'` | 6 timers (the five listed at the time plus `openclaw-verify.timer`), all enabled and active, with their next run `VERIFIED` |
 
 ---
 
@@ -487,8 +503,10 @@ step are in sections 2–4; the traps are in `doc-02-trampas-y-recomendaciones.m
    `publicOrigin`, `trustedProxies`, `allowRealIpFallback`, `controlUi.allowedOrigins`,
    `device-pair.publicUrl`.
 6. Auth: password into the secret store, SecretRef, `auth.mode`.
-7. Backups: staging dir, the three scripts, the units and timers; then the bucket, the uploader,
-   the guard and the alerts in GitOps.
-8. Observability of the teams: the `openclaw-team-progress.py` hook plus `streaming.mode:
+7. Backups: staging dir, the host scripts, the units and timers (`ai-resources openclaw
+   install-units --enable`); then the bucket, the uploader, the guard and the alerts in GitOps
+   (`templates/gitops/openclaw-backups/`, rendered with `ai-resources openclaw render-gitops-backups`).
+8. Observability of the teams: the kit's team narration hook (`ai-resources setup`, question
+   "narrate the team") plus `streaming.mode:
    progress` and the `## Work reporting` block.
 9. Verify with section 7 as the checklist, and only then call it done.

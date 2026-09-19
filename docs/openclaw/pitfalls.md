@@ -891,7 +891,7 @@ Once things are clean, `openclaw doctor` still prints stuff. Telling noise from 
 
 ---
 
-## T31 — OpenClaw receives the Claude Code team's activity and discards it on purpose *(added 2026-09-18)*
+## T31 — OpenClaw receives the Claude Code team's activity and discards it on purpose *(added 2026-09-18; implemented in the kit 1.9.0)*
 
 **Symptom.** With `streaming.mode: progress` and `progress.toolProgress: true`, Telegram shows the
 parent agent's tool rows but **nothing** from inside a subagent: a `/kit-implement` looks like a single
@@ -923,11 +923,15 @@ The **model** does not travel in the payload: resolve it from the role's frontma
 `~/.claude/agents/<role>.md` (`planner`/`software-architect`/`code-reviewer` → opus,
 `implementer`/`tester`/`verifier`/`doc-writer` → sonnet, `explore` → haiku).
 
-Implemented as `~/.claude/hooks/openclaw-team-progress.py`, registered on `PreToolUse`
-(`Agent|Workflow` and `Write|Edit|MultiEdit|NotebookEdit`) and on `SubagentStop`. It only speaks when
-`OPENCLAW_CLI=1`, so a normal terminal session stays silent, and it maps cwd → agent workspace → topic.
-Verified end to end: `ai Agent started 18:46:51` ↔ `telegram outbound send ok ... threadId=315
-messageId=507` in the same second.
+Implemented in the kit as `hooks/openclaw_team_progress.py` (C-section below; before 1.9.0 it was a
+hand-written `~/.claude/hooks/openclaw-team-progress.py` that lived on one disk). `ai-resources setup`
+registers it in `~/.claude/settings.json` on `PreToolUse` (`*`), `SubagentStop`, `UserPromptSubmit` and
+`Stop`, and replaces a hand-installed copy (teardown puts it back). It speaks only when **both**
+`OPENCLAW_CLI=1` (a session started by the gateway) **and** `OPENCLAW_NARRATION` is `milestones` or
+`every-step` in `~/.openclaw/kit-host.env`: an absent key means **off**, because `OPENCLAW_CLI=1` is the
+normal state on a gateway host and cannot be the only gate for a hook that writes to a chat. It maps
+cwd → agent workspace → topic. Verified end to end on the original hook: `ai Agent started 18:46:51` ↔
+`telegram outbound send ok ... threadId=315 messageId=507` in the same second.
 
 **How to catch it.** Two traps around this one. First, the hook leaves **no trace in the transcript**:
 the only proof it published is `grep "outbound send ok" ~/.openclaw/logs/gateway.log`. Second, useful
@@ -990,228 +994,174 @@ and proven (T31).
 
 ---
 
-# SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT
+# SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT (implemented in 1.9.0)
 
-Real repo structure (`~/Development/wildbit/ai-resources`): `scripts/ai_resources/{cli.py,
-doctor.py,setup/,voice/,daemon.py,audit.py}`, `skills/<name>/SKILL.md`, `workflows/*.workflow.yaml`
-plus `WORKFLOW_CONTRACT.md`, `hooks/{hooks.json,*.py}`, `templates/*.template.md`,
-`openclaw-plugin/ai-resources/`, `Formula/ai-resources.rb`, `agents/`, `profiles/`, `rules/`,
-`docs/`, `evals/`, `tests/`.
+All ten cards below were proposals on 2026-09-18 and are now implemented. Each one says **what was
+built and where it lives**, and records where the build differs from the proposal. The primary surface
+is `ai-resources setup`: its OpenClaw section asks, per capability, whether to enable it (see
+`runbook.md`, "How setup asks"). The `ai-resources openclaw <verb>` commands are thin wrappers over the
+same functions, for headless runs and disaster recovery; no logic lives only in a subcommand.
 
-The criterion for marking something **ESSENTIAL**: today it exists only on `bithome`'s disk, written by
-hand, and without the kit it can neither be reproduced nor recovered.
+Wizard code: `scripts/ai_resources/setup/cockpits/_openclaw_host.py` (prompt, apply, teardown, status
+line). Logic: `scripts/ai_resources/openclaw_host.py`. Tests for the wizard path:
+`tests/test_openclaw_host_wizard.py`. Everything is idempotent (a second run changes nothing) and
+teardown removes exactly what was recorded: it disables only the timers the kit enabled, puts back a
+hand-installed hook it replaced, and never stores or restores a credential value.
 
----
-
-### C01 — `ai-resources openclaw bootstrap` — **ESSENTIAL**
-
-**Paths:** `scripts/ai_resources/openclaw_host.py` (new module) plus subcommand registration in
-`scripts/ai_resources/cli.py`.
-
-**What it does, idempotently and verifying every step:**
-1. `brew install node` if there is no system node valid for openclaw's `engines`
-   (`>=24.16 <25 || >=26.1`).
-2. `npm i -g openclaw@<pin>` **with** `--allow-scripts=openclaw,@google/genai,koffi,tree-sitter-bash,protobufjs`
-   and a follow-up check of the native `.node` files (T06).
-3. Uninstall any global openclaw copy living under a version manager, so there is exactly **one**.
-4. `gateway install --force` invoking **brew's node by absolute path** (T07) and verifying the
-   resulting `ExecStart`/`Environment=PATH` against ephemeral multishells.
-5. `loginctl enable-linger` plus `systemctl --user enable` (start on machine reboot).
-6. Create `/srv/openclaw-backups/{daily,weekly,monthly}` with `install -d -o $USER`.
-7. `systemctl --user set-property ... MemoryHigh=` instead of a drop-in (T27).
-8. Install the C02 units and enable their timers.
-
-**What real problem it avoids:** today this is ~25 manual commands from this session, each with its own
-trap (T06, T07, T27); on a new machine or after a disaster it gets rebuilt from memory, or not at all.
+Not implemented, and recorded so nobody assumes otherwise: a **restore rehearsal** (P5, still open); a
+traces panel (Phoenix / Langfuse, deferred: it needs a cluster service and OpenTelemetry wiring); and
+the live rehearsal of the kit on the reference host (`runbook.md`, "Pending operator steps").
 
 ---
 
-### C02 — The three scripts plus systemd templates as kit artifacts — **ESSENTIAL**
+### C01 — `ai-resources openclaw bootstrap` — **IMPLEMENTED**
 
-**Proposed paths:**
-```
-scripts/openclaw/openclaw-backup.sh
-scripts/openclaw/openclaw-maintenance.sh
-scripts/openclaw/openclaw-watchdog.sh
-templates/systemd/openclaw-backup@.service.template
-templates/systemd/openclaw-backup-{daily,weekly,monthly}.timer.template
-templates/systemd/openclaw-maintenance.{service,timer}.template
-templates/systemd/openclaw-watchdog.{service,timer}.template
-```
-Templates with markers (`@HOME@`, `@LIBEXEC@`, `@OWNER_TELEGRAM_ID@`) that `setup` substitutes; the
-`.sh` files installed into `libexec/openclaw/` by the formula (`Formula/ai-resources.rb` — add them to
-the installed file list) and referenced by absolute path from the units.
+`scripts/ai_resources/openclaw_host.py` (`bootstrap()`, `BOOTSTRAP_STEPS`), CLI in the same module,
+wizard question "host check" in `cockpits/_openclaw_host.py`. Tests: `tests/test_openclaw_bootstrap.py`.
 
-**What real problem it avoids:** the three scripts carry lessons inside them that are not obvious and
-would be lost on a rewrite: staging under `/srv` and never in `/tmp` (16 GB tmpfs), the `.sha256`
-written **last** as the completeness witness, zero `|| true` on anything critical, size assertion plus
-`tar tzf` plus `sha256sum -c`, `--all-agents` on cleanup (T10), health polling instead of `sleep`
-(T10), pausing the watchdog and **draining** before `doctor --fix` (T01), and a Telegram notice only
-when something is wrong. Today they live only in one machine's `~/.local/bin`, unversioned.
+Eight idempotent steps, each check-then-change, each mutation its own confirm: `node`, `openclaw`,
+`single-copy`, `gateway-unit`, `boot`, `backup-dirs`, `memory-high`, `units`. `--dry-run` reports and
+changes nothing. Install uses `--allow-scripts=` and asserts the native `.node` files afterwards (T06),
+invokes brew's node by absolute path (T07), and sets `MemoryHigh` with `set-property` rather than a
+drop-in (T27).
 
----
+**Deviation from the proposal.** It installs `openclaw@latest`, not a pin: the user chose "always
+latest". The mitigation is that bootstrap records `OPENCLAW_INSTALLED_VERSION` and
+`OPENCLAW_PREVIOUS_VERSION` in `~/.openclaw/kit-host.env`, asserts the gateway answers `openclaw
+health` afterwards, and prints the rollback command. That file is therefore the only record of the
+running version: the DR runbook restores it first. MCP servers are still never `@latest`.
 
-### C03 — `ai-resources openclaw doctor` (a wrapper that drains) — **ESSENTIAL**
+### C02 — The host scripts and systemd templates as kit artifacts — **IMPLEMENTED**
 
-**Path:** a subcommand in `scripts/ai_resources/openclaw_host.py`, reusing the C02 logic.
+`scripts/openclaw/{_common.sh,openclaw-backup.sh,openclaw-maintenance.sh,openclaw-watchdog.sh,
+openclaw-verify.sh,openclaw-team-watch.py,openclaw-host.env.example}`; ten unit templates in
+`templates/systemd/*.template` rendered by `render_units()` / `install_units()` in `openclaw_host.py`
+(marker `@LIBEXEC@`); `ai-resources openclaw install-units` and the wizard "units" question. Tests:
+`tests/test_openclaw_host_scripts.py`, `tests/test_openclaw_units_render.py` (the templates agree with
+the live units, captured under `tests/fixtures/systemd/`, except for the two changes made on purpose).
 
-**What it does:** `touch watchdog.off` → `systemctl stop` (tolerating the ~5 min of
-`TimeoutStopSec`) → wait for `TasksCurrent=[not set]` → `openclaw doctor --fix` → `rm watchdog.off` →
-`start` → poll `health` → exit non-zero if the gateway did not come back.
+The lessons in the scripts are preserved (staging under `/srv`, `.sha256` written last, no `|| true`
+on anything critical, size and `tar tzf` and `sha256sum -c` assertions, `--all-agents`, health
+polling, drain before `doctor --fix`). Units invoke `/bin/bash <script>`, never the bare path, so the
+exec bit brew may drop is not load-bearing. Host values (operator id, backup dir, domain, CIDR) come
+from `~/.openclaw/kit-host.env`, never from the scripts.
 
-**What real problem it avoids:** exactly the half-hour outage (T01), which reproduced **twice** in the
-same session, one of those times with a unit freshly generated by openclaw. As long as `doctor --fix`
-remains the normal way to fix things, this wrapper is the difference between maintenance and a blackout.
+**Corrections to the proposal.** There were **five** scripts, not three (`openclaw-verify.sh` and
+`openclaw-team-watch.py` also lived only on the host), and **six** timers armed, not five. Before
+1.9.0 the backup omitted the watchdog, verify and team-watch scripts and most of the timer and service
+units, by accident rather than by design; the list in `openclaw-backup.sh` is now complete.
+`openclaw-gateway.service` is generated by `openclaw gateway install --force` and is not templated.
 
----
+### C03 — `ai-resources openclaw doctor` (a wrapper that drains) — **IMPLEMENTED**
 
-### C04 — `AGENTS.md` templates per workspace type — **ESSENTIAL**
+`doctor()` in `scripts/ai_resources/openclaw_host.py`; `ai-resources openclaw doctor
+[--dry-run] [--force] [--cleanup-sessions]`. Tests: `tests/test_openclaw_doctor_drain.py`.
 
-**Paths:**
-```
-templates/AGENTS.orchestrator.template.md     # the main/Jarvis agent
-templates/AGENTS.workspace-umbrella.template.md
-templates/AGENTS.workspace-repo.template.md
-```
+`touch watchdog.off` → `stop` (tolerating `TimeoutStopSec=330`) → poll until the cgroup drains → `doctor
+--fix` only if drained → remove the marker → `start` → poll `openclaw health`. The marker is removed and
+the gateway started again on **every** exit path, including Ctrl-C. Exit codes: 0 ok, 2 marker already
+present, 3 not drained, 4 doctor failed, 5 gateway did not answer. The maintenance script uses the same
+drain.
 
-**Mandatory content in all three** (what is hand-written in five places today): the "why this file
-exists" block about `--setting-sources user` (T02), the subproject→repo→docs-home table, "never commit
-at the umbrella level" (T11), the durable-docs convention (never `.agent-output/`), the "working as a
-team" section with the kit roles and their per-stack variants, memory, and red lines (English, no
-Claude attribution, explicit cluster context). The orchestrator one adds the topic map and the pointer
-to `TOPIC-ROUTING.md` (T18).
+### C04 — `AGENTS.md` templates per workspace type — **IMPLEMENTED**
 
-**What real problem it avoids:** that project rules are invisible (T02) and that every new workspace is
-born with OpenClaw's generic 6-8 KB template that says nothing about the project — today all three
-repos had **the same** file, identical md5.
+`templates/AGENTS.orchestrator.template.md`, `templates/AGENTS.workspace-umbrella.template.md`,
+`templates/AGENTS.workspace-repo.template.md`; `agent_new()` / `write_agents_md()` in
+`openclaw_host.py`; `ai-resources openclaw agent-new <id> <workspace>` and the wizard "AGENTS.md"
+question (writes only into workspaces that have none). Tests: `tests/test_agents_templates.py`.
 
-Companion: `ai-resources openclaw agent-new <id> <workspace>` which creates the agent, picks the
-template (umbrella vs repo, detected with `git ls-files | wc -l` and `git remote`), writes the
-`AGENTS.md`, adds the OpenClaw files to the repo's `.git/info/exclude`, and reminds you that the topic
-needs `/new` (T19).
+All three carry the `--setting-sources user` block (T02), the subproject → repo → docs table, "never
+commit at the umbrella level" (T11), the durable-docs convention, the team section, memory and red
+lines; the orchestrator adds the topic map (T18). The kind is detected from `git ls-files` and `git
+remote`; ambiguous means umbrella. The OpenClaw files go into `.git/info/exclude`, and the command
+reminds you that a topic needs `/new` (T19). The kit never edits `channels`.
 
----
+### C05 — `openclaw-operations` skill — **IMPLEMENTED**
 
-### C05 — `openclaw-operations` skill — **ESSENTIAL**
+`skills/openclaw-operations/SKILL.md` (one file, under 10,000 characters, triggers first), indexed in
+`skills-index.json`. Tests: `tests/test_openclaw_operations_skill.py`. It documents that
+`ai-resources setup` asks, the narration off-switch, drain before doctor, `watchdog.off` as a
+maintenance window, never restarting the gateway from a tool, and the diagnosis order, citing stable
+names in the code (`DOCTOR_NOISE`, the unit names, the command verbs).
 
-**Path:** `skills/openclaw-operations/SKILL.md` (plus `references/` for the long parts).
+**Deviation.** The proposal put the long catalogue in `references/`; the skill fits in one file and
+the T30 catalogue is code (`DOCTOR_NOISE`), so there is no `references/` directory.
 
-**What it contains:** the Section A catalogue turned into procedures: how to stop and start the gateway
-without breaking it, how to change models per agent, how to diagnose a 403 from the ingress, how to
-read `openclaw doctor` telling noise from signal (T30), how to verify backups (local and off-box), how
-to pair a browser and a phone (T28), and the diagnostic `grep`s that actually worked.
+### C06 — `openclaw_gateway_guard.py` hook — **IMPLEMENTED**
 
-**Trigger:** files under `~/.openclaw/**`, `openclaw-*.service|timer`, and keywords
-(openclaw, gateway, watchdog, control ui, telegram bot).
+`hooks/openclaw_gateway_guard.py`, registered in `hooks/hooks.json` (plugin route) and by the wizard
+through `cockpits/claude.py` (`install_openclaw_hooks`), on `PreToolUse` with matcher `Bash`. Tests:
+`tests/test_openclaw_gateway_guard.py`, `tests/test_hook_registration_parity.py`.
 
-**What real problem it avoids:** that the next agent touching this rediscovers T01, T05 and T14 on its
-own, at the cost of an outage per discovery.
+It denies exactly two shapes, in command position only (a `grep`, an `echo` or a heredoc body never
+matches), and only while the gateway is live and unguarded: `openclaw doctor --fix` and `systemctl
+--user stop openclaw-gateway.service`. The message names the exact alternative, `ai-resources openclaw
+doctor`. Any internal error exits 0. A deny still aborts the whole call (T24).
 
----
+### C07 — Canonical OpenClaw config block — **IMPLEMENTED**
 
-### C06 — `openclaw_gateway_guard.py` hook — **NICE-TO-HAVE (with caveats)**
+`profiles/openclaw-host.json5` (`.json5` on purpose: `profiles/*.yaml` feeds the model-routing picker);
+`load_host_profile()` and `build_host_patch()` in `openclaw_host.py`; applied by the wizard "config"
+question. Tests: `tests/test_openclaw_host_profile.py` (and the wizard suite).
 
-**Paths:** `hooks/openclaw_gateway_guard.py` plus an entry in `hooks/hooks.json`.
+It pins the keys in the original card with the reason next to each. The wizard shows the patch, then
+validates it with `openclaw config patch --stdin --dry-run`, and applies only after its own confirm;
+a rejected dry run stops there. `channels.*` is never touched except `channels.telegram.streaming.*`,
+enforced in code (`assert_channels_safe`). The GitHub token is a SecretRef to `GH_TOKEN`, sent only
+when that variable resolves. Host values (domain, ingress CIDR) are asked, not edited by hand. A key
+whose plugin is not configured, or whose value needs a marker not provided, is skipped with a note.
 
-**What it blocks (PreToolUse over Bash):**
-- `openclaw doctor --fix` when the gateway is active and `~/.openclaw/watchdog.off` does not exist
-  → message: "use `ai-resources openclaw doctor`, which drains first (T01)".
-- a `systemctl --user stop` of the gateway without `watchdog.off` → same advice.
+**Deviation from the proposal, decided by the architect and the user:** the proposal said per-key
+`openclaw config set`. It is superseded by one atomic `config patch --stdin`, dry-run first. There is no
+per-key fallback. Teardown records the previous value of every leaf it changed and restores it, except a
+credential leaf: its value is never stored, so it is not restored (the wizard says so).
 
-**Important caveat:** a deny aborts the **whole** call, not just the offending command (T24). The hook
-has to be surgical and its message must state the exact alternative, or it creates more friction than
-value. Same pattern as their `kubectl-context-guard.py`, which works well today.
+### C08 — The backup GitOps manifests as templates — **IMPLEMENTED**
 
----
+`templates/gitops/openclaw-backups/{bucket,uploader,guard,alerts}.yaml.template`;
+`render_gitops_backups()` and `ai-resources openclaw render-gitops-backups --set KEY=VALUE --out DIR`.
+Tests: `tests/test_openclaw_units_render.py` (rendered with a fixture marker set: parses as YAML, leaves
+no marker, carries no infrastructure literal).
 
-### C07 — Canonical OpenClaw config block in `profiles/` — **ESSENTIAL**
+Every value that belongs to the target infrastructure is a marker (`GCP_PROJECT`, `BUCKET_NAME`,
+`WIF_POOL`, `NODE_NAME`, ...; `--list-markers` prints them); the real values live only in the
+infrastructure repo. Preserved and pinned by tests: per-prefix lifecycle with `Orphan` deletion, reuse of
+an existing service account (zero new IAM), workload identity federation with no JSON key, tarballs
+without their `.sha256` skipped, an assertion that the newest daily reached the bucket, a soft `monthly`
+tier in the guard, and alert queries that measure schedule minus success above one period.
 
-**Path:** `profiles/openclaw-host.json5` (or `.yaml`), applied by `setup` through `openclaw config set`
-one key at a time (never by writing the json by hand) and validated with `openclaw config validate`.
+**Deviation.** The proposal listed node IP and CIDR as markers. The manifests have no place that needs
+them (the node is pinned by name), so they are not markers.
 
-**What it pins, with the reason next to each key:**
-```
-agents.defaults.model.primary            haiku (utility)
-agents.entries.*.model.primary           sonnet-5     (orchestrating on haiku invents the work)
-agents.entries.main.thinkingDefault      high         (→ --effort, MAX_THINKING_TOKENS)
-agents.defaults.heartbeat.every          0m           (T20: 240 turns/day with no recipient)
-agents.entries.main.heartbeat.every      2h
-agents.defaults.heartbeat.model          haiku
-tools.profile                            coding
-tools.alsoAllow                          ["group:messaging"]   (without it there is no `message` tool)
-logging.file / logging.maxFileBytes      outside /tmp (T26)
-gateway.bind                             tailnet      (T04)
-gateway.publicOrigin                     https://<domain>
-gateway.trustedProxies                   [<pod CIDR>] (T05)
-gateway.allowRealIpFallback              true         (T05)
-gateway.controlUi.allowedOrigins         ["https://<domain>"]
-gateway.controlUi.github.token           SecretRef env GH_TOKEN (T14)
-plugins.entries.device-pair.config.publicUrl  https://<domain>  (T28)
-mcp.servers.*                            PINNED versions, never @latest
-```
-Plus disabling the MCP servers that demand OAuth and are not used (they failed on **every** session
-startup). Worth adding now that it is measured: `channels.telegram.streaming.mode: progress` with
-`progress.commentary: true` and a `maxLines` above the default 8 (T31).
+### C09 — `ai-resources openclaw status` — **IMPLEMENTED**
 
-**What real problem it avoids:** that every host is born different and that these 15 decisions — each
-with its own scar — get rediscovered one by one.
+`collect_status()` and its renderer in `openclaw_host.py`; `ai-resources openclaw status`. Tests:
+`tests/test_openclaw_status.py` (fixtures under `tests/fixtures/openclaw_status/`).
 
----
+One screen, nine sections: unit, boot, listeners, health, the six timers with their next firing, newest
+backup per tier (daily older than 36 h is flagged), off-box presence, effective model per agent, and
+`openclaw doctor` warnings filtered through the T30 catalogue (`DOCTOR_NOISE`); anything else is shown
+verbatim. It sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` itself. It never repairs and exits 0.
 
-### C08 — The backup GitOps manifests as a kit template — **NICE-TO-HAVE**
+### C10 — Recovery runbook and host-onboarding workflow — **IMPLEMENTED (restore UNREHEARSED)**
 
-**Path:** `templates/gitops/openclaw-backups/{bucket.yaml,uploader.yaml,guard.yaml,alerts.yaml}.template`
-with markers for project, bucket, node IP, WIF pool and CIDR.
+`docs/runbooks/openclaw-host-dr.md` and `workflows/openclaw-host-setup.workflow.yaml` (with its
+generated `workflow-openclaw-host-setup` skill). Tests: `tests/test_openclaw_dr_runbook.py`.
 
-**What real problem it avoids:** today they live in `org-gitops` tied to `wildbit-iac` and to `bithome`.
-As templates they serve the next host or the next client, and they preserve what makes them good:
-per-prefix lifecycle, reusing the existing service account (zero new IAM), WIF with no JSON key,
-skipping tarballs without their `.sha256`, **asserting** that the daily is in the bucket, and the guard
-with a soft tier for `monthly`.
+The runbook restores `~/.openclaw/kit-host.env` first, lists what a tarball carries and omits and why,
+and records the pre-1.9.0 omissions as accidents. The workflow names `ai-resources setup` as the primary
+path and the `openclaw` subcommands as the headless fallback.
 
-**Why not essential:** they are specific to an infrastructure that is already versioned in its own repo.
+**Still open: P5.** The restore has never been rehearsed end to end, and the runbook says so at the top.
+A runbook without a rehearsal is still a plan.
 
 ---
 
-### C09 — `ai-resources openclaw status` — **NICE-TO-HAVE**
+## Implementation record
 
-**Path:** a subcommand in the same module as C01.
-
-**What it prints on one screen:** unit active/enabled/linger, listeners (`ss`), `openclaw health`,
-timers with their next firing, age and size of the latest backup per tier, off-box presence of the
-latest daily, effective model per agent, and doctor's warnings **filtered** through the known-noise
-catalogue (T30).
-
-**What real problem it avoids:** today that diagnosis is ~10 commands with the DBus environment set by
-hand (`XDG_RUNTIME_DIR` + `DBUS_SESSION_BUS_ADDRESS`, without which `systemctl --user` fails with
-*"Failed to connect to user scope bus"*).
-
----
-
-### C10 — Recovery runbook and host-onboarding workflow — **NICE-TO-HAVE**
-
-**Paths:** `docs/runbooks/openclaw-host-dr.md` and `workflows/openclaw-host-setup.workflow.yaml`.
-
-**What the runbook contains:** the 6 steps from the `INVENTORY.txt` that already travels inside every
-tarball (restore `~/.openclaw`, `engram.db`, `ai-config.tar.gz`, `brew install ai-resources &&
-ai-resources setup` to regenerate `~/.claude`, `gateway install --force`, enable plus start), plus what
-is **not** in the backup and why (regenerable skills and subagents, transcripts, checkouts).
-
-**What real problem it avoids:** that the backup remains an assumption. It ties into P5: a runbook
-without a restore rehearsal is still theory.
-
----
-
-## Suggested implementation order
-
-1. **C02** (the scripts into the kit) — it is the only thing that today exists on a single disk.
-2. **C03** plus **C06** — the `doctor --fix` blackout is the failure that already happened twice.
-3. **C07** plus **C04** — they make the behaviour reproducible, not just the installation.
-4. **C01** — the full bootstrap, which consumes everything above.
-5. **C05** — the skill, once the rest exists and has stable names to cite.
-6. **C08 / C09 / C10** — when there is a second host to justify them.
-
----
+Built in the order the criticality suggested: C02 (the only thing that existed on one disk), C03 and C06
+(the outage that happened twice), C07 and C04 (reproducible behaviour, not only installation), C01 (the
+bootstrap that consumes them), then the wizard integration, C05, C09, C08 and C10.
 
 ## Sources
 

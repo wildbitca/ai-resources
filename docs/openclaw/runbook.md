@@ -19,6 +19,60 @@ Conventions used here:
 Literal error messages and command output are quoted in their original language
 throughout, because that is what you will actually see on screen.
 
+**Since ai-resources 1.9.0 most of this is done by the kit.** Where a step below has a kit
+equivalent it is marked **[kit]** with the command; the manual recipe stays because it is what the kit
+does, and it is what to fall back on if the kit is not installed. The primary way in is
+`ai-resources setup` (next section). For a machine loss, start from
+`docs/runbooks/openclaw-host-dr.md`, which restores `~/.openclaw/kit-host.env` first.
+
+---
+
+## How setup asks
+
+`ai-resources setup` is the primary surface. After it detects the tools on the machine, step 7 lets
+you pick the cockpits to configure; when OpenClaw is one of them it asks, in this order. Every answer
+defaults to **no** on a first run, except the workboard, which defaults to yes:
+
+| # | Question | What a yes does | Touches the running gateway? |
+|---|---|---|---|
+| 1 | Configure this machine as an OpenClaw host? | Enables the rest; a no asks nothing more (and offers to undo an earlier run) | no |
+| 2 | Narrate the team's work into Telegram: **off** / milestones / every step | Writes `OPENCLAW_NARRATION` to `~/.openclaw/kit-host.env` and registers the narration hook in `~/.claude/settings.json`. Off removes the key, and the hook then publishes nothing | no |
+| 3 | Install the gateway guard hook? | Registers `openclaw_gateway_guard.py`, which denies an undrained `doctor --fix` or gateway stop | no |
+| 4 | Install the `openclaw-*` systemd units? | Renders the ten units into `~/.config/systemd/user` and enables the six timers (a separate confirm shows what will be written) | reloads systemd, not the gateway |
+| 5 | Apply the canonical config block? | Shows the patch, validates it with `config patch --dry-run`, then applies it after its own confirm | yes: needs a restart |
+| 6 | Your Telegram id, backup dir, and (with 5) domain and ingress CIDR | Written to `kit-host.env`; each value is validated as you type. Empty skips the keys that need it | no |
+| 7 | Enable the workboard plugin? | `openclaw plugins enable workboard`, after a confirm | yes: needs a restart |
+| 8 | Write an `AGENTS.md` into workspaces that have none? | A template per workspace; an existing file is never touched | no |
+| 9 | Check this host against the documented setup? | Runs `bootstrap --dry-run`, reports, and offers to fix; every fix asks again | maybe |
+
+Rules the wizard keeps: **secrets are never asked** (use `openclaw configure`); anything that changes
+the running gateway is its own confirm, printed in full and defaulting to no; **nothing restarts the
+gateway**: it says "restart needed" and stops; a second run changes nothing; undoing it (answer no to the
+first question on a later run and confirm the offer to undo the earlier one) removes exactly what the kit recorded, disables only
+the timers it enabled, puts back a hand-installed hook it replaced, and does not restore a credential
+value because it never stored one. `--dry-run` previews all of it and writes nothing.
+
+The kit has no `--yes` flag. `ai-resources setup --non-interactive` reuses the saved answers and
+prompts for nothing: it re-applies only the local pieces already agreed (`kit-host.env`, hooks,
+`AGENTS.md`) and skips every confirm that would touch the running gateway.
+
+The `ai-resources openclaw <verb>` commands are wrappers over the same functions, for headless runs
+and disaster recovery: `status`, `doctor`, `bootstrap`, `install-units`, `agent-new`,
+`render-gitops-backups`.
+
+## Pending operator steps
+
+These need the real host and a maintenance window, so they were **not** run when 1.9.0 was built:
+
+1. `touch ~/.openclaw/watchdog.off` first, and confirm it is gone at the end.
+2. `ai-resources openclaw doctor`: confirm it drains, fixes and the gateway answers.
+3. `ai-resources openclaw bootstrap --dry-run`: expect zero changes on the reference host.
+4. `ai-resources openclaw install-units --dry-run`: diff against the live units.
+5. `bash "$(brew --prefix ai-resources)/libexec/scripts/openclaw/openclaw-verify.sh"` once.
+6. `ai-resources setup` against the real `~/.claude/settings.json`: confirm a delegated subagent
+   narrates into its topic and a plain terminal session publishes nothing.
+7. The restore rehearsal in `docs/runbooks/openclaw-host-dr.md` section 6 (on a throwaway host).
+
 ---
 
 # PART A — Prerequisites and ordering
@@ -95,6 +149,11 @@ interactive PATH. **That is correct and must not be "fixed"**: your projects sta
 Node and the gateway uses absolute brew paths.
 
 ### B1.2 OpenClaw via brew's npm, allowing install scripts `[idem]`
+
+**[kit]** `ai-resources openclaw bootstrap` does this (and B1.1, B1.3, linger and the backup
+directories) idempotently. It installs the **latest** openclaw, not a pin, and records
+`OPENCLAW_INSTALLED_VERSION` and `OPENCLAW_PREVIOUS_VERSION` in `~/.openclaw/kit-host.env`; the manual
+recipe below pins `2026.9.4`, the reference state.
 
 ```bash
 PATH=/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin \
@@ -505,15 +564,20 @@ mkdir -p ~/.openclaw/logs
 `/tmp` is a 16 GB tmpfs in RAM and an `rsync` that does not fit can leave an incomplete
 backup reported as good.
 
-### B4.2 The three scripts `[idem]`
+### B4.2 The host scripts `[idem]`
 
-Copy them from the backup or from the kit into `~/.local/bin/` and `chmod +x`:
+**[kit]** The scripts ship in the kit under `scripts/openclaw/` and the units run them from there as
+`/bin/bash <script>`: nothing is copied to `~/.local/bin` any more. Host values come from
+`~/.openclaw/kit-host.env`. (On the reference host they originally lived in `~/.local/bin`; that is
+historical.)
 
 | Script | What it does |
 |---|---|
 | `openclaw-backup.sh <daily\|weekly\|monthly\|manual>` | `openclaw backup create --no-include-workspace --verify` + engram `VACUUM INTO` + tar of the hand-written config + `INVENTORY.txt`; one tarball and its `.sha256` **written last**; rotates 7/4/3; notifies on Telegram on failure |
 | `openclaw-maintenance.sh` | pauses the watchdog, stops, **waits for the drain**, `doctor --fix`, `sessions cleanup --all-agents`, starts, polls health up to 2 min, checks backup age and new versions |
 | `openclaw-watchdog.sh` | if the gateway is not active it starts it and **says so on Telegram**; paused with `~/.openclaw/watchdog.off` |
+| `openclaw-verify.sh` | one-pass read-only check that the setup is as expected (checks 1-4 and 9 everywhere; the ingress, OTLP, Alloy and Flux checks are opt-in through `OPENCLAW_VERIFY_*`); `--notify`, from the daily timer, messages the operator only when something fails |
+| `openclaw-team-watch.py` | the per-member live message launched by the narration hook at `every-step` |
 
 Invariants that must survive any port of these scripts:
 
@@ -526,6 +590,10 @@ Invariants that must survive any port of these scripts:
 - Poll health **for up to 2 minutes**: 12 s is not enough on a cold start.
 
 ### B4.3 Units and timers `[idem]`
+
+**[kit]** `ai-resources openclaw install-units --enable` (or the setup question) renders the ten units
+from `templates/systemd/` and enables the **six** timers (the list below is the original five plus
+`openclaw-verify.timer`). The recipe below is what it does.
 
 ```
 ~/.config/systemd/user/openclaw-backup@.service          Type=oneshot, ExecStart=…openclaw-backup.sh %i
@@ -542,7 +610,8 @@ All timers use `Persistent=true` (a run missed while the machine was off fires a
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now openclaw-backup-daily.timer openclaw-backup-weekly.timer \
-  openclaw-backup-monthly.timer openclaw-watchdog.timer openclaw-maintenance.timer
+  openclaw-backup-monthly.timer openclaw-watchdog.timer openclaw-maintenance.timer \
+  openclaw-verify.timer
 systemctl --user list-timers "openclaw-*" --no-pager
 ```
 
@@ -552,11 +621,16 @@ if `list-timers` does not show it, `start` it.
 First backup by hand, so you do not wait for the timer `[idem]`:
 
 ```bash
-~/.local/bin/openclaw-backup.sh daily
+systemctl --user start openclaw-backup@daily.service   # runs the kit's openclaw-backup.sh
 ls -lh /srv/openclaw-backups/daily/     # ~18 MB + .sha256
 ```
 
 ### B4.4 Cluster side: bucket, uploader, guard and alerts
+
+**[kit]** The four manifests exist as templates in `templates/gitops/openclaw-backups/`; render them
+with `ai-resources openclaw render-gitops-backups --list-markers`, then `--set KEY=VALUE ... --out DIR`,
+and commit the result to the infrastructure repo. The real values (project, bucket, WIF pool, node)
+live only there.
 
 This lives in **`wildbitca/org-gitops`** and Flux materialises it. Reference files:
 
@@ -723,8 +797,15 @@ override `PATH`**. For every other variable it works.
 
 ### B6.3 Team visibility hook `[idem]`
 
-`~/.claude/hooks/openclaw-team-progress.py` posts one line in the topic when a subagent or
-workflow starts and when a member finishes. Registration in `~/.claude/settings.json`:
+**[kit]** The hook is `hooks/openclaw_team_progress.py`; `ai-resources setup` registers it on
+`PreToolUse` (`*`), `SubagentStop`, `UserPromptSubmit` and `Stop` when you choose a narration level.
+**Off is the default and it is real**: the hook speaks only when the gateway started the session
+(`OPENCLAW_CLI=1`) **and** `~/.openclaw/kit-host.env` carries `OPENCLAW_NARRATION=milestones` or
+`every-step`. A hand-installed copy is replaced and teardown puts it back.
+
+The original hand-written hook, `~/.claude/hooks/openclaw-team-progress.py`, posted one line in the
+topic when a subagent or workflow started and when a member finished. Its registration, kept for the
+manual route:
 
 ```json
 "PreToolUse":  [ { "matcher": "Agent|Workflow", "hooks": [ { "type": "command",
@@ -798,13 +879,17 @@ cluster, the uploader's WIF identity is the one with access to that bucket.
 |---|---|---|
 | `openclaw-state.tar.gz` | all of `~/.openclaw`: config, state (sqlite holding the **secret store**), per-agent DBs, media | restored **as is** |
 | `engram.db` | consistent snapshot (`VACUUM INTO`) of the persistent memory | copied to `~/.engram/engram.db` |
-| `ai-config.tar.gz` | what lives in no repo: `~/.claude/CLAUDE.md`, `settings.json`, `hooks/`, `~/.config/shell/`, the units, the three scripts, and `AGENTS.md`/`MEMORY.md`/`USER.md`/`memory/` of the 5 workspaces | unpacked over `$HOME` |
+| `ai-config.tar.gz` | what lives in no repo: `~/.claude/CLAUDE.md`, `settings.json`, `hooks/`, `~/.config/shell/`, `~/.openclaw/kit-host.env`, the units and scripts that existed (all of them from 1.9.0; older tarballs lack the watchdog, verify and team-watch scripts and most units, which `ai-resources openclaw install-units` regenerates), and `AGENTS.md`/`MEMORY.md`/`USER.md`/`memory/` of the 5 workspaces | unpacked over `$HOME` |
 | `INVENTORY.txt` | that day's versions (openclaw, node, claude, ai-resources), the agent table with model and workspace, and the restore steps | read it first |
 
 **Deliberately not in the backup**: the `~/.claude` skills and subagents (regenerable),
 `~/.claude/projects` (1.2 GB of transcripts) and the project checkouts (they are git repos).
 
 ## C3. Recovery sequence
+
+The kit-driven order, with `~/.openclaw/kit-host.env` restored first, is in
+`docs/runbooks/openclaw-host-dr.md`, and it says plainly that the restore has never been rehearsed.
+The sequence below is the original, on the reference host.
 
 ```bash
 # 0. PART A prerequisites on the new machine, and all of B1 (runtime)
@@ -857,7 +942,7 @@ openclaw doctor                                   # no "Doctor warnings" blocks
 ls ~/.claude/agents | wc -l                       # ~40  (0 means ai-resources setup is missing)
 ls ~/.claude/skills | wc -l                       # ~137
 openclaw agent --agent main --session-key "probe-$(date +%s)" -m "Responde solo: ok"
-~/.local/bin/openclaw-backup.sh manual            # the whole cycle works again
+systemctl --user start openclaw-backup@manual.service   # the whole cycle works again
 ```
 
 And the check that really closes the loop: send a message in a topic from Telegram and see
@@ -868,6 +953,9 @@ the right agent answer, on the right model.
 # PART D — Daily operation
 
 ## Stop and start without fighting the watchdog
+
+Only the operator does this, in a maintenance window: never from a tool running inside a gateway
+session, which is a child of the unit and dies with it.
 
 ```bash
 touch ~/.openclaw/watchdog.off            # the watchdog goes quiet
@@ -882,8 +970,12 @@ manoeuvre. And the other way round: leave the file behind and nobody is watching
 
 ## Run doctor without killing the gateway
 
+**[kit]** `ai-resources openclaw doctor` (add `--dry-run` to see the sequence, `--cleanup-sessions` to
+also run `sessions cleanup --all-agents`). It is the only supported way: the gateway guard hook denies
+a bare `openclaw doctor --fix`. The weekly maintenance timer calls it. By hand, which is exactly what
+it does:
+
 ```bash
-~/.local/bin/openclaw-maintenance.sh      # does the right sequence, or by hand:
 
 touch ~/.openclaw/watchdog.off
 systemctl --user stop openclaw-gateway.service
@@ -904,7 +996,7 @@ was an explicit stop, `Restart=always` does not cover it. Note the `stop` itself
 ## Force a backup and check it left the node
 
 ```bash
-~/.local/bin/openclaw-backup.sh daily
+systemctl --user start openclaw-backup@daily.service
 tail -5 ~/.openclaw/logs/backup.log
 ls -lh /srv/openclaw-backups/daily/
 
@@ -1026,7 +1118,7 @@ Exposure:
 
 Backup and watch:
 
-- [ ] `systemctl --user list-timers "openclaw-*"` → 5 timers with a next elapse
+- [ ] `systemctl --user list-timers "openclaw-*"` → 6 timers with a next elapse (or `ai-resources openclaw status`)
 - [ ] `ls /srv/openclaw-backups/daily/` → ~18 MB tarball **with** its `.sha256`
 - [ ] `gcloud storage ls -r gs://wildbit-iac-openclaw-backups` → objects under `daily/` and `weekly/`
 - [ ] guard Job by hand → "daily y weekly estan al dia", exit 0
