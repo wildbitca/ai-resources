@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "session_id": "s1",
+  "cwd": "WS/pacha",
+  "tool_input": {
+    "command": "echo SECRET COMMAND"
+  }
+}

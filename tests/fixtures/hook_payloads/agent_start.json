@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "session_id": "s1",
+  "cwd": "WS/pacha",
+  "effort": "medium",
+  "tool_input": {
+    "subagent_type": "planner",
+    "description": "Plan the change",
+    "prompt": "SECRET PROMPT TEXT"
+  }
+}

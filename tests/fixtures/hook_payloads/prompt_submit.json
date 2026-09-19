@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "UserPromptSubmit",
+  "session_id": "s1",
+  "cwd": "WS/pacha/api",
+  "prompt": "SECRET PROMPT TEXT",
+  "effort": {
+    "level": "high"
+  }
+}

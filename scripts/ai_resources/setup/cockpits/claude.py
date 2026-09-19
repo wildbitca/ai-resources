@@ -84,6 +84,15 @@ def detect():
 
 NATIVE_MODELS = ("inherit", "opus", "sonnet", "haiku", "fable", "opusplan")
 KIT_HOOK_SCRIPTS = ("kit_session_start.py", "kit_subagent_return.py", "kit_handoff_guard.py")
+# Opt-in hooks that only make sense on a host running OpenClaw. They are installed by the
+# OpenClaw cockpit's host section, never by the always-on kit merge below, so a machine
+# without OpenClaw never gets them (`hooks/hooks.json` still lists them for the plugin route,
+# where both are inert: the team hook needs OPENCLAW_CLI=1 and the guard needs a live gateway).
+OPENCLAW_HOOK_SCRIPTS = ("openclaw_team_progress.py",)
+# Where the team hook lived before the kit shipped it. A registration pointing there is a
+# hand-installed copy of the same hook: leaving it beside the kit entry publishes every team
+# event to Telegram twice.
+LEGACY_OPENCLAW_HOOK_MARKERS = (".claude/hooks/openclaw-team-progress.py",)
 
 
 def _is_native_model(model: str) -> bool:
@@ -93,6 +102,15 @@ def _is_native_model(model: str) -> bool:
 
 def _is_kit_hook_command(command: str) -> bool:
     return any(f"/hooks/{script}" in command for script in KIT_HOOK_SCRIPTS)
+
+
+def _is_openclaw_hook_command(command: str) -> bool:
+    """A registration of one of the kit's OpenClaw hooks (not the legacy hand-installed copy)."""
+    return any(f"/hooks/{script}" in command for script in OPENCLAW_HOOK_SCRIPTS)
+
+
+def _is_legacy_openclaw_hook_command(command: str) -> bool:
+    return any(marker in command for marker in LEGACY_OPENCLAW_HOOK_MARKERS)
 
 
 def _kit_hooks(ak_path: str) -> dict[str, list[dict]]:
@@ -111,6 +129,43 @@ def _kit_hooks(ak_path: str) -> dict[str, list[dict]]:
         "SubagentStop": [entry("kit_subagent_return.py")],
         "PreToolUse": [entry("kit_handoff_guard.py", "Write|Edit|MultiEdit|NotebookEdit|Bash")],
     }
+
+
+def _openclaw_hooks(ak_path: str, *, team: bool = True, guard: bool = True) -> dict[str, list[dict]]:
+    """Entries for the OpenClaw host hooks. Timeouts are the ones measured on the live host:
+    the team hook spawns detached processes and the per-tool call needs the longer budget."""
+
+    def entry(script: str, matcher: str = "", timeout: int = 10) -> dict:
+        hook = {"type": "command", "command": f'python3 "{ak_path}/hooks/{script}"', "timeout": timeout}
+        return {"matcher": matcher, "hooks": [hook]} if matcher else {"hooks": [hook]}
+
+    out: dict[str, list[dict]] = {}
+    if team:
+        out["PreToolUse"] = [entry("openclaw_team_progress.py", "*", 30)]
+        out["SubagentStop"] = [entry("openclaw_team_progress.py", "", 30)]
+        out["UserPromptSubmit"] = [entry("openclaw_team_progress.py", "", 20)]
+        out["Stop"] = [entry("openclaw_team_progress.py", "", 20)]
+    return out
+
+
+def install_openclaw_hooks(ak_path: str, *, team: bool, guard: bool,
+                           settings_path: Path | None = None) -> bool:
+    """Make ~/.claude/settings.json carry exactly the requested OpenClaw hooks.
+
+    Earlier kit entries are replaced (so a second run is a byte-level no-op) and, when the team
+    hook is wanted, the hand-installed legacy copy is replaced too. The user's own hooks stay.
+    Returns True when the file changed.
+    """
+    def ours(command: str) -> bool:
+        return _is_openclaw_hook_command(command) or (team and _is_legacy_openclaw_hook_command(command))
+
+    return _shared.merge_kit_hooks(settings_path or SETTINGS_PATH,
+                                   _openclaw_hooks(ak_path, team=team, guard=guard), ours)
+
+
+def remove_openclaw_hooks(settings_path: Path | None = None) -> bool:
+    """Undo `install_openclaw_hooks`. The legacy hand-installed copy is not the kit's to remove."""
+    return _shared.merge_kit_hooks(settings_path or SETTINGS_PATH, {}, _is_openclaw_hook_command)
 
 
 def _cleanup_stale_hooks(settings: dict) -> bool:

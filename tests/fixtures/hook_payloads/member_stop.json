@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "SubagentStop",
+  "session_id": "s1",
+  "cwd": "WS/pacha",
+  "agent_id": "a1",
+  "agent_type": "implementer",
+  "last_assistant_message": "Done: 3 files changed."
+}

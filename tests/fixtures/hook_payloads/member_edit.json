@@ -1,0 +1,14 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "session_id": "s1",
+  "cwd": "WS/pacha",
+  "agent_id": "a1",
+  "agent_type": "implementer",
+  "transcript_path": "/tmp/proj/sess.jsonl",
+  "tool_input": {
+    "file_path": "WS/pacha/src/x.py",
+    "old_string": "SECRET OLD",
+    "new_string": "SECRET NEW"
+  }
+}

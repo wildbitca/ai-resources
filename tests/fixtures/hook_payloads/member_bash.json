@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "session_id": "s1",
+  "cwd": "WS/pacha",
+  "agent_id": "a1",
+  "agent_type": "implementer",
+  "transcript_path": "/tmp/proj/sess.jsonl",
+  "tool_input": {
+    "command": "echo SECRET COMMAND"
+  }
+}
