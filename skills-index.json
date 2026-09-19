@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "generated_at": "2026-09-19T16:21:59.662007+00:00",
+  "generated_at": "2026-09-19T16:27:56.780094+00:00",
   "skills_root": "skills",
-  "count": 137,
+  "count": 138,
   "skills": [
     {
       "id": "changelog-best-practices",
@@ -1341,6 +1341,14 @@
       "path": "skills/workflow-merge-and-document/SKILL.md",
       "name": "workflow-merge-and-document",
       "description": "User asks to merge a branch and write docs, SDD specs, or handoff documents. Includes 'merge + document', 'merge and write specs/docs', 'merge and update SDD'. Runs the kit workflow 'merge-and-document': Merge feature branch to develop and write/update SDD specs. Delegates all heavy work to cheap models.",
+      "triggers": [],
+      "globs": []
+    },
+    {
+      "id": "workflow-openclaw-host-setup",
+      "path": "skills/workflow-openclaw-host-setup/SKILL.md",
+      "name": "workflow-openclaw-host-setup",
+      "description": "User wants to set up, rebuild, restore or re-align an OpenClaw gateway host, onboard a new agent workspace on it, or verify that its documented setup is in place. Runs the kit workflow 'openclaw-host-setup': Set up or rebuild an OpenClaw gateway host from the kit. ai-resources setup first, thin openclaw subcommands as the fallback, then verify.",
       "triggers": [],
       "globs": []
     },

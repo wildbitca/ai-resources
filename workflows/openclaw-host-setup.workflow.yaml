@@ -1,0 +1,133 @@
+# OpenClaw host onboarding: bring a machine to the documented setup and prove it.
+# Use when a host will run (or already runs) the OpenClaw gateway and must be built, rebuilt after
+# a loss, or brought back in line with the kit.
+#
+# PRIMARY PATH: `ai-resources setup`. Its OpenClaw section asks, per capability, whether to enable
+# it and configures it (team narration, gateway guard, systemd units, canonical config block,
+# workboard, AGENTS.md, host check). The `ai-resources openclaw <verb>` commands are thin wrappers
+# over the same functions, for headless runs and disaster recovery; they are the fallback, not the
+# plan. Setup is interactive, so the `setup` step below hands the terminal to the operator.
+#
+# Flow: preflight -> setup (operator) -> agents -> verify
+# Order of the fallback wrappers: bootstrap -> install-units -> config (setup only) -> agent-new -> verify.
+#
+# Hard rules for every step: never restart or stop the gateway (report "restart needed"), never
+# write ~/.openclaw/openclaw.json by hand, never run `openclaw doctor --fix` (use
+# `ai-resources openclaw doctor` in a maintenance window the operator opens), never ask for or
+# print a secret. A rebuild restores ~/.openclaw/kit-host.env FIRST: with no version pin it is the
+# only record of the installed openclaw version.
+#
+# handoff_file: .agent-output/handoff-openclaw-host-setup.md. DELETE when DONE.
+#
+name: openclaw-host-setup
+description: Set up or rebuild an OpenClaw gateway host from the kit. ai-resources setup first, thin openclaw subcommands as the fallback, then verify.
+domain: devops
+trigger: User wants to set up, rebuild, restore or re-align an OpenClaw gateway host, onboard a new agent workspace on it, or verify that its documented setup is in place.
+prerequisites:
+  - "Shell access to the host as the user that runs the gateway (systemctl --user needs that user's session bus)"
+  - "The kit installed (brew install ai-resources) and Claude Code installed if team narration or the guard are wanted"
+steps:
+  - id: preflight
+    subagent_type: generalPurpose
+    skills:
+      - openclaw-operations
+      - common-best-practices
+    entry_criteria: Host chosen and operator available
+    exit_criteria: Host state documented without any change to it
+    handoff_to: setup
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}.
+      READ ONLY: this step changes nothing on the host.
+
+      1. If this is a rebuild, confirm ~/.openclaw/kit-host.env was restored before anything else
+         (see $AGENT_KIT/docs/runbooks/openclaw-host-dr.md) and note OPENCLAW_INSTALLED_VERSION.
+      2. Run `ai-resources openclaw status` and `ai-resources openclaw bootstrap --dry-run`.
+         Record every line that is not satisfied.
+      3. Check ~/.openclaw/watchdog.off. If it exists and you did not create it, report it: do not
+         delete it.
+      4. Record which capabilities the operator wants: team narration (off, milestones, every-step),
+         gateway guard, systemd units, canonical config block, workboard, AGENTS.md templates.
+
+      Update {{handoff_file}} (Host_state, Unsatisfied_checks, Capabilities_wanted, Next=setup).
+      If blocked, set Blocked: true, Return_to_step: preflight, Block_reason: [reason].
+
+  - id: setup
+    subagent_type: generalPurpose
+    skills:
+      - openclaw-operations
+      - common-best-practices
+    entry_criteria: Preflight complete
+    exit_criteria: The operator ran ai-resources setup (or the fallback wrappers) and every chosen capability is applied
+    handoff_to: agents
+    on_concern_return_to: preflight
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}.
+
+      **STOP — HUMAN ACTION REQUIRED.** `ai-resources setup` asks questions and every change to the
+      running gateway is its own confirm: the operator runs it in their terminal, you do not answer
+      for them. Tell them which answers preflight recommends, and that host values (domain, operator
+      Telegram id, ingress CIDR, backup dir) are asked there and written to ~/.openclaw/kit-host.env.
+      Secrets are never asked: they go through `openclaw configure`.
+
+      Fallback for a headless host, one wrapper at a time, each after the operator's go-ahead:
+        1. `ai-resources openclaw bootstrap --dry-run`, then `ai-resources openclaw bootstrap`
+           (node, openclaw install, single copy, gateway unit, boot, backup dirs, MemoryHigh, units)
+        2. `ai-resources openclaw install-units --dry-run`, then `ai-resources openclaw install-units --enable`
+        3. the canonical config block has NO headless verb: it is applied only by `ai-resources setup`
+           (validated with `config patch --dry-run` first). Do not write openclaw.json by hand.
+      The kit has no --yes flag; an unattended run is `ai-resources setup --non-interactive`, which
+      re-applies only what was already agreed and never touches the running gateway.
+
+      When the tool says "restart needed", report it to the operator and stop: never restart the
+      gateway yourself. If `openclaw doctor --fix` is needed, the operator opens a maintenance window
+      and runs `ai-resources openclaw doctor`.
+
+      Update {{handoff_file}} (Applied: list of what setup reported, Restart_needed: yes|no, Next=agents).
+      If blocked, set Blocked: true, Return_to_step: setup, Block_reason: [reason].
+
+  - id: agents
+    subagent_type: generalPurpose
+    skills:
+      - openclaw-operations
+    entry_criteria: Setup applied
+    exit_criteria: Every agent workspace has its AGENTS.md; the operator was told to send /new in each topic
+    handoff_to: verify
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}.
+
+      For each agent workspace that has no AGENTS.md, run
+      `ai-resources openclaw agent-new <agent-id> <workspace>` (the template kind is detected:
+      orchestrator, umbrella or repo; an existing AGENTS.md is never overwritten without --force).
+      Binding a Telegram topic is the operator's, through `openclaw config set channels.telegram.groups[...]`:
+      the kit never edits `channels`.
+
+      Remind the operator that a live topic keeps its old context: send /new in the topic once so
+      the agent starts with the new AGENTS.md.
+
+      Update {{handoff_file}} (Workspaces_written, Topic_reminder: done, Next=verify).
+
+  - id: verify
+    subagent_type: verifier
+    skills:
+      - common-protocol-enforcement
+    entry_criteria: All prior steps complete
+    exit_criteria: Every check below has evidence, or the gap is stated
+    on_concern_return_to: setup
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}.
+
+      Verify, with evidence for each (READ ONLY):
+      1. `ai-resources openclaw status` shows the gateway active and healthy, and all six timers armed.
+      2. `bash $AGENT_KIT/scripts/openclaw/openclaw-verify.sh` reports no failed check.
+      3. ~/.openclaw/watchdog.off does not exist (a leftover leaves the gateway unguarded).
+      4. `ai-resources openclaw bootstrap --dry-run` reports zero changes.
+      5. If narration was chosen: ~/.openclaw/kit-host.env carries OPENCLAW_NARRATION, and it does not
+         carry it if the operator chose off.
+      6. The restore of the off-box backup is UNREHEARSED: do not report it as verified.
+
+      Update {{handoff_file}} (Verification: PASS | GAPS with the evidence per check).
+      If any check fails, set Blocked: true, Return_to_step: setup, Block_reason: [the failing check].
