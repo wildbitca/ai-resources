@@ -717,6 +717,393 @@ def agent_new(agent_id: str, workspace: Path | str, *, kind: str | None = None, 
     return result
 
 
+# --- bootstrap: bring a host to the documented state, idempotently (C01) -----------------------------
+
+ALLOW_SCRIPTS = "openclaw,@google/genai,koffi,tree-sitter-bash,protobufjs"
+BOOTSTRAP_STEPS = ("node", "openclaw", "single-copy", "gateway-unit", "boot", "backup-dirs",
+                   "memory-high", "units")
+BOOTSTRAP_TITLES = {
+    "node": "node satisfies openclaw's engines range (>=24.16 <25 || >=26.1)",
+    "openclaw": "openclaw is installed with its install scripts allowed (T06)",
+    "single-copy": "exactly one global openclaw",
+    "gateway-unit": "the gateway unit runs brew's node by absolute path (T07)",
+    "boot": "the gateway starts at boot (linger + enabled)",
+    "backup-dirs": "the backup tier directories exist and are yours",
+    "memory-high": "MemoryHigh is set with set-property, never a drop-in (T27)",
+    "units": "the openclaw-* units are installed and their timers enabled",
+}
+_EPHEMERAL_PATH = ("multishell", "/run/user/")
+# Where a version manager keeps its own node (and so its own global openclaw), relative to $HOME.
+_VERSION_MANAGER_GLOBS = (".nvm/versions/node/*/bin", ".local/share/fnm/node-versions/*/installation/bin",
+                          ".fnm/node-versions/*/installation/bin", ".volta/bin",
+                          ".asdf/installs/nodejs/*/bin", ".local/share/mise/installs/node/*/bin")
+
+
+def node_version_ok(version: str) -> bool:
+    """`>=24.16 <25 || >=26.1`: non-contiguous, so trusting whatever node brew has is not enough."""
+    m = re.match(r"v?(\d+)\.(\d+)\.(\d+)", version.strip())
+    if not m:
+        return False
+    major, minor = int(m.group(1)), int(m.group(2))
+    return (major == 24 and minor >= 16) or (major == 26 and minor >= 1) or major > 26
+
+
+def _bytes(size: str) -> int:
+    m = re.fullmatch(r"(\d+)([KMGT]?)", size.strip().upper())
+    if not m:
+        raise ValueError(f"not a size such as 12G: {size!r}")
+    return int(m.group(1)) * 1024 ** "_KMGT".index(m.group(2) or "_")
+
+
+def _package_root(binary: Path) -> Path | None:
+    """`.../node_modules/openclaw` for an installed openclaw executable (or its entry script)."""
+    for parent in [binary.resolve(), *binary.resolve().parents]:
+        if parent.name == "openclaw" and parent.parent.name == "node_modules":
+            return parent
+    return None
+
+
+def _execstart_argv(text: str) -> list[str]:
+    m = re.search(r"argv\[\]=(.*?)\s;", text)
+    return m.group(1).split() if m else []
+
+
+class StepResult:
+    def __init__(self, step: str, status: str, detail: str = ""):
+        self.step, self.status, self.detail = step, status, detail
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"StepResult({self.step}, {self.status}, {self.detail!r})"
+
+
+OK_STATUSES = {"satisfied", "changed", "would-change", "skipped"}
+
+
+class _Ctx:
+    """What every step shares: the runner, the dry-run switch and the record of what it ran."""
+
+    def __init__(self, runner, *, dry_run, confirm, home, upgrade, memory_high, backup_dir,
+                 host_env_path, sleep, health_wait, node_bin, env, unit_dir=None):
+        self.runner, self.dry_run, self.confirm, self.home = runner, dry_run, confirm, home
+        self.upgrade, self.memory_high, self.backup_dir = upgrade, memory_high, backup_dir
+        self.host_env_path, self.sleep, self.health_wait = host_env_path, sleep, health_wait
+        self.node_bin, self.env, self.unit_dir = node_bin, env, unit_dir
+        self.commands: list[list[str]] = []   # every command actually run (never in dry-run)
+        self.planned: list[str] = []          # what a dry run says it would do
+
+    def run(self, argv: list[str], **kw) -> tuple[int, str]:
+        """A read-only probe. Always runs, in dry-run too."""
+        return self.runner(argv, env=self.env, **kw)
+
+    def mutate(self, step: str, argv: list[str], why: str, **kw) -> tuple[int, str] | None:
+        """A change. In dry-run only recorded; otherwise confirmed, recorded and run.
+        Returns None when nothing was run (dry-run or declined)."""
+        shown = " ".join(argv)
+        if self.dry_run:
+            self.planned.append(f"{step}: {shown}   ({why})")
+            return None
+        if not self.confirm(step, f"{why}: {shown}"):
+            return None
+        self.commands.append(list(argv))
+        return self.runner(argv, env=self.env, **kw)
+
+
+def _node_bin(runner, env) -> str:
+    rc, prefix = runner(["brew", "--prefix", "node"], env=env)
+    if rc == 0 and prefix.strip() and (Path(prefix.strip()) / "bin" / "node").exists():
+        return str(Path(prefix.strip()) / "bin" / "node")
+    return shutil.which("node") or ""
+
+
+def _step_node(c: _Ctx) -> StepResult:
+    rc, out = c.run([c.node_bin or "node", "--version"])
+    if rc == 0 and node_version_ok(out):
+        return StepResult("node", "satisfied", out.strip())
+    if rc != 0:
+        out = "node is not installed"
+    if c.run(["brew", "--version"])[0] != 0:
+        return StepResult("node", "refused", f"{out}; Homebrew is missing, install node >=24.16 by hand")
+    r = c.mutate("node", ["brew", "install", "node"], "install a node that satisfies the range", timeout=900)
+    if r is None:
+        return StepResult("node", "would-change" if c.dry_run else "declined", out.strip())
+    c.node_bin = _node_bin(c.runner, c.env)
+    rc, ver = c.run([c.node_bin or "node", "--version"])
+    ok = rc == 0 and node_version_ok(ver)
+    return StepResult("node", "changed" if ok else "failed", ver.strip() or out.strip())
+
+
+def _native_ok(c: _Ctx) -> tuple[bool, str]:
+    rc, root = c.run(["npm", "root", "-g"])
+    if rc != 0 or not root.strip():
+        return False, "cannot locate the global node_modules (npm root -g)"
+    pkg = Path(root.strip().splitlines()[-1]) / "openclaw" / "node_modules"
+    tree = list(pkg.glob("tree-sitter-bash/**/*.node"))
+    koffi = list(pkg.glob("@koromix/koffi-*/**/*.node"))
+    if not tree or not koffi:
+        missing = [n for n, found in (("tree-sitter-bash", tree), ("koffi", koffi)) if not found]
+        return False, "native modules missing: " + ", ".join(missing)
+    return True, ""
+
+
+def _openclaw_version(c: _Ctx) -> str:
+    rc, out = c.run(["openclaw", "--version"])
+    m = re.search(r"\d{4}\.\d+\.\d+", out) if rc == 0 else None
+    return m.group(0) if m else ""
+
+
+def _gateway_active(c: _Ctx) -> bool:
+    rc, out = c.run(["systemctl", "--user", "is-active", GATEWAY_UNIT])
+    return rc == 0 and out.strip() == "active"
+
+
+def _step_openclaw(c: _Ctx) -> StepResult:
+    current = _openclaw_version(c)
+    native_ok, why = _native_ok(c) if current else (False, "")
+    if current and native_ok and not c.upgrade:
+        return StepResult("openclaw", "satisfied", current)
+    reason = ("not installed" if not current else why if not native_ok else "upgrade requested")
+    npm = str(Path(c.node_bin).with_name("npm")) if c.node_bin and Path(c.node_bin).with_name("npm").exists() else "npm"
+    argv = [npm, "install", "-g", f"--allow-scripts={ALLOW_SCRIPTS}", "openclaw@latest"]
+    if c.mutate("openclaw", argv, f"install the latest openclaw ({reason})", timeout=1200) is None:
+        return StepResult("openclaw", "would-change" if c.dry_run else "declined", reason)
+    new = _openclaw_version(c)
+    native_ok, why = _native_ok(c)
+    if not new or not native_ok:
+        return StepResult("openclaw", "failed", why or "openclaw does not report a version after the install")
+    # Always latest, so the one thing that makes it reversible is recording what was there.
+    values = {"OPENCLAW_INSTALLED_VERSION": new}
+    if current:
+        values["OPENCLAW_PREVIOUS_VERSION"] = current
+    write_host_env(values, c.host_env_path)
+    rollback = (f"npm install -g --allow-scripts={ALLOW_SCRIPTS} openclaw@{current}" if current else "")
+    if _gateway_active(c):
+        healthy = False
+        for _ in range(max(1, int(c.health_wait // 5))):
+            rc, _out = c.run(["openclaw", "health"])
+            if rc == 0:
+                healthy = True
+                break
+            c.sleep(5)
+        if not healthy:
+            hint = f" Roll back with: {rollback}" if rollback else ""
+            return StepResult("openclaw", "failed", f"{new} installed but the gateway does not answer.{hint}")
+    return StepResult("openclaw", "changed", f"{current or 'none'} -> {new}"
+                      + (f" (roll back: {rollback})" if rollback else ""))
+
+
+def find_openclaw_copies(home: Path, path_env: str) -> list[Path]:
+    """Every distinct global openclaw executable: on PATH and in the usual version-manager homes."""
+    seen: dict[str, Path] = {}
+    candidates = [Path(d) / "openclaw" for d in path_env.split(os.pathsep) if d]
+    for pattern in _VERSION_MANAGER_GLOBS:
+        candidates += [d / "openclaw" for d in sorted(home.glob(pattern))]
+    for cand in candidates:
+        if cand.exists():
+            seen.setdefault(str(cand.resolve()), cand)
+    return list(seen.values())
+
+
+def _is_version_managed(copy: Path, home: Path) -> bool:
+    return any(copy.parent == d for pattern in _VERSION_MANAGER_GLOBS for d in home.glob(pattern))
+
+
+def _step_single_copy(c: _Ctx) -> StepResult:
+    copies = find_openclaw_copies(c.home, c.env.get("PATH", os.environ.get("PATH", "")))
+    roots = {str(_package_root(p)): p for p in copies if _package_root(p)}
+    if len(roots) <= 1:
+        return StepResult("single-copy", "satisfied", f"{len(roots)} copy")
+    rc, out = c.run(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "ExecStart", "--value"])
+    running = None
+    for token in (_execstart_argv(out) if rc == 0 else []):
+        m = re.match(r"^(.*/node_modules/openclaw)/", token)
+        if m:
+            running = Path(m.group(1)).resolve()
+            break
+    known = {Path(r).resolve() for r in roots}
+    if running is None or running not in known:
+        return StepResult("single-copy", "refused",
+                          f"{len(roots)} copies found but the running unit's ExecStart does not prove "
+                          "which one it uses; removing blindly could break the gateway")
+    shadowed = [p for r, p in roots.items() if Path(r).resolve() != running
+                and _is_version_managed(p, c.home)]
+    if not shadowed:
+        return StepResult("single-copy", "refused",
+                          "several copies, but none of the extra ones lives under a version manager")
+    detail = []
+    for copy in shadowed:
+        npm = copy.parent / "npm"
+        if not npm.exists():
+            return StepResult("single-copy", "refused", f"no npm next to {copy}; remove it by hand")
+        r = c.mutate("single-copy", [str(npm), "uninstall", "-g", "openclaw"],
+                     f"remove the shadowed copy at {copy}")
+        detail.append(str(copy))
+        if r is None and not c.dry_run:
+            return StepResult("single-copy", "declined", str(copy))
+    if c.dry_run:
+        return StepResult("single-copy", "would-change", "would remove: " + ", ".join(detail))
+    return StepResult("single-copy", "changed", "removed: " + ", ".join(detail))
+
+
+def _unit_facts(c: _Ctx) -> tuple[str, str]:
+    rc, out = c.run(["systemctl", "--user", "cat", GATEWAY_UNIT])
+    return (out if rc == 0 else ""), ("" if rc == 0 else out)
+
+
+def _gateway_unit_problem(c: _Ctx) -> str:
+    text, _err = _unit_facts(c)
+    if not text:
+        return "no gateway unit installed"
+    exec_line = next((ln for ln in text.splitlines() if ln.startswith("ExecStart=")), "")
+    env_path = next((ln for ln in text.splitlines() if ln.startswith("Environment=") and "PATH=" in ln), "")
+    for line in (exec_line, env_path):
+        if any(bad in line for bad in _EPHEMERAL_PATH):
+            return "the unit references an ephemeral path (T07)"
+    first = exec_line.split("=", 1)[1].split()[0] if "=" in exec_line and exec_line.split("=", 1)[1].split() else ""
+    want = c.node_bin
+    if not want or not first.startswith("/"):
+        return "ExecStart does not start with an absolute node path (T07)"
+    if os.path.realpath(first) != os.path.realpath(want):
+        return f"ExecStart runs {first}, not brew's node {want} (T07)"
+    return ""
+
+
+def _step_gateway_unit(c: _Ctx) -> StepResult:
+    problem = _gateway_unit_problem(c)
+    if not problem:
+        return StepResult("gateway-unit", "satisfied", "")
+    oc = shutil.which("openclaw") or "openclaw"
+    entry = os.path.realpath(oc) if os.path.exists(oc) else oc
+    argv = [c.node_bin or "node", entry, "gateway", "install", "--force"]
+    if c.mutate("gateway-unit", argv, f"regenerate the gateway unit ({problem}); the kit does not restart it") is None:
+        return StepResult("gateway-unit", "would-change" if c.dry_run else "declined", problem)
+    after = _gateway_unit_problem(c)
+    if after:
+        return StepResult("gateway-unit", "failed", f"{after}; fix the unit and re-run (T07)")
+    return StepResult("gateway-unit", "changed", "unit regenerated; a restart is needed to pick it up")
+
+
+def _step_boot(c: _Ctx) -> StepResult:
+    user = c.env.get("USER") or os.environ.get("USER", "")
+    rc, linger = c.run(["loginctl", "show-user", user, "-p", "Linger", "--value"])
+    rc2, enabled = c.run(["systemctl", "--user", "is-enabled", GATEWAY_UNIT])
+    need_linger = not (rc == 0 and linger.strip() == "yes")
+    need_enable = not (rc2 == 0 and enabled.strip() == "enabled")
+    if not need_linger and not need_enable:
+        return StepResult("boot", "satisfied", "linger + enabled")
+    ran = False
+    for needed, argv, why in ((need_linger, ["loginctl", "enable-linger", user], "let user services run without a login"),
+                              (need_enable, ["systemctl", "--user", "enable", GATEWAY_UNIT], "start the gateway at boot")):
+        if needed:
+            r = c.mutate("boot", argv, why)
+            ran = ran or r is not None
+            if r is not None and r[0] != 0:
+                return StepResult("boot", "failed", r[1][-200:])
+    if c.dry_run:
+        return StepResult("boot", "would-change")
+    return StepResult("boot", "changed" if ran else "declined")
+
+
+def _step_backup_dirs(c: _Ctx) -> StepResult:
+    base = Path(c.backup_dir)
+    tiers = [base / t for t in ("daily", "weekly", "monthly")]
+    uid = os.getuid()
+    missing = [t for t in tiers if not t.is_dir() or t.stat().st_uid != uid]
+    if not missing:
+        return StepResult("backup-dirs", "satisfied", str(base))
+    user = c.env.get("USER") or os.environ.get("USER", "")
+    argv = ["sudo", "install", "-d", "-o", user, "-m", "0755", *[str(t) for t in tiers]]
+    r = c.mutate("backup-dirs", argv, "create the backup tiers owned by you")
+    if r is None:
+        return StepResult("backup-dirs", "would-change" if c.dry_run else "declined", ", ".join(map(str, missing)))
+    return StepResult("backup-dirs", "changed" if r[0] == 0 else "failed", r[1][-200:])
+
+
+def _step_memory_high(c: _Ctx) -> StepResult:
+    want = _bytes(c.memory_high)
+    rc, cur = c.run(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "MemoryHigh", "--value"])
+    if rc != 0:
+        return StepResult("memory-high", "refused", "the gateway unit is not installed yet")
+    if cur.strip() == str(want):
+        return StepResult("memory-high", "satisfied", c.memory_high)
+    argv = ["systemctl", "--user", "set-property", GATEWAY_UNIT, f"MemoryHigh={c.memory_high}"]
+    r = c.mutate("memory-high", argv, "cap the gateway's memory without a drop-in")
+    if r is None:
+        return StepResult("memory-high", "would-change" if c.dry_run else "declined", f"currently {cur.strip() or 'unset'}")
+    return StepResult("memory-high", "changed" if r[0] == 0 else "failed", r[1][-200:])
+
+
+def _step_units(c: _Ctx) -> StepResult:
+    plan = install_units(c.unit_dir, dry_run=True, runner=c.runner)
+    disabled = []
+    for timer in TIMER_NAMES:
+        rc, out = c.run(["systemctl", "--user", "is-enabled", timer])
+        if not (rc == 0 and out.strip() == "enabled"):
+            disabled.append(timer)
+    if not plan["changed"] and not disabled:
+        return StepResult("units", "satisfied", f"{len(UNIT_NAMES)} units, {len(TIMER_NAMES)} timers")
+    if c.dry_run:
+        c.planned.append(f"units: install {len(plan['changed'])} unit(s), enable {len(disabled) or len(TIMER_NAMES)} timer(s)")
+        return StepResult("units", "would-change", f"{len(plan['changed'])} to write, {len(disabled)} timers off")
+    if not c.confirm("units", "install the openclaw-* units and enable their timers"):
+        return StepResult("units", "declined")
+    result = install_units(c.unit_dir, enable=True, runner=c.runner)
+    c.commands.append(["ai-resources", "openclaw", "install-units", "--enable"])
+    ok = len(result["enabled"]) == len(TIMER_NAMES)
+    return StepResult("units", "changed" if ok else "failed", f"wrote {len(result['changed'])}, enabled {len(result['enabled'])}")
+
+
+_STEP_FUNCS = {"node": _step_node, "openclaw": _step_openclaw, "single-copy": _step_single_copy,
+               "gateway-unit": _step_gateway_unit, "boot": _step_boot, "backup-dirs": _step_backup_dirs,
+               "memory-high": _step_memory_high, "units": _step_units}
+
+
+def bootstrap(runner: Runner = default_runner, *, dry_run: bool = False, only: str | None = None,
+              upgrade: bool = False, memory_high: str = "12G", backup_dir: str | None = None,
+              confirm: Callable[[str, str], bool] = lambda step, what: True,
+              home: Path | None = None, host_env_path: Path | None = None,
+              sleep: Callable[[float], None] = time.sleep, health_wait: float = 60,
+              unit_dir: Path | None = None,
+              out: Callable[[str], None] = print) -> tuple[list[StepResult], _Ctx]:
+    """Eight idempotent steps in a fixed order; each checks first and reports satisfied or changed.
+
+    `dry_run` runs the checks and prints what it WOULD do; nothing is touched. `only` runs one
+    step. `confirm(step, description)` is asked before every change (the wizard passes a real
+    prompt; the headless command passes yes). Never writes openclaw.json, never restarts the
+    gateway; the steps that change the gateway's unit or install a new version say a restart
+    is needed and stop.
+    """
+    if only is not None and only not in BOOTSTRAP_STEPS:
+        raise ValueError(f"unknown step {only!r}; choose from {', '.join(BOOTSTRAP_STEPS)}")
+    env = systemd_env()
+    env.setdefault("USER", os.environ.get("USER", ""))
+    env_file = read_host_env(host_env_path)
+    ctx = _Ctx(runner, dry_run=dry_run, confirm=confirm, home=home or Path.home(), upgrade=upgrade,
+               memory_high=memory_high,
+               backup_dir=backup_dir or env_file.get("OPENCLAW_BACKUP_DIR", "/srv/openclaw-backups"),
+               host_env_path=host_env_path, sleep=sleep, health_wait=health_wait,
+               node_bin=_node_bin(runner, env), env=env, unit_dir=unit_dir)
+    results: list[StepResult] = []
+    for step in BOOTSTRAP_STEPS:
+        if only is not None and step != only:
+            continue
+        try:
+            res = _STEP_FUNCS[step](ctx)
+        except Exception as e:  # noqa: BLE001 - a step must never take the report down with it
+            res = StepResult(step, "failed", f"{type(e).__name__}: {e}")
+        results.append(res)
+        out(f"[{res.status:>12}] {step}: {BOOTSTRAP_TITLES[step]}" + (f"  -- {res.detail}" if res.detail else ""))
+        # A later step cannot succeed on top of a failed or refused earlier one that it depends on.
+        if res.status == "failed" and step in ("node", "openclaw"):
+            break
+    if dry_run:
+        for line in ctx.planned:
+            out(f"  would run  {line}")
+        changing = [r for r in results if r.status == "would-change"]
+        out(f"dry run: {len(changing)} step(s) would change something" if changing
+            else "dry run: nothing to change")
+    return results, ctx
+
+
 # --- CLI ------------------------------------------------------------------------------------------
 
 def cmd_install_units(args: argparse.Namespace) -> int:
@@ -757,6 +1144,16 @@ def cmd_agent_new(args: argparse.Namespace) -> int:
     return 1 if str(res["registered"]).startswith("failed") else 0
 
 
+def cmd_bootstrap(args: argparse.Namespace) -> int:
+    try:
+        results, _ctx = bootstrap(dry_run=args.dry_run, only=args.only or None, upgrade=args.upgrade,
+                                  memory_high=args.memory_high)
+    except ValueError as e:
+        print(f"error: {e}")
+        return 2
+    return 0 if all(r.status in OK_STATUSES for r in results) else 1
+
+
 def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p = sub.add_parser("openclaw", help="OpenClaw host operations (units, doctor, bootstrap, status)")
     verbs = p.add_subparsers(dest="openclaw_verb", metavar="VERB")
@@ -776,6 +1173,13 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_doc.add_argument("--cleanup-sessions", action="store_true",
                        help="Also run `openclaw sessions cleanup --all-agents` inside the drained window")
     p_doc.set_defaults(func=cmd_doctor)
+
+    p_bs = verbs.add_parser("bootstrap", help="Bring a host to the documented state, idempotently")
+    p_bs.add_argument("--dry-run", action="store_true", help="Report what would change; touch nothing")
+    p_bs.add_argument("--only", default="", choices=["", *BOOTSTRAP_STEPS], help="Run a single step")
+    p_bs.add_argument("--upgrade", action="store_true", help="Reinstall the latest openclaw even if one is present")
+    p_bs.add_argument("--memory-high", default="12G", help="MemoryHigh for the gateway unit (default 12G)")
+    p_bs.set_defaults(func=cmd_bootstrap)
 
     p_new = verbs.add_parser("agent-new", help="Give an OpenClaw agent a workspace with the right AGENTS.md")
     p_new.add_argument("agent_id")
