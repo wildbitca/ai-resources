@@ -1,0 +1,182 @@
+# Alerts for the OpenClaw host backups (Grafana, through the Crossplane Grafana provider).
+#
+# A separate RuleGroup from any cluster-backup alerts on purpose: different producer (a systemd
+# user timer on the host, not a cron), different bucket, different blast radius when it rots.
+#
+# QUERY SHAPE, for hard-won reasons:
+#   - it measures `last_schedule_time - last_successful_time`, not `kube_job_status_failed`,
+#     because a failed Job object stays in the CronJob history and would keep the alert
+#     firing forever after the next successful run;
+#   - the threshold sits ABOVE one full period, because while a run is in flight the delta
+#     equals `period - previous_duration`, not zero. A tighter threshold fires on every slow
+#     run. The price is detecting a real failure one period later;
+#   - the "not running" rules take the MAX of `last_schedule_time` and `last_successful_time`:
+#     the first advances whenever the controller creates a Job, and the second covers a freshly
+#     created CronJob that has not reached its first scheduled time yet.
+#
+# WHAT IS AT STAKE: openclaw's config and state, the per-agent databases and secret store,
+# engram's memory, and the hand-written AI config that lives in no repo. Losing the host
+# without these means rebuilding every agent, its routing, its memory and every project rule.
+apiVersion: alerting.grafana.crossplane.io/v1alpha1
+kind: RuleGroup
+metadata:
+  name: grafana-alerts-openclaw-backup
+spec:
+  forProvider:
+    name: OpenClaw backups
+    folderUid: @GRAFANA_FOLDER_UID@
+    intervalSeconds: 300
+    rule:
+    # -- Backups stopped or corrupt ----------------------------------------
+    # The guard (`openclaw-backup-guard`, every 6 h) exits 1 when a tier has a backup that is too
+    # old, missing, suspiciously small or without its `.sha256`. Threshold 25200 s = 7 h, above
+    # the 6 h period so a slow run does not fire it.
+    #
+    # Where to look on the host: `tail -20 ~/.openclaw/logs/backup.log` and
+    # `systemctl --user list-timers 'openclaw-*'`. Known causes: the timer disabled, `linger`
+    # turned off (user timers do not run without a session), a full disk under the backup
+    # directory, or `openclaw backup create` failing its verification.
+    - name: OpenClaw backups stopped or corrupt
+      condition: C
+      for: 15m0s
+      noDataState: OK
+      execErrState: Error
+      labels:
+        severity: critical
+        scope: platform
+        service: @ALERT_SERVICE@
+      annotations:
+        summary: ':floppy_disk: The OpenClaw backups are not up to date'
+        description: 'The last run of `openclaw-backup-guard` did not succeed: at least one tier has a backup that is too old, missing, suspiciously small or without its `.sha256`. Look first at `tail -20 ~/.openclaw/logs/backup.log` on the host and at `systemctl --user list-timers openclaw-*`.'
+        impact: 'Without recent backups, losing the host loses every agent configuration, its memory and the project rules that live in no repo.'
+        runbook_url: "@RUNBOOK_URL@"
+      data:
+      - refId: A
+        datasourceUid: @PROM_DATASOURCE_UID@
+        relativeTimeRange:
+        - from: 43200
+          to: 0
+        model: '{"refId": "A", "expr": "max(kube_cronjob_status_last_schedule_time{cronjob=\"openclaw-backup-guard\"} - kube_cronjob_status_last_successful_time{cronjob=\"openclaw-backup-guard\"}) or vector(-1)", "instant": true, "intervalMs": 300000, "maxDataPoints": 43200}'
+      - refId: B
+        datasourceUid: __expr__
+        relativeTimeRange:
+        - from: 43200
+          to: 0
+        model: '{"refId": "B", "type": "reduce", "datasource": {"type": "__expr__", "uid": "__expr__"}, "reducer": "last", "expression": "A"}'
+      - refId: C
+        datasourceUid: __expr__
+        relativeTimeRange:
+        - from: 43200
+          to: 0
+        model: '{"refId": "C", "type": "threshold", "datasource": {"type": "__expr__", "uid": "__expr__"}, "conditions": [{"type": "query", "evaluator": {"type": "gt", "params": [25200]}}], "expression": "B"}'
+    # -- Backup guard not running ------------------------------------------
+    # This measures RUNS, not successes, on purpose: the guard exits 1 when it finds a stale
+    # backup, which is its job. If this alert only looked at `last_successful_time` it would go
+    # quiet exactly while there is something to watch. Threshold 14 h: more than two 6 h periods.
+    - name: OpenClaw backup guard not running
+      condition: C
+      for: 30m0s
+      noDataState: Alerting
+      execErrState: Error
+      labels:
+        severity: warning
+        scope: platform
+        service: @ALERT_SERVICE@
+      annotations:
+        summary: ':eyes: The OpenClaw backup guard is not running'
+        description: 'More than 14 h without a run of `openclaw-backup-guard`, so nobody is checking the backups. Check that the CronJob exists and is not suspended, and that the hostPath is still mounted.'
+        impact: 'Backup monitoring is blind: they could have been stopped for days without any alert saying so.'
+        runbook_url: "@RUNBOOK_URL@"
+      data:
+      - refId: A
+        datasourceUid: @PROM_DATASOURCE_UID@
+        relativeTimeRange:
+        - from: 43200
+          to: 0
+        model: '{"refId": "A", "expr": "(time() - max by (cronjob) ({__name__=~\"kube_cronjob_status_last_(successful|schedule)_time\", cronjob=\"openclaw-backup-guard\"})) / 3600", "instant": true, "intervalMs": 300000, "maxDataPoints": 43200}'
+      - refId: B
+        datasourceUid: __expr__
+        relativeTimeRange:
+        - from: 43200
+          to: 0
+        model: '{"refId": "B", "type": "reduce", "datasource": {"type": "__expr__", "uid": "__expr__"}, "reducer": "last", "expression": "A"}'
+      - refId: C
+        datasourceUid: __expr__
+        relativeTimeRange:
+        - from: 43200
+          to: 0
+        model: '{"refId": "C", "type": "threshold", "datasource": {"type": "__expr__", "uid": "__expr__"}, "conditions": [{"type": "query", "evaluator": {"type": "gt", "params": [14]}}], "expression": "B"}'
+    # -- Off-box upload failing --------------------------------------------
+    # `openclaw-backup-uploader` runs daily and asserts at the end that the newest daily backup
+    # is in the bucket. Threshold 90000 s = 25 h, above the 24 h period.
+    #
+    # THIS IS WHAT TURNS A LOCAL COPY INTO A BACKUP: while this alert fires, the tarballs live
+    # only on the host's disk, which is exactly the disk you want to be able to lose.
+    - name: OpenClaw off-box upload failing
+      condition: C
+      for: 15m0s
+      noDataState: OK
+      execErrState: Error
+      labels:
+        severity: critical
+        scope: platform
+        service: @ALERT_SERVICE@
+      annotations:
+        summary: ':cloud_with_rain: The OpenClaw backups are not leaving the node'
+        description: 'The last run of `openclaw-backup-uploader` did not succeed: there is no local daily to upload, or the upload failed, or the final check did not find the tarball in the bucket. The Job logs say which of the three.'
+        impact: 'The backups exist only on the disk of the host. Losing the node loses them with it.'
+        runbook_url: "@RUNBOOK_URL@"
+      data:
+      - refId: A
+        datasourceUid: @PROM_DATASOURCE_UID@
+        relativeTimeRange:
+        - from: 172800
+          to: 0
+        model: '{"refId": "A", "expr": "max(kube_cronjob_status_last_schedule_time{cronjob=\"openclaw-backup-uploader\"} - kube_cronjob_status_last_successful_time{cronjob=\"openclaw-backup-uploader\"}) or vector(-1)", "instant": true, "intervalMs": 300000, "maxDataPoints": 43200}'
+      - refId: B
+        datasourceUid: __expr__
+        relativeTimeRange:
+        - from: 172800
+          to: 0
+        model: '{"refId": "B", "type": "reduce", "datasource": {"type": "__expr__", "uid": "__expr__"}, "reducer": "last", "expression": "A"}'
+      - refId: C
+        datasourceUid: __expr__
+        relativeTimeRange:
+        - from: 172800
+          to: 0
+        model: '{"refId": "C", "type": "threshold", "datasource": {"type": "__expr__", "uid": "__expr__"}, "conditions": [{"type": "query", "evaluator": {"type": "gt", "params": [90000]}}], "expression": "B"}'
+    # -- Uploader not running ----------------------------------------------
+    # Threshold 50 h: more than two daily periods.
+    - name: OpenClaw off-box upload not running
+      condition: C
+      for: 30m0s
+      noDataState: Alerting
+      execErrState: Error
+      labels:
+        severity: warning
+        scope: platform
+        service: @ALERT_SERVICE@
+      annotations:
+        summary: ':eyes: The OpenClaw backup uploader is not running'
+        description: 'More than 50 h without a run of `openclaw-backup-uploader`, so nothing is even trying to get the backups off the node. Check that the CronJob exists and is not suspended.'
+        impact: 'There is no new off-box copy and nothing trying to make one.'
+        runbook_url: "@RUNBOOK_URL@"
+      data:
+      - refId: A
+        datasourceUid: @PROM_DATASOURCE_UID@
+        relativeTimeRange:
+        - from: 259200
+          to: 0
+        model: '{"refId": "A", "expr": "(time() - max by (cronjob) ({__name__=~\"kube_cronjob_status_last_(successful|schedule)_time\", cronjob=\"openclaw-backup-uploader\"})) / 3600", "instant": true, "intervalMs": 300000, "maxDataPoints": 43200}'
+      - refId: B
+        datasourceUid: __expr__
+        relativeTimeRange:
+        - from: 259200
+          to: 0
+        model: '{"refId": "B", "type": "reduce", "datasource": {"type": "__expr__", "uid": "__expr__"}, "reducer": "last", "expression": "A"}'
+      - refId: C
+        datasourceUid: __expr__
+        relativeTimeRange:
+        - from: 259200
+          to: 0
+        model: '{"refId": "C", "type": "threshold", "datasource": {"type": "__expr__", "uid": "__expr__"}, "conditions": [{"type": "query", "evaluator": {"type": "gt", "params": [50]}}], "expression": "B"}'

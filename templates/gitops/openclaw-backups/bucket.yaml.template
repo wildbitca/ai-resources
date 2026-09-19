@@ -1,0 +1,80 @@
+# Off-box backup target for an OpenClaw host (Crossplane, GCP Storage).
+#
+# Rendered by `ai-resources openclaw render-gitops-backups`; every marker between at-signs is a value that
+# belongs to the target infrastructure and lives in that repo, never in this kit.
+#
+# What ends up here: one tarball per run produced by openclaw-backup.sh (openclaw's own
+# verified state backup, a consistent engram snapshot, and the hand-written AI config that
+# lives in no repo), each with its .sha256 written last and an INVENTORY.txt inside.
+#
+# Size and cost: tens of MB per tarball. With the retention below (7 daily + 4 weekly +
+# 3 monthly) the bucket holds a few hundred MB. Everything stays on STANDARD on purpose: at
+# this size a colder class only adds early-deletion penalties.
+#
+# Upload path: the uploader CronJob (uploader.yaml), which impersonates an EXISTING service
+# account by workload identity federation. No JSON key is created or installed anywhere and
+# no new service account is introduced.
+---
+apiVersion: storage.gcp.upbound.io/v1beta2
+kind: Bucket
+metadata:
+  name: @BUCKET_NAME@
+  annotations:
+    crossplane.io/external-name: @BUCKET_NAME@
+spec:
+  # Backups are precious: removing the manifest must never delete the data.
+  deletionPolicy: Orphan
+  providerConfigRef:
+    name: @PROVIDER_CONFIG@
+  forProvider:
+    project: @GCP_PROJECT@
+    location: @BUCKET_LOCATION@
+    storageClass: STANDARD
+    uniformBucketLevelAccess: true
+    forceDestroy: false
+    versioning:
+      enabled: false
+    # Remote retention per tier (by object prefix), one day longer than the local rotation
+    # (7 / 4 / 3) so a late upload never lands in an already-expired prefix.
+    lifecycleRule:
+      - action:
+          type: Delete
+        condition:
+          age: 8
+          matchesPrefix:
+            - daily/
+      - action:
+          type: Delete
+        condition:
+          age: 35
+          matchesPrefix:
+            - weekly/
+      - action:
+          type: Delete
+        condition:
+          age: 100
+          matchesPrefix:
+            - monthly/
+      # Manual runs are for debugging, not for keeping.
+      - action:
+          type: Delete
+        condition:
+          age: 8
+          matchesPrefix:
+            - manual/
+---
+# Least privilege: the uploader identity that already exists, object-level admin scoped to
+# THIS bucket only. Zero new IAM principals, zero keys.
+apiVersion: storage.gcp.upbound.io/v1beta2
+kind: BucketIAMMember
+metadata:
+  name: @BUCKET_NAME@-objectadmin-uploader
+spec:
+  deletionPolicy: Orphan
+  providerConfigRef:
+    name: @PROVIDER_CONFIG@
+  forProvider:
+    bucketRef:
+      name: @BUCKET_NAME@
+    role: roles/storage.objectAdmin
+    member: serviceAccount:@UPLOADER_SA_EMAIL@

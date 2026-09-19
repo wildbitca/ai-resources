@@ -200,3 +200,162 @@ def test_host_env_refuses_values_bash_would_execute(tmp_path, bad):
     with pytest.raises(ValueError):
         host.write_host_env({"A": bad}, tmp_path / "e")
     assert not (tmp_path / "e").exists()
+
+
+# --- GitOps backup templates (C08) ------------------------------------------------------------------------
+
+GITOPS = REPO / "templates" / "gitops" / "openclaw-backups"
+GITOPS_FILES = ("bucket.yaml", "uploader.yaml", "guard.yaml", "alerts.yaml")
+# What the reference infrastructure calls things. None of it may appear in the kit: those values
+# live in the infrastructure repo, and a template that carries them is a copy, not a template.
+INFRA_LITERALS = ("wildbit", "bithome", "k3s-backup", "namespace: monitoring", "199022639860", "k3s-oidc", "us-central1",
+                  "grafanacloud-prom", "100.76.", "192.168.")
+FIXTURE_MARKERS = {
+    "GCP_PROJECT": "acme-platform", "BUCKET_NAME": "acme-openclaw-backups", "BUCKET_LOCATION": "EUROPE-WEST1",
+    "PROVIDER_CONFIG": "acme-gcp", "UPLOADER_SA_EMAIL": "backup-uploader@acme-platform.iam.gserviceaccount.com",
+    "UPLOADER_KSA": "backup-uploader", "CRED_CONFIGMAP": "backup-uploader-cred", "WIF_PROJECT_NUMBER": "123456789012",
+    "WIF_POOL": "acme-pool", "WIF_PROVIDER": "acme-oidc", "NODE_NAME": "node-a", "BACKUP_DIR": "/srv/openclaw-backups",
+    "NAMESPACE": "observability", "GRAFANA_FOLDER_UID": "alerting", "PROM_DATASOURCE_UID": "prom-uid",
+    "ALERT_SERVICE": "acme-platform", "RUNBOOK_URL": "https://git.example.org/acme/gitops/blob/main/alerts.yaml",
+}
+
+
+def _gitops_docs() -> dict[str, list]:
+    import yaml
+    rendered = host.render_gitops_backups(FIXTURE_MARKERS)
+    return {name: list(yaml.safe_load_all(text)) for name, text in rendered.items()}
+
+
+def test_there_are_exactly_the_four_gitops_templates():
+    assert {p.name for p in GITOPS.glob("*.template")} == {f"{n}.template" for n in GITOPS_FILES}
+
+
+def test_the_fixture_covers_every_marker_and_nothing_extra():
+    assert set(host.gitops_marker_names()) == set(FIXTURE_MARKERS)
+
+
+@pytest.mark.parametrize("name", GITOPS_FILES)
+def test_a_rendered_gitops_manifest_parses_and_leaves_no_marker(name):
+    text = host.render_gitops_backups(FIXTURE_MARKERS)[name]
+    assert not re.findall(r"@[A-Z][A-Z0-9_]*@", text)
+    assert [d for d in _gitops_docs()[name] if d]
+
+
+@pytest.mark.parametrize("path", sorted(GITOPS.glob("*.template")), ids=lambda p: p.name)
+def test_the_gitops_templates_carry_no_infrastructure_literal_and_are_english(path):
+    text = path.read_text(encoding="utf-8").lower()
+    for literal in INFRA_LITERALS:
+        assert literal not in text, f"{path.name}: {literal}"
+    assert not [c for c in text if c.isalpha() and ord(c) > 127], path.name
+
+
+def test_a_missing_gitops_marker_raises_instead_of_leaving_a_literal():
+    partial = dict(FIXTURE_MARKERS)
+    partial.pop("BUCKET_NAME")
+    with pytest.raises(KeyError, match="BUCKET_NAME"):
+        host.render_gitops_backups(partial)
+
+
+@pytest.mark.parametrize("bad", ["two words", "quo'te", 'dq"', "new\nline", "", "a: b"])
+def test_a_value_that_could_change_the_yaml_structure_is_refused(bad):
+    with pytest.raises(ValueError):
+        host.render_gitops_backups({**FIXTURE_MARKERS, "NODE_NAME": bad})
+
+
+def test_the_bucket_keeps_per_prefix_lifecycle_and_never_deletes_the_data_with_the_manifest():
+    bucket, member = _gitops_docs()["bucket.yaml"]
+    assert bucket["spec"]["deletionPolicy"] == "Orphan" and member["spec"]["deletionPolicy"] == "Orphan"
+    rules = bucket["spec"]["forProvider"]["lifecycleRule"]
+    ages = {r["condition"]["matchesPrefix"][0]: r["condition"]["age"] for r in rules}
+    assert ages == {"daily/": 8, "weekly/": 35, "monthly/": 100, "manual/": 8}
+    assert bucket["spec"]["forProvider"]["uniformBucketLevelAccess"] is True
+    assert bucket["spec"]["forProvider"]["forceDestroy"] is False
+
+
+def test_the_iam_reuses_an_existing_service_account_scoped_to_this_bucket_only():
+    _bucket, member = _gitops_docs()["bucket.yaml"]
+    forp = member["spec"]["forProvider"]
+    assert forp["role"] == "roles/storage.objectAdmin"
+    assert forp["bucketRef"]["name"] == FIXTURE_MARKERS["BUCKET_NAME"]
+    assert forp["member"] == "serviceAccount:" + FIXTURE_MARKERS["UPLOADER_SA_EMAIL"]
+    kinds = {d["kind"] for docs in _gitops_docs().values() for d in docs if d}
+    assert "ServiceAccount" in kinds  # only the guard's own, read-only
+    assert not {"GoogleServiceAccount", "ServiceAccountKey", "Secret"} & kinds
+
+
+def test_there_is_no_json_key_anywhere():
+    for path in GITOPS.glob("*.template"):
+        text = path.read_text(encoding="utf-8")
+        for needle in ("private_key", "GOOGLE_APPLICATION_CREDENTIALS", "service_account.json", "kind: Secret"):
+            assert needle not in text, f"{path.name}: {needle}"
+    uploader = _gitops_docs()["uploader.yaml"][0]
+    volumes = {v["name"]: v for v in uploader["spec"]["jobTemplate"]["spec"]["template"]["spec"]["volumes"]}
+    token = volumes["gcp-wif-token"]["projected"]["sources"][0]["serviceAccountToken"]
+    assert token["audience"].startswith("https://iam.googleapis.com/projects/123456789012/locations/global/"
+                                        "workloadIdentityPools/acme-pool/providers/acme-oidc")
+
+
+def _uploader_script() -> str:
+    uploader = _gitops_docs()["uploader.yaml"][0]
+    return uploader["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["args"][0]
+
+
+def test_the_uploader_skips_a_tarball_without_its_checksum_and_asserts_the_daily_arrived():
+    script = _uploader_script()
+    assert '[ -f "$f.sha256" ] ||' in script and "continue" in script.split('[ -f "$f.sha256" ]')[1].splitlines()[0]
+    assert script.index("gcloud storage cp \"$f\"") < script.index("gcloud storage cp \"$f.sha256\""), \
+        "the checksum is uploaded after the tarball"
+    tail = script.split("newest=")[1]
+    assert 'gcloud storage ls "$BUCKET/daily/$(basename "$newest")"' in tail and "exit 1" in tail
+    assert "set -eu" in script and "|| true" not in script.replace("2>/dev/null | head -1 || true", "")
+    assert "gcloud storage ls" in script.split("UPLOAD")[0], "idempotent: it looks before it copies"
+
+
+def test_the_uploader_mounts_the_backups_read_only():
+    uploader = _gitops_docs()["uploader.yaml"][0]
+    pod = uploader["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    mounts = {m["name"]: m for m in pod["containers"][0]["volumeMounts"]}
+    assert mounts["backups"]["readOnly"] is True and pod["automountServiceAccountToken"] is False
+
+
+def test_the_guard_is_hard_on_daily_and_weekly_and_soft_on_monthly():
+    guard = _gitops_docs()["guard.yaml"][1]
+    script = guard["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert 'LIMITS = {"daily": 36, "weekly": 216, "monthly": 780}' in script
+    assert 'SOFT = {"monthly"}' in script and "MIN_MB = 5.0" in script and ".sha256" in script
+    pod = guard["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    assert pod["securityContext"]["runAsNonRoot"] is True
+    assert pod["containers"][0]["volumeMounts"][0]["readOnly"] is True
+
+
+def test_the_alert_models_are_valid_json_and_watch_both_cronjobs_for_failure_and_silence():
+    import json
+    (group,) = _gitops_docs()["alerts.yaml"]
+    rules = group["spec"]["forProvider"]["rule"]
+    assert len(rules) == 4
+    exprs = []
+    for rule in rules:
+        models = [json.loads(q["model"]) for q in rule["data"]]
+        assert [m["refId"] for m in models] == ["A", "B", "C"] and rule["condition"] == "C"
+        exprs.append(models[0]["expr"])
+        assert rule["data"][0]["datasourceUid"] == FIXTURE_MARKERS["PROM_DATASOURCE_UID"]
+    joined = "\n".join(exprs)
+    for cronjob in ("openclaw-backup-guard", "openclaw-backup-uploader"):
+        assert joined.count(cronjob) == 3  # failure uses it twice, silence once
+    assert "kube_job_status_failed" not in joined, "a failed Job object keeps that alert firing forever"
+    assert sum("} - kube_cronjob_status_last_successful_time" in e for e in exprs) == 2 and sum("last_(successful|schedule)" in e for e in exprs) == 2
+
+
+def test_render_gitops_backups_writes_four_files_and_lists_markers(tmp_path, capsys):
+    import argparse
+    args = argparse.Namespace(list_markers=True, set=[], out="")
+    assert host.cmd_render_gitops_backups(args) == 0
+    assert "WIF_POOL" in capsys.readouterr().out
+    args = argparse.Namespace(list_markers=False, set=[f"{k}={v}" for k, v in FIXTURE_MARKERS.items()],
+                              out=str(tmp_path / "out"))
+    assert host.cmd_render_gitops_backups(args) == 0
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == sorted(GITOPS_FILES)
+    args.set = ["BUCKET_NAME=x"]
+    assert host.cmd_render_gitops_backups(args) == 2
+    args.set = ["novalue"]
+    assert host.cmd_render_gitops_backups(args) == 2

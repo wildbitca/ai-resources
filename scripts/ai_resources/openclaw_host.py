@@ -189,6 +189,42 @@ def render_units(markers: dict[str, str] | None = None,
     return {name: render_unit(name, markers, templates_dir) for name in UNIT_NAMES}
 
 
+# --- GitOps backup templates (C08) -------------------------------------------------------------------
+
+GITOPS_TEMPLATES_DIR_NAME = Path("templates") / "gitops" / "openclaw-backups"
+GITOPS_TEMPLATE_NAMES = ("bucket", "uploader", "guard", "alerts")
+_GITOPS_VALUE = re.compile(r"^[A-Za-z0-9._:/@+-]+$")
+
+
+def gitops_marker_names(templates_dir: Path | None = None) -> list[str]:
+    """Every marker the four backup templates use, sorted. The values belong to the target
+    infrastructure (project, bucket, node, WIF pool ...) and live in its own repo, never here."""
+    templates_dir = templates_dir or (repo_root() / GITOPS_TEMPLATES_DIR_NAME)
+    found: set[str] = set()
+    for name in GITOPS_TEMPLATE_NAMES:
+        found |= set(_MARKER.findall((templates_dir / f"{name}.yaml.template").read_text(encoding="utf-8")))
+    return sorted(found)
+
+
+def render_gitops_backups(markers: dict[str, str], templates_dir: Path | None = None) -> dict[str, str]:
+    """The four GitOps manifests as {"bucket.yaml": text, ...}.
+
+    A marker without a value raises, and so does a value that could change the YAML's structure
+    (whitespace, quotes, a newline): a half-substituted manifest applies fine and fails in the
+    cluster, at the worst time.
+    """
+    templates_dir = templates_dir or (repo_root() / GITOPS_TEMPLATES_DIR_NAME)
+    missing = sorted(set(gitops_marker_names(templates_dir)) - set(markers))
+    if missing:
+        raise KeyError("no value for marker(s) " + ", ".join(missing))
+    for key, value in markers.items():
+        if not _GITOPS_VALUE.match(str(value)):
+            raise ValueError(f"{key}: {value!r} has characters that are not safe in a manifest")
+    return {f"{name}.yaml": _MARKER.sub(lambda m: str(markers[m.group(1)]),
+                                       (templates_dir / f"{name}.yaml.template").read_text(encoding="utf-8"))
+            for name in GITOPS_TEMPLATE_NAMES}
+
+
 def install_units(dest: Path | None = None, *, markers: dict[str, str] | None = None,
                   dry_run: bool = False, enable: bool = False, runner: Runner = default_runner,
                   templates_dir: Path | None = None) -> dict:
@@ -1362,6 +1398,34 @@ def cmd_install_units(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_render_gitops_backups(args: argparse.Namespace) -> int:
+    if args.list_markers:
+        print("\n".join(gitops_marker_names()))
+        return 0
+    markers: dict[str, str] = {}
+    for item in args.set:
+        key, sep, value = item.partition("=")
+        if not sep or not key:
+            print(f"error: --set wants KEY=VALUE, got {item!r}")
+            return 2
+        markers[key] = value
+    try:
+        rendered = render_gitops_backups(markers)
+    except (KeyError, ValueError) as e:
+        print(f"error: {e.args[0] if e.args else e}")
+        return 2
+    if args.out:
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        for name, text in rendered.items():
+            (out / name).write_text(text, encoding="utf-8")
+            print(f"wrote {out / name}")
+    else:
+        for name, text in rendered.items():
+            print(f"# === {name}\n{text}", end="" if text.endswith("\n") else "\n")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     return doctor(force=args.force, dry_run=args.dry_run, cleanup_sessions=args.cleanup_sessions,
                   drain_timeout=args.drain_timeout, health_timeout=args.health_timeout)
@@ -1408,6 +1472,13 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_units.add_argument("--render-only", action="store_true", help="Print the rendered units; write nothing")
     p_units.add_argument("--enable", action="store_true", help="Also enable and start the timers")
     p_units.set_defaults(func=cmd_install_units)
+
+    p_gr = verbs.add_parser("render-gitops-backups",
+                            help="Render the off-box backup manifests (bucket, uploader, guard, alerts) for a GitOps repo")
+    p_gr.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="A marker value (repeatable)")
+    p_gr.add_argument("--out", default="", help="Write the four files here (default: print them)")
+    p_gr.add_argument("--list-markers", action="store_true", help="Print the markers the templates need and stop")
+    p_gr.set_defaults(func=cmd_render_gitops_backups)
 
     p_doc = verbs.add_parser("doctor", help="Run `openclaw doctor --fix` safely: drain, fix, restart, verify")
     p_doc.add_argument("--force", action="store_true", help="Proceed although watchdog.off already exists")

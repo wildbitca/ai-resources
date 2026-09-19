@@ -1,0 +1,122 @@
+# Freshness guard for the OpenClaw host backups.
+#
+# WHY IT EXISTS
+# A backup that stopped happening and a backup nobody knows stopped happening are the same
+# thing until the day it is needed. The producer is a systemd USER timer on the host
+# (openclaw-backup-{daily,weekly,monthly}.timer), and a user timer is easy to lose: it dies
+# quietly with a disabled unit, a full disk, or `linger` turned off.
+#
+# WHAT IT CHECKS
+# Per tier, the AGE of the newest tarball against a limit (timer interval plus margin), its
+# SIZE (a tarball under 5 MB is not a backup of this setup) and that its .sha256 exists.
+# It does NOT check that the tarball restores: only a real restore proves that, and the
+# restore has not been rehearsed (see the DR runbook).
+#
+# WHY monthly IS SOFT
+# The monthly tier is empty until the first day of the month after install. An empty monthly
+# is reported but does not fail the Job, otherwise the guard would cry wolf for weeks.
+# daily and weekly are hard: if either is missing, something is broken.
+#
+# HOW IT ALERTS
+# Stale backups make the Job fail, and the alert rules (alerts.yaml) watch the CronJob.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openclaw-backup-guard
+  namespace: @NAMESPACE@
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openclaw-backup-guard
+  namespace: @NAMESPACE@
+spec:
+  # Every 6 hours. The tightest tier is daily with a 36 h limit, so this cadence notices a
+  # stopped backup well inside two days.
+  schedule: "20 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 1800
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 21600
+      template:
+        spec:
+          serviceAccountName: openclaw-backup-guard
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          nodeName: @NODE_NAME@
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+          containers:
+            - name: guard
+              image: python:3.13-alpine
+              command: ["python3", "-c"]
+              args:
+                - |
+                  import os, sys, time
+
+                  BASE = "@BACKUP_DIR@"
+                  # Hours a tier may go without a new tarball: timer interval + margin.
+                  LIMITS = {"daily": 36, "weekly": 216, "monthly": 780}
+                  # monthly has no history until the first of the month: report, do not fail.
+                  SOFT = {"monthly"}
+                  MIN_MB = 5.0
+
+                  now = time.time()
+                  failures = []
+                  for tier, hours in sorted(LIMITS.items()):
+                      d = os.path.join(BASE, tier)
+                      soft = tier in SOFT
+                      if not os.path.isdir(d):
+                          print(f"  MISSING {tier}: the directory does not exist")
+                          if not soft:
+                              failures.append(f"{tier}: {d} does not exist")
+                          continue
+                      tars = [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".tar.gz")]
+                      if not tars:
+                          print(f"  EMPTY   {tier}: no backup at all" + (" (soft tier)" if soft else ""))
+                          if not soft:
+                              failures.append(f"{tier}: no tarball")
+                          continue
+                      newest = max(tars, key=os.path.getmtime)
+                      age = (now - os.path.getmtime(newest)) / 3600
+                      size = os.path.getsize(newest) / 1e6
+                      state = "OK     " if age <= hours else "STALE  "
+                      print(f"  {state} {tier}: {os.path.basename(newest)}  {age:.1f}h  {size:.0f} MB  (limit {hours}h)")
+                      if age > hours:
+                          failures.append(f"{tier}: {age:.0f}h old, limit {hours}h")
+                      # A tarball under 5 MB is not a backup of this setup.
+                      if size < MIN_MB:
+                          failures.append(f"{tier}: the newest tarball is {size:.2f} MB, suspiciously small")
+                          print(f"  SMALL   {tier}: {size:.2f} MB")
+                      # Without its .sha256 beside it the tarball is not closed.
+                      if not os.path.exists(newest + ".sha256"):
+                          failures.append(f"{tier}: the newest tarball has no .sha256")
+                          print(f"  NOSHA   {tier}: {os.path.basename(newest)}.sha256 is missing")
+
+                  if failures:
+                      print("FAIL: " + "; ".join(failures))
+                      sys.exit(1)
+                  print("daily and weekly are up to date")
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 64Mi
+              volumeMounts:
+                # READ ONLY: this guard looks, it does not touch. The tarballs are 0644 and
+                # owned by the host user, so uid 65534 reads them without privileges.
+                - name: backups
+                  mountPath: @BACKUP_DIR@
+                  readOnly: true
+          volumes:
+            - name: backups
+              hostPath:
+                path: @BACKUP_DIR@
+                type: Directory

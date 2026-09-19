@@ -1,0 +1,120 @@
+# Off-box upload of the OpenClaw host backups, with NO JSON KEY.
+#
+# WHAT IT CLOSES
+# The setup that runs the AI agents (openclaw config and state, the agent databases and
+# secret store, engram's memory, the hand-written config in ~/.claude and ~/.config/shell)
+# lives on the node's disk, the same disk the cluster backups exist to survive. A local copy
+# is not a backup.
+#
+# HOW IT AUTHENTICATES
+# It reuses an identity the cluster already has: a Kubernetes ServiceAccount federated to a
+# GCP service account through workload identity federation (the projected token below and a
+# credential-configuration ConfigMap). Nothing new is granted beyond the BucketIAMMember in
+# bucket.yaml.
+#
+# THE .sha256 IS THE WITNESS
+# The producer writes the checksum LAST. A tarball without its sibling checksum is still
+# being written, so this job skips it: uploading a half-written tarball is worse than
+# uploading nothing, because it would look like a recovery point.
+#
+# IT ASSERTS, IT DOES NOT ONLY TRY
+# At the end it checks that the newest local daily tarball is really in the bucket and fails
+# otherwise. Without that, a silent upload failure leaves this job green and everyone
+# believing there is an off-box backup.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openclaw-backup-uploader
+  namespace: @NAMESPACE@
+spec:
+  # 04:40, after the daily backup timer on the host (03:30 + jitter) has closed its file.
+  schedule: "40 4 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          serviceAccountName: @UPLOADER_KSA@
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          nodeName: @NODE_NAME@
+          containers:
+            - name: uploader
+              image: google/cloud-sdk:alpine
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  BUCKET=gs://@BUCKET_NAME@
+                  export CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=/etc/gcp/credential.json
+                  export CLOUDSDK_CORE_PROJECT=@GCP_PROJECT@
+
+                  uploaded=0
+                  for tier in daily weekly monthly; do
+                    d="@BACKUP_DIR@/$tier"
+                    [ -d "$d" ] || { echo "  $tier: directory does not exist"; continue; }
+                    for f in "$d"/*.tar.gz; do
+                      [ -e "$f" ] || continue
+                      [ -f "$f.sha256" ] || { echo "  SKIP    $(basename "$f") (still being written)"; continue; }
+                      n=$(basename "$f")
+                      if gcloud storage ls "$BUCKET/$tier/$n" >/dev/null 2>&1; then
+                        echo "  ALREADY $tier/$n"
+                        continue
+                      fi
+                      echo "  UPLOAD  $tier/$n ($(du -h "$f" | cut -f1))"
+                      gcloud storage cp "$f" "$BUCKET/$tier/$n"
+                      gcloud storage cp "$f.sha256" "$BUCKET/$tier/$n.sha256"
+                      uploaded=$((uploaded+1))
+                    done
+                  done
+                  echo "uploaded in this pass: $uploaded"
+
+                  newest=$(ls -1t @BACKUP_DIR@/daily/*.tar.gz 2>/dev/null | head -1 || true)
+                  if [ -z "$newest" ]; then
+                    echo "ERROR: there is no daily backup on disk to upload."
+                    echo "The host timer is producing nothing: look at ~/.openclaw/logs/backup.log"
+                    exit 1
+                  fi
+                  if ! gcloud storage ls "$BUCKET/daily/$(basename "$newest")" >/dev/null 2>&1; then
+                    echo "ERROR: the newest daily backup is NOT in the bucket."
+                    exit 1
+                  fi
+                  echo "OK: the newest daily backup is off-box"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+              volumeMounts:
+                - name: backups
+                  mountPath: @BACKUP_DIR@
+                  readOnly: true
+                - name: cred
+                  mountPath: /etc/gcp
+                  readOnly: true
+                - name: gcp-wif-token
+                  mountPath: /var/run/secrets/gcp
+                  readOnly: true
+          volumes:
+            - name: backups
+              hostPath:
+                path: @BACKUP_DIR@
+                type: Directory
+            - name: cred
+              configMap:
+                name: @CRED_CONFIGMAP@
+            - name: gcp-wif-token
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: https://iam.googleapis.com/projects/@WIF_PROJECT_NUMBER@/locations/global/workloadIdentityPools/@WIF_POOL@/providers/@WIF_PROVIDER@
+                      expirationSeconds: 3600
+                      path: token
