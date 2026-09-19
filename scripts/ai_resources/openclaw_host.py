@@ -607,6 +607,116 @@ def mcp_latest_findings(doc: dict) -> list[str]:
     return sorted(out)
 
 
+# --- agent workspaces: AGENTS.md templates and `agent-new` (C04) --------------------------------------
+
+AGENTS_TEMPLATES = {
+    "orchestrator": "AGENTS.orchestrator.template.md",
+    "umbrella": "AGENTS.workspace-umbrella.template.md",
+    "repo": "AGENTS.workspace-repo.template.md",
+}
+# What OpenClaw injects from a workspace, none of which belongs in the project's history.
+OPENCLAW_WORKSPACE_FILES = ("AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md", "DREAMS.md",
+                            "DOCS.md", "TOPIC-ROUTING.md", "memory/")
+_AGENT_ID = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
+TOPIC_REMINDER = ("A Telegram topic keeps its old context: send /new in the topic once so the agent "
+                  "starts with this AGENTS.md (T19). Binding the topic is done with "
+                  "`openclaw config set channels.telegram.groups[...]`; the kit never edits channels.")
+
+
+def detect_workspace_kind(workspace: Path | str, runner: Runner = default_runner) -> str:
+    """`repo` for a checkout with tracked files and a remote; `umbrella` for everything else.
+
+    An umbrella is a directory that groups repositories: it is not a repository, or it is one
+    with no commits and no remote. Anything ambiguous is an umbrella, because the umbrella
+    template only warns harder against committing in the wrong place.
+    """
+    ws = str(workspace)
+    rc, top = runner(["git", "-C", ws, "rev-parse", "--show-toplevel"])
+    if rc != 0 or not top.strip():
+        return "umbrella"
+    rc, files = runner(["git", "-C", ws, "ls-files"])
+    tracked = len([ln for ln in files.splitlines() if ln.strip()]) if rc == 0 else 0
+    rc, remotes = runner(["git", "-C", ws, "remote"])
+    has_remote = rc == 0 and bool(remotes.strip())
+    return "repo" if tracked > 0 and has_remote else "umbrella"
+
+
+def render_agents_md(kind: str, agent_id: str, agent_name: str | None = None) -> str:
+    text = (repo_root() / "templates" / AGENTS_TEMPLATES[kind]).read_text(encoding="utf-8")
+    return _MARKER.sub(lambda m: {"AGENT_ID": agent_id, "AGENT_NAME": agent_name or agent_id}
+                       .get(m.group(1), m.group(0)), text)
+
+
+def add_to_git_exclude(workspace: Path, names: tuple[str, ...] = OPENCLAW_WORKSPACE_FILES) -> bool:
+    """Append the OpenClaw files to .git/info/exclude, once. False when there is nothing to do."""
+    git_dir = workspace / ".git"
+    if not git_dir.is_dir():
+        return False
+    exclude = git_dir / "info" / "exclude"
+    try:
+        current = exclude.read_text(encoding="utf-8")
+    except OSError:
+        current = ""
+    have = {ln.strip() for ln in current.splitlines()}
+    missing = [n for n in names if n not in have]
+    if not missing:
+        return False
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    block = "" if not current or current.endswith("\n") else "\n"
+    if "# OpenClaw workspace files (ai-resources)" not in current:
+        block += "# OpenClaw workspace files (ai-resources)\n"
+    exclude.write_text(current + block + "\n".join(missing) + "\n", encoding="utf-8")
+    return True
+
+
+def write_agents_md(workspace: Path, kind: str, agent_id: str, *, force: bool = False,
+                    agent_name: str | None = None) -> str:
+    """Returns `written`, `overwritten` or `kept` (an existing file is never replaced without force)."""
+    target = workspace / "AGENTS.md"
+    existed = target.exists()
+    if existed and not force:
+        return "kept"
+    workspace.mkdir(parents=True, exist_ok=True)
+    target.write_text(render_agents_md(kind, agent_id, agent_name), encoding="utf-8")
+    return "overwritten" if existed else "written"
+
+
+def agent_new(agent_id: str, workspace: Path | str, *, kind: str | None = None, force: bool = False,
+              model: str = "", register: bool = True, runner: Runner = default_runner,
+              openclaw_bin: str | None = None) -> dict:
+    """Give an OpenClaw agent a workspace with the right AGENTS.md.
+
+    Registers the agent through OpenClaw's own `agents add` (which also creates its agentDir and
+    session store, and is a validated writer), never through openclaw.json. Refuses to overwrite an
+    existing AGENTS.md without `force`. The Telegram topic binding is not done here: it lives in
+    `channels`, which the kit never edits.
+    """
+    if not _AGENT_ID.match(agent_id):
+        raise ValueError("the agent id must be lowercase letters, digits and dashes, starting with a letter")
+    ws = Path(workspace).expanduser().resolve()
+    if not ws.is_dir():
+        raise FileNotFoundError(f"workspace does not exist: {ws}")
+    kind = kind or detect_workspace_kind(ws, runner)
+    if kind not in AGENTS_TEMPLATES:
+        raise ValueError(f"unknown workspace kind {kind!r}")
+    result: dict = {"kind": kind, "workspace": str(ws), "agents_md": write_agents_md(ws, kind, agent_id, force=force)}
+    result["excluded"] = add_to_git_exclude(ws)
+    result["registered"] = None
+    if register:
+        oc = openclaw_bin or resolve_openclaw_bin()
+        rc, listing = runner([oc, "agents", "list", "--json"])
+        if rc == 0 and re.search(rf'"id"\s*:\s*"{re.escape(agent_id)}"', listing):
+            result["registered"] = "existing"
+        else:
+            args = [oc, "agents", "add", agent_id, "--workspace", str(ws), "--non-interactive"]
+            if model:
+                args += ["--model", model]
+            rc, out = runner(args)
+            result["registered"] = "added" if rc == 0 else f"failed: {out[-200:]}"
+    result["reminder"] = TOPIC_REMINDER
+    return result
+
+
 # --- CLI ------------------------------------------------------------------------------------------
 
 def cmd_install_units(args: argparse.Namespace) -> int:
@@ -631,6 +741,22 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                   drain_timeout=args.drain_timeout, health_timeout=args.health_timeout)
 
 
+def cmd_agent_new(args: argparse.Namespace) -> int:
+    try:
+        res = agent_new(args.agent_id, args.workspace, kind=args.kind or None, force=args.force,
+                        model=args.model, register=not args.no_register)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"error: {e}")
+        return 2
+    print(f"workspace {res['workspace']} ({res['kind']}): AGENTS.md {res['agents_md']}")
+    if res["excluded"]:
+        print("added the OpenClaw files to .git/info/exclude")
+    if res["registered"]:
+        print(f"agent {args.agent_id}: {res['registered']}")
+    print(res["reminder"])
+    return 1 if str(res["registered"]).startswith("failed") else 0
+
+
 def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p = sub.add_parser("openclaw", help="OpenClaw host operations (units, doctor, bootstrap, status)")
     verbs = p.add_subparsers(dest="openclaw_verb", metavar="VERB")
@@ -650,5 +776,15 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_doc.add_argument("--cleanup-sessions", action="store_true",
                        help="Also run `openclaw sessions cleanup --all-agents` inside the drained window")
     p_doc.set_defaults(func=cmd_doctor)
+
+    p_new = verbs.add_parser("agent-new", help="Give an OpenClaw agent a workspace with the right AGENTS.md")
+    p_new.add_argument("agent_id")
+    p_new.add_argument("workspace")
+    p_new.add_argument("--kind", choices=sorted(AGENTS_TEMPLATES), default="",
+                       help="Template (default: detected from the workspace)")
+    p_new.add_argument("--force", action="store_true", help="Overwrite an existing AGENTS.md")
+    p_new.add_argument("--model", default="", help="Model ref for the new agent")
+    p_new.add_argument("--no-register", action="store_true", help="Write the files only; do not run `openclaw agents add`")
+    p_new.set_defaults(func=cmd_agent_new)
 
     p.set_defaults(func=lambda a: (p.print_help(), 1)[1])
