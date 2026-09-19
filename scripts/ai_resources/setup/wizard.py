@@ -1210,13 +1210,17 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
 
 def _openclaw_status_line(s: state.SetupState) -> str:
     """One-line OpenClaw summary for the end of step 9, in either setup mode. "" if unapplied."""
+    from .cockpits import _openclaw_host as _host_section
+
+    host_line = _host_section.status_line(s)
     if not s.openclaw.applied:
-        return ""
+        return host_line
     worker = f", worker {s.openclaw.worker_model}" if s.openclaw.engine == "antigravity" else ""
-    return (
+    line = (
         f"OpenClaw: engine {s.openclaw.engine} → {s.openclaw.model}{worker}  "
         f"(plugin linked: {s.openclaw.plugin_linked}, risk acknowledged: {s.openclaw.risk_acknowledged})"
     )
+    return f"{line}\n{host_line}" if host_line else line
 
 
 # --- Step 9 dry-run preview ------------------------------------------------------

@@ -68,6 +68,7 @@ from ... import repo_root
 from . import _shared
 from . import _openclaw_mcp as mcp
 from . import _openclaw_voice as voice
+from . import _openclaw_host as host_section
 from . import _agy_quota
 from ... import openclaw_host
 
@@ -518,6 +519,7 @@ def prompt(s: state.SetupState, *, dry_run: bool = False) -> None:
     if s.openclaw.engine == "claude-code":
         mcp.prompt(s, _get(read_config(config_path()), "mcp", "servers") or {})
     voice.prompt(s)
+    host_section.prompt(s)
 
 
 def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
@@ -630,7 +632,11 @@ def configure(ctx: dict) -> list[Path]:
     engine_changed = _configure_engine(ctx, doc, path, ak_path, written)
     mcp_changed = _configure_mcp(s, doc, path, written, dry_run=dry_run)
     voice_changed = _configure_voice(s, doc, path, ak_path, written, dry_run=dry_run)
-    if dry_run or not (engine_changed or mcp_changed or voice_changed):
+    # Above the early return below on purpose: the host section's local work (kit-host.env, hooks,
+    # AGENTS.md) does not depend on openclaw.json having changed, and it renders its own dry run.
+    host_changed = host_section.configure(s, doc, ak_path, written, dry_run=dry_run,
+                                          apply_patch=apply_patch, oc=_openclaw, config_path=path)
+    if dry_run or not (engine_changed or mcp_changed or voice_changed or host_changed):
         return written
 
     agents_md = workspace_dir(doc) / "AGENTS.md"
@@ -1049,14 +1055,18 @@ def _teardown_voice(s: state.SetupState) -> bool:
 
 def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
-    if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored):
+    if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored
+            or host_section.applied_any(s.openclaw)):
         return []
     doc = read_config(config_path())
+    # Reverse order of configure(): the host section ran last, so it is undone first.
+    host_ok = host_section.teardown(s, apply_patch=apply_patch, oc=_openclaw) \
+        if host_section.applied_any(s.openclaw) else True
     engine_ok = _teardown_engine(s) if s.openclaw.applied else True
     mcp_ok = _teardown_mcp(s) if s.openclaw.mcp_mirrored else True
     voice_ok = _teardown_voice(s) if s.openclaw.voice_applied else True
     removed: list[str] = []
-    if not (engine_ok and mcp_ok and voice_ok):
+    if not (engine_ok and mcp_ok and voice_ok and host_ok):
         return removed
     removed.append(str(config_path()))
 

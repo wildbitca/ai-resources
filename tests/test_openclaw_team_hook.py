@@ -415,3 +415,25 @@ def test_the_always_on_kit_merge_does_not_touch_the_openclaw_hooks(tmp_path):
     claude._shared.merge_kit_hooks(path, {}, claude._is_kit_hook_command)
     assert path.read_bytes() == before
 
+
+def test_legacy_entries_are_recorded_then_restored_around_an_install_and_a_remove(tmp_path):
+    path = tmp_path / "settings.json"
+    original = _legacy_settings()
+    path.write_text(json.dumps(original), encoding="utf-8")
+    recorded = claude.legacy_openclaw_entries(path)
+    assert sorted(r["event"] for r in recorded) == ["PreToolUse", "Stop", "SubagentStop", "UserPromptSubmit"]
+    assert all(LEGACY in [h["command"] for h in r["entry"]["hooks"]] for r in recorded)
+
+    claude.install_openclaw_hooks("/kit", team=True, guard=False, settings_path=path)
+    assert claude.legacy_openclaw_entries(path) == []
+    claude.remove_openclaw_hooks(path)
+    assert claude.restore_legacy_openclaw_hooks(recorded, path) is True
+
+    assert json.loads(path.read_text(encoding="utf-8")) == original
+    assert claude.restore_legacy_openclaw_hooks(recorded, path) is False, "restoring twice adds nothing"
+
+
+def test_restoring_with_nothing_recorded_never_creates_the_settings_file(tmp_path):
+    path = tmp_path / "settings.json"
+    assert claude.restore_legacy_openclaw_hooks([], path) is False
+    assert not path.exists()

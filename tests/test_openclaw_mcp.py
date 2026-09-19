@@ -325,7 +325,11 @@ def test_missing_gateway_env_is_reported_by_name_only(tmp_path, monkeypatch, cap
     out = capsys.readouterr()
     text = out.out + out.err
     assert "SUPABASE_ACCESS_TOKEN" in text and "OPENROUTER_API_KEY" not in text
-    assert str(tmp_path / ".env") in text and "openclaw gateway restart" in text
+    # rich wraps at the console width (80 columns off a TTY) and folds a long tmp path, so compare
+    # with all whitespace removed rather than depending on where the lines happen to break.
+    squashed = "".join(text.split())
+    assert "".join(str(tmp_path / ".env").split()) in squashed
+    assert "".join("openclaw gateway restart".split()) in squashed
     assert "fake" not in text
 
 
@@ -394,11 +398,16 @@ def test_openclaw_prompt_asks_only_for_the_claude_code_engine(monkeypatch, tmp_p
     monkeypatch.setattr(openclaw.voice, "prompt", lambda s: None)
     monkeypatch.setattr(openclaw, "config_path", lambda: tmp_path / "missing.json")
     monkeypatch.setattr(mcp, "prompt", lambda s, servers, home=None: asked.append(s.openclaw.engine))
+    # The host section asks its master question after the engine sections; answer it "no".
+    host_asked: list[str] = []
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=False, **_k: host_asked.append(msg) or False)
     for engine in ("claude-code", "direct", "keep"):
         s = state.SetupState()
         s.openclaw.engine = engine
         openclaw.prompt(s)
+        assert s.openclaw.host is False
     assert asked == ["claude-code"]
+    assert len(host_asked) == 3 and all("OpenClaw host" in m for m in host_asked)
 
 
 def test_mcp_state_survives_a_save_and_load(tmp_path, monkeypatch):

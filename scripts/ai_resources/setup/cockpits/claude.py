@@ -152,12 +152,73 @@ def _openclaw_hooks(ak_path: str, *, team: bool = True, guard: bool = True) -> d
     return out
 
 
+def legacy_openclaw_entries(settings_path: Path | None = None) -> list[dict]:
+    """The hand-installed legacy team-hook registrations in settings.json, as
+    [{"event": ..., "entry": {...}}] where each entry carries ONLY the legacy hook(s).
+
+    Read-only. Recorded before `install_openclaw_hooks` replaces them so teardown can put them back.
+    """
+    path = settings_path or SETTINGS_PATH
+    try:
+        hooks = json.loads(path.read_text(encoding="utf-8")).get("hooks", {})
+    except (OSError, ValueError, AttributeError):
+        return []
+    found: list[dict] = []
+    for event, entries in (hooks.items() if isinstance(hooks, dict) else []):
+        for entry in entries if isinstance(entries, list) else []:
+            if not (isinstance(entry, dict) and isinstance(entry.get("hooks"), list)):
+                continue
+            legacy = [h for h in entry["hooks"]
+                      if isinstance(h, dict) and _is_legacy_openclaw_hook_command(str(h.get("command", "")))]
+            if legacy:
+                found.append({"event": event, "entry": {**entry, "hooks": legacy}})
+    return found
+
+
+def restore_legacy_openclaw_hooks(recorded: list[dict], settings_path: Path | None = None) -> bool:
+    """Put back the registrations `legacy_openclaw_entries` recorded. Idempotent: an entry whose
+    command is already registered under that event is not added twice. True when the file changed.
+    The entry goes at the end of its event's list (its original position is not recorded)."""
+    if not recorded:
+        return False
+    path = settings_path or SETTINGS_PATH
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        ui.warn(f"{path} is not valid JSON: the legacy OpenClaw hook was not restored.")
+        return False
+    if not isinstance(settings, dict) or not isinstance(settings.get("hooks", {}), dict):
+        return False
+    hooks = settings.setdefault("hooks", {})
+    changed = False
+    for item in recorded:
+        event, entry = item.get("event"), item.get("entry")
+        if not (isinstance(event, str) and isinstance(entry, dict)):
+            continue
+        current = hooks.setdefault(event, [])
+        if not isinstance(current, list):
+            continue
+        present = {h.get("command") for e in current if isinstance(e, dict)
+                   for h in (e.get("hooks") or []) if isinstance(h, dict)}
+        if all(h.get("command") in present for h in entry.get("hooks", [])):
+            continue
+        current.append(entry)
+        changed = True
+    if not changed:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return True
+
+
 def install_openclaw_hooks(ak_path: str, *, team: bool, guard: bool,
                            settings_path: Path | None = None) -> bool:
     """Make ~/.claude/settings.json carry exactly the requested OpenClaw hooks.
 
     Earlier kit entries are replaced (so a second run is a byte-level no-op) and, when the team
     hook is wanted, the hand-installed legacy copy is replaced too. The user's own hooks stay.
+    The legacy entries are NOT recorded here: call `legacy_openclaw_entries` first and hand the
+    result to `restore_legacy_openclaw_hooks` on teardown, which is what puts them back.
     Returns True when the file changed.
     """
     def ours(command: str) -> bool:
@@ -168,7 +229,9 @@ def install_openclaw_hooks(ak_path: str, *, team: bool, guard: bool,
 
 
 def remove_openclaw_hooks(settings_path: Path | None = None) -> bool:
-    """Undo `install_openclaw_hooks`. The legacy hand-installed copy is not the kit's to remove."""
+    """Undo `install_openclaw_hooks` for the kit's own entries. It does not restore the legacy
+    hand-installed copy that install replaced: `restore_legacy_openclaw_hooks` does, from the
+    entries the caller recorded."""
     return _shared.merge_kit_hooks(settings_path or SETTINGS_PATH, {}, _is_openclaw_hook_command)
 
 

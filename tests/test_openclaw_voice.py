@@ -110,10 +110,13 @@ def _answers(monkeypatch, *answers):
 def test_openclaw_prompt_asks_about_voice_notes(monkeypatch):
     monkeypatch.setattr(openclaw, "_prompt_engine", lambda s, **_k: None)
     asked = _answers(monkeypatch, "cloud", "es")
+    # The host section's master question follows the voice question; answering "no" ends it there.
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=False, **_k: False)
     s = state.SetupState()
     openclaw.prompt(s)
     assert asked[0][0] == "Voice notes: how should OpenClaw transcribe them?"
     assert len(asked) == 2, "cloud asks the language, not the correction"
+    assert s.openclaw.host is False
     assert (s.openclaw.voice, s.openclaw.voice_language) == ("cloud", "es")
 
 

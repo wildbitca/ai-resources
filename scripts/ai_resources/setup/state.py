@@ -194,6 +194,34 @@ class OpenClawState:
     # (in `configure()` when switching away, and in `teardown()`), so a switch from
     # antigravity to any other engine is never mistaken for "nothing to restore".
     antigravity_applied: bool = False
+    # OpenClaw host section (cockpits/_openclaw_host.py). Every answer defaults to "no": a first
+    # unattended run never changes how a live host behaves.
+    host: bool = False                # the master answer: this machine runs the gateway
+    host_narration: str = ""          # team narration into Telegram: "" (off) | milestones | every-step
+    host_guard: bool = False          # the gateway guard hook (denies an undrained gateway stop)
+    host_units: bool = False          # the ten openclaw-* systemd units (backup, watchdog, ...)
+    host_config: bool = False         # the canonical config block (profiles/openclaw-host.json5)
+    host_workboard: bool = True       # `openclaw plugins enable workboard` (asked; defaults to yes)
+    host_agents_md: bool = False      # AGENTS.md templates for workspaces that have none
+    host_check: bool = False          # report (and offer to fix) what `openclaw bootstrap` finds
+    host_domain: str = ""             # public host name of the control UI (no scheme)
+    host_pod_cidr: str = ""           # CIDR of the ingress that reaches the gateway
+    host_operator_id: str = ""        # numeric Telegram id that failure notices go to
+    host_backup_dir: str = ""         # where the backup tiers live
+    # What the last configure() applied, so teardown removes exactly that and nothing else.
+    host_hooks_applied: bool = False
+    host_units_previous: dict[str, Any] = field(default_factory=dict)  # unit file -> text before (None: absent)
+    host_units_applied: bool = False
+    # Timers the kit enabled (they were not enabled before), so teardown disables exactly those.
+    host_timers_enabled: list[str] = field(default_factory=list)
+    # Hand-installed legacy team-hook registrations the kit replaced: [{"event", "entry"}], put back
+    # by teardown.
+    host_legacy_hooks: list[Any] = field(default_factory=list)
+    host_config_changes: list[Any] = field(default_factory=list)       # leaves changed, with their old values
+    host_workboard_applied: str = ""  # "" | enabled-by-kit | already-enabled
+    host_agents_md_written: dict[str, str] = field(default_factory=dict)  # path -> sha256 of what was written
+    host_env_previous: dict[str, Any] = field(default_factory=dict)    # kit-host.env key -> value before (None: absent)
+    host_env_created: bool = False
 
 
 @dataclass
@@ -292,10 +320,14 @@ def save(state: SetupState) -> None:
     state.last_run = datetime.now(timezone.utc).isoformat()
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(_to_dict(state), default_flow_style=False, sort_keys=False),
-        encoding="utf-8",
-    )
+    text = yaml.safe_dump(_to_dict(state), default_flow_style=False, sort_keys=False)
+    # The state records what the kit replaced on the host (previous config values, unit texts),
+    # so it is owner-only: created 0600 (no window where it is world-readable) and tightened
+    # when an older run left it wider.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.chmod(path, 0o600)
 
 
 def is_first_run() -> bool:

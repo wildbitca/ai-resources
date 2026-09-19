@@ -34,6 +34,9 @@ class _FakeConsole:
     def print(self, *_a, **_k):
         pass
 
+    def rule(self, *_a, **_k):
+        pass
+
 
 @pytest.fixture
 def dry_run_env(monkeypatch):

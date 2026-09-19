@@ -531,6 +531,15 @@ def assert_channels_safe(patch: dict, replace_paths: list[str] | None = None) ->
         raise ValueError("a host patch may only touch channels.telegram.streaming")
 
 
+_SECRET_KEY = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential)", re.IGNORECASE)
+
+
+def is_secret_path(path: list[str]) -> bool:
+    """A leaf whose value can be a literal credential (a token may be pasted in as a string).
+    Its previous value is never recorded: setup-state.yaml must not become a second copy."""
+    return bool(path) and bool(_SECRET_KEY.search(str(path[-1])))
+
+
 def build_host_patch(profile: dict, doc: dict, values: dict[str, str]) -> dict:
     """The minimal patch that makes `doc` canonical.
 
@@ -569,7 +578,11 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str]) -> dict:
         for k in path[:-1]:
             cur = cur.setdefault(k, {})
         cur[path[-1]] = wanted
-        change = {"path": path, "previous": current if had else None, "had": had}
+        secret = is_secret_path(path)
+        # A secret leaf records that it existed and nothing of its value.
+        change = {"path": path, "previous": None if secret else (current if had else None), "had": had}
+        if secret:
+            change["secret"] = True
         if not had:
             # Restore deletes the highest ancestor the kit created, not just the leaf, so a
             # teardown does not leave empty `model: {}` shells behind.
@@ -587,6 +600,10 @@ def restore_patch(changes: list[dict]) -> tuple[dict, list[str]]:
     patch: dict = {}
     replace_paths: list[str] = []
     for ch in changes:
+        if ch.get("secret") and ch["had"]:
+            # The old value was never stored, so there is nothing to put back. Deleting the leaf
+            # would destroy a credential; leave it and let the operator run `openclaw configure`.
+            continue
         path = ch["path"] if ch["had"] else ch.get("delete", ch["path"])
         cur = patch
         for k in path[:-1]:
@@ -1033,13 +1050,20 @@ def _step_memory_high(c: _Ctx) -> StepResult:
     return StepResult("memory-high", "changed" if r[0] == 0 else "failed", r[1][-200:])
 
 
-def _step_units(c: _Ctx) -> StepResult:
-    plan = install_units(c.unit_dir, dry_run=True, runner=c.runner)
+def units_state(dest: Path | None = None, runner: Runner = default_runner) -> tuple[list[str], list[str]]:
+    """(unit files that differ from their template, timers that are not enabled). Read-only."""
+    plan = install_units(dest, dry_run=True, runner=runner)
     disabled = []
     for timer in TIMER_NAMES:
-        rc, out = c.run(["systemctl", "--user", "is-enabled", timer])
+        rc, out = runner(["systemctl", "--user", "is-enabled", timer], env=systemd_env())
         if not (rc == 0 and out.strip() == "enabled"):
             disabled.append(timer)
+    return plan["changed"], disabled
+
+
+def _step_units(c: _Ctx) -> StepResult:
+    changed, disabled = units_state(c.unit_dir, c.runner)
+    plan = {"changed": changed}
     if not plan["changed"] and not disabled:
         return StepResult("units", "satisfied", f"{len(UNIT_NAMES)} units, {len(TIMER_NAMES)} timers")
     if c.dry_run:
@@ -1063,7 +1087,7 @@ def bootstrap(runner: Runner = default_runner, *, dry_run: bool = False, only: s
               confirm: Callable[[str, str], bool] = lambda step, what: True,
               home: Path | None = None, host_env_path: Path | None = None,
               sleep: Callable[[float], None] = time.sleep, health_wait: float = 60,
-              unit_dir: Path | None = None,
+              unit_dir: Path | None = None, skip: tuple[str, ...] = (),
               out: Callable[[str], None] = print) -> tuple[list[StepResult], _Ctx]:
     """Eight idempotent steps in a fixed order; each checks first and reports satisfied or changed.
 
@@ -1085,7 +1109,7 @@ def bootstrap(runner: Runner = default_runner, *, dry_run: bool = False, only: s
                node_bin=_node_bin(runner, env), env=env, unit_dir=unit_dir)
     results: list[StepResult] = []
     for step in BOOTSTRAP_STEPS:
-        if only is not None and step != only:
+        if (only is not None and step != only) or step in skip:
             continue
         try:
             res = _STEP_FUNCS[step](ctx)

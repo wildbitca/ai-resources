@@ -237,6 +237,26 @@ def test_restore_deletes_leaves_the_kit_created(doc):
     assert restore["tools"]["profile"] == "minimal"
 
 
+def test_a_credential_leaf_records_that_it_existed_and_nothing_of_its_value(doc, monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "x")
+    doc["gateway"]["controlUi"]["github"] = {"token": "ghp_LITERALSECRET"}
+    result = build(doc)
+    [change] = [c for c in result["changes"] if c["path"][-1] == "token"]
+    assert change == {"path": ["gateway", "controlUi", "github", "token"], "previous": None, "had": True,
+                      "secret": True}
+    assert "ghp_LITERALSECRET" not in json.dumps(result["changes"])
+    restore, _ = host.restore_patch(result["changes"])
+    assert "github" not in restore.get("gateway", {}).get("controlUi", {}), "a credential is never deleted or rewritten"
+
+
+@pytest.mark.parametrize("path,secret", [
+    (["gateway", "controlUi", "github", "token"], True), (["x", "apiKey"], True), (["x", "api_key"], True),
+    (["x", "password"], True), (["x", "clientSecret"], True), (["tools", "profile"], False),
+    (["gateway", "trustedProxies"], False)])
+def test_which_leaves_count_as_credentials(path, secret):
+    assert host.is_secret_path(path) is secret
+
+
 def test_restore_never_names_channels_in_a_replace_path(doc, monkeypatch):
     monkeypatch.setenv("GH_TOKEN", "x")
     result = build(doc)
