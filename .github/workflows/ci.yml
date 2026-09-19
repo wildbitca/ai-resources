@@ -30,6 +30,9 @@ jobs:
       - name: Compile the CLI and hooks
         run: python3 -m compileall -q scripts hooks
 
+      - name: Check the OpenClaw host scripts parse
+        run: for f in scripts/openclaw/*.sh; do bash -n "$f"; done
+
       # validate_kit checks structure and compileall checks syntax; neither
       # exercises behaviour. These cover the gateway translation, profile
       # selection, non-interactive prompts and subagent generation — the paths
