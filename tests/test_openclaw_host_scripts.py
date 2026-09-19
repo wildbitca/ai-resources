@@ -86,7 +86,7 @@ class Host:
         self.log.write_text("", encoding="utf-8")
         self.state: dict[str, str] = {"is-active": "active", "is-enabled": "enabled"}
         self.openclaw_health_rc = 0
-        for name in ("systemctl", "loginctl", "openclaw", "kubectl", "flux", "sleep", "curl"):
+        for name in ("systemctl", "loginctl", "openclaw", "ai-resources", "kubectl", "flux", "sleep", "curl"):
             self._stub(name)
         self.env_file = self.home / ".openclaw" / "kit-host.env"
 
@@ -104,6 +104,7 @@ case "{name} $1 $2" in
   "systemctl --user show") echo "{'[not set]'}"; exit 0 ;;
   "loginctl show-user"*) echo yes; exit 0 ;;
   "openclaw health "*) exit "$(cat "{self.bin}/health-rc" 2>/dev/null || echo 0)" ;;
+  "ai-resources openclaw"*) echo "Repaired legacy bindings 2"; exit "$(cat "{self.bin}/doctor-rc" 2>/dev/null || echo 0)" ;;
 esac
 exit 0
 """, encoding="utf-8")
@@ -111,6 +112,9 @@ exit 0
 
     def set_active(self, value: str):
         (self.bin / "is-active").write_text(value + "\n", encoding="utf-8")
+
+    def set_doctor_rc(self, rc: int):
+        (self.bin / "doctor-rc").write_text(str(rc), encoding="utf-8")
 
     def set_health(self, rc: int):
         (self.bin / "health-rc").write_text(str(rc), encoding="utf-8")
@@ -325,15 +329,59 @@ def test_backup_reads_workspaces_from_the_config_not_from_a_literal_list():
     assert "workspaces()" in text and "OPENCLAW_BACKUP_EXTRA" in text
 
 
-# --- maintenance keeps what is its own ------------------------------------------------------------------------------------
+# --- maintenance keeps what is its own (AC-6.5) ----------------------------------------------------------------
 
-def test_maintenance_always_removes_the_pause_marker_on_exit():
-    text = _text("openclaw-maintenance.sh")
-    assert re.search(r'finish\(\)\s*\{[^}]*rm -f "\$OFF"', text)
-    assert "trap finish EXIT" in text
+def _executable(name: str) -> str:
+    """The script without comments and without the prose inside `say "..."` report lines."""
+    lines = (ln.split("#", 1)[0] for ln in _text(name).splitlines())
+    return "\n".join(ln for ln in lines if 'say "' not in ln)
 
 
-def test_maintenance_cleans_every_agents_sessions_and_polls_health():
-    text = _text("openclaw-maintenance.sh")
-    assert "sessions cleanup --all-agents" in text
-    assert "openclaw health" in text and "seq 1 24" in text
+def test_maintenance_has_no_drain_and_no_doctor_fix_of_its_own():
+    code = _executable("openclaw-maintenance.sh")
+    assert "TasksCurrent" not in code
+    assert "doctor --fix" not in code.replace("ai-resources openclaw doctor", "")
+    assert 'systemctl --user stop' not in code and 'systemctl --user start' not in code
+
+
+def test_maintenance_never_touches_the_pause_marker_itself():
+    """The wrapper owns watchdog.off: removing it here would end another window's pause."""
+    code = _executable("openclaw-maintenance.sh")
+    assert "watchdog.off" not in code and "$OFF" not in code
+
+
+def test_maintenance_calls_the_wrapper_exactly_once_and_keeps_its_own_checks(host):
+    host.fresh_backup()
+    r = host.run("openclaw-maintenance.sh")
+    assert r.returncode == 0, r.stderr
+    calls = host.calls()
+    assert len([c for c in calls if c.startswith("ai-resources openclaw doctor")]) == 1
+    assert "--cleanup-sessions" in "\n".join(calls)
+    assert any(c.startswith("openclaw update status") for c in calls)
+    assert not any(c.startswith("systemctl --user stop") for c in calls)
+    log = (host.home / ".openclaw" / "logs" / "maintenance.log").read_text()
+    assert "backups: 1 dailies on disk" in log
+
+
+@pytest.mark.parametrize("rc,needle", [(2, "another maintenance window"), (3, "did not drain"),
+                                       (4, "did not complete"), (5, "does NOT answer")])
+def test_maintenance_reports_each_wrapper_failure_and_notifies(host, rc, needle):
+    host.fresh_backup()
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_doctor_rc(rc)
+    r = host.run("openclaw-maintenance.sh")
+    assert r.returncode == 1
+    log = "\n".join(host.calls())
+    assert log.count("openclaw message send") == 1 and needle in log
+
+
+def test_maintenance_is_quiet_when_everything_is_fine(host):
+    host.fresh_backup()
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    assert host.run("openclaw-maintenance.sh").returncode == 0
+    assert not any(c.startswith("openclaw message send") for c in host.calls())
+
+
+def test_maintenance_flags_a_stale_backup(host):
+    host.fresh_backup(age_hours=40)
+    assert host.run("openclaw-maintenance.sh").returncode == 1

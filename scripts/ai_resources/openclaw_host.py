@@ -233,6 +233,123 @@ def systemd_env() -> dict[str, str]:
     return env
 
 
+# --- the drained doctor (T01) ---------------------------------------------------------------------
+
+EXIT_OK = 0
+EXIT_REFUSED = 2          # another maintenance window is already open
+EXIT_NOT_DRAINED = 3      # the cgroup never emptied, so `doctor --fix` was not run
+EXIT_DOCTOR_FAILED = 4    # `doctor --fix` ran and did not complete
+EXIT_NOT_HEALTHY = 5      # the gateway did not answer after being started again
+
+
+class Marker:
+    """The `watchdog.off` file: while it exists the watchdog leaves the gateway alone."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path or WATCHDOG_OFF
+
+    def exists(self) -> bool:
+        return self.path.exists()
+
+    def touch(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.touch()
+
+    def remove(self) -> None:
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: bool = False,
+           cleanup_sessions: bool = False, drain_timeout: float = 90, drain_interval: float = 3,
+           health_timeout: float = 120, health_interval: float = 5,
+           sleep: Callable[[float], None] = time.sleep, marker: Marker | None = None,
+           openclaw_bin: str | None = None, out: Callable[[str], None] = print) -> int:
+    """`openclaw doctor --fix`, the only safe way, implemented once.
+
+    `doctor --fix` stops the gateway and re-inspects the stopped unit; if a child (claude,
+    engram, npx) is still alive it aborts with "ownership or manager identity changed" and
+    leaves the gateway DOWN (T01, lost half an hour on 2026-09-18). So the sequence is:
+
+        touch watchdog.off  ->  stop  ->  poll until the cgroup drains  ->  doctor --fix
+        ->  rm watchdog.off  ->  start  ->  poll `openclaw health`
+
+    The drain is polled, never a fixed sleep. `doctor --fix` runs ONLY if it drained. The marker
+    is removed and the gateway started again on EVERY exit path, including an exception or a
+    Ctrl-C mid-sequence: a window that leaves the watchdog paused or the gateway stopped is the
+    failure this function exists to prevent.
+
+    Exit codes: 0 ok; 2 refused (marker present); 3 not drained; 4 doctor failed; 5 gateway did
+    not come back.
+    """
+    marker = marker or Marker()
+    env = systemd_env()
+    oc = openclaw_bin or resolve_openclaw_bin()
+    sysctl = ["systemctl", "--user"]
+
+    steps = ["touch watchdog.off", f"systemctl --user stop {GATEWAY_UNIT}",
+             f"poll TasksCurrent until [not set] (up to {drain_timeout:g}s)", f"{oc} doctor --fix"]
+    if cleanup_sessions:
+        steps.append(f"{oc} sessions cleanup --all-agents")
+    steps += ["remove watchdog.off", f"systemctl --user start {GATEWAY_UNIT}",
+              f"poll {oc} health (up to {health_timeout:g}s)"]
+    if dry_run:
+        out("dry run -- would do, in order:")
+        for i, step in enumerate(steps, 1):
+            out(f"  {i}. {step}")
+        return EXIT_OK
+
+    if marker.exists() and not force:
+        out(f"refusing: {marker.path} exists, so another maintenance window is open. "
+            "Pass --force if that window is dead.")
+        return EXIT_REFUSED
+
+    drained = doctor_ok = False
+    code = EXIT_OK
+    marker.touch()
+    try:
+        # TimeoutStopSec=330 on the gateway unit: allow for it.
+        runner(sysctl + ["stop", GATEWAY_UNIT], env=env, timeout=400)
+        polls = max(1, int(drain_timeout // drain_interval))
+        for _ in range(polls):
+            rc, text = runner(sysctl + ["show", GATEWAY_UNIT, "-p", "TasksCurrent", "--value"], env=env)
+            if rc == 0 and text.strip() == "[not set]":
+                drained = True
+                break
+            sleep(drain_interval)
+        out(f"drained={'yes' if drained else 'no'}")
+        if drained:
+            rc, text = runner([oc, "doctor", "--fix"], env=env, timeout=600)
+            out(text)
+            doctor_ok = rc == 0 and "Doctor complete" in text
+            out(f"doctor={'ok' if doctor_ok else 'failed'}")
+            if cleanup_sessions:
+                _rc, cleaned = runner([oc, "sessions", "cleanup", "--all-agents"], env=env, timeout=300)
+                out("sessions cleanup: " + " ".join(cleaned.splitlines()[-2:]))
+        else:
+            out(f"doctor=skipped (the cgroup did not drain in {drain_timeout:g}s)")
+    finally:
+        marker.remove()
+        runner(sysctl + ["start", GATEWAY_UNIT], env=env, timeout=120)
+        healthy = False
+        for _ in range(max(1, int(health_timeout // health_interval))):
+            sleep(health_interval)
+            rc, _text = runner([oc, "health"], env=env, timeout=60)
+            if rc == 0:
+                healthy = True
+                break
+        out(f"healthy={'yes' if healthy else 'no'}")
+        if not healthy:
+            code = EXIT_NOT_HEALTHY
+    if code:
+        return code
+    if not drained:
+        return EXIT_NOT_DRAINED
+    return EXIT_OK if doctor_ok else EXIT_DOCTOR_FAILED
+
+
 # --- CLI ------------------------------------------------------------------------------------------
 
 def cmd_install_units(args: argparse.Namespace) -> int:
@@ -252,6 +369,11 @@ def cmd_install_units(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    return doctor(force=args.force, dry_run=args.dry_run, cleanup_sessions=args.cleanup_sessions,
+                  drain_timeout=args.drain_timeout, health_timeout=args.health_timeout)
+
+
 def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p = sub.add_parser("openclaw", help="OpenClaw host operations (units, doctor, bootstrap, status)")
     verbs = p.add_subparsers(dest="openclaw_verb", metavar="VERB")
@@ -262,5 +384,14 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_units.add_argument("--render-only", action="store_true", help="Print the rendered units; write nothing")
     p_units.add_argument("--enable", action="store_true", help="Also enable and start the timers")
     p_units.set_defaults(func=cmd_install_units)
+
+    p_doc = verbs.add_parser("doctor", help="Run `openclaw doctor --fix` safely: drain, fix, restart, verify")
+    p_doc.add_argument("--force", action="store_true", help="Proceed although watchdog.off already exists")
+    p_doc.add_argument("--dry-run", action="store_true", help="Print the sequence; touch nothing")
+    p_doc.add_argument("--drain-timeout", type=float, default=90, help="Seconds to wait for the cgroup to drain")
+    p_doc.add_argument("--health-timeout", type=float, default=120, help="Seconds to wait for the gateway to answer")
+    p_doc.add_argument("--cleanup-sessions", action="store_true",
+                       help="Also run `openclaw sessions cleanup --all-agents` inside the drained window")
+    p_doc.set_defaults(func=cmd_doctor)
 
     p.set_defaults(func=lambda a: (p.print_help(), 1)[1])
