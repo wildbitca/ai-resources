@@ -12,7 +12,11 @@ import json
 import pathlib
 import sys
 
+import subprocess
+
 import pytest
+
+_REAL_POPEN = subprocess.Popen  # the fixture below replaces subprocess.Popen for the whole process
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
@@ -98,6 +102,9 @@ def env(tmp_path, monkeypatch):
         (tmp_path / "kit-host.env").write_text(f"OPENCLAW_NARRATION={level}\n", encoding="utf-8")
 
     e.run, e.set_level = run, set_level
+    # The hook speaks only when the host env opts in, so every test starts opted in at the
+    # documented level; the "off" tests below remove or change it explicitly.
+    set_level("milestones")
     return e
 
 
@@ -201,9 +208,65 @@ def test_parent_tools_are_never_narrated(env):
     assert env.popen.calls == []
 
 
-def test_an_unknown_detail_level_falls_back_to_milestones(env):
+# --- narration off is really off (architect condition 1) -----------------------------------------------
+
+ALL_EVENTS = ["prompt_submit", "agent_start", "member_edit", "member_bash", "member_stop", "stop", "workflow"]
+
+
+def test_an_absent_narration_key_means_off(env):
+    (env.tmp / "kit-host.env").write_text("OPENCLAW_BACKUP_DIR=/srv/b\n", encoding="utf-8")
+    assert env.hook.narration_level() == "off"
+
+
+def test_an_absent_env_file_means_off(env):
+    (env.tmp / "kit-host.env").unlink()
+    assert env.hook.narration_level() == "off"
+
+
+def test_an_unknown_detail_level_means_off_not_milestones(env):
     env.set_level("chatty")
-    assert env.hook.narration_level() == "milestones"
+    assert env.hook.narration_level() == "off"
+
+
+@pytest.mark.parametrize("payload", ALL_EVENTS)
+@pytest.mark.parametrize("state", ["no-file", "no-key", "explicit-off", "unknown"])
+def test_when_off_a_gateway_session_spawns_and_logs_nothing(env, payload, state):
+    """OPENCLAW_CLI=1 is the normal state on a gateway host; it must not be the only gate."""
+    envfile = env.tmp / "kit-host.env"
+    if state == "no-file":
+        envfile.unlink()
+    elif state == "no-key":
+        envfile.write_text("OPENCLAW_GUARD=1\n", encoding="utf-8")
+    elif state == "explicit-off":
+        env.set_level("off")
+    else:
+        env.set_level("verbose")
+    env.run(payload)
+    assert env.popen.calls == []
+    assert not (env.tmp / "logs").exists(), "off must not even write the payload log"
+    assert not (env.tmp / "state").exists()
+
+
+def test_turning_the_key_on_makes_the_same_event_publish(env):
+    (env.tmp / "kit-host.env").unlink()
+    env.run("stop")
+    assert env.popen.calls == []
+    env.set_level("milestones")
+    env.run("stop")
+    assert len(env.popen.sends()) == 1
+
+
+def test_the_process_exits_zero_and_silent_when_off(env, tmp_path):
+    """Run the hook as Claude Code does (a subprocess, OPENCLAW_CLI=1) against an env without the key."""
+    home = tmp_path / "home"
+    (home / ".openclaw").mkdir(parents=True)
+    (home / ".openclaw" / "kit-host.env").write_text("OPENCLAW_GUARD=1\n", encoding="utf-8")
+    proc = _REAL_POPEN([sys.executable, str(HOOK)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, text=True,
+                       env={"PATH": "/usr/bin:/bin", "HOME": str(home), "OPENCLAW_CLI": "1"})
+    out, err = proc.communicate(json.dumps({"hook_event_name": "Stop", "cwd": str(home)}), timeout=30)
+    assert proc.returncode == 0 and out == "" and err == ""
+    assert not (home / ".openclaw" / "logs").exists()
 
 
 def test_a_session_stops_publishing_at_the_message_ceiling(env):
@@ -351,3 +414,4 @@ def test_the_always_on_kit_merge_does_not_touch_the_openclaw_hooks(tmp_path):
     before = path.read_bytes()
     claude._shared.merge_kit_hooks(path, {}, claude._is_kit_hook_command)
     assert path.read_bytes() == before
+

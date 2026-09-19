@@ -19,15 +19,19 @@ WHAT ACTUALLY ARRIVES (measured on 2026-09-18 with a hook that only logged)
 The MODEL is not in the payload: it is resolved from the role's frontmatter in ~/.claude/agents.
 
 RULES
-- Speaks only when OPENCLAW_CLI=1 (that is, only in sessions started by the gateway). In a
-  plain terminal it is a silent no-op.
+- Speaks only when OPENCLAW_CLI=1 (that is, only in sessions started by the gateway) AND the
+  host env file opts in (OPENCLAW_NARRATION is `milestones` or `every-step`). In a plain
+  terminal, or without that key, it is a silent no-op: OPENCLAW_CLI=1 is the normal state on a
+  gateway host, so it cannot be the only gate for a hook that publishes to a chat.
 - Never publishes prompts, raw tool_input or tool output: only the role, the file and the
   member's final message, trimmed.
 - Volume ceilings, because Telegram is not a terminal: EDITS_PER_MEMBER and
   MESSAGES_PER_SESSION. On reaching the ceiling it says so once and goes quiet.
 - Detail level, read from `~/.openclaw/kit-host.env` (OPENCLAW_NARRATION):
-    milestones   (default) the request, the team start, each member's hand-off, the close
+    (absent)     off: nothing is published, nothing is logged. The default.
+    milestones   the request, the team start, each member's hand-off, the close
     every-step   also each edit, the periodic pulse and the per-member live message
+  Any other value also means off: an unreadable choice must not publish.
 - Absolute best effort: any failure exits 0 and says nothing.
 """
 import json
@@ -50,7 +54,7 @@ PULSE_EVERY = 3  # measured: members batch a lot in Bash; with 5 it almost never
 MAX_DESC = 90
 MAX_RESULT = 260
 MAX_WATCHERS = 3
-DEFAULT_NARRATION = "milestones"
+DEFAULT_NARRATION = "off"
 NARRATION_LEVELS = ("milestones", "every-step")
 
 # Fallbacks for a session whose PATH does not carry the Homebrew prefix.
@@ -110,7 +114,10 @@ def log_payload(p):
 
 
 def narration_level():
-    """`milestones` or `every-step`, from the host env file; anything else means the default."""
+    """`milestones` or `every-step` when the host env file opts in; `off` otherwise.
+
+    Absent file, absent key, an unknown value or an unreadable file all mean `off`: this hook
+    publishes to a chat, so it speaks only when the operator asked for it."""
     try:
         with open(KIT_HOST_ENV) as fh:
             for line in fh:
@@ -340,6 +347,9 @@ def publish(target, text, session_id):
 def main():
     if os.environ.get("OPENCLAW_CLI") != "1":
         return
+    level = narration_level()
+    if level == "off":
+        return
     p = read_payload()
     log_payload(p)
     target = resolve_target(p.get("cwd"))
@@ -350,7 +360,7 @@ def main():
     ti = p.get("tool_input") if isinstance(p.get("tool_input"), dict) else {}
     inner_role = p.get("agent_type")
     effort = effort_of(p)
-    every_step = narration_level() == "every-step"
+    every_step = level == "every-step"
 
     # The request comes in. Before this there was silence until the first tool.
     if event == "UserPromptSubmit":
