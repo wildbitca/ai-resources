@@ -69,6 +69,7 @@ from . import _shared
 from . import _openclaw_mcp as mcp
 from . import _openclaw_voice as voice
 from . import _agy_quota
+from ... import openclaw_host
 
 
 NAME = "OpenClaw"
@@ -395,6 +396,9 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
 
 def apply_patch(patch: dict, *, dry_run: bool = False,
                 replace_paths: list[str] | None = None) -> tuple[bool, str]:
+    # The Telegram allowlist is the only gate in front of the unrestricted claude-kit backend:
+    # no patch may carry an allowlist or a topic binding, and no --replace-path may name channels.
+    openclaw_host.assert_channels_safe(patch, replace_paths)
     args = ["config", "patch", "--stdin"] + (["--dry-run"] if dry_run else [])
     for rp in (replace_paths or []):
         args += ["--replace-path", rp]
@@ -767,7 +771,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
     if engine.id == "antigravity" and not s.openclaw.risk_acknowledged:
         ui.error("OpenClaw antigravity: unrestricted-execution risk was not acknowledged — "
                  "re-run the wizard interactively and accept the warning, then re-apply.")
-        return written
+        return False
 
     model = s.openclaw.model if s.openclaw.model in engine.models else (engine.models[0] if engine.models else "")
     worker_model = (s.openclaw.worker_model or "claude-sonnet-5").split("/")[-1]

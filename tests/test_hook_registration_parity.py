@@ -93,3 +93,13 @@ def test_kit_predicate_recognises_every_kit_script_and_only_those():
     for script in getattr(claude, "OPENCLAW_HOOK_SCRIPTS", ()):
         assert not claude._is_kit_hook_command(f'python3 "/x/hooks/{script}"'), (
             f"{script} is opt-in: the always-on kit merge must not claim it")
+
+
+def test_the_plugin_route_lists_the_opt_in_hooks_on_purpose():
+    """hooks.json lists the OpenClaw hooks (inert without OPENCLAW_CLI / a live gateway) while the
+    always-on merge keeps them out of KIT_HOOK_SCRIPTS: a decision, not a drift. Setup installs
+    them only when the OpenClaw section is enabled."""
+    doc = json.loads((HOOKS_DIR / "hooks.json").read_text(encoding="utf-8"))
+    from_json = _scripts_from_hooks(doc["hooks"])
+    for script in claude.OPENCLAW_HOOK_SCRIPTS:
+        assert script in from_json and script not in claude.KIT_HOOK_SCRIPTS

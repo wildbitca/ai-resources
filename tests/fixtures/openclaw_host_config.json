@@ -1,0 +1,123 @@
+{
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-haiku-4-5"
+      },
+      "heartbeat": {
+        "target": "none",
+        "every": "30m",
+        "model": "anthropic/claude-haiku-4-5"
+      }
+    },
+    "entries": {
+      "main": {
+        "workspace": "/home/u/.openclaw/workspace",
+        "model": {
+          "primary": "anthropic/claude-sonnet-5"
+        }
+      },
+      "app": {
+        "workspace": "/home/u/dev/app",
+        "model": {
+          "primary": "anthropic/claude-haiku-4-5"
+        }
+      },
+      "infra": {
+        "workspace": "/home/u/dev/infra"
+      },
+      "docs": {
+        "workspace": "/home/u/dev/docs",
+        "model": {
+          "primary": "anthropic/claude-opus-5"
+        }
+      },
+      "claude": {
+        "workspace": "/home/u/dev",
+        "model": {
+          "primary": "claude-kit/claude-sonnet-5"
+        }
+      }
+    }
+  },
+  "tools": {
+    "profile": "minimal",
+    "alsoAllow": [
+      "group:web"
+    ]
+  },
+  "logging": {
+    "file": "/tmp/openclaw/gateway.log"
+  },
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "port": 18789,
+    "trustedProxies": [
+      "192.0.2.0/24"
+    ],
+    "controlUi": {
+      "enabled": true,
+      "allowedOrigins": [
+        "https://old.example.org"
+      ]
+    }
+  },
+  "plugins": {
+    "entries": {
+      "device-pair": {
+        "enabled": true,
+        "config": {
+          "publicUrl": "http://100.64.0.1:18789"
+        }
+      },
+      "workboard": {
+        "enabled": false
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "allowedUsers": [
+        111111111
+      ],
+      "groups": {
+        "-1001": {
+          "topics": {
+            "1": {
+              "agentId": "main"
+            },
+            "8": {
+              "agentId": "app"
+            }
+          }
+        }
+      },
+      "streaming": {
+        "mode": "off"
+      }
+    }
+  },
+  "commands": {
+    "ownerAllowFrom": [
+      "telegram:111111111"
+    ]
+  },
+  "mcp": {
+    "servers": {
+      "engram": {
+        "command": "/usr/bin/engram",
+        "args": [
+          "mcp"
+        ]
+      },
+      "supa": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@example/mcp-server@latest"
+        ]
+      }
+    }
+  }
+}

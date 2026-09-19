@@ -1,0 +1,90 @@
+// OpenClaw host profile: the canonical gateway configuration, one reason per key.
+//
+// NOT a routing profile. `profiles/*.yaml` feed the model-routing picker in `ai-resources setup`;
+// this file is `.json5` on purpose so `profiles.list_profiles()` never offers it there. The setup
+// wizard's OpenClaw section applies it, and `ai-resources openclaw config` does the same headless.
+//
+// It is a patch TEMPLATE for `openclaw config patch --stdin` (OpenClaw's own validated writer;
+// the kit never writes openclaw.json by hand). Rules the builder applies:
+//   - only the leaves that differ from the live config are sent, so a second run sends nothing;
+//   - `@DOMAIN@` and `@POD_CIDR@` are asked by the wizard and stored in ~/.openclaw/kit-host.env;
+//     no host value is ever written here;
+//   - the "*" agent entry expands to every existing entry that is NOT owned by the engine
+//     section, and only where the primary model is absent or a haiku one;
+//   - arrays are unioned with what is already there (a user's extra origin or proxy survives);
+//   - plugin entries are only touched when the plugin is already configured;
+//   - `channels` is off limits except `channels.telegram.streaming`: the Telegram allowlist is
+//     the only gate in front of the unrestricted claude-kit backend, so no allowlist and no topic
+//     binding may ever appear in a patch built from this file (asserted by the tests).
+//
+// Deliberately absent: `agents.defaults.model.primary`. The ENGINE section owns it (it points the
+// default agent at the chosen engine), and two sections owning one key means whichever runs last
+// wins and either teardown clobbers the other. The rule this file enforces instead is the one
+// behind it: no orchestrator entry may run haiku (T29), because a haiku orchestrator
+// confabulates topics. Haiku belongs to the utility default only.
+//
+// Deliberately absent too: `mcp.servers`. The kit cannot invent a safe version, so a server
+// declared with `@latest` is REPORTED by the wizard, not rewritten. Pin the version by hand.
+{
+  "agents": {
+    "defaults": {
+      // T20: heartbeats off by default (every=0m); only the main agent wakes up, every 2 hours.
+      "heartbeat": { "every": "0m" },
+    },
+    "entries": {
+      // T29: an orchestrator on haiku confabulates topics. Sonnet 5 for every entry that is not
+      // engine-owned and has no model, or a haiku one.
+      "*": { "model": { "primary": "anthropic/claude-sonnet-5" } },
+      "main": {
+        "thinkingDefault": "high",
+        "heartbeat": { "every": "2h" },
+      },
+    },
+  },
+
+  "tools": {
+    // Without group:messaging there is no `message` tool: the agent cannot reply into a topic.
+    "profile": "coding",
+    "alsoAllow": ["group:messaging"],
+  },
+
+  "logging": {
+    // T26: a log under /tmp lives in RAM (tmpfs). The path is expanded to the operator's home.
+    "file": "@HOME@/.openclaw/logs/gateway.log",
+    "maxFileBytes": 33554432,
+  },
+
+  "gateway": {
+    // T04: bind to the tailnet only. Never lan or 0.0.0.0.
+    "bind": "tailnet",
+    // T05: behind an ingress the real client address arrives in a header; without these the
+    // control UI answers 403 from the ingress.
+    "publicOrigin": "https://@DOMAIN@",
+    "trustedProxies": ["@POD_CIDR@"],
+    "allowRealIpFallback": true,
+    "controlUi": {
+      "allowedOrigins": ["https://@DOMAIN@"],
+      // T14: a reference to an environment variable, never the token. Skipped (with a note) when
+      // GH_TOKEN is not resolvable on this host, since the dry run checks SecretRefs.
+      "github": { "token": { "source": "env", "provider": "default", "id": "GH_TOKEN" } },
+    },
+  },
+
+  "plugins": {
+    "entries": {
+      // T28: the pairing QR must carry the public URL, not the tailnet address.
+      "device-pair": { "config": { "publicUrl": "https://@DOMAIN@" } },
+    },
+  },
+
+  "channels": {
+    "telegram": {
+      // T31: stream progress into the topic with commentary, and keep enough lines to read.
+      "streaming": {
+        "mode": "progress",
+        "preview": { "toolProgress": true },
+        "progress": { "toolProgress": true, "commentary": true, "maxLines": 14 },
+      },
+    },
+  },
+}

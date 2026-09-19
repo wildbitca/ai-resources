@@ -19,6 +19,8 @@ real state machines against a fake and nothing in the suite can reach a live uni
 from __future__ import annotations
 
 import argparse
+import ipaddress
+import json
 import os
 import re
 import shutil
@@ -348,6 +350,261 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
     if not drained:
         return EXIT_NOT_DRAINED
     return EXIT_OK if doctor_ok else EXIT_DOCTOR_FAILED
+
+
+# --- the canonical host configuration (profiles/openclaw-host.json5) ---------------------------------
+
+PROFILE_PATH_NAME = Path("profiles") / "openclaw-host.json5"
+# Entries whose model belongs to the engine section (the antigravity worker agent).
+ENGINE_OWNED_ENTRIES = ("claude",)
+# A dict with these keys is one value (a SecretRef), not a subtree to merge into.
+_ATOMIC_KEYS = {"source", "id"}
+_HOST_MARKERS = ("HOME", "DOMAIN", "POD_CIDR")
+
+
+def load_json5(text: str) -> dict:
+    """Parse the JSON5 subset the kit's profile uses: // and /* */ comments and trailing commas.
+
+    No dependency on a JSON5 library (CI installs none). Strings are honoured, so a `//` inside
+    a URL is not a comment.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 1
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+            out.append(c)
+        elif text.startswith("//", i):
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        else:
+            out.append(c)
+        i += 1
+    cleaned = re.sub(r",(\s*[\]}])", r"\1", "".join(out))
+    return json.loads(cleaned)
+
+
+def load_host_profile(path: Path | None = None) -> dict:
+    return load_json5((path or (repo_root() / PROFILE_PATH_NAME)).read_text(encoding="utf-8"))
+
+
+_HOSTNAME = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$")
+
+
+def validate_host_values(values: dict[str, str]) -> list[str]:
+    """Problems with the values the wizard collected; empty when they are usable.
+
+    Empty domain / CIDR are allowed: the keys that need them are then simply not sent.
+    """
+    problems = []
+    domain = values.get("DOMAIN", "")
+    if domain and not _HOSTNAME.match(domain):
+        problems.append(f"domain {domain!r} is not a host name (no scheme, no path)")
+    cidr = values.get("POD_CIDR", "")
+    if cidr:
+        try:
+            ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            problems.append(f"{cidr!r} is not a CIDR such as 10.42.0.0/24")
+    owner = values.get("OWNER_TELEGRAM_ID", "")
+    if owner and not re.fullmatch(r"-?\d{5,15}", owner):
+        problems.append("the operator id must be the numeric Telegram user id")
+    backup = values.get("BACKUP_DIR", "")
+    if backup and not (backup.startswith("/") and _ENV_SAFE_VALUE.match(backup) and " " not in backup):
+        problems.append("the backup path must be absolute, without spaces or shell characters")
+    return problems
+
+
+def _substitute(node, values: dict[str, str], missing: set[str]):
+    if isinstance(node, dict):
+        return {k: _substitute(v, values, missing) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_substitute(v, values, missing) for v in node]
+    if isinstance(node, str):
+        def repl(m):
+            key = m.group(1)
+            if not values.get(key):
+                missing.add(key)
+                return m.group(0)
+            return values[key]
+        return _MARKER.sub(repl, node)
+    return node
+
+
+def _has_marker(node) -> bool:
+    if isinstance(node, dict):
+        return any(_has_marker(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_has_marker(v) for v in node)
+    return isinstance(node, str) and bool(_MARKER.search(node))
+
+
+def _get_path(doc, path: list[str]):
+    cur = doc
+    for k in path:
+        if not isinstance(cur, dict) or k not in cur:
+            return None, False
+        cur = cur[k]
+    return cur, True
+
+
+def _is_atomic(node) -> bool:
+    return isinstance(node, dict) and _ATOMIC_KEYS <= set(node)
+
+
+def _leaves(node, path: list[str]):
+    """(path, value) for every value the patch sets: scalars, arrays and atomic dicts."""
+    if isinstance(node, dict) and not _is_atomic(node):
+        for k, v in node.items():
+            yield from _leaves(v, path + [k])
+    else:
+        yield path, node
+
+
+def _secret_env_available(name: str) -> bool:
+    if os.environ.get(name):
+        return True
+    try:
+        for line in (Path.home() / ".openclaw" / ".env").read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith(f"{name}=") and line.split("=", 1)[1].strip():
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def _union(existing, wanted: list):
+    base = list(existing) if isinstance(existing, list) else []
+    return base + [w for w in wanted if w not in base]
+
+
+def _is_haiku(model) -> bool:
+    return isinstance(model, str) and "haiku" in model.lower()
+
+
+def expand_wildcards(profile: dict, doc: dict) -> dict:
+    """Replace the `*` agent entry with one concrete entry per agent that needs it."""
+    tree = json.loads(json.dumps(profile))
+    entries = ((tree.get("agents") or {}).get("entries")) or {}
+    template = entries.pop("*", None)
+    if template is not None:
+        for aid, entry in ((doc.get("agents") or {}).get("entries") or {}).items():
+            if aid in ENGINE_OWNED_ENTRIES:
+                continue
+            primary = ((entry or {}).get("model") or {}).get("primary")
+            if primary and not _is_haiku(primary):
+                continue
+            merged = json.loads(json.dumps(template))
+            for k, v in (entries.get(aid) or {}).items():
+                merged[k] = v
+            entries[aid] = merged
+    return tree
+
+
+def assert_channels_safe(patch: dict, replace_paths: list[str] | None = None) -> None:
+    """The one invariant this module must never break: no allowlist, no topic binding, no
+    replace-path anywhere on `channels`. Only `channels.telegram.streaming.*` may be sent."""
+    for rp in replace_paths or []:
+        if rp == "channels" or rp.startswith("channels.") or rp.startswith("channels["):
+            raise ValueError(f"refusing a --replace-path on the channels namespace: {rp}")
+    channels = patch.get("channels")
+    if channels is None:
+        return
+    allowed = isinstance(channels, dict) and set(channels) == {"telegram"} \
+        and isinstance(channels["telegram"], dict) and set(channels["telegram"]) == {"streaming"}
+    if not allowed:
+        raise ValueError("a host patch may only touch channels.telegram.streaming")
+
+
+def build_host_patch(profile: dict, doc: dict, values: dict[str, str]) -> dict:
+    """The minimal patch that makes `doc` canonical.
+
+    Returns {"patch": {...}, "changes": [{"path": [...], "previous": v, "had": bool}],
+             "replace_paths": [...], "skipped": [str]}.
+    """
+    values = dict(values)
+    values.setdefault("HOME", str(Path.home()))
+    tree = expand_wildcards(profile, doc)
+    skipped: list[str] = []
+    missing: set[str] = set()
+    tree = _substitute(tree, values, missing)
+
+    patch: dict = {}
+    changes: list[dict] = []
+    replace_paths: list[str] = []
+    for path, wanted in _leaves(tree, []):
+        dotted = ".".join(path)
+        if _has_marker(wanted):
+            skipped.append(f"{dotted}: needs " + ", ".join(sorted(missing)) + " (not set)")
+            continue
+        # A plugin's settings are only written when the plugin is already configured.
+        if path[:2] == ["plugins", "entries"] and len(path) > 2:
+            if not _get_path(doc, path[:3])[1]:
+                skipped.append(f"{dotted}: plugin {path[2]} is not configured")
+                continue
+        if path == ["gateway", "controlUi", "github", "token"] and not _secret_env_available("GH_TOKEN"):
+            skipped.append(f"{dotted}: GH_TOKEN is not available on this host (set it with `openclaw configure`)")
+            continue
+        current, had = _get_path(doc, path)
+        if isinstance(wanted, list):
+            wanted = _union(current, wanted)
+        if had and current == wanted:
+            continue
+        cur = patch
+        for k in path[:-1]:
+            cur = cur.setdefault(k, {})
+        cur[path[-1]] = wanted
+        change = {"path": path, "previous": current if had else None, "had": had}
+        if not had:
+            # Restore deletes the highest ancestor the kit created, not just the leaf, so a
+            # teardown does not leave empty `model: {}` shells behind.
+            change["delete"] = next(path[: i + 1] for i in range(len(path))
+                                    if not _get_path(doc, path[: i + 1])[1])
+        changes.append(change)
+        if _is_atomic(wanted) and had and isinstance(current, dict):
+            replace_paths.append(dotted)
+    assert_channels_safe(patch, replace_paths)
+    return {"patch": patch, "changes": changes, "replace_paths": replace_paths, "skipped": skipped}
+
+
+def restore_patch(changes: list[dict]) -> tuple[dict, list[str]]:
+    """The patch that puts every changed leaf back as it was (absent leaves are deleted)."""
+    patch: dict = {}
+    replace_paths: list[str] = []
+    for ch in changes:
+        path = ch["path"] if ch["had"] else ch.get("delete", ch["path"])
+        cur = patch
+        for k in path[:-1]:
+            cur = cur.setdefault(k, {})
+        cur[path[-1]] = ch["previous"] if ch["had"] else None
+        if ch["had"] and isinstance(ch["previous"], dict):
+            replace_paths.append(".".join(path))
+    assert_channels_safe(patch, replace_paths)
+    return patch, replace_paths
+
+
+def mcp_latest_findings(doc: dict) -> list[str]:
+    """`mcp.servers` entries that run an unpinned package. Reported, never rewritten."""
+    out = []
+    for name, spec in (((doc.get("mcp") or {}).get("servers")) or {}).items():
+        args = (spec or {}).get("args") or []
+        if any(isinstance(a, str) and a.endswith("@latest") for a in args):
+            out.append(name)
+    return sorted(out)
 
 
 # --- CLI ------------------------------------------------------------------------------------------
