@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "generated_at": "2026-09-16T00:38:01.847994+00:00",
+  "generated_at": "2026-09-19T16:21:59.662007+00:00",
   "skills_root": "skills",
-  "count": 136,
+  "count": 137,
   "skills": [
     {
       "id": "changelog-best-practices",
@@ -1097,6 +1097,21 @@
       "globs": [
         "**/crossplane/**",
         "infra/**"
+      ]
+    },
+    {
+      "id": "openclaw-operations",
+      "path": "skills/openclaw-operations/SKILL.md",
+      "name": "openclaw-operations",
+      "description": "Use when touching ~/.openclaw, openclaw-*.service or .timer units, the OpenClaw gateway, its watchdog, control ui or Telegram bot, or when `openclaw doctor` warns. Covers stopping or repairing the gateway safely, telling doctor noise from signal, verifying backups, team narration into Telegram, and wiring host units and config through `ai-resources setup`. (triggers: openclaw, gateway, watchdog, watchdog.off, control ui, telegram bot, doctor --fix, kit-host.env, team narration)",
+      "triggers": [
+        "openclaw, gateway, watchdog, watchdog.off, control ui, telegram bot, doctor --fix, kit-host.env, team narration"
+      ],
+      "globs": [
+        "**/.openclaw/**",
+        "**/openclaw-*.service",
+        "**/openclaw-*.timer",
+        "**/kit-host.env"
       ]
     },
     {
