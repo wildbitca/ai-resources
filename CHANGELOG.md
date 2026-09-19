@@ -4,6 +4,92 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.0] — 2026-09-19 — the OpenClaw setup is reproducible from the kit
+
+The setup that 1.8.2 documented can now be rebuilt from the kit: the scripts,
+units, hooks, config block and backup manifests that lived on one machine's disk
+are versioned artifacts, and every one of them is reachable from `ai-resources
+setup`. On a fresh host, `brew upgrade ai-resources && ai-resources setup`
+reproduces the documented setup up to the secrets and the host-specific values
+in `~/.openclaw/kit-host.env`.
+
+### Added
+
+- **`ai-resources setup` asks.** The OpenClaw cockpit gains a host section with
+  one opt-in question per capability: team narration (off, milestones or every
+  step), the gateway guard hook, the ten `openclaw-*` systemd units, the
+  canonical config block, the workboard plugin, an `AGENTS.md` for workspaces
+  that have none, and a host check. Every answer defaults to no on a first run
+  (the workboard defaults to yes). Host values (domain, operator id, ingress CIDR,
+  backup dir) are asked and written to `~/.openclaw/kit-host.env`; secrets are
+  never asked. Anything that changes the running gateway is its own confirm, is
+  skipped under `--non-interactive`, and nothing restarts the gateway. A second
+  run changes nothing, and undoing it removes only what the kit recorded.
+- **`ai-resources openclaw` commands**, thin wrappers over the same functions for
+  headless runs and disaster recovery: `doctor` (the drained `doctor --fix`),
+  `bootstrap` (eight idempotent host checks), `status` (one screen, never
+  repairs), `install-units`, `agent-new` and `render-gitops-backups`.
+- **Host scripts and units in the kit:** the five scripts (`openclaw-backup.sh`,
+  `-maintenance.sh`, `-watchdog.sh`, `-verify.sh`, `openclaw-team-watch.py`) under
+  `scripts/openclaw/`, and the ten `openclaw-*` units as templates in
+  `templates/systemd/`, run as `/bin/bash <script>` so the exec bit is never
+  load-bearing.
+- **Hooks:** `hooks/openclaw_team_progress.py` publishes a Claude Code team's work
+  into its Telegram topic (OpenClaw discards subagent events on purpose, T31), and
+  `hooks/openclaw_gateway_guard.py` denies an undrained `openclaw doctor --fix` or
+  gateway stop (T01). A test pins that `hooks.json`, the cockpit registrations and
+  `hooks/` agree.
+- **`profiles/openclaw-host.json5`:** the canonical host config, applied as one
+  atomic `openclaw config patch --stdin` after a `--dry-run`, with the invariant
+  that `channels.*` is never touched (only `channels.telegram.streaming`).
+- **Three `AGENTS.md` templates** (orchestrator, umbrella, repo).
+- **`openclaw-operations` skill**, the operating manual, and the
+  `openclaw-host-setup` workflow, whose primary path is `ai-resources setup`.
+- **Off-box backup manifests as GitOps templates** in
+  `templates/gitops/openclaw-backups/` (bucket, uploader, guard, alerts). Every
+  value that belongs to the target infrastructure is a marker.
+- **`docs/runbooks/openclaw-host-dr.md`**, which restores `kit-host.env` first
+  (with no version pin it is the only record of the installed openclaw version)
+  and states that the restore is **unrehearsed**.
+
+### Changed
+
+- **The team narration hook is off unless the host env opts in.** It speaks only
+  when the gateway started the session (`OPENCLAW_CLI=1`) and
+  `OPENCLAW_NARRATION` is `milestones` or `every-step` in `kit-host.env`. Before
+  this, an absent key meant `milestones`, so answering "off" left it publishing.
+- `bootstrap` installs the latest openclaw, not a pin, and records
+  `OPENCLAW_INSTALLED_VERSION` and `OPENCLAW_PREVIOUS_VERSION` in `kit-host.env`.
+- `docs/openclaw/*` now states what is implemented and where it lives, and
+  corrects three facts: there are five host scripts, not three; six timers are
+  armed, not five; and the config block is applied with `config patch --stdin`,
+  not per-key `config set`. The backup had left out the watchdog, verify and
+  team-watch scripts and most units by accident; the list is now complete.
+- `__version__` in `scripts/ai_resources/__init__.py` (still 1.7.3) now matches
+  the release.
+
+### Fixed
+
+- Teardown of the host section removes no more and no less than was added: it
+  disables only the timers the kit enabled, and puts back a hand-installed
+  `openclaw-team-progress.py` registration that setup had replaced.
+- `configure()` no longer reports a teardown as "openclaw.json changed".
+
+### Security
+
+- `setup-state.yaml` is written owner-only (0600), and a credential leaf in the
+  config (token, secret, password, api key) records only that it existed: its value
+  is never persisted or restored.
+
+### Notes
+
+- Not done: a restore rehearsal, and the live rehearsal of the kit on the
+  reference host (both are operator steps in `docs/openclaw/runbook.md` and
+  `docs/runbooks/openclaw-host-dr.md`). A traces panel (Phoenix / Langfuse) is
+  deferred.
+- `Formula/ai-resources.rb` points at tag `v1.9.0`, which is created when the
+  release is tagged.
+
 ## [1.8.2] — 2026-09-18 — the OpenClaw setup stops living in one person's head
 
 Documentation only: no code, no skills, no formula behaviour changes. It lands
@@ -40,7 +126,8 @@ left the gateway dead for half an hour without anyone noticing.
   scripts as versioned artifacts, a wrapper that drains before calling
   `openclaw doctor --fix`, and the canonical configuration block. None of them are
   implemented here. Until they are, those scripts live on a single disk and are
-  recoverable only from a backup tarball.
+  recoverable only from a backup tarball. *(Superseded: all ten are implemented in
+  1.9.0.)*
 
 ## [1.8.1] — 2026-09-17 — the quota remedy stops pointing at dead pools
 
