@@ -88,7 +88,7 @@ KIT_HOOK_SCRIPTS = ("kit_session_start.py", "kit_subagent_return.py", "kit_hando
 # OpenClaw cockpit's host section, never by the always-on kit merge below, so a machine
 # without OpenClaw never gets them (`hooks/hooks.json` still lists them for the plugin route,
 # where both are inert: the team hook needs OPENCLAW_CLI=1 and the guard needs a live gateway).
-OPENCLAW_HOOK_SCRIPTS = ("openclaw_team_progress.py",)
+OPENCLAW_HOOK_SCRIPTS = ("openclaw_team_progress.py", "openclaw_gateway_guard.py")
 # Where the team hook lived before the kit shipped it. A registration pointing there is a
 # hand-installed copy of the same hook: leaving it beside the kit entry publishes every team
 # event to Telegram twice.
@@ -145,6 +145,10 @@ def _openclaw_hooks(ak_path: str, *, team: bool = True, guard: bool = True) -> d
         out["SubagentStop"] = [entry("openclaw_team_progress.py", "", 30)]
         out["UserPromptSubmit"] = [entry("openclaw_team_progress.py", "", 20)]
         out["Stop"] = [entry("openclaw_team_progress.py", "", 20)]
+    if guard:
+        # Bash only: the guard has nothing to say about an edit, and a narrower matcher means it
+        # is not spawned for every Write/Edit on the host.
+        out.setdefault("PreToolUse", []).append(entry("openclaw_gateway_guard.py", "Bash"))
     return out
 
 
