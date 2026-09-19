@@ -23,6 +23,7 @@ import ipaddress
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -1104,6 +1105,220 @@ def bootstrap(runner: Runner = default_runner, *, dry_run: bool = False, only: s
     return results, ctx
 
 
+# --- status: one screen, never repairs (C09) -----------------------------------------------------------
+
+# T30: what `openclaw doctor` still prints on a clean host. Anything else is signal.
+DOCTOR_NOISE = (
+    ("heap", re.compile(r"runtime V8 ceiling: not measured", re.I)),
+    ("shell-path", re.compile(r"PATH missing required dirs|Gateway service PATH includes version managers", re.I)),
+    ("owned-unit", re.compile(r"Run [`\"']openclaw gateway install --force[`\"'] when you want to replace", re.I)),
+    ("desktop", re.compile(r"Host desktop disabled", re.I)),
+    ("legacy-bindings", re.compile(r"Legacy session bindings|Affected sessions: \d+|migrate legacy bindings and stale", re.I)),
+    ("whisper", re.compile(r"whisper-cli backend cannot be proven without loading a model", re.I)),
+    ("privacy-mode", re.compile(r"telegram.*privacy mode", re.I)),
+    ("dashboard-conflict", re.compile(r'Plugin command "/dashboard" conflicts with an existing Telegram command', re.I)),
+)
+TIER_MAX_AGE_HOURS = {"daily": 36, "weekly": 8 * 24, "monthly": 35 * 24}
+STATUS_SECTIONS = ("unit", "boot", "listeners", "health", "timers", "backups", "off-box", "models", "doctor")
+
+
+def parse_doctor_entries(text: str) -> list[tuple[str, str]]:
+    """(panel title, entry) for every bullet or paragraph in `openclaw doctor`'s boxed report,
+    plus its standalone `[warning]` lines. Wrapped lines are joined into one entry."""
+    entries: list[tuple[str, str]] = []
+    title = ""
+    current: list[str] = []
+
+    def flush():
+        if current:
+            entries.append((title, " ".join(current).strip()))
+            current.clear()
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        m = re.match(r"^[\u25c7\u25c6]\s+(.*?)\s*[\u2500]+", line)
+        if m:
+            flush()
+            title = m.group(1)
+            continue
+        if line.startswith(("\u251c", "\u2570")):
+            flush()
+            title = ""
+            continue
+        if re.match(r"^\[warning\]", line, re.I):
+            flush()
+            entries.append(("", line))
+            continue
+        if not title:
+            continue
+        body = line.strip("\u2502").strip()
+        if not body:
+            flush()
+        elif body.startswith("- "):
+            flush()
+            current.append(body[2:])
+        elif body.lower().startswith("fix:") or not current and not body.startswith("-"):
+            flush()
+            current.append(body)
+        else:
+            current.append(body)
+    flush()
+    return entries
+
+
+def filter_doctor_warnings(text: str) -> tuple[list[str], list[str]]:
+    """(known noise, signal): entries in a warnings panel or a `[warning]` line that the T30
+    catalogue does not explain are signal; catalogued entries anywhere are noise."""
+    noise: list[str] = []
+    signal: list[str] = []
+    for title, entry in parse_doctor_entries(text):
+        if any(pat.search(entry) for _, pat in DOCTOR_NOISE):
+            noise.append(entry)
+        elif not title or "warning" in title.lower():
+            signal.append(entry)
+    return noise, signal
+
+
+def _humanize(seconds: float) -> str:
+    hours = seconds / 3600
+    return f"{hours:.0f}h" if hours < 48 else f"{hours / 24:.0f}d"
+
+
+def _size(n: int) -> str:
+    for unit in ("B", "K", "M", "G"):
+        if n < 1024 or unit == "G":
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n}"
+
+
+def backup_tiers(base: Path, now: float | None = None) -> dict[str, dict]:
+    now = now if now is not None else time.time()
+    out: dict[str, dict] = {}
+    for tier in ("daily", "weekly", "monthly"):
+        files = sorted((base / tier).glob("*.tar.gz"), key=lambda p: p.stat().st_mtime, reverse=True) \
+            if (base / tier).is_dir() else []
+        if not files:
+            out[tier] = {"present": False}
+            continue
+        newest = files[0]
+        age = now - newest.stat().st_mtime
+        out[tier] = {"present": True, "name": newest.name, "age_hours": age / 3600,
+                     "size": newest.stat().st_size, "count": len(files),
+                     "checksum": newest.with_name(newest.name + ".sha256").exists(),
+                     "stale": age / 3600 > TIER_MAX_AGE_HOURS[tier]}
+    return out
+
+
+def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
+                   host_env_path: Path | None = None, config_path: Path | None = None,
+                   now: float | None = None) -> dict:
+    """Everything `status` prints, as data. Read-only: it never repairs, and sets the two
+    environment variables `systemctl --user` needs from a bare shell, which is the manual step
+    everyone forgets."""
+    home = home or Path.home()
+    env = systemd_env()
+    hostenv = read_host_env(host_env_path)
+    report: dict = {}
+
+    def sc(*args):
+        return runner(["systemctl", "--user", *args], env=env)
+
+    rc, active = sc("is-active", GATEWAY_UNIT)
+    rc2, enabled = sc("is-enabled", GATEWAY_UNIT)
+    report["unit"] = {"active": active.strip() if rc == 0 else (active.strip() or "unknown"),
+                      "enabled": enabled.strip() if rc2 == 0 else (enabled.strip() or "unknown")}
+    user = env.get("USER") or os.environ.get("USER", "")
+    _rc, linger = runner(["loginctl", "show-user", user, "-p", "Linger", "--value"], env=env)
+    report["boot"] = {"linger": linger.strip() or "unknown"}
+
+    cfg_file = config_path or Path(os.environ.get("OPENCLAW_CONFIG_PATH") or home / ".openclaw" / "openclaw.json")
+    try:
+        cfg = json.loads(Path(cfg_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cfg = {}
+    port = str(((cfg.get("gateway") or {}).get("port")) or 18789)
+    _rc, ss = runner(["ss", "-H", "-ltn"], env=env)
+    listeners = [ln.split()[3] for ln in ss.splitlines() if len(ln.split()) >= 4 and ln.split()[3].endswith(f":{port}")]
+    report["listeners"] = {"port": port, "addresses": listeners,
+                           "wildcard": any(a.startswith(("0.0.0.0", "*", "[::]")) for a in listeners)}
+
+    rc, _health = runner(["openclaw", "health"], env=env)
+    report["health"] = {"ok": rc == 0}
+
+    timers = []
+    for name in TIMER_NAMES:
+        _rc, nxt = sc("show", name, "-p", "NextElapseUSecRealtime", "--value")
+        rc_e, en = sc("is-enabled", name)
+        timers.append({"name": name, "enabled": rc_e == 0 and en.strip() == "enabled", "next": nxt.strip() or "-"})
+    report["timers"] = timers
+
+    base = Path(hostenv.get("OPENCLAW_BACKUP_DIR", "/srv/openclaw-backups"))
+    tiers = backup_tiers(base, now)
+    report["backups"] = tiers
+
+    remote_cmd = hostenv.get("OPENCLAW_OFFBOX_LIST_CMD", "")
+    offbox: dict = {"configured": bool(remote_cmd)}
+    if remote_cmd and tiers["daily"].get("present"):
+        rc, listing = runner(shlex.split(remote_cmd), env=env)
+        offbox.update(ok=rc == 0, present=tiers["daily"]["name"] in listing if rc == 0 else False,
+                      name=tiers["daily"]["name"])
+    report["off-box"] = offbox
+
+    default_model = (((cfg.get("agents") or {}).get("defaults") or {}).get("model") or {}).get("primary", "?")
+    report["models"] = [{"agent": aid, "model": ((e or {}).get("model") or {}).get("primary") or f"{default_model} (default)"}
+                        for aid, e in ((cfg.get("agents") or {}).get("entries") or {}).items()]
+
+    rc, doctor = runner(["openclaw", "doctor", "--non-interactive"], env=env, timeout=120)
+    noise, signal = filter_doctor_warnings(doctor) if rc == 0 or doctor else ([], [])
+    report["doctor"] = {"ran": rc == 0, "noise": len(noise), "signal": signal}
+    return report
+
+
+def render_status(report: dict) -> str:
+    lines = ["OpenClaw host status", ""]
+    u, b = report["unit"], report["boot"]
+    lines.append(f"unit        {GATEWAY_UNIT}: {u['active']}, {u['enabled']}")
+    lines.append(f"boot        linger: {b['linger']}")
+    ls = report["listeners"]
+    addr = ", ".join(ls["addresses"]) or "nothing listening"
+    lines.append(f"listeners   port {ls['port']}: {addr}" + ("   ATTENTION: bound to all interfaces (T04)" if ls["wildcard"] else ""))
+    lines.append(f"health      {'answers' if report['health']['ok'] else 'DOES NOT ANSWER'}")
+    lines.append("timers")
+    for t in report["timers"]:
+        lines.append(f"  {t['name']:<34} {'enabled' if t['enabled'] else 'OFF':<8} next {t['next']}")
+    lines.append("backups")
+    for tier, info in report["backups"].items():
+        if not info["present"]:
+            lines.append(f"  {tier:<8} none")
+            continue
+        flag = "   STALE" if info["stale"] else ""
+        chk = "" if info["checksum"] else "   NO .sha256"
+        lines.append(f"  {tier:<8} {_humanize(info['age_hours'] * 3600)} old, {_size(info['size'])}, "
+                     f"{info['count']} on disk{flag}{chk}")
+    ob = report["off-box"]
+    if not ob["configured"]:
+        lines.append("off-box     not configured (set OPENCLAW_OFFBOX_LIST_CMD in kit-host.env)")
+    elif "ok" not in ob:
+        lines.append("off-box     no local daily to look for")
+    else:
+        lines.append("off-box     " + (f"newest daily {ob['name']} is present" if ob["present"]
+                                       else f"newest daily {ob['name']} is MISSING off-box"
+                                       if ob["ok"] else "the listing command failed"))
+    lines.append("models")
+    for m in report["models"]:
+        lines.append(f"  {m['agent']:<16} {m['model']}")
+    d = report["doctor"]
+    if not d["ran"]:
+        lines.append("doctor      could not run")
+    elif not d["signal"]:
+        lines.append(f"doctor      clean ({d['noise']} known-noise warning(s) filtered, T30)")
+    else:
+        lines.append(f"doctor      {len(d['signal'])} warning(s) not in the known-noise catalogue:")
+        lines += [f"  {w}" for w in d["signal"]]
+    return "\n".join(lines)
+
+
 # --- CLI ------------------------------------------------------------------------------------------
 
 def cmd_install_units(args: argparse.Namespace) -> int:
@@ -1144,6 +1359,11 @@ def cmd_agent_new(args: argparse.Namespace) -> int:
     return 1 if str(res["registered"]).startswith("failed") else 0
 
 
+def cmd_status(args: argparse.Namespace) -> int:
+    print(render_status(collect_status()))
+    return 0  # status never repairs and never fails the shell: it reports
+
+
 def cmd_bootstrap(args: argparse.Namespace) -> int:
     try:
         results, _ctx = bootstrap(dry_run=args.dry_run, only=args.only or None, upgrade=args.upgrade,
@@ -1173,6 +1393,9 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_doc.add_argument("--cleanup-sessions", action="store_true",
                        help="Also run `openclaw sessions cleanup --all-agents` inside the drained window")
     p_doc.set_defaults(func=cmd_doctor)
+
+    p_st = verbs.add_parser("status", help="One-screen host status (never repairs)")
+    p_st.set_defaults(func=cmd_status)
 
     p_bs = verbs.add_parser("bootstrap", help="Bring a host to the documented state, idempotently")
     p_bs.add_argument("--dry-run", action="store_true", help="Report what would change; touch nothing")

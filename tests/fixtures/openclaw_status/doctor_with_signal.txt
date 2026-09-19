@@ -1,0 +1,53 @@
+┌  OpenClaw doctor
+│
+◇  Doctor warnings ────────────────────────────────────────────────────╮
+│                                                                      │
+│  - Legacy session bindings or retired session model route state      │
+│    detected.                                                         │
+│  - Affected sessions: 9.                                             │
+│  - Run `openclaw doctor --fix` to migrate legacy bindings and stale  │
+│    session model/provider pins across all agent session stores.      │
+│                                                                      │
+├──────────────────────────────────────────────────────────────────────╯
+│
+◇  Doctor changes ───────────────────────────────────────╮
+│                                                        │
+│  Would merge stale Telegram General-topic identities.  │
+│                                                        │
+├────────────────────────────────────────────────────────╯
+│
+◇  Gateway heap ──────────────────────────────────────────────────────────╮
+│                                                                         │
+│  service argv: --max-old-space-size=8192; installer recommendation:     │
+│  6144 MiB old space; runtime V8 ceiling: not measured                   │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────╯
+│
+◇  Gateway service config ────────────────────────────────────────────────╮
+│                                                                         │
+│  - Gateway service PATH includes version managers or package managers;  │
+│    recommend a minimal PATH.                                            │
+│    (/home/u/.local/share/fnm/current/bin)                               │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────╯
+│
+◇  Gateway service config ──────────────────────────────────────────────╮
+│                                                                       │
+│  Run `openclaw gateway install --force` when you want to replace the  │
+│  gateway service definition.                                          │
+│                                                                       │
+├───────────────────────────────────────────────────────────────────────╯
+│
+◇  Channel warnings ──────────────────────────────────────╮
+│                                                          │
+│  - Telegram privacy mode is enabled for the bot.         │
+│  - Plugin command "/dashboard" conflicts with an         │
+│    existing Telegram command.                            │
+│  - Host desktop disabled.                                │
+│  - whisper-cli backend cannot be proven without loading  │
+│    a model.                                              │
+│                                                          │
+├──────────────────────────────────────────────────────────╯
+[warning] core/doctor/example - The kit had never seen this warning before.
+  fix: Run something.
+└  Doctor complete.
