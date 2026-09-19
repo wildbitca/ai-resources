@@ -1,0 +1,8 @@
+[Unit]
+Description=OpenClaw Gateway watchdog (restarts the gateway and reports it)
+Documentation=file://@LIBEXEC@/scripts/openclaw/openclaw-watchdog.sh
+
+[Service]
+Type=oneshot
+TimeoutStartSec=3min
+ExecStart=/bin/bash @LIBEXEC@/scripts/openclaw/openclaw-watchdog.sh

@@ -1,0 +1,17 @@
+[Unit]
+Description=Daily check that the OpenClaw setup is as expected
+Documentation=file:///LIVE/bin/openclaw-verify.sh
+
+[Service]
+Type=oneshot
+# Notifica SÓLO si algo falla. Un chequeo que escribe cada día se deja de leer, y entonces
+# no vale nada: es la lección de los backups de k3s, que llevaban un mes rotos con el fallo
+# escrito en un log que nadie abría.
+ExecStart=/bin/sh -c '\
+  salida=$(/LIVE/bin/openclaw-verify.sh 2>&1); rc=$?; \
+  printf "%s\\n" "$salida" >> /LIVE/home/.openclaw/logs/verify.log; \
+  [ $rc -eq 0 ] && exit 0; \
+  /LIVE/openclaw message send --channel telegram --target OWNER \
+    --message "🔍 El verificador del setup encontró fallos:$(printf "\\n%s" "$(printf "%s\\n" "$salida" | grep -E "^  ✗")")" \
+    >/dev/null 2>&1 || true; \
+  exit $rc'

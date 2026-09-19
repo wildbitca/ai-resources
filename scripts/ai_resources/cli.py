@@ -6,7 +6,7 @@ import sys
 
 from . import __version__
 from .generate import cmd_generate
-from . import daemon, doctor, executors_cmd, audit
+from . import daemon, doctor, executors_cmd, audit, openclaw_host
 from .setup import wizard
 
 
@@ -88,6 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_subparser(sub)
     executors_cmd.add_subparser(sub)
     audit.add_subparser(sub)
+    openclaw_host.add_subparser(sub)
 
     return ap
 

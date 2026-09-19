@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly OpenClaw maintenance window
+
+[Timer]
+# Sunday 04:30, after the weekly backup (03:45) so the window starts from a fresh copy.
+OnCalendar=Sun *-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=10min
+Unit=openclaw-maintenance.service
+
+[Install]
+WantedBy=timers.target

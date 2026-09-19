@@ -1,0 +1,11 @@
+[Unit]
+Description=daily backup of the OpenClaw setup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=5min
+Unit=openclaw-backup@daily.service
+
+[Install]
+WantedBy=timers.target

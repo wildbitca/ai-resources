@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily verification of the OpenClaw setup
+
+[Timer]
+# 08:15: después del backup de las 03:30 y a una hora en que el aviso se lee.
+OnCalendar=*-*-* 08:15:00
+Persistent=true
+RandomizedDelaySec=10min
+Unit=openclaw-verify.service
+
+[Install]
+WantedBy=timers.target

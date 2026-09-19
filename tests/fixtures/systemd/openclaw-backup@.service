@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenClaw setup backup (%i tier)
+Documentation=file:///LIVE/bin/openclaw-backup.sh
+
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/LIVE/bin/openclaw-backup.sh %i

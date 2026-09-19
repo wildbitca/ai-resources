@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily check that the OpenClaw setup is as expected
+Documentation=file://@LIBEXEC@/scripts/openclaw/openclaw-verify.sh
+
+[Service]
+Type=oneshot
+# `--notify` logs every run to verify.log and messages the operator ONLY when a check fails. A
+# check that writes every day stops being read, and then it is worth nothing: that is the lesson
+# of the k3s backups, which were broken for a month with the failure written in a log nobody
+# opened.
+ExecStart=/bin/bash @LIBEXEC@/scripts/openclaw/openclaw-verify.sh --notify

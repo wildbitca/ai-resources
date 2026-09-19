@@ -1,0 +1,8 @@
+[Unit]
+Description=OpenClaw weekly maintenance window (drained doctor --fix + checks)
+Documentation=file:///LIVE/bin/openclaw-maintenance.sh
+
+[Service]
+Type=oneshot
+TimeoutStartSec=20min
+ExecStart=/LIVE/bin/openclaw-maintenance.sh

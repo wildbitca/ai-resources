@@ -1,0 +1,11 @@
+[Unit]
+Description=Check every 2 minutes that the OpenClaw Gateway is running
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=openclaw-watchdog.service
+
+[Install]
+WantedBy=timers.target
