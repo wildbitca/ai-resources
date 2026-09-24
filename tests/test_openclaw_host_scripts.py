@@ -21,7 +21,8 @@ import pytest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = REPO / "scripts" / "openclaw"
 SH = sorted(SCRIPTS.glob("*.sh"))
-ALL_FILES = SH + [SCRIPTS / "openclaw-team-watch.py", SCRIPTS / "openclaw-host.env.example"]
+ALL_FILES = SH + [SCRIPTS / "openclaw-team-watch.py", SCRIPTS / "openclaw-team-send.py",
+                  SCRIPTS / "openclaw-host.env.example"]
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
 
@@ -54,6 +55,7 @@ def test_bash_syntax(path):
 
 def test_the_python_watcher_compiles():
     compile((SCRIPTS / "openclaw-team-watch.py").read_text(encoding="utf-8"), "watch", "exec")
+    compile((SCRIPTS / "openclaw-team-send.py").read_text(encoding="utf-8"), "send", "exec")
 
 
 # --- AC-3.3: the cluster context is never inherited -------------------------------------------------------
@@ -311,10 +313,10 @@ def test_backup_uses_strict_mode_and_a_lock():
 
 # --- AC-4.2: nothing the host needs is left out of the backup -----------------------------------------------------------
 
-def test_backup_lists_all_five_scripts_all_ten_units_and_the_host_env():
+def test_backup_lists_all_six_scripts_all_ten_units_and_the_host_env():
     text = _text("openclaw-backup.sh")
     for script in ("openclaw-backup.sh", "openclaw-maintenance.sh", "openclaw-watchdog.sh",
-                   "openclaw-verify.sh", "openclaw-team-watch.py"):
+                   "openclaw-verify.sh", "openclaw-team-watch.py", "openclaw-team-send.py"):
         assert f".local/bin/{script}" in text
     for unit in ("openclaw-backup@.service", "openclaw-backup-daily.timer", "openclaw-backup-weekly.timer",
                  "openclaw-backup-monthly.timer", "openclaw-maintenance.service", "openclaw-maintenance.timer",

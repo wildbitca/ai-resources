@@ -1038,6 +1038,50 @@ parallel members fall back to the pulse message.
 message; a secret on a command line would reach the chat. That behaviour predates this fix.
 
 
+## T33 — Telegram rate limits: a lost narration message left no trace *(added 2026-09-24; fixed in 1.9.2)*
+
+**Symptom.** Live member messages stopped updating, first messages never appeared, and nothing said why.
+The gateway log showed `429 Too Many Requests, retry after 11-33` (`telegram/draft-stream`, `telegram/send`).
+
+**Cause.** A forum group and **all its topics share one budget** (about 20 messages a minute for the chat,
+edits included). Each live watcher edited every 4 s, so three watchers alone wanted 45 a minute, on top of
+the gateway's own streaming drafts. The gateway answers a 429 by *waiting*: 577 `message.action` calls in
+3.5 h averaged 3 s, and the slowest took 76 s. The narration then failed in three silent ways:
+
+1. The watcher called the CLI with a **30 s timeout**. A call that was waiting out a 429 was killed, the edit
+   was lost, and when it was the member's **first** message the watcher concluded it had no message id and
+   exited, so that member never got a live message at all.
+2. The hook sent fire-and-forget with output to `/dev/null`: a send that failed (gateway restarting, 429
+   that outlived the call) was gone and nobody knew.
+3. Every process retried on its own schedule, so they all woke into the same limit together.
+
+**Fix (`openclaw-team-send.py`, used by the hook and the watcher).** One queue per chat, on disk, shared by
+every process on the host:
+
+- **FIFO and pacing.** A caller takes a ticket and waits its turn, so milestones keep their order; at least
+  4 s between two calls to the same chat, more after a 429 (it waits the `retry after N` Telegram asked for,
+  plus a second) and after a slow call (5 s extra). Tickets of dead processes are ignored, and the wait is
+  bounded, so a crash never blocks the queue.
+- **Retries.** A 429 waits and retries (up to 8 times); a transient failure retries with 2/5/15/30 s back-off
+  (5 attempts); `message is not modified` counts as delivered; a permanent error (chat or message gone, bot
+  blocked, topic closed) stops at once. The call timeout is 120 s.
+- **Nothing is lost silently.** Every rate limit, retry, slow call and failure is one JSON line in
+  `~/.openclaw/logs/team-outbox.log`. A **send** that could not be delivered is kept in
+  `~/.openclaw/logs/team-outbox-dead/`; a recent one (under 30 min) is replayed after the next successful send,
+  and `openclaw-team-send.py --replay` retries them all. A failed edit is logged but not kept: the member's next
+  edit supersedes it.
+- **Latest wins.** An edit is handed over as a function and rendered when its turn comes, so a member that
+  waited behind others shows what it is doing now.
+- The watcher edits every 6 s at most (was 4) and its heartbeat is 60 s (was 45), so it asks for less.
+
+**How to spot it next time.** `tail ~/.openclaw/logs/team-outbox.log`: `rate` lines say who is being limited and
+for how long, `retry` and `failed` lines say what did not go out, and `ls ~/.openclaw/logs/team-outbox-dead/`
+lists what is waiting to be replayed. Empty log and no dead letters means every message was delivered.
+
+**Not fixed here.** The gateway's own streaming drafts (`telegram/draft-stream`) share the same budget and are
+outside the kit. If they alone saturate the chat, lower `channels.telegram.streaming.progress.maxLines` or
+the number of agents narrating at once.
+
 ---
 
 # SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT (implemented in 1.9.0)

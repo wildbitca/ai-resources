@@ -170,6 +170,16 @@ def watcher_path():
     return ""
 
 
+def sender_path():
+    """The kit's delivery queue, else the pre-kit location; "" when neither exists (the hook then
+    calls the openclaw CLI directly, as it did before the queue)."""
+    for candidate in (os.path.join(kit_root(), "scripts", "openclaw", "openclaw-team-send.py"),
+                      os.path.expanduser("~/.local/bin/openclaw-team-send.py")):
+        if os.path.exists(candidate):
+            return candidate
+    return ""
+
+
 def effort_of(p):
     """`effort` arrives as a string in some events and as an object in others (measured: the
     Telegram message came out as "{'level': '..." because the dict's repr was printed)."""
@@ -517,13 +527,20 @@ def launch_watcher(p, target, role):
 
 
 def _send(target, text):
-    # Fire and forget, on purpose: `openclaw message send` takes 1-2 s, and waiting for it
-    # inside the hook added that latency to EVERY narrated tool call. The message is not the
-    # work; the work must not wait for the message.
+    # Fire and forget, on purpose: `openclaw message send` takes 1-2 s (and much longer while
+    # Telegram rate-limits the chat), and waiting for it inside the hook added that latency to
+    # EVERY narrated tool call. The message is not the work; the work must not wait for the message.
+    #
+    # The detached process is the delivery queue (openclaw-team-send.py), not the bare CLI: it
+    # waits for its turn behind the other messages of the chat, keeps the milestones in order,
+    # retries on a 429 and logs and keeps what it cannot deliver, so a failure is no longer
+    # invisible. Without the queue script the CLI is called directly.
     try:
+        sender = sender_path()
+        head = ["python3", sender, "send"] if sender else [openclaw_bin(), "message", "send"]
         subprocess.Popen(
-            [openclaw_bin(), "message", "send", "--channel", "telegram",
-             "--target", target[0], "--thread-id", target[1], "--message", text],
+            head + ["--channel", "telegram", "--target", target[0], "--thread-id", target[1],
+                    "--message", text],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL, start_new_session=True,
         )

@@ -103,7 +103,7 @@ for p in \
   ".config/systemd/user/openclaw-verify.timer" \
   ".local/bin/openclaw-backup.sh" ".local/bin/openclaw-maintenance.sh" \
   ".local/bin/openclaw-watchdog.sh" ".local/bin/openclaw-verify.sh" \
-  ".local/bin/openclaw-team-watch.py"
+  ".local/bin/openclaw-team-watch.py" ".local/bin/openclaw-team-send.py"
 do
   [ -e "$HOME/$p" ] && echo "$p" >> "$STAGE/ai-config.list"
 done

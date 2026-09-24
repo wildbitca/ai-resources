@@ -13,7 +13,7 @@ not be verified it says so; treat those lines as leads, not facts.
 | # | Document | What it answers |
 |---|---|---|
 | 1 | [inventory.md](inventory.md) | What exists today: the six agents with their model and workspace, all 48 configuration changes with the command and the reason, what was installed, what was written, what was cleaned up, the decisions taken and how each one was verified |
-| 2 | [pitfalls.md](pitfalls.md) | 32 traps with the literal symptom, the verified cause, the fix and how to spot it next time; what is still open; and the ten kit customizations, each with what was implemented and where it lives |
+| 2 | [pitfalls.md](pitfalls.md) | 33 traps with the literal symptom, the verified cause, the fix and how to spot it next time; what is still open; and the ten kit customizations, each with what was implemented and where it lives |
 | 3 | [runbook.md](runbook.md) | How `ai-resources setup` asks, standing it up from a clean machine in six phases, recovering it from a backup, the daily cheat sheet, a 34-box final checklist, and the pending operator steps. Eight steps need a human and say so |
 | 4 | [../runbooks/openclaw-host-dr.md](../runbooks/openclaw-host-dr.md) | Disaster recovery from a backup tarball with the kit, `kit-host.env` first. **Unrehearsed**, and it says so |
 

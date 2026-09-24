@@ -83,6 +83,7 @@ def hook(tmp_path, monkeypatch, request):
     monkeypatch.setattr(mod, "OPENCLAW_JSON", str(tmp_path / "missing.json"))
     monkeypatch.setattr(mod, "watcher_path", lambda: str(watcher))
     monkeypatch.setattr(mod, "openclaw_bin", lambda: "/bin/openclaw")
+    monkeypatch.setattr(mod, "sender_path", lambda: "")
     monkeypatch.setattr(mod.subprocess, "Popen", popen)
     mod.popen, mod.tmp = popen, tmp_path
     return mod
@@ -344,8 +345,15 @@ def test_the_watcher_resolves_a_workflow_transcript(watch_mod, tmp_path):
 STUB = """#!{python}
 import json, os, sys, time
 open(os.environ["STUB_CALLS"], "a").write(json.dumps({{"t": time.time(), "argv": sys.argv[1:]}}) + "\\n")
-if sys.argv[1:3] == ["message", "send"]:
+plan_path = os.environ.get("STUB_PLAN", "")
+plan = json.load(open(plan_path)) if plan_path and os.path.exists(plan_path) else []
+n = sum(1 for _ in open(os.environ["STUB_CALLS"])) - 1
+step = plan[n] if n < len(plan) else {{}}
+if sys.argv[1:3] == ["message", "send"] and not step.get("rc"):
     print("Message ID: 100")
+elif step.get("out"):
+    print(step["out"])
+sys.exit(step.get("rc", 0))
 """
 
 
@@ -361,9 +369,12 @@ class _Rig:
         self.transcript = tmp_path / "S1" / "subagents" / "agent-w1.jsonl"
         self.env = {**os.environ,
                     "OPENCLAW_TEAM_HOOK_STATE": str(self.state), "OPENCLAW_TEAM_HOOK_BIN": str(self.stub),
-                    "STUB_CALLS": str(self.calls), "OPENCLAW_TEAM_WATCH_INTERVAL": "0.2",
+                    "STUB_CALLS": str(self.calls), "STUB_PLAN": str(tmp_path / "plan.json"),
+                    "OPENCLAW_TEAM_WATCH_INTERVAL": "0.2",
                     "OPENCLAW_TEAM_WATCH_HEARTBEAT": "0.5", "OPENCLAW_TEAM_WATCH_TICK": "0.2",
-                    "OPENCLAW_TEAM_WATCH_QUIET": "0.5", "OPENCLAW_TEAM_WATCH_WAIT": "6"}
+                    "OPENCLAW_TEAM_WATCH_QUIET": "0.5", "OPENCLAW_TEAM_WATCH_WAIT": "6",
+                    # the delivery queue the watcher goes through: no real pacing, and its log in tmp
+                    "OPENCLAW_TEAM_SEND_INTERVAL": "0.05", "OPENCLAW_TEAM_SEND_LOG_DIR": str(tmp_path / "logs")}
         self.procs = []
 
     def write_transcript(self, path=None):
@@ -484,3 +495,68 @@ def test_the_watcher_closes_when_its_parent_claude_is_gone(rig):
     proc = rig.start("--claude-pid", str(_dead_pid()))
     assert rig.wait(lambda: proc.poll() is not None), "nobody is left to run the member"
     assert "no signal from the member" in rig.texts("edit")[-1]
+
+
+# --- delivery goes through the queue (T33) ----------------------------------------------------------------------------
+
+def test_the_hook_sends_through_the_queue_when_it_exists(hook, monkeypatch):
+    queue = hook.tmp / "openclaw-team-send.py"
+    queue.write_text("# stub\n", encoding="utf-8")
+    monkeypatch.setattr(hook, "sender_path", lambda: str(queue))
+    hook.publish(TARGET, "hello", "S1", milestone=True)
+    (argv,) = hook.popen.calls
+    assert argv[:3] == ["python3", str(queue), "send"]
+    flags = dict(zip(argv[3::2], argv[4::2]))
+    assert flags == {"--channel": "telegram", "--target": "-1001", "--thread-id": "8", "--message": "hello"}
+
+
+def test_the_hook_calls_the_cli_directly_without_the_queue(hook):
+    hook.publish(TARGET, "hello", "S1", milestone=True)
+    (argv,) = hook.popen.calls
+    assert argv[:3] == ["/bin/openclaw", "message", "send"]
+
+
+def test_the_queue_resolves_inside_the_kit_before_the_legacy_location(tmp_path, monkeypatch):
+    mod = _load(HOOK, "openclaw_team_progress_sender")
+    kit = tmp_path / "kit"
+    (kit / "scripts" / "openclaw").mkdir(parents=True)
+    (kit / "scripts" / "openclaw" / "openclaw-team-send.py").write_text("#", encoding="utf-8")
+    monkeypatch.setenv("AGENT_KIT", str(kit))
+    assert mod.sender_path() == str(kit / "scripts" / "openclaw" / "openclaw-team-send.py")
+
+
+def test_the_watcher_still_works_when_the_queue_script_is_missing(tmp_path, monkeypatch):
+    """Copied alone, the watcher cannot load its queue and must fall back to the CLI, not crash."""
+    lone = tmp_path / "openclaw-team-watch.py"
+    lone.write_text(WATCH.read_text(encoding="utf-8"), encoding="utf-8")
+    mod = _load(lone, "openclaw_team_watch_lone")
+    assert mod.BUS is None
+    monkeypatch.setattr(mod, "sh", lambda args, capture=False: "Message ID: 55" if capture else None)
+    assert mod.send("-1001", "8", "x") == "55"
+    mod.edit("-1001", "8", "55", lambda: "rendered late")  # a callable is resolved on the direct path too
+
+
+def test_the_watcher_goes_through_the_queue_and_renders_edits_late(tmp_path):
+    mod = _load(WATCH, "openclaw_team_watch_queue")
+    assert mod.BUS is not None
+    seen = []
+    mod.BUS = type("Q", (), {"deliver": staticmethod(lambda kind, chat, thread, **kw: seen.append((kind, kw)) or (True, "9"))})
+    assert mod.send("-1001", "8", "hello") == "9"
+    mod.edit("-1001", "8", "9", lambda: "later")
+    kinds = [k for k, _ in seen]
+    assert kinds == ["send", "edit"] and callable(seen[1][1]["text_fn"]) and seen[1][1]["text"] is None
+
+
+def test_a_429_on_the_first_message_no_longer_makes_the_watcher_give_up(rig):
+    """The old watcher had a 30 s CLI timeout and no retry: a first send that met a rate limit left the
+    member without a live message for good. Now it waits its turn, honours retry-after and delivers."""
+    (rig.tmp / "plan.json").write_text(json.dumps([{"rc": 1, "out": "429: Too Many Requests: retry after 0"}]),
+                                       encoding="utf-8")
+    rig.write_transcript()
+    proc = rig.start()
+    assert rig.wait(lambda: (rig.state / "mid-w1").exists(), timeout=15), "the first message never got through"
+    assert len(rig.entries("send")) == 2, "one refused with a 429, one delivered"
+    rig.stop()
+    assert rig.wait(lambda: proc.poll() is not None)
+    logged = (rig.tmp / "logs" / "team-outbox.log").read_text(encoding="utf-8")
+    assert '"event": "rate"' in logged

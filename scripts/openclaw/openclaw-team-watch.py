@@ -30,6 +30,13 @@ the topic went silent. Now it closes only when:
   - the member has been silent for SILENCE_HARD, or LIFETIME_CAP is reached (hard ceilings).
 While the member is quiet it keeps editing its message every HEARTBEAT seconds ("still running,
 last tool X, N s since last activity"), so the topic never looks dead.
+
+DELIVERY
+Every send and edit goes through openclaw-team-send.py (next to this file): one queue per chat,
+paced, with retries on a 429, and a log and a dead-letter directory for whatever could not be
+delivered. An edit is handed over as a function, so it is rendered when its turn comes and carries the
+member's state at that moment. If that file cannot be loaded the watcher falls back to calling the
+CLI directly, as it did before.
 The hook writes this process' PID into watch-<agent_id>. On a relaunch the message is reused
 (mid-<agent_id>) instead of opening a second one, and the transcript is replayed from the start
 so the rows and counters are rebuilt.
@@ -64,8 +71,8 @@ def _seconds(name, default):
         return float(default)
 
 
-EDIT_INTERVAL = _seconds("OPENCLAW_TEAM_WATCH_INTERVAL", 4.0)        # Telegram does not appreciate faster
-HEARTBEAT = _seconds("OPENCLAW_TEAM_WATCH_HEARTBEAT", 45.0)          # edit even while the member is quiet
+EDIT_INTERVAL = _seconds("OPENCLAW_TEAM_WATCH_INTERVAL", 6.0)        # one chat shares its budget among all topics
+HEARTBEAT = _seconds("OPENCLAW_TEAM_WATCH_HEARTBEAT", 60.0)          # edit even while the member is quiet
 TRANSCRIPT_WAIT = _seconds("OPENCLAW_TEAM_WATCH_WAIT", 25.0)         # the member's file takes a moment to exist
 SILENCE_NO_PARENT = _seconds("OPENCLAW_TEAM_WATCH_SILENCE", 1500.0)  # 25 min, only when the parent is unknown
 SILENCE_HARD = _seconds("OPENCLAW_TEAM_WATCH_SILENCE_HARD", 7200.0)  # 2 h with no transcript line at all
@@ -74,6 +81,22 @@ QUIET_AFTER = _seconds("OPENCLAW_TEAM_WATCH_QUIET", 20.0)  # the "still running"
 TICK = _seconds("OPENCLAW_TEAM_WATCH_TICK", 1.0)           # how often the transcript is polled
 MAX_ROWS = 12
 MAX_CHARS = 3500
+
+
+def _load_bus():
+    """The shared delivery queue, or None when it cannot be loaded (then the CLI is called directly)."""
+    try:
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "openclaw-team-send.py")
+        spec = importlib.util.spec_from_file_location("openclaw_team_send", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+BUS = _load_bus()
 
 
 def sh(args, capture=False):
@@ -85,6 +108,9 @@ def sh(args, capture=False):
 
 
 def send(chat, thread, text):
+    if BUS is not None:
+        _, mid = BUS.deliver("send", chat, thread, text=text)
+        return mid or None
     out = sh([OPENCLAW, "message", "send", "--channel", "telegram",
               "--target", chat, "--thread-id", thread, "--message", text], capture=True) or ""
     m = re.search(r"Message ID:\s*(\d+)", out)
@@ -92,8 +118,13 @@ def send(chat, thread, text):
 
 
 def edit(chat, thread, mid, text):
+    """`text` is a string or a function returning one; a function is called when the edit's turn comes."""
+    if BUS is not None:
+        BUS.deliver("edit", chat, thread, mid=mid, text=None if callable(text) else text,
+                    text_fn=text if callable(text) else None)
+        return
     sh([OPENCLAW, "message", "edit", "--channel", "telegram", "--target", chat,
-        "--thread-id", thread, "--message-id", mid, "--message", text])
+        "--thread-id", thread, "--message-id", mid, "--message", text() if callable(text) else text])
 
 
 def short(s, n):
@@ -285,7 +316,8 @@ def live(a, stop_marker, msg_marker, t0):
             wait = EDIT_INTERVAL - (time.time() - last_edit)
             if wait > 0:
                 time.sleep(wait)
-            edit(a.chat, a.thread, mid, render(a.role, a.model, rows, tools, t0, reason, last_tool, idle))
+            edit(a.chat, a.thread, mid,
+                 lambda: render(a.role, a.model, rows, tools, t0, reason, last_tool, idle))
             if reason == "stop":
                 for path in (stop_marker, msg_marker):
                     try:
@@ -295,7 +327,8 @@ def live(a, stop_marker, msg_marker, t0):
             return
 
         if (dirty or now - last_edit >= HEARTBEAT) and now - last_edit >= EDIT_INTERVAL:
-            edit(a.chat, a.thread, mid, render(a.role, a.model, rows, tools, t0, None, last_tool, idle))
+            edit(a.chat, a.thread, mid,
+                 lambda: render(a.role, a.model, rows, tools, t0, None, last_tool, time.time() - last_line))
             last_edit = time.time()
             dirty = False
         time.sleep(TICK)

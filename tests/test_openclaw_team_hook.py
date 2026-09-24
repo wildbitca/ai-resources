@@ -96,6 +96,7 @@ def env(tmp_path, monkeypatch, request):
     monkeypatch.setattr(hook, "STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(hook, "watcher_path", lambda: "")
     monkeypatch.setattr(hook, "openclaw_bin", lambda: "/bin/openclaw")
+    monkeypatch.setattr(hook, "sender_path", lambda: "")
     monkeypatch.setattr(hook.subprocess, "Popen", popen)
     monkeypatch.setenv("OPENCLAW_CLI", "1")
 
