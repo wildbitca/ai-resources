@@ -4,6 +4,21 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.3] — 2026-09-24 — team narration can speak Spanish
+
+A host whose operator reads Spanish had to choose between the hand-installed team hook (Spanish, no
+kit) and the kit's (English, everything else). Now the kit speaks both.
+
+### Added
+
+- `OPENCLAW_NARRATION_LANG=en|es` in `~/.openclaw/kit-host.env`. It applies to everything the team hook
+  and its live messages write into Telegram: the request, the team start, each hand-off, the workflow
+  banner, the turn close, edits, the pulse, the rate-window notice and the member's live message (the hook
+  hands the language to the watcher with `--lang`). Absent or any other value means English, so nothing
+  changes for existing hosts. The Spanish strings are written as escapes: the source stays ASCII.
+- The key is documented in `openclaw-host.env.example`. `write_host_env` keeps lines it does not manage, so
+  `ai-resources setup` does not drop it; the wizard does not ask for it yet.
+
 ## [1.9.2] — 2026-09-24 — team narration stops fighting Telegram's rate limit, and stops losing messages
 
 A forum group and all its topics share one Telegram budget (about 20 messages a minute, edits included).
