@@ -560,3 +560,33 @@ def test_a_429_on_the_first_message_no_longer_makes_the_watcher_give_up(rig):
     assert rig.wait(lambda: proc.poll() is not None)
     logged = (rig.tmp / "logs" / "team-outbox.log").read_text(encoding="utf-8")
     assert '"event": "rate"' in logged
+
+
+# --- watcher language ------------------------------------------------------------------------------------------------------
+
+def test_the_watcher_labels_exist_in_both_languages(watch_mod):
+    assert set(watch_mod.LABELS["en"]) == set(watch_mod.LABELS["es"])
+
+
+def test_the_watcher_renders_spanish_when_asked(watch_mod):
+    running = watch_mod.render("implementer", "opus", [], 3, time.time() - 5, None, "Bash", 40, "es")
+    assert "trabajando" in running and "herramientas" in running and "sigue trabajando" in running and "40s sin actividad" in running
+    done = watch_mod.render("implementer", "opus", [], 3, time.time() - 5, "stop", lang="es")
+    assert "terminó" in done
+    silent = watch_mod.render("implementer", "opus", [], 3, time.time() - 5, "padre", lang="es")
+    assert "sin señal del miembro" in silent
+
+
+def test_the_watcher_renders_english_by_default_and_for_an_unknown_language(watch_mod):
+    for lang in ("en", "fr", None):
+        text = watch_mod.render("implementer", "opus", [], 3, time.time() - 5, None, "Bash", 40, lang or "zz")
+        assert "working" in text and "tools" in text and "still running" in text
+
+
+def test_a_spanish_watcher_shows_spanish_end_to_end(rig):
+    rig.write_transcript()
+    proc = rig.start("--lang", "es")
+    assert rig.wait(lambda: any("trabajando" in t for t in rig.texts("edit")), timeout=10)
+    rig.stop()
+    assert rig.wait(lambda: proc.poll() is not None)
+    assert "terminó" in rig.texts("edit")[-1]

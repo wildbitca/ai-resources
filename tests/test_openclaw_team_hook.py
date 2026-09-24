@@ -457,3 +457,76 @@ def test_restoring_with_nothing_recorded_never_creates_the_settings_file(tmp_pat
     path = tmp_path / "settings.json"
     assert claude.restore_legacy_openclaw_hooks([], path) is False
     assert not path.exists()
+
+
+# --- narration language (OPENCLAW_NARRATION_LANG) -------------------------------------------------------------------
+
+def _set_lang(env, value):
+    path = env.tmp / "kit-host.env"
+    path.write_text(path.read_text(encoding="utf-8") + f"OPENCLAW_NARRATION_LANG={value}\n", encoding="utf-8")
+
+
+def test_the_default_language_is_english(env):
+    assert env.hook.narration_lang() == "en"
+    env.run("prompt_submit")
+    assert "request received" in env.popen.sends()[0]
+
+
+@pytest.mark.parametrize("value", ["fr", "", "ES-mx", "spanish"])
+def test_an_unknown_language_means_english(env, value):
+    _set_lang(env, value)
+    assert env.hook.narration_lang() == "en"
+
+
+def test_spanish_is_selected_by_the_host_env_file_and_is_case_insensitive(env):
+    _set_lang(env, "ES")
+    assert env.hook.narration_lang() == "es"
+
+
+def test_spanish_narrates_every_milestone_in_spanish(env):
+    _set_lang(env, "es")
+    for name in ("prompt_submit", "agent_start", "member_stop", "stop", "workflow"):
+        env.run(name)
+    text = "\n".join(env.popen.sends())
+    for expected in ("petición recibida", "equipo · arranca", "terminó", "turno completo", "workflow"):
+        assert expected in text, expected
+    for english in ("request received", "starting", "finished", "turn complete"):
+        assert english not in text, english
+
+
+def test_spanish_covers_the_every_step_messages_too(env):
+    env.set_level("every-step")  # rewrites the env file, so the language is appended after it
+    _set_lang(env, "es")
+    for _ in range(3):
+        env.run("member_bash")
+    assert "herramientas" in env.popen.sends()[0] and "última" in env.popen.sends()[0]
+    env.popen.calls.clear()
+    for _ in range(env.hook.EDITS_PER_MEMBER + 1):
+        env.run("member_edit")
+    assert "sigue editando" in env.popen.sends()[-1]
+
+
+def test_spanish_covers_the_rate_window_notice(env):
+    _set_lang(env, "es")
+    target = (CHAT, "8")
+    for i in range(env.hook.MESSAGES_PER_WINDOW + 2):
+        env.hook.publish(target, f"edit {i}", "S9")
+    assert any("mensajes omitidos por ritmo" in t for t in env.popen.sends())
+
+
+def test_the_watcher_is_told_the_language(env, monkeypatch):
+    watcher = env.tmp / "openclaw-team-watch.py"
+    watcher.write_text("# stub\n", encoding="utf-8")
+    monkeypatch.setattr(env.hook, "watcher_path", lambda: str(watcher))
+    env.set_level("every-step")
+    _set_lang(env, "es")
+    env.run("member_bash")
+    (spawn,) = [c for c in env.popen.calls if str(watcher) in c]
+    assert dict(zip(spawn[2::2], spawn[3::2]))["--lang"] == "es"
+
+
+def test_every_message_key_exists_in_both_languages(env):
+    assert set(env.hook.MESSAGES) == set(env.hook.MESSAGES_ES)
+    for key, text in env.hook.MESSAGES_ES.items():
+        placeholders = lambda t: sorted(__import__("re").findall(r"\{(\w+)\}", t))
+        assert placeholders(text) == placeholders(env.hook.MESSAGES[key]), key

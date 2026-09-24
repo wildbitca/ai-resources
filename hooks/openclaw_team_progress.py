@@ -38,6 +38,10 @@ RULES
     milestones   the request, the team start, each member's hand-off, the close
     every-step   also each edit, the periodic pulse and the per-member live message
   Any other value also means off: an unreadable choice must not publish.
+- Language of what reaches the chat, read from `~/.openclaw/kit-host.env` (OPENCLAW_NARRATION_LANG):
+    (absent)     en, the default
+    es           Spanish
+  Any other value means en. The source stays ASCII: the Spanish strings are written as escapes.
 - Absolute best effort: any failure exits 0 and says nothing.
 """
 import fcntl
@@ -68,6 +72,8 @@ MAX_WATCHERS = 3
 WATCHER_TAG = "openclaw-team-watch"
 DEFAULT_NARRATION = "off"
 NARRATION_LEVELS = ("milestones", "every-step")
+NARRATION_LANGS = ("en", "es")
+DEFAULT_LANG = "en"
 
 # Fallbacks for a session whose PATH does not carry the Homebrew prefix.
 OPENCLAW_FALLBACKS = ("/home/linuxbrew/.linuxbrew/bin/openclaw", "/opt/homebrew/bin/openclaw",
@@ -89,6 +95,26 @@ MESSAGES = {
     "edit_more": "✏️ *{role}* keeps editing (rest omitted)",
     "pulse": "⏳ *{role}* · {n} tools · {secs}s · last `{tool}`",
     "rate_omitted": "⏸️ messages omitted to keep the pace (max {n} every {mins} min); milestones keep coming",
+}
+
+
+# The same messages in Spanish. Written with \u escapes so this file stays ASCII and English in the
+# source; what reaches Telegram is what the operator reads, so it follows OPENCLAW_NARRATION_LANG.
+MESSAGES_ES = {
+    "request": "\U0001F4E5 petici\u00f3n recibida \u00b7 modelo *{model}*{tail}",
+    "turn_done": "\U0001F3C1 turno completo",
+    "member_done": "\u2705 *{role}* termin\u00f3",
+    "team_start": "\U0001F465 equipo \u00b7 arranca *{role}* ({model}{tail})",
+    "inherited": "{model} (heredado)",
+    "inherited_unknown": "modelo heredado",
+    "workflow": "\U0001F9E9 workflow *{name}*",
+    "workflow_phases": " \u00b7 {n} fases",
+    "unnamed": "sin nombre",
+    "a_member": "un miembro",
+    "edit": "\u270f\ufe0f *{role}* \u2192 `{path}`",
+    "edit_more": "\u270f\ufe0f *{role}* sigue editando (resto omitido)",
+    "pulse": "\u23f3 *{role}* \u00b7 {n} herramientas \u00b7 {secs}s \u00b7 \u00faltima `{tool}`",
+    "rate_omitted": "\u23f8\ufe0f mensajes omitidos por ritmo (m\u00e1x {n} cada {mins} min); los hitos siguen llegando",
 }
 
 
@@ -142,6 +168,24 @@ def narration_level():
     except Exception:
         pass
     return DEFAULT_NARRATION
+
+
+def narration_lang():
+    """`es` when the host env file asks for it, `en` otherwise (absent file, key or value)."""
+    try:
+        with open(KIT_HOST_ENV) as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("OPENCLAW_NARRATION_LANG="):
+                    value = line.split("=", 1)[1].strip().strip("'\"").lower()
+                    return value if value in NARRATION_LANGS else DEFAULT_LANG
+    except Exception:
+        pass
+    return DEFAULT_LANG
+
+
+def messages():
+    return MESSAGES_ES if narration_lang() == "es" else MESSAGES
 
 
 def openclaw_bin():
@@ -515,7 +559,7 @@ def launch_watcher(p, target, role):
                 ["python3", watcher, "--agent-id", str(aid), "--role", str(role),
                  "--model", role_model(role) or (agent_model(p.get("cwd")) or ""),
                  "--transcript", path, "--chat", target[0], "--thread", target[1],
-                 "--claude-pid", str(claude_pid())],
+                 "--claude-pid", str(claude_pid()), "--lang", narration_lang()],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL, start_new_session=True,
             )
@@ -551,11 +595,12 @@ def _send(target, text):
 def publish(target, text, session_id, milestone=False):
     """A milestone bypasses the rate window and is never dropped. Everything else is limited to
     MESSAGES_PER_WINDOW per WINDOW_SECONDS per session, with one notice per window."""
+    msgs = messages()
     if not milestone:
         ok, first = window(session_id)
         if not ok:
             if first:
-                _send(target, MESSAGES["rate_omitted"].format(n=MESSAGES_PER_WINDOW,
+                _send(target, msgs["rate_omitted"].format(n=MESSAGES_PER_WINDOW,
                                                               mins=WINDOW_SECONDS // 60))
             return
     _send(target, text)
@@ -567,6 +612,7 @@ def main():
     level = narration_level()
     if level == "off":
         return
+    msgs = messages()
     p = read_payload()
     log_payload(p)
     target = resolve_target(p.get("cwd"))
@@ -583,12 +629,12 @@ def main():
     if event == "UserPromptSubmit":
         model = agent_model(p.get("cwd")) or "?"
         tail = f" · effort {effort}" if effort else ""
-        publish(target, MESSAGES["request"].format(model=model, tail=tail), session, milestone=True)
+        publish(target, msgs["request"].format(model=model, tail=tail), session, milestone=True)
         return
 
     # The turn ends: close the story.
     if event == "Stop":
-        publish(target, MESSAGES["turn_done"], session, milestone=True)
+        publish(target, msgs["turn_done"], session, milestone=True)
         return
 
     if event == "SubagentStop":
@@ -604,9 +650,9 @@ def main():
                     os.remove(mark)
             except Exception:
                 pass
-        role = clean(inner_role or MESSAGES["a_member"], 40)
+        role = clean(inner_role or msgs["a_member"], 40)
         result = clean(p.get("last_assistant_message") or "", MAX_RESULT)
-        publish(target, MESSAGES["member_done"].format(role=role) + (f"\n{result}" if result else ""),
+        publish(target, msgs["member_done"].format(role=role) + (f"\n{result}" if result else ""),
                 session, milestone=True)
         return
 
@@ -622,11 +668,11 @@ def main():
             model_label = model
         else:
             inherited = agent_model(p.get("cwd"))
-            model_label = (MESSAGES["inherited"].format(model=inherited) if inherited
-                           else MESSAGES["inherited_unknown"])
+            model_label = (msgs["inherited"].format(model=inherited) if inherited
+                           else msgs["inherited_unknown"])
         tail = f" · effort {effort}" if effort else ""
         desc = clean(ti.get("description") or "")
-        publish(target, MESSAGES["team_start"].format(role=role, model=model_label, tail=tail)
+        publish(target, msgs["team_start"].format(role=role, model=model_label, tail=tail)
                 + (f"\n{desc}" if desc else ""), session, milestone=True)
         return
 
@@ -634,10 +680,10 @@ def main():
         name = clean(ti.get("name") or "", 40)
         if not name and ti.get("script"):
             m = re.search(r"name:\s*['\"]([^'\"]+)", str(ti["script"]))
-            name = clean(m.group(1) if m else MESSAGES["unnamed"], 40)
+            name = clean(m.group(1) if m else msgs["unnamed"], 40)
         phases = len(re.findall(r"phase\(", str(ti.get("script") or "")))
-        publish(target, MESSAGES["workflow"].format(name=name or MESSAGES["unnamed"])
-                + (MESSAGES["workflow_phases"].format(n=phases) if phases else ""), session,
+        publish(target, msgs["workflow"].format(name=name or msgs["unnamed"])
+                + (msgs["workflow_phases"].format(n=phases) if phases else ""), session,
                 milestone=True)
         return
 
@@ -657,9 +703,9 @@ def main():
         path = clean(str(path).replace(os.path.expanduser("~"), "~"), 70)
         ok, last = counter(f"edits-{p.get('agent_id')}", EDITS_PER_MEMBER)
         if ok:
-            publish(target, MESSAGES["edit"].format(role=role, path=path), session)
+            publish(target, msgs["edit"].format(role=role, path=path), session)
         elif last:
-            publish(target, MESSAGES["edit_more"].format(role=role), session)
+            publish(target, msgs["edit_more"].format(role=role), session)
         return
 
     # The pulse is the fallback for when there is no watcher (cap reached, or the transcript
@@ -668,7 +714,7 @@ def main():
         return
     n, secs = pulse(p.get("agent_id"))
     if n:
-        publish(target, MESSAGES["pulse"].format(role=role, n=n, secs=secs, tool=clean(tool, 24)),
+        publish(target, msgs["pulse"].format(role=role, n=n, secs=secs, tool=clean(tool, 24)),
                 session)
 
 

@@ -78,6 +78,7 @@ OpenClaw drops Claude Code subagent events on purpose, so the kit ships a Claude
   the gateway, the normal state on a host) AND `~/.openclaw/kit-host.env` has
   `OPENCLAW_NARRATION=milestones` or `every-step`. A missing key, a missing file or an unknown
   value means it exits 0 without publishing or logging.
+- Language of what it writes: `OPENCLAW_NARRATION_LANG=es` in the same file (default `en`).
 - To turn it off: answer `off` in `ai-resources setup` (removes the key). Do not just delete the
   hook registration by hand; a hand-installed `openclaw-team-progress.py` from before the kit is
   replaced by the kit's hook on setup and restored on teardown.

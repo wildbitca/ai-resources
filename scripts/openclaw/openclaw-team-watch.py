@@ -146,22 +146,34 @@ def target_of(name, tool_input):
     return ""
 
 
-def render(role, model, rows, tools, t0, reason, last_tool=None, idle=0.0):
+# What the live message says, per language (the hook passes --lang from OPENCLAW_NARRATION_LANG). The
+# Spanish strings are escapes so this file stays ASCII and English in the source.
+LABELS = {
+    "en": {"working": "working", "finished": "finished", "no_signal": "no signal from the member",
+           "tools": "tools", "still": "still running \u00b7 last `{tool}` \u00b7 {secs}s since last activity"},
+    "es": {"working": "trabajando", "finished": "termin\u00f3", "no_signal": "sin se\u00f1al del miembro",
+           "tools": "herramientas",
+           "still": "sigue trabajando \u00b7 \u00faltima `{tool}` \u00b7 {secs}s sin actividad"},
+}
+
+
+def render(role, model, rows, tools, t0, reason, last_tool=None, idle=0.0, lang="en"):
     """`reason` is None while running, "stop" when the member finished, anything else when the
     watcher gave up without a stop signal."""
+    words = LABELS.get(lang, LABELS["en"])
     head = f"\U0001F464 *{role}*" + (f" · {model}" if model else "")
     if reason is None:
-        status = "working"
+        status = words["working"]
     elif reason == "stop":
-        status = "finished"
+        status = words["finished"]
     else:
-        status = "no signal from the member"
-    head += f" · {status} · {int(time.time() - t0)}s · {tools} tools"
+        status = words["no_signal"]
+    head += f" · {status} · {int(time.time() - t0)}s · {tools} {words['tools']}"
     body = "\n".join(rows[-MAX_ROWS:])
     if reason is None and last_tool and idle >= QUIET_AFTER:
         # Only shown once the member has been quiet for a moment, so a busy member's message is
         # not cluttered. It also guarantees the text changes between heartbeats.
-        body += ("\n" if body else "") + f"⏱️ still running · last `{last_tool}` · {int(idle)}s since last activity"
+        body += ("\n" if body else "") + "\u23f1\ufe0f " + words["still"].format(tool=last_tool, secs=int(idle))
     text = head + ("\n" + body if body else "")
     return text[:MAX_CHARS]
 
@@ -216,6 +228,7 @@ def main():
     ap.add_argument("--chat", required=True)
     ap.add_argument("--thread", required=True)
     ap.add_argument("--claude-pid", type=int, default=0)
+    ap.add_argument("--lang", default="en")
     a = ap.parse_args()
 
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", a.agent_id)[:70]
@@ -259,7 +272,7 @@ def live(a, stop_marker, msg_marker, t0):
     except Exception:
         mid = None
     if not mid:
-        mid = send(a.chat, a.thread, render(a.role, a.model, [], 0, t0, None))
+        mid = send(a.chat, a.thread, render(a.role, a.model, [], 0, t0, None, lang=a.lang))
         if not mid:
             return
         try:
@@ -317,7 +330,7 @@ def live(a, stop_marker, msg_marker, t0):
             if wait > 0:
                 time.sleep(wait)
             edit(a.chat, a.thread, mid,
-                 lambda: render(a.role, a.model, rows, tools, t0, reason, last_tool, idle))
+                 lambda: render(a.role, a.model, rows, tools, t0, reason, last_tool, idle, a.lang))
             if reason == "stop":
                 for path in (stop_marker, msg_marker):
                     try:
@@ -328,7 +341,7 @@ def live(a, stop_marker, msg_marker, t0):
 
         if (dirty or now - last_edit >= HEARTBEAT) and now - last_edit >= EDIT_INTERVAL:
             edit(a.chat, a.thread, mid,
-                 lambda: render(a.role, a.model, rows, tools, t0, None, last_tool, time.time() - last_line))
+                 lambda: render(a.role, a.model, rows, tools, t0, None, last_tool, time.time() - last_line, a.lang))
             last_edit = time.time()
             dirty = False
         time.sleep(TICK)
