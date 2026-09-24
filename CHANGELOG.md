@@ -4,6 +4,48 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.1] — 2026-09-24 — a long workflow no longer goes silent in Telegram
+
+An `elinvo` workflow ran a member for hours and its topic heard nothing after the start. Four
+independent causes, all fixed in the team-narration hook and its watcher (pitfall T32). Hosts that
+narrate at the `every-step` level are the ones that notice; `milestones` gains the rate window and
+the log rotation.
+
+### Fixed
+
+- **Workflow members were never watched.** A member started by a Workflow writes its transcript to
+  `subagents/workflows/<workflow id>/agent-<id>.jsonl`, and the hook only looked at
+  `subagents/agent-<id>.jsonl` (346 of 655 transcripts on the reference host). Both the hook and the
+  watcher now look in both places, and the watcher keeps looking while the file does not exist yet.
+- **The 60-message lifetime cap is gone.** It silenced sessions that live for days, milestones
+  included. A sliding window (30 messages per 10 minutes per session, one notice per window) limits
+  the rest, and milestones bypass it: the request, the team start, each hand-off, the workflow banner
+  and the turn close are never dropped.
+- **The watcher no longer closes after 90 s of silence.** A member blocks for minutes inside one tool
+  call. It closes on `SubagentStop`, when its `claude` parent is gone, after 25 minutes of silence
+  only if the parent cannot be checked, and at hard ceilings (2 h without a transcript line, 6 h of
+  life). While the member is quiet it edits its message every 45 s with the last tool and the idle time.
+- **A watcher marker that outlived its process kept the member unwatched.** `watch-<agent_id>` now
+  holds the watcher PID, and counts as alive only if that process exists and is that member's watcher.
+  Dead markers are swept, do not count against `MAX_WATCHERS`, and the member's next tool call
+  relaunches the watcher, which reuses its Telegram message instead of opening a second one.
+- `team-hook.jsonl` rotates to `.1` at 2 MB instead of going silent.
+
+### Changed
+
+- The hook launches (or heals) a member's watcher before handling an edit, so a member whose first
+  tool is an edit still gets one.
+- `stop-<agent_id>` markers older than a day are removed when a watcher is launched.
+
+### Notes
+
+- Pitfall T32 in `docs/openclaw/pitfalls.md` records the four causes, the fix and how to spot a
+  member without a live watcher.
+- The watcher prints the first line of each tool's command, trimmed to 54 characters, in the live
+  message. That predates this release and is unchanged.
+- Hosts that installed the hook by hand before the kit already run a patched copy of the same fix;
+  `ai-resources setup` replaces it with this one.
+
 ## [1.9.0] — 2026-09-19 — the OpenClaw setup is reproducible from the kit
 
 The setup that 1.8.2 documented can now be rebuilt from the kit: the scripts,
