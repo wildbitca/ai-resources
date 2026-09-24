@@ -4,6 +4,45 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.2] — 2026-09-24 — team narration stops fighting Telegram's rate limit, and stops losing messages
+
+A forum group and all its topics share one Telegram budget (about 20 messages a minute, edits included).
+The live-member watchers, the narration hook and the gateway's own streaming drafts were drawing on it
+together; the gateway answers a 429 by waiting (calls took up to 76 s), and the narration failed in silence
+(pitfall T33).
+
+### Added
+
+- `scripts/openclaw/openclaw-team-send.py`: the delivery queue the hook and the watcher now use.
+  - One FIFO queue per chat, kept on disk and shared by every process on the host, so milestones keep their
+    order and callers stop waking into the same limit together.
+  - Pacing: at least 4 s between two calls to one chat, more after a 429 (it waits the `retry after N` Telegram
+    asked for) and after a slow call.
+  - Retries: a 429 waits and retries; a transient failure retries with a growing back-off; `message is not
+    modified` counts as delivered; a permanent error stops at once.
+  - Nothing is lost silently: every rate limit, retry, slow call and failure is a line in
+    `~/.openclaw/logs/team-outbox.log`, and a send that could not be delivered is kept in
+    `~/.openclaw/logs/team-outbox-dead/`. A recent one is replayed after the next successful send;
+    `openclaw-team-send.py --replay` retries them all.
+  - Latest wins: an edit is rendered when its turn comes, so a member that waited shows what it is doing now.
+- The backup now also takes `~/.local/bin/openclaw-team-send.py`.
+
+### Fixed
+
+- **A rate limit on a member's first message left it without a live message for good.** The watcher called the
+  CLI with a 30 s timeout and no retry; a call waiting out a 429 was killed, no message id came back, and the
+  watcher exited. It now waits its turn, honours `retry after` and delivers.
+- **The hook's fire-and-forget send had nobody to notice a failure.** It now hands the message to the queue,
+  which retries and records what it cannot deliver. Without the queue script the hook still calls the CLI
+  directly.
+- The watcher asks for less: it edits every 6 s at most (was 4) and its heartbeat is 60 s (was 45).
+
+### Notes
+
+- The gateway's own streaming drafts (`telegram/draft-stream`) draw on the same budget and are outside the kit.
+- Hosts that installed the hook and the watcher by hand keep working; copy `openclaw-team-send.py` next to
+  them (`~/.local/bin`) to get the queue.
+
 ## [1.9.1] — 2026-09-24 — a long workflow no longer goes silent in Telegram
 
 An `elinvo` workflow ran a member for hours and its topic heard nothing after the start. Four
