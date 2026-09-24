@@ -142,6 +142,7 @@ def main() -> int:
 
         # 1. Upgrade providers + internal module refs
         cmd = [sys.executable, str(upgrade_script), str(module_dir)] + report_arg + [str(tf_modules_root)]
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args -- argument list (no shell); paths come from this maintainer CLI's own arguments
         r = subprocess.run(cmd)
         if r.returncode != 0:
             print(f"Upgrade failed for tf-module-{name}, skipping version-commit.", file=sys.stderr)
@@ -150,6 +151,7 @@ def main() -> int:
 
         # 2. Commit, tag, push (version-commit --yes pushes by default)
         cmd = [sys.executable, str(version_commit_script), "--yes", str(module_dir)]
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args -- argument list (no shell); paths come from this maintainer CLI's own arguments
         r = subprocess.run(cmd)
         if r.returncode != 0:
             print(f"Version-commit failed for tf-module-{name}.", file=sys.stderr)
