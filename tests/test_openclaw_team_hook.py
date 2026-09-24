@@ -38,9 +38,25 @@ def _load_hook():
 class _Popens:
     def __init__(self):
         self.calls: list[list[str]] = []
+        self.procs: list = []
 
     def __call__(self, argv, **_kw):
         self.calls.append(list(argv))
+        if argv and argv[0] == "python3" and "--agent-id" in argv:
+            # A watcher launch: the hook records the PID it gets back, and later treats the marker
+            # as live only while a process that looks like that member's watcher exists. Start a
+            # real idle stand-in whose command line carries the watcher name and the agent id.
+            proc = _REAL_POPEN([sys.executable, "-c", "import time; time.sleep(120)",
+                                "openclaw-team-watch.py", "--agent-id", argv[argv.index("--agent-id") + 1]],
+                               start_new_session=True)
+            self.procs.append(proc)
+            return proc
+        return type("Proc", (), {"pid": 0})()
+
+    def cleanup(self):
+        for proc in self.procs:
+            proc.kill()
+            proc.wait()
 
     def sends(self) -> list[str]:
         """The --message argument of every `openclaw message send` call."""
@@ -48,7 +64,7 @@ class _Popens:
 
 
 @pytest.fixture
-def env(tmp_path, monkeypatch):
+def env(tmp_path, monkeypatch, request):
     """A host with two agents (one workspace nested in the other), a topic map and no watcher."""
     root = tmp_path / "dev"
     (root / "pacha" / "api").mkdir(parents=True)
@@ -72,6 +88,7 @@ def env(tmp_path, monkeypatch):
 
     hook = _load_hook()
     popen = _Popens()
+    request.addfinalizer(popen.cleanup)
     monkeypatch.setattr(hook, "OPENCLAW_JSON", str(cfgfile))
     monkeypatch.setattr(hook, "KIT_HOST_ENV", str(tmp_path / "kit-host.env"))
     monkeypatch.setattr(hook, "AGENTS_DIR", str(agents))
@@ -269,10 +286,12 @@ def test_the_process_exits_zero_and_silent_when_off(env, tmp_path):
     assert not (home / ".openclaw" / "logs").exists()
 
 
-def test_a_session_stops_publishing_at_the_message_ceiling(env):
-    for _ in range(env.hook.MESSAGES_PER_SESSION + 10):
+def test_milestones_are_never_dropped_by_the_rate_window(env):
+    """The old lifetime cap (60 per session) silenced a workflow that ran for hours. Milestones now
+    bypass the window entirely; the window itself is covered in test_openclaw_team_resilience.py."""
+    for _ in range(env.hook.MESSAGES_PER_WINDOW + 10):
         env.run("stop")
-    assert len(env.popen.sends()) == env.hook.MESSAGES_PER_SESSION
+    assert len(env.popen.sends()) == env.hook.MESSAGES_PER_WINDOW + 10
 
 
 def test_the_team_start_names_the_role_model_from_its_frontmatter(env):

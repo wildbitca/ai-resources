@@ -992,6 +992,52 @@ Kustomizations Ready, the gateway password in the store with `auth.mode: passwor
 bucket with backups inside (4 objects, 36.9 MB, live lifecycle), and the team-progress hook published
 and proven (T31).
 
+## T32 — A long workflow goes silent in Telegram, and workflow members never get a live message *(added 2026-09-24; fixed in 1.9.1)*
+
+**Symptom.** An `elinvo` `kit-implement` workflow ran a member for hours (its transcript was still being
+written) and nothing reached topic 67 after the start. Other long sessions were over the old message cap too.
+
+**Causes (all verified on disk, four independent ones).**
+
+1. **Lifetime message cap.** `publish` stopped at 60 messages per `session_id` for good. A session that
+   lives for days hit it and every later message, milestones included, was dropped.
+2. **The watcher closed while the member was still working.** It exited after 90 s without new transcript
+   lines, but a member blocks for minutes inside one tool call (sleep + watch loops of up to 590 s).
+3. **A marker that lied.** `watch-<agent_id>` was an empty file removed only on `SubagentStop`, so after the
+   watcher died the hook believed it was alive: it did not relaunch it and it suppressed the pulse fallback.
+   `MAX_WATCHERS` counted marker files, not processes, so stale markers also blocked new members.
+4. **Workflow members were never watched at all.** A member started by a Workflow writes its transcript to
+   `<session>/subagents/workflows/<workflow id>/agent-<id>.jsonl`; the hook only looked at
+   `<session>/subagents/agent-<id>.jsonl`. That is 346 of 655 member transcripts measured on the host. The
+   watcher waited 25 s for a file that never existed and left. Not in the incident report; found while
+   testing the fix, because the relaunched watcher for the elinvo member opened no message.
+
+**Fix (hook and watcher, 1.9.1).**
+
+- A sliding window (30 messages per 10 minutes per session, one "omitted" notice per window) replaces the
+  lifetime cap. Milestones (the request, the team start, each hand-off, the workflow banner, the turn close)
+  bypass it and are never dropped.
+- The marker holds the watcher's PID. It is alive only if that process exists, is not a zombie and its command
+  line names the watcher and the member (guards against PID reuse). Dead markers are swept, do not count against
+  `MAX_WATCHERS`, and the member's next tool call launches the watcher again. Markers written by the old hook are
+  empty; for those the process list is the evidence.
+- The watcher no longer closes on silence while the member runs. It closes on `SubagentStop`, when the `claude`
+  process that runs the member is gone (`--claude-pid`), after 25 min of silence only if the parent cannot be
+  checked, and at hard ceilings (2 h without a transcript line, 6 h of life). While quiet it edits its message
+  every 45 s with `still running · last <tool> · N s since last activity`. A relaunch reuses the message
+  (`mid-<agent_id>`) instead of opening a second one.
+- The hook and the watcher look for the transcript in both layouts.
+- `team-hook.jsonl` rotates to `.1` at 2 MB instead of going silent.
+
+**How to spot it next time.** A member that is running but has no `watch-<id>` marker with a live PID:
+`ls /run/user/$UID/openclaw-team-hook/ | grep watch-` and `pgrep -af 'openclaw-team-watch.py --agent-id'`. A
+marker whose PID is not in that list is dead. `MAX_WATCHERS` is 3: with workflow members now watched, many
+parallel members fall back to the pulse message.
+
+**Residual.** The watcher prints the first line of each tool's command (trimmed to 54 characters) in the live
+message; a secret on a command line would reach the chat. That behaviour predates this fix.
+
+
 ---
 
 # SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT (implemented in 1.9.0)

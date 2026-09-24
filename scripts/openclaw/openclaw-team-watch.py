@@ -20,10 +20,27 @@ WHAT CAN BE SHOWN AND WHAT CANNOT (measured on 2026-09-18)
 
 LIFECYCLE
 The hook launches it detached on the member's first tool (that is when its `agent_id` shows
-up). It dies when the SubagentStop hook touches its marker, or when the transcript stops
-growing, or at the time cap. It never hangs around.
+up) and launches it again if it finds the process gone while the member still runs. The old
+rule closed it after 90 s without new transcript lines, but a member blocks for minutes inside
+one tool call (sleep + watch loops), so the watcher died while the member was still working and
+the topic went silent. Now it closes only when:
+  - the hook touched stop-<agent_id> (SubagentStop): the member finished; or
+  - the claude process that runs the member is gone (--claude-pid): nobody is left; or
+  - the member has been silent for SILENCE_NO_PARENT and the parent cannot be checked; or
+  - the member has been silent for SILENCE_HARD, or LIFETIME_CAP is reached (hard ceilings).
+While the member is quiet it keeps editing its message every HEARTBEAT seconds ("still running,
+last tool X, N s since last activity"), so the topic never looks dead.
+The hook writes this process' PID into watch-<agent_id>. On a relaunch the message is reused
+(mid-<agent_id>) instead of opening a second one, and the transcript is replayed from the start
+so the rows and counters are rebuilt.
+
+A member started by a Workflow writes its transcript to
+<session>/subagents/workflows/<workflow id>/agent-<id>.jsonl, not to
+<session>/subagents/agent-<id>.jsonl, and the workflow id is not in the hook payload. The
+transcript is therefore looked up while waiting for it to appear.
 """
 import argparse
+import glob
 import json
 import os
 import re
@@ -32,12 +49,29 @@ import subprocess
 import sys
 import time
 
-OPENCLAW = shutil.which("openclaw") or "/home/linuxbrew/.linuxbrew/bin/openclaw"
-STATE_DIR = f"/run/user/{os.getuid()}/openclaw-team-hook"
-EDIT_INTERVAL = 4.0        # Telegram does not appreciate a faster pace than this
-TRANSCRIPT_WAIT = 25.0     # the member's file takes a moment to exist
-IDLE_STOP = 90.0           # no new lines for this long: close
-LIFETIME_CAP = 1800.0
+# The two overrides below and the OPENCLAW_TEAM_WATCH_* timings exist so the tests can run this
+# process against a throwaway state directory, a stub `openclaw` and short clocks. In production
+# none of them is set and the defaults apply.
+OPENCLAW = (os.environ.get("OPENCLAW_TEAM_HOOK_BIN") or shutil.which("openclaw")
+            or "/home/linuxbrew/.linuxbrew/bin/openclaw")
+STATE_DIR = os.environ.get("OPENCLAW_TEAM_HOOK_STATE") or f"/run/user/{os.getuid()}/openclaw-team-hook"
+
+
+def _seconds(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except ValueError:
+        return float(default)
+
+
+EDIT_INTERVAL = _seconds("OPENCLAW_TEAM_WATCH_INTERVAL", 4.0)        # Telegram does not appreciate faster
+HEARTBEAT = _seconds("OPENCLAW_TEAM_WATCH_HEARTBEAT", 45.0)          # edit even while the member is quiet
+TRANSCRIPT_WAIT = _seconds("OPENCLAW_TEAM_WATCH_WAIT", 25.0)         # the member's file takes a moment to exist
+SILENCE_NO_PARENT = _seconds("OPENCLAW_TEAM_WATCH_SILENCE", 1500.0)  # 25 min, only when the parent is unknown
+SILENCE_HARD = _seconds("OPENCLAW_TEAM_WATCH_SILENCE_HARD", 7200.0)  # 2 h with no transcript line at all
+LIFETIME_CAP = _seconds("OPENCLAW_TEAM_WATCH_LIFETIME", 6 * 3600.0)
+QUIET_AFTER = _seconds("OPENCLAW_TEAM_WATCH_QUIET", 20.0)  # the "still running" line shows after this much quiet
+TICK = _seconds("OPENCLAW_TEAM_WATCH_TICK", 1.0)           # how often the transcript is polled
 MAX_ROWS = 12
 MAX_CHARS = 3500
 
@@ -81,13 +115,65 @@ def target_of(name, tool_input):
     return ""
 
 
-def render(role, model, rows, tools, t0, closed):
+def render(role, model, rows, tools, t0, reason, last_tool=None, idle=0.0):
+    """`reason` is None while running, "stop" when the member finished, anything else when the
+    watcher gave up without a stop signal."""
     head = f"\U0001F464 *{role}*" + (f" · {model}" if model else "")
-    status = "finished" if closed else "working"
+    if reason is None:
+        status = "working"
+    elif reason == "stop":
+        status = "finished"
+    else:
+        status = "no signal from the member"
     head += f" · {status} · {int(time.time() - t0)}s · {tools} tools"
     body = "\n".join(rows[-MAX_ROWS:])
+    if reason is None and last_tool and idle >= QUIET_AFTER:
+        # Only shown once the member has been quiet for a moment, so a busy member's message is
+        # not cluttered. It also guarantees the text changes between heartbeats.
+        body += ("\n" if body else "") + f"⏱️ still running · last `{last_tool}` · {int(idle)}s since last activity"
     text = head + ("\n" + body if body else "")
     return text[:MAX_CHARS]
+
+
+def resolve_transcript(path, agent_id):
+    """`path` is <session>/subagents/agent-<id>.jsonl. A workflow member writes to
+    <session>/subagents/workflows/<workflow id>/agent-<id>.jsonl instead."""
+    if os.path.exists(path):
+        return path
+    root = os.path.dirname(path)
+    found = glob.glob(os.path.join(glob.escape(root), "workflows", "*", f"agent-{glob.escape(agent_id)}.jsonl"))
+    return found[0] if found else path
+
+
+def parent_alive(pid):
+    """True / False when the claude process is known, None when it was not passed."""
+    if not pid or pid <= 1:
+        return None
+    try:
+        os.kill(pid, 0)
+        with open(f"/proc/{pid}/stat") as fh:
+            if fh.read().rsplit(")", 1)[1].split()[0] == "Z":
+                return False
+        with open(f"/proc/{pid}/comm") as fh:
+            return fh.read().strip() == "claude"
+    except Exception:
+        return False
+
+
+def close_reason(now, t0, last_line, has_stop, parent):
+    """Why the watcher should close now, or None to keep going. Pure so it can be tested."""
+    if has_stop:
+        return "stop"
+    if now - t0 > LIFETIME_CAP:
+        return "lifetime"
+    if parent is False:
+        return "parent"
+    silence = now - last_line
+    if silence > SILENCE_HARD:
+        return "silence"
+    if parent is None and silence > SILENCE_NO_PARENT:
+        return "silence"
+    return None
 
 
 def main():
@@ -98,27 +184,65 @@ def main():
     ap.add_argument("--transcript", required=True)
     ap.add_argument("--chat", required=True)
     ap.add_argument("--thread", required=True)
+    ap.add_argument("--claude-pid", type=int, default=0)
     a = ap.parse_args()
 
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", a.agent_id)[:70]
     stop_marker = os.path.join(STATE_DIR, f"stop-{a.agent_id}")
-    t0 = time.time()
+    watch_marker = os.path.join(STATE_DIR, f"watch-{safe}")
+    msg_marker = os.path.join(STATE_DIR, f"mid-{safe}")
+    me = str(os.getpid())
 
+    try:
+        live(a, stop_marker, msg_marker, time.time())
+    finally:
+        # Leave no marker behind that claims a watcher exists. The hook wrote our PID there; only
+        # remove it when it is still ours (a relaunch may have replaced it).
+        try:
+            with open(watch_marker) as fh:
+                if fh.read().strip() == me:
+                    os.remove(watch_marker)
+        except Exception:
+            pass
+
+
+def live(a, stop_marker, msg_marker, t0):
     # The transcript may not exist yet when the first tool arrives.
-    while not os.path.exists(a.transcript):
+    while True:
+        a.transcript = resolve_transcript(a.transcript, a.agent_id)
+        if os.path.exists(a.transcript):
+            break
         if time.time() - t0 > TRANSCRIPT_WAIT:
             return
         time.sleep(0.5)
 
-    mid = send(a.chat, a.thread, render(a.role, a.model, [], 0, t0, False))
+    # A relaunched watcher keeps editing the message the previous one opened; the transcript is
+    # replayed from the start below, so the rows and counters are rebuilt.
+    mid = None
+    try:
+        with open(msg_marker) as fh:
+            parts = fh.read().strip().split("|")
+        mid = parts[0] or None
+        if len(parts) > 1 and parts[1]:
+            t0 = float(parts[1])
+    except Exception:
+        mid = None
     if not mid:
-        return
+        mid = send(a.chat, a.thread, render(a.role, a.model, [], 0, t0, None))
+        if not mid:
+            return
+        try:
+            with open(msg_marker, "w") as fh:
+                fh.write(f"{mid}|{t0}")
+        except Exception:
+            pass
 
     rows, tools = [], 0
+    last_tool = None
     pos = 0
     last_line = time.time()
     last_edit = 0.0
-    dirty = False
-    closed = False
+    dirty = True  # a relaunch has to repaint the reused message
 
     while True:
         try:
@@ -141,32 +265,40 @@ def main():
             for b in c:
                 if b.get("type") == "tool_use":
                     tools += 1
+                    last_tool = short(b.get("name"), 22)
                     target = target_of(b.get("name"), b.get("input"))
-                    rows.append(f"\U0001F6E0️ `{short(b.get('name'), 22)}`" + (f" {target}" if target else ""))
+                    rows.append(f"\U0001F6E0️ `{last_tool}`" + (f" {target}" if target else ""))
                     dirty = True
                 elif b.get("type") == "text" and (b.get("text") or "").strip():
                     rows.append("\U0001F4AC " + short(b["text"], 150))
                     dirty = True
-            if new:
-                last_line = time.time()
+        if new:
+            last_line = time.time()
 
-        if os.path.exists(stop_marker):
-            closed = True
-        if time.time() - last_line > IDLE_STOP or time.time() - t0 > LIFETIME_CAP:
-            closed = True
+        now = time.time()
+        reason = close_reason(now, t0, last_line, os.path.exists(stop_marker), parent_alive(a.claude_pid))
+        idle = now - last_line
 
-        if (dirty or closed) and time.time() - last_edit >= EDIT_INTERVAL:
-            edit(a.chat, a.thread, mid, render(a.role, a.model, rows, tools, t0, closed))
+        if reason:
+            # The closing edit is never skipped by the rate limit: wait out the interval so the
+            # last thing the topic shows is the final state, not a stale "working".
+            wait = EDIT_INTERVAL - (time.time() - last_edit)
+            if wait > 0:
+                time.sleep(wait)
+            edit(a.chat, a.thread, mid, render(a.role, a.model, rows, tools, t0, reason, last_tool, idle))
+            if reason == "stop":
+                for path in (stop_marker, msg_marker):
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+            return
+
+        if (dirty or now - last_edit >= HEARTBEAT) and now - last_edit >= EDIT_INTERVAL:
+            edit(a.chat, a.thread, mid, render(a.role, a.model, rows, tools, t0, None, last_tool, idle))
             last_edit = time.time()
             dirty = False
-
-        if closed:
-            try:
-                os.remove(stop_marker)
-            except Exception:
-                pass
-            return
-        time.sleep(1.0)
+        time.sleep(TICK)
 
 
 if __name__ == "__main__":

@@ -81,8 +81,10 @@ OpenClaw drops Claude Code subagent events on purpose, so the kit ships a Claude
 - To turn it off: answer `off` in `ai-resources setup` (removes the key). Do not just delete the
   hook registration by hand; a hand-installed `openclaw-team-progress.py` from before the kit is
   replaced by the kit's hook on setup and restored on teardown.
-- It never publishes prompts, raw tool input or tool output, and is capped per member and per
-  session.
+- It never publishes prompts, raw tool input or tool output. Edits are capped per member and other
+  non-milestone messages by a sliding window per session; milestones are never dropped (T32). A member
+  without a live message: `pgrep -af 'openclaw-team-watch.py --agent-id'` against the `watch-<id>` markers
+  in `/run/user/$UID/openclaw-team-hook/` (the marker holds the watcher PID).
 
 ## Diagnosis, in the order that has worked
 

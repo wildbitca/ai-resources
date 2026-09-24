@@ -25,8 +25,14 @@ RULES
   gateway host, so it cannot be the only gate for a hook that publishes to a chat.
 - Never publishes prompts, raw tool_input or tool output: only the role, the file and the
   member's final message, trimmed.
-- Volume ceilings, because Telegram is not a terminal: EDITS_PER_MEMBER and
-  MESSAGES_PER_SESSION. On reaching the ceiling it says so once and goes quiet.
+- Volume ceilings, because Telegram is not a terminal: EDITS_PER_MEMBER and a sliding window
+  of MESSAGES_PER_WINDOW per WINDOW_SECONDS per session. Over the ceiling it says so once per
+  window and goes quiet until the window recovers. Milestones (the request, the team start,
+  each member's hand-off, the workflow banner, the turn close) bypass the window and are
+  never dropped: a session that lives for days must not fall silent for good.
+- Each member's live message is kept by a detached watcher process. The watch-<agent_id> marker
+  holds that process' PID: a marker whose process is gone is dead, it is swept, it does not
+  count against MAX_WATCHERS, and the member's next tool call launches the watcher again.
 - Detail level, read from `~/.openclaw/kit-host.env` (OPENCLAW_NARRATION):
     (absent)     off: nothing is published, nothing is logged. The default.
     milestones   the request, the team start, each member's hand-off, the close
@@ -34,6 +40,8 @@ RULES
   Any other value also means off: an unreadable choice must not publish.
 - Absolute best effort: any failure exits 0 and says nothing.
 """
+import fcntl
+import glob
 import json
 import os
 import re
@@ -49,11 +57,15 @@ LOG_PAYLOADS = os.path.expanduser("~/.openclaw/logs/team-hook.jsonl")
 STATE_DIR = f"/run/user/{os.getuid()}/openclaw-team-hook"
 MAX_LOG = 2_000_000
 EDITS_PER_MEMBER = 6
-MESSAGES_PER_SESSION = 60
+# Sliding window for non-milestone messages. A lifetime cap silenced sessions that live for
+# days (an elinvo workflow went mute for hours on 2026-09-24); a window recovers by itself.
+WINDOW_SECONDS = 600
+MESSAGES_PER_WINDOW = 30
 PULSE_EVERY = 3  # measured: members batch a lot in Bash; with 5 it almost never pulsed
 MAX_DESC = 90
 MAX_RESULT = 260
 MAX_WATCHERS = 3
+WATCHER_TAG = "openclaw-team-watch"
 DEFAULT_NARRATION = "off"
 NARRATION_LEVELS = ("milestones", "every-step")
 
@@ -76,6 +88,7 @@ MESSAGES = {
     "edit": "✏️ *{role}* → `{path}`",
     "edit_more": "✏️ *{role}* keeps editing (rest omitted)",
     "pulse": "⏳ *{role}* · {n} tools · {secs}s · last `{tool}`",
+    "rate_omitted": "⏸️ messages omitted to keep the pace (max {n} every {mins} min); milestones keep coming",
 }
 
 
@@ -95,7 +108,8 @@ def log_payload(p):
     """Skeleton of the payload on disk: lets the hook be redesigned on data, not on faith."""
     try:
         if os.path.exists(LOG_PAYLOADS) and os.path.getsize(LOG_PAYLOADS) > MAX_LOG:
-            return
+            # One generation is kept: rotating beats going silent at the cap.
+            os.replace(LOG_PAYLOADS, LOG_PAYLOADS + ".1")
         ti = p.get("tool_input") if isinstance(p.get("tool_input"), dict) else {}
         os.makedirs(os.path.dirname(LOG_PAYLOADS), exist_ok=True)
         with open(LOG_PAYLOADS, "a") as fh:
@@ -288,48 +302,221 @@ def pulse(agent_id):
         return (None, None)
 
 
+def window(session):
+    """Sliding-window rate limit per session. Returns (allowed, first_one_over).
+
+    The state file holds the timestamps of the messages sent in the last WINDOW_SECONDS and the
+    time the "omitted" notice was last shown, so the notice appears once per window. The
+    read-modify-write is flock'ed because the hook runs concurrently for parallel tool calls."""
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        path = os.path.join(STATE_DIR, "window-" + _safe(session))
+        now = time.time()
+        with open(path, "a+") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            fh.seek(0)
+            try:
+                data = json.loads(fh.read() or "{}")
+            except Exception:
+                data = {}
+            stamps = [t for t in data.get("t", []) if isinstance(t, (int, float)) and now - t < WINDOW_SECONDS]
+            noticed_at = data.get("notice", 0) or 0
+            noticed = bool(noticed_at) and now - noticed_at < WINDOW_SECONDS
+            if len(stamps) < MESSAGES_PER_WINDOW:
+                stamps.append(now)
+                allowed, first = True, False
+            else:
+                allowed, first = False, not noticed
+                if first:
+                    noticed_at = now
+            fh.seek(0)
+            fh.truncate()
+            fh.write(json.dumps({"t": stamps, "notice": noticed_at}))
+        return allowed, first
+    except Exception:
+        return True, False
+
+
 def member_transcript(p):
     """The parent transcript is `<proj>/<session>.jsonl`; the member's lives in
-    `<proj>/<session>/subagents/agent-<agent_id>.jsonl`. Verified on disk."""
+    `<proj>/<session>/subagents/agent-<agent_id>.jsonl`. Verified on disk.
+
+    Members started by a Workflow live one level down, in
+    `subagents/workflows/<workflow id>/agent-<agent_id>.jsonl` (measured on 2026-09-24: 346 of
+    655 member transcripts). Looking only at the first layout meant no workflow member ever got
+    a live message: its watcher waited for a file that was never there. When the file does not
+    exist yet the direct path is returned and the watcher keeps looking."""
     tp, aid = p.get("transcript_path"), p.get("agent_id")
     if not (tp and aid):
         return None
     base = str(tp)[:-6] if str(tp).endswith(".jsonl") else str(tp)
-    return os.path.join(base, "subagents", f"agent-{aid}.jsonl")
+    root = os.path.join(base, "subagents")
+    direct = os.path.join(root, f"agent-{aid}.jsonl")
+    if os.path.exists(direct):
+        return direct
+    found = glob.glob(os.path.join(glob.escape(root), "workflows", "*", f"agent-{glob.escape(str(aid))}.jsonl"))
+    return found[0] if found else direct
 
 
-def launch_watcher(p, target, role):
-    """One process per member, once, detached. The cap exists because each one edits its own
-    message and Telegram rate-limits per chat."""
-    aid = p.get("agent_id")
-    path = member_transcript(p)
-    watcher = watcher_path()
-    if not (aid and path and watcher):
-        return
+def _mark_path(aid):
+    return os.path.join(STATE_DIR, f"watch-{_safe(aid)}")
+
+
+def _cmdline(pid):
     try:
-        os.makedirs(STATE_DIR, exist_ok=True)
-        mark = os.path.join(STATE_DIR, f"watch-{_safe(aid)}")
-        if os.path.exists(mark):
-            return
-        alive = len([f for f in os.listdir(STATE_DIR) if f.startswith("watch-")])
-        if alive >= MAX_WATCHERS:
-            return
-        open(mark, "w").close()
-        subprocess.Popen(
-            ["python3", watcher, "--agent-id", str(aid), "--role", str(role),
-             "--model", role_model(role) or (agent_model(p.get("cwd")) or ""),
-             "--transcript", path, "--chat", target[0], "--thread", target[1]],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL, start_new_session=True,
-        )
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            return fh.read().replace(b"\0", b" ").decode(errors="ignore")
+    except Exception:
+        return ""
+
+
+def _pid_is_watcher(pid, aid):
+    """True only for a live, non-zombie process that is this member's watcher. The command line
+    is checked too, to guard against the kernel reusing the PID for something else."""
+    try:
+        pid = int(pid)
+        if pid <= 1:
+            return False
+        os.kill(pid, 0)
+        with open(f"/proc/{pid}/stat") as fh:
+            if fh.read().rsplit(")", 1)[1].split()[0] == "Z":
+                return False
+    except Exception:
+        return False
+    cmd = _cmdline(pid)
+    return WATCHER_TAG in cmd and str(aid) in cmd
+
+
+def _scan_watchers():
+    """agent_id -> pid of every live watcher process. Only needed for markers written by an
+    older hook, which are empty: they carry no PID to check."""
+    alive = {}
+    try:
+        entries = os.listdir("/proc")
+    except Exception:
+        return alive
+    for d in entries:
+        if not d.isdigit():
+            continue
+        cmd = _cmdline(d)
+        if WATCHER_TAG in cmd and "--agent-id" in cmd:
+            m = re.search(r"--agent-id\s+(\S+)", cmd)
+            if m:
+                alive[m.group(1)] = int(d)
+    return alive
+
+
+def watcher_alive(aid, scan=None):
+    """True when the member's watcher process is alive. The marker alone proves nothing: it
+    outlives the process whenever the watcher exits without a SubagentStop."""
+    try:
+        with open(_mark_path(aid)) as fh:
+            content = fh.read().strip()
+    except Exception:
+        return False
+    if content.isdigit():
+        return _pid_is_watcher(content, aid)
+    return str(aid) in (scan if scan is not None else _scan_watchers())
+
+
+def _empty_mark(name):
+    try:
+        return os.path.getsize(os.path.join(STATE_DIR, name)) == 0
+    except Exception:
+        return False
+
+
+def sweep_markers():
+    """Remove the markers whose watcher is gone and return how many are alive. A dead marker
+    must not count against MAX_WATCHERS nor suppress the relaunch."""
+    try:
+        marks = [f for f in os.listdir(STATE_DIR) if f.startswith("watch-")]
+    except Exception:
+        return 0
+    scan = _scan_watchers() if any(_empty_mark(f) for f in marks) else None
+    alive = 0
+    for f in marks:
+        if watcher_alive(f[len("watch-"):], scan):
+            alive += 1
+        else:
+            try:
+                os.remove(os.path.join(STATE_DIR, f))
+            except Exception:
+                pass
+    return alive
+
+
+def sweep_stops(days=1):
+    """stop-<id> markers are only removed by a watcher that saw them; the ones with no watcher
+    pile up. Anything older than `days` belongs to a member that is long gone."""
+    try:
+        limit = time.time() - days * 86400
+        for f in os.listdir(STATE_DIR):
+            if f.startswith("stop-"):
+                path = os.path.join(STATE_DIR, f)
+                if os.path.getmtime(path) < limit:
+                    os.remove(path)
     except Exception:
         pass
 
 
-def publish(target, text, session_id):
-    ok, _ = counter(f"ses-{session_id}", MESSAGES_PER_SESSION)
-    if not ok:
-        return
+def claude_pid():
+    """PID of the claude process that runs this hook, found by walking up the parent chain. The
+    watcher uses it to tell "the member is quiet" from "nobody is left to run it"."""
+    pid = os.getppid()
+    for _ in range(8):
+        if pid <= 1:
+            break
+        try:
+            with open(f"/proc/{pid}/comm") as fh:
+                if fh.read().strip() == "claude":
+                    return pid
+            with open(f"/proc/{pid}/stat") as fh:
+                pid = int(fh.read().rsplit(")", 1)[1].split()[1])
+        except Exception:
+            break
+    return 0
+
+
+def launch_watcher(p, target, role):
+    """One detached process per member. The cap exists because each one edits its own message
+    and Telegram rate-limits per chat. Returns True when the member has a live watcher after
+    the call.
+
+    Idempotent and self-healing: a live watcher is left alone; a marker whose process is gone is
+    swept and the watcher is launched again, so a member that is still running gets its live
+    message back on its next tool call."""
+    aid = p.get("agent_id")
+    path = member_transcript(p)
+    watcher = watcher_path()
+    if not (aid and path and watcher):
+        return False
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(os.path.join(STATE_DIR, ".watch.lock"), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if watcher_alive(aid):
+                return True
+            alive = sweep_markers()
+            sweep_stops()
+            if alive >= MAX_WATCHERS:
+                return False
+            proc = subprocess.Popen(
+                ["python3", watcher, "--agent-id", str(aid), "--role", str(role),
+                 "--model", role_model(role) or (agent_model(p.get("cwd")) or ""),
+                 "--transcript", path, "--chat", target[0], "--thread", target[1],
+                 "--claude-pid", str(claude_pid())],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL, start_new_session=True,
+            )
+            with open(_mark_path(aid), "w") as fh:
+                fh.write(str(proc.pid))
+            return True
+    except Exception:
+        return False
+
+
+def _send(target, text):
     # Fire and forget, on purpose: `openclaw message send` takes 1-2 s, and waiting for it
     # inside the hook added that latency to EVERY narrated tool call. The message is not the
     # work; the work must not wait for the message.
@@ -342,6 +529,19 @@ def publish(target, text, session_id):
         )
     except Exception:
         pass
+
+
+def publish(target, text, session_id, milestone=False):
+    """A milestone bypasses the rate window and is never dropped. Everything else is limited to
+    MESSAGES_PER_WINDOW per WINDOW_SECONDS per session, with one notice per window."""
+    if not milestone:
+        ok, first = window(session_id)
+        if not ok:
+            if first:
+                _send(target, MESSAGES["rate_omitted"].format(n=MESSAGES_PER_WINDOW,
+                                                              mins=WINDOW_SECONDS // 60))
+            return
+    _send(target, text)
 
 
 def main():
@@ -366,12 +566,12 @@ def main():
     if event == "UserPromptSubmit":
         model = agent_model(p.get("cwd")) or "?"
         tail = f" · effort {effort}" if effort else ""
-        publish(target, MESSAGES["request"].format(model=model, tail=tail), session)
+        publish(target, MESSAGES["request"].format(model=model, tail=tail), session, milestone=True)
         return
 
     # The turn ends: close the story.
     if event == "Stop":
-        publish(target, MESSAGES["turn_done"], session)
+        publish(target, MESSAGES["turn_done"], session, milestone=True)
         return
 
     if event == "SubagentStop":
@@ -380,7 +580,9 @@ def main():
             try:
                 os.makedirs(STATE_DIR, exist_ok=True)
                 open(os.path.join(STATE_DIR, f"stop-{aid}"), "w").close()
-                mark = os.path.join(STATE_DIR, f"watch-{_safe(aid)}")
+                mark = _mark_path(aid)
+                # The watcher removes its own marker when it sees the stop file. Removing it
+                # here too keeps a finished member from counting as a live watcher.
                 if os.path.exists(mark):
                     os.remove(mark)
             except Exception:
@@ -388,7 +590,7 @@ def main():
         role = clean(inner_role or MESSAGES["a_member"], 40)
         result = clean(p.get("last_assistant_message") or "", MAX_RESULT)
         publish(target, MESSAGES["member_done"].format(role=role) + (f"\n{result}" if result else ""),
-                session)
+                session, milestone=True)
         return
 
     if event != "PreToolUse":
@@ -408,7 +610,7 @@ def main():
         tail = f" · effort {effort}" if effort else ""
         desc = clean(ti.get("description") or "")
         publish(target, MESSAGES["team_start"].format(role=role, model=model_label, tail=tail)
-                + (f"\n{desc}" if desc else ""), session)
+                + (f"\n{desc}" if desc else ""), session, milestone=True)
         return
 
     if tool == "Workflow":
@@ -418,7 +620,8 @@ def main():
             name = clean(m.group(1) if m else MESSAGES["unnamed"], 40)
         phases = len(re.findall(r"phase\(", str(ti.get("script") or "")))
         publish(target, MESSAGES["workflow"].format(name=name or MESSAGES["unnamed"])
-                + (MESSAGES["workflow_phases"].format(n=phases) if phases else ""), session)
+                + (MESSAGES["workflow_phases"].format(n=phases) if phases else ""), session,
+                milestone=True)
         return
 
     # From here down, only what happens INSIDE a team member: the parent agent's own tools
@@ -426,6 +629,11 @@ def main():
     if not inner_role or not every_step:
         return
     role = clean(inner_role, 40)
+
+    # The member's first tool is when its agent_id exists, so it is when its live message starts.
+    # Every later call re-checks that the watcher is alive and relaunches it if it is not. It
+    # runs before the edit branch so a member whose first tool is an edit still gets one.
+    has_watcher = launch_watcher(p, target, inner_role)
 
     if tool in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
         path = ti.get("file_path") or ti.get("notebook_path") or ""
@@ -437,13 +645,9 @@ def main():
             publish(target, MESSAGES["edit_more"].format(role=role), session)
         return
 
-    # First tool of the member: its agent_id exists now, so this is when its live message starts.
-    launch_watcher(p, target, inner_role)
-
     # The pulse is the fallback for when there is no watcher (cap reached, or the transcript
     # never appeared): with a live message it would be duplicate noise.
-    mark = os.path.join(STATE_DIR, f"watch-{_safe(p.get('agent_id'))}")
-    if os.path.exists(mark):
+    if has_watcher:
         return
     n, secs = pulse(p.get("agent_id"))
     if n:
