@@ -4,6 +4,34 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.5] — 2026-09-25 — the Workshop fix actually reaches the hosts that need it
+
+1.9.4 authored `skills.workshop.autonomous.mode` inside `_build_antigravity_patch`, and that patch is
+never rebuilt on the hosts that need the fix most: `_configure_engine` returns early when the saved
+engine answer is `keep`, which is what a host the kit already configured reports on every re-run. So
+`ai-resources setup` left those hosts on OpenClaw's `auto` default and the unschedulable
+`skill-collection-review-<agent>` job stayed. Caught by checking the live state on `bithome`
+(`engine: keep`) instead of trusting the code path.
+
+### Fixed
+
+- The Workshop mode is now authored by `_configure_skill_workshop`, a host-level step in
+  `configure()` that runs whatever the engine answer is. It is written only when the key is unset
+  **and** the kit manages that host's OpenClaw (`openclaw.applied`), so a run that configures
+  nothing but voice — or declines every OpenClaw section — still leaves `openclaw.json` untouched.
+
+### Added
+
+- A regression test that a host with `engine: keep` gets the Workshop mode, and one that a host the
+  kit does not manage does not.
+- `_Recorder.engine_patches()` in the cockpit tests: six assertions counted *all* config patches,
+  which stopped being a statement about the engine once a second host-level patch existed.
+
+### Operator action
+
+Same as 1.9.4 — `brew upgrade ai-resources && ai-resources setup`. On 1.9.4 that command was a no-op
+for a `keep` host; on 1.9.5 it writes the key.
+
 ## [1.9.4] — 2026-09-25 — the weekly Skill Workshop review stops failing forever
 
 OpenClaw's Skill Workshop defaults to `auto`, and `auto` registers a weekly
