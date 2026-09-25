@@ -81,6 +81,11 @@ def hook(tmp_path, monkeypatch, request):
     monkeypatch.setattr(mod, "LOG_PAYLOADS", str(tmp_path / "logs" / "team-hook.jsonl"))
     monkeypatch.setattr(mod, "AGENTS_DIR", str(tmp_path / "agents"))
     monkeypatch.setattr(mod, "OPENCLAW_JSON", str(tmp_path / "missing.json"))
+    # KIT_HOST_ENV must be isolated too, or the hook reads the real
+    # ~/.openclaw/kit-host.env and the assertions below depend on the operator's own
+    # OPENCLAW_NARRATION_LANG: on a host set to `es` the rate notice comes out in Spanish and
+    # every English-string assertion fails. Pointing it at a missing file pins the `en` default.
+    monkeypatch.setattr(mod, "KIT_HOST_ENV", str(tmp_path / "missing-kit-host.env"))
     monkeypatch.setattr(mod, "watcher_path", lambda: str(watcher))
     monkeypatch.setattr(mod, "openclaw_bin", lambda: "/bin/openclaw")
     monkeypatch.setattr(mod, "sender_path", lambda: "")
