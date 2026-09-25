@@ -380,42 +380,6 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
             "supportsParallelToolCalls": True,
         }}}
 
-    # Skill Workshop: author the autonomous mode instead of inheriting OpenClaw's default.
-    #
-    # WHY THIS KEY IS SET AT ALL. Left unset, OpenClaw defaults to "auto", and "auto" does two
-    # things nobody on a kit host opted into: it applies captured proposals, and it registers a
-    # weekly `skill-collection-review-<agent>` job per configured agent whose toolsAllow is
-    # ["ls","read","write","edit","apply_patch","exec","process"] — an unsupervised agent turn
-    # that rewrites the operator's own skill files every 7 days.
-    #
-    # WHY IT BREAKS THIS KIT SPECIFICALLY. That review runs under `rootedExecution`, and the
-    # gateway then requires the resolved CLI backend to declare
-    # `isolatesInstructionsWithExactTools === true` AND `bundleMcp`. The kit's `claude-kit`
-    # backend deliberately declares neither (see buildClaudeBackend in the plugin: bundleMcp is
-    # false so core never injects --strict-mcp-config/--mcp-config/--disallowedTools, which is
-    # what keeps --dangerously-skip-permissions meaningful). So on any host where the `claude`
-    # worker agent is primary-bound to `claude-kit/*` — which is exactly what this setup
-    # configures — that job is scheduled and can never run. Measured on 2026-09-25 with
-    # openclaw 2026.9.6: `status: error (2x)`,
-    # 'CLI backend "claude-kit" does not declare instruction isolation with exact tools'.
-    # It cannot be worked around from the outside: the job is system-owned, so both
-    # `openclaw cron edit` and `openclaw cron disable` answer "system-owned monitor jobs cannot
-    # be edited by cron clients", and there is no per-agent opt-out (`skills.workshop` is global
-    # with additionalProperties:false, and `agents.entries.<id>.skills` is only a skill-name
-    # allowlist). Declaring the missing flag on claude-kit is NOT the fix: it is a false claim
-    # about a security property, and the gate's very next condition would still reject it for
-    # bundleMcp. A regression test pins that flag's absence.
-    #
-    # "propose" keeps the Workshop's value — it still captures improvement proposals for the
-    # operator to approve — while removing the unsupervised rewrite and, with it, the
-    # unschedulable job. `workshopEnabled` in the gateway's monitor is `mode === "auto"`, so any
-    # other value stops the per-agent review job from being registered at all.
-    #
-    # WHY ONLY WHEN UNSET. An operator who has deliberately authored a mode owns that decision,
-    # including "auto" and the failing job that comes with it. Setup fixes the silent default it
-    # would otherwise inherit; it does not overwrite a stated choice.
-    if _get(doc, "skills", "workshop", "autonomous", "mode") is None:
-        patch["skills"] = {"workshop": {"autonomous": {"mode": "propose"}}}
 
 
     plugin_config: dict[str, str] = {}
@@ -669,11 +633,13 @@ def configure(ctx: dict) -> list[Path]:
     engine_changed = _configure_engine(ctx, doc, path, ak_path, written)
     mcp_changed = _configure_mcp(s, doc, path, written, dry_run=dry_run)
     voice_changed = _configure_voice(s, doc, path, ak_path, written, dry_run=dry_run)
+    workshop_changed = _configure_skill_workshop(s, doc, path, written, dry_run=dry_run)
     # Above the early return below on purpose: the host section's local work (kit-host.env, hooks,
     # AGENTS.md) does not depend on openclaw.json having changed, and it renders its own dry run.
     host_changed = host_section.configure(s, doc, ak_path, written, dry_run=dry_run,
                                           apply_patch=apply_patch, oc=_openclaw, config_path=path)
-    if dry_run or not (engine_changed or mcp_changed or voice_changed or host_changed):
+    if dry_run or not (engine_changed or mcp_changed or voice_changed or workshop_changed
+                      or host_changed):
         return written
 
     agents_md = workspace_dir(doc) / "AGENTS.md"
@@ -894,6 +860,57 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
         s.openclaw.worker_model = worker_model
     s.openclaw.config_path = str(path)
     ui.ok(f"OpenClaw default agent → {model} via {engine.runtime}")
+    return True
+
+
+WORKSHOP_MODE = "propose"
+
+
+def _configure_skill_workshop(s: state.SetupState, doc: dict, path: Path, written: list[Path], *,
+                              dry_run: bool) -> bool:
+    """Author `skills.workshop.autonomous.mode`. True when openclaw.json changed.
+
+    A HOST-LEVEL SETTING, NOT AN ENGINE ONE — which is why it lives here and not in
+    `_build_antigravity_patch`. An earlier attempt put it there and it never reached the hosts
+    that need it most: `_configure_engine` returns early for `engine == "keep"`, so a host the kit
+    already configured (the common case on a re-run) never rebuilt that patch.
+
+    WHY THE KEY IS WRITTEN AT ALL. Unset means OpenClaw's default "auto", and "auto" registers a
+    weekly `skill-collection-review-<agent>` job per configured agent whose toolsAllow is
+    ["ls","read","write","edit","apply_patch","exec","process"] — an unsupervised turn that
+    rewrites the operator's own skill files every 7 days. On a kit host it also cannot succeed:
+    the review runs under `rootedExecution`, which requires the resolved CLI backend to declare
+    `isolatesInstructionsWithExactTools` AND `bundleMcp`, and the kit's `claude-kit` declares
+    neither on purpose. Measured on openclaw 2026.9.6: `error (2x)`,
+    'CLI backend "claude-kit" does not declare instruction isolation with exact tools'. The job is
+    system-owned, so `cron edit`/`cron disable` refuse it, and the monitor never auto-disables it.
+    See docs/openclaw/pitfalls.md T34.
+
+    "propose" keeps the Workshop's value — proposals still get captured for the operator to
+    approve — and stops the per-agent review job from being registered at all (`workshopEnabled`
+    in the monitor is `mode === "auto"`).
+
+    ONLY WHEN UNSET. An operator who authored a mode owns that decision, including "auto" and the
+    failing job that comes with it. Setup fixes the silent default, never a stated choice.
+    """
+    # Only on a host whose OpenClaw the kit manages. A run that configures nothing but voice, or
+    # that declines every OpenClaw section, must leave openclaw.json alone — several tests exist
+    # precisely to hold that contract. `applied` is set by `_configure_engine`, which runs before
+    # this step, so a first antigravity/claude-code run is covered on the same pass.
+    if not s.openclaw.applied:
+        return False
+    if _get(doc, "skills", "workshop", "autonomous", "mode") is not None:
+        return False
+    patch = {"skills": {"workshop": {"autonomous": {"mode": WORKSHOP_MODE}}}}
+    ok, out = apply_patch(patch, dry_run=dry_run)
+    if not ok:
+        ui.error(f"OpenClaw rejected the Skill Workshop patch: {out[-400:]}")
+        return False
+    if dry_run:
+        return False
+    if path not in written:
+        written.append(path)
+    ui.ok(f"OpenClaw Skill Workshop → {WORKSHOP_MODE} (no unsupervised weekly skill rewrite)")
     return True
 
 
