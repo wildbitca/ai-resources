@@ -1084,6 +1084,61 @@ the number of agents narrating at once.
 
 ---
 
+## T34 — The weekly Skill Workshop review can never run on a `claude-kit` worker *(added 2026-09-25; fixed in 1.9.4)*
+
+**Symptom.** `openclaw cron list` shows `skill-collection-review-claude` at `status: error (2x)` with
+`CLI backend "claude-kit" does not declare instruction isolation with exact tools; collection review skipped`.
+The reviews of every other agent are `ok`. Measured on openclaw `2026.9.6`, job
+`8af32147-cb72-40c4-a9a1-68eeb104ce92`, schedule every 7d, `sessionTarget: isolated`.
+
+**Cause — an upstream projection that is coarser than its own enforcement.** Two places disagree:
+
+| Layer | What it demands | Where |
+|---|---|---|
+| Enforcement | under `rootedExecution`: `backendResolved.isolatesInstructionsWithExactTools === true`, and on the next line `canEnforceExactToolAvailability && backendResolved.bundleMcp && …` | `dist/prepare.runtime-EmRTe005.mjs` |
+| Projection | `enabled = workshopEnabled && hasEligibleRuntime !== false`, where eligibility is true if `policy.runtimeSource === "implicit" \|\| policy.runtime === "auto" \|\| supportsCronExecutionRoot(...)` | `dist/skill-collection-review-monitor-DnbqA4A4.mjs` |
+| | `supportsCronExecutionRoot = (runtime, rootedCliExecution) => runtime === "openclaw" \|\| rootedCliExecution`, and `rootedCliExecution` is `isCliProvider(...)` — **true for any CLI backend** | `dist/execution-root-runtime-Cn0UlMtn.mjs` |
+
+So the monitor schedules a job the runtime will always refuse, and — because eligibility never computes
+`false` — it never auto-disables it either. The kit walks into this because its `claude` worker agent is
+primary-bound to `claude-kit/*`, and `claude-kit` declares neither flag **on purpose**: `bundleMcp: false`
+is what stops core injecting `--strict-mcp-config` / `--mcp-config` / `--disallowedTools`, which is what
+keeps `--dangerously-skip-permissions` meaningful (AC-03).
+
+**Dead ends, all measured — do not spend time on them again.**
+
+- `openclaw cron edit --model …` and `openclaw cron disable` → `system-owned monitor jobs cannot be edited by cron clients`.
+- Deleting the `agent:<id>:cron:<jobId>` session so `hasStoredExecutionPreference` turns false → useless, eligibility was already true via `runtimeSource === "implicit"`.
+- An explicit `agents.entries.<id>.runtime` → `isCliProvider("claude-kit")` is still true, so eligibility stays true.
+- A per-agent opt-out → does not exist: `skills.workshop` is global with `additionalProperties: false`, and `agents.entries.<id>.skills` is only a skill-name allowlist.
+- Repointing the agent's `model.primary` at a mediated provider → it works, but it silently moves that agent's non-`/claude` traffic (this review, agy `sessions_spawn`, subagent delegation) off the operator's Claude CLI subscription onto a metered API. **Rejected: the model is the operator's decision, not the kit's.**
+
+**Never "fix" it by declaring the flag.** Adding `isolatesInstructionsWithExactTools: true` to
+`buildClaudeBackend` is a false claim about a security property, and it would not even work: the gate's very
+next condition requires `bundleMcp`, which stays `false`. A test pins the flag's **absence** with that reason
+(`openclaw-plugin/ai-resources/test/index.test.mjs`).
+
+**Fix (1.9.4).** Setup authors `skills.workshop.autonomous.mode = "propose"` instead of inheriting OpenClaw's
+default `auto`. The monitor's `workshopEnabled` is `mode === "auto"`, so any other value stops the per-agent
+review job from being registered at all — the job disappears from `openclaw cron list` rather than sitting
+there failing. `"propose"` keeps the Workshop's value: it still captures improvement proposals for the
+operator to approve, it just no longer rewrites skill files unsupervised every 7 days — which is what `auto`
+was doing on every kit host without anyone choosing it (`toolsAllow` for that job is
+`["ls","read","write","edit","apply_patch","exec","process"]`).
+
+Setup only writes the key **when the host left it unset**: an operator who authored a mode owns that
+decision, including `auto` and the failing job that comes with it.
+
+**Applies immediately, no restart.** `openclaw config set skills.workshop.autonomous.mode propose` answers
+*"Change will apply without restarting the gateway"*, and the review jobs vanish from `cron list` within
+seconds.
+
+**Still open upstream.** The projection/enforcement mismatch is unfixed in OpenClaw: any future agent whose
+primary is a CLI-provider ref reproduces this, and the monitor still will not auto-disable it. Reported in
+`docs/openclaw/upstream/skill-collection-review-eligibility.md`.
+
+---
+
 # SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT (implemented in 1.9.0)
 
 All ten cards below were proposals on 2026-09-18 and are now implemented. Each one says **what was
