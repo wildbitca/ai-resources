@@ -4,6 +4,59 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.4] — 2026-09-25 — the weekly Skill Workshop review stops failing forever
+
+OpenClaw's Skill Workshop defaults to `auto`, and `auto` registers a weekly
+`skill-collection-review-<agent>` job that rewrites the operator's skill files unsupervised. On a kit host
+that job can never run: it needs a rooted runtime, and the kit's `claude` worker is bound to `claude-kit`,
+which is unrestricted by design. Nobody chose either behaviour — both came from an inherited default.
+
+### Fixed
+
+- The setup now authors `skills.workshop.autonomous.mode = "propose"` instead of inheriting OpenClaw's
+  `auto`. This stops `skill-collection-review-<agent>` from being registered, so the job that sat at
+  `status: error (2x)` with `CLI backend "claude-kit" does not declare instruction isolation with exact
+  tools` (job `8af32147-cb72-40c4-a9a1-68eeb104ce92`, openclaw `2026.9.6`) no longer exists rather than
+  failing every 7 days. It is written **only when the host left the key unset**: an operator who authored a
+  mode owns that decision, including `auto`.
+- `npm test` in `openclaw-plugin/ai-resources` ran `node --test test/`, which fails on Node 24 with the
+  directory form. Now `node --test test/*.test.mjs`. The suite was never run by CI, so this was broken only
+  for whoever verified locally.
+- `tests/test_openclaw_team_resilience.py` read the operator's real `~/.openclaw/kit-host.env`: the fixture
+  isolated `STATE_DIR` and `LOG_PAYLOADS` but not `KIT_HOST_ENV`, so on a host with
+  `OPENCLAW_NARRATION_LANG=es` the rate-limit notice came out in Spanish and two English-string assertions
+  failed. Green in CI, red on the operator's own machine. The fixture now points the key at a missing file,
+  pinning the `en` default.
+
+### Changed
+
+- `claude-kit` is untouched: `bundleMcp: false`, `--dangerously-skip-permissions` and
+  `FORBIDDEN_CLAUDE_FLAGS` are byte-identical. The `claude` agent's `model.primary` is untouched too —
+  repointing it at a mediated provider would have fixed the job by moving the operator's traffic off their
+  Claude CLI subscription onto a metered API, which is not the kit's decision to make.
+
+### Added
+
+- A regression test pinning that `buildClaudeBackend()` does **not** declare
+  `isolatesInstructionsWithExactTools`, with the reason in the test: declaring it is a false claim about a
+  security property, and the gate's next condition would reject it anyway for `bundleMcp`.
+- `docs/openclaw/pitfalls.md` T34 — the full analysis, the measured dead ends, and why the flag is never the
+  fix.
+- `docs/openclaw/upstream/skill-collection-review-eligibility.md` — the upstream report: OpenClaw's
+  eligibility projection (`isCliProvider`) is coarser than its own enforcement
+  (`isolatesInstructionsWithExactTools && bundleMcp`), so it schedules a job it will always refuse and never
+  auto-disables it.
+
+### Operator action
+
+```
+brew upgrade ai-resources && ai-resources setup
+```
+
+On a host that already ran with `auto`, setup writes the key on the next run. To apply it without waiting:
+`openclaw config set skills.workshop.autonomous.mode propose` — it takes effect without restarting the
+gateway.
+
 ## [1.9.3] — 2026-09-24 — team narration can speak Spanish
 
 A host whose operator reads Spanish had to choose between the hand-installed team hook (Spanish, no
