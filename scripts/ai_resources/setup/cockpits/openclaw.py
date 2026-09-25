@@ -380,6 +380,43 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
             "supportsParallelToolCalls": True,
         }}}
 
+    # Skill Workshop: author the autonomous mode instead of inheriting OpenClaw's default.
+    #
+    # WHY THIS KEY IS SET AT ALL. Left unset, OpenClaw defaults to "auto", and "auto" does two
+    # things nobody on a kit host opted into: it applies captured proposals, and it registers a
+    # weekly `skill-collection-review-<agent>` job per configured agent whose toolsAllow is
+    # ["ls","read","write","edit","apply_patch","exec","process"] — an unsupervised agent turn
+    # that rewrites the operator's own skill files every 7 days.
+    #
+    # WHY IT BREAKS THIS KIT SPECIFICALLY. That review runs under `rootedExecution`, and the
+    # gateway then requires the resolved CLI backend to declare
+    # `isolatesInstructionsWithExactTools === true` AND `bundleMcp`. The kit's `claude-kit`
+    # backend deliberately declares neither (see buildClaudeBackend in the plugin: bundleMcp is
+    # false so core never injects --strict-mcp-config/--mcp-config/--disallowedTools, which is
+    # what keeps --dangerously-skip-permissions meaningful). So on any host where the `claude`
+    # worker agent is primary-bound to `claude-kit/*` — which is exactly what this setup
+    # configures — that job is scheduled and can never run. Measured on 2026-09-25 with
+    # openclaw 2026.9.6: `status: error (2x)`,
+    # 'CLI backend "claude-kit" does not declare instruction isolation with exact tools'.
+    # It cannot be worked around from the outside: the job is system-owned, so both
+    # `openclaw cron edit` and `openclaw cron disable` answer "system-owned monitor jobs cannot
+    # be edited by cron clients", and there is no per-agent opt-out (`skills.workshop` is global
+    # with additionalProperties:false, and `agents.entries.<id>.skills` is only a skill-name
+    # allowlist). Declaring the missing flag on claude-kit is NOT the fix: it is a false claim
+    # about a security property, and the gate's very next condition would still reject it for
+    # bundleMcp. A regression test pins that flag's absence.
+    #
+    # "propose" keeps the Workshop's value — it still captures improvement proposals for the
+    # operator to approve — while removing the unsupervised rewrite and, with it, the
+    # unschedulable job. `workshopEnabled` in the gateway's monitor is `mode === "auto"`, so any
+    # other value stops the per-agent review job from being registered at all.
+    #
+    # WHY ONLY WHEN UNSET. An operator who has deliberately authored a mode owns that decision,
+    # including "auto" and the failing job that comes with it. Setup fixes the silent default it
+    # would otherwise inherit; it does not overwrite a stated choice.
+    if _get(doc, "skills", "workshop", "autonomous", "mode") is None:
+        patch["skills"] = {"workshop": {"autonomous": {"mode": "propose"}}}
+
 
     plugin_config: dict[str, str] = {}
     if agy_bin:

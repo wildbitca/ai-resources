@@ -1167,3 +1167,44 @@ def test_s3_zero_percent_warning_never_points_at_an_equally_dead_pool(monkeypatc
     for w in quota_warnings:
         assert "Every other pool is spent too" in w
         assert "Re-run `ai-resources setup` and pick" not in w
+
+def test_setup_authors_the_workshop_mode_when_the_host_left_it_unset():
+    """Unset means OpenClaw's own default, "auto", which registers a weekly
+    `skill-collection-review-<agent>` job per agent. That job runs under `rootedExecution`, and
+    the kit binds the `claude` worker to `claude-kit/*`, a backend that deliberately declares
+    neither `isolatesInstructionsWithExactTools` nor `bundleMcp` — so the job is scheduled and
+    can never run (measured 2026-09-25, openclaw 2026.9.6: `error (2x)`). It is system-owned, so
+    it cannot be disabled from outside. Setup therefore authors the mode instead of inheriting it.
+    """
+    patch = openclaw.build_patch(
+        openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", {}, KIT_SKILLS, "e",
+        worker_model="claude-sonnet-5",
+    )
+    assert patch["skills"]["workshop"]["autonomous"]["mode"] == "propose"
+
+
+def test_setup_never_overwrites_a_workshop_mode_the_operator_authored():
+    """An operator who wrote a mode owns that decision — including "auto" and the unschedulable
+    review job that comes with it. Setup fixes the silent default, not a stated choice."""
+    for authored in ("auto", "off", "propose"):
+        doc = {"skills": {"workshop": {"autonomous": {"mode": authored}}}}
+        patch = openclaw.build_patch(
+            openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", doc, KIT_SKILLS, "e",
+            worker_model="claude-sonnet-5",
+        )
+        assert "skills" not in patch, f"setup tried to overwrite an authored mode ({authored})"
+
+
+def test_authoring_the_workshop_mode_is_idempotent():
+    """Second run on a host the kit already configured: the value is present, so nothing is
+    re-written and the patch carries no `skills` key at all."""
+    first = openclaw.build_patch(
+        openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", {}, KIT_SKILLS, "e",
+        worker_model="claude-sonnet-5",
+    )
+    doc = {"skills": first["skills"]}
+    second = openclaw.build_patch(
+        openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", doc, KIT_SKILLS, "e",
+        worker_model="claude-sonnet-5",
+    )
+    assert "skills" not in second

@@ -136,6 +136,29 @@ test("the claude-kit backend resumes sessions with --resume and starts them with
   assert.equal(backend.config.input, "stdin");
 });
 
+test("the claude-kit backend does NOT declare instruction isolation with exact tools", () => {
+  // DO NOT "FIX" A FAILING skill-collection-review JOB BY ADDING THIS FLAG.
+  //
+  // OpenClaw's Skill Workshop registers a weekly `skill-collection-review-<agent>` job that runs
+  // under `rootedExecution`. The gateway then requires the resolved CLI backend to declare
+  // `isolatesInstructionsWithExactTools === true` AND `bundleMcp`. On a kit host the `claude`
+  // worker is primary-bound to `claude-kit/*`, so that job fails with
+  // 'CLI backend "claude-kit" does not declare instruction isolation with exact tools'
+  // (measured 2026-09-25, openclaw 2026.9.6). Setting the flag here would be:
+  //   1. a false claim about a security property — this backend runs
+  //      --dangerously-skip-permissions and keeps bundleMcp false precisely so core never
+  //      injects --strict-mcp-config / --mcp-config / --disallowedTools (AC-03); and
+  //   2. useless anyway — the gate's very next condition requires bundleMcp, which stays false.
+  // The supported fix is `skills.workshop.autonomous.mode` (the kit's setup authors "propose"),
+  // which stops the job from being registered at all.
+  const backend = buildClaudeBackend({ claude: "claude" });
+  assert.ok(
+    !("isolatesInstructionsWithExactTools" in backend),
+    "claude-kit must not claim instruction isolation: it cannot enforce it",
+  );
+  assert.equal(backend.bundleMcp, false);
+});
+
 // --- agy-cli backend shape ---------------------------------------------------------
 
 test("the agy-cli backend bundles MCP through gemini-system-settings and resumes via --conversation", () => {
