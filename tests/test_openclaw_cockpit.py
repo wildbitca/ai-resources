@@ -45,6 +45,16 @@ class _Recorder:
     def patches(self):
         return [p for a, p in self.calls if a[:2] == ["config", "patch"]]
 
+    def engine_patches(self):
+        """Every patch except the standalone Skill Workshop one.
+
+        `_configure_skill_workshop` is a host-level step that runs on every configure(), so a
+        count over all patches is no longer a statement about the engine. Filtering by shape keeps
+        these assertions about what they were written to check.
+        """
+        return [p for p in self.patches()
+                if not (isinstance(p, dict) and set(p) == {"skills"})]
+
 
 @pytest.fixture
 def jarvis(tmp_path, monkeypatch):
@@ -210,7 +220,7 @@ def test_configure_goes_through_openclaw_and_snapshots_what_it_replaces(jarvis):
 
     openclaw.configure({"state": s})
 
-    assert len(rec.patches()) == 1
+    assert len(rec.engine_patches()) == 1
     assert s.openclaw.applied
     assert s.openclaw.previous["model"] == {"primary": "openrouter/auto"}
     assert json.loads(cfg.read_text())["agents"]["defaults"]["model"]["primary"] == "openrouter/auto", \
@@ -267,7 +277,7 @@ def test_teardown_restores_the_snapshot_and_removes_the_kit_block(jarvis, monkey
 
     openclaw.teardown(s)
 
-    restore = rec.patches()[-1]
+    restore = rec.engine_patches()[-1]
     assert restore["agents"]["defaults"]["model"] == {"primary": "openrouter/auto"}
     assert "mcp" not in restore, "Engram existed before the kit and must survive teardown"
     assert "ai-resources" not in (ws / "AGENTS.md").read_text()
@@ -568,7 +578,7 @@ def test_ac15_configure_skips_the_patch_when_risk_is_not_acknowledged(jarvis, mo
 
     openclaw.configure({"state": s})
 
-    assert rec.patches() == []
+    assert rec.engine_patches() == []
     assert not s.openclaw.applied
 
 
@@ -581,7 +591,7 @@ def test_ac16_teardown_restores_plugins_subagents_and_the_claude_agent(jarvis, m
 
     removed = openclaw.teardown(s)
 
-    restore = rec.patches()[-1]
+    restore = rec.engine_patches()[-1]
     assert restore["plugins"]["entries"]["openrouter"] is None
     assert restore["plugins"]["entries"]["llama-cpp"] is None
     assert restore["agents"]["entries"] is None
@@ -608,7 +618,7 @@ def test_ac13b_and_ac16_preexisting_config_is_restored_exactly_by_teardown(
     assert s.openclaw.applied
 
     openclaw.teardown(s)
-    restore = rec.patches()[-1]
+    restore = rec.engine_patches()[-1]
 
     assert restore["plugins"]["entries"]["openrouter"] == {"enabled": True, "apiKey": "sk-or-xxx"}
     assert restore["plugins"]["entries"]["llama-cpp"] == {"enabled": True, "modelPath": "/models/llama.gguf"}
@@ -685,7 +695,7 @@ def test_configure_resolves_agy_and_claude_bins_via_which_extra_not_plain_which(
     )
     s = _antigravity_state()
     openclaw.configure({"state": s})
-    patch = rec.patches()[0]
+    patch = rec.engine_patches()[0]
     plugin_config = patch["plugins"]["entries"]["ai-resources"]["config"]
     assert plugin_config["agyBin"] == "/home/user/.local/bin/agy"
     assert plugin_config["claudeBin"] == "/home/user/.local/bin/claude"
@@ -749,7 +759,7 @@ def test_switching_away_from_antigravity_restores_its_keys_unlinks_plugin_and_un
     s.openclaw.engine = "claude-code"
     openclaw.configure({"state": s})
 
-    restore = rec.patches()[-1]
+    restore = rec.engine_patches()[-1]
     assert restore["agents"]["entries"] is None
     assert restore["plugins"]["entries"]["ai-resources"] is None
     # The newly selected engine's own patch still applies alongside the restore.
@@ -765,7 +775,7 @@ def test_switching_away_from_antigravity_restores_its_keys_unlinks_plugin_and_un
     # that already happened during the switch above.
     rec.calls.clear()
     openclaw.teardown(s)
-    final = rec.patches()[-1]
+    final = rec.engine_patches()[-1]
     assert "entries" not in final["agents"]
     assert "commands" not in final
     assert "tools" not in final
@@ -856,7 +866,7 @@ def test_ac18_parity_prompt_plus_configure_produce_the_same_patch_and_never_touc
 
         rec.calls.clear()
         openclaw.configure({"state": s})
-        patches[mode] = rec.patches()[0]
+        patches[mode] = rec.engine_patches()[0]
 
     assert patches["single-model"] == patches["multi-model"]
     settings_path = tmp_path / ".claude" / "settings.json"
@@ -991,7 +1001,7 @@ def test_the_engine_patch_is_skipped_when_the_backend_never_registers(jarvis, mo
     monkeypatch.setattr(openclaw, "register_agy_mcp_bridge", lambda *_a: (True, False, ""))
     cfg, _ws, rec = jarvis
     openclaw.configure({"state": _antigravity_state()})
-    assert not any(c[0][:2] == ["config", "patch"] for c in rec.calls), rec.calls
+    assert rec.engine_patches() == [], rec.calls
 
 
 def test_backend_registered_reads_the_plugin_runtime_not_models_list(monkeypatch):
@@ -1168,43 +1178,64 @@ def test_s3_zero_percent_warning_never_points_at_an_equally_dead_pool(monkeypatc
         assert "Every other pool is spent too" in w
         assert "Re-run `ai-resources setup` and pick" not in w
 
-def test_setup_authors_the_workshop_mode_when_the_host_left_it_unset():
-    """Unset means OpenClaw's own default, "auto", which registers a weekly
-    `skill-collection-review-<agent>` job per agent. That job runs under `rootedExecution`, and
-    the kit binds the `claude` worker to `claude-kit/*`, a backend that deliberately declares
-    neither `isolatesInstructionsWithExactTools` nor `bundleMcp` — so the job is scheduled and
-    can never run (measured 2026-09-25, openclaw 2026.9.6: `error (2x)`). It is system-owned, so
-    it cannot be disabled from outside. Setup therefore authors the mode instead of inheriting it.
+def test_setup_authors_the_workshop_mode_when_the_host_left_it_unset(jarvis):
+    """Unset means OpenClaw's default "auto", which registers a weekly
+    `skill-collection-review-<agent>` job per agent. That job runs under `rootedExecution` and the
+    kit binds the `claude` worker to `claude-kit/*`, a backend that declares neither
+    `isolatesInstructionsWithExactTools` nor `bundleMcp` — so it is scheduled and can never run
+    (measured 2026-09-25, openclaw 2026.9.6: `error (2x)`). It is system-owned, so it cannot be
+    disabled from outside. See docs/openclaw/pitfalls.md T34.
     """
-    patch = openclaw.build_patch(
-        openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", {}, KIT_SKILLS, "e",
-        worker_model="claude-sonnet-5",
-    )
-    assert patch["skills"]["workshop"]["autonomous"]["mode"] == "propose"
+    _cfg, _ws, rec = jarvis
+    s = _state("claude", "openclaw")
+    s.openclaw.applied = True
+    doc = openclaw.read_config(openclaw.config_path())
+
+    assert openclaw._configure_skill_workshop(s, doc, openclaw.config_path(), [], dry_run=False)
+
+    patches = [p for p in rec.patches() if p and "skills" in p]
+    assert len(patches) == 1
+    assert patches[0]["skills"]["workshop"]["autonomous"]["mode"] == "propose"
 
 
-def test_setup_never_overwrites_a_workshop_mode_the_operator_authored():
+def test_the_workshop_mode_is_not_written_on_a_host_the_kit_does_not_manage(jarvis):
+    """A run that configures nothing but voice, or declines every OpenClaw section, must leave
+    openclaw.json alone. The kit authors this key only on a host whose OpenClaw it manages."""
+    _cfg, _ws, rec = jarvis
+    s = _state("claude", "openclaw")
+    s.openclaw.applied = False
+    doc = openclaw.read_config(openclaw.config_path())
+
+    assert not openclaw._configure_skill_workshop(s, doc, openclaw.config_path(), [], dry_run=False)
+    assert not [p for p in rec.patches() if p and "skills" in p]
+
+
+def test_setup_never_overwrites_a_workshop_mode_the_operator_authored(jarvis):
     """An operator who wrote a mode owns that decision — including "auto" and the unschedulable
     review job that comes with it. Setup fixes the silent default, not a stated choice."""
+    _cfg, _ws, rec = jarvis
+    s = _state("claude", "openclaw")
+    s.openclaw.applied = True
     for authored in ("auto", "off", "propose"):
         doc = {"skills": {"workshop": {"autonomous": {"mode": authored}}}}
-        patch = openclaw.build_patch(
-            openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", doc, KIT_SKILLS, "e",
-            worker_model="claude-sonnet-5",
-        )
-        assert "skills" not in patch, f"setup tried to overwrite an authored mode ({authored})"
+        assert not openclaw._configure_skill_workshop(
+            s, doc, openclaw.config_path(), [], dry_run=False)
+    assert not [p for p in rec.patches() if p and "skills" in p], \
+        "setup tried to overwrite an authored mode"
 
 
-def test_authoring_the_workshop_mode_is_idempotent():
-    """Second run on a host the kit already configured: the value is present, so nothing is
-    re-written and the patch carries no `skills` key at all."""
-    first = openclaw.build_patch(
-        openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", {}, KIT_SKILLS, "e",
-        worker_model="claude-sonnet-5",
-    )
-    doc = {"skills": first["skills"]}
-    second = openclaw.build_patch(
-        openclaw.ENGINES["antigravity"], "gemini-3.8-flash-low", doc, KIT_SKILLS, "e",
-        worker_model="claude-sonnet-5",
-    )
-    assert "skills" not in second
+def test_the_workshop_mode_reaches_a_host_whose_engine_is_kept(jarvis):
+    """REGRESSION. The first version of this fix lived in `_build_antigravity_patch`, so it never
+    reached the hosts that need it most: `_configure_engine` returns early for `engine == "keep"`,
+    which is what a host the kit already configured reports on a re-run. The Workshop mode is a
+    host-level setting and must be authored whatever the engine answer is."""
+    _cfg, _ws, rec = jarvis
+    s = _state("claude", "openclaw")
+    s.openclaw.engine = "keep"
+    s.openclaw.applied = True
+
+    openclaw.configure({"state": s})
+
+    patches = [p for p in rec.patches() if p and "skills" in p]
+    assert len(patches) == 1, "a kept engine must still get the Workshop mode"
+    assert patches[0]["skills"]["workshop"]["autonomous"]["mode"] == "propose"

@@ -1084,7 +1084,7 @@ the number of agents narrating at once.
 
 ---
 
-## T34 — The weekly Skill Workshop review can never run on a `claude-kit` worker *(added 2026-09-25; fixed in 1.9.4)*
+## T34 — The weekly Skill Workshop review can never run on a `claude-kit` worker *(added 2026-09-25; fixed in 1.9.4, completed in 1.9.5)*
 
 **Symptom.** `openclaw cron list` shows `skill-collection-review-claude` at `status: error (2x)` with
 `CLI backend "claude-kit" does not declare instruction isolation with exact tools; collection review skipped`.
@@ -1118,7 +1118,7 @@ keeps `--dangerously-skip-permissions` meaningful (AC-03).
 next condition requires `bundleMcp`, which stays `false`. A test pins the flag's **absence** with that reason
 (`openclaw-plugin/ai-resources/test/index.test.mjs`).
 
-**Fix (1.9.4).** Setup authors `skills.workshop.autonomous.mode = "propose"` instead of inheriting OpenClaw's
+**Fix (1.9.4, completed in 1.9.5).** Setup authors `skills.workshop.autonomous.mode = "propose"` instead of inheriting OpenClaw's
 default `auto`. The monitor's `workshopEnabled` is `mode === "auto"`, so any other value stops the per-agent
 review job from being registered at all — the job disappears from `openclaw cron list` rather than sitting
 there failing. `"propose"` keeps the Workshop's value: it still captures improvement proposals for the
@@ -1126,8 +1126,14 @@ operator to approve, it just no longer rewrites skill files unsupervised every 7
 was doing on every kit host without anyone choosing it (`toolsAllow` for that job is
 `["ls","read","write","edit","apply_patch","exec","process"]`).
 
-Setup only writes the key **when the host left it unset**: an operator who authored a mode owns that
-decision, including `auto` and the failing job that comes with it.
+Setup only writes the key **when the host left it unset** and the kit manages that host's OpenClaw: an
+operator who authored a mode owns that decision, including `auto` and the failing job that comes with it,
+and a host the kit does not configure is never touched.
+
+**Where the step lives, and why it matters.** `_configure_skill_workshop`, a host-level step in
+`configure()` — not inside `_build_antigravity_patch`. 1.9.4 put it there and it reached nobody who
+already ran the kit: `_configure_engine` returns early for `engine == "keep"`, the saved answer on every
+re-run, so that patch was never rebuilt. If you move this logic, keep it off the engine path.
 
 **Applies immediately, no restart.** `openclaw config set skills.workshop.autonomous.mode propose` answers
 *"Change will apply without restarting the gateway"*, and the review jobs vanish from `cron list` within
