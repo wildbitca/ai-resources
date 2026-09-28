@@ -1337,7 +1337,7 @@ def _verify_identity(doc: dict, F: Any) -> list:
         file_name = openclaw_host.identity_file_name(ws) or "(no IDENTITY.md name)"
         out.append(F("warn", "openclaw",
                      f"agents {', '.join(aids)} share {ws}; {ws / 'IDENTITY.md'} says Name: {file_name}, "
-                     f"so {', '.join(unnamed)} (no identity.name) are narrated with that name",
+                     f"so {', '.join(unnamed)} (no identity.name) {'is' if len(unnamed) == 1 else 'are'} narrated with that name",
                      "; ".join(f"openclaw config set agents.entries.{a}.identity.name {a} --dry-run, inspect, then "
                                "without --dry-run" for a in unnamed) + ". The kit never writes IDENTITY.md"))
     return out
