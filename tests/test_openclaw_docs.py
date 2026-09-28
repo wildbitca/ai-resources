@@ -47,3 +47,19 @@ def test_the_docs_say_the_restore_is_unrehearsed_and_the_kit_has_no_yes_flag():
     text = "\n".join(d.read_text(encoding="utf-8") for d in DOCS)
     assert "never been rehearsed" in text
     assert not re.search(r"(?<!no )(?<!no `)--yes", text), "the kit has no --yes flag: only --non-interactive"
+
+
+def test_the_block_drift_identity_and_model_form_pitfalls_are_recorded():
+    text = (REPO / "docs" / "openclaw" / "pitfalls.md").read_text(encoding="utf-8")
+    for code in ("T36", "T37", "T38"):
+        assert re.search(rf"^## {code} — ", text, re.M), code
+    assert "durable only until an agent rewrites its own `AGENTS.md`" in text
+    assert "identity.name" in text and "IDENTITY.md" in text and "`--dry-run`" in text
+    assert "anyOf: [string, {primary, fallbacks}]" in text
+
+
+def test_the_runbook_and_readme_name_the_verify_command_and_its_exit_rule():
+    runbook = (REPO / "docs" / "openclaw" / "runbook.md").read_text(encoding="utf-8")
+    assert "ai-resources verify" in runbook and "OPENCLAW_OFFBOX_LIST_CMD" in runbook
+    assert "never `openclaw doctor --fix` bare" in runbook and "OPENCLAW_CLI" in runbook
+    assert "ai-resources verify" in (REPO / "README.md").read_text(encoding="utf-8")

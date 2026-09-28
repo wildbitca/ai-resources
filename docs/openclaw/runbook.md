@@ -61,6 +61,29 @@ The `ai-resources openclaw <verb>` commands are wrappers over the same functions
 and disaster recovery: `status`, `doctor`, `bootstrap`, `install-units`, `agent-new`,
 `render-gitops-backups`.
 
+## Verification: what setup left behind
+
+`ai-resources setup` ends with step 10, **Verification**: a read-only check of exactly the cockpits step
+9 applied, one line per finding with its remedy. The same checks run from `ai-resources verify` (add
+`--json` for one object per finding, `--cockpit ID` to narrow it) and from section 4 of
+`ai-resources doctor`. It writes nothing, needs no network and never restarts the gateway.
+
+| Level | Meaning | Exit code |
+|---|---|---|
+| `error` | genuinely broken: a recorded managed block missing or duplicated, the gateway unit inactive or disabled, the gateway up but not answering, the `main` catch-all binding not last, the kit plugin linked but not loaded | 1 (setup, verify and doctor) |
+| `warn` | advisory: stale routing text outside the markers, a shared identity (T37), a short-form model (T38), a disabled timer, a stale daily backup, a gateway bound to all interfaces, no off-box copy configured | 0 |
+
+Setup and doctor now exit non-zero on an `error`, never on a `warn`. A probe that times out is reported as
+"could not measure", never as broken. The off-box warning carries the literal line to add
+(`OPENCLAW_OFFBOX_LIST_CMD=<your listing command>` in `~/.openclaw/kit-host.env`); the kit will not choose
+a destination for you.
+
+Repair for a dropped block (T36) is to re-run `ai-resources setup`. Standing host rules apply to
+anything you do about a finding: never `openclaw doctor --fix` bare (use `ai-resources openclaw doctor`);
+never stop the gateway from a session it launched (check `OPENCLAW_CLI`); never hand-edit
+`~/.openclaw/openclaw.json` (`openclaw config set|patch --dry-run` first); whoever creates
+`~/.openclaw/watchdog.off` removes it; update with `openclaw update`, never `npm i -g`.
+
 ## Pending operator steps
 
 These need the real host and a maintenance window, so they were **not** run when 1.9.0 was built:

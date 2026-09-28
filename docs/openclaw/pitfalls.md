@@ -592,6 +592,8 @@ to its value (`- Name: Jarvis`).
 **How to catch it.** `openclaw agents list` and check that no two entries share the same `Workspace`.
 If they do, collision is guaranteed.
 
+See T37 for the sharper case: a missing `identity.name` inherits the file's name.
+
 ---
 
 ## T18 — `TOPIC-ROUTING.md` is not injected by the runtime
@@ -1204,6 +1206,75 @@ binding resolves; for a binding that never resolves at all, there is no log to t
 against the live config directly (`resolve_target(cwd)` for each agent's workspace) and confirm every
 one returns a chat id, then trigger one real send. A green pytest suite is not that proof either: it
 exercises the fixture, not the live config.
+
+---
+
+## T36 — A managed block is durable only until an agent rewrites its own `AGENTS.md` *(added 2026-09-28; detected by `ai-resources verify` since 1.10.0)*
+
+**Symptom.** `~/.openclaw/workspace/AGENTS.md` (the workspace of `main`) had no kit marker pair, no
+`sessions_spawn` line and no worktree section, while the other five workspaces carried all of them. The
+v1.9.7 report said all six had the block.
+
+**Measured, not assumed.** Setup **did** write it: `setup-state.yaml` recorded that file under
+`agent_kit_blocks`, `_workspace_targets()` keys the directory once with `aids` holding both `""` (the
+defaults workspace) and `main`, and the other five files carried the setup mtime (21:28:43) while main's
+was 19 minutes later (21:47:31). A 2026-09-17 kit backup beside it still held a BEGIN marker. Something
+replaced the file wholesale after setup; the block writer was correct. `tests/test_openclaw_workspace_blocks.py`
+now pins both facts (one target, one marker pair, a second run changes nothing).
+
+**Cause.** An agent that edits its own instructions (the default workspace guidance even says "learned a
+lesson: update `AGENTS.md`") writes the whole file. The kit refreshes its block on every setup run and
+cannot see between runs.
+
+**Fix.** Nothing rewrites it for you, on purpose. `ai-resources verify` (and step 10 of `ai-resources
+setup`, and `ai-resources doctor`) reports a recorded block that is gone, or duplicated, as an **error**
+naming the file. The repair is `ai-resources setup`: it rewrites only the marked block and keeps every byte
+outside the markers, including hand-written text. The verifier never writes.
+
+**Also reported (warn).** Routing documented outside the markers that the live config does not have (a
+Telegram chat id in neither `bindings` nor `channels.telegram.groups`, a `topic N` reference nobody
+routes). The kit never touches bytes outside its markers: the obsolete topic table of the deleted forum
+`-1003678125825` in `main`'s file is the operator's to edit.
+
+---
+
+## T37 — An agent with no `identity.name` inherits the name in a shared workspace's `IDENTITY.md` *(added 2026-09-28; supersedes T17's framing; reported since 1.10.0)*
+
+**Symptom.** `openclaw agents list` printed `Identity: security` for the `claude` worker.
+
+**Measured.** `agents.entries.claude.identity` is null while every other agent has one. `claude` and
+`security` share `~/Development`, and `~/Development/IDENTITY.md` says `- Name: security`. OpenClaw falls
+back to the workspace file when `identity.name` is absent, so the agent is narrated with whichever name
+the file holds. The kit never prints or writes identity (`IDENTITY.md` is not in any template it writes).
+
+**Fix (operator).** Give the agent a name, validated first and never by hand-editing `openclaw.json`:
+`openclaw config set agents.entries.claude.identity.name claude --dry-run`, inspect, then run it without
+`--dry-run`. Splitting the workspace is the other option (T17). The kit will not split it, will not invent
+a name and will not write `IDENTITY.md`: two agents writing one file is exactly the T17 damage.
+
+**How the kit helps.** `ai-resources verify` warns per shared workspace naming every agent that lacks an
+`identity.name`, and `ai-resources openclaw status` has an `identity` section (name, workspace, the name in
+the file) so the explanation sits where the wrong string was noticed.
+
+---
+
+## T38 — `model` has two legal spellings, and `openclaw agents add --model` writes the short one *(added 2026-09-28; fixed in 1.9.10)*
+
+**Symptom.** `ai-resources openclaw status` crashed with `AttributeError: 'str' object has no attribute
+'get'` after an agent was created with `--model`.
+
+**Cause.** The schema is `anyOf: [string, {primary, fallbacks}]`. The kit's readers assumed the object.
+
+**Fix.** `model_spec()` / `model_primary()` in `scripts/ai_resources/openclaw_host.py` read both, in
+`expand_wildcards` and in status. The kit does **not** rewrite the operator's config: status and
+`ai-resources verify` list each short-form agent with `openclaw config set agents.entries.<id>.model.primary
+<ref>` as an option, and a warning is all it is (the form is legal).
+
+**Also in 1.9.10.** `status` resolved no binary (a bare `openclaw` is rc 127 in any PATH without brew),
+so "doctor could not run" was reproducible. The cause reported at the time, a 120 s timeout, did **not**
+reproduce: `openclaw doctor --non-interactive` is rc 0 in about 29 s on bithome. Status now names why it
+failed (`ok`, `timeout`, `missing`, `failed`), and `Unknown model: claude-kit/...` is known noise
+(`claude-kit` is a CLI backend, not a catalogue provider).
 
 ---
 
