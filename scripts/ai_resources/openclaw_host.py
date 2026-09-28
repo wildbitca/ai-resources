@@ -812,6 +812,36 @@ def agent_workspaces(doc: dict) -> dict[str, list[Path]]:
     return out
 
 
+_IDENTITY_NAME = re.compile(r"^\s*[-*]\s*(?:\*\*)?Name(?:\*\*)?:\s*(?:\*\*)?(.+?)(?:\*\*)?\s*$", re.M | re.I)
+
+
+def identity_file_name(workspace: Path | str) -> str | None:
+    """The `- Name:` line of a workspace's IDENTITY.md, or None. Read-only: the kit never writes it."""
+    try:
+        text = (Path(workspace) / "IDENTITY.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = _IDENTITY_NAME.search(text)
+    return m.group(1).strip() if m else None
+
+
+def agent_identities(doc: dict) -> list[dict]:
+    """Per agent: the configured `identity.name`, the resolved workspace, and the name IDENTITY.md holds there.
+
+    OpenClaw falls back to the workspace file when `identity.name` is absent, so two agents sharing a
+    workspace can be narrated with the name of whichever wrote the file last.
+    """
+    entries = ((doc.get("agents") or {}).get("entries")) or {}
+    out = []
+    for aid, paths in agent_workspaces(doc).items():
+        for ws in paths:
+            ident = (entries.get(aid) or {}).get("identity")
+            name = ident.get("name") if isinstance(ident, dict) else None
+            out.append({"agent": aid, "name": name if isinstance(name, str) and name else None,
+                        "workspace": str(ws), "file_name": identity_file_name(ws)})
+    return out
+
+
 def detect_workspace_kind(workspace: Path | str, runner: Runner = default_runner) -> str:
     """`repo` for a checkout with tracked files and a remote; `umbrella` for everything else.
 
@@ -1321,7 +1351,7 @@ DOCTOR_NOISE = (
 # insurance, not the fix for "could not run" (that was the unresolved binary, rc 127).
 DOCTOR_TIMEOUT = 600
 TIER_MAX_AGE_HOURS = {"daily": 36, "weekly": 8 * 24, "monthly": 35 * 24}
-STATUS_SECTIONS = ("unit", "boot", "listeners", "health", "timers", "backups", "off-box", "models", "doctor")
+STATUS_SECTIONS = ("unit", "boot", "listeners", "health", "timers", "backups", "off-box", "models", "identity", "doctor")
 
 
 def parse_doctor_entries(text: str) -> list[tuple[str, str]]:
@@ -1478,6 +1508,7 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                          "shorthand": isinstance((e or {}).get("model"), str)}
                         for aid, e in ((cfg.get("agents") or {}).get("entries") or {}).items()]
 
+    report["identity"] = agent_identities(cfg)
     if not run_doctor:
         report["doctor"] = {"ran": False, "status": "skipped"}
         return report
@@ -1526,6 +1557,20 @@ def render_status(report: dict) -> str:
     if short:
         lines.append("  the short form of `model` is legal and the kit reads both; to spell it as an object:")
         lines += [f"    openclaw config set agents.entries.{m['agent']}.model.primary {m['model']}" for m in short]
+    lines.append("identity")
+    ident = report.get("identity", [])
+    for i in ident:
+        lines.append(f"  {i['agent']:<16} {i['name'] or '-':<12} {i['workspace']}   IDENTITY.md: {i['file_name'] or '-'}")
+    by_ws: dict[str, list[dict]] = {}
+    for i in ident:
+        by_ws.setdefault(i["workspace"], []).append(i)
+    for ws, group in by_ws.items():
+        unnamed = [i["agent"] for i in group if not i["name"]]
+        if len(group) > 1 and unnamed:
+            lines.append(f"  ATTENTION: {', '.join(i['agent'] for i in group)} share {ws}; "
+                         f"{', '.join(unnamed)} ha{'s' if len(unnamed) == 1 else 've'} no identity.name, so OpenClaw "
+                         f"narrates it with IDENTITY.md's name ({group[0]['file_name'] or 'none'}). The kit never writes that file; "
+                         + "; ".join(f"openclaw config set agents.entries.{a}.identity.name {a} --dry-run" for a in unnamed))
     d = report["doctor"]
     if d.get("status") == "skipped":
         lines.append("doctor      not run (--no-doctor)")

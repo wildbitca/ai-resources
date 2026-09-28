@@ -1243,7 +1243,6 @@ def teardown(s: state.SetupState) -> list[str]:
 
 # --- verify (read-only) --------------------------------------------------------------------------------------
 
-_IDENTITY_NAME = re.compile(r"^\s*[-*]\s*(?:\*\*)?Name(?:\*\*)?:\s*(?:\*\*)?(.+?)(?:\*\*)?\s*$", re.M | re.I)
 _CHAT_ID = re.compile(r"(?<![\w-])-\d{9,}\b")
 _TOPIC_REF = re.compile(r"\btopic\s+(\d+)\b", re.I)
 
@@ -1335,11 +1334,7 @@ def _verify_identity(doc: dict, F: Any) -> list:
         unnamed = [a for a in aids if not (((entries.get(a) or {}).get("identity")) or {}).get("name")]
         if not unnamed:
             continue
-        try:
-            m = _IDENTITY_NAME.search((ws / "IDENTITY.md").read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            m = None
-        file_name = m.group(1).strip() if m else "(no IDENTITY.md name)"
+        file_name = openclaw_host.identity_file_name(ws) or "(no IDENTITY.md name)"
         out.append(F("warn", "openclaw",
                      f"agents {', '.join(aids)} share {ws}; {ws / 'IDENTITY.md'} says Name: {file_name}, "
                      f"so {', '.join(unnamed)} (no identity.name) are narrated with that name",
