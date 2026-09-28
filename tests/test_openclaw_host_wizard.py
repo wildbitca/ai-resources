@@ -846,3 +846,98 @@ def test_a_clean_host_check_says_so(sim, script, monkeypatch):
 def test_the_fixture_points_every_write_target_into_tmp(sim, tmp_path):
     for target in (sim.env_file, sim.units, sim.settings, sim.cfg):
         assert str(target).startswith(str(tmp_path.parent)), target
+
+
+# --- step 10: setup ends by verifying every selected tooling ------------------------------------------------------
+
+class _Console:
+    def print(self, *_a, **_k):
+        pass
+
+
+def _step10_env(monkeypatch, findings):
+    from ai_resources import verify
+    calls, sections = [], []
+    monkeypatch.setattr(verify, "run_all", lambda s, ids=None, ctx=None: calls.append(list(ids)) or findings)
+    monkeypatch.setattr(ui, "section", lambda n, total, title: sections.append((n, total, title)))
+    monkeypatch.setattr(ui, "console", lambda: _Console())
+    return calls, sections
+
+
+def test_step10_prints_its_header_and_one_line_per_finding_and_returns_zero_on_all_clear(script, monkeypatch):
+    from ai_resources.verify import Finding
+    calls, sections = _step10_env(monkeypatch, [Finding("ok", "claude", "block present"),
+                                                Finding("ok", "openclaw", "gateway up")])
+    assert wizard._step10_verify(_state(), ["claude", "openclaw"]) == 0
+    assert sections == [(10, 10, "Verification")] and calls == [["claude", "openclaw"]]
+    assert script.messages("ok")[:2] == ["claude: block present", "openclaw: gateway up"]
+    assert script.messages("ok")[-1].startswith("All 2 selected toolings reached the expected state")
+
+
+def test_step10_returns_non_zero_on_an_error_and_zero_on_a_warn(script, monkeypatch):
+    from ai_resources.verify import Finding
+    _step10_env(monkeypatch, [Finding("ok", "claude", "fine"), Finding("error", "openclaw", "block gone", "re-run setup")])
+    assert wizard._step10_verify(_state(), ["claude", "openclaw"]) == 1
+    assert "1 of 2 selected toolings did not reach the expected state" in script.messages("error")[-1]
+    assert "re-run setup" in " ".join(script.messages("detail"))
+    _step10_env(monkeypatch, [Finding("warn", "openclaw", "off-box not configured", "add the env line")])
+    assert wizard._step10_verify(_state(), ["claude", "openclaw"]) == 0
+
+
+def test_step10_judges_only_the_selected_cockpits(script, monkeypatch):
+    import types
+    from ai_resources import verify
+    from ai_resources.setup import cockpits
+    from ai_resources.setup import state as st
+    seen = []
+    fake = {cid: types.SimpleNamespace(verify=lambda ctx, _c=cid: seen.append(_c) or [verify.Finding("ok", _c, "x")])
+            for cid in ("claude", "cursor", "openclaw")}
+    monkeypatch.setattr(cockpits, "ALL", fake)
+    monkeypatch.setattr(ui, "section", lambda *a: None)
+    monkeypatch.setattr(ui, "console", lambda: _Console())
+    assert wizard._step10_verify(st.SetupState(), ["claude", "openclaw"]) == 0
+    assert seen == ["claude", "openclaw"]
+
+
+def test_step10_with_nothing_applied_says_so(script, monkeypatch):
+    calls, _ = _step10_env(monkeypatch, [])
+    assert wizard._step10_verify(_state(), []) == 0 and calls == []
+
+
+def _drive_run(monkeypatch, tmp_path, *, apply_rc, targets, findings):
+    """wizard.run with every step but 9 and 10 stubbed out."""
+    import argparse
+    from ai_resources.setup import state as st
+    calls, sections = _step10_env(monkeypatch, findings)
+    monkeypatch.setattr(ui, "require_deps", lambda: None)
+    monkeypatch.setattr(ui, "banner", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(st, "load", lambda: st.SetupState())
+    monkeypatch.setattr(st, "save", lambda s: None)
+    monkeypatch.setattr(st, "is_first_run", lambda: True)
+    for step in ("_step1_mode", "_step2_cockpits", "_step6_single_model_profile", "_step7_cockpit_config"):
+        monkeypatch.setattr(wizard, step, lambda *a, **k: 0)
+
+    def apply(s, dry_run=False):
+        wizard._APPLIED_TARGETS = list(targets)
+        return apply_rc
+    monkeypatch.setattr(wizard, "_step9_apply", apply)
+    monkeypatch.setattr(wizard, "_print_completion", lambda s: None)
+    args = argparse.Namespace(dry_run=False, non_interactive=False, profile="")
+    return wizard.run(args), calls, sections
+
+
+def test_run_exits_non_zero_on_an_error_finding_and_zero_on_a_warn(script, monkeypatch, tmp_path):
+    from ai_resources.verify import Finding
+    rc, calls, _ = _drive_run(monkeypatch, tmp_path, apply_rc=0, targets=["claude", "openclaw"],
+                              findings=[Finding("error", "openclaw", "block gone")])
+    assert rc == 1 and calls == [["claude", "openclaw"]]
+    rc, calls, _ = _drive_run(monkeypatch, tmp_path, apply_rc=0, targets=["claude"],
+                              findings=[Finding("warn", "claude", "meh")])
+    assert rc == 0 and calls == [["claude"]]
+
+
+def test_run_skips_verification_when_apply_failed(script, monkeypatch, tmp_path):
+    rc, calls, sections = _drive_run(monkeypatch, tmp_path, apply_rc=1, targets=["claude"], findings=[])
+    assert rc == 1 and calls == [] and (10, 10, "Verification") not in sections

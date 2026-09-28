@@ -133,9 +133,9 @@ def failing_cockpits(findings: list[Finding]) -> list[str]:
     return sorted({f.cockpit for f in findings if f.level == "error"})
 
 
-def summary(findings: list[Finding]) -> str:
-    """The closing line: all clear, or how many of the checked toolings did not reach the state."""
-    total = len({f.cockpit for f in findings})
+def summary(findings: list[Finding], selected: int | None = None) -> str:
+    """The closing line: all clear, or how many of the selected toolings did not reach the state."""
+    total = selected if selected is not None else len({f.cockpit for f in findings})
     bad = len(failing_cockpits(findings))
     c = counts(findings)
     tail = f"{c['error']} error(s), {c['warn']} warning(s), {c['ok']} ok"

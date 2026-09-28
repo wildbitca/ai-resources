@@ -23,7 +23,7 @@ from .cockpits import ALL as ALL_COCKPITS
 from .. import __version__, repo_root
 
 
-TOTAL_STEPS = 9
+TOTAL_STEPS = 10
 SINGLE_MODEL_DEFAULT_PROFILE = "claude-native"
 # The assignment that measured best across three instrumented workflow runs on
 # 2026-09-16, and gateway-agnostic, so it is the recommendation for either one.
@@ -36,6 +36,11 @@ RECOMMENDED_PROFILE = "measured-best"
 # typed must not: substituting it silently ran setup under a profile they did
 # not ask for and never mentioned it.
 _REQUESTED_PROFILE = ""
+
+# The cockpits step 9 configured, in registry order. Step 10 verifies exactly these: re-deriving
+# the selection from the state would judge toolings the operator never picked, and that noise is
+# what teaches people to skip the step.
+_APPLIED_TARGETS: list[str] = []
 
 
 def _reject_unavailable_requested_profile(available: list[str], context: str) -> int | None:
@@ -50,6 +55,8 @@ def _reject_unavailable_requested_profile(available: list[str], context: str) ->
 def run(args: argparse.Namespace) -> int:
     """Main wizard entry point."""
     ui.require_deps()
+    global _APPLIED_TARGETS
+    _APPLIED_TARGETS = []
     dry_run = getattr(args, "dry_run", False)
 
     # Both flags were declared in the CLI and never read, so they accepted input
@@ -156,10 +163,12 @@ def run(args: argparse.Namespace) -> int:
     if rc != 0:
         return rc
 
+    verify_rc = 0
     if not dry_run:
         state.save(s)
+        verify_rc = _step10_verify(s, list(_APPLIED_TARGETS))
         _print_completion(s)
-    return 0
+    return verify_rc   # non-zero only when a selected tooling has an error-level finding
 
 
 # --- Step 1 — Mode ---------------------------------------------------------------
@@ -1067,6 +1076,8 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
         targets = [cid for cid, cs in s.cockpits.items() if cs.installed]
     # Dict order, not selection order: OpenClaw's engines reuse what the other cockpits install.
     targets = [cid for cid in ALL_COCKPITS if cid in targets]
+    global _APPLIED_TARGETS
+    _APPLIED_TARGETS = list(targets)
     for cid in targets:
         mod = ALL_COCKPITS.get(cid)
         if not mod:
@@ -1221,6 +1232,25 @@ def _openclaw_status_line(s: state.SetupState) -> str:
         f"(plugin linked: {s.openclaw.plugin_linked}, risk acknowledged: {s.openclaw.risk_acknowledged})"
     )
     return f"{line}\n{host_line}" if host_line else line
+
+
+# --- Step 10 — Verification ------------------------------------------------------
+def _step10_verify(s: state.SetupState, targets: list[str]) -> int:
+    """Read-only check of every tooling step 9 applied. 1 iff a finding is an error, never for a warn."""
+    from .. import verify
+
+    ui.section(10, TOTAL_STEPS, "Verification")
+    if not targets:
+        ui.info("Nothing was applied, so there is nothing to verify.")
+        return 0
+    findings = verify.run_all(s, targets)
+    verify.print_findings(findings)
+    ui.console().print()
+    if verify.has_errors(findings):
+        ui.error(verify.summary(findings, selected=len(targets)))
+        return 1
+    ui.ok(verify.summary(findings, selected=len(targets)))
+    return 0
 
 
 # --- Step 9 dry-run preview ------------------------------------------------------
@@ -1464,6 +1494,9 @@ def _step9_dry_run(s: state.SetupState) -> int:
             )
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    console.print()
+    ui.section(10, TOTAL_STEPS, "Verification")
+    ui.info("Skipped in a dry run: verification checks what a real apply left behind, and nothing was applied.")
     console.print()
     ui.info("Dry run complete — no permanent changes made.")
     ui.detail("Remove --dry-run to apply.")
