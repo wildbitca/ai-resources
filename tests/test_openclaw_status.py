@@ -363,3 +363,16 @@ def test_two_agents_sharing_a_workspace_show_both_names_the_shared_path_and_the_
 
 def test_a_workspace_of_one_named_agent_carries_no_attention_line(env):
     assert "ATTENTION: " not in host.render_status(collect(env, Canned())).split("identity")[1].split("doctor")[0]
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("# IDENTITY\n\n- Name: security\n", "security"),
+    ("- **Name:** Jarvis\n", "Jarvis"),
+    ("- **Name**: Jarvis\n", "Jarvis"),
+    ("- **Name:**\n  _(pick something you like)_\n- **Creature:**\n", None),   # the unfilled template
+    ("- Name:\n", None),
+    ("no name here\n", None),
+])
+def test_the_identity_name_line_is_read_and_an_unfilled_template_is_no_name(tmp_path, text, expected):
+    (tmp_path / "IDENTITY.md").write_text(text, encoding="utf-8")
+    assert host.identity_file_name(tmp_path) == expected
