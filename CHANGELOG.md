@@ -4,6 +4,68 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.10.0] — 2026-09-28 — setup now ends by verifying every selected tooling
+
+`ai-resources setup` used to end in a state it had **applied**. It now ends in one it has **verified**:
+a read-only check per selected tooling, reachable from three doors that share one implementation.
+
+### Behaviour change: new non-zero exits
+
+**`ai-resources setup`, `ai-resources verify` and `ai-resources doctor` now exit 1 when a verification
+finding is an `error`.** They never exit non-zero for a `warn`. Automation that assumed setup always
+exits 0 after a successful apply must tolerate this. Only genuinely broken states are errors: a recorded
+managed block now missing or duplicated, the gateway unit dead or disabled, the gateway up but not
+answering, the `main` catch-all binding not last, the kit plugin linked but not loaded.
+
+### Added
+
+- **`scripts/ai_resources/verify.py`**: `Finding(level, cockpit, message, remedy)` and `run_all(state,
+  cockpit_ids)`. A cockpit module may expose an optional `verify(ctx)`; the others get a generic check of
+  the managed block and config directory the state file recorded. `run_all` never raises: a cockpit whose
+  verify blows up becomes one error naming it.
+- **Wizard step 10, Verification** (`TOTAL_STEPS` 9 to 10): verifies exactly the cockpits step 9 applied,
+  one line and remedy per finding, closing with all clear or `N of M selected toolings did not reach the
+  expected state`. A dry run prints the header with a skip notice and probes nothing.
+- **`ai-resources verify [--json] [--cockpit ID]`**, and doctor section 4 folds in the same findings
+  (error-level ones only count as issues; doctor still has six sections).
+- **openclaw verify**: a recorded kit block that is gone or duplicated (error), routing documented outside
+  the markers that the live config lacks (warn), agents sharing a workspace that inherit `IDENTITY.md`'s
+  name (warn), string-form models (warn), the catch-all binding order (error), the gateway unit, health,
+  timers, backups, listeners and the off-box gap (the literal `OPENCLAW_OFFBOX_LIST_CMD` line; the kit
+  chooses no destination). A timeout is "could not measure", never an error. **claude verify**: the
+  `CLAUDE.md` block, `settings.json` and the recorded scripts and subagents; it judges no model or
+  permission setting.
+- **`ai-resources openclaw status` identity section**: each agent's `identity.name`, workspace and the
+  name `IDENTITY.md` holds there, with the `openclaw config set ... identity.name ... --dry-run` remedy.
+- Setup warns (naming the path and the agents) when an agent workspace directory does not exist, instead
+  of skipping it silently. It does not create the directory.
+- Pitfalls T36, T37, T38; the runbook's Verification section.
+
+### Decisions (D1-D7 of the phase-E plan) and why
+
+- **D1** One normalizer pair (`model_spec`, `model_primary`) for every read of `model`: the schema allows
+  both spellings and `openclaw agents add --model` writes the short one, so a reader must be total.
+- **D2** Tolerant read, loud report, never a rewrite. Hand-editing `openclaw.json` is forbidden by the
+  host rules and no agent's `model.primary` may change; the remedy is printed for the operator.
+- **D3** E3 fixed in three layers (shipped in 1.9.10): resolve the binary, name the budget (600 s), tell
+  timeout from missing from failed.
+- **D4** One implementation, three doors (wizard, doctor, `verify`): no duplicated logic, and a
+  run-on-demand command answers "setup applied but never verified for weeks".
+- **D5** Verify never writes: no repair flag, no config write, no `IDENTITY.md` write. The repair for a
+  dropped block is `ai-resources setup`, which already refreshes the block on every run.
+- **D6** E4 (shared identity) and E5 (no off-box copy) are visibility, not enforcement. The kit will not
+  split a shared workspace, invent an identity or pick a backup destination.
+- **D7** Severity gates the exit code: only `error` is non-zero.
+
+### Findings recorded so the next reader does not re-chase them
+
+- The E3 cause reported at the time (a 120 s doctor timeout) did **not** reproduce: measured 29 s, rc 0.
+  What was fixed instead is the unresolved binary (rc 127) and the collapsed timeout/OSError return codes
+  (1.9.10).
+- The E1 regression (the kit block missing from `main`'s `AGENTS.md`) was not a targeting skip:
+  `_workspace_targets` keys the default and `main` workspace once and setup wrote the block; the file was
+  replaced wholesale afterwards. Regression tests pin the writer; verify now detects the drift.
+
 ## [1.9.10] — 2026-09-28 — status survives the short model form
 
 `ai-resources openclaw status` no longer crashes on a `model` written as a string, no longer says
