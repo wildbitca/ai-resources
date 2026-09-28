@@ -45,12 +45,19 @@ GATEWAY_UNIT = "openclaw-gateway.service"
 
 def default_runner(argv: list[str], *, env: dict | None = None, timeout: float | None = 120,
                    input: str | None = None) -> tuple[int, str]:
+    """Run `argv`; (return code, combined output).
+
+    127 is a missing binary and 124 a timeout (the coreutils `timeout` convention); any other
+    OSError is 1. Every caller before the 124 split tested `rc == 0` only, so it is additive.
+    """
     try:
         r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, input=input,
                            env=env, cwd=str(Path.home()))
     except FileNotFoundError:
         return 127, f"{argv[0]} not found"
-    except (subprocess.TimeoutExpired, OSError) as e:
+    except subprocess.TimeoutExpired as e:
+        return 124, str(e)
+    except OSError as e:
         return 1, str(e)
     return r.returncode, (r.stdout + r.stderr).strip()
 
@@ -361,7 +368,7 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
             sleep(drain_interval)
         out(f"drained={'yes' if drained else 'no'}")
         if drained:
-            rc, text = runner([oc, "doctor", "--fix"], env=env, timeout=600)
+            rc, text = runner([oc, "doctor", "--fix"], env=env, timeout=DOCTOR_TIMEOUT)
             out(text)
             doctor_ok = rc == 0 and "Doctor complete" in text
             out(f"doctor={'ok' if doctor_ok else 'failed'}")
@@ -1306,6 +1313,10 @@ DOCTOR_NOISE = (
     ("privacy-mode", re.compile(r"telegram.*privacy mode", re.I)),
     ("dashboard-conflict", re.compile(r'Plugin command "/dashboard" conflicts with an existing Telegram command', re.I)),
 )
+# The drained `doctor --fix` and the status probe share one budget so they can never drift.
+# Measured on bithome 2026-09-28: `openclaw doctor --non-interactive` = rc 0 in ~29s, so 600 is
+# insurance, not the fix for "could not run" (that was the unresolved binary, rc 127).
+DOCTOR_TIMEOUT = 600
 TIER_MAX_AGE_HOURS = {"daily": 36, "weekly": 8 * 24, "monthly": 35 * 24}
 STATUS_SECTIONS = ("unit", "boot", "listeners", "health", "timers", "backups", "off-box", "models", "doctor")
 
@@ -1400,7 +1411,7 @@ def backup_tiers(base: Path, now: float | None = None) -> dict[str, dict]:
 
 def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                    host_env_path: Path | None = None, config_path: Path | None = None,
-                   now: float | None = None) -> dict:
+                   now: float | None = None, run_doctor: bool = True) -> dict:
     """Everything `status` prints, as data. Read-only: it never repairs, and sets the two
     environment variables `systemctl --user` needs from a bare shell, which is the manual step
     everyone forgets."""
@@ -1431,7 +1442,8 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
     report["listeners"] = {"port": port, "addresses": listeners,
                            "wildcard": any(a.startswith(("0.0.0.0", "*", "[::]")) for a in listeners)}
 
-    rc, _health = runner(["openclaw", "health"], env=env)
+    oc = resolve_openclaw_bin()   # one resolution for health and doctor: a login PATH may lack brew
+    rc, _health = runner([oc, "health"], env=env)
     report["health"] = {"ok": rc == 0}
 
     timers = []
@@ -1458,9 +1470,14 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                          "shorthand": isinstance((e or {}).get("model"), str)}
                         for aid, e in ((cfg.get("agents") or {}).get("entries") or {}).items()]
 
-    rc, doctor = runner(["openclaw", "doctor", "--non-interactive"], env=env, timeout=120)
+    if not run_doctor:
+        report["doctor"] = {"ran": False, "status": "skipped"}
+        return report
+    rc, doctor = runner([oc, "doctor", "--non-interactive"], env=env, timeout=DOCTOR_TIMEOUT)
     noise, signal = filter_doctor_warnings(doctor) if rc == 0 or doctor else ([], [])
-    report["doctor"] = {"ran": rc == 0, "noise": len(noise), "signal": signal}
+    status = "ok" if rc == 0 else "missing" if rc == 127 else "timeout" if rc == 124 else "failed"
+    report["doctor"] = {"ran": rc == 0, "status": status, "rc": rc, "bin": oc,
+                        "noise": len(noise), "signal": signal}
     return report
 
 
@@ -1502,8 +1519,15 @@ def render_status(report: dict) -> str:
         lines.append("  the short form of `model` is legal and the kit reads both; to spell it as an object:")
         lines += [f"    openclaw config set agents.entries.{m['agent']}.model.primary {m['model']}" for m in short]
     d = report["doctor"]
-    if not d["ran"]:
-        lines.append("doctor      could not run")
+    if d.get("status") == "skipped":
+        lines.append("doctor      not run (--no-doctor)")
+    elif d.get("status") == "missing":
+        lines.append(f"doctor      not run: {d.get('bin', 'openclaw')} was not found "
+                     "(put the openclaw binary on PATH, e.g. /home/linuxbrew/.linuxbrew/bin)")
+    elif d.get("status") == "timeout":
+        lines.append(f"doctor      timed out after {DOCTOR_TIMEOUT}s (re-run `ai-resources openclaw doctor`)")
+    elif d.get("status") == "failed":
+        lines.append(f"doctor      failed (rc={d.get('rc')})")
     elif not d["signal"]:
         lines.append(f"doctor      clean ({d['noise']} known-noise warning(s) filtered, T30)")
     else:
@@ -1581,7 +1605,7 @@ def cmd_agent_new(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    print(render_status(collect_status()))
+    print(render_status(collect_status(run_doctor=not getattr(args, "no_doctor", False))))
     return 0  # status never repairs and never fails the shell: it reports
 
 
@@ -1623,6 +1647,8 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_doc.set_defaults(func=cmd_doctor)
 
     p_st = verbs.add_parser("status", help="One-screen host status (never repairs)")
+    p_st.add_argument("--no-doctor", action="store_true",
+                      help="Skip the `openclaw doctor` probe (the slow one; answers in about a second)")
     p_st.set_defaults(func=cmd_status)
 
     p_bs = verbs.add_parser("bootstrap", help="Bring a host to the documented state, idempotently")
