@@ -100,12 +100,12 @@ def doctor_text(name):
 
 # --- AC-12.1 ------------------------------------------------------------------------------------------------------
 
-def test_the_report_has_all_nine_sections_from_fixture_output(env):
+def test_the_report_has_all_ten_sections_from_fixture_output(env):
     env.backup("daily", "openclaw-1.tar.gz", 3)
     report = collect(env, Canned(doctor=doctor_text("doctor_noise_only.txt")))
-    assert list(report) == list(host.STATUS_SECTIONS) and len(report) == 9
+    assert list(report) == list(host.STATUS_SECTIONS) and len(report) == 10
     text = host.render_status(report)
-    for needle in ("unit ", "boot ", "listeners ", "health ", "timers", "backups", "off-box", "models", "doctor "):
+    for needle in ("unit ", "boot ", "listeners ", "health ", "timers", "backups", "off-box", "models", "identity", "doctor "):
         assert needle in text
     assert text.count(".timer") == 6
     assert "main" in text and "anthropic/claude-haiku-4-5 (default)" in text  # effective model per agent
@@ -336,3 +336,30 @@ def test_an_unknown_model_of_a_real_provider_stays_signal():
     text = doctor_text("doctor_live_claude_kit.txt").replace("claude-kit/claude-sonnet-5", "anthropic/some-model")
     _noise, signal = host.filter_doctor_warnings(text)
     assert any("Unknown model: anthropic/some-model" in s for s in signal)
+
+
+# --- E4: identity, where the operator saw the wrong name ---------------------------------------------------------------
+
+def test_two_agents_sharing_a_workspace_show_both_names_the_shared_path_and_the_remedy(env, tmp_path):
+    shared = tmp_path / "Development"
+    shared.mkdir()
+    ident = shared / "IDENTITY.md"
+    ident.write_text("# IDENTITY\n\n- Name: security\n", encoding="utf-8")
+    cfg = env.home / ".openclaw" / "openclaw.json"
+    doc = json.loads(cfg.read_text(encoding="utf-8"))
+    doc["agents"]["entries"] = {"claude": {"workspace": str(shared), "identity": None},
+                                "security": {"workspace": str(shared), "identity": {"name": "security"}},
+                                "main": {"workspace": str(tmp_path / "main"), "identity": {"name": "Jarvis"}}}
+    cfg.write_text(json.dumps(doc), encoding="utf-8")
+    before = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    text = host.render_status(collect(env, Canned()))
+    identity = text[text.index("identity"):text.index("doctor")]
+    assert "claude" in identity and "security" in identity and str(shared) in identity
+    assert "IDENTITY.md: security" in identity and "Jarvis" in identity
+    assert "openclaw config set agents.entries.claude.identity.name claude --dry-run" in identity
+    assert "agents.entries.security.identity.name" not in identity
+    assert {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
+def test_a_workspace_of_one_named_agent_carries_no_attention_line(env):
+    assert "ATTENTION: " not in host.render_status(collect(env, Canned())).split("identity")[1].split("doctor")[0]
