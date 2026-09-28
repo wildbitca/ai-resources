@@ -4,6 +4,49 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.6] — 2026-09-28 — team narration reaches a basic-group host again
+
+Migrating a Telegram team from one forum (topics) to one basic group per agent broke narration for
+every agent, silently: `resolve_target()` only ever read `channels.telegram.groups[chat].topics[thread]`
+for a numeric thread id, and a basic-group host routes through the root `bindings` array instead, which
+the hook never looked at. Live regression, all agents mute — caught by resolving against the real host
+config for all five group-routed agents and finding `None` for every one of them.
+
+### Fixed
+
+- `resolve_target()` in `hooks/openclaw_team_progress.py` now tries the root `bindings` array first
+  (`match.channel == "telegram"` and `match.peer.kind == "group"` and `agentId == agent` →
+  `(peer.id, None)`), then falls back to the forum topic scan unchanged. It filters on
+  `match.peer.kind`, never on `type`: the catch-all binding (`agentId: "main"`,
+  `match.accountId: "*"`) has no `type` and no `peer`, so it can never be mistaken for a target.
+- `_agent_for()` left an exact-length workspace tie to dict iteration order. On the live host
+  `claude` and `security` both set `~/Development`, `claude` is listed first and has no binding, so
+  that tree resolved to nothing. Among tied candidates the bound one now wins; any further tie breaks
+  on sorted agent id, so the choice is stable across dict orderings. A single match is unaffected.
+- A group-mode target carries no thread (`(chatId, None)`). `launch_watcher()` and `_send()` in the
+  hook, and `send()`/`edit()` in `scripts/openclaw/openclaw-team-watch.py`, now omit
+  `--thread`/`--thread-id` entirely instead of passing `None` into `Popen`'s argv (which raised
+  `TypeError`, swallowed silently by the hook's top-level catch-all).
+  `scripts/openclaw/openclaw-team-send.py` was already thread-optional; pinned with a test.
+
+### Added
+
+- A bindings-mode test fixture (five basic-group ids, forum-dead `topics: {"*": ...}`, the
+  peer-less catch-all last) alongside the existing forum fixture.
+- Regression coverage: the group-bindings routing path, the binding-over-topic precedence, the
+  catch-all never becoming a target, malformed/missing bindings resolving to `None` rather than
+  raising, the exact-length tie (both orderings), and the argv omission for group-mode sends.
+- `docs/openclaw/pitfalls.md` T35: the four traps behind this regression, none of which log — a
+  green `config patch --dry-run`, the `-100...` supergroup id that silently kills a binding,
+  `groupPolicy: allowlist` dropping a group with the `channel_ingress_events(status=completed,
+  attempts=0)` signature, and an array-replace patch on `bindings` losing the catch-all if it is not
+  re-appended last. Cross-linked from T31.
+
+### Operator action
+
+`brew upgrade ai-resources` and restart the agent session (the hook is loaded once per session). No
+`openclaw setup` step is required for this fix — it changes only the hook and watcher scripts.
+
 ## [1.9.5] — 2026-09-25 — the Workshop fix actually reaches the hosts that need it
 
 1.9.4 authored `skills.workshop.autonomous.mode` inside `_build_antigravity_patch`, and that patch is
