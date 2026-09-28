@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import copy
 import json
 import os
 import re
@@ -649,6 +650,98 @@ def restore_patch(changes: list[dict]) -> tuple[dict, list[str]]:
             replace_paths.append(".".join(path))
     assert_channels_safe(patch, replace_paths)
     return patch, replace_paths
+
+
+# --- Telegram group routing: the root `bindings` array (v1.9.8) ---------------------------------------
+#
+# The setup writes ONLY the root `bindings` array. It never writes `channels.telegram.*`
+# (`assert_channels_safe` is unchanged): when a routed group is missing from
+# `channels.telegram.groups` the setup reports it, with the command for the operator to run (T35).
+
+_GROUP_ID = re.compile(r"^-[0-9]+$")
+
+
+def validate_group_id(value: str) -> str | None:
+    """None when `value` has the shape of a Telegram group chat id, else why not."""
+    if not _GROUP_ID.match(value.strip()):
+        return "a Telegram group chat id is a minus sign and digits, e.g. -5xxxxxxxxx (a basic group)"
+    return None
+
+
+def is_supergroup_id(value: str) -> bool:
+    """`-100...` is a supergroup/channel id; a BASIC group can never have one (T35)."""
+    return value.strip().startswith("-100")
+
+
+def _peer(entry) -> dict | None:
+    match = entry.get("match") if isinstance(entry, dict) else None
+    peer = match.get("peer") if isinstance(match, dict) else None
+    return peer if isinstance(peer, dict) else None
+
+
+def _group_route(entry, aid: str | None = None) -> bool:
+    """A Telegram group route. Filters on `match.peer.kind`, never on `type`: the catch-all has no `type`."""
+    peer = _peer(entry)
+    return bool(peer and peer.get("kind") == "group"
+                and entry["match"].get("channel", "telegram") == "telegram"
+                and (aid is None or entry.get("agentId") == aid))
+
+
+def group_binding_ids(doc: dict) -> dict[str, list[str]]:
+    """agent id -> the group chat ids the live `bindings` array routes to it."""
+    out: dict[str, list[str]] = {}
+    bindings = doc.get("bindings")
+    for entry in bindings if isinstance(bindings, list) else []:
+        if _group_route(entry) and isinstance(entry.get("agentId"), str):
+            out.setdefault(entry["agentId"], []).append(str(entry["match"]["peer"].get("id")))
+    return out
+
+
+def build_bindings(current, wanted: dict[str, str]) -> tuple[list, list[str]]:
+    """The whole `bindings` array that binds each agent to its group, and what changed.
+
+    A `config patch` replaces an array whole, so this starts from the live array and touches only what
+    the kit owns, matched on `agentId` plus `match.peer.id`:
+      * an agent already bound to its chat id keeps its entry byte for byte (operator `comment` too);
+      * an agent bound to another group (converted to a supergroup, say) has that ONE entry's peer id
+        moved in place, keeping its comment; with several group entries a new one is appended;
+      * an agent with no group entry gets a new route.
+    Every entry the kit does not own survives verbatim. Peer-less entries (main's catch-all: no `type`,
+    no `peer`, `accountId: "*"`) are kept, in order, LAST: routing to `main` must never be shadowed.
+    """
+    entries = [copy.deepcopy(e) for e in current] if isinstance(current, list) else []
+    notes: list[str] = []
+    for aid, chat in wanted.items():
+        chat = str(chat)
+        own = [e for e in entries if _group_route(e, aid)]
+        if any(str(e["match"]["peer"].get("id")) == chat for e in own):
+            continue
+        if len(own) == 1:
+            notes.append(f"{aid}: group {own[0]['match']['peer'].get('id')} -> {chat}")
+            own[0]["match"]["peer"]["id"] = chat
+            continue
+        notes.append(f"{aid}: bound to group {chat}")
+        entries.append({"type": "route", "agentId": aid, "comment": f"{aid} group (ai-resources)",
+                        "match": {"channel": "telegram", "peer": {"kind": "group", "id": chat}}})
+    with_peer = [e for e in entries if _peer(e) is not None]
+    peerless = [e for e in entries if _peer(e) is None]
+    return with_peer + peerless, notes
+
+
+def allowlist_gaps(doc: dict, chat_ids: list[str]) -> list[str]:
+    """The chat ids Telegram would DROP without a log line: `groupPolicy: "allowlist"` and not listed."""
+    telegram = ((doc.get("channels") or {}).get("telegram")) or {}
+    if telegram.get("groupPolicy") != "allowlist":
+        return []
+    groups = telegram.get("groups")
+    listed = set(groups) if isinstance(groups, dict) else set()
+    return [c for c in chat_ids if c not in listed]
+
+
+def allowlist_fix_command(chat_id: str) -> str:
+    """The exact command that lists a group (`--merge` adds the key, it does not replace the map)."""
+    value = json.dumps({chat_id: {"requireMention": False}}, separators=(",", ":"))
+    return f"openclaw config set channels.telegram.groups '{value}' --strict-json --merge"
 
 
 def mcp_latest_findings(doc: dict) -> list[str]:

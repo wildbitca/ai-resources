@@ -224,6 +224,14 @@ class OpenClawState:
     # path -> sha256 of a file the kit CREATED with only the block, "" when the file already
     # existed (teardown removes the block and leaves every other byte).
     agent_kit_blocks: dict[str, str] = field(default_factory=dict)
+    # Telegram group routing (root `bindings` only; `channels` is never written). `host_group_ids` is
+    # the last answer per agent; `bindings_previous` the array before the kit's first write (None:
+    # absent), put back on teardown; `bindings_written` the digest of what the kit last wrote, so
+    # teardown never overwrites an array the operator changed since.
+    host_group_ids: dict[str, str] = field(default_factory=dict)
+    bindings_applied: bool = False
+    bindings_previous: Any = None
+    bindings_written: str = ""
     host_env_previous: dict[str, Any] = field(default_factory=dict)    # kit-host.env key -> value before (None: absent)
     host_env_created: bool = False
 
