@@ -326,6 +326,27 @@ Rules the writer keeps (decided for 1.9.7):
 - **Teardown** removes the block from files that existed before and deletes files the kit created,
   unless somebody edited them since (then only the block goes).
 
+### Telegram group routing on an OpenClaw host
+
+`ai-resources setup` (host section) asks one question per routed agent (every agent except `main` and
+the `claude` worker): its Telegram **basic group** chat id, `-5xxxxxxxxx`, pre-filled from the live
+config so a re-run is Enter, Enter. An empty answer leaves that agent's binding alone; a `-100...` id
+is accepted with a warning (a basic group cannot have one). Nothing is asked in a non-interactive run.
+
+The setup writes **only** the root `bindings` array, and never `channels.telegram.*`. To bring a second
+machine to parity, in order:
+
+1. Create the groups in Telegram and add the bot; note each `-5xxxxxxxxx` id.
+2. Run `ai-resources setup` and answer the group question for each agent. The bindings patch is
+   validated with `--dry-run`, then applied after its own confirm. `main`'s catch-all stays last.
+3. For each group the setup names as **missing from `channels.telegram.groups`**, run the exact
+   `openclaw config set ... --strict-json --merge` command it printed. This is the one manual step: under
+   `groupPolicy: "allowlist"` an unlisted group is dropped with no log line (T35).
+4. Send one message in each group. A green dry-run is not evidence of routing; a message arriving is.
+
+Teardown puts the `bindings` array back as it was before the kit's first write, unless the operator
+changed it since (then it is left as it is and the setup says so).
+
 ## Result
 - Status: (success | partial | blocked)
 - Executive summary: (1-3 sentences)
