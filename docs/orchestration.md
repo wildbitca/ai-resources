@@ -300,6 +300,32 @@ sequenceDiagram
 
 **Subagent return format:**
 ```
+## OpenClaw agent workspaces
+
+On an OpenClaw host every agent has a workspace, and OpenClaw injects that workspace's `AGENTS.md`
+into the agent's turns. `ai-resources setup` keeps one **kit block** (between the `ai-resources`
+markers) in each of them, so the agents know the kit exists: load `kit-orchestration` before
+multi-step work, pick a `workflow-*` skill, work through the kit roles without self sign-off, pass
+work between roles in the handoff file, and delegate code to the `claude` worker with
+`sessions_spawn agentId=claude cwd=<project> thread=true`.
+
+Rules the writer keeps (decided for 1.9.7):
+
+- **Engine independent.** The block is the same under `keep`, `direct`, `claude-code` and
+  `antigravity`. The orchestrator's workspace also carries the engine part (memory rule, and the
+  antigravity delegation text) inside the same marker pair.
+- **Refresh, never skip.** A workspace whose `AGENTS.md` already exists gets only its marked block
+  refreshed; every byte outside the markers stays as the operator wrote it. The first run over a
+  hand-shaped file prepends the block once. A missing file is created from the matching template
+  (only when the host section's AGENTS.md question was answered yes), and the block goes into it.
+- **One write per workspace.** Agents are deduplicated by resolved workspace path: `claude` and
+  `security` share `~/Development`, and that file is written once. The block carries no agent id, so
+  it is byte-identical whichever agent the loop visits last.
+- **`claude` does not delegate to itself.** A workspace used only by the `claude` worker gets the
+  block without the delegation paragraph. Any other agent on the path brings it back.
+- **Teardown** removes the block from files that existed before and deletes files the kit created,
+  unless somebody edited them since (then only the block goes).
+
 ## Result
 - Status: (success | partial | blocked)
 - Executive summary: (1-3 sentences)
