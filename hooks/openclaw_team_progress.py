@@ -242,17 +242,34 @@ def _load_config():
 
 
 def _agent_for(cfg, cwd):
-    """(agent id, workspace length) of the agent whose workspace is the longest prefix of cwd."""
+    """Id of the agent whose workspace is the longest prefix of cwd.
+
+    An exact-length tie (e.g. `claude` and `security` both set `~/Development`) used to go to
+    whichever entry dict iteration visited first -- on the live host that was `claude`, which has
+    no routing target, so the tree resolved to nothing. Among tied candidates, prefer one that has
+    its own routing target; break any further tie by sorted agent id, so the choice is stable
+    across dict orderings. A single match (no tie at all) is unaffected."""
     cwd = os.path.realpath(cwd or os.getcwd())
-    agent, best = None, -1
+    best = -1
+    candidates = []
     for aid, entry in ((cfg.get("agents") or {}).get("entries") or {}).items():
         ws = entry.get("workspace")
         if not ws:
             continue
         ws = os.path.realpath(os.path.expanduser(ws))
-        if (cwd == ws or cwd.startswith(ws + os.sep)) and len(ws) > best:
-            agent, best = aid, len(ws)
-    return agent
+        if not (cwd == ws or cwd.startswith(ws + os.sep)):
+            continue
+        length = len(ws)
+        if length > best:
+            best, candidates = length, [aid]
+        elif length == best:
+            candidates.append(aid)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    bound = sorted(aid for aid in candidates if _has_own_target(cfg, aid))
+    return bound[0] if bound else sorted(candidates)[0]
 
 
 def agent_model(cwd):
