@@ -1454,7 +1454,8 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
     report["off-box"] = offbox
 
     default_model = model_primary((cfg.get("agents") or {}).get("defaults")) or "?"
-    report["models"] = [{"agent": aid, "model": model_primary(e) or f"{default_model} (default)"}
+    report["models"] = [{"agent": aid, "model": model_primary(e) or f"{default_model} (default)",
+                         "shorthand": isinstance((e or {}).get("model"), str)}
                         for aid, e in ((cfg.get("agents") or {}).get("entries") or {}).items()]
 
     rc, doctor = runner(["openclaw", "doctor", "--non-interactive"], env=env, timeout=120)
@@ -1496,6 +1497,10 @@ def render_status(report: dict) -> str:
     lines.append("models")
     for m in report["models"]:
         lines.append(f"  {m['agent']:<16} {m['model']}")
+    short = [m for m in report["models"] if m.get("shorthand")]
+    if short:
+        lines.append("  the short form of `model` is legal and the kit reads both; to spell it as an object:")
+        lines += [f"    openclaw config set agents.entries.{m['agent']}.model.primary {m['model']}" for m in short]
     d = report["doctor"]
     if not d["ran"]:
         lines.append("doctor      could not run")
