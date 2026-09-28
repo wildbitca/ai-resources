@@ -4,6 +4,15 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.10.1] — 2026-09-28 — an unfilled IDENTITY.md template is no name
+
+### Fixed
+
+- `ai-resources openclaw status` (identity section) and the shared-identity finding of `ai-resources verify`
+  printed `**` as the name held by `IDENTITY.md` in a workspace whose file still carries the unfilled
+  template line `- **Name:**`. The line is now matched on a single line and an empty value reads as no name.
+  Found by running 1.10.0 against the live host after it shipped.
+
 ## [1.10.0] — 2026-09-28 — setup now ends by verifying every selected tooling
 
 `ai-resources setup` used to end in a state it had **applied**. It now ends in one it has **verified**:
