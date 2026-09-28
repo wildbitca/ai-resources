@@ -53,7 +53,7 @@ def test_the_block_drift_identity_and_model_form_pitfalls_are_recorded():
     text = (REPO / "docs" / "openclaw" / "pitfalls.md").read_text(encoding="utf-8")
     for code in ("T36", "T37", "T38"):
         assert re.search(rf"^## {code} — ", text, re.M), code
-    assert "durable only until an agent rewrites its own `AGENTS.md`" in text
+    assert "the kit's own test suite stripped it" in text and "openclaw.CONFIG_ROOT" in text
     assert "identity.name" in text and "IDENTITY.md" in text and "`--dry-run`" in text
     assert "anyOf: [string, {primary, fallbacks}]" in text
 

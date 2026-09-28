@@ -374,7 +374,7 @@ completion; never narrate individual tool calls (streaming already shows those);
 **Measured 2026-09-28 (main's workspace).** `~/.openclaw/workspace/AGENTS.md` is the hand-written Jarvis file (92 lines,
 4 797 bytes) with **no** kit marker pair (0 markers, 0 `sessions_spawn`, 0 worktree lines, 0
 `kit-orchestration`), while the other five workspaces carry exactly one pair each. Setup did write it
-(recorded in `agent_kit_blocks`); the file was replaced afterwards (T36). Its topic table documents the
+(recorded in `agent_kit_blocks`); the kit's own test suite stripped it afterwards (T36, fixed in 1.10.2). Its topic table documents the
 deleted forum `-1003678125825`; live routing is the root `bindings` array. The kit never edits bytes
 outside its markers, so that text is the operator's to update. `claude` and `security` share
 `~/Development`, whose `IDENTITY.md` says `- Name: security` (T37).
