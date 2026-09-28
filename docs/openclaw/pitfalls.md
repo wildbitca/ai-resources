@@ -1209,27 +1209,39 @@ exercises the fixture, not the live config.
 
 ---
 
-## T36 — A managed block is durable only until an agent rewrites its own `AGENTS.md` *(added 2026-09-28; detected by `ai-resources verify` since 1.10.0)*
+## T36 — The kit block vanished from `main`'s `AGENTS.md`: the kit's own test suite stripped it *(added 2026-09-28; root cause found and fixed in 1.10.2; detected by `ai-resources verify` since 1.10.0)*
 
 **Symptom.** `~/.openclaw/workspace/AGENTS.md` (the workspace of `main`) had no kit marker pair, no
 `sessions_spawn` line and no worktree section, while the other five workspaces carried all of them. The
-v1.9.7 report said all six had the block.
+v1.9.7 report said all six had the block, and it was true at the moment setup ran.
 
 **Measured, not assumed.** Setup **did** write it: `setup-state.yaml` recorded that file under
 `agent_kit_blocks`, `_workspace_targets()` keys the directory once with `aids` holding both `""` (the
 defaults workspace) and `main`, and the other five files carried the setup mtime (21:28:43) while main's
-was 19 minutes later (21:47:31). A 2026-09-17 kit backup beside it still held a BEGIN marker. Something
-replaced the file wholesale after setup; the block writer was correct. `tests/test_openclaw_workspace_blocks.py`
-now pins both facts (one target, one marker pair, a second run changes nothing).
+was later (21:47:31). `tests/test_openclaw_workspace_blocks.py` pins the writer (one target, one marker
+pair, a second run changes nothing): the writer was never the defect.
 
-**Cause.** An agent that edits its own instructions (the default workspace guidance even says "learned a
-lesson: update `AGENTS.md`") writes the whole file. The kit refreshes its block on every setup run and
-cannot see between runs.
+**Cause (found 2026-09-28, 1.10.1 to 1.10.2).** The suite itself. `openclaw.teardown()` removes the kit block
+from `workspace_dir(doc) / "AGENTS.md"`, and for a config that names no `agents.defaults.workspace` that is
+`CONFIG_ROOT / "workspace"`. `tests/conftest.py` redirected `claude.CONFIG_ROOT` and the host env paths but
+**not** `openclaw.CONFIG_ROOT`, so several teardown tests (`test_openclaw_mcp.py`, `test_openclaw_cockpit.py`)
+resolved to the operator's real `~/.openclaw/workspace` and removed the block from the live file, leaving
+the hand-written bytes intact and the mtime bumped. Every run of `pytest tests/` on the host did it: each
+unexplained mtime on that file matched a test run. Bisected by running each openclaw test module against the
+live file and comparing mtimes.
 
-**Fix.** Nothing rewrites it for you, on purpose. `ai-resources verify` (and step 10 of `ai-resources
-setup`, and `ai-resources doctor`) reports a recorded block that is gone, or duplicated, as an **error**
-naming the file. The repair is `ai-resources setup`: it rewrites only the marked block and keeps every byte
-outside the markers, including hand-written text. The verifier never writes.
+**Fix (1.10.2).** conftest points `openclaw.CONFIG_ROOT` at `tmp_path` for every test, and
+`tests/test_test_isolation.py` fails if it ever resolves to the real `~/.openclaw`. After the fix a full run
+of the suite leaves the live `~/.openclaw` and workspace files (block included) byte- and mtime-identical.
+
+**Lesson.** A green report that said "all six workspaces have the block" was checked against the run that
+wrote them, not against the file afterwards, and the suite that produced the report was the thing undoing it.
+Check the file, and check that the suite cannot reach the host.
+
+**Detection and repair.** `ai-resources verify` (also step 10 of `ai-resources setup`, and `ai-resources
+doctor`) reports a recorded block that is gone, or duplicated, as an **error** naming the file, whatever
+removed it (an agent that rewrites its own `AGENTS.md` can too). The repair is `ai-resources setup`: it
+rewrites only the marked block and keeps every byte outside the markers. The verifier never writes.
 
 **Also reported (warn).** Routing documented outside the markers that the live config does not have (a
 Telegram chat id in neither `bindings` nor `channels.telegram.groups`, a `topic N` reference nobody
