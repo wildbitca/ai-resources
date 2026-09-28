@@ -4,6 +4,49 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.7] — 2026-09-28 — every OpenClaw agent workspace learns the kit
+
+None of the six agent workspaces taught its agent that the kit exists: `sessions_spawn` appeared zero
+times in all six `AGENTS.md` files and `~/Development` had no kit block at all. Three causes, each
+fixed: `_configure_agents_md()` returned early for any workspace whose `AGENTS.md` existed and skipped the
+engine-owned `claude` entry; `_write_workspace_block()` emitted the delegation text only on the
+antigravity branch (the stored engine is `keep`); and `~/Development` is one file serving two agents
+(`claude`, `security`).
+
+### Decisions (ratified by the operator, gate B1)
+
+- The kit block is **engine independent**. "Skip if `AGENTS.md` exists" became "refresh only the marked
+  block", never touching content outside the markers.
+- Workspaces are **deduplicated by resolved path**, so `~/Development` is written once.
+- `claude` is **excluded from the delegation paragraph** (it is the worker and does not delegate to
+  itself); it receives the rest of the block. The other agents carry the paragraph.
+- `claude` and `security` keep sharing `~/Development` (no workspace split): the v1.9.6 tie-break already
+  resolves narration to `security`, and the path dedupe resolves the file.
+
+### Added
+
+- `openclaw_agent_kit_md()`: the agent-agnostic block (kit-orchestration, `workflow-*`, the kit roles and
+  no self sign-off, the handoff file, delegation through `sessions_spawn`).
+- `openclaw._configure_workspace_blocks()`: refreshes the block in every agent workspace on every run,
+  through the single existing writer `_write_workspace_block()` (one marker pair per file, also for the
+  orchestrator's engine part), honouring `--dry-run` and recording each path for teardown
+  (`agent_kit_blocks` in the setup state).
+- `docs/orchestration.md`: the OpenClaw agent workspace rules.
+
+### Changed
+
+- The three workspace templates no longer teach forum-topic routing: the orchestrator template describes
+  one basic group per agent, the root `bindings` array and the silent traps of T35. `TOPIC-ROUTING.md` is
+  kept only as a legacy pointer for forum hosts.
+- `write_managed_block()` keeps every byte of a file it prepends to (trailing newlines included), so
+  `remove_managed_block()` gives the original back exactly.
+
+### Upgrade note
+
+The **first** real run after upgrading refreshes a managed block into your hand-shaped `AGENTS.md` files:
+expect the block at the top of each one. Text outside the markers is not modified. The block is written
+even when the OpenClaw host section was never answered and the engine is `keep`.
+
 ## [1.9.6] — 2026-09-28 — team narration reaches a basic-group host again
 
 Migrating a Telegram team from one forum (topics) to one basic group per agent broke narration for
