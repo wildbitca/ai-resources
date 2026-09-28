@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -1058,6 +1059,9 @@ def _configure_workspace_blocks(s: state.SetupState, doc: dict, ak_path: str, ga
     any_changed = False
     for ws, slot in _workspace_targets(doc).items():
         if not ws.is_dir() and not (force_default and ws == default):
+            # The workspace directory is the operator's to create: say which agents point at it.
+            ui.warn(f"{ws}: workspace directory does not exist, so no kit block was written "
+                    f"(agents: {', '.join(a or 'defaults' for a in slot['aids'])})")
             continue
         agents_md = ws / "AGENTS.md"
         if dry_run:
@@ -1235,3 +1239,156 @@ def teardown(s: state.SetupState) -> list[str]:
         removed.append(str(workspace_dir(doc) / "AGENTS.md"))
     s.openclaw = state.OpenClawState()
     return removed
+
+
+# --- verify (read-only) --------------------------------------------------------------------------------------
+
+_IDENTITY_NAME = re.compile(r"^\s*[-*]\s*(?:\*\*)?Name(?:\*\*)?:\s*(?:\*\*)?(.+?)(?:\*\*)?\s*$", re.M | re.I)
+_CHAT_ID = re.compile(r"(?<![\w-])-\d{9,}\b")
+_TOPIC_REF = re.compile(r"\btopic\s+(\d+)\b", re.I)
+
+
+def _outside_block(text: str) -> str:
+    """`text` without its managed block (all of it when there is none)."""
+    lines = text.splitlines(keepends=True)
+    begin, end = _shared._managed_block_span(lines)
+    if begin is None or end is None:
+        return text
+    return "".join(lines[:begin] + lines[end + 1:])
+
+
+def _verify_config_path() -> Path:
+    env = os.environ.get("OPENCLAW_CONFIG_PATH")
+    if env:
+        return Path(env).expanduser()
+    default = CONFIG_ROOT / "openclaw.json"
+    return default if default.is_file() else config_path()
+
+
+def _is_catch_all(entry: Any) -> bool:
+    match = entry.get("match") if isinstance(entry, dict) else None
+    return bool(isinstance(match, dict) and entry.get("agentId") == "main"
+                and match.get("accountId") == "*" and openclaw_host._peer(entry) is None)
+
+
+def _known_routing_text(doc: dict) -> tuple[set[str], str]:
+    """(chat ids, everything else routed) that the live config knows about."""
+    ids = {str(i) for ids in openclaw_host.group_binding_ids(doc).values() for i in ids}
+    groups = (((doc.get("channels") or {}).get("telegram") or {}).get("groups")) or {}
+    if isinstance(groups, dict):
+        ids |= {str(k) for k in groups}
+    return ids, json.dumps({"bindings": doc.get("bindings"), "groups": groups}, ensure_ascii=False)
+
+
+def _verify_workspace_blocks(doc: dict, o: state.OpenClawState, F: Any) -> list:
+    """E1: a recorded managed block that is now gone, or duplicated; stale routing docs outside it."""
+    out: list = []
+    known_ids, known_text = _known_routing_text(doc)
+    good = 0
+    for ws in _workspace_targets(doc):
+        if not ws.is_dir():
+            continue
+        agents_md = ws / "AGENTS.md"
+        recorded = str(agents_md) in o.agent_kit_blocks or str(agents_md) in o.host_agents_md_written
+        if not agents_md.is_file():
+            out.append(F("error" if recorded else "warn", "openclaw", f"{agents_md} does not exist",
+                         "re-run `ai-resources setup`"))
+            continue
+        pairs, orphan = _shared.managed_block_pairs(agents_md)
+        if pairs == 1 and not orphan:
+            good += 1
+        elif pairs == 0 and not orphan:
+            out.append(F("error" if recorded else "warn", "openclaw",
+                         f"the kit block was removed from {agents_md} after setup wrote it" if recorded
+                         else f"{agents_md} has no kit block",
+                         "re-run `ai-resources setup` (it rewrites only the marked block; every byte "
+                         "outside the markers is kept)"))
+        else:
+            out.append(F("error", "openclaw", f"{agents_md} has {pairs} kit block(s)"
+                         + (" and a BEGIN marker without an END" if orphan else ""),
+                         "re-run `ai-resources setup` (it repairs the marked block; every byte outside "
+                         "the markers is kept)"))
+        outside = _outside_block(agents_md.read_text(encoding="utf-8", errors="replace"))
+        stale = sorted({m for m in _CHAT_ID.findall(outside) if m not in known_ids})
+        stale += sorted({f"topic {n}" for n in _TOPIC_REF.findall(outside)
+                         if not re.search(rf"(?<![\w-]){n}(?![\w-])", known_text)})
+        if stale:
+            out.append(F("warn", "openclaw",
+                         f"{agents_md} documents routing the live config does not have: {', '.join(stale)}",
+                         "the kit never touches bytes outside its markers; update that text by hand"))
+    if good:
+        out.insert(0, F("ok", "openclaw", f"the kit block is present exactly once in {good} workspace AGENTS.md file(s)"))
+    return out
+
+
+def _verify_identity(doc: dict, F: Any) -> list:
+    """E4: agents that share a workspace and inherit whatever name its IDENTITY.md holds."""
+    entries = ((doc.get("agents") or {}).get("entries")) or {}
+    by_ws: dict[Path, list[str]] = {}
+    for aid, paths in openclaw_host.agent_workspaces(doc).items():
+        for p in paths:
+            by_ws.setdefault(p, []).append(aid)
+    out: list = []
+    for ws, aids in by_ws.items():
+        if len(aids) < 2:
+            continue
+        unnamed = [a for a in aids if not (((entries.get(a) or {}).get("identity")) or {}).get("name")]
+        if not unnamed:
+            continue
+        try:
+            m = _IDENTITY_NAME.search((ws / "IDENTITY.md").read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            m = None
+        file_name = m.group(1).strip() if m else "(no IDENTITY.md name)"
+        out.append(F("warn", "openclaw",
+                     f"agents {', '.join(aids)} share {ws}; {ws / 'IDENTITY.md'} says Name: {file_name}, "
+                     f"so {', '.join(unnamed)} (no identity.name) are narrated with that name",
+                     "; ".join(f"openclaw config set agents.entries.{a}.identity.name {a} --dry-run, inspect, then "
+                               "without --dry-run" for a in unnamed) + ". The kit never writes IDENTITY.md"))
+    return out
+
+
+def verify(ctx: dict) -> list:
+    """Read-only: what setup left in OpenClaw. Order: config checks, host, then the plugin."""
+    from ...verify import Finding as F
+    from . import _openclaw_host
+
+    s = ctx["state"]
+    o = s.openclaw
+    out: list = []
+    doc = read_config(_verify_config_path())
+    if not doc:
+        out.append(F("warn", ID, "openclaw.json could not be read (missing, or JSON5 the kit cannot parse); "
+                     "the config checks were skipped", "run `openclaw config validate`"))
+    else:
+        out += _verify_workspace_blocks(doc, o, F)
+        out += _verify_identity(doc, F)
+        for aid, entry in (((doc.get("agents") or {}).get("entries")) or {}).items():
+            raw = (entry or {}).get("model")
+            if isinstance(raw, str):
+                out.append(F("warn", ID, f"agent {aid} spells its model as a string ({raw}); the short form is legal "
+                             "and the kit reads both",
+                             f"openclaw config set agents.entries.{aid}.model.primary {raw}"))
+        bindings = doc.get("bindings")
+        if isinstance(bindings, list) and any(_is_catch_all(b) for b in bindings):
+            if _is_catch_all(bindings[-1]):
+                out.append(F("ok", ID, "the main catch-all binding is last"))
+            else:
+                out.append(F("error", ID, "the main catch-all binding is not last in `bindings`; it shadows the routes after it",
+                             "re-run `ai-resources setup` (it keeps peer-less entries last); "
+                             "never edit openclaw.json by hand"))
+    host_findings = _openclaw_host.verify(ctx, runner=ctx.get("runner"))
+    out += host_findings
+    gateway_down = any(f.level == "error" and openclaw_host.GATEWAY_UNIT in f.message for f in host_findings)
+    if o.plugin_linked and not gateway_down:
+        plugin = plugin_runtime()
+        stable = str(Path(_shared.stable_kit_root(repo_root())) / "openclaw-plugin" / "ai-resources")
+        if plugin.get("status") != "loaded":
+            out.append(F("error", ID, f"the kit plugin is linked but the gateway reports it {plugin.get('status') or 'unreadable'}",
+                         "`ai-resources openclaw doctor`, then restart the gateway in a maintenance window"))
+        elif plugin_is_stale(stable):
+            out.append(F("warn", ID, "the gateway runs the kit plugin from an older kit directory",
+                         "restart the gateway in a maintenance window (`ai-resources openclaw doctor` drains it safely)"))
+        else:
+            out.append(F("ok", ID, "the kit plugin is linked and loaded"))
+    return out

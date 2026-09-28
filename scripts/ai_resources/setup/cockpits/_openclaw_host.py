@@ -619,3 +619,85 @@ def status_line(s: state.SetupState) -> str:
     if o.host_agents_md_written:
         parts.append(f"{len(o.host_agents_md_written)} AGENTS.md")
     return "OpenClaw host: " + (", ".join(parts) or "env only")
+
+
+# --- verify (read-only) ---------------------------------------------------------------------------------------
+
+_UNIT_STATES = ("enabled", "enabled-runtime", "disabled", "static", "linked", "linked-runtime", "masked",
+                "masked-runtime", "indirect", "generated", "alias")
+OFFBOX_REMEDY = ("add OPENCLAW_OFFBOX_LIST_CMD=<your listing command> to ~/.openclaw/kit-host.env "
+                 "\u2014 the kit will not choose a destination for you (another host, S3, rclone are all yours to pick)")
+
+
+class _Watch:
+    """Wraps a runner and remembers which probes timed out (rc 124): "could not measure", not "broken"."""
+
+    def __init__(self, runner: Callable[..., tuple[int, str]]):
+        self.runner, self.timed_out = runner, []
+
+    def __call__(self, argv, **kw):
+        rc, out = self.runner(argv, **kw)
+        if rc == 124:
+            self.timed_out.append(list(argv))
+            return 1, ""
+        return rc, out
+
+    def timed(self, *needles: str) -> bool:
+        return any(all(n in argv for n in needles) for argv in self.timed_out)
+
+
+def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> list:
+    """The host findings: unit, health, timers, backups, listeners and the off-box gap.
+
+    Every call is a read (systemctl is-*/show, ss, loginctl, `openclaw health`, a directory listing);
+    it never runs doctor and never stops or restarts the gateway. The one collector is
+    `openclaw_host.collect_status(run_doctor=False)`, so status and verify cannot disagree.
+    """
+    from ...verify import Finding
+
+    s = ctx["state"]
+    watch = _Watch(runner or ctx.get("runner") or _runner())
+    report = host.collect_status(watch, run_doctor=False, probe_offbox=False)
+    who = "openclaw"
+    unit = report["unit"]
+    present = bool(unit["enabled"].split()) and unit["enabled"].split()[0] in _UNIT_STATES
+    if not present and not s.openclaw.host and not watch.timed(host.GATEWAY_UNIT):
+        return [Finding("ok", who, "no gateway unit on this machine; the host checks were skipped")]
+    out: list[Finding] = []
+    unit_timeout = watch.timed(host.GATEWAY_UNIT)
+    gateway_up = unit["active"] == "active"
+    if unit_timeout:
+        out.append(Finding("warn", who, f"could not measure {host.GATEWAY_UNIT} (systemctl timed out)",
+                           "re-run `ai-resources verify`"))
+    elif not gateway_up or not unit["enabled"].startswith("enabled"):
+        out.append(Finding("error", who, f"{host.GATEWAY_UNIT} is {unit['active']}, {unit['enabled']}",
+                           "systemctl --user enable --now openclaw-gateway.service, or "
+                           "`ai-resources openclaw doctor` to repair it safely"))
+    else:
+        out.append(Finding("ok", who, f"{host.GATEWAY_UNIT} is active and enabled"))
+    # A down unit is one error, not a cascade: health answers nothing when nothing is running.
+    if gateway_up:
+        if watch.timed("health"):
+            out.append(Finding("warn", who, "could not measure gateway health (`openclaw health` timed out)",
+                               "re-run `ai-resources verify`"))
+        elif not report["health"]["ok"]:
+            out.append(Finding("error", who, "the gateway is running but `openclaw health` does not answer",
+                               "`ai-resources openclaw doctor` (drain, fix, start, health)"))
+        else:
+            out.append(Finding("ok", who, "the gateway answers `openclaw health`"))
+    for t in report["timers"]:
+        if not t["enabled"]:
+            out.append(Finding("warn", who, f"timer {t['name']} is not enabled",
+                               f"systemctl --user enable --now {t['name']}"))
+    daily = report["backups"]["daily"]
+    if not daily["present"]:
+        out.append(Finding("warn", who, "no daily backup found", "check openclaw-backup.timer and OPENCLAW_BACKUP_DIR"))
+    elif daily["stale"]:
+        out.append(Finding("warn", who, f"the newest daily backup is {daily['age_hours']:.0f}h old",
+                           "run `ai-resources openclaw status` and check openclaw-backup.timer"))
+    if report["listeners"]["wildcard"]:
+        out.append(Finding("warn", who, f"the gateway port {report['listeners']['port']} is bound to all interfaces (T04)",
+                           "set gateway.bind to loopback or a tailnet address"))
+    if not report["off-box"]["configured"]:
+        out.append(Finding("warn", who, "no off-box backup listing is configured", OFFBOX_REMEDY))
+    return out

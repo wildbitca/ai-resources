@@ -1419,7 +1419,7 @@ def backup_tiers(base: Path, now: float | None = None) -> dict[str, dict]:
 
 def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                    host_env_path: Path | None = None, config_path: Path | None = None,
-                   now: float | None = None, run_doctor: bool = True) -> dict:
+                   now: float | None = None, run_doctor: bool = True, probe_offbox: bool = True) -> dict:
     """Everything `status` prints, as data. Read-only: it never repairs, and sets the two
     environment variables `systemctl --user` needs from a bare shell, which is the manual step
     everyone forgets."""
@@ -1467,7 +1467,7 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
 
     remote_cmd = hostenv.get("OPENCLAW_OFFBOX_LIST_CMD", "")
     offbox: dict = {"configured": bool(remote_cmd)}
-    if remote_cmd and tiers["daily"].get("present"):
+    if remote_cmd and probe_offbox and tiers["daily"].get("present"):
         rc, listing = runner(shlex.split(remote_cmd), env=env)
         offbox.update(ok=rc == 0, present=tiers["daily"]["name"] in listing if rc == 0 else False,
                       name=tiers["daily"]["name"])

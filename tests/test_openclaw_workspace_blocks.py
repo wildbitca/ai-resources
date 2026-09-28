@@ -228,3 +228,13 @@ def test_orchestrator_default_workspace_gets_exactly_one_marker_pair(sim, script
     before = {p: p.read_bytes() for p in sim.tmp.rglob("AGENTS.md")}
     _configure(s)
     assert {p: p.read_bytes() for p in sim.tmp.rglob("AGENTS.md")} == before
+
+
+def test_a_workspace_directory_that_does_not_exist_is_reported_by_setup_not_created(sim, script):
+    doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
+    doc["agents"]["entries"]["docs"]["workspace"] = str(sim.tmp / "ws" / "missing")
+    sim.cfg.write_text(json.dumps(doc), encoding="utf-8")
+    s = _state()
+    _configure(s)
+    assert not (sim.tmp / "ws" / "missing").exists()
+    assert any("workspace directory does not exist" in m and "docs" in m for m in script.messages("warn"))
