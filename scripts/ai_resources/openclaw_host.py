@@ -812,7 +812,7 @@ def agent_workspaces(doc: dict) -> dict[str, list[Path]]:
     return out
 
 
-_IDENTITY_NAME = re.compile(r"^\s*[-*]\s*(?:\*\*)?Name(?:\*\*)?:\s*(?:\*\*)?(.+?)(?:\*\*)?\s*$", re.M | re.I)
+_IDENTITY_NAME = re.compile(r"^[ \t]*[-*][ \t]*(?:\*\*)?Name:?(?:\*\*)?:?[ \t]*(.*?)[ \t]*$", re.M | re.I)
 
 
 def identity_file_name(workspace: Path | str) -> str | None:
@@ -822,7 +822,8 @@ def identity_file_name(workspace: Path | str) -> str | None:
     except OSError:
         return None
     m = _IDENTITY_NAME.search(text)
-    return m.group(1).strip() if m else None
+    # An unfilled template line (`- **Name:**` with nothing after it) is no name at all.
+    return (m.group(1).strip().strip("*_ \t") or None) if m else None
 
 
 def agent_identities(doc: dict) -> list[dict]:
