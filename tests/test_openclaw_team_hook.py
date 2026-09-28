@@ -195,21 +195,67 @@ def env(tmp_path, monkeypatch, request):
     return e
 
 
-# --- A1: characterization of the live regression (Defect 1) ---------------------------------
+# --- A1/A2: dual-mode resolve_target (Defect 1) ----------------------------------------------
 #
-# Today (v1.9.5) `resolve_target()` only scans `channels.telegram.groups[chat].topics[thread]`
+# Was: today (v1.9.5) `resolve_target()` only scans `channels.telegram.groups[chat].topics[thread]`
 # for a numeric `thread_id`. A bindings-mode host has no such topic, so every group-routed agent
-# is mute. This test pins that broken behaviour so the fix in A2 shows as a red-to-green flip in
-# the diff, not a silent rewrite.
+# was mute (documented by this same test on unmodified v1.9.5, see A1 in the plan). A2 taught
+# `resolve_target` to read the root `bindings` array first.
 
 
-def test_documents_the_regression_group_bindings_resolve_to_none(bindings_env):
-    """RED on unmodified v1.9.5 `resolve_target`: a bindings-only host resolves to nothing."""
+@pytest.mark.parametrize("agent,sub", [
+    ("snoutzone", "pacha"), ("elinvo", "elinvo"), ("devops", "org-iac"), ("ai", "ai-resources"),
+])
+def test_each_group_bound_agent_resolves_to_its_own_chat_with_no_thread(bindings_env, agent, sub):
+    target = bindings_env.hook.resolve_target(str(bindings_env.root / sub))
+    assert target == (GROUP_CHATS[agent], None)
+
+
+# `security` is deliberately not covered here: it shares `Development` with `claude` in an
+# exact-length workspace tie, which A3 below resolves. See
+# test_the_bound_agent_wins_an_exact_length_workspace_tie.
+
+
+def test_the_forum_fixture_is_byte_identical_to_v1_9_5(env):
+    """Given the forum fixture (no `bindings` key at all), the returned tuple is exactly what
+    v1.9.5 returned: a binding lookup must never disturb a host that has none."""
+    target = env.hook.resolve_target(str(env.root / "pacha" / "api"))
+    assert target == (CHAT, "9")
+
+
+def test_a_binding_wins_over_a_topic_when_both_exist(bindings_env):
+    cfg = json.loads(bindings_env.cfg.read_text(encoding="utf-8"))
+    cfg["channels"]["telegram"]["groups"][GROUP_CHATS["snoutzone"]]["topics"]["7"] = {"agentId": "snoutzone"}
+    bindings_env.cfg.write_text(json.dumps(cfg), encoding="utf-8")
     target = bindings_env.hook.resolve_target(str(bindings_env.root / "pacha"))
-    assert target is None, (
-        "this pins the live regression (Defect 1): if this starts failing, resolve_target now "
-        "reads root `bindings` and this test must be flipped to assert the resolved chat id (A2)"
-    )
+    assert target == (GROUP_CHATS["snoutzone"], None), "the binding must win, not the topic"
+
+
+def test_only_mains_catch_all_binding_matches_resolves_to_none(bindings_env):
+    """main's catch-all has no `type` and no `peer` -- it must never become a target."""
+    target = bindings_env.hook.resolve_target(str(bindings_env.root))
+    assert target is None
+
+
+def test_a_binding_missing_peer_is_ignored_not_crashed_on(bindings_env):
+    cfg = json.loads(bindings_env.cfg.read_text(encoding="utf-8"))
+    cfg["bindings"] = [{"agentId": "snoutzone", "match": {"channel": "telegram"}}]
+    bindings_env.cfg.write_text(json.dumps(cfg), encoding="utf-8")
+    assert bindings_env.hook.resolve_target(str(bindings_env.root / "pacha")) is None
+
+
+def test_a_malformed_bindings_array_is_ignored_not_crashed_on(bindings_env):
+    cfg = json.loads(bindings_env.cfg.read_text(encoding="utf-8"))
+    cfg["bindings"] = ["not-a-dict", 42, None]
+    bindings_env.cfg.write_text(json.dumps(cfg), encoding="utf-8")
+    assert bindings_env.hook.resolve_target(str(bindings_env.root / "pacha")) is None
+
+
+def test_bindings_that_is_not_a_list_is_ignored_not_crashed_on(bindings_env):
+    cfg = json.loads(bindings_env.cfg.read_text(encoding="utf-8"))
+    cfg["bindings"] = {"not": "a list"}
+    bindings_env.cfg.write_text(json.dumps(cfg), encoding="utf-8")
+    assert bindings_env.hook.resolve_target(str(bindings_env.root / "pacha")) is None
 
 
 # --- AC-2.2: gate ------------------------------------------------------------------------
