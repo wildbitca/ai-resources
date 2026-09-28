@@ -371,6 +371,14 @@ completion; never narrate individual tool calls (streaming already shows those);
 | `~/.openclaw/workspace/IDENTITY.md` | — | `- Name: ai` → `- Name: Jarvis`; the `ai` agent had overwritten it while sharing `main`'s workspace |
 | `~/Development/wildbit/elinvo/CLAUDE.md` | 49 | deploy-target section rewritten: context `default` (k3s bithome), ns `elinvo-dev`/`elinvo`, explicit `--context`, stop on `aks-*`. The old text demanded `docker-desktop`/`orbstack`/`kind`/`minikube`, none of which exist on this machine |
 
+**Measured 2026-09-28 (main's workspace).** `~/.openclaw/workspace/AGENTS.md` is the hand-written Jarvis file (92 lines,
+4 797 bytes) with **no** kit marker pair (0 markers, 0 `sessions_spawn`, 0 worktree lines, 0
+`kit-orchestration`), while the other five workspaces carry exactly one pair each. Setup did write it
+(recorded in `agent_kit_blocks`); the file was replaced afterwards (T36). Its topic table documents the
+deleted forum `-1003678125825`; live routing is the root `bindings` array. The kit never edits bytes
+outside its markers, so that text is the operator's to update. `claude` and `security` share
+`~/Development`, whose `IDENTITY.md` says `- Name: security` (T37).
+
 ### 4.2 Host automation `VERIFIED`
 
 **Implemented in the kit since 1.9.0.** The scripts below are now `scripts/openclaw/*` in the

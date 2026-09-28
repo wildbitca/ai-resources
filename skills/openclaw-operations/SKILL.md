@@ -30,7 +30,8 @@ The subcommands are thin wrappers over the same functions, for headless runs and
 
 | Command | Does |
 |---|---|
-| `ai-resources openclaw status` | one screen, never repairs |
+| `ai-resources openclaw status [--no-doctor]` | one screen, never repairs |
+| `ai-resources verify` | read-only check of what setup left behind (exit 1 only on an error) |
 | `ai-resources openclaw doctor` | the drained `doctor --fix` (below) |
 | `ai-resources openclaw bootstrap [--dry-run] [--only STEP]` | eight idempotent host checks, fixes each after a confirm |
 | `ai-resources openclaw install-units [--dry-run] [--enable]` | render/install the ten units |
@@ -95,6 +96,7 @@ OpenClaw drops Claude Code subagent events on purpose, so the kit ships a Claude
    tier (daily older than 36 h is flagged), off-box copy, model per agent, doctor warnings. It sets
    `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` itself; do the same by hand for `systemctl --user`
    from SSH or a timer.
+   After any `ai-resources setup`, run `ai-resources verify` (a dropped kit block is T36, a shared identity T37).
 2. `openclaw doctor` warnings: the known-noise catalogue is `DOCTOR_NOISE` in
    `scripts/ai_resources/openclaw_host.py` (T30: V8 heap not measured, shell PATH artifacts, "run
    gateway install --force" hint, host desktop, legacy session bindings, whisper-cli, Telegram privacy

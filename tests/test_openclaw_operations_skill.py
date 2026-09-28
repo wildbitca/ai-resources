@@ -63,3 +63,7 @@ def test_every_stable_name_it_cites_exists_in_the_code():
         assert (REPO / rel).exists(), rel
     for rel in re.findall(r"\$AGENT_KIT/(docs/openclaw/[A-Za-z0-9_./-]+)", text):
         assert (REPO / rel).exists(), rel
+
+
+def test_the_skill_names_the_verify_command():
+    assert "ai-resources verify" in _text()

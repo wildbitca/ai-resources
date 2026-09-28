@@ -36,6 +36,7 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 | `ai-resources setup --non-interactive` | Re-apply saved answers without prompting (useful in CI or scripted re-runs). |
 | `ai-resources setup --profile <name>` | Skip profile prompt and use the named profile directly. |
 | `ai-resources doctor` | Full health check across config, credentials, gateway, cockpits, smoke tests. |
+| `ai-resources verify` | Read-only check that setup left every configured tooling in the expected state (`--json`, `--cockpit ID`); exits 1 only on an error-level finding. Setup ends by running it. |
 | `ai-resources executors show` | Display current role → model mapping. |
 | `ai-resources executors edit` | Open `executors.yaml` in `$EDITOR`. |
 | `ai-resources executors test <role>` | Round-trip a single role's model through the gateway. |
