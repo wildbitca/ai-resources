@@ -1,0 +1,109 @@
+┌  OpenClaw doctor
+│
+◇  Update history ────────────────────────────────────────────────────────╮
+│                                                                         │
+│  Recorded warnings from update 00000000-0000-0000-0000-000000000000 (a  │
+│  later repair may have resolved them):                                  │
+│  core/doctor/runtime-tool-schemas: MCP server "supabase-admin" was not  │
+│  started for update validation. Run `openclaw doctor --lint --only      │
+│  core/doctor/runtime-tool-schemas` after the update to inspect its      │
+│  tools.                                                                 │
+│  Deferred model retirement repair completed after plugin convergence.   │
+│  WARNING: Gateway bound to "tailnet" (100.64.0.9)                     │
+│  (network-accessible).                                                  │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────╯
+│
+◇  Gateway heap ──────────────────────────────────────────────────────────╮
+│                                                                         │
+│  service argv: --max-old-space-size=8192; installer recommendation:     │
+│  8192 MiB old space (31433 MiB physical capacity; adaptive cap 8192     │
+│  MiB; native headroom cap 23574 MiB); runtime V8 ceiling: not measured  │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────╯
+│
+◇  Gateway service definition ─────────────────────────────────────╮
+│                                                                  │
+│  - Systemd Service.MemoryHigh contains an unrecognized setting.  │
+│                                                                  │
+├──────────────────────────────────────────────────────────────────╯
+│
+◇  Gateway service config ─────────────────────────────────────────────────────────╮
+│                                                                                  │
+│  - Gateway service PATH includes version managers or package managers;           │
+│    recommend a minimal PATH.                                                     │
+│    (/home/u/.local/share/fnm/node-versions/v24.21.0/installation/bin)  │
+│                                                                                  │
+├──────────────────────────────────────────────────────────────────────────────────╯
+│
+◇  Gateway service config ──────────────────────────────────────────────╮
+│                                                                       │
+│  Run `openclaw gateway install --force` when you want to replace the  │
+│  gateway service definition.                                          │
+│                                                                       │
+├───────────────────────────────────────────────────────────────────────╯
+│
+◇  Host desktop ────────────────────────────────────────────────────╮
+│                                                                   │
+│  disabled; enable the Desktop lab with desktop.host.enabled=true  │
+│                                                                   │
+├───────────────────────────────────────────────────────────────────╯
+│
+◇  Security ────────────────────────────────────────────────────────────╮
+│                                                                       │
+│  - WARNING: Gateway bound to "tailnet" (100.64.0.9)                 │
+│    (network-accessible).                                              │
+│    Ensure your auth credentials are strong and not exposed.           │
+│    Safer remote access: keep bind loopback and use Tailscale          │
+│    Serve/Funnel or an SSH tunnel.                                     │
+│    Example tunnel: ssh -N -L 18789:127.0.0.1:18789 user@gateway-host  │
+│    Docs: https://docs.openclaw.ai/gateway/remote                      │
+│  - Run: openclaw security audit --deep                                │
+│                                                                       │
+├───────────────────────────────────────────────────────────────────────╯
+│
+◇  Doctor information ──────────────────────────────────────────────╮
+│                                                                   │
+│  - Local STT auto-selection: whisper-cli (observed=unknown);      │
+│    whisper-cli backend cannot be proven without loading a model.  │
+│    path: tools.media.models                                       │
+│                                                                   │
+├───────────────────────────────────────────────────────────────────╯
+│
+◇  Doctor information ─────────────────────────────────────────────────────╮
+│                                                                          │
+│  - Configured MCP server "clickup" was not probed during read-only       │
+│    inspection because OAuth may rotate external credentials.             │
+│    path: mcp.servers.clickup                                             │
+│    fix: For configured servers, run `openclaw mcp probe <name>` against  │
+│    the serving configuration. Validate plugin-provided or agent-local    │
+│    MCP servers from an authenticated serving-agent turn so refreshed     │
+│    credentials persist with their owner.                                 │
+│                                                                          │
+├──────────────────────────────────────────────────────────────────────────╯
+│
+◇  Doctor warnings ───────────────────────────────────────────────────────╮
+│                                                                         │
+│  - Agent claude runtime tool schema inspection could not prepare its    │
+│    selected model context.                                              │
+│    path: agents.claude.model                                            │
+│    issue: Unknown model: claude-kit/claude-sonnet-5. Run `openclaw      │
+│    models list --refresh --provider claude-kit` to inspect this         │
+│    provider's model choices, then retry with a model supported by your  │
+│    account.                                                             │
+│    fix: Resolve the provider/model loading problem, then rerun doctor   │
+│    to validate model-specific tool schemas.                             │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────╯
+│
+◇  Channel warnings ───────────────────────────────────────────────────────╮
+│                                                                          │
+│  - telegram default: Config allows unmentioned group messages            │
+│    (requireMention=false). Telegram Bot API privacy mode will block      │
+│    most group messages unless disabled. (In BotFather run /setprivacy →  │
+│    Disable for this bot (then restart the gateway).)                     │
+│                                                                          │
+├──────────────────────────────────────────────────────────────────────────╯
+│
+└  Doctor complete.
+

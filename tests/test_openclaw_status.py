@@ -24,7 +24,10 @@ NOW = 1_800_000_000.0
 
 
 class Canned:
-    def __init__(self, doctor: str = "", offbox_listing: str = "", health_rc: int = 0, ss: str = ""):
+    def __init__(self, doctor: str = "", offbox_listing: str = "", health_rc: int = 0, ss: str = "",
+                 doctor_rc: int = 0):
+        self.doctor_rc = doctor_rc
+        self.timeouts: dict[str, float | None] = {}
         self.doctor, self.offbox_listing, self.health_rc = doctor, offbox_listing, health_rc
         self.ss = ss or ("LISTEN 0 511 127.0.0.1:18789 0.0.0.0:*\n"
                          "LISTEN 0 511 100.64.0.9:18789 0.0.0.0:*\nLISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\n")
@@ -32,7 +35,10 @@ class Canned:
 
     def __call__(self, argv, **_kw):
         self.calls.append(list(argv))
-        a = argv
+        a = list(argv)
+        if a and os.path.basename(a[0]) == "openclaw":
+            self.timeouts[a[1]] = _kw.get("timeout")
+            a[0] = "openclaw"
         if a[:3] == ["systemctl", "--user", "is-active"]:
             return 0, "active"
         if a[:3] == ["systemctl", "--user", "is-enabled"]:
@@ -46,14 +52,18 @@ class Canned:
         if a[:2] == ["openclaw", "health"]:
             return self.health_rc, ""
         if a[:2] == ["openclaw", "doctor"]:
-            return 0, self.doctor
+            return self.doctor_rc, self.doctor
         if a[0] == "remote-ls":
             return 0, self.offbox_listing
         raise AssertionError(f"status must not run {argv}")
 
 
+OC_BIN = "/opt/oc/bin/openclaw"
+
+
 @pytest.fixture
-def env(tmp_path):
+def env(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "resolve_openclaw_bin", lambda: OC_BIN)
     home = tmp_path / "home"
     (home / ".openclaw").mkdir(parents=True)
     (home / ".openclaw" / "openclaw.json").write_text(json.dumps({
@@ -101,6 +111,38 @@ def test_the_report_has_all_nine_sections_from_fixture_output(env):
     assert "main" in text and "anthropic/claude-haiku-4-5 (default)" in text  # effective model per agent
 
 
+def _write_models(env, defaults, entries):
+    cfg = env.home / ".openclaw" / "openclaw.json"
+    doc = json.loads(cfg.read_text(encoding="utf-8"))
+    doc["agents"] = {"defaults": {"model": defaults}, "entries": entries}
+    cfg.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_short_form_models_render_like_the_long_form(env):
+    long_form = {"main": {"model": {"primary": "anthropic/claude-sonnet-5"}}, "util": {}}
+    short_form = {"main": {"model": "anthropic/claude-sonnet-5"}, "util": {}}
+    _write_models(env, {"primary": "anthropic/claude-haiku-4-5"}, long_form)
+    as_long = host.render_status(collect(env, Canned()))
+    _write_models(env, "anthropic/claude-haiku-4-5", short_form)
+    report = collect(env, Canned())
+    assert [m["model"] for m in report["models"]] == ["anthropic/claude-sonnet-5",
+                                                       "anthropic/claude-haiku-4-5 (default)"]
+    short = [ln for ln in host.render_status(report).splitlines() if ln.startswith("  ") and not ln.startswith("   ") and "anthropic" in ln]
+    assert short == [ln for ln in as_long.splitlines() if ln.startswith("  ") and not ln.startswith("   ") and "anthropic" in ln]
+
+
+def test_a_short_form_model_gets_the_remedy_line_and_a_long_form_does_not(env):
+    _write_models(env, {"primary": "anthropic/claude-haiku-4-5"},
+                  {"main": {"model": "anthropic/claude-sonnet-5"}, "app": {"model": {"primary": "x/y"}}})
+    report = collect(env, Canned())
+    assert {m["agent"]: m["shorthand"] for m in report["models"]} == {"main": True, "app": False}
+    text = host.render_status(report)
+    assert "openclaw config set agents.entries.main.model.primary anthropic/claude-sonnet-5" in text
+    assert "agents.entries.app.model.primary" not in text
+    _write_models(env, {"primary": "anthropic/claude-haiku-4-5"}, {"app": {"model": {"primary": "x/y"}}})
+    assert "openclaw config set" not in host.render_status(collect(env, Canned()))
+
+
 def test_status_sets_the_environment_systemctl_needs_and_only_runs_probes(env, monkeypatch):
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     seen = []
@@ -115,7 +157,7 @@ def test_status_sets_the_environment_systemctl_needs_and_only_runs_probes(env, m
     forbidden = ("start", "stop", "restart", "enable", "disable", "set-property", "--fix", "reload")
     for call in canned.calls:
         assert not any(tok in forbidden for tok in call), call
-    assert not any(c[:2] == ["openclaw", "config"] for c in canned.calls)
+    assert not any(c[1:3] == ["config", "set"] or c[1:3] == ["config", "patch"] for c in canned.calls)
 
 
 def test_status_never_fails_the_shell_and_never_writes(env, tmp_path, capsys):
@@ -156,6 +198,7 @@ def test_every_noise_pattern_matches_its_own_line_and_none_other(name):
         "whisper": "whisper-cli backend cannot be proven without loading a model",
         "privacy-mode": "telegram bot privacy mode is on",
         "dashboard-conflict": 'Plugin command "/dashboard" conflicts with an existing Telegram command',
+        "claude-kit-model": "issue: Unknown model: claude-kit/claude-sonnet-5. Run `openclaw models list`",
     }
     matched = [n for n, pat in host.DOCTOR_NOISE if pat.search(samples[name])]
     assert matched == [name]
@@ -218,3 +261,78 @@ def test_off_box_presence_of_the_newest_daily_is_checked_through_the_configured_
 def test_the_cli_registers_status():
     from ai_resources import cli
     assert cli.build_parser().parse_args(["openclaw", "status"]).func is host.cmd_status
+
+
+# --- E3: resolve the binary, name the budget, tell the truth ------------------------------------------------------
+
+def _doctor_calls(canned):
+    return [c for c in canned.calls if os.path.basename(c[0]) == "openclaw" and c[1] == "doctor"]
+
+
+def test_health_and_doctor_run_the_absolute_resolved_binary_with_the_named_budget(env):
+    canned = Canned(doctor="")
+    collect(env, canned)
+    assert [c[0] for c in canned.calls if c[1:2] in (["health"], ["doctor"])] == [OC_BIN, OC_BIN]
+    assert canned.timeouts["doctor"] == host.DOCTOR_TIMEOUT == 600
+
+
+@pytest.mark.parametrize("rc,status,needle", [
+    (127, "missing", "was not found"),
+    (124, "timeout", "timed out after 600s"),
+    (2, "failed", "failed (rc=2)"),
+])
+def test_each_doctor_failure_is_told_apart(env, rc, status, needle):
+    report = collect(env, Canned(doctor="", doctor_rc=rc))
+    assert report["doctor"]["status"] == status and report["doctor"]["ran"] is False
+    text = host.render_status(report)
+    assert needle in text and "could not run" not in text
+    if rc == 127:
+        assert OC_BIN in text and "PATH" in text
+    if rc == 124:
+        assert "ai-resources openclaw doctor" in text
+
+
+def test_a_clean_doctor_keeps_the_legacy_ran_key_and_the_noise_verdict(env):
+    report = collect(env, Canned(doctor=doctor_text("doctor_noise_only.txt")))
+    assert report["doctor"]["ran"] is True and report["doctor"]["status"] == "ok"
+    assert "clean (" in host.render_status(report)
+
+
+def test_no_doctor_issues_no_doctor_argv_at_all(env):
+    canned = Canned(doctor="")
+    report = host.collect_status(canned, home=env.home, host_env_path=env.hostenv, now=NOW, run_doctor=False)
+    assert _doctor_calls(canned) == []
+    assert report["doctor"] == {"ran": False, "status": "skipped"}
+    assert "doctor      not run (--no-doctor)" in host.render_status(report)
+
+
+def test_the_status_verb_takes_no_doctor():
+    from ai_resources import cli
+    assert cli.build_parser().parse_args(["openclaw", "status", "--no-doctor"]).no_doctor is True
+
+
+def test_the_default_runner_tells_a_timeout_from_an_oserror(monkeypatch):
+    import subprocess
+
+    def boom(exc):
+        def run(*_a, **_k):
+            raise exc
+        return run
+    monkeypatch.setattr(host.subprocess, "run", boom(subprocess.TimeoutExpired("x", 1)))
+    assert host.default_runner(["x"])[0] == 124
+    monkeypatch.setattr(host.subprocess, "run", boom(PermissionError("nope")))
+    assert host.default_runner(["x"])[0] == 1
+    monkeypatch.setattr(host.subprocess, "run", boom(FileNotFoundError()))
+    assert host.default_runner(["x"])[0] == 127
+
+
+def test_the_live_claude_kit_model_warning_is_noise_and_leaves_no_signal():
+    noise, signal = host.filter_doctor_warnings(doctor_text("doctor_live_claude_kit.txt"))
+    assert signal == []
+    assert any("Unknown model: claude-kit/claude-sonnet-5" in n for n in noise)
+
+
+def test_an_unknown_model_of_a_real_provider_stays_signal():
+    text = doctor_text("doctor_live_claude_kit.txt").replace("claude-kit/claude-sonnet-5", "anthropic/some-model")
+    _noise, signal = host.filter_doctor_warnings(text)
+    assert any("Unknown model: anthropic/some-model" in s for s in signal)
