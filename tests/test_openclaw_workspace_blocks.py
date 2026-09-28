@@ -198,3 +198,33 @@ def test_trailing_bytes_of_a_hand_shaped_file_survive_a_round_trip(sim, script, 
     assert outside_block(_agents(sim, "infra").read_bytes().decode("utf-8")).lstrip("\r\n") == shape
     openclaw.teardown(s)
     assert _agents(sim, "infra").read_bytes() == shape.encode("utf-8")
+
+
+# --- the orchestrator's default workspace is main's (the live shape) ------------------------------------
+
+def _default_is_main(sim) -> None:
+    doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
+    doc["agents"]["defaults"]["workspace"] = str(sim.workspaces["main"])
+    sim.cfg.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def test_workspace_targets_keys_default_and_main_as_one_entry(sim):
+    _default_is_main(sim)
+    doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
+    main_ws = sim.workspaces["main"].resolve()
+    targets = openclaw._workspace_targets(doc)
+    assert list(targets).count(main_ws) == 1
+    assert {"", "main"} <= set(targets[main_ws]["aids"])
+    assert targets[main_ws]["engine"] is True
+
+
+def test_orchestrator_default_workspace_gets_exactly_one_marker_pair(sim, script):
+    _default_is_main(sim)
+    s = _state()
+    _configure(s)
+    text = _agents(sim, "main").read_text(encoding="utf-8")
+    assert _pairs(text) == 1 and text.count(_shared.MANAGED_END) == 1
+    assert "kit-orchestration" in text and "sessions_spawn" in text
+    before = {p: p.read_bytes() for p in sim.tmp.rglob("AGENTS.md")}
+    _configure(s)
+    assert {p: p.read_bytes() for p in sim.tmp.rglob("AGENTS.md")} == before

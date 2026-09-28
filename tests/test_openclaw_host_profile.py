@@ -280,3 +280,29 @@ def test_host_values_are_validated(values, ok):
 def test_the_json5_loader_keeps_urls_and_drops_comments_and_trailing_commas():
     doc = host.load_json5('{ // a comment\n "u": "https://x.org/a", /* b */ "l": [1, 2,], }')
     assert doc == {"u": "https://x.org/a", "l": [1, 2]}
+
+
+# --- E2: `model` may be a string (`openclaw agents add --model` writes that form) ----------------------------
+
+@pytest.mark.parametrize("raw,expands", [
+    ("anthropic/claude-haiku-4-5", True),
+    ({"primary": "anthropic/claude-haiku-4-5"}, True),
+    ("anthropic/claude-sonnet-5", False),
+    ({"primary": "anthropic/claude-sonnet-5"}, False),
+    (None, True),
+])
+def test_expand_wildcards_reads_both_spellings_of_model(raw, expands):
+    tree = {"agents": {"entries": {"*": {"model": {"primary": "anthropic/claude-sonnet-5"}}}}}
+    entry = {} if raw is None else {"model": raw}
+    doc = {"agents": {"entries": {"app": entry}}}
+    out = host.expand_wildcards(tree, doc)
+    assert ("app" in out["agents"]["entries"]) is expands
+
+
+def test_model_helpers_are_total():
+    assert host.model_spec("a/b") == {"primary": "a/b"}
+    assert host.model_spec({"primary": "a/b", "fallbacks": []}) == {"primary": "a/b", "fallbacks": []}
+    for junk in (None, 3, [], ""):
+        assert host.model_primary({"model": junk}) is None
+    assert host.model_primary(None) is None
+    assert host.model_primary({"model": "a/b"}) == "a/b"
