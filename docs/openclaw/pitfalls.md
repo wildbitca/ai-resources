@@ -923,6 +923,11 @@ The **model** does not travel in the payload: resolve it from the role's frontma
 `~/.claude/agents/<role>.md` (`planner`/`software-architect`/`code-reviewer` → opus,
 `implementer`/`tester`/`verifier`/`doc-writer` → sonnet, `explore` → haiku).
 
+> **This card describes cwd → workspace → forum topic.** A host migrated to one basic Telegram
+> group per agent routes through the root `bindings` array instead, and that path has its own
+> traps (a `-100...` id, `groupPolicy: allowlist` dropping a group with no log line, an array
+> replace losing the catch-all). See **T35** below.
+
 Implemented in the kit as `hooks/openclaw_team_progress.py` (C-section below; before 1.9.0 it was a
 hand-written `~/.claude/hooks/openclaw-team-progress.py` that lived on one disk). `ai-resources setup`
 registers it in `~/.claude/settings.json` on `PreToolUse` (`*`), `SubagentStop`, `UserPromptSubmit` and
@@ -1142,6 +1147,48 @@ seconds.
 **Still open upstream.** The projection/enforcement mismatch is unfixed in OpenClaw: any future agent whose
 primary is a CLI-provider ref reproduces this, and the monitor still will not auto-disable it. Reported in
 `docs/openclaw/upstream/skill-collection-review-eligibility.md`.
+
+---
+
+## T35 — Basic-group routing (root `bindings`) has its own four traps, none of which log *(added 2026-09-28; fixed in 1.9.6)*
+
+**Symptom.** After a Telegram forum (topics) migrates to one basic group per agent, narration goes
+mute for every agent: `resolve_target()` (T31's cwd → workspace → topic path) only reads
+`channels.telegram.groups[chat].topics[thread]` with a numeric `thread_id`, and a basic-group host has
+no such topic — routing lives in the root `bindings` array instead. See T31 above for the path this
+extends.
+
+**Fix (1.9.6).** `resolve_target()` now tries the root `bindings` array first (`match.channel ==
+"telegram"` **and** `match.peer.kind == "group"` **and** `agentId == agent` → `(peer.id, None)`),
+then falls back to the forum topic scan unchanged. It filters on `match.peer.kind`, **never** on
+`type`: the catch-all binding (`agentId: "main"`, `match.accountId: "*"`) has no `type` at all and, more
+importantly, no `peer` — it carries no chat id and must never be mistaken for a target.
+
+**The four traps, measured 2026-09-28, none of which produce a log line or a non-zero exit:**
+
+1. **A dry run proves nothing.** `topics["*"].agentId` does **not** route — the runtime only reads a
+   numeric forum thread id — and `openclaw config patch --dry-run` validates that shape and then
+   silently ignores it at runtime. A green dry-run is not evidence that a message will ever arrive;
+   only a live send is (see the `channel_ingress_events` signature below).
+2. **The chat id shape is a tell, and converting it is silent.** A basic Telegram group id is
+   `-5xxxxxxxxx` (about 10 digits), never `-100...`. Converting the group to a supergroup changes the
+   chat id and kills the binding with no error anywhere — the old id simply stops resolving to
+   anything reachable.
+3. **`groupPolicy: "allowlist"` drops an unlisted group with no log line at all.** The event still
+   lands in the `channel_ingress_events` table, but with `payload_json = "null"`, `status =
+   "completed"` and `attempts = 0` — it looks like nothing happened, not like a rejection. Check that
+   table (or `channels.telegram.groups`) before assuming the binding itself is wrong.
+4. **A `config patch` on `bindings` replaces the array whole.** There is no per-entry upsert at the
+   API level: whoever writes to `bindings` must re-read the current array, keep every entry it does
+   not own verbatim, and re-append the catch-all **last**. Losing it, or moving it off the end, breaks
+   every direct-chat route silently.
+
+**How to catch it next time.** `tail ~/.openclaw/logs/team-outbox.log` and
+`ls ~/.openclaw/logs/team-outbox-dead/` (T31's own tool) still apply for delivery failures once a
+binding resolves; for a binding that never resolves at all, there is no log to tail — run the resolver
+against the live config directly (`resolve_target(cwd)` for each agent's workspace) and confirm every
+one returns a chat id, then trigger one real send. A green pytest suite is not that proof either: it
+exercises the fixture, not the live config.
 
 ---
 
