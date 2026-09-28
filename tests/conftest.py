@@ -30,3 +30,10 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     from ai_resources import openclaw_host
     monkeypatch.setattr(openclaw_host, "HOST_ENV_PATH", root / "openclaw" / "kit-host.env", raising=False)
     monkeypatch.setattr(openclaw_host, "WATCHDOG_OFF", root / "openclaw" / "watchdog.off", raising=False)
+    # And the OpenClaw cockpit's own root. A teardown test whose config names no
+    # `agents.defaults.workspace` resolves the workspace to `CONFIG_ROOT / "workspace"`, which was
+    # the operator's real ~/.openclaw/workspace: its teardown removed the kit block from the live
+    # main AGENTS.md on every test run, and that was the "block missing from main" regression
+    # v1.9.7 reported as fixed (1.10.2).
+    from ai_resources.setup.cockpits import openclaw as openclaw_cockpit
+    monkeypatch.setattr(openclaw_cockpit, "CONFIG_ROOT", root / "openclaw-home", raising=False)
