@@ -6,7 +6,7 @@ import sys
 
 from . import __version__
 from .generate import cmd_generate
-from . import daemon, doctor, executors_cmd, audit, openclaw_host
+from . import daemon, doctor, executors_cmd, audit, openclaw_host, verify
 from .setup import wizard
 
 
@@ -20,6 +20,9 @@ _EPILOG = """Typical flows:
 
   Health check:
     ai-resources doctor
+
+  Check, read-only, what setup left behind:
+    ai-resources verify
 
   Show role → model map:
     ai-resources executors show
@@ -86,6 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     # daemon, doctor, executors, audit
     daemon.add_subparser(sub)
     doctor.add_subparser(sub)
+    verify.add_subparser(sub)
     executors_cmd.add_subparser(sub)
     audit.add_subparser(sub)
     openclaw_host.add_subparser(sub)
