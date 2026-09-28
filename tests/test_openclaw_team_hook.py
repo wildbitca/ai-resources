@@ -216,6 +216,41 @@ def test_each_group_bound_agent_resolves_to_its_own_chat_with_no_thread(bindings
 # test_the_bound_agent_wins_an_exact_length_workspace_tie.
 
 
+# --- A3: exact-length workspace tie (Defect 1, tie-break) -------------------------------------
+#
+# `claude` and `security` both set `~/Development` as their workspace. `claude` has no binding of
+# its own; `security` does. Dict order alone used to decide (whichever entry was visited first),
+# so on the live host (`claude` listed first) the tree resolved to nothing.
+
+def test_the_bound_agent_wins_an_exact_length_workspace_tie(bindings_env):
+    target = bindings_env.hook.resolve_target(str(bindings_env.root / "Development"))
+    assert target == (GROUP_CHATS["security"], None)
+
+
+def test_the_tie_break_is_stable_across_reversed_entry_order(tmp_path, monkeypatch, request):
+    """Same tie, entries in the opposite dict order: the bound agent must still win."""
+    root = tmp_path / "dev"
+    (root / "Development").mkdir(parents=True)
+    cfg = _bindings_config(root)
+    entries = cfg["agents"]["entries"]
+    cfg["agents"]["entries"] = {
+        "security": entries["security"], "claude": entries["claude"],
+        **{k: v for k, v in entries.items() if k not in ("security", "claude")},
+    }
+    cfgfile = tmp_path / "openclaw.json"
+    cfgfile.write_text(json.dumps(cfg), encoding="utf-8")
+    hook = _load_hook()
+    monkeypatch.setattr(hook, "OPENCLAW_JSON", str(cfgfile))
+    target = hook.resolve_target(str(root / "Development"))
+    assert target == (GROUP_CHATS["security"], None)
+
+
+def test_a_single_match_tie_break_does_not_apply_and_is_unchanged(env):
+    """No tie at all (distinct workspaces): the chosen agent is the same as v1.9.5."""
+    call_target = env.hook._agent_for(json.loads(env.cfg.read_text(encoding="utf-8")), str(env.root / "elinvo"))
+    assert call_target == "main"  # elinvo has no own topic in the forum fixture; still, no tie here
+
+
 def test_the_forum_fixture_is_byte_identical_to_v1_9_5(env):
     """Given the forum fixture (no `bindings` key at all), the returned tuple is exactly what
     v1.9.5 returned: a binding lookup must never disturb a host that has none."""
