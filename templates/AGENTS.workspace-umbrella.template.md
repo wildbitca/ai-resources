@@ -36,6 +36,15 @@ Anything worth keeping goes in the repository's docs (ADRs, runbooks, specs, REA
 with the change that needs it. **Never leave the only copy under `.agent-output/`**: that
 directory is scratch space, ignored by git, and lost with the workspace.
 
+## Worktrees
+
+Do a task's work on its own branch in a managed worktree, not in this checkout:
+`openclaw worktrees create <repoRoot> --name <agent>-<task> [--base-ref <ref>]`, then `list`,
+`remove <id>` (snapshots), `restore <id>` and `gc`. Managed worktrees live under
+`~/.openclaw/worktrees/<repo-fingerprint>/<name>`. **Never under `/tmp`**: it is tmpfs, held in RAM
+and emptied on every reboot, which is how scratch work has been lost before (T26). The
+`using-git-worktrees` skill has the flow and the raw `git worktree` fallback.
+
 ## Working as a team
 
 For anything beyond a small edit, work as a team with the kit's roles rather than doing it all
