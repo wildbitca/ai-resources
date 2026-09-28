@@ -448,6 +448,17 @@ def kit_instructions_md(tool: str, ak_path: str, gateway_url: str, mode: str, *,
     )
 
 
+# Measured on openclaw 2026.9.6 (`openclaw worktrees create` against a throwaway repository, with
+# `worktreeRoot` unset): `~/.openclaw/worktrees/<repoFingerprint>/<name>`, branch `openclaw/<name>`.
+# The kit does not pin `worktreeRoot`: it documents the default.
+OPENCLAW_WORKTREE_ROOT_NOTE = (
+    "Managed worktrees live under `~/.openclaw/worktrees/<repo-fingerprint>/<name>` (measured on "
+    "openclaw 2026.9.6, with `worktreeRoot` unset). Never create a worktree, a virtualenv or any "
+    "scratch you need again under `/tmp`: it is tmpfs, held in RAM and emptied on every reboot, "
+    "which is how the kit's test virtualenv and the old scratch worktrees died (T26)."
+)
+
+
 def openclaw_agent_kit_md(ak_path: str, *, delegates: bool = True) -> str:
     """The kit block for an OpenClaw agent workspace `AGENTS.md`.
 
@@ -472,6 +483,18 @@ def openclaw_agent_kit_md(ak_path: str, *, delegates: bool = True) -> str:
         "- Never sign off your own work: only the `verifier` confirms acceptance criteria.\n"
         "- Hand work between roles through the handoff file: `handoff.md` at the repo root (or "
         f"`.agent-output/handoff.md`); the shape is `{ak_path}/handoff.md.template`.\n"
+    )
+    text += (
+        "\n## Worktrees\n\n"
+        "- Do a task's work on its own branch in a managed worktree, not in the shared checkout: "
+        "`openclaw worktrees create <repoRoot> --name <agent>-<task> [--base-ref <ref>]` prints the "
+        "path and the branch (`openclaw/<name>`); work only there. The kit does not create, snapshot "
+        "or clean worktrees: it delegates to `openclaw worktrees`.\n"
+        "- `openclaw worktrees list` shows the active and the restorable ones; `remove <id>` snapshots "
+        "then removes; `restore <id>` brings one back; `gc` reclaims the old ones.\n"
+        f"- {OPENCLAW_WORKTREE_ROOT_NOTE}\n"
+        "- The `using-git-worktrees` skill has the whole flow and the raw `git worktree` fallback for "
+        "sessions outside OpenClaw.\n"
     )
     if delegates:
         text += (
