@@ -4,6 +4,41 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.10] — 2026-09-28 — status survives the short model form
+
+`ai-resources openclaw status` no longer crashes on a `model` written as a string, no longer says
+"doctor could not run" for four different reasons, and no longer reports the `claude-kit` model probe as
+a warning. Only `openclaw_host.py` and its tests change.
+
+### Fixed
+
+- **Short-form `model`.** The OpenClaw schema is `anyOf: [string, {primary, fallbacks}]` and
+  `openclaw agents add --model` writes the string. `expand_wildcards` and `collect_status` assumed the
+  object and raised `AttributeError`. `model_spec` / `model_primary` now read both spellings.
+  The kit never rewrites the operator's config: status lists every short-form agent with the exact
+  `openclaw config set agents.entries.<id>.model.primary <ref>` remedy and still exits 0.
+- **Status resolves the `openclaw` binary.** `collect_status` called a bare `openclaw` for `health` and
+  `doctor`, which is rc 127 in any PATH without brew. Both now use `resolve_openclaw_bin()`.
+- **Doctor says why it failed.** `default_runner` returns rc 124 for a timeout only (OSError stays 1;
+  every caller tested `rc == 0` only). `report["doctor"]["status"]` is `ok`, `timeout`, `missing` or
+  `failed` (the legacy `ran` key stays) and each renders its own line. The budget is one constant,
+  `DOCTOR_TIMEOUT = 600`, shared with the drained `doctor --fix`.
+- **`Unknown model: claude-kit/...` is known noise.** `claude-kit` is a CLI backend, not a catalogue
+  provider. One entry anchored to the `claude-kit/` prefix; `Unknown model: anthropic/...` stays signal.
+  A `fix:` remedy line now follows the noise entry it belongs to.
+
+### Added
+
+- `ai-resources openclaw status --no-doctor`: skips the doctor probe and issues no doctor argv.
+
+### Notes
+
+- The reported cause of "could not run" (a 120s timeout) did **not** reproduce: on bithome
+  `openclaw doctor --non-interactive` is rc 0 in about 29s. The unresolved binary (rc 127) was the
+  reproducible cause; 600s is insurance.
+- Regression tests pin that the orchestrator's default workspace and `main`'s are one target with one
+  marker pair (the v1.9.7 block writer is correct; a dropped block is post-apply drift).
+
 ## [1.9.9] — 2026-09-28 — the per-agent worktree flow, delegated to OpenClaw
 
 Each agent works on its own branch in a managed worktree. The kit teaches the flow and builds none of it.
