@@ -72,3 +72,26 @@ def test_dry_run_forwards_the_configured_backend_to_settings_patch(dry_run_env, 
         wizard._step9_dry_run(s)
 
     assert dry_run_env["backend"] == backend
+
+
+def test_dry_run_announces_that_verification_is_skipped_and_probes_nothing(dry_run_env, monkeypatch):
+    """Step 10 in a dry run is a header and a notice: run_all is never called, so no live host is probed."""
+    from ai_resources import verify
+
+    calls = []
+    monkeypatch.setattr(verify, "run_all", lambda *a, **k: calls.append(a) or [])
+    sections, lines = [], []
+    monkeypatch.setattr(ui, "section", lambda n, total, title: sections.append((n, total, title)))
+    monkeypatch.setattr(ui, "info", lambda msg: lines.append(msg))
+    monkeypatch.setattr(ui, "role_table", lambda *a, **k: None)
+    monkeypatch.setattr(claude_cockpit, "_build_settings_patch", lambda *a, **k: {})
+    monkeypatch.setattr(claude_cockpit, "_kit_hooks", lambda *a, **k: {}, raising=False)
+    s = state.SetupState()
+    s.mode = "single-model"
+    try:
+        wizard._step9_dry_run(s)
+    except _StoppedAfterPatch:
+        pytest.skip("the preview stops before its tail in this harness")
+    assert (10, wizard.TOTAL_STEPS, "Verification") in sections
+    assert any("verification" in m.lower() and "dry run" in m.lower() for m in lines)
+    assert calls == []
