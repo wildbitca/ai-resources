@@ -1311,6 +1311,9 @@ DOCTOR_NOISE = (
     ("legacy-bindings", re.compile(r"Legacy session bindings|Affected sessions: \d+|migrate legacy bindings and stale", re.I)),
     ("whisper", re.compile(r"whisper-cli backend cannot be proven without loading a model", re.I)),
     ("privacy-mode", re.compile(r"telegram.*privacy mode", re.I)),
+    # `claude-kit` is a CLI backend, not a catalogue provider, so it can never answer a
+    # model-list probe. Anchored to the provider prefix: `Unknown model: anthropic/...` is signal.
+    ("claude-kit-model", re.compile(r"Unknown model: claude-kit/", re.I)),
     ("dashboard-conflict", re.compile(r'Plugin command "/dashboard" conflicts with an existing Telegram command', re.I)),
 )
 # The drained `doctor --fix` and the status probe share one budget so they can never drift.
@@ -1370,8 +1373,13 @@ def filter_doctor_warnings(text: str) -> tuple[list[str], list[str]]:
     catalogue does not explain are signal; catalogued entries anywhere are noise."""
     noise: list[str] = []
     signal: list[str] = []
+    prev_title, prev_noise = None, False
     for title, entry in parse_doctor_entries(text):
-        if any(pat.search(entry) for _, pat in DOCTOR_NOISE):
+        if entry.lower().startswith("fix:") and title == prev_title and prev_noise:
+            continue   # the remedy line of an entry already explained as noise
+        prev_title = title
+        prev_noise = any(pat.search(entry) for _, pat in DOCTOR_NOISE)
+        if prev_noise:
             noise.append(entry)
         elif not title or "warning" in title.lower():
             signal.append(entry)
