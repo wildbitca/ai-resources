@@ -347,6 +347,20 @@ machine to parity, in order:
 Teardown puts the `bindings` array back as it was before the kit's first write, unless the operator
 changed it since (then it is left as it is and the setup says so).
 
+### The worktree flow
+
+The kit block (and the repo and umbrella `AGENTS.md` templates) teach one flow, delegated entirely to
+OpenClaw: `openclaw worktrees create <repoRoot> --name <agent>-<task> [--base-ref <ref>]`, then `list`,
+`remove <id>` (snapshots), `restore <id>` and `gc`. The kit creates, snapshots and cleans nothing itself,
+and it does **not** pin `worktreeRoot` in `openclaw.json`: it documents the default, which was measured
+on openclaw 2026.9.6 with one real `create` against a throwaway repository:
+`~/.openclaw/worktrees/<repoFingerprint>/<name>`, on branch `openclaw/<name>`.
+
+**Never under `/tmp`.** It is a tmpfs held in RAM, emptied on every reboot, so anything there vanishes
+silently. That is how `/tmp/kitvenv` and the old `/tmp/wt-*` worktrees died (the same tmpfs failure as
+T26). The `using-git-worktrees` skill carries the rule and its reason, and keeps the raw
+`git worktree` commands as the fallback for sessions outside OpenClaw.
+
 ## Result
 - Status: (success | partial | blocked)
 - Executive summary: (1-3 sentences)

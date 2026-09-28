@@ -28,6 +28,32 @@ Create and manage **git worktrees** so feature or fix work happens in a separate
 
 Use `git worktree remove --force <path>` only when the worktree path is gone or Git reports a stale lock (understand why before forcing).
 
+## OpenClaw-managed worktrees
+
+Inside an OpenClaw agent session, do not run `git worktree add` yourself: OpenClaw creates, snapshots
+and cleans worktrees, and this kit delegates to it instead of reimplementing any of that.
+
+| Action | Command |
+|--------|---------|
+| Create | `openclaw worktrees create <repoRoot> --name <agent>-<task> [--base-ref <ref>] [--json]` |
+| Inspect (active and restorable) | `openclaw worktrees list` |
+| Return one (snapshots it first) | `openclaw worktrees remove <id>` |
+| Bring a removed one back | `openclaw worktrees restore <id>` |
+| Reclaim old snapshots and orphans | `openclaw worktrees gc` |
+
+`create` prints the id, the path and the branch. Measured on openclaw 2026.9.6 with `worktreeRoot`
+unset, against a throwaway repository: path `~/.openclaw/worktrees/<repoFingerprint>/<name>`, branch
+`openclaw/<name>`. Work only in that path. `remove --if-lossless` refuses (`retained-unpushed`) while the
+branch has unpushed commits; plain `remove` snapshots it and is restorable.
+
+**Never put a worktree, a virtualenv or any scratch you will need again under `/tmp`.** `/tmp` is a
+tmpfs held in RAM and emptied on every reboot, so anything there silently disappears: the kit's test
+virtualenv (`/tmp/kitvenv`) and the old scratch worktrees (`/tmp/wt-*`) died exactly that way (the same
+tmpfs failure as T26, the gateway log). Use the managed root under `~/.openclaw/worktrees`, or a path
+under `~/.cache` for a virtualenv.
+
+The raw `git worktree` commands above remain the path for sessions outside OpenClaw.
+
 ## Integration
 
 - **Workspace**: Point the editor/IDE and all terminal sessions at the **worktree path** for the duration of the task.
