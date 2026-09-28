@@ -292,15 +292,32 @@ def role_model(role):
     return None
 
 
-def resolve_target(cwd):
-    """cwd -> (chatId, threadId) through the agent's workspace. The team worker (no topic of
-    its own) is reported in the main agent's topic."""
-    cfg = _load_config()
-    if cfg is None:
+def _binding_target(cfg, agent):
+    """(chatId, None) from the root `bindings` array for this agent's own Telegram group, or
+    None. Filters on `match.peer.kind == "group"`, NEVER on `type`: main's catch-all binding has
+    no `type` at all and, critically, no `peer` -- it carries no chat id, so it must never be
+    mistaken for a target."""
+    bindings = cfg.get("bindings")
+    if not isinstance(bindings, list):
         return None
-    agent = _agent_for(cfg, cwd)
-    if not agent:
-        return None
+    for b in bindings:
+        if not isinstance(b, dict) or b.get("agentId") != agent:
+            continue
+        match = b.get("match")
+        if not isinstance(match, dict) or match.get("channel") != "telegram":
+            continue
+        peer = match.get("peer")
+        if not isinstance(peer, dict) or peer.get("kind") != "group":
+            continue
+        chat_id = peer.get("id")
+        if chat_id:
+            return str(chat_id), None
+    return None
+
+
+def _topic_target(cfg, agent):
+    """(chat, thread) from the forum topic map: the agent's own numeric topic, else `main`'s as
+    the fallback. Unchanged from v1.9.5 -- this is the path forum hosts still use."""
     fallback = None
     groups = ((cfg.get("channels") or {}).get("telegram") or {}).get("groups") or {}
     for chat_id, group in groups.items():
@@ -312,6 +329,35 @@ def resolve_target(cwd):
             if topic.get("agentId") == "main":
                 fallback = (chat_id, thread_id)
     return fallback
+
+
+def _has_own_target(cfg, agent):
+    """True when `agent` has its own binding or its own numeric topic -- not just the `main`
+    fallback. Used only to break an exact-length workspace tie (see `_agent_for`)."""
+    if _binding_target(cfg, agent) is not None:
+        return True
+    groups = ((cfg.get("channels") or {}).get("telegram") or {}).get("groups") or {}
+    for group in groups.values():
+        for thread_id, topic in (group.get("topics") or {}).items():
+            if isinstance(topic, dict) and thread_id.isdigit() and topic.get("agentId") == agent:
+                return True
+    return False
+
+
+def resolve_target(cwd):
+    """cwd -> (chatId, threadId) through the agent's workspace. A root `bindings` entry (basic
+    Telegram group) wins over the forum topic map; the team worker (no target of its own) is
+    reported in `main`'s. Total: an unreadable or malformed config returns None, never raises."""
+    cfg = _load_config()
+    if cfg is None:
+        return None
+    agent = _agent_for(cfg, cwd)
+    if not agent:
+        return None
+    try:
+        return _binding_target(cfg, agent) or _topic_target(cfg, agent)
+    except Exception:
+        return None
 
 
 def _safe(key, limit=70):
