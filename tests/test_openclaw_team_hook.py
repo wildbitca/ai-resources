@@ -27,6 +27,75 @@ from ai_resources.setup.cockpits import claude  # noqa: E402
 
 CHAT = "-1001"
 
+# --- bindings-mode fixture (basic Telegram groups, no forum topics) -------------------------
+#
+# Shaped exactly like the live host after the migration from forum topics to one basic group
+# per agent (measured 2026-09-28): `groups[chat].topics` holds only the non-routing `"*"` key,
+# and the routing lives in the root `bindings` array instead. Basic-group chat ids are short
+# (`-5xxxxxxxxx`), never `-100...` (that shape is a supergroup and kills the binding).
+GROUP_CHATS = {
+    "snoutzone": "-5100000001",
+    "elinvo": "-5100000002",
+    "devops": "-5100000003",
+    "ai": "-5100000004",
+    "security": "-5100000005",
+}
+
+
+def _bindings_config(root):
+    """A host on the live shape: five basic-group bindings plus main's peer-less catch-all last.
+    `claude` is listed before `security` and both share `root / "Development"`, matching the live
+    tie (`claude` has no binding of its own; `security` does)."""
+    groups = {chat: {"topics": {"*": {"agentId": agent}}} for agent, chat in GROUP_CHATS.items()}
+    bindings = [
+        {"type": "route", "agentId": agent, "comment": f"{agent} group",
+         "match": {"channel": "telegram", "peer": {"kind": "group", "id": chat}}}
+        for agent, chat in GROUP_CHATS.items()
+    ] + [
+        {"agentId": "main", "comment": "catch-all", "match": {"accountId": "*"}},
+    ]
+    return {
+        "agents": {"defaults": {"model": {"primary": "anthropic/haiku"}},
+                   "entries": {
+                       "main": {"workspace": str(root)},
+                       "snoutzone": {"workspace": str(root / "pacha")},
+                       "elinvo": {"workspace": str(root / "elinvo")},
+                       "devops": {"workspace": str(root / "org-iac")},
+                       "ai": {"workspace": str(root / "ai-resources")},
+                       "claude": {"workspace": str(root / "Development")},
+                       "security": {"workspace": str(root / "Development")},
+                   }},
+        "channels": {"telegram": {"groupPolicy": "allowlist", "groups": groups}},
+        "bindings": bindings,
+    }
+
+
+@pytest.fixture
+def bindings_env(tmp_path, monkeypatch, request):
+    """A host routed entirely through root `bindings` (no forum topics)."""
+    root = tmp_path / "dev"
+    for sub in ("pacha", "elinvo", "org-iac", "ai-resources", "Development"):
+        (root / sub).mkdir(parents=True)
+    cfgfile = tmp_path / "openclaw.json"
+    cfgfile.write_text(json.dumps(_bindings_config(root)), encoding="utf-8")
+
+    hook = _load_hook()
+    popen = _Popens()
+    request.addfinalizer(popen.cleanup)
+    monkeypatch.setattr(hook, "OPENCLAW_JSON", str(cfgfile))
+    monkeypatch.setattr(hook, "STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(hook, "watcher_path", lambda: "")
+    monkeypatch.setattr(hook, "sender_path", lambda: "")
+    monkeypatch.setattr(hook.subprocess, "Popen", popen)
+    monkeypatch.setenv("OPENCLAW_CLI", "1")
+
+    class Env:
+        pass
+
+    e = Env()
+    e.hook, e.popen, e.root, e.tmp, e.cfg = hook, popen, root, tmp_path, cfgfile
+    return e
+
 
 def _load_hook():
     spec = importlib.util.spec_from_file_location("openclaw_team_progress", HOOK)
@@ -124,6 +193,23 @@ def env(tmp_path, monkeypatch, request):
     # documented level; the "off" tests below remove or change it explicitly.
     set_level("milestones")
     return e
+
+
+# --- A1: characterization of the live regression (Defect 1) ---------------------------------
+#
+# Today (v1.9.5) `resolve_target()` only scans `channels.telegram.groups[chat].topics[thread]`
+# for a numeric `thread_id`. A bindings-mode host has no such topic, so every group-routed agent
+# is mute. This test pins that broken behaviour so the fix in A2 shows as a red-to-green flip in
+# the diff, not a silent rewrite.
+
+
+def test_documents_the_regression_group_bindings_resolve_to_none(bindings_env):
+    """RED on unmodified v1.9.5 `resolve_target`: a bindings-only host resolves to nothing."""
+    target = bindings_env.hook.resolve_target(str(bindings_env.root / "pacha"))
+    assert target is None, (
+        "this pins the live regression (Defect 1): if this starts failing, resolve_target now "
+        "reads root `bindings` and this test must be flipped to assert the resolved chat id (A2)"
+    )
 
 
 # --- AC-2.2: gate ------------------------------------------------------------------------
