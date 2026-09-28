@@ -4,6 +4,46 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.8] — 2026-09-28 — the wizard maintains the Telegram group routing
+
+Routing a basic group to its agent lives in the root `bindings` array, and until now nothing in the kit
+wrote it: a second machine reached parity only by hand-editing JSON. The wizard now asks and maintains
+it, without ever touching `channels`.
+
+### Decisions (ratified by the operator, gate C1)
+
+- `assert_channels_safe()` and the test that pins it are **unchanged**. The setup writes only the root
+  `bindings` array and never `channels.telegram.*`.
+- When a routed group is missing from `channels.telegram.groups` under `groupPolicy: "allowlist"`
+  (Telegram drops it with no log line), the setup reports it loudly with the exact
+  `openclaw config set ... --strict-json --merge` command for the operator to run. Smallest blast
+  radius; no justification needed for changing the invariant.
+
+### Added
+
+- One wizard question per routed agent (every agent except `main` and the `claude` worker): its
+  Telegram group chat id, pre-filled from the live `bindings` (a re-run is Enter, Enter), validated as
+  `-<digits>` with the `-5xxxxxxxxx` shape in the message, warned (not rejected) on `-100...`, empty
+  leaves the binding alone, nothing asked without a terminal. Answers are saved in the setup state.
+- `openclaw_host.build_bindings()`: rebuilds the array from the live one, upserting only what the kit
+  owns (matched on `agentId` plus `match.peer.id`), keeping the operator's `comment` and every entry the
+  kit does not own verbatim, and keeping peer-less entries (main's catch-all: no `type`, no `peer`) last.
+  Sent whole with `--replace-path bindings`, validated with `--dry-run` first (a passing dry-run is not
+  evidence of routing: T35) and applied after its own confirm.
+- The pre-kit array is snapshotted in the setup state and put back by teardown, unless the operator
+  changed the array since (then it is left alone with a warning).
+- The allowlist gap report (`allowlist_gaps()`, `allowlist_fix_command()`), naming the chat id and T35.
+- `tests/fixtures/openclaw_bindings.py`: the one shared bindings shape. The hook tests and the cockpit
+  tests both use it, and a round-trip test proves that what the cockpit writes is what
+  `resolve_target()` reads (the hook is stdlib-only and cannot import the cockpit).
+- Docs: the group-routing sequence in `docs/orchestration.md`, the new wizard question in the runbook,
+  the setup's behaviour in T35.
+
+### Changed
+
+- The host-wizard test's question count went from 12 to 12 plus one group question per routed agent,
+  and its scripted answers gained an empty group-id answer. No assertion was loosened.
+
 ## [1.9.7] — 2026-09-28 — every OpenClaw agent workspace learns the kit
 
 None of the six agent workspaces taught its agent that the kit exists: `sessions_spawn` appeared zero
