@@ -4,6 +4,21 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.10.2] — 2026-09-28 — the test suite no longer strips the block from the live main workspace
+
+### Fixed
+
+- **Root cause of the "kit block missing from `main`'s `AGENTS.md`" regression (T36).** `tests/conftest.py`
+  redirected `claude.CONFIG_ROOT` and the host env paths but not `openclaw.CONFIG_ROOT`. Teardown tests whose
+  config names no `agents.defaults.workspace` therefore resolved to the operator's real
+  `~/.openclaw/workspace` and removed the kit block from the live file on every `pytest tests/` run. The
+  v1.9.7 report said the block was fixed; it had been written correctly and was undone by the suite.
+  conftest now isolates `openclaw.CONFIG_ROOT` for every test, and `tests/test_test_isolation.py` pins it.
+  After the fix, a full run leaves the live OpenClaw files unchanged (verified against the host).
+- This corrects the 1.10.0 notes (and T36's first draft), which attributed the drift to an agent rewriting
+  its own file: that was a hypothesis, and it was wrong. `ai-resources verify` still reports the drop, whatever
+  its cause.
+
 ## [1.10.1] — 2026-09-28 — an unfilled IDENTITY.md template is no name
 
 ### Fixed
