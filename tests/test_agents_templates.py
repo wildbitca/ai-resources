@@ -182,3 +182,36 @@ def test_a_bad_agent_id_is_refused(tmp_path, bad):
 def test_a_missing_workspace_is_refused(tmp_path):
     with pytest.raises(FileNotFoundError):
         host.agent_new("a", tmp_path / "nope", register=False, runner=_Runner())
+
+
+# --- v1.9.7: the templates teach group routing, not topic routing ---------------------------------------
+
+@pytest.mark.parametrize("kind", sorted(TEMPLATES))
+def test_no_template_asserts_topic_routing_as_the_mechanism(kind):
+    text = host.render_agents_md(kind, "billing", "Billing API")
+    lowered = text.lower()
+    for stale in ("owns one telegram topic", "topic map", "generate `topic-routing.md`",
+                  "talks to the operator in the main telegram topic", "a new topic starts with no history"):
+        assert stale not in lowered
+    assert "@AGENT" not in text and "billing" in text
+
+
+def test_the_orchestrator_teaches_bindings_and_the_silent_traps():
+    text = host.render_agents_md("orchestrator", "main", "Main")
+    for needle in ("**basic group**", "bindings", "-5xxxxxxxxx", "-100", "channels.telegram.groups",
+                   "dry-run", "T35"):
+        assert needle in text
+    # the forum file survives only as a legacy pointer
+    assert "legacy forum host" in text and "TOPIC-ROUTING.md" in text
+
+
+@pytest.mark.parametrize("kind", sorted(TEMPLATES))
+def test_a_freshly_written_agents_md_can_take_the_kit_block(tmp_path, kind):
+    """A fresh workspace must accept the managed block without disturbing the template."""
+    from ai_resources.setup.cockpits import _shared
+    host.write_agents_md(tmp_path, kind, "a")
+    template = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert _shared.write_managed_block(tmp_path / "AGENTS.md", _shared.openclaw_agent_kit_md("/kit"))
+    assert _shared.MANAGED_BEGIN in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert _shared.remove_managed_block(tmp_path / "AGENTS.md")
+    assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == template

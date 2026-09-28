@@ -225,7 +225,11 @@ def test_keep_changes_nothing(bot):
     before = (ws / "AGENTS.md").read_text()
     s = _state("keep")
     openclaw.configure({"state": s})
-    assert rec.patches() == [] and (ws / "AGENTS.md").read_text() == before
+    text = (ws / "AGENTS.md").read_text()
+    assert rec.patches() == []
+    # `keep` leaves the engine alone; the engine-independent kit block is still refreshed (v1.9.7),
+    # and everything outside it is exactly what the operator had.
+    assert text.split("<!-- END ai-resources -->\n", 1)[-1].lstrip("\n") == before
 
 
 def test_a_local_engine_that_cannot_be_installed_leaves_voice_untouched(bot, monkeypatch):

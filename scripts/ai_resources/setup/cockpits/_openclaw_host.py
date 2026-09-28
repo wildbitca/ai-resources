@@ -108,7 +108,8 @@ def prompt(s: state.SetupState) -> None:
     o.host_workboard = bool(ui.confirm(
         "Enable the workboard plugin (a shared task board for the agents)?", default=o.host_workboard))
     o.host_agents_md = bool(ui.confirm(
-        "Write an AGENTS.md into every agent workspace that has none (existing files are never touched)?",
+        "Write an AGENTS.md into every agent workspace that has none (an existing file is never replaced; "
+        "only the kit's marked block is refreshed in it)?",
         default=o.host_agents_md))
     o.host_check = bool(ui.confirm(
         "Check this host against the documented setup (node, openclaw install, unit, linger, backup dirs, "
@@ -320,14 +321,20 @@ def _sha(text: str) -> str:
 
 
 def _configure_agents_md(o: state.OpenClawState, doc: dict, *, dry_run: bool) -> None:
+    """A template AGENTS.md for every workspace that has none (an existing file is never replaced).
+
+    The kit block itself is not written here: it is refreshed in every workspace, existing file or
+    not, by `openclaw._configure_workspace_blocks`, whatever this question was answered.
+    """
     if not o.host_agents_md:
         return
-    for aid, entry in (((doc.get("agents") or {}).get("entries")) or {}).items():
-        if aid in host.ENGINE_OWNED_ENTRIES or not (entry or {}).get("workspace"):
+    # One file per resolved workspace, even when two agents (`claude`, `security`) share it. The
+    # engine-owned worker never picks the template: it only gets the kit block, from the other writer.
+    for ws, aids in _by_workspace(doc).items():
+        template_aids = [a for a in aids if a not in host.ENGINE_OWNED_ENTRIES]
+        if not template_aids or not ws.is_dir() or (ws / "AGENTS.md").exists():
             continue
-        ws = Path(entry["workspace"]).expanduser()
-        if not ws.is_dir() or (ws / "AGENTS.md").exists():
-            continue
+        aid = "main" if "main" in aids else template_aids[0]
         kind = "orchestrator" if aid == "main" else host.detect_workspace_kind(ws, _runner())
         if dry_run:
             ui.detail(f"Would write {ws / 'AGENTS.md'} ({kind} template)")
@@ -336,6 +343,37 @@ def _configure_agents_md(o: state.OpenClawState, doc: dict, *, dry_run: bool) ->
         host.add_to_git_exclude(ws)
         o.host_agents_md_written[str(ws / "AGENTS.md")] = _sha((ws / "AGENTS.md").read_text(encoding="utf-8"))
         ui.ok(f"{ws / 'AGENTS.md'} written ({kind} template)")
+
+
+def _by_workspace(doc: dict) -> dict[Path, list[str]]:
+    grouped: dict[Path, list[str]] = {}
+    for aid, paths in host.agent_workspaces(doc).items():
+        for path in paths:
+            grouped.setdefault(path, []).append(aid)
+    return grouped
+
+
+def teardown_workspace_blocks(o: state.OpenClawState) -> list[str]:
+    """Undo the kit block in every workspace it was refreshed in. Returns the paths changed.
+
+    A file the kit created holding only the block is deleted, unless somebody edited it since (a
+    digest that no longer matches): then only the block goes. A file that existed before loses the
+    block and keeps every other byte.
+    """
+    from . import _shared
+    done: list[str] = []
+    for path_str, digest in list(o.agent_kit_blocks.items()):
+        p = Path(path_str)
+        try:
+            if digest and p.is_file() and _sha(p.read_text(encoding="utf-8")) == digest:
+                p.unlink()
+                done.append(path_str)
+            elif _shared.remove_managed_block(p):
+                done.append(path_str)
+        except OSError:
+            pass
+        o.agent_kit_blocks.pop(path_str, None)
+    return done
 
 
 def _configure_check(o: state.OpenClawState, *, dry_run: bool) -> None:
