@@ -213,3 +213,90 @@ def test_claude_verify_never_reads_or_reports_model_or_permission_settings(tmp_p
     import inspect
     src = inspect.getsource(claude.verify)
     assert not any(w in src for w in ("bundleMcp", "dangerously", "FORBIDDEN_CLAUDE_FLAGS", "isolatesInstructions"))
+
+
+# --- the `verify` verb and doctor's section 4 -----------------------------------------------------------------------
+
+def _cli_env(monkeypatch, fakes, findings_by_cockpit, configured=("a", "b")):
+    from ai_resources.setup import ui
+    s = state.SetupState()
+    for cid in configured:
+        s.cockpits[cid] = state.CockpitState(installed=True, configured=True)
+    visited = []
+    for cid, findings in findings_by_cockpit.items():
+        fakes[cid] = _fake(lambda ctx, _c=cid, _f=findings: visited.append(_c) or list(_f))
+    monkeypatch.setattr(state, "load", lambda: s)
+    monkeypatch.setattr(ui, "require_deps", lambda: None)
+    monkeypatch.setattr(ui, "banner", lambda *a, **k: None)
+    return visited
+
+
+def test_json_emits_one_parseable_object_per_finding(fakes, monkeypatch, capsys):
+    from ai_resources import cli
+    _cli_env(monkeypatch, fakes, {"a": [verify.Finding("warn", "a", "hmm", "do x")],
+                                  "b": [verify.Finding("ok", "b", "fine")]})
+    assert cli.main(["verify", "--json"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert rows == [{"level": "warn", "cockpit": "a", "message": "hmm", "remedy": "do x"},
+                    {"level": "ok", "cockpit": "b", "message": "fine", "remedy": ""}]
+
+
+def test_exit_code_is_one_iff_an_error_exists(fakes, monkeypatch, capsys):
+    from ai_resources import cli
+    _cli_env(monkeypatch, fakes, {"a": [verify.Finding("warn", "a", "hmm")], "b": [verify.Finding("ok", "b", "fine")]})
+    assert cli.main(["verify"]) == 0
+    _cli_env(monkeypatch, fakes, {"a": [verify.Finding("error", "a", "broken", "fix")]})
+    assert cli.main(["verify"]) == 1
+    assert cli.main(["verify", "--json"]) == 1
+
+
+def test_cockpit_flag_visits_only_that_one_and_repeats(fakes, monkeypatch, capsys):
+    from ai_resources import cli
+    visited = _cli_env(monkeypatch, fakes, {"a": [], "b": [], "c": []}, configured=("a", "b", "c"))
+    cli.main(["verify", "--json", "--cockpit", "b"])
+    assert visited == ["b"]
+    visited.clear()
+    cli.main(["verify", "--json", "--cockpit", "a", "--cockpit", "c"])
+    assert visited == ["a", "c"]
+
+
+def test_the_default_set_is_the_configured_cockpits(fakes, monkeypatch, capsys):
+    from ai_resources import cli
+    visited = _cli_env(monkeypatch, fakes, {"a": [], "b": []}, configured=("b",))
+    cli.main(["verify", "--json"])
+    assert visited == ["b"]
+
+
+class _Console:
+    def print(self, *_a, **_k):
+        pass
+
+    def rule(self, *_a, **_k):
+        pass
+
+
+def _doctor_issues(monkeypatch, fakes, findings) -> int:
+    import argparse
+    from ai_resources import doctor
+    from ai_resources.setup import ui
+    s = state.SetupState()
+    s.cockpits["a"] = state.CockpitState(installed=True, configured=True, version="1")
+    fakes["a"] = _fake(lambda ctx: list(findings))
+    banners = []
+    monkeypatch.setattr(state, "load", lambda: s)
+    monkeypatch.setattr(ui, "require_deps", lambda: None)
+    monkeypatch.setattr(ui, "console", lambda: _Console())
+    monkeypatch.setattr(ui, "banner", lambda title, subtitle="", version="": banners.append(title))
+    sections = []
+    monkeypatch.setattr(ui, "section", lambda n, total, title: sections.append((n, total)))
+    doctor.cmd_doctor(argparse.Namespace(skip_smoke=True))
+    assert {t for _, t in sections} == {6}    # doctor still has six sections
+    text = banners[-1]
+    return int(text.split("Doctor: ")[1].split(" issue")[0]) if "issue" in text else 0
+
+
+def test_doctor_counts_error_findings_and_not_warnings(fakes, monkeypatch):
+    base = _doctor_issues(monkeypatch, fakes, [])
+    assert _doctor_issues(monkeypatch, fakes, [verify.Finding("warn", "a", "w"), verify.Finding("ok", "a", "o")]) == base
+    assert _doctor_issues(monkeypatch, fakes, [verify.Finding("error", "a", "e1"), verify.Finding("warn", "a", "w")]) == base + 1
+    assert _doctor_issues(monkeypatch, fakes, [verify.Finding("error", "a", "e1"), verify.Finding("error", "a", "e2")]) == base + 2

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from . import verify
 from .setup import state, detection, credentials, litellm, providers, smoke, ui
 
 
@@ -184,6 +185,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         issues += 1
     for cid, cs in configured:
         ui.ok(f"{cid}  v{cs.version or '?'}  → {cs.config_root}")
+    if configured:
+        # The same read-only verification as `ai-resources verify` and the last setup step. Only an
+        # error-level finding is an issue: a warning is printed and does not fail the check.
+        findings = verify.run_all(s, [cid for cid, _ in configured])
+        verify.print_findings(findings, show_ok=False)
+        issues += verify.counts(findings)["error"]
 
     # 4b. Claude Code OAuth session — informational, not an error
     if s.mode == "multi-model":
