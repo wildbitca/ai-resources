@@ -4,6 +4,39 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.9.9] — 2026-09-28 — the per-agent worktree flow, delegated to OpenClaw
+
+Each agent works on its own branch in a managed worktree. The kit teaches the flow and builds none of it.
+
+### Decisions (ratified by the operator, gate D1)
+
+- `worktreeRoot` is **not** pinned in the config. The real path was measured with one real
+  `openclaw worktrees create` against a throwaway repository on openclaw 2026.9.6 (`worktreeRoot`
+  unset): **`~/.openclaw/worktrees/<repoFingerprint>/<name>`**, branch `openclaw/<name>`. The kit only
+  documents it, in the workspace block and in `skills/using-git-worktrees/SKILL.md`.
+- The kit reimplements no creation, snapshot or GC: it delegates to
+  `openclaw worktrees create|list|remove|restore|gc`.
+- Hard rule, written with its reason: never a worktree, a virtualenv or any scratch you need again under
+  `/tmp`. It is a tmpfs held in RAM and emptied on every reboot; that is how `/tmp/kitvenv` and the
+  `/tmp/wt-*` worktrees died (T26 is the same tmpfs failure).
+- Open question resolved: `claude` and `security` keep sharing `~/Development`; the v1.9.6 tie-break
+  resolves narration to `security` and the v1.9.7 path dedupe resolves the file.
+
+### Added
+
+- A `## Worktrees` section in the kit block every agent workspace gets (also the `claude` worker), the
+  `openclaw worktrees` subcommands, the `using-git-worktrees` skill and the durable root.
+- The same section in the repo and umbrella `AGENTS.md` templates.
+- `skills/using-git-worktrees/SKILL.md`: an OpenClaw-managed section with the commands, the measured path,
+  the never-under-`/tmp` rule and its reason; the raw `git worktree` commands stay as the fallback outside
+  OpenClaw.
+- `docs/orchestration.md`: the worktree flow.
+
+### Upgrade note
+
+The kit block changes, so the next `ai-resources setup` refreshes it in every agent workspace (only the
+marked block; text outside the markers is untouched).
+
 ## [1.9.8] — 2026-09-28 — the wizard maintains the Telegram group routing
 
 Routing a basic group to its agent lives in the root `bindings` array, and until now nothing in the kit
