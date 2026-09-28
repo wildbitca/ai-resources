@@ -824,3 +824,45 @@ def teardown(env_keys: list[str]) -> list[str]:
             installed.unlink()
     _remove_kit_model_overrides(SETTINGS_PATH)
     return _shared.remove_env_keys_from_settings(SETTINGS_PATH, env_keys)
+
+
+# --- verify (read-only) ----------------------------------------------------------------------------------------
+
+def _recorded_names(value: Any) -> list[str]:
+    """A tracking list of names, or [] when the record is not the shape this expects."""
+    return [v for v in value if isinstance(v, str) and v] if isinstance(value, list) else []
+
+
+def verify(ctx: dict) -> list:
+    """What setup left in Claude Code: the managed CLAUDE.md block, settings.json, and the
+    workflow scripts, subagents and skill links the state file recorded. Writes nothing, and
+    judges nothing about the model or permission settings."""
+    from ...verify import Finding as F, block_findings
+
+    s = ctx["state"]
+    cs = s.cockpits.get(ID)
+    if not getattr(cs, "configured", False):
+        return [F("ok", ID, "claude is not configured by the kit; nothing to verify")]
+    out = block_findings(ID, CLAUDE_MD_PATH, "the kit block")
+    if not SETTINGS_PATH.is_file():
+        out.append(F("warn", ID, f"{SETTINGS_PATH} is missing although setup configured claude", "re-run `ai-resources setup`"))
+    else:
+        try:
+            ok = isinstance(json.loads(SETTINGS_PATH.read_text(encoding="utf-8")), dict)
+        except (OSError, ValueError):
+            ok = False
+        out.append(F("ok", ID, f"{SETTINGS_PATH} is valid JSON") if ok else
+                   F("error", ID, f"{SETTINGS_PATH} is not valid JSON, so Claude Code ignores it",
+                     "fix or remove the file, then re-run `ai-resources setup`"))
+    tracking = s.tracking
+    gone = [n for n in _recorded_names(getattr(tracking, "workflow_scripts_installed", None))
+            if not (WORKFLOWS_DIR / n).is_file()]
+    gone += [f"agents/{n}.md" for n in _recorded_names(getattr(tracking, "subagent_files_installed", None))
+             if not (AGENTS_DIR / f"{n}.md").is_file()]
+    if gone:
+        out.append(F("warn", ID, f"{len(gone)} file(s) setup installed are missing: {', '.join(gone[:6])}"
+                     + (" ..." if len(gone) > 6 else ""), "re-run `ai-resources setup`"))
+    skills = CONFIG_ROOT / "skills"
+    if not skills.is_dir():
+        out.append(F("warn", ID, f"{skills} does not exist, so no kit skill is linked", "re-run `ai-resources setup`"))
+    return out

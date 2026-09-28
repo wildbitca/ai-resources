@@ -136,7 +136,7 @@ def test_every_selected_cockpit_produces_at_least_one_finding(tmp_path, monkeypa
                 (tmp_path / cid).mkdir(exist_ok=True)
                 (tmp_path / cid / "instructions.md").write_text(f"{BEGIN}\nx\n{END}\n", encoding="utf-8")
     s = _state(*selected, config_root=str(tmp_path))
-    monkeypatch.setattr(cockpits.claude, "CONFIG_ROOT", tmp_path / "claude", raising=False)
+    _claude_home(monkeypatch, tmp_path / "claude", with_block=True)
     found = verify.run_all(s, selected)
     assert {f.cockpit for f in found} == set(selected)
     assert not [f for f in found if f.level == "error"], verify.render(found)
@@ -161,3 +161,55 @@ def test_render_and_summary_are_stable_for_a_fixed_list():
     assert "-> fix it" in verify.render(fs)
     assert verify.summary(fs) == "1 of 2 selected toolings did not reach the expected state (1 error(s), 1 warning(s), 1 ok)"
     assert verify.summary([verify.Finding("ok", "a", "x")]).startswith("All 1 selected toolings")
+
+
+# --- the claude cockpit's own verify ---------------------------------------------------------------------------
+
+def _claude_home(monkeypatch, root, *, with_block: bool):
+    from ai_resources.setup.cockpits import claude
+    root.mkdir(parents=True, exist_ok=True)
+    for name, value in (("CONFIG_ROOT", root), ("SETTINGS_PATH", root / "settings.json"),
+                        ("CLAUDE_MD_PATH", root / "CLAUDE.md"), ("AGENTS_DIR", root / "agents"),
+                        ("WORKFLOWS_DIR", root / "workflows")):
+        monkeypatch.setattr(claude, name, value)
+    (root / "settings.json").write_text('{"env": {}}', encoding="utf-8")
+    (root / "skills").mkdir(exist_ok=True)
+    (root / "CLAUDE.md").write_text((f"{BEGIN}\nx\n{END}\n" if with_block else "# mine\n"), encoding="utf-8")
+    return claude
+
+
+def test_claude_verify_is_ok_on_a_healthy_home_and_writes_nothing(tmp_path, monkeypatch):
+    _claude_home(monkeypatch, tmp_path / "c", with_block=True)
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()}
+    found = verify.run_all(_state("claude"), ["claude"])
+    assert found and not [f for f in found if f.level != "ok"], verify.render(found)
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
+def test_claude_verify_flags_a_dropped_block_and_missing_recorded_files(tmp_path, monkeypatch):
+    _claude_home(monkeypatch, tmp_path / "c", with_block=False)
+    s = _state("claude")
+    s.tracking.workflow_scripts_installed = ["kit-plan.js"]
+    s.tracking.subagent_files_installed = ["implementer"]
+    found = verify.run_all(s, ["claude"])
+    assert [f.level for f in found if f.level == "error"] == ["error"]
+    assert any(f.level == "warn" and "kit-plan.js" in f.message and "agents/implementer.md" in f.message for f in found)
+
+
+def test_claude_verify_survives_a_tracking_record_of_the_wrong_shape(tmp_path, monkeypatch):
+    _claude_home(monkeypatch, tmp_path / "c", with_block=True)
+    s = _state("claude")
+    s.tracking.workflow_scripts_installed = {"kit-plan.js": 1}
+    s.tracking.subagent_files_installed = None
+    assert not [f for f in verify.run_all(s, ["claude"]) if f.level != "ok"]
+
+
+def test_claude_verify_never_reads_or_reports_model_or_permission_settings(tmp_path, monkeypatch):
+    claude = _claude_home(monkeypatch, tmp_path / "c", with_block=True)
+    (tmp_path / "c" / "settings.json").write_text(json.dumps({"bundleMcp": False, "env": {}}), encoding="utf-8")
+    text = " ".join(f.message + f.remedy for f in verify.run_all(_state("claude"), ["claude"]))
+    for word in ("bundleMcp", "dangerously-skip-permissions", "FORBIDDEN_CLAUDE_FLAGS"):
+        assert word not in text
+    import inspect
+    src = inspect.getsource(claude.verify)
+    assert not any(w in src for w in ("bundleMcp", "dangerously", "FORBIDDEN_CLAUDE_FLAGS", "isolatesInstructions"))
