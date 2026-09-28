@@ -1183,6 +1183,21 @@ importantly, no `peer` — it carries no chat id and must never be mistaken for 
    not own verbatim, and re-append the catch-all **last**. Losing it, or moving it off the end, breaks
    every direct-chat route silently.
 
+**What the setup does about it (1.9.8).** `ai-resources setup` asks for each routed agent's group chat
+id (pre-filled from the live `bindings`, empty leaves it alone) and maintains **only** the root
+`bindings` array: it upserts the entries it owns (matched on `agentId` plus `match.peer.id`), keeps
+every other entry and the operator's `comment`s verbatim, re-appends main's catch-all last and sends the
+array with `--replace-path bindings`. It never writes `channels.telegram.*` (trap 3 stays the operator's
+step): when a routed group is missing from `channels.telegram.groups` under `groupPolicy: "allowlist"`
+it prints the id and the exact command, e.g.
+
+```
+openclaw config set channels.telegram.groups '{"-5xxxxxxxxx":{"requireMention":false}}' --strict-json --merge
+```
+
+`--merge` adds the key and keeps the rest of the map. That command validates with `--dry-run` too, and
+that proves nothing (trap 1): the proof is a message arriving.
+
 **How to catch it next time.** `tail ~/.openclaw/logs/team-outbox.log` and
 `ls ~/.openclaw/logs/team-outbox-dead/` (T31's own tool) still apply for delivery failures once a
 binding resolves; for a binding that never resolves at all, there is no log to tail — run the resolver

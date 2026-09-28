@@ -37,12 +37,13 @@ defaults to **no** on a first run, except the workboard, which defaults to yes:
 |---|---|---|---|
 | 1 | Configure this machine as an OpenClaw host? | Enables the rest; a no asks nothing more (and offers to undo an earlier run) | no |
 | 2 | Narrate the team's work into Telegram: **off** / milestones / every step | Writes `OPENCLAW_NARRATION` to `~/.openclaw/kit-host.env` and registers the narration hook in `~/.claude/settings.json`. Off removes the key, and the hook then publishes nothing | no |
+| 2b | Telegram group chat id, once per routed agent (not `main`, not `claude`) | Pre-filled from the live `bindings`; empty leaves the agent alone; `-100...` warns. Writes only the root `bindings` array (validated with `--dry-run`, then its own confirm), `main`'s catch-all last. Never writes `channels`: a group missing from `channels.telegram.groups` is reported with the exact `openclaw config set` command (T35) | yes: `config patch` on `bindings` |
 | 3 | Install the gateway guard hook? | Registers `openclaw_gateway_guard.py`, which denies an undrained `doctor --fix` or gateway stop | no |
 | 4 | Install the `openclaw-*` systemd units? | Renders the ten units into `~/.config/systemd/user` and enables the six timers (a separate confirm shows what will be written) | reloads systemd, not the gateway |
 | 5 | Apply the canonical config block? | Shows the patch, validates it with `config patch --dry-run`, then applies it after its own confirm | yes: needs a restart |
 | 6 | Your Telegram id, backup dir, and (with 5) domain and ingress CIDR | Written to `kit-host.env`; each value is validated as you type. Empty skips the keys that need it | no |
 | 7 | Enable the workboard plugin? | `openclaw plugins enable workboard`, after a confirm | yes: needs a restart |
-| 8 | Write an `AGENTS.md` into workspaces that have none? | A template per workspace; an existing file is never touched | no |
+| 8 | Write an `AGENTS.md` into workspaces that have none? | A template per workspace; an existing file is never replaced. The marked kit block is refreshed in every workspace on every run, whatever this answer (v1.9.7) | no |
 | 9 | Check this host against the documented setup? | Runs `bootstrap --dry-run`, reports, and offers to fix; every fix asks again | maybe |
 
 Rules the wizard keeps: **secrets are never asked** (use `openclaw configure`); anything that changes
@@ -54,7 +55,7 @@ value because it never stored one. `--dry-run` previews all of it and writes not
 
 The kit has no `--yes` flag. `ai-resources setup --non-interactive` reuses the saved answers and
 prompts for nothing: it re-applies only the local pieces already agreed (`kit-host.env`, hooks,
-`AGENTS.md`) and skips every confirm that would touch the running gateway.
+`AGENTS.md`) and refreshes the kit block in every agent workspace and skips every confirm that would touch the running gateway.
 
 The `ai-resources openclaw <verb>` commands are wrappers over the same functions, for headless runs
 and disaster recovery: `status`, `doctor`, `bootstrap`, `install-units`, `agent-new`,
