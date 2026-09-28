@@ -6,6 +6,15 @@ Each module exposes:
     CONFIG_ROOT: Path    — typical user config directory
     detect() -> dict     — installation detection
     configure(ctx)       — apply multi-model setup using context.SetupContext
+
+A module MAY also expose:
+    verify(ctx) -> list[ai_resources.verify.Finding]
+                         — read-only check of what configure() left behind; ctx is {"state": ...}
+                           plus optional extras. It must not write, must not touch the network and
+                           must not import this package at module level. A cockpit without it gets
+                           the generic check of `ai_resources.verify`, which only judges what the
+                           state file recorded. `Finding.level` is `error` only for a genuinely
+                           broken state; everything advisory is `warn`.
 """
 from __future__ import annotations
 

@@ -253,6 +253,25 @@ def _managed_block_span(lines: list[str]) -> tuple[int | None, int | None]:
     return begin, None
 
 
+def managed_block_pairs(path: Path) -> tuple[int, bool]:
+    """(complete BEGIN/END pairs in `path`, whether a BEGIN with no END follows them). Read-only.
+
+    Built on `_managed_block_span`, so the verifier and the writer can never disagree about what
+    a marker is. A missing file is (0, False).
+    """
+    lines = _read_raw(path).splitlines(keepends=True)
+    pairs = 0
+    while lines:
+        begin, end = _managed_block_span(lines)
+        if begin is None:
+            return pairs, False
+        if end is None:
+            return pairs, True
+        pairs += 1
+        lines = lines[end + 1:]
+    return pairs, False
+
+
 def _render_managed(raw: str, body: str) -> tuple[str, bool]:
     """(`raw` with `body` in its managed block, whether text OUTSIDE the block changed)."""
     nl = "\r\n" if "\r\n" in raw else "\n"
