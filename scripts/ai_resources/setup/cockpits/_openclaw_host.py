@@ -31,6 +31,7 @@ Rules this module keeps:
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -52,7 +53,7 @@ NARRATION_CHOICES = (
 def applied_any(o: state.OpenClawState) -> bool:
     return bool(o.host_hooks_applied or o.host_units_applied or o.host_config_changes
                 or o.host_workboard_applied == "enabled-by-kit" or o.host_agents_md_written
-                or o.host_env_previous or o.host_env_created)
+                or o.host_env_previous or o.host_env_created or o.bindings_applied)
 
 
 def _runner() -> Callable[..., tuple[int, str]]:
@@ -77,7 +78,7 @@ def _values(o: state.OpenClawState) -> dict[str, str]:
 
 # --- the questions ----------------------------------------------------------------------------------------
 
-def prompt(s: state.SetupState) -> None:
+def prompt(s: state.SetupState, doc: dict | None = None) -> None:
     """Ask what to set up on this OpenClaw host. Called from step 7."""
     o = s.openclaw
     env = host.read_host_env()
@@ -92,6 +93,7 @@ def prompt(s: state.SetupState) -> None:
                        [ui.Choice(label, value=value) for value, label in NARRATION_CHOICES],
                        default=o.host_narration or env.get("OPENCLAW_NARRATION") or "off")
     o.host_narration = "" if choice == "off" else choice
+    _ask_group_ids(o, doc or {})
     o.host_guard = bool(ui.confirm(
         "Install the gateway guard hook (denies `openclaw doctor --fix` and a plain gateway stop while "
         "the gateway is live; `ai-resources openclaw doctor` is the safe way)?",
@@ -115,6 +117,42 @@ def prompt(s: state.SetupState) -> None:
         "Check this host against the documented setup (node, openclaw install, unit, linger, backup dirs, "
         "MemoryHigh) and offer to fix what differs?", default=o.host_check))
     ui.detail("Secrets are not asked here: set them with `openclaw configure`.")
+
+
+def _routed_agents(doc: dict) -> list[str]:
+    """The agents that get their own Telegram group: not main (the catch-all) and not the worker."""
+    entries = ((doc.get("agents") or {}).get("entries")) or {}
+    return [a for a in entries if a != "main" and a not in host.ENGINE_OWNED_ENTRIES]
+
+
+def _ask_group_ids(o: state.OpenClawState, doc: dict) -> None:
+    """One question per routed agent: its Telegram group chat id.
+
+    Pre-filled with the id already bound in the live config, so a re-run is Enter, Enter; an empty
+    answer leaves that agent's binding alone. Nothing is asked without a terminal.
+    """
+    if ui.is_non_interactive():
+        return
+    live = host.group_binding_ids(doc)
+    for aid in _routed_agents(doc):
+        default = o.host_group_ids.get(aid) or (live.get(aid) or [""])[0]
+        answer = (ui.text(f"Telegram group chat id for agent `{aid}` (a basic group, -5xxxxxxxxx; "
+                          "empty: leave its binding alone):", default=default,
+                          validate=_group_id_check) or "").strip()
+        if not answer:
+            continue
+        if host.is_supergroup_id(answer):
+            ui.warn(f"{answer} starts with -100: that is a supergroup or channel id, and a BASIC group "
+                    "never has one. Converting a group to a supergroup changes its id and kills the "
+                    "binding with no error (T35). Keeping the value you typed.")
+        o.host_group_ids[aid] = answer
+
+
+def _group_id_check(value: str):
+    value = (value or "").strip()
+    if not value:
+        return True
+    return True if host.validate_group_id(value) is None else host.validate_group_id(value)
 
 
 def _ask_host_values(o: state.OpenClawState, env: dict[str, str]) -> None:
@@ -164,6 +202,7 @@ def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path],
     _configure_units(o, dry_run=dry_run)
     changed = _configure_config(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch)
     changed = _configure_workboard(o, doc, dry_run=dry_run, oc=oc) or changed
+    changed = _configure_bindings(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch) or changed
     _configure_agents_md(o, doc, dry_run=dry_run)
     _configure_check(o, dry_run=dry_run)
     return changed
@@ -316,6 +355,67 @@ def _configure_workboard(o: state.OpenClawState, doc: dict, *, dry_run: bool,
     return True
 
 
+def _digest_bindings(bindings) -> str:
+    return _sha(json.dumps(bindings, sort_keys=True))
+
+
+def _configure_bindings(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *,
+                        dry_run: bool, apply_patch: Callable[..., tuple[bool, str]]) -> bool:
+    """Bind each answered agent to its Telegram group in the root `bindings` array. True when it changed.
+
+    Writes ONLY `bindings` (`channels.telegram.*` is the operator's: `assert_channels_safe` is
+    unchanged). The array is rebuilt from the live one and sent whole with `--replace-path bindings`.
+    """
+    wanted = {a: c for a, c in o.host_group_ids.items() if a in _routed_agents(doc) and c}
+    if not wanted:
+        return False
+    current = doc.get("bindings")
+    new, notes = host.build_bindings(current, wanted)
+    _report_allowlist_gaps(doc, wanted)
+    if not notes:
+        return False
+    ui.info("Telegram group bindings (the root `bindings` array is replaced whole, main's catch-all stays last):")
+    for note in notes:
+        ui.detail(note)
+    patch = {"bindings": new}
+    # A passing --dry-run only proves the schema accepts the array. It is NOT evidence that Telegram
+    # will route the group: an unlisted group is dropped with no log line (T35), and `topics["*"]`
+    # validates and is then ignored. The evidence is a message arriving.
+    ok, out = apply_patch(patch, dry_run=True, replace_paths=["bindings"])
+    if not ok:
+        ui.error(f"OpenClaw rejected the bindings patch in a dry run; nothing was applied: {out[-400:]}")
+        return False
+    if dry_run:
+        ui.detail("Dry run accepted by OpenClaw; nothing applied.")
+        return False
+    if not _gate("Apply the group bindings to the running gateway's config?",
+                 detail=f"{len(notes)} binding(s) change. OpenClaw validated it with --dry-run."):
+        return False
+    ok, out = apply_patch(patch, replace_paths=["bindings"])
+    if not ok:
+        ui.error(f"OpenClaw rejected the bindings patch: {out[-400:]}")
+        return False
+    if not o.bindings_applied:
+        o.bindings_previous = copy.deepcopy(current)
+        o.bindings_applied = True
+    o.bindings_written = _digest_bindings(new)
+    o.config_path = str(path)
+    if path not in written:
+        written.append(path)
+    ui.ok(f"OpenClaw bindings: {len(notes)} group(s) bound")
+    return True
+
+
+def _report_allowlist_gaps(doc: dict, wanted: dict[str, str]) -> None:
+    """Say loudly which routed groups Telegram would drop without a log line. Reported, never patched."""
+    for chat in host.allowlist_gaps(doc, sorted(set(wanted.values()))):
+        agents = ", ".join(a for a, c in wanted.items() if c == chat)
+        ui.warn(f"Telegram group {chat} ({agents}) is routed but is NOT in channels.telegram.groups, and "
+                "groupPolicy is \"allowlist\": Telegram will DROP every message from it with no log line "
+                "(T35). The kit never writes channels; run this yourself:\n    "
+                + host.allowlist_fix_command(chat))
+
+
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -399,7 +499,7 @@ def _configure_check(o: state.OpenClawState, *, dry_run: bool) -> None:
 # --- teardown ------------------------------------------------------------------------------------------------
 
 def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]],
-             oc: Callable[..., tuple[int, str]]) -> bool:
+             oc: Callable[..., tuple[int, str]], doc: dict | None = None) -> bool:
     """Remove exactly what configure() recorded and restore what it replaced. True when finished."""
     o = s.openclaw
     ok = True
@@ -412,6 +512,9 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
         except OSError:
             pass
         o.host_agents_md_written.pop(path_str, None)   # an edited file is the user's now
+
+    if o.bindings_applied:
+        ok = _restore_bindings(o, doc or {}, apply_patch) and ok
 
     if o.host_config_changes:
         for ch in o.host_config_changes:
@@ -452,6 +555,29 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             host.HOST_ENV_PATH.unlink(missing_ok=True)
         o.host_env_previous, o.host_env_created = {}, False
     return ok
+
+
+def _restore_bindings(o: state.OpenClawState, doc: dict,
+                      apply_patch: Callable[..., tuple[bool, str]]) -> bool:
+    """Put the `bindings` array back as it was before the kit's first write (absent: removed).
+
+    Only when the live array is still what the kit wrote: one the operator changed since is theirs,
+    and is left alone with a warning rather than replaced by a stale snapshot. True when finished.
+    """
+    live = doc.get("bindings")
+    if o.bindings_written and live is not None and _digest_bindings(live) != o.bindings_written:
+        ui.warn("The root `bindings` array changed since the kit wrote it, so it is left as it is now. "
+                "Remove the groups you no longer want with `openclaw config set bindings ...`.")
+    else:
+        previous = o.bindings_previous
+        done, out = apply_patch({"bindings": previous},
+                                replace_paths=["bindings"] if isinstance(previous, list) else None)
+        if not done:
+            ui.error(f"OpenClaw bindings teardown failed: {out[-300:]}")
+            return False
+    o.bindings_applied, o.bindings_previous, o.bindings_written = False, None, ""
+    o.host_group_ids = {}
+    return True
 
 
 def _remove_units(o: state.OpenClawState) -> None:

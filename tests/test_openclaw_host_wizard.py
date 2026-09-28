@@ -38,6 +38,7 @@ ANSWERS = {
     "Where the backup tiers are written": "/srv/backups",
     "Public host name": "ai.example.org",
     "CIDR of the ingress": "10.9.0.0/24",
+    "Telegram group chat id for agent": "",          # empty: leave every binding alone (C2)
     "Enable the workboard plugin (a shared": True,
     "Write an AGENTS.md into every agent workspace": True,
     "Check this host against the documented setup": False,
@@ -300,7 +301,11 @@ def test_a_first_run_defaults_every_answer_to_no_except_the_workboard(sim, scrip
     assert default_of("Public host name of the control UI, wit") == ""
     assert default_of("CIDR of the ingress that reaches the ga") == ""
     assert default_of("Where the backup tiers are written") == "/srv/openclaw-backups"
-    assert len(defaults) == 12, sorted(defaults)
+    # v1.9.8 adds one group-id question per routed agent (app, infra, docs here); with no binding yet
+    # each defaults to empty, which leaves that agent unbound.
+    group_questions = [k for k in defaults if k.startswith("Telegram group chat id for agent")]
+    assert len(group_questions) == 3 and all(defaults[k] == "" for k in group_questions)
+    assert len(defaults) == 12 + 3, sorted(defaults)
 
 
 def test_declining_the_master_question_asks_nothing_else(sim, script):

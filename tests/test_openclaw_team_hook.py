@@ -33,13 +33,7 @@ CHAT = "-1001"
 # per agent (measured 2026-09-28): `groups[chat].topics` holds only the non-routing `"*"` key,
 # and the routing lives in the root `bindings` array instead. Basic-group chat ids are short
 # (`-5xxxxxxxxx`), never `-100...` (that shape is a supergroup and kills the binding).
-GROUP_CHATS = {
-    "snoutzone": "-5100000001",
-    "elinvo": "-5100000002",
-    "devops": "-5100000003",
-    "ai": "-5100000004",
-    "security": "-5100000005",
-}
+from fixtures.openclaw_bindings import GROUP_CHATS, live_bindings  # noqa: E402  (shared with the cockpit tests)
 
 
 def _bindings_config(root):
@@ -47,13 +41,7 @@ def _bindings_config(root):
     `claude` is listed before `security` and both share `root / "Development"`, matching the live
     tie (`claude` has no binding of its own; `security` does)."""
     groups = {chat: {"topics": {"*": {"agentId": agent}}} for agent, chat in GROUP_CHATS.items()}
-    bindings = [
-        {"type": "route", "agentId": agent, "comment": f"{agent} group",
-         "match": {"channel": "telegram", "peer": {"kind": "group", "id": chat}}}
-        for agent, chat in GROUP_CHATS.items()
-    ] + [
-        {"agentId": "main", "comment": "catch-all", "match": {"accountId": "*"}},
-    ]
+    bindings = live_bindings()
     return {
         "agents": {"defaults": {"model": {"primary": "anthropic/haiku"}},
                    "entries": {

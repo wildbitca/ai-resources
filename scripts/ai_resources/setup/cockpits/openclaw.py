@@ -512,7 +512,7 @@ def prompt(s: state.SetupState, *, dry_run: bool = False) -> None:
     if s.openclaw.engine == "claude-code":
         mcp.prompt(s, _get(read_config(config_path()), "mcp", "servers") or {})
     voice.prompt(s)
-    host_section.prompt(s)
+    host_section.prompt(s, read_config(config_path()))
 
 
 def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
@@ -1209,7 +1209,7 @@ def teardown(s: state.SetupState) -> list[str]:
         return []
     doc = read_config(config_path())
     # Reverse order of configure(): the host section ran last, so it is undone first.
-    host_ok = host_section.teardown(s, apply_patch=apply_patch, oc=_openclaw) \
+    host_ok = host_section.teardown(s, apply_patch=apply_patch, oc=_openclaw, doc=doc) \
         if host_section.applied_any(s.openclaw) else True
     engine_ok = _teardown_engine(s) if s.openclaw.applied else True
     mcp_ok = _teardown_mcp(s) if s.openclaw.mcp_mirrored else True
