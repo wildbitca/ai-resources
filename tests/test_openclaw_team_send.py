@@ -97,6 +97,15 @@ def test_a_send_returns_the_message_id_and_leaves_no_trace(rig):
     assert argv[:2] == ["message", "send"] and argv[argv.index("--thread-id") + 1] == "8"
 
 
+def test_a_group_mode_send_omits_the_thread_flag_entirely(rig):
+    """A group-routed target carries no thread (A4). `--thread-id ""` must never reach argv:
+    already correct in this script, pinned here so no reviewer hunts for a missing fourth edit."""
+    ok, mid = rig.bus.deliver("send", CHAT, "", text="hello")
+    assert (ok, mid) == (True, "100")
+    argv = rig.calls()[0]["argv"]
+    assert "--thread-id" not in argv
+
+
 def test_an_edit_carries_the_message_id(rig):
     ok, _ = rig.bus.deliver("edit", CHAT, "8", text="new", mid="77")
     assert ok

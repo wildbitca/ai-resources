@@ -618,11 +618,14 @@ def launch_watcher(p, target, role):
             sweep_stops()
             if alive >= MAX_WATCHERS:
                 return False
+            argv = ["python3", watcher, "--agent-id", str(aid), "--role", str(role),
+                    "--model", role_model(role) or (agent_model(p.get("cwd")) or ""),
+                    "--transcript", path, "--chat", target[0]]
+            if target[1]:  # no `None`/"" ever reaches argv: Popen would raise TypeError
+                argv += ["--thread", target[1]]
+            argv += ["--claude-pid", str(claude_pid()), "--lang", narration_lang()]
             proc = subprocess.Popen(
-                ["python3", watcher, "--agent-id", str(aid), "--role", str(role),
-                 "--model", role_model(role) or (agent_model(p.get("cwd")) or ""),
-                 "--transcript", path, "--chat", target[0], "--thread", target[1],
-                 "--claude-pid", str(claude_pid()), "--lang", narration_lang()],
+                argv,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL, start_new_session=True,
             )
@@ -645,9 +648,12 @@ def _send(target, text):
     try:
         sender = sender_path()
         head = ["python3", sender, "send"] if sender else [openclaw_bin(), "message", "send"]
+        argv = head + ["--channel", "telegram", "--target", target[0]]
+        if target[1]:  # no `None`/"" ever reaches argv: Popen would raise TypeError
+            argv += ["--thread-id", target[1]]
+        argv += ["--message", text]
         subprocess.Popen(
-            head + ["--channel", "telegram", "--target", target[0], "--thread-id", target[1],
-                    "--message", text],
+            argv,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL, start_new_session=True,
         )

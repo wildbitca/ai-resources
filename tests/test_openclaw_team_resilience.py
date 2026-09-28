@@ -281,6 +281,26 @@ def test_the_watcher_argv_carries_the_workflow_transcript_and_the_claude_pid(hoo
     assert flags["--claude-pid"].isdigit()
 
 
+# --- A4: no `None`/"" thread ever reaches argv (Defect 1, group mode) -----------------------------------
+
+def test_a_group_mode_target_launches_the_watcher_with_no_thread_token_at_all(hook):
+    """A group target is (chat, None): `--thread` must be entirely absent from argv, not passed
+    as an empty string -- Popen requires every argv element to be a str."""
+    hook.launch_watcher(_member(hook.tmp, "gm1"), ("-5100000001", None), "implementer")
+    (argv,) = hook.popen.watchers()
+    assert "--thread" not in argv
+    flags = dict(zip(argv[2::2], argv[3::2]))
+    assert flags["--chat"] == "-5100000001"
+
+
+def test_a_forum_mode_target_still_carries_the_thread_flag(hook):
+    """The forum path is unchanged: TARGET has a real thread and the flag stays present."""
+    hook.launch_watcher(_member(hook.tmp, "fm1"), TARGET, "implementer")
+    (argv,) = hook.popen.watchers()
+    flags = dict(zip(argv[2::2], argv[3::2]))
+    assert flags["--thread"] == "8"
+
+
 # --- D: the payload log rotates instead of going silent --------------------------------------------------------
 
 def test_the_payload_log_rotates_at_the_cap_instead_of_stopping(hook):
