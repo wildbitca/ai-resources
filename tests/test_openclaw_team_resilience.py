@@ -408,10 +408,15 @@ class _Rig:
         row = {"message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}}
         path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
-    def start(self, *extra):
-        proc = _REAL_POPEN([sys.executable, str(WATCH), "--agent-id", "w1", "--role", "implementer",
-                            "--transcript", str(self.transcript), "--chat", "-1001", "--thread", "8", *extra],
-                           env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def start(self, *extra, thread="8"):
+        """`thread=None` (or "") drops --thread entirely, exercising the group-mode CLI path
+        where the flag is never passed at all -- distinct from passing it empty."""
+        argv = [sys.executable, str(WATCH), "--agent-id", "w1", "--role", "implementer",
+                "--transcript", str(self.transcript), "--chat", "-1001"]
+        if thread:
+            argv += ["--thread", thread]
+        proc = _REAL_POPEN(argv + list(extra), env=self.env,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.procs.append(proc)
         return proc
 
@@ -522,6 +527,21 @@ def test_the_watcher_closes_when_its_parent_claude_is_gone(rig):
     assert "no signal from the member" in rig.texts("edit")[-1]
 
 
+def test_a_group_mode_watcher_starts_without_a_thread_and_never_sends_thread_id(rig):
+    """End-to-end argparse relaxation (Defect 1): with --thread never passed on the CLI, the
+    watcher must still start (required=False) and every send/edit it makes must carry no
+    --thread-id -- not even an empty one."""
+    rig.write_transcript()
+    proc = rig.start(thread=None)
+    assert rig.wait(lambda: (rig.state / "mid-w1").exists()), "a group-mode watcher must still come up"
+    assert rig.wait(lambda: len(rig.texts("edit")) >= 1)
+    assert rig.entries("send"), "the first message must still go out"
+    assert all("--thread-id" not in argv for argv in rig.entries("send"))
+    assert all("--thread-id" not in argv for argv in rig.entries("edit"))
+    rig.stop()
+    assert rig.wait(lambda: proc.poll() is not None)
+
+
 # --- delivery goes through the queue (T33) ----------------------------------------------------------------------------
 
 def test_the_hook_sends_through_the_queue_when_it_exists(hook, monkeypatch):
@@ -556,9 +576,23 @@ def test_the_watcher_still_works_when_the_queue_script_is_missing(tmp_path, monk
     lone.write_text(WATCH.read_text(encoding="utf-8"), encoding="utf-8")
     mod = _load(lone, "openclaw_team_watch_lone")
     assert mod.BUS is None
-    monkeypatch.setattr(mod, "sh", lambda args, capture=False: "Message ID: 55" if capture else None)
+    seen = []
+    monkeypatch.setattr(mod, "sh", lambda args, capture=False: seen.append(args) or (
+        "Message ID: 55" if capture else None))
+
+    def thread_id_of(argv):
+        return argv[argv.index("--thread-id") + 1] if "--thread-id" in argv else None
+
     assert mod.send("-1001", "8", "x") == "55"
     mod.edit("-1001", "8", "55", lambda: "rendered late")  # a callable is resolved on the direct path too
+    assert thread_id_of(seen[0]) == "8", "a real thread must reach argv on the direct-CLI send"
+    assert thread_id_of(seen[1]) == "8", "a real thread must reach argv on the direct-CLI edit"
+
+    seen.clear()
+    assert mod.send("-1001", "", "x") == "55"
+    mod.edit("-1001", None, "55", lambda: "rendered late")
+    assert thread_id_of(seen[0]) is None, "an empty thread must be omitted from send, not sent as an empty string"
+    assert thread_id_of(seen[1]) is None, "an empty thread must be omitted from edit, not sent as an empty string"
 
 
 def test_the_watcher_goes_through_the_queue_and_renders_edits_late(tmp_path):
