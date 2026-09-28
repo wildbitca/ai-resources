@@ -111,8 +111,10 @@ def send(chat, thread, text):
     if BUS is not None:
         _, mid = BUS.deliver("send", chat, thread, text=text)
         return mid or None
-    out = sh([OPENCLAW, "message", "send", "--channel", "telegram",
-              "--target", chat, "--thread-id", thread, "--message", text], capture=True) or ""
+    argv = [OPENCLAW, "message", "send", "--channel", "telegram", "--target", chat]
+    if thread:  # group-mode targets carry no thread; the flag must be omitted, not empty
+        argv += ["--thread-id", thread]
+    out = sh(argv + ["--message", text], capture=True) or ""
     m = re.search(r"Message ID:\s*(\d+)", out)
     return m.group(1) if m else None
 
@@ -123,8 +125,10 @@ def edit(chat, thread, mid, text):
         BUS.deliver("edit", chat, thread, mid=mid, text=None if callable(text) else text,
                     text_fn=text if callable(text) else None)
         return
-    sh([OPENCLAW, "message", "edit", "--channel", "telegram", "--target", chat,
-        "--thread-id", thread, "--message-id", mid, "--message", text() if callable(text) else text])
+    argv = [OPENCLAW, "message", "edit", "--channel", "telegram", "--target", chat]
+    if thread:  # group-mode targets carry no thread; the flag must be omitted, not empty
+        argv += ["--thread-id", thread]
+    sh(argv + ["--message-id", mid, "--message", text() if callable(text) else text])
 
 
 def short(s, n):
@@ -226,7 +230,7 @@ def main():
     ap.add_argument("--model", default="")
     ap.add_argument("--transcript", required=True)
     ap.add_argument("--chat", required=True)
-    ap.add_argument("--thread", required=True)
+    ap.add_argument("--thread", required=False, default="")  # absent for a group-mode target
     ap.add_argument("--claude-pid", type=int, default=0)
     ap.add_argument("--lang", default="en")
     a = ap.parse_args()

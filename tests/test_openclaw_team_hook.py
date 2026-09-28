@@ -79,12 +79,19 @@ def bindings_env(tmp_path, monkeypatch, request):
     cfgfile = tmp_path / "openclaw.json"
     cfgfile.write_text(json.dumps(_bindings_config(root)), encoding="utf-8")
 
+    agents = tmp_path / "agents"
+    agents.mkdir()
+
     hook = _load_hook()
     popen = _Popens()
     request.addfinalizer(popen.cleanup)
     monkeypatch.setattr(hook, "OPENCLAW_JSON", str(cfgfile))
+    monkeypatch.setattr(hook, "KIT_HOST_ENV", str(tmp_path / "kit-host.env"))
+    monkeypatch.setattr(hook, "AGENTS_DIR", str(agents))
+    monkeypatch.setattr(hook, "LOG_PAYLOADS", str(tmp_path / "logs" / "team-hook.jsonl"))
     monkeypatch.setattr(hook, "STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(hook, "watcher_path", lambda: "")
+    monkeypatch.setattr(hook, "openclaw_bin", lambda: "/bin/openclaw")
     monkeypatch.setattr(hook, "sender_path", lambda: "")
     monkeypatch.setattr(hook.subprocess, "Popen", popen)
     monkeypatch.setenv("OPENCLAW_CLI", "1")
@@ -94,6 +101,18 @@ def bindings_env(tmp_path, monkeypatch, request):
 
     e = Env()
     e.hook, e.popen, e.root, e.tmp, e.cfg = hook, popen, root, tmp_path, cfgfile
+
+    def run(payload, **over):
+        payload = dict(payload)
+        payload.update(over)
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+        hook.main()
+
+    def set_level(level):
+        (tmp_path / "kit-host.env").write_text(f"OPENCLAW_NARRATION={level}\n", encoding="utf-8")
+
+    e.run, e.set_level = run, set_level
+    set_level("milestones")
     return e
 
 
@@ -243,6 +262,14 @@ def test_the_tie_break_is_stable_across_reversed_entry_order(tmp_path, monkeypat
     monkeypatch.setattr(hook, "OPENCLAW_JSON", str(cfgfile))
     target = hook.resolve_target(str(root / "Development"))
     assert target == (GROUP_CHATS["security"], None)
+
+
+def test_a_group_mode_milestone_omits_thread_id_entirely_from_the_send_call(bindings_env):
+    """A4: `target[1]` is None for a group target; `_send` must omit `--thread-id`, not pass ""."""
+    bindings_env.run({"hook_event_name": "Stop", "session_id": "s1", "cwd": str(bindings_env.root / "pacha")})
+    (call,) = bindings_env.popen.calls
+    assert "--thread-id" not in call
+    assert call[call.index("--target") + 1] == GROUP_CHATS["snoutzone"]
 
 
 def test_a_single_match_tie_break_does_not_apply_and_is_unchanged(env):
