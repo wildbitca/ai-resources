@@ -245,6 +245,23 @@ def _configure(s, *, dry_run=False):
     return openclaw.configure({"state": s, "dry_run": dry_run})
 
 
+def outside_block(text: str) -> str:
+    """The file minus the kit's managed block: what the operator owns."""
+    from ai_resources.setup.cockpits import _shared
+    lines = text.splitlines(keepends=True)
+    begin, end = _shared._managed_block_span(lines)
+    if begin is None or end is None:
+        return text
+    return ("".join(lines[:begin] + lines[end + 1:])).lstrip("\r\n")
+
+
+def without_blocks(files: dict[str, bytes]) -> dict[str, bytes]:
+    """`files` with the kit block stripped from every AGENTS.md; a file that was only the block is gone."""
+    out = {k: outside_block(v.decode("utf-8")).encode("utf-8") if k.endswith("AGENTS.md") else v
+           for k, v in files.items()}
+    return {k: v for k, v in out.items() if not (k.endswith("AGENTS.md") and not v)}
+
+
 # --- the questions ------------------------------------------------------------------------------------
 
 def test_a_first_run_defaults_every_answer_to_no_except_the_workboard(sim, script, monkeypatch):
@@ -377,11 +394,14 @@ def test_configure_applies_every_section(sim, script):
     assert (["plugins", "enable", "workboard"], None) in sim.oc.calls
     assert o.host_workboard_applied == "enabled-by-kit"
 
-    # AGENTS.md: a template where there was none; an existing file, and the engine-owned agent, untouched.
+    # AGENTS.md: a template where there was none; an existing file keeps every byte outside the kit
+    # block (v1.9.7: the block is refreshed in it too); the engine-owned worker gets the block alone.
     for aid in ("main", "infra", "docs"):
         assert (sim.workspaces[aid] / "AGENTS.md").is_file()
-    assert (sim.workspaces["app"] / "AGENTS.md").read_text(encoding="utf-8") == "# mine\n"
-    assert not (sim.workspaces["claude"] / "AGENTS.md").exists()
+    app = (sim.workspaces["app"] / "AGENTS.md").read_text(encoding="utf-8")
+    assert outside_block(app) == "# mine\n" and "kit-orchestration" in app and "sessions_spawn" in app
+    worker = (sim.workspaces["claude"] / "AGENTS.md").read_text(encoding="utf-8")
+    assert "kit-orchestration" in worker and "sessions_spawn" not in worker
     assert len(o.host_agents_md_written) == 3
 
     # The unpinned MCP server is reported, never rewritten; the gateway is never restarted.
@@ -426,7 +446,9 @@ def test_invalid_host_values_apply_nothing(sim, script):
     s = _state()
     before = sim.files()
     _run_wizard(s)
-    assert sim.files() == before and not sim.oc.real_patches() and not sim.systemd.calls
+    # The host section applied nothing; only the kit block (engine- and host-independent) may appear.
+    assert without_blocks(sim.files()) == without_blocks(before)
+    assert not sim.env_file.exists() and not sim.oc.real_patches() and not sim.systemd.calls
     assert any("nothing applied" in m for m in script.messages("error"))
 
 

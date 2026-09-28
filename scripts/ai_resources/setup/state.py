@@ -220,6 +220,10 @@ class OpenClawState:
     host_config_changes: list[Any] = field(default_factory=list)       # leaves changed, with their old values
     host_workboard_applied: str = ""  # "" | enabled-by-kit | already-enabled
     host_agents_md_written: dict[str, str] = field(default_factory=dict)  # path -> sha256 of what was written
+    # The kit block in agent workspace AGENTS.md files (independent of the host answers above):
+    # path -> sha256 of a file the kit CREATED with only the block, "" when the file already
+    # existed (teardown removes the block and leaves every other byte).
+    agent_kit_blocks: dict[str, str] = field(default_factory=dict)
     host_env_previous: dict[str, Any] = field(default_factory=dict)    # kit-host.env key -> value before (None: absent)
     host_env_created: bool = False
 

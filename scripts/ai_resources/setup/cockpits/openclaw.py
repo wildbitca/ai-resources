@@ -473,15 +473,7 @@ def workspace_dir(doc: dict) -> Path:
 
 
 def _remove_managed_block(path: Path) -> bool:
-    if not path.is_file():
-        return False
-    raw = path.read_text(encoding="utf-8")
-    lines = raw.splitlines(keepends=True)
-    begin, end = _shared._managed_block_span(lines)
-    if begin is None or end is None:
-        return False
-    path.write_text("".join(lines[:begin] + lines[end + 1:]).lstrip("\r\n"), encoding="utf-8")
-    return True
+    return _shared.remove_managed_block(path)
 
 
 # --- agy MCP bridge (antigravity only) --------------------------------------------
@@ -638,13 +630,13 @@ def configure(ctx: dict) -> list[Path]:
     # AGENTS.md) does not depend on openclaw.json having changed, and it renders its own dry run.
     host_changed = host_section.configure(s, doc, ak_path, written, dry_run=dry_run,
                                           apply_patch=apply_patch, oc=_openclaw, config_path=path)
-    if dry_run or not (engine_changed or mcp_changed or voice_changed or workshop_changed
-                      or host_changed):
+    changed = engine_changed or mcp_changed or voice_changed or workshop_changed or host_changed
+    # The kit block in every agent workspace does not depend on the engine, on the host section's
+    # answers or on openclaw.json having changed: it is refreshed on every run (B1, v1.9.7).
+    _configure_workspace_blocks(s, doc, ak_path, ctx.get("gateway_url", ""), written,
+                                dry_run=dry_run, force_default=changed)
+    if dry_run or not changed:
         return written
-
-    agents_md = workspace_dir(doc) / "AGENTS.md"
-    if _write_workspace_block(s, agents_md, ak_path, ctx.get("gateway_url", "")):
-        written.append(agents_md)
 
     cs.configured = True
     cs.last_configured_at = datetime.now(timezone.utc).isoformat()
@@ -981,15 +973,22 @@ def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
 
 
 def _write_workspace_block(s: state.SetupState, agents_md: Path, ak_path: str,
-                           gateway_url: str) -> bool:
-    """The kit block in the workspace AGENTS.md, built from what the kit has applied.
+                           gateway_url: str, *, kit: bool = False, delegates: bool = True,
+                           engine_part: bool = True, dry_run: bool = False) -> bool:
+    """The single writer of the kit block in a workspace AGENTS.md, one marker pair per file.
 
-    CLI runtimes already load the kit block from their own config (CLAUDE.md, AGENTS.md,
-    GEMINI.md), so repeating it here would inject it twice; only OpenClaw's own runtime needs
-    the whole block. The memory rule goes in for every engine: OpenClaw injects this file into
-    all of them, and its native memory tools would otherwise compete with Engram.
+    Two parts share that pair. The engine part (`engine_part`, the orchestrator's workspace only)
+    is built from what the kit has applied: CLI runtimes already load the kit block from their
+    own config (CLAUDE.md, AGENTS.md, GEMINI.md), so repeating it there would inject it twice;
+    only OpenClaw's own runtime needs the whole block. The memory rule goes in for every engine:
+    OpenClaw injects this file into all of them, and its native memory tools would otherwise
+    compete with Engram. The common part (`kit`) is the engine-independent block every agent
+    workspace gets (`_shared.openclaw_agent_kit_md`); `delegates` is False only for a workspace
+    that belongs to the `claude` worker alone.
+
+    With `dry_run` nothing is written and the result says whether the file would change.
     """
-    engine = applied_engine(s)
+    engine = applied_engine(s) if engine_part else None
     if engine and engine.id == "direct":
         md = _shared.kit_instructions_md("OpenClaw", ak_path, gateway_url, "single-model",
                                          native_skills=False) + "\n" + MEMORY_MD
@@ -997,15 +996,111 @@ def _write_workspace_block(s: state.SetupState, agents_md: Path, ak_path: str,
         md = _antigravity_agents_md(ak_path)
     elif engine:
         md = f"# ai-resources (OpenClaw)\n\nEngine: {engine.label.split(' — ')[0]}.\n\n{MEMORY_MD}"
-    else:
+    elif engine_part and not kit:
         md = "# ai-resources (OpenClaw)\n"
+    else:
+        md = ""
+    if kit:
+        common = _shared.openclaw_agent_kit_md(ak_path, delegates=delegates)
+        if md:
+            # Same marker pair: drop the second H1 rather than stack two titles in one block.
+            common = common.split("\n", 2)[2]
+            md = md.rstrip("\n") + "\n\n" + common
+        else:
+            md = common
 
-    with_voice = s.openclaw.voice_applied in ("agy", "cloud", "local") and _claim_voice_section(agents_md)
+    with_voice = engine_part and s.openclaw.voice_applied in ("agy", "cloud", "local") \
+        and (dry_run or _claim_voice_section(agents_md))
     if with_voice:
         md += "\n" + voice.VOICE_MD
-    if not engine and not with_voice:
+    if not engine and not with_voice and not kit:
+        if dry_run:
+            return agents_md.is_file() and "BEGIN ai-resources" in agents_md.read_text(encoding="utf-8")
         return _remove_managed_block(agents_md)
+    if dry_run:
+        return _shared.managed_block_would_change(agents_md, md)
     return _shared.write_managed_block(agents_md, md)
+
+
+def _workspace_targets(doc: dict) -> dict[Path, dict]:
+    """Every workspace that gets the kit block, deduplicated by RESOLVED path.
+
+    `~/Development` is the workspace of two agents (`claude` and `security`) and must be written
+    once. `engine` marks the orchestrator's workspaces (the engine part goes there); `delegates`
+    is False when the `claude` worker is the only agent that uses the path.
+    """
+    targets: dict[Path, dict] = {}
+
+    def add(ws: Path | str, aid: str) -> None:
+        key = Path(ws).expanduser().resolve()
+        slot = targets.setdefault(key, {"aids": [], "engine": False})
+        slot["aids"].append(aid)
+        slot["engine"] = slot["engine"] or aid in ("main", "")
+
+    add(workspace_dir(doc), "")   # agents.defaults.workspace: the orchestrator's home
+    for aid, ws in openclaw_host.agent_workspaces(doc).items():
+        for path in ws:
+            add(path, aid)
+    for slot in targets.values():
+        slot["delegates"] = any(a not in openclaw_host.ENGINE_OWNED_ENTRIES for a in slot["aids"])
+    return targets
+
+
+def _configure_workspace_blocks(s: state.SetupState, doc: dict, ak_path: str, gateway_url: str,
+                                written: list[Path], *, dry_run: bool, force_default: bool) -> bool:
+    """Refresh the kit block in every agent workspace AGENTS.md. True when a file changed.
+
+    Only the marked block is ever written: a file that already exists keeps every byte outside
+    the markers, and what the kit created (or added a block to) is recorded for teardown.
+    """
+    o = s.openclaw
+    default = workspace_dir(doc).resolve()
+    any_changed = False
+    for ws, slot in _workspace_targets(doc).items():
+        if not ws.is_dir() and not (force_default and ws == default):
+            continue
+        agents_md = ws / "AGENTS.md"
+        if dry_run:
+            if _write_workspace_block(s, agents_md, ak_path, gateway_url, kit=True,
+                                      delegates=slot["delegates"], engine_part=slot["engine"],
+                                      dry_run=True):
+                ui.detail(f"Would refresh the kit block in {agents_md}")
+            continue
+        before = agents_md.read_text(encoding="utf-8") if agents_md.is_file() else None
+        changed = _write_workspace_block(s, agents_md, ak_path, gateway_url, kit=True,
+                                         delegates=slot["delegates"], engine_part=slot["engine"])
+        after = agents_md.read_text(encoding="utf-8") if agents_md.is_file() else None
+        _record_block(o, str(agents_md), before, after)
+        if changed:
+            any_changed = True
+            if agents_md not in written:
+                written.append(agents_md)
+            ui.ok(f"{agents_md}: kit block refreshed")
+    return any_changed
+
+
+def _record_block(o: state.OpenClawState, key: str, before: str | None, after: str | None) -> None:
+    """Remember how teardown must undo the kit block in `key`.
+
+    `host_agents_md_written` (a whole file from a template) keeps its digest current, so the
+    kit's own block does not turn a file nobody edited into "the user's now". `agent_kit_blocks`
+    maps a path to the digest of a file the kit CREATED with only the block ("" when the file
+    existed before: teardown then removes the block and nothing else).
+    """
+    if after is None:
+        return
+    digest = host_section._sha
+    if key in o.host_agents_md_written:
+        if before is not None and digest(before) == o.host_agents_md_written[key]:
+            o.host_agents_md_written[key] = digest(after)
+    elif key in o.agent_kit_blocks:
+        current = o.agent_kit_blocks[key]
+        if current:
+            o.agent_kit_blocks[key] = digest(after) if before is not None and digest(before) == current else ""
+    elif before is None:
+        o.agent_kit_blocks[key] = digest(after)
+    else:
+        o.agent_kit_blocks[key] = ""
 
 
 def _claim_voice_section(agents_md: Path) -> bool:
@@ -1110,7 +1205,7 @@ def _teardown_voice(s: state.SetupState) -> bool:
 def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
     if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored
-            or host_section.applied_any(s.openclaw)):
+            or s.openclaw.agent_kit_blocks or host_section.applied_any(s.openclaw)):
         return []
     doc = read_config(config_path())
     # Reverse order of configure(): the host section ran last, so it is undone first.
@@ -1135,6 +1230,7 @@ def teardown(s: state.SetupState) -> list[str]:
         if unregister_agy_mcp_bridge():
             removed.append("agy-mcp:openclaw")
 
+    removed.extend(host_section.teardown_workspace_blocks(s.openclaw))
     if _remove_managed_block(workspace_dir(doc) / "AGENTS.md"):
         removed.append(str(workspace_dir(doc) / "AGENTS.md"))
     s.openclaw = state.OpenClawState()

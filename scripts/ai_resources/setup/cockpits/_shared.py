@@ -204,7 +204,7 @@ LEGACY_KIT_HEADINGS = frozenset({
     "Memory (Engram MCP)",
 })
 # `## ` headings of the current block; used to clean up a block whose END marker was deleted.
-CURRENT_KIT_HEADINGS = frozenset({"Using the kit", "Delegation", "Multi-model routing"})
+CURRENT_KIT_HEADINGS = frozenset({"Using the kit", "Delegation", "Multi-model routing", "Kit workflow"})
 
 
 def _is_fence(bare: str) -> bool:
@@ -253,6 +253,61 @@ def _managed_block_span(lines: list[str]) -> tuple[int | None, int | None]:
     return begin, None
 
 
+def _render_managed(raw: str, body: str) -> tuple[str, bool]:
+    """(`raw` with `body` in its managed block, whether text OUTSIDE the block changed)."""
+    nl = "\r\n" if "\r\n" in raw else "\n"
+    block = nl.join([MANAGED_BEGIN, *body.strip().splitlines(), MANAGED_END]) + nl
+    lines = raw.splitlines(keepends=True)
+    begin, end = _managed_block_span(lines)
+    if begin is not None and end is not None:
+        return "".join(lines[:begin]) + block + "".join(lines[end + 1:]), False
+    rest = raw
+    if begin is None and not _LEGACY_TITLE.search(rest):
+        # Nothing of the kit's in the file: prepend the block and keep every other byte (only the
+        # leading blank lines go, so removing the block later gives the file back).
+        rest = raw.lstrip("\r\n")
+        return block + (f"{nl}{rest}" if rest else ""), False
+    if begin is not None:  # BEGIN without END: drop the orphan marker and the kit text after it
+        rest = "".join(lines[:begin] + lines[begin + 1:])
+        rest = strip_legacy_kit_sections(rest, LEGACY_KIT_HEADINGS | CURRENT_KIT_HEADINGS)
+    else:
+        rest = strip_legacy_kit_sections(rest)
+    rest = rest.strip("\r\n")
+    return block + (f"{nl}{rest}{nl}" if rest else ""), rest != raw.strip("\r\n")
+
+
+def _read_raw(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    with open(path, encoding="utf-8", newline="") as fh:
+        return fh.read()
+
+
+def managed_block_would_change(path: Path, body: str) -> bool:
+    """Whether `write_managed_block(path, body)` would change the file (it writes nothing)."""
+    raw = _read_raw(path)
+    return _render_managed(raw, body)[0] != raw
+
+
+def remove_managed_block(path: Path) -> bool:
+    """Drop the managed block from `path`, leaving every other byte as it was. True if it changed."""
+    if not path.is_file():
+        return False
+    raw = _read_raw(path)
+    lines = raw.splitlines(keepends=True)
+    begin, end = _managed_block_span(lines)
+    if begin is None or end is None:
+        return False
+    rest = "".join(lines[:begin] + lines[end + 1:])
+    # write_managed_block puts one blank line between the block and what it prepended to.
+    nl = "\r\n" if "\r\n" in raw else "\n"
+    if begin == 0 and rest.startswith(nl):
+        rest = rest[len(nl):]
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(rest)
+    return True
+
+
 def write_managed_block(path: Path, body: str, *, dry_run: bool = False) -> bool:
     """Write `body` between the kit markers in `path`, preserving everything outside them.
 
@@ -262,27 +317,8 @@ def write_managed_block(path: Path, body: str, *, dry_run: bool = False) -> bool
     `<name>.ai-resources-backup-<timestamp>` and the user is told. Line endings are preserved.
     Returns True if the file changed.
     """
-    raw = ""
-    if path.is_file():
-        with open(path, encoding="utf-8", newline="") as fh:
-            raw = fh.read()
-    nl = "\r\n" if "\r\n" in raw else "\n"
-    block = nl.join([MANAGED_BEGIN, *body.strip().splitlines(), MANAGED_END]) + nl
-    lines = raw.splitlines(keepends=True)
-    begin, end = _managed_block_span(lines)
-    if begin is not None and end is not None:
-        updated = "".join(lines[:begin]) + block + "".join(lines[end + 1:])
-        outside_changed = False
-    else:
-        rest = raw
-        if begin is not None:  # BEGIN without END: drop the orphan marker and the kit text after it
-            rest = "".join(lines[:begin] + lines[begin + 1:])
-            rest = strip_legacy_kit_sections(rest, LEGACY_KIT_HEADINGS | CURRENT_KIT_HEADINGS)
-        elif _LEGACY_TITLE.search(rest):
-            rest = strip_legacy_kit_sections(rest)
-        rest = rest.strip("\r\n")
-        updated = block + (f"{nl}{rest}{nl}" if rest else "")
-        outside_changed = rest != raw.strip("\r\n")
+    raw = _read_raw(path)
+    updated, outside_changed = _render_managed(raw, body)
     if updated == raw or dry_run:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -410,6 +446,42 @@ def kit_instructions_md(tool: str, ak_path: str, gateway_url: str, mode: str, *,
         f"skill explains how to run them (definitions in `{ak_path}/workflows/`).\n\n"
         f"{multimodel_protocol_md(ak_path, gateway_url, mode)}"
     )
+
+
+def openclaw_agent_kit_md(ak_path: str, *, delegates: bool = True) -> str:
+    """The kit block for an OpenClaw agent workspace `AGENTS.md`.
+
+    Independent of the OpenClaw engine (the same text under `keep`, `direct`, `claude-code` and
+    `antigravity`) and agent-agnostic: no agent id is substituted, so a workspace shared by two
+    agents converges to the same bytes whichever one the loop visits last. `delegates` is a
+    property of the WORKSPACE, not of an agent: it is False only when every agent that uses the
+    workspace is the `claude` worker, which does not delegate to itself.
+    """
+    text = (
+        "# ai-resources (OpenClaw agent)\n\n"
+        f"Kit root: `{ak_path}`. After `brew upgrade ai-resources`, run `ai-resources setup`.\n\n"
+        "## Kit workflow\n\n"
+        "- Before any multi-step work, load the `kit-orchestration` skill: it explains how to run "
+        "a workflow (steps, handoff, parallel groups, return format).\n"
+        "- Workflows are the `workflow-*` skills (feature, bugfix, refactor, incident response, "
+        "...). Pick one by reading each skill's description, which is its trigger. Definitions "
+        f"live in `{ak_path}/workflows/`.\n"
+        "- Work as a team with the kit roles rather than in one head: `planner`, "
+        "`software-architect`, `implementer`, `tester`, `code-reviewer`, `security-auditor`, "
+        "`verifier`, `doc-writer`. `/kit-plan <goal>` then `/kit-implement` drive that loop.\n"
+        "- Never sign off your own work: only the `verifier` confirms acceptance criteria.\n"
+        "- Hand work between roles through the handoff file: `handoff.md` at the repo root (or "
+        f"`.agent-output/handoff.md`); the shape is `{ak_path}/handoff.md.template`.\n"
+    )
+    if delegates:
+        text += (
+            "\n## Delegation\n\n"
+            "- Hand code and team work to the `claude` worker agent: "
+            "`sessions_spawn agentId=claude cwd=<project> thread=true`, so the reply lands back "
+            "in the same Telegram thread.\n"
+            "- Do not do a project's coding in this workspace; delegate it, then report.\n"
+        )
+    return text
 
 
 def kit_context_block(ak_path: str) -> str:

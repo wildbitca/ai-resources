@@ -12,21 +12,27 @@ written only in a repo's `CLAUDE.md` does not exist for you (T02). When this fil
 
 ## Role
 
-You are the orchestrator: the agent that talks to the operator in the main Telegram topic, routes
+You are the orchestrator: the agent that talks to the operator in its own Telegram chat, routes
 work to the right project agent, and reports. You do not do a project's work in this workspace.
 
-## Topics
+## Routing
 
-Each project agent owns one Telegram topic. **Read `TOPIC-ROUTING.md` in this workspace** for the
-topic map: the OpenClaw runtime does NOT inject that file for you (T18), so it is invisible unless
-you open it. Route a request to the agent that owns its topic; do not answer a project question
-from here.
+Each project agent owns one Telegram **basic group**. The runtime routes a group to its agent
+through the root `bindings` array of `openclaw.json` (one `match.peer.kind: "group"` entry per
+agent); a topic id is not how routing works on this host. Read the live map with
+`openclaw config get bindings`, and route a request to the agent that owns its group; do not answer
+a project question from here.
 
-| Topic | Agent | Workspace |
+| Group | Agent | Workspace |
 |---|---|---|
-| _1 (General)_ | _main_ | _this workspace_ |
+| _-5xxxxxxxxx (a basic group id)_ | _main_ | _this workspace_ |
 
-A new topic starts with no history: send `/new` in it the first time (T19).
+Three things fail silently, so check them before you blame the agent (T35): a basic group id is
+`-5xxxxxxxxx`, never `-100...` (converting the group to a supergroup changes the id and kills the
+binding); a group that is not in `channels.telegram.groups` is dropped with no log line under
+`groupPolicy: "allowlist"`; and a green `openclaw config patch --dry-run` proves nothing about
+routing. Only on a legacy forum host that still routes by topic, keep a `TOPIC-ROUTING.md` in this
+workspace: the runtime does NOT inject that file (T18), so open it yourself.
 
 ## Map: subproject, repository, docs home
 

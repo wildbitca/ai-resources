@@ -672,9 +672,24 @@ AGENTS_TEMPLATES = {
 OPENCLAW_WORKSPACE_FILES = ("AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md", "DREAMS.md",
                             "DOCS.md", "TOPIC-ROUTING.md", "memory/")
 _AGENT_ID = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
-TOPIC_REMINDER = ("A Telegram topic keeps its old context: send /new in the topic once so the agent "
-                  "starts with this AGENTS.md (T19). Binding the topic is done with "
-                  "`openclaw config set channels.telegram.groups[...]`; the kit never edits channels.")
+TOPIC_REMINDER = ("A Telegram topic or group keeps its old context: send /new in it once so the agent "
+                  "starts with this AGENTS.md (T19). A basic group is routed by an entry in the root "
+                  "`bindings` array (`ai-resources setup` maintains it) and must be listed in "
+                  "`channels.telegram.groups` (T35); the kit never edits channels.")
+
+
+def agent_workspaces(doc: dict) -> dict[str, list[Path]]:
+    """agent id -> its workspace path, resolved (`~` expanded, symlinks followed), entries order.
+
+    Callers deduplicate on the resolved path: two agents can share one workspace, and the file
+    in it is one file.
+    """
+    out: dict[str, list[Path]] = {}
+    for aid, entry in (((doc.get("agents") or {}).get("entries")) or {}).items():
+        ws = (entry or {}).get("workspace")
+        if ws:
+            out[aid] = [Path(ws).expanduser().resolve()]
+    return out
 
 
 def detect_workspace_kind(workspace: Path | str, runner: Runner = default_runner) -> str:
