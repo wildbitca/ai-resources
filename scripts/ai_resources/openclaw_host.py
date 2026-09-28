@@ -530,6 +530,26 @@ def _union(existing, wanted: list):
     return base + [w for w in wanted if w not in base]
 
 
+def model_spec(value) -> dict:
+    """The `{primary, fallbacks}` form of an agent's `model` field, whichever way it was written.
+
+    The OpenClaw schema is `anyOf: [string, {primary, fallbacks}]`, and `openclaw agents add
+    --model <id>` writes the string form, so every reader of `model` must be total: a string is
+    the primary, an object is taken as-is, anything else (absent, null, a number) is empty.
+    """
+    if isinstance(value, str):
+        return {"primary": value}
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def model_primary(entry) -> str | None:
+    """The primary model of an agent entry (or of `agents.defaults`), in either spelling."""
+    primary = model_spec((entry or {}).get("model")).get("primary")
+    return primary if isinstance(primary, str) and primary else None
+
+
 def _is_haiku(model) -> bool:
     return isinstance(model, str) and "haiku" in model.lower()
 
@@ -543,7 +563,7 @@ def expand_wildcards(profile: dict, doc: dict) -> dict:
         for aid, entry in ((doc.get("agents") or {}).get("entries") or {}).items():
             if aid in ENGINE_OWNED_ENTRIES:
                 continue
-            primary = ((entry or {}).get("model") or {}).get("primary")
+            primary = model_primary(entry)
             if primary and not _is_haiku(primary):
                 continue
             merged = json.loads(json.dumps(template))
@@ -1433,8 +1453,8 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                       name=tiers["daily"]["name"])
     report["off-box"] = offbox
 
-    default_model = (((cfg.get("agents") or {}).get("defaults") or {}).get("model") or {}).get("primary", "?")
-    report["models"] = [{"agent": aid, "model": ((e or {}).get("model") or {}).get("primary") or f"{default_model} (default)"}
+    default_model = model_primary((cfg.get("agents") or {}).get("defaults")) or "?"
+    report["models"] = [{"agent": aid, "model": model_primary(e) or f"{default_model} (default)"}
                         for aid, e in ((cfg.get("agents") or {}).get("entries") or {}).items()]
 
     rc, doctor = runner(["openclaw", "doctor", "--non-interactive"], env=env, timeout=120)
