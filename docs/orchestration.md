@@ -300,6 +300,22 @@ sequenceDiagram
 
 **Subagent return format:**
 ```
+## Result
+- Status: (success | partial | blocked)
+- Executive summary: (1-3 sentences)
+- Summary: (max 5 bullet points)
+- Handoff: (path to updated handoff file)
+
+## Artifacts
+- Files touched: (paths)
+- Commands run: (or "none")
+
+## Routing
+- Next recommended: (workflow step)
+- Blocked: (yes/no)
+- Risks: (or "none")
+```
+
 ## OpenClaw agent workspaces
 
 On an OpenClaw host every agent has a workspace, and OpenClaw injects that workspace's `AGENTS.md`
@@ -360,22 +376,6 @@ on openclaw 2026.9.6 with one real `create` against a throwaway repository:
 silently. That is how `/tmp/kitvenv` and the old `/tmp/wt-*` worktrees died (the same tmpfs failure as
 T26). The `using-git-worktrees` skill carries the rule and its reason, and keeps the raw
 `git worktree` commands as the fallback for sessions outside OpenClaw.
-
-## Result
-- Status: (success | partial | blocked)
-- Executive summary: (1-3 sentences)
-- Summary: (max 5 bullet points)
-- Handoff: (path to updated handoff file)
-
-## Artifacts
-- Files touched: (paths)
-- Commands run: (or "none")
-
-## Routing
-- Next recommended: (workflow step)
-- Blocked: (yes/no)
-- Risks: (or "none")
-```
 
 ## Handoff Protocol
 
