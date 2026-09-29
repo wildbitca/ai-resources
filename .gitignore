@@ -17,3 +17,5 @@ scripts/**/__pycache__/
 evals/results/
 # Workflow artifacts (plans, handoffs, spike captures — may hold real user content)
 .agent-output/
+# the openclaw CLI drops received images in the cwd
+.openclaw-cli-images/
