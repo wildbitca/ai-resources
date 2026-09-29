@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "generated_at": "2026-09-19T16:27:56.780094+00:00",
+  "generated_at": "2026-09-29T15:47:03.745696+00:00",
   "skills_root": "skills",
-  "count": 138,
+  "count": 139,
   "skills": [
     {
       "id": "changelog-best-practices",
@@ -21,6 +21,16 @@
       "description": "Every feature must belong to a ClickUp card. Use when starting feature work, creating tasks, or tracking work in ClickUp. Requires ClickUp MCP tools.",
       "triggers": [
         "clickup, feature tracking, create task, task card, work tracking, project management, epic, sprint"
+      ],
+      "globs": []
+    },
+    {
+      "id": "cloudflare-cf-cli",
+      "path": "skills/cloudflare-cf-cli/SKILL.md",
+      "name": "cloudflare-cf-cli",
+      "description": "Use Cloudflare's `cf` CLI instead of raw Cloudflare API calls (curl, fetch) or Wrangler for any Cloudflare account/zone/Workers/DNS task. Cuts agent token usage via condensed JSON output and command search.",
+      "triggers": [
+        "cloudflare, wrangler, cf cli, workers, cf deploy, cf dev, dns record, zone, cloudflare api, CLOUDFLARE_API_TOKEN"
       ],
       "globs": []
     },

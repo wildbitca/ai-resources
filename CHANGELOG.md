@@ -4,6 +4,26 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.12.0] — 2026-09-29 — the Cloudflare `cf` CLI skill
+
+### Added
+
+- **`skills/cloudflare-cf-cli`**: prefer Cloudflare's agent-first `cf` CLI over raw `curl` against
+  the Cloudflare API or Wrangler for account, zone, DNS, Workers, D1, R2, KV and Access work. It
+  covers the whole API (~3,000 operations against Wrangler's ~280) and defaults to condensed JSON,
+  which is the actual reason to prefer it: it costs fewer tokens on every call. The skill also
+  pins the safety rules that matter — discover commands with `cf cli search` instead of chaining
+  `--help` guesses, keep those queries anonymous (no names, domains, IDs or tokens), request a
+  scoped token rather than reusing a production one from a project's `.env`, and never hand-edit
+  DNS records that this repo already declares as IaC through Crossplane.
+
+### Changed
+
+- `skills-index.json` regenerated (139 skills), and the `.skill-source.yaml` banner of the 24
+  vendored `gpm-*` skills updated to the wording `ai-resources generate` emits today. No skill
+  content changed: every `git_revision` is untouched. The churn lands here rather than reappearing
+  on the next `generate`.
+
 ## [1.11.1] — 2026-09-29 — the kit notices that the gateway runs an older kit
 
 ### Fixed
