@@ -687,8 +687,99 @@ def plugin_is_stale(plugin_dir: str) -> bool:
         return root != plugin_dir
 
 
-def restart_gateway(backend: str = "agy-cli") -> bool:
-    """Restart the gateway and report whether the backend came back registered."""
+# Limits of the restart guard that are accepted, not overlooked:
+#   * a turn that starts between the last poll and `gateway restart` is still killed: the probe
+#     narrows the window, it cannot close it without locking the gateway;
+#   * the 30-minute wait cap is a constant, not a setting;
+#   * a non-interactive upgrade on an always-busy host defers on EVERY run and leaves the plugin
+#     stale until someone acts. That is the design: the alternative is killing work unattended,
+#     and the loud error plus `ai-resources openclaw status` are the nudge.
+#
+# The three answers when agent turns are in flight. `wait` is what an operator does by hand, and
+# the only one that ends with both the work finished and the tooling correct.
+RESTART_NOW = "restart now (kills the turns listed above)"
+RESTART_DEFER = "defer (leave the gateway running; setup reports what is left to do)"
+RESTART_WAIT = "wait until they finish, then restart"
+RESTART_WAIT_CAP = 30 * 60        # seconds `wait` polls before it falls back to defer
+RESTART_WAIT_INTERVAL = 15.0
+RESTART_COMMAND = "openclaw gateway restart"
+
+
+class RestartDeferred(Exception):
+    """The gateway was NOT restarted because agent turns are in flight. Never a silent skip: the
+    caller records it and reports OpenClaw as not complete."""
+
+    def __init__(self, reason: str, busy: list):
+        super().__init__(reason)
+        self.reason, self.busy = reason, busy
+
+
+def _gateway_busy() -> tuple[int, list]:
+    return openclaw_host.gateway_busy(out=ui.detail)
+
+
+def _gateway_main_pid() -> str:
+    return openclaw_host.gateway_main_pid()
+
+
+def _can_ask() -> bool:
+    """Whether anyone can answer a prompt: the wizard's own flag, then a terminal on stdin."""
+    return not ui.is_non_interactive() and ui.stdin_is_a_terminal()
+
+
+def _probe_busy(probe) -> tuple[int, list]:
+    """The probe already swallows its own errors; this is the belt to that pair of braces, because
+    a restart guard that raises would block the upgrade it exists to protect."""
+    try:
+        return (probe or _gateway_busy)()
+    except Exception as e:  # noqa: BLE001
+        ui.detail(f"restart guard: the busy probe failed ({type(e).__name__}: {e}); treating the gateway as idle")
+        return 0, []
+
+
+def _await_idle(probe, count: int, workers: list, *, sleep, monotonic, cap: float, interval: float):
+    """Poll until no agent turn is left; RestartDeferred at the cap or on Ctrl-C.
+
+    An interrupted wait defers and never restarts: the operator who pressed Ctrl-C wanted out."""
+    deadline = monotonic() + cap
+    try:
+        while count:
+            if monotonic() >= deadline:
+                raise RestartDeferred(f"{count} agent turn(s) still in flight after waiting {cap / 60:g} min", workers)
+            sleep(interval)
+            count, workers = _probe_busy(probe)
+    except KeyboardInterrupt:
+        raise RestartDeferred(f"{count} agent turn(s) in flight (wait interrupted)", workers) from None
+
+
+def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=None, monotonic=None,
+                    interactive: bool | None = None, wait_cap: float = RESTART_WAIT_CAP,
+                    wait_interval: float = RESTART_WAIT_INTERVAL) -> bool:
+    """Restart the gateway and report whether the backend came back registered.
+
+    A restart kills every agent turn in flight, and the caller reaches this exactly when
+    `brew upgrade` moved the plugin, so it looks first. Idle: restart as it always did, no
+    prompt. Busy and interactive: ask (restart now / defer / wait). Busy and not interactive:
+    defer. A deferral raises RestartDeferred; it never returns quietly.
+    """
+    count, workers = _probe_busy(probe)
+    if count:
+        reason = f"{count} agent turn(s) in flight"
+        if not (_can_ask() if interactive is None else interactive):
+            raise RestartDeferred(reason, workers)
+        try:
+            answer = (ask or ui.select)(
+                f"OpenClaw is running {count} agent turn(s); a restart kills them:\n"
+                f"{openclaw_host.describe_busy(workers)}\nWhat now?",
+                [RESTART_NOW, RESTART_DEFER, RESTART_WAIT], default=RESTART_DEFER)
+        except KeyboardInterrupt:
+            answer = None
+        if answer == RESTART_WAIT:
+            ui.info(f"Waiting up to {wait_cap / 60:g} min for the turns to finish (Ctrl-C defers)...")
+            _await_idle(probe, count, workers, sleep=sleep or time.sleep, monotonic=monotonic or time.monotonic,
+                        cap=wait_cap, interval=wait_interval)
+        elif answer != RESTART_NOW:
+            raise RestartDeferred(reason, workers)
     rc, out = _openclaw(["gateway", "restart"], timeout=180)
     if rc != 0:
         ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")
@@ -698,6 +789,34 @@ def restart_gateway(backend: str = "agy-cli") -> bool:
             return True
         time.sleep(BACKEND_WAIT_SECONDS)
     return False
+
+
+def _record_deferred_restart(s: state.SetupState, deferred: RestartDeferred) -> None:
+    """Write the gap down and say it loudly: setup must not claim a state it does not have."""
+    s.openclaw.gateway_restart_pending = {
+        "reason": deferred.reason, "command": RESTART_COMMAND, "main_pid": _gateway_main_pid(),
+        "since": datetime.now(timezone.utc).isoformat()}
+    ui.error(f"OpenClaw setup is NOT complete: the gateway restart was deferred ({deferred.reason}), so the "
+             "gateway still runs the old plugin and the agy-cli backend is not registered. "
+             f"Finish with `{RESTART_COMMAND}` once the turns have ended; "
+             "`ai-resources openclaw status` shows this until it is done.")
+
+
+def pending_restart_findings(o: state.OpenClawState, main_pid=None) -> list:
+    """The verify finding for a deferred restart that has not happened; [] when none is owed.
+
+    Done means the unit's MainPID changed since the deferral (see `restart_done`). An unreadable
+    pid is not done, and neither is a malformed record: a corrupt state must not read as
+    "nothing is owed"."""
+    from ...verify import Finding as F
+
+    if o.gateway_restart_pending is None or o.gateway_restart_pending == {}:
+        return []
+    pending = openclaw_host.normalize_pending(o.gateway_restart_pending)
+    if openclaw_host.restart_done(pending, (main_pid or _gateway_main_pid)()):
+        return []
+    return [F("error", ID, f"the gateway restart setup deferred ({pending.get('reason', '')}) has not happened",
+              f"run `{pending.get('command', RESTART_COMMAND)}` when the agent turns have ended")]
 
 
 def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
@@ -735,6 +854,7 @@ def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
     plugin_dir = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
     stale = plugin_is_stale(plugin_dir)
     if backend_registered("agy-cli") and not stale:
+        s.openclaw.gateway_restart_pending = {}   # restarted by hand since a deferral: nothing is owed
         return True
 
     # A plugin linked from another shell only takes effect on the next gateway start, and
@@ -742,7 +862,13 @@ def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
     if stale:
         ui.info("OpenClaw is running the plugin from an older kit directory "
                 "(`brew upgrade` moves it) — restarting the gateway.")
-    if restart_gateway():
+    try:
+        restarted = restart_gateway()
+    except RestartDeferred as deferred:
+        _record_deferred_restart(s, deferred)
+        return False
+    if restarted:
+        s.openclaw.gateway_restart_pending = {}
         ui.ok("OpenClaw gateway restarted; the agy-cli backend is registered.")
         return True
     ui.error("OpenClaw: the agy-cli backend is still not registered. Restart the gateway "
@@ -836,6 +962,8 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
         # skipping registration because a stale marker is still present.
         (s.openclaw.previous or {}).pop("agy_mcp_bridge_preexisted", None)
         s.openclaw.antigravity_applied = False
+        # No antigravity, no agy-cli backend to register: a deferred restart is no longer owed.
+        s.openclaw.gateway_restart_pending = {}
 
 
 
@@ -1182,6 +1310,8 @@ def _teardown_engine(s: state.SetupState) -> bool:
     s.openclaw.applied = False
     s.openclaw.previous = {}
     s.openclaw.model = ""
+    # The debt was for registering the plugin's backend; with the engine put back nothing owes it.
+    s.openclaw.gateway_restart_pending = {}
     return True
 
 
@@ -1210,6 +1340,9 @@ def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
     if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored
             or s.openclaw.agent_kit_blocks or host_section.applied_any(s.openclaw)):
+        # A deferral leaves `applied` False (the engine patch waits for the restart), so this is
+        # the path that meets it: with nothing to undo there is nothing left to demand either.
+        s.openclaw.gateway_restart_pending = {}
         return []
     doc = read_config(config_path())
     # Reverse order of configure(): the host section ran last, so it is undone first.
@@ -1374,6 +1507,10 @@ def verify(ctx: dict) -> list:
                              "never edit openclaw.json by hand"))
     host_findings = _openclaw_host.verify(ctx, runner=ctx.get("runner"))
     out += host_findings
+    # The runner is threaded like the host section's above: verify must not reach the live unit.
+    runner = ctx.get("runner")
+    out += pending_restart_findings(
+        o, main_pid=(lambda: openclaw_host.gateway_main_pid(runner)) if runner else None)
     gateway_down = any(f.level == "error" and openclaw_host.GATEWAY_UNIT in f.message for f in host_findings)
     if o.plugin_linked and not gateway_down:
         plugin = plugin_runtime()

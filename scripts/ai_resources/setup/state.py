@@ -234,6 +234,11 @@ class OpenClawState:
     bindings_written: str = ""
     host_env_previous: dict[str, Any] = field(default_factory=dict)    # kit-host.env key -> value before (None: absent)
     host_env_created: bool = False
+    # A gateway restart setup DEFERRED because agent turns were in flight: {reason, command,
+    # main_pid, since}. Empty when nothing is owed. While it is set setup reports OpenClaw as
+    # not complete and `ai-resources openclaw status` names the command; `main_pid` (the unit's
+    # MainPID at deferral) is how a restart done by hand is recognised.
+    gateway_restart_pending: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

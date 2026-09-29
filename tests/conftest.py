@@ -37,3 +37,8 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # v1.9.7 reported as fixed (1.10.2).
     from ai_resources.setup.cockpits import openclaw as openclaw_cockpit
     monkeypatch.setattr(openclaw_cockpit, "CONFIG_ROOT", root / "openclaw-home", raising=False)
+    # And the restart guard's two systemd reads: an unstubbed `restart_gateway()` would ask the
+    # live unit whether agent turns are running, and a busy host would defer a restart a test
+    # expects to happen. The guard's own tests pass a fake probe explicitly.
+    monkeypatch.setattr(openclaw_cockpit, "_gateway_busy", lambda: (0, []))
+    monkeypatch.setattr(openclaw_cockpit, "_gateway_main_pid", lambda: "")

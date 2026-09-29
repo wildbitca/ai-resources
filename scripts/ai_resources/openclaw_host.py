@@ -29,7 +29,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from . import repo_root
 
@@ -395,6 +395,179 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
     if not drained:
         return EXIT_NOT_DRAINED
     return EXIT_OK if doctor_ok else EXIT_DOCTOR_FAILED
+
+
+# --- the restart guard: is a turn in flight right now? --------------------------------------------
+#
+# The drain above answers "did everything die after the stop". This answers the question before
+# it. OpenClaw has no "turn in flight" query (`sessions list` returns store paths, `gateway
+# status` service state), and CPU or transcript mtime gave two false "stuck agent" diagnoses, so
+# the signal is the one the drain already trusts: what the unit's cgroup holds. Each agent turn
+# is a CLI worker child of the gateway; a restart kills all of them.
+
+# Two assumptions the probe makes, both of which fail OPEN (the restart proceeds, as it did before
+# the guard existed) and neither of which is detectable from inside it:
+#   * cgroup v2. The unit's tree is read from `<cgroup root><ControlGroup>/cgroup.procs`, the
+#     unified hierarchy. On a v1 or hybrid host that path does not exist (or holds nothing), the
+#     probe answers "idle" and the guard is silently absent; only the read-failure line through
+#     `out` hints at it.
+#   * argv[0] only. An agent counts when the basename of its own argv[0] is in AGENT_CLI_NAMES.
+#     A CLI started through a node shim (`node .../cli.js`) or wrapped (`sudo claude`,
+#     `env claude`) has another argv[0] and is invisible. That is deliberate: it is the same
+#     rule that keeps the gateway's own node workers out of the count, and matching on later
+#     arguments would let a path that merely contains "claude" make an idle gateway look busy.
+#
+# argv[0] basenames of the agent CLIs the gateway spawns for a turn. The gateway's own node
+# workers (`spawn-broker`, `sqlite-readonly-location`, `dist/index.js` itself) are deliberately
+# absent: they are always there, so counting them would make every gateway look busy.
+AGENT_CLI_NAMES = frozenset({"claude", "codex", "gemini", "agy", "opencode"})
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+PROC_ROOT = Path("/proc")
+
+
+class AgentProc(NamedTuple):
+    pid: int
+    agent: str
+    elapsed: float | None     # seconds since the process started; None when /proc/<pid>/stat is unreadable
+
+
+def _elapsed(proc_root: Path, pid: int) -> float | None:
+    """Seconds since `pid` started: /proc/uptime minus starttime (field 22 of stat, in clock ticks)."""
+    try:
+        stat = (proc_root / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
+        uptime = float((proc_root / "uptime").read_text(encoding="utf-8").split()[0])
+        # `comm` (field 2) may hold spaces and parentheses: fields resume after the LAST ")".
+        start = int(stat.rpartition(")")[2].split()[19])
+        return max(0.0, uptime - start / os.sysconf("SC_CLK_TCK"))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _unit_pids(unit_dir: Path, out: Callable[[str], None] | None) -> list[int]:
+    """Every pid in `unit_dir`'s cgroup and all its descendants, each once, in walk order.
+
+    cgroup v2 lists only the processes directly in a cgroup in its `cgroup.procs`, while the
+    drain above (`TasksCurrent`) counts the whole subtree. The unit is flat today; walking keeps
+    the probe honest the day OpenClaw gains `Delegate=yes` or a scope per turn, instead of
+    silently answering "idle" for work that lives one level down."""
+    pids: list[int] = []
+    for here, _dirs, files in os.walk(unit_dir):
+        if "cgroup.procs" not in files:
+            continue
+        try:
+            listing = (Path(here) / "cgroup.procs").read_text(encoding="utf-8").split()
+        except OSError as e:
+            if out and Path(here) == unit_dir:
+                out(f"restart guard: cannot read {unit_dir}/cgroup.procs ({e}); treating the gateway as idle")
+            continue
+        pids += [int(p) for p in listing if p.isdigit() and int(p) not in pids]
+    return pids
+
+
+def gateway_busy(runner: Runner = default_runner, *, cgroup_root: Path = CGROUP_ROOT,
+                 proc_root: Path = PROC_ROOT,
+                 out: Callable[[str], None] | None = None) -> tuple[int, list[AgentProc]]:
+    """(number of agent CLI workers in the gateway's cgroup tree, one AgentProc per worker).
+
+    Any failure (no systemd, a stopped unit, an unreadable cgroup or /proc, a path that leaves
+    the cgroup root) is "not busy": a probe that blocks an upgrade because it could not read
+    /proc is worse than no probe, the rule the gateway guard hook states for itself.
+
+    That rule makes a permanently broken probe look exactly like an idle host, so the failures
+    that are NOT the normal "unit is stopped" case are also said once through `out` (a quiet
+    line), which is how a dead guard gets noticed.
+    """
+    try:
+        rc, group = runner(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "ControlGroup", "--value"],
+                           env=systemd_env())
+        group = group.strip()
+        if rc != 0:
+            if out:
+                out(f"restart guard: systemctl could not describe {GATEWAY_UNIT} (rc {rc}); treating the gateway as idle")
+            return 0, []
+        if not group.startswith("/"):
+            return 0, []   # a stopped unit has no cgroup: nothing can be in flight
+        root = cgroup_root.resolve()
+        unit_dir = (root / group.lstrip("/")).resolve()
+        if not unit_dir.is_relative_to(root):
+            return 0, []
+        found: list[AgentProc] = []
+        for pid in _unit_pids(unit_dir, out):
+            try:
+                argv0 = (proc_root / str(pid) / "cmdline").read_bytes().split(b"\0")[0].decode(errors="replace")
+            except OSError:
+                continue   # exited between the two reads
+            name = os.path.basename(argv0)
+            if name in AGENT_CLI_NAMES:
+                found.append(AgentProc(pid, name, _elapsed(proc_root, pid)))
+        return len(found), found
+    except Exception as e:  # noqa: BLE001 - see the docstring: a broken probe must never block
+        if out:
+            out(f"restart guard: the busy probe failed ({type(e).__name__}: {e}); treating the gateway as idle")
+        return 0, []
+
+
+def gateway_main_pid(runner: Runner = default_runner) -> str:
+    """The unit's MainPID, "" when unknown. It changes on every restart, which is how a pending
+    restart is recognised as done without asking the gateway anything."""
+    rc, out = runner(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "MainPID", "--value"],
+                     env=systemd_env())
+    return out.strip() if rc == 0 else ""
+
+
+def format_elapsed(seconds: float | None) -> str:
+    if seconds is None:
+        return "?"
+    minutes = int(seconds // 60)
+    return f"{minutes // 60}h {minutes % 60:02d}m" if minutes >= 60 else f"{minutes}m {int(seconds % 60):02d}s"
+
+
+def describe_busy(workers: list[AgentProc]) -> str:
+    """One line per worker, for the prompt and for the record of a deferral."""
+    return "\n".join(f"  pid {w.pid}  {w.agent}  running {format_elapsed(w.elapsed)}" for w in workers)
+
+
+def render_pending(pending: dict) -> str:
+    """The `status` block for a gateway restart that setup deferred."""
+    return ("restart     PENDING: setup deferred the gateway restart (" + str(pending.get("reason", "")) + ")\n"
+            f"            since {pending.get('since', '?')}; finish with: {pending.get('command', 'openclaw gateway restart')}")
+
+
+def normalize_pending(pending) -> dict:
+    """A pending-restart record whose shape can be trusted, or a stand-in that keeps the gap visible.
+
+    The record is read back from setup-state.yaml, which can be hand-edited or written by another
+    kit version, and this runs in the reporting paths, exactly when the state may already be bad.
+    A record that is not a mapping is NOT "nothing owed": it becomes a pending record with no
+    usable pid, so it stays reported until a setup run clears it."""
+    if isinstance(pending, dict):
+        return pending
+    return {"reason": f"unreadable pending-restart record {pending!r}", "command": "openclaw gateway restart",
+            "main_pid": "", "since": "?"}
+
+
+def restart_done(pending: dict, current_pid: str) -> bool:
+    """Whether the gateway restarted since the deferral: both pids known and different.
+
+    A pid that could not be read when the deferral was recorded cannot be compared with anything,
+    so an empty recorded pid means "still pending", never "done": otherwise any pid read later
+    would look like a restart and the gap would clear itself while the old plugin still runs."""
+    recorded = str(pending.get("main_pid") or "")
+    return bool(recorded) and bool(current_pid) and current_pid != recorded
+
+
+def pending_restart_report(pending, runner: Runner = default_runner) -> str:
+    """render_pending while the gateway has not restarted since the deferral, else "".
+
+    Done means the MainPID differs from the one recorded. An unreadable pid, now or at record
+    time, is not done: only proof clears a gap that setup named.
+    """
+    if pending is None or pending == {}:
+        return ""
+    pending = normalize_pending(pending)
+    if restart_done(pending, gateway_main_pid(runner)):
+        return ""
+    return render_pending(pending)
 
 
 # --- the canonical host configuration (profiles/openclaw-host.json5) ---------------------------------
@@ -1660,6 +1833,14 @@ def cmd_agent_new(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     print(render_status(collect_status(run_doctor=not getattr(args, "no_doctor", False))))
+    # Outside the ten sections on purpose: it is not host state but a gap setup named and left.
+    try:
+        from .setup import state
+        pending = pending_restart_report(state.load().openclaw.gateway_restart_pending)
+    except Exception:  # noqa: BLE001 - an unreadable setup state must not hide the report above
+        pending = ""
+    if pending:
+        print(pending)
     return 0  # status never repairs and never fails the shell: it reports
 
 

@@ -4,6 +4,46 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.11.0] — 2026-09-29 — the gateway restart asks before it kills an agent turn
+
+### Added
+
+- **`ai-resources setup` no longer restarts the OpenClaw gateway out from under live work.**
+  `restart_gateway()` ran `openclaw gateway restart` unconditionally, and its only caller reaches
+  it exactly when the plugin directory is stale — which is what `brew upgrade` causes, because it
+  moves the kit while the running gateway holds the previous path. So the ordinary upgrade killed
+  every agent turn in flight, with no warning and no way to say "later". Measured on a real host:
+  nine agent workers alive, one over an hour into its turn.
+- **`gateway_busy()` (`openclaw_host.py`)**: a pre-restart probe beside the drained doctor it
+  mirrors, sharing its unit constant, runner indirection and env handling. It resolves the unit's
+  cgroup from `systemctl show -p ControlGroup`, walks that tree's `cgroup.procs`, and counts only
+  processes whose `argv[0]` basename is a known agent CLI — never the gateway's own node workers.
+  Only the CLI name is kept, never argv: a worker's command line carries tool allow-lists and
+  config paths, and none of it reaches the prompt, the logs or the state file.
+- **Three answers when turns are in flight**: restart now (the prompt names what it kills), defer,
+  or wait — which polls until idle and then restarts, under a 30-minute cap after which it defers.
+  An interrupted wait defers and never restarts: whoever pressed Ctrl-C wanted out.
+- Without a terminal the answer is always defer. Killing unattended work to finish a setup is the
+  worse trade.
+
+### Fixed
+
+- **A deferral can no longer silence itself.** It is recorded as `gateway_restart_pending`, makes
+  the engine step fail, raises a `verify` error naming the command, and shows a PENDING block in
+  `ai-resources openclaw status` until the unit's MainPID changes. An empty recorded pid, an
+  unreadable current pid and a malformed (non-mapping) record all keep it reported — a corrupt
+  record must not be read as "nothing is owed". Teardown discharges it, so tearing the kit down
+  never leaves a demand to restart a gateway for a plugin the kit no longer registers.
+
+### Notes
+
+- The probe fails open by design: any error means "not busy", because a guard that blocks an
+  upgrade when it cannot read `/proc` is worse than no guard. It now leaves one quiet line when it
+  does, so a dead guard is distinguishable from an idle host.
+- Accepted limits, documented in the code: a turn that starts between the last poll and the
+  restart is still killed; the cap is a constant; and an unattended upgrade on an always-busy host
+  defers on every run.
+
 ## [1.10.4] — 2026-09-29 — the orphan recovery also covers the engine sections
 
 ### Fixed
