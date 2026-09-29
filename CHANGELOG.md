@@ -4,6 +4,52 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.12.1] — 2026-09-29 — five findings from an independent review of 1.11.0–1.12.0
+
+An independent review of the day's three commits found two medium and three low defects. Both
+mediums were reproduced before being fixed, and one of them was a regression introduced by the
+previous round's own fix.
+
+### Fixed
+
+- **A dead restart guard was silent again** (`openclaw_host.py`). `_unit_pids` walked the unit's
+  cgroup with a bare `os.walk`, whose default `onerror=None` swallows a missing or unreadable
+  directory, so the walk yielded nothing and the diagnostic line added in 1.11.0 — which lives in
+  the `cgroup.procs` read's error branch — was never reached. On a cgroup v1 or hybrid host
+  `gateway_busy()` therefore answered `(0, [])` with no trace at all, and a `brew upgrade` would
+  kill every agent turn in flight without a prompt: exactly the regression the guard exists to
+  prevent. The walk now checks the directory and reports through `out`, and still fails open.
+- **Teardown after a deferral left half the engine behind.** 1.11.1 made the nothing-applied early
+  return unlink the plugin, but it still left `antigravity_applied` True and never unregistered the
+  agy MCP bridge — which `_register_plugin_and_backends()` registers *before* it reaches the
+  restart. Since `doctor.py` gates its engine section on that flag, `ai-resources doctor` warned
+  "OpenClaw has not loaded the ai-resources plugin" on every run after a clean teardown, and a
+  second teardown took the same early return and skipped the bridge again. The branch now
+  unregisters the bridge under the normal path's condition, clears the marker and resets the flag;
+  a second teardown is a no-op, and a bridge the user owned is still left alone.
+- **A pid listed twice in one `cgroup.procs` was counted twice.** `pids += [... if int(p) not in
+  pids]` evaluates the comprehension before `+=` mutates the list, so the guard deduplicated only
+  across cgroup directories. A fork racing the read can list a pid twice, and the prompt would then
+  tell the operator a restart kills more turns than exist.
+- **A DST-ambiguous start time could hide a stale plugin.** `gateway_started_at()` parsed systemd's
+  localised timestamp and fell back to `time.mktime()` with `tm_isdst = -1` for any non-UTC zone, so
+  during an autumn fall-back hour the result could be an hour out — and an hour out in one direction
+  reproduces precisely the false negative 1.11.1 was written to fix. It now asks systemd for
+  `--timestamp=unix` and accepts only `@<digits>`; anything else returns None and the path rule
+  decides alone.
+- **The staleness warning contradicted its own evidence.** `plugin_is_stale()` returns True for two
+  different reasons, but the doctor and verify messages both said the gateway runs the plugin "from
+  an older kit directory" — and when the *time* rule fires the paths are identical, so an operator
+  who checked would find them equal and reasonably dismiss the warning. A new `stale_reason()`
+  reports which rule tripped (`"path"`, `"time"` or None); `plugin_is_stale()` is a bool wrapper
+  over it, so existing callers are unaffected, and each rule is now worded for what it means.
+
+### Notes
+
+- `--timestamp=unix` needs a systemd that supports it. Where it does not, the time rule is simply
+  unavailable and detection falls back to the path comparison — the same behaviour as before 1.11.1,
+  and the safe direction.
+
 ## [1.12.0] — 2026-09-29 — the Cloudflare `cf` CLI skill
 
 ### Added

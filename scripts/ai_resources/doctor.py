@@ -217,10 +217,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         from . import repo_root as _repo_root
         plugin_dir = str(Path(_shared_cockpit.stable_kit_root(_repo_root()))
                          / "openclaw-plugin" / "ai-resources")
-        if _openclaw_cockpit.plugin_is_stale(plugin_dir):
+        if (why := _openclaw_cockpit.stale_reason(plugin_dir)):
             # `brew upgrade` moves the kit; until the gateway restarts it holds the old
-            # path and answers "Unknown CLI backend" to every chat message.
-            ui.warn("OpenClaw is running the ai-resources plugin from an older kit directory.")
+            # path and answers "Unknown CLI backend" to every chat message. When only the
+            # time rule trips the paths are equal, so the message must not talk about a directory.
+            ui.warn("OpenClaw is running the ai-resources plugin from an older kit directory." if why == "path"
+                    else "OpenClaw is running older ai-resources plugin code than the kit on disk "
+                         "(restart to load it).")
             ui.detail("Run: openclaw gateway restart")
             issues += 1
         elif not _openclaw_cockpit.backend_registered("agy-cli"):

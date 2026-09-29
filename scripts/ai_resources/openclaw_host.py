@@ -19,7 +19,6 @@ real state machines against a fake and nothing in the suite can reach a live uni
 from __future__ import annotations
 
 import argparse
-import calendar
 import ipaddress
 import copy
 import json
@@ -451,8 +450,20 @@ def _unit_pids(unit_dir: Path, out: Callable[[str], None] | None) -> list[int]:
     drain above (`TasksCurrent`) counts the whole subtree. The unit is flat today; walking keeps
     the probe honest the day OpenClaw gains `Delegate=yes` or a scope per turn, instead of
     silently answering "idle" for work that lives one level down."""
+    if not unit_dir.is_dir():
+        # A v1 or hybrid host answers a ControlGroup that is not under the v2 root. `os.walk` would
+        # swallow that and yield nothing, which reads as "idle" with no trace: say it instead.
+        if out:
+            out(f"restart guard: {unit_dir} is not a cgroup v2 directory; treating the gateway as idle")
+        return []
     pids: list[int] = []
-    for here, _dirs, files in os.walk(unit_dir):
+    seen: set[int] = set()
+
+    def unreadable(e: OSError) -> None:
+        if out and Path(e.filename or "") == unit_dir:
+            out(f"restart guard: cannot read {unit_dir} ({e.strerror or e}); treating the gateway as idle")
+
+    for here, _dirs, files in os.walk(unit_dir, onerror=unreadable):
         if "cgroup.procs" not in files:
             continue
         try:
@@ -461,7 +472,11 @@ def _unit_pids(unit_dir: Path, out: Callable[[str], None] | None) -> list[int]:
             if out and Path(here) == unit_dir:
                 out(f"restart guard: cannot read {unit_dir}/cgroup.procs ({e}); treating the gateway as idle")
             continue
-        pids += [int(p) for p in listing if p.isdigit() and int(p) not in pids]
+        # One at a time: a fork racing the read can list a pid twice within a single cgroup.procs.
+        for p in listing:
+            if p.isdigit() and int(p) not in seen:
+                seen.add(int(p))
+                pids.append(int(p))
     return pids
 
 
@@ -525,20 +540,19 @@ def gateway_started_at(runner: Runner = default_runner) -> float | None:
     unparseable answer are all None: the caller then judges by the path alone rather than
     inventing staleness from a clock it could not read.
 
-    systemd prints `Mon 2026-09-28 20:49:26 UTC`: local time with the zone's abbreviation. UTC/GMT
-    are exact; any other abbreviation cannot be mapped back reliably, so it is read as the local
-    time it was printed in, which is what it is on the host that ran systemctl.
+    Asked as `--timestamp=unix`, which prints `@<epoch>`. The default form is local time with a
+    zone abbreviation, and mapping that back is a guess during a DST fall-back hour: an hour early
+    makes a kit installed in that window look older than the gateway, the very false negative the
+    time rule exists to prevent. A systemd without the flag fails the call, and any answer that is
+    not `@<digits>` is None as well: the caller then judges by the path alone, the safe direction.
     """
     try:
-        rc, out = runner(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "ActiveEnterTimestamp", "--value"],
-                         env=systemd_env())
-        parts = out.split()
-        if rc != 0 or len(parts) < 3:
+        rc, out = runner(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "ActiveEnterTimestamp", "--value",
+                          "--timestamp=unix"], env=systemd_env())
+        stamp = out.strip()
+        if rc != 0 or not (stamp.startswith("@") and stamp[1:].isdigit()):
             return None
-        stamp = time.strptime(f"{parts[1]} {parts[2]}", "%Y-%m-%d %H:%M:%S")
-        if len(parts) > 3 and parts[3] in ("UTC", "GMT"):
-            return float(calendar.timegm(stamp))
-        return time.mktime(stamp)
+        return float(stamp[1:])
     except Exception:  # noqa: BLE001 - a broken clock read must never make the gateway look stale
         return None
 

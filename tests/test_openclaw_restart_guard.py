@@ -125,6 +125,15 @@ def test_a_pid_listed_in_two_cgroups_is_counted_once(tree):
     assert probe(tree)[0] == 1
 
 
+def test_a_pid_listed_twice_in_one_cgroup_procs_is_counted_once(tree):
+    """A fork racing the read can make cgroup.procs list a pid twice; the prompt must not tell the
+    operator a restart kills more turns than exist."""
+    tree.add(201, "claude", "--print")
+    (tree.unit_dir / "cgroup.procs").write_text("201\n201\n")
+    count, detail = probe(tree)
+    assert count == 1 and [d.pid for d in detail] == [201]
+
+
 def test_a_process_that_exits_between_the_two_reads_is_skipped(tree):
     tree.add(201, "claude", "--print")
     tree.add(202, "claude", "--print", listed=False)   # in cgroup.procs, gone from /proc
@@ -216,6 +225,29 @@ def test_a_broken_probe_says_so_quietly_but_still_reports_not_busy(tree):
 
     assert host.gateway_busy(boom, cgroup_root=tree.cgroup_root, proc_root=tree.proc_root, out=said.append) == (0, [])
     assert len(said) == 1 and "RuntimeError" in said[0]
+
+
+def test_a_missing_unit_cgroup_says_so_once_and_still_reports_not_busy(tree):
+    """A cgroup v1 or hybrid host answers a ControlGroup that does not exist under the v2 root. The
+    walk yields nothing, so without an explicit check the dead guard stays as silent as an idle one."""
+    said: list[str] = []
+    assert host.gateway_busy(fake_systemctl("/no/such/slice.service"), cgroup_root=tree.cgroup_root,
+                             proc_root=tree.proc_root, out=said.append) == (0, [])
+    assert len(said) == 1 and "restart guard" in said[0] and "idle" in said[0]
+
+
+def test_an_unreadable_unit_cgroup_says_so_once_and_still_reports_not_busy(tree):
+    tree.add(201, "claude")
+    tree.unit_dir.chmod(0)
+    said: list[str] = []
+    try:
+        if os.access(tree.unit_dir, os.R_OK):
+            pytest.skip("running as a user that ignores file modes")
+        assert host.gateway_busy(fake_systemctl(), cgroup_root=tree.cgroup_root, proc_root=tree.proc_root,
+                                 out=said.append) == (0, [])
+    finally:
+        tree.unit_dir.chmod(0o755)
+    assert len(said) == 1 and "restart guard" in said[0] and "idle" in said[0]
 
 
 def test_a_stopped_unit_and_a_healthy_probe_stay_silent(tree):
@@ -633,6 +665,53 @@ def test_teardown_with_nothing_applied_still_clears_a_deferral(monkeypatch):
     s.openclaw.gateway_restart_pending = _pending()
     assert openclaw.teardown(s) == []
     assert s.openclaw.gateway_restart_pending == {}
+
+
+def _deferred_bridge_state():
+    """What a deferral leaves behind: plugin linked and bridge registered, `applied` still False."""
+    s = _antigravity_state()
+    s.openclaw.plugin_linked = True
+    s.openclaw.antigravity_applied = True
+    s.openclaw.gateway_restart_pending = _pending()
+    s.openclaw.previous = {"agy_mcp_bridge_preexisted": False}
+    return s
+
+
+def test_teardown_after_a_deferral_unregisters_the_bridge_and_clears_the_flag(monkeypatch):
+    """`_register_plugin_and_backends` registers the bridge before the restart it then defers, so the
+    early return must undo it too, or doctor 4c keeps warning about a plugin the kit dropped."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(openclaw, "_openclaw", lambda args, stdin=None, timeout=120: (0, "ok"))
+    monkeypatch.setattr(openclaw, "_agy", lambda args, *_a, **_k: (calls.append(args), (0, "ok"))[1])
+    s = _deferred_bridge_state()
+    removed = openclaw.teardown(s)
+    assert ["mcp", "remove", "openclaw"] in calls
+    assert "agy-mcp:openclaw" in removed
+    assert s.openclaw.antigravity_applied is False
+    assert "agy_mcp_bridge_preexisted" not in (s.openclaw.previous or {})
+
+
+def test_a_second_teardown_after_a_deferral_is_a_no_op(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(openclaw, "_openclaw", lambda args, stdin=None, timeout=120: (calls.append(args), (0, "ok"))[1])
+    monkeypatch.setattr(openclaw, "_agy", lambda args, *_a, **_k: (calls.append(args), (0, "ok"))[1])
+    s = _deferred_bridge_state()
+    openclaw.teardown(s)
+    assert calls.count(["mcp", "remove", "openclaw"]) == 1
+    calls.clear()
+    assert openclaw.teardown(s) == []
+    assert calls == []
+
+
+def test_teardown_after_a_deferral_leaves_a_bridge_the_user_owned(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(openclaw, "_openclaw", lambda args, stdin=None, timeout=120: (0, "ok"))
+    monkeypatch.setattr(openclaw, "_agy", lambda args, *_a, **_k: (calls.append(args), (0, "ok"))[1])
+    s = _deferred_bridge_state()
+    s.openclaw.previous = {"agy_mcp_bridge_preexisted": True}
+    openclaw.teardown(s)
+    assert calls == []
+    assert s.openclaw.antigravity_applied is False
 
 
 def test_a_full_teardown_clears_a_deferral(jarvis, monkeypatch):

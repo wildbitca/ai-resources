@@ -717,7 +717,14 @@ def _installed_at(plugin_dir: Path) -> float | None:
 
 
 def plugin_is_stale(plugin_dir: str, runner=None) -> bool:
-    """Whether the gateway is running older plugin code than the kit has on disk.
+    """Whether the gateway is running older plugin code than the kit has on disk; see `stale_reason`."""
+    return stale_reason(plugin_dir, runner) is not None
+
+
+def stale_reason(plugin_dir: str, runner=None) -> str | None:
+    """Which rule says the gateway runs older plugin code than the kit has on disk: "path", "time",
+    or None when neither does. The two need different words for the operator: on "time" the paths
+    are identical, so a message about an older directory sends them comparing equal strings.
 
     Two rules, either one is enough:
 
@@ -742,19 +749,19 @@ def plugin_is_stale(plugin_dir: str, runner=None) -> bool:
     """
     root = (plugin_runtime().get("rootDir") or "").strip()
     if not root:
-        return False
+        return None
     try:
         if Path(root).resolve() != Path(plugin_dir).resolve():
-            return True
+            return "path"
     except OSError:
         if root != plugin_dir:
-            return True
+            return "path"
     # An explicit runner is the caller's fake (verify threads its own): it must never reach the live unit.
     started = openclaw_host.gateway_started_at(runner) if runner else _gateway_started_at()
     if started is None:
-        return False
+        return None
     installed = _installed_at(Path(plugin_dir))
-    return installed is not None and installed > started
+    return "time" if installed is not None and installed > started else None
 
 
 # Limits of the restart guard that are accepted, not overlooked:
@@ -932,7 +939,7 @@ def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
     # A plugin linked from another shell only takes effect on the next gateway start, and
     # after `brew upgrade` the running gateway holds a path from the previous version.
     if stale:
-        ui.info("OpenClaw is running the plugin from an older kit directory "
+        ui.info("OpenClaw is running older plugin code than the kit on disk "
                 "(`brew upgrade` moves it) — restarting the gateway.")
     try:
         restarted = restart_gateway()
@@ -1426,7 +1433,18 @@ def teardown(s: state.SetupState) -> list[str]:
         s.openclaw.gateway_restart_pending = {}
         # The same deferral leaves `plugin_linked` True while `applied` stays False, so the early
         # return used to leave the plugin linked: the kit torn down, the gateway still loading it.
-        return _unlink_plugin(s)
+        removed = _unlink_plugin(s)
+        # `_register_plugin_and_backends` registers the agy bridge and records its marker BEFORE the
+        # restart it then defers, so the same deferral leaves the bridge in place with `applied`
+        # False. Left alone, `antigravity_applied` keeps doctor 4c warning about a plugin the kit
+        # dropped, and every later teardown returns here and skips the bridge again.
+        if s.openclaw.antigravity_applied:
+            if not (s.openclaw.previous or {}).get("agy_mcp_bridge_preexisted", True) \
+                    and unregister_agy_mcp_bridge():
+                removed.append("agy-mcp:openclaw")
+            (s.openclaw.previous or {}).pop("agy_mcp_bridge_preexisted", None)
+            s.openclaw.antigravity_applied = False
+        return removed
     doc = read_config(config_path())
     # Reverse order of configure(): the host section ran last, so it is undone first.
     host_ok = host_section.teardown(s, apply_patch=apply_patch, oc=_openclaw, doc=doc) \
@@ -1597,8 +1615,9 @@ def verify(ctx: dict) -> list:
         if plugin.get("status") != "loaded":
             out.append(F("error", ID, f"the kit plugin is linked but the gateway reports it {plugin.get('status') or 'unreadable'}",
                          "`ai-resources openclaw doctor`, then restart the gateway in a maintenance window"))
-        elif plugin_is_stale(stable, runner):
-            out.append(F("warn", ID, "the gateway runs the kit plugin from an older kit directory",
+        elif (why := stale_reason(stable, runner)):
+            out.append(F("warn", ID, "the gateway runs the kit plugin from an older kit directory" if why == "path"
+                         else "the gateway runs older kit plugin code than the kit on disk (restart to load it)",
                          "restart the gateway in a maintenance window (`ai-resources openclaw doctor` drains it safely)"))
         else:
             out.append(F("ok", ID, "the kit plugin is linked and loaded"))

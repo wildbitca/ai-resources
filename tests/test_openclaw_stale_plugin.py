@@ -28,13 +28,13 @@ from ai_resources.setup import state, ui  # noqa: E402
 from ai_resources.setup.cockpits import openclaw, _shared  # noqa: E402
 
 # The two moments measured on this host: the gateway unit started, then the kit was upgraded.
-GATEWAY_STARTED = "Mon 2026-09-28 20:49:26 UTC"
 STARTED_EPOCH = calendar.timegm((2026, 9, 28, 20, 49, 26))
+GATEWAY_STARTED = f"@{STARTED_EPOCH}"   # `--timestamp=unix`: numeric, so no zone or DST to guess
 KIT_INSTALLED_EPOCH = calendar.timegm((2026, 9, 29, 14, 41, 4))
 
 
 def fake_show(value: str = GATEWAY_STARTED, rc: int = 0, seen: list | None = None):
-    """A runner that answers `systemctl --user show <unit> -p ActiveEnterTimestamp --value`."""
+    """A runner that answers `systemctl --user show <unit> -p ActiveEnterTimestamp --value --timestamp=unix`."""
     def runner(argv, *, env=None, timeout=None, **_kw):
         if seen is not None:
             seen.append((argv, env))
@@ -67,11 +67,17 @@ def test_gateway_started_at_reads_the_unit_start_time_through_the_shared_unit_an
     seen: list = []
     assert host.gateway_started_at(fake_show(seen=seen)) == STARTED_EPOCH
     argv, env = seen[0]
-    assert argv == ["systemctl", "--user", "show", host.GATEWAY_UNIT, "-p", "ActiveEnterTimestamp", "--value"]
+    assert argv == ["systemctl", "--user", "show", host.GATEWAY_UNIT, "-p", "ActiveEnterTimestamp", "--value",
+                    "--timestamp=unix"]
     assert env is not None and "XDG_RUNTIME_DIR" in env   # systemd_env(), like the busy probe
 
 
-@pytest.mark.parametrize("value, rc", [("", 0), ("n/a", 0), ("garbage in here now", 0), (GATEWAY_STARTED, 1)])
+@pytest.mark.parametrize("value, rc", [("", 0), ("n/a", 0), ("garbage in here now", 0), ("@", 0), ("@notanumber", 0),
+                                      (GATEWAY_STARTED, 1),
+                                      # a systemd without `--timestamp=` fails; one that ignores it prints
+                                      # the localised form, which is never parsed (DST-ambiguous)
+                                      ("Invalid value: unix.", 1), ("Mon 2026-09-28 20:49:26 UTC", 0),
+                                      ("Mon 2026-11-01 01:30:00 CET", 0)])
 def test_gateway_started_at_is_none_when_the_answer_cannot_be_trusted(value, rc):
     assert host.gateway_started_at(fake_show(value, rc)) is None
 
@@ -161,8 +167,72 @@ def test_ac5_the_doctor_tells_the_operator_to_restart_when_only_the_time_rule_tr
     monkeypatch.setattr(ui, "warn", lambda msg: lines.append(msg))
     monkeypatch.setattr(ui, "detail", lambda msg: lines.append(msg))
     doctor.cmd_doctor(argparse.Namespace(skip_smoke=True))
-    assert "OpenClaw is running the ai-resources plugin from an older kit directory." in lines
+    assert "OpenClaw is running older ai-resources plugin code than the kit on disk (restart to load it)." in lines
+    assert not any("older kit directory" in ln for ln in lines)
     assert "Run: openclaw gateway restart" in lines
+
+
+def test_the_doctor_words_the_path_rule_as_an_older_kit_directory(monkeypatch, tmp_path):
+    plugin = plugin_tree(tmp_path, STARTED_EPOCH - 3600)
+    old = tmp_path / "old" / "openclaw-plugin" / "ai-resources"
+    old.mkdir(parents=True)
+    runtime_says(monkeypatch, old)
+    monkeypatch.setattr(openclaw, "_gateway_started_at", lambda: STARTED_EPOCH)
+    monkeypatch.setattr(_shared, "stable_kit_root", lambda _root: plugin.parents[1])
+    monkeypatch.setattr(doctor, "_check_antigravity_quota", lambda _s: 0)
+    s = state.SetupState()
+    s.openclaw.antigravity_applied = True
+    monkeypatch.setattr(ui, "require_deps", lambda: None)
+    monkeypatch.setattr(ui, "console", lambda: _FakeConsole())
+    monkeypatch.setattr(state, "load", lambda: s)
+    lines: list[str] = []
+    monkeypatch.setattr(ui, "warn", lambda msg: lines.append(msg))
+    monkeypatch.setattr(ui, "detail", lambda msg: lines.append(msg))
+    doctor.cmd_doctor(argparse.Namespace(skip_smoke=True))
+    assert "OpenClaw is running the ai-resources plugin from an older kit directory." in lines
+    assert not any("kit on disk" in ln for ln in lines)
+
+
+def test_stale_reason_names_the_rule_that_tripped(monkeypatch, tmp_path):
+    plugin = plugin_tree(tmp_path, KIT_INSTALLED_EPOCH)
+    runtime_says(monkeypatch, plugin)
+    assert openclaw.stale_reason(str(plugin), runner=fake_show()) == "time"
+    old = tmp_path / "old" / "openclaw-plugin" / "ai-resources"
+    old.mkdir(parents=True)
+    runtime_says(monkeypatch, old)
+    assert openclaw.stale_reason(str(plugin), runner=fake_show()) == "path"   # path wins when both hold
+    runtime_says(monkeypatch, plugin)
+    assert openclaw.stale_reason(str(plugin), runner=fake_show("", 0)) is None
+
+
+def _verify_plugin_messages(monkeypatch, runtime_root, plugin) -> list[str]:
+    """The plugin findings `verify` emits, with the config and host sections stubbed out."""
+    from ai_resources.setup.cockpits import _openclaw_host
+    monkeypatch.setattr(openclaw, "plugin_runtime", lambda: {"status": "loaded", "rootDir": str(runtime_root)})
+    monkeypatch.setattr(openclaw, "read_config", lambda _p: {"agents": {}})
+    monkeypatch.setattr(openclaw, "_verify_workspace_blocks", lambda *_a, **_k: [])
+    monkeypatch.setattr(openclaw, "_verify_identity", lambda *_a, **_k: [])
+    monkeypatch.setattr(_openclaw_host, "verify", lambda *_a, **_k: [])
+    monkeypatch.setattr(_shared, "stable_kit_root", lambda _root: plugin.parents[1])
+    s = state.SetupState()
+    s.openclaw.plugin_linked = True
+    return [f.message for f in openclaw.verify({"state": s, "runner": fake_show()})]
+
+
+def test_verify_words_the_time_rule_as_older_code_than_the_kit_on_disk(monkeypatch, tmp_path):
+    plugin = plugin_tree(tmp_path, KIT_INSTALLED_EPOCH)
+    msgs = _verify_plugin_messages(monkeypatch, plugin, plugin)
+    assert "the gateway runs older kit plugin code than the kit on disk (restart to load it)" in msgs
+    assert not any("older kit directory" in m for m in msgs)
+
+
+def test_verify_words_the_path_rule_as_an_older_kit_directory(monkeypatch, tmp_path):
+    plugin = plugin_tree(tmp_path, STARTED_EPOCH - 3600)
+    old = tmp_path / "old" / "openclaw-plugin" / "ai-resources"
+    old.mkdir(parents=True)
+    msgs = _verify_plugin_messages(monkeypatch, old, plugin)
+    assert "the gateway runs the kit plugin from an older kit directory" in msgs
+    assert not any("kit on disk" in m for m in msgs)
 
 
 # --- AC 6: teardown unlinks after a deferral --------------------------------------------------
