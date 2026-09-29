@@ -7,6 +7,7 @@ test_openclaw_host_wizard: nothing here can reach the real ~/.openclaw or a gate
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -238,3 +239,17 @@ def test_a_workspace_directory_that_does_not_exist_is_reported_by_setup_not_crea
     _configure(s)
     assert not (sim.tmp / "ws" / "missing").exists()
     assert any("workspace directory does not exist" in m and "docs" in m for m in script.messages("warn"))
+
+
+def test_every_heading_of_the_rendered_kit_blocks_is_known_to_the_orphan_recovery():
+    bodies = [
+        _shared.openclaw_agent_kit_md("/kit", delegates=True),
+        _shared.openclaw_agent_kit_md("/kit", delegates=False),
+        _shared.kit_instructions_md("claude", "/kit", "http://gw", "single-model", native_skills=True),
+        _shared.kit_instructions_md("claude", "/kit", "http://gw", "single-model", native_skills=False),
+        _shared.multimodel_protocol_md("/kit", "http://gw"),
+    ]
+    known = _shared.CURRENT_KIT_HEADINGS | _shared.LEGACY_KIT_HEADINGS
+    for body in bodies:
+        for heading in re.findall(r"^## (.+?)\s*$", body, re.MULTILINE):
+            assert heading in known, f"{heading!r} would be stranded by the orphan-marker recovery"

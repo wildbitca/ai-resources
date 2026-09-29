@@ -204,7 +204,7 @@ LEGACY_KIT_HEADINGS = frozenset({
     "Memory (Engram MCP)",
 })
 # `## ` headings of the current block; used to clean up a block whose END marker was deleted.
-CURRENT_KIT_HEADINGS = frozenset({"Using the kit", "Delegation", "Multi-model routing", "Kit workflow"})
+CURRENT_KIT_HEADINGS = frozenset({"Using the kit", "Delegation", "Multi-model routing", "Kit workflow", "Worktrees"})
 
 
 def _is_fence(bare: str) -> bool:
