@@ -4,6 +4,46 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.10.3] — 2026-09-29 — the orphan recovery knows every kit heading, and this repo commits its own block
+
+### Fixed
+
+- **`CURRENT_KIT_HEADINGS` lacked `Worktrees`.** When the END marker of a kit block was deleted, the recovery
+  cut the block at the first heading it did not recognise, so the `## Worktrees` section (added in 1.9.9) was
+  left stranded outside the markers. The frozenset now lists it.
+- **`docs/orchestration.md`: the subagent return format is back inside its fence.** The opening fence swallowed
+  `## OpenClaw agent workspaces` and the Worktrees section, and the Result / Artifacts / Routing content was
+  stranded as top-level headings further down. One fence pair now surrounds the return format.
+
+### Added
+
+- **The kit block of this repo's own `AGENTS.md` is committed.** This repo is the workspace of the `ai` agent,
+  which delegates, so setup writes the full block there. Excluding it would make the kit work in every
+  workspace but its own and leave the `ai` agent as the only one without the kit's instructions. The block
+  was regenerated with the installed kit and a second `ai-resources setup --non-interactive` left the file
+  byte-identical (determinism measured, not asserted).
+
+### Tests
+
+- `test_every_heading_of_the_rendered_kit_blocks_is_known_to_the_orphan_recovery` pins the frozenset to every
+  `## ` heading the kit renderers emit; it fails naming `Worktrees` without the fix.
+- `test_two_spellings_of_one_workspace_are_written_once` and
+  `test_workspace_targets_resolve_spellings_to_one_key`: a symlinked or dotted spelling of a workspace is still
+  one target. Both fail against a `_workspace_targets` that keys by the unresolved path, which no other test does.
+- `tests/test_repo_agents_md_block.py`: the committed block equals what the renderer produces. It reads the kit
+  root from the block itself, so it stays green on any machine, and it fails when one word of the block changes.
+
+### Chore
+
+- `.openclaw-cli-images/` is git-ignored: the openclaw CLI drops received images in the cwd.
+
+### Host documentation (no code change)
+
+- Four operator-written `AGENTS.md` files documented Telegram topics of a forum that no longer exists. They
+  were corrected by hand, outside the kit markers. The kit deliberately does not automate this because it
+  never writes outside its markers. If a group is added later without updating that prose, the `verify`
+  warning `documents routing the live config does not have` fires again **by design**; it is not noise.
+
 ## [1.10.2] — 2026-09-28 — the test suite no longer strips the block from the live main workspace
 
 ### Fixed
