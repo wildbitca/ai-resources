@@ -4,6 +4,48 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.13.0] — 2026-09-29 — the wizard asks when to report a gateway running older plugin code
+
+### Added
+
+- **A wizard question for the stale-plugin report.** 1.11.1 taught the kit to detect that the
+  gateway is still running the plugin code it loaded at start, and 1.12.1 made the message name the
+  rule that tripped. But the only caller that reports it was gated on `antigravity_applied`, so on a
+  host with engine `keep` nothing was ever said. Measured on a live host right after upgrading:
+  `stale_reason()` answered `"time"`, the plugin was loaded with both CLI backends registered, and
+  `ai-resources doctor` reported nothing.
+
+  Changing that gate changes what every host reports, so the wizard now asks, in the OpenClaw
+  cockpit: report it **whenever the kit's plugin is linked** (the default), **only when the kit
+  manages the engine** (the behaviour up to 1.12.1), or **never**. The answer is
+  `openclaw.stale_plugin_check` (`linked | engine | off`); a state file without the key loads as
+  `linked`. The default is safe by the rule the neighbouring host answers follow — its consequence
+  is a warning, not an action — but it does add an issue to `ai-resources doctor`, and therefore
+  makes it exit non-zero, on a host that was previously silent. The question's help text says so.
+
+### Fixed
+
+- **`"linked"` observes the gateway instead of trusting the state file.** A first attempt gated on
+  `s.openclaw.plugin_linked`, which was still inert on the host this was written for: that field
+  records that *the kit* linked the plugin, and it is only ever set for the antigravity engine. On
+  the measured host it was `False` while `openclaw plugins list` said `enabled` and the runtime said
+  `Status: loaded` with `agy-cli` and `claude-kit`. The gate now asks the runtime the module already
+  queries, so no new probe and no new subprocess.
+
+  This is the third time in one day that a flag recording what the kit DID was used to decide
+  something about what IS true — after `antigravity_applied` and the path comparison in
+  `plugin_is_stale`. A gate that must reflect the live system has to observe the live system.
+
+### Notes
+
+- `"off"` silences only the staleness report. The antigravity quota check still runs exactly when
+  it did before, whatever the answer.
+- A missing `agy-cli` backend is still reported for antigravity only: with engine `keep` a backend
+  the host never asked for is not a defect.
+- The check costs a gateway round-trip (measured at ~9s on a busy host) and fails open: when the
+  runtime cannot be read it reports nothing rather than guessing, so a transient failure reads as
+  "not stale". That is the same direction every probe in this module takes.
+
 ## [1.12.1] — 2026-09-29 — five findings from an independent review of 1.11.0–1.12.0
 
 An independent review of the day's three commits found two medium and three low defects. Both

@@ -160,6 +160,7 @@ def test_ac5_the_doctor_tells_the_operator_to_restart_when_only_the_time_rule_tr
     monkeypatch.setattr(doctor, "_check_antigravity_quota", lambda _s: 0)
     s = state.SetupState()
     s.openclaw.antigravity_applied = True
+    s.openclaw.plugin_linked = True   # the default answer gates on the link
     monkeypatch.setattr(ui, "require_deps", lambda: None)
     monkeypatch.setattr(ui, "console", lambda: _FakeConsole())
     monkeypatch.setattr(state, "load", lambda: s)
@@ -182,6 +183,7 @@ def test_the_doctor_words_the_path_rule_as_an_older_kit_directory(monkeypatch, t
     monkeypatch.setattr(doctor, "_check_antigravity_quota", lambda _s: 0)
     s = state.SetupState()
     s.openclaw.antigravity_applied = True
+    s.openclaw.plugin_linked = True   # the default answer gates on the link
     monkeypatch.setattr(ui, "require_deps", lambda: None)
     monkeypatch.setattr(ui, "console", lambda: _FakeConsole())
     monkeypatch.setattr(state, "load", lambda: s)

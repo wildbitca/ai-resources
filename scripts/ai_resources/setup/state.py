@@ -208,6 +208,12 @@ class OpenClawState:
     host_pod_cidr: str = ""           # CIDR of the ingress that reaches the gateway
     host_operator_id: str = ""        # numeric Telegram id that failure notices go to
     host_backup_dir: str = ""         # where the backup tiers live
+    # When `ai-resources doctor` reports a gateway running older plugin code than the kit on disk:
+    # linked (the kit's plugin is linked) | engine (only when the kit applied antigravity) | off.
+    # "linked" is the default because the consequence is a warning, not an action: it never
+    # changes how a live host behaves, the rule the host answers above follow. It does change
+    # doctor's issue count, and so its exit status.
+    stale_plugin_check: str = "linked"
     # What the last configure() applied, so teardown removes exactly that and nothing else.
     host_hooks_applied: bool = False
     host_units_previous: dict[str, Any] = field(default_factory=dict)  # unit file -> text before (None: absent)

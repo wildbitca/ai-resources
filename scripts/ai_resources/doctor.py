@@ -210,9 +210,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     ui.detail("Gateway uses allow_requests_on_db_unavailable=true — works as-is.")
                     ui.detail("To switch to API key mode: claude /logout → new terminal → ai-resources doctor")
 
-    # 4c. OpenClaw antigravity engine: the gateway must run the plugin the kit links.
-    if s.openclaw.antigravity_applied:
-        from .setup.cockpits import openclaw as _openclaw_cockpit
+    # 4c. OpenClaw: the gateway must run the plugin the kit links. The wizard asks when to report
+    # it; engine `keep` with a linked plugin is the host where the engine gate alone stayed silent.
+    # "linked" asks the gateway, not the state file: `plugin_linked` records only what the kit did.
+    from .setup.cockpits import openclaw as _openclaw_cockpit
+    stale_check = s.openclaw.stale_plugin_check
+    if (_openclaw_cockpit.plugin_loaded() if stale_check == "linked"
+            else s.openclaw.antigravity_applied if stale_check == "engine"
+            else False):
         from .setup.cockpits import _shared as _shared_cockpit
         from . import repo_root as _repo_root
         plugin_dir = str(Path(_shared_cockpit.stable_kit_root(_repo_root()))
@@ -226,6 +231,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                          "(restart to load it).")
             ui.detail("Run: openclaw gateway restart")
             issues += 1
+        elif not s.openclaw.antigravity_applied:
+            # Only the antigravity engine needs the agy-cli backend; a host that never asked for
+            # it has no defect to report here.
+            pass
         elif not _openclaw_cockpit.backend_registered("agy-cli"):
             ui.warn("OpenClaw has not loaded the ai-resources plugin (no agy-cli backend).")
             ui.detail("Run: openclaw gateway restart")
@@ -233,7 +242,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         else:
             ui.ok("OpenClaw runs the kit plugin (agy-cli backend registered)")
 
-        # 4d. Antigravity quota.
+    # 4d. Antigravity quota: about the engine, not the plugin, so the answer above does not gate it.
+    if s.openclaw.antigravity_applied:
         issues += _check_antigravity_quota(s)
 
     # 5. Executors mapping

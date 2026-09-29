@@ -109,6 +109,7 @@ def _answers(monkeypatch, *answers):
 
 def test_openclaw_prompt_asks_about_voice_notes(monkeypatch):
     monkeypatch.setattr(openclaw, "_prompt_engine", lambda s, **_k: None)
+    monkeypatch.setattr(openclaw, "_prompt_stale_check", lambda s: None)
     asked = _answers(monkeypatch, "cloud", "es")
     # The host section's master question follows the voice question; answering "no" ends it there.
     monkeypatch.setattr(ui, "confirm", lambda msg, default=False, **_k: False)

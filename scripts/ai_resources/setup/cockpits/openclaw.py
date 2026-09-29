@@ -514,6 +514,26 @@ def prompt(s: state.SetupState, *, dry_run: bool = False) -> None:
         mcp.prompt(s, _get(read_config(config_path()), "mcp", "servers") or {})
     voice.prompt(s)
     host_section.prompt(s, read_config(config_path()))
+    _prompt_stale_check(s)
+
+
+STALE_CHECKS = ("linked", "engine", "off")
+
+
+def _prompt_stale_check(s: state.SetupState) -> None:
+    """Ask when `ai-resources doctor` reports a gateway running older plugin code (doctor 4c)."""
+    saved = s.openclaw.stale_plugin_check
+    ui.detail("After `brew upgrade` the gateway keeps running the plugin code it loaded at start "
+              "until it is restarted.")
+    ui.detail("The default can make `ai-resources doctor` report an issue, and so exit non-zero, "
+              "on a host where it said nothing before. It only reports; it never restarts.")
+    s.openclaw.stale_plugin_check = ui.select(
+        "When should `ai-resources doctor` report that?",
+        [ui.Choice("Whenever the kit's plugin is linked (default)", value="linked"),
+         ui.Choice("Only when the kit manages the engine (behaviour before this version)", value="engine"),
+         ui.Choice("Never", value="off")],
+        default=saved if saved in STALE_CHECKS else "linked",
+    )
 
 
 def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
@@ -663,6 +683,17 @@ def plugin_runtime() -> dict:
     except ValueError:
         return {}
     return (report.get("plugin") or {}) if isinstance(report, dict) else {}
+
+
+def plugin_loaded() -> bool:
+    """Whether the running gateway has the kit plugin loaded, however it got linked.
+
+    Observes the gateway; it does not read `plugin_linked`, which only records that THE KIT ran
+    the link (inside the antigravity registration). A host on engine `keep` can carry a plugin
+    linked by an earlier run or by hand, and the gateway is the only one that knows. An unreadable
+    runtime is {}, so this is False: a warning must never rest on a guess.
+    """
+    return plugin_runtime().get("status") == "loaded"
 
 
 def backend_registered(backend: str) -> bool:

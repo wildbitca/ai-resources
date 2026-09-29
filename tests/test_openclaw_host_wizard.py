@@ -42,6 +42,7 @@ ANSWERS = {
     "Enable the workboard plugin (a shared": True,
     "Write an AGENTS.md into every agent workspace": True,
     "Check this host against the documented setup": False,
+    "When should `ai-resources doctor` report that": "linked",
 }
 GATES = {
     "Install the openclaw-* systemd units and enable": True,
@@ -305,15 +306,20 @@ def test_a_first_run_defaults_every_answer_to_no_except_the_workboard(sim, scrip
     # each defaults to empty, which leaves that agent unbound.
     group_questions = [k for k in defaults if k.startswith("Telegram group chat id for agent")]
     assert len(group_questions) == 3 and all(defaults[k] == "" for k in group_questions)
-    assert len(defaults) == 12 + 3, sorted(defaults)
+    assert len(defaults) == 12 + 3 + 1, sorted(defaults)   # +1: the stale-plugin question
 
 
 def test_declining_the_master_question_asks_nothing_else(sim, script):
+    """Declining the host master question skips every HOST question: the invariant is unchanged.
+    The one extra question is the stale-plugin check, which is the OpenClaw cockpit's own and not a
+    host answer. It gates a report (`ai-resources doctor`) that applies to a host on engine `keep`
+    that never opted into the host section, which is the case it exists for."""
     script.answers["Configure this machine as an OpenClaw host"] = False
     s = _state()
     openclaw.prompt(s)
     assert s.openclaw.host is False
-    assert len(script.asked) == 1
+    # the stale-plugin question is the cockpit's own, not the host section's: it is still asked
+    assert len(script.asked) == 2 and "When should `ai-resources doctor` report that" in script.asked[1]
 
 
 def test_prompt_records_every_answer(sim, script):
