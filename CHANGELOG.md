@@ -4,6 +4,26 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.10.4] — 2026-09-29 — the orphan recovery also covers the engine sections
+
+### Fixed
+
+- **`CURRENT_KIT_HEADINGS` only covered the common block.** 1.10.3 added `Worktrees`, but the OpenClaw engine
+  part and the voice rule land between the *same* managed markers, and their four headings (`Memory`,
+  `Orchestration`, `Voice`, `Voice notes`) were still unknown to the recovery. A block that lost its END
+  marker was therefore cut at the first of them and the rest stranded outside the pair — the same defect
+  1.10.3 fixed, one renderer further along. The frozenset now lists every heading any renderer that feeds
+  the managed pair emits, and a comment says so, so the next renderer added is an obvious edit here too.
+
+### Tests
+
+- `test_every_heading_of_the_rendered_kit_blocks_is_known_to_the_orphan_recovery` now also feeds
+  `MEMORY_MD`, `voice.VOICE_MD` and `_antigravity_agents_md`; against the 1.10.3 frozenset it fails naming
+  `'Memory'`, which is how the gap was found.
+- `test_a_block_whose_end_marker_is_gone_is_rebuilt_without_stranding_kit_sections` deletes the END marker
+  from each of the four block shapes (common, antigravity+kit, with-voice, direct) and asserts one marker
+  pair, no kit heading left outside it, and the hand-written tail kept.
+
 ## [1.10.3] — 2026-09-29 — the orphan recovery knows every kit heading, and this repo commits its own block
 
 ### Fixed

@@ -204,7 +204,14 @@ LEGACY_KIT_HEADINGS = frozenset({
     "Memory (Engram MCP)",
 })
 # `## ` headings of the current block; used to clean up a block whose END marker was deleted.
-CURRENT_KIT_HEADINGS = frozenset({"Using the kit", "Delegation", "Multi-model routing", "Kit workflow", "Worktrees"})
+# Every renderer that feeds the managed pair contributes here: the common block, the multi-model
+# protocol, and the OpenClaw engine part (`Orchestration`, `Voice`, `Memory`, `Voice notes`). They
+# are only ever stripped under a `# ai-resources (<tool>)` title, so a user's own section of the
+# same name under another H1 is kept.
+CURRENT_KIT_HEADINGS = frozenset({
+    "Using the kit", "Delegation", "Multi-model routing", "Kit workflow", "Worktrees",
+    "Memory", "Voice notes", "Orchestration", "Voice",
+})
 
 
 def _is_fence(bare: str) -> bool:

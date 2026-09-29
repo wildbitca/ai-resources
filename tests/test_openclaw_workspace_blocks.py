@@ -249,11 +249,45 @@ def test_every_heading_of_the_rendered_kit_blocks_is_known_to_the_orphan_recover
         _shared.kit_instructions_md("claude", "/kit", "http://gw", "single-model", native_skills=True),
         _shared.kit_instructions_md("claude", "/kit", "http://gw", "single-model", native_skills=False),
         _shared.multimodel_protocol_md("/kit", "http://gw"),
+        # the engine part and the voice rule land between the same markers (_write_workspace_block)
+        openclaw.MEMORY_MD,
+        openclaw.voice.VOICE_MD,
+        openclaw._antigravity_agents_md("/kit"),
     ]
     known = _shared.CURRENT_KIT_HEADINGS | _shared.LEGACY_KIT_HEADINGS
     for body in bodies:
         for heading in re.findall(r"^## (.+?)\s*$", body, re.MULTILINE):
             assert heading in known, f"{heading!r} would be stranded by the orphan-marker recovery"
+
+
+def _orphaned(body: str, tail: str) -> str:
+    """A file whose kit block lost its END marker, followed by hand-written text."""
+    return "\n".join([_shared.MANAGED_BEGIN, *body.strip().splitlines()]) + "\n\n" + tail
+
+
+_ORPHAN_BODIES = {
+    "common": lambda: _shared.openclaw_agent_kit_md("/kit"),
+    "antigravity+kit": lambda: openclaw._antigravity_agents_md("/kit") + "\n"
+                               + _shared.openclaw_agent_kit_md("/kit").split("\n", 2)[2],
+    "with-voice": lambda: _shared.openclaw_agent_kit_md("/kit") + "\n" + openclaw.voice.VOICE_MD,
+    "direct": lambda: _shared.kit_instructions_md("OpenClaw", "/kit", "http://gw", "single-model",
+                                                   native_skills=False) + "\n" + openclaw.MEMORY_MD,
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_ORPHAN_BODIES))
+def test_a_block_whose_end_marker_is_gone_is_rebuilt_without_stranding_kit_sections(tmp_path, kind):
+    body = _ORPHAN_BODIES[kind]()
+    tail = "# My notes\n\n## Mine\n\nHand-written rule.\n"
+    path = tmp_path / "AGENTS.md"
+    path.write_text(_orphaned(body, tail), encoding="utf-8")
+    _shared.write_managed_block(path, body)
+    text = path.read_text(encoding="utf-8")
+    assert text.count(BEGIN) == 1 and text.count(_shared.MANAGED_END) == 1
+    outside = outside_block(text)
+    assert tail.strip() in outside
+    for heading in _shared.CURRENT_KIT_HEADINGS:
+        assert f"## {heading}\n" not in outside, f"{heading!r} stranded outside the block"
 
 
 def test_two_spellings_of_one_workspace_are_written_once(sim, script, monkeypatch):
