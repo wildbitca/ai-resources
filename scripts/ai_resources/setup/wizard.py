@@ -20,6 +20,7 @@ from . import (
     ui,
 )
 from .cockpits import ALL as ALL_COCKPITS
+from .cockpits import _shared
 from .. import __version__, repo_root
 
 
@@ -1295,7 +1296,10 @@ def _step9_dry_run(s: state.SetupState) -> int:
             s.litellm.remote.url if s.litellm.deployment == "remote"
             else f"http://{bind}:{port}"
         )
-    ak_path = str(_repo_root())
+    # The path a real run writes (`claude.configure`): the version-independent opt/ link, not the
+    # resolved Cellar directory. Showing the resolved one diffed against the stored opt/ value and
+    # labelled an unchanged setting `(update)`.
+    ak_path = str(_shared.stable_kit_root(_repo_root()))
     mode = s.mode
 
     # Role table

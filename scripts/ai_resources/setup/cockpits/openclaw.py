@@ -671,20 +671,90 @@ def backend_registered(backend: str) -> bool:
     return plugin.get("status") == "loaded" and backend in (plugin.get("cliBackendIds") or [])
 
 
-def plugin_is_stale(plugin_dir: str) -> bool:
-    """Whether the gateway is running a copy of the plugin from somewhere else.
+def _gateway_started_at() -> float | None:
+    return openclaw_host.gateway_started_at()
 
-    `brew upgrade` moves the kit into a new Cellar directory, so a gateway that is still
-    running keeps a path that no longer exists and answers `Unknown CLI backend` to every
-    message until it restarts (seen after upgrading to 1.7.2 on 2026-09-17).
+
+def _installed_at(plugin_dir: Path) -> float | None:
+    """When the kit behind `plugin_dir` landed on disk; None when it cannot be told.
+
+    NOT the mtime of the plugin directory or of its files: Homebrew preserves the source mtimes of
+    everything it installs, so those predate the install by weeks (measured 2026-09-29: plugin dir
+    2026-09-25, index.js 2026-09-17, on a kit installed 2026-09-29 14:41) and a comparison against
+    them says "older than the gateway" on exactly the upgrade this rule exists to catch.
+
+    The plugin dir is `<kit root>/openclaw-plugin/ai-resources`, resolved first so the
+    version-independent opt/ link is followed to the real Cellar directory. Two directories above
+    it are read, and NEITHER is redundant:
+
+      * the kit root (`<Cellar>/ai-resources/<version>/libexec`) is fresh only on a SOURCE build,
+        and only by accident: `Formula/ai-resources.rb` (`libexec.install Dir["*"]`, then
+        `virtualenv_create(libexec/"venv", ...)`) adds the venv inside it after the copy. On a
+        poured bottle tar restores directory mtimes, so libexec carries the BUILD MACHINE's time,
+        which can predate the local gateway start.
+      * the version directory (`<Cellar>/ai-resources/<version>`) is the one that stays fresh on a
+        bottle, because brew writes `INSTALL_RECEIPT.json` into it after extracting. Dropping it
+        as "redundant" reintroduces the 1.10.2 -> 1.11.0 false negative on every bottle install.
+        It is only read when the tree really is `<...>/Cellar/<formula>/<version>/libexec` (the
+        same literal `stable_kit_root` relies on); anywhere else, such as a repo checkout, only
+        the kit root counts, so the parent directory of a checkout is never mistaken for an
+        install. A Cellar that does not match that shape silently loses the bottle coverage.
+
+    Accepted false positives, all of which fail toward "restart the gateway", never toward hiding
+    an upgrade: brew rewrites the receipt atomically on `brew pin`, `brew unpin` and
+    `brew link --overwrite`, which bumps the version directory's mtime without changing any code;
+    and a repo checkout moves the kit root's mtime whenever a top-level entry is added or removed.
+    """
+    try:
+        kit_root = plugin_dir.resolve().parents[1]
+        stamps = [kit_root.stat().st_mtime]
+        version_dir = kit_root.parent
+        if version_dir.parent.parent.name == "Cellar":
+            stamps.append(version_dir.stat().st_mtime)
+        return max(stamps)
+    except (OSError, IndexError):
+        return None
+
+
+def plugin_is_stale(plugin_dir: str, runner=None) -> bool:
+    """Whether the gateway is running older plugin code than the kit has on disk.
+
+    Two rules, either one is enough:
+
+      * PATH: the runtime root is not the expected plugin dir. `brew upgrade` moves the kit into
+        a new Cellar directory, so a gateway holding the old versioned path answers `Unknown CLI
+        backend` to every message until it restarts (seen after upgrading to 1.7.2 on 2026-09-17).
+      * TIME: the installed kit is newer than the gateway process. Setup links the plugin through
+        the version-independent opt/ path on purpose, so after an upgrade both sides of the path
+        rule are equal (opt/ simply resolves to the new Cellar directory) and that rule is blind:
+        the gateway kept its 1.10.2 code in memory through the 1.11.0 upgrade and nothing said so
+        (2026-09-29). The unit's start time against the install time of the RESOLVED kit root catches
+        it (see `_installed_at`: not the plugin dir, whose mtime brew preserves from the source).
+
+    The time rule fails open, like every probe here: an unreadable start time or mtime leaves the
+    path rule to decide alone. A working repo checkout trips it whenever a top-level entry of the
+    kit root is added or removed (a directory's mtime does not move on edits to files inside it),
+    because there the gateway genuinely IS running older code than the tree on disk.
+
+    That is not only a warning: `configure()` calls this and RESTARTS the gateway when it is True,
+    so a developer running setup from a checkout gets a restart (behind the busy guard) after
+    such a change. `brew pin` also trips it; see `_installed_at`.
     """
     root = (plugin_runtime().get("rootDir") or "").strip()
     if not root:
         return False
     try:
-        return Path(root).resolve() != Path(plugin_dir).resolve()
+        if Path(root).resolve() != Path(plugin_dir).resolve():
+            return True
     except OSError:
-        return root != plugin_dir
+        if root != plugin_dir:
+            return True
+    # An explicit runner is the caller's fake (verify threads its own): it must never reach the live unit.
+    started = openclaw_host.gateway_started_at(runner) if runner else _gateway_started_at()
+    if started is None:
+        return False
+    installed = _installed_at(Path(plugin_dir))
+    return installed is not None and installed > started
 
 
 # Limits of the restart guard that are accepted, not overlooked:
@@ -852,6 +922,8 @@ def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
                     f"({bridge_out[-200:]}); will retry on the next run.")
 
     plugin_dir = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
+    # True also when the installed kit is merely newer than the gateway (time rule), which makes
+    # the restart below happen on a checkout after a top-level change, or after `brew pin`.
     stale = plugin_is_stale(plugin_dir)
     if backend_registered("agy-cli") and not stale:
         s.openclaw.gateway_restart_pending = {}   # restarted by hand since a deferral: nothing is owed
@@ -1336,6 +1408,15 @@ def _teardown_voice(s: state.SetupState) -> bool:
     return True
 
 
+def _unlink_plugin(s: state.SetupState) -> list[str]:
+    """Uninstall the kit plugin when setup linked it; what was removed, for the teardown report."""
+    if not s.openclaw.plugin_linked:
+        return []
+    rc_unlink, _out = _openclaw(["plugins", "uninstall", PLUGIN_ID])
+    s.openclaw.plugin_linked = False
+    return ["plugin:ai-resources"] if rc_unlink == 0 else []
+
+
 def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
     if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored
@@ -1343,7 +1424,9 @@ def teardown(s: state.SetupState) -> list[str]:
         # A deferral leaves `applied` False (the engine patch waits for the restart), so this is
         # the path that meets it: with nothing to undo there is nothing left to demand either.
         s.openclaw.gateway_restart_pending = {}
-        return []
+        # The same deferral leaves `plugin_linked` True while `applied` stays False, so the early
+        # return used to leave the plugin linked: the kit torn down, the gateway still loading it.
+        return _unlink_plugin(s)
     doc = read_config(config_path())
     # Reverse order of configure(): the host section ran last, so it is undone first.
     host_ok = host_section.teardown(s, apply_patch=apply_patch, oc=_openclaw, doc=doc) \
@@ -1356,11 +1439,7 @@ def teardown(s: state.SetupState) -> list[str]:
         return removed
     removed.append(str(config_path()))
 
-    if s.openclaw.plugin_linked:
-        rc_unlink, _out = _openclaw(["plugins", "uninstall", PLUGIN_ID])
-        if rc_unlink == 0:
-            removed.append("plugin:ai-resources")
-        s.openclaw.plugin_linked = False
+    removed += _unlink_plugin(s)
 
     if s.openclaw.antigravity_applied and not (s.openclaw.previous or {}).get(
             "agy_mcp_bridge_preexisted", True):
@@ -1518,7 +1597,7 @@ def verify(ctx: dict) -> list:
         if plugin.get("status") != "loaded":
             out.append(F("error", ID, f"the kit plugin is linked but the gateway reports it {plugin.get('status') or 'unreadable'}",
                          "`ai-resources openclaw doctor`, then restart the gateway in a maintenance window"))
-        elif plugin_is_stale(stable):
+        elif plugin_is_stale(stable, runner):
             out.append(F("warn", ID, "the gateway runs the kit plugin from an older kit directory",
                          "restart the gateway in a maintenance window (`ai-resources openclaw doctor` drains it safely)"))
         else:

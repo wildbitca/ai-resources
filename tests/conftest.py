@@ -42,3 +42,6 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # expects to happen. The guard's own tests pass a fake probe explicitly.
     monkeypatch.setattr(openclaw_cockpit, "_gateway_busy", lambda: (0, []))
     monkeypatch.setattr(openclaw_cockpit, "_gateway_main_pid", lambda: "")
+    # And the start-time read behind `plugin_is_stale`'s time rule: a tmp plugin dir is always newer
+    # than the live gateway, so an unstubbed call would make every staleness test report stale.
+    monkeypatch.setattr(openclaw_cockpit, "_gateway_started_at", lambda: None)

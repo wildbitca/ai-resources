@@ -19,6 +19,7 @@ real state machines against a fake and nothing in the suite can reach a live uni
 from __future__ import annotations
 
 import argparse
+import calendar
 import ipaddress
 import copy
 import json
@@ -513,6 +514,33 @@ def gateway_main_pid(runner: Runner = default_runner) -> str:
     rc, out = runner(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "MainPID", "--value"],
                      env=systemd_env())
     return out.strip() if rc == 0 else ""
+
+
+def gateway_started_at(runner: Runner = default_runner) -> float | None:
+    """When the gateway unit last became active, as epoch seconds; None when it cannot be told.
+
+    `ActiveEnterTimestamp` moves on every start and restart, so it is the moment the running
+    process loaded whatever plugin code was on disk then. Same unit, runner and env as the busy
+    probe above, so the reads cannot drift. A stopped unit, a failed systemctl, an empty or
+    unparseable answer are all None: the caller then judges by the path alone rather than
+    inventing staleness from a clock it could not read.
+
+    systemd prints `Mon 2026-09-28 20:49:26 UTC`: local time with the zone's abbreviation. UTC/GMT
+    are exact; any other abbreviation cannot be mapped back reliably, so it is read as the local
+    time it was printed in, which is what it is on the host that ran systemctl.
+    """
+    try:
+        rc, out = runner(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "ActiveEnterTimestamp", "--value"],
+                         env=systemd_env())
+        parts = out.split()
+        if rc != 0 or len(parts) < 3:
+            return None
+        stamp = time.strptime(f"{parts[1]} {parts[2]}", "%Y-%m-%d %H:%M:%S")
+        if len(parts) > 3 and parts[3] in ("UTC", "GMT"):
+            return float(calendar.timegm(stamp))
+        return time.mktime(stamp)
+    except Exception:  # noqa: BLE001 - a broken clock read must never make the gateway look stale
+        return None
 
 
 def format_elapsed(seconds: float | None) -> str:

@@ -4,6 +4,54 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.11.1] — 2026-09-29 — the kit notices that the gateway runs an older kit
+
+### Fixed
+
+- **`plugin_is_stale()` could not see a `brew upgrade`.** It decided staleness by comparing the
+  gateway's runtime plugin root with the expected one, both resolved. But setup links the plugin
+  through the version-independent `opt/` path on purpose (`stable_kit_root()`, "so links written by
+  setup keep resolving after `brew upgrade`"), and that path does not change across an upgrade — it
+  simply resolves to the new Cellar directory. Both sides compared equal, so the doctor's warning
+  ("running the ai-resources plugin from an older kit directory. Run: `openclaw gateway restart`")
+  never fired. The two intentions contradicted each other: the link is stable by design, so
+  staleness could not be detected from the path by design.
+
+  Measured on a live host upgrading 1.10.2 → 1.11.0: the gateway kept its pid and its in-memory
+  plugin code from the old version, `plugin_is_stale()` returned False, the agy-cli backend was
+  registered, and `ai-resources doctor` reported the plugin correctly loaded. `brew upgrade` has no
+  `post_install`, so nothing restarts the gateway either — the restart is the only way the new code
+  is loaded, and nothing asked for it.
+
+  The path rule stays and a time rule joins it: also stale when the installed kit is newer than the
+  running gateway, read from the unit's start timestamp against `_installed_at()`. Any unreadable
+  timestamp falls back to the path rule alone and never invents staleness.
+- **`_installed_at()` looks at the install roots, not at the files.** Homebrew preserves the source
+  mtimes of everything it installs, so per-file and per-subdirectory mtimes are useless as an
+  install marker: on the measured host the plugin directory read 25 September and its `index.js`
+  17 September, both older than the gateway. A first attempt compared the plugin directory and
+  reported "not stale" on exactly the case it was written for. Two directories are checked, and
+  neither is redundant: the kit root is fresh only on a **source build**, because the formula
+  creates the venv inside `libexec` after the copy; on a **poured bottle** it carries the build
+  machine's time, and only the version directory stays fresh, because brew writes
+  `INSTALL_RECEIPT.json` into it. Dropping the version-directory branch brings the false negative
+  back on every bottle install, which is what most machines get. Both branches now have a test.
+- **Teardown left the plugin linked after a deferred restart.** A deferral leaves `applied` False
+  with `plugin_linked` True, so `teardown()` took its nothing-applied early return and never
+  unlinked: the kit was torn down while the gateway kept loading its plugin.
+- **`setup --dry-run` reported a change it would not make.** It displayed `AGENT_SKILLS_ROOT` as the
+  resolved Cellar path and labelled it `(update)`, while a real run writes the stable `opt/` path,
+  unchanged. A dry run that reports phantom changes is worse than none: it is the one output an
+  operator reads to decide whether applying is safe.
+
+### Notes
+
+- Accepted false positives, documented at `_installed_at()`: `brew pin` and `brew link --overwrite`
+  rewrite the receipt and move the version directory's mtime without changing any code, and a repo
+  checkout trips the rule when a top-level entry of the kit root is added or removed. Both fail
+  toward telling the operator to restart, which is recoverable — and `configure()` acts on a true
+  result by restarting the gateway behind the 1.11.0 busy guard, which is stated where it is read.
+
 ## [1.11.0] — 2026-09-29 — the gateway restart asks before it kills an agent turn
 
 ### Added
