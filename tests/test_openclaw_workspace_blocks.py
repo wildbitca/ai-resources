@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -253,3 +254,37 @@ def test_every_heading_of_the_rendered_kit_blocks_is_known_to_the_orphan_recover
     for body in bodies:
         for heading in re.findall(r"^## (.+?)\s*$", body, re.MULTILINE):
             assert heading in known, f"{heading!r} would be stranded by the orphan-marker recovery"
+
+
+def test_two_spellings_of_one_workspace_are_written_once(sim, script, monkeypatch):
+    # `security` reaches claude's tree through a symlink: one directory, two spellings.
+    link = sim.tmp / "ws" / "claude-link"
+    link.symlink_to(sim.workspaces["claude"])
+    doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
+    doc["agents"]["entries"]["security"] = {"workspace": str(link)}
+    doc["agents"]["entries"]["claude"]["workspace"] = str(
+        sim.workspaces["claude"].parent / ".." / "ws" / "claude")   # a `..` detour, same dir
+    # the orchestrator's default workspace spells the same directory a third way
+    doc["agents"]["defaults"]["workspace"] = str(sim.workspaces["claude"]) + "/../claude"
+    sim.cfg.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    calls: list[str] = []
+    real = _shared.write_managed_block
+    monkeypatch.setattr(_shared, "write_managed_block",
+                        lambda path, body, **kw: (calls.append(str(path)), real(path, body, **kw))[1])
+    _configure(_state())
+    shared = str(_agents(sim, "claude"))
+    assert sum(Path(c).resolve() == Path(shared).resolve() for c in calls) == 1
+    assert _pairs(_agents(sim, "claude").read_text(encoding="utf-8")) == 1
+
+
+def test_workspace_targets_resolve_spellings_to_one_key(sim):
+    doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
+    real = sim.workspaces["claude"]
+    # agent_workspaces() resolves entries itself, so the defaults path is the one that needs
+    # `_workspace_targets` to resolve: spell it with a `..` detour and a trailing slash.
+    doc["agents"]["defaults"]["workspace"] = str(real.parent / ".." / "ws" / real.name) + "/"
+    doc["agents"]["entries"]["security"] = {"workspace": str(real)}
+    doc["agents"]["entries"]["claude"]["workspace"] = str(real) + "/"
+    keys = [k for k in openclaw._workspace_targets(doc) if k == real.resolve()]
+    assert len(keys) == 1
+    assert sorted(openclaw._workspace_targets(doc)[real.resolve()]["aids"]) == ["", "claude", "security"]
