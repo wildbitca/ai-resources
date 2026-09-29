@@ -1,3 +1,29 @@
+<!-- BEGIN ai-resources: managed by `ai-resources setup`; edits inside this block are overwritten -->
+# ai-resources (OpenClaw agent)
+
+Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upgrade ai-resources`, run `ai-resources setup`.
+
+## Kit workflow
+
+- Before any multi-step work, load the `kit-orchestration` skill: it explains how to run a workflow (steps, handoff, parallel groups, return format).
+- Workflows are the `workflow-*` skills (feature, bugfix, refactor, incident response, ...). Pick one by reading each skill's description, which is its trigger. Definitions live in `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec/workflows/`.
+- Work as a team with the kit roles rather than in one head: `planner`, `software-architect`, `implementer`, `tester`, `code-reviewer`, `security-auditor`, `verifier`, `doc-writer`. `/kit-plan <goal>` then `/kit-implement` drive that loop.
+- Never sign off your own work: only the `verifier` confirms acceptance criteria.
+- Hand work between roles through the handoff file: `handoff.md` at the repo root (or `.agent-output/handoff.md`); the shape is `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec/handoff.md.template`.
+
+## Worktrees
+
+- Do a task's work on its own branch in a managed worktree, not in the shared checkout: `openclaw worktrees create <repoRoot> --name <agent>-<task> [--base-ref <ref>]` prints the path and the branch (`openclaw/<name>`); work only there. The kit does not create, snapshot or clean worktrees: it delegates to `openclaw worktrees`.
+- `openclaw worktrees list` shows the active and the restorable ones; `remove <id>` snapshots then removes; `restore <id>` brings one back; `gc` reclaims the old ones.
+- Managed worktrees live under `~/.openclaw/worktrees/<repo-fingerprint>/<name>` (measured on openclaw 2026.9.6, with `worktreeRoot` unset). Never create a worktree, a virtualenv or any scratch you need again under `/tmp`: it is tmpfs, held in RAM and emptied on every reboot, which is how the kit's test virtualenv and the old scratch worktrees died (T26).
+- The `using-git-worktrees` skill has the whole flow and the raw `git worktree` fallback for sessions outside OpenClaw.
+
+## Delegation
+
+- Hand code and team work to the `claude` worker agent: `sessions_spawn agentId=claude cwd=<project> thread=true`, so the reply lands back in the same Telegram thread.
+- Do not do a project's coding in this workspace; delegate it, then report.
+<!-- END ai-resources -->
+
 # Agent skills & orchestration policy
 
 > [!IMPORTANT]
