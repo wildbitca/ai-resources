@@ -11,6 +11,14 @@ Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upg
 - Never sign off your own work: only the `verifier` confirms acceptance criteria.
 - Hand work between roles through the handoff file: `handoff.md` at the repo root (or `.agent-output/handoff.md`); the shape is `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec/handoff.md.template`.
 
+## Long-running commands never block a tool call
+
+- A tool call that is still open holds a gateway stop until the stop timeout; then systemd SIGKILLs the gateway and every child it started (T39).
+- Work that may take more than about 2 minutes runs in the background, writes to a file, and is polled with short reads.
+- Never put a long `sleep` or a wait loop inside one call.
+- Ask the user once with `ask_user`, then end the turn; never leave it open waiting.
+- A cron job reports at each phase, so a timeout names the phase that hung.
+
 ## Worktrees
 
 - Do a task's work on its own branch in a managed worktree, not in the shared checkout: `openclaw worktrees create <repoRoot> --name <agent>-<task> [--base-ref <ref>]` prints the path and the branch (`openclaw/<name>`); work only there. The kit does not create, snapshot or clean worktrees: it delegates to `openclaw worktrees`.

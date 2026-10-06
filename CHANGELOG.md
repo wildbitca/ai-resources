@@ -4,6 +4,35 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.14.0] — 2026-10-06 — what the 2026-10-06 gateway outage taught the kit
+
+### Added
+
+- **Pitfall T39** in `docs/openclaw/pitfalls.md`: blocked tool calls hold a gateway stop for the whole
+  `TimeoutStopSec`, then systemd SIGKILLs every child. Counts are lower bounds (9154 events were dropped),
+  the 2026-09-18 bundle records no stalled sessions, and the sender of the first SIGTERM is not established.
+- **A kit-block rule for every OpenClaw agent workspace**, `## Long-running commands never block a tool call`:
+  work over about 2 minutes runs in the background and is polled, `ask_user` is asked once and the turn
+  ends, cron jobs report per phase. `ai-resources verify` warns when a workspace repeats that heading by
+  hand outside the kit markers (the kit never edits those bytes).
+- **Watchdog alerts.** `openclaw-watchdog.sh` sends a Telegram message on a new
+  `stop_shutdown_timeout` stability bundle (the first run records a baseline silently) and when the
+  gateway stays in `deactivating` past `OPENCLAW_WATCHDOG_DEACTIVATING_ALERT_SEC` (default 240 s; a 360 s
+  threshold would not have fired on 10-06). A failed send is retried on the next tick. The watchdog still
+  never starts or stops a unit in transition.
+- **A `stability` line in `ai-resources openclaw status`** and a `verify` warning (never an error) for a
+  stop in the last 7 days that was held by blocked tool calls, plus a warning when the installed watchdog
+  unit does not run the kit script.
+- **`openclaw-operations` skill:** diagnosis step for stability bundles, the `gateway_restart_sentinel`
+  table (read-only) and cron `tool-execution-started` timeouts.
+
+### Upgrade notes
+
+- Run `ai-resources openclaw install-units --dry-run`, then `ai-resources openclaw install-units`
+  (daemon-reload only, no restart, no `--enable`): older hosts run a stale `~/.local/bin` watchdog copy.
+- Trim the hand-written long-running sections that `ai-resources verify` reports.
+- Send `/new` in live topics so sessions pick up the new block (T19).
+
 ## [1.13.0] — 2026-09-29 — the wizard asks when to report a gateway running older plugin code
 
 ### Added

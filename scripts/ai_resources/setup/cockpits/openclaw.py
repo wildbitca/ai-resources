@@ -1572,6 +1572,11 @@ def _verify_workspace_blocks(doc: dict, o: state.OpenClawState, F: Any) -> list:
         stale = sorted({m for m in _CHAT_ID.findall(outside) if m not in known_ids})
         stale += sorted({f"topic {n}" for n in _TOPIC_REF.findall(outside)
                          if not re.search(rf"(?<![\w-]){n}(?![\w-])", known_text)})
+        if re.search(rf"^{re.escape(_shared.OPENCLAW_LONG_RUNNING_HEADING)}[ \t]*$", outside, re.MULTILINE):
+            out.append(F("warn", "openclaw",
+                         f"{agents_md} repeats the kit section "
+                         f"\"{_shared.OPENCLAW_LONG_RUNNING_HEADING.removeprefix('## ')}\" outside the markers",
+                         "delete the hand-written copy; the kit never touches bytes outside its markers"))
         if stale:
             out.append(F("warn", "openclaw",
                          f"{agents_md} documents routing the live config does not have: {', '.join(stale)}",

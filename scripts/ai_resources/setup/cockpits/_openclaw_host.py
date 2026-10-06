@@ -700,4 +700,54 @@ def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> l
                            "set gateway.bind to loopback or a tailnet address"))
     if not report["off-box"]["configured"]:
         out.append(Finding("warn", who, "no off-box backup listing is configured", OFFBOX_REMEDY))
+    out += _stability_findings(report.get("stability") or {})
+    out += _watchdog_unit_findings()
     return out
+
+
+STABILITY_RECENT_DAYS = 7
+_STABILITY_REMEDY = ("see T39 and the openclaw-operations skill; long work runs in the background "
+                     "(kit block rule)")
+
+
+def _stability_findings(s: dict) -> list:
+    """T39: a recent stop that ran into its timeout while tool calls were still open. A warn at
+    most: the stop is over, and the gateway being up is what verify's errors are about."""
+    from ...verify import Finding
+
+    if not s.get("present"):
+        return []
+    if s.get("error"):
+        return [Finding("warn", "openclaw", f"the newest gateway stability bundle could not be read ({s['error']})",
+                        "open it by hand under ~/.openclaw/logs/stability/; see T39")]
+    age = s.get("age_hours")
+    reason = s.get("reason", "")
+    stalled = s.get("stalled", {})
+    held = {k: v for k, v in stalled.items() if k in ("blocked_tool_call", "active_work_without_progress")}
+    if age is None or age > STABILITY_RECENT_DAYS * 24 or not held \
+            or not reason.endswith(("shutdown_timeout", "close_failed")):
+        return []
+    import datetime as dt
+    day = dt.datetime.fromtimestamp(s["generated_at"], dt.timezone.utc).strftime("%Y-%m-%d")
+    blocked = held.get("blocked_tool_call", 0)
+    what = (f">={blocked} blocked tool calls ({', '.join(sorted(s.get('tools', {}))) or 'unnamed tools'})"
+            if blocked else f">={sum(held.values())} stalled sessions")
+    return [Finding("warn", "openclaw", f"gateway stop on {day} was held by {what}", _STABILITY_REMEDY)]
+
+
+def _watchdog_unit_findings() -> list:
+    """The installed watchdog unit must run the kit's script: an older host kept a copy under
+    ~/.local/bin that never gets the kit's fixes. A file read; nothing is run."""
+    from ...verify import Finding
+
+    path = host.user_unit_dir() / "openclaw-watchdog.service"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    exec_line = next((ln for ln in text.splitlines() if ln.startswith("ExecStart=")), "")
+    want = f"{host.kit_root()}/scripts/openclaw/openclaw-watchdog.sh"
+    if exec_line.split()[-1:] == [want]:
+        return []
+    return [Finding("warn", "openclaw", f"the watchdog unit does not run the kit script ({exec_line or 'no ExecStart'})",
+                    "`ai-resources openclaw install-units --dry-run`, then `install-units`")]

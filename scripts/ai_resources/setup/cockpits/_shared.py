@@ -210,7 +210,7 @@ LEGACY_KIT_HEADINGS = frozenset({
 # same name under another H1 is kept.
 CURRENT_KIT_HEADINGS = frozenset({
     "Using the kit", "Delegation", "Multi-model routing", "Kit workflow", "Worktrees",
-    "Memory", "Voice notes", "Orchestration", "Voice",
+    "Long-running commands never block a tool call", "Memory", "Voice notes", "Orchestration", "Voice",
 })
 
 
@@ -485,6 +485,21 @@ OPENCLAW_WORKTREE_ROOT_NOTE = (
 )
 
 
+# The heading must stay byte-identical to the hand-written sections some workspaces already carry
+# outside the markers: `verify` uses it to find those duplicates (T39).
+OPENCLAW_LONG_RUNNING_HEADING = "## Long-running commands never block a tool call"
+OPENCLAW_LONG_RUNNING_MD = (
+    f"\n{OPENCLAW_LONG_RUNNING_HEADING}\n\n"
+    "- A tool call that is still open holds a gateway stop until the stop timeout; then systemd "
+    "SIGKILLs the gateway and every child it started (T39).\n"
+    "- Work that may take more than about 2 minutes runs in the background, writes to a file, and "
+    "is polled with short reads.\n"
+    "- Never put a long `sleep` or a wait loop inside one call.\n"
+    "- Ask the user once with `ask_user`, then end the turn; never leave it open waiting.\n"
+    "- A cron job reports at each phase, so a timeout names the phase that hung.\n"
+)
+
+
 def openclaw_agent_kit_md(ak_path: str, *, delegates: bool = True) -> str:
     """The kit block for an OpenClaw agent workspace `AGENTS.md`.
 
@@ -510,6 +525,7 @@ def openclaw_agent_kit_md(ak_path: str, *, delegates: bool = True) -> str:
         "- Hand work between roles through the handoff file: `handoff.md` at the repo root (or "
         f"`.agent-output/handoff.md`); the shape is `{ak_path}/handoff.md.template`.\n"
     )
+    text += OPENCLAW_LONG_RUNNING_MD
     text += (
         "\n## Worktrees\n\n"
         "- Do a task's work on its own branch in a managed worktree, not in the shared checkout: "

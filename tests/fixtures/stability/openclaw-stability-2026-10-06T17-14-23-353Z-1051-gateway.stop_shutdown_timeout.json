@@ -1,0 +1,130 @@
+{
+ "version": 1,
+ "generatedAt": "2026-10-06T17:14:23.353Z",
+ "reason": "gateway.stop_shutdown_timeout",
+ "snapshot": {
+  "capacity": 1000,
+  "count": 15,
+  "dropped": 9154,
+  "events": [
+   {
+    "seq": 1,
+    "ts": 1790000000001,
+    "type": "session.state"
+   },
+   {
+    "seq": 2,
+    "ts": 1790000000002,
+    "type": "model.call.started"
+   },
+   {
+    "seq": 10,
+    "ts": 1790000000010,
+    "type": "session.stalled",
+    "reason": "blocked_tool_call",
+    "ageMs": 400000,
+    "activeWorkKind": "tool_call",
+    "toolName": "Bash"
+   },
+   {
+    "seq": 11,
+    "ts": 1790000000011,
+    "type": "session.stalled",
+    "reason": "blocked_tool_call",
+    "ageMs": 1980000,
+    "activeWorkKind": "tool_call",
+    "toolName": "Bash"
+   },
+   {
+    "seq": 12,
+    "ts": 1790000000012,
+    "type": "session.stalled",
+    "reason": "blocked_tool_call",
+    "ageMs": 360000,
+    "activeWorkKind": "tool_call",
+    "toolName": "mcp__openclaw__ask_user"
+   },
+   {
+    "seq": 13,
+    "ts": 1790000000013,
+    "type": "session.stalled",
+    "reason": "blocked_tool_call",
+    "ageMs": 500000,
+    "activeWorkKind": "tool_call",
+    "toolName": "Bash"
+   },
+   {
+    "seq": 14,
+    "ts": 1790000000014,
+    "type": "session.stalled",
+    "reason": "blocked_tool_call",
+    "ageMs": 700000,
+    "activeWorkKind": "tool_call",
+    "toolName": "Bash"
+   },
+   {
+    "seq": 15,
+    "ts": 1790000000015,
+    "type": "session.stalled",
+    "reason": "blocked_tool_call",
+    "ageMs": 420000,
+    "activeWorkKind": "tool_call",
+    "toolName": "mcp__openclaw__ask_user"
+   },
+   {
+    "seq": 20,
+    "ts": 1790000000020,
+    "type": "session.stalled",
+    "reason": "active_work_without_progress",
+    "ageMs": 720000,
+    "activeWorkKind": "embedded_run"
+   },
+   {
+    "seq": 21,
+    "ts": 1790000000021,
+    "type": "session.stalled",
+    "reason": "active_work_without_progress",
+    "ageMs": 720001,
+    "activeWorkKind": "embedded_run"
+   },
+   {
+    "seq": 30,
+    "ts": 1790000000030,
+    "type": "session.long_running",
+    "ageMs": 300000
+   },
+   {
+    "seq": 31,
+    "ts": 1790000000031,
+    "type": "session.long_running",
+    "ageMs": 300000
+   },
+   {
+    "seq": 32,
+    "ts": 1790000000032,
+    "type": "session.long_running",
+    "ageMs": 300000
+   },
+   {
+    "seq": 33,
+    "ts": 1790000000033,
+    "type": "session.long_running",
+    "ageMs": 300000
+   },
+   {
+    "seq": 34,
+    "ts": 1790000000034,
+    "type": "session.long_running",
+    "ageMs": 300000
+   }
+  ],
+  "summary": {
+   "byType": {
+    "session.state": 1,
+    "model.call.started": 1,
+    "session.stalled": 8,
+    "session.long_running": 5
+   }
+  }
+ }
+}

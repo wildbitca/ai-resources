@@ -90,6 +90,32 @@ def test_the_kit_block_never_reads_as_stale_documentation(sim, script):
     assert not _by(_verify(s), "warn", "documents routing")
 
 
+def test_a_hand_copy_of_the_long_running_section_outside_the_block_is_one_warn_naming_the_file(sim, script):
+    s = _applied(sim, script)
+    md = sim.workspaces["app"] / "AGENTS.md"
+    md.write_text(md.read_text(encoding="utf-8") + "\n" + _shared.OPENCLAW_LONG_RUNNING_HEADING
+                  + "\n\nMy own copy.\n", encoding="utf-8")
+    before = _snapshot(sim)
+    warns = _by(_verify(s), "warn", "repeats the kit section")
+    assert len(warns) == 1 and str(md) in warns[0].message
+    assert "Long-running commands never block a tool call" in warns[0].message
+    assert "never touches bytes outside its markers" in warns[0].remedy
+    assert _snapshot(sim) == before
+
+
+def test_the_block_alone_does_not_trip_the_duplicate_guard(sim, script):
+    s = _applied(sim, script)
+    assert _shared.OPENCLAW_LONG_RUNNING_HEADING in (sim.workspaces["app"] / "AGENTS.md").read_text(encoding="utf-8")
+    assert not _by(_verify(s), "warn", "repeats the kit section")
+
+
+def test_a_hand_section_with_another_heading_is_not_a_duplicate(sim, script):
+    s = _applied(sim, script)
+    md = sim.workspaces["app"] / "AGENTS.md"
+    md.write_text(md.read_text(encoding="utf-8") + "\n## Long-running jobs of mine\n\nx\n", encoding="utf-8")
+    assert not _by(_verify(s), "warn", "repeats the kit section")
+
+
 def test_a_dead_chat_id_outside_the_block_warns_and_a_live_one_does_not(sim, script):
     s = _applied(sim, script)
     _edit(sim, lambda d: d.update(bindings=[{"type": "route", "agentId": "app",

@@ -1290,6 +1290,51 @@ failed (`ok`, `timeout`, `missing`, `failed`), and `Unknown model: claude-kit/..
 
 ---
 
+## T39 — Blocked tool calls hold a gateway stop for the full TimeoutStopSec, then systemd SIGKILLs every child *(added 2026-10-06; fixed in 1.14.0)*
+
+**Symptom.** On 2026-10-06 the gateway sat in `deactivating` from 17:08:58 to 17:14:23 (about 5.5 min) and
+was then SIGKILLed with its children. The watchdog logged the transition every 2 minutes and told nobody.
+
+**Measured (2026-10-06).** The stability bundle `gateway.stop_shutdown_timeout` holds 73 `session.stalled`
+events: 67 `blocked_tool_call` and 6 `active_work_without_progress`. These are **lower bounds**: 9154 events
+were dropped from the ring buffer. The tools were `Bash` and `mcp__openclaw__ask_user`: `ask_user` stayed
+open for more than 6 min, a `Bash` call for about 33 min, and a Sonnet call timed out after 22 min. The
+stop ran the full 5 min 30 s (`TimeoutStopSec=330`), the gateway logged "shutdown deadline reached;
+abandoning unfinished cleanup", and systemd SIGKILLed `claude`, `engram` and `npm exec @supabase`. The
+`security-scan-weekly-deep` cron repeatedly died at 3600 s with `cron: job execution timed out (last
+phase: tool-execution-started)`. The restart sentinel is the STRICT table `gateway_restart_sentinel` in
+`~/.openclaw/state/openclaw.sqlite`, not a file; after the incident it holds only a revision-floor row.
+
+**Not established.** Who sent the first SIGTERM at 17:08:58 is not established, and no cause is given for it.
+The 2026-09-18 `stop_shutdown_timeout` bundle also exists, and it records **no** stalled sessions, so this
+pitfall does not claim stalled sessions for that date. Other reasons on disk: `restart_close_failed`
+(2026-09-29, 8 stalled) and `stop_close_failed` (2026-10-05).
+
+**Cause.** A tool call that is still open when the gateway stops keeps the drain waiting until the stop
+timeout; then the unit is killed with everything in its cgroup.
+
+**Fix.**
+
+- An agent rule in the kit block (`## Long-running commands never block a tool call`): work over about
+  2 min runs in the background and is polled, no long waits in one call, `ask_user` once then end the
+  turn, cron jobs report per phase. Live sessions see it only after `/new` (T19).
+- `scripts/openclaw/openclaw-watchdog.sh` sends a Telegram alert on a new `stop_shutdown_timeout` bundle
+  (the first run only records a baseline) and when the unit stays in `deactivating` past
+  `OPENCLAW_WATCHDOG_DEACTIVATING_ALERT_SEC` (default 240 s). A 360 s threshold would NOT have fired on
+  10-06 (the stop ended at about 330 s), so the bundle alert is what covers that case. The alert needs
+  `openclaw message send` to work during a stop; it is retried every tick until it is sent. The watchdog
+  still never starts or stops a unit in transition. The host runs the new script only after
+  `ai-resources openclaw install-units` (daemon-reload only, no restart).
+- `ai-resources openclaw status` has a `stability` line, and `ai-resources verify` warns (never errors)
+  for a bundle younger than 7 days with blocked tool calls, and when the installed watchdog unit does not
+  run the kit script. `verify` also warns when a workspace repeats the new section by hand outside the
+  kit markers: the kit never edits those bytes, so trimming them is a manual step.
+
+**How to catch it.** `ai-resources openclaw status` (stability line), then the newest
+`~/.openclaw/logs/stability/openclaw-stability-*.json`. Read the sentinel only with `sqlite3 -readonly`.
+
+---
+
 # SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT (implemented in 1.9.0)
 
 All ten cards below were proposals on 2026-09-18 and are now implemented. Each one says **what was
@@ -1426,6 +1471,9 @@ an existing service account (zero new IAM), workload identity federation with no
 without their `.sha256` skipped, an assertion that the newest daily reached the bucket, a soft `monthly`
 tier in the guard, and alert queries that measure schedule minus success above one period.
 
+**1.14.0 (T39).** The watchdog also alerts on a new `stop_shutdown_timeout` bundle and on a stop stuck in
+`deactivating`; it still never starts or stops a unit in transition.
+
 **Deviation.** The proposal listed node IP and CIDR as markers. The manifests have no place that needs
 them (the node is pinned by name), so they are not markers.
 
@@ -1438,6 +1486,7 @@ One screen, nine sections: unit, boot, listeners, health, the six timers with th
 backup per tier (daily older than 36 h is flagged), off-box presence, effective model per agent, and
 `openclaw doctor` warnings filtered through the T30 catalogue (`DOCTOR_NOISE`); anything else is shown
 verbatim. It sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` itself. It never repairs and exits 0.
+Since 1.14.0 it has an eleventh section, `stability`: the newest gateway stability bundle (T39).
 
 ### C10 — Recovery runbook and host-onboarding workflow — **IMPLEMENTED (restore UNREHEARSED)**
 

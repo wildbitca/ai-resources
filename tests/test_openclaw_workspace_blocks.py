@@ -47,6 +47,25 @@ def test_the_block_teaches_the_orchestration_loop_and_the_delegation():
     assert "topic" not in text.lower()
 
 
+@pytest.mark.parametrize("delegates", [True, False])
+def test_the_long_running_rule_is_in_both_forms_once_and_before_the_worktrees(delegates):
+    text = _shared.openclaw_agent_kit_md("/kit", delegates=delegates)
+    heading = _shared.OPENCLAW_LONG_RUNNING_HEADING
+    assert heading == "## Long-running commands never block a tool call"
+    assert text.count(heading) == 1
+    assert text.index("## Kit workflow") < text.index(heading) < text.index("## Worktrees")
+    section = text.split(heading, 1)[1].split("\n## ", 1)[0]
+    for needle in ("T39", "background", "ask_user", "phase"):
+        assert needle in section, needle
+
+
+def test_the_long_running_rule_names_no_host_job():
+    section = _shared.openclaw_agent_kit_md("/kit").split(_shared.OPENCLAW_LONG_RUNNING_HEADING, 1)[1]
+    section = section.split("\n## ", 1)[0]
+    for host_literal in ("security-scan", "wildbit", "devops", "bithome"):
+        assert host_literal not in section
+
+
 def test_the_worker_block_leaves_out_the_delegation_and_keeps_the_rest():
     worker = _shared.openclaw_agent_kit_md("/kit", delegates=False)
     assert "sessions_spawn" not in worker and "## Delegation" not in worker
