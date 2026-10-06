@@ -16,8 +16,41 @@ LOG="$OPENCLAW_LOG_DIR/watchdog.log"
 [ -e "$OPENCLAW_WATCHDOG_OFF" ] && exit 0
 mkdir -p "$(dirname "$LOG")"
 
+# T39: a stop that ran into its shutdown timeout leaves a stability bundle behind, and the bundle
+# only appears AFTER the restart, so this runs before the early exit for an active gateway.
+# Newest bundle by the timestamp in its name (not mtime). The first run only records a baseline,
+# so bundles that already exist never page. The marker advances only once the send worked.
+SEEN_MARK="$OPENCLAW_LOG_DIR/watchdog.seen-stability"
+newest=""
+for f in "$HOME"/.openclaw/logs/stability/*gateway.stop_shutdown_timeout.json; do
+  [ -e "$f" ] || continue
+  f="${f##*/}"
+  [[ "$f" > "$newest" ]] && newest="$f"
+done
+if [ ! -e "$SEEN_MARK" ]; then
+  printf '%s\n' "$newest" > "$SEEN_MARK"
+elif [ -n "$newest" ] && [[ "$newest" > "$(cat "$SEEN_MARK")" ]]; then
+  counts="$(python3 -I -c 'import json,sys
+try:
+    e=json.load(open(sys.argv[1]))["snapshot"]["events"]
+    n=sum(1 for x in e if x.get("type")=="session.stalled")
+    print(" (%d stalled sessions recorded, a lower bound)" % n if n else "")
+except Exception:
+    pass' "$HOME/.openclaw/logs/stability/$newest" 2>/dev/null || true)"
+  if notify "OpenClaw gateway stop hit its shutdown timeout; systemd killed its children (bundle $newest)${counts}. Run: ai-resources openclaw status. See T39."; then
+    printf '%s\n' "$newest" > "$SEEN_MARK"
+    echo "$(date '+%F %T') notified: stop_shutdown_timeout bundle $newest" >> "$LOG"
+  else
+    echo "$(date '+%F %T') could not notify about bundle $newest (will retry)" >> "$LOG"
+  fi
+fi
+
 state="$(systemctl --user is-active "$UNIT" 2>/dev/null || true)"
-[ "$state" = active ] && exit 0
+DEACT_MARK="$OPENCLAW_LOG_DIR/watchdog.deactivating-alerted"
+if [ "$state" = active ]; then
+  rm -f "$DEACT_MARK"
+  exit 0
+fi
 
 # MEASURED ON 2026-09-18: stopping this gateway takes minutes (TimeoutStopSec=330 plus the
 # drain), so during a deliberate restart the unit sits in `deactivating` for a good while. The
@@ -30,7 +63,26 @@ state="$(systemctl --user is-active "$UNIT" 2>/dev/null || true)"
 # transition ends, the next tick -- two minutes later -- will see it `inactive` and act then.
 case "$state" in
   inactive|failed) : ;;
-  *) echo "$(date '+%F %T') gateway in transition ('$state'): not intervening" >> "$LOG"; exit 0 ;;
+  *)
+    echo "$(date '+%F %T') gateway in transition ('$state'): not intervening" >> "$LOG"
+    if [ "$state" = deactivating ]; then
+      # Age of the stop = monotonic now - monotonic moment the unit left `active` (microseconds).
+      exit_us="$(systemctl --user show "$UNIT" -p ActiveExitTimestampMonotonic --value 2>/dev/null || true)"
+      up_s="$(awk '{print int($1)}' "$OPENCLAW_UPTIME_FILE" 2>/dev/null || true)"
+      if [[ "$exit_us" =~ ^[0-9]+$ && "$exit_us" -gt 0 && "$up_s" =~ ^[0-9]+$ ]]; then
+        age=$(( up_s - exit_us / 1000000 ))
+        if [ "$age" -ge "$OPENCLAW_WATCHDOG_DEACTIVATING_ALERT_SEC" ] \
+           && [ "$(cat "$DEACT_MARK" 2>/dev/null)" != "$exit_us" ]; then
+          if notify "OpenClaw gateway stuck in deactivating for $(( age / 60 )) min; blocked tool calls hold the drain. See T39."; then
+            printf '%s\n' "$exit_us" > "$DEACT_MARK"
+            echo "$(date '+%F %T') notified: deactivating for ${age}s" >> "$LOG"
+          else
+            echo "$(date '+%F %T') could not notify about deactivating (will retry)" >> "$LOG"
+          fi
+        fi
+      fi
+    fi
+    exit 0 ;;
 esac
 
 since="$(systemctl --user show "$UNIT" -p ActiveExitTimestamp --value)"

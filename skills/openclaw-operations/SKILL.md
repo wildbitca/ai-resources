@@ -111,6 +111,11 @@ OpenClaw drops Claude Code subagent events on purpose, so the kit ships a Claude
 6. Useful greps: `grep "outbound send ok" ~/.openclaw/logs/gateway.log` is the only proof the
    narration hook published; `ss -lntp | grep 18789` after any restart; `journalctl --user -u
    openclaw-gateway.service -n 100`.
+7. A stop that ran the whole `TimeoutStopSec` or SIGKILLed children (T39): read the newest
+   `~/.openclaw/logs/stability/openclaw-stability-*.json` (`status` summarizes it). The restart sentinel
+   is the table `gateway_restart_sentinel` in `~/.openclaw/state/openclaw.sqlite`: `sqlite3 -readonly`, never edit.
+   `job execution timed out (last phase: tool-execution-started)` in `gateway.log` is one tool call that
+   outlived the cron limit: split the job into phases and background it.
 
 ## Backups and units
 

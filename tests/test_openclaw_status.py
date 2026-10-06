@@ -100,12 +100,12 @@ def doctor_text(name):
 
 # --- AC-12.1 ------------------------------------------------------------------------------------------------------
 
-def test_the_report_has_all_ten_sections_from_fixture_output(env):
+def test_the_report_has_all_eleven_sections_from_fixture_output(env):
     env.backup("daily", "openclaw-1.tar.gz", 3)
     report = collect(env, Canned(doctor=doctor_text("doctor_noise_only.txt")))
-    assert list(report) == list(host.STATUS_SECTIONS) and len(report) == 10
+    assert list(report) == list(host.STATUS_SECTIONS) and len(report) == 11
     text = host.render_status(report)
-    for needle in ("unit ", "boot ", "listeners ", "health ", "timers", "backups", "off-box", "models", "identity", "doctor "):
+    for needle in ("unit ", "boot ", "listeners ", "health ", "timers", "backups", "off-box", "models", "identity", "stability ", "doctor "):
         assert needle in text
     assert text.count(".timer") == 6
     assert "main" in text and "anthropic/claude-haiku-4-5 (default)" in text  # effective model per agent
@@ -376,3 +376,135 @@ def test_a_workspace_of_one_named_agent_carries_no_attention_line(env):
 def test_the_identity_name_line_is_read_and_an_unfilled_template_is_no_name(tmp_path, text, expected):
     (tmp_path / "IDENTITY.md").write_text(text, encoding="utf-8")
     assert host.identity_file_name(tmp_path) == expected
+
+
+# --- T39: the newest stability bundle -------------------------------------------------------------------------
+
+import datetime as _dt
+import shutil
+
+STABILITY = REPO / "tests" / "fixtures" / "stability"
+B_1006 = "openclaw-stability-2026-10-06T17-14-23-353Z-1051-gateway.stop_shutdown_timeout.json"
+B_0918 = "openclaw-stability-2026-09-18T01-25-07-371Z-485771-gateway.stop_shutdown_timeout.json"
+B_BAD = "openclaw-stability-2026-10-07T00-00-00-000Z-1-gateway.stop_close_failed.json"
+T_1006 = _dt.datetime(2026, 10, 6, 17, 14, 23, tzinfo=_dt.timezone.utc).timestamp()
+
+
+def _bundles(dest, *names):
+    dest.mkdir(parents=True, exist_ok=True)
+    for n in names:
+        shutil.copy(STABILITY / n, dest / n)
+    return dest
+
+
+def test_stability_summary_of_the_10_06_shape(tmp_path):
+    s = host.stability_summary(_bundles(tmp_path / "s", B_1006), now=T_1006 + 3 * 3600)
+    assert s["present"] and s["reason"] == "gateway.stop_shutdown_timeout"
+    assert s["stalled"] == {"blocked_tool_call": 6, "active_work_without_progress": 2}
+    assert s["tools"] == {"Bash": 4, "mcp__openclaw__ask_user": 2}
+    assert s["long_running"] == 5 and s["dropped"] == 9154
+    assert s["max_stalled_age_s"] == 1980 and abs(s["age_hours"] - 3) < 0.01
+
+
+def test_stability_summary_of_a_bundle_without_stalls(tmp_path):
+    s = host.stability_summary(_bundles(tmp_path / "s", B_0918), now=T_1006)
+    assert s["present"] and s["stalled"] == {} and s["tools"] == {} and "error" not in s
+
+
+def test_stability_summary_survives_corrupt_json(tmp_path):
+    s = host.stability_summary(_bundles(tmp_path / "s", B_BAD), now=T_1006)
+    assert s["present"] and "error" in s
+
+
+def test_stability_summary_without_a_directory(tmp_path):
+    assert host.stability_summary(tmp_path / "nope") == {"present": False}
+
+
+def test_stability_summary_picks_the_newest_name_not_the_newest_mtime(tmp_path):
+    d = _bundles(tmp_path / "s", B_1006, B_0918)
+    os.utime(d / B_1006, (1, 1))
+    os.utime(d / B_0918, (NOW, NOW))
+    assert host.stability_summary(d, now=T_1006)["name"] == B_1006
+
+
+def test_stability_summary_skips_an_oversized_bundle(tmp_path, monkeypatch):
+    d = _bundles(tmp_path / "s", B_1006)
+    monkeypatch.setattr(host, "STABILITY_MAX_BYTES", 10)
+    assert "error" in host.stability_summary(d, now=T_1006)
+
+
+def test_stability_summary_falls_back_to_the_summary_counts(tmp_path):
+    d = tmp_path / "s"
+    d.mkdir()
+    (d / B_1006).write_text(json.dumps({"version": 1, "reason": "gateway.stop_shutdown_timeout",
+                                        "generatedAt": "2026-10-06T17:14:23.353Z",
+                                        "snapshot": {"summary": {"byType": {"session.stalled": 73}}}}),
+                            encoding="utf-8")
+    assert host.stability_summary(d, now=T_1006)["stalled"] == {"unknown": 73}
+
+
+def test_stability_summary_never_returns_event_payloads(tmp_path):
+    s = host.stability_summary(_bundles(tmp_path / "s", B_1006), now=T_1006)
+    assert "events" not in json.dumps(s)
+
+
+MALFORMED = {
+    "snapshot is a list": {"version": 1, "snapshot": [1]},
+    "events is an int": {"version": 1, "snapshot": {"events": 5}},
+    "summary is a list": {"version": 1, "snapshot": {"summary": [1]}},
+    "byType is a list": {"version": 1, "snapshot": {"summary": {"byType": [1]}}},
+    "non-numeric stalled count": {"version": 1, "snapshot": {"summary": {"byType": {"session.stalled": "many"}}}},
+    "non-numeric long_running count": {"version": 1, "snapshot": {"summary": {"byType": {"session.long_running": "x"}}}},
+    "non-numeric dropped": {"version": 1, "snapshot": {"events": [], "dropped": "lots"}},
+    "list-valued dropped": {"version": 1, "snapshot": {"events": [], "dropped": [1]}},
+}
+
+
+@pytest.mark.parametrize("label", sorted(MALFORMED))
+def test_stability_summary_never_raises_on_a_malformed_bundle(tmp_path, label):
+    d = tmp_path / "s"
+    d.mkdir()
+    (d / B_BAD).write_text(json.dumps(MALFORMED[label]), encoding="utf-8")
+    s = host.stability_summary(d, now=T_1006)
+    assert s["present"] is True and s["error"], label
+
+
+@pytest.mark.parametrize("label", sorted(MALFORMED))
+def test_status_survives_a_malformed_bundle(env, label):
+    d = env.home / ".openclaw" / "logs" / "stability"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / B_BAD).write_text(json.dumps(MALFORMED[label]), encoding="utf-8")
+    text = host.render_status(host.collect_status(Canned(), home=env.home, host_env_path=env.hostenv,
+                                                  now=T_1006, run_doctor=False))
+    assert "could not be read" in next(ln for ln in text.splitlines() if ln.startswith("stability"))
+
+
+def _status_with(env, *names):
+    _bundles(env.home / ".openclaw" / "logs" / "stability", *names)
+    return host.render_status(host.collect_status(Canned(), home=env.home, host_env_path=env.hostenv,
+                                                  now=T_1006 + 3 * 3600, run_doctor=False))
+
+
+def test_status_names_counts_tools_and_the_lower_bound(env):
+    line = next(ln for ln in _status_with(env, B_1006).splitlines() if ln.startswith("stability"))
+    for needle in ("gateway.stop_shutdown_timeout", ">=8 stalled", "blocked_tool_call 6", "Bash",
+                   "mcp__openclaw__ask_user", "33 min", "9154", "lower bounds", "T39"):
+        assert needle in line, needle
+
+
+def test_status_without_stalls_or_bundles(env):
+    assert "no stalled sessions" in _status_with(env, B_0918)
+    other = host.render_status(host.collect_status(Canned(), home=env.home / "elsewhere", host_env_path=env.hostenv,
+                                                   now=T_1006, run_doctor=False))
+    assert "stability   no bundles" in other
+
+
+def test_status_stability_reads_never_write(env):
+    _bundles(env.home / ".openclaw" / "logs" / "stability", B_1006)
+    def snap():
+        return {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in env.home.rglob("*") if p.is_file()}
+    before_paths = sorted(env.home.rglob("*"))
+    before = snap()
+    host.collect_status(Canned(), home=env.home, host_env_path=env.hostenv, now=T_1006, run_doctor=False)
+    assert sorted(env.home.rglob("*")) == before_paths
+    assert snap() == before, "no file may be rewritten, not even in place"

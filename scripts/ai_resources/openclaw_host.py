@@ -1567,7 +1567,7 @@ DOCTOR_NOISE = (
 # insurance, not the fix for "could not run" (that was the unresolved binary, rc 127).
 DOCTOR_TIMEOUT = 600
 TIER_MAX_AGE_HOURS = {"daily": 36, "weekly": 8 * 24, "monthly": 35 * 24}
-STATUS_SECTIONS = ("unit", "boot", "listeners", "health", "timers", "backups", "off-box", "models", "identity", "doctor")
+STATUS_SECTIONS = ("unit", "boot", "listeners", "health", "timers", "backups", "off-box", "models", "identity", "stability", "doctor")
 
 
 def parse_doctor_entries(text: str) -> list[tuple[str, str]]:
@@ -1663,6 +1663,86 @@ def backup_tiers(base: Path, now: float | None = None) -> dict[str, dict]:
     return out
 
 
+# T39: the gateway writes a stability bundle when a stop or restart goes wrong. Real ones are about
+# 1.5 MB; anything far above that is not read.
+STABILITY_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _bundle_time(name: str, data: dict) -> float | None:
+    """Epoch seconds from the bundle's generatedAt, else from the timestamp in its file name."""
+    import datetime as dt
+    raw = data.get("generatedAt") if isinstance(data, dict) else None
+    if not isinstance(raw, str):
+        m = re.match(r"openclaw-stability-(\d{4}-\d\d-\d\d)T(\d\d)-(\d\d)-(\d\d)", name)
+        raw = f"{m[1]}T{m[2]}:{m[3]}:{m[4]}Z" if m else ""
+    try:
+        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def stability_summary(log_dir: Path, now: float | None = None) -> dict:
+    """What the newest gateway stability bundle says about stalled sessions. Read-only; never
+    returns event payloads or session text. Counts are lower bounds: the ring buffer drops events."""
+    now = now if now is not None else time.time()
+    try:
+        names = sorted(n for n in os.listdir(log_dir) if n.startswith("openclaw-stability-") and n.endswith(".json"))
+    except OSError:
+        return {"present": False}
+    if not names:
+        return {"present": False}
+    name = names[-1]          # the timestamp in the name sorts as text; mtime can be reset by a copy
+    out: dict = {"present": True, "name": name}
+    path = Path(log_dir) / name
+    try:
+        if path.stat().st_size > STABILITY_MAX_BYTES:
+            return {**out, "error": "bundle too large to read"}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("version") != 1:
+            return {**out, "error": "unexpected bundle version"}
+        snap = data.get("snapshot") or {}
+        summary = snap.get("summary") or {} if isinstance(snap, dict) else None
+        by_type = summary.get("byType") or {} if isinstance(summary, dict) else None
+        raw_events = snap.get("events") or [] if isinstance(snap, dict) else None
+        if not isinstance(by_type, dict) or not isinstance(raw_events, list):
+            return {**out, "error": "unexpected bundle shape"}
+        events = [e for e in raw_events if isinstance(e, dict)]
+    except (OSError, ValueError) as e:
+        return {**out, "error": f"unreadable: {type(e).__name__}"}
+    try:
+        return _stability_fields(out, name, data, snap, events, by_type, now)
+    except (TypeError, ValueError, OverflowError, AttributeError):
+        return {"present": True, "name": name, "error": "unexpected bundle shape"}
+
+
+def _stability_fields(out: dict, name: str, data: dict, snap: dict, events: list, by_type: dict,
+                      now: float) -> dict:
+    stalled: dict[str, int] = {}
+    tools: dict[str, int] = {}
+    ages: list[float] = []
+    long_running = 0
+    for e in events:
+        if e.get("type") == "session.stalled":
+            reason = str(e.get("reason") or "unknown")
+            stalled[reason] = stalled.get(reason, 0) + 1
+            if isinstance(e.get("ageMs"), (int, float)):
+                ages.append(e["ageMs"] / 1000)
+            if reason == "blocked_tool_call" and e.get("toolName"):
+                tools[str(e["toolName"])] = tools.get(str(e["toolName"]), 0) + 1
+        elif e.get("type") == "session.long_running":
+            long_running += 1
+    if not events and by_type.get("session.stalled"):
+        stalled = {"unknown": int(by_type["session.stalled"])}
+    if not events:
+        long_running = int(by_type.get("session.long_running") or 0)
+    ts = _bundle_time(name, data)
+    out.update(reason=str(data.get("reason") or "?"), generated_at=ts,
+               age_hours=(now - ts) / 3600 if ts is not None else None,
+               stalled=stalled, tools=tools, long_running=long_running,
+               max_stalled_age_s=max(ages) if ages else 0, dropped=int(snap.get("dropped") or 0))
+    return out
+
+
 def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                    host_env_path: Path | None = None, config_path: Path | None = None,
                    now: float | None = None, run_doctor: bool = True, probe_offbox: bool = True) -> dict:
@@ -1725,6 +1805,7 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                         for aid, e in ((cfg.get("agents") or {}).get("entries") or {}).items()]
 
     report["identity"] = agent_identities(cfg)
+    report["stability"] = stability_summary(home / ".openclaw" / "logs" / "stability", now)
     if not run_doctor:
         report["doctor"] = {"ran": False, "status": "skipped"}
         return report
@@ -1734,6 +1815,27 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
     report["doctor"] = {"ran": rc == 0, "status": status, "rc": rc, "bin": oc,
                         "noise": len(noise), "signal": signal}
     return report
+
+
+def _render_stability(s: dict) -> str:
+    if not s.get("present"):
+        return "stability   no bundles"
+    if s.get("error"):
+        return f"stability   newest bundle {s['name']} could not be read ({s['error']})"
+    import datetime as dt
+    when = dt.datetime.fromtimestamp(s["generated_at"], dt.timezone.utc).strftime("%Y-%m-%d %H:%M") \
+        if s.get("generated_at") is not None else "?"
+    ago = f" ({_humanize(s['age_hours'] * 3600)} ago)" if s.get("age_hours") is not None else ""
+    head = f"stability   newest {s['reason']} {when}{ago}: "
+    if not s["stalled"]:
+        return head + "no stalled sessions"
+    parts = []
+    for reason, n in sorted(s["stalled"].items(), key=lambda kv: -kv[1]):
+        tools = f": {', '.join(sorted(s['tools']))}" if reason == "blocked_tool_call" and s["tools"] else ""
+        parts.append(f"{reason} {n}{tools}")
+    dropped = f", {s['dropped']} events dropped" if s["dropped"] else ""
+    return (head + f">={sum(s['stalled'].values())} stalled ({'; '.join(parts)}), "
+            f"oldest {round(s['max_stalled_age_s'] / 60)} min{dropped} (counts are lower bounds); see T39")
 
 
 def render_status(report: dict) -> str:
@@ -1787,6 +1889,7 @@ def render_status(report: dict) -> str:
                          f"{', '.join(unnamed)} ha{'s' if len(unnamed) == 1 else 've'} no identity.name, so OpenClaw "
                          f"narrates it with IDENTITY.md's name ({group[0]['file_name'] or 'none'}). The kit never writes that file; "
                          + "; ".join(f"openclaw config set agents.entries.{a}.identity.name {a} --dry-run" for a in unnamed))
+    lines.append(_render_stability(report.get("stability") or {"present": False}))
     d = report["doctor"]
     if d.get("status") == "skipped":
         lines.append("doctor      not run (--no-doctor)")

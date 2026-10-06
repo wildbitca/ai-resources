@@ -18,6 +18,11 @@ fi
 
 : "${OPENCLAW_BACKUP_DIR:=/srv/openclaw-backups}"
 : "${OPENCLAW_EXTRA_PATH:=}"
+# Seconds a gateway stop may sit in `deactivating` before the watchdog tells the operator. A stop
+# that runs the whole TimeoutStopSec (330 s) is SIGKILLed right after, so keep this below that.
+: "${OPENCLAW_WATCHDOG_DEACTIVATING_ALERT_SEC:=240}"
+# Where the watchdog reads the monotonic clock; a test points it at a file.
+: "${OPENCLAW_UPTIME_FILE:=/proc/uptime}"
 
 # OPENCLAW_EXTRA_PATH goes FIRST: an operator who sets it wants that openclaw, not the default.
 export PATH="${OPENCLAW_EXTRA_PATH:+$OPENCLAW_EXTRA_PATH:}/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin:$HOME/.local/bin"
@@ -32,6 +37,6 @@ OPENCLAW_WATCHDOG_OFF="$HOME/.openclaw/watchdog.off"
 # failed, so callers decide whether that matters (`notify "..." || log "could not notify"`).
 notify() {
   [ -n "${OPENCLAW_OWNER_TELEGRAM_ID:-}" ] || return 1
-  openclaw message send --channel telegram --target "$OPENCLAW_OWNER_TELEGRAM_ID" \
+  timeout 30 openclaw message send --channel telegram --target "$OPENCLAW_OWNER_TELEGRAM_ID" \
     --message "$1" >/dev/null 2>&1
 }

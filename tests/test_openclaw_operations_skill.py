@@ -67,3 +67,10 @@ def test_every_stable_name_it_cites_exists_in_the_code():
 
 def test_the_skill_names_the_verify_command():
     assert "ai-resources verify" in _text()
+
+
+def test_the_skill_diagnoses_stability_bundles_the_sentinel_and_cron_timeouts():
+    text = _text()
+    for needle in ("~/.openclaw/logs/stability/openclaw-stability-", "gateway_restart_sentinel",
+                   "sqlite3 -readonly", "job execution timed out (last phase: tool-execution-started)", "T39"):
+        assert needle in text, needle

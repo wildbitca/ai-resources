@@ -58,6 +58,18 @@ def test_the_block_drift_identity_and_model_form_pitfalls_are_recorded():
     assert "anyOf: [string, {primary, fallbacks}]" in text
 
 
+def test_t39_records_the_blocked_stop_without_inventing_a_cause():
+    text = (REPO / "docs" / "openclaw" / "pitfalls.md").read_text(encoding="utf-8")
+    m = re.search(r"^## T39 — .*?(?=^## |^# SECTION)", text, re.M | re.S)
+    assert m, "T39 is missing"
+    t39 = m.group(0)
+    for needle in ("stop_shutdown_timeout", "blocked_tool_call", "lower bounds", "gateway_restart_sentinel",
+                   "records **no** stalled sessions"):
+        assert needle in t39, needle
+    sigterm = [ln for ln in t39.splitlines() if "SIGTERM" in ln]
+    assert sigterm and all("not established" in ln for ln in sigterm), sigterm
+
+
 def test_the_runbook_and_readme_name_the_verify_command_and_its_exit_rule():
     runbook = (REPO / "docs" / "openclaw" / "runbook.md").read_text(encoding="utf-8")
     assert "ai-resources verify" in runbook and "OPENCLAW_OFFBOX_LIST_CMD" in runbook

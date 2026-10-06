@@ -6,6 +6,7 @@ The runner answers from canned output: nothing here reaches systemd, ss or openc
 from __future__ import annotations
 
 import os
+import pathlib
 
 import pytest
 
@@ -50,6 +51,7 @@ def box(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / ".openclaw").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(home / ".openclaw" / "openclaw.json"))
     backups = tmp_path / "backups"
     (backups / "daily").mkdir(parents=True)
@@ -143,3 +145,108 @@ def test_verify_never_stops_restarts_or_runs_doctor_and_writes_nothing(box):
     for call in runner.calls:
         assert not {"stop", "restart", "start", "enable", "disable", "doctor", "--fix"} & set(call), call
     assert {p: p.stat().st_mtime_ns for p in box.parent.parent.rglob("*") if p.is_file()} == before
+
+
+# --- T39: stability bundle and the watchdog unit ------------------------------------------------------------------
+
+import datetime as _dt
+import json
+import time
+
+FIX = pathlib.Path(__file__).parent / "fixtures" / "stability"
+B_1006 = "openclaw-stability-2026-10-06T17-14-23-353Z-1051-gateway.stop_shutdown_timeout.json"
+B_0918 = "openclaw-stability-2026-09-18T01-25-07-371Z-485771-gateway.stop_shutdown_timeout.json"
+
+
+def _bundle(box, fixture: str, age_days: float):
+    """The fixture bundle, regenerated `age_days` ago (name and generatedAt both move)."""
+    home = box.parent.parent
+    when = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=age_days)
+    data = json.loads((FIX / fixture).read_text(encoding="utf-8"))
+    data["generatedAt"] = when.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    name = "openclaw-stability-" + when.strftime("%Y-%m-%dT%H-%M-%S-000Z") + "-" + fixture.split("Z-", 1)[1]
+    d = home / ".openclaw" / "logs" / "stability"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(json.dumps(data), encoding="utf-8")
+
+
+def _stability_warns(found):
+    return [f for f in found if f.level == "warn" and "gateway stop" in f.message]
+
+
+def test_a_recent_stop_held_by_blocked_tool_calls_is_one_warn_naming_the_tools_and_t39(box):
+    _bundle(box, B_1006, 1)
+    warns = _stability_warns(_run(HostRunner()))
+    assert len(warns) == 1
+    assert ">=6 blocked tool calls" in warns[0].message and "Bash" in warns[0].message
+    assert "T39" in warns[0].remedy and "openclaw-operations" in warns[0].remedy
+
+
+def test_the_same_bundle_after_the_window_is_ok(box):
+    _bundle(box, B_1006, 8)
+    assert not _stability_warns(_run(HostRunner()))
+
+
+def test_a_bundle_without_stalls_is_ok(box):
+    _bundle(box, B_0918, 1)
+    assert not _stability_warns(_run(HostRunner()))
+
+
+def test_an_unreadable_bundle_is_a_warn(box):
+    d = box.parent.parent / ".openclaw" / "logs" / "stability"
+    d.mkdir(parents=True)
+    (d / "openclaw-stability-2099-01-01T00-00-00-000Z-1-gateway.stop_close_failed.json").write_text("{x", encoding="utf-8")
+    assert any(f.level == "warn" and "stability bundle" in f.message for f in _run(HostRunner()))
+
+
+def _custom_bundle(box, reason: str, stalled: list[dict], age_days: float = 1):
+    when = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=age_days)
+    d = box.parent.parent / ".openclaw" / "logs" / "stability"
+    d.mkdir(parents=True, exist_ok=True)
+    name = "openclaw-stability-" + when.strftime("%Y-%m-%dT%H-%M-%S-000Z") + f"-1-{reason}.json"
+    (d / name).write_text(json.dumps({"version": 1, "reason": reason,
+                                      "generatedAt": when.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                                      "snapshot": {"events": stalled}}), encoding="utf-8")
+
+
+def test_a_recent_close_failed_bundle_with_stalls_is_a_warn(box):
+    _custom_bundle(box, "gateway.stop_close_failed",
+                   [{"type": "session.stalled", "reason": "blocked_tool_call", "toolName": "Bash"}] * 2)
+    warns = _stability_warns(_run(HostRunner()))
+    assert len(warns) == 1 and ">=2 blocked tool calls" in warns[0].message
+
+
+def test_active_work_without_progress_only_uses_the_stalled_sessions_wording(box):
+    _custom_bundle(box, "gateway.stop_shutdown_timeout",
+                   [{"type": "session.stalled", "reason": "active_work_without_progress"}] * 3)
+    warns = _stability_warns(_run(HostRunner()))
+    assert len(warns) == 1
+    assert ">=3 stalled sessions" in warns[0].message and "blocked tool calls" not in warns[0].message
+
+
+def test_a_recent_bundle_with_a_non_matching_reason_stays_ok(box):
+    _custom_bundle(box, "gateway.restart_requested",
+                   [{"type": "session.stalled", "reason": "blocked_tool_call", "toolName": "Bash"}] * 2)
+    assert not _stability_warns(_run(HostRunner()))
+
+
+def test_no_stability_finding_is_ever_an_error(box):
+    _bundle(box, B_1006, 1)
+    assert not [f for f in _run(HostRunner()) if f.level == "error"]
+
+
+def _watchdog_unit(box, exec_start: str):
+    d = box.parent.parent.parent / "xdg" / "systemd" / "user"
+    d.mkdir(parents=True)
+    (d / "openclaw-watchdog.service").write_text(f"[Service]\nExecStart={exec_start}\n", encoding="utf-8")
+
+
+def test_a_stale_watchdog_execstart_is_one_warn_naming_install_units(box):
+    _watchdog_unit(box, "/home/u/.local/bin/openclaw-watchdog.sh")
+    warns = [f for f in _run(HostRunner()) if f.level == "warn" and "watchdog" in f.message]
+    assert len(warns) == 1 and "install-units" in warns[0].remedy
+
+
+def test_the_kit_watchdog_execstart_is_not_a_warn(box):
+    _watchdog_unit(box, f"/bin/bash {host.kit_root()}/scripts/openclaw/openclaw-watchdog.sh")
+    assert not [f for f in _run(HostRunner()) if f.level == "warn" and "watchdog" in f.message]

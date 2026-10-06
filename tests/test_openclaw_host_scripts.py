@@ -91,6 +91,7 @@ class Host:
         for name in ("systemctl", "loginctl", "openclaw", "ai-resources", "kubectl", "flux", "sleep", "curl"):
             self._stub(name)
         self.env_file = self.home / ".openclaw" / "kit-host.env"
+        self.uptime_file = tmp / "uptime"
 
     def _stub(self, name: str):
         script = self.bin / name
@@ -103,7 +104,8 @@ case "{name} $1 $2" in
   "systemctl --user is-active") cat "{self.bin}/is-active" 2>/dev/null || echo active; exit 0 ;;
   "systemctl --user is-enabled") echo enabled; exit 0 ;;
   "systemctl --user list-timers") for i in 1 2 3 4 5 6; do echo "n openclaw-t$i.timer"; done; exit 0 ;;
-  "systemctl --user show") echo "{'[not set]'}"; exit 0 ;;
+  "systemctl --user show") case "$*" in *ActiveExitTimestampMonotonic*) cat "{self.bin}/exit-mono" 2>/dev/null || echo "[not set]" ;; *) echo "[not set]" ;; esac; exit 0 ;;
+  "openclaw message send") exit "$(cat "{self.bin}/send-rc" 2>/dev/null || echo 0)" ;;
   "loginctl show-user"*) echo yes; exit 0 ;;
   "openclaw health "*) exit "$(cat "{self.bin}/health-rc" 2>/dev/null || echo 0)" ;;
   "ai-resources openclaw"*) echo "Repaired legacy bindings 2"; exit "$(cat "{self.bin}/doctor-rc" 2>/dev/null || echo 0)" ;;
@@ -117,6 +119,24 @@ exit 0
 
     def set_doctor_rc(self, rc: int):
         (self.bin / "doctor-rc").write_text(str(rc), encoding="utf-8")
+
+    def set_send_rc(self, rc: int):
+        (self.bin / "send-rc").write_text(str(rc), encoding="utf-8")
+
+    def set_deactivating_for(self, seconds: float, exit_mono_us: int = 1_000_000_000):
+        """Fake clock: uptime is exit_mono + seconds, so the unit has been deactivating that long."""
+        (self.bin / "exit-mono").write_text(f"{exit_mono_us}\n", encoding="utf-8")
+        self.uptime_file.write_text(f"{exit_mono_us / 1e6 + seconds:.2f} 0.00\n", encoding="utf-8")
+
+    def add_stability_bundle(self, name: str, raw: str | None = None, events: list | None = None):
+        d = self.home / ".openclaw" / "logs" / "stability"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text(raw if raw is not None else json.dumps(
+            {"version": 1, "reason": "gateway.stop_shutdown_timeout", "snapshot": {"events": events or []}}),
+            encoding="utf-8")
+
+    def sent(self) -> list[str]:
+        return [c for c in self.calls() if c.startswith("openclaw message send")]
 
     def set_health(self, rc: int):
         (self.bin / "health-rc").write_text(str(rc), encoding="utf-8")
@@ -140,7 +160,7 @@ exit 0
             "HOME": str(self.home), "USER": "tester", "LOGNAME": "tester",
             "XDG_RUNTIME_DIR": str(self.run_dir), "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent",
             "OPENCLAW_EXTRA_PATH": str(self.bin), "OPENCLAW_BACKUP_DIR": str(self.backups),
-            "OPENCLAW_HOST_ENV": str(self.env_file),
+            "OPENCLAW_HOST_ENV": str(self.env_file), "OPENCLAW_UPTIME_FILE": str(self.uptime_file),
             "PATH": os.environ["PATH"],
         }
         return subprocess.run(["bash", str(SCRIPTS / script), *args], env=env, capture_output=True,
@@ -198,6 +218,185 @@ def test_watchdog_stays_quiet_when_there_is_nobody_to_notify(host):
     r = host.run("openclaw-watchdog.sh")
     assert r.returncode == 0
     assert not any(c.startswith("openclaw message send") for c in host.calls())
+
+
+# --- T39: the watchdog says so when a stop is stuck or hit its shutdown timeout ---------------------------------
+
+BUNDLE_OLD = "openclaw-stability-2026-09-18T01-25-07-371Z-485771-gateway.stop_shutdown_timeout.json"
+BUNDLE_NEW = "openclaw-stability-2026-10-06T17-14-23-353Z-1051-gateway.stop_shutdown_timeout.json"
+
+
+def _no_lifecycle_calls(host):
+    assert not any(c.startswith(("systemctl --user start", "systemctl --user stop",
+                                 "systemctl --user restart")) for c in host.calls())
+
+
+def test_watchdog_alerts_once_when_deactivating_past_the_threshold(host):
+    host.set_active("deactivating")
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_deactivating_for(7 * 60)
+    assert host.run("openclaw-watchdog.sh").returncode == 0
+    assert len(host.sent()) == 1 and "deactivating" in host.sent()[0]
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 1, "the same stop must not page twice"
+    _no_lifecycle_calls(host)
+
+
+def test_watchdog_alerts_again_for_a_new_stop(host):
+    host.set_active("deactivating")
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_deactivating_for(400)
+    host.run("openclaw-watchdog.sh")
+    host.set_deactivating_for(400, exit_mono_us=5_000_000_000)
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 2
+
+
+def test_watchdog_only_logs_when_deactivating_below_the_threshold(host):
+    host.set_active("deactivating")
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_deactivating_for(30)
+    host.run("openclaw-watchdog.sh")
+    assert host.sent() == []
+    assert "not intervening" in (host.home / ".openclaw" / "logs" / "watchdog.log").read_text()
+
+
+def test_watchdog_retries_a_failed_deactivating_alert(host):
+    host.set_active("deactivating")
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_deactivating_for(400)
+    host.set_send_rc(1)
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 1
+    assert not (host.home / ".openclaw" / "logs" / "watchdog.deactivating-alerted").exists()
+    host.set_send_rc(0)
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 2
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 2
+
+
+def test_watchdog_resets_the_deactivating_marker_when_the_unit_goes_active(host):
+    marker = host.home / ".openclaw" / "logs" / "watchdog.deactivating-alerted"
+    host.set_active("deactivating")
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_deactivating_for(400)
+    host.run("openclaw-watchdog.sh")
+    assert marker.exists() and len(host.sent()) == 1
+    host.set_active("active")
+    host.run("openclaw-watchdog.sh")
+    assert not marker.exists()
+    # the same stop timestamp seen again (a new stop that reuses it) must page again
+    host.set_active("deactivating")
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 2
+
+
+def test_watchdog_honours_the_deactivating_threshold_from_the_host_env(host):
+    host.set_active("deactivating")
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42", OPENCLAW_WATCHDOG_DEACTIVATING_ALERT_SEC="100")
+    host.set_deactivating_for(90)
+    host.run("openclaw-watchdog.sh")
+    assert host.sent() == []
+    host.set_deactivating_for(110)
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 1
+
+
+def test_watchdog_deactivating_threshold_defaults_to_240_seconds(host):
+    host.set_active("deactivating")
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_deactivating_for(230)
+    host.run("openclaw-watchdog.sh")
+    assert host.sent() == []
+    host.set_deactivating_for(250)
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 1
+
+
+def test_watchdog_bundle_alert_names_the_stalled_count_as_a_lower_bound(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.run("openclaw-watchdog.sh")
+    stalls = [{"type": "session.stalled", "reason": "blocked_tool_call"}] * 3 + [{"type": "session.long_running"}]
+    host.add_stability_bundle(BUNDLE_NEW, events=stalls)
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 1
+    assert "(3 stalled sessions recorded, a lower bound)" in host.sent()[0]
+
+
+@pytest.mark.parametrize("raw", ["{not json", json.dumps({"version": 1, "snapshot": [1]}), "[]"])
+def test_watchdog_bundle_alert_still_sends_when_the_counts_cannot_be_read(host, raw):
+    seen = host.home / ".openclaw" / "logs" / "watchdog.seen-stability"
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.run("openclaw-watchdog.sh")
+    host.add_stability_bundle(BUNDLE_NEW, raw=raw)
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 1 and "T39" in host.sent()[0]
+    assert "stalled sessions recorded" not in host.sent()[0]
+    assert seen.read_text().strip() == BUNDLE_NEW
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 1
+
+
+def test_watchdog_first_run_baselines_existing_bundles_silently(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.add_stability_bundle(BUNDLE_OLD)
+    host.add_stability_bundle(BUNDLE_NEW)
+    assert host.run("openclaw-watchdog.sh").returncode == 0
+    assert host.sent() == []
+    assert (host.home / ".openclaw" / "logs" / "watchdog.seen-stability").read_text().strip() == BUNDLE_NEW
+
+
+def test_watchdog_alerts_once_on_a_new_stop_shutdown_timeout_bundle_while_active(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.add_stability_bundle(BUNDLE_OLD)
+    host.run("openclaw-watchdog.sh")
+    host.add_stability_bundle(BUNDLE_NEW)
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 1 and "T39" in host.sent()[0]
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 1
+    _no_lifecycle_calls(host)
+
+
+def test_watchdog_ignores_bundles_with_other_reasons(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.run("openclaw-watchdog.sh")
+    host.add_stability_bundle("openclaw-stability-2026-10-05T17-18-14-775Z-3724199-gateway.stop_close_failed.json")
+    host.run("openclaw-watchdog.sh")
+    assert host.sent() == []
+
+
+def test_watchdog_retries_a_failed_bundle_alert(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.run("openclaw-watchdog.sh")
+    host.add_stability_bundle(BUNDLE_NEW)
+    host.set_send_rc(1)
+    host.run("openclaw-watchdog.sh")
+    host.set_send_rc(0)
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 2
+    host.run("openclaw-watchdog.sh")
+    assert len(host.sent()) == 2
+
+
+def test_watchdog_pause_marker_silences_the_new_alerts(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_active("deactivating")
+    host.set_deactivating_for(900)
+    host.add_stability_bundle(BUNDLE_NEW)
+    (host.home / ".openclaw" / "watchdog.off").write_text("", encoding="utf-8")
+    host.run("openclaw-watchdog.sh")
+    assert host.sent() == []
+
+
+def test_watchdog_makes_no_send_attempt_without_an_owner_id(host):
+    host.set_active("deactivating")
+    host.set_deactivating_for(900)
+    host.run("openclaw-watchdog.sh")
+    host.add_stability_bundle(BUNDLE_NEW)
+    host.run("openclaw-watchdog.sh")
+    assert host.sent() == []
 
 
 # --- AC-3.3 / 3.5: verify -----------------------------------------------------------------------------------------

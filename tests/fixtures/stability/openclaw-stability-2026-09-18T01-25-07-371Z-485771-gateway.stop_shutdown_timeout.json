@@ -1,0 +1,28 @@
+{
+ "version": 1,
+ "generatedAt": "2026-09-18T01:25:07.371Z",
+ "reason": "gateway.stop_shutdown_timeout",
+ "snapshot": {
+  "capacity": 1000,
+  "count": 2,
+  "dropped": 0,
+  "events": [
+   {
+    "seq": 1,
+    "ts": 1790000000001,
+    "type": "session.state"
+   },
+   {
+    "seq": 2,
+    "ts": 1790000000002,
+    "type": "model.call.started"
+   }
+  ],
+  "summary": {
+   "byType": {
+    "session.state": 1,
+    "model.call.started": 1
+   }
+  }
+ }
+}
