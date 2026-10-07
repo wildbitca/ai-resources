@@ -14,8 +14,8 @@
 # It deliberately does NOT capture: the ~/.claude skills and subagents (regenerable with
 # `ai-resources setup`), ~/.claude/projects transcripts (about 1.2 GB of history), or the
 # project workspaces (they are git checkouts). Before ai-resources 1.9.0 it also left out the
-# watchdog, verify and team-watch scripts and eight of the ten units -- by accident, not by
-# design; the list below is the fix.
+# watchdog, verify and team-watch scripts and eight of the ten units of that release -- by
+# accident, not by design; the list below is the fix. The kit now installs fourteen units.
 #
 # Conventions copied from k3s-backup.sh, including the lessons its runbook records:
 #   - stage on disk under $OPENCLAW_BACKUP_DIR, never in /tmp (tmpfs, sized in RAM);

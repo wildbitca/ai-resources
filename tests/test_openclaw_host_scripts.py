@@ -103,7 +103,7 @@ echo "{name} $*" >> "{self.log}"
 case "{name} $1 $2" in
   "systemctl --user is-active") cat "{self.bin}/is-active" 2>/dev/null || echo active; exit 0 ;;
   "systemctl --user is-enabled") echo enabled; exit 0 ;;
-  "systemctl --user list-timers") for i in 1 2 3 4 5 6; do echo "n openclaw-t$i.timer"; done; exit 0 ;;
+  "systemctl --user list-timers") for i in 1 2 3 4 5 6 7 8; do echo "n openclaw-t$i.timer"; done; exit 0 ;;
   "systemctl --user show") case "$*" in *ActiveExitTimestampMonotonic*) cat "{self.bin}/exit-mono" 2>/dev/null || echo "[not set]" ;; *) echo "[not set]" ;; esac; exit 0 ;;
   "openclaw message send") exit "$(cat "{self.bin}/send-rc" 2>/dev/null || echo 0)" ;;
   "loginctl show-user"*) echo yes; exit 0 ;;
@@ -475,9 +475,9 @@ def test_verify_notify_mode_reports_only_the_failed_lines(host):
     assert "local backup" in (host.home / ".openclaw" / "logs" / "verify.log").read_text()
 
 
-def test_the_verify_script_expects_six_timers():
-    assert re.search(r'-ge 6\b', _text("openclaw-verify.sh"))
-    assert not re.search(r'-ge 5\b', _text("openclaw-verify.sh"))
+def test_the_verify_script_expects_eight_timers():
+    assert re.search(r'-ge 8\b', _text("openclaw-verify.sh"))
+    assert not re.search(r'-ge 6\b', _text("openclaw-verify.sh"))
 
 
 # --- AC-4.1: the backup invariants ----------------------------------------------------------------------------------

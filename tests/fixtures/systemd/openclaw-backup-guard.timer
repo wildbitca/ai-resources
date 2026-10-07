@@ -1,0 +1,13 @@
+[Unit]
+Description=Six-hourly freshness check of the OpenClaw host backups
+
+[Timer]
+# Every 6 h. The tightest tier is daily with a 36 h limit, so this cadence notices a stopped
+# backup well inside two days.
+OnCalendar=*-*-* 00,06,12,18:20:00
+Persistent=true
+RandomizedDelaySec=5min
+Unit=openclaw-backup-guard.service
+
+[Install]
+WantedBy=timers.target

@@ -615,18 +615,28 @@ Invariants that must survive any port of these scripts:
 
 ### B4.3 Units and timers `[idem]`
 
-**[kit]** `ai-resources openclaw install-units --enable` (or the setup question) renders the ten units
-from `templates/systemd/` and enables the **six** timers (the list below is the original five plus
-`openclaw-verify.timer`). The recipe below is what it does.
+**[kit]** `ai-resources openclaw install-units --enable` (or the setup question) renders the
+fourteen units from `templates/systemd/` and enables the **eight** timers (three backup tiers,
+the backup guard, the off-box uploader, maintenance, watchdog and `openclaw-verify.timer`). The
+recipe below is what it does.
 
 ```
 ~/.config/systemd/user/openclaw-backup@.service          Type=oneshot, ExecStart=…openclaw-backup.sh %i
 ~/.config/systemd/user/openclaw-backup-daily.timer       OnCalendar=*-*-* 03:30:00
 ~/.config/systemd/user/openclaw-backup-weekly.timer      OnCalendar=Sun *-*-* 03:45:00
 ~/.config/systemd/user/openclaw-backup-monthly.timer     OnCalendar=*-*-01 04:00:00
+~/.config/systemd/user/openclaw-backup-guard.{service,timer}     OnCalendar=*-*-* 00,06,12,18:20:00
+~/.config/systemd/user/openclaw-backup-uploader.{service,timer}  OnCalendar=*-*-* 04:40:00
 ~/.config/systemd/user/openclaw-maintenance.{service,timer}  OnCalendar=Sun *-*-* 04:30:00
 ~/.config/systemd/user/openclaw-watchdog.{service,timer}     OnBootSec=2min OnUnitActiveSec=2min
 ```
+
+The guard and uploader are the host-native replacement for a hostPath-mounted Kubernetes
+CronJob: that shape only works when the pod is scheduled on the exact host that owns the
+backup directory, which a remote cluster's nodes cannot do. Running them as systemd user
+timers on the host itself, alongside the producer timers above, needs no such placement
+trick. Set `OPENCLAW_OFFBOX_BUCKET` in `~/.openclaw/kit-host.env` before enabling the
+uploader timer, or it refuses to run.
 
 All timers use `Persistent=true` (a run missed while the machine was off fires at boot) and
 `RandomizedDelaySec`.
@@ -634,8 +644,8 @@ All timers use `Persistent=true` (a run missed while the machine was off fires a
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now openclaw-backup-daily.timer openclaw-backup-weekly.timer \
-  openclaw-backup-monthly.timer openclaw-watchdog.timer openclaw-maintenance.timer \
-  openclaw-verify.timer
+  openclaw-backup-monthly.timer openclaw-backup-guard.timer openclaw-backup-uploader.timer \
+  openclaw-watchdog.timer openclaw-maintenance.timer openclaw-verify.timer
 systemctl --user list-timers "openclaw-*" --no-pager
 ```
 

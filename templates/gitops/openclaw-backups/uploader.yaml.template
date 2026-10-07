@@ -1,5 +1,11 @@
 # Off-box upload of the OpenClaw host backups, with NO JSON KEY.
 #
+# ONLY VALID WHEN THE OPENCLAW HOST IS ITSELF A NODE OF THE TARGET CLUSTER. The hostPath mount
+# below needs the pod scheduled on the exact machine that owns the backup directory; a remote
+# cluster (its nodes are not this host) cannot do that. When the OpenClaw host stands alone, run
+# `scripts/openclaw/openclaw-backup-uploader.sh` as a systemd user timer on the host instead:
+# same upload and assertion logic, no cluster object, no node placement trick.
+#
 # WHAT IT CLOSES
 # The setup that runs the AI agents (openclaw config and state, the agent databases and
 # secret store, engram's memory, the hand-written config in ~/.claude and ~/.config/shell)
