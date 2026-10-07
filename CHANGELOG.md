@@ -4,6 +4,32 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [1.15.0] — 2026-10-07 — the backup guard and uploader run as host timers
+
+### Added
+
+- **`openclaw-backup-guard.sh` and `openclaw-backup-uploader.sh`** in `scripts/openclaw/`, carrying
+  the same per-tier freshness/size/checksum checks and upload assertions the old Kubernetes CronJobs
+  had, using the same `notify()` failure path as the other host scripts. They replace
+  `openclaw-backup-guard`/`openclaw-backup-uploader`, the CronJobs that were deleted with the bithome
+  k3s cluster (wildbitca/org-gitops#109): a remote cluster's nodes (e.g. gke-iac) cannot reach a
+  standalone host's local disk the way `nodeName` + `hostPath` did on the exact machine that owned
+  `/srv/openclaw-backups`.
+- **Four systemd units** rendered from `templates/systemd/`
+  (`openclaw-backup-guard.{service,timer}`, `openclaw-backup-uploader.{service,timer}`), the same
+  convention every other host unit uses. `UNIT_NAMES` grows from 10 to 14.
+- **`OPENCLAW_OFFBOX_BUCKET`** in `kit-host.env`; the uploader refuses to run without it (the kit
+  never picks an upload destination for an operator).
+- `openclaw-verify.sh`'s timer-count check moves from 6 to 8 so a silently-disabled guard or
+  uploader timer is still caught.
+
+### Notes
+
+- The old `templates/gitops/openclaw-backups/{guard,uploader}.yaml.template` (the k8s CronJob shape)
+  stays in place for hosts that really are cluster nodes, with a note on when they no longer apply.
+- Companion change: wildbitca/org-gitops#145 (GCP IAM for the uploader's GCS credential path, and
+  retirement of the dead Grafana alerts for the removed CronJobs).
+
 ## [1.14.0] — 2026-10-06 — what the 2026-10-06 gateway outage taught the kit
 
 ### Added
