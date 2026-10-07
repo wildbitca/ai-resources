@@ -156,6 +156,10 @@ UNIT_NAMES = (
     "openclaw-backup-daily.timer",
     "openclaw-backup-weekly.timer",
     "openclaw-backup-monthly.timer",
+    "openclaw-backup-guard.service",
+    "openclaw-backup-guard.timer",
+    "openclaw-backup-uploader.service",
+    "openclaw-backup-uploader.timer",
     "openclaw-maintenance.service",
     "openclaw-maintenance.timer",
     "openclaw-watchdog.service",
@@ -236,7 +240,7 @@ def render_gitops_backups(markers: dict[str, str], templates_dir: Path | None = 
 def install_units(dest: Path | None = None, *, markers: dict[str, str] | None = None,
                   dry_run: bool = False, enable: bool = False, runner: Runner = default_runner,
                   templates_dir: Path | None = None) -> dict:
-    """Write all ten units at once, so the host never runs a mix of old and new ones.
+    """Write all fourteen units at once, so the host never runs a mix of old and new ones.
 
     Returns {"changed": [...], "unchanged": [...], "reloaded": bool, "enabled": [...]}.
     Never touches the gateway unit. A second run with nothing to change writes nothing and

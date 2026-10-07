@@ -17,6 +17,9 @@ if [ -r "$OPENCLAW_HOST_ENV" ]; then
 fi
 
 : "${OPENCLAW_BACKUP_DIR:=/srv/openclaw-backups}"
+# Off-box upload target for openclaw-backup-uploader.sh, e.g. gs://my-bucket. No default: the
+# kit never chooses a destination, and the uploader refuses to run without one.
+: "${OPENCLAW_OFFBOX_BUCKET:=}"
 : "${OPENCLAW_EXTRA_PATH:=}"
 # Seconds a gateway stop may sit in `deactivating` before the watchdog tells the operator. A stop
 # that runs the whole TimeoutStopSec (330 s) is SIGKILLed right after, so keep this below that.

@@ -35,10 +35,11 @@ run_checks() {
     && [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ] \
     && ok "start at boot" "enabled + linger" || bad "start at boot" "check enabled/linger"
 
-  # 3. The six timers: three backup tiers, maintenance, watchdog and this verifier. Without
-  #    them there is no backup, no maintenance and no safety net.
+  # 3. The eight timers: three backup tiers, the backup guard, the off-box uploader,
+  #    maintenance, watchdog and this verifier. Without them there is no backup, no off-box
+  #    copy, no maintenance and no safety net.
   n=$(systemctl --user list-timers "openclaw-*" --no-pager 2>/dev/null | grep -c "openclaw-")
-  [ "$n" -ge 6 ] && ok "timers" "$n armed" || bad "timers" "only $n (expected 6)"
+  [ "$n" -ge 8 ] && ok "timers" "$n armed" || bad "timers" "only $n (expected 8)"
 
   # 4. Backup: that one exists and is not stale. A stale backup lies worse than none.
   latest=$(ls -1t "$OPENCLAW_BACKUP_DIR"/*/*.tar.gz 2>/dev/null | head -1)

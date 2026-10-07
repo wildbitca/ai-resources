@@ -1,0 +1,8 @@
+[Unit]
+Description=Freshness guard for the OpenClaw host backups
+Documentation=file:///opt/kit/libexec/scripts/openclaw/openclaw-backup-guard.sh
+
+[Service]
+Type=oneshot
+Nice=10
+ExecStart=/bin/bash /opt/kit/libexec/scripts/openclaw/openclaw-backup-guard.sh

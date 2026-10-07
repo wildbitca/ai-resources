@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily off-box upload of the OpenClaw host backups
+
+[Timer]
+# 04:40, after the daily backup timer (03:30 + jitter) has closed its file.
+OnCalendar=*-*-* 04:40:00
+Persistent=true
+RandomizedDelaySec=5min
+Unit=openclaw-backup-uploader.service
+
+[Install]
+WantedBy=timers.target

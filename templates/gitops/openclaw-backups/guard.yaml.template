@@ -1,5 +1,10 @@
 # Freshness guard for the OpenClaw host backups.
 #
+# ONLY VALID WHEN THE OPENCLAW HOST IS ITSELF A NODE OF THE TARGET CLUSTER, for the same reason
+# as uploader.yaml: the hostPath mount below needs the pod scheduled on that exact machine. When
+# the OpenClaw host stands alone, run `scripts/openclaw/openclaw-backup-guard.sh` as a systemd
+# user timer on the host instead: same checks, no cluster object, no node placement trick.
+#
 # WHY IT EXISTS
 # A backup that stopped happening and a backup nobody knows stopped happening are the same
 # thing until the day it is needed. The producer is a systemd USER timer on the host

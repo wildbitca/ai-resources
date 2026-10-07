@@ -1,0 +1,8 @@
+[Unit]
+Description=Off-box upload of the OpenClaw host backups
+Documentation=file://@LIBEXEC@/scripts/openclaw/openclaw-backup-uploader.sh
+
+[Service]
+Type=oneshot
+Nice=10
+ExecStart=/bin/bash @LIBEXEC@/scripts/openclaw/openclaw-backup-uploader.sh

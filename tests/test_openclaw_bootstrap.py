@@ -422,7 +422,7 @@ def test_units_are_installed_and_their_timers_enabled(sim):
     sim.timers_enabled = False
     results, _, _ = run(sim, only="units")
     assert results["units"].status in ("changed", "failed")
-    assert len(list(sim.units.iterdir())) == 10
+    assert len(list(sim.units.iterdir())) == 14
 
 
 # --- AC-10.6 and consent -------------------------------------------------------------------------------------------------------------------------
