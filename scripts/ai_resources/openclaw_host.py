@@ -2214,6 +2214,46 @@ def recorded_selection():
         return None
 
 
+def pending_summary(o) -> dict:
+    """What status and verify show about the restart-required config setup did not apply:
+    {"paths": [...], "watch": {...}|None}, {} when there is nothing to say. Paths only, never values."""
+    paths = sorted({str(e.get("path", "")) for e in (getattr(o, "host_restart_pending", None) or []) if e.get("path")})
+    cw = getattr(o, "config_watch", None) or {}
+    watch = None
+    if cw.get("done") and cw.get("result"):
+        r = cw["result"]
+        watch = {"reverted": sorted(set(r.get("hot") or []) | set(r.get("restart") or [])),
+                 "problems": list(r.get("problems") or []), "run_id": cw.get("run_id", "")}
+    if not paths and not (watch and (watch["reverted"] or watch["problems"])):
+        return {}
+    return {"paths": paths, "watch": watch}
+
+
+def recorded_pending() -> dict:
+    """`pending_summary` of setup-state.yaml; {} when it is missing or broken (a status never fails on it)."""
+    try:
+        from .setup import state as setup_state
+        return pending_summary(setup_state.load().openclaw)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+PENDING_COMMAND = "ai-resources openclaw apply-pending"
+
+
+def pending_lines(pending: dict) -> list[str]:
+    out: list[str] = []
+    if pending.get("paths"):
+        out.append("restart-required config pending: " + ", ".join(pending["paths"])
+                   + f"; run `{PENDING_COMMAND}` when idle")
+    w = pending.get("watch")
+    if w and w.get("reverted"):
+        out.append("the post-setup watch reverted: " + ", ".join(w["reverted"]))
+    if w and w.get("problems"):
+        out.append("the post-setup watch could not finish its revert: " + "; ".join(w["problems"]))
+    return out
+
+
 def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                    host_env_path: Path | None = None, config_path: Path | None = None,
                    now: float | None = None, run_doctor: bool = True, probe_offbox: bool = True,
@@ -2489,6 +2529,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         pending = ""
     if pending:
         print(pending)
+    # Same place, same reason: restart-required config setup did not apply, and the last post-setup watch.
+    for line in pending_lines(recorded_pending()):
+        print(line)
     return 0  # status never repairs and never fails the shell: it reports
 
 

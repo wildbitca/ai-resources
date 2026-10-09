@@ -299,3 +299,24 @@ def _run_disabled(box, overlay):
     from ai_resources import model_pins
     model_pins.save_overlay(overlay)
     return _run(HostRunner(timers_enabled=False))
+
+
+# --- restart-required config setup did not apply (ADR-0003) ---------------------------------------------------------
+
+def test_verify_names_the_pending_keys_and_the_command(box):
+    pending = [{"op": "profile", "path": "gateway.bind", "action": "forced", "source": "setup", "at": "t"}]
+    found = _run(HostRunner(), host_restart_pending=pending)
+    [f] = [f for f in found if "restart-required config pending" in f.message]
+    assert f.level == "warn" and "gateway.bind" in f.message and "ai-resources openclaw apply-pending" in f.remedy
+
+
+def test_verify_is_silent_about_pending_keys_when_there_are_none(box):
+    assert not [f for f in _run(HostRunner()) if "pending" in f.message or "post-setup watch" in f.message]
+
+
+def test_verify_reports_a_watch_revert_and_an_unfinished_one(box):
+    cw = {"run_id": "r1", "done": True, "result": {"hot": ["tools.profile"], "restart": [],
+                                                    "problems": ["restart-required keys not reverted (drained window exit 3)"]}}
+    found = _run(HostRunner(), config_watch=cw)
+    assert any(f.level == "warn" and "post-setup watch reverted: tools.profile" in f.message for f in found)
+    assert any(f.level == "error" and "could not finish its revert" in f.message for f in found)

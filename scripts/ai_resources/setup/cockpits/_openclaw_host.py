@@ -1034,6 +1034,7 @@ def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> l
     if not report["off-box"]["configured"]:
         out.append(Finding("warn", who, "no off-box backup listing is configured", OFFBOX_REMEDY))
     out += _stability_findings(report.get("stability") or {})
+    out += _pending_findings(s.openclaw)
     out += _watchdog_unit_findings()
     out += _hand_copy_findings()
     from ... import model_pins, models
@@ -1114,3 +1115,24 @@ def _hand_copy_findings() -> list:
                     "it can restart the gateway over live runs and may run beside the kit's timer",
                     "run `ai-resources setup` interactively to adopt the kit's version (the hand files are moved to "
                     "~/.openclaw/backup/hand-units/, never deleted)")]
+
+
+def _pending_findings(o: state.OpenClawState) -> list:
+    """Restart-required config that setup (or a teardown, or the post-setup watch) did not apply, and
+    the last watch's revert. Paths only, from setup-state; nothing is run."""
+    from ...verify import Finding
+
+    summary = host.pending_summary(o)
+    out = []
+    if summary.get("paths"):
+        out.append(Finding("warn", "openclaw", host.pending_lines({"paths": summary["paths"]})[0].split("; run")[0],
+                           f"run `{host.PENDING_COMMAND}` when no agent run is in flight"))
+    w = summary.get("watch") or {}
+    if w.get("reverted"):
+        out.append(Finding("warn", "openclaw", "the post-setup watch reverted: " + ", ".join(w["reverted"]),
+                           "the gateway stopped answering after the last `ai-resources setup`; check "
+                           "`ai-resources openclaw status` before running setup again"))
+    if w.get("problems"):
+        out.append(Finding("error", "openclaw", "the post-setup watch could not finish its revert: " + "; ".join(w["problems"]),
+                           f"`{host.PENDING_COMMAND}` retries the restart-required part when idle"))
+    return out

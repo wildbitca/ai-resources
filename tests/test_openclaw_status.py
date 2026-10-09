@@ -525,3 +525,49 @@ def test_status_has_no_drift_when_references_match(env):
     report = collect(env, Canned())
     assert not [m for m in report["models"] if m.get("drift")]
     assert "DRIFT" not in host.render_status(report)
+
+
+# --- restart-required config setup did not apply (ADR-0003) -------------------------------------------------------------
+
+def _openclaw_state(**kw):
+    from ai_resources.setup import state as setup_state
+    o = setup_state.OpenClawState()
+    for k, v in kw.items():
+        setattr(o, k, v)
+    return o
+
+
+def test_pending_keys_are_listed_with_the_apply_pending_command_and_paths_only():
+    o = _openclaw_state(host_restart_pending=[
+        {"op": "profile", "path": "gateway.bind", "action": "forced", "source": "setup", "at": "t"},
+        {"op": "restore", "path": "gateway.bind", "change": {"path": ["gateway", "bind"], "previous": "SECRET-LOOKING", "had": True},
+         "source": "teardown", "at": "t"}])
+    lines = host.pending_lines(host.pending_summary(o))
+    assert lines == ["restart-required config pending: gateway.bind; run `ai-resources openclaw apply-pending` when idle"]
+    assert "SECRET-LOOKING" not in " ".join(lines)
+
+
+def test_nothing_is_shown_without_pending_keys_or_a_watch_result():
+    assert host.pending_summary(_openclaw_state()) == {}
+    assert host.pending_lines({}) == []
+    done_clean = {"run_id": "r", "done": True, "result": {"hot": [], "restart": [], "problems": []}}
+    assert host.pending_summary(_openclaw_state(config_watch=done_clean)) == {}
+
+
+def test_the_last_watch_result_is_shown_when_it_reverted_or_failed():
+    cw = {"run_id": "r1", "done": True, "result": {"hot": ["tools.profile"], "restart": ["gateway.bind"],
+                                                    "problems": ["restart-required keys not reverted (drained window exit 3)"]}}
+    lines = host.pending_lines(host.pending_summary(_openclaw_state(config_watch=cw)))
+    assert any(l.startswith("the post-setup watch reverted: gateway.bind, tools.profile") for l in lines)
+    assert any("could not finish its revert" in l for l in lines)
+
+
+def test_status_prints_the_pending_lines_after_the_report(monkeypatch, capsys):
+    import argparse
+    monkeypatch.setattr(host, "collect_status", lambda *a, **k: {})
+    monkeypatch.setattr(host, "render_status", lambda r: "REPORT")
+    monkeypatch.setattr(host, "recorded_selection", lambda: None)
+    monkeypatch.setattr(host, "recorded_pending", lambda: {"paths": ["gateway.bind"], "watch": None})
+    assert host.cmd_status(argparse.Namespace(no_doctor=True)) == 0
+    out = capsys.readouterr().out
+    assert out.index("REPORT") < out.index("restart-required config pending: gateway.bind")
