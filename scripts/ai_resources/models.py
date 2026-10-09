@@ -613,6 +613,8 @@ def _run_locked(opts: Options, deps: Deps) -> Result:
     applicable = [p for p in props if p.applicable and (not opts.classes or p.cls in opts.classes)]
     _log(deps, "plan", proposals=[p.as_dict() for p in props])
 
+    if opts.classes:
+        needs = [p for p in needs if p.cls in opts.classes]       # only what the caller asked about
     if not applicable:
         rc = EXIT_APPROVAL_PENDING if needs else EXIT_OK
         if writes:
@@ -783,3 +785,34 @@ def default_deps() -> Deps:
         config_file=oc.config_path, smoke=lambda m: smoke(m, runner, claude_bin=shutil.which("claude") or "claude"),
         busy=lambda: openclaw_host.gateway_busy()[0], restart=restart, health=health,
         main_pid=openclaw_host.gateway_main_pid, log=_append_log)
+
+
+def run_rollback(deps: Deps) -> Result:
+    """`models rollback`: the recorded inverse patch, then the same restart and health flow."""
+    with deps.lock() as got:
+        if not got:
+            return Result(EXIT_LOCKED, "locked", "another models update is running")
+        ov = _load(deps)
+        ok, msg, back = rollback_last(apply_patch=deps.apply_patch, overlay=ov, overlay_file=deps.overlay_file,
+                                      now=deps.now)
+        if not ok:
+            return Result(EXIT_PRECHECK_FAILED, "nothing_to_roll_back", msg)
+        _log(deps, "manual_rollback")
+        marker = deps.marker or openclaw_host.Marker()
+        owned = not marker.exists()
+        marker.touch()
+        try:
+            try:
+                deps.restart()
+            except RestartDeferred as e:
+                _persist(deps, back, pending_restart=True, last_result="rolled_back")
+                return Result(EXIT_DEFERRED, "deferred", f"rolled back; restart deferred: {e.reason}")
+            healthy = _await_health(deps)
+        finally:
+            if owned:
+                marker.remove()
+        _persist(deps, back, last_result="rolled_back" if healthy else "rollback_failed",
+                 last_run=deps.now().isoformat())
+        if not healthy:
+            return Result(EXIT_ROLLBACK_FAILED, "rollback_failed", "rolled back, but the gateway is not healthy")
+        return Result(EXIT_OK, "rolled_back", "rolled back and healthy")

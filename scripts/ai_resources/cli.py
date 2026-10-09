@@ -6,7 +6,7 @@ import sys
 
 from . import __version__
 from .generate import cmd_generate
-from . import daemon, doctor, executors_cmd, audit, openclaw_host, verify
+from . import daemon, doctor, executors_cmd, audit, models_cmd, openclaw_host, verify
 from .setup import wizard
 
 
@@ -26,6 +26,11 @@ _EPILOG = """Typical flows:
 
   Show role → model map:
     ai-resources executors show
+
+  Newer Claude models for the OpenClaw host (read-only check, then apply):
+    ai-resources models status
+    ai-resources models check --refresh
+    ai-resources models update --dry-run
 
   Daemon (LiteLLM container):
     ai-resources daemon status
@@ -93,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     executors_cmd.add_subparser(sub)
     audit.add_subparser(sub)
     openclaw_host.add_subparser(sub)
+    models_cmd.add_subparser(sub)
 
     return ap
 
