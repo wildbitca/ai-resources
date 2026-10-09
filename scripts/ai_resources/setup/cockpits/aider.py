@@ -102,7 +102,7 @@ def configure(ctx: dict) -> list[Path]:
         if CONF_PATH.is_file() and CONF_PATH.read_text(encoding="utf-8") != text:
             # A changed base (OpenRouter's OpenAI base is /api/v1) alters an existing file: keep the old one.
             _backup_private(CONF_PATH, CONF_PATH.with_name(CONF_PATH.name + ".kit-bak"))
-        if _shared.write_text(CONF_PATH, text):
+        if _shared.write_text(CONF_PATH, text, mode=0o600):   # the file holds the gateway master key
             written.append(CONF_PATH)
     elif route is not None and route.action == "skip":
         ui.info(f"Aider: no model setting written ({route.reason})")

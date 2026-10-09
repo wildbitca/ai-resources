@@ -103,3 +103,28 @@ def test_a_stale_wider_backup_is_tightened_not_reused(home):
     (home / ".aider.conf.yml").write_text("openai-api-base: x\n")
     _configure(backend="openrouter", gateway_url="https://openrouter.ai/api", openai_base=profiles.OPENAI_BASE["openrouter"])
     assert _mode(bak) == 0o600
+
+
+def test_a_new_conf_with_the_key_is_created_0600(home):
+    _configure(backend="litellm", gateway_url="http://127.0.0.1:4000")
+    path = home / ".aider.conf.yml"
+    assert "openai-api-key" in path.read_text()
+    assert _mode(path) == 0o600
+
+
+@pytest.mark.parametrize("old_mode", [0o644, 0o666])
+def test_an_existing_conf_is_tightened_to_0600_when_rewritten(home, old_mode):
+    path = home / ".aider.conf.yml"
+    path.write_text("openai-api-base: http://old\n")
+    os.chmod(path, old_mode)
+    _configure(backend="litellm", gateway_url="http://127.0.0.1:4000")
+    assert "openai-api-key" in path.read_text()
+    assert _mode(path) == 0o600
+
+
+def test_an_unchanged_wider_conf_is_still_tightened(home):
+    _configure(backend="litellm", gateway_url="http://127.0.0.1:4000")
+    path = home / ".aider.conf.yml"
+    os.chmod(path, 0o644)
+    _configure(backend="litellm", gateway_url="http://127.0.0.1:4000")
+    assert _mode(path) == 0o600

@@ -85,19 +85,36 @@ def remove_env_keys_from_settings(path: Path, keys: list[str]) -> list[str]:
     return removed
 
 
-def write_text(path: Path, content: str, *, dry_run: bool = False) -> bool:
-    """Write text file, creating parent dirs. Returns True if written/changed."""
+def write_text(path: Path, content: str, *, dry_run: bool = False, mode: int | None = None) -> bool:
+    """Write text file, creating parent dirs. Returns True if written/changed.
+
+    With `mode`, the file is created with that mode from the start (no window at the umask default)
+    and an existing file is tightened to it: use 0o600 for files that carry a key.
+    """
     if path.is_file():
         try:
             existing = path.read_text(encoding="utf-8")
             if existing == content:
+                if mode is not None and path.stat().st_mode & 0o777 != mode:
+                    path.chmod(mode)
                 return False
         except OSError:
             pass
     if dry_run:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    if mode is None:
+        path.write_text(content, encoding="utf-8")
+        return True
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    try:
+        os.fchmod(fd, mode)   # O_CREAT does not reset the mode of a file that already exists
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fd = -1
+            fh.write(content)
+    finally:
+        if fd >= 0:
+            os.close(fd)
     return True
 
 
