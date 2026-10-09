@@ -4,6 +4,81 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [2.0.0] — 2026-10-09 — models you choose, kept current, and honest about what each cockpit can use
+
+This is a major release: the model layer is no longer Claude-only, the wizard asks its questions in
+a different order, and a file the kit writes to your home directory has a new on-disk schema.
+
+### Added
+
+- **`ai-resources models`** with the verbs `status`, `check`, `update`, `approve`, `revoke`, `pin`,
+  `unpin`, `exclude` and `rollback`. `update` finds newer models for the providers you enabled and shows
+  them, `up to date` rows included, instead of staying silent about slots that have nothing newer. On a
+  terminal it asks per model (update now, always, not now, never) and applies the answers to every
+  config they affect; the answer is remembered per slot. Without a terminal it never prompts: it records
+  the proposals and sends the Telegram notice with the exact command. `--dry-run`, `--check`,
+  `--no-restart`, `--review`, `--apply-proposals` and `--slot` are available.
+- **Provider adapters** for Anthropic, Google, OpenAI, DeepSeek, Moonshot, Vertex, Ollama and OpenRouter
+  (`scripts/ai_resources/model_providers/`): version ordering, family detection, catalogue source and
+  smoke path per provider. Discovery runs only for providers you enabled and that have credentials; the
+  others are listed with the reason they were skipped. Calling the OpenAI, DeepSeek and Moonshot `/models`
+  endpoints is opt-in per provider, and the key only ever travels in the Authorization header.
+  Aliases (`-latest`), previews, dated snapshots and unknown families are reported and never applied
+  unattended. A model with an unknown price always needs approval; OpenRouter slots use its public
+  pricing, cached with a timestamp.
+- **Wizard, tools first.** `ai-resources setup` detects and offers to install the base tools (Claude Code,
+  Antigravity, OpenClaw, the OpenRouter and LiteLLM gateways), then asks which provider accounts have
+  credentials, then lists their models and lets you choose a single model, several models from one
+  provider, or several providers. It ends with a per-cockpit summary (configured, through a gateway,
+  skipped and why) and one confirmation before anything is written. New flags for non-interactive runs:
+  `--shape`, `--providers`, `--models`, `--smoke-path`, `--backend`, `--cockpits`, `--allow-unverified`.
+- **Cockpit compatibility matrix** (`setup/compat.py`): cockpit x provider x mode, every cell cited to the
+  code. It drives the wizard summary, the apply gate and the generated table in `docs/multi-model.md`.
+  A cell nobody has verified behaves as a skip unless you pass `--allow-unverified`.
+- **Background updates.** `openclaw-models-update` (wrapper, service and daily timer; `UNIT_NAMES` grows
+  from 14 to 16) runs under a lock and a cooldown, smoke-tests a model before switching, takes a backup,
+  writes `openclaw.json` only through `openclaw config patch`, restarts the gateway only when no agent run
+  is in flight, checks health afterwards and rolls everything back if it fails.
+- **One declaration of the pins** (`model_pins.py`) with a host overlay; the effective pin is the higher of
+  the kit default and the overlay, so a stale overlay never holds a host behind a newer kit.
+- **Re-render from the selection:** `executors.yaml`, `litellm.yaml`, the Claude subagent files, Claude
+  settings and `~/.aider.conf.yml` follow the selection through one fan-out, each with a backup and a
+  restore in reverse order if any step fails. LiteLLM gets a single health-checked restart.
+- ADR-0001 (pins and unattended updates) and ADR-0002 (provider-agnostic selection, honest cockpit gating,
+  interactive updates).
+
+### Changed
+
+- **Breaking:** the overlay `~/.config/ai-resources/model-pins.json` is schema 2 (per-slot answers). An
+  older file is migrated in place and a `.v1.bak` copy is kept; a kit older than 2.0.0 cannot read the new
+  schema.
+- **Breaking:** the wizard's step order changes (tools first). `--class` is kept as an alias of `--slot`.
+- Claude Code in single-model mode no longer turns a non-Claude pick into a Claude model behind your
+  back; if it cannot use the model, setup says so and writes no model setting for it.
+- Instruction files only claim gateway routing for the cockpits that are actually wired to one (seven
+  cockpits were told otherwise).
+- Aider under OpenRouter now gets the `/api/v1` base. The base and the id format come from OpenRouter's
+  public documentation and have not been checked against the live service.
+- `.claude-plugin/plugin.json` now carries the kit version (it was stuck at 1.2.0) and its license is
+  corrected to Apache-2.0, matching `LICENSE` and the Homebrew formula. `test_release_consistency.py`
+  enforces both.
+
+### Security
+
+- Files that carry a key are created and kept at `0600`: `~/.aider.conf.yml`, its `.kit-bak` backup, and
+  `~/.claude/settings.json` when it holds the OpenRouter key. An existing, wider file is tightened.
+- A restore never deletes a file that existed before the kit touched it and was not backed up.
+- Keys are never printed or logged; credential detection reads only an allowlist of fields from OpenClaw's
+  auth status.
+
+### Notes
+
+- Run `brew upgrade ai-resources` and `ai-resources setup` on each host to install the new timer and
+  migrate the overlay. Nothing changes a live model until you approve it or set a slot to "always".
+- Not yet verified against live services, so they behave as a skip without `--allow-unverified`: Claude
+  Code to non-Claude models through LiteLLM or OpenRouter, and OpenClaw running a native Google model.
+- Antigravity (`agy`) and Claude Desktop appear as report-only rows; Vertex is report-only.
+
 ## [1.15.0] — 2026-10-07 — the backup guard and uploader run as host timers
 
 ### Added

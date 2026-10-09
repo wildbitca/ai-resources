@@ -2,14 +2,14 @@
   "name": "ai-resources",
   "displayName": "ai-resources kit",
   "description": "Skills, workflows, role subagents and hooks for spec-driven work across Flutter, Angular, Symfony/API Platform and DevOps stacks.",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "author": {
     "name": "Wildbit",
     "url": "https://github.com/wildbitca"
   },
   "homepage": "https://github.com/wildbitca/ai-resources",
   "repository": "https://github.com/wildbitca/ai-resources",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": ["skills", "workflows", "orchestration", "flutter", "terraform", "spec-driven"],
   "agents": [
     "./agents/roles/code-reviewer.md",
