@@ -668,6 +668,77 @@ def load_host_profile(path: Path | None = None) -> dict:
     return load_json5((path or (repo_root() / PROFILE_PATH_NAME)).read_text(encoding="utf-8"))
 
 
+# --- operator overrides: ~/.openclaw/kit-host-overrides.json5 (ADR-0003) ----------------------------------------
+#
+# The profile FILLS keys the operator has not set. A key the operator set to something else is kept
+# unless the overrides file opts it back into the profile value:
+#     { "keep": ["gateway.controlUi"], "force": ["gateway.bind", "tools"] }
+# An entry is a dotted path (or a prefix of one); a `*` segment matches any one segment, and a lone
+# "*" in `force` means every key (the 2.0.x behaviour). The file is parsed, never shell-sourced.
+
+_OVERRIDE_PATH = re.compile(r"^[A-Za-z0-9_*-]+(\.[A-Za-z0-9_*-]+)*$")
+
+
+# `force: ["*"]`: every profile key wins over the operator's value (the 2.0.x behaviour).
+FORCE_ALL: dict[str, frozenset[str]] = {"keep": frozenset(), "force": frozenset({"*"})}
+
+
+def host_overrides_path() -> Path:
+    return Path.home() / ".openclaw" / "kit-host-overrides.json5"
+
+
+def load_host_overrides(path: Path | None = None) -> dict[str, frozenset[str]]:
+    """{"keep": frozenset, "force": frozenset} from the overrides file; both empty when it is absent.
+
+    Raises ValueError naming the file and the offending PATH on bad content. A value is never
+    printed: an entry that is not a string is reported by its position only.
+    """
+    path = path or host_overrides_path()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {"keep": frozenset(), "force": frozenset()}
+    except OSError as e:
+        raise ValueError(f"{path}: cannot be read ({e.strerror or 'error'})") from None
+    try:
+        data = load_json5(text)
+    except ValueError:
+        raise ValueError(f"{path}: not valid JSON5") from None
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: expected an object with `keep` and `force` lists")
+    out: dict[str, frozenset[str]] = {}
+    for name in ("keep", "force"):
+        entries = data.get(name, [])
+        if not isinstance(entries, list):
+            raise ValueError(f"{path}: `{name}` must be a list of dotted paths")
+        seen: set[str] = set()
+        for i, entry in enumerate(entries):
+            if not isinstance(entry, str) or not _OVERRIDE_PATH.match(entry):
+                shown = entry if isinstance(entry, str) else f"entry #{i + 1}"
+                raise ValueError(f"{path}: `{name}` has an invalid path: {shown!r}")
+            if is_secret_path(entry.split(".")):
+                raise ValueError(f"{path}: `{name}` names a credential path ({entry}); "
+                                 "credentials are set with `openclaw configure`, never by the kit")
+            seen.add(entry)
+        out[name] = frozenset(seen)
+    unknown = set(data) - {"keep", "force"}
+    if unknown:
+        raise ValueError(f"{path}: unknown key(s): {', '.join(sorted(str(k) for k in unknown))}")
+    both = out["keep"] & out["force"]
+    if both:
+        raise ValueError(f"{path}: {sorted(both)[0]} is in both `keep` and `force`")
+    return out
+
+
+def _override_hit(path: list[str], entries) -> bool:
+    """True when `path` is, or sits under, one of the dotted `entries` (a `*` segment matches any)."""
+    for entry in entries or ():
+        segs = entry.split(".")
+        if len(segs) <= len(path) and all(a == "*" or a == b for a, b in zip(segs, path)):
+            return True
+    return False
+
+
 _HOSTNAME = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$")
 
 
@@ -841,12 +912,20 @@ def is_secret_path(path: list[str]) -> bool:
     return bool(path) and bool(_SECRET_KEY.search(str(path[-1])))
 
 
-def build_host_patch(profile: dict, doc: dict, values: dict[str, str]) -> dict:
-    """The minimal patch that makes `doc` canonical.
+def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
+                     overrides: dict | None = None) -> dict:
+    """The minimal patch that FILLS the keys `doc` lacks (ADR-0003: the profile never overwrites).
 
-    Returns {"patch": {...}, "changes": [{"path": [...], "previous": v, "had": bool}],
-             "replace_paths": [...], "skipped": [str]}.
+    A leaf the operator set to a different value is kept, unless `overrides["force"]` names it.
+    The one policy exception is an agent still on a haiku primary (T29), which the wildcard entry
+    exists to fix.
+
+    Returns {"patch": {...}, "changes": [{"path": [...], "previous": v, "had": bool, "action":
+             "filled"|"forced"}], "replace_paths": [...], "skipped": [str],
+             "kept": [dotted], "filled": [dotted], "forced": [dotted]}.
     """
+    overrides = overrides or {}
+    keep_set, force_set = overrides.get("keep", frozenset()), overrides.get("force", frozenset())
     values = dict(values)
     values.setdefault("HOME", str(Path.home()))
     # The one declaration of the sonnet pin (model_pins), resolved at call time.
@@ -859,6 +938,7 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str]) -> dict:
     patch: dict = {}
     changes: list[dict] = []
     replace_paths: list[str] = []
+    kept: list[str] = []
     for path, wanted in _leaves(tree, []):
         dotted = ".".join(path)
         if _has_marker(wanted):
@@ -880,8 +960,24 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str]) -> dict:
             continue
         current, had = _get_path(doc, path)
         if isinstance(wanted, list):
-            wanted = _union(current, wanted)
+            merged = _union(current, wanted)
+            if had and _override_hit(path, keep_set):
+                if merged != current:
+                    kept.append(dotted)        # `keep` blocks the union under this path
+                continue
+            wanted = merged
         if had and current == wanted:
+            continue
+        if had and isinstance(wanted, list) and isinstance(current, list):
+            action = "filled"            # an add-only union: nothing the operator listed is lost
+        elif not had:
+            action = "filled"
+        elif _override_hit(path, force_set) and not _override_hit(path, keep_set):
+            action = "forced"
+        elif path[:2] == ["agents", "entries"] and path[-2:] == ["model", "primary"] and _is_haiku(current):
+            action = "forced"            # T29: no orchestrator may run haiku
+        else:
+            kept.append(dotted)
             continue
         cur = patch
         for k in path[:-1]:
@@ -889,7 +985,8 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str]) -> dict:
         cur[path[-1]] = wanted
         secret = is_secret_path(path)
         # A secret leaf records that it existed and nothing of its value.
-        change = {"path": path, "previous": None if secret else (current if had else None), "had": had}
+        change = {"path": path, "previous": None if secret else (current if had else None), "had": had,
+                  "action": action}
         if secret:
             change["secret"] = True
         if not had:
@@ -901,7 +998,10 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str]) -> dict:
         if _is_atomic(wanted) and had and isinstance(current, dict):
             replace_paths.append(dotted)
     assert_channels_safe(patch, replace_paths)
-    return {"patch": patch, "changes": changes, "replace_paths": replace_paths, "skipped": skipped}
+    return {"patch": patch, "changes": changes, "replace_paths": replace_paths, "skipped": skipped,
+            "kept": kept,
+            "filled": [".".join(c["path"]) for c in changes if c["action"] == "filled"],
+            "forced": [".".join(c["path"]) for c in changes if c["action"] == "forced"]}
 
 
 def restore_patch(changes: list[dict]) -> tuple[dict, list[str]]:
@@ -909,6 +1009,8 @@ def restore_patch(changes: list[dict]) -> tuple[dict, list[str]]:
     patch: dict = {}
     replace_paths: list[str] = []
     for ch in changes:
+        if ch.get("action") == "kept":
+            continue                  # a kept value was never written, so there is nothing to put back
         if ch.get("secret") and ch["had"]:
             # The old value was never stored, so there is nothing to put back. Deleting the leaf
             # would destroy a credential; leave it and let the operator run `openclaw configure`.

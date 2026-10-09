@@ -89,7 +89,7 @@ for p in \
   ".claude/CLAUDE.md" ".claude/settings.json" ".claude/hooks" \
   ".config/shell" \
   ".openclaw/openclaw.json" ".openclaw/telegram.token" ".openclaw/gateway.systemd.env" \
-  ".openclaw/kit-host.env" ".openclaw/bin" ".config/ai-resources/model-pins.json" \
+  ".openclaw/kit-host.env" ".openclaw/kit-host-overrides.json5" ".openclaw/bin" ".config/ai-resources/model-pins.json" \
   ".config/systemd/user/openclaw-gateway.service" \
   ".config/systemd/user/openclaw-backup@.service" \
   ".config/systemd/user/openclaw-backup-daily.timer" \

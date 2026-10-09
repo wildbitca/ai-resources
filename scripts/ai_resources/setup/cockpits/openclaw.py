@@ -71,7 +71,7 @@ from . import _openclaw_mcp as mcp
 from . import _openclaw_voice as voice
 from . import _openclaw_host as host_section
 from . import _agy_quota
-from ... import model_pins, openclaw_host
+from ... import model_pins, openclaw_host, openclaw_reload_rules
 
 
 NAME = "OpenClaw"
@@ -1108,6 +1108,8 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
     if dry_run:
         return False
     written.append(path)
+    # The engine section is a deliberate wizard choice, not fill-only (ADR-0003), so say which keys it wrote.
+    ui.info("changed by the engine section: " + ", ".join(openclaw_reload_rules.leaf_paths(patch)))
 
     if switching_away_from_antigravity:
         if s.openclaw.plugin_linked:

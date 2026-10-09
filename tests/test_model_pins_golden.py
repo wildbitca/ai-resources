@@ -43,7 +43,8 @@ def _worker_model_literals() -> list[str]:
 def snapshots(tmp_home: pathlib.Path) -> dict[str, object]:
     profile = host.load_host_profile()
     doc = json.loads(HOST_FIXTURE.read_text(encoding="utf-8"))
-    built = host.build_host_patch(profile, doc, VALUES)
+    # FORCE_ALL: the snapshot pins what the profile says against a customised host (fill-only is tested elsewhere).
+    built = host.build_host_patch(profile, doc, VALUES, overrides=host.FORCE_ALL)
     return {
         "audit.json": {"prices": {k: list(v) for k, v in audit.PRICES.items()}, "aliases": dict(audit.ALIASES)},
         "engines.json": {"claude-code": _engine(openclaw.ENGINES["claude-code"]),

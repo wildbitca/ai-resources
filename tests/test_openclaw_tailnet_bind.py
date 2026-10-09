@@ -38,8 +38,26 @@ def test_without_a_tailnet_the_rest_of_the_gateway_block_is_still_written():
     assert gw["trustedProxies"] == ["10.42.0.0/24"]
 
 
-def test_with_a_tailnet_the_bind_is_written():
-    assert _patch({"gateway": {"bind": "loopback"}}, TAILNET="1")["patch"]["gateway"]["bind"] == "tailnet"
+def test_with_a_tailnet_an_existing_loopback_bind_is_kept():
+    # fill-only, ADR-0003: the profile never overwrites a value the operator set.
+    built = _patch({"gateway": {"bind": "loopback"}}, TAILNET="1")
+    assert "bind" not in built["patch"].get("gateway", {})
+    assert "gateway.bind" in built["kept"]
+
+
+def test_with_a_tailnet_and_no_bind_the_bind_is_filled():
+    built = _patch({"gateway": {}}, TAILNET="1")
+    assert built["patch"]["gateway"]["bind"] == "tailnet"
+    assert "gateway.bind" in built["filled"]
+
+
+def test_with_a_tailnet_a_forced_bind_replaces_loopback():
+    built = host.build_host_patch(host.load_host_profile(), {"gateway": {"bind": "loopback"}},
+                                  {**VALUES, "TAILNET": "1"},
+                                  overrides={"keep": frozenset(), "force": frozenset({"gateway.bind"})})
+    assert built["patch"]["gateway"]["bind"] == "tailnet"
+    [ch] = [c for c in built["changes"] if c["path"] == ["gateway", "bind"]]
+    assert ch["previous"] == "loopback" and ch["action"] == "forced"
 
 
 def test_when_detection_did_not_run_the_profile_value_stands():

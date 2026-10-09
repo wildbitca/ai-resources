@@ -298,13 +298,27 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
                       apply_patch: Callable[..., tuple[bool, str]]) -> bool:
     if not o.host_config:
         return False
-    built = host.build_host_patch(host.load_host_profile(), doc, _values(o))
+    try:
+        overrides = host.load_host_overrides()
+    except ValueError as e:
+        # Never crash setup on a hand-edited file, and never fall back to "no overrides": that could
+        # overwrite a value the operator meant to protect. Skip the step and say why.
+        ui.error(f"OpenClaw config skipped: {e}")
+        return False
+    built = host.build_host_patch(host.load_host_profile(), doc, _values(o), overrides=overrides)
+    if built["kept"]:
+        ui.info("kept your value: " + ", ".join(built["kept"])
+                + f" (opt back in with `force` in {host.host_overrides_path()})")
     for note in built["skipped"]:
         ui.detail(f"Not sent: {note}")
     for name in host.mcp_latest_findings(doc):
         ui.warn(f"mcp.servers.{name} runs an unpinned package (@latest). The kit will not rewrite it: pin the version by hand.")
     if not built["patch"]:
         return False
+    if built["filled"]:
+        ui.info("filled: " + ", ".join(built["filled"]))
+    if built["forced"]:
+        ui.info("replaced (forced by the profile or your overrides): " + ", ".join(built["forced"]))
     ui.info("Canonical config patch (sent with `openclaw config patch --stdin`):")
     ui.detail(json.dumps(built["patch"], indent=2))
     ok, out = apply_patch(built["patch"], dry_run=True, replace_paths=built["replace_paths"])

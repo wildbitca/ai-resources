@@ -205,6 +205,12 @@ def sim(tmp_path, monkeypatch):
     home = h.home
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
+    # The fixture is a customised host. Setup is fill-only (ADR-0003), so this simulated operator opts
+    # into the canonical profile with `force: ["*"]`; the fill-only tests below delete this file.
+    h.overrides_file = tmp_path / "overrides" / "kit-host-overrides.json5"
+    h.overrides_file.parent.mkdir()
+    h.overrides_file.write_text('{"force": ["*"]}\n', encoding="utf-8")
+    monkeypatch.setattr(host, "host_overrides_path", lambda: h.overrides_file)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(h.cfg))
     monkeypatch.delenv("GH_TOKEN", raising=False)
@@ -950,3 +956,28 @@ def test_run_exits_non_zero_on_an_error_finding_and_zero_on_a_warn(script, monke
 def test_run_skips_verification_when_apply_failed(script, monkeypatch, tmp_path):
     rc, calls, sections = _drive_run(monkeypatch, tmp_path, apply_rc=1, targets=["claude"], findings=[])
     assert rc == 1 and calls == [] and (10, 10, "Verification") not in sections
+
+
+# --- fill-only summary and the overrides file (ADR-0003) -----------------------------------------------------
+
+def test_without_overrides_the_wizard_keeps_operator_values_and_says_so(sim, script):
+    sim.overrides_file.unlink()
+    s = _state()
+    _run_wizard(s)
+    doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
+    original = json.loads(sim.original_config)
+    assert doc["gateway"]["bind"] == original["gateway"]["bind"]            # lan, the operator's
+    assert doc["tools"]["profile"] == original["tools"]["profile"]
+    info = " | ".join(script.messages("info"))
+    assert "kept your value:" in info and "gateway.bind" in info
+    assert "filled:" in info and "gateway.publicOrigin" in info
+    assert all(c["path"] != ["gateway", "bind"] for c in s.openclaw.host_config_changes)
+
+
+def test_a_broken_overrides_file_skips_the_config_step_and_does_not_crash(sim, script):
+    sim.overrides_file.write_text('{"force": ["bad path"]}', encoding="utf-8")
+    s = _state()
+    _run_wizard(s)
+    assert sim.oc.real_patches() == [] or all(p.get("gateway") is None for _a, p in sim.oc.real_patches())
+    assert any("kit-host-overrides.json5" in m for m in script.messages("error"))
+    assert s.openclaw.host_config_changes == []

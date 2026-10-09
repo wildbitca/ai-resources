@@ -6,6 +6,11 @@
 //
 // It is a patch TEMPLATE for `openclaw config patch --stdin` (OpenClaw's own validated writer;
 // the kit never writes openclaw.json by hand). Rules the builder applies:
+//   - FILL ONLY (ADR-0003): a key the operator has not set is written; a key set to a different
+//     value is KEPT and listed as "kept your value". `~/.openclaw/kit-host-overrides.json5` opts a
+//     key back into the profile value: {"force": ["gateway.bind"], "keep": ["tools"]} (a prefix
+//     covers everything under it, a "*" segment matches any, and a lone "*" in `force` means all).
+//     The one exception is an agent still on a haiku primary (T29), which the "*" entry fixes;
 //   - only the leaves that differ from the live config are sent, so a second run sends nothing;
 //   - `@DOMAIN@` and `@POD_CIDR@` are asked by the wizard and stored in ~/.openclaw/kit-host.env;
 //     no host value is ever written here;

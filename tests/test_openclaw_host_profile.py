@@ -55,8 +55,10 @@ def no_gh_token(monkeypatch, tmp_path):
     monkeypatch.setattr(host.Path, "home", classmethod(lambda cls: tmp_path))
 
 
-def build(doc, **over):
-    return host.build_host_patch(host.load_host_profile(), doc, {**VALUES, **over})
+def build(doc, *, overrides=host.FORCE_ALL, **over):
+    """The patch against `doc`. The fixture is a customised host, so by default every profile key is
+    forced (`force: ["*"]`): these tests pin WHAT the profile says. Fill-only is tested separately."""
+    return host.build_host_patch(host.load_host_profile(), doc, {**VALUES, **over}, overrides=overrides)
 
 
 def paths(result) -> set[str]:
@@ -243,7 +245,7 @@ def test_a_credential_leaf_records_that_it_existed_and_nothing_of_its_value(doc,
     result = build(doc)
     [change] = [c for c in result["changes"] if c["path"][-1] == "token"]
     assert change == {"path": ["gateway", "controlUi", "github", "token"], "previous": None, "had": True,
-                      "secret": True}
+                      "secret": True, "action": "forced"}
     assert "ghp_LITERALSECRET" not in json.dumps(result["changes"])
     restore, _ = host.restore_patch(result["changes"])
     assert "github" not in restore.get("gateway", {}).get("controlUi", {}), "a credential is never deleted or rewritten"
@@ -306,3 +308,129 @@ def test_model_helpers_are_total():
         assert host.model_primary({"model": junk}) is None
     assert host.model_primary(None) is None
     assert host.model_primary({"model": "a/b"}) == "a/b"
+
+
+# --- fill-only (ADR-0003): the profile never overwrites a value the operator set -----------------------------
+
+def _fill_only(doc, **over):
+    return build(doc, overrides=None, **over)
+
+
+def test_an_operator_bind_is_kept_not_overwritten(doc):
+    doc["gateway"]["bind"] = "loopback"
+    built = _fill_only(doc, TAILNET="1")
+    assert "bind" not in built["patch"].get("gateway", {})
+    assert "gateway.bind" in built["kept"]
+    assert not any(c["path"] == ["gateway", "bind"] for c in built["changes"])
+
+
+def test_force_writes_the_profile_value_and_records_the_previous_one(doc):
+    doc["gateway"]["bind"] = "loopback"
+    built = build(doc, overrides={"keep": frozenset(), "force": frozenset({"gateway.bind"})}, TAILNET="1")
+    assert built["patch"]["gateway"]["bind"] == "tailnet"
+    [ch] = [c for c in built["changes"] if c["path"] == ["gateway", "bind"]]
+    assert ch["previous"] == "loopback" and ch["had"] is True and ch["action"] == "forced"
+    assert "gateway.bind" in built["forced"]
+
+
+def test_force_accepts_a_prefix_and_a_wildcard_segment(doc):
+    built = build(doc, overrides={"keep": frozenset(), "force": frozenset({"tools"})})
+    assert built["patch"]["tools"]["profile"] == "coding"
+    built = build(doc, overrides={"keep": frozenset(), "force": frozenset({"agents.entries.*.heartbeat"})})
+    assert built["patch"]["agents"]["entries"]["main"]["heartbeat"]["every"] == "2h"
+    assert "profile" not in built["patch"].get("tools", {})       # not forced, so the operator's value stays
+
+
+def test_a_customised_host_keeps_every_differing_value_and_fills_the_rest(doc):
+    built = _fill_only(doc, TAILNET="1")
+    kept = set(built["kept"])
+    assert {"tools.profile", "gateway.bind", "logging.file"} <= kept
+    filled = set(built["filled"])
+    assert "gateway.publicOrigin" in filled              # absent in the fixture: filled
+    assert "gateway.trustedProxies" in filled            # array union is an add-only fill
+    assert not kept & filled
+    # Whatever is sent is only ever an addition: applying it never changes a kept value.
+    patched = host_apply(doc, built["patch"])
+    assert patched["gateway"]["bind"] == doc["gateway"]["bind"]
+    assert patched["tools"]["profile"] == doc["tools"]["profile"]
+
+
+def test_a_haiku_primary_is_still_replaced_because_of_t29(doc):
+    built = _fill_only(doc)
+    assert built["patch"]["agents"]["entries"]["app"]["model"]["primary"].startswith("anthropic/")
+    assert "agents.entries.app.model.primary" in built["forced"]
+    assert "agents.entries.docs.model.primary" not in built["forced"] + built["filled"]   # a deliberate opus stays
+
+
+def test_keep_blocks_an_array_union(doc):
+    built = build(doc, overrides={"keep": frozenset({"gateway.trustedProxies"}), "force": frozenset()})
+    assert "trustedProxies" not in built["patch"]["gateway"]
+    assert "gateway.trustedProxies" in built["kept"]
+
+
+def test_a_never_customised_host_gets_the_same_patch_either_way():
+    # `{}` has nothing to keep, so fill-only and the 2.0.x behaviour agree byte for byte.
+    a = host.build_host_patch(host.load_host_profile(), {}, {**VALUES, "TAILNET": "1"})
+    b = host.build_host_patch(host.load_host_profile(), {}, {**VALUES, "TAILNET": "1"}, overrides=host.FORCE_ALL)
+    assert json.dumps(a["patch"], sort_keys=True) == json.dumps(b["patch"], sort_keys=True)
+    assert a["kept"] == []
+
+
+def test_the_second_run_sends_nothing_fill_only(doc):
+    first = _fill_only(doc, TAILNET="1")
+    patched = host_apply(doc, first["patch"])
+    second = _fill_only(patched, TAILNET="1")
+    assert second["patch"] == {} and second["changes"] == []
+
+
+def test_restore_ignores_kept_records(doc):
+    changes = [{"path": ["gateway", "bind"], "previous": "loopback", "had": True, "action": "kept"},
+               {"path": ["tools", "profile"], "previous": "minimal", "had": True, "action": "forced"}]
+    restore, _ = host.restore_patch(changes)
+    assert restore == {"tools": {"profile": "minimal"}}
+
+
+# --- the overrides file ------------------------------------------------------------------------------------------
+
+def _overrides(tmp_path, text):
+    p = tmp_path / "kit-host-overrides.json5"
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def test_a_missing_overrides_file_means_no_overrides(tmp_path):
+    got = host.load_host_overrides(tmp_path / "nope.json5")
+    assert got == {"keep": frozenset(), "force": frozenset()}
+
+
+def test_a_valid_overrides_file_loads_with_comments(tmp_path):
+    p = _overrides(tmp_path, '// mine\n{"keep": ["gateway.controlUi"], "force": ["gateway.bind", "tools",],}\n')
+    got = host.load_host_overrides(p)
+    assert got == {"keep": frozenset({"gateway.controlUi"}), "force": frozenset({"gateway.bind", "tools"})}
+
+
+@pytest.mark.parametrize("text", ['{"force": ["gateway bind"]}', '{"force": ["a..b"]}', '{"force": [3]}',
+                                  '{"force": "gateway.bind"}', '{"nope": []}', '[]', 'not json'])
+def test_invalid_overrides_are_refused_naming_the_file(tmp_path, text):
+    p = _overrides(tmp_path, text)
+    with pytest.raises(ValueError, match="kit-host-overrides.json5"):
+        host.load_host_overrides(p)
+
+
+def test_a_secret_path_cannot_be_listed_and_its_value_is_never_printed(tmp_path):
+    p = _overrides(tmp_path, '{"force": ["gateway.controlUi.github.token"]}')
+    with pytest.raises(ValueError) as e:
+        host.load_host_overrides(p)
+    assert "gateway.controlUi.github.token" in str(e.value) and "credential" in str(e.value)
+
+
+def test_a_path_in_both_lists_is_refused(tmp_path):
+    p = _overrides(tmp_path, '{"keep": ["gateway.bind"], "force": ["gateway.bind"]}')
+    with pytest.raises(ValueError, match="both"):
+        host.load_host_overrides(p)
+
+
+def test_the_overrides_file_is_never_shell_sourced():
+    # kit-host.env is sourced by bash; the overrides file must stay out of it and out of _check_env_pair.
+    assert host.host_overrides_path().name == "kit-host-overrides.json5"
+    assert host.host_overrides_path() != host.HOST_ENV_PATH
