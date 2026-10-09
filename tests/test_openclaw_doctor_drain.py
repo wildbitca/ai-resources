@@ -226,3 +226,91 @@ def test_the_real_marker_is_created_and_removed(tmp_path):
     m.remove()
     m.remove()  # removing twice is fine
     assert not m.exists()
+
+
+# --- the shared window (drained_window) and the strict busy probe (ADR-0003) ---------------------------------
+
+def _window(fake, action, **kw):
+    lines: list[str] = []
+    kw.setdefault("drain_timeout", 12)
+    kw.setdefault("drain_interval", 3)
+    kw.setdefault("health_timeout", 20)
+    kw.setdefault("health_interval", 5)
+    code = host.drained_window(action, runner=fake, sleep=fake.sleep, marker=fake.marker,
+                               openclaw_bin="openclaw", out=lines.append, **kw)
+    return code, lines
+
+
+def test_the_window_runs_the_action_between_the_drain_and_the_start():
+    fake = Fake()
+    code, _ = _window(fake, lambda: fake.events.append("action") or True)
+    assert code == 0
+    assert fake.ops() == ["touch", "stop", "drain", "action", "rm", "start", "health"]
+
+
+def test_the_marker_is_removed_and_the_gateway_started_when_the_action_raises():
+    fake = Fake()
+
+    def boom():
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        _window(fake, boom)
+    assert fake.ops() == ["touch", "stop", "drain", "rm", "start", "health"]
+    assert fake._present is False
+
+
+def test_a_failed_action_is_exit_4_and_the_gateway_still_comes_back():
+    fake = Fake()
+    code, _ = _window(fake, lambda: False)
+    assert code == host.EXIT_DOCTOR_FAILED
+    assert fake.ops()[-3:] == ["rm", "start", "health"]
+
+
+def test_require_idle_with_runs_in_flight_stops_nothing():
+    fake = Fake()
+    code, lines = _window(fake, lambda: True, require_idle=True, busy_probe=lambda: 2)
+    assert code == host.EXIT_REFUSED_BUSY
+    assert fake.events == []
+    assert any("2 agent run(s)" in ln for ln in lines)
+
+
+def test_require_idle_with_a_probe_error_stops_nothing():
+    fake = Fake()
+    code, _ = _window(fake, lambda: True, require_idle=True, busy_probe=lambda: None)
+    assert code == host.EXIT_REFUSED_BUSY
+    assert fake.events == []
+
+
+def test_require_idle_and_idle_runs_the_window():
+    fake = Fake()
+    code, _ = _window(fake, lambda: True, require_idle=True, busy_probe=lambda: 0)
+    assert code == 0 and fake.ops()[:2] == ["touch", "stop"]
+
+
+def test_an_open_window_is_refused_without_force():
+    fake = Fake(marker_present=True)
+    code, _ = _window(fake, lambda: True)
+    assert code == host.EXIT_REFUSED and fake.events == []
+
+
+def test_strict_probe_none_on_a_failed_probe_and_a_count_otherwise(tmp_path):
+    def failing(argv, **_kw):
+        return 1, "no bus"
+
+    assert host.gateway_busy_strict(failing, cgroup_root=tmp_path, proc_root=tmp_path) is None
+    assert host.gateway_busy(failing, cgroup_root=tmp_path, proc_root=tmp_path) == (0, [])  # fail-open is unchanged
+
+    def stopped(argv, **_kw):
+        return 0, ""
+
+    assert host.gateway_busy_strict(stopped, cgroup_root=tmp_path, proc_root=tmp_path) == 0
+
+
+def test_the_busy_verb_exit_codes(monkeypatch, capsys):
+    import argparse
+    for probe, code in ((0, 0), (3, 1), (None, 2)):
+        monkeypatch.setattr(host, "gateway_busy_strict", lambda _p=probe: _p)
+        assert host.cmd_busy(argparse.Namespace(json=True)) == code
+    out = capsys.readouterr().out.strip().splitlines()
+    assert '"probe_ok": false' in out[-1] and '"busy": null' in out[-1]

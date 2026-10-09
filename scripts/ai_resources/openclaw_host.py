@@ -337,10 +337,7 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
     Exit codes: 0 ok; 2 refused (marker present); 3 not drained; 4 doctor failed; 5 gateway did
     not come back.
     """
-    marker = marker or Marker()
-    env = systemd_env()
     oc = openclaw_bin or resolve_openclaw_bin()
-    sysctl = ["systemctl", "--user"]
 
     steps = ["touch watchdog.off", f"systemctl --user stop {GATEWAY_UNIT}",
              f"poll TasksCurrent until [not set] (up to {drain_timeout:g}s)", f"{oc} doctor --fix"]
@@ -354,12 +351,66 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
             out(f"  {i}. {step}")
         return EXIT_OK
 
+    env = systemd_env()
+
+    def run_doctor() -> bool:
+        rc, text = runner([oc, "doctor", "--fix"], env=env, timeout=DOCTOR_TIMEOUT)
+        out(text)
+        doctor_ok = rc == 0 and "Doctor complete" in text
+        out(f"doctor={'ok' if doctor_ok else 'failed'}")
+        if cleanup_sessions:
+            _rc, cleaned = runner([oc, "sessions", "cleanup", "--all-agents"], env=env, timeout=300)
+            out("sessions cleanup: " + " ".join(cleaned.splitlines()[-2:]))
+        return doctor_ok
+
+    return drained_window(run_doctor, runner=runner, force=force, drain_timeout=drain_timeout,
+                          drain_interval=drain_interval, health_timeout=health_timeout,
+                          health_interval=health_interval, sleep=sleep, marker=marker,
+                          openclaw_bin=oc, out=out,
+                          skip_message=f"doctor=skipped (the cgroup did not drain in {drain_timeout:g}s)")
+
+
+EXIT_REFUSED_BUSY = 6     # require_idle was set and agent runs are in flight (or the probe failed)
+
+
+def drained_window(action: Callable[[], bool], *, runner: Runner = default_runner, force: bool = False,
+                   require_idle: bool = False, busy_probe: Callable[[], "int | None"] | None = None,
+                   drain_timeout: float = 90, drain_interval: float = 3,
+                   health_timeout: float = 120, health_interval: float = 5,
+                   sleep: Callable[[float], None] = time.sleep, marker: Marker | None = None,
+                   openclaw_bin: str | None = None, out: Callable[[str], None] = print,
+                   skip_message: str = "") -> int:
+    """The one maintenance window (T01), shared by `doctor` and the kit's restart-required config applies.
+
+        touch watchdog.off  ->  stop  ->  poll until the cgroup drains  ->  action()
+        ->  rm watchdog.off  ->  start  ->  poll `openclaw health`
+
+    `action` runs ONLY once the unit drained, and returns True on success. The marker is removed
+    and the gateway started again on EVERY exit path, `action` raising included. With
+    `require_idle` the window is refused, before anything is stopped, when the strict busy probe
+    reports runs in flight or cannot tell (ADR-0001: defer, never force).
+
+    Exit codes: 0 ok; 2 refused (marker present); 3 not drained; 4 action failed; 5 gateway did
+    not come back; 6 refused (busy).
+    """
+    marker = marker or Marker()
+    env = systemd_env()
+    oc = openclaw_bin or resolve_openclaw_bin()
+    sysctl = ["systemctl", "--user"]
+
     if marker.exists() and not force:
         out(f"refusing: {marker.path} exists, so another maintenance window is open. "
             "Pass --force if that window is dead.")
         return EXIT_REFUSED
+    if require_idle:
+        probe = busy_probe or (lambda: gateway_busy_strict(runner))
+        busy = probe()
+        if busy is None or busy > 0:
+            out("refusing: " + ("the busy probe could not tell whether agent runs are in flight"
+                                if busy is None else f"{busy} agent run(s) are in flight") + "; nothing was stopped")
+            return EXIT_REFUSED_BUSY
 
-    drained = doctor_ok = False
+    drained = action_ok = False
     code = EXIT_OK
     marker.touch()
     try:
@@ -374,15 +425,9 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
             sleep(drain_interval)
         out(f"drained={'yes' if drained else 'no'}")
         if drained:
-            rc, text = runner([oc, "doctor", "--fix"], env=env, timeout=DOCTOR_TIMEOUT)
-            out(text)
-            doctor_ok = rc == 0 and "Doctor complete" in text
-            out(f"doctor={'ok' if doctor_ok else 'failed'}")
-            if cleanup_sessions:
-                _rc, cleaned = runner([oc, "sessions", "cleanup", "--all-agents"], env=env, timeout=300)
-                out("sessions cleanup: " + " ".join(cleaned.splitlines()[-2:]))
-        else:
-            out(f"doctor=skipped (the cgroup did not drain in {drain_timeout:g}s)")
+            action_ok = bool(action())
+        elif skip_message:
+            out(skip_message)
     finally:
         marker.remove()
         runner(sysctl + ["start", GATEWAY_UNIT], env=env, timeout=120)
@@ -400,7 +445,7 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
         return code
     if not drained:
         return EXIT_NOT_DRAINED
-    return EXIT_OK if doctor_ok else EXIT_DOCTOR_FAILED
+    return EXIT_OK if action_ok else EXIT_DOCTOR_FAILED
 
 
 # --- the restart guard: is a turn in flight right now? --------------------------------------------
@@ -527,6 +572,20 @@ def gateway_busy(runner: Runner = default_runner, *, cgroup_root: Path = CGROUP_
         if out:
             out(f"restart guard: the busy probe failed ({type(e).__name__}: {e}); treating the gateway as idle")
         return 0, []
+
+
+def gateway_busy_strict(runner: Runner = default_runner, *, cgroup_root: Path = CGROUP_ROOT,
+                        proc_root: Path = PROC_ROOT) -> int | None:
+    """Number of agent runs in flight, or None when the probe could not tell.
+
+    `gateway_busy` fails OPEN (a broken probe reads as idle), which suits an upgrade guard. A
+    restart-required config apply must fail CLOSED, so any note the probe emits about a failure
+    turns the answer into None, and callers treat None as busy. A plainly stopped unit is not a
+    failure: nothing is in flight.
+    """
+    problems: list[str] = []
+    count, _procs = gateway_busy(runner, cgroup_root=cgroup_root, proc_root=proc_root, out=problems.append)
+    return None if problems else count
 
 
 def gateway_main_pid(runner: Runner = default_runner) -> str:
@@ -2113,6 +2172,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                   drain_timeout=args.drain_timeout, health_timeout=args.health_timeout)
 
 
+def cmd_busy(args: argparse.Namespace) -> int:
+    """Exit 0 idle, 1 busy, 2 the probe could not tell (callers treat 2 as busy)."""
+    n = gateway_busy_strict()
+    if args.json:
+        print(json.dumps({"busy": n, "probe_ok": n is not None}))
+    else:
+        print("unknown (the probe could not tell; treated as busy)" if n is None else f"{n} agent run(s) in flight")
+    return 2 if n is None else (1 if n > 0 else 0)
+
+
 def cmd_agent_new(args: argparse.Namespace) -> int:
     try:
         res = agent_new(args.agent_id, args.workspace, kind=args.kind or None, force=args.force,
@@ -2179,6 +2248,10 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_doc.add_argument("--cleanup-sessions", action="store_true",
                        help="Also run `openclaw sessions cleanup --all-agents` inside the drained window")
     p_doc.set_defaults(func=cmd_doctor)
+
+    p_busy = verbs.add_parser("busy", help="How many agent runs are in flight (exit 0 idle, 1 busy, 2 unknown)")
+    p_busy.add_argument("--json", action="store_true", help="Print {busy, probe_ok} as JSON")
+    p_busy.set_defaults(func=cmd_busy)
 
     p_st = verbs.add_parser("status", help="One-screen host status (never repairs)")
     p_st.add_argument("--no-doctor", action="store_true",
