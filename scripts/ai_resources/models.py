@@ -182,6 +182,8 @@ def propose(effective: dict[str, str], discovered: Discovery, overlay: dict | No
             prop.decision, prop.reasons = "frozen", ["class is frozen"]
         elif approvals.get(cls) == new:
             prop.decision, prop.reasons = "approved", ["approved by the operator"]
+        elif ((overlay.get("state") or {}).get("failed") or {}).get(cls) == new:
+            prop.reasons = ["a previous attempt failed and was rolled back; approve to retry"]
         else:
             reasons = []
             if kind == "major":
@@ -201,3 +203,241 @@ def propose(effective: dict[str, str], discovered: Discovery, overlay: dict | No
         out.append(Proposal("new_family", "", model_id, "new_family", "unknown", "report",
                             ["family outside the pinned classes; never applied"]))
     return out
+
+
+# =================================================================================================
+# S6: references, patches, backup, apply and rollback
+# =================================================================================================
+
+def collect_refs(doc: dict) -> list[tuple[tuple, str]]:
+    """Every model reference in a live config: (path, ref).
+
+    Paths point at the string itself: ("agents","entries","main","model","primary") or
+    ("agents","entries","x","model") when the entry uses the bare string form. Fallback lists
+    are reported per item as (..., "fallbacks", i)."""
+    agents = doc.get("agents") if isinstance(doc.get("agents"), dict) else {}
+    out: list[tuple[tuple, str]] = []
+
+    def model_field(base: tuple, owner: dict) -> None:
+        value = owner.get("model") if isinstance(owner, dict) else None
+        if isinstance(value, str):
+            out.append((base + ("model",), value))
+        elif isinstance(value, dict):
+            if isinstance(value.get("primary"), str):
+                out.append((base + ("model", "primary"), value["primary"]))
+            fb = value.get("fallbacks")
+            if isinstance(fb, list):
+                for i, item in enumerate(fb):
+                    if isinstance(item, str):
+                        out.append((base + ("model", "fallbacks", i), item))
+
+    defaults = agents.get("defaults") if isinstance(agents.get("defaults"), dict) else {}
+    model_field(("agents", "defaults"), defaults)
+    hb = defaults.get("heartbeat")
+    if isinstance(hb, dict):
+        model_field(("agents", "defaults", "heartbeat"), hb)
+    entries = agents.get("entries") if isinstance(agents.get("entries"), dict) else {}
+    for name, entry in entries.items():
+        model_field(("agents", "entries", name), entry)
+        hb = entry.get("heartbeat") if isinstance(entry, dict) else None
+        if isinstance(hb, dict):
+            model_field(("agents", "entries", name, "heartbeat"), hb)
+    allow = defaults.get("models")
+    if isinstance(allow, dict):
+        for key in allow:
+            out.append((("agents", "defaults", "models", key), key))
+    return out
+
+
+def _get(doc, path):
+    cur = doc
+    for k in path:
+        cur = cur[k]
+    return cur
+
+
+def _nest(patch: dict, path: tuple, value) -> None:
+    cur = patch
+    for k in path[:-1]:
+        cur = cur.setdefault(k, {})
+    cur[path[-1]] = value
+
+
+def build_forward_patch(doc: dict, changes: dict[str, str]) -> dict:
+    """{patch, inverse, replace_paths, touched} for `changes = {old_ref: new_ref}`.
+
+    The allowlist gains the new key (copying the old entry) and KEEPS the old one, so a rollback
+    stays valid and an agent that pins the old ref explicitly keeps working. Only references equal
+    to an old ref are repointed. The inverse restores each repointed value exactly and deletes the
+    keys the forward patch added (null)."""
+    patch: dict = {}
+    inverse: dict = {}
+    touched: list[str] = []
+    allow = ((doc.get("agents") or {}).get("defaults") or {}).get("models")
+    fallback_lists: dict[tuple, list] = {}
+    for path, ref in collect_refs(doc):
+        if path[:4] == ("agents", "defaults", "models", ref) and len(path) == 4:
+            continue
+        new = changes.get(ref)
+        if not new:
+            continue
+        touched.append(".".join(str(p) for p in path))
+        if "fallbacks" in path:                      # arrays replace as a whole
+            list_path = path[:path.index("fallbacks") + 1]
+            fallback_lists.setdefault(list_path, list(_get(doc, list_path)))
+            fallback_lists[list_path][path[-1]] = new
+            continue
+        _nest(patch, path, new)
+        _nest(inverse, path, ref)
+    for list_path, new_list in fallback_lists.items():
+        _nest(patch, list_path, new_list)
+        _nest(inverse, list_path, copy.deepcopy(_get(doc, list_path)))
+    if touched:
+        for old, new in changes.items():
+            if isinstance(allow, dict) and new not in allow:
+                value = copy.deepcopy(allow[old]) if old in allow else {"agentRuntime": {"id": "claude-cli"}}
+                _nest(patch, ("agents", "defaults", "models", new), value)
+                _nest(inverse, ("agents", "defaults", "models", new), None)
+    openclaw_host.assert_channels_safe(patch, [])
+    openclaw_host.assert_channels_safe(inverse, [])
+    return {"patch": patch, "inverse": inverse, "replace_paths": [], "touched": touched}
+
+
+def apply_in_memory(doc: dict, patch: dict) -> dict:
+    """`openclaw config patch` semantics, for tests and previews: objects merge, null deletes,
+    arrays and scalars replace."""
+    out = copy.deepcopy(doc)
+
+    def merge(dst: dict, src: dict) -> None:
+        for k, v in src.items():
+            if v is None:
+                dst.pop(k, None)
+            elif isinstance(v, dict) and isinstance(dst.get(k), dict):
+                merge(dst[k], v)
+            else:
+                dst[k] = copy.deepcopy(v)
+    merge(out, patch)
+    return out
+
+
+# --- backup ------------------------------------------------------------------------------------
+
+def backup_root() -> Path:
+    return Path.home() / ".openclaw" / "backups" / "models-update"
+
+
+def backup(config_file: Path, *, overlay_file: Path | None = None, root: Path | None = None,
+           now: Callable[[], datetime] | None = None, keep: int = BACKUPS_KEPT) -> Path:
+    """Copy the live config and the overlay (mode 0600) for forensics; keep the newest `keep`.
+
+    This is a read of openclaw.json and a write elsewhere: nothing here touches the live file."""
+    root = root or backup_root()
+    stamp = (now() if now else datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%S%fZ")
+    dest = root / stamp
+    dest.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for src in (config_file, overlay_file if overlay_file is not None else model_pins.overlay_path()):
+        if src.exists():
+            target = dest / src.name
+            shutil.copyfile(src, target)
+            os.chmod(target, 0o600)
+    dirs = sorted(d for d in root.iterdir() if d.is_dir())
+    for old in dirs[:-keep] if keep else dirs:
+        shutil.rmtree(old, ignore_errors=True)
+    return dest
+
+
+# --- lock --------------------------------------------------------------------------------------
+
+def lock_path() -> Path:
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    base = Path(runtime) if runtime and Path(runtime).is_dir() else model_pins.overlay_path().parent
+    return base / "ai-resources-models-update.lock"
+
+
+@contextmanager
+def update_lock(path: Path | None = None) -> Iterator[bool]:
+    """Exclusive, non-blocking flock. Yields False when another run holds it."""
+    import fcntl
+    path = path or lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+# --- apply and rollback ------------------------------------------------------------------------
+
+ApplyPatch = Callable[..., "tuple[bool, str]"]     # (patch, *, dry_run, replace_paths) -> (ok, output)
+
+
+def _stamp(now: Callable[[], datetime] | None) -> str:
+    return (now() if now else datetime.now(timezone.utc)).isoformat()
+
+
+def apply_changes(doc: dict, changes: dict[str, tuple[str, str]], *, apply_patch: ApplyPatch,
+                  overlay: dict, overlay_file: Path | None = None,
+                  now: Callable[[], datetime] | None = None) -> tuple[bool, str, dict]:
+    """Switch the config to the new ids, then record it in the overlay.
+
+    `changes` is {cls: (old_id, new_id)}. Order: dry run (any failure aborts, nothing written), real
+    patch, and ONLY on success the overlay is saved. Returns (ok, message, overlay)."""
+    ref_changes = {model_pins.openclaw_ref(o): model_pins.openclaw_ref(n) for o, n in changes.values()}
+    built = build_forward_patch(doc, ref_changes)
+    if built["patch"]:
+        ok, out = apply_patch(built["patch"], dry_run=True, replace_paths=built["replace_paths"])
+        if not ok:
+            return False, f"config patch dry run rejected the change: {out[-300:]}", overlay
+        ok, out = apply_patch(built["patch"], dry_run=False, replace_paths=built["replace_paths"])
+        if not ok:
+            return False, f"config patch failed: {out[-300:]}", overlay
+    updated = copy.deepcopy(overlay) if overlay else model_pins.empty_overlay()
+    previous = {cls: (updated.get("pins") or {}).get(cls) for cls in changes}
+    pins = updated.setdefault("pins", {})
+    pending = updated.setdefault("pending", {})
+    for cls, (_old, new) in changes.items():
+        pins[cls] = new
+        pending.pop(cls, None)
+    st = updated.setdefault("state", {})
+    st["last_change"] = {"changes": {c: list(v) for c, v in changes.items()}, "inverse": built["inverse"],
+                         "previous_pins": previous, "at": _stamp(now)}
+    updated.setdefault("history", []).append(
+        {"at": _stamp(now), "action": "switch", "changes": {c: list(v) for c, v in changes.items()}})
+    model_pins.save_overlay(updated, overlay_file)
+    return True, "applied" if built["patch"] else "recorded (no references to repoint)", updated
+
+
+def rollback_last(*, apply_patch: ApplyPatch, overlay: dict, overlay_file: Path | None = None,
+                  now: Callable[[], datetime] | None = None) -> tuple[bool, str, dict]:
+    """Send the recorded inverse patch (dry run first), then restore the previous overlay pins."""
+    last = (overlay.get("state") or {}).get("last_change") if overlay else None
+    if not isinstance(last, dict) or "inverse" not in last:
+        return False, "nothing to roll back (no recorded change)", overlay
+    inverse = last["inverse"]
+    if inverse:
+        ok, out = apply_patch(inverse, dry_run=True, replace_paths=[])
+        if not ok:
+            return False, f"rollback dry run rejected: {out[-300:]}", overlay
+        ok, out = apply_patch(inverse, dry_run=False, replace_paths=[])
+        if not ok:
+            return False, f"rollback patch failed: {out[-300:]}", overlay
+    updated = copy.deepcopy(overlay)
+    pins = updated.setdefault("pins", {})
+    for cls, prev in (last.get("previous_pins") or {}).items():
+        if prev:
+            pins[cls] = prev
+        else:
+            pins.pop(cls, None)
+    updated["state"].pop("last_change", None)
+    updated.setdefault("history", []).append({"at": _stamp(now), "action": "rollback"})
+    model_pins.save_overlay(updated, overlay_file)
+    return True, "rolled back", updated
