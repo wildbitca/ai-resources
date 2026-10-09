@@ -353,13 +353,20 @@ def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
     return patch
 
 
-def _resolve_model(configured: str, meta: dict, mode: str) -> str:
-    """Pick the frontmatter model value for one generated subagent."""
+def _resolve_model(configured: str, meta: dict, mode: str, strict: bool = False) -> str:
+    """Pick the frontmatter model value for one generated subagent.
+
+    `strict` is set when the host has a recorded model selection: a non-native id that reaches
+    single-model there raises `SkipCockpit` instead of silently becoming opus/haiku/inherit. Without
+    a selection the legacy fallback stays, so existing setups are unchanged."""
     if mode == "multi-model":
         # Any string is legal: the gateway, not Claude Code, resolves it.
         return configured or "inherit"
     if configured and _is_native_model(configured):
         return configured
+    if strict and configured:
+        raise _shared.SkipCockpit(
+            f"{configured!r} is not a Claude model; Claude Code runs only Claude models without a gateway")
     legacy = str(meta.get("model", "inherit")).lower()
     return {"strong": "opus", "fast": "haiku"}.get(legacy, legacy or "inherit")
 
@@ -395,7 +402,7 @@ def _write_subagent(name: str, desc: str, tools: str | None, model: str, body: s
 
 
 def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
-                             tracking: Any = None) -> list[str]:
+                             tracking: Any = None, strict: bool = False) -> list[str]:
     """Write one Claude Code subagent per kit role and per persona.
 
     Personas (`agents/personas/<role>-<domain>.md`) are domain overlays with no
@@ -431,7 +438,7 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         body = _rewrite_body(body, ak_path)
         role_bodies[name] = body
 
-        model = _resolve_model(str(by_role.get(name, {}).get("model", "") or ""), meta, mode)
+        model = _resolve_model(str(by_role.get(name, {}).get("model", "") or ""), meta, mode, strict)
         # Append unconditionally: `_write_subagent` reports whether the file
         # changed, which is not the same as whether it should exist. Treating a
         # no-op rewrite as "not produced" made the pruning below delete every
@@ -462,7 +469,7 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
             or by_role.get(base, {}).get("model", "")
             or ""
         )
-        model = _resolve_model(configured, meta, mode)
+        model = _resolve_model(configured, meta, mode, strict)
         body = (role_bodies[base] + "\n\n---\n\n" + _rewrite_body(overlay, ak_path)
                 + _shared.kit_context_block(ak_path))
         _write_subagent(name, str(meta.get("description", "")),
@@ -699,6 +706,13 @@ def configure(ctx: dict) -> list[Path]:
     ak_path = str(_shared.stable_kit_root(repo_root()))
     mode = s.mode
     backend = getattr(s, "backend", "litellm")
+    route = ctx.get("route")
+    if route is not None and route.action == "skip" and mode == "multi-model":
+        # The matrix has no verified gateway route for the selected models: Claude Code gets the kit
+        # content and its own Claude models, and no endpoint or non-Claude model setting (Addendum A2).
+        ui.info(f"Claude Code: no gateway setting written ({route.reason})")
+        mode = "single-model"
+    strict = getattr(s, "selection", None) is not None
 
     written: list[Path] = []
 
@@ -751,7 +765,7 @@ def configure(ctx: dict) -> list[Path]:
     written.append(SETTINGS_PATH)
 
     # 2. Subagent files
-    agents = _generate_subagent_files(executors, ak_path, mode, s.tracking)
+    agents = _generate_subagent_files(executors, ak_path, mode, s.tracking, strict)
     if agents:
         written.append(AGENTS_DIR)
 

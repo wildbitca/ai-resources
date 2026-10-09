@@ -132,13 +132,35 @@ ENGINES: dict[str, Engine] = {
     "keep": Engine("keep", "Keep OpenClaw's current engine — change nothing", "", "", ()),
 }
 
-def engine_models(engine: Engine) -> tuple[str, ...]:
+def engine_models(engine: Engine, selection=None) -> tuple[str, ...]:
     """The refs an engine offers NOW. For claude-code the model_pins overlay is applied at call time
-    (never at import), so a host pin moves the default without a kit release."""
+    (never at import), so a host pin moves the default without a kit release.
+
+    With a recorded `selection`, claude-code and codex offer the selection's own refs for their
+    provider (the primary first); antigravity always offers agy's own ids, never an API id."""
+    if selection is not None and engine.id in ("claude-code", "codex"):
+        provider = "anthropic" if engine.id == "claude-code" else "openai"
+        slots = [k for k in selection.slots if k.startswith(provider + ":")]
+        if slots:
+            eff = model_pins.effective_slots(selection)
+            slots.sort(key=lambda k: k != selection.primary)
+            return tuple(f"{provider}/{eff[k]}" for k in slots)
     if engine.id != "claude-code":
         return engine.models
     eff = model_pins.effective()
     return tuple(model_pins.openclaw_ref(eff[c]) for c in ("sonnet", "opus", "haiku"))
+
+
+def selection_engines(s: state.SetupState) -> list[str] | None:
+    """Engine ids the compatibility matrix allows for the recorded selection (None: no selection).
+
+    Antigravity is returned as a separate, labelled choice and is never the default."""
+    selection = s.get_selection() if hasattr(s, "get_selection") else None
+    if selection is None:
+        return None
+    from .. import compat
+    detected = [cid for cid, cs in s.cockpits.items() if cs.installed]
+    return compat.engines_for(selection, detected, allow_unverified=selection.allow_unverified)
 
 
 def default_worker_model() -> str:
@@ -156,10 +178,13 @@ def detect():
 def available_engines(s: state.SetupState) -> list[Engine]:
     """Engines whose backing CLI is installed and not permanently disabled, in preference order."""
     out = []
+    allowed = selection_engines(s)
     for eng in ENGINES.values():
         if eng.disabled_reason:
             continue
         if eng.requires and not (s.cockpits.get(eng.requires) or state.CockpitState()).installed:
+            continue
+        if allowed is not None and eng.id != "keep" and eng.id not in allowed:
             continue
         out.append(eng)
     return out
@@ -180,6 +205,9 @@ def default_engine(s: state.SetupState) -> str:
     if ui.is_non_interactive():
         # Never repoint a live bot from a first unattended run.
         return "keep"
+    if selection_engines(s) is not None:
+        # A recorded selection: the first engine it supports; antigravity is never the default.
+        return next((i for i in ids if i not in ("antigravity", "keep")), "keep")
     if "antigravity" in ids:
         return "antigravity"
     return "claude-code" if "claude-code" in ids else "keep"
@@ -575,7 +603,7 @@ def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
             "Model for the unrestricted claude worker agent:", default=saved_worker,
         ) or saved_worker
 
-    models = engine_models(engine)
+    models = engine_models(engine, s.get_selection() if hasattr(s, "get_selection") else None)
     if not models:
         return
     saved = s.openclaw.model if s.openclaw.model in models else models[0]
@@ -1020,12 +1048,18 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
         ui.error(f"OpenClaw: engine {engine.id} needs {engine.requires}, which is not installed.")
         return False
 
+    allowed = selection_engines(s)
+    if allowed is not None and engine.id not in allowed:
+        # The matrix has no verified runtime for the picked models on this engine: nothing is built or sent.
+        ui.info(f"OpenClaw: skipped; no verified OpenClaw runtime for the selected models on engine {engine.id}.")
+        return False
+
     if engine.id == "antigravity" and not s.openclaw.risk_acknowledged:
         ui.error("OpenClaw antigravity: unrestricted-execution risk was not acknowledged — "
                  "re-run the wizard interactively and accept the warning, then re-apply.")
         return False
 
-    models = engine_models(engine)
+    models = engine_models(engine, s.get_selection() if hasattr(s, "get_selection") else None)
     model = s.openclaw.model if s.openclaw.model in models else (models[0] if models else "")
     worker_model = (s.openclaw.worker_model or default_worker_model()).split("/")[-1]
     kit_skills = str(Path(ak_path) / "skills")

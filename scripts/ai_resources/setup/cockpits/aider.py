@@ -1,6 +1,7 @@
 """Aider cockpit configurator — uses LiteLLM for multi-provider support."""
 from __future__ import annotations
 
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,7 +10,7 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
-from .. import state
+from .. import state, ui
 from ..detection import detect_aider
 from ... import model_pins, repo_root
 from . import _shared
@@ -77,10 +78,19 @@ def configure(ctx: dict) -> list[Path]:
     if _shared.write_managed_block(CONVENTIONS_PATH, md):
         written.append(CONVENTIONS_PATH)
 
-    # ~/.aider.conf.yml only when multi-model
-    if s.mode == "multi-model" and master_key:
-        if _shared.write_text(CONF_PATH, _conf_yaml(executors, gateway_url, master_key)):
+    # ~/.aider.conf.yml only when multi-model and the matrix wires Aider to the gateway
+    route = ctx.get("route")
+    wired = route is None or route.action == "via_gateway"
+    if s.mode == "multi-model" and master_key and wired:
+        base = ctx.get("openai_base") or gateway_url
+        text = _conf_yaml(executors, base, master_key)
+        if CONF_PATH.is_file() and CONF_PATH.read_text(encoding="utf-8") != text:
+            # A changed base (OpenRouter's OpenAI base is /api/v1) alters an existing file: keep the old one.
+            shutil.copyfile(CONF_PATH, CONF_PATH.with_name(CONF_PATH.name + ".kit-bak"))
+        if _shared.write_text(CONF_PATH, text):
             written.append(CONF_PATH)
+    elif route is not None and route.action == "skip":
+        ui.info(f"Aider: no model setting written ({route.reason})")
 
     cs = s.cockpits.get(ID) or state.CockpitState()
     cs.installed = True

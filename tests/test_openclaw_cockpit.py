@@ -1239,3 +1239,52 @@ def test_the_workshop_mode_reaches_a_host_whose_engine_is_kept(jarvis):
     patches = [p for p in rec.patches() if p and "skills" in p]
     assert len(patches) == 1, "a kept engine must still get the Workshop mode"
     assert patches[0]["skills"]["workshop"]["autonomous"]["mode"] == "propose"
+
+
+# --- engines from the recorded selection (plan v2, S11) -------------------------------------------
+
+def _selection_state(*slots, installed=("claude", "openclaw", "agy", "codex")):
+    from ai_resources import selection as sel
+    s = state.SetupState()
+    for cid in installed:
+        s.cockpits[cid] = state.CockpitState(installed=True)
+    s.set_selection(sel.Selection(slots={k: sel.SlotSel(v) for k, v in slots},
+                                  primary=slots[0][0]))
+    return s
+
+
+def test_a_google_selection_has_no_verified_engine_so_none_is_offered_but_keep():
+    s = _selection_state(("google:gemini-flash", "google/gemini-3.8-flash"), installed=("claude", "openclaw"))
+    assert [e.id for e in openclaw.available_engines(s)] == ["keep"]
+    assert openclaw.default_engine(s) == "keep"
+
+
+def test_antigravity_is_a_separate_choice_and_never_the_default():
+    s = _selection_state(("google:gemini-flash", "google/gemini-3.8-flash"))
+    ids = [e.id for e in openclaw.available_engines(s)]
+    assert "antigravity" in ids and "claude-code" not in ids
+    assert openclaw.default_engine(s) == "keep"
+
+
+def test_a_claude_selection_offers_claude_code_with_the_selected_refs(monkeypatch):
+    s = _selection_state(("anthropic:sonnet", "anthropic/claude-sonnet-5"), ("anthropic:opus", "anthropic/claude-opus-5"))
+    assert openclaw.default_engine(s) == "claude-code"
+    assert openclaw.engine_models(openclaw.ENGINES["claude-code"], s.get_selection()) == (
+        "anthropic/claude-sonnet-5", "anthropic/claude-opus-5")
+
+
+def test_no_patch_is_built_for_an_engine_the_matrix_does_not_allow(monkeypatch, tmp_path):
+    s = _selection_state(("google:gemini-flash", "google/gemini-3.8-flash"))
+    s.openclaw.engine = "claude-code"
+    built = []
+    monkeypatch.setattr(openclaw, "build_patch", lambda *a, **k: built.append(1) or {})
+    monkeypatch.setattr(openclaw, "apply_patch", lambda *a, **k: (_ for _ in ()).throw(AssertionError("patched")))
+    assert openclaw._configure_engine({"state": s}, {}, tmp_path / "openclaw.json", "/kit", []) is False
+    assert built == []
+
+
+def test_a_host_without_a_selection_keeps_every_engine():
+    s = state.SetupState()
+    s.cockpits["claude"] = state.CockpitState(installed=True)
+    assert openclaw.selection_engines(s) is None
+    assert "claude-code" in [e.id for e in openclaw.available_engines(s)]
