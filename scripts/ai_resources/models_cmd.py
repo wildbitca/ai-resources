@@ -185,7 +185,9 @@ class _UiIO:
 def _artifacts_line(deps: models.Deps, p) -> str:
     """The artifacts this proposal would touch, exactly as the fan-out registry reports them."""
     change = model_fanout.Change({p.slot: (p.old, p.new)})
-    ids = model_fanout.affected_ids(models.registry(deps.apply_patch, deps.artifacts()), change, model_fanout.Ctx())
+    # The same plan and selection the apply passes, so the preview lists what the apply will really touch.
+    ctx = model_fanout.Ctx(selection=deps.selection(), plan=deps.route_plan())
+    ids = model_fanout.affected_ids(models.registry(deps.apply_patch, deps.artifacts()), change, ctx)
     return ", ".join(["overlay", *ids]) if ids else "overlay"
 
 

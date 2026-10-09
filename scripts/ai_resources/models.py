@@ -1164,7 +1164,10 @@ def _run_locked(opts: Options, deps: Deps, ctx: dict | None = None, plan: "Plan 
         return Result(EXIT_ERROR, "overlay_changed",
                       "the model policy changed while you were answering; nothing was written; run the command again")
 
-    explicit = bool(answers) or opts.apply_proposals            # a human asked for this run: no cooldown
+    # A human asked for this run (no cooldown) only when they accepted something: declining everything
+    # ("Not now", "Never") is not a request, so it keeps the cooldown and applies nothing on its own.
+    explicit = opts.apply_proposals or any(
+        a.kind in (models_interaction.KIND_NOW, models_interaction.KIND_ALWAYS) for a in (answers or {}).values())
     cooldown = policy_of(ov)["cooldown_hours"]
     last_switch = st.get("last_switch_at")
     if writes and last_switch and not explicit:

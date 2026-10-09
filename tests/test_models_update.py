@@ -218,6 +218,27 @@ def test_cooldown_skips_discovery(env):
     assert env.run().outcome == "pending_approval"      # opus and haiku still wait
 
 
+def test_declining_everything_keeps_the_cooldown_and_applies_nothing(env):
+    from ai_resources import models_interaction as mi
+    env.run(classes=["sonnet"])
+    env.runner_calls.clear()
+    patches = len(env.patches)
+    env.now = NOW + timedelta(hours=1)
+    declined = {"anthropic:opus": mi.Answer(mi.KIND_NOT_NOW, "claude-opus-5-5"),
+                "anthropic:haiku": mi.Answer(mi.KIND_NEVER_MODEL, "claude-haiku-5-5")}
+    r = models.run_update(models.Options(), env.deps(), answers=declined)
+    assert (r.rc, r.outcome) == (0, "cooldown") and env.runner_calls == [] and len(env.patches) == patches
+
+
+def test_accepting_one_proposal_still_bypasses_the_cooldown(env):
+    from ai_resources import models_interaction as mi
+    env.run(classes=["sonnet"])
+    env.now = NOW + timedelta(hours=1)
+    r = models.run_update(models.Options(), env.deps(),
+                          answers={"anthropic:opus": mi.Answer(mi.KIND_NOW, "claude-opus-5-5")})
+    assert r.outcome != "cooldown"
+
+
 def test_check_has_no_side_effects(env):
     before = env.overlay.exists()
     r = env.run(check=True)
@@ -337,7 +358,7 @@ def test_one_failing_provider_is_a_row_not_an_error(tmp_path, monkeypatch):
     r = e.run(check=True)
     rows = {p.provider: p.text for p in r.providers}
     assert rows["google"].startswith("discovery failed") and rows["anthropic"].endswith("listed")
-    assert r.rc in (models.EXIT_APPROVAL_PENDING, models.EXIT_OK)
+    assert r.rc == models.EXIT_APPROVAL_PENDING and r.outcome == "pending_approval"     # anthropic still waits
     assert any(r_["provider"] == "google" for r_ in r.as_dict()["providers"])
 
 

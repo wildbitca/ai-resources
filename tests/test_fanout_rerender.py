@@ -254,6 +254,20 @@ def test_a_new_file_the_atomic_write_creates_is_0600(tmp_path):
     assert not (tmp_path / "new.conf.tmp").exists()
 
 
+# --- M10: the interactive "updates:" line lists what the apply will really touch --------------------------------
+
+def test_the_updates_line_lists_every_artifact_the_apply_renders(host):
+    from ai_resources import models_cmd
+    deps = SimpleNamespace(apply_patch=lambda *a, **k: (True, ""), artifacts=host.artifacts,
+                           selection=lambda: host.selection, route_plan=host.plan)
+    proposal = SimpleNamespace(slot="google:gemini-flash", old=OLD, new=NEW)
+    listed = models_cmd._artifacts_line(deps, proposal).split(", ")
+    applied = fo.apply_all(host.artifacts(), CHANGE, host.ctx())
+    assert applied.ok
+    assert {"aider-conf", "claude-subagents"} <= set(listed)            # plan-gated artifacts are not dropped
+    assert set(listed) - {"overlay"} == set(applied.payloads) - {"openclaw"}       # exactly what the apply rendered
+
+
 # --- M11: nothing the artifact did not create is ever deleted -----------------------------------------------------
 
 def test_a_restore_without_a_backup_never_deletes_a_file_that_existed(tmp_path):
