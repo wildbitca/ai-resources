@@ -9,7 +9,7 @@ import json
 import sys
 from datetime import datetime, timezone
 
-from . import model_pins, models
+from . import model_pins, model_providers, models
 from .setup import ui
 
 VERBS = ("status", "check", "update", "approve", "revoke", "pin", "unpin", "exclude", "rollback")
@@ -36,12 +36,24 @@ def _save(ov: dict, action: str, **detail) -> None:
 
 
 def _check_class(cls: str, model_id: str | None = None) -> str | None:
-    if cls not in model_pins.CLASSES:
-        return f"unknown class {cls!r}; choose one of {', '.join(model_pins.CLASSES)}"
+    """Validate a class or a `<provider>:<family>` slot and, when given, that the id belongs to it."""
+    slot = model_pins.slot_key(cls)
+    provider, _, family = slot.partition(":")
+    if provider == model_pins.PROVIDER_ANTHROPIC:
+        if family not in model_pins.CLASSES:
+            return f"unknown class {cls!r}; choose one of {', '.join(model_pins.CLASSES)}"
+        if model_id is not None:
+            parsed = model_pins.parse_id(model_id)
+            if not parsed or parsed[0] != family:
+                return f"{model_id!r} is not a {family} model id (expected e.g. claude-{family}-5)"
+        return None
+    adapter = model_providers.REGISTRY.get(provider)
+    if not adapter or not family or provider == "openrouter":
+        return f"unknown slot {cls!r}; use <provider>:<family> (providers: {', '.join(model_providers.model_families())})"
     if model_id is not None:
-        parsed = model_pins.parse_id(model_id)
-        if not parsed or parsed[0] != cls:
-            return f"{model_id!r} is not a {cls} model id (expected e.g. claude-{cls}-5)"
+        ref = adapter.from_any_spelling(model_id)
+        if not ref or ref.family != family:
+            return f"{model_id!r} is not a {slot} model id"
     return None
 
 
@@ -59,7 +71,7 @@ def _print_result(r: models.Result, args: argparse.Namespace) -> None:
         extra = f" ({'; '.join(p.reasons)})" if p.reasons else ""
         print(f"  {p.cls}: {old} -> {p.new} [{p.kind}, price {p.price}] {p.decision}{extra}")
         if p.decision == "needs_approval":
-            print(f"    approve with: ai-resources models approve {p.cls} {p.new}")
+            print(f"    approve with: {models.approve_command(p.slot, p.new)}")
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -67,7 +79,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     eff = model_pins.effective(ov)
     print("Claude pins (class: effective, kit default, host overlay)")
     for cls in model_pins.CLASSES:
-        pin = (ov.get("pins") or {}).get(cls, "-")
+        pin = (ov.get("pins") or {}).get(model_pins.slot_key(cls), "-")
         frozen = " [frozen]" if model_pins.is_frozen(ov, cls) else ""
         print(f"  {cls:7} {eff[cls]:22} default {model_pins.DEFAULTS[cls]:20} overlay {pin}{frozen}")
     deps = get_deps()
@@ -90,8 +102,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"  DRIFT {path} = {ref} (effective {cls}: {model_pins.openclaw_ref(eff[cls])})")
     pending = ov.get("pending") or {}
     print("\nPending approvals: " + ("none" if not pending else ""))
-    for cls, p in pending.items():
-        print(f"  {cls} -> {p.get('to')} ({p.get('reason')}); ai-resources models approve {cls} {p.get('to')}")
+    for slot, p in pending.items():
+        print(f"  {slot} -> {p.get('to')} ({p.get('reason')}); {models.approve_command(slot, p.get('to'))}")
     st = ov.get("state") or {}
     print(f"\nLast run: {st.get('last_run', 'never')}  result: {st.get('last_result', '-')}  "
           f"last switch: {st.get('last_switch_at', '-')}")
@@ -130,9 +142,9 @@ def _offer_approvals(args: argparse.Namespace, deps: models.Deps) -> None:
         answer = ui.select(f"{p.cls}: {p.old} -> {p.new} ({'; '.join(p.reasons)}). Apply it?",
                            ["Approve and apply", "Skip"], default="Skip")
         if answer == "Approve and apply":
-            ov.setdefault("approvals", {})[p.cls] = p.new
-            ((ov.get("state") or {}).get("failed") or {}).pop(p.cls, None)
-            _save(ov, "approve", cls=p.cls, id=p.new)
+            ov.setdefault("approvals", {})[p.slot] = p.new
+            ((ov.get("state") or {}).get("failed") or {}).pop(p.slot, None)
+            _save(ov, "approve", cls=p.slot, id=p.new)
 
 
 def cmd_update(args: argparse.Namespace) -> int:
@@ -144,54 +156,79 @@ def cmd_update(args: argparse.Namespace) -> int:
     return r.rc
 
 
+def _target(args: argparse.Namespace, want_id: bool) -> tuple[str | None, str | None]:
+    """(slot-or-class, id) from `approve [--slot S] [cls] id`: --slot replaces the positional class."""
+    ids = list(getattr(args, "ids", None) or [])
+    slot = getattr(args, "slot", None)
+    if slot:
+        return slot, (ids[0] if want_id and ids else None)
+    if want_id:
+        return (ids[0], ids[1]) if len(ids) >= 2 else (ids[0] if ids else None, None)
+    return (ids[0] if ids else None), None
+
+
 def cmd_approve(args: argparse.Namespace) -> int:
-    err = _check_class(args.cls, args.id)
+    target, model_id = _target(args, want_id=True)
+    if not target or not model_id:
+        print("usage: ai-resources models approve (--slot <provider:family> | <class>) <id>", file=sys.stderr)
+        return 2
+    err = _check_class(target, model_id)
     if err:
         print(err, file=sys.stderr)
         return 2
+    slot = model_pins.slot_key(target)
     ov = _overlay()
-    ov.setdefault("approvals", {})[args.cls] = args.id
-    ((ov.get("state") or {}).get("failed") or {}).pop(args.cls, None)
-    _save(ov, "approve", cls=args.cls, id=args.id)
-    print(f"approved {args.cls} -> {args.id}; the next `models update` may apply it")
+    ov.setdefault("approvals", {})[slot] = model_id
+    ((ov.get("state") or {}).get("failed") or {}).pop(slot, None)
+    _save(ov, "approve", cls=slot, id=model_id)
+    print(f"approved {slot} -> {model_id}; the next `models update` may apply it")
     return 0
 
 
 def cmd_revoke(args: argparse.Namespace) -> int:
-    err = _check_class(args.cls)
+    target, _ = _target(args, want_id=False)
+    err = _check_class(target or "")
     if err:
         print(err, file=sys.stderr)
         return 2
+    slot = model_pins.slot_key(target)
     ov = _overlay()
-    removed = (ov.get("approvals") or {}).pop(args.cls, None)
-    _save(ov, "revoke", cls=args.cls)
-    print(f"revoked the approval for {args.cls}" if removed else f"no approval for {args.cls}")
+    removed = (ov.get("approvals") or {}).pop(slot, None)
+    _save(ov, "revoke", cls=slot)
+    print(f"revoked the approval for {slot}" if removed else f"no approval for {slot}")
     return 0
 
 
 def cmd_pin(args: argparse.Namespace) -> int:
-    err = _check_class(args.cls, args.id)
+    target, model_id = _target(args, want_id=True)
+    if not target or not model_id:
+        print("usage: ai-resources models pin (--slot <provider:family> | <class>) <id>", file=sys.stderr)
+        return 2
+    err = _check_class(target, model_id)
     if err:
         print(err, file=sys.stderr)
         return 2
+    slot = model_pins.slot_key(target)
     ov = _overlay()
-    ov.setdefault("pins", {})[args.cls] = args.id
-    ov.setdefault("policy", {}).setdefault("classes", {}).setdefault(args.cls, {})["mode"] = "frozen"
-    _save(ov, "pin", cls=args.cls, id=args.id)
-    print(f"pinned {args.cls} at {args.id} (frozen: no automatic changes)")
+    ov.setdefault("pins", {})[slot] = model_id
+    ov.setdefault("policy", {}).setdefault("slots", {}).setdefault(slot, {}).update({"frozen": True})
+    _save(ov, "pin", cls=slot, id=model_id)
+    print(f"pinned {slot} at {model_id} (frozen: no automatic changes)")
     return 0
 
 
 def cmd_unpin(args: argparse.Namespace) -> int:
-    err = _check_class(args.cls)
+    target, _ = _target(args, want_id=False)
+    err = _check_class(target or "")
     if err:
         print(err, file=sys.stderr)
         return 2
+    slot = model_pins.slot_key(target)
     ov = _overlay()
-    ov.get("pins", {}).pop(args.cls, None)
-    ((ov.get("policy") or {}).get("classes") or {}).pop(args.cls, None)
-    _save(ov, "unpin", cls=args.cls)
-    print(f"{args.cls} follows the kit default and the catalog again")
+    ov.get("pins", {}).pop(slot, None)
+    ((ov.get("policy") or {}).get("slots") or {}).pop(slot, None)
+    _save(ov, "unpin", cls=slot)
+    print(f"{slot} follows the kit default and the catalog again")
     return 0
 
 
@@ -226,28 +263,32 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     u.add_argument("--check", action="store_true", help="Print the plan; no smoke call, no write")
     u.add_argument("--dry-run", action="store_true", help="Smoke-test and validate the patch; apply nothing")
     u.add_argument("--class", dest="classes", action="append", choices=list(model_pins.CLASSES),
-                   help="Only this class (repeatable)")
+                   help="Only this Claude class (alias of --slot anthropic:<class>; repeatable)")
+    u.add_argument("--slot", dest="classes", action="append", metavar="PROVIDER:FAMILY",
+                   help="Only this slot, for example google:gemini-flash (repeatable)")
     u.add_argument("--no-restart", action="store_true", help="Patch the config but leave the gateway running")
     u.add_argument("--unattended", action="store_true", help="Never prompt (the timer uses this)")
     u.add_argument("--json", action="store_true")
     u.set_defaults(func=cmd_update, refresh=True)
 
     a = sp.add_parser("approve", help="Approve one specific upgrade for later unattended runs")
-    a.add_argument("cls")
-    a.add_argument("id")
+    a.add_argument("--slot", metavar="PROVIDER:FAMILY", help="The slot, for example google:gemini-flash")
+    a.add_argument("ids", nargs="+", metavar="[CLASS] ID", help="[class] and the model id (class is replaced by --slot)")
     a.set_defaults(func=cmd_approve)
 
-    r = sp.add_parser("revoke", help="Remove a class's approval")
-    r.add_argument("cls")
+    r = sp.add_parser("revoke", help="Remove a slot's approval")
+    r.add_argument("--slot", metavar="PROVIDER:FAMILY")
+    r.add_argument("ids", nargs="*", metavar="CLASS")
     r.set_defaults(func=cmd_revoke)
 
-    pi = sp.add_parser("pin", help="Freeze a class at an explicit model id")
-    pi.add_argument("cls")
-    pi.add_argument("id")
+    pi = sp.add_parser("pin", help="Freeze a slot at an explicit model id")
+    pi.add_argument("--slot", metavar="PROVIDER:FAMILY")
+    pi.add_argument("ids", nargs="+", metavar="[CLASS] ID")
     pi.set_defaults(func=cmd_pin)
 
-    un = sp.add_parser("unpin", help="Let a class follow the catalog again")
-    un.add_argument("cls")
+    un = sp.add_parser("unpin", help="Let a slot follow the catalog again")
+    un.add_argument("--slot", metavar="PROVIDER:FAMILY")
+    un.add_argument("ids", nargs="*", metavar="CLASS")
     un.set_defaults(func=cmd_unpin)
 
     ex = sp.add_parser("exclude", help="Never apply a model id matching this glob")

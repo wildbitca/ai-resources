@@ -96,8 +96,8 @@ def test_apply_dry_run_then_real_then_overlay(doc, tmp_path):
     ok, msg, ov = models.apply_changes(doc, CHANGES, apply_patch=patch, overlay={}, overlay_file=ov_file)
     assert ok and [d for _, d in patch.calls] == [True, False]
     saved = mp.load_overlay(ov_file)
-    assert saved["pins"]["sonnet"] == "claude-sonnet-5-5"
-    assert saved["state"]["last_change"]["previous_pins"] == {"sonnet": None}
+    assert saved["pins"]["anthropic:sonnet"] == "claude-sonnet-5-5"
+    assert saved["state"]["last_change"]["previous_pins"] == {"anthropic:sonnet": None}
     assert saved["history"][-1]["action"] == "switch"
 
 
@@ -120,7 +120,7 @@ def test_rollback_sends_the_inverse_dry_run_first_and_reverts_pins(doc, tmp_path
     ok, msg, back = models.rollback_last(apply_patch=patch, overlay=ov, overlay_file=ov_file)
     assert ok and [d for _, d in patch.calls] == [True, False]
     assert patch.calls[0][0] == ov["state"]["last_change"]["inverse"]
-    assert "sonnet" not in mp.load_overlay(ov_file)["pins"]
+    assert "anthropic:sonnet" not in mp.load_overlay(ov_file)["pins"]
     assert models.rollback_last(apply_patch=patch, overlay=back)[0] is False
 
 

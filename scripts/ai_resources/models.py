@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
-from . import audit, model_pins, openclaw_host
+from . import audit, model_pins, model_providers, openclaw_host
 from .model_pins import CLASSES
 
 # (return code, combined output); same contract as openclaw_host.default_runner.
@@ -69,8 +69,17 @@ class DiscoveryError(Exception):
 
 @dataclass
 class Discovery:
-    best: dict[str, str] = field(default_factory=dict)         # class -> highest available id
+    best: dict[str, str] = field(default_factory=dict)         # Claude class -> highest available id
     new_families: list[str] = field(default_factory=list)      # e.g. claude-mythos-5 (never applied)
+    others: dict[str, str] = field(default_factory=dict)       # non-Claude slot -> highest stable id
+    previews: dict[str, str] = field(default_factory=dict)     # slot -> newest preview/alias (report only)
+    providers: list = field(default_factory=list)              # one ProviderRow per provider asked about
+
+    def slot_best(self) -> dict[str, str]:
+        """slot -> highest stable id, Claude slots first."""
+        out = {model_pins.slot_key(c): i for c, i in self.best.items()}
+        out.update(self.others)
+        return out
 
 
 def discover(runner: Runner, *, refresh: bool = True, warn: Callable[[str], None] = lambda m: None,
@@ -117,27 +126,45 @@ def _version(model_id: str) -> tuple[int, int] | None:
 
 @dataclass
 class Proposal:
-    cls: str
+    cls: str                        # the family: opus | sonnet | gemini-flash | ...
     old: str
     new: str
-    kind: str                       # minor | major | new_family
+    kind: str                       # minor | major | new_family | current
     price: str                      # equal | lower | higher(N%) | unknown
-    decision: str                   # auto | approved | needs_approval | excluded | frozen | report | current
+    decision: str                   # auto | approved | needs_approval | excluded | frozen | suppressed | report | current
     reasons: list[str] = field(default_factory=list)
+    provider: str = "anthropic"
+
+    @property
+    def slot(self) -> str:
+        return f"{self.provider}:{self.cls}"
 
     @property
     def applicable(self) -> bool:
         return self.decision in ("auto", "approved")
 
     def as_dict(self) -> dict:
-        return {"cls": self.cls, "old": self.old, "new": self.new, "kind": self.kind, "price": self.price,
-                "decision": self.decision, "reasons": list(self.reasons)}
+        # `cls` is kept for the wrapper script and older readers; `slot` and `provider` are additive.
+        return {"cls": self.cls, "slot": self.slot, "provider": self.provider, "old": self.old, "new": self.new,
+                "kind": self.kind, "price": self.price, "decision": self.decision, "reasons": list(self.reasons)}
 
 
-def _price_delta(old: str, new: str) -> tuple[str, float | None]:
-    """Compare list prices (input + output). EXACT ids only: prefix matching would price
-    `claude-sonnet-5-5` as `claude-sonnet-5`, and a price must never be invented."""
-    p_old, p_new = audit.PRICES.get(old), audit.PRICES.get(new)
+def _price_of(model_id: str, overlay: dict | None) -> tuple | None:
+    """List price (in, out) per 1M tokens: the audit table, then the operator's own `prices`.
+    EXACT ids only: prefix matching would price `claude-sonnet-5-5` as `claude-sonnet-5`."""
+    price = audit.PRICES.get(model_id)
+    if price:
+        return price
+    own = (overlay or {}).get("prices") if isinstance((overlay or {}).get("prices"), dict) else {}
+    entry = own.get(model_id)
+    if isinstance(entry, (list, tuple)) and len(entry) >= 2 and all(isinstance(x, (int, float)) for x in entry[:2]):
+        return tuple(entry)
+    return None
+
+
+def _price_delta(old: str, new: str, overlay: dict | None = None) -> tuple[str, float | None]:
+    """Compare list prices (input + output). A price must never be invented."""
+    p_old, p_new = _price_of(old, overlay), _price_of(new, overlay)
     if not p_old or not p_new:
         return "unknown", None
     a, b = p_old[0] + p_old[1], p_new[0] + p_new[1]
@@ -150,50 +177,71 @@ def _price_delta(old: str, new: str) -> tuple[str, float | None]:
 
 
 def policy_of(overlay: dict) -> dict:
+    overlay = model_pins.migrate(overlay) if overlay else {}
     pol = overlay.get("policy") if isinstance(overlay.get("policy"), dict) else {}
     return {
-        "classes": pol.get("classes") if isinstance(pol.get("classes"), dict) else {},
+        "slots": pol.get("slots") if isinstance(pol.get("slots"), dict) else {},
         "max_cost_delta_pct": pol.get("max_cost_delta_pct", 0) or 0,
         "exclude": [g for g in (pol.get("exclude") or []) if isinstance(g, str)],
         "cooldown_hours": pol.get("cooldown_hours", DEFAULT_COOLDOWN_HOURS),
     }
 
 
+def _adapter_version(provider: str, model_id: str) -> tuple[int, ...] | None:
+    adapter = model_providers.REGISTRY.get(provider)
+    ref = adapter.from_any_spelling(model_id) if adapter else None
+    return ref.version if ref else None
+
+
 def propose(effective: dict[str, str], discovered: Discovery, overlay: dict | None = None) -> list[Proposal]:
-    """One Proposal per class with a newer id in the catalog. A downgrade is never proposed."""
-    overlay = overlay or {}
+    """One Proposal per slot. A downgrade is never proposed.
+
+    `effective` maps slots (or bare Claude class names) to the id each slot runs now. The ladder, in
+    order: exclude glob, frozen, never (this id, then the whole family), approved, failed retry, then
+    the policy `answer`: `ask` waits for a human, `always` applies within `max_bump` when the price is
+    known and not higher. A slot with nothing newer reports `current`.
+    """
+    overlay = model_pins.migrate(overlay) if overlay else {}
     pol = policy_of(overlay)
     approvals = overlay.get("approvals") if isinstance(overlay.get("approvals"), dict) else {}
+    failed = ((overlay.get("state") or {}).get("failed")) or {}
+    best_by_slot = discovered.slot_best()
     out: list[Proposal] = []
-    for cls in CLASSES:
-        old, new = effective.get(cls), discovered.best.get(cls)
+    for key, old in effective.items():
+        slot = model_pins.slot_key(key)
+        provider, cls = slot.split(":", 1)
+        new = best_by_slot.get(slot)
         if not old or not new:
             continue
-        v_old, v_new = _version(old), _version(new)
+        v_old, v_new = _adapter_version(provider, old), _adapter_version(provider, new)
         if not v_old or not v_new:
             continue
         if v_new <= v_old:
-            # Nothing newer in the catalog: say so instead of leaving the class out of the report.
+            # Nothing newer in the catalog: say so instead of leaving the slot out of the report.
             reasons = [] if v_new == v_old else [f"catalog newest is {new}"]
-            out.append(Proposal(cls, old, old, "current", "equal", "current", reasons))
+            out.append(Proposal(cls, old, old, "current", "equal", "current", reasons, provider))
             continue
         kind = "major" if v_new[0] > v_old[0] else "minor"
-        price, pct = _price_delta(old, new)
-        mode = (pol["classes"].get(cls) or {}).get("mode", "auto-minor") if isinstance(pol["classes"].get(cls), dict) else "auto-minor"
-        prop = Proposal(cls, old, new, kind, price, "needs_approval")
+        price, pct = _price_delta(old, new, overlay)
+        sp = model_pins.slot_policy(overlay, slot)
+        prop = Proposal(cls, old, new, kind, price, "needs_approval", [], provider)
         if any(fnmatch.fnmatch(new, g) for g in pol["exclude"]):
             prop.decision, prop.reasons = "excluded", ["matches an exclude glob"]
-        elif mode == "frozen":
+        elif sp.get("frozen"):
             prop.decision, prop.reasons = "frozen", ["class is frozen"]
-        elif approvals.get(cls) == new:
+        elif new in sp.get("never_ids", []) or sp.get("family_never") or sp.get("answer") == "never":
+            prop.decision, prop.reasons = "suppressed", ["you chose never for this " +
+                                                         ("family" if sp.get("family_never") or sp.get("answer") == "never"
+                                                          else "model")]
+        elif approvals.get(slot) == new:
             prop.decision, prop.reasons = "approved", ["approved by the operator"]
-        elif ((overlay.get("state") or {}).get("failed") or {}).get(cls) == new:
+        elif failed.get(slot) == new:
             prop.reasons = ["a previous attempt failed and was rolled back; approve to retry"]
         else:
             reasons = []
-            if kind == "major":
+            if kind == "major" and sp.get("max_bump", "minor") == "minor":
                 reasons.append("major jump")
-            if mode == "approve":
+            if sp.get("answer") != "always":
                 reasons.append("mode approve")
             if price == "unknown":
                 reasons.append("price unknown")
@@ -268,6 +316,15 @@ def _nest(patch: dict, path: tuple, value) -> None:
     cur[path[-1]] = value
 
 
+def _runtime_of(ref: str) -> str:
+    """agentRuntime id for a new allowlist key: the adapter's, `claude-cli` for anything unknown."""
+    prefix = ref.split("/", 1)[0]
+    for adapter in model_providers.REGISTRY.values():
+        if adapter.ref_prefix == prefix and adapter.runtime:
+            return adapter.runtime
+    return "claude-cli"
+
+
 def build_forward_patch(doc: dict, changes: dict[str, str]) -> dict:
     """{patch, inverse, replace_paths, touched} for `changes = {old_ref: new_ref}`.
 
@@ -300,7 +357,7 @@ def build_forward_patch(doc: dict, changes: dict[str, str]) -> dict:
     if touched:
         for old, new in changes.items():
             if isinstance(allow, dict) and new not in allow:
-                value = copy.deepcopy(allow[old]) if old in allow else {"agentRuntime": {"id": "claude-cli"}}
+                value = copy.deepcopy(allow[old]) if old in allow else {"agentRuntime": {"id": _runtime_of(new)}}
                 _nest(patch, ("agents", "defaults", "models", new), value)
                 _nest(inverse, ("agents", "defaults", "models", new), None)
     openclaw_host.assert_channels_safe(patch, [])
@@ -382,6 +439,18 @@ def update_lock(path: Path | None = None) -> Iterator[bool]:
 
 # --- apply and rollback ------------------------------------------------------------------------
 
+def slot_ref(slot: str, model_id: str) -> str | None:
+    """The OpenClaw model ref for `model_id` in `slot`, or None when OpenClaw has no verified runtime
+    for that provider (such a slot is never repointed in openclaw.json)."""
+    provider = model_pins.slot_provider(slot)
+    adapter = model_providers.REGISTRY.get(provider)
+    if provider == "anthropic":
+        return model_pins.openclaw_ref(model_id)
+    if not adapter or not adapter.ref_prefix or not adapter.runtime:
+        return None
+    return f"{adapter.ref_prefix}/{model_id}"
+
+
 ApplyPatch = Callable[..., "tuple[bool, str]"]     # (patch, *, dry_run, replace_paths) -> (ok, output)
 
 
@@ -394,9 +463,16 @@ def apply_changes(doc: dict, changes: dict[str, tuple[str, str]], *, apply_patch
                   now: Callable[[], datetime] | None = None) -> tuple[bool, str, dict]:
     """Switch the config to the new ids, then record it in the overlay.
 
-    `changes` is {cls: (old_id, new_id)}. Order: dry run (any failure aborts, nothing written), real
-    patch, and ONLY on success the overlay is saved. Returns (ok, message, overlay)."""
-    ref_changes = {model_pins.openclaw_ref(o): model_pins.openclaw_ref(n) for o, n in changes.values()}
+    `changes` is {slot: (old_id, new_id)} (a bare Claude class name is accepted for an anthropic
+    slot). Order: dry run (any failure aborts, nothing written), real patch, and ONLY on success the
+    overlay is saved. A slot whose provider has no verified OpenClaw runtime is recorded in the
+    overlay but never repointed in openclaw.json. Returns (ok, message, overlay)."""
+    changes = {model_pins.slot_key(k): v for k, v in changes.items()}
+    ref_changes = {}
+    for slot, (o, n) in changes.items():
+        ref_o, ref_n = slot_ref(slot, o), slot_ref(slot, n)
+        if ref_o and ref_n:
+            ref_changes[ref_o] = ref_n
     built = build_forward_patch(doc, ref_changes)
     if built["patch"]:
         ok, out = apply_patch(built["patch"], dry_run=True, replace_paths=built["replace_paths"])
@@ -405,13 +481,13 @@ def apply_changes(doc: dict, changes: dict[str, tuple[str, str]], *, apply_patch
         ok, out = apply_patch(built["patch"], dry_run=False, replace_paths=built["replace_paths"])
         if not ok:
             return False, f"config patch failed: {out[-300:]}", overlay
-    updated = copy.deepcopy(overlay) if overlay else model_pins.empty_overlay()
-    previous = {cls: (updated.get("pins") or {}).get(cls) for cls in changes}
+    updated = model_pins.migrate(overlay) if overlay else model_pins.empty_overlay()
+    previous = {slot: (updated.get("pins") or {}).get(slot) for slot in changes}
     pins = updated.setdefault("pins", {})
     pending = updated.setdefault("pending", {})
-    for cls, (_old, new) in changes.items():
-        pins[cls] = new
-        pending.pop(cls, None)
+    for slot, (_old, new) in changes.items():
+        pins[slot] = new
+        pending.pop(slot, None)
     st = updated.setdefault("state", {})
     st["last_change"] = {"changes": {c: list(v) for c, v in changes.items()}, "inverse": built["inverse"],
                          "previous_pins": previous, "at": _stamp(now)}
@@ -435,13 +511,14 @@ def rollback_last(*, apply_patch: ApplyPatch, overlay: dict, overlay_file: Path 
         ok, out = apply_patch(inverse, dry_run=False, replace_paths=[])
         if not ok:
             return False, f"rollback patch failed: {out[-300:]}", overlay
-    updated = copy.deepcopy(overlay)
+    updated = model_pins.migrate(overlay)
     pins = updated.setdefault("pins", {})
-    for cls, prev in (last.get("previous_pins") or {}).items():
+    for slot, prev in (last.get("previous_pins") or {}).items():
+        slot = model_pins.slot_key(slot)
         if prev:
-            pins[cls] = prev
+            pins[slot] = prev
         else:
-            pins.pop(cls, None)
+            pins.pop(slot, None)
     updated["state"].pop("last_change", None)
     updated.setdefault("history", []).append({"at": _stamp(now), "action": "rollback"})
     model_pins.save_overlay(updated, overlay_file)
@@ -570,6 +647,19 @@ def _log(deps: Deps, event: str, **kw) -> None:
     deps.log({"at": deps.now().isoformat(), "event": event, **kw})
 
 
+def approve_command(slot: str, model_id: str) -> str:
+    """The exact command that approves one proposal. Claude classes keep the short form."""
+    slot = model_pins.slot_key(slot)
+    if model_pins.slot_provider(slot) == model_pins.PROVIDER_ANTHROPIC:
+        return f"ai-resources models approve {model_pins.slot_family(slot)} {model_id}"
+    return f"ai-resources models approve --slot {slot} {model_id}"
+
+
+def _wanted(opts: Options) -> set[str]:
+    """The slots a caller asked about (`--class sonnet` is the alias of `--slot anthropic:sonnet`)."""
+    return {model_pins.slot_key(c) for c in (opts.classes or [])}
+
+
 def run_update(opts: Options, deps: Deps) -> Result:
     with deps.lock() as got:
         if not got:
@@ -610,17 +700,18 @@ def _run_locked(opts: Options, deps: Deps) -> Result:
     needs = [p for p in props if p.decision == "needs_approval"]
     if writes:
         pending = ov.setdefault("pending", {})
-        for cls in list(pending):
-            if cls not in {p.cls for p in needs}:
-                pending.pop(cls)
+        for slot in list(pending):
+            if slot not in {p.slot for p in needs}:
+                pending.pop(slot)
         for p in needs:
-            first = (pending.get(p.cls) or {}).get("first_seen") if (pending.get(p.cls) or {}).get("to") == p.new else None
-            pending[p.cls] = {"to": p.new, "reason": ", ".join(p.reasons), "first_seen": first or now.isoformat()}
-    applicable = [p for p in props if p.applicable and (not opts.classes or p.cls in opts.classes)]
+            first = (pending.get(p.slot) or {}).get("first_seen") if (pending.get(p.slot) or {}).get("to") == p.new else None
+            pending[p.slot] = {"to": p.new, "reason": ", ".join(p.reasons), "first_seen": first or now.isoformat()}
+    wanted = _wanted(opts)
+    applicable = [p for p in props if p.applicable and (not wanted or p.slot in wanted)]
     _log(deps, "plan", proposals=[p.as_dict() for p in props])
 
-    if opts.classes:
-        needs = [p for p in needs if p.cls in opts.classes]       # only what the caller asked about
+    if wanted:
+        needs = [p for p in needs if p.slot in wanted]            # only what the caller asked about
     if not applicable:
         rc = EXIT_APPROVAL_PENDING if needs else EXIT_OK
         if writes:
@@ -639,7 +730,7 @@ def _run_locked(opts: Options, deps: Deps) -> Result:
         if writes:
             _persist(deps, ov, last_run=now.isoformat(), last_result="smoke_failed")
         return Result(EXIT_PRECHECK_FAILED, "smoke_failed", "smoke failed for every candidate", proposals=props)
-    changes = {p.cls: (p.old, p.new) for p in survivors}
+    changes = {p.slot: (p.old, p.new) for p in survivors}
 
     if deps.busy():
         if opts.dry_run:
@@ -736,11 +827,12 @@ def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, 
         back["state"].pop("pending_restart", None)
         back["state"].pop("pending_restart_pid", None)
         failed = back["state"].setdefault("failed", {})
-        for cls, (_old, new) in applied.items():
-            failed[cls] = new
+        for slot, (_old, new) in applied.items():
+            slot = model_pins.slot_key(slot)
+            failed[slot] = new
             # the approval is spent by the failed attempt; re-approving (which clears `failed`) retries
-            if (back.get("approvals") or {}).get(cls) == new:
-                back["approvals"].pop(cls, None)
+            if (back.get("approvals") or {}).get(slot) == new:
+                back["approvals"].pop(slot, None)
         try:
             deps.restart()
             healthy_again = _await_health(deps)
@@ -847,9 +939,10 @@ def model_findings(report: dict, overlay: dict, *, now: datetime | None = None) 
         rows = ", ".join(f"{m['agent']} ({m['model']} -> {m['drift']})" for m in drift)
         out.append(("warn", f"{len(drift)} model reference(s) in openclaw.json lag the pins: {rows}",
                     "`ai-resources models status`; `ai-resources setup` re-applies the canonical config"))
+    overlay = model_pins.migrate(overlay) if overlay else {}
     pending = overlay.get("pending") or {}
     if pending:
-        cmds = "; ".join(f"ai-resources models approve {c} {p.get('to')}" for c, p in pending.items())
+        cmds = "; ".join(approve_command(c, p.get("to")) for c, p in pending.items())
         out.append(("ok", f"{len(pending)} model upgrade(s) await approval", cmds))
     st = overlay.get("state") or {}
     result = st.get("last_result")

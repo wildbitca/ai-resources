@@ -105,7 +105,7 @@ def test_healthy_switch(env):
     r = env.run(classes=["sonnet"])
     assert (r.rc, r.outcome) == (0, "switched")
     assert len(real_patches(env)) == 1 and env.restarts == 1
-    assert env.state()["pins"]["sonnet"] == "claude-sonnet-5-5"
+    assert env.state()["pins"]["anthropic:sonnet"] == "claude-sonnet-5-5"
     assert env.state()["state"]["last_result"] == "switched"
     assert "pending_restart" not in env.state()["state"]
     assert any(e["event"] == "switched" for e in env.events)
@@ -153,8 +153,8 @@ def test_unhealthy_gateway_rolls_back(env):
     r = env.run(classes=["sonnet"])
     assert (r.rc, r.outcome) == (2, "rolled_back")
     st = env.state()
-    assert "sonnet" not in st["pins"] and st["state"]["last_result"] == "rolled_back"
-    assert st["state"]["failed"] == {"sonnet": "claude-sonnet-5-5"}
+    assert "anthropic:sonnet" not in st["pins"] and st["state"]["last_result"] == "rolled_back"
+    assert st["state"]["failed"] == {"anthropic:sonnet": "claude-sonnet-5-5"}
     assert env.restarts == 2 and not env.marker.exists()
     assert env.doc["agents"]["entries"]["main"]["model"]["primary"] == "anthropic/claude-sonnet-5"
 
@@ -189,13 +189,13 @@ def test_a_rolled_back_model_is_not_retried_unattended(env):
 def test_an_approved_model_that_fails_is_not_retried_every_run(env):
     env.run(classes=["sonnet"], check=True)           # record nothing; just prove discovery works
     ov = env.state()
-    ov.setdefault("approvals", {})["sonnet"] = "claude-sonnet-5-5"
+    ov.setdefault("approvals", {})["anthropic:sonnet"] = "claude-sonnet-5-5"
     mp.save_overlay(ov, env.overlay)
     env.health_ok = False
     assert env.run(classes=["sonnet"]).rc == 2
     st = env.state()
-    assert st["state"]["failed"] == {"sonnet": "claude-sonnet-5-5"}
-    assert "sonnet" not in (st.get("approvals") or {})
+    assert st["state"]["failed"] == {"anthropic:sonnet": "claude-sonnet-5-5"}
+    assert "anthropic:sonnet" not in (st.get("approvals") or {})
     patches_before = len(real_patches(env))
     env.now = NOW + timedelta(days=2)
     env.health_ok = True
@@ -242,7 +242,7 @@ def test_needs_approval_runs_record_pending_and_return_10(tmp_path, monkeypatch)
     r = e.run()
     assert r.rc == 10 and e.patches == [] and e.smokes == []
     pend = e.state()["pending"]
-    assert pend["sonnet"]["to"] == "claude-sonnet-5-5" and "price unknown" in pend["sonnet"]["reason"]
+    assert pend["anthropic:sonnet"]["to"] == "claude-sonnet-5-5" and "price unknown" in pend["anthropic:sonnet"]["reason"]
 
 
 def test_discovery_failure_is_exit_1(env):

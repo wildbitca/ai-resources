@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "pins": {"opus": "claude-opus-5-5", "haiku": "claude-haiku-4-5"},
+  "policy": {
+    "classes": {"haiku": {"mode": "frozen"}, "sonnet": {"mode": "approve"}, "opus": {"mode": "auto-minor"}},
+    "max_cost_delta_pct": 5,
+    "exclude": ["claude-mythos-*"],
+    "cooldown_hours": 6
+  },
+  "approvals": {"fable": "claude-fable-5-2"},
+  "pending": {"sonnet": {"to": "claude-sonnet-5-5", "reason": "price unknown", "first_seen": "2026-10-08T10:00:00+00:00"}},
+  "state": {
+    "failed": {"sonnet": "claude-sonnet-5-5"},
+    "last_run": "2026-10-09T01:00:00+00:00",
+    "last_change": {
+      "changes": {"opus": ["claude-opus-5", "claude-opus-5-5"]},
+      "previous_pins": {"opus": null},
+      "inverse": {"agents": {"defaults": {"models": {"anthropic/claude-opus-5-5": null}}}},
+      "at": "2026-10-08T01:00:00+00:00"
+    }
+  },
+  "history": [{"at": "2026-10-08T01:00:00+00:00", "action": "switch", "changes": {"opus": ["claude-opus-5", "claude-opus-5-5"]}}]
+}

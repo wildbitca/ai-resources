@@ -57,11 +57,11 @@ def test_approve_persists_and_the_next_plan_applies_it(tmp_path, monkeypatch, ca
     monkeypatch.setattr(models_cmd, "get_deps", e.deps)
     monkeypatch.setattr(mp, "overlay_path", lambda: e.overlay)
     assert run("approve", "haiku", "claude-haiku-5-5") == 0
-    assert mp.load_overlay(e.overlay)["approvals"] == {"haiku": "claude-haiku-5-5"}
+    assert mp.load_overlay(e.overlay)["approvals"] == {"anthropic:haiku": "claude-haiku-5-5"}
     r = models.run_update(models.Options(check=True), e.deps())
     assert {p.cls: p.decision for p in r.proposals}["haiku"] == "approved" and r.rc == 11
     assert run("revoke", "haiku") == 0
-    assert "haiku" not in mp.load_overlay(e.overlay)["approvals"]
+    assert "anthropic:haiku" not in mp.load_overlay(e.overlay)["approvals"]
 
 
 def test_approve_validates_class_and_id(env, capsys):
@@ -73,12 +73,12 @@ def test_approve_validates_class_and_id(env, capsys):
 def test_pin_unpin_and_exclude_persist(env):
     assert run("pin", "sonnet", "claude-sonnet-5") == 0
     ov = mp.load_overlay(env.overlay)
-    assert ov["pins"]["sonnet"] == "claude-sonnet-5" and ov["policy"]["classes"]["sonnet"]["mode"] == "frozen"
+    assert ov["pins"]["anthropic:sonnet"] == "claude-sonnet-5" and ov["policy"]["slots"]["anthropic:sonnet"]["frozen"] is True
     assert run("exclude", "claude-opus-5-5") == 0
     assert mp.load_overlay(env.overlay)["policy"]["exclude"] == ["claude-opus-5-5"]
     assert run("unpin", "sonnet") == 0
     ov = mp.load_overlay(env.overlay)
-    assert "sonnet" not in ov["pins"] and "sonnet" not in ov["policy"]["classes"]
+    assert "anthropic:sonnet" not in ov["pins"] and "anthropic:sonnet" not in ov["policy"]["slots"]
 
 
 def test_a_pinned_class_is_not_updated(env):
@@ -111,20 +111,20 @@ def test_update_interactive_offers_the_pending_ones(tmp_path, monkeypatch):
     monkeypatch.setattr(ui, "select", lambda msg, choices, default=None, **k: asked.append(msg) or (
         "Approve and apply" if msg.startswith("haiku") else "Skip"))
     run("update", "--no-restart")
-    assert len(asked) == 3 and mp.load_overlay(e.overlay)["approvals"] == {"haiku": "claude-haiku-5-5"}
+    assert len(asked) == 3 and mp.load_overlay(e.overlay)["approvals"] == {"anthropic:haiku": "claude-haiku-5-5"}
 
 
 def test_update_json_output(env, capsys):
     run("update", "--dry-run", "--json", "--class", "sonnet")
     data = json.loads(capsys.readouterr().out)
-    assert data["outcome"] == "dry_run" and data["applied"]["sonnet"] == ["claude-sonnet-5", "claude-sonnet-5-5"]
+    assert data["outcome"] == "dry_run" and data["applied"]["anthropic:sonnet"] == ["claude-sonnet-5", "claude-sonnet-5-5"]
 
 
 def test_rollback_verb(env):
     run("update", "--unattended", "--class", "sonnet")
     env.restarts = 0
     assert run("rollback") == 0
-    assert "sonnet" not in mp.load_overlay(env.overlay)["pins"]
+    assert "anthropic:sonnet" not in mp.load_overlay(env.overlay)["pins"]
     assert env.doc["agents"]["entries"]["main"]["model"]["primary"] == "anthropic/claude-sonnet-5"
     assert run("rollback") == 4                      # nothing left to undo
 

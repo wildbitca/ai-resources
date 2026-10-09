@@ -79,9 +79,9 @@ def test_save_overlay_is_atomic_0600_and_trims_history(tmp_path):
     mp.save_overlay({"pins": {"opus": "claude-opus-5-5"}, "history": list(range(80))}, path)
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     data = json.loads(path.read_text())
-    assert data["schema"] == 1 and len(data["history"]) == 50 and data["history"][-1] == 79
+    assert data["schema"] == 2 and len(data["history"]) == 50 and data["history"][-1] == 79
     assert not list(path.parent.glob("*.tmp"))
-    assert mp.load_overlay(path)["pins"] == {"opus": "claude-opus-5-5"}
+    assert mp.load_overlay(path)["pins"] == {"anthropic:opus": "claude-opus-5-5"}
 
 
 def test_agy_static_is_the_antigravity_list():
