@@ -13,18 +13,27 @@ globs:
 ## Architecture
 
 ```
-Cockpit (Claude Code / Cursor / Gemini CLI / etc.)
-    │  ANTHROPIC_BASE_URL=http://127.0.0.1:4000
+Claude Code / Aider  (the cockpits the kit points at a gateway; multi-model only)
+    │  ANTHROPIC_BASE_URL (Claude Code) · OpenAI-compatible base (Aider)
     ▼
-LiteLLM gateway (local container or remote)
+Gateway: LiteLLM (local) or OpenRouter (hosted)
     │  inspects {"model": "..."} field
     ▼
-Provider (Anthropic / Google / OpenAI / Vertex / Ollama)
+Provider (Anthropic / Google / OpenAI / DeepSeek / Moonshot / Vertex / Ollama)
 ```
 
-The cockpit's HTTP calls hit LiteLLM at the configured `gateway.url` (default
-`127.0.0.1:4000`). LiteLLM reads the `model` field from each request and
-routes to the matching provider, translating between API formats as needed.
+Every other cockpit (Cursor, Gemini CLI, Codex, Copilot, Windsurf, Continue, OpenCode) keeps its own model
+settings: the kit writes instructions and MCP for it and claims nothing about routing. Gemini CLI also gets its
+auth setting. OpenClaw runs its own engines (`claude-code`, `codex`, `antigravity`); Antigravity uses agy's own
+model ids, never an API id.
+
+The authoritative table (cockpit x provider x mode, every cell cited to the code) is
+`scripts/ai_resources/setup/compat.py`, rendered in `docs/multi-model.md`. A cell that is not verified end to
+end behaves as "skip" unless the user passes `--allow-unverified`.
+
+For the cockpits that are wired to a gateway, the HTTP calls hit it at the configured `gateway.url` (default
+`127.0.0.1:4000`). LiteLLM reads the `model` field from each request and routes to the matching provider,
+translating between API formats as needed.
 
 ## Single source of truth: `~/.config/ai-resources/executors.yaml`
 
@@ -35,10 +44,10 @@ gateway:
   url: http://127.0.0.1:4000
   api_key_env: LITELLM_MASTER_KEY
 by_role:
-  research:           { provider: google,    model: gemini-2.5-pro }
-  planner:            { provider: anthropic, model: claude-sonnet-4-6 }
-  software-architect: { provider: anthropic, model: claude-opus-4-7 }
-  implementer:        { provider: anthropic, model: claude-sonnet-4-6 }
+  research:           { provider: google,    model: gemini-3.8-flash }
+  planner:            { provider: anthropic, model: claude-sonnet-5 }
+  software-architect: { provider: anthropic, model: claude-opus-5 }
+  implementer:        { provider: anthropic, model: claude-sonnet-5 }
   ...
 ```
 
@@ -54,18 +63,21 @@ In Claude Code, subagent files at `~/.claude/agents/<role>.md` declare:
 ---
 name: research
 description: ...
-model: gemini-2.5-pro      # ← string passes through to gateway
+model: gemini-3.8-flash    # ← string passes through to the gateway (Claude Code, multi-model)
 tools: Read, Grep, Glob
 ---
 ```
 
-The `model:` value is **not validated** by Claude Code against an Anthropic
-allowlist (verified empirically). Any string the gateway recognizes works:
-`claude-sonnet-4-6`, `gemini-2.5-pro`, `gpt-5`, `vertex_ai/claude-sonnet-...`,
-etc.
+In multi-model mode Claude Code forwards the `model:` value to the gateway without
+checking it against an Anthropic allowlist, so a string the gateway recognizes
+reaches it. Whether a given non-Claude model works end to end through Claude Code
+is a matrix cell (`compat.py`), and an unverified cell is not configured by
+default. In single-model mode (no gateway) Claude Code runs only Claude models
+and a non-Claude id is never written.
 
-For other cockpits (Cursor, Aider, etc.), the equivalent assignment lives in
-their own config (e.g. Aider's `architect-model` / `model` / `weak-model`).
+For other cockpits the kit writes no model setting, except Aider's
+`architect-model` / `model` / `weak-model` (in `~/.aider.conf.yml`, multi-model
+only, with the gateway's OpenAI-compatible base) and OpenClaw's engine model.
 
 ## What works cross-provider
 

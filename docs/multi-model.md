@@ -30,9 +30,12 @@ per-cockpit configuration.
 
 ## Mental model
 
-The cockpit always talks to a gateway; the gateway routes on the `model` field
-of each request. Tools, MCP, skills and workspace access are preserved — only
-the LLM behind each subagent changes.
+Claude Code and Aider are the cockpits the kit points at a gateway; the gateway
+routes on the `model` field of each request. Every other cockpit keeps its own
+model settings and the kit only writes instructions (and MCP) for it — see
+[Which cockpit can use which model](#which-cockpit-can-use-which-model). Tools,
+MCP, skills and workspace access are preserved — only the LLM behind each
+subagent changes.
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -144,6 +147,89 @@ ai-resources setup            # re-runs the wizard, picks up edits
 ai-resources daemon restart   # LiteLLM backend only, if just the gateway changed
 ```
 
+## Which cockpit can use which model
+
+The setup wizard lets you pick models in one of three shapes — **one model**,
+**several models from one provider**, or **models from several providers** — and
+shows, per detected cockpit and *before* writing anything, exactly what will be
+configured: `configure` (the kit points the tool at the model or its auth),
+`via gateway` (multi-model only), `instructions only` (the tool keeps its own
+model settings) or `skip` (with the reason). It never configures a cockpit with
+a model that cockpit cannot use. Kit content (skills, hooks, instruction
+blocks) is written for every detected cockpit; the table governs the *model
+setting* only.
+
+A cell marked `(unverified)` has a code path that is not verified end to end:
+it behaves as `skip` ("not verified yet") unless you pass `--allow-unverified`,
+and the summary labels it. The table below is generated from
+`scripts/ai_resources/setup/compat.py` and a test keeps it identical to the code.
+
+<!-- compat-matrix:begin -->
+| Cockpit | Mode | anthropic | google | vertex | openai | ollama | deepseek | moonshot | Source |
+|---|---|---|---|---|---|---|---|---|---|
+| claude | single-model | configure | skip | skip | skip | skip | skip | skip | claude.py:85, 98-100, 361-364 |
+| claude | multi-model:litellm | via gateway | via gateway (unverified) | via gateway (unverified) | via gateway (unverified) | via gateway (unverified) | via gateway (unverified) | via gateway (unverified) | claude.py:318-319, 358-360; litellm.py:117-129 |
+| claude | multi-model:openrouter | via gateway | via gateway (unverified) | skip | via gateway (unverified) | skip | via gateway (unverified) | via gateway (unverified) | claude.py:264-282, 321-352; providers.py:140-158 |
+| gemini | single-model | instructions only | configure | instructions only | instructions only | instructions only | instructions only | instructions only | gemini.py:25-69 |
+| gemini | multi-model:litellm | instructions only | configure | instructions only | instructions only | instructions only | instructions only | instructions only | gemini.py:25-69 |
+| gemini | multi-model:openrouter | instructions only | configure | instructions only | instructions only | instructions only | instructions only | instructions only | gemini.py:25-69 |
+| cursor | single-model | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | cursor.py:24-51 |
+| cursor | multi-model:litellm | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | cursor.py:24-51 |
+| cursor | multi-model:openrouter | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | cursor.py:24-51 |
+| codex | single-model | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | codex.py:23-43 |
+| codex | multi-model:litellm | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | codex.py:23-43 |
+| codex | multi-model:openrouter | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | codex.py:23-43 |
+| aider | single-model | skip | skip | skip | skip | skip | skip | skip | aider.py:37-51, 79-82; litellm.py:136-202 |
+| aider | multi-model:litellm | via gateway | via gateway | via gateway | via gateway | via gateway | via gateway | via gateway | aider.py:37-51, 79-82; litellm.py:136-202 |
+| aider | multi-model:openrouter | via gateway | via gateway | skip | via gateway | skip | via gateway | via gateway | aider.py:47; profiles.py:106; docs: openrouter.ai/docs/quickstart (/api/v1) |
+| copilot | single-model | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | copilot.py:23-30 |
+| copilot | multi-model:litellm | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | copilot.py:23-30 |
+| copilot | multi-model:openrouter | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | copilot.py:23-30 |
+| windsurf | single-model | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | windsurf.py:23-30 |
+| windsurf | multi-model:litellm | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | windsurf.py:23-30 |
+| windsurf | multi-model:openrouter | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | windsurf.py:23-30 |
+| continue | single-model | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | continue_dev.py:23-30 |
+| continue | multi-model:litellm | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | continue_dev.py:23-30 |
+| continue | multi-model:openrouter | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | continue_dev.py:23-30 |
+| opencode | single-model | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | opencode.py:23-30 |
+| opencode | multi-model:litellm | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | opencode.py:23-30 |
+| opencode | multi-model:openrouter | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | opencode.py:23-30 |
+| openclaw | single-model | configure | skip | skip | configure | skip | skip | skip | openclaw.py:116-120 |
+| openclaw | multi-model:litellm | configure | skip | skip | configure | skip | skip | skip | openclaw.py:116-120 |
+| openclaw | multi-model:openrouter | configure | skip | skip | configure | skip | skip | skip | openclaw.py:116-120 |
+| agy | any | report-only: used only through OpenClaw's Antigravity engine | | | | | | | detection.py:170-192; cockpits/__init__.py:23-35 |
+| claude-desktop | any | report-only: not managed by ai-resources | | | | | | | _shared.py:564 |
+
+OpenClaw engines (any mode):
+
+| Engine | anthropic | google | vertex | openai | ollama | deepseek | moonshot | Source |
+|---|---|---|---|---|---|---|---|---|
+| claude-code | configure | skip | skip | skip | skip | skip | skip | openclaw.py:116-120 |
+| codex | skip | skip | skip | configure | skip | skip | skip | openclaw.py:121-125 |
+| antigravity | configure | configure | skip | configure | skip | skip | skip | openclaw.py:97-115, 1019-1026; model_pins.py:33-38 |
+| native | skip | configure (unverified) | skip | skip | skip | skip | skip | openclaw.py:97-133, 296-344 |
+<!-- compat-matrix:end -->
+
+Notes:
+
+- `agy` (Antigravity) is used only through OpenClaw's Antigravity engine, with
+  agy's own model ids (for example `gemini-3.8-flash-low`), which differ from the
+  API ids; the kit never maps one to the other. It needs agy installed and the
+  unrestricted-execution risk acknowledged, and is never the default.
+- Claude Desktop is not managed by ai-resources.
+- Aider under OpenRouter uses OpenRouter's OpenAI-compatible base
+  `https://openrouter.ai/api/v1` (the Anthropic-shaped `https://openrouter.ai/api`
+  is for Claude Code). An existing `~/.aider.conf.yml` that changes is kept next
+  to the new one as `~/.aider.conf.yml.kit-bak`.
+- A single non-Claude model keeps `mode: single-model` and needs no backend:
+  Claude Code then keeps its own Claude models and no endpoint is written.
+
+Non-interactive selection (`ai-resources setup --non-interactive`) takes
+`--shape`, `--providers`, `--models`, `--smoke-path`, `--backend`, `--cockpits`
+and `--allow-unverified`, prints the same plan, never prompts, and exits non-zero
+with nothing written on a contradiction (for example `--shape single` with two
+models, or `--cockpits claude` for a model the matrix skips).
+
 ## Per-cockpit configuration
 
 | Cockpit | File written | Notes |
@@ -152,7 +238,7 @@ ai-resources daemon restart   # LiteLLM backend only, if just the gateway change
 | Gemini CLI | `~/.gemini/settings.json`, `~/.gemini/GEMINI.md` | Engram MCP configured |
 | Cursor | `~/.cursor/AGENT_KIT.md`, `~/.cursor/mcp.json` | |
 | Codex CLI | `~/.codex/AGENTS.md` | |
-| Aider | `~/.aider/CONVENTIONS.md`, `~/.aider.conf.yml` | architect/editor/weak models from executors |
+| Aider | `~/.aider/CONVENTIONS.md`, `~/.aider.conf.yml` | architect/editor/weak models from executors; the conf file only in multi-model, with the gateway's OpenAI-compatible base |
 | Windsurf | `~/.codeium/windsurf/memories/global_rules.md` | |
 | Continue.dev | `~/.continue/AGENT_KIT.md` | |
 | Copilot | `~/.vscode/copilot-instructions.md` | |
@@ -405,39 +491,67 @@ puts back the `tools.media` the kit replaced and removes the block.
 
 ## Automatic model updates
 
-`ai-resources models` keeps the Claude models the OpenClaw host runs on current, without waiting for a
-kit release and without hand-editing `openclaw.json`.
+`ai-resources models` keeps the models you chose current without waiting for a kit release and without
+hand-editing `openclaw.json`. It works on **slots**: a slot is `<provider>:<family>` (for example
+`anthropic:sonnet`, `google:gemini-flash`). The four Claude classes are the built-in `anthropic:` slots, so a
+host with no recorded selection behaves exactly as before.
 
-**One declaration.** The Claude class pins (`opus`, `sonnet`, `haiku`, `fable`) are declared once in
-`scripts/ai_resources/model_pins.py` (`DEFAULTS`). The audit aliases, the OpenClaw `claude-code` engine,
-the `worker_model` default, the aider fallbacks and the `*` entry of `profiles/openclaw-host.json5` are
-all built from it. A test (`tests/test_model_pins_consistency.py`) keeps the hand-written ids in the
-profiles, LiteLLM, providers and aider aligned with it.
+**Who owns what** (ADR-0002). `setup-state.yaml` (`selection`) owns WHAT you want: providers, slots, the
+primary, the smoke path. The overlay `~/.config/ai-resources/model-pins.json` (schema 2) owns HOW each slot
+moves: pins, per-slot answers, approvals, pending proposals, history. The wizard writes the selection;
+only `ai-resources models ...` writes the overlay. A schema-1 overlay is migrated on first save and kept
+once as `model-pins.json.v1.bak`.
 
-**The overlay and the higher-of rule.** A host can move a class forward with
-`~/.config/ai-resources/model-pins.json` (written by the commands below). The effective pin is the
-**higher** of the kit default and the overlay, so a stale overlay never holds a host behind a newer kit.
-The only way to hold a class down is `ai-resources models pin <class> <id>`, which freezes it.
-LiteLLM, OpenRouter profiles and aider follow kit releases, not the overlay.
+**One declaration.** Claude pins are declared once in `scripts/ai_resources/model_pins.py` (`DEFAULTS`);
+every other provider's naming, ordering and discovery sources live in an adapter under
+`scripts/ai_resources/model_providers/`. The effective id of a slot is the highest of the kit default, the
+selection's id and the overlay pin, unless the slot is frozen or its track is `fixed`.
 
-**Policy.** `ai-resources models update` reads the catalog (`openclaw models list --all --json --provider
-claude-cli`) and decides per class:
+**Discovery.** Only providers that are enabled and credentialed are asked, in one run with one time budget:
+an OpenClaw catalog listing (`openclaw models list --all --json --provider <id>`), then the vendor's own
+`/models` for OpenAI, DeepSeek and Moonshot **only if you opted in per provider in the wizard** (the host is
+hard-coded, the key goes only in the Authorization header and is never printed), else a static report-only
+list. Credentials are detected from the kit's `.env` and from OpenClaw's auth status, reading only provider
+names, kinds and counts, never key material. A provider that fails shows `discovery failed`; the run exits 1
+only when every provider it asked failed. Aliases, previews, dated snapshots and unknown families are
+reported, never applied.
 
-| Decision | When |
-|----------|------|
-| `auto` | a minor bump of the same family and major, with a known price that is not above `max_cost_delta_pct` (default 0) |
-| `approved` | the operator ran `ai-resources models approve <class> <id>` for exactly that id |
-| `needs_approval` | a major jump, an unknown price (`audit.PRICES` has no exact entry), a price increase, or mode `approve` |
-| `excluded` / `frozen` | an `exclude` glob matches, or the class is frozen |
+**The answer ladder** (per slot, first match wins): `exclude` glob or `frozen`, then `never` (this id, or the
+whole family), then an `approve`d id, then the slot's remembered `answer`:
 
-A family outside the four classes (for example `claude-mythos-5`) is reported and never applied. A
-downgrade is never proposed. A bump that was rolled back is not retried until it is approved again.
-Prices are never invented: add a verified price to `audit.PRICES` so a minor bump can apply by itself.
+| Answer | Meaning |
+|--------|---------|
+| `ask` | wait for a human (the default for every non-Claude slot) |
+| `always` | apply a newer **stable** id on its own when the smoke test passes and the price is **known and not higher**, within `max_bump` (`minor` keeps major jumps for a human; `any` follows the whole family) |
+| `never` | never propose it again (this model only, or the whole family) |
 
-**What an update does.** Smoke-test the new id (`claude -p --model <id>`, which must answer `OK` and name
-that model), defer if agent turns are in flight, back up, validate and send the forward patch through
-`openclaw config patch`, restart the gateway with `watchdog.off` held, poll `openclaw health`, require a new
-gateway PID, smoke-test again, and roll back with the inverse patch if any of it fails.
+Claude slots keep their v1 behaviour (`always`, `max_bump: minor`). Prices are never invented: exact
+`audit.PRICES`, then your own `prices` in the overlay, then OpenRouter's public list for an OpenRouter
+backend (cached 24 h). Decisions are `auto`, `approved`, `needs_approval`, `excluded`, `frozen`,
+`suppressed`, `report` and `current` (the slot is up to date).
+
+**On a terminal** `ai-resources models update` discovers once, shows a table per slot (current -> proposed,
+provider, channel, price, smoke path, and the artifacts it would touch), and asks: *Update now / Not now /
+Always update this family / Never* for one proposal; *Update all shown / Choose per model / Not now* for
+several. Only Always and Never change your policy. The lock is released while you read and taken again to
+apply the same discovery (it exits 73 if another run holds it; it aborts with no write if the policy changed
+meanwhile). **Unattended** (the systemd timer, `--unattended`, `--non-interactive`, no TTY) it never asks: it
+records pending proposals with a timestamp, applies only `always` slots that pass every guardrail, and exits
+10 so the wrapper sends the notice with the exact `ai-resources models approve ...` command.
+`--apply-proposals` approves and applies every pending proposal without a prompt; `--review` forces the
+interactive listing on a terminal. `--slot <provider:family>` selects a slot (`--class` is the alias for the
+Claude ones).
+
+**What an update does.** Smoke-test the new id on the selection's smoke path (`claude -p` for Claude on the
+Claude CLI; the LiteLLM gateway, OpenRouter or a direct vendor call otherwise; a slot with no probe waits for
+a human), defer if agent turns are in flight, back up, then apply every affected artifact through one
+ordered registry (`scripts/ai_resources/model_fanout.py`): `openclaw.json` through `openclaw config patch`,
+the overlay and, from the re-render step, `executors.yaml`, `litellm.yaml`, the Claude subagent files and
+settings and `~/.aider.conf.yml`. A failure restores the artifacts already written, in reverse order. The
+gateway is restarted with `watchdog.off` held, `openclaw health` is polled, a new PID is required, the model
+is smoke-tested again, and the inverse patch rolls everything back if any of it fails. A slot whose provider
+has no verified OpenClaw runtime (Google today) is recorded and re-rendered but never repointed in
+`openclaw.json`.
 
 **Writes stay on `config patch`.** The command never opens `openclaw.json` for writing: `config patch`
 validates the schema and the kit asserts that no patch touches `channels`. The file copy under
@@ -449,8 +563,8 @@ so a rollback stays valid.
 | Code | Meaning |
 |------|---------|
 | 0 | OK, no change, cooldown, `--check` or `--dry-run` with nothing applicable |
-| 1 | Error (discovery, I/O, unexpected) |
-| 2 | Switched, failed health, rolled back successfully |
+| 1 | Error (every provider failed, I/O, the policy changed during a prompt, unexpected) |
+| 2 | Switched, failed health, rolled back successfully (also: an artifact failed and the earlier ones were restored) |
 | 4 | Smoke or patch validation failed before any write |
 | 6 | Rollback failed (critical) |
 | 10 | Approval pending (nothing applicable) |

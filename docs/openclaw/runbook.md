@@ -1099,7 +1099,7 @@ for line in open('/home/bitgandtter/.openclaw/logs/gateway.log',errors='ignore')
 EOF
 ```
 
-## Upgrade the Claude models (automatic and manual)
+## Upgrade the models (automatic and manual)
 
 `openclaw-models-update.timer` runs `scripts/openclaw/openclaw-models-update.sh` daily at 04:45 (30 min
 jitter). It runs `ai-resources models update --unattended --json`, logs to
@@ -1110,6 +1110,8 @@ ai-resources models status                  # effective pins, config drift, pend
 ai-resources models check --refresh         # read-only: exit 0 nothing, 10 approval pending, 11 ready
 ai-resources models update --dry-run        # smoke-tests and validates the patch; applies nothing
 ai-resources models approve haiku claude-haiku-5-5   # the exact command the Telegram notice prints
+ai-resources models approve --slot google:gemini-flash gemini-3.9-flash   # a non-Claude slot is named in full
+ai-resources models update                  # on a terminal: shows what was found and asks (never from the timer)
 ai-resources models pin sonnet claude-sonnet-5       # freeze a class; `models unpin sonnet` releases it
 ai-resources models exclude 'claude-opus-5-5'        # never apply ids matching the glob
 ai-resources models rollback                # inverse patch, restart, health check

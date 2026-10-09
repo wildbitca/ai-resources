@@ -1,6 +1,6 @@
 # ADR-0001: Model pins in one place and unattended model updates through `config patch`
 
-**Status**: accepted
+**Status**: accepted; superseded in part by [ADR-0002](0002-provider-agnostic-model-selection.md)
 **Date**: 2026-10-09
 **Decision makers**: planner, implementer (confirmation of the write path requested from the operator)
 
