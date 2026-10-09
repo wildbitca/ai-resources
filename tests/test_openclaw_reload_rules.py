@@ -151,12 +151,12 @@ def test_installed_version_parse_and_failure():
         calls.append(argv)
         return 0, "OpenClaw 2026.9.9 (bcfc888)"
 
-    assert rr.installed_openclaw_version(ok) == "2026.9.9"
-    assert rr.installed_openclaw_version(ok) == "2026.9.9"
+    assert rr.read_installed_version(ok) == "2026.9.9"
+    assert rr.read_installed_version(ok) == "2026.9.9"
     assert len(calls) == 1  # cached
 
-    assert rr.installed_openclaw_version(lambda argv, **kw: (1, "boom")) is None
-    assert rr.installed_openclaw_version(lambda argv, **kw: (0, "garbage")) is None
+    assert rr.read_installed_version(lambda argv, **kw: (1, "boom")) is None
+    assert rr.read_installed_version(lambda argv, **kw: (0, "garbage")) is None
 
 
 def test_reload_mode_of():

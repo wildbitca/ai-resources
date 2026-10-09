@@ -247,6 +247,12 @@ class OpenClawState:
     # not complete and `ai-resources openclaw status` names the command; `main_pid` (the unit's
     # MainPID at deferral) is how a restart done by hand is recognised.
     gateway_restart_pending: dict[str, Any] = field(default_factory=dict)
+    # Restart-required openclaw.json keys setup (or a teardown, or the post-setup watch) did NOT apply
+    # because that would restart a live gateway (ADR-0003). Each entry:
+    #   {"op": "profile", "path": dotted, "action": "filled"|"forced", "source", "at"}   re-derived at apply time
+    #   {"op": "restore", "path": dotted, "change": <host_config_changes record>, "source", "at"}
+    # Never holds a secret value. `ai-resources openclaw apply-pending` applies and clears them.
+    host_restart_pending: list[Any] = field(default_factory=list)
 
 
 @dataclass

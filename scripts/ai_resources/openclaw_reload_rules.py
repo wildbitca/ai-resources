@@ -19,6 +19,15 @@ from typing import Callable
 
 PINNED_OPENCLAW_VERSION = "2026.9.9"
 
+
+class RestartRequired(Exception):
+    """A write was refused because it touches restart-required keys (or keys that cannot be
+    classified). Raised BEFORE any CLI call, so an ignored return value cannot skip it silently."""
+
+    def __init__(self, paths: list[str]):
+        super().__init__("restart-required config keys: " + ", ".join(paths))
+        self.paths = list(paths)
+
 # (prefix, kind) in the source order of the dist: CORE_RELOAD_POLICIES then DEFAULT_RELOAD_POLICIES.
 # kind: "restart" | "hot" | "none". Longest prefix wins (OpenClaw's compareReloadRules).
 RULES: tuple[tuple[str, str], ...] = (
@@ -261,7 +270,7 @@ def deep_merge(a: dict, b: dict) -> dict:
 _VERSION_CACHE: dict[int, tuple[object, str | None]] = {}
 
 
-def installed_openclaw_version(runner: Callable[..., "tuple[int, str]"], *, refresh: bool = False) -> str | None:
+def read_installed_version(runner: Callable[..., "tuple[int, str]"], *, refresh: bool = False) -> str | None:
     """`openclaw --version` parsed to e.g. "2026.9.9"; None when it cannot be read. Cached per runner."""
     import re
     hit = _VERSION_CACHE.get(id(runner))
@@ -272,6 +281,11 @@ def installed_openclaw_version(runner: Callable[..., "tuple[int, str]"], *, refr
     version = m.group(1) if m else None
     _VERSION_CACHE[id(runner)] = (runner, version)
     return version
+
+
+# The name callers use. The test suite replaces THIS name (conftest) so a fake `openclaw` need not
+# answer `--version`; `read_installed_version` stays the real implementation.
+installed_openclaw_version = read_installed_version
 
 
 def reload_mode_of(doc: dict | None) -> str | None:

@@ -45,6 +45,15 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # live unit whether agent turns are running, and a busy host would defer a restart a test
     # expects to happen. The guard's own tests pass a fake probe explicitly.
     monkeypatch.setattr(openclaw_cockpit, "_gateway_busy", lambda: (0, []))
+    # And the restart-required gate (ADR-0003): it asks `openclaw --version` and the cgroup. Unstubbed, a fake
+    # `_openclaw` would answer no version (so every key reads restart-required) and a real probe would read the
+    # live gateway. test_openclaw_restart_gate.py sets both itself.
+    from ai_resources import openclaw_reload_rules
+    monkeypatch.setattr(openclaw_reload_rules, "installed_openclaw_version",
+                        lambda runner, **kw: openclaw_reload_rules.PINNED_OPENCLAW_VERSION)
+    from ai_resources.setup.cockpits import _openclaw_host as host_section
+    monkeypatch.setattr(host_section, "_in_flight", lambda: (0, "0"))
+    monkeypatch.setattr(openclaw_cockpit, "_live_reload_mode", lambda: None)
     monkeypatch.setattr(openclaw_cockpit, "_gateway_main_pid", lambda: "")
     # And the start-time read behind `plugin_is_stale`'s time rule: a tmp plugin dir is always newer
     # than the live gateway, so an unstubbed call would make every staleness test report stale.

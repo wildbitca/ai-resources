@@ -448,6 +448,34 @@ def drained_window(action: Callable[[], bool], *, runner: Runner = default_runne
     return EXIT_OK if action_ok else EXIT_DOCTOR_FAILED
 
 
+EXIT_APPLY_REJECTED = 7   # the dry run was rejected, so nothing was stopped
+
+
+def apply_drained(patch: dict, replace_paths: list[str] | None, *, apply_patch: Callable[..., "tuple[bool, str]"],
+                  runner: Runner = default_runner, out: Callable[[str], None] = print,
+                  **window: object) -> tuple[int, bool]:
+    """Apply a patch that carries restart-required keys, inside a drained window. (exit code, written).
+
+    Dry run first: a rejected patch aborts BEFORE anything is stopped. Then `drained_window` with
+    `require_idle`: with the gateway stopped there is no live process for OpenClaw's own watcher to
+    force-restart, and `openclaw config patch` writes the file without one (P0 spike, ADR-0003).
+    """
+    ok, text = apply_patch(patch, dry_run=True, replace_paths=replace_paths)
+    if not ok:
+        out(f"OpenClaw rejected the patch in a dry run; nothing was stopped or applied: {text[-300:]}")
+        return EXIT_APPLY_REJECTED, False
+    written = {"ok": False}
+
+    def action() -> bool:
+        done, msg = apply_patch(patch, replace_paths=replace_paths, allow_restart=True)
+        written["ok"] = done
+        out("config patch applied" if done else f"config patch failed: {msg[-300:]}")
+        return done
+
+    code = drained_window(action, runner=runner, require_idle=True, out=out, **window)
+    return code, written["ok"]
+
+
 # --- the restart guard: is a turn in flight right now? --------------------------------------------
 #
 # The drain above answers "did everything die after the stop". This answers the question before
@@ -2182,6 +2210,15 @@ def cmd_busy(args: argparse.Namespace) -> int:
     return 2 if n is None else (1 if n > 0 else 0)
 
 
+def cmd_apply_pending(args: argparse.Namespace) -> int:
+    from .setup import state as setup_state
+    from .setup.cockpits import _openclaw_host as section
+    s = setup_state.load()
+    rc = section.apply_pending(s, assume_yes=args.yes)
+    setup_state.save(s)
+    return rc
+
+
 def cmd_agent_new(args: argparse.Namespace) -> int:
     try:
         res = agent_new(args.agent_id, args.workspace, kind=args.kind or None, force=args.force,
@@ -2252,6 +2289,11 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_busy = verbs.add_parser("busy", help="How many agent runs are in flight (exit 0 idle, 1 busy, 2 unknown)")
     p_busy.add_argument("--json", action="store_true", help="Print {busy, probe_ok} as JSON")
     p_busy.set_defaults(func=cmd_busy)
+
+    p_ap = verbs.add_parser("apply-pending",
+                            help="Apply the restart-required config setup deferred, inside a drained window (only when idle)")
+    p_ap.add_argument("--yes", action="store_true", help="Do not ask for confirmation (it still refuses while busy)")
+    p_ap.set_defaults(func=cmd_apply_pending)
 
     p_st = verbs.add_parser("status", help="One-screen host status (never repairs)")
     p_st.add_argument("--no-doctor", action="store_true",

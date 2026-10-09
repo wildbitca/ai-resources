@@ -8,7 +8,7 @@ implementation, two entry points.
 
     team narration   the Claude Code hook that reports a team's work into its Telegram topic
     guard            the hook that denies an undrained gateway stop (T01)
-    units            the ten openclaw-* systemd units (backup, maintenance, watchdog, verify)
+    units            the openclaw-* systemd units (backup, maintenance, watchdog, verify, health-restart)
     config           the canonical openclaw.json keys (profiles/openclaw-host.json5)
     workboard        `openclaw plugins enable workboard`
     AGENTS.md        a template for every agent workspace that has none
@@ -23,8 +23,12 @@ Rules this module keeps:
   a bootstrap fix) is a separate confirm that prints the exact change, defaults to no, and is
   skipped without a terminal. The config patch is always validated with `--dry-run` first, and a
   rejected dry run stops there: there is no per-key fallback.
-* Nothing here restarts the gateway or writes openclaw.json by hand. It reports "restart needed"
-  and stops.
+* Setup never makes the gateway restart while it is live (ADR-0003). Config keys that OpenClaw
+  restarts for are applied only after an explicit confirm, while no agent run is in flight, inside
+  a drained window (watchdog.off, stop, drain, patch, start, health). Unattended runs, busy
+  gateways and declined confirms record them as pending (`ai-resources openclaw apply-pending`).
+* The host profile only FILLS keys the operator has not set; `kit-host-overrides.json5` opts a key
+  back in. openclaw.json is only ever written through `openclaw config patch`.
 * Secrets are never asked. The wizard points at `openclaw configure`.
 * configure() is idempotent (a second run changes nothing) and teardown() removes exactly what
   configure() recorded, restoring whatever it replaced.
@@ -34,15 +38,19 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from .. import state, ui
 from ... import openclaw_host as host
+from ... import openclaw_reload_rules as rr
 from . import claude as claude_cockpit
 
-RESTART_NOTE = ("Restart needed for some keys. The kit never restarts the gateway: do it yourself in a "
-                "maintenance window (`ai-resources openclaw doctor` drains it safely).")
+RESTART_NOTE = ("Some keys only take effect after a gateway restart. Setup never makes the gateway restart while it "
+                "is live: restart-required keys are applied only after an explicit confirm, while idle, inside a "
+                "drained window (`ai-resources openclaw apply-pending`; `ai-resources openclaw doctor` drains too).")
 NARRATION_CHOICES = (
     ("off", "Off — do not narrate the team into Telegram"),
     ("milestones", "Milestones — the request, the team start, each hand-off and the close (recommended)"),
@@ -200,7 +208,7 @@ def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path],
     _configure_env(o, dry_run=dry_run)
     _configure_hooks(s, ak_path, dry_run=dry_run)
     _configure_units(o, dry_run=dry_run)
-    changed = _configure_config(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch)
+    changed = _configure_config(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc)
     changed = _configure_workboard(o, doc, dry_run=dry_run, oc=oc) or changed
     changed = _configure_bindings(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch) or changed
     _configure_agents_md(o, doc, dry_run=dry_run)
@@ -294,8 +302,88 @@ def _configure_units(o: state.OpenClawState, *, dry_run: bool) -> None:
           "systemd reloaded, the gateway was not restarted")
 
 
+def _window_kwargs() -> dict:
+    """Extra `drained_window` arguments (a seam for tests: a fake clock instead of real sleeps)."""
+    return {}
+
+
+def _oc_runner(oc: Callable[..., tuple[int, str]]) -> Callable[..., tuple[int, str]]:
+    return lambda argv, **kw: oc(list(argv[1:]), timeout=kw.get("timeout", 30))
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _in_flight() -> tuple[int | None, str]:
+    """(runs in flight or None, text for the operator). None is an unreadable probe: treated as busy."""
+    n = host.gateway_busy_strict(_runner())
+    return n, ("unknown (treated as busy)" if n is None else str(n))
+
+
+def _record_pending(o: state.OpenClawState, entries: list[dict]) -> None:
+    known = {(e.get("op"), e.get("path"), e.get("source")) for e in o.host_restart_pending}
+    for e in entries:
+        if (e["op"], e["path"], e["source"]) not in known:
+            o.host_restart_pending.append(e)
+
+
+def _drained_apply(patch: dict, replace_paths: list[str],
+                   apply_patch: Callable[..., tuple[bool, str]]) -> tuple[bool, bool]:
+    """(written, window_ok). The confirmed path: dry run, then the patch inside a drained window."""
+    code, written = host.apply_drained(patch, replace_paths, apply_patch=apply_patch, runner=_runner(),
+                                       out=ui.detail, busy_probe=lambda: _in_flight()[0], **_window_kwargs())
+    if code == host.EXIT_REFUSED_BUSY:
+        ui.warn("not applied: agent runs started in flight before the window opened; deferred.")
+    elif code == host.EXIT_APPLY_REJECTED:
+        ui.error("OpenClaw rejected the restart-required patch in a dry run; nothing was stopped.")
+    elif code == host.EXIT_REFUSED:
+        ui.warn("not applied: another maintenance window is open (watchdog.off exists); deferred.")
+    elif code:
+        ui.error(f"the drained window ended with code {code} ({'config written; ' if written else ''}"
+                 "check `ai-resources openclaw status`)")
+    return written, code == host.EXIT_OK
+
+
+def _handle_restart_part(o: state.OpenClawState, patch: dict, replace_paths: list[str], changes: list[dict], *,
+                         source: str, apply_patch: Callable[..., tuple[bool, str]]) -> bool:
+    """The restart-required half of a patch. True when it was written (inside a drained window).
+
+    Never applied unattended, never while runs are in flight or the probe cannot tell, and only
+    after a separate explicit confirm. Everything else is recorded as pending.
+    """
+    paths = rr.leaf_paths(patch)
+    n, shown = _in_flight()
+    ui.warn("needs a gateway restart: " + ", ".join(paths))
+    ui.info(f"agent runs in flight: {shown}")
+    pend = [{"op": "profile", "path": ".".join(c["path"]), "action": c.get("action", "filled"),
+             "source": source, "at": _now()} for c in changes] if source == "setup" else \
+           [{"op": "restore", "path": ".".join(c["path"]), "change": c, "source": source, "at": _now()}
+            for c in changes if not (c.get("secret") and c.get("had"))]
+    if ui.is_non_interactive():
+        ui.warn("not applied: restart-required keys are never applied unattended; recorded as pending "
+                "(`ai-resources openclaw apply-pending` when idle)")
+        _record_pending(o, pend)
+        return False
+    if n is None or n > 0:
+        ui.warn(f"not applied: {shown if n is None else n} agent run(s) in flight, and a restart would cut them. "
+                "Recorded as pending; run `ai-resources openclaw apply-pending` when idle.")
+        _record_pending(o, pend)
+        return False
+    if not ui.confirm("Apply in a drained window? The gateway will stop and start "
+                      f"(N={n} runs in flight).", default=False):
+        ui.info("Recorded as pending: `ai-resources openclaw apply-pending` applies it later.")
+        _record_pending(o, pend)
+        return False
+    written, window_ok = _drained_apply(patch, replace_paths, apply_patch)
+    if not written:
+        _record_pending(o, pend)
+    return written
+
+
 def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
-                      apply_patch: Callable[..., tuple[bool, str]]) -> bool:
+                      apply_patch: Callable[..., tuple[bool, str]],
+                      oc: Callable[..., tuple[int, str]] | None = None) -> bool:
     if not o.host_config:
         return False
     try:
@@ -313,8 +401,11 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
         ui.detail(f"Not sent: {note}")
     for name in host.mcp_latest_findings(doc):
         ui.warn(f"mcp.servers.{name} runs an unpinned package (@latest). The kit will not rewrite it: pin the version by hand.")
+    version = rr.installed_openclaw_version(_oc_runner(oc), refresh=True) if oc else None
+    mode = rr.reload_mode_of(doc)
+    reverted = _offer_legacy_revert(o, doc, version, mode, dry_run=dry_run, apply_patch=apply_patch)
     if not built["patch"]:
-        return False
+        return reverted
     if built["filled"]:
         ui.info("filled: " + ", ".join(built["filled"]))
     if built["forced"]:
@@ -325,25 +416,160 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
     if not ok:
         # Fail closed: a rejected dry run stops here. There is no per-key fallback.
         ui.error(f"OpenClaw rejected the config patch in a dry run; nothing was applied: {out[-400:]}")
-        return False
+        return reverted
+    restart = rr.restart_paths(built["patch"], openclaw_version=version, reload_mode=mode)
+    hot_patch, restart_patch = rr.split_patch(built["patch"], restart)
+    hot_rp, restart_rp = rr.split_replace_paths(built["replace_paths"], restart)
+    hot_changes, restart_changes = rr.split_changes(built["changes"], restart)
     if dry_run:
         ui.detail("Dry run accepted by OpenClaw; nothing applied.")
-        return False
-    if not _gate("Apply this patch to the running gateway's config?",
-                 detail=f"{len(built['changes'])} key(s) change. OpenClaw validated it with --dry-run."):
-        return False
-    ok, out = apply_patch(built["patch"], replace_paths=built["replace_paths"])
-    if not ok:
-        ui.error(f"OpenClaw rejected the config patch: {out[-400:]}")
-        return False
+        if restart_patch:
+            ui.detail("These keys need a gateway restart and would be pending: " + ", ".join(restart))
+        return reverted
+
+    applied = False
+    if hot_patch and _gate("Apply this patch to the running gateway's config?",
+                           detail=f"{len(hot_changes)} key(s) change; none of them restarts the gateway. "
+                                  "OpenClaw validated it with --dry-run."):
+        ok, out = apply_patch(hot_patch, replace_paths=hot_rp)
+        if not ok:
+            ui.error(f"OpenClaw rejected the config patch: {out[-400:]}")
+        else:
+            _record_changes(o, hot_changes)
+            applied = True
+            ui.ok(f"OpenClaw config: {len(hot_changes)} key(s) applied")
+    if restart_patch and _handle_restart_part(o, restart_patch, restart_rp, restart_changes, source="setup",
+                                              apply_patch=apply_patch):
+        _record_changes(o, restart_changes)
+        applied = True
+        ui.ok(f"OpenClaw config: {len(restart_changes)} restart-required key(s) applied in a drained window")
+    if applied:
+        o.config_path = str(path)
+        if path not in written:
+            written.append(path)
+        ui.warn(RESTART_NOTE)
+    return applied or reverted
+
+
+def _record_changes(o: state.OpenClawState, changes: list[dict]) -> None:
     known = {tuple(c["path"]) for c in o.host_config_changes}
-    o.host_config_changes.extend(c for c in built["changes"] if tuple(c["path"]) not in known)
-    o.config_path = str(path)
-    if path not in written:
-        written.append(path)
-    ui.ok(f"OpenClaw config: {len(built['changes'])} key(s) applied")
-    ui.warn(RESTART_NOTE)
-    return True
+    o.host_config_changes.extend(c for c in changes if tuple(c["path"]) not in known)
+
+
+def _offer_legacy_revert(o: state.OpenClawState, doc: dict, version, mode, *, dry_run: bool,
+                         apply_patch: Callable[..., tuple[bool, str]]) -> bool:
+    """Offer to put back a restart-required value that setup 2.0.0 overwrote (default No, interactive only).
+
+    A change recorded before the fill-only rule has no `action`. If the live value is still the
+    one the profile writes, the operator never chose it: offer the recorded previous value back,
+    through a drained window. Returns True when it was reverted.
+    """
+    if dry_run or ui.is_non_interactive():
+        return False
+    for ch in list(o.host_config_changes):
+        if "action" in ch or not ch.get("had") or ch.get("secret"):
+            continue
+        dotted = ".".join(ch["path"])
+        if not rr.restart_paths(_nest(ch["path"], 0), openclaw_version=version, reload_mode=mode):
+            continue                      # a hot key left behind is harmless: nothing to offer
+        live, had = host._get_path(doc, ch["path"])
+        if not had or live == ch["previous"] or live != _profile_value(ch["path"], o):
+            continue                      # gone, already back, or changed by the operator since
+        n, shown = _in_flight()
+        ui.warn(f"{dotted} is `{live}`, written by an earlier setup that replaced your `{ch['previous']}`. "
+                "Setup no longer overwrites your values, but it cannot tell whether you want this one.")
+        ui.info(f"agent runs in flight: {shown}")
+        if n is None or n > 0:
+            ui.info("Not offered now (a revert restarts the gateway in a drained window, and runs are in flight).")
+            continue
+        if not ui.confirm(f"Restore {dotted} to `{ch['previous']}` in a drained window? The gateway will stop and "
+                          f"start (N={n} runs in flight).", default=False):
+            continue
+        patch, rp = host.restore_patch([ch])
+        wrote, _ok = _drained_apply(patch, rp, apply_patch)
+        if wrote:
+            o.host_config_changes = [c for c in o.host_config_changes if c is not ch]
+            return True
+    return False
+
+
+def _nest(path: list[str], value) -> dict:
+    node: object = value
+    for k in reversed(path):
+        node = {k: node}
+    return node  # type: ignore[return-value]
+
+
+def _profile_value(path: list[str], o: state.OpenClawState):
+    """The value the profile writes at `path` for this host (None when it writes none)."""
+    built = host.build_host_patch(host.load_host_profile(), {}, _values(o), overrides=host.FORCE_ALL)
+    cur: object = built["patch"]
+    for k in path:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return cur
+
+
+def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
+    """`ai-resources openclaw apply-pending`: apply the recorded restart-required keys in a drained window.
+
+    Exit 0 done (or nothing pending), 1 refused or failed. Refuses while runs are in flight or the
+    probe cannot tell; the keys stay pending. Values are re-derived from the profile and the
+    overrides (or taken from the recorded inverse), so no secret was ever stored.
+    """
+    from . import openclaw as cockpit
+
+    o = s.openclaw
+    if not o.host_restart_pending:
+        ui.ok("No restart-required config is pending.")
+        return 0
+    pending = list(o.host_restart_pending)
+    ui.info("Pending restart-required keys: " + ", ".join(sorted({e["path"] for e in pending})))
+    n, shown = _in_flight()
+    ui.info(f"agent runs in flight: {shown}")
+    if n is None or n > 0:
+        ui.warn("Refusing: a restart would cut the runs in flight (or the probe cannot tell). Try again when idle.")
+        return 1
+    doc = cockpit.read_config(cockpit.config_path())
+    patch: dict = {}
+    rp: list[str] = []
+    changes: list[dict] = []
+    wanted = {e["path"] for e in pending if e.get("op") == "profile"}
+    if wanted:
+        ov = host.load_host_overrides()
+        forced = frozenset(e["path"] for e in pending if e.get("op") == "profile" and e.get("action") == "forced")
+        built = host.build_host_patch(host.load_host_profile(), doc, _values(o),
+                                      overrides={"keep": ov["keep"], "force": ov["force"] | forced})
+        have = [p for p in rr.leaf_paths(built["patch"]) if p in wanted]
+        _hot, only = rr.split_patch(built["patch"], have)
+        patch = rr.deep_merge(patch, only)
+        rp += rr.split_replace_paths(built["replace_paths"], have)[1]
+        changes += [c for c in built["changes"] if ".".join(c["path"]) in wanted]
+    restores = [e["change"] for e in pending if e.get("op") == "restore"]
+    if restores:
+        rpatch, rrp = host.restore_patch(restores)
+        patch = rr.deep_merge(patch, rpatch)
+        rp += rrp
+    if not patch:
+        ui.ok("Nothing left to apply: the pending keys already match.")
+        o.host_restart_pending = []
+        return 0
+    ui.info("Will apply (keys only): " + ", ".join(rr.leaf_paths(patch)))
+    if not assume_yes:
+        if ui.is_non_interactive():
+            ui.warn("Needs an interactive confirm, or pass --yes.")
+            return 1
+        if not ui.confirm("Apply in a drained window? The gateway will stop and start "
+                          f"(N={n} runs in flight).", default=False):
+            return 1
+    written, window_ok = _drained_apply(patch, rp, cockpit.apply_patch)
+    if not written:
+        return 1
+    _record_changes(o, changes)
+    o.host_restart_pending = []
+    ui.ok("Restart-required config applied in a drained window.")
+    return 0 if window_ok else 1
 
 
 def _configure_workboard(o: state.OpenClawState, doc: dict, *, dry_run: bool,
@@ -535,13 +761,7 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             if ch.get("secret") and ch.get("had"):
                 ui.warn(f"{'.'.join(ch['path'])} held a credential before the kit replaced it with a reference. "
                         "The old value was never stored, so it is not restored: set it again with `openclaw configure`.")
-        patch, replace_paths = host.restore_patch(o.host_config_changes)
-        done, out = apply_patch(patch, replace_paths=replace_paths) if patch else (True, "")
-        if done:
-            o.host_config_changes = []
-        else:
-            ui.error(f"OpenClaw host config teardown failed: {out[-300:]}")
-            ok = False
+        ok = _teardown_config(o, apply_patch, oc, doc or {}) and ok
 
     if o.host_workboard_applied == "enabled-by-kit":
         rc, out = oc(["plugins", "disable", "workboard"])
@@ -569,6 +789,36 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             host.HOST_ENV_PATH.unlink(missing_ok=True)
         o.host_env_previous, o.host_env_created = {}, False
     return ok
+
+
+def _restore_path(ch: dict) -> list[str]:
+    return ch["path"] if ch["had"] else ch.get("delete", ch["path"])
+
+
+def _teardown_config(o: state.OpenClawState, apply_patch: Callable[..., tuple[bool, str]],
+                     oc: Callable[..., tuple[int, str]], doc: dict) -> bool:
+    """Put the config leaves back. The hot half is applied as before; the restart-required half
+    (the inverse of a `gateway.bind` change, say) goes through the same gate as a forward change:
+    a drained window after a confirm while idle, otherwise pending. True when nothing failed."""
+    patch, replace_paths = host.restore_patch(o.host_config_changes)
+    if not patch:
+        o.host_config_changes = []
+        return True
+    version = rr.installed_openclaw_version(_oc_runner(oc), refresh=True)
+    restart = rr.restart_paths(patch, openclaw_version=version, reload_mode=rr.reload_mode_of(doc))
+    hot, res = rr.split_patch(patch, restart)
+    hot_rp, res_rp = rr.split_replace_paths(replace_paths, restart)
+    if hot:
+        done, out = apply_patch(hot, replace_paths=hot_rp)
+        if not done:
+            ui.error(f"OpenClaw host config teardown failed: {out[-300:]}")
+            return False
+    if res:
+        res_changes = [c for c in o.host_config_changes
+                       if ".".join(_restore_path(c)) in restart and not (c.get("secret") and c.get("had"))]
+        _handle_restart_part(o, res, res_rp, res_changes, source="teardown", apply_patch=apply_patch)
+    o.host_config_changes = []
+    return True
 
 
 def _restore_bindings(o: state.OpenClawState, doc: dict,

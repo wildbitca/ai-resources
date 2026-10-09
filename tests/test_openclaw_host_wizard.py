@@ -47,6 +47,7 @@ ANSWERS = {
 GATES = {
     "Install the openclaw-* systemd units and enable": True,
     "Apply this patch to the running gateway's config": True,
+    "Apply in a drained window": True,       # gateway.bind is restart-required (ADR-0003)
     "Enable the workboard plugin (`openclaw plugins enable workboard`)": True,
 }
 
@@ -154,6 +155,8 @@ class FakeSystemd:
             self.enabled.discard(argv[4])
         if argv[:2] == ["git", "-C"]:
             return 128, "not a git repository"
+        if argv[:3] == ["systemctl", "--user", "show"] and "TasksCurrent" in argv:
+            return 0, "[not set]"                  # the drained window sees an empty cgroup
         return 0, ""
 
 
@@ -220,6 +223,7 @@ def sim(tmp_path, monkeypatch):
     monkeypatch.setattr(openclaw, "_openclaw", h.oc)
     monkeypatch.setattr(openclaw._shared, "stable_kit_root", lambda _root: pathlib.Path("/kit"))
     monkeypatch.setattr(section, "_runner", lambda: h.systemd)
+    monkeypatch.setattr(section, "_window_kwargs", lambda: {"sleep": lambda _s: None})
     # The suite must never reach the operator's real files (conftest redirects claude.SETTINGS_PATH).
     assert str(claude.SETTINGS_PATH).startswith(str(tmp_path.parent)), claude.SETTINGS_PATH
     assert str(h.env_file).startswith(str(tmp_path))
@@ -396,10 +400,14 @@ def test_configure_applies_every_section(sim, script):
     assert o.host_units_applied is True
 
     # Config: validated with --dry-run first, then applied atomically; secrets are not part of it.
-    [(dry_args, dry_patch)] = sim.oc.dry_patches()
-    [(args, patch)] = sim.oc.real_patches()
-    assert dry_patch == patch and "--stdin" in args
-    assert sim.oc.calls.index((dry_args, dry_patch)) < sim.oc.calls.index((args, patch))
+    # ADR-0003: the whole patch is validated first; the hot half is applied as before and the restart-required
+    # half (gateway.bind) goes in a second write, inside a drained window.
+    from ai_resources import openclaw_reload_rules as rr
+    dry_whole, dry_restart = sim.oc.dry_patches()[0], sim.oc.dry_patches()[1]
+    (args, patch), (restart_args, restart_patch) = sim.oc.real_patches()
+    assert rr.deep_merge(patch, restart_patch) == dry_whole[1] and "--stdin" in args
+    assert restart_patch == {"gateway": {"bind": "tailnet"}} and dry_restart[1] == restart_patch
+    assert sim.oc.calls.index(dry_whole) < sim.oc.calls.index((args, patch)) < sim.oc.calls.index((restart_args, restart_patch))
     doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
     assert doc["gateway"]["bind"] == "tailnet" and doc["gateway"]["publicOrigin"] == "https://ai.example.org"
     assert doc["channels"]["telegram"]["allowedUsers"] == [111111111]           # channels stay the user's
@@ -428,7 +436,10 @@ def test_configure_applies_every_section(sim, script):
     assert section.RESTART_NOTE in script.messages("warn")
     for argv in [a for a, _ in sim.oc.calls] + sim.systemd.calls:
         assert "restart" not in argv and "doctor" not in argv
-        assert not (argv[:3] == ["systemctl", "--user", "stop"] or "openclaw-gateway.service" in argv)
+    # The only stop/start of the gateway is the confirmed drained window that carries gateway.bind
+    # (ADR-0003): one stop, one start, the second after the write.
+    gateway_calls = [c for c in sim.systemd.calls if "openclaw-gateway.service" in c and c[2] in ("stop", "start")]
+    assert [c[2] for c in gateway_calls] == ["stop", "start"]
 
 
 def test_the_status_line_reports_what_was_applied(sim, script):
@@ -525,7 +536,7 @@ def test_a_second_run_is_a_byte_level_no_op(sim, script):
     files_before = sim.files()
     state_before = asdict(s)
     mutations = lambda: [a for a, _ in sim.oc.calls if a[:2] in (["config", "patch"], ["plugins", "enable"])] \
-        + [c for c in sim.systemd.calls if c[2] in ("enable", "daemon-reload", "disable")]
+        + [c for c in sim.systemd.calls if len(c) > 2 and c[2] in ("enable", "daemon-reload", "disable")]
     calls_before = len(mutations())
 
     script.asked.clear()

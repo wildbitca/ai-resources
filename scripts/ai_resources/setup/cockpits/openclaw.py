@@ -438,16 +438,59 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
     return patch
 
 
+RestartRequired = openclaw_reload_rules.RestartRequired
+
+
+def _version_runner(argv, **kw):
+    """The reload-rule table's `runner` seam over `_openclaw` (looked up at call time, so tests swap it)."""
+    return _openclaw(list(argv[1:]), timeout=kw.get("timeout", 30))
+
+
+def _live_reload_mode() -> str | None:
+    """`gateway.reload.mode` from the live file: None when absent or the file is missing, "off" when
+    it cannot be read (fail closed: an unreadable file may well say `off`)."""
+    try:
+        text = config_path().read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return openclaw_reload_rules.reload_mode_of(openclaw_host.load_json5(text))
+    except ValueError:
+        return "off"
+
+
 def apply_patch(patch: dict, *, dry_run: bool = False,
-                replace_paths: list[str] | None = None) -> tuple[bool, str]:
+                replace_paths: list[str] | None = None, allow_restart: bool = False,
+                reload_mode: str | None = None) -> tuple[bool, str]:
     # The Telegram allowlist is the only gate in front of the unrestricted claude-kit backend:
     # no patch may carry an allowlist or a topic binding, and no --replace-path may name channels.
     openclaw_host.assert_channels_safe(patch, replace_paths)
+    if not dry_run and not allow_restart:
+        # The single writer's gate (ADR-0003): a key that makes OpenClaw restart a live gateway is never
+        # written here. Raise before any CLI call; `apply_drained` is the one caller that passes allow_restart.
+        restart = openclaw_reload_rules.restart_paths(
+            patch, openclaw_version=openclaw_reload_rules.installed_openclaw_version(_version_runner, refresh=True),
+            reload_mode=reload_mode if reload_mode is not None else _live_reload_mode())
+        if restart:
+            raise RestartRequired(restart)
     args = ["config", "patch", "--stdin"] + (["--dry-run"] if dry_run else [])
     for rp in (replace_paths or []):
         args += ["--replace-path", rp]
     rc, out = _openclaw(args, stdin=json.dumps(patch))
     return rc == 0, out
+
+
+def _apply_hot(patch: dict, *, dry_run: bool = False,
+               replace_paths: list[str] | None = None) -> tuple[bool, str]:
+    """`apply_patch` for the writers that only ever carry hot keys (engine, media): a refusal is
+    reported as not applied instead of crashing setup (e.g. OpenClaw upgraded past the pinned table)."""
+    try:
+        return apply_patch(patch, dry_run=dry_run, replace_paths=replace_paths)
+    except RestartRequired as e:
+        msg = ("not applied: " + ", ".join(e.paths) + " need a gateway restart or cannot be classified on "
+               "this OpenClaw version (refresh openclaw_reload_rules.py); the kit never restarts a live gateway")
+        ui.warn(msg)
+        return False, msg
 
 
 def _antigravity_restore_fragment(prev: dict) -> tuple[dict, list[str]]:
@@ -1101,7 +1144,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
     if engine.id == "antigravity" and not dry_run and not _register_plugin_and_backends(s, ak_path):
         return False
 
-    ok, out = apply_patch(patch, dry_run=dry_run, replace_paths=replace_paths)
+    ok, out = _apply_hot(patch, dry_run=dry_run, replace_paths=replace_paths)
     if not ok:
         ui.error(f"OpenClaw rejected the config patch: {out[-400:]}")
         return False
@@ -1185,7 +1228,7 @@ def _configure_skill_workshop(s: state.SetupState, doc: dict, path: Path, writte
     if _get(doc, "skills", "workshop", "autonomous", "mode") is not None:
         return False
     patch = {"skills": {"workshop": {"autonomous": {"mode": WORKSHOP_MODE}}}}
-    ok, out = apply_patch(patch, dry_run=dry_run)
+    ok, out = _apply_hot(patch, dry_run=dry_run)
     if not ok:
         ui.error(f"OpenClaw rejected the Skill Workshop patch: {out[-400:]}")
         return False
@@ -1247,7 +1290,7 @@ def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
                               str(Path(ak_path) / VOICE_SCRIPT),
                               s.openclaw.voice_language or "auto", current,
                               s.openclaw.voice_correction or "llm")
-    ok, out = apply_patch({"tools": {"media": media}}, dry_run=dry_run)
+    ok, out = _apply_hot({"tools": {"media": media}}, dry_run=dry_run)
     if not ok:
         ui.error(f"OpenClaw rejected the voice-notes patch: {out[-400:]}")
         return False
@@ -1550,7 +1593,11 @@ def teardown(s: state.SetupState) -> list[str]:
     removed.extend(host_section.teardown_workspace_blocks(s.openclaw))
     if _remove_managed_block(workspace_dir(doc) / "AGENTS.md"):
         removed.append(str(workspace_dir(doc) / "AGENTS.md"))
+    # Restart-required keys the teardown could not write without restarting a live gateway stay owed:
+    # `ai-resources openclaw apply-pending` still has to find them (ADR-0003).
+    pending = s.openclaw.host_restart_pending
     s.openclaw = state.OpenClawState()
+    s.openclaw.host_restart_pending = pending
     return removed
 
 
