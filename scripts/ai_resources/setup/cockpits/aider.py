@@ -1,7 +1,7 @@
 """Aider cockpit configurator — uses LiteLLM for multi-provider support."""
 from __future__ import annotations
 
-import shutil
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -61,6 +61,21 @@ def _conf_yaml(executors: dict, gateway_url: str, master_key: str) -> str:
     return yaml.safe_dump(conf, default_flow_style=False, sort_keys=False)
 
 
+def _backup_private(src: Path, dest: Path) -> None:
+    """Copy `src` to `dest` created 0600 from the start: the file holds the gateway master key, and a plain
+    copy would take the umask (0644) instead of the source's mode. Never wider than 0600, whatever `src` is."""
+    data = src.read_bytes()
+    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)   # an older backup may exist with a wider mode: O_CREAT does not reset it
+        with os.fdopen(fd, "wb") as fh:
+            fd = -1
+            fh.write(data)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def configure(ctx: dict) -> list[Path]:
     s = ctx["state"]
     ak_path = str(_shared.stable_kit_root(repo_root()))
@@ -86,7 +101,7 @@ def configure(ctx: dict) -> list[Path]:
         text = _conf_yaml(executors, base, master_key)
         if CONF_PATH.is_file() and CONF_PATH.read_text(encoding="utf-8") != text:
             # A changed base (OpenRouter's OpenAI base is /api/v1) alters an existing file: keep the old one.
-            shutil.copyfile(CONF_PATH, CONF_PATH.with_name(CONF_PATH.name + ".kit-bak"))
+            _backup_private(CONF_PATH, CONF_PATH.with_name(CONF_PATH.name + ".kit-bak"))
         if _shared.write_text(CONF_PATH, text):
             written.append(CONF_PATH)
     elif route is not None and route.action == "skip":

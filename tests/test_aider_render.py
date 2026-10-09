@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import os
+import stat
+
 import pytest
 import yaml
 
@@ -75,3 +78,28 @@ def test_the_matrix_wires_aider_under_openrouter_with_the_documented_base():
 def test_the_executors_gateway_block_is_unchanged_for_existing_setups():
     assert profiles.GATEWAYS["openrouter"]["url"] == "https://openrouter.ai/api"
     assert "openai_base" not in profiles.GATEWAYS["openrouter"]
+
+
+def _mode(p):
+    return stat.S_IMODE(os.stat(p).st_mode)
+
+
+@pytest.mark.parametrize("src_mode", [0o600, 0o644, 0o666])
+def test_the_backup_of_the_key_file_is_never_group_or_other_readable(home, src_mode):
+    conf_path = home / ".aider.conf.yml"
+    conf_path.write_text("openai-api-key: secret\nopenai-api-base: https://openrouter.ai/api\n")
+    os.chmod(conf_path, src_mode)
+    _configure(backend="openrouter", gateway_url="https://openrouter.ai/api", openai_base=profiles.OPENAI_BASE["openrouter"])
+    bak = home / ".aider.conf.yml.kit-bak"
+    assert "secret" in bak.read_text()
+    assert _mode(bak) == 0o600
+    assert _mode(bak) & 0o077 == 0
+
+
+def test_a_stale_wider_backup_is_tightened_not_reused(home):
+    bak = home / ".aider.conf.yml.kit-bak"
+    bak.write_text("old")
+    os.chmod(bak, 0o644)
+    (home / ".aider.conf.yml").write_text("openai-api-base: x\n")
+    _configure(backend="openrouter", gateway_url="https://openrouter.ai/api", openai_base=profiles.OPENAI_BASE["openrouter"])
+    assert _mode(bak) == 0o600
