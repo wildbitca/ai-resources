@@ -235,3 +235,13 @@ def test_findings_name_lost_credentials_missing_ids_and_preview_pins():
 
 def test_a_claude_only_host_gets_no_selection_findings():
     assert models.model_findings({"models": [], "timers": []}, {}) == []
+
+
+def test_a_claude_only_host_lists_the_other_providers_as_skipped_with_a_reason(env, capsys):
+    run("check")
+    out = capsys.readouterr().out
+    for pid in ("openai", "deepseek", "moonshot", "google"):
+        assert f"{pid}: skipped: not enabled" in out
+    run("check", "--json")
+    rows = {r["provider"]: r for r in json.loads(capsys.readouterr().out)["providers"]}
+    assert rows["anthropic"]["status"] == "ok" and rows["openai"]["detail"] == "not enabled"

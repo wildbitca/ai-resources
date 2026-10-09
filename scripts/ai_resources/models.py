@@ -204,6 +204,10 @@ def discover(runner: Runner, *, refresh: bool = True, warn: Callable[[str], None
         result = Discovery()
         _absorb_claude(result, _read_catalog(runner, binary, CATALOG_PROVIDER, DISCOVERY_TIMEOUT), {})
         result.providers.append(ProviderRow("anthropic", "ok", "", len(result.best)))
+        # A host with no recorded selection runs the Claude classes only: say so for the rest.
+        for pid in model_providers.model_families():
+            if pid != "anthropic":
+                result.providers.append(ProviderRow(pid, "skipped", "not enabled"))
         return result
 
     accounts = accounts or {}
