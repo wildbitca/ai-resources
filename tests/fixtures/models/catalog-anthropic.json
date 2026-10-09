@@ -1,0 +1,28 @@
+{
+  "count": 2,
+  "models": [
+    {
+      "key": "anthropic/claude-sonnet-5",
+      "name": "Claude Sonnet 5",
+      "input": "text+image",
+      "contextWindow": 1000000,
+      "local": false,
+      "available": true,
+      "tags": [
+        "default",
+        "configured"
+      ]
+    },
+    {
+      "key": "anthropic/claude-haiku-4-5",
+      "name": "Claude Haiku 4.5",
+      "input": "text+image",
+      "contextWindow": 200000,
+      "local": false,
+      "available": true,
+      "tags": [
+        "configured"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "type": "cli_error",
+    "message": "Unknown model catalog provider \"vertex\". Run openclaw models list --all to list models and their provider IDs."
+  }
+}

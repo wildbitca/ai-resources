@@ -1,0 +1,168 @@
+{
+  "configPath": "/home/user/.openclaw/openclaw.json",
+  "agentDir": "/home/user/.openclaw/agents/main/agent",
+  "defaultModel": "anthropic/claude-haiku-4-5",
+  "resolvedDefault": "anthropic/claude-haiku-4-5",
+  "fallbacks": [],
+  "imageModel": null,
+  "imageFallbacks": [],
+  "utilityModel": {
+    "ref": "anthropic/claude-haiku-5-5",
+    "source": "provider-default"
+  },
+  "aliases": {},
+  "allowed": [],
+  "auth": {
+    "storePath": "/home/user/.openclaw/state/openclaw.sqlite",
+    "shellEnvFallback": {
+      "enabled": false,
+      "appliedKeys": []
+    },
+    "providersWithOAuth": [],
+    "missingProvidersInUse": [],
+    "modelRouteIssues": [
+      {
+        "kind": "indeterminate",
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "evidence": "profile",
+        "message": "Auth readiness could not be confirmed for anthropic/claude-haiku-4-5."
+      },
+      {
+        "kind": "indeterminate",
+        "provider": "anthropic",
+        "model": "claude-haiku-5-5",
+        "evidence": "profile",
+        "message": "Auth readiness could not be confirmed for anthropic/claude-haiku-5-5."
+      }
+    ],
+    "runtimeAuthRoutes": [
+      {
+        "provider": "anthropic",
+        "runtime": "claude-cli",
+        "authProvider": "claude-cli",
+        "status": "indeterminate",
+        "effective": {
+          "kind": "profiles",
+          "detail": "FAKEKEY-DO-NOT-LEAK"
+        }
+      }
+    ],
+    "providers": [
+      {
+        "provider": "claude-cli",
+        "effective": {
+          "kind": "synthetic",
+          "detail": "FAKEKEY-DO-NOT-LEAK"
+        },
+        "profiles": {
+          "count": 0,
+          "oauth": 0,
+          "token": 0,
+          "apiKey": 0,
+          "labels": []
+        },
+        "syntheticAuth": {
+          "value": "FAKEKEY-DO-NOT-LEAK",
+          "source": "Claude CLI native auth"
+        }
+      },
+      {
+        "provider": "google",
+        "effective": {
+          "kind": "env",
+          "detail": "FAKEKEY-DO-NOT-LEAK"
+        },
+        "profiles": {
+          "count": 0,
+          "oauth": 0,
+          "token": 0,
+          "apiKey": 0,
+          "labels": []
+        },
+        "env": {
+          "value": "FAKEKEY-DO-NOT-LEAK",
+          "source": "env: GEMINI_API_KEY"
+        }
+      },
+      {
+        "provider": "openrouter",
+        "effective": {
+          "kind": "profiles",
+          "detail": "FAKEKEY-DO-NOT-LEAK"
+        },
+        "profiles": {
+          "count": 1,
+          "oauth": 0,
+          "token": 0,
+          "apiKey": 1,
+          "labels": [
+            "openrouter:default=ref(store:OPENROUTER_API_KEY)"
+          ]
+        },
+        "env": {
+          "value": "FAKEKEY-DO-NOT-LEAK",
+          "source": "env: OPENROUTER_API_KEY"
+        }
+      },
+      {
+        "provider": "perplexity",
+        "effective": {
+          "kind": "env",
+          "detail": "FAKEKEY-DO-NOT-LEAK"
+        },
+        "profiles": {
+          "count": 0,
+          "oauth": 0,
+          "token": 0,
+          "apiKey": 0,
+          "labels": []
+        },
+        "env": {
+          "value": "FAKEKEY-DO-NOT-LEAK",
+          "source": "env: OPENROUTER_API_KEY"
+        }
+      }
+    ],
+    "unusableProfiles": [],
+    "oauth": {
+      "warnAfterMs": 86400000,
+      "profiles": [
+        {
+          "profileId": "openrouter:default",
+          "provider": "openrouter",
+          "type": "api_key",
+          "source": "store",
+          "label": "openrouter:default",
+          "status": "static"
+        }
+      ],
+      "providers": [
+        {
+          "provider": "openrouter",
+          "status": "static",
+          "profiles": [
+            {
+              "profileId": "openrouter:default",
+              "provider": "openrouter",
+              "type": "api_key",
+              "source": "store",
+              "label": "openrouter:default",
+              "status": "static"
+            }
+          ],
+          "effectiveProfiles": [
+            {
+              "profileId": "openrouter:default",
+              "provider": "openrouter",
+              "type": "api_key",
+              "source": "store",
+              "label": "openrouter:default",
+              "status": "static"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
