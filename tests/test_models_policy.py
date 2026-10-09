@@ -138,3 +138,88 @@ def test_a_pin_ahead_of_the_catalog_is_current_with_a_note(disc):
 def test_current_rows_never_make_a_run_applicable_or_pending(disc):
     props = [p for p in models.propose(mp.effective({}), disc, {}) if p.decision == "current"]
     assert props and not any(p.applicable for p in props)
+
+
+# --- S7: non-Claude slots and the answer ladder ------------------------------------------------
+
+def _google_disc(best="gemini-3.8-flash"):
+    return models.Discovery(others={"google:gemini-flash": best})
+
+
+def _eff(old="gemini-3.7-flash"):
+    return {"google:gemini-flash": old}
+
+
+def test_a_google_bump_with_unknown_price_needs_approval_even_when_the_answer_is_always():
+    ov = {"policy": {"slots": {"google:gemini-flash": {"answer": "always", "max_bump": "minor"}}}}
+    [p] = models.propose(_eff("gemini-9.1-flash"), _google_disc("gemini-9.2-flash"), ov)
+    assert (p.slot, p.kind, p.decision) == ("google:gemini-flash", "minor", "needs_approval")
+    assert "price unknown" in p.reasons
+
+
+def test_a_known_equal_price_and_an_always_answer_is_auto(monkeypatch):
+    monkeypatch.setattr(audit, "PRICES", {**audit.PRICES, "gemini-9.1-flash": (1.0, 2.0), "gemini-9.2-flash": (1.0, 2.0)})
+    ov = {"policy": {"slots": {"google:gemini-flash": {"answer": "always", "max_bump": "minor"}}}}
+    [p] = models.propose(_eff("gemini-9.1-flash"), _google_disc("gemini-9.2-flash"), ov)
+    assert p.decision == "auto"
+
+
+def test_a_new_non_claude_slot_defaults_to_ask(monkeypatch):
+    monkeypatch.setattr(audit, "PRICES", {**audit.PRICES, "gemini-9.1-flash": (1.0, 2.0), "gemini-9.2-flash": (1.0, 2.0)})
+    [p] = models.propose(_eff("gemini-9.1-flash"), _google_disc("gemini-9.2-flash"), {})
+    assert p.decision == "needs_approval" and "mode approve" in p.reasons
+
+
+def test_max_bump_minor_holds_a_major_jump_and_any_lets_it_through(monkeypatch):
+    monkeypatch.setattr(audit, "PRICES", {**audit.PRICES, "gemini-3.7-flash": (1.0, 2.0), "gemini-4.0-flash": (1.0, 2.0)})
+    base = {"google:gemini-flash": {"answer": "always", "max_bump": "minor"}}
+    [held] = models.propose(_eff(), models.Discovery(others={"google:gemini-flash": "gemini-4.0-flash"}),
+                            {"policy": {"slots": base}})
+    assert held.decision == "needs_approval" and "major jump" in held.reasons
+    [free] = models.propose(_eff(), models.Discovery(others={"google:gemini-flash": "gemini-4.0-flash"}),
+                            {"policy": {"slots": {"google:gemini-flash": {"answer": "always", "max_bump": "any"}}}})
+    assert free.decision == "auto"
+
+
+def test_never_ids_suppress_one_id_and_the_family_never_suppresses_every_id():
+    one = {"policy": {"slots": {"google:gemini-flash": {"never_ids": ["gemini-3.8-flash"]}}}}
+    [p] = models.propose(_eff(), _google_disc(), one)
+    assert p.decision == "suppressed"
+    [other] = models.propose(_eff(), _google_disc("gemini-3.9-flash"), one)
+    assert other.decision == "needs_approval"                       # only that exact id was refused
+    fam = {"policy": {"families": {"google:gemini-flash": {"never": True}}}}
+    for new in ("gemini-3.8-flash", "gemini-3.9-flash"):
+        [q] = models.propose(_eff(), _google_disc(new), fam)
+        assert q.decision == "suppressed", new
+
+
+def test_precedence_exclude_and_frozen_beat_never_and_always():
+    ov = {"policy": {"exclude": ["gemini-3.8-*"], "slots": {"google:gemini-flash": {"answer": "always", "never_ids": ["gemini-3.8-flash"]}}}}
+    assert models.propose(_eff(), _google_disc(), ov)[0].decision == "excluded"
+    ov = {"policy": {"slots": {"google:gemini-flash": {"answer": "always", "frozen": True, "never_ids": ["gemini-3.8-flash"]}}}}
+    assert models.propose(_eff(), _google_disc(), ov)[0].decision == "frozen"
+
+
+def test_an_approval_beats_an_always_that_would_wait():
+    ov = {"approvals": {"google:gemini-flash": "gemini-3.8-flash"}}
+    [p] = models.propose(_eff(), _google_disc(), ov)
+    assert p.decision == "approved" and p.applicable
+
+
+def test_a_preview_or_alias_is_never_a_candidate():
+    disc = models.Discovery(previews={"google:gemini-flash": "gemini-9-flash-preview"})
+    [p] = models.propose(_eff("gemini-3.8-flash"), disc, {})
+    assert (p.kind, p.decision, p.applicable) == ("preview", "report", False)
+    assert models.propose(_eff("gemini-3.8-flash"), models.Discovery(previews={"google:gemini-flash": "gemini-3.1-flash-preview"}), {}) == []
+
+
+def test_no_smoke_path_adds_a_reason_when_the_path_cannot_probe_the_provider():
+    sel = type("S", (), {"smoke_path": "claude-cli"})()
+    [p] = models.propose(_eff(), _google_disc(), {}, sel, {})
+    assert "no smoke path" in p.reasons
+
+
+def test_proposals_carry_the_slot_and_provider_in_json():
+    [p] = models.propose(_eff(), _google_disc(), {})
+    d = p.as_dict()
+    assert d["slot"] == "google:gemini-flash" and d["provider"] == "google" and d["cls"] == "gemini-flash"

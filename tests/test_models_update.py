@@ -270,3 +270,90 @@ def test_smoke_output_is_redacted_and_truncated():
     out = models.redact("x" * 500 + " token=abc123 sk-ant-abcdefghijk")
     assert len(out) <= 200
     assert "sk-ant" not in models.redact("sk-ant-abcdefghijk") and "abc123" not in models.redact("token=abc123")
+
+
+# --- provider-agnostic runs (S6/S7) -------------------------------------------------------------
+
+import dataclasses
+
+import httpx
+
+from ai_resources import model_accounts as ma
+from ai_resources.selection import ProviderSel, Selection, SlotSel
+
+
+def _selection(*providers, smoke_path="litellm"):
+    slots = {"anthropic": ("anthropic:sonnet", "anthropic/claude-sonnet-5"),
+             "google": ("google:gemini-flash", "google/gemini-3.7-flash")}
+    s = Selection(shape="multi-provider", smoke_path=smoke_path)
+    for p in providers:
+        s.providers[p] = ProviderSel()
+        s.slots[slots[p][0]] = SlotSel(ref=slots[p][1])
+    return s
+
+
+def _provider_env(tmp_path, monkeypatch, *providers, fail=(), **kw):
+    e = Env(tmp_path, monkeypatch, priced=False)
+    runner_calls = e.runner_calls
+
+    def runner(argv, **k):
+        runner_calls.append(argv)
+        if "refresh" in argv:
+            return 0, "ok"
+        provider = argv[argv.index("--provider") + 1]
+        if provider in fail:
+            return 1, "boom"
+        if provider == "google":      # one flash newer than the kit default (gemini-3.8-flash)
+            cat = json.loads((FIX / "catalog-google.json").read_text())
+            cat["models"].append({"key": "google/gemini-3.9-flash", "name": "Gemini 3.9 Flash", "available": True})
+            return 0, json.dumps(cat)
+        return 0, (FIX / "claude-cli-catalog.json").read_text()
+
+    e.runner = runner
+    gateway_hits = []
+
+    def handler(req):
+        gateway_hits.append(json.loads(req.content))
+        return httpx.Response(200, json={"model": json.loads(req.content)["model"],
+                                          "choices": [{"message": {"content": "OK"}}]})
+
+    deps = dataclasses.replace(
+        e.deps(), runner=runner, selection=lambda: _selection(*providers),
+        accounts=lambda: {p: ma.Account(True, ["env-file"], direct_key=True) for p in providers},
+        http=models.make_http(httpx.MockTransport(handler)), gateway=lambda: ("http://gw.invalid", "k"), **kw)
+    e.deps = lambda: deps
+    e.gateway_hits = gateway_hits
+    return e
+
+
+def test_every_enabled_provider_failing_is_a_plain_error(tmp_path, monkeypatch):
+    e = _provider_env(tmp_path, monkeypatch, "anthropic", "google", fail={"google", "claude-cli"})
+    r = e.run()
+    assert r.rc == models.EXIT_ERROR == 1 and r.outcome == "error"
+
+
+def test_one_failing_provider_is_a_row_not_an_error(tmp_path, monkeypatch):
+    e = _provider_env(tmp_path, monkeypatch, "anthropic", "google", fail={"google"})
+    r = e.run(check=True)
+    rows = {p.provider: p.text for p in r.providers}
+    assert rows["google"].startswith("discovery failed") and rows["anthropic"].endswith("listed")
+    assert r.rc in (models.EXIT_APPROVAL_PENDING, models.EXIT_OK)
+    assert any(r_["provider"] == "google" for r_ in r.as_dict()["providers"])
+
+
+def test_an_approved_google_bump_is_smoked_through_the_gateway_and_recorded_without_a_restart(tmp_path, monkeypatch):
+    e = _provider_env(tmp_path, monkeypatch, "google")
+    mp.save_overlay({"approvals": {"google:gemini-flash": "gemini-3.9-flash"}}, e.overlay)
+    r = e.run()
+    assert r.rc == 0 and r.outcome == "switched"
+    assert e.gateway_hits and e.gateway_hits[0]["model"] == "google/gemini-3.9-flash"
+    assert e.patches == [] and e.restarts == 0                        # no verified OpenClaw runtime: nothing to patch
+    assert e.state()["pins"]["google:gemini-flash"] == "gemini-3.9-flash"
+
+
+def test_a_google_bump_without_approval_waits_and_is_recorded_as_pending(tmp_path, monkeypatch):
+    e = _provider_env(tmp_path, monkeypatch, "google")
+    r = e.run()
+    assert r.rc == models.EXIT_APPROVAL_PENDING
+    assert e.state()["pending"]["google:gemini-flash"]["to"] == "gemini-3.9-flash"
+    assert e.gateway_hits == []                                      # no smoke call before the human answers

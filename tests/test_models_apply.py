@@ -214,3 +214,38 @@ def test_failed_attempt_is_not_proposed_again_automatically():
     ov = {"state": {"failed": {"sonnet": "claude-sonnet-5-5"}}}
     p = models.propose(mp.DEFAULTS, disc, ov)[0]
     assert p.decision == "needs_approval" and "previous attempt failed" in p.reasons[0]
+
+
+# --- S7: non-Claude slots -----------------------------------------------------------------------
+
+def test_a_slot_without_a_verified_openclaw_runtime_builds_no_forward_patch(doc, tmp_path):
+    doc["agents"]["entries"]["ai"]["model"] = {"primary": "google/gemini-3.7-flash"}
+    patch = FakePatch()
+    ok, msg, ov = models.apply_changes(doc, {"google:gemini-flash": ("gemini-3.7-flash", "gemini-3.8-flash")},
+                                       apply_patch=patch, overlay={}, overlay_file=tmp_path / "ov.json")
+    assert ok and patch.calls == [] and "no references to repoint" in msg
+    assert mp.load_overlay(tmp_path / "ov.json")["pins"]["google:gemini-flash"] == "gemini-3.8-flash"
+
+
+def test_an_openai_ref_with_the_codex_runtime_is_repointed_with_that_runtime(doc):
+    ref = models.slot_ref("openai:gpt-sol", "gpt-5.6-sol")
+    assert ref == "openai/gpt-5.6-sol"
+    built = models.build_forward_patch(doc, {"openai/gpt-5.6-sol": "openai/gpt-5.7-sol"})
+    after = models.apply_in_memory(doc, built["patch"])
+    assert after["agents"]["entries"]["ai"]["model"]["primary"] == "openai/gpt-5.7-sol"
+    assert after["agents"]["defaults"]["models"]["openai/gpt-5.7-sol"] == {"agentRuntime": {"id": "codex"}}
+    assert "channels" not in built["patch"]
+
+
+def test_claude_only_patches_are_unchanged_by_the_slot_support(doc):
+    built = models.build_forward_patch(doc, dict([SONNET]))
+    assert built["patch"]["agents"]["defaults"]["models"][SONNET[1]] == {"agentRuntime": {"id": "claude-cli"}}
+
+
+def test_the_restart_backend_follows_the_selection():
+    from ai_resources.selection import ProviderSel, Selection, SlotSel
+    assert models.restart_backend(None) == "claude-cli"
+    only_openai = Selection(providers={"openai": ProviderSel()}, slots={"openai:gpt-sol": SlotSel(ref="openai/gpt-5.6-sol")})
+    assert models.restart_backend(only_openai) == "codex"
+    with_claude = Selection(providers={}, slots={"anthropic:sonnet": SlotSel(), "openai:gpt-sol": SlotSel()})
+    assert models.restart_backend(with_claude) == "claude-cli"

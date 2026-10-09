@@ -48,6 +48,7 @@ EXIT_DEFERRED = 75
 
 CATALOG_PROVIDER = "claude-cli"
 DISCOVERY_TIMEOUT = 90
+DISCOVERY_BUDGET = 90          # one budget for the whole discovery run, not per provider
 REFRESH_TIMEOUT = 180
 SMOKE_TIMEOUT = 180
 HEALTH_TRIES = 36
@@ -74,6 +75,7 @@ class Discovery:
     others: dict[str, str] = field(default_factory=dict)       # non-Claude slot -> highest stable id
     previews: dict[str, str] = field(default_factory=dict)     # slot -> newest preview/alias (report only)
     providers: list = field(default_factory=list)              # one ProviderRow per provider asked about
+    listed: dict = field(default_factory=dict)                 # provider -> every available id seen (for doctor)
 
     def slot_best(self) -> dict[str, str]:
         """slot -> highest stable id, Claude slots first."""
@@ -82,15 +84,26 @@ class Discovery:
         return out
 
 
-def discover(runner: Runner, *, refresh: bool = True, warn: Callable[[str], None] = lambda m: None,
-             binary: str = "openclaw") -> Discovery:
-    """Highest available Claude id per class from `openclaw models list --all --json --provider claude-cli`."""
-    if refresh:
-        rc, out = runner([binary, "models", "refresh"], timeout=REFRESH_TIMEOUT)
-        if rc != 0:
-            warn(f"models refresh failed (rc {rc}); using the cached catalog")
-    rc, out = runner([binary, "models", "list", "--all", "--json", "--provider", CATALOG_PROVIDER],
-                     timeout=DISCOVERY_TIMEOUT)
+@dataclass
+class ProviderRow:
+    """What discovery did for one provider; shown by status/check/update and in the JSON report."""
+    provider: str
+    status: str                # ok | skipped | report-only | failed
+    detail: str = ""
+    count: int = 0
+
+    @property
+    def text(self) -> str:
+        if self.status == "ok":
+            return f"{self.count} model(s) listed"
+        return f"skipped: {self.detail}" if self.status == "skipped" else self.detail
+
+    def as_dict(self) -> dict:
+        return {"provider": self.provider, "status": self.status, "detail": self.detail, "count": self.count}
+
+
+def _read_catalog(runner: Runner, binary: str, catalog_id: str, timeout: float) -> list:
+    rc, out = runner([binary, "models", "list", "--all", "--json", "--provider", catalog_id], timeout=timeout)
     if rc != 0:
         raise DiscoveryError(f"`models list` failed (rc {rc}): {out[-200:]}")
     try:
@@ -100,13 +113,16 @@ def discover(runner: Runner, *, refresh: bool = True, warn: Callable[[str], None
             raise TypeError("models is not a list")
     except (ValueError, KeyError, TypeError) as e:
         raise DiscoveryError(f"`models list` returned unusable output ({e})") from None
-    result = Discovery()
-    best_ver: dict[str, tuple[int, int]] = {}
+    return entries
+
+
+def _absorb_claude(result: "Discovery", entries: list, best_ver: dict) -> None:
     for entry in entries:
         if not isinstance(entry, dict) or not entry.get("available"):
             continue
         key = str(entry.get("key", ""))
         model_id = key.split("/", 1)[1] if key.startswith(CATALOG_PROVIDER + "/") else key
+        result.listed.setdefault("anthropic", set()).add(model_id)
         parsed = model_pins.parse_id(model_id)
         if parsed:
             cls, major, minor = parsed
@@ -116,6 +132,154 @@ def discover(runner: Runner, *, refresh: bool = True, warn: Callable[[str], None
         m = _ANY_FAMILY.match(model_id)
         if m and m.group(1) not in CLASSES and model_id not in result.new_families:
             result.new_families.append(model_id)
+
+
+def _absorb_provider(result: "Discovery", adapter, ids: list[str], wanted: set[str]) -> int:
+    """Fold a provider's model ids into the discovery. Only slots in `wanted` get a best id."""
+    seen = 0
+    best_ver: dict[str, tuple] = {}
+    prev_ver: dict[str, tuple] = {}
+    for model_id in ids:
+        ref = adapter.from_any_spelling(model_id)
+        seen += 1
+        result.listed.setdefault(adapter.id, set()).add(model_id)
+        if ref is None:
+            tag = f"{adapter.id}/{model_id}"
+            if tag not in result.new_families and ":" not in model_id:
+                result.new_families.append(tag)
+            continue
+        if ref.slot not in wanted:
+            continue
+        if ref.channel == "stable":
+            if ref.version > best_ver.get(ref.slot, ()):
+                best_ver[ref.slot], result.others[ref.slot] = ref.version, model_id
+        elif ref.channel == "preview" and ref.version > prev_ver.get(ref.slot, ()):
+            prev_ver[ref.slot], result.previews[ref.slot] = ref.version, model_id
+    return seen
+
+
+def _vendor_ids(adapter, key: str, http, timeout: float) -> list[str]:
+    """Model ids from the vendor's own `/models`. The host is the adapter's constant; the key travels
+    only in the Authorization header and is never logged or returned."""
+    status, text = http("GET", adapter.vendor_host + adapter.vendor_path,
+                        {"Authorization": f"Bearer {key}", "Accept": "application/json"}, timeout)
+    if status != 200:
+        raise DiscoveryError(f"{adapter.id} /models answered HTTP {status}")
+    try:
+        data = json.loads(text)
+        return [str(m["id"]) for m in data["data"] if isinstance(m, dict) and "id" in m]
+    except (ValueError, KeyError, TypeError):
+        raise DiscoveryError(f"{adapter.id} /models returned unusable output") from None
+
+
+def make_http(transport=None) -> Callable:
+    """The HTTP seam: `http(method, url, headers, timeout) -> (status, text)`. httpx is imported
+    lazily (the pure functions above stay importable without it); tests pass a MockTransport."""
+    def http(method: str, url: str, headers: dict, timeout: float, body: dict | None = None) -> tuple[int, str]:
+        import httpx
+        with httpx.Client(transport=transport, timeout=timeout) as client:
+            r = client.request(method, url, headers=headers, json=body)
+            return r.status_code, r.text
+    return http
+
+
+def discover(runner: Runner, *, refresh: bool = True, warn: Callable[[str], None] = lambda m: None,
+             binary: str = "openclaw", selection=None, accounts: dict | None = None, http: Callable | None = None,
+             key_for: Callable[[str], str] = lambda p: "", monotonic: Callable[[], float] = time.monotonic,
+             budget: float = DISCOVERY_BUDGET) -> "Discovery":
+    """Highest stable id per slot.
+
+    Without a `selection` this is the original Claude-only discovery (`models list --provider
+    claude-cli`; any failure raises DiscoveryError). With one, only providers that are ENABLED and
+    CREDENTIALED are asked: one refresh, then each provider's sources in order (OpenClaw catalog,
+    the vendor listing when the user opted in, else a static report-only list). A provider that
+    fails is recorded as `discovery failed`; the run raises only when every provider it asked failed.
+    One time budget covers the whole run, not each provider.
+    """
+    if selection is None:
+        if refresh:
+            rc, out = runner([binary, "models", "refresh"], timeout=REFRESH_TIMEOUT)
+            if rc != 0:
+                warn(f"models refresh failed (rc {rc}); using the cached catalog")
+        result = Discovery()
+        _absorb_claude(result, _read_catalog(runner, binary, CATALOG_PROVIDER, DISCOVERY_TIMEOUT), {})
+        result.providers.append(ProviderRow("anthropic", "ok", "", len(result.best)))
+        return result
+
+    accounts = accounts or {}
+    result = Discovery()
+    deadline = monotonic() + budget
+    wanted = set(selection.slots)
+    enabled = set(selection.enabled_providers())
+    asked = failed = 0
+    refreshed = False
+    for pid, adapter in model_providers.REGISTRY.items():
+        if pid not in enabled:
+            if pid != "openrouter":
+                result.providers.append(ProviderRow(pid, "skipped", "not enabled"))
+            continue
+        acc = accounts.get(pid)
+        if acc is not None and not getattr(acc, "credentialed", False):
+            result.providers.append(ProviderRow(pid, "skipped", "no credentials"))
+            continue
+        row = None
+        for source in adapter.sources:
+            if source == model_providers.SOURCE_CATALOG and adapter.catalog_ids:
+                if monotonic() >= deadline:
+                    row = ProviderRow(pid, "failed", "discovery failed: budget")
+                    break
+                if refresh and not refreshed:
+                    refreshed = True
+                    rc, _out = runner([binary, "models", "refresh"], timeout=min(REFRESH_TIMEOUT, max(1.0, deadline - monotonic())))
+                    if rc != 0:
+                        warn(f"models refresh failed (rc {rc}); using the cached catalog")
+                asked += 1
+                catalog_id = CATALOG_PROVIDER if pid == "anthropic" else adapter.catalog_ids[0]
+                try:
+                    entries = _read_catalog(runner, binary, catalog_id, min(DISCOVERY_TIMEOUT, max(1.0, deadline - monotonic())))
+                except DiscoveryError as e:
+                    failed += 1
+                    row = ProviderRow(pid, "failed", f"discovery failed: {e}")
+                    warn(f"{pid}: {e}")
+                    break
+                if pid == "anthropic":
+                    before = len(result.best)
+                    _absorb_claude(result, entries, {})
+                    count = len(result.best) or before
+                else:
+                    ids = [str(e.get("key", "")).split("/", 1)[-1] for e in entries
+                           if isinstance(e, dict) and e.get("available")]
+                    count = _absorb_provider(result, adapter, ids, wanted)
+                row = ProviderRow(pid, "ok", "", count)
+                if count == 0:
+                    continue            # an empty catalog entry (openai here) falls through to the next source
+                break
+            if source == model_providers.SOURCE_VENDOR and adapter.vendor_host:
+                psel = selection.providers.get(pid)
+                if not (psel and psel.vendor_listing):
+                    continue
+                key = key_for(pid)
+                if not key or http is None:
+                    continue
+                if monotonic() >= deadline:
+                    row = ProviderRow(pid, "failed", "discovery failed: budget")
+                    break
+                asked += 1
+                try:
+                    ids = _vendor_ids(adapter, key, http, min(DISCOVERY_TIMEOUT, max(1.0, deadline - monotonic())))
+                except Exception as e:  # noqa: BLE001
+                    failed += 1
+                    row = ProviderRow(pid, "failed", f"discovery failed: {type(e).__name__}" if not isinstance(e, DiscoveryError)
+                                      else f"discovery failed: {e}")
+                    break
+                row = ProviderRow(pid, "ok", "", _absorb_provider(result, adapter, ids, wanted))
+                break
+        if row is None or (row.status == "ok" and row.count == 0 and model_providers.SOURCE_STATIC in adapter.sources):
+            row = ProviderRow(pid, "report-only", "static list, report-only")
+        result.providers.append(row)
+    if asked and failed == asked:
+        raise DiscoveryError("every enabled provider failed: " + "; ".join(
+            f"{r.provider} ({r.detail})" for r in result.providers if r.status == "failed"))
     return result
 
 
@@ -193,7 +357,8 @@ def _adapter_version(provider: str, model_id: str) -> tuple[int, ...] | None:
     return ref.version if ref else None
 
 
-def propose(effective: dict[str, str], discovered: Discovery, overlay: dict | None = None) -> list[Proposal]:
+def propose(effective: dict[str, str], discovered: Discovery, overlay: dict | None = None, selection=None,
+            accounts: dict | None = None) -> list[Proposal]:
     """One Proposal per slot. A downgrade is never proposed.
 
     `effective` maps slots (or bare Claude class names) to the id each slot runs now. The ladder, in
@@ -247,11 +412,24 @@ def propose(effective: dict[str, str], discovered: Discovery, overlay: dict | No
                 reasons.append("price unknown")
             elif pct is not None and pct > pol["max_cost_delta_pct"]:
                 reasons.append(f"price increase {pct:g}%")
+            if selection is not None and smoke_path_problem(provider, selection, accounts):
+                reasons.append("no smoke path")
             if reasons:
                 prop.reasons = reasons
             else:
                 prop.decision, prop.reasons = "auto", [f"{kind} bump, price {price}"]
         out.append(prop)
+    # A preview or alias newer than what the slot runs is reported, never applied or proposed.
+    for key, old in effective.items():
+        slot = model_pins.slot_key(key)
+        preview = discovered.previews.get(slot)
+        if not old or not preview:
+            continue
+        provider, cls = slot.split(":", 1)
+        v_old, v_prev = _adapter_version(provider, old), _adapter_version(provider, preview)
+        if v_old and v_prev and v_prev > v_old:
+            out.append(Proposal(cls, old, preview, "preview", "unknown", "report",
+                                ["newest is a preview; never applied automatically"], provider))
     for model_id in discovered.new_families:
         out.append(Proposal("new_family", "", model_id, "new_family", "unknown", "report",
                             ["family outside the pinned classes; never applied"]))
@@ -583,6 +761,137 @@ def smoke(model_id: str, runner: Runner, *, timeout: float = SMOKE_TIMEOUT, clau
     return SmokeResult(True, "ok", redact(str(data.get("result", ""))))
 
 
+# --- smoke dispatch: one real call per path ----------------------------------------------------
+# Every probe is a billable call on the operator's account. The key travels only in a header (or the
+# Claude CLI's own login) and every excerpt is scrubbed of it.
+
+GOOGLE_HOST = "https://generativelanguage.googleapis.com"
+OPENROUTER_CHAT = "https://openrouter.ai/api/v1/chat/completions"
+OLLAMA_GENERATE = "http://127.0.0.1:11434/api/generate"
+ANTHROPIC_MESSAGES = "https://api.anthropic.com/v1/messages"
+_PROMPT = "Reply with exactly OK"
+# Vendor chat-completions paths (the host is the adapter's constant).
+_CHAT_PATH = {"openai": "/v1/chat/completions", "deepseek": "/chat/completions", "moonshot": "/v1/chat/completions"}
+
+
+def _scrub(text: str, *secrets: str) -> str:
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "[redacted]")
+    return redact(text)
+
+
+def _chat_body(model: str) -> dict:
+    return {"model": model, "max_tokens": 16, "messages": [{"role": "user", "content": _PROMPT}]}
+
+
+def _judge_chat(status: int, text: str, requested: str, secrets: tuple, *, strict_model: bool = True) -> SmokeResult:
+    """Pass only on HTTP 200 with an OK reply from the model that was asked for."""
+    if status != 200:
+        return SmokeResult(False, f"HTTP {status}", _scrub(text, *secrets))
+    try:
+        doc = json.loads(text)
+        reply = doc["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        return SmokeResult(False, "reply was not a chat completion", _scrub(text, *secrets))
+    if "OK" not in str(reply):
+        return SmokeResult(False, "reply did not contain OK", _scrub(str(reply), *secrets))
+    served = str(doc.get("model", ""))
+    if strict_model and served and served.split("/")[-1] != requested.split("/")[-1]:
+        return SmokeResult(False, f"served model {served!r} is not {requested!r}", _scrub(str(reply), *secrets))
+    return SmokeResult(True, "ok", _scrub(str(reply), *secrets))
+
+
+def smoke_slot(provider: str, model_id: str, path: str, *, http: Callable | None, key: str = "",
+               gateway_url: str = "http://127.0.0.1:4000", gateway_key: str = "") -> SmokeResult:
+    """The probe for `model_id` of `provider` over `path` (litellm | openrouter | direct)."""
+    adapter = model_providers.REGISTRY.get(provider)
+    if adapter is None or path not in adapter.smoke_kinds:
+        return SmokeResult(False, "no smoke path")
+    if http is None:
+        return SmokeResult(False, "no HTTP client")
+    timeout = SMOKE_TIMEOUT
+    if path == "litellm":
+        name = model_id if provider == "anthropic" else f"{provider}/{model_id}"
+        status, text = http("POST", gateway_url.rstrip("/") + "/v1/chat/completions",
+                            {"Authorization": f"Bearer {gateway_key}", "Content-Type": "application/json"},
+                            timeout, _chat_body(name))
+        return _judge_chat(status, text, name, (gateway_key,))
+    if path == "openrouter":
+        ns_id = model_pins.openrouter_id(model_id) if provider == "anthropic" else f"{adapter.openrouter_ns}/{model_id}"
+        if provider != "anthropic" and not adapter.openrouter_ns:
+            return SmokeResult(False, "no smoke path")
+        status, text = http("POST", OPENROUTER_CHAT, {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                            timeout, _chat_body(ns_id))
+        return _judge_chat(status, text, ns_id, (key,))
+    # direct
+    if provider == "google":
+        url = f"{GOOGLE_HOST}/v1beta/models/{model_id}:generateContent"
+        status, text = http("POST", url, {"x-goog-api-key": key, "Content-Type": "application/json"}, timeout,
+                            {"contents": [{"parts": [{"text": _PROMPT}]}], "generationConfig": {"maxOutputTokens": 16}})
+        if status != 200:
+            return SmokeResult(False, f"HTTP {status}", _scrub(text, key))
+        try:
+            reply = json.loads(text)["candidates"][0]["content"]["parts"][0]["text"]
+        except (ValueError, KeyError, IndexError, TypeError):
+            return SmokeResult(False, "reply was not a generateContent response", _scrub(text, key))
+        return SmokeResult("OK" in reply, "ok" if "OK" in reply else "reply did not contain OK", _scrub(reply, key))
+    if provider == "anthropic":
+        status, text = http("POST", ANTHROPIC_MESSAGES, {"x-api-key": key, "anthropic-version": "2023-06-01",
+                                                          "Content-Type": "application/json"}, timeout, _chat_body(model_id))
+        if status != 200:
+            return SmokeResult(False, f"HTTP {status}", _scrub(text, key))
+        try:
+            doc = json.loads(text)
+            reply = doc["content"][0]["text"]
+        except (ValueError, KeyError, IndexError, TypeError):
+            return SmokeResult(False, "reply was not a message", _scrub(text, key))
+        if "OK" not in reply or str(doc.get("model", model_id)) != model_id:
+            return SmokeResult(False, "reply did not contain OK or the served model differs", _scrub(reply, key))
+        return SmokeResult(True, "ok", _scrub(reply, key))
+    if provider == "ollama":
+        status, text = http("POST", OLLAMA_GENERATE, {"Content-Type": "application/json"}, timeout,
+                            {"model": model_id, "prompt": _PROMPT, "stream": False})
+        if status != 200:
+            return SmokeResult(False, f"HTTP {status}", redact(text))
+        try:
+            reply = json.loads(text).get("response", "")
+        except ValueError:
+            return SmokeResult(False, "reply was not JSON", redact(text))
+        return SmokeResult("OK" in reply, "ok" if "OK" in reply else "reply did not contain OK", redact(reply))
+    chat = _CHAT_PATH.get(provider)
+    if not chat or not adapter.vendor_host:
+        return SmokeResult(False, "no smoke path")
+    status, text = http("POST", adapter.vendor_host + chat,
+                        {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, timeout, _chat_body(model_id))
+    return _judge_chat(status, text, model_id, (key,))
+
+
+def smoke_path_problem(provider: str, selection, accounts: dict | None) -> str:
+    """Why this provider cannot be probed on the selection's path, or "" when it can."""
+    adapter = model_providers.REGISTRY.get(provider)
+    path = getattr(selection, "smoke_path", "claude-cli") if selection is not None else "claude-cli"
+    if adapter is None or path not in adapter.smoke_kinds:
+        return "no smoke path"
+    acc = (accounts or {}).get(provider)
+    if path == "direct" and acc is not None and not getattr(acc, "direct_key", False) and provider != "ollama":
+        return "no smoke path"            # an OpenClaw-only credential cannot be used for a direct probe
+    return ""
+
+
+def smoke_proposal(deps: "Deps", provider: str, model_id: str, selection, accounts: dict | None = None) -> SmokeResult:
+    """Dispatch one probe. Claude over the Claude CLI keeps the original `deps.smoke`."""
+    path = getattr(selection, "smoke_path", "claude-cli") if selection is not None else "claude-cli"
+    if provider == "anthropic" and path == "claude-cli":
+        return deps.smoke(model_id)
+    problem = smoke_path_problem(provider, selection, accounts)
+    if problem:
+        return SmokeResult(False, problem)
+    gateway_url, gateway_key = deps.gateway()
+    key = deps.key_for("openrouter" if path == "openrouter" else provider)
+    return smoke_slot(provider, model_id, path, http=deps.http, key=key, gateway_url=gateway_url, gateway_key=gateway_key)
+
+
 @dataclass
 class Options:
     check: bool = False
@@ -601,9 +910,11 @@ class Result:
     proposals: list[Proposal] = field(default_factory=list)
     applied: dict[str, tuple[str, str]] = field(default_factory=dict)
     deferrals: int = 0
+    providers: list = field(default_factory=list)       # ProviderRow per provider discovery asked about
 
     def as_dict(self) -> dict:
         return {"rc": self.rc, "outcome": self.outcome, "message": self.message, "deferrals": self.deferrals,
+                "providers": [r.as_dict() for r in self.providers],
                 "proposals": [p.as_dict() for p in self.proposals],
                 "applied": {c: list(v) for c, v in self.applied.items()}}
 
@@ -630,6 +941,12 @@ class Deps:
     log: Callable[[dict], None] = lambda event: None
     health_tries: int = HEALTH_TRIES
     health_interval: float = HEALTH_INTERVAL
+    # Provider-agnostic seams; the defaults keep a Claude-only host exactly as it was.
+    selection: Callable[[], object] = lambda: None
+    accounts: Callable[[], dict] = lambda: {}
+    http: Callable | None = None
+    key_for: Callable[[str], str] = lambda provider: ""
+    gateway: Callable[[], tuple[str, str]] = lambda: ("http://127.0.0.1:4000", "")
 
 
 def _load(deps: Deps) -> dict:
@@ -645,6 +962,67 @@ def _persist(deps: Deps, ov: dict, **state_fields) -> dict:
 
 def _log(deps: Deps, event: str, **kw) -> None:
     deps.log({"at": deps.now().isoformat(), "event": event, **kw})
+
+
+PRICE_TTL_HOURS = 24
+OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
+
+
+def openrouter_price_map(raw: dict) -> dict[str, list[float]]:
+    """bare model id -> [input, output] USD per 1M tokens, from OpenRouter's public `/models` JSON."""
+    out: dict[str, list[float]] = {}
+    for entry in raw.get("data", []) if isinstance(raw, dict) else []:
+        try:
+            ns, bare = str(entry["id"]).split("/", 1)
+            pricing = entry["pricing"]
+            price = [round(float(pricing["prompt"]) * 1e6, 6), round(float(pricing["completion"]) * 1e6, 6)]
+        except (KeyError, ValueError, TypeError):
+            continue
+        for adapter in model_providers.REGISTRY.values():
+            if adapter.openrouter_ns == ns:
+                ref = adapter.from_any_spelling(bare)
+                out[bare.replace(".", "-") if adapter.id == "anthropic" else bare] = price
+                if ref:
+                    out.setdefault(bare, price)
+    return out
+
+
+def _with_prices(deps: "Deps", ov: dict, selection) -> dict:
+    """The overlay with OpenRouter's public prices folded under the operator's own `prices` (Q4).
+    Only for an openrouter-backend selection; cached 24 h with a timestamp; never invented."""
+    if selection is None or getattr(selection, "smoke_path", "") != "openrouter" or deps.http is None:
+        return ov
+    cache = ov.get("price_cache") if isinstance(ov.get("price_cache"), dict) else {}
+    now = deps.now()
+    fresh = False
+    try:
+        fresh = now - datetime.fromisoformat(cache.get("fetched_at", "")) < timedelta(hours=PRICE_TTL_HOURS)
+    except ValueError:
+        pass
+    prices = cache.get("prices") if fresh and isinstance(cache.get("prices"), dict) else None
+    if prices is None:
+        try:
+            status, text = deps.http("GET", OPENROUTER_MODELS, {"Accept": "application/json"}, 30)
+            prices = openrouter_price_map(json.loads(text)) if status == 200 else {}
+        except Exception:  # noqa: BLE001
+            prices = {}
+        if prices:
+            ov["price_cache"] = {"fetched_at": now.isoformat(), "prices": prices}
+    merged = dict(ov)
+    merged["prices"] = {**prices, **(ov.get("prices") if isinstance(ov.get("prices"), dict) else {})}
+    return merged
+
+
+def _catalog_missing(effective: dict, disc: "Discovery") -> list[str]:
+    """Slots whose effective id is absent from a catalog that answered (doctor reports them)."""
+    ok = {r.provider for r in disc.providers if r.status == "ok"}
+    out = []
+    for key, model_id in effective.items():
+        slot = model_pins.slot_key(key)
+        provider = model_pins.slot_provider(slot)
+        if provider in ok and model_id and model_id not in disc.listed.get(provider, set()):
+            out.append(slot)
+    return sorted(out)
 
 
 def approve_command(slot: str, model_id: str) -> str:
@@ -664,10 +1042,13 @@ def run_update(opts: Options, deps: Deps) -> Result:
     with deps.lock() as got:
         if not got:
             return Result(EXIT_LOCKED, "locked", "another models update is running")
-        return _run_locked(opts, deps)
+        ctx: dict = {}
+        result = _run_locked(opts, deps, ctx)
+        result.providers = ctx.get("providers", [])
+        return result
 
 
-def _run_locked(opts: Options, deps: Deps) -> Result:
+def _run_locked(opts: Options, deps: Deps, ctx: dict | None = None) -> Result:
     writes = not (opts.check or opts.dry_run)
     ov = _load(deps)
     st = ov.get("state") or {}
@@ -689,14 +1070,21 @@ def _run_locked(opts: Options, deps: Deps) -> Result:
         except ValueError:
             pass
 
+    selection = deps.selection()
     try:
-        disc = discover(deps.runner, refresh=opts.refresh, warn=lambda m: _log(deps, "warn", message=m))
+        disc = discover(deps.runner, refresh=opts.refresh, warn=lambda m: _log(deps, "warn", message=m),
+                        selection=selection, accounts=deps.accounts() if selection is not None else None,
+                        http=deps.http, key_for=deps.key_for, monotonic=deps.monotonic)
     except DiscoveryError as e:
         _log(deps, "discovery_failed", error=str(e))
         if writes:
             _persist(deps, ov, last_run=now.isoformat(), last_result="error")
         return Result(EXIT_ERROR, "error", str(e))
-    props = propose(model_pins.effective(ov), disc, ov)
+    if ctx is not None:
+        ctx["providers"] = disc.providers
+    effective = model_pins.effective_slots(selection, ov) if selection is not None else model_pins.effective(ov)
+    accounts = deps.accounts() if selection is not None else None
+    props = propose(effective, disc, _with_prices(deps, ov, selection), selection, accounts)
     needs = [p for p in props if p.decision == "needs_approval"]
     if writes:
         pending = ov.setdefault("pending", {})
@@ -706,6 +1094,8 @@ def _run_locked(opts: Options, deps: Deps) -> Result:
         for p in needs:
             first = (pending.get(p.slot) or {}).get("first_seen") if (pending.get(p.slot) or {}).get("to") == p.new else None
             pending[p.slot] = {"to": p.new, "reason": ", ".join(p.reasons), "first_seen": first or now.isoformat()}
+    if writes:
+        ov.setdefault("state", {})["catalog_missing"] = _catalog_missing(effective, disc)
     wanted = _wanted(opts)
     applicable = [p for p in props if p.applicable and (not wanted or p.slot in wanted)]
     _log(deps, "plan", proposals=[p.as_dict() for p in props])
@@ -722,7 +1112,7 @@ def _run_locked(opts: Options, deps: Deps) -> Result:
 
     survivors: list[Proposal] = []
     for p in applicable:
-        res = deps.smoke(p.new)
+        res = smoke_proposal(deps, p.provider, p.new, selection, accounts)
         _log(deps, "smoke", model=p.new, ok=res.ok, reason=res.reason, excerpt=res.excerpt)
         if res.ok:
             survivors.append(p)
@@ -763,6 +1153,12 @@ def _run_locked(opts: Options, deps: Deps) -> Result:
         _persist(deps, ov, last_run=now.isoformat(), last_result="switched", last_switch_at=now.isoformat())
         return Result(EXIT_OK, "switched", "switched; the gateway was not restarted (--no-restart)",
                       proposals=props, applied=changes)
+    if not any(slot_ref(slot, old) for slot, (old, _new) in changes.items()):
+        # Only slots OpenClaw has no verified runtime for moved: openclaw.json did not change, so
+        # there is nothing to restart or health-check.
+        _persist(deps, ov, last_run=now.isoformat(), last_result="switched", last_switch_at=now.isoformat())
+        return Result(EXIT_OK, "switched", "recorded; openclaw.json has no reference to repoint",
+                      proposals=props, applied=changes)
     _persist(deps, ov, pending_restart=True, pending_restart_pid=deps.main_pid())
     return _restart_and_verify(opts, deps, ov, changes, resume=False, proposals=props)
 
@@ -801,8 +1197,10 @@ def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, 
         reason = "" if healthy and pid_changed else ("gateway unhealthy after restart" if not healthy
                                                      else "gateway pid did not change")
         if not reason:
-            for cls, (_old, new) in applied.items():
-                res = deps.smoke(new)
+            selection_now = deps.selection()
+            for slot, (_old, new) in applied.items():
+                res = smoke_proposal(deps, model_pins.slot_provider(slot), new, selection_now,
+                                     deps.accounts() if selection_now is not None else None)
                 _log(deps, "smoke_post", model=new, ok=res.ok, reason=res.reason)
                 if not res.ok:
                     reason = f"post-switch smoke failed for {new}: {res.reason}"
@@ -867,6 +1265,18 @@ def _append_log(event: dict) -> None:
         pass
 
 
+def restart_backend(selection) -> str:
+    """The backend whose registration a restart waits for: the Claude CLI unless the selection has
+    no Claude slot, then the runtime of the first slot that has one."""
+    if selection is None or any(model_pins.slot_provider(s) == "anthropic" for s in selection.slots):
+        return "claude-cli"
+    for slot in selection.slots:
+        adapter = model_providers.REGISTRY.get(model_pins.slot_provider(slot))
+        if adapter and adapter.runtime:
+            return adapter.runtime
+    return "claude-cli"
+
+
 def default_deps() -> Deps:
     """The real wiring. Imports the OpenClaw cockpit lazily: it is heavy and the pure functions
     above must stay importable without it."""
@@ -875,7 +1285,7 @@ def default_deps() -> Deps:
 
     def restart() -> object:
         try:
-            return oc.restart_gateway(backend="claude-cli", ask=None, interactive=False,
+            return oc.restart_gateway(backend=restart_backend(selection()), ask=None, interactive=False,
                                       restart_timeout=RESTART_TIMEOUT)
         except oc.RestartDeferred as e:
             raise RestartDeferred(e.reason) from None
@@ -884,11 +1294,33 @@ def default_deps() -> Deps:
         rc, _ = runner([openclaw_host.resolve_openclaw_bin(), "health"], timeout=60)
         return rc == 0
 
+    from . import model_accounts
+    from .setup import credentials, state as setup_state
+
+    def selection():
+        try:
+            return setup_state.load().get_selection()
+        except Exception:  # noqa: BLE001 - a broken state file must not stop the Claude-only path
+            return None
+
+    def key_for(provider: str) -> str:
+        if provider == "openrouter":
+            return credentials.get_key("OPENROUTER_API_KEY")
+        adapter = model_providers.REGISTRY.get(provider)
+        return credentials.get_key(adapter.credential[0]) if adapter and adapter.credential else ""
+
+    def gateway() -> tuple[str, str]:
+        st = setup_state.load()
+        host = f"http://{st.litellm.local.bind_address}:{st.litellm.local.port}"
+        return host, credentials.get_key("LITELLM_MASTER_KEY")
+
     return Deps(
         runner=runner, apply_patch=oc.apply_patch, read_config=lambda: oc.read_config(oc.config_path()),
         config_file=oc.config_path, smoke=lambda m: smoke(m, runner, claude_bin=shutil.which("claude") or "claude"),
         busy=lambda: openclaw_host.gateway_busy()[0], restart=restart, health=health,
-        main_pid=openclaw_host.gateway_main_pid, log=_append_log)
+        main_pid=openclaw_host.gateway_main_pid, log=_append_log,
+        selection=selection, accounts=lambda: model_accounts.detect(model_accounts.default_deps(runner)),
+        http=make_http(), key_for=key_for, gateway=gateway)
 
 
 def run_rollback(deps: Deps) -> Result:
@@ -924,14 +1356,41 @@ def run_rollback(deps: Deps) -> Result:
 
 # --- findings for doctor, verify and status ----------------------------------------------------
 
+def _selection_findings(overlay: dict, selection, accounts: dict | None) -> list[tuple[str, str, str]]:
+    if selection is None:
+        return []
+    out: list[tuple[str, str, str]] = []
+    if accounts:
+        for pid in selection.enabled_providers():
+            acc = accounts.get(pid)
+            if acc is not None and not getattr(acc, "credentialed", True):
+                out.append(("warn", f"provider {pid} is enabled but has lost its credentials",
+                            f"add the key (`ai-resources setup`) or disable {pid}"))
+    st = overlay.get("state") or {}
+    for slot in st.get("catalog_missing") or []:
+        out.append(("warn", f"{slot}: the running model id is no longer listed by its catalog",
+                    "`ai-resources models check --refresh`; pin or approve a listed id"))
+    eff = model_pins.effective_slots(selection, overlay)
+    for slot, model_id in eff.items():
+        adapter = model_providers.REGISTRY.get(model_pins.slot_provider(slot))
+        ref = adapter.from_any_spelling(model_id) if adapter else None
+        if ref and ref.channel in ("preview", "alias"):
+            out.append(("warn", f"{slot} runs {model_id}, a {ref.channel} id that never updates on its own",
+                        f"`ai-resources models pin --slot {slot} <stable id>` or approve a stable one"))
+    return out
+
+
 TIMER_UNIT = "openclaw-models-update.timer"
 STALE_RUN_DAYS = 3
 
 
-def model_findings(report: dict, overlay: dict, *, now: datetime | None = None) -> list[tuple[str, str, str]]:
+def model_findings(report: dict, overlay: dict, *, now: datetime | None = None, selection=None,
+                   accounts: dict | None = None) -> list[tuple[str, str, str]]:
     """(level, message, remedy) for the host report: drift, pending approvals and the last run.
 
-    Levels are the verify levels: ok (advisory text), warn, error."""
+    With a `selection` it also flags an enabled provider that lost its credentials (needs
+    `accounts`), a slot whose id the catalog no longer lists, and a slot pinned to a preview or an
+    alias. Levels are the verify levels: ok (advisory text), warn, error."""
     now = now or datetime.now(timezone.utc)
     out: list[tuple[str, str, str]] = []
     drift = [m for m in report.get("models", []) if m.get("drift")]
@@ -945,6 +1404,7 @@ def model_findings(report: dict, overlay: dict, *, now: datetime | None = None) 
         cmds = "; ".join(approve_command(c, p.get("to")) for c, p in pending.items())
         out.append(("ok", f"{len(pending)} model upgrade(s) await approval", cmds))
     st = overlay.get("state") or {}
+    out += _selection_findings(overlay, selection, accounts)
     result = st.get("last_result")
     if result == "rollback_failed":
         out.append(("error", "the last models update could not be rolled back",

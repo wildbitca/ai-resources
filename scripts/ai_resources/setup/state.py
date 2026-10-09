@@ -265,6 +265,18 @@ class SetupState:
     smoke_tests: dict[str, Any] = field(default_factory=lambda: {"last_run": "", "status": "unknown"})
     tracking: InstallTracking = field(default_factory=InstallTracking)
     openclaw: OpenClawState = field(default_factory=OpenClawState)
+    # What the user wants (providers, slots, primary), as a plain dict (see ai_resources.selection).
+    # None on a host that never made a selection: readers derive the implicit four Claude slots, so
+    # existing setups keep producing byte-identical output, and the key is not written at all.
+    selection: Any = None
+
+    def get_selection(self):
+        """The recorded Selection, or None (callers use `selection.implicit_selection()` for the default)."""
+        from .. import selection as _sel
+        return _sel.Selection.from_dict(self.selection)
+
+    def set_selection(self, sel) -> None:
+        self.selection = sel.to_dict() if sel is not None else None
 
 
 def _to_dict(obj: Any) -> Any:
@@ -345,7 +357,10 @@ def save(state: SetupState) -> None:
     state.last_run = datetime.now(timezone.utc).isoformat()
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = yaml.safe_dump(_to_dict(state), default_flow_style=False, sort_keys=False)
+    doc = _to_dict(state)
+    if doc.get("selection") is None:
+        doc.pop("selection", None)
+    text = yaml.safe_dump(doc, default_flow_style=False, sort_keys=False)
     # The state records what the kit replaced on the host (previous config values, unit texts),
     # so it is owner-only: created 0600 (no window where it is world-readable) and tightened
     # when an older run left it wider.
