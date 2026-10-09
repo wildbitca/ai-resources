@@ -62,7 +62,9 @@ Run as the user that will own the gateway. Nothing here is run by an agent.
    which version was running: read `OPENCLAW_INSTALLED_VERSION` from it (`OPENCLAW_PREVIOUS_VERSION`
    is the one before). `INVENTORY.txt` prints the openclaw version the tarball was taken from: use it
    to cross-check, not instead. Also in this file: the operator id, backup dir, public domain and
-   pod CIDR that the units, scripts and config block are rendered from.
+   pod CIDR that the units, scripts and config block are rendered from. Restore
+   `~/.openclaw/kit-host-overrides.json5` the same way if the host had one (the `keep`/`force` lists that
+   decide which of your values setup leaves alone).
 2. **Node and openclaw, at the recorded version.** Install Homebrew's node, then
    `npm install -g --allow-scripts=openclaw,@google/genai,koffi,tree-sitter-bash,protobufjs openclaw@<recorded version>`
    (npm 11 blocks install scripts on global installs otherwise; pitfall T06). Installing the
@@ -89,7 +91,7 @@ Run as the user that will own the gateway. Nothing here is run by an agent.
    `ai-resources openclaw agent-new <agent-id> <workspace>`. Send `/new` in each Telegram topic once
    (pitfall T19) so the agent starts with its `AGENTS.md`.
 9. **Units and scripts.** `ai-resources openclaw install-units --dry-run`, then
-   `ai-resources openclaw install-units --enable`: the ten `openclaw-*` units are rendered from
+   `ai-resources openclaw install-units --enable`: the eighteen `openclaw-*` units are rendered from
    templates and run the scripts from the kit. This is also the fix for a tarball that predates
    1.9.0 and lacks them.
 10. **Start the gateway (operator).** `openclaw gateway install --force`, then
@@ -100,7 +102,8 @@ Run as the user that will own the gateway. Nothing here is run by an agent.
 11. **Verify.** `ai-resources openclaw status`, then
     `bash $AGENT_KIT/scripts/openclaw/openclaw-verify.sh`, then
     `ai-resources openclaw bootstrap --dry-run` (expect zero changes). Confirm
-    `~/.openclaw/watchdog.off` does not exist.
+    `~/.openclaw/watchdog.off` does not exist: while it exists the watchdog, the health check
+    (`openclaw-health-restart.timer`) and the post-setup watch all stand down.
 
 ## 4. Off-box side (GitOps)
 

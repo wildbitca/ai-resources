@@ -4,6 +4,44 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## Unreleased (2.0.2) — setup can no longer take a live gateway down
+
+Prepared, not released: no version file, tag or Formula change belongs to this entry. See
+[ADR-0003](docs/decisions/0003-setup-never-triggers-a-live-gateway-restart.md) and pitfall T40.
+
+### Fixed
+
+- **`ai-resources setup` restarted a live gateway and cut the agent runs in flight (2026-10-09).** It wrote
+  `gateway.bind` over the operator's value; OpenClaw treats `gateway.*` keys as restart-required, defers the
+  restart for 300 s (not configurable) and then forces it. Setup now knows which keys restart the gateway (a
+  pinned copy of OpenClaw's reload table that fails closed on any other version) and applies those only
+  after a separate default-No confirm, while no agent run is in flight, inside a drained window. Unattended
+  runs and busy gateways apply nothing restart-required and record it as pending.
+
+### Changed
+
+- **Behaviour change: setup keeps values you set (fill-only).** The OpenClaw host profile now fills keys you
+  have not set and keeps a differing value, listing it as `kept your value`. Hosts customised under 2.0.0 are
+  no longer made canonical. `~/.openclaw/kit-host-overrides.json5` (`keep` / `force`; a lone `"*"` in
+  `force` restores the old behaviour) opts keys back in. An agent on a haiku primary is still replaced.
+- The engine section still writes `agents.defaults.model.primary` (a wizard choice) and now lists the keys
+  it changed.
+- `gateway.bind: tailnet` written by 2.0.0 is offered back (default No, drained window) on the next
+  interactive run.
+- The health-restart timer is part of the kit (16 to 18 units, 9 to 10 timers). It never forces a restart
+  over live runs: with runs in flight, or a probe that cannot tell, it notifies once per episode; an idle
+  gateway gets the drained doctor. A hand-installed copy is taken over by interactive setup (files moved to
+  `~/.openclaw/backup/hand-units/`, never deleted).
+
+### Added
+
+- `ai-resources openclaw busy` (0 idle, 1 busy, 2 unknown), `apply-pending` (applies deferred
+  restart-required keys in a drained window) and `config-watch` (started by setup).
+- A post-setup watch (transient `openclaw-config-watch-<id>` unit, 10 minutes): after three failed
+  `openclaw health` checks it reverts what the run wrote. Hot keys are reverted at once; restart-required
+  keys only inside the drained window. It notifies over Telegram.
+- `status` and `verify` list pending restart-required keys and the last watch result.
+
 ## [2.0.1] — 2026-10-09 — setup no longer binds the gateway to a tailnet that is not there
 
 ### Fixed

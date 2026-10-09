@@ -408,6 +408,14 @@ unit files in all, counting the later backup guard and uploader). State and logs
 notice) and `~/.openclaw/backups/models-update/` (the last ten forensic copies). The backup script includes
 the overlay.
 
+Since 2.0.2 (ADR-0003): `openclaw-health-restart.service` + `.timer` (every hour; `OnBootSec=30min`) run
+`scripts/openclaw/openclaw-health-restart.sh`, which replaces the host's hand-installed copy (historical
+path `~/.local/bin/openclaw-health-restart.sh`, originally there, moved to `~/.openclaw/backup/hand-units/` on
+adoption) and never forces a restart over live runs; ten timers and eighteen unit files in all. State and logs:
+`~/.openclaw/health-restart.state` (the cooldown), `~/.openclaw/logs/health-restart.log` and
+`~/.openclaw/logs/health-restart.notified` (one notice per episode). Setup also starts a transient
+`openclaw-config-watch-<id>` unit after a run that wrote config (not a timer; at most 11 minutes).
+
 **What the backup left out.** Before 1.9.0 the list in `openclaw-backup.sh` held only
 `openclaw.json`, `gateway.systemd.env`, the gateway and watchdog units, and the backup and
 maintenance scripts. The watchdog, verify and team-watch scripts and the newer unit files were

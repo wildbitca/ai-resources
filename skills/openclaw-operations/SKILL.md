@@ -34,7 +34,7 @@ The subcommands are thin wrappers over the same functions, for headless runs and
 | `ai-resources verify` | read-only check of what setup left behind (exit 1 only on an error) |
 | `ai-resources openclaw doctor` | the drained `doctor --fix` (below) |
 | `ai-resources openclaw bootstrap [--dry-run] [--only STEP]` | eight idempotent host checks, fixes each after a confirm |
-| `ai-resources openclaw install-units [--dry-run] [--enable]` | render/install the ten units |
+| `ai-resources openclaw install-units [--dry-run] [--enable]` | render/install the eighteen units |
 | `ai-resources openclaw agent-new ID WORKSPACE` | workspace plus the right `AGENTS.md` |
 
 Prefer `status` and `bootstrap --dry-run` first: they report and change nothing.
@@ -92,7 +92,7 @@ OpenClaw drops Claude Code subagent events on purpose, so the kit ships a Claude
 
 ## Diagnosis, in the order that has worked
 
-1. `ai-resources openclaw status`: unit, linger, listeners, health, six timers, newest backup per
+1. `ai-resources openclaw status`: unit, linger, listeners, health, ten timers, newest backup per
    tier (daily older than 36 h is flagged), off-box copy, model per agent, doctor warnings. It sets
    `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` itself; do the same by hand for `systemctl --user`
    from SSH or a timer.

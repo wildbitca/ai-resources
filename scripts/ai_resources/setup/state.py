@@ -201,7 +201,7 @@ class OpenClawState:
     host: bool = False                # the master answer: this machine runs the gateway
     host_narration: str = ""          # team narration into Telegram: "" (off) | milestones | every-step
     host_guard: bool = False          # the gateway guard hook (denies an undrained gateway stop)
-    host_units: bool = False          # the ten openclaw-* systemd units (backup, watchdog, ...)
+    host_units: bool = False          # the openclaw-* systemd units (backup, watchdog, ...)
     host_config: bool = False         # the canonical config block (profiles/openclaw-host.json5)
     host_workboard: bool = True       # `openclaw plugins enable workboard` (asked; defaults to yes)
     host_agents_md: bool = False      # AGENTS.md templates for workspaces that have none

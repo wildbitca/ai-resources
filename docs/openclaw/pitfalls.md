@@ -1335,6 +1335,38 @@ timeout; then the unit is killed with everything in its cgroup.
 
 ---
 
+## T40 — A restart-required key written to a live gateway makes OpenClaw force a restart after 300 s, cutting in-flight runs *(added 2026-10-09; fixed in 2.0.2)*
+
+**Symptom.** On 2026-10-09 an `ai-resources setup` run wrote `gateway.bind: tailnet` over the operator's
+`loopback` with `openclaw config patch`. A few minutes later the gateway restarted by itself, cut the agent
+runs in flight and answered 503 for about 8.5 min (the gateway was at 13.3 GB RSS with swap full and 120+
+stalled sessions, T39, so the restart was slow).
+
+**Cause.** OpenClaw's config watcher classifies every `gateway.*` key as restart-required unless it is a listed
+hot exception (`gateway.trustedProxies`, `gateway.publicOrigin`, `gateway.controlUi.allowedOrigins`...). On
+such a write it defers the restart for a hard-coded 300 s (there is no setting for it) and then forces it,
+whatever is running. `openclaw config patch --dry-run --json` has no field that says so, and the text output
+only ends with "Restart the gateway to apply.". The kit's own code never ran a restart, so "setup never
+restarts the gateway" was true of the code and false in practice. The profile also overwrote a value the
+operator had set, which is what made the key change at all.
+
+**Fix (2.0.2, ADR-0003).** The kit pins OpenClaw's reload table for one version and treats everything else as
+restart-required (`openclaw_reload_rules.py`); `apply_patch` refuses such a key unless the caller is the drained
+window; setup applies it only after an explicit confirm, while no run is in flight, inside
+`watchdog.off`, stop, drain, patch, start, health; unattended runs and busy gateways record it as pending
+(`ai-resources openclaw status`, `apply-pending`); the host profile no longer overwrites a value the operator
+set; and a post-setup watch reverts the run if the gateway stops answering.
+
+**Not covered.** A hand-run `openclaw config set gateway.*` (or any restart-required key) against a live gateway
+still restarts it after 300 s: that is OpenClaw's behaviour and the kit cannot change it. Use
+`ai-resources openclaw apply-pending` for kit-managed keys; for anything else, stop the gateway the drained way
+(`ai-resources openclaw doctor`) first.
+
+**How to catch it.** `ai-resources openclaw status` lists pending restart-required keys; the gateway log shows the
+config change followed, about 300 s later, by a restart.
+
+---
+
 # SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT (implemented in 1.9.0)
 
 All ten cards below were proposals on 2026-09-18 and are now implemented. Each one says **what was

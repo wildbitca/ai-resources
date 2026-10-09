@@ -39,16 +39,18 @@ defaults to **no** on a first run, except the workboard, which defaults to yes:
 | 2 | Narrate the team's work into Telegram: **off** / milestones / every step | Writes `OPENCLAW_NARRATION` to `~/.openclaw/kit-host.env` and registers the narration hook in `~/.claude/settings.json`. Off removes the key, and the hook then publishes nothing | no |
 | 2b | Telegram group chat id, once per routed agent (not `main`, not `claude`) | Pre-filled from the live `bindings`; empty leaves the agent alone; `-100...` warns. Writes only the root `bindings` array (validated with `--dry-run`, then its own confirm), `main`'s catch-all last. Never writes `channels`: a group missing from `channels.telegram.groups` is reported with the exact `openclaw config set` command (T35) | yes: `config patch` on `bindings` |
 | 3 | Install the gateway guard hook? | Registers `openclaw_gateway_guard.py`, which denies an undrained `doctor --fix` or gateway stop | no |
-| 4 | Install the `openclaw-*` systemd units? | Renders the ten units into `~/.config/systemd/user` and enables the six timers (a separate confirm shows what will be written) | reloads systemd, not the gateway |
-| 5 | Apply the canonical config block? | Shows the patch, validates it with `config patch --dry-run`, then applies it after its own confirm | yes: needs a restart |
+| 4 | Install the `openclaw-*` systemd units? | Renders the eighteen units into `~/.config/systemd/user` and enables the ten timers (a separate confirm shows what will be written). A hand-installed health-restart copy is taken over here: its timer is disabled and its files are moved to `~/.openclaw/backup/hand-units/<timestamp>/`, never deleted | reloads systemd, not the gateway |
+| 5 | Apply the canonical config block? | Fills the keys you have not set (a value you set is **kept** and listed), validates the patch with `config patch --dry-run`, applies the hot keys after a confirm, and offers the restart-required ones (today `gateway.bind`) in a drained window only when no run is in flight; otherwise they are recorded as pending | hot keys: yes; restart-required keys: only in the drained window |
 | 6 | Your Telegram id, backup dir, and (with 5) domain and ingress CIDR | Written to `kit-host.env`; each value is validated as you type. Empty skips the keys that need it | no |
 | 7 | Enable the workboard plugin? | `openclaw plugins enable workboard`, after a confirm | yes: needs a restart |
 | 8 | Write an `AGENTS.md` into workspaces that have none? | A template per workspace; an existing file is never replaced. The marked kit block is refreshed in every workspace on every run, whatever this answer (v1.9.7) | no |
 | 9 | Check this host against the documented setup? | Runs `bootstrap --dry-run`, reports, and offers to fix; every fix asks again | maybe |
 
 Rules the wizard keeps: **secrets are never asked** (use `openclaw configure`); anything that changes
-the running gateway is its own confirm, printed in full and defaulting to no; **nothing restarts the
-gateway**: it says "restart needed" and stops; a second run changes nothing; undoing it (answer no to the
+the running gateway is its own confirm, printed in full and defaulting to no; **setup never makes the
+gateway restart while it is live** (ADR-0003, T40): a key OpenClaw restarts for is applied only after its own
+default-No confirm, while no agent run is in flight (the count is shown; an unreadable probe counts as busy),
+inside a drained window, and never by an unattended run; a second run changes nothing; undoing it (answer no to the
 first question on a later run and confirm the offer to undo the earlier one) removes exactly what the kit recorded, disables only
 the timers it enabled, puts back a hand-installed hook it replaced, and does not restore a credential
 value because it never stored one. `--dry-run` previews all of it and writes nothing.
@@ -59,7 +61,52 @@ prompts for nothing: it re-applies only the local pieces already agreed (`kit-ho
 
 The `ai-resources openclaw <verb>` commands are wrappers over the same functions, for headless runs
 and disaster recovery: `status`, `doctor`, `bootstrap`, `install-units`, `agent-new`,
-`render-gitops-backups`.
+`render-gitops-backups`, `busy` (runs in flight; exit 0 idle, 1 busy, 2 unknown), `apply-pending`
+and `config-watch` (started by setup).
+
+### Operator overrides (`kit-host-overrides.json5`)
+
+The host profile only fills keys you have not set. To make setup manage a key you already set, or to
+protect an array from additions, write `~/.openclaw/kit-host-overrides.json5` (it is backed up with
+`kit-host.env`; it is parsed, never shell-sourced):
+
+```json5
+{
+  // opt these keys (or everything under them) back into the profile value
+  "force": ["gateway.bind", "tools"],
+  // never touch these, not even to add array entries
+  "keep": ["gateway.controlUi.allowedOrigins"],
+}
+```
+
+A `*` segment matches any one segment; a lone `"*"` in `force` restores the 2.0.x behaviour (the profile
+wins everywhere). A credential path is refused, and so is a path in both lists. The summary prints `kept your
+value: ...` and `filled: ...` as key paths only. An agent still on a haiku primary is replaced regardless
+(T29). Delete the file to return to the defaults.
+
+### Pending restart-required keys (`apply-pending`)
+
+A restart-required key that setup did not apply (unattended run, runs in flight, probe error, declined
+confirm, teardown) is recorded in `setup-state.yaml`. `ai-resources openclaw status` and `ai-resources verify`
+list the paths and the command:
+
+```
+ai-resources openclaw busy            # 0 idle, 1 busy, 2 unknown
+ai-resources openclaw apply-pending   # dry run, then watchdog.off, stop, drain, patch, start, health
+```
+
+It refuses while runs are in flight and asks before it stops the gateway (see `--help` for the
+non-interactive form). A hand-run `openclaw config set gateway.*` is outside this protection: OpenClaw
+forces that restart after 300 s whatever is running (T40).
+
+### Post-setup watch (`openclaw-config-watch-*`)
+
+After a run that wrote OpenClaw config, setup starts a transient user unit that checks `openclaw health` every
+30 s for 10 minutes. Three failures in a row revert the run: hot keys at once, restart-required keys in the
+same drained window (never a blind patch on a live gateway), then a Telegram notice with key paths. Follow it
+with `journalctl --user -u openclaw-config-watch-<id>`, cancel it with `systemctl --user stop
+openclaw-config-watch-<id>`. It stands down on `watchdog.off`, and a newer setup run supersedes it. Without
+`systemd-run` or a user bus setup says `post-setup watch not started`; there is no foreground fallback.
 
 ## Verification: what setup left behind
 
@@ -616,8 +663,9 @@ Invariants that must survive any port of these scripts:
 ### B4.3 Units and timers `[idem]`
 
 **[kit]** `ai-resources openclaw install-units --enable` (or the setup question) renders the
-fourteen units from `templates/systemd/` and enables the **eight** timers (three backup tiers,
-the backup guard, the off-box uploader, maintenance, watchdog and `openclaw-verify.timer`). The
+eighteen units from `templates/systemd/` and enables the **ten** timers (three backup tiers,
+the backup guard, the off-box uploader, maintenance, watchdog, `openclaw-verify.timer`, the daily models
+update and the health check `openclaw-health-restart.timer`). The
 recipe below is what it does.
 
 ```
@@ -1181,7 +1229,7 @@ Exposure:
 
 Backup and watch:
 
-- [ ] `systemctl --user list-timers "openclaw-*"` → 6 timers with a next elapse (or `ai-resources openclaw status`)
+- [ ] `systemctl --user list-timers "openclaw-*"` → 10 timers with a next elapse (or `ai-resources openclaw status`)
 - [ ] `ls /srv/openclaw-backups/daily/` → ~18 MB tarball **with** its `.sha256`
 - [ ] `gcloud storage ls -r gs://wildbit-iac-openclaw-backups` → objects under `daily/` and `weekly/`
 - [ ] guard Job by hand → "daily y weekly estan al dia", exit 0
