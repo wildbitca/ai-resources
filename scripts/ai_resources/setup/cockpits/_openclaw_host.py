@@ -657,7 +657,8 @@ def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> l
 
     s = ctx["state"]
     watch = _Watch(runner or ctx.get("runner") or _runner())
-    report = host.collect_status(watch, run_doctor=False, probe_offbox=False)
+    selection = s.get_selection() if hasattr(s, "get_selection") else None
+    report = host.collect_status(watch, run_doctor=False, probe_offbox=False, selection=selection)
     who = "openclaw"
     unit = report["unit"]
     present = bool(unit["enabled"].split()) and unit["enabled"].split()[0] in _UNIT_STATES
@@ -703,8 +704,16 @@ def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> l
     out += _stability_findings(report.get("stability") or {})
     out += _watchdog_unit_findings()
     from ... import model_pins, models
+    accounts = None
+    if selection is not None and selection.enabled_providers() != ["anthropic"]:
+        try:
+            from ... import model_accounts
+            accounts = model_accounts.detect(model_accounts.default_deps())
+        except Exception:  # noqa: BLE001 - advisory only; a failing status call must not break verify
+            accounts = None
     out += [Finding(level, who, message, remedy)
-            for level, message, remedy in models.model_findings(report, model_pins.load_overlay())]
+            for level, message, remedy in models.model_findings(report, model_pins.load_overlay(),
+                                                               selection=selection, accounts=accounts)]
     return out
 
 

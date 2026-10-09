@@ -62,6 +62,9 @@ def _print_result(r: models.Result, args: argparse.Namespace) -> None:
         print(json.dumps(r.as_dict(), indent=2))
         return
     print(f"{r.outcome}: {r.message}" if r.message else r.outcome)
+    for row in r.providers:
+        if row.status in ("skipped", "failed", "report-only"):
+            print(f"  {row.provider}: {row.text}")
     for p in r.proposals:
         if p.decision == "current":
             note = f" ({'; '.join(p.reasons)})" if p.reasons else ""
@@ -74,15 +77,49 @@ def _print_result(r: models.Result, args: argparse.Namespace) -> None:
             print(f"    approve with: {models.approve_command(p.slot, p.new)}")
 
 
+def answer_label(overlay: dict, slot: str) -> str:
+    """The remembered answer of a slot, as one word for status: always | ask | never (model|family) | frozen."""
+    pol = model_pins.slot_policy(overlay, slot)
+    if pol.get("frozen"):
+        return "frozen"
+    if pol.get("family_never") or pol.get("answer") == "never":
+        return "never (family)"
+    suffix = f", {len(pol['never_ids'])} id(s) refused" if pol.get("never_ids") else ""
+    if pol.get("answer") == "never":
+        return "never (family)"
+    return f"{pol.get('answer', 'ask')}{suffix}"
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     ov = model_pins.load_overlay()
-    eff = model_pins.effective(ov)
-    print("Claude pins (class: effective, kit default, host overlay)")
-    for cls in model_pins.CLASSES:
-        pin = (ov.get("pins") or {}).get(model_pins.slot_key(cls), "-")
-        frozen = " [frozen]" if model_pins.is_frozen(ov, cls) else ""
-        print(f"  {cls:7} {eff[cls]:22} default {model_pins.DEFAULTS[cls]:20} overlay {pin}{frozen}")
     deps = get_deps()
+    selection = deps.selection()
+    slots = model_pins.effective_slots(selection, ov)
+    claude_eff = model_pins.effective(ov)
+    print("Model slots (slot: effective id, kit default, host overlay, answer)")
+    for slot, model_id in slots.items():
+        provider, family = slot.split(":", 1)
+        adapter = model_providers.REGISTRY.get(provider)
+        default = (adapter.default_id(family) if adapter else None) or "-"
+        pin = (ov.get("pins") or {}).get(slot, "-")
+        frozen = " [frozen]" if model_pins.is_frozen(ov, slot) else ""
+        print(f"  {slot:26} {model_id:24} default {default:22} overlay {pin}  answer {answer_label(ov, slot)}{frozen}")
+    if selection is not None:
+        try:
+            accounts = deps.accounts()
+        except Exception as e:  # noqa: BLE001
+            accounts = {}
+            print(f"\nAccounts: unavailable ({type(e).__name__})")
+        print("\nProviders")
+        for pid in model_providers.model_families():
+            psel = selection.providers.get(pid)
+            if psel is None or not psel.enabled:
+                print(f"  {pid:10} skipped: not enabled")
+                continue
+            acc = accounts.get(pid)
+            note = ("credentialed (" + ", ".join(acc.sources) + ")") if acc is not None and acc.credentialed else \
+                   ("skipped: no credentials" if acc is not None else "enabled")
+            print(f"  {pid:10} {note}")
     try:
         doc = deps.read_config()
     except Exception as e:  # noqa: BLE001
@@ -92,14 +129,12 @@ def cmd_status(args: argparse.Namespace) -> int:
     for path, ref in models.collect_refs(doc):
         if "models" in path[:3] and len(path) == 4:
             continue
-        if not ref.startswith("anthropic/"):
-            continue
-        parsed = model_pins.parse_id(ref.split("/", 1)[1])
-        if parsed and ref != model_pins.openclaw_ref(eff[parsed[0]]):
-            drift.append((".".join(str(p) for p in path), ref, parsed[0]))
+        wanted = model_pins.ref_drift(ref, claude_eff, slots)
+        if wanted:
+            drift.append((".".join(str(p) for p in path), ref, wanted))
     print("\nopenclaw.json references: " + ("all match the effective pins" if not drift else f"{len(drift)} differ"))
-    for path, ref, cls in drift:
-        print(f"  DRIFT {path} = {ref} (effective {cls}: {model_pins.openclaw_ref(eff[cls])})")
+    for path, ref, wanted in drift:
+        print(f"  DRIFT {path} = {ref} (effective: {wanted})")
     pending = ov.get("pending") or {}
     print("\nPending approvals: " + ("none" if not pending else ""))
     for slot, p in pending.items():

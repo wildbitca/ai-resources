@@ -1751,9 +1751,19 @@ def _stability_fields(out: dict, name: str, data: dict, snap: dict, events: list
     return out
 
 
+def recorded_selection():
+    """The selection in setup-state.yaml, or None (a broken or missing state never stops a status)."""
+    try:
+        from .setup import state as setup_state
+        return setup_state.load().get_selection()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                    host_env_path: Path | None = None, config_path: Path | None = None,
-                   now: float | None = None, run_doctor: bool = True, probe_offbox: bool = True) -> dict:
+                   now: float | None = None, run_doctor: bool = True, probe_offbox: bool = True,
+                   selection=None) -> dict:
     """Everything `status` prints, as data. Read-only: it never repairs, and sets the two
     environment variables `systemctl --user` needs from a bare shell, which is the manual step
     everyone forgets."""
@@ -1809,17 +1819,18 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
 
     default_model = model_primary((cfg.get("agents") or {}).get("defaults")) or "?"
     eff = model_pins.effective()
+    slots = model_pins.effective_slots(selection) if selection is not None else None
     report["models"] = [{"agent": aid, "model": model_primary(e) or f"{default_model} (default)",
                          "shorthand": isinstance((e or {}).get("model"), str),
-                         "drift": model_pins.ref_drift(model_primary(e) or "", eff)}
+                         "drift": model_pins.ref_drift(model_primary(e) or "", eff, slots)}
                         for aid, e in ((cfg.get("agents") or {}).get("entries") or {}).items()]
     # The defaults and the heartbeat are references too; a row appears only when one lags the pins.
     defaults = (cfg.get("agents") or {}).get("defaults") or {}
     for label, owner in (("(defaults)", defaults), ("(defaults heartbeat)", defaults.get("heartbeat"))):
         ref = model_primary(owner if isinstance(owner, dict) else {})
-        if ref and model_pins.ref_drift(ref, eff):
+        if ref and model_pins.ref_drift(ref, eff, slots):
             report["models"].append({"agent": label, "model": ref, "shorthand": False,
-                                     "drift": model_pins.ref_drift(ref, eff)})
+                                     "drift": model_pins.ref_drift(ref, eff, slots)})
 
     report["identity"] = agent_identities(cfg)
     report["stability"] = stability_summary(home / ".openclaw" / "logs" / "stability", now)
@@ -1995,7 +2006,8 @@ def cmd_agent_new(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    print(render_status(collect_status(run_doctor=not getattr(args, "no_doctor", False))))
+    print(render_status(collect_status(run_doctor=not getattr(args, "no_doctor", False),
+                                       selection=recorded_selection())))
     # Outside the ten sections on purpose: it is not host state but a gap setup named and left.
     try:
         from .setup import state

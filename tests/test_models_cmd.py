@@ -147,3 +147,89 @@ def test_check_json_has_a_current_row_for_fable(env, capsys):
     run("check", "--json")
     rows = json.loads(capsys.readouterr().out)["proposals"]
     assert any(r["cls"] == "fable" and r["decision"] == "current" for r in rows)
+
+
+# --- provider-agnostic verbs and findings (S8) ----------------------------------------------------
+
+import dataclasses
+
+from ai_resources import model_accounts as ma
+from ai_resources.selection import ProviderSel, Selection, SlotSel
+
+
+def _google_selection():
+    s = Selection(shape="multi-provider", smoke_path="litellm")
+    s.providers.update({"anthropic": ProviderSel(), "google": ProviderSel()})
+    s.slots.update({"anthropic:sonnet": SlotSel(ref="anthropic/claude-sonnet-5"),
+                    "google:gemini-flash": SlotSel(ref="google/gemini-3.7-flash")})
+    return s
+
+
+def test_pin_by_class_equals_pin_by_slot(tmp_path, monkeypatch):
+    results = []
+    for argv in (["pin", "opus", "claude-opus-5"], ["pin", "--slot", "anthropic:opus", "claude-opus-5"]):
+        (tmp_path / f"r{len(results)}").mkdir()
+        e = Env(tmp_path / f"r{len(results)}", monkeypatch)
+        monkeypatch.setattr(models_cmd, "get_deps", e.deps)
+        monkeypatch.setattr(mp, "overlay_path", lambda e=e: e.overlay)
+        assert run(*argv) == 0
+        ov = mp.load_overlay(e.overlay)
+        ov.pop("history")
+        results.append(ov)
+    assert results[0] == results[1]
+
+
+def test_pin_and_approve_validate_a_non_claude_slot(env, capsys):
+    assert run("pin", "--slot", "google:gemini-flash", "gemini-3.8-flash") == 0
+    assert mp.load_overlay(env.overlay)["pins"]["google:gemini-flash"] == "gemini-3.8-flash"
+    assert run("approve", "--slot", "google:gemini-flash", "gemini-3.5-flash-lite") == 2     # another family
+    assert run("approve", "--slot", "nope:thing", "x") == 2
+    assert "slot" in capsys.readouterr().err
+
+
+def test_update_slot_filter_alias(env):
+    assert run("update", "--unattended", "--slot", "anthropic:sonnet") == 0
+    assert env.restarts == 1
+
+
+def test_status_lists_every_slot_with_its_answer_and_the_skipped_providers(env, monkeypatch, capsys):
+    deps = dataclasses.replace(env.deps(), selection=_google_selection,
+                               accounts=lambda: {"anthropic": ma.Account(True, ["synthetic"]), "google": ma.Account(False, [], "no credentials")})
+    monkeypatch.setattr(models_cmd, "get_deps", lambda: deps)
+    ov = mp.empty_overlay()
+    ov["policy"]["slots"]["google:gemini-flash"] = {"answer": "always", "never_ids": ["gemini-9-flash"]}
+    mp.save_overlay(ov, env.overlay)
+    assert run("status") == 0
+    out = capsys.readouterr().out
+    assert "google:gemini-flash" in out and "answer always, 1 id(s) refused" in out
+    assert "anthropic:sonnet" in out and "answer always" in out
+    assert "openai     skipped: not enabled" in out
+    assert "google     skipped: no credentials" in out
+
+
+def test_status_reports_drift_for_a_stale_google_reference(env, monkeypatch, capsys):
+    env.doc["agents"]["entries"]["ai"]["model"] = {"primary": "google/gemini-3.7-flash"}
+    deps = dataclasses.replace(env.deps(), selection=_google_selection,
+                               read_config=lambda: env.doc, accounts=lambda: {})
+    monkeypatch.setattr(models_cmd, "get_deps", lambda: deps)
+    run("status")
+    out = capsys.readouterr().out
+    assert "DRIFT agents.entries.ai.model.primary = google/gemini-3.7-flash (effective: google/gemini-3.8-flash)" in out
+
+
+def test_findings_name_lost_credentials_missing_ids_and_preview_pins():
+    sel = _google_selection()
+    ov = {"state": {"catalog_missing": ["google:gemini-flash"]},
+          "pins": {"google:gemini-flash": "gemini-3.9-flash"}}
+    found = models.model_findings({"models": [], "timers": []}, ov, selection=sel,
+                                  accounts={"google": ma.Account(False, [], "no credentials"), "anthropic": ma.Account(True, ["synthetic"])})
+    texts = [m for _l, m, _r in found]
+    assert any("google is enabled but has lost its credentials" in t for t in texts)
+    assert any("google:gemini-flash: the running model id is no longer listed" in t for t in texts)
+    sel.slots["google:gemini-pro"] = SlotSel(ref="google/gemini-3.1-pro-preview")
+    found = models.model_findings({"models": [], "timers": []}, {}, selection=sel)
+    assert any("google:gemini-pro runs gemini-3.1-pro-preview, a preview id" in m for _l, m, _r in found)
+
+
+def test_a_claude_only_host_gets_no_selection_findings():
+    assert models.model_findings({"models": [], "timers": []}, {}) == []
