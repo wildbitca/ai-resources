@@ -580,7 +580,8 @@ def _prompt_stale_check(s: state.SetupState) -> None:
 def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
     engines = available_engines(s)
     missing = [e for e in ENGINES.values()
-              if e.requires and not e.disabled_reason and e not in engines]
+              if e.requires and not e.disabled_reason and e not in engines
+              and not (s.cockpits.get(e.requires) or state.CockpitState()).installed]
     if missing:
         ui.detail("Not offered (CLI not installed): " + ", ".join(e.id for e in missing))
     disabled = [e for e in ENGINES.values() if e.disabled_reason]

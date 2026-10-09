@@ -128,3 +128,10 @@ def test_the_antigravity_engine_shows_its_own_id_and_the_risk_line():
     assert "gemini-3.8-flash-low (Antigravity id)" in line and "unrestricted code execution" in line
     agy = next(a for a in actions if a.cockpit == "agy")
     assert "Antigravity engine" in ms.describe(agy)
+
+
+def test_a_skipped_openclaw_does_not_list_openclaw_json_as_a_changed_file():
+    s = _single_flash()
+    actions = {a.cockpit: a for a in ms.plan_table(s.get_selection(), "single-model", None, ["openclaw", "claude"])}
+    assert not any("openclaw.json" in f for f in actions["openclaw"].files)
+    assert any(f.startswith("~/.openclaw/workspace") for f in actions["openclaw"].files)

@@ -263,6 +263,9 @@ _FILES = {
 
 def files_for(action: compat.CockpitAction, mode: str) -> list[str]:
     files = list(_FILES.get(action.cockpit, []))
+    if action.cockpit == "openclaw" and action.action == compat.SKIP:
+        # No engine is configured for these models: openclaw.json is not patched, only the kit blocks are refreshed.
+        files = [f for f in files if "openclaw.json" not in f]
     if action.cockpit == "aider" and mode == "multi-model" and action.action == compat.VIA_GATEWAY:
         files.append("~/.aider.conf.yml")
     return files
