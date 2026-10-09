@@ -51,6 +51,10 @@ def _print_result(r: models.Result, args: argparse.Namespace) -> None:
         return
     print(f"{r.outcome}: {r.message}" if r.message else r.outcome)
     for p in r.proposals:
+        if p.decision == "current":
+            note = f" ({'; '.join(p.reasons)})" if p.reasons else ""
+            print(f"  {p.cls}: {p.old} up to date{note}")
+            continue
         old = p.old or "-"
         extra = f" ({'; '.join(p.reasons)})" if p.reasons else ""
         print(f"  {p.cls}: {old} -> {p.new} [{p.kind}, price {p.price}] {p.decision}{extra}")

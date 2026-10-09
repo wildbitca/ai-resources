@@ -70,7 +70,8 @@ def test_todays_prices_make_bumps_wait_for_approval(disc):
     assert p["sonnet"].decision == "needs_approval" and "price unknown" in p["sonnet"].reasons
     assert p["opus"].decision == "needs_approval" and "price unknown" in p["opus"].reasons
     assert p["haiku"].decision == "needs_approval" and "major jump" in p["haiku"].reasons
-    assert "fable" not in p
+    # S2: a class with nothing newer in the catalog is reported as "current", not left out.
+    assert p["fable"].decision == "current" and not p["fable"].applicable
 
 
 @pytest.fixture
@@ -118,4 +119,22 @@ def test_new_family_is_reported_and_never_applicable(disc):
 
 def test_a_downgrade_is_never_proposed(disc):
     eff = dict(mp.DEFAULTS, sonnet="claude-sonnet-5-5", opus="claude-opus-5-5", haiku="claude-haiku-5-5")
-    assert [p for p in models.propose(eff, disc, {}) if p.kind != "new_family"] == []
+    # "current" rows (S2) report that nothing is newer; they are not proposals of a change.
+    assert [p for p in models.propose(eff, disc, {}) if p.kind not in ("new_family", "current")] == []
+
+
+def test_a_class_with_nothing_newer_is_reported_as_current(disc):
+    row = by_cls(models.propose(mp.effective({}), disc, {}))["fable"]
+    assert (row.old, row.new, row.kind, row.decision) == ("claude-fable-5-1", "claude-fable-5-1", "current", "current")
+
+
+def test_a_pin_ahead_of_the_catalog_is_current_with_a_note(disc):
+    eff = mp.effective({})
+    eff["opus"] = "claude-opus-9-9"
+    row = by_cls(models.propose(eff, disc, {}))["opus"]
+    assert row.decision == "current" and row.reasons == ["catalog newest is claude-opus-5-5"]
+
+
+def test_current_rows_never_make_a_run_applicable_or_pending(disc):
+    props = [p for p in models.propose(mp.effective({}), disc, {}) if p.decision == "current"]
+    assert props and not any(p.applicable for p in props)

@@ -135,3 +135,15 @@ def test_status_reports_drift_and_agy(env, capsys):
     out = capsys.readouterr().out
     assert "DRIFT agents.entries.main.model.primary" in out
     assert "gemini-3.8-flash-low" in out and "pool" in out
+
+
+def test_check_prints_up_to_date_rows(env, capsys):
+    run("check")
+    out = capsys.readouterr().out
+    assert "fable" in out and "up to date" in out
+
+
+def test_check_json_has_a_current_row_for_fable(env, capsys):
+    run("check", "--json")
+    rows = json.loads(capsys.readouterr().out)["proposals"]
+    assert any(r["cls"] == "fable" and r["decision"] == "current" for r in rows)

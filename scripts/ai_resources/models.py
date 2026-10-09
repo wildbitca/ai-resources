@@ -122,7 +122,7 @@ class Proposal:
     new: str
     kind: str                       # minor | major | new_family
     price: str                      # equal | lower | higher(N%) | unknown
-    decision: str                   # auto | approved | needs_approval | excluded | frozen | report
+    decision: str                   # auto | approved | needs_approval | excluded | frozen | report | current
     reasons: list[str] = field(default_factory=list)
 
     @property
@@ -170,7 +170,12 @@ def propose(effective: dict[str, str], discovered: Discovery, overlay: dict | No
         if not old or not new:
             continue
         v_old, v_new = _version(old), _version(new)
-        if not v_old or not v_new or v_new <= v_old:
+        if not v_old or not v_new:
+            continue
+        if v_new <= v_old:
+            # Nothing newer in the catalog: say so instead of leaving the class out of the report.
+            reasons = [] if v_new == v_old else [f"catalog newest is {new}"]
+            out.append(Proposal(cls, old, old, "current", "equal", "current", reasons))
             continue
         kind = "major" if v_new[0] > v_old[0] else "minor"
         price, pct = _price_delta(old, new)
