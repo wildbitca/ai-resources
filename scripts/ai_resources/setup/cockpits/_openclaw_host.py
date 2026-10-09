@@ -189,7 +189,7 @@ def _ask_host_values(o: state.OpenClawState, env: dict[str, str]) -> None:
 
 def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path], *, dry_run: bool,
               apply_patch: Callable[..., tuple[bool, str]], oc: Callable[..., tuple[int, str]],
-              config_path: Path) -> bool:
+              config_path: Path, run_changes: list[dict] | None = None) -> bool:
     """Apply what the user chose. True when openclaw.json changed."""
     o = s.openclaw
     if not o.host:
@@ -208,7 +208,8 @@ def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path],
     _configure_env(o, dry_run=dry_run)
     _configure_hooks(s, ak_path, dry_run=dry_run)
     _configure_units(o, dry_run=dry_run)
-    changed = _configure_config(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc)
+    changed = _configure_config(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
+                                run_changes=run_changes)
     changed = _configure_workboard(o, doc, dry_run=dry_run, oc=oc) or changed
     changed = _configure_bindings(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch) or changed
     _configure_agents_md(o, doc, dry_run=dry_run)
@@ -383,7 +384,8 @@ def _handle_restart_part(o: state.OpenClawState, patch: dict, replace_paths: lis
 
 def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
                       apply_patch: Callable[..., tuple[bool, str]],
-                      oc: Callable[..., tuple[int, str]] | None = None) -> bool:
+                      oc: Callable[..., tuple[int, str]] | None = None,
+                      run_changes: list[dict] | None = None) -> bool:
     if not o.host_config:
         return False
     try:
@@ -435,12 +437,12 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
         if not ok:
             ui.error(f"OpenClaw rejected the config patch: {out[-400:]}")
         else:
-            _record_changes(o, hot_changes)
+            _record_changes(o, hot_changes, run_changes)
             applied = True
             ui.ok(f"OpenClaw config: {len(hot_changes)} key(s) applied")
     if restart_patch and _handle_restart_part(o, restart_patch, restart_rp, restart_changes, source="setup",
                                               apply_patch=apply_patch):
-        _record_changes(o, restart_changes)
+        _record_changes(o, restart_changes, run_changes)
         applied = True
         ui.ok(f"OpenClaw config: {len(restart_changes)} restart-required key(s) applied in a drained window")
     if applied:
@@ -451,9 +453,11 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
     return applied or reverted
 
 
-def _record_changes(o: state.OpenClawState, changes: list[dict]) -> None:
+def _record_changes(o: state.OpenClawState, changes: list[dict], run_changes: list[dict] | None = None) -> None:
     known = {tuple(c["path"]) for c in o.host_config_changes}
     o.host_config_changes.extend(c for c in changes if tuple(c["path"]) not in known)
+    if run_changes is not None:                      # what the post-setup watch may revert
+        run_changes.extend(copy.deepcopy(c) for c in changes)
 
 
 def _offer_legacy_revert(o: state.OpenClawState, doc: dict, version, mode, *, dry_run: bool,
@@ -570,6 +574,48 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
     o.host_restart_pending = []
     ui.ok("Restart-required config applied in a drained window.")
     return 0 if window_ok else 1
+
+
+# --- the post-setup watch (R3) ------------------------------------------------------------------------------
+
+def stop_config_watch(*, forget: bool = False, o: state.OpenClawState | None = None) -> None:
+    """Stop any `openclaw-config-watch-*` unit (a new run supersedes it; teardown cancels it)."""
+    _runner()(["systemctl", "--user", "stop", host.WATCH_UNIT_PREFIX + "*"], env=host.systemd_env())
+    if forget and o is not None:
+        o.config_watch = None
+
+
+def start_config_watch(s: state.SetupState, run_changes: list[dict]) -> bool:
+    """Record this run's changes and start the bounded health watch as a transient user unit.
+
+    Never a foreground loop (T39: an open tool call holds a gateway stop). When `systemd-run` or
+    the user bus is missing, say so and carry on: setup is not blocked by its safety net.
+    """
+    import shutil
+    import uuid
+
+    o = s.openclaw
+    if not run_changes:
+        return False
+    run_id = uuid.uuid4().hex[:8]
+    unit = host.WATCH_UNIT_PREFIX + run_id
+    cli = shutil.which("ai-resources")
+    if not cli:
+        ui.warn("post-setup watch not started: `ai-resources` is not on PATH; run `ai-resources openclaw status` "
+                "in 10 minutes")
+        return False
+    o.config_watch = {"run_id": run_id, "unit": unit, "started_at": _now(), "changes": run_changes,
+                      "done": False, "result": None}
+    rc, out = _runner()(["systemd-run", "--user", f"--unit={unit}", "--collect", "-p", "RuntimeMaxSec=660",
+                         cli, "openclaw", "config-watch", "--run-id", run_id], env=host.systemd_env(), timeout=30)
+    if rc != 0:
+        o.config_watch = None
+        ui.warn(f"post-setup watch not started: {out.strip()[-160:] or 'systemd-run failed'}; run "
+                "`ai-resources openclaw status` in 10 minutes")
+        return False
+    ui.info(f"Post-setup watch started ({unit}): if `openclaw health` fails 3 times within 10 minutes, this run's "
+            f"changes are reverted.\n  follow:  journalctl --user -u {unit}\n  cancel:  systemctl --user stop {unit}")
+    return True
 
 
 def _configure_workboard(o: state.OpenClawState, doc: dict, *, dry_run: bool,
@@ -743,6 +789,8 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
     """Remove exactly what configure() recorded and restore what it replaced. True when finished."""
     o = s.openclaw
     ok = True
+    if o.config_watch:
+        stop_config_watch(forget=True, o=o)     # before restoring: a revert must not race the restore
 
     for path_str, digest in list(o.host_agents_md_written.items()):
         p = Path(path_str)

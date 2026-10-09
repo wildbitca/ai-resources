@@ -253,6 +253,10 @@ class OpenClawState:
     #   {"op": "restore", "path": dotted, "change": <host_config_changes record>, "source", "at"}
     # Never holds a secret value. `ai-resources openclaw apply-pending` applies and clears them.
     host_restart_pending: list[Any] = field(default_factory=list)
+    # The post-setup health watch (`openclaw-config-watch-<run_id>`, a transient user unit):
+    # {run_id, unit, started_at, changes, done, result}. `changes` are this run's written keys with
+    # their previous values (never a secret value). Cleared by a newer run or a teardown.
+    config_watch: Any = None
 
 
 @dataclass

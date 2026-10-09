@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 from typing import Callable, NamedTuple
 
-from . import model_pins, repo_root
+from . import model_pins, openclaw_reload_rules, repo_root
 
 # (return code, combined output). 127 means the binary is missing.
 Runner = Callable[..., "tuple[int, str]"]
@@ -453,7 +453,7 @@ EXIT_APPLY_REJECTED = 7   # the dry run was rejected, so nothing was stopped
 
 def apply_drained(patch: dict, replace_paths: list[str] | None, *, apply_patch: Callable[..., "tuple[bool, str]"],
                   runner: Runner = default_runner, out: Callable[[str], None] = print,
-                  **window: object) -> tuple[int, bool]:
+                  require_idle: bool = True, **window: object) -> tuple[int, bool]:
     """Apply a patch that carries restart-required keys, inside a drained window. (exit code, written).
 
     Dry run first: a rejected patch aborts BEFORE anything is stopped. Then `drained_window` with
@@ -472,8 +472,157 @@ def apply_drained(patch: dict, replace_paths: list[str] | None, *, apply_patch: 
         out("config patch applied" if done else f"config patch failed: {msg[-300:]}")
         return done
 
-    code = drained_window(action, runner=runner, require_idle=True, out=out, **window)
+    code = drained_window(action, runner=runner, require_idle=require_idle, out=out, **window)
     return code, written["ok"]
+
+
+# --- the post-setup watch: revert what this run wrote if the gateway stops answering (ADR-0003) ---------------
+#
+# Started by setup as a transient user unit (`systemd-run --user`), never in the foreground: the loop is
+# minutes long and an open tool call holds a gateway stop (T39). It is bounded, cancellable (stop the unit,
+# or a newer setup run, or watchdog.off) and reverts at most once.
+
+WATCH_UNIT_PREFIX = "openclaw-config-watch-"
+WATCH_WINDOW = 600.0
+WATCH_INTERVAL = 30.0
+WATCH_FAILURES = 3
+_TRANSIENT_STATES = frozenset({"activating", "deactivating", "reloading"})
+
+
+def notify_owner(message: str, runner: Runner = default_runner) -> bool:
+    """Telegram to the operator, as the kit's shell scripts do (`openclaw message send`). Best effort."""
+    target = read_host_env().get("OPENCLAW_OWNER_TELEGRAM_ID", "")
+    if not target:
+        return False
+    rc, _out = runner([resolve_openclaw_bin(), "message", "send", "--channel", "telegram", "--target", target,
+                       "--message", message], timeout=30)
+    return rc == 0
+
+
+def _unit_state(runner: Runner) -> str:
+    """ActiveState of the gateway unit ("" when unreadable)."""
+    rc, text = runner(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "ActiveState", "--value"],
+                      env=systemd_env())
+    return text.strip() if rc == 0 else ""
+
+
+def watch_config(run_id: str, *, runner: Runner = default_runner,
+                 sleep: Callable[[float], None] = time.sleep, window: float = WATCH_WINDOW,
+                 interval: float = WATCH_INTERVAL, failures: int = WATCH_FAILURES,
+                 load: Callable[[], object] | None = None, save: Callable[[object], None] | None = None,
+                 apply_patch: Callable[..., "tuple[bool, str]"] | None = None,
+                 notify: Callable[[str], bool] | None = None, marker: Marker | None = None,
+                 reload_mode: Callable[[], "str | None"] | None = None,
+                 out: Callable[[str], None] = print, **window_kw: object) -> int:
+    """Watch the gateway for `window` seconds after a setup run; revert that run's changes if it stops answering.
+
+    Exit 0 whether or not it reverted (the unit's job is done); 1 when the revert itself failed.
+
+    A tick that finds no `config_watch` for this run id (cancelled or superseded), `done` already
+    set, or `watchdog.off` present (a maintenance window is open) ends the watch without a revert.
+    A gateway that is activating, deactivating or reloading is neither a failure nor a success: a
+    restart by OpenClaw, the watchdog or a kit window is in progress. After `failures` consecutive
+    failed `openclaw health` calls everything the run recorded is reverted: hot keys at once with no
+    restart; restart-required keys only inside the kit's drained window (a blind `config patch` of
+    such a key would make OpenClaw force a restart over live runs after 300 s).
+    """
+    from .setup import state as setup_state
+    from .setup.cockpits import openclaw as cockpit
+
+    load = load or setup_state.load
+    save = save or setup_state.save
+    apply_patch = apply_patch or cockpit.apply_patch
+    notify = notify or (lambda msg: notify_owner(msg, runner))
+    reload_mode = reload_mode or cockpit._live_reload_mode
+    marker = marker or Marker()
+    oc = resolve_openclaw_bin()
+    ticks = min(21, int(window // interval) + 1)
+    bad = 0
+    for tick in range(ticks):
+        if tick:
+            sleep(interval)
+        s = load()
+        cw = s.openclaw.config_watch
+        if not cw or cw.get("run_id") != run_id or cw.get("done"):
+            out("watch: cancelled, superseded or already finished; nothing to do")
+            return 0
+        if marker.exists():
+            out("watch: a maintenance window is open (watchdog.off); standing down")
+            return 0
+        if _unit_state(runner) in _TRANSIENT_STATES:
+            continue
+        rc, _text = runner([oc, "health"], timeout=45)
+        if rc == 0:
+            bad = 0
+            continue
+        bad += 1
+        if bad >= failures:
+            return _revert_run(s, cw, runner=runner, sleep=sleep, save=save, apply_patch=apply_patch, notify=notify,
+                               reload_mode=reload_mode, marker=marker, out=out, **window_kw)
+    out("watch: the gateway stayed healthy; nothing to revert")
+    return 0
+
+
+def _revert_run(s, cw: dict, *, runner: Runner, sleep, save, apply_patch, notify, reload_mode, marker, out,
+                **window_kw) -> int:
+    rr = openclaw_reload_rules
+
+    changes = list(cw.get("changes") or [])
+    patch, rp = restore_patch(changes)
+    version = rr.installed_openclaw_version(lambda argv, **kw: runner([resolve_openclaw_bin(), *argv[1:]], **kw))
+    restart = rr.restart_paths(patch, openclaw_version=version, reload_mode=reload_mode())
+    hot, res = rr.split_patch(patch, restart)
+    hot_rp, res_rp = rr.split_replace_paths(rp, restart)
+    hot_paths, res_paths = rr.leaf_paths(hot), rr.leaf_paths(res)
+    problems: list[str] = []
+    done_hot = done_res = False
+    out("watch: the gateway stopped answering; reverting this run's config changes")
+    if hot:
+        try:
+            ok, text = apply_patch(hot, dry_run=True, replace_paths=hot_rp)
+            if ok:
+                ok, text = apply_patch(hot, replace_paths=hot_rp)
+        except rr.RestartRequired as e:       # defensive: the same table that split the patch refused it
+            ok, text = False, str(e)
+        done_hot = ok
+        if not ok:
+            problems.append(f"hot keys not reverted: {text[-200:]}")
+    if res:
+        code, written = apply_drained(res, res_rp, apply_patch=apply_patch, runner=runner, out=out,
+                                      require_idle=False, sleep=sleep, marker=marker, **window_kw)
+        done_res = written
+        if not written:
+            problems.append(f"restart-required keys not reverted (drained window exit {code})")
+            for ch in changes:
+                if ".".join(restore_path_of(ch)) in res_paths:
+                    s.openclaw.host_restart_pending.append(
+                        {"op": "restore", "path": ".".join(ch["path"]), "change": ch, "source": "watch",
+                         "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+    cw["done"] = True
+    cw["result"] = {"hot": hot_paths if done_hot else [], "restart": res_paths if done_res else [],
+                    "problems": problems}
+    save(s)
+    parts = []
+    if done_hot:
+        parts.append("reverted: " + ", ".join(hot_paths))
+    if done_res:
+        parts.append("reverted in a drained window (restart-required): " + ", ".join(res_paths))
+    if problems:
+        parts.append("; ".join(problems) + ". Check `ai-resources openclaw status`.")
+    message = ("OpenClaw did not answer `openclaw health` after the last `ai-resources setup`, so the kit "
+               "reverted what that run wrote. " + " | ".join(parts or ["nothing to revert"]))
+    out(message)
+    if not notify(message):
+        out("watch: no Telegram target configured or the send failed; the journal has the details")
+    return 1 if problems else 0
+
+
+def restore_path_of(ch: dict) -> list[str]:
+    return ch["path"] if ch.get("had") else ch.get("delete", ch["path"])
+
+
+def cmd_config_watch(args: argparse.Namespace) -> int:
+    return watch_config(args.run_id, window=args.window, interval=args.interval)
 
 
 # --- the restart guard: is a turn in flight right now? --------------------------------------------
@@ -1089,6 +1238,36 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
             "kept": kept,
             "filled": [".".join(c["path"]) for c in changes if c["action"] == "filled"],
             "forced": [".".join(c["path"]) for c in changes if c["action"] == "forced"]}
+
+
+def change_records(doc: dict, patch: dict, replace_paths: list[str] | None, action: str) -> list[dict]:
+    """Records (the shape `restore_patch` inverts) for every leaf `patch` writes into `doc`.
+
+    Used for writers other than the host profile (the engine section) so the post-setup watch can put
+    their keys back. A `--replace-path` is one record holding the whole previous subtree. A secret
+    leaf records that it existed and nothing of its value.
+    """
+    replace = set(replace_paths or [])
+    out: list[dict] = []
+
+    def walk(node, path: list[str]) -> None:
+        dotted = ".".join(path)
+        if isinstance(node, dict) and node and dotted not in replace:
+            for k, v in node.items():
+                walk(v, path + [str(k)])
+            return
+        current, had = _get_path(doc, path)
+        secret = is_secret_path(path)
+        ch: dict = {"path": path, "previous": None if secret else (copy.deepcopy(current) if had else None),
+                    "had": had, "action": action}
+        if secret:
+            ch["secret"] = True
+        if not had:
+            ch["delete"] = next(path[: i + 1] for i in range(len(path)) if not _get_path(doc, path[: i + 1])[1])
+        out.append(ch)
+
+    walk(patch, [])
+    return out
 
 
 def restore_patch(changes: list[dict]) -> tuple[dict, list[str]]:
@@ -2294,6 +2473,13 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
                             help="Apply the restart-required config setup deferred, inside a drained window (only when idle)")
     p_ap.add_argument("--yes", action="store_true", help="Do not ask for confirmation (it still refuses while busy)")
     p_ap.set_defaults(func=cmd_apply_pending)
+
+    p_cw = verbs.add_parser("config-watch",
+                            help="(started by setup) watch the gateway after a setup run; revert the run if it stops answering")
+    p_cw.add_argument("--run-id", required=True, help="The setup run this watch belongs to")
+    p_cw.add_argument("--window", type=float, default=WATCH_WINDOW, help="Seconds to watch (default 600)")
+    p_cw.add_argument("--interval", type=float, default=WATCH_INTERVAL, help="Seconds between checks (default 30)")
+    p_cw.set_defaults(func=cmd_config_watch)
 
     p_st = verbs.add_parser("status", help="One-screen host status (never repairs)")
     p_st.add_argument("--no-doctor", action="store_true",

@@ -440,6 +440,9 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
 
 RestartRequired = openclaw_reload_rules.RestartRequired
 
+# One-shot hook run before the first non-dry config write of a setup run (see `configure`).
+_before_first_write = None
+
 
 def _version_runner(argv, **kw):
     """The reload-rule table's `runner` seam over `_openclaw` (looked up at call time, so tests swap it)."""
@@ -462,6 +465,7 @@ def _live_reload_mode() -> str | None:
 def apply_patch(patch: dict, *, dry_run: bool = False,
                 replace_paths: list[str] | None = None, allow_restart: bool = False,
                 reload_mode: str | None = None) -> tuple[bool, str]:
+    global _before_first_write
     # The Telegram allowlist is the only gate in front of the unrestricted claude-kit backend:
     # no patch may carry an allowlist or a topic binding, and no --replace-path may name channels.
     openclaw_host.assert_channels_safe(patch, replace_paths)
@@ -473,6 +477,9 @@ def apply_patch(patch: dict, *, dry_run: bool = False,
             reload_mode=reload_mode if reload_mode is not None else _live_reload_mode())
         if restart:
             raise RestartRequired(restart)
+    if not dry_run and _before_first_write is not None:
+        hook, _before_first_write = _before_first_write, None
+        hook()
     args = ["config", "patch", "--stdin"] + (["--dry-run"] if dry_run else [])
     for rp in (replace_paths or []):
         args += ["--replace-path", rp]
@@ -715,6 +722,7 @@ def applied_engine(s: state.SetupState) -> Engine | None:
 
 
 def configure(ctx: dict) -> list[Path]:
+    global _before_first_write
     s = ctx["state"]
     dry_run = ctx.get("dry_run", False)
     written: list[Path] = []
@@ -728,6 +736,21 @@ def configure(ctx: dict) -> list[Path]:
     path = config_path()
     doc = read_config(path)
     ak_path = str(_shared.stable_kit_root(repo_root()))
+    run_changes: list[dict] = []
+    ctx["run_changes"] = run_changes
+    # A new run supersedes the previous watch: it is stopped just BEFORE this run's first write, so an old
+    # revert can never race the new writes, while a run that writes nothing leaves the old watch (and the
+    # state) alone. (setup-state records every watch it starts.)
+    _before_first_write = ((lambda: host_section.stop_config_watch(forget=True, o=s.openclaw))
+                           if (s.openclaw.config_watch and not dry_run) else None)
+    try:
+        return _configure(ctx, s, cs, dry_run, written, path, doc, ak_path, run_changes)
+    finally:
+        _before_first_write = None
+
+
+def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[Path], path: Path, doc: dict,
+               ak_path: str, run_changes: list[dict]) -> list[Path]:
 
     engine_changed = _configure_engine(ctx, doc, path, ak_path, written)
     mcp_changed = _configure_mcp(s, doc, path, written, dry_run=dry_run)
@@ -736,8 +759,11 @@ def configure(ctx: dict) -> list[Path]:
     # Above the early return below on purpose: the host section's local work (kit-host.env, hooks,
     # AGENTS.md) does not depend on openclaw.json having changed, and it renders its own dry run.
     host_changed = host_section.configure(s, doc, ak_path, written, dry_run=dry_run,
-                                          apply_patch=apply_patch, oc=_openclaw, config_path=path)
+                                          apply_patch=apply_patch, oc=_openclaw, config_path=path,
+                                          run_changes=run_changes)
     changed = engine_changed or mcp_changed or voice_changed or workshop_changed or host_changed
+    if not dry_run and run_changes:
+        host_section.start_config_watch(s, run_changes)
     # The kit block in every agent workspace does not depend on the engine, on the host section's
     # answers or on openclaw.json having changed: it is refreshed on every run (B1, v1.9.7).
     _configure_workspace_blocks(s, doc, ak_path, ctx.get("gateway_url", ""), written,
@@ -1151,6 +1177,8 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
     if dry_run:
         return False
     written.append(path)
+    if ctx.get("run_changes") is not None:
+        ctx["run_changes"].extend(openclaw_host.change_records(doc, patch, replace_paths, "engine"))
     # The engine section is a deliberate wizard choice, not fill-only (ADR-0003), so say which keys it wrote.
     ui.info("changed by the engine section: " + ", ".join(openclaw_reload_rules.leaf_paths(patch)))
 

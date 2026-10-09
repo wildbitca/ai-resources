@@ -37,7 +37,7 @@ def events(sim, monkeypatch):
         return real_oc(args, stdin=stdin, timeout=timeout)
 
     def sd(argv, **kw):
-        if argv[:2] == ["systemctl", "--user"] and argv[2] in ("stop", "start"):
+        if argv[:2] == ["systemctl", "--user"] and argv[2] in ("stop", "start") and host.GATEWAY_UNIT in argv:
             log.append((argv[2], host.WATCHDOG_OFF.exists()))
         elif argv[:2] == ["systemctl", "--user"] and argv[2] == "show" and "TasksCurrent" in argv:
             log.append(("drain",))
