@@ -876,7 +876,7 @@ def _await_idle(probe, count: int, workers: list, *, sleep, monotonic, cap: floa
 
 def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=None, monotonic=None,
                     interactive: bool | None = None, wait_cap: float = RESTART_WAIT_CAP,
-                    wait_interval: float = RESTART_WAIT_INTERVAL) -> bool:
+                    wait_interval: float = RESTART_WAIT_INTERVAL, restart_timeout: int = 180) -> bool:
     """Restart the gateway and report whether the backend came back registered.
 
     A restart kills every agent turn in flight, and the caller reaches this exactly when
@@ -902,7 +902,7 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
                         cap=wait_cap, interval=wait_interval)
         elif answer != RESTART_NOW:
             raise RestartDeferred(reason, workers)
-    rc, out = _openclaw(["gateway", "restart"], timeout=180)
+    rc, out = _openclaw(["gateway", "restart"], timeout=restart_timeout)
     if rc != 0:
         ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")
         return False

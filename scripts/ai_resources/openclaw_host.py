@@ -44,7 +44,7 @@ GATEWAY_UNIT = "openclaw-gateway.service"
 
 
 def default_runner(argv: list[str], *, env: dict | None = None, timeout: float | None = 120,
-                   input: str | None = None) -> tuple[int, str]:
+                   input: str | None = None, cwd: str | None = None) -> tuple[int, str]:
     """Run `argv`; (return code, combined output).
 
     127 is a missing binary and 124 a timeout (the coreutils `timeout` convention); any other
@@ -52,7 +52,7 @@ def default_runner(argv: list[str], *, env: dict | None = None, timeout: float |
     """
     try:
         r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, input=input,
-                           env=env, cwd=str(Path.home()))
+                           env=env, cwd=cwd or str(Path.home()))
     except FileNotFoundError:
         return 127, f"{argv[0]} not found"
     except subprocess.TimeoutExpired as e:

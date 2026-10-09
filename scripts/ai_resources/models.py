@@ -441,3 +441,345 @@ def rollback_last(*, apply_patch: ApplyPatch, overlay: dict, overlay_file: Path 
     updated.setdefault("history", []).append({"at": _stamp(now), "action": "rollback"})
     model_pins.save_overlay(updated, overlay_file)
     return True, "rolled back", updated
+
+
+# =================================================================================================
+# S7: smoke probe and the update orchestration
+# =================================================================================================
+
+class RestartDeferred(Exception):
+    """The gateway was not restarted because agent turns are in flight; never forced."""
+
+    def __init__(self, reason: str = ""):
+        super().__init__(reason)
+        self.reason = reason
+
+
+@dataclass
+class SmokeResult:
+    ok: bool
+    reason: str = ""
+    excerpt: str = ""
+
+
+_SECRET = re.compile(r"(sk-[A-Za-z0-9_\-]{8,}|(?i:token|key|secret|password|authorization)[\"']?\s*[:=]\s*[\"']?[^\s\"',}]+)")
+
+
+def redact(text: str, limit: int = 200) -> str:
+    return _SECRET.sub("[redacted]", text)[:limit]
+
+
+def smoke_cwd() -> Path:
+    """A neutral scratch directory, so `--setting-sources project` loads no project settings."""
+    path = model_pins.overlay_path().parent / "smoke"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def smoke(model_id: str, runner: Runner, *, timeout: float = SMOKE_TIMEOUT, claude_bin: str = "claude",
+          cwd: Path | None = None) -> SmokeResult:
+    """One real call on the operator's account. Passes only when rc is 0, the reply contains OK and
+    the served model equals `model_id` (the `modelUsage` key of `claude -p --output-format json`)."""
+    argv = [claude_bin, "-p", "--model", model_id, "--output-format", "json", "--setting-sources", "project",
+            "Reply with exactly OK"]
+    kw = {"timeout": timeout}
+    kw["cwd"] = str(cwd or smoke_cwd())
+    rc, out = runner(argv, **kw)
+    if rc != 0:
+        return SmokeResult(False, f"claude exited {rc}", redact(out))
+    try:
+        data = json.loads(out[out.index("{"):out.rindex("}") + 1])
+    except ValueError:
+        return SmokeResult(False, "reply was not JSON", redact(out))
+    if not isinstance(data, dict) or data.get("is_error"):
+        return SmokeResult(False, "claude reported an error", redact(str(data.get("result", "")) if isinstance(data, dict) else out))
+    if "OK" not in str(data.get("result", "")):
+        return SmokeResult(False, "reply did not contain OK", redact(str(data.get("result", ""))))
+    served = list((data.get("modelUsage") or {}).keys())
+    if not any(k.split("[", 1)[0] == model_id for k in served):
+        return SmokeResult(False, f"served model {served or 'unknown'} is not {model_id}", redact(str(data.get("result", ""))))
+    return SmokeResult(True, "ok", redact(str(data.get("result", ""))))
+
+
+@dataclass
+class Options:
+    check: bool = False
+    dry_run: bool = False
+    classes: list[str] | None = None
+    no_restart: bool = False
+    refresh: bool = True
+    unattended: bool = False
+
+
+@dataclass
+class Result:
+    rc: int
+    outcome: str
+    message: str = ""
+    proposals: list[Proposal] = field(default_factory=list)
+    applied: dict[str, tuple[str, str]] = field(default_factory=dict)
+
+    def as_dict(self) -> dict:
+        return {"rc": self.rc, "outcome": self.outcome, "message": self.message,
+                "proposals": [p.as_dict() for p in self.proposals],
+                "applied": {c: list(v) for c, v in self.applied.items()}}
+
+
+@dataclass
+class Deps:
+    """Everything external. `default_deps()` wires the real ones; tests pass fakes."""
+    runner: Runner
+    apply_patch: ApplyPatch
+    read_config: Callable[[], dict]
+    config_file: Callable[[], Path]
+    smoke: Callable[[str], SmokeResult]
+    busy: Callable[[], int]
+    restart: Callable[[], object]
+    health: Callable[[], bool]
+    main_pid: Callable[[], str]
+    sleep: Callable[[float], None] = time.sleep
+    monotonic: Callable[[], float] = time.monotonic
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+    marker: openclaw_host.Marker | None = None
+    overlay_file: Path | None = None
+    backup_root: Path | None = None
+    lock: Callable[[], object] = update_lock
+    log: Callable[[dict], None] = lambda event: None
+    health_tries: int = HEALTH_TRIES
+    health_interval: float = HEALTH_INTERVAL
+
+
+def _load(deps: Deps) -> dict:
+    ov = model_pins.load_overlay(deps.overlay_file)
+    return ov or model_pins.empty_overlay()
+
+
+def _persist(deps: Deps, ov: dict, **state_fields) -> dict:
+    ov.setdefault("state", {}).update(state_fields)
+    model_pins.save_overlay(ov, deps.overlay_file)
+    return ov
+
+
+def _log(deps: Deps, event: str, **kw) -> None:
+    deps.log({"at": deps.now().isoformat(), "event": event, **kw})
+
+
+def run_update(opts: Options, deps: Deps) -> Result:
+    with deps.lock() as got:
+        if not got:
+            return Result(EXIT_LOCKED, "locked", "another models update is running")
+        return _run_locked(opts, deps)
+
+
+def _run_locked(opts: Options, deps: Deps) -> Result:
+    writes = not (opts.check or opts.dry_run)
+    ov = _load(deps)
+    st = ov.get("state") or {}
+    now = deps.now()
+
+    if st.get("pending_restart") and writes:
+        last = st.get("last_change") or {}
+        applied = {c: tuple(v) for c, v in (last.get("changes") or {}).items()}
+        _log(deps, "resume_restart", applied=list(applied))
+        return _restart_and_verify(opts, deps, ov, applied, resume=True)
+
+    cooldown = policy_of(ov)["cooldown_hours"]
+    last_switch = st.get("last_switch_at")
+    if writes and last_switch:
+        try:
+            if now - datetime.fromisoformat(last_switch) < timedelta(hours=cooldown):
+                _log(deps, "cooldown", last_switch_at=last_switch)
+                return Result(EXIT_OK, "cooldown", f"switched less than {cooldown:g} h ago")
+        except ValueError:
+            pass
+
+    try:
+        disc = discover(deps.runner, refresh=opts.refresh, warn=lambda m: _log(deps, "warn", message=m))
+    except DiscoveryError as e:
+        _log(deps, "discovery_failed", error=str(e))
+        if writes:
+            _persist(deps, ov, last_run=now.isoformat(), last_result="error")
+        return Result(EXIT_ERROR, "error", str(e))
+    props = propose(model_pins.effective(ov), disc, ov)
+    needs = [p for p in props if p.decision == "needs_approval"]
+    if writes:
+        pending = ov.setdefault("pending", {})
+        for cls in list(pending):
+            if cls not in {p.cls for p in needs}:
+                pending.pop(cls)
+        for p in needs:
+            first = (pending.get(p.cls) or {}).get("first_seen") if (pending.get(p.cls) or {}).get("to") == p.new else None
+            pending[p.cls] = {"to": p.new, "reason": ", ".join(p.reasons), "first_seen": first or now.isoformat()}
+    applicable = [p for p in props if p.applicable and (not opts.classes or p.cls in opts.classes)]
+    _log(deps, "plan", proposals=[p.as_dict() for p in props])
+
+    if not applicable:
+        rc = EXIT_APPROVAL_PENDING if needs else EXIT_OK
+        if writes:
+            _persist(deps, ov, last_run=now.isoformat(), last_result="pending_approval" if needs else "no_change")
+        return Result(rc, "pending_approval" if needs else "no_change", proposals=props)
+    if opts.check:
+        return Result(EXIT_APPLICABLE, "applicable", "changes are ready to apply", proposals=props)
+
+    survivors: list[Proposal] = []
+    for p in applicable:
+        res = deps.smoke(p.new)
+        _log(deps, "smoke", model=p.new, ok=res.ok, reason=res.reason, excerpt=res.excerpt)
+        if res.ok:
+            survivors.append(p)
+    if not survivors:
+        if writes:
+            _persist(deps, ov, last_run=now.isoformat(), last_result="smoke_failed")
+        return Result(EXIT_PRECHECK_FAILED, "smoke_failed", "smoke failed for every candidate", proposals=props)
+    changes = {p.cls: (p.old, p.new) for p in survivors}
+
+    if deps.busy():
+        if opts.dry_run:
+            return Result(EXIT_DEFERRED, "deferred", "the gateway is busy", proposals=props)
+        _persist(deps, ov, last_run=now.isoformat(), last_result="deferred",
+                 deferrals=int(st.get("deferrals", 0)) + 1)
+        _log(deps, "deferred", reason="gateway busy")
+        return Result(EXIT_DEFERRED, "deferred", "the gateway is busy; nothing was patched", proposals=props)
+
+    doc = deps.read_config()
+    if opts.dry_run:
+        built = build_forward_patch(doc, {model_pins.openclaw_ref(o): model_pins.openclaw_ref(n)
+                                          for o, n in changes.values()})
+        if built["patch"]:
+            ok, out = deps.apply_patch(built["patch"], dry_run=True, replace_paths=[])
+            if not ok:
+                return Result(EXIT_PRECHECK_FAILED, "patch_rejected", out[-300:], proposals=props)
+        return Result(EXIT_OK, "dry_run", "the patch validates; nothing was applied", proposals=props, applied=changes)
+
+    backup(deps.config_file(), overlay_file=deps.overlay_file, root=deps.backup_root, now=deps.now)
+    ok, msg, ov = apply_changes(doc, changes, apply_patch=deps.apply_patch, overlay=ov,
+                                overlay_file=deps.overlay_file, now=deps.now)
+    if not ok:
+        _persist(deps, ov, last_run=now.isoformat(), last_result="patch_rejected")
+        _log(deps, "apply_failed", message=msg)
+        return Result(EXIT_PRECHECK_FAILED, "patch_rejected", msg, proposals=props)
+    _log(deps, "applied", changes={c: list(v) for c, v in changes.items()})
+    if opts.no_restart:
+        _persist(deps, ov, last_run=now.isoformat(), last_result="switched", last_switch_at=now.isoformat())
+        return Result(EXIT_OK, "switched", "switched; the gateway was not restarted (--no-restart)",
+                      proposals=props, applied=changes)
+    _persist(deps, ov, pending_restart=True, pending_restart_pid=deps.main_pid())
+    return _restart_and_verify(opts, deps, ov, changes, resume=False, proposals=props)
+
+
+def _await_health(deps: Deps) -> bool:
+    for _ in range(deps.health_tries):
+        if deps.health():
+            return True
+        deps.sleep(deps.health_interval)
+    return False
+
+
+def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, tuple[str, str]], *,
+                        resume: bool, proposals: list[Proposal] | None = None) -> Result:
+    proposals = proposals or []
+    now = deps.now()
+    st = ov.get("state") or {}
+    marker = deps.marker or openclaw_host.Marker()
+    owned = not marker.exists()
+    marker.touch()
+    try:
+        pid_before = st.get("pending_restart_pid") or deps.main_pid()
+        already = resume and pid_before and deps.main_pid() != pid_before
+        if not already:
+            try:
+                deps.restart()
+            except RestartDeferred as e:
+                _persist(deps, ov, pending_restart=True, pending_restart_pid=pid_before, last_run=now.isoformat(),
+                         last_result="deferred", deferrals=int(st.get("deferrals", 0)) + 1)
+                _log(deps, "restart_deferred", reason=e.reason)
+                return Result(EXIT_DEFERRED, "deferred", f"restart deferred: {e.reason}", proposals, applied)
+        healthy = _await_health(deps)
+        pid_changed = already or not pid_before or deps.main_pid() != pid_before
+        reason = "" if healthy and pid_changed else ("gateway unhealthy after restart" if not healthy
+                                                     else "gateway pid did not change")
+        if not reason:
+            for cls, (_old, new) in applied.items():
+                res = deps.smoke(new)
+                _log(deps, "smoke_post", model=new, ok=res.ok, reason=res.reason)
+                if not res.ok:
+                    reason = f"post-switch smoke failed for {new}: {res.reason}"
+                    break
+        if not reason:
+            ov.get("state", {}).pop("pending_restart", None)
+            ov["state"].pop("pending_restart_pid", None)
+            _persist(deps, ov, deferrals=0, last_switch_at=now.isoformat(), last_run=now.isoformat(),
+                     last_result="switched")
+            ov.setdefault("history", []).append({"at": now.isoformat(), "action": "verified"})
+            model_pins.save_overlay(ov, deps.overlay_file)
+            _log(deps, "switched", changes={c: list(v) for c, v in applied.items()})
+            return Result(EXIT_OK, "switched", "switched and healthy", proposals, applied)
+
+        _log(deps, "switch_failed", reason=reason)
+        ok, msg, back = rollback_last(apply_patch=deps.apply_patch, overlay=ov, overlay_file=deps.overlay_file,
+                                      now=deps.now)
+        if not ok:
+            _persist(deps, ov, last_run=now.isoformat(), last_result="rollback_failed")
+            _log(deps, "rollback_failed", message=msg)
+            return Result(EXIT_ROLLBACK_FAILED, "rollback_failed", f"{reason}; {msg}", proposals, applied)
+        back["state"].pop("pending_restart", None)
+        back["state"].pop("pending_restart_pid", None)
+        failed = back["state"].setdefault("failed", {})
+        for cls, (_old, new) in applied.items():
+            failed[cls] = new
+        try:
+            deps.restart()
+            healthy_again = _await_health(deps)
+        except RestartDeferred:
+            healthy_again = False
+        _persist(deps, back, last_run=now.isoformat(), deferrals=0,
+                 last_result="rolled_back" if healthy_again else "rollback_failed")
+        _log(deps, "rolled_back" if healthy_again else "rollback_failed", reason=reason)
+        if not healthy_again:
+            return Result(EXIT_ROLLBACK_FAILED, "rollback_failed", f"{reason}; the gateway is not healthy after the rollback",
+                          proposals, applied)
+        return Result(EXIT_ROLLED_BACK, "rolled_back", f"{reason}; rolled back", proposals, applied)
+    finally:
+        if owned:
+            marker.remove()
+
+
+# --- real wiring -------------------------------------------------------------------------------
+
+def log_file() -> Path:
+    base = os.environ.get("OPENCLAW_LOG_DIR")
+    return (Path(base) if base else Path.home() / ".openclaw" / "logs") / "models-update.log"
+
+
+def _append_log(event: dict) -> None:
+    try:
+        path = log_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event, sort_keys=True) + "\n")
+    except OSError:
+        pass
+
+
+def default_deps() -> Deps:
+    """The real wiring. Imports the OpenClaw cockpit lazily: it is heavy and the pure functions
+    above must stay importable without it."""
+    from .setup.cockpits import openclaw as oc
+    runner = openclaw_host.default_runner
+
+    def restart() -> object:
+        try:
+            return oc.restart_gateway(backend="claude-cli", ask=None, interactive=False,
+                                      restart_timeout=RESTART_TIMEOUT)
+        except oc.RestartDeferred as e:
+            raise RestartDeferred(e.reason) from None
+
+    def health() -> bool:
+        rc, _ = runner([openclaw_host.resolve_openclaw_bin(), "health"], timeout=60)
+        return rc == 0
+
+    return Deps(
+        runner=runner, apply_patch=oc.apply_patch, read_config=lambda: oc.read_config(oc.config_path()),
+        config_file=oc.config_path, smoke=lambda m: smoke(m, runner, claude_bin=shutil.which("claude") or "claude"),
+        busy=lambda: openclaw_host.gateway_busy()[0], restart=restart, health=health,
+        main_pid=openclaw_host.gateway_main_pid, log=_append_log)
