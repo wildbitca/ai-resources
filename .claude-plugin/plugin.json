@@ -2,7 +2,7 @@
   "name": "ai-resources",
   "displayName": "ai-resources kit",
   "description": "Skills, workflows, role subagents and hooks for spec-driven work across Flutter, Angular, Symfony/API Platform and DevOps stacks.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": {
     "name": "Wildbit",
     "url": "https://github.com/wildbitca"

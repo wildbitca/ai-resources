@@ -4,6 +4,22 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [2.0.1] — 2026-10-09 — setup no longer binds the gateway to a tailnet that is not there
+
+### Fixed
+
+- **`ai-resources setup` wrote `gateway.bind: tailnet` on hosts without Tailscale.** The OpenClaw host
+  profile binds the gateway to the tailnet, and setup applied it unconditionally. Without Tailscale that
+  value cannot be honoured (OpenClaw falls back to loopback), and changing `gateway.bind` forces a gateway
+  restart that cut in-flight agent runs. Setup now detects a tailnet (the `tailscale` CLI reports an
+  IPv4 address); without one it leaves the operator's `bind` as it is and lists the skip with its reason.
+  The rest of the `gateway` block (`publicOrigin`, `trustedProxies`) is still written.
+
+### Notes
+
+- A host that ran 2.0.0 setup may already carry `bind: tailnet`. It keeps working through the loopback
+  fallback; to make it explicit, set it with `openclaw config patch` (this restarts the gateway).
+
 ## [2.0.0] — 2026-10-09 — models you choose, kept current, and honest about what each cockpit can use
 
 This is a major release: the model layer is no longer Claude-only, the wizard asks its questions in
