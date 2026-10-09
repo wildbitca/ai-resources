@@ -641,6 +641,19 @@ def test_models_update_notifies_on_failures(host, rc):
         assert "CRITICAL" in "\n".join(host.calls())
 
 
+def test_models_update_ignores_stray_output_around_the_json_report(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    noisy = "warning: overlay unreadable {not json}\n" + json.dumps(_approval_payload()) + "\ngateway restart slow\n"
+    host.set_models(10, noisy)
+    assert host.run("openclaw-models-update.sh").returncode == 10
+    assert len(host.sent()) == 1
+    assert "ai-resources models approve haiku claude-haiku-5-5" in "\n".join(host.calls())
+    host.set_models(0, "note: something\n" + json.dumps(
+        {"rc": 0, "outcome": "switched", "message": "switched and healthy", "proposals": []}))
+    host.run("openclaw-models-update.sh")
+    assert len(host.sent()) == 2
+
+
 def test_models_update_notifies_on_a_switch(host):
     host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
     host.set_models(0, {"rc": 0, "outcome": "switched", "message": "switched and healthy", "proposals": []})

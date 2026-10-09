@@ -186,6 +186,23 @@ def test_a_rolled_back_model_is_not_retried_unattended(env):
     assert r.rc == 10 and len(real_patches(env)) == 2        # forward + inverse only
 
 
+def test_an_approved_model_that_fails_is_not_retried_every_run(env):
+    env.run(classes=["sonnet"], check=True)           # record nothing; just prove discovery works
+    ov = env.state()
+    ov.setdefault("approvals", {})["sonnet"] = "claude-sonnet-5-5"
+    mp.save_overlay(ov, env.overlay)
+    env.health_ok = False
+    assert env.run(classes=["sonnet"]).rc == 2
+    st = env.state()
+    assert st["state"]["failed"] == {"sonnet": "claude-sonnet-5-5"}
+    assert "sonnet" not in (st.get("approvals") or {})
+    patches_before = len(real_patches(env))
+    env.now = NOW + timedelta(days=2)
+    env.health_ok = True
+    r = env.run(classes=["sonnet"])
+    assert r.rc == 10 and len(real_patches(env)) == patches_before
+
+
 def test_lock_held_returns_73_with_no_calls(env):
     env.lock_free = False
     assert env.run().rc == 73 and env.runner_calls == [] and env.patches == []

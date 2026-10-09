@@ -124,27 +124,66 @@ def test_rollback_sends_the_inverse_dry_run_first_and_reverts_pins(doc, tmp_path
     assert models.rollback_last(apply_patch=patch, overlay=back)[0] is False
 
 
-def test_nothing_ever_opens_openclaw_json_for_writing(doc, tmp_path, monkeypatch):
-    cfg = tmp_path / "openclaw.json"
-    cfg.write_text(json.dumps(doc))
-    real_open = builtins.open
+def _spy_config_writes(monkeypatch, cfg):
+    """Record every attempt to write, replace or rename the config file, through any common API."""
     writes = []
+    real_open, real_os_open = builtins.open, os.open
+    real_replace, real_rename = os.replace, os.rename
 
-    def spy(file, mode="r", *a, **kw):
-        if str(file) == str(cfg) and any(c in mode for c in "wax+"):
-            writes.append(file)
+    def is_cfg(p):
+        try:
+            return os.fspath(p) == str(cfg)
+        except TypeError:
+            return False
+
+    def spy_open(file, mode="r", *a, **kw):
+        if is_cfg(file) and any(c in mode for c in "wax+"):
+            writes.append(("open", mode))
         return real_open(file, mode, *a, **kw)
-    monkeypatch.setattr(builtins, "open", spy)
+
+    def spy_os_open(path, flags, *a, **kw):
+        if is_cfg(path) and flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+            writes.append(("os.open", flags))
+        return real_os_open(path, flags, *a, **kw)
+
+    def spy_move(real, name):
+        def inner(src, dst, *a, **kw):
+            if is_cfg(src) or is_cfg(dst):
+                writes.append((name, src, dst))
+            return real(src, dst, *a, **kw)
+        return inner
+
+    monkeypatch.setattr(builtins, "open", spy_open)
+    monkeypatch.setattr(os, "open", spy_os_open)
+    monkeypatch.setattr(os, "replace", spy_move(real_replace, "os.replace"))
+    monkeypatch.setattr(os, "rename", spy_move(real_rename, "os.rename"))
     for name in ("write_text", "write_bytes"):
         orig = getattr(pathlib.Path, name)
-        monkeypatch.setattr(pathlib.Path, name, lambda self, *a, _o=orig, **k:
-                            writes.append(self) if self == cfg else _o(self, *a, **k))
-    ov_file = tmp_path / "ov.json"
-    _, _, ov = models.apply_changes(doc, CHANGES, apply_patch=FakePatch(), overlay={}, overlay_file=ov_file)
-    models.backup(cfg, overlay_file=ov_file, root=tmp_path / "bk")
-    models.rollback_last(apply_patch=FakePatch(), overlay=ov, overlay_file=ov_file)
+        monkeypatch.setattr(pathlib.Path, name, lambda self, *a, _o=orig, _n=name, **k:
+                            writes.append((_n, self)) if is_cfg(self) else _o(self, *a, **k))
+    for name in ("rename", "replace"):
+        orig = getattr(pathlib.Path, name)
+        monkeypatch.setattr(pathlib.Path, name, lambda self, target, _o=orig, _n=name, **k:
+                            writes.append((_n, self, target)) if (is_cfg(self) or is_cfg(target))
+                            else _o(self, target, **k))
+    return writes
+
+
+@pytest.mark.parametrize("scenario", ["switch", "rollback"])
+def test_nothing_ever_writes_openclaw_json_during_an_update(tmp_path, monkeypatch, scenario):
+    import hashlib
+    from test_models_update import Env
+    env = Env(tmp_path, monkeypatch)
+    cfg = env.cfg
+    before = hashlib.sha256(cfg.read_bytes()).hexdigest()
+    writes = _spy_config_writes(monkeypatch, cfg)
+    if scenario == "rollback":
+        env.health_ok = False
+    r = env.run(classes=["sonnet"])
+    assert r.rc == (0 if scenario == "switch" else 2)
+    assert env.restarts >= 1 and any(not dry for _, dry in env.patches)      # the real path ran
     assert writes == []
-    assert json.loads(cfg.read_text()) == doc
+    assert hashlib.sha256(cfg.read_bytes()).hexdigest() == before
 
 
 def test_backup_keeps_the_newest_ten_with_mode_0600(tmp_path):

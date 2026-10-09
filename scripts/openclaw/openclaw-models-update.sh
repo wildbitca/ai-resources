@@ -24,21 +24,34 @@ if [ -e "$OPENCLAW_WATCHDOG_OFF" ]; then
   exit 0
 fi
 
-out="$(ai-resources models update --unattended --json 2>&1)"
+# stdout carries the JSON report; stderr (warnings, stray log lines) goes to the log, never into the parse.
+errf="$(mktemp)"
+out="$(ai-resources models update --unattended --json 2>"$errf")"
 rc=$?
 log "rc=$rc $(tr '\n' ' ' <<<"$out" | cut -c1-600)"
+if [ -s "$errf" ]; then log "stderr: $(tr '\n' ' ' <"$errf" | cut -c1-600)"; fi
+rm -f "$errf"
+
+# Reads stdin and keeps the LAST top-level JSON object in it, so stray text around the report
+# (a warning printed to stdout) cannot silence the notifications. Yields {} when there is none.
+last_json='import json,sys
+t=sys.stdin.read(); dec=json.JSONDecoder(); i=0; last={}
+while True:
+    i=t.find("{", i)
+    if i < 0: break
+    try: o,j=dec.raw_decode(t, i)
+    except Exception: i+=1; continue
+    if isinstance(o, dict): last=o
+    i=j
+'
 
 # A field of the JSON report, "" when it cannot be read.
-field(){ python3 -c 'import json,sys
-try: d=json.loads(sys.stdin.read())
-except Exception: sys.exit(0)
+field(){ python3 -c "$last_json"'d=last
 v=d.get(sys.argv[1], "")
 print(v if not isinstance(v,(dict,list)) else json.dumps(v))' "$1" <<<"$out" 2>/dev/null; }
 
 # The exact commands that approve what is waiting, one per line.
-approve_lines(){ python3 -c 'import json,sys
-try: d=json.loads(sys.stdin.read())
-except Exception: sys.exit(0)
+approve_lines(){ python3 -c "$last_json"'d=last
 for p in d.get("proposals", []):
     if p.get("decision") == "needs_approval":
         print("ai-resources models approve %s %s   # %s" % (p["cls"], p["new"], "; ".join(p.get("reasons", []))))' <<<"$out" 2>/dev/null; }

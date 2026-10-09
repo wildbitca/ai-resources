@@ -733,6 +733,9 @@ def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, 
         failed = back["state"].setdefault("failed", {})
         for cls, (_old, new) in applied.items():
             failed[cls] = new
+            # the approval is spent by the failed attempt; re-approving (which clears `failed`) retries
+            if (back.get("approvals") or {}).get(cls) == new:
+                back["approvals"].pop(cls, None)
         try:
             deps.restart()
             healthy_again = _await_health(deps)
