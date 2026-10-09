@@ -11,7 +11,7 @@ except ImportError:
 
 from .. import state
 from ..detection import detect_aider
-from ... import repo_root
+from ... import model_pins, repo_root
 from . import _shared
 
 
@@ -34,13 +34,14 @@ def _conf_yaml(executors: dict, gateway_url: str, master_key: str) -> str:
     """
     by_role = executors.get("by_role", {})
 
+    pins = model_pins.effective()
     architect_model = by_role.get("software-architect", {}).get("model") \
         or by_role.get("planner", {}).get("model") \
-        or "claude-opus-4-7"
+        or pins["opus"]
     editor_model = by_role.get("implementer", {}).get("model") \
-        or "claude-sonnet-4-6"
+        or pins["sonnet"]
     weak_model = by_role.get("verifier", {}).get("model") \
-        or "claude-haiku-4-5"
+        or pins["haiku"]
 
     conf = {
         "openai-api-base": gateway_url,
