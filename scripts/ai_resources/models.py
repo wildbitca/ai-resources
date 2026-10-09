@@ -518,9 +518,10 @@ class Result:
     message: str = ""
     proposals: list[Proposal] = field(default_factory=list)
     applied: dict[str, tuple[str, str]] = field(default_factory=dict)
+    deferrals: int = 0
 
     def as_dict(self) -> dict:
-        return {"rc": self.rc, "outcome": self.outcome, "message": self.message,
+        return {"rc": self.rc, "outcome": self.outcome, "message": self.message, "deferrals": self.deferrals,
                 "proposals": [p.as_dict() for p in self.proposals],
                 "applied": {c: list(v) for c, v in self.applied.items()}}
 
@@ -638,10 +639,11 @@ def _run_locked(opts: Options, deps: Deps) -> Result:
     if deps.busy():
         if opts.dry_run:
             return Result(EXIT_DEFERRED, "deferred", "the gateway is busy", proposals=props)
-        _persist(deps, ov, last_run=now.isoformat(), last_result="deferred",
-                 deferrals=int(st.get("deferrals", 0)) + 1)
+        count = int(st.get("deferrals", 0)) + 1
+        _persist(deps, ov, last_run=now.isoformat(), last_result="deferred", deferrals=count)
         _log(deps, "deferred", reason="gateway busy")
-        return Result(EXIT_DEFERRED, "deferred", "the gateway is busy; nothing was patched", proposals=props)
+        return Result(EXIT_DEFERRED, "deferred", "the gateway is busy; nothing was patched", proposals=props,
+                      deferrals=count)
 
     doc = deps.read_config()
     if opts.dry_run:
@@ -692,10 +694,12 @@ def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, 
             try:
                 deps.restart()
             except RestartDeferred as e:
+                count = int(st.get("deferrals", 0)) + 1
                 _persist(deps, ov, pending_restart=True, pending_restart_pid=pid_before, last_run=now.isoformat(),
-                         last_result="deferred", deferrals=int(st.get("deferrals", 0)) + 1)
+                         last_result="deferred", deferrals=count)
                 _log(deps, "restart_deferred", reason=e.reason)
-                return Result(EXIT_DEFERRED, "deferred", f"restart deferred: {e.reason}", proposals, applied)
+                return Result(EXIT_DEFERRED, "deferred", f"restart deferred: {e.reason}", proposals, applied,
+                              deferrals=count)
         healthy = _await_health(deps)
         pid_changed = already or not pid_before or deps.main_pid() != pid_before
         reason = "" if healthy and pid_changed else ("gateway unhealthy after restart" if not healthy
@@ -816,3 +820,44 @@ def run_rollback(deps: Deps) -> Result:
         if not healthy:
             return Result(EXIT_ROLLBACK_FAILED, "rollback_failed", "rolled back, but the gateway is not healthy")
         return Result(EXIT_OK, "rolled_back", "rolled back and healthy")
+
+
+# --- findings for doctor, verify and status ----------------------------------------------------
+
+TIMER_UNIT = "openclaw-models-update.timer"
+STALE_RUN_DAYS = 3
+
+
+def model_findings(report: dict, overlay: dict, *, now: datetime | None = None) -> list[tuple[str, str, str]]:
+    """(level, message, remedy) for the host report: drift, pending approvals and the last run.
+
+    Levels are the verify levels: ok (advisory text), warn, error."""
+    now = now or datetime.now(timezone.utc)
+    out: list[tuple[str, str, str]] = []
+    drift = [m for m in report.get("models", []) if m.get("drift")]
+    if drift:
+        rows = ", ".join(f"{m['agent']} ({m['model']} -> {m['drift']})" for m in drift)
+        out.append(("warn", f"{len(drift)} model reference(s) in openclaw.json lag the pins: {rows}",
+                    "`ai-resources models status`; `ai-resources setup` re-applies the canonical config"))
+    pending = overlay.get("pending") or {}
+    if pending:
+        cmds = "; ".join(f"ai-resources models approve {c} {p.get('to')}" for c, p in pending.items())
+        out.append(("ok", f"{len(pending)} model upgrade(s) await approval", cmds))
+    st = overlay.get("state") or {}
+    result = st.get("last_result")
+    if result == "rollback_failed":
+        out.append(("error", "the last models update could not be rolled back",
+                    "check `openclaw health` and `ai-resources models status` now"))
+    elif result == "rolled_back":
+        out.append(("warn", "the last models update was rolled back",
+                    "see ~/.openclaw/logs/models-update.log; `ai-resources models approve` retries it"))
+    timer_on = any(t.get("name") == TIMER_UNIT and t.get("enabled") for t in report.get("timers", []))
+    last_run = st.get("last_run")
+    if timer_on and last_run:
+        try:
+            if now - datetime.fromisoformat(last_run) > timedelta(days=STALE_RUN_DAYS):
+                out.append(("warn", f"the models update has not run for more than {STALE_RUN_DAYS} days",
+                            f"systemctl --user status {TIMER_UNIT}"))
+        except ValueError:
+            pass
+    return out

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily OpenClaw model upgrade check
+
+[Timer]
+OnCalendar=*-*-* 04:45:00
+Persistent=true
+RandomizedDelaySec=30min
+Unit=openclaw-models-update.service
+
+[Install]
+WantedBy=timers.target

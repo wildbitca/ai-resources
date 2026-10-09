@@ -89,7 +89,7 @@ for p in \
   ".claude/CLAUDE.md" ".claude/settings.json" ".claude/hooks" \
   ".config/shell" \
   ".openclaw/openclaw.json" ".openclaw/telegram.token" ".openclaw/gateway.systemd.env" \
-  ".openclaw/kit-host.env" ".openclaw/bin" \
+  ".openclaw/kit-host.env" ".openclaw/bin" ".config/ai-resources/model-pins.json" \
   ".config/systemd/user/openclaw-gateway.service" \
   ".config/systemd/user/openclaw-backup@.service" \
   ".config/systemd/user/openclaw-backup-daily.timer" \
@@ -101,8 +101,10 @@ for p in \
   ".config/systemd/user/openclaw-watchdog.timer" \
   ".config/systemd/user/openclaw-verify.service" \
   ".config/systemd/user/openclaw-verify.timer" \
+  ".config/systemd/user/openclaw-models-update.service" \
+  ".config/systemd/user/openclaw-models-update.timer" \
   ".local/bin/openclaw-backup.sh" ".local/bin/openclaw-maintenance.sh" \
-  ".local/bin/openclaw-watchdog.sh" ".local/bin/openclaw-verify.sh" \
+  ".local/bin/openclaw-watchdog.sh" ".local/bin/openclaw-verify.sh" ".local/bin/openclaw-models-update.sh" \
   ".local/bin/openclaw-team-watch.py" ".local/bin/openclaw-team-send.py"
 do
   [ -e "$HOME/$p" ] && echo "$p" >> "$STAGE/ai-config.list"

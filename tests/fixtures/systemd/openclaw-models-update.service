@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily upgrade of the Claude models OpenClaw runs on (smoke-tested, health-checked, self-rolling-back)
+Documentation=file:///LIVE/bin/openclaw-models-update.sh
+
+[Service]
+Type=oneshot
+TimeoutStartSec=900
+ExecStart=/LIVE/bin/openclaw-models-update.sh

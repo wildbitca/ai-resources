@@ -151,3 +151,15 @@ def effective(overlay: dict | None = None) -> dict[str, str]:
         if pv and pp and pp[0] == cls and dv and pv > dv:
             out[cls] = pinned
     return out
+
+
+def ref_drift(ref: str, eff: dict[str, str] | None = None) -> str | None:
+    """The ref a Claude `anthropic/<id>` reference SHOULD carry, or None when it matches (or is not
+    a Claude class ref at all). Used by status, doctor and verify to flag a config that lags the pins."""
+    if not isinstance(ref, str) or not ref.startswith("anthropic/"):
+        return None
+    parsed = parse_id(ref.split("/", 1)[1])
+    if not parsed:
+        return None
+    wanted = openclaw_ref((eff or effective())[parsed[0]])
+    return wanted if wanted != ref else None

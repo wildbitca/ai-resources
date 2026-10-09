@@ -107,7 +107,7 @@ def test_the_report_has_all_eleven_sections_from_fixture_output(env):
     text = host.render_status(report)
     for needle in ("unit ", "boot ", "listeners ", "health ", "timers", "backups", "off-box", "models", "identity", "stability ", "doctor "):
         assert needle in text
-    assert text.count(".timer") == 8
+    assert text.count(".timer") == 9
     assert "main" in text and "anthropic/claude-haiku-4-5 (default)" in text  # effective model per agent
 
 
@@ -508,3 +508,20 @@ def test_status_stability_reads_never_write(env):
     host.collect_status(Canned(), home=env.home, host_env_path=env.hostenv, now=T_1006, run_doctor=False)
     assert sorted(env.home.rglob("*")) == before_paths
     assert snap() == before, "no file may be rewritten, not even in place"
+
+
+# --- model pins drift (models update) ------------------------------------------------------------------------------
+
+def test_status_flags_a_reference_that_lags_the_pins(env, monkeypatch):
+    from ai_resources import model_pins
+    model_pins.save_overlay({"pins": {"sonnet": "claude-sonnet-5-5"}})
+    report = collect(env, Canned())
+    drifted = {m["agent"]: m["drift"] for m in report["models"] if m.get("drift")}
+    assert drifted == {"main": "anthropic/claude-sonnet-5-5"}
+    assert "DRIFT" in host.render_status(report)
+
+
+def test_status_has_no_drift_when_references_match(env):
+    report = collect(env, Canned())
+    assert not [m for m in report["models"] if m.get("drift")]
+    assert "DRIFT" not in host.render_status(report)

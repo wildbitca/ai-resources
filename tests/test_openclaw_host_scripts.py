@@ -108,6 +108,7 @@ case "{name} $1 $2" in
   "openclaw message send") exit "$(cat "{self.bin}/send-rc" 2>/dev/null || echo 0)" ;;
   "loginctl show-user"*) echo yes; exit 0 ;;
   "openclaw health "*) exit "$(cat "{self.bin}/health-rc" 2>/dev/null || echo 0)" ;;
+  "ai-resources models"*) cat "{self.bin}/models-out" 2>/dev/null; exit "$(cat "{self.bin}/models-rc" 2>/dev/null || echo 0)" ;;
   "ai-resources openclaw"*) echo "Repaired legacy bindings 2"; exit "$(cat "{self.bin}/doctor-rc" 2>/dev/null || echo 0)" ;;
 esac
 exit 0
@@ -119,6 +120,11 @@ exit 0
 
     def set_doctor_rc(self, rc: int):
         (self.bin / "doctor-rc").write_text(str(rc), encoding="utf-8")
+
+    def set_models(self, rc: int, payload: dict | str = ""):
+        (self.bin / "models-rc").write_text(str(rc), encoding="utf-8")
+        (self.bin / "models-out").write_text(payload if isinstance(payload, str) else json.dumps(payload),
+                                             encoding="utf-8")
 
     def set_send_rc(self, rc: int):
         (self.bin / "send-rc").write_text(str(rc), encoding="utf-8")
@@ -586,3 +592,90 @@ def test_maintenance_is_quiet_when_everything_is_fine(host):
 def test_maintenance_flags_a_stale_backup(host):
     host.fresh_backup(age_hours=40)
     assert host.run("openclaw-maintenance.sh").returncode == 1
+
+
+# --- openclaw-models-update.sh (the daily background model upgrade) ------------------------------------------------
+
+def _approval_payload(cls="haiku", new="claude-haiku-5-5"):
+    return {"rc": 10, "outcome": "pending_approval", "message": "", "deferrals": 0,
+            "proposals": [{"cls": cls, "old": "claude-haiku-4-5", "new": new, "kind": "major", "price": "unknown",
+                           "decision": "needs_approval", "reasons": ["major jump", "price unknown"]}]}
+
+
+def _models_calls(host):
+    return [c for c in host.calls() if c.startswith("ai-resources models")]
+
+
+def test_models_update_stands_down_while_a_maintenance_window_is_open(host):
+    (host.home / ".openclaw" / "watchdog.off").touch()
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    r = host.run("openclaw-models-update.sh")
+    assert r.returncode == 0 and _models_calls(host) == [] and host.sent() == []
+
+
+def test_models_update_runs_the_unattended_command(host):
+    host.set_models(0, {"rc": 0, "outcome": "no_change", "message": "", "proposals": []})
+    assert host.run("openclaw-models-update.sh").returncode == 0
+    assert _models_calls(host) == ["ai-resources models update --unattended --json"]
+
+
+def test_models_update_notifies_once_per_proposal_set_with_the_exact_approve_command(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_models(10, _approval_payload())
+    assert host.run("openclaw-models-update.sh").returncode == 10
+    assert host.run("openclaw-models-update.sh").returncode == 10
+    assert len(host.sent()) == 1
+    assert "ai-resources models approve haiku claude-haiku-5-5" in "\n".join(host.calls())
+    host.set_models(10, _approval_payload("opus", "claude-opus-5-5"))
+    host.run("openclaw-models-update.sh")
+    assert len(host.sent()) == 2
+
+
+@pytest.mark.parametrize("rc", [1, 2, 4, 6])
+def test_models_update_notifies_on_failures(host, rc):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_models(rc, {"rc": rc, "outcome": "x", "message": "boom", "proposals": []})
+    assert host.run("openclaw-models-update.sh").returncode == rc
+    assert len(host.sent()) == 1
+    if rc == 6:
+        assert "CRITICAL" in "\n".join(host.calls())
+
+
+def test_models_update_notifies_on_a_switch(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_models(0, {"rc": 0, "outcome": "switched", "message": "switched and healthy", "proposals": []})
+    host.run("openclaw-models-update.sh")
+    assert len(host.sent()) == 1
+
+
+@pytest.mark.parametrize("rc,payload,sent", [
+    (73, {"rc": 73, "outcome": "locked", "proposals": []}, 0),
+    (75, {"rc": 75, "outcome": "deferred", "deferrals": 1, "proposals": []}, 0),
+    (75, {"rc": 75, "outcome": "deferred", "deferrals": 3, "proposals": []}, 1),
+    (0, {"rc": 0, "outcome": "no_change", "proposals": []}, 0),
+])
+def test_models_update_is_quiet_when_there_is_nothing_to_say(host, rc, payload, sent):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_models(rc, payload)
+    host.run("openclaw-models-update.sh")
+    assert len(host.sent()) == sent
+
+
+def test_models_update_logs_every_run(host):
+    host.set_models(0, {"rc": 0, "outcome": "no_change", "proposals": []})
+    host.run("openclaw-models-update.sh")
+    assert "rc=0" in (host.home / ".openclaw" / "logs" / "models-update.log").read_text()
+
+
+def test_backup_enumerates_the_models_update_script_units_and_overlay():
+    text = _text("openclaw-backup.sh")
+    for needle in (".local/bin/openclaw-models-update.sh", ".config/systemd/user/openclaw-models-update.service",
+                   ".config/systemd/user/openclaw-models-update.timer", ".config/ai-resources/model-pins.json"):
+        assert needle in text
+
+
+def test_models_update_unit_gives_the_restart_and_health_poll_time():
+    text = (REPO / "templates" / "systemd" / "openclaw-models-update.service.template").read_text()
+    assert "TimeoutStartSec=900" in text and "Type=oneshot" in text
+    timer = (REPO / "templates" / "systemd" / "openclaw-models-update.timer.template").read_text()
+    assert "OnCalendar=*-*-* 04:45:00" in timer and "RandomizedDelaySec=30min" in timer and "Persistent=true" in timer

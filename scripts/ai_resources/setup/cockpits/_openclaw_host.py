@@ -702,6 +702,9 @@ def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> l
         out.append(Finding("warn", who, "no off-box backup listing is configured", OFFBOX_REMEDY))
     out += _stability_findings(report.get("stability") or {})
     out += _watchdog_unit_findings()
+    from ... import model_pins, models
+    out += [Finding(level, who, message, remedy)
+            for level, message, remedy in models.model_findings(report, model_pins.load_overlay())]
     return out
 
 

@@ -166,6 +166,8 @@ UNIT_NAMES = (
     "openclaw-watchdog.timer",
     "openclaw-verify.service",
     "openclaw-verify.timer",
+    "openclaw-models-update.service",
+    "openclaw-models-update.timer",
 )
 TIMER_NAMES = tuple(n for n in UNIT_NAMES if n.endswith(".timer"))
 _MARKER = re.compile(r"@([A-Z][A-Z0-9_]*)@")
@@ -1806,9 +1808,18 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
     report["off-box"] = offbox
 
     default_model = model_primary((cfg.get("agents") or {}).get("defaults")) or "?"
+    eff = model_pins.effective()
     report["models"] = [{"agent": aid, "model": model_primary(e) or f"{default_model} (default)",
-                         "shorthand": isinstance((e or {}).get("model"), str)}
+                         "shorthand": isinstance((e or {}).get("model"), str),
+                         "drift": model_pins.ref_drift(model_primary(e) or "", eff)}
                         for aid, e in ((cfg.get("agents") or {}).get("entries") or {}).items()]
+    # The defaults and the heartbeat are references too; a row appears only when one lags the pins.
+    defaults = (cfg.get("agents") or {}).get("defaults") or {}
+    for label, owner in (("(defaults)", defaults), ("(defaults heartbeat)", defaults.get("heartbeat"))):
+        ref = model_primary(owner if isinstance(owner, dict) else {})
+        if ref and model_pins.ref_drift(ref, eff):
+            report["models"].append({"agent": label, "model": ref, "shorthand": False,
+                                     "drift": model_pins.ref_drift(ref, eff)})
 
     report["identity"] = agent_identities(cfg)
     report["stability"] = stability_summary(home / ".openclaw" / "logs" / "stability", now)
@@ -1876,7 +1887,8 @@ def render_status(report: dict) -> str:
                                        if ob["ok"] else "the listing command failed"))
     lines.append("models")
     for m in report["models"]:
-        lines.append(f"  {m['agent']:<16} {m['model']}")
+        lines.append(f"  {m['agent']:<16} {m['model']}"
+                     + (f"   DRIFT: the pins say {m['drift']} (`ai-resources models status`)" if m.get("drift") else ""))
     short = [m for m in report["models"] if m.get("shorthand")]
     if short:
         lines.append("  the short form of `model` is legal and the kit reads both; to spell it as an object:")
@@ -2009,7 +2021,7 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p = sub.add_parser("openclaw", help="OpenClaw host operations (units, doctor, bootstrap, status)")
     verbs = p.add_subparsers(dest="openclaw_verb", metavar="VERB")
 
-    p_units = verbs.add_parser("install-units", help="Render and install the ten openclaw-* systemd units")
+    p_units = verbs.add_parser("install-units", help="Render and install the openclaw-* systemd units")
     p_units.add_argument("--dest", default="", help="Unit directory (default: ~/.config/systemd/user)")
     p_units.add_argument("--dry-run", action="store_true", help="Show what would change; write nothing")
     p_units.add_argument("--render-only", action="store_true", help="Print the rendered units; write nothing")

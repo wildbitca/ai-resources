@@ -250,3 +250,52 @@ def test_a_stale_watchdog_execstart_is_one_warn_naming_install_units(box):
 def test_the_kit_watchdog_execstart_is_not_a_warn(box):
     _watchdog_unit(box, f"/bin/bash {host.kit_root()}/scripts/openclaw/openclaw-watchdog.sh")
     assert not [f for f in _run(HostRunner()) if f.level == "warn" and "watchdog" in f.message]
+
+
+# --- the models update findings --------------------------------------------------------------------------------
+
+def _model_findings(box, overlay, config=None):
+    import json
+    from ai_resources import model_pins
+    cfg = box.parent / "openclaw.json"
+    cfg.write_text(json.dumps(config or {"agents": {"defaults": {"model": {"primary": "anthropic/claude-haiku-4-5"}},
+                                                     "entries": {"main": {"model": {"primary": "anthropic/claude-sonnet-5"}}}}}),
+                   encoding="utf-8")
+    model_pins.save_overlay(overlay)
+    return _run(HostRunner())
+
+
+def test_drift_between_the_config_and_the_pins_is_one_warn(box):
+    found = _model_findings(box, {"pins": {"sonnet": "claude-sonnet-5-5"}})
+    drift = [f for f in found if "lag the pins" in f.message]
+    assert len(drift) == 1 and drift[0].level == "warn" and "main" in drift[0].message
+
+
+def test_matching_references_give_no_model_finding(box):
+    found = _model_findings(box, {})
+    assert not [f for f in found if "pins" in f.message or "models update" in f.message]
+
+
+def test_pending_approvals_are_advisory(box):
+    found = _model_findings(box, {"pending": {"haiku": {"to": "claude-haiku-5-5", "reason": "major jump"}}})
+    pend = [f for f in found if "await approval" in f.message]
+    assert len(pend) == 1 and pend[0].level == "ok" and "models approve haiku claude-haiku-5-5" in pend[0].remedy
+
+
+@pytest.mark.parametrize("result,level", [("rolled_back", "warn"), ("rollback_failed", "error")])
+def test_a_failed_last_run_is_surfaced(box, result, level):
+    found = _model_findings(box, {"state": {"last_result": result}})
+    assert [f.level for f in found if "models update" in f.message] == [level]
+
+
+def test_a_stale_last_run_warns_only_while_the_timer_is_enabled(box):
+    old = {"state": {"last_run": "2020-01-01T00:00:00+00:00"}}
+    assert any("has not run" in f.message for f in _model_findings(box, old))
+    found = _run_disabled(box, old)
+    assert not any("has not run" in f.message for f in found)
+
+
+def _run_disabled(box, overlay):
+    from ai_resources import model_pins
+    model_pins.save_overlay(overlay)
+    return _run(HostRunner(timers_enabled=False))
