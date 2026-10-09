@@ -403,6 +403,63 @@ into the block and backs up the original first. Decline, or run unattended, and 
 section stays while the block leaves the rule out, so it never appears twice. Teardown
 puts back the `tools.media` the kit replaced and removes the block.
 
+## Automatic model updates
+
+`ai-resources models` keeps the Claude models the OpenClaw host runs on current, without waiting for a
+kit release and without hand-editing `openclaw.json`.
+
+**One declaration.** The Claude class pins (`opus`, `sonnet`, `haiku`, `fable`) are declared once in
+`scripts/ai_resources/model_pins.py` (`DEFAULTS`). The audit aliases, the OpenClaw `claude-code` engine,
+the `worker_model` default, the aider fallbacks and the `*` entry of `profiles/openclaw-host.json5` are
+all built from it. A test (`tests/test_model_pins_consistency.py`) keeps the hand-written ids in the
+profiles, LiteLLM, providers and aider aligned with it.
+
+**The overlay and the higher-of rule.** A host can move a class forward with
+`~/.config/ai-resources/model-pins.json` (written by the commands below). The effective pin is the
+**higher** of the kit default and the overlay, so a stale overlay never holds a host behind a newer kit.
+The only way to hold a class down is `ai-resources models pin <class> <id>`, which freezes it.
+LiteLLM, OpenRouter profiles and aider follow kit releases, not the overlay.
+
+**Policy.** `ai-resources models update` reads the catalog (`openclaw models list --all --json --provider
+claude-cli`) and decides per class:
+
+| Decision | When |
+|----------|------|
+| `auto` | a minor bump of the same family and major, with a known price that is not above `max_cost_delta_pct` (default 0) |
+| `approved` | the operator ran `ai-resources models approve <class> <id>` for exactly that id |
+| `needs_approval` | a major jump, an unknown price (`audit.PRICES` has no exact entry), a price increase, or mode `approve` |
+| `excluded` / `frozen` | an `exclude` glob matches, or the class is frozen |
+
+A family outside the four classes (for example `claude-mythos-5`) is reported and never applied. A
+downgrade is never proposed. A bump that was rolled back is not retried until it is approved again.
+Prices are never invented: add a verified price to `audit.PRICES` so a minor bump can apply by itself.
+
+**What an update does.** Smoke-test the new id (`claude -p --model <id>`, which must answer `OK` and name
+that model), defer if agent turns are in flight, back up, validate and send the forward patch through
+`openclaw config patch`, restart the gateway with `watchdog.off` held, poll `openclaw health`, require a new
+gateway PID, smoke-test again, and roll back with the inverse patch if any of it fails.
+
+**Writes stay on `config patch`.** The command never opens `openclaw.json` for writing: `config patch`
+validates the schema and the kit asserts that no patch touches `channels`. The file copy under
+`~/.openclaw/backups/models-update/<timestamp>/` is forensics only. The allowlist keeps the old model key
+so a rollback stays valid.
+
+**Exit codes** (the same table in the CLI, the wrapper script and the runbook):
+
+| Code | Meaning |
+|------|---------|
+| 0 | OK, no change, cooldown, `--check` or `--dry-run` with nothing applicable |
+| 1 | Error (discovery, I/O, unexpected) |
+| 2 | Switched, failed health, rolled back successfully |
+| 4 | Smoke or patch validation failed before any write |
+| 6 | Rollback failed (critical) |
+| 10 | Approval pending (nothing applicable) |
+| 11 | `models check` only: a change is ready to apply |
+| 73 | Locked by another run |
+| 75 | Deferred (gateway busy, or restart deferred; resumed by the next run) |
+
+Antigravity (agy) models are report-only: edit `model_pins.AGY_STATIC` by hand.
+
 ## Operations
 
 ```sh

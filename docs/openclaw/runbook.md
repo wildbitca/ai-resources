@@ -1099,6 +1099,33 @@ for line in open('/home/bitgandtter/.openclaw/logs/gateway.log',errors='ignore')
 EOF
 ```
 
+## Upgrade the Claude models (automatic and manual)
+
+`openclaw-models-update.timer` runs `scripts/openclaw/openclaw-models-update.sh` daily at 04:45 (30 min
+jitter). It runs `ai-resources models update --unattended --json`, logs to
+`~/.openclaw/logs/models-update.log` and messages you only when something changed or needs a decision.
+
+```bash
+ai-resources models status                  # effective pins, config drift, pending approvals, last run
+ai-resources models check --refresh         # read-only: exit 0 nothing, 10 approval pending, 11 ready
+ai-resources models update --dry-run        # smoke-tests and validates the patch; applies nothing
+ai-resources models approve haiku claude-haiku-5-5   # the exact command the Telegram notice prints
+ai-resources models pin sonnet claude-sonnet-5       # freeze a class; `models unpin sonnet` releases it
+ai-resources models exclude 'claude-opus-5-5'        # never apply ids matching the glob
+ai-resources models rollback                # inverse patch, restart, health check
+```
+
+- **Pause:** `touch ~/.openclaw/watchdog.off` (the wrapper stands down) or
+  `systemctl --user disable --now openclaw-models-update.timer`.
+- **Manual rollback:** `ai-resources models rollback`. If the CLI itself is broken, take the copy of
+  `openclaw.json` from `~/.openclaw/backups/models-update/<timestamp>/` and send the lines you need back
+  with `openclaw config patch --stdin` (never edit the live file). Deleting
+  `~/.config/ai-resources/model-pins.json` returns to the kit defaults.
+- **Exit code 6** means the rollback failed: check `openclaw health` and `ai-resources models status` at once.
+- **Why nothing auto-applies yet:** a bump applies by itself only when `audit.PRICES` has an exact, verified
+  price for the new id and it is not dearer. Add the price (from the vendor price page) to
+  `scripts/ai_resources/audit.py`, or approve the bump by hand.
+
 ## From a tool shell (no login session)
 
 ```bash

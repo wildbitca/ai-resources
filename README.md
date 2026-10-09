@@ -40,6 +40,10 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 | `ai-resources executors show` | Display current role → model mapping. |
 | `ai-resources executors edit` | Open `executors.yaml` in `$EDITOR`. |
 | `ai-resources executors test <role>` | Round-trip a single role's model through the gateway. |
+| `ai-resources models status` | Effective Claude pins (kit default vs host overlay), config drift, pending approvals, last run. |
+| `ai-resources models check [--refresh]` | Read-only: exit 0 nothing to do, 10 an approval is pending, 11 a change is ready. |
+| `ai-resources models update [--check\|--dry-run] [--class C] [--no-restart] [--unattended]` | Find newer Claude models and apply what the policy allows (config patch, drained restart, health check, automatic rollback). |
+| `ai-resources models {approve,revoke,pin,unpin,exclude,rollback}` | Policy and recovery for the model updates. See `docs/multi-model.md`. |
 | `ai-resources daemon {start,stop,status,logs,update}` | Manage local LiteLLM container. |
 | `ai-resources audit` | Cost report from gateway logs. |
 | `ai-resources generate` | Regenerate skills index, import vendor skills. |

@@ -401,6 +401,13 @@ Systemd units, all `VERIFIED`: `openclaw-watchdog.service` + `.timer` (every 2 m
 `openclaw-maintenance.service` + `.timer`, and `openclaw-verify.service` + `.timer` (six timers in
 all, ten unit files, not counting `openclaw-gateway.service`, which openclaw generates).
 
+Since the models update: `openclaw-models-update.service` + `.timer` (daily 04:45, 30 min jitter) run
+`scripts/openclaw/openclaw-models-update.sh`, which adds one timer and two unit files (nine timers and sixteen
+unit files in all, counting the later backup guard and uploader). State and logs: `~/.config/ai-resources/model-pins.json` (the overlay and the last run),
+`~/.openclaw/logs/models-update.log`, `~/.openclaw/logs/models-update.notified` (de-duplicates the approval
+notice) and `~/.openclaw/backups/models-update/` (the last ten forensic copies). The backup script includes
+the overlay.
+
 **What the backup left out.** Before 1.9.0 the list in `openclaw-backup.sh` held only
 `openclaw.json`, `gateway.systemd.env`, the gateway and watchdog units, and the backup and
 maintenance scripts. The watchdog, verify and team-watch scripts and the newer unit files were
