@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
-from . import audit, model_pins, model_providers, openclaw_host
+from . import audit, model_fanout, model_pins, model_providers, openclaw_host
 from .model_pins import CLASSES
 
 # (return code, combined output); same contract as openclaw_host.default_runner.
@@ -636,29 +636,40 @@ def _stamp(now: Callable[[], datetime] | None) -> str:
     return (now() if now else datetime.now(timezone.utc)).isoformat()
 
 
-def apply_changes(doc: dict, changes: dict[str, tuple[str, str]], *, apply_patch: ApplyPatch,
-                  overlay: dict, overlay_file: Path | None = None,
-                  now: Callable[[], datetime] | None = None) -> tuple[bool, str, dict]:
-    """Switch the config to the new ids, then record it in the overlay.
+@dataclass
+class ApplyOutcome:
+    ok: bool
+    message: str
+    overlay: dict
+    failed: str = ""                  # artifact id that failed ("" when ok)
+    unwound: bool = False             # an artifact AFTER the first failed and the earlier ones were restored
+
+
+def _registry(apply_patch: ApplyPatch, extra: list | None = None) -> list:
+    """The ordered artifact registry: openclaw first, then whatever S12 registers, overlay last."""
+    return [model_fanout.OpenClawArtifact(apply_patch, build_forward_patch, slot_ref), *(extra or [])]
+
+
+def apply_changes_ex(doc: dict, changes: dict[str, tuple[str, str]], *, apply_patch: ApplyPatch,
+                     overlay: dict, overlay_file: Path | None = None,
+                     now: Callable[[], datetime] | None = None, artifacts: list | None = None,
+                     selection=None) -> ApplyOutcome:
+    """Switch every affected artifact to the new ids, then record it in the overlay.
 
     `changes` is {slot: (old_id, new_id)} (a bare Claude class name is accepted for an anthropic
-    slot). Order: dry run (any failure aborts, nothing written), real patch, and ONLY on success the
-    overlay is saved. A slot whose provider has no verified OpenClaw runtime is recorded in the
-    overlay but never repointed in openclaw.json. Returns (ok, message, overlay)."""
+    slot). Order: the registry renders in order (openclaw: dry run, then the real patch), a failure
+    restores the earlier artifacts in reverse, and ONLY on success the overlay is saved. A slot whose
+    provider has no verified OpenClaw runtime is recorded in the overlay but never repointed in
+    openclaw.json."""
     changes = {model_pins.slot_key(k): v for k, v in changes.items()}
-    ref_changes = {}
-    for slot, (o, n) in changes.items():
-        ref_o, ref_n = slot_ref(slot, o), slot_ref(slot, n)
-        if ref_o and ref_n:
-            ref_changes[ref_o] = ref_n
-    built = build_forward_patch(doc, ref_changes)
-    if built["patch"]:
-        ok, out = apply_patch(built["patch"], dry_run=True, replace_paths=built["replace_paths"])
-        if not ok:
-            return False, f"config patch dry run rejected the change: {out[-300:]}", overlay
-        ok, out = apply_patch(built["patch"], dry_run=False, replace_paths=built["replace_paths"])
-        if not ok:
-            return False, f"config patch failed: {out[-300:]}", overlay
+    registry = _registry(apply_patch, artifacts)
+    ctx = model_fanout.Ctx(doc=doc, selection=selection)
+    res = model_fanout.apply_all(registry, model_fanout.Change(changes), ctx)
+    if not res.ok:
+        unwound = bool(res.restored) and res.failed != registry[0].id
+        return ApplyOutcome(False, res.message + ("; " + "; ".join(res.restore_errors) if res.restore_errors else ""),
+                            overlay, res.failed, unwound)
+    openclaw_payload = res.payloads.get("openclaw", {"inverse": {}})
     updated = model_pins.migrate(overlay) if overlay else model_pins.empty_overlay()
     previous = {slot: (updated.get("pins") or {}).get(slot) for slot in changes}
     pins = updated.setdefault("pins", {})
@@ -667,28 +678,42 @@ def apply_changes(doc: dict, changes: dict[str, tuple[str, str]], *, apply_patch
         pins[slot] = new
         pending.pop(slot, None)
     st = updated.setdefault("state", {})
-    st["last_change"] = {"changes": {c: list(v) for c, v in changes.items()}, "inverse": built["inverse"],
+    st["last_change"] = {"changes": {c: list(v) for c, v in changes.items()},
+                         "inverse": openclaw_payload.get("inverse", {}),
+                         "artifacts": res.payloads,
                          "previous_pins": previous, "at": _stamp(now)}
     updated.setdefault("history", []).append(
         {"at": _stamp(now), "action": "switch", "changes": {c: list(v) for c, v in changes.items()}})
     model_pins.save_overlay(updated, overlay_file)
-    return True, "applied" if built["patch"] else "recorded (no references to repoint)", updated
+    return ApplyOutcome(True, "applied" if openclaw_payload.get("inverse") else "recorded (no references to repoint)",
+                        updated)
+
+
+def apply_changes(doc: dict, changes: dict[str, tuple[str, str]], *, apply_patch: ApplyPatch,
+                  overlay: dict, overlay_file: Path | None = None,
+                  now: Callable[[], datetime] | None = None, artifacts: list | None = None,
+                  selection=None) -> tuple[bool, str, dict]:
+    """`apply_changes_ex` as the (ok, message, overlay) triple the verbs and tests use."""
+    out = apply_changes_ex(doc, changes, apply_patch=apply_patch, overlay=overlay, overlay_file=overlay_file,
+                           now=now, artifacts=artifacts, selection=selection)
+    return out.ok, out.message, out.overlay
 
 
 def rollback_last(*, apply_patch: ApplyPatch, overlay: dict, overlay_file: Path | None = None,
-                  now: Callable[[], datetime] | None = None) -> tuple[bool, str, dict]:
-    """Send the recorded inverse patch (dry run first), then restore the previous overlay pins."""
+                  now: Callable[[], datetime] | None = None, artifacts: list | None = None,
+                  selection=None) -> tuple[bool, str, dict]:
+    """Restore the recorded change in reverse artifact order (the inverse patch for openclaw.json,
+    dry run first), then restore the previous overlay pins."""
     last = (overlay.get("state") or {}).get("last_change") if overlay else None
     if not isinstance(last, dict) or "inverse" not in last:
         return False, "nothing to roll back (no recorded change)", overlay
-    inverse = last["inverse"]
-    if inverse:
-        ok, out = apply_patch(inverse, dry_run=True, replace_paths=[])
-        if not ok:
-            return False, f"rollback dry run rejected: {out[-300:]}", overlay
-        ok, out = apply_patch(inverse, dry_run=False, replace_paths=[])
-        if not ok:
-            return False, f"rollback patch failed: {out[-300:]}", overlay
+    payloads = last.get("artifacts")
+    if not isinstance(payloads, dict) or "openclaw" not in payloads:
+        payloads = {"openclaw": {"inverse": last["inverse"]}, **(payloads or {})}     # recorded before the registry
+    ok, msg = model_fanout.restore_all(_registry(apply_patch, artifacts), payloads,
+                                       model_fanout.Ctx(selection=selection))
+    if not ok:
+        return False, msg, overlay
     updated = model_pins.migrate(overlay)
     pins = updated.setdefault("pins", {})
     for slot, prev in (last.get("previous_pins") or {}).items():
@@ -947,6 +972,8 @@ class Deps:
     http: Callable | None = None
     key_for: Callable[[str], str] = lambda provider: ""
     gateway: Callable[[], tuple[str, str]] = lambda: ("http://127.0.0.1:4000", "")
+    # Extra artifacts of the fan-out registry (S12 registers the re-rendered files here).
+    artifacts: Callable[[], list] = lambda: []
 
 
 def _load(deps: Deps) -> dict:
@@ -1142,9 +1169,16 @@ def _run_locked(opts: Options, deps: Deps, ctx: dict | None = None) -> Result:
         return Result(EXIT_OK, "dry_run", "the patch validates; nothing was applied", proposals=props, applied=changes)
 
     backup(deps.config_file(), overlay_file=deps.overlay_file, root=deps.backup_root, now=deps.now)
-    ok, msg, ov = apply_changes(doc, changes, apply_patch=deps.apply_patch, overlay=ov,
-                                overlay_file=deps.overlay_file, now=deps.now)
+    outcome = apply_changes_ex(doc, changes, apply_patch=deps.apply_patch, overlay=ov,
+                               overlay_file=deps.overlay_file, now=deps.now, artifacts=deps.artifacts(),
+                               selection=selection)
+    ok, msg, ov = outcome.ok, outcome.message, outcome.overlay
     if not ok:
+        if outcome.unwound:          # a later artifact failed after an earlier one had been written
+            _persist(deps, ov, last_run=now.isoformat(), last_result="rolled_back")
+            _log(deps, "apply_unwound", artifact=outcome.failed, message=msg)
+            return Result(EXIT_ROLLED_BACK, "rolled_back", f"{outcome.failed}: {msg}; earlier artifacts restored",
+                          proposals=props)
         _persist(deps, ov, last_run=now.isoformat(), last_result="patch_rejected")
         _log(deps, "apply_failed", message=msg)
         return Result(EXIT_PRECHECK_FAILED, "patch_rejected", msg, proposals=props)
@@ -1217,7 +1251,7 @@ def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, 
 
         _log(deps, "switch_failed", reason=reason)
         ok, msg, back = rollback_last(apply_patch=deps.apply_patch, overlay=ov, overlay_file=deps.overlay_file,
-                                      now=deps.now)
+                                      now=deps.now, artifacts=deps.artifacts(), selection=deps.selection())
         if not ok:
             _persist(deps, ov, last_run=now.isoformat(), last_result="rollback_failed")
             _log(deps, "rollback_failed", message=msg)
@@ -1330,7 +1364,7 @@ def run_rollback(deps: Deps) -> Result:
             return Result(EXIT_LOCKED, "locked", "another models update is running")
         ov = _load(deps)
         ok, msg, back = rollback_last(apply_patch=deps.apply_patch, overlay=ov, overlay_file=deps.overlay_file,
-                                      now=deps.now)
+                                      now=deps.now, artifacts=deps.artifacts(), selection=deps.selection())
         if not ok:
             return Result(EXIT_PRECHECK_FAILED, "nothing_to_roll_back", msg)
         _log(deps, "manual_rollback")
