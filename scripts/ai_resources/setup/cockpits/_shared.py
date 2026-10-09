@@ -11,6 +11,10 @@ from typing import Any, Callable
 from .. import state, ui
 
 
+class SkipCockpit(Exception):
+    """A cockpit cannot be given what the selection asks for; the wizard prints the reason and moves on."""
+
+
 def deep_merge_json(path: Path, patch: dict, *, dry_run: bool = False) -> bool:
     """Merge patch into JSON at path. Returns True if written."""
     existing: dict = {}

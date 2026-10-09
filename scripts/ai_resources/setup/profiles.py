@@ -107,6 +107,12 @@ GATEWAYS: dict[str, dict[str, str]] = {
 }
 
 
+# The OpenAI-compatible base a cockpit that speaks the OpenAI protocol (Aider) must use per gateway.
+# OpenRouter serves it at /api/v1; GATEWAYS above holds the Anthropic-shaped /api that Claude Code
+# appends /v1/messages to. LiteLLM serves both at the gateway URL itself.
+OPENAI_BASE: dict[str, str] = {"openrouter": "https://openrouter.ai/api/v1"}
+
+
 def to_executors(profile: dict[str, Any], backend: str = "litellm") -> dict[str, Any]:
     """Convert a profile dict to a final executors.yaml structure.
 

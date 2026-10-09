@@ -87,6 +87,20 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Skip prompts and use this profile")
     p_st.add_argument("--dry-run", action="store_true",
                       help="Preview generated configs + test gateway without writing anything")
+    p_st.add_argument("--shape", default="", choices=["", "single", "single-provider", "multi-provider"],
+                      help="Model selection shape (with --models): one model, one provider, several providers")
+    p_st.add_argument("--providers", default="", help="Comma-separated providers the models come from")
+    p_st.add_argument("--models", default="",
+                      help="Comma-separated models: provider/id, provider:family, or a family or id")
+    p_st.add_argument("--smoke-path", dest="smoke_path", default="",
+                      choices=["", "claude-cli", "litellm", "openrouter", "direct"],
+                      help="How `models update` probes a new model")
+    p_st.add_argument("--backend", default="", choices=["", "litellm", "openrouter"],
+                      help="Gateway for multi-model (litellm or openrouter); omitted: keep the saved mode")
+    p_st.add_argument("--cockpits", default="",
+                      help="Comma-separated cockpits to configure (fails if the matrix cannot serve the models)")
+    p_st.add_argument("--allow-unverified", dest="allow_unverified", action="store_true",
+                      help="Also configure compatibility cells that are not verified end to end (labelled)")
     p_st.set_defaults(func=cmd_setup)
 
     # version

@@ -226,7 +226,8 @@ def selection_refs(selection) -> list[tuple[str, str]]:
     A selection exposes ``slots`` (``"<provider>:<family>"`` -> object or mapping with ``ref``).
     """
     if selection is None:
-        return [("anthropic", f"anthropic/{f}") for f in ("opus", "sonnet", "haiku", "fable")]
+        from .. import model_pins
+        return [("anthropic", model_pins.openclaw_ref(model_pins.DEFAULTS[c])) for c in model_pins.CLASSES]
     out = []
     for key, slot in selection.slots.items():
         provider = key.split(":", 1)[0]

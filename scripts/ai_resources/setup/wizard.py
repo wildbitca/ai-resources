@@ -19,9 +19,10 @@ from . import (
     tools,
     ui,
 )
+from . import compat, model_selection
 from .cockpits import ALL as ALL_COCKPITS
 from .cockpits import _shared
-from .. import __version__, repo_root
+from .. import __version__, repo_root, selection as selection_mod
 
 
 TOTAL_STEPS = 10
@@ -98,7 +99,19 @@ def run(args: argparse.Namespace) -> int:
         _REQUESTED_PROFILE = args.profile
         s.profile.name = args.profile
 
+    # Model-selection flags are checked before anything is written: a contradiction exits non-zero
+    # with zero writes (the same plan table is printed non-interactively).
+    rc = _preflight_selection(args, s)
+    if rc != 0:
+        return rc
+
     # ------------------------------------------------------------------
+    # Tools first (Addendum A1): detect, and offer to install, the base tools; every later step only
+    # offers what these steps found.
+    rc = _step2_cockpits(s)
+    if rc != 0:
+        return rc
+
     rc = _step1_mode(s)
     if rc != 0:
         return rc
@@ -111,10 +124,6 @@ def run(args: argparse.Namespace) -> int:
         rc = _teardown_multi_model(prev_s, s)
         if rc != 0:
             return rc
-
-    rc = _step2_cockpits(s)
-    if rc != 0:
-        return rc
 
     if s.mode == "multi-model":
         if s.backend == "litellm":
@@ -133,6 +142,10 @@ def run(args: argparse.Namespace) -> int:
         if rc != 0:
             return rc
 
+        rc = _step_models(s, args, dry_run)
+        if rc != 0:
+            return rc
+
         rc = _step6_profile(s)
         if rc != 0:
             return rc
@@ -143,6 +156,9 @@ def run(args: argparse.Namespace) -> int:
         ui.info("Skipped (single-model uses cockpit's native auth).")
         ui.section(5, TOTAL_STEPS, "Credentials")
         ui.info("Skipped.")
+        rc = _step_models(s, args, dry_run)
+        if rc != 0:
+            return rc
         rc = _step6_single_model_profile(s)
         if rc != 0:
             return rc
@@ -160,6 +176,10 @@ def run(args: argparse.Namespace) -> int:
         ui.info("Skipped (no local gateway to supervise)." if s.mode == "multi-model"
                 else "Skipped (single-model mode).")
 
+    rc = _step_summary(s, args)
+    if rc != 0:
+        return rc
+
     rc = _step9_apply(s, dry_run=dry_run)
     if rc != 0:
         return rc
@@ -170,6 +190,207 @@ def run(args: argparse.Namespace) -> int:
         verify_rc = _step10_verify(s, list(_APPLIED_TARGETS))
         _print_completion(s)
     return verify_rc   # non-zero only when a selected tooling has an error-level finding
+
+
+# --- Model selection (Addendum A1: tools, then accounts, then models, then a summary) ---------
+def _openclaw_runner():
+    from .. import openclaw_host
+    return openclaw_host.default_runner
+
+
+def _discover_for_wizard(probe: selection_mod.Selection):
+    """Read-only discovery for the model lists (cached catalog; no refresh, no write)."""
+    from .. import models as models_mod
+    runner = _openclaw_runner()
+    accounts = model_selection.detect_accounts()
+    return models_mod.discover(runner, refresh=False, selection=probe, accounts=accounts,
+                               http=models_mod.make_http(), key_for=_key_for)
+
+
+def _key_for(provider: str) -> str:
+    adapter = model_selection.model_providers.REGISTRY.get(provider)
+    return credentials.get_key(adapter.credential[0]) if adapter and adapter.credential else ""
+
+
+def _detected_cockpit_ids(s: state.SetupState) -> list[str]:
+    return [cid for cid, cs in s.cockpits.items() if cs.installed]
+
+
+def _preflight_selection(args: argparse.Namespace, s: state.SetupState) -> int:
+    """Validate the model flags before any write. Sets `s.selection` (in memory) when they describe one."""
+    wanted = any(getattr(args, a, "") for a in ("models", "shape", "providers", "smoke_path", "backend", "cockpits")) \
+        or getattr(args, "allow_unverified", False)
+    if not wanted:
+        return 0
+    backend = getattr(args, "backend", "") or None
+    if backend and backend not in ("litellm", "openrouter"):
+        ui.error(f"--backend must be litellm or openrouter, not {backend!r}")
+        return 2
+    mode, eff_backend = ("multi-model", backend) if backend else (s.mode, s.backend)
+    try:
+        accounts = model_selection.detect_accounts()
+        cands = model_selection.candidates(accounts, _discover_for_wizard)
+        selection = model_selection.selection_from_args(args, accounts, cands, mode, eff_backend)
+    except model_selection.SelectionError as e:
+        ui.error(str(e))
+        return 2
+    except Exception as e:  # noqa: BLE001 - a broken host probe must not look like a contradiction
+        ui.error(f"could not read the accounts: {type(e).__name__}")
+        return 1
+    detected = [cid for cid, det in detection.detect_all_cockpits().items() if det.installed]
+    requested = [c.strip() for c in (getattr(args, "cockpits", "") or "").split(",") if c.strip()]
+    unknown = [c for c in requested if c not in ALL_COCKPITS]
+    if unknown:
+        ui.error(f"--cockpits: unknown cockpit(s) {', '.join(unknown)}")
+        return 2
+    if selection is None and not requested:
+        if backend:
+            s.mode, s.backend = "multi-model", backend
+        return 0
+    actions = model_selection.plan_table(selection, mode, eff_backend, requested or detected,
+                                         allow_unverified=bool(getattr(args, "allow_unverified", False)))
+    for line in model_selection.render_summary(actions, selection, mode, eff_backend):
+        ui.detail(line)
+    bad = [a for a in actions if a.action == compat.SKIP and a.cockpit in requested]
+    if bad and selection is not None:
+        for a in bad:
+            ui.error(f"--cockpits {a.cockpit}: {a.reason} (set --backend or --allow-unverified where the matrix allows it)")
+        return 2
+    if backend:
+        s.mode, s.backend = "multi-model", backend
+    if selection is not None:
+        s.set_selection(selection)
+    if requested:
+        s.profile.customizations.setdefault("__targets__", {})["selected"] = requested
+    return 0
+
+
+def _ask_missing_keys(s: state.SetupState, accounts: dict, dry_run: bool) -> dict:
+    """Ask only about the providers that have no credentials yet (masked prompts, same env file)."""
+    missing = [pid for pid, a in accounts.items()
+               if not a.credentialed and pid not in ("openrouter", "vertex", "ollama")]
+    if not missing:
+        return accounts
+    picked = ui.checkbox("Add a key for these providers? (none needed for the ones you do not use)",
+                         [ui.Choice(f"{providers.get(pid).name}", value=pid) for pid in missing], default=[])
+    updates: dict[str, str] = {}
+    for pid in picked or []:
+        env_var = providers.get(pid).primary_env_var
+        val = ui.password(env_var)
+        if val:
+            updates[env_var] = val
+    if updates and not dry_run:
+        _, added = credentials.update_env_tracked(updates)
+        for k in added:
+            if k not in s.tracking.env_keys_added:
+                s.tracking.env_keys_added.append(k)
+        ui.ok(f"Credentials written to {state.env_path()}")
+        return model_selection.detect_accounts()
+    return accounts
+
+
+def _pick_candidates(shape: str, cands: dict[str, list]) -> list | None:
+    """The questions of the chosen shape; None when the user backs out."""
+    def choices_for(pid):
+        return [ui.Choice(c.label, value=c) for c in cands[pid]]
+
+    if shape == model_selection.SHAPE_SINGLE:
+        flat = [ui.Choice(f"{pid}: {c.label}", value=c) for pid in cands for c in cands[pid]]
+        one = ui.select("Which model?", flat)
+        return None if one is None else [one]
+    if shape == model_selection.SHAPE_ONE_PROVIDER:
+        pid = ui.select("Which provider?", [ui.Choice(p, value=p) for p in cands])
+        if pid is None:
+            return None
+        picked = ui.checkbox(f"Models from {pid}:", choices_for(pid), default=[c for c in cands[pid][:1] if c.channel == "stable"])
+        return picked or None
+    chosen = ui.checkbox("Providers:", [ui.Choice(p, value=p) for p in cands], default=[])
+    if not chosen or len(chosen) < 2:
+        ui.error("Pick at least two providers for this shape.")
+        return None
+    out: list = []
+    for pid in chosen:
+        picked = ui.checkbox(f"Models from {pid}:", choices_for(pid), default=[c for c in cands[pid][:1] if c.channel == "stable"])
+        out += picked or []
+    return out or None
+
+
+def _step_models(s: state.SetupState, args: argparse.Namespace, dry_run: bool = False) -> int:
+    """Pick models from the accounts the earlier steps found (interactive), or keep what the flags set."""
+    if s.get_selection() is not None and (getattr(args, "models", "") or ui.is_non_interactive()):
+        return 0                                    # set by the flags (or saved) and not being changed
+    if ui.is_non_interactive():
+        return 0
+    how = ui.select("How do you want to choose models?",
+                    [ui.Choice("Use a kit profile (presets for every role)", value="profile"),
+                     ui.Choice("Pick models from my accounts (live lists)", value="pick")],
+                    default="profile")
+    if how is None:
+        return 130
+    if how != "pick":
+        return 0
+    ui.info("Looking at your accounts (names only; no key is shown)...")
+    accounts = model_selection.detect_accounts()
+    accounts = _ask_missing_keys(s, accounts, dry_run)
+    while True:
+        creds = {p: a for p, a in accounts.items() if a.credentialed}
+        vendor: dict[str, bool] = {}
+        for pid in model_selection.VENDOR_LISTING_PROVIDERS:
+            if pid in creds and accounts[pid].direct_key:
+                vendor[pid] = ui.confirm(f"List new {providers.get(pid).name} models with your key?", default=False)
+        cands = model_selection.candidates(accounts, _discover_for_wizard, vendor)
+        cands = {p: v for p, v in cands.items() if v}
+        if not cands:
+            ui.warn("No provider with credentials lists any model; keeping the kit profile.")
+            return 0
+        shape = ui.select("What do you want to use?",
+                          [ui.Choice(label, value=key) for key, label in model_selection.SHAPE_LABELS.items()])
+        if shape is None:
+            return 130
+        picks = _pick_candidates(shape, cands)
+        if not picks:
+            continue
+        primary = None
+        if len(picks) > 1:
+            primary = ui.select("Primary model:", [ui.Choice(f"{c.slot} = {c.id}", value=c.slot) for c in picks])
+        providers_used = sorted({c.provider for c in picks})
+        smoke = model_selection.choose_smoke_path(providers_used, s.backend, s.mode, accounts)
+        try:
+            selection = model_selection.build_selection(shape, picks, primary, accounts=accounts,
+                                                        vendor_listing=vendor, smoke_path=smoke)
+        except model_selection.SelectionError as e:
+            ui.error(str(e))
+            continue
+        s.set_selection(selection)
+        return 0
+
+
+def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
+    """The summary BEFORE the write, one line per detected cockpit, then one confirmation.
+
+    Only a recorded selection has a summary; a host without one is configured exactly as before."""
+    selection = s.get_selection()
+    if selection is None:
+        return 0
+    detected = _detected_cockpit_ids(s)
+    actions = model_selection.plan_table(selection, s.mode, s.backend, detected,
+                                         engine=selection.openclaw_engine or None)
+    ui.console().print()
+    ui.info("Summary of what will be configured")
+    for line in model_selection.render_summary(actions, selection, s.mode, s.backend):
+        ui.detail(line)
+    if ui.is_non_interactive():
+        return 0
+    answer = ui.select("Apply this?", [model_selection.APPLY, model_selection.CHANGE, model_selection.CANCEL],
+                       default=model_selection.APPLY)
+    if answer == model_selection.CHANGE:
+        s.set_selection(None)
+        rc = _step_models(s, args)
+        return rc if rc != 0 else _step_summary(s, args)
+    if answer != model_selection.APPLY:
+        ui.warn("Setup cancelled; nothing was written by the apply step.")
+        return 130
+    return 0
 
 
 # --- Step 1 — Mode ---------------------------------------------------------------
@@ -222,7 +443,7 @@ def _try_install_pipx() -> bool:
 
 
 def _step1_mode(s: state.SetupState) -> int:
-    ui.section(1, TOTAL_STEPS, "Setup mode")
+    ui.section(2, TOTAL_STEPS, "Setup mode")
     choices = [
         ui.Choice("single-model — Each cockpit talks to its own provider; Claude subagents pick "
                   "Claude models by role", value="single-model", description=" "),
@@ -320,7 +541,7 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
 
 # --- Step 2 — Cockpit detection --------------------------------------------------
 def _step2_cockpits(s: state.SetupState) -> int:
-    ui.section(2, TOTAL_STEPS, "Cockpit detection")
+    ui.section(1, TOTAL_STEPS, "Tools and cockpits")
     ui.info("Scanning installed AI CLIs...")
     detected = detection.detect_all_cockpits()
 
@@ -1079,6 +1300,13 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     targets = [cid for cid in ALL_COCKPITS if cid in targets]
     global _APPLIED_TARGETS
     _APPLIED_TARGETS = list(targets)
+    # The apply gate: with a recorded selection every cockpit gets its row of the compatibility
+    # matrix (`ctx["route"]`); a cockpit whose row is "skip" keeps the kit content and gets no model
+    # or endpoint setting (the summary said so before this step). Without a selection nothing changes.
+    selection = s.get_selection()
+    routes = {a.cockpit: a for a in model_selection.plan_table(
+        selection, s.mode, s.backend, targets, engine=(selection.openclaw_engine or None) if selection else None)} \
+        if selection is not None else {}
     for cid in targets:
         mod = ALL_COCKPITS.get(cid)
         if not mod:
@@ -1092,9 +1320,15 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                 "detected_version": s.cockpits.get(cid, state.CockpitState()).version,
                 "detected_path": s.cockpits.get(cid, state.CockpitState()).binary_path,
             }
+            if s.mode == "multi-model" and s.backend in profiles.OPENAI_BASE:
+                ctx["openai_base"] = profiles.OPENAI_BASE[s.backend]
+            if cid in routes:
+                ctx["route"] = routes[cid]
             written = mod.configure(ctx)
             for w in written:
                 ui.ok(str(w))
+        except _shared.SkipCockpit as e:
+            ui.warn(f"{cid}: skipped: {e}")
         except Exception as e:
             ui.error(f"{cid}: {e}")
 
@@ -1255,6 +1489,17 @@ def _step10_verify(s: state.SetupState, targets: list[str]) -> int:
 
 
 # --- Step 9 dry-run preview ------------------------------------------------------
+def _print_plan_table(s: state.SetupState) -> None:
+    """One line per detected cockpit: configure / through a gateway / instructions only / skipped and why.
+    The same table the summary shows; read-only."""
+    selection = s.get_selection()
+    actions = model_selection.plan_table(selection, s.mode, s.backend, _detected_cockpit_ids(s),
+                                         engine=(selection.openclaw_engine or None) if selection else None)
+    ui.info("Cockpit plan" + ("" if selection is not None else " (no model selection recorded: the kit defaults)"))
+    for a in actions:
+        ui.detail("  " + model_selection.describe(a))
+
+
 def _step9_dry_run(s: state.SetupState) -> int:
     """Render all configs to a temp dir, print them, start the gateway, run smoke tests, tear down."""
     import json
@@ -1272,6 +1517,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
     console.print("[bold yellow]DRY RUN — configs shown below will NOT be written.[/]")
     console.print("[bold yellow]Gateway will be started temporarily for smoke tests, then stopped.[/]")
     console.print()
+    _print_plan_table(s)
 
     # Build executors
     if s.mode == "multi-model":
