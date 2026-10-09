@@ -1,0 +1,76 @@
+{
+  "agents": {
+    "defaults": {
+      "heartbeat": {
+        "every": "0m"
+      }
+    },
+    "entries": {
+      "*": {
+        "model": {
+          "primary": "anthropic/claude-sonnet-5"
+        }
+      },
+      "main": {
+        "heartbeat": {
+          "every": "2h"
+        },
+        "thinkingDefault": "high"
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "streaming": {
+        "mode": "progress",
+        "preview": {
+          "toolProgress": true
+        },
+        "progress": {
+          "commentary": true,
+          "maxLines": 14,
+          "toolProgress": true
+        }
+      }
+    }
+  },
+  "gateway": {
+    "allowRealIpFallback": true,
+    "bind": "tailnet",
+    "controlUi": {
+      "allowedOrigins": [
+        "https://@DOMAIN@"
+      ],
+      "github": {
+        "token": {
+          "id": "GH_TOKEN",
+          "provider": "default",
+          "source": "env"
+        }
+      }
+    },
+    "publicOrigin": "https://@DOMAIN@",
+    "trustedProxies": [
+      "@POD_CIDR@"
+    ]
+  },
+  "logging": {
+    "file": "@HOME@/.openclaw/logs/gateway.log",
+    "maxFileBytes": 33554432
+  },
+  "plugins": {
+    "entries": {
+      "device-pair": {
+        "config": {
+          "publicUrl": "https://@DOMAIN@"
+        }
+      }
+    }
+  },
+  "tools": {
+    "alsoAllow": [
+      "group:messaging"
+    ],
+    "profile": "coding"
+  }
+}

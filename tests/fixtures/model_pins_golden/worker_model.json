@@ -1,0 +1,7 @@
+{
+  "cockpit_fallbacks": [
+    "claude-sonnet-5",
+    "claude-sonnet-5"
+  ],
+  "state_default": "claude-sonnet-5"
+}
