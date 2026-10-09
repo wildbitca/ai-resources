@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import stat
 from pathlib import Path
 from typing import Any, Callable
 
@@ -80,9 +81,15 @@ def embeds(obj: Any, mapping: dict[str, str]) -> bool:
 # --- files ---------------------------------------------------------------------------------------
 
 def backup_file(path: Path, backup_dir: Path | None, art_id: str) -> dict:
-    """Copy `path` into `backup_dir` (0600). The payload records where, or that the file was absent."""
-    payload: dict = {"path": str(path), "backup": None}
-    if backup_dir is None or not path.is_file():
+    """Copy `path` into `backup_dir` (0600). The payload records where, whether the file existed before the
+    change (`existed`) and its permission bits (`mode`), so a restore never deletes a file the artifact did
+    not create and never widens a file the user locked down."""
+    existed = path.exists()
+    payload: dict = {"path": str(path), "backup": None, "existed": existed}
+    if not path.is_file():
+        return payload
+    payload["mode"] = stat.S_IMODE(path.stat().st_mode)
+    if backup_dir is None:
         return payload
     backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     dest = backup_dir / f"{art_id}-{path.name}"
@@ -99,14 +106,33 @@ def restore_file(payload: dict) -> None:
         if not src.is_file():
             raise ArtifactError(f"the backup {src} is gone; cannot restore {path}")
         shutil.copyfile(src, path)
+        if payload.get("mode") is not None:
+            os.chmod(path, payload["mode"])
+    elif payload.get("existed", False):
+        # The file was there before the change and nothing was backed up: it is the user's, never delete it.
+        raise ArtifactError(f"no backup of {path} was taken; it was left as it is")
     elif path.exists():
         path.unlink()
 
 
 def _atomic_write(path: Path, text: str) -> None:
+    """Write `text` to a temp file next to `path` and swap it in. The file keeps the permission bits of the one
+    it replaces; a new file is created 0600 (these files can carry a gateway key)."""
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError:
+        mode = 0o600
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            os.fchmod(fh.fileno(), mode)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class _FileArtifact(Artifact):
@@ -145,7 +171,10 @@ class _FileArtifact(Artifact):
         try:
             self._write(substitution(change.slots), change, ctx)
         except Exception as e:  # noqa: BLE001 - leave the file as it was, then report
-            restore_file(payload)
+            try:
+                restore_file(payload)
+            except ArtifactError as re_:
+                raise ArtifactError(f"{self.id}: {e}; {re_}") from e
             raise ArtifactError(f"{self.id}: {e}") from e
         return payload
 
@@ -336,18 +365,22 @@ class LiteLLMArtifact(_FileArtifact):
             self._write(substitution(change.slots), change, ctx)
             payload["restarted"] = True
         except Exception as e:  # noqa: BLE001 - put the old file back and bring the old config up again
-            restore_file({k: payload[k] for k in ("path", "backup")})
+            note = ""
+            try:
+                restore_file({k: v for k, v in payload.items() if k != "restarted"})
+            except ArtifactError as re_:
+                note = f"; {re_}"
             try:
                 if self._running():
                     self._restart()
                     self._healthy()
             except Exception:  # noqa: BLE001
                 pass
-            raise ArtifactError(f"{self.id}: {e}") from e
+            raise ArtifactError(f"{self.id}: {e}{note}") from e
         return payload
 
     def restore(self, payload: dict, ctx: Ctx) -> None:
-        restore_file({k: payload[k] for k in ("path", "backup")})
+        restore_file({k: v for k, v in payload.items() if k != "restarted"})
         if payload.get("restarted") and self._running():
             if not self._restart() or not self._healthy():
                 raise ArtifactError("LiteLLM did not become healthy after restoring litellm.yaml")

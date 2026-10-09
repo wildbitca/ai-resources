@@ -177,13 +177,114 @@ def test_restoring_a_recorded_change_puts_every_file_back(host):
     assert host.snapshot() == before
 
 
+def _all_key_env_vars(monkeypatch):
+    """Put the sentinel in every environment variable a renderer could read a key from."""
+    from ai_resources.setup import credentials
+    names = {"LITELLM_MASTER_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY"}
+    names |= {v for vs in credentials.PROVIDER_KEYS.values() for v in vs}
+    names |= {env for _prefix, env in litellm._VENDOR_UPSTREAM.values()}
+    for n in names:
+        monkeypatch.setenv(n, SENTINEL)
+
+
+def _written_files(host):
+    return [state.executors_path(), state.litellm_path(), claude.SETTINGS_PATH, aider.CONF_PATH,
+            *claude.AGENTS_DIR.glob("*.md")]
+
+
 def test_no_key_value_is_written_by_the_re_render(host, monkeypatch):
-    monkeypatch.setenv("LITELLM_MASTER_KEY", SENTINEL)
-    fo.apply_all(host.artifacts(), CHANGE, host.ctx())
-    for p in (state.executors_path(), state.litellm_path(), *claude.AGENTS_DIR.glob("*.md")):
-        assert SENTINEL not in p.read_text()
+    _all_key_env_vars(monkeypatch)
+    res = fo.apply_all(host.artifacts(), CHANGE, host.ctx())
+    assert res.ok and "aider-conf" in res.payloads                 # aider.conf.yml really was re-rendered
+    for p in _written_files(host):
+        assert SENTINEL not in p.read_text(), p
+    assert yaml.safe_load(aider.CONF_PATH.read_text())["openai-api-key"] == "keep-me"
     assert "os.environ/" in state.litellm_path().read_text()
     assert "api_key: gemini" not in state.litellm_path().read_text()
+
+
+def test_no_key_value_reaches_the_claude_settings_under_openrouter(tmp_path, monkeypatch):
+    h = Host(tmp_path, monkeypatch, backend="openrouter")
+    _all_key_env_vars(monkeypatch)
+    claude.SETTINGS_PATH.write_text(json.dumps({
+        "env": {"ANTHROPIC_AUTH_TOKEN": "tok", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "anthropic/claude-haiku-4.5"}}))
+    res = fo.apply_all(h.artifacts(), fo.Change({"anthropic:haiku": ("claude-haiku-4-5", "claude-haiku-5-5")}), h.ctx())
+    assert res.ok and "claude-settings" in res.payloads
+    text = claude.SETTINGS_PATH.read_text()
+    assert SENTINEL not in text and json.loads(text)["env"]["ANTHROPIC_AUTH_TOKEN"] == "tok"
+
+
+# --- M0: the credential-bearing files keep their permission bits ------------------------------------------------
+
+def _mode(p: Path) -> int:
+    return p.stat().st_mode & 0o777
+
+
+def test_a_locked_down_aider_conf_and_settings_stay_0600_after_the_render(tmp_path, monkeypatch):
+    h = Host(tmp_path, monkeypatch, backend="openrouter")
+    claude.SETTINGS_PATH.write_text(json.dumps({
+        "env": {"ANTHROPIC_AUTH_TOKEN": "tok", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "anthropic/claude-haiku-4.5"}}))
+    aider.CONF_PATH.write_text(yaml.safe_dump({"openai-api-key": "k", "model": "anthropic/claude-haiku-4.5"}))
+    for p in (claude.SETTINGS_PATH, aider.CONF_PATH):
+        p.chmod(0o600)
+    before = h.snapshot()
+    res = fo.apply_all(h.artifacts(), fo.Change({"anthropic:haiku": ("claude-haiku-4-5", "claude-haiku-5-5")}), h.ctx())
+    assert res.ok and {"claude-settings", "aider-conf"} <= set(res.payloads)
+    assert _mode(claude.SETTINGS_PATH) == 0o600 and _mode(aider.CONF_PATH) == 0o600
+    assert h.snapshot() != before
+    ok, msg = fo.restore_all(h.artifacts(), res.payloads, h.ctx())
+    assert ok, msg
+    assert _mode(claude.SETTINGS_PATH) == 0o600 and _mode(aider.CONF_PATH) == 0o600
+
+
+def test_a_restore_puts_a_widened_file_back_to_its_original_mode(host):
+    aider.CONF_PATH.chmod(0o600)
+    res = fo.apply_all(host.artifacts(), CHANGE, host.ctx())
+    assert res.ok
+    aider.CONF_PATH.chmod(0o644)                                     # something widened it after the render
+    ok, msg = fo.restore_all(host.artifacts(), res.payloads, host.ctx())
+    assert ok, msg
+    assert _mode(aider.CONF_PATH) == 0o600
+
+
+def test_a_new_file_the_atomic_write_creates_is_0600(tmp_path):
+    target = tmp_path / "new.conf"
+    rr._atomic_write(target, "openai-api-key: k\n")
+    assert _mode(target) == 0o600 and target.read_text() == "openai-api-key: k\n"
+    assert not (tmp_path / "new.conf.tmp").exists()
+
+
+# --- M11: nothing the artifact did not create is ever deleted -----------------------------------------------------
+
+def test_a_restore_without_a_backup_never_deletes_a_file_that_existed(tmp_path):
+    f = tmp_path / "executors.yaml"
+    f.write_text("mine: 1\n")
+    payload = rr.backup_file(f, None, "executors")
+    assert payload["existed"] is True and payload["backup"] is None
+    with pytest.raises(fo.ArtifactError, match="no backup"):
+        rr.restore_file(payload)
+    assert f.read_text() == "mine: 1\n"
+
+
+def test_a_restore_removes_only_a_file_the_artifact_created(tmp_path):
+    f = tmp_path / "executors.yaml"
+    payload = rr.backup_file(f, None, "executors")
+    assert payload["existed"] is False
+    f.write_text("created: 1\n")
+    rr.restore_file(payload)
+    assert not f.exists()
+
+
+def test_a_failed_write_without_a_backup_dir_leaves_the_users_file(host, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(rr.AiderConfArtifact, "_write", boom)
+    before = digest(aider.CONF_PATH)
+    art = next(a for a in host.artifacts() if a.id == "aider-conf")
+    ctx = fo.Ctx(selection=host.selection, plan=host.plan(), extras={"state": host.state})     # no backup_dir
+    with pytest.raises(fo.ArtifactError, match="disk full"):
+        art.render(CHANGE, ctx)
+    assert digest(aider.CONF_PATH) == before
 
 
 def test_under_openrouter_the_claude_pins_and_overrides_move_too(tmp_path, monkeypatch):
