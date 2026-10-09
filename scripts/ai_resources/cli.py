@@ -27,10 +27,12 @@ _EPILOG = """Typical flows:
   Show role → model map:
     ai-resources executors show
 
-  Newer Claude models for the OpenClaw host (read-only check, then apply):
+  Newer models for the OpenClaw host and your gateways (read-only check, then apply):
     ai-resources models status
     ai-resources models check --refresh
     ai-resources models update --dry-run
+    ai-resources models update            # on a terminal: shows what was found and asks
+    ai-resources models approve --slot google:gemini-flash <id>
 
   Daemon (LiteLLM container):
     ai-resources daemon status

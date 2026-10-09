@@ -1,5 +1,7 @@
 """`ai-resources models ...`: status, check, update, approve, revoke, pin, unpin, exclude, rollback.
 
+`update` asks on a terminal (see models_interaction) and never prompts unattended.
+
 Thin over `models.py` (policy, patching, orchestration) and `model_pins.py` (declaration and overlay).
 Unattended runs (a timer, no TTY, `--unattended`) never prompt."""
 from __future__ import annotations
@@ -9,7 +11,7 @@ import json
 import sys
 from datetime import datetime, timezone
 
-from . import model_pins, model_providers, models
+from . import model_fanout, model_pins, model_providers, models, models_interaction
 from .setup import ui
 
 VERBS = ("status", "check", "update", "approve", "revoke", "pin", "unpin", "exclude", "rollback")
@@ -155,7 +157,8 @@ def _opts(args: argparse.Namespace, *, check: bool = False) -> models.Options:
     return models.Options(check=check or getattr(args, "check", False), dry_run=getattr(args, "dry_run", False),
                           classes=getattr(args, "classes", None) or None,
                           no_restart=getattr(args, "no_restart", False),
-                          refresh=getattr(args, "refresh", True), unattended=getattr(args, "unattended", False))
+                          refresh=getattr(args, "refresh", True), unattended=getattr(args, "unattended", False),
+                          apply_proposals=getattr(args, "apply_proposals", False))
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -164,30 +167,85 @@ def cmd_check(args: argparse.Namespace) -> int:
     return r.rc
 
 
-def _offer_approvals(args: argparse.Namespace, deps: models.Deps) -> None:
-    """Interactive only: offer each needs_approval proposal, persisting the answer as an approval."""
-    try:
-        disc = models.discover(deps.runner, refresh=getattr(args, "refresh", True))
-    except models.DiscoveryError:
-        return
-    ov = _overlay()
-    for p in models.propose(model_pins.effective(ov), disc, ov):
-        if p.decision != "needs_approval":
+NOT_UPDATED_NOTE = ("executors.yaml, litellm.yaml, the Claude subagent files and aider.conf.yml were not "
+                    "updated by this command; run `ai-resources setup` to re-render them.")
+
+
+class _UiIO:
+    """The buttons: `ui.select` behind the interface `models_interaction` asks through."""
+
+    def select(self, message, choices, default=None):
+        return ui.select(message, choices, default=default)
+
+
+def _artifacts_line(deps: models.Deps, p) -> str:
+    """The artifacts this proposal would touch, exactly as the fan-out registry reports them."""
+    change = model_fanout.Change({p.slot: (p.old, p.new)})
+    ids = model_fanout.affected_ids(models.registry(deps.apply_patch, deps.artifacts()), change, model_fanout.Ctx())
+    return ", ".join(["overlay", *ids]) if ids else "overlay"
+
+
+def _channel(p) -> str:
+    adapter = model_providers.REGISTRY.get(p.provider)
+    ref = adapter.from_any_spelling(p.new) if adapter else None
+    return ref.channel if ref else "unknown"
+
+
+def _print_plan(plan: models.Plan, deps: models.Deps, wanted: set[str]) -> list:
+    """The table of what discovery found, one row per proposal. Returns the proposals to ask about."""
+    path = getattr(plan.selection, "smoke_path", "claude-cli") if plan.selection is not None else "claude-cli"
+    rows = [p for p in plan.props if p.decision not in ("current",) and (not wanted or p.slot in wanted)]
+    for row in plan.disc.providers:
+        if row.status in ("skipped", "failed", "report-only"):
+            print(f"  {row.provider}: {row.text}")
+    if not rows:
+        print("Everything is up to date.")
+    for p in rows:
+        if p.kind == "new_family":
+            print(f"  new family {p.new} (report only, never applied)")
             continue
-        answer = ui.select(f"{p.cls}: {p.old} -> {p.new} ({'; '.join(p.reasons)}). Apply it?",
-                           ["Approve and apply", "Skip"], default="Skip")
-        if answer == "Approve and apply":
-            ov.setdefault("approvals", {})[p.slot] = p.new
-            ((ov.get("state") or {}).get("failed") or {}).pop(p.slot, None)
-            _save(ov, "approve", cls=p.slot, id=p.new)
+        print(f"  {p.slot}: {p.old or '-'} -> {p.new}  [{p.provider}, {_channel(p)}, {p.kind}, price {p.price}, "
+              f"smoke {path}]  {p.decision}" + (f" ({'; '.join(p.reasons)})" if p.reasons else ""))
+        print(f"    updates: {_artifacts_line(deps, p)}")
+    res = models_interaction.resolve(plan.props, lambda slot: model_pins.slot_policy(_overlay(), slot), True)
+    return [p for p in res.ask if not wanted or p.slot in wanted]
+
+
+def _interactive_update(args: argparse.Namespace, deps: models.Deps) -> int:
+    """TTY run: discover once, show the table, ask, then apply THAT result through the fan-out."""
+    opts = _opts(args)
+    plan = models.make_plan(opts, deps)
+    if isinstance(plan, models.Result):
+        _print_result(plan, args)
+        return plan.rc
+    wanted = models._wanted(opts)
+    to_ask = _print_plan(plan, deps, wanted)
+    answers = models_interaction.ask(to_ask, _UiIO())
+    if answers is None:
+        print("cancelled; nothing was changed")
+        return 0
+    r = models.run_update(opts, deps, plan=plan, answers=answers, expect_revision=plan.revision)
+    if r.rc == models.EXIT_LOCKED:
+        print("an update is already running; nothing was changed")
+        return r.rc
+    _print_result(r, args)
+    if r.outcome == "switched":
+        print(NOT_UPDATED_NOTE)
+    return r.rc
 
 
 def cmd_update(args: argparse.Namespace) -> int:
     deps = get_deps()
-    if not (args.check or args.dry_run) and _can_prompt(args):
-        _offer_approvals(args, deps)
+    dry = args.check or args.dry_run
+    if getattr(args, "review", False) and not _can_prompt(args):
+        print("--review needs a terminal (and no --unattended)", file=sys.stderr)
+        return 2
+    if not dry and not getattr(args, "apply_proposals", False) and _can_prompt(args):
+        return _interactive_update(args, deps)
     r = models.run_update(_opts(args), deps)
     _print_result(r, args)
+    if r.outcome == "switched" and not getattr(args, "json", False):
+        print(NOT_UPDATED_NOTE)
     return r.rc
 
 
@@ -284,7 +342,7 @@ def cmd_rollback(args: argparse.Namespace) -> int:
 
 
 def add_subparser(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("models", help="Find, approve and apply newer Claude models for the OpenClaw host")
+    p = sub.add_parser("models", help="Find, approve and apply newer models (any enabled provider) for the OpenClaw host and gateways")
     sp = p.add_subparsers(dest="action", required=True, metavar="VERB")
 
     sp.add_parser("status", help="Effective pins, config drift, pending approvals, last run").set_defaults(func=cmd_status)
@@ -303,6 +361,9 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
                    help="Only this slot, for example google:gemini-flash (repeatable)")
     u.add_argument("--no-restart", action="store_true", help="Patch the config but leave the gateway running")
     u.add_argument("--unattended", action="store_true", help="Never prompt (the timer uses this)")
+    u.add_argument("--review", action="store_true", help="Force the interactive listing (needs a terminal)")
+    u.add_argument("--apply-proposals", action="store_true",
+                   help="Scripted, no prompt: approve and apply every proposal that is waiting for a human")
     u.add_argument("--json", action="store_true")
     u.set_defaults(func=cmd_update, refresh=True)
 

@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
-from . import audit, model_fanout, model_pins, model_providers, openclaw_host
+from . import audit, model_fanout, model_pins, model_providers, models_interaction, openclaw_host
 from .model_pins import CLASSES
 
 # (return code, combined output); same contract as openclaw_host.default_runner.
@@ -645,7 +645,7 @@ class ApplyOutcome:
     unwound: bool = False             # an artifact AFTER the first failed and the earlier ones were restored
 
 
-def _registry(apply_patch: ApplyPatch, extra: list | None = None) -> list:
+def registry(apply_patch: ApplyPatch, extra: list | None = None) -> list:
     """The ordered artifact registry: openclaw first, then whatever S12 registers, overlay last."""
     return [model_fanout.OpenClawArtifact(apply_patch, build_forward_patch, slot_ref), *(extra or [])]
 
@@ -662,11 +662,11 @@ def apply_changes_ex(doc: dict, changes: dict[str, tuple[str, str]], *, apply_pa
     provider has no verified OpenClaw runtime is recorded in the overlay but never repointed in
     openclaw.json."""
     changes = {model_pins.slot_key(k): v for k, v in changes.items()}
-    registry = _registry(apply_patch, artifacts)
+    arts = registry(apply_patch, artifacts)
     ctx = model_fanout.Ctx(doc=doc, selection=selection)
-    res = model_fanout.apply_all(registry, model_fanout.Change(changes), ctx)
+    res = model_fanout.apply_all(arts, model_fanout.Change(changes), ctx)
     if not res.ok:
-        unwound = bool(res.restored) and res.failed != registry[0].id
+        unwound = bool(res.restored) and res.failed != arts[0].id
         return ApplyOutcome(False, res.message + ("; " + "; ".join(res.restore_errors) if res.restore_errors else ""),
                             overlay, res.failed, unwound)
     openclaw_payload = res.payloads.get("openclaw", {"inverse": {}})
@@ -710,7 +710,7 @@ def rollback_last(*, apply_patch: ApplyPatch, overlay: dict, overlay_file: Path 
     payloads = last.get("artifacts")
     if not isinstance(payloads, dict) or "openclaw" not in payloads:
         payloads = {"openclaw": {"inverse": last["inverse"]}, **(payloads or {})}     # recorded before the registry
-    ok, msg = model_fanout.restore_all(_registry(apply_patch, artifacts), payloads,
+    ok, msg = model_fanout.restore_all(registry(apply_patch, artifacts), payloads,
                                        model_fanout.Ctx(selection=selection))
     if not ok:
         return False, msg, overlay
@@ -925,6 +925,7 @@ class Options:
     no_restart: bool = False
     refresh: bool = True
     unattended: bool = False
+    apply_proposals: bool = False      # scripted: approve and apply every pending proposal, no prompt
 
 
 @dataclass
@@ -1065,17 +1066,63 @@ def _wanted(opts: Options) -> set[str]:
     return {model_pins.slot_key(c) for c in (opts.classes or [])}
 
 
-def run_update(opts: Options, deps: Deps) -> Result:
+@dataclass
+class Plan:
+    """One discovery, as the user saw it: the interactive path applies THIS result, never a second one."""
+    disc: "Discovery"
+    props: list
+    revision: str
+    selection: object = None
+    accounts: dict | None = None
+
+
+def _discover_for(deps: Deps, opts: Options, now: datetime, ctx: dict | None):
+    """(selection, accounts, discovery) or a Result for a failed discovery."""
+    selection = deps.selection()
+    accounts = deps.accounts() if selection is not None else None
+    disc = discover(deps.runner, refresh=opts.refresh, warn=lambda m: _log(deps, "warn", message=m),
+                    selection=selection, accounts=accounts, http=deps.http, key_for=deps.key_for,
+                    monotonic=deps.monotonic)
+    if ctx is not None:
+        ctx["providers"] = disc.providers
+    return selection, accounts, disc
+
+
+def make_plan(opts: Options, deps: Deps) -> "Plan | Result":
+    """Take the lock, discover ONCE, propose, record the overlay revision, release the lock.
+
+    The interactive path calls this, asks, then calls `run_update(..., plan=plan)`: the lock is not
+    held while a human reads a prompt."""
+    with deps.lock() as got:
+        if not got:
+            return Result(EXIT_LOCKED, "locked", "another models update is running")
+        ov = _load(deps)
+        ctx: dict = {}
+        try:
+            selection, accounts, disc = _discover_for(deps, opts, deps.now(), ctx)
+        except DiscoveryError as e:
+            _log(deps, "discovery_failed", error=str(e))
+            return Result(EXIT_ERROR, "error", str(e), providers=ctx.get("providers", []))
+        effective = model_pins.effective_slots(selection, ov) if selection is not None else model_pins.effective(ov)
+        props = propose(effective, disc, _with_prices(deps, ov, selection), selection, accounts)
+        return Plan(disc, props, models_interaction.revision(ov), selection, accounts)
+
+
+def run_update(opts: Options, deps: Deps, *, plan: "Plan | None" = None, answers: dict | None = None,
+               expect_revision: str | None = None) -> Result:
+    """Discover, propose and apply. With a `plan` (the interactive path) no second discovery runs and
+    the overlay must still be at `expect_revision`; `answers` are the user's replies to the plan."""
     with deps.lock() as got:
         if not got:
             return Result(EXIT_LOCKED, "locked", "another models update is running")
         ctx: dict = {}
-        result = _run_locked(opts, deps, ctx)
+        result = _run_locked(opts, deps, ctx, plan, answers, expect_revision)
         result.providers = ctx.get("providers", [])
         return result
 
 
-def _run_locked(opts: Options, deps: Deps, ctx: dict | None = None) -> Result:
+def _run_locked(opts: Options, deps: Deps, ctx: dict | None = None, plan: "Plan | None" = None,
+                answers: dict | None = None, expect_revision: str | None = None) -> Result:
     writes = not (opts.check or opts.dry_run)
     ov = _load(deps)
     st = ov.get("state") or {}
@@ -1087,9 +1134,17 @@ def _run_locked(opts: Options, deps: Deps, ctx: dict | None = None) -> Result:
         _log(deps, "resume_restart", applied=list(applied))
         return _restart_and_verify(opts, deps, ov, applied, resume=True)
 
+    if expect_revision is not None and models_interaction.revision(ov) != expect_revision:
+        # The policy moved while a human was reading the prompt: do not apply an answer to a
+        # question that no longer matches. Nothing was written.
+        _log(deps, "overlay_changed")
+        return Result(EXIT_ERROR, "overlay_changed",
+                      "the model policy changed while you were answering; nothing was written; run the command again")
+
+    explicit = bool(answers) or opts.apply_proposals            # a human asked for this run: no cooldown
     cooldown = policy_of(ov)["cooldown_hours"]
     last_switch = st.get("last_switch_at")
-    if writes and last_switch:
+    if writes and last_switch and not explicit:
         try:
             if now - datetime.fromisoformat(last_switch) < timedelta(hours=cooldown):
                 _log(deps, "cooldown", last_switch_at=last_switch)
@@ -1097,21 +1152,30 @@ def _run_locked(opts: Options, deps: Deps, ctx: dict | None = None) -> Result:
         except ValueError:
             pass
 
-    selection = deps.selection()
-    try:
-        disc = discover(deps.runner, refresh=opts.refresh, warn=lambda m: _log(deps, "warn", message=m),
-                        selection=selection, accounts=deps.accounts() if selection is not None else None,
-                        http=deps.http, key_for=deps.key_for, monotonic=deps.monotonic)
-    except DiscoveryError as e:
-        _log(deps, "discovery_failed", error=str(e))
-        if writes:
-            _persist(deps, ov, last_run=now.isoformat(), last_result="error")
-        return Result(EXIT_ERROR, "error", str(e))
-    if ctx is not None:
-        ctx["providers"] = disc.providers
+    if answers and writes:
+        ov = models_interaction.apply_answers(ov, answers)
+        model_pins.save_overlay(ov, deps.overlay_file)
+
+    if plan is not None:
+        selection, accounts, disc = plan.selection, plan.accounts, plan.disc       # the SAME discovery the user answered
+        if ctx is not None:
+            ctx["providers"] = disc.providers
+    else:
+        try:
+            selection, accounts, disc = _discover_for(deps, opts, now, ctx)
+        except DiscoveryError as e:
+            _log(deps, "discovery_failed", error=str(e))
+            if writes:
+                _persist(deps, ov, last_run=now.isoformat(), last_result="error")
+            return Result(EXIT_ERROR, "error", str(e), providers=(ctx or {}).get("providers", []))
     effective = model_pins.effective_slots(selection, ov) if selection is not None else model_pins.effective(ov)
-    accounts = deps.accounts() if selection is not None else None
     props = propose(effective, disc, _with_prices(deps, ov, selection), selection, accounts)
+    if opts.apply_proposals and writes:
+        # Scripted: every proposal waiting for a human is approved with the exact id found.
+        for p in props:
+            if p.decision == "needs_approval":
+                ov.setdefault("approvals", {})[p.slot] = p.new
+        props = propose(effective, disc, _with_prices(deps, ov, selection), selection, accounts)
     needs = [p for p in props if p.decision == "needs_approval"]
     if writes:
         pending = ov.setdefault("pending", {})

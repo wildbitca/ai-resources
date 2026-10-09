@@ -101,7 +101,9 @@ def test_update_without_a_tty_never_prompts(env, monkeypatch):
     assert run("update", "--class", "sonnet") == 0
 
 
-def test_update_interactive_offers_the_pending_ones(tmp_path, monkeypatch):
+def test_update_interactive_asks_once_per_run_and_persists_an_always_answer(tmp_path, monkeypatch):
+    """The v1 per-proposal "Approve and apply / Skip" prompts were replaced by the batch question and the
+    four buttons of the interactive design (plan v2 decision (i)); the full flow is in test_update_interaction."""
     e = Env(tmp_path, monkeypatch, priced=False)
     monkeypatch.setattr(models_cmd, "get_deps", e.deps)
     monkeypatch.setattr(mp, "overlay_path", lambda: e.overlay)
@@ -109,9 +111,9 @@ def test_update_interactive_offers_the_pending_ones(tmp_path, monkeypatch):
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
     asked = []
     monkeypatch.setattr(ui, "select", lambda msg, choices, default=None, **k: asked.append(msg) or (
-        "Approve and apply" if msg.startswith("haiku") else "Skip"))
+        "Choose per model" if len(asked) == 1 else ("Update now" if msg.startswith("anthropic:haiku") else "Not now")))
     run("update", "--no-restart")
-    assert len(asked) == 3 and mp.load_overlay(e.overlay)["approvals"] == {"anthropic:haiku": "claude-haiku-5-5"}
+    assert len(asked) == 4 and mp.load_overlay(e.overlay)["pins"] == {"anthropic:haiku": "claude-haiku-5-5"}
 
 
 def test_update_json_output(env, capsys):

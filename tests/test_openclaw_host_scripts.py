@@ -692,3 +692,24 @@ def test_models_update_unit_gives_the_restart_and_health_poll_time():
     assert "TimeoutStartSec=900" in text and "Type=oneshot" in text
     timer = (REPO / "templates" / "systemd" / "openclaw-models-update.timer.template").read_text()
     assert "OnCalendar=*-*-* 04:45:00" in timer and "RandomizedDelaySec=30min" in timer and "Persistent=true" in timer
+
+
+def test_models_update_notice_names_a_non_claude_slot_in_full_and_says_newer_models(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    payload = _approval_payload()
+    payload["proposals"][0].update({"cls": "gemini-flash", "slot": "google:gemini-flash", "provider": "google",
+                                    "new": "gemini-3.9-flash"})
+    host.set_models(10, payload)
+    assert host.run("openclaw-models-update.sh").returncode == 10
+    calls = "\n".join(host.calls())
+    assert "ai-resources models approve --slot google:gemini-flash gemini-3.9-flash" in calls
+    assert "newer models are waiting" in calls and "newer Claude models" not in calls
+
+
+def test_models_update_notice_keeps_the_short_form_for_a_claude_slot(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    payload = _approval_payload()
+    payload["proposals"][0]["slot"] = "anthropic:haiku"
+    host.set_models(10, payload)
+    host.run("openclaw-models-update.sh")
+    assert "ai-resources models approve haiku claude-haiku-5-5" in "\n".join(host.calls())

@@ -2,7 +2,7 @@
 # openclaw-models-update.sh — the daily background upgrade of the Claude models OpenClaw runs on.
 #
 # All the work (discovery, policy, smoke probe, `openclaw config patch`, drained restart, health
-# check, rollback) is `ai-resources models update --unattended`. This script keeps what is its own:
+# check, rollback) is `ai-resources models update --unattended` (it never prompts). This script keeps what is its own:
 #   - standing down while a maintenance window is open (watchdog.off);
 #   - turning the exit code into a report line in models-update.log;
 #   - telling the operator ONLY when something changed or needs a decision.
@@ -50,11 +50,14 @@ field(){ python3 -c "$last_json"'d=last
 v=d.get(sys.argv[1], "")
 print(v if not isinstance(v,(dict,list)) else json.dumps(v))' "$1" <<<"$out" 2>/dev/null; }
 
-# The exact commands that approve what is waiting, one per line.
+# The exact commands that approve what is waiting, one per line. A Claude class keeps the short
+# form (`approve haiku <id>`); any other provider's slot is named in full (`approve --slot google:gemini-flash <id>`).
 approve_lines(){ python3 -c "$last_json"'d=last
 for p in d.get("proposals", []):
     if p.get("decision") == "needs_approval":
-        print("ai-resources models approve %s %s   # %s" % (p["cls"], p["new"], "; ".join(p.get("reasons", []))))' <<<"$out" 2>/dev/null; }
+        slot = p.get("slot") or p["cls"]
+        target = p["cls"] if slot.startswith("anthropic:") or ":" not in slot else "--slot " + slot
+        print("ai-resources models approve %s %s   # %s" % (target, p["new"], "; ".join(p.get("reasons", []))))' <<<"$out" 2>/dev/null; }
 
 say(){ notify "$1" || log "note: could not notify over Telegram"; }
 
@@ -68,7 +71,7 @@ case "$rc" in
     key="$(sha256sum <<<"$lines" | cut -d' ' -f1)"
     if [ -n "$lines" ] && [ "$(cat "$NOTIFIED" 2>/dev/null)" != "$key" ]; then
       echo "$key" > "$NOTIFIED"
-      say "OpenClaw: newer Claude models are waiting for your approval. To allow one:
+      say "OpenClaw: newer models are waiting for your approval. To allow one:
 $lines"
     fi ;;
   1)  say "OpenClaw models update FAILED (error): $(field message)" ;;
