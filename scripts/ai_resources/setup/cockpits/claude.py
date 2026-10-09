@@ -756,7 +756,9 @@ def configure(ctx: dict) -> list[Path]:
                 s.tracking.cockpit_env_keys_added[ID].append(k)
 
     # Apply patch
-    _shared.deep_merge_json(SETTINGS_PATH, settings_patch)
+    # A patch that carries the gateway token makes settings.json a key-bearing file: 0600, not the umask default.
+    carries_key = bool(settings_patch.get("env", {}).get("ANTHROPIC_AUTH_TOKEN"))
+    _shared.deep_merge_json(SETTINGS_PATH, settings_patch, mode=0o600 if carries_key else None)
 
     # Kit hooks: replace earlier kit entries, keep the user's own hooks
     _shared.merge_kit_hooks(SETTINGS_PATH, _kit_hooks(ak_path), _is_kit_hook_command)

@@ -15,8 +15,12 @@ class SkipCockpit(Exception):
     """A cockpit cannot be given what the selection asks for; the wizard prints the reason and moves on."""
 
 
-def deep_merge_json(path: Path, patch: dict, *, dry_run: bool = False) -> bool:
-    """Merge patch into JSON at path. Returns True if written."""
+def deep_merge_json(path: Path, patch: dict, *, dry_run: bool = False, mode: int | None = None) -> bool:
+    """Merge patch into JSON at path. Returns True if written.
+
+    With `mode` (0o600 for a file that will carry a key) the file is created with it and an existing,
+    wider file is tightened to it even when the merge changes nothing.
+    """
     existing: dict = {}
     if path.is_file():
         try:
@@ -41,11 +45,17 @@ def deep_merge_json(path: Path, patch: dict, *, dry_run: bool = False) -> bool:
 
     changed = _merge(existing, patch)
     if not changed:
+        if mode is not None and not dry_run and path.is_file() and path.stat().st_mode & 0o777 != mode:
+            path.chmod(mode)
         return False
     if dry_run:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    text = json.dumps(existing, indent=2, ensure_ascii=False) + "\n"
+    if mode is None:
+        path.write_text(text, encoding="utf-8")
+    else:
+        _write_with_mode(path, text, mode)
     return True
 
 
@@ -85,11 +95,25 @@ def remove_env_keys_from_settings(path: Path, keys: list[str]) -> list[str]:
     return removed
 
 
+def _write_with_mode(path: Path, content: str, mode: int) -> None:
+    """Write `content` to `path` created with `mode` from the start (no window at the umask default);
+    an existing file is tightened to it as well, because O_CREAT does not reset the mode."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fd = -1
+            fh.write(content)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def write_text(path: Path, content: str, *, dry_run: bool = False, mode: int | None = None) -> bool:
     """Write text file, creating parent dirs. Returns True if written/changed.
 
-    With `mode`, the file is created with that mode from the start (no window at the umask default)
-    and an existing file is tightened to it: use 0o600 for files that carry a key.
+    With `mode`, the file is created with that mode from the start and an existing, wider file is
+    tightened to it, even when its content is unchanged: use 0o600 for files that carry a key.
     """
     if path.is_file():
         try:
@@ -105,16 +129,8 @@ def write_text(path: Path, content: str, *, dry_run: bool = False, mode: int | N
     path.parent.mkdir(parents=True, exist_ok=True)
     if mode is None:
         path.write_text(content, encoding="utf-8")
-        return True
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    try:
-        os.fchmod(fd, mode)   # O_CREAT does not reset the mode of a file that already exists
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fd = -1
-            fh.write(content)
-    finally:
-        if fd >= 0:
-            os.close(fd)
+    else:
+        _write_with_mode(path, content, mode)
     return True
 
 

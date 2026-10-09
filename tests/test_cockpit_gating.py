@@ -175,3 +175,70 @@ def test_apply_without_a_selection_passes_no_route(monkeypatch, tmp_path):
     s.cockpits["claude"] = state.CockpitState(installed=True)
     assert wizard._step9_apply(s) == 0
     assert "route" not in seen and "openai_base" not in seen
+
+
+# --- a settings.json that carries the gateway token is never group/other readable ------------------------
+
+def _mode(p):
+    import os
+    import stat
+    return stat.S_IMODE(os.stat(p).st_mode)
+
+
+def test_a_new_settings_json_with_the_openrouter_key_is_created_0600(claude_home):
+    s = state.SetupState()
+    s.mode, s.backend = "multi-model", "openrouter"
+    claude.configure(_ctx(s))
+    path = claude_home / "settings.json"
+    assert json.loads(path.read_text())["env"]["ANTHROPIC_AUTH_TOKEN"] == "k"
+    assert _mode(path) == 0o600
+
+
+def test_litellm_never_puts_the_gateway_key_in_settings_json(claude_home):
+    s = state.SetupState()
+    s.mode, s.backend = "multi-model", "litellm"
+    claude.configure(_ctx(s))
+    assert "ANTHROPIC_AUTH_TOKEN" not in json.loads((claude_home / "settings.json").read_text())["env"]
+
+
+@pytest.mark.parametrize("old_mode", [0o644, 0o666])
+def test_an_existing_wider_settings_json_is_tightened_and_keeps_the_users_content(claude_home, old_mode):
+    claude_home.mkdir(parents=True)
+    path = claude_home / "settings.json"
+    path.write_text(json.dumps({"theme": "dark", "env": {"MY_VAR": "1"}}))
+    path.chmod(old_mode)
+    s = state.SetupState()
+    s.mode, s.backend = "multi-model", "openrouter"
+    claude.configure(_ctx(s))
+    data = json.loads(path.read_text())
+    assert data["theme"] == "dark" and data["env"]["MY_VAR"] == "1"
+    assert data["env"]["ANTHROPIC_AUTH_TOKEN"] == "k"
+    assert _mode(path) == 0o600
+
+
+def test_a_second_run_that_changes_nothing_still_tightens_a_widened_settings_json(claude_home):
+    s = state.SetupState()
+    s.mode, s.backend = "multi-model", "openrouter"
+    claude.configure(_ctx(s))
+    path = claude_home / "settings.json"
+    path.chmod(0o644)
+    claude.configure(_ctx(s))
+    assert _mode(path) == 0o600
+
+
+def test_deep_merge_json_without_a_mode_is_unchanged(tmp_path):
+    path = tmp_path / "x.json"
+    assert _shared.deep_merge_json(path, {"a": 1})
+    assert json.loads(path.read_text()) == {"a": 1}
+    path.chmod(0o644)
+    _shared.deep_merge_json(path, {"b": 2})
+    assert _mode(path) == 0o644
+
+
+def test_deep_merge_json_with_a_mode_creates_and_tightens(tmp_path):
+    path = tmp_path / "y.json"
+    assert _shared.deep_merge_json(path, {"a": 1}, mode=0o600)
+    assert _mode(path) == 0o600
+    path.chmod(0o644)
+    assert _shared.deep_merge_json(path, {"a": 1}, mode=0o600) is False   # nothing changed, still tightened
+    assert _mode(path) == 0o600
