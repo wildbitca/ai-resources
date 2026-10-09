@@ -11,6 +11,7 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
+from . import model_providers
 from .setup import state, ui, profiles, credentials, litellm, smoke
 from .setup.providers import PROVIDERS, KNOWN_MODELS
 
@@ -53,6 +54,10 @@ def _infer_provider(model: str) -> str | None:
     for provider_id, models in KNOWN_MODELS.items():
         if model in models:
             return provider_id
+    # The provider adapters know every family they declare, including ids newer than KNOWN_MODELS.
+    ref = model_providers.identify(model)
+    if ref is not None:
+        return ref.provider
     # Fallback: prefix heuristics
     if model.startswith("claude-"):
         return "anthropic"

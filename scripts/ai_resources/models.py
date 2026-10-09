@@ -643,6 +643,7 @@ class ApplyOutcome:
     overlay: dict
     failed: str = ""                  # artifact id that failed ("" when ok)
     unwound: bool = False             # an artifact AFTER the first failed and the earlier ones were restored
+    rendered: list = field(default_factory=list)    # ids of the artifacts written besides the overlay
 
 
 def registry(apply_patch: ApplyPatch, extra: list | None = None) -> list:
@@ -653,7 +654,7 @@ def registry(apply_patch: ApplyPatch, extra: list | None = None) -> list:
 def apply_changes_ex(doc: dict, changes: dict[str, tuple[str, str]], *, apply_patch: ApplyPatch,
                      overlay: dict, overlay_file: Path | None = None,
                      now: Callable[[], datetime] | None = None, artifacts: list | None = None,
-                     selection=None) -> ApplyOutcome:
+                     selection=None, plan: dict | None = None, backup_dir: Path | None = None) -> ApplyOutcome:
     """Switch every affected artifact to the new ids, then record it in the overlay.
 
     `changes` is {slot: (old_id, new_id)} (a bare Claude class name is accepted for an anthropic
@@ -663,7 +664,8 @@ def apply_changes_ex(doc: dict, changes: dict[str, tuple[str, str]], *, apply_pa
     openclaw.json."""
     changes = {model_pins.slot_key(k): v for k, v in changes.items()}
     arts = registry(apply_patch, artifacts)
-    ctx = model_fanout.Ctx(doc=doc, selection=selection)
+    ctx = model_fanout.Ctx(doc=doc, selection=selection, plan=plan or {},
+                           extras={"backup_dir": backup_dir})
     res = model_fanout.apply_all(arts, model_fanout.Change(changes), ctx)
     if not res.ok:
         unwound = bool(res.restored) and res.failed != arts[0].id
@@ -686,7 +688,7 @@ def apply_changes_ex(doc: dict, changes: dict[str, tuple[str, str]], *, apply_pa
         {"at": _stamp(now), "action": "switch", "changes": {c: list(v) for c, v in changes.items()}})
     model_pins.save_overlay(updated, overlay_file)
     return ApplyOutcome(True, "applied" if openclaw_payload.get("inverse") else "recorded (no references to repoint)",
-                        updated)
+                        updated, rendered=[a for a in res.payloads if a != "openclaw"])
 
 
 def apply_changes(doc: dict, changes: dict[str, tuple[str, str]], *, apply_patch: ApplyPatch,
@@ -937,10 +939,11 @@ class Result:
     applied: dict[str, tuple[str, str]] = field(default_factory=dict)
     deferrals: int = 0
     providers: list = field(default_factory=list)       # ProviderRow per provider discovery asked about
+    rendered: list = field(default_factory=list)        # artifact ids re-rendered besides the overlay and openclaw.json
 
     def as_dict(self) -> dict:
         return {"rc": self.rc, "outcome": self.outcome, "message": self.message, "deferrals": self.deferrals,
-                "providers": [r.as_dict() for r in self.providers],
+                "providers": [r.as_dict() for r in self.providers], "rerendered": list(self.rendered),
                 "proposals": [p.as_dict() for p in self.proposals],
                 "applied": {c: list(v) for c, v in self.applied.items()}}
 
@@ -975,6 +978,7 @@ class Deps:
     gateway: Callable[[], tuple[str, str]] = lambda: ("http://127.0.0.1:4000", "")
     # Extra artifacts of the fan-out registry (S12 registers the re-rendered files here).
     artifacts: Callable[[], list] = lambda: []
+    route_plan: Callable[[], dict] = lambda: {}        # cockpit -> CockpitAction, from the compatibility matrix
 
 
 def _load(deps: Deps) -> dict:
@@ -1118,6 +1122,7 @@ def run_update(opts: Options, deps: Deps, *, plan: "Plan | None" = None, answers
         ctx: dict = {}
         result = _run_locked(opts, deps, ctx, plan, answers, expect_revision)
         result.providers = ctx.get("providers", [])
+        result.rendered = ctx.get("rendered", [])
         return result
 
 
@@ -1232,10 +1237,12 @@ def _run_locked(opts: Options, deps: Deps, ctx: dict | None = None, plan: "Plan 
                 return Result(EXIT_PRECHECK_FAILED, "patch_rejected", out[-300:], proposals=props)
         return Result(EXIT_OK, "dry_run", "the patch validates; nothing was applied", proposals=props, applied=changes)
 
-    backup(deps.config_file(), overlay_file=deps.overlay_file, root=deps.backup_root, now=deps.now)
+    backup_dir = backup(deps.config_file(), overlay_file=deps.overlay_file, root=deps.backup_root, now=deps.now)
     outcome = apply_changes_ex(doc, changes, apply_patch=deps.apply_patch, overlay=ov,
                                overlay_file=deps.overlay_file, now=deps.now, artifacts=deps.artifacts(),
-                               selection=selection)
+                               selection=selection, plan=deps.route_plan(), backup_dir=backup_dir)
+    if ctx is not None:
+        ctx["rendered"] = outcome.rendered
     ok, msg, ov = outcome.ok, outcome.message, outcome.overlay
     if not ok:
         if outcome.unwound:          # a later artifact failed after an earlier one had been written
@@ -1407,6 +1414,25 @@ def default_deps() -> Deps:
         adapter = model_providers.REGISTRY.get(provider)
         return credentials.get_key(adapter.credential[0]) if adapter and adapter.credential else ""
 
+    def host_artifacts() -> list:
+        from . import model_rerender
+        try:
+            st = setup_state.load()
+            return model_rerender.build(state=st, selection=st.get_selection(),
+                                        detected=[c for c, cs in st.cockpits.items() if cs.installed])
+        except Exception:  # noqa: BLE001 - a broken state file must not stop the OpenClaw update
+            return []
+
+    def route_plan() -> dict:
+        from .setup import model_selection
+        try:
+            st = setup_state.load()
+            sel = st.get_selection()
+            detected = [c for c, cs in st.cockpits.items() if cs.installed]
+            return {a.cockpit: a for a in model_selection.plan_table(sel, st.mode, st.backend, detected)}
+        except Exception:  # noqa: BLE001
+            return {}
+
     def gateway() -> tuple[str, str]:
         st = setup_state.load()
         host = f"http://{st.litellm.local.bind_address}:{st.litellm.local.port}"
@@ -1418,7 +1444,7 @@ def default_deps() -> Deps:
         busy=lambda: openclaw_host.gateway_busy()[0], restart=restart, health=health,
         main_pid=openclaw_host.gateway_main_pid, log=_append_log,
         selection=selection, accounts=lambda: model_accounts.detect(model_accounts.default_deps(runner)),
-        http=make_http(), key_for=key_for, gateway=gateway)
+        http=make_http(), key_for=key_for, gateway=gateway, artifacts=host_artifacts, route_plan=route_plan)
 
 
 def run_rollback(deps: Deps) -> Result:

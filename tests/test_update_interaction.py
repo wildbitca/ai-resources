@@ -262,10 +262,10 @@ def test_review_needs_a_terminal(unpriced, monkeypatch, capsys):
     assert run("update", "--review") == 2
 
 
-def test_the_pre_s12_result_says_which_files_were_not_updated(unpriced, monkeypatch, capsys):
+def test_the_result_says_which_files_were_re_rendered_or_that_none_embedded_the_id(unpriced, monkeypatch, capsys):
     tty(monkeypatch, Prompts(mi.UPDATE_NOW))
     run("update", "--no-restart", "--class", "sonnet")
-    assert "executors.yaml, litellm.yaml" in capsys.readouterr().out
+    assert "No other kit file (executors.yaml, litellm.yaml" in capsys.readouterr().out
 
 
 def test_the_wrapper_parses():

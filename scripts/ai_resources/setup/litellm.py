@@ -34,6 +34,7 @@ try:
 except ImportError:
     httpx = None  # type: ignore
 
+from .. import model_pins
 from . import state, credentials, ui
 
 
@@ -202,7 +203,8 @@ def _upstream_params(model_name: str, provider: str, role: str) -> dict:
     )
 
 
-def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) -> str:
+def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str,
+                         extra_claude_ids: tuple = ()) -> str:
     """Build litellm.yaml content from executors.yaml + providers config.
 
     No master_key is set in general_settings: the gateway listens only on
@@ -242,10 +244,13 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
         "claude-haiku-4-5": "haiku",
         "claude-fable-5-1": "fable",
     }
-    for claude_model in _CLAUDE_PASSTHROUGH_MODELS:
+    # `extra_claude_ids` are ids a models update moved a class to: Claude Code resolves its aliases to
+    # them, so the gateway needs an entry each (the static list above follows kit releases).
+    for claude_model in [*_CLAUDE_PASSTHROUGH_MODELS, *extra_claude_ids]:
         if claude_model in seen_models:
             continue
-        pinned = classes.get(_ALIAS_OF.get(claude_model, ""), "")
+        parsed = model_pins.parse_id(claude_model)
+        pinned = classes.get(_ALIAS_OF.get(claude_model) or (parsed[0] if parsed else ""), "")
         target = pinned or f"anthropic/{claude_model}"
         model_list.append({
             "model_name": claude_model,
@@ -327,10 +332,10 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str) 
 
 
 def write_configs(executors: dict, providers: dict,
-                  master_key_env: str = "LITELLM_MASTER_KEY") -> dict:
+                  master_key_env: str = "LITELLM_MASTER_KEY", extra_claude_ids: tuple = ()) -> dict:
     """Write litellm.yaml. Wrapper script + lifecycle written separately."""
     state.config_root().mkdir(parents=True, exist_ok=True)
-    yaml_text = _render_litellm_yaml(executors, providers, master_key_env)
+    yaml_text = _render_litellm_yaml(executors, providers, master_key_env, tuple(extra_claude_ids))
     state.litellm_path().write_text(yaml_text, encoding="utf-8")
     return {"litellm.yaml": state.litellm_path()}
 

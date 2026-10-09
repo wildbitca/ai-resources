@@ -167,8 +167,12 @@ def cmd_check(args: argparse.Namespace) -> int:
     return r.rc
 
 
-NOT_UPDATED_NOTE = ("executors.yaml, litellm.yaml, the Claude subagent files and aider.conf.yml were not "
-                    "updated by this command; run `ai-resources setup` to re-render them.")
+def rerender_note(r: models.Result) -> str:
+    """Which kit files the run re-rendered besides openclaw.json and the overlay."""
+    if r.rendered:
+        return "Also re-rendered: " + ", ".join(r.rendered)
+    return ("No other kit file (executors.yaml, litellm.yaml, Claude subagents and settings, aider.conf.yml) "
+            "embedded the old id.")
 
 
 class _UiIO:
@@ -230,7 +234,7 @@ def _interactive_update(args: argparse.Namespace, deps: models.Deps) -> int:
         return r.rc
     _print_result(r, args)
     if r.outcome == "switched":
-        print(NOT_UPDATED_NOTE)
+        print(rerender_note(r))
     return r.rc
 
 
@@ -245,7 +249,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     r = models.run_update(_opts(args), deps)
     _print_result(r, args)
     if r.outcome == "switched" and not getattr(args, "json", False):
-        print(NOT_UPDATED_NOTE)
+        print(rerender_note(r))
     return r.rc
 
 

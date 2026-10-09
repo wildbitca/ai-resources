@@ -388,8 +388,8 @@ def _rewrite_body(body: str, ak_path: str) -> str:
     return body
 
 
-def _write_subagent(name: str, desc: str, tools: str | None, model: str, body: str) -> bool:
-    """Emit one subagent file. Returns True when the file changed on disk."""
+def _subagent_text(name: str, desc: str, tools: str | None, model: str, body: str) -> str:
+    """The content of one subagent file (pure)."""
     # Quote defensively: frontmatter is parsed as YAML now, so a description
     # containing a quote or a newline would otherwise emit a broken file.
     safe_desc = " ".join(desc.split()).replace("\\", "\\\\").replace('"', '\\"')
@@ -397,12 +397,16 @@ def _write_subagent(name: str, desc: str, tools: str | None, model: str, body: s
     if tools is not None:
         fm_lines.append(f"tools: {tools}")
     fm_lines.append(f"model: {model}")
-    content = f"---\n{chr(10).join(fm_lines)}\n---\n\n{body}"
-    return _shared.write_text(AGENTS_DIR / f"{name}.md", content)
+    return f"---\n{chr(10).join(fm_lines)}\n---\n\n{body}"
+
+
+def _write_subagent(name: str, desc: str, tools: str | None, model: str, body: str) -> bool:
+    """Emit one subagent file. Returns True when the file changed on disk."""
+    return _shared.write_text(AGENTS_DIR / f"{name}.md", _subagent_text(name, desc, tools, model, body))
 
 
 def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
-                             tracking: Any = None, strict: bool = False) -> list[str]:
+                             tracking: Any = None, strict: bool = False, sink: Any = None) -> list[str]:
     """Write one Claude Code subagent per kit role and per persona.
 
     Personas (`agents/personas/<role>-<domain>.md`) are domain overlays with no
@@ -424,7 +428,9 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
     by_role = executors.get("by_role", {})
     by_persona = executors.get("by_persona", {})
     generated: list[str] = []
-    AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+    write = sink or _write_subagent                 # a sink makes this a render-only pass: nothing touches disk
+    if sink is None:
+        AGENTS_DIR.mkdir(parents=True, exist_ok=True)
 
     role_bodies: dict[str, str] = {}
 
@@ -443,9 +449,9 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         # changed, which is not the same as whether it should exist. Treating a
         # no-op rewrite as "not produced" made the pruning below delete every
         # agent on any re-run where content was identical.
-        _write_subagent(name, str(meta.get("description", "")),
-                        ROLE_TOOLS.get(name), model,
-                        body + _shared.kit_context_block(ak_path))
+        write(name, str(meta.get("description", "")),
+              ROLE_TOOLS.get(name), model,
+              body + _shared.kit_context_block(ak_path))
         generated.append(name)
 
     personas_dir = repo_root() / "agents" / "personas"
@@ -472,8 +478,8 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         model = _resolve_model(configured, meta, mode, strict)
         body = (role_bodies[base] + "\n\n---\n\n" + _rewrite_body(overlay, ak_path)
                 + _shared.kit_context_block(ak_path))
-        _write_subagent(name, str(meta.get("description", "")),
-                        ROLE_TOOLS.get(base), model, body)
+        write(name, str(meta.get("description", "")),
+              ROLE_TOOLS.get(base), model, body)
         generated.append(name)
 
     if tracking is not None:
@@ -484,6 +490,15 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         tracking.subagent_files_installed = sorted(generated)
 
     return generated
+
+
+def render_subagent_files(executors: dict, ak_path: str, mode: str, strict: bool = False) -> dict[str, str]:
+    """name -> file content for every subagent, without touching disk (the S12 re-render diffs it)."""
+    out: dict[str, str] = {}
+    _generate_subagent_files(executors, ak_path, mode, None, strict,
+                             sink=lambda name, desc, tools, model, body: out.__setitem__(
+                                 name, _subagent_text(name, desc, tools, model, body)))
+    return out
 
 
 def _shipped_workflow_scripts(ak_path: str) -> list[Path]:

@@ -110,12 +110,15 @@ def affected_ids(artifacts: Iterable[Artifact], change: Change, ctx: Ctx) -> lis
 
 
 def apply_all(artifacts: Iterable[Artifact], change: Change, ctx: Ctx) -> ApplyResult:
-    """Render every affected artifact in order. On a failure restore the earlier ones in reverse."""
+    """Render every affected artifact in order. On a failure restore the earlier ones in reverse.
+
+    Which artifacts are affected is decided up front, against the state before ANY of them is written:
+    an artifact that reads another's output (litellm.yaml renders from executors.yaml) must not be
+    judged by a file an earlier artifact has already rewritten."""
+    todo = [a for a in artifacts if a.affected(change, ctx)]
     done: list[tuple[Artifact, dict]] = []
     result = ApplyResult(ok=True)
-    for art in artifacts:
-        if not art.affected(change, ctx):
-            continue
+    for art in todo:
         try:
             payload = art.render(change, ctx)
         except Exception as e:  # noqa: BLE001 - an artifact may fail in any way; the run must unwind

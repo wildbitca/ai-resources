@@ -713,3 +713,12 @@ def test_models_update_notice_keeps_the_short_form_for_a_claude_slot(host):
     host.set_models(10, payload)
     host.run("openclaw-models-update.sh")
     assert "ai-resources models approve haiku claude-haiku-5-5" in "\n".join(host.calls())
+
+
+def test_models_update_switch_notice_lists_the_re_rendered_files_instead_of_the_setup_hint(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_models(0, {"rc": 0, "outcome": "switched", "message": "switched and healthy", "proposals": [],
+                        "rerendered": ["executors", "litellm", "aider-conf"]})
+    host.run("openclaw-models-update.sh")
+    text = "\n".join(host.calls())
+    assert "Re-rendered: executors, litellm, aider-conf." in text and "ai-resources setup" not in text.split("models updated")[-1]

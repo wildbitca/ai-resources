@@ -64,7 +64,8 @@ say(){ notify "$1" || log "note: could not notify over Telegram"; }
 case "$rc" in
   0)
     if [ "$(field outcome)" = "switched" ]; then
-      say "OpenClaw models updated: $(field message). Run \`ai-resources setup\` to re-render LiteLLM and the executors."
+      files="$(python3 -c "$last_json"'print(", ".join(str(x) for x in last.get("rerendered", [])))' <<<"$out" 2>/dev/null)"
+      say "OpenClaw models updated: $(field message).${files:+ Re-rendered: $files.}"
     fi ;;
   10)
     lines="$(approve_lines)"

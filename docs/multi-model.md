@@ -546,12 +546,24 @@ Claude ones).
 Claude CLI; the LiteLLM gateway, OpenRouter or a direct vendor call otherwise; a slot with no probe waits for
 a human), defer if agent turns are in flight, back up, then apply every affected artifact through one
 ordered registry (`scripts/ai_resources/model_fanout.py`): `openclaw.json` through `openclaw config patch`,
-the overlay and, from the re-render step, `executors.yaml`, `litellm.yaml`, the Claude subagent files and
-settings and `~/.aider.conf.yml`. A failure restores the artifacts already written, in reverse order. The
+the overlay and the files that embed the old id: `executors.yaml`, `litellm.yaml`, the Claude subagent
+files and settings and `~/.aider.conf.yml`. A failure restores the artifacts already written, in reverse
+order. The
 gateway is restarted with `watchdog.off` held, `openclaw health` is polled, a new PID is required, the model
 is smoke-tested again, and the inverse patch rolls everything back if any of it fails. A slot whose provider
 has no verified OpenClaw runtime (Google today) is recorded and re-rendered but never repointed in
 `openclaw.json`.
+
+**What is re-rendered, and when.** Each of those files is rewritten only if the compatibility matrix configures
+its cockpit for this host AND the file embeds an id of a slot that moved. Single-model Claude aliases
+(`opus`, `sonnet`) embed no id and a `fixed`-track slot never moves, so neither is rewritten. The ids are
+replaced as whole strings in every spelling the file uses (bare, `google/...`, OpenRouter's namespace and
+dotted minor). Each file is backed up next to the `openclaw.json` backup before it is written; LiteLLM is
+restarted once and health-checked (not for OpenRouter or a remote gateway), and if it does not come up, or
+any later step fails, every file is put back byte for byte and the update exits 2. The renderers write
+`os.environ/<VAR>` references only: no key value is written, and the key already in `~/.aider.conf.yml` is
+left as it was. The result lists the re-rendered files (`rerendered` in `--json`; the Telegram notice prints
+them too).
 
 **Writes stay on `config patch`.** The command never opens `openclaw.json` for writing: `config patch`
 validates the schema and the kit asserts that no patch touches `channels`. The file copy under

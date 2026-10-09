@@ -187,3 +187,13 @@ def test_pick_smoke_result_fails_on_an_empty_list():
     ok, msg = ec._pick_smoke_result([])
     assert ok is False
     assert msg
+
+
+def test_provider_inference_uses_the_adapter_registry_for_ids_newer_than_the_known_list():
+    from ai_resources import executors_cmd
+    assert executors_cmd._infer_provider("deepseek-v5-pro") == "deepseek"
+    assert executors_cmd._infer_provider("kimi-k3.0-code") == "moonshot"
+    assert executors_cmd._infer_provider("gemini-4.0-flash") == "google"
+    assert executors_cmd._infer_provider("gpt-7-astra") == "openai"
+    assert executors_cmd._infer_provider("o3-mini") == "openai"             # the prefix heuristic still applies
+    assert executors_cmd._infer_provider("something-else") is None
