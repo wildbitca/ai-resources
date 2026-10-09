@@ -35,7 +35,9 @@ OpenAI surface does not serve.
    unless `--allow-unverified` opts in, and the summary labels it. The spike (S1) verified nothing it could not
    probe read-only on the live host, so every Claude-to-non-Claude gateway cell, OpenClaw's native Google
    runtime and the other unverified cells stay unverified; the one confirmed defect is Aider's OpenRouter base
-   (`/api/v1`), fixed. A single non-Claude model keeps `mode: single-model` and needs no backend.
+   (`/api/v1`), fixed. Aider under OpenRouter is the one exception to "unverified": the base URL
+   (`/api/v1`) and the model id format come from OpenRouter's public documentation, not from a live probe, so
+   that cell is wired (`via gateway`) as trusted from documentation, not live-verified. A single non-Claude model keeps `mode: single-model` and needs no backend.
 6. **Wizard order (Addendum A1)**: tools (detect, offer to install), then accounts (only the providers
    without credentials are asked about), then models from the enabled accounts, then a summary per cockpit,
    then one confirmation (Apply / Change models / Cancel), then the write. Non-interactive runs take the same

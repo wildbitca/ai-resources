@@ -85,7 +85,7 @@ _CLAUDE_SRC = "claude.py:85, 98-100, 361-364"
 _CLAUDE_GW_SRC = "claude.py:318-319, 358-360; litellm.py:117-129"
 _CLAUDE_OR_SRC = "claude.py:264-282, 321-352; providers.py:140-158"
 _AIDER_SRC = "aider.py:37-51, 79-82; litellm.py:136-202"
-_AIDER_OR_SRC = "aider.py:47; profiles.py:106; docs: openrouter.ai/docs/quickstart (/api/v1)"
+_AIDER_OR_SRC = "aider.py:47; profiles.py:106; docs: openrouter.ai/docs/quickstart (/api/v1); trusted from documentation, not live-verified"
 _GEMINI_SRC = "gemini.py:25-69"
 _INSTR_SRC = {
     "codex": "codex.py:23-43",

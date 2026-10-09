@@ -181,7 +181,7 @@ and the summary labels it. The table below is generated from
 | codex | multi-model:openrouter | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | codex.py:23-43 |
 | aider | single-model | skip | skip | skip | skip | skip | skip | skip | aider.py:37-51, 79-82; litellm.py:136-202 |
 | aider | multi-model:litellm | via gateway | via gateway | via gateway | via gateway | via gateway | via gateway | via gateway | aider.py:37-51, 79-82; litellm.py:136-202 |
-| aider | multi-model:openrouter | via gateway | via gateway | skip | via gateway | skip | via gateway | via gateway | aider.py:47; profiles.py:106; docs: openrouter.ai/docs/quickstart (/api/v1) |
+| aider | multi-model:openrouter | via gateway | via gateway | skip | via gateway | skip | via gateway | via gateway | aider.py:47; profiles.py:106; docs: openrouter.ai/docs/quickstart (/api/v1); trusted from documentation, not live-verified |
 | copilot | single-model | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | copilot.py:23-30 |
 | copilot | multi-model:litellm | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | copilot.py:23-30 |
 | copilot | multi-model:openrouter | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | instructions only | copilot.py:23-30 |
