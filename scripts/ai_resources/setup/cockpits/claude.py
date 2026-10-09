@@ -712,6 +712,10 @@ def configure(ctx: dict) -> list[Path]:
         # content and its own Claude models, and no endpoint or non-Claude model setting (Addendum A2).
         ui.info(f"Claude Code: no gateway setting written ({route.reason})")
         mode = "single-model"
+        # The kit's Claude-native roles replace the gateway profile's non-Claude ids: an explicit,
+        # announced choice, not a silent fallback inside `_resolve_model`.
+        from .. import profiles
+        executors = profiles.to_executors(profiles.load_profile("claude-native"))
     strict = getattr(s, "selection", None) is not None
 
     written: list[Path] = []
