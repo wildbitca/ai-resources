@@ -12,6 +12,8 @@ try:
 except ImportError:
     yaml = None  # handled by ui.require_deps()
 
+from .. import model_pins  # noqa: E402
+
 SCHEMA_VERSION = "1.0"
 
 
@@ -183,7 +185,7 @@ class OpenClawState:
     # Bare model id: the ref is built as `claude-kit/<worker_model>`, and OpenClaw
     # only resolves two-segment refs (`claude-kit/anthropic/claude-sonnet-5` is
     # rejected by `config patch --dry-run`).
-    worker_model: str = "claude-sonnet-5"
+    worker_model: str = field(default_factory=lambda: model_pins.effective()["sonnet"])
     plugin_linked: bool = False       # the kit ran `openclaw plugins install --link ...`
     risk_acknowledged: bool = False   # explicit consent to unrestricted code execution
     # True once `configure()` has successfully applied the antigravity engine's own

@@ -34,7 +34,7 @@
     "entries": {
       // T29: an orchestrator on haiku confabulates topics. Sonnet 5 for every entry that is not
       // engine-owned and has no model, or a haiku one.
-      "*": { "model": { "primary": "anthropic/claude-sonnet-5" } },
+      "*": { "model": { "primary": "anthropic/@MODEL_SONNET@" } },
       "main": {
         "thinkingDefault": "high",
         "heartbeat": { "every": "2h" },

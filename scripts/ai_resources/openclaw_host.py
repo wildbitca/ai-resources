@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 from typing import Callable, NamedTuple
 
-from . import repo_root
+from . import model_pins, repo_root
 
 # (return code, combined output). 127 means the binary is missing.
 Runner = Callable[..., "tuple[int, str]"]
@@ -831,6 +831,8 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str]) -> dict:
     """
     values = dict(values)
     values.setdefault("HOME", str(Path.home()))
+    # The one declaration of the sonnet pin (model_pins), resolved at call time.
+    values.setdefault("MODEL_SONNET", model_pins.effective()["sonnet"])
     tree = expand_wildcards(profile, doc)
     skipped: list[str] = []
     missing: set[str] = set()

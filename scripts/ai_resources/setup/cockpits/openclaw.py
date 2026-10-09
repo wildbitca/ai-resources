@@ -71,7 +71,7 @@ from . import _openclaw_mcp as mcp
 from . import _openclaw_voice as voice
 from . import _openclaw_host as host_section
 from . import _agy_quota
-from ... import openclaw_host
+from ... import model_pins, openclaw_host
 
 
 NAME = "OpenClaw"
@@ -100,8 +100,7 @@ ENGINES: dict[str, Engine] = {
         "Antigravity CLI (agy) — chat-facing orchestrator that hears voice notes and "
         "hands code/team work to an unrestricted Claude Code sub-agent",
         "agy-cli", "agy",
-        ("gemini-3.8-flash-low", "gemini-3.8-flash-high", "gemini-3.1-pro-low",
-         "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"),
+        model_pins.AGY_STATIC,
         # gemini-3.8-flash-medium leaks its reasoning into replies (S0) — never offered.
         # Antigravity serves TWO independent weekly quota pools: Gemini models share one,
         # Claude and GPT models share the other (see `_agy_quota.py`). `gemini-3.8-flash-low`
@@ -117,7 +116,7 @@ ENGINES: dict[str, Engine] = {
     "claude-code": Engine(
         "claude-code", "Claude Code — the bot runs the full kit (subagents, skills, hooks, workflows)",
         "claude-cli", "claude",
-        ("anthropic/claude-sonnet-5", "anthropic/claude-opus-5", "anthropic/claude-haiku-4-5"),
+        tuple(model_pins.openclaw_ref(model_pins.DEFAULTS[c]) for c in ("sonnet", "opus", "haiku")),
     ),
     "codex": Engine(
         "codex", "Codex CLI — the bot uses the Codex cockpit's setup",
@@ -132,6 +131,20 @@ ENGINES: dict[str, Engine] = {
     ),
     "keep": Engine("keep", "Keep OpenClaw's current engine — change nothing", "", "", ()),
 }
+
+def engine_models(engine: Engine) -> tuple[str, ...]:
+    """The refs an engine offers NOW. For claude-code the model_pins overlay is applied at call time
+    (never at import), so a host pin moves the default without a kit release."""
+    if engine.id != "claude-code":
+        return engine.models
+    eff = model_pins.effective()
+    return tuple(model_pins.openclaw_ref(eff[c]) for c in ("sonnet", "opus", "haiku"))
+
+
+def default_worker_model() -> str:
+    """The bare id the claude worker agent defaults to: the effective sonnet pin."""
+    return model_pins.effective()["sonnet"]
+
 
 RUNTIME_IDS = {e.runtime for e in ENGINES.values() if e.runtime}
 
@@ -557,14 +570,15 @@ def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
     if engine_id == "antigravity":
         # A vendor-prefixed value saved by an earlier run would build a three-segment
         # ref, which OpenClaw cannot resolve; keep only the model id.
-        saved_worker = (s.openclaw.worker_model or "claude-sonnet-5").split("/")[-1]
+        saved_worker = (s.openclaw.worker_model or default_worker_model()).split("/")[-1]
         s.openclaw.worker_model = ui.text(
             "Model for the unrestricted claude worker agent:", default=saved_worker,
         ) or saved_worker
 
-    if not engine.models:
+    models = engine_models(engine)
+    if not models:
         return
-    saved = s.openclaw.model if s.openclaw.model in engine.models else engine.models[0]
+    saved = s.openclaw.model if s.openclaw.model in models else models[0]
 
     if engine_id == "antigravity":
         # Antigravity serves two independent weekly quota pools (see `_agy_quota.py`);
@@ -572,7 +586,7 @@ def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
         # state formats are untouched — only the label changes.
         choices = [
             ui.Choice(f"{m} — {_agy_quota.pool_for_model(m)} pool", value=m)
-            for m in engine.models
+            for m in models
         ]
         # Best-effort live pool state, read-only, at most once, never blocking:
         # skipped under non-interactive and dry-run so an unattended run stays
@@ -596,7 +610,7 @@ def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
                 else:
                     ui.detail(message)
     else:
-        choices = [ui.Choice(m, value=m) for m in engine.models]
+        choices = [ui.Choice(m, value=m) for m in models]
 
     s.openclaw.model = ui.select(
         "Model for OpenClaw's default agent:",
@@ -623,7 +637,7 @@ def applied_engine(s: state.SetupState) -> Engine | None:
     if not s.openclaw.applied:
         return None
     for eng in ENGINES.values():
-        if s.openclaw.model in eng.models:
+        if s.openclaw.model in eng.models or s.openclaw.model in engine_models(eng):
             return eng
     return None
 
@@ -1011,8 +1025,9 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
                  "re-run the wizard interactively and accept the warning, then re-apply.")
         return False
 
-    model = s.openclaw.model if s.openclaw.model in engine.models else (engine.models[0] if engine.models else "")
-    worker_model = (s.openclaw.worker_model or "claude-sonnet-5").split("/")[-1]
+    models = engine_models(engine)
+    model = s.openclaw.model if s.openclaw.model in models else (models[0] if models else "")
+    worker_model = (s.openclaw.worker_model or default_worker_model()).split("/")[-1]
     kit_skills = str(Path(ak_path) / "skills")
     engram = shutil.which("engram") or "engram"
 

@@ -17,7 +17,7 @@ import pytest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
-from ai_resources import audit  # noqa: E402
+from ai_resources import audit, model_pins  # noqa: E402
 from ai_resources import openclaw_host as host  # noqa: E402
 from ai_resources.setup import state  # noqa: E402
 from ai_resources.setup.cockpits import openclaw  # noqa: E402
@@ -34,7 +34,10 @@ def _engine(e) -> dict:
 
 def _worker_model_literals() -> list[str]:
     src = (REPO / "scripts/ai_resources/setup/cockpits/openclaw.py").read_text(encoding="utf-8")
-    return re.findall(r'worker_model or "([^"]+)"', src)
+    # The literal fallback now comes from model_pins (default_worker_model()): resolve it so the
+    # golden stays the same list of bare ids.
+    found = re.findall(r'worker_model or (?:"([^"]+)"|default_worker_model\(\))', src)
+    return [f or openclaw.default_worker_model() for f in found]
 
 
 def snapshots(tmp_home: pathlib.Path) -> dict[str, object]:
@@ -47,7 +50,9 @@ def snapshots(tmp_home: pathlib.Path) -> dict[str, object]:
                          "antigravity": _engine(openclaw.ENGINES["antigravity"])},
         "worker_model.json": {"state_default": state.OpenClawState().worker_model,
                               "cockpit_fallbacks": _worker_model_literals()},
-        "host_profile.json": profile,
+        # The sonnet literal in the profile is now the @MODEL_SONNET@ marker; resolve it to compare.
+        "host_profile.json": json.loads(json.dumps(profile).replace(
+            "@MODEL_SONNET@", model_pins.DEFAULTS["sonnet"])),
         "host_patch.json": {"patch": built["patch"], "replace_paths": built["replace_paths"],
                             "skipped": built["skipped"]},
     }

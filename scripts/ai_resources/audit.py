@@ -22,6 +22,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from . import model_pins
 from .setup import ui
 
 
@@ -59,12 +60,7 @@ PRICES: dict[str, tuple[float, float, float, float, float]] = {
 }
 
 # Claude Code aliases that can appear as the model name; they resolve to the newest model.
-ALIASES: dict[str, str] = {
-    "fable": "claude-fable-5-1",
-    "opus": "claude-opus-5",
-    "sonnet": "claude-sonnet-5",
-    "haiku": "claude-haiku-4-5",
-}
+ALIASES: dict[str, str] = dict(model_pins.effective())
 
 
 def _price(model: str) -> tuple[float, float, float, float, float] | None:
