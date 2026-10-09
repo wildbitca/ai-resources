@@ -178,16 +178,26 @@ def test_the_timer_does_not_apply_an_always_slot_whose_price_is_unknown(tmp_path
 # --- AC-S8c-6: revision and lock -----------------------------------------------------------------
 
 def test_an_overlay_change_while_the_prompt_is_open_aborts_with_no_write(unpriced, monkeypatch):
+    tampered = {}
+
     def tamper():
         ov = mp.load_overlay(unpriced.overlay) or mp.empty_overlay()
         ov.setdefault("pins", {})["anthropic:opus"] = "claude-opus-5-5"
         ov.setdefault("policy", {}).setdefault("slots", {})["anthropic:opus"] = {"frozen": True}
         mp.save_overlay(ov, unpriced.overlay)
+        tampered["bytes"] = unpriced.overlay.read_bytes()
+        tampered["state"] = unpriced.state()
 
     tty(monkeypatch, Prompts(mi.UPDATE_ALL, side_effect=tamper))
     rc = run("update")
     assert rc == models.EXIT_ERROR and unpriced.patches == [] and unpriced.restarts == 0
-    assert "anthropic:sonnet" not in (unpriced.state().get("approvals") or {})
+    assert tampered, "the overlay was never tampered with"
+    # AC-S8c-6: no write of any kind after the revision check: the overlay is exactly what the other run left
+    assert unpriced.overlay.read_bytes() == tampered["bytes"]
+    assert unpriced.state() == tampered["state"]
+    after = unpriced.state()
+    assert "anthropic:sonnet" not in (after.get("approvals") or {}) and "anthropic:sonnet" not in (after.get("pins") or {})
+    assert "anthropic:sonnet" not in (after.get("pending") or {})
 
 
 def test_a_lock_held_at_the_start_means_rc_73_and_no_prompt(unpriced, monkeypatch):

@@ -62,13 +62,30 @@ def test_unverified_cells_behave_as_skip_unless_opted_in(cid, mk):
         assert opt.action == c.action and opt.unverified
 
 
-def test_implicit_selection_keeps_kit_content_for_every_cockpit_in_every_mode():
+# AC-S1b-3: a snapshot of what today's wizard configures when no selection exists. Only claude, aider and
+# openclaw have a model setting to write (aider.py:79-82 writes ~/.aider.conf.yml only in multi-model through
+# the gateway; claude.py configures directly in single-model and through the gateway otherwise); every other
+# cockpit gets kit instructions only.
+_INSTRUCTIONS_ONLY = {c: compat.INSTRUCTIONS_ONLY for c in
+                      ("gemini", "cursor", "codex", "copilot", "windsurf", "continue", "opencode")}
+IMPLICIT_ACTIONS = {
+    compat.SINGLE: {"claude": compat.CONFIGURE, "aider": compat.SKIP, "openclaw": compat.CONFIGURE,
+                    **_INSTRUCTIONS_ONLY},
+    compat.MULTI_LITELLM: {"claude": compat.VIA_GATEWAY, "aider": compat.VIA_GATEWAY, "openclaw": compat.CONFIGURE,
+                           **_INSTRUCTIONS_ONLY},
+    compat.MULTI_OPENROUTER: {"claude": compat.VIA_GATEWAY, "aider": compat.VIA_GATEWAY, "openclaw": compat.CONFIGURE,
+                              **_INSTRUCTIONS_ONLY},
+}
+
+
+def test_implicit_selection_reproduces_todays_configure_set_for_every_cockpit_in_every_mode():
+    assert set(IMPLICIT_ACTIONS) == set(MODE_ARGS)
     for mk, (mode, backend) in MODE_ARGS.items():
         acts = compat.plan(None, mode, backend, DETECTED)
         assert [a.cockpit for a in acts] == list(compat.COCKPITS)
-        assert all(a.kit_content for a in acts)
-        claude = next(a for a in acts if a.cockpit == "claude")
-        assert claude.action == (compat.CONFIGURE if mk == compat.SINGLE else compat.VIA_GATEWAY)
+        assert all(a.kit_content for a in acts), mk
+        assert {a.cockpit: a.action for a in acts} == IMPLICIT_ACTIONS[mk], mk
+        assert not any(a.unverified or a.report_only for a in acts), mk
 
 
 def test_single_gemini_flash_example():

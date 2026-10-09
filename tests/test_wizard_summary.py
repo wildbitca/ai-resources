@@ -33,7 +33,7 @@ def test_single_gemini_flash_summary_has_one_honest_line_per_cockpit():
     got = _lines(_single_flash())
     assert got["claude"].endswith("skipped: Claude Code runs only Claude models without a gateway")
     assert "uses its own model settings; ai-resources sets auth and MCP only" in got["gemini"]
-    assert "Cursor: instructions only; Cursor keeps its own model settings" in got["cursor"] or "instructions only" in got["cursor"]
+    assert "Cursor: instructions only; Cursor keeps its own model settings" in got["cursor"]
     assert "skipped: no verified OpenClaw runtime" in got["openclaw"]
     assert set(got) == {"claude", "openclaw", "gemini", "cursor"}
 
