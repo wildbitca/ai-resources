@@ -209,6 +209,7 @@ def sim(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(h.cfg))
     monkeypatch.delenv("GH_TOKEN", raising=False)
     monkeypatch.setattr(host, "HOST_ENV_PATH", h.env_file)
+    monkeypatch.setattr(host, "tailnet_available", lambda: True)   # the suite must not depend on this machine's Tailscale
     monkeypatch.setattr(openclaw, "CONFIG_ROOT", home / ".openclaw")
     monkeypatch.setattr(openclaw, "_openclaw", h.oc)
     monkeypatch.setattr(openclaw._shared, "stable_kit_root", lambda _root: pathlib.Path("/kit"))

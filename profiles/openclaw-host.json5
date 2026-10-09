@@ -55,7 +55,8 @@
   },
 
   "gateway": {
-    // T04: bind to the tailnet only. Never lan or 0.0.0.0.
+    // T04: bind to the tailnet only. Never lan or 0.0.0.0. Setup writes this only when the host is on a tailnet
+    // (the `tailscale` CLI reports an address); otherwise the bind is left as the operator has it.
     "bind": "tailnet",
     // T05: behind an ingress the real client address arrives in a header; without these the
     // control UI answers 403 from the ingress.

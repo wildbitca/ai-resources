@@ -741,6 +741,22 @@ def _leaves(node, path: list[str]):
         yield path, node
 
 
+def tailnet_available() -> bool:
+    """True when this host is on a tailnet: the `tailscale` CLI exists and reports an IPv4 address.
+
+    `gateway.bind: tailnet` has no interface to bind to without it, and OpenClaw silently falls back
+    to loopback, so the kit must not write that value on a host without Tailscale.
+    """
+    exe = shutil.which("tailscale")
+    if not exe:
+        return False
+    try:
+        r = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
 def _secret_env_available(name: str) -> bool:
     if os.environ.get(name):
         return True
@@ -853,6 +869,12 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str]) -> dict:
             if not _get_path(doc, path[:3])[1]:
                 skipped.append(f"{dotted}: plugin {path[2]} is not configured")
                 continue
+        # The profile binds the gateway to the tailnet (T04). Without Tailscale that bind cannot be honoured, so
+        # the value is left as the operator has it. `TAILNET` is "0" only when the caller detected no tailnet;
+        # absent means "unknown", which keeps the profile's value (the golden fixtures rely on that).
+        if path == ["gateway", "bind"] and wanted == "tailnet" and values.get("TAILNET") == "0":
+            skipped.append(f"{dotted}: tailnet needs Tailscale, which is not running on this host (bind left as it is)")
+            continue
         if path == ["gateway", "controlUi", "github", "token"] and not _secret_env_available("GH_TOKEN"):
             skipped.append(f"{dotted}: GH_TOKEN is not available on this host (set it with `openclaw configure`)")
             continue
