@@ -421,8 +421,13 @@ def link_agents_skills(ak_path: str) -> None:
                 f"{', '.join(links['skipped'])}")
 
 
-def multimodel_protocol_md(ak_path: str, gateway_url: str, mode: str = "multi-model") -> str:
+def multimodel_protocol_md(ak_path: str, gateway_url: str, mode: str = "multi-model",
+                           route: str = "via_gateway") -> str:
     """Return the multi-model section for instruction files (empty in single-model mode).
+
+    `route` is the cockpit's action from the compatibility matrix (`setup/compat.py`). Only a
+    `via_gateway` cockpit (Claude Code, Aider) is told that its model calls go through the
+    gateway: every other cockpit keeps its own model settings, and the text claims nothing else.
 
     The backend is read off the gateway URL rather than passed in: nine call sites
     across the cockpits already hand us the URL, and threading a parallel `backend`
@@ -430,6 +435,13 @@ def multimodel_protocol_md(ak_path: str, gateway_url: str, mode: str = "multi-mo
     """
     if mode == "single-model":
         return ""
+    if route != "via_gateway":
+        return (
+            "## Multi-model routing\n\n"
+            "This tool uses its own model settings; ai-resources does not choose its model. "
+            "The role → model map is `~/.config/ai-resources/executors.yaml` "
+            "(`ai-resources executors show` / `set`).\n"
+        )
     backend = "openrouter" if "openrouter.ai" in gateway_url else "litellm"
     name = "OpenRouter" if backend == "openrouter" else "LiteLLM gateway"
     cost = (
@@ -443,8 +455,7 @@ def multimodel_protocol_md(ak_path: str, gateway_url: str, mode: str = "multi-mo
         f"Model calls go through {name} at `{gateway_url}`. Each kit subagent's `model:` "
         "is routed to its provider; the role → model map is `~/.config/ai-resources/executors.yaml` "
         "(`ai-resources executors show` / `set`).\n\n"
-        "- Anthropic does not support routing Claude Code to non-Claude models; check the gateway "
-        "with `ai-resources doctor`.\n"
+        "- Check the gateway with `ai-resources doctor`.\n"
         "- Prompt caching is lost on non-Anthropic routes, so a cheaper model can cost more per task. "
         "Keep review, security and verification on strong models.\n"
         f"{cost}"
@@ -452,8 +463,12 @@ def multimodel_protocol_md(ak_path: str, gateway_url: str, mode: str = "multi-mo
 
 
 def kit_instructions_md(tool: str, ak_path: str, gateway_url: str, mode: str, *,
-                        native_skills: bool, extra: str = "") -> str:
-    """Kit block for the instruction files of cockpits other than Claude Code."""
+                        native_skills: bool, extra: str = "", route: str = "instructions_only") -> str:
+    """Kit block for the instruction files of cockpits other than Claude Code.
+
+    `route` defaults to instructions-only: a cockpit gets the gateway sentence only when its caller
+    passes `via_gateway` (Aider, in multi-model).
+    """
     if native_skills:
         skills = ("- **Skills** are linked into `~/.agents/skills/`, which this tool discovers natively. "
                   "Load a skill when its description matches the task; a loaded skill overrides "
@@ -470,7 +485,7 @@ def kit_instructions_md(tool: str, ak_path: str, gateway_url: str, mode: str, *,
         f"{skills}"
         "- **Workflows** for multi-step work are the `workflow-*` skills; the `kit-orchestration` "
         f"skill explains how to run them (definitions in `{ak_path}/workflows/`).\n\n"
-        f"{multimodel_protocol_md(ak_path, gateway_url, mode)}"
+        f"{multimodel_protocol_md(ak_path, gateway_url, mode, route)}"
     )
 
 

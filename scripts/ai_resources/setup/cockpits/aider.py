@@ -71,6 +71,7 @@ def configure(ctx: dict) -> list[Path]:
     # Conventions file
     md = _shared.kit_instructions_md(
         "Aider", ak_path, gateway_url, s.mode, native_skills=False,
+        route="via_gateway" if master_key else "instructions_only",
         extra="Loaded automatically via `~/.aider.conf.yml` (`read:` directive).\n\n",
     )
     if _shared.write_managed_block(CONVENTIONS_PATH, md):
