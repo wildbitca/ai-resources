@@ -444,6 +444,13 @@ def _try_install_pipx() -> bool:
 
 def _step1_mode(s: state.SetupState) -> int:
     ui.section(2, TOTAL_STEPS, "Setup mode")
+    chosen = s.get_selection()
+    if chosen is not None and s.mode == "single-model":
+        # A single-model selection is already recorded: the mode is decided and the summary says which
+        # cockpits it leaves out. Pass --backend to move to a gateway; no mode/backend question is asked.
+        ui.info("Single-model selection recorded; no gateway or backend is asked for "
+                "(pass --backend to use one).")
+        return 0
     choices = [
         ui.Choice("single-model — Each cockpit talks to its own provider; Claude subagents pick "
                   "Claude models by role", value="single-model", description=" "),

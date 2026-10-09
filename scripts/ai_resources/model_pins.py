@@ -338,7 +338,8 @@ def ref_drift(ref: str, eff: dict[str, str] | None = None, slots: dict[str, str]
         parsed = parse_id(bare)
         if not parsed:
             return None
-        wanted = openclaw_ref((eff or effective())[parsed[0]])
+        slot_id = (slots or {}).get(slot_key(parsed[0]))
+        wanted = openclaw_ref(slot_id if slot_id else (eff or effective())[parsed[0]])
         return wanted if wanted != ref else None
     if not slots:
         return None

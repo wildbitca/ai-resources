@@ -111,3 +111,22 @@ def test_claude_only_apply_records_the_same_inverse_as_before(tmp_path, monkeypa
     models.run_update(models.Options(classes=["sonnet"]), env.deps())
     last = env.state()["state"]["last_change"]
     assert last["inverse"] == last["artifacts"]["openclaw"]["inverse"] and last["inverse"]
+
+
+def test_a_failed_unwind_of_openclaw_json_is_rollback_failed_not_patch_rejected(tmp_path, monkeypatch):
+    env = Env(tmp_path, monkeypatch)
+    real = env.apply_patch
+    real_calls = []
+
+    def flaky(patch, *, dry_run=False, replace_paths=None):
+        if not dry_run:
+            real_calls.append(1)
+            if len(real_calls) > 1:                      # the inverse patch
+                return False, "boom"
+        return real(patch, dry_run=dry_run, replace_paths=replace_paths)
+
+    env.apply_patch = flaky
+    deps = replace(env.deps(), artifacts=lambda: [Recorder("files", fail=True)])
+    r = models.run_update(models.Options(classes=["sonnet"]), deps)
+    assert r.rc == models.EXIT_ROLLBACK_FAILED and r.outcome == "rollback_failed"
+    assert env.state()["state"]["last_result"] == "rollback_failed"

@@ -223,3 +223,17 @@ def test_proposals_carry_the_slot_and_provider_in_json():
     [p] = models.propose(_eff(), _google_disc(), {})
     d = p.as_dict()
     assert d["slot"] == "google:gemini-flash" and d["provider"] == "google" and d["cls"] == "gemini-flash"
+
+
+def test_a_fixed_track_slot_is_never_proposed_a_change(disc):
+    from types import SimpleNamespace
+    selection = SimpleNamespace(slots={"anthropic:sonnet": {"ref": "anthropic/claude-sonnet-5", "track": "fixed"}})
+    props = models.propose({"anthropic:sonnet": "claude-sonnet-5"}, disc, {}, selection)
+    row = [p for p in props if p.cls == "sonnet" and p.kind != "preview"][0]
+    assert (row.kind, row.decision, row.new) == ("current", "current", "claude-sonnet-5")
+
+
+def test_anthropic_drift_follows_the_slot_map_for_a_fixed_track():
+    slots = {"anthropic:sonnet": "claude-sonnet-5"}
+    assert mp.ref_drift("anthropic/claude-sonnet-5", {"sonnet": "claude-sonnet-5-5"}, slots) is None
+    assert mp.ref_drift("anthropic/claude-sonnet-5", {"sonnet": "claude-sonnet-5-5"}) is not None

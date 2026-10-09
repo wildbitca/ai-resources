@@ -30,29 +30,32 @@ from .model_fanout import Artifact, ArtifactError, Change, Ctx
 
 # --- id spelling ---------------------------------------------------------------------------------
 
-def spellings(provider: str, model_id: str) -> list[str]:
-    """Every way a file may spell `model_id` of `provider`: bare, vendor-prefixed, OpenRouter-namespaced
-    (dotted minor for Claude)."""
+def spellings(provider: str, model_id: str) -> dict[str, str]:
+    """Every way a file may spell `model_id` of `provider`, keyed by spelling style: `bare`,
+    `prefix:<p>` for each vendor prefix, and `openrouter` (dotted minor for Claude)."""
     adapter = model_providers.REGISTRY.get(provider)
-    out = [model_id]
+    out = {"bare": model_id}
     if adapter is None:
         return out
     for prefix in dict.fromkeys(p for p in (provider, adapter.ref_prefix, adapter.litellm_prefix, adapter.openrouter_ns) if p):
-        out.append(f"{prefix}/{model_id}")
+        out[f"prefix:{prefix}"] = f"{prefix}/{model_id}"
     if provider == "anthropic":
-        out.append(model_pins.openrouter_id(model_id))
-    return list(dict.fromkeys(out))
+        out["openrouter"] = model_pins.openrouter_id(model_id)
+    return out
 
 
 def substitution(changes: dict[str, tuple[str, str]]) -> dict[str, str]:
-    """old spelling -> new spelling, for every slot that moves (positional per spelling style)."""
+    """old spelling -> new spelling, for every slot that moves (paired by spelling style, never by position)."""
     mapping: dict[str, str] = {}
     for slot, (old, new) in changes.items():
         if old == new:
             continue
         provider = model_pins.slot_provider(slot)
-        for a, b in zip(spellings(provider, old), spellings(provider, new)):
-            mapping[a] = b
+        new_sp = spellings(provider, new)
+        for style, a in spellings(provider, old).items():
+            b = new_sp.get(style)
+            if b and a != b:
+                mapping[a] = b
     return mapping
 
 

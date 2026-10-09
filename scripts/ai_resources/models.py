@@ -361,6 +361,14 @@ def _adapter_version(provider: str, model_id: str) -> tuple[int, ...] | None:
     return ref.version if ref else None
 
 
+def _slot_track(selection, slot: str) -> str:
+    slots = getattr(selection, "slots", None) or {}
+    sel = slots.get(slot)
+    if sel is None:
+        return "family"
+    return (sel.get("track") if isinstance(sel, dict) else getattr(sel, "track", None)) or "family"
+
+
 def propose(effective: dict[str, str], discovered: Discovery, overlay: dict | None = None, selection=None,
             accounts: dict | None = None) -> list[Proposal]:
     """One Proposal per slot. A downgrade is never proposed.
@@ -384,6 +392,10 @@ def propose(effective: dict[str, str], discovered: Discovery, overlay: dict | No
             continue
         v_old, v_new = _adapter_version(provider, old), _adapter_version(provider, new)
         if not v_old or not v_new:
+            continue
+        if _slot_track(selection, slot) == "fixed":
+            # A fixed-track slot is never rewritten: report it as current, propose nothing.
+            out.append(Proposal(cls, old, old, "current", "equal", "current", ["track is fixed"], provider))
             continue
         if v_new <= v_old:
             # Nothing newer in the catalog: say so instead of leaving the slot out of the report.
@@ -648,6 +660,7 @@ class ApplyOutcome:
     failed: str = ""                  # artifact id that failed ("" when ok)
     unwound: bool = False             # an artifact AFTER the first failed and the earlier ones were restored
     rendered: list = field(default_factory=list)    # ids of the artifacts written besides the overlay
+    restore_failed: bool = False      # a restore after the failure itself failed: files are left half-applied
 
 
 def registry(apply_patch: ApplyPatch, extra: list | None = None) -> list:
@@ -672,9 +685,10 @@ def apply_changes_ex(doc: dict, changes: dict[str, tuple[str, str]], *, apply_pa
                            extras={"backup_dir": backup_dir})
     res = model_fanout.apply_all(arts, model_fanout.Change(changes), ctx)
     if not res.ok:
-        unwound = bool(res.restored) and res.failed != arts[0].id
+        restore_failed = bool(res.restore_errors)
+        unwound = bool(res.restored) and res.failed != arts[0].id and not restore_failed
         return ApplyOutcome(False, res.message + ("; " + "; ".join(res.restore_errors) if res.restore_errors else ""),
-                            overlay, res.failed, unwound)
+                            overlay, res.failed, unwound, restore_failed=restore_failed)
     openclaw_payload = res.payloads.get("openclaw", {"inverse": {}})
     updated = model_pins.migrate(overlay) if overlay else model_pins.empty_overlay()
     previous = {slot: (updated.get("pins") or {}).get(slot) for slot in changes}
@@ -1249,6 +1263,10 @@ def _run_locked(opts: Options, deps: Deps, ctx: dict | None = None, plan: "Plan 
         ctx["rendered"] = outcome.rendered
     ok, msg, ov = outcome.ok, outcome.message, outcome.overlay
     if not ok:
+        if outcome.restore_failed:
+            _persist(deps, ov, last_run=now.isoformat(), last_result="rollback_failed")
+            _log(deps, "rollback_failed", artifact=outcome.failed, message=msg)
+            return Result(EXIT_ROLLBACK_FAILED, "rollback_failed", f"{outcome.failed}: {msg}", proposals=props)
         if outcome.unwound:          # a later artifact failed after an earlier one had been written
             _persist(deps, ov, last_run=now.isoformat(), last_result="rolled_back")
             _log(deps, "apply_unwound", artifact=outcome.failed, message=msg)

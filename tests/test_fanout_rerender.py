@@ -122,8 +122,17 @@ def test_the_ids_are_replaced_as_whole_strings_only(host):
     # claude-sonnet-5 is a prefix of claude-sonnet-5-5: a bump of one must never rewrite the other
     mapping = rr.substitution({"anthropic:sonnet": ("claude-sonnet-5", "claude-sonnet-5-5")})
     new, changed = rr.substitute({"a": "anthropic/claude-sonnet-5", "b": "anthropic/claude-sonnet-5-5", "c": ["claude-sonnet-5"]}, mapping)
-    assert changed and new == {"a": "anthropic/claude-sonnet-5-5", "b": "anthropic/claude-sonnet-5-5", "c": ["claude-sonnet-5-5"]}
+    assert changed and new == {"a": "anthropic/claude-sonnet-5.5", "b": "anthropic/claude-sonnet-5-5", "c": ["claude-sonnet-5-5"]}
     assert rr.substitution({"google:x": ("a", "a")}) == {}
+
+
+def test_a_minorless_claude_id_maps_the_openrouter_spelling_by_style_not_position():
+    m = rr.substitution({"anthropic:sonnet": ("claude-sonnet-5", "claude-sonnet-5-5")})
+    assert m["anthropic/claude-sonnet-5"] == "anthropic/claude-sonnet-5.5"
+    assert m["claude-sonnet-5"] == "claude-sonnet-5-5"
+    m = rr.substitution({"anthropic:opus": ("claude-opus-4-7", "claude-opus-5")})
+    assert m["anthropic/claude-opus-4.7"] == "anthropic/claude-opus-5"
+    assert m["claude-opus-4-7"] == "claude-opus-5"
 
 
 def test_openrouter_spellings_follow_the_namespace_and_the_dotted_minor():

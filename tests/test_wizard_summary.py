@@ -52,10 +52,27 @@ def test_the_summary_lists_the_files_slots_and_backend(monkeypatch):
 
 
 def test_no_backend_question_is_asked_for_a_single_model_without_a_gateway_cockpit(monkeypatch):
-    script = Script(**{"Apply this?": ms.APPLY})
+    script = Script(**{"How do you want to choose models?": "profile", "Apply this?": ms.APPLY})
     script.install(monkeypatch)
-    wizard._step_summary(_single_flash(), argparse.Namespace())
-    assert not any("gateway" in q.lower() and q.startswith(("select", "checkbox")) for q in script.asked)
+    s = _single_flash()
+    s.mode = "single-model"
+    args = argparse.Namespace()
+    assert wizard._step1_mode(s) == 0
+    assert wizard._step_models(s, args) == 0
+    assert wizard._step_summary(s, args) == 0
+    assert s.mode == "single-model"
+    asked = " | ".join(script.asked).lower()
+    assert not any(w in asked for w in ("choose mode:", "setup mode", "gateway", "backend", "litellm", "openrouter"))
+    assert "Backend: none (single-model)" in script.transcript
+
+
+def test_the_mode_question_is_still_asked_when_no_selection_is_recorded(monkeypatch):
+    script = Script(**{"Choose mode:": "single-model"})
+    script.install(monkeypatch)
+    s = state.SetupState()
+    s.mode = "single-model"
+    assert wizard._step1_mode(s) == 0
+    assert any("Choose mode:" in q for q in script.asked)
 
 
 def _tree_digest(root: Path) -> str:
