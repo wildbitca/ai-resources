@@ -107,7 +107,7 @@ def test_the_report_has_all_eleven_sections_from_fixture_output(env):
     text = host.render_status(report)
     for needle in ("unit ", "boot ", "listeners ", "health ", "timers", "backups", "off-box", "models", "identity", "stability ", "doctor "):
         assert needle in text
-    assert text.count(".timer") == 9
+    assert text.count(".timer") == 10
     assert "main" in text and "anthropic/claude-haiku-4-5 (default)" in text  # effective model per agent
 
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the OpenClaw gateway health check about every hour
+
+[Timer]
+OnBootSec=30min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Persistent=false
+Unit=openclaw-health-restart.service
+
+[Install]
+WantedBy=timers.target

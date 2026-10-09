@@ -1,4 +1,4 @@
-"""The ten openclaw-* systemd unit templates and their renderer.
+"""The eighteen openclaw-* systemd unit templates and their renderer.
 
 `tests/fixtures/systemd/` holds the units as they run on the reference host (host paths and the
 operator id replaced by placeholders); the templates must agree with them everywhere except the
@@ -22,6 +22,7 @@ from ai_resources import openclaw_host as host  # noqa: E402
 TEMPLATES = REPO / "templates" / "systemd"
 LIVE = REPO / "tests" / "fixtures" / "systemd"
 LIBEXEC = "/opt/kit/libexec"
+NO_HAND_COPY = pathlib.Path("/nonexistent-home")   # install_units looks for a hand-installed health-restart script here
 
 
 def _directives(text: str) -> list[str]:
@@ -41,7 +42,7 @@ def _relocate(lines: list[str]) -> list[str]:
 
 def test_there_is_one_template_per_unit_and_nothing_else():
     on_disk = {p.name[: -len(".template")] for p in TEMPLATES.glob("*.template")}
-    assert on_disk == set(host.UNIT_NAMES) and len(host.UNIT_NAMES) == 16
+    assert on_disk == set(host.UNIT_NAMES) and len(host.UNIT_NAMES) == 18
 
 
 def test_the_gateway_unit_is_never_templated():
@@ -127,9 +128,9 @@ class _Systemctl:
         return 0, ""
 
 
-def test_install_writes_all_fourteen_units_and_reloads_once(tmp_path):
+def test_install_writes_all_eighteen_units_and_reloads_once(tmp_path):
     rec = _Systemctl()
-    res = host.install_units(tmp_path, markers=host.unit_markers(LIBEXEC), runner=rec)
+    res = host.install_units(tmp_path, markers=host.unit_markers(LIBEXEC), runner=rec, home=NO_HAND_COPY)
     assert sorted(res["changed"]) == sorted(host.UNIT_NAMES) and res["reloaded"]
     assert {p.name for p in tmp_path.iterdir()} == set(host.UNIT_NAMES)
     assert rec.calls == [["systemctl", "--user", "daemon-reload"]]
@@ -159,13 +160,13 @@ def test_install_replaces_a_stale_unit_and_leaves_the_gateway_unit_alone(tmp_pat
 
 def test_dry_run_writes_and_reloads_nothing(tmp_path):
     rec = _Systemctl()
-    res = host.install_units(tmp_path, markers=host.unit_markers(LIBEXEC), dry_run=True, runner=rec)
-    assert len(res["changed"]) == 16 and list(tmp_path.iterdir()) == [] and rec.calls == []
+    res = host.install_units(tmp_path, markers=host.unit_markers(LIBEXEC), dry_run=True, runner=rec, home=NO_HAND_COPY)
+    assert len(res["changed"]) == 18 and list(tmp_path.iterdir()) == [] and rec.calls == []
 
 
 def test_enable_starts_only_the_timers_and_never_the_gateway(tmp_path):
     rec = _Systemctl()
-    host.install_units(tmp_path, markers=host.unit_markers(LIBEXEC), enable=True, runner=rec)
+    host.install_units(tmp_path, markers=host.unit_markers(LIBEXEC), enable=True, runner=rec, home=NO_HAND_COPY)
     enabled = [c for c in rec.calls if "enable" in c]
     assert sorted(c[-1] for c in enabled) == sorted(host.TIMER_NAMES)
     assert not any("openclaw-gateway" in " ".join(c) for c in rec.calls)
@@ -359,3 +360,62 @@ def test_render_gitops_backups_writes_four_files_and_lists_markers(tmp_path, cap
     assert host.cmd_render_gitops_backups(args) == 2
     args.set = ["novalue"]
     assert host.cmd_render_gitops_backups(args) == 2
+
+
+# --- the health-restart timer: adopting a hand-installed copy (ADR-0003) --------------------------------------------------
+
+HAND_SCRIPT = "#!/bin/bash\nsystemctl --user restart openclaw-gateway.service  # the hand copy\n"
+HAND_SERVICE = "[Service]\nExecStart=/bin/bash %h/.local/bin/openclaw-health-restart.sh\n"
+HAND_TIMER = "[Timer]\nOnUnitActiveSec=1h\n"
+
+
+def _hand_host(tmp_path):
+    home = tmp_path / "home"
+    dest = tmp_path / "units"
+    (home / ".local" / "bin").mkdir(parents=True)
+    dest.mkdir()
+    (home / ".local" / "bin" / "openclaw-health-restart.sh").write_text(HAND_SCRIPT, encoding="utf-8")
+    (dest / "openclaw-health-restart.service").write_text(HAND_SERVICE, encoding="utf-8")
+    (dest / "openclaw-health-restart.timer").write_text(HAND_TIMER, encoding="utf-8")
+    return home, dest
+
+
+def test_adoption_stops_the_old_timer_moves_the_hand_files_and_installs_the_kits(tmp_path):
+    home, dest = _hand_host(tmp_path)
+    rec = _Systemctl()
+    res = host.install_units(dest, markers=host.unit_markers(LIBEXEC), enable=True, runner=rec, home=home,
+                             adopt_hand_copy=True)
+    assert rec.calls[0] == ["systemctl", "--user", "disable", "--now", "openclaw-health-restart.timer"]
+    assert not any(c[:3] == ["systemctl", "--user", "stop"] and "gateway" in " ".join(c) for c in rec.calls)
+    [backup] = list((home / ".openclaw" / "backup" / "hand-units").iterdir())
+    assert (backup / "openclaw-health-restart.sh").read_text(encoding="utf-8") == HAND_SCRIPT
+    assert (backup / "openclaw-health-restart.service").read_text(encoding="utf-8") == HAND_SERVICE
+    assert (backup / "openclaw-health-restart.timer").read_text(encoding="utf-8") == HAND_TIMER
+    assert not (home / ".local" / "bin" / "openclaw-health-restart.sh").exists()
+    assert LIBEXEC in (dest / "openclaw-health-restart.service").read_text(encoding="utf-8")
+    assert len(res["adopted"]) == 3 and "openclaw-health-restart.timer" in res["enabled"]
+
+
+def test_a_second_run_after_adoption_changes_nothing(tmp_path):
+    home, dest = _hand_host(tmp_path)
+    markers = host.unit_markers(LIBEXEC)
+    host.install_units(dest, markers=markers, enable=True, runner=_Systemctl(), home=home, adopt_hand_copy=True)
+    before = {p.name: p.read_bytes() for p in dest.iterdir()}
+    backups = list((home / ".openclaw" / "backup" / "hand-units").iterdir())
+    rec = _Systemctl()
+    res = host.install_units(dest, markers=markers, runner=rec, home=home, adopt_hand_copy=True)
+    assert res["changed"] == [] and res["adopted"] == [] and res["hand_copy"] == [] and rec.calls == []
+    assert {p.name: p.read_bytes() for p in dest.iterdir()} == before
+    assert list((home / ".openclaw" / "backup" / "hand-units").iterdir()) == backups
+
+
+def test_without_adoption_the_hand_copy_is_left_exactly_as_it_is(tmp_path):
+    home, dest = _hand_host(tmp_path)
+    rec = _Systemctl()
+    res = host.install_units(dest, markers=host.unit_markers(LIBEXEC), enable=True, runner=rec, home=home)
+    assert (dest / "openclaw-health-restart.service").read_text(encoding="utf-8") == HAND_SERVICE
+    assert (home / ".local" / "bin" / "openclaw-health-restart.sh").read_text(encoding="utf-8") == HAND_SCRIPT
+    assert len(res["hand_copy"]) == 3 and res["adopted"] == []
+    assert not any("disable" in c for c in rec.calls)
+    assert "openclaw-health-restart.timer" not in res["enabled"]
+    assert (dest / "openclaw-watchdog.service").exists(), "the rest of the units are still installed"

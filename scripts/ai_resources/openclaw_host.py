@@ -168,6 +168,8 @@ UNIT_NAMES = (
     "openclaw-verify.timer",
     "openclaw-models-update.service",
     "openclaw-models-update.timer",
+    "openclaw-health-restart.service",
+    "openclaw-health-restart.timer",
 )
 TIMER_NAMES = tuple(n for n in UNIT_NAMES if n.endswith(".timer"))
 _MARKER = re.compile(r"@([A-Z][A-Z0-9_]*)@")
@@ -239,28 +241,85 @@ def render_gitops_backups(markers: dict[str, str], templates_dir: Path | None = 
             for name in GITOPS_TEMPLATE_NAMES}
 
 
-def install_units(dest: Path | None = None, *, markers: dict[str, str] | None = None,
-                  dry_run: bool = False, enable: bool = False, runner: Runner = default_runner,
-                  templates_dir: Path | None = None) -> dict:
-    """Write all fourteen units at once, so the host never runs a mix of old and new ones.
+HEALTH_UNITS = ("openclaw-health-restart.service", "openclaw-health-restart.timer")
+HAND_SCRIPT_NAME = "openclaw-health-restart.sh"
 
-    Returns {"changed": [...], "unchanged": [...], "reloaded": bool, "enabled": [...]}.
-    Never touches the gateway unit. A second run with nothing to change writes nothing and
-    reloads nothing.
+
+def hand_copy_files(dest: Path | None = None, home: Path | None = None,
+                    rendered: dict[str, str] | None = None) -> list[Path]:
+    """The hand-installed health-restart script and unit files that are not the kit's render.
+
+    The host kept its own copy of this timer before the kit adopted it (ADR-0003). A unit file that
+    equals the kit's render is not a hand copy; the script under ~/.local/bin always is, because
+    the kit's units run the script from the kit root.
     """
     dest = dest or user_unit_dir()
+    home = home or Path.home()
+    found: list[Path] = []
+    script = home / ".local" / "bin" / HAND_SCRIPT_NAME
+    if script.is_file():
+        found.append(script)
+    rendered = rendered if rendered is not None else render_units()
+    for name in HEALTH_UNITS:
+        target = dest / name
+        try:
+            text = target.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if text != rendered.get(name):
+            found.append(target)
+    return found
+
+
+def _adopt_hand_copy(files: list[Path], *, runner: Runner, home: Path, now: str | None = None) -> list[str]:
+    """Stop the hand-installed timer (not the gateway), then MOVE its files aside; never delete them."""
+    runner(["systemctl", "--user", "disable", "--now", "openclaw-health-restart.timer"], env=systemd_env())
+    backup = home / ".openclaw" / "backup" / "hand-units" / (now or time.strftime("%Y%m%d-%H%M%S"))
+    backup.mkdir(parents=True, exist_ok=True)
+    moved: list[str] = []
+    for f in files:
+        target = backup / f.name
+        shutil.move(str(f), str(target))
+        moved.append(str(target))
+    return moved
+
+
+def install_units(dest: Path | None = None, *, markers: dict[str, str] | None = None,
+                  dry_run: bool = False, enable: bool = False, runner: Runner = default_runner,
+                  templates_dir: Path | None = None, adopt_hand_copy: bool = False,
+                  home: Path | None = None) -> dict:
+    """Write all the units at once, so the host never runs a mix of old and new ones.
+
+    Returns {"changed": [...], "unchanged": [...], "reloaded": bool, "enabled": [...],
+             "hand_copy": [paths], "adopted": [paths]}.
+    Never touches the gateway unit. A second run with nothing to change writes nothing and
+    reloads nothing. A hand-installed health-restart copy is left alone (its units are not
+    written) unless `adopt_hand_copy`: then its timer is disabled and its files are moved to
+    ~/.openclaw/backup/hand-units/<timestamp>/ before the kit's units go in.
+    """
+    dest = dest or user_unit_dir()
+    home = home or Path.home()
     rendered = render_units(markers, templates_dir)
+    hand = hand_copy_files(dest, home, rendered)
+    skip: set[str] = set()
+    if hand and not adopt_hand_copy:
+        skip = set(HEALTH_UNITS)
     changed, unchanged = [], []
     for name, text in rendered.items():
+        if name in skip:
+            continue
         target = dest / name
         try:
             same = target.read_text(encoding="utf-8") == text
         except OSError:
             same = False
         (unchanged if same else changed).append(name)
-    result = {"changed": changed, "unchanged": unchanged, "reloaded": False, "enabled": []}
+    result = {"changed": changed, "unchanged": unchanged, "reloaded": False, "enabled": [],
+              "hand_copy": [str(p) for p in hand], "adopted": []}
     if dry_run:
         return result
+    if hand and adopt_hand_copy:
+        result["adopted"] = _adopt_hand_copy(hand, runner=runner, home=home)
     if changed:
         dest.mkdir(parents=True, exist_ok=True)
         for name in changed:
@@ -271,6 +330,8 @@ def install_units(dest: Path | None = None, *, markers: dict[str, str] | None = 
         result["reloaded"] = rc == 0
     if enable:
         for timer in TIMER_NAMES:
+            if timer in skip:
+                continue          # a hand copy owns this timer until the operator adopts it
             rc, _out = runner(["systemctl", "--user", "enable", "--now", timer], env=systemd_env())
             if rc == 0:
                 result["enabled"].append(timer)
@@ -1865,9 +1926,10 @@ def _step_memory_high(c: _Ctx) -> StepResult:
     return StepResult("memory-high", "changed" if r[0] == 0 else "failed", r[1][-200:])
 
 
-def units_state(dest: Path | None = None, runner: Runner = default_runner) -> tuple[list[str], list[str]]:
+def units_state(dest: Path | None = None, runner: Runner = default_runner,
+                home: Path | None = None) -> tuple[list[str], list[str]]:
     """(unit files that differ from their template, timers that are not enabled). Read-only."""
-    plan = install_units(dest, dry_run=True, runner=runner)
+    plan = install_units(dest, dry_run=True, runner=runner, home=home)
     disabled = []
     for timer in TIMER_NAMES:
         rc, out = runner(["systemctl", "--user", "is-enabled", timer], env=systemd_env())
@@ -1877,7 +1939,7 @@ def units_state(dest: Path | None = None, runner: Runner = default_runner) -> tu
 
 
 def _step_units(c: _Ctx) -> StepResult:
-    changed, disabled = units_state(c.unit_dir, c.runner)
+    changed, disabled = units_state(c.unit_dir, c.runner, c.home)
     plan = {"changed": changed}
     if not plan["changed"] and not disabled:
         return StepResult("units", "satisfied", f"{len(UNIT_NAMES)} units, {len(TIMER_NAMES)} timers")
@@ -1886,9 +1948,11 @@ def _step_units(c: _Ctx) -> StepResult:
         return StepResult("units", "would-change", f"{len(plan['changed'])} to write, {len(disabled)} timers off")
     if not c.confirm("units", "install the openclaw-* units and enable their timers"):
         return StepResult("units", "declined")
-    result = install_units(c.unit_dir, enable=True, runner=c.runner)
+    result = install_units(c.unit_dir, enable=True, runner=c.runner, home=c.home)
     c.commands.append(["ai-resources", "openclaw", "install-units", "--enable"])
-    ok = len(result["enabled"]) == len(TIMER_NAMES)
+    # A hand-installed health-restart timer is not the bootstrap's to take over (setup asks first), so its
+    # timer is not enabled here.
+    ok = len(result["enabled"]) == len(TIMER_NAMES) - (len(HEALTH_UNITS) // 2 if result["hand_copy"] else 0)
     return StepResult("units", "changed" if ok else "failed", f"wrote {len(result['changed'])}, enabled {len(result['enabled'])}")
 
 

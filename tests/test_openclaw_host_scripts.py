@@ -88,7 +88,8 @@ class Host:
         self.log.write_text("", encoding="utf-8")
         self.state: dict[str, str] = {"is-active": "active", "is-enabled": "enabled"}
         self.openclaw_health_rc = 0
-        for name in ("systemctl", "loginctl", "openclaw", "ai-resources", "kubectl", "flux", "sleep", "curl"):
+        for name in ("systemctl", "loginctl", "openclaw", "ai-resources", "kubectl", "flux", "sleep", "curl", "free",
+                     "journalctl"):
             self._stub(name)
         self.env_file = self.home / ".openclaw" / "kit-host.env"
         self.uptime_file = tmp / "uptime"
@@ -103,12 +104,15 @@ echo "{name} $*" >> "{self.log}"
 case "{name} $1 $2" in
   "systemctl --user is-active") cat "{self.bin}/is-active" 2>/dev/null || echo active; exit 0 ;;
   "systemctl --user is-enabled") echo enabled; exit 0 ;;
-  "systemctl --user list-timers") for i in 1 2 3 4 5 6 7 8; do echo "n openclaw-t$i.timer"; done; exit 0 ;;
-  "systemctl --user show") case "$*" in *ActiveExitTimestampMonotonic*) cat "{self.bin}/exit-mono" 2>/dev/null || echo "[not set]" ;; *) echo "[not set]" ;; esac; exit 0 ;;
+  "systemctl --user list-timers") for i in 1 2 3 4 5 6 7 8 9 10; do echo "n openclaw-t$i.timer"; done; exit 0 ;;
+  "systemctl --user show") case "$*" in *ActiveExitTimestampMonotonic*) cat "{self.bin}/exit-mono" 2>/dev/null || echo "[not set]" ;; *MemoryCurrent*) cat "{self.bin}/mem-current" 2>/dev/null || echo "[not set]" ;; *MemoryHigh*) cat "{self.bin}/mem-high" 2>/dev/null || echo "[not set]" ;; *) echo "[not set]" ;; esac; exit 0 ;;
+  "free -b"*) cat "{self.bin}/free-out" 2>/dev/null || echo "Swap: 0 0 0"; exit 0 ;;
+  "journalctl --user"*) cat "{self.bin}/journal-out" 2>/dev/null; exit 0 ;;
   "openclaw message send") exit "$(cat "{self.bin}/send-rc" 2>/dev/null || echo 0)" ;;
   "loginctl show-user"*) echo yes; exit 0 ;;
   "openclaw health "*) exit "$(cat "{self.bin}/health-rc" 2>/dev/null || echo 0)" ;;
   "ai-resources models"*) cat "{self.bin}/models-out" 2>/dev/null; exit "$(cat "{self.bin}/models-rc" 2>/dev/null || echo 0)" ;;
+  "ai-resources openclaw busy"*) exit "$(cat "{self.bin}/busy-rc" 2>/dev/null || echo 0)" ;;
   "ai-resources openclaw"*) echo "Repaired legacy bindings 2"; exit "$(cat "{self.bin}/doctor-rc" 2>/dev/null || echo 0)" ;;
 esac
 exit 0
@@ -117,6 +121,17 @@ exit 0
 
     def set_active(self, value: str):
         (self.bin / "is-active").write_text(value + "\n", encoding="utf-8")
+
+    def set_busy_rc(self, rc: int):
+        (self.bin / "busy-rc").write_text(str(rc), encoding="utf-8")
+
+    def set_stalls(self, n: int):
+        (self.bin / "journal-out").write_text("CLI produced no output\n" * n, encoding="utf-8")
+
+    def set_memory_pressure(self):
+        (self.bin / "mem-current").write_text("95\n", encoding="utf-8")
+        (self.bin / "mem-high").write_text("100\n", encoding="utf-8")
+        (self.bin / "free-out").write_text("Swap: 1000 950 50\n", encoding="utf-8")
 
     def set_doctor_rc(self, rc: int):
         (self.bin / "doctor-rc").write_text(str(rc), encoding="utf-8")
@@ -481,9 +496,9 @@ def test_verify_notify_mode_reports_only_the_failed_lines(host):
     assert "local backup" in (host.home / ".openclaw" / "logs" / "verify.log").read_text()
 
 
-def test_the_verify_script_expects_eight_timers():
-    assert re.search(r'-ge 8\b', _text("openclaw-verify.sh"))
-    assert not re.search(r'-ge 6\b', _text("openclaw-verify.sh"))
+def test_the_verify_script_expects_ten_timers():
+    assert re.search(r'-ge 10\b', _text("openclaw-verify.sh"))
+    assert not re.search(r'-ge (6|8)\b', _text("openclaw-verify.sh"))
 
 
 # --- AC-4.1: the backup invariants ----------------------------------------------------------------------------------
@@ -722,3 +737,114 @@ def test_models_update_switch_notice_lists_the_re_rendered_files_instead_of_the_
     host.run("openclaw-models-update.sh")
     text = "\n".join(host.calls())
     assert "Re-rendered: executors, litellm, aider-conf." in text and "ai-resources setup" not in text.split("models updated")[-1]
+
+
+# --- openclaw-health-restart.sh: never forces anything over live runs (ADR-0003, AC-4) ------------------------------------
+
+def _hr(host, *args):
+    return host.run("openclaw-health-restart.sh", *args)
+
+
+def _doctor_calls(host):
+    return [c for c in host.calls() if c.startswith("ai-resources openclaw doctor")]
+
+
+def _forbidden_calls(host):
+    return [c for c in host.calls() if c.startswith("ai-resources openclaw doctor")
+            or re.match(r"systemctl --user (restart|stop|start)\b", c)]
+
+
+@pytest.mark.parametrize("busy_rc", [1, 2])
+def test_busy_or_unknown_with_a_health_failure_never_acts_and_notifies_once(host, busy_rc):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_health(1)
+    host.set_busy_rc(busy_rc)
+    assert _hr(host).returncode == 0
+    assert _forbidden_calls(host) == []
+    assert len(host.sent()) == 1
+    # A second tick in the same episode stays quiet.
+    assert _hr(host).returncode == 0
+    assert _forbidden_calls(host) == [] and len(host.sent()) == 1
+
+
+def test_a_new_episode_notifies_again_after_the_gateway_was_healthy(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_busy_rc(1)
+    host.set_health(1)
+    _hr(host)
+    host.set_health(0)
+    _hr(host)                      # healthy: the episode ends
+    host.set_health(1)
+    _hr(host)
+    assert len(host.sent()) == 2
+
+
+@pytest.mark.parametrize("trigger", ["stalls", "memory"])
+def test_every_trigger_honours_the_busy_probe(host, trigger):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_busy_rc(1)
+    if trigger == "stalls":
+        host.set_stalls(8)
+    else:
+        host.set_memory_pressure()
+        host.set_stalls(1)
+    _hr(host)
+    assert _forbidden_calls(host) == [] and len(host.sent()) == 1
+
+
+def test_idle_with_a_health_failure_runs_the_drained_doctor_once_and_writes_the_cooldown(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_health(1)
+    host.set_busy_rc(0)
+    assert _hr(host).returncode == 0
+    assert len(_doctor_calls(host)) == 1
+    assert not any(re.match(r"systemctl --user (restart|stop|start)\b", c) for c in host.calls()), \
+        "the script itself never stops or starts anything"
+    state = (host.home / ".openclaw" / "health-restart.state").read_text()
+    assert re.search(r"^last_restart=\d+$", state, re.M)
+    # Inside the cooldown a second tick does nothing at all.
+    host.log.write_text("", encoding="utf-8")
+    assert _hr(host).returncode == 0
+    assert _doctor_calls(host) == [] and host.sent() == []
+
+
+def test_a_failed_drained_doctor_is_reported_and_exits_non_zero(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_health(1)
+    host.set_doctor_rc(4)
+    r = _hr(host)
+    assert r.returncode == 1 and len(host.sent()) == 1
+
+
+def test_a_healthy_gateway_does_nothing(host):
+    assert _hr(host).returncode == 0
+    assert host.sent() == [] and _forbidden_calls(host) == []
+
+
+def test_watchdog_off_stands_the_health_check_down(host):
+    (host.home / ".openclaw" / "watchdog.off").touch()
+    host.set_health(1)
+    assert _hr(host).returncode == 0
+    assert not any(c.startswith(("openclaw health", "ai-resources")) for c in host.calls())
+
+
+@pytest.mark.parametrize("state", ["inactive", "failed", "activating", "deactivating"])
+def test_a_gateway_that_is_not_active_is_left_to_the_watchdog(host, state):
+    host.set_active(state)
+    host.set_health(1)
+    assert _hr(host).returncode == 0
+    assert _forbidden_calls(host) == [] and host.sent() == []
+
+
+def test_dry_run_decides_but_does_not_act(host):
+    host.set_health(1)
+    assert _hr(host, "--dry-run").returncode == 0
+    assert _doctor_calls(host) == []
+
+
+def test_the_health_restart_script_never_restarts_stops_or_starts_the_gateway_and_has_no_chat_id():
+    code = "\n".join(ln.split("#", 1)[0] for ln in _text("openclaw-health-restart.sh").splitlines())
+    assert not re.search(r"systemctl\s+--user\s+(restart|stop|start|kill)", code)
+    assert "gateway restart" not in code and "kill" not in code.replace("skipping", "")
+    assert not re.search(r"\b\d{6,}\b", code), "no hard-coded chat id or other long numeric literal"
+    assert "OPENCLAW_OWNER_TELEGRAM_ID" in _text("_common.sh")

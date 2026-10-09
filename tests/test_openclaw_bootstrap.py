@@ -54,7 +54,7 @@ class HostSim:
             (self.backup / t).mkdir(parents=True)
         self.units = tmp / "units"
         self.units.mkdir()
-        host.install_units(self.units, markers=host.unit_markers(), runner=lambda *a, **k: (0, ""))
+        host.install_units(self.units, markers=host.unit_markers(), runner=lambda *a, **k: (0, ""), home=self.home)
         self.commands: list[list[str]] = []
         self.probes: list[list[str]] = []
         self.host_env = tmp / "kit-host.env"
@@ -422,7 +422,7 @@ def test_units_are_installed_and_their_timers_enabled(sim):
     sim.timers_enabled = False
     results, _, _ = run(sim, only="units")
     assert results["units"].status in ("changed", "failed")
-    assert len(list(sim.units.iterdir())) == 16
+    assert len(list(sim.units.iterdir())) == 18
 
 
 # --- AC-10.6 and consent -------------------------------------------------------------------------------------------------------------------------

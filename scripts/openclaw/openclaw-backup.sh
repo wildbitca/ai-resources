@@ -15,7 +15,7 @@
 # `ai-resources setup`), ~/.claude/projects transcripts (about 1.2 GB of history), or the
 # project workspaces (they are git checkouts). Before ai-resources 1.9.0 it also left out the
 # watchdog, verify and team-watch scripts and eight of the ten units of that release -- by
-# accident, not by design; the list below is the fix. The kit now installs fourteen units.
+# accident, not by design; the list below is the fix. The kit now installs eighteen units.
 #
 # Conventions copied from k3s-backup.sh, including the lessons its runbook records:
 #   - stage on disk under $OPENCLAW_BACKUP_DIR, never in /tmp (tmpfs, sized in RAM);
@@ -103,6 +103,8 @@ for p in \
   ".config/systemd/user/openclaw-verify.timer" \
   ".config/systemd/user/openclaw-models-update.service" \
   ".config/systemd/user/openclaw-models-update.timer" \
+  ".config/systemd/user/openclaw-health-restart.service" \
+  ".config/systemd/user/openclaw-health-restart.timer" \
   ".local/bin/openclaw-backup.sh" ".local/bin/openclaw-maintenance.sh" \
   ".local/bin/openclaw-watchdog.sh" ".local/bin/openclaw-verify.sh" ".local/bin/openclaw-models-update.sh" \
   ".local/bin/openclaw-team-watch.py" ".local/bin/openclaw-team-send.py"

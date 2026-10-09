@@ -992,3 +992,47 @@ def test_a_broken_overrides_file_skips_the_config_step_and_does_not_crash(sim, s
     assert sim.oc.real_patches() == [] or all(p.get("gateway") is None for _a, p in sim.oc.real_patches())
     assert any("kit-host-overrides.json5" in m for m in script.messages("error"))
     assert s.openclaw.host_config_changes == []
+
+
+# --- adopting the hand-installed health-restart timer --------------------------------------------------------------
+
+def _put_hand_copy(sim):
+    script = sim.home / ".local" / "bin" / "openclaw-health-restart.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/bin/bash\nsystemctl --user restart x  # hand copy\n", encoding="utf-8")
+    return script
+
+
+def test_an_unattended_run_leaves_the_hand_copy_and_says_how_to_adopt_it(sim, script):
+    hand = _put_hand_copy(sim)
+    s = _state()
+    openclaw.prompt(s)
+    script.non_interactive = True
+    _configure(s)
+    assert hand.exists()
+    assert not (sim.home / ".openclaw" / "backup" / "hand-units").exists()
+    assert any("hand-installed openclaw-health-restart" in m and "interactively" in m for m in script.messages("info"))
+
+
+def test_an_interactive_run_adopts_it_and_teardown_puts_the_script_back(sim, script):
+    hand = _put_hand_copy(sim)
+    original = hand.read_text(encoding="utf-8")
+    s = _state()
+    _run_wizard(s)
+    assert not hand.exists()
+    [backup] = list((sim.home / ".openclaw" / "backup" / "hand-units").iterdir())
+    assert (backup / "openclaw-health-restart.sh").read_text(encoding="utf-8") == original
+    assert s.openclaw.host_hand_moved == {str(hand): str(backup / "openclaw-health-restart.sh")}
+    assert any(c[:4] == ["systemctl", "--user", "disable", "--now"] and c[4] == "openclaw-health-restart.timer"
+               for c in sim.systemd.calls)
+    openclaw.teardown(s)
+    assert hand.read_text(encoding="utf-8") == original, "nothing was deleted; the hand copy is back"
+    assert s.openclaw.host_hand_moved == {}
+
+
+def test_verify_flags_a_hand_copy_that_is_still_present(sim, script):
+    from ai_resources.setup.cockpits import _openclaw_host as sec
+    assert sec._hand_copy_findings() == []
+    _put_hand_copy(sim)
+    [finding] = sec._hand_copy_findings()
+    assert finding.level == "warn" and "openclaw-health-restart.sh" in finding.message

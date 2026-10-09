@@ -222,6 +222,9 @@ class OpenClawState:
     host_units_applied: bool = False
     # Timers the kit enabled (they were not enabled before), so teardown disables exactly those.
     host_timers_enabled: list[str] = field(default_factory=list)
+    # Hand-installed health-restart files the kit moved aside when it adopted that timer:
+    # original path -> where it was moved. Teardown moves them back; nothing is ever deleted.
+    host_hand_moved: dict[str, str] = field(default_factory=dict)
     # Hand-installed legacy team-hook registrations the kit replaced: [{"event", "entry"}], put back
     # by teardown.
     host_legacy_hooks: list[Any] = field(default_factory=list)

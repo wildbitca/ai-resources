@@ -281,24 +281,38 @@ def _configure_units(o: state.OpenClawState, *, dry_run: bool) -> None:
         return
     dest = host.user_unit_dir()
     changed, disabled = host.units_state(dest, _runner())
-    if not changed and not disabled:
+    hand = host.hand_copy_files(dest)
+    if not changed and not disabled and not hand:
         return
     summary = (f"{len(changed)} unit file(s) to write in {dest}"
                + (f", {len(disabled)} timer(s) to enable" if disabled else ""))
+    if hand:
+        summary += (f"; adopt the hand-installed health-restart timer (its files move to "
+                    f"{Path.home() / '.openclaw' / 'backup' / 'hand-units'}/<timestamp>, nothing is deleted)")
     if dry_run:
         ui.detail("Would install the openclaw-* units: " + summary)
         return
+    if hand and ui.is_non_interactive():
+        ui.info("A hand-installed openclaw-health-restart timer is present: run setup interactively to adopt it "
+                "(the kit's version never forces a restart over live runs).")
     if not _gate("Install the openclaw-* systemd units and enable their timers?",
                  detail=summary + ": " + ", ".join(changed)):
         return
     for name in changed:
         o.host_units_previous.setdefault(name, _unit_text(name, dest))
-    result = host.install_units(dest, enable=True, runner=_runner())
+    result = host.install_units(dest, enable=True, runner=_runner(), adopt_hand_copy=True)
     o.host_units_applied = True
+    for moved in result["adopted"]:
+        # `adopted` lists the backup paths; the original is the hand copy path with the same file name.
+        name = Path(moved).name
+        original = (Path.home() / ".local" / "bin" / name) if name.endswith(".sh") else dest / name
+        o.host_hand_moved[str(original)] = moved
     # Only the timers that were NOT enabled before are the kit's to disable again.
     for timer in result["enabled"]:
         if timer in disabled and timer not in o.host_timers_enabled:
             o.host_timers_enabled.append(timer)
+    if result["adopted"]:
+        ui.ok(f"Hand-installed health-restart copy moved to {Path(result['adopted'][0]).parent}")
     ui.ok(f"openclaw-* units installed ({len(result['changed'])} written, {len(result['enabled'])} timers enabled); "
           "systemd reloaded, the gateway was not restarted")
 
@@ -821,7 +835,7 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
     else:
         o.host_workboard_applied = ""
 
-    if o.host_units_applied or o.host_units_previous or o.host_timers_enabled:
+    if o.host_units_applied or o.host_units_previous or o.host_timers_enabled or o.host_hand_moved:
         _remove_units(o)
 
     if o.host_hooks_applied or o.host_legacy_hooks:
@@ -908,6 +922,12 @@ def _remove_units(o: state.OpenClawState) -> None:
         else:
             (dest / name).write_text(previous, encoding="utf-8")
         o.host_units_previous.pop(name, None)
+    for original, moved in list(o.host_hand_moved.items()):
+        src, dst = Path(moved), Path(original)
+        if src.exists() and not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            host.shutil.move(str(src), str(dst))
+        o.host_hand_moved.pop(original, None)
     runner(["systemctl", "--user", "daemon-reload"], env=env)
     o.host_units_applied = False
 
@@ -1015,6 +1035,7 @@ def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> l
         out.append(Finding("warn", who, "no off-box backup listing is configured", OFFBOX_REMEDY))
     out += _stability_findings(report.get("stability") or {})
     out += _watchdog_unit_findings()
+    out += _hand_copy_findings()
     from ... import model_pins, models
     accounts = None
     if selection is not None and selection.enabled_providers() != ["anthropic"]:
@@ -1075,3 +1096,21 @@ def _watchdog_unit_findings() -> list:
         return []
     return [Finding("warn", "openclaw", f"the watchdog unit does not run the kit script ({exec_line or 'no ExecStart'})",
                     "`ai-resources openclaw install-units --dry-run`, then `install-units`")]
+
+
+def _hand_copy_findings() -> list:
+    """A hand-installed health-restart copy next to (or instead of) the kit's: it can force a restart
+    over live runs (ADR-0003). Reads files only."""
+    from ...verify import Finding
+
+    try:
+        hand = host.hand_copy_files()
+    except (OSError, KeyError, ValueError):
+        return []
+    if not hand:
+        return []
+    return [Finding("warn", "openclaw",
+                    "a hand-installed openclaw-health-restart copy is present (" + ", ".join(p.name for p in hand) + "); "
+                    "it can restart the gateway over live runs and may run beside the kit's timer",
+                    "run `ai-resources setup` interactively to adopt the kit's version (the hand files are moved to "
+                    "~/.openclaw/backup/hand-units/, never deleted)")]

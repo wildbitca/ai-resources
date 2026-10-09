@@ -1,0 +1,10 @@
+[Unit]
+Description=OpenClaw gateway health check (acts only on an idle, degraded gateway, through the drained doctor)
+Documentation=file://@LIBEXEC@/scripts/openclaw/openclaw-health-restart.sh
+
+[Service]
+Type=oneshot
+# The drained doctor waits for the cgroup (90 s), runs doctor and polls health (120 s); the gateway
+# stop alone can take TimeoutStopSec=330 s.
+TimeoutStartSec=15min
+ExecStart=/bin/bash @LIBEXEC@/scripts/openclaw/openclaw-health-restart.sh
