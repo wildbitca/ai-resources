@@ -1369,6 +1369,36 @@ still restarts it after 300 s: that is OpenClaw's behaviour and the kit cannot c
 **How to catch it.** `ai-resources openclaw status` lists pending restart-required keys; the gateway log shows the
 config change followed, about 300 s later, by a restart.
 
+## T41 — `MemoryHigh` throttles the whole gateway cgroup until the gateway freezes and a graceful restart is refused *(added 2026-10-10; mitigated in the unreleased resource-safety work, ADR-0004)*
+
+**Symptom.** Gateway cgroup `memory.current` 13.75 GiB against `MemoryHigh` 12 GiB, swap 16/16 GiB, load
+average 68, memory PSI `full` ~94 %, while the machine still had ~13 GiB `MemAvailable`. The gateway main
+PID sat in state `D` with `/proc/<pid>/wchan` = `__mem_cgroup_handle_over_high`; the journal was silent for
+~17 min; `openclaw health` printed "Gateway is still starting (phase: ...)".
+
+**Cause.** `MemoryHigh` with `MemoryMax=infinity` throttles every task in the unit's cgroup instead of killing
+anything. The cgroup holds EVERY child of every agent run (`Unity -batchmode`, `tsc`, Gradle, ~8 `claude`
+workers, ~130 leaked per-session MCP stacks): the gateway process itself was ~2 GB. The throttle is artificial
+(the host has free memory) and it stops the gateway's own event loop.
+
+**Why a restart is refused.** `openclaw gateway restart` fails in ~9 s with `GATEWAY_RESTART_PREPARATION_REFUSED
+... SQLite transaction lock wait failed ... database is locked ... Gateway was not signaled`: the throttled
+gateway holds `openclaw.sqlite`. The kit therefore never attempts a restart of a `frozen` gateway.
+
+**What frees it.** SIGTERM to the heavy agent children (Unity, tsc, Gradle, ~2 GiB) brought the cgroup to the
+limit and the main thread left state `D` within ~20 s: the operator does this by hand. A runtime
+`systemctl --user set-property --runtime ... MemoryHigh=<higher>` is untested here, and setup's
+`_step_memory_high` re-asserts 12G on every run, so the kit does not do it.
+
+**Prevention (ADR-0004).** `mcp.sessionIdleTtlMs` evicts idle per-session MCP runtimes (an active lease
+prevents eviction), `agents.defaults.timeoutSeconds` caps a run, and the health timer classifies the state
+(`ai-resources openclaw pressure`): confirmed pressure below the freeze gets a gated graceful restart (mode
+`on`) or a notice (mode `notify`); `frozen` gets a notice and exit 2.
+
+**How to catch it.** `ai-resources openclaw pressure --json`, `ai-resources openclaw status` ("resource" line),
+`ai-resources verify` (frozen last tick, `MemoryHigh` drift).
+
+
 ---
 
 # SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT (implemented in 1.9.0)

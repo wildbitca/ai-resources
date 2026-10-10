@@ -6,9 +6,65 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
-Not released. The release label and version bump are a separate step.
+Not released: the release label (2.1.0 is recommended) and the version bump are a separate step.
+See [ADR-0004](docs/decisions/0004-bounded-graceful-restart-under-memory-pressure.md) and pitfall T41.
 
-- Resource-safe gateway (ADR-0004): details are filled in as the work lands.
+### Added
+
+- **A resource-safety layer for the OpenClaw gateway.** `ai-resources setup` now fills, fill-only and hot,
+  `mcp.sessionIdleTtlMs=1800000` (evicts idle per-session MCP runtimes, the proven leak) and
+  `agents.defaults.timeoutSeconds=14400` (caps a run at 4 h); a value you set is kept, `0` included, and
+  `OPENCLAW_RESOURCE_GUARDS=off` (the wizard asks) skips both. The agent rules in the managed `AGENTS.md`
+  block cover commands without `run_in_background` and forbid the native AskUserQuestion in headless
+  sessions.
+- **`ai-resources openclaw pressure [--json]`** (read-only): classifies the gateway as `healthy`, `pressure`,
+  `hard`, `frozen`, `refused-probe` or `health-fail` from cgroup and `/proc` files, in two samples, using the
+  `memory.events high` delta, never the absolute counter.
+- **`ai-resources openclaw graceful-restart [--dry-run] [--reason memory|manual]`**: the one sanctioned
+  self-initiated restart. Gates (watchdog.off, unit active, mode, confirmed pressure, 3 h cooldown, 2 per
+  day, window `02:00-05:00` America/Guayaquil or above 105 % of `MemoryHigh`), `flock`, never from inside
+  the gateway cgroup, `timeout 600 openclaw gateway restart` with watchdog.off held by a signal-safe guard,
+  success = health plus a new MainPID, snapshots (0700/0600, bounded) and a recovery report.
+- **`ai-resources openclaw restart-report --since <epoch|iso>`** (read-only): counts the restart-recovery
+  markers in the gateway journal.
+- `status` shows the mode, restarts today, the last restart and the current classification; `verify` warns on
+  a failed last restart, a frozen last tick, a stale `watchdog.off`, too many snapshots, guards missing from
+  the config and `MemoryHigh` drift.
+- `hooks/openclaw_gateway_guard.py` also denies `openclaw gateway restart` from an agent call while the
+  gateway is live and `watchdog.off` is absent (T29).
+
+### Changed
+
+- **Policy (ADR-0004, supersedes ADR-0003 decision 7 for the memory trigger only).** The health-restart timer
+  can now restart the gateway gracefully with runs in flight, on confirmed memory pressure only. It ships in
+  mode `notify` (it tells you once what it would do); set `OPENCLAW_GRACEFUL_RESTART=on` after one
+  supervised restart. **Open risk:** whether Slack/Telegram messages were duplicated or lost after the
+  2026-10-10 13:20 restart is not verified. Setup itself still never restarts a live gateway on its own
+  initiative, and its own restart now holds `watchdog.off` through a guard.
+- **Behaviour change: `ai-resources openclaw doctor` refuses a gateway with runs in flight** (exit 6, nothing
+  stopped) unless `--even-if-busy`.
+- **Behaviour change: `openclaw-health-restart.sh --dry-run` is stricter**: no notice, no state, no episode
+  file, no marker.
+- The health-restart timer runs every 15 minutes (was hourly) with `TimeoutStartSec=25min`; a frozen gateway
+  exits 2 and notifies (retried until delivered) instead of staying quiet.
+
+### Fixed (2.0.2 defects)
+
+- The engine section no longer records "changes" whose value equals the live one, and `apply-pending` drops
+  restores the live value already satisfies instead of opening a drained window for a no-op.
+- The post-setup watch measures a health baseline before the first write: it is not started when
+  `openclaw.json` is byte-identical, and it never reverts when the gateway was already failing (it notifies
+  once instead).
+- The installed OpenClaw version is read from the package's `package.json` first, so a slow gateway no longer
+  turns every key into "restart-required".
+- `status` shows a next-run time for timers scheduled on the monotonic clock instead of `-`.
+
+### Not in the kit (documented only)
+
+- `~/.config/environment.d/50-agent-wif.conf` puts the read-only agent identity into every user service, so
+  `openclaw-backup-uploader` cannot write the bucket; a local drop-in with `UnsetEnvironment=` is the fix.
+- `brew upgrade` of node or openclaw under a running gateway deletes files it is using.
+- The orphan-MCP reaper is deferred; its orphanhood proof is recorded in ADR-0004.
 
 ## [2.0.2] — 2026-10-10 — setup can no longer take a live gateway down
 

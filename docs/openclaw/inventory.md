@@ -408,12 +408,17 @@ unit files in all, counting the later backup guard and uploader). State and logs
 notice) and `~/.openclaw/backups/models-update/` (the last ten forensic copies). The backup script includes
 the overlay.
 
-Since 2.0.2 (ADR-0003): `openclaw-health-restart.service` + `.timer` (every hour; `OnBootSec=30min`) run
+Since 2.0.2 (ADR-0003; ADR-0004 in the unreleased work changes the cadence to every 15 minutes and the budget to `TimeoutStartSec=25min`): `openclaw-health-restart.service` + `.timer` (`OnBootSec=30min`) run
 `scripts/openclaw/openclaw-health-restart.sh`, which replaces the host's hand-installed copy (historical
 path `~/.local/bin/openclaw-health-restart.sh`, originally there, moved to `~/.openclaw/backup/hand-units/` on
 adoption) and never forces a restart over live runs; ten timers and eighteen unit files in all. State and logs:
 `~/.openclaw/health-restart.state` (the cooldown), `~/.openclaw/logs/health-restart.log` and
-`~/.openclaw/logs/health-restart.notified` (one notice per episode). Setup also starts a transient
+`~/.openclaw/logs/health-restart.notified` (one notice per episode). ADR-0004 adds, in the same
+`health-restart.state`: `last_restart_reason`, `last_restart_result` (`started`, `ok`, `failed`, `refused`),
+`last_report` and `restarts_day=<YYYY-MM-DD>:<n>` (the daily cap); `~/.openclaw/health-restart.lock` (the
+flock shared by the timer and a manual `graceful-restart`); and
+`~/.openclaw/logs/restart-snapshots/<UTC timestamp>/` (0700, `before/`, `after/`, `report.txt`, the newest
+`OPENCLAW_RESTART_SNAPSHOTS_KEEP`). Setup also starts a transient
 `openclaw-config-watch-<id>` unit after a run that wrote config (not a timer; at most 11 minutes).
 
 **What the backup left out.** Before 1.9.0 the list in `openclaw-backup.sh` held only

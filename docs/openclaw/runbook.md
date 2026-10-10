@@ -41,6 +41,8 @@ defaults to **no** on a first run, except the workboard, which defaults to yes:
 | 3 | Install the gateway guard hook? | Registers `openclaw_gateway_guard.py`, which denies an undrained `doctor --fix` or gateway stop | no |
 | 4 | Install the `openclaw-*` systemd units? | Renders the eighteen units into `~/.config/systemd/user` and enables the ten timers (a separate confirm shows what will be written). A hand-installed health-restart copy is taken over here: its timer is disabled and its files are moved to `~/.openclaw/backup/hand-units/<timestamp>/`, never deleted | reloads systemd, not the gateway |
 | 5 | Apply the canonical config block? | Fills the keys you have not set (a value you set is **kept** and listed), validates the patch with `config patch --dry-run`, applies the hot keys after a confirm, and offers the restart-required ones (today `gateway.bind`) in a drained window only when no run is in flight; otherwise they are recorded as pending | hot keys: yes; restart-required keys: only in the drained window |
+| 5b | Let the health check restart the gateway gracefully under memory pressure? **notify** / on / off (asked with 4) | Writes `OPENCLAW_GRACEFUL_RESTART` to `kit-host.env`. Unattended runs keep an existing value, else `notify` (see "Resource safety") | no |
+| 5c | Let setup fill the resource guards? **on** / off (asked with 5) | Writes `OPENCLAW_RESOURCE_GUARDS`; `on` fills `mcp.sessionIdleTtlMs` and `agents.defaults.timeoutSeconds` when unset | no |
 | 6 | Your Telegram id, backup dir, and (with 5) domain and ingress CIDR | Written to `kit-host.env`; each value is validated as you type. Empty skips the keys that need it | no |
 | 7 | Enable the workboard plugin? | `openclaw plugins enable workboard`, after a confirm | yes: needs a restart |
 | 8 | Write an `AGENTS.md` into workspaces that have none? | A template per workspace; an existing file is never replaced. The marked kit block is refreshed in every workspace on every run, whatever this answer (v1.9.7) | no |
@@ -61,8 +63,8 @@ prompts for nothing: it re-applies only the local pieces already agreed (`kit-ho
 
 The `ai-resources openclaw <verb>` commands are wrappers over the same functions, for headless runs
 and disaster recovery: `status`, `doctor`, `bootstrap`, `install-units`, `agent-new`,
-`render-gitops-backups`, `busy` (runs in flight; exit 0 idle, 1 busy, 2 unknown), `apply-pending`
-and `config-watch` (started by setup).
+`render-gitops-backups`, `busy` (runs in flight; exit 0 idle, 1 busy, 2 unknown), `apply-pending`,
+`pressure`, `graceful-restart`, `restart-report` (see "Resource safety") and `config-watch` (started by setup).
 
 ### Operator overrides (`kit-host-overrides.json5`)
 
@@ -1076,6 +1078,93 @@ state comes back `unknown`, `GatewayServiceUpdateOwnershipError` is raised
 manually.") **after the stop and before the start**, and the gateway stays dead. Since it
 was an explicit stop, `Restart=always` does not cover it. Note the `stop` itself can take
 ~5 min because of `TimeoutStopSec=330`.
+
+## Resource safety: prevention first, a graceful restart as the valve
+
+**[kit]** Since the resource-safe gateway work ([ADR-0004](../decisions/0004-bounded-graceful-restart-under-memory-pressure.md)),
+`ai-resources setup` configures four layers. Why: on 2026-10-09/10 the gateway cgroup reached 13.75 GiB
+against `MemoryHigh=12G` (the process itself was ~2 GB; the rest was ~130 per-session MCP stacks nothing
+evicted), the main thread froze in state `D`, and the old health timer, which never acted with runs in
+flight, logged `healthy`.
+
+| Layer | What | Where |
+|---|---|---|
+| Prevent | `mcp.sessionIdleTtlMs=1800000` (evict an idle per-session MCP runtime after 30 min) and `agents.defaults.timeoutSeconds=14400` (cap one run at 4 h). Hot keys, FILL-ONLY: a value you set, `0` included, is kept | `profiles/openclaw-host.json5` |
+| Instruct | The kit block in every `AGENTS.md`: wrap commands in `timeout <N>` or detach them when `run_in_background` is unavailable; never call the native AskUserQuestion in a headless or subagent session | `scripts/ai_resources/setup/cockpits/_shared.py` |
+| Detect | `ai-resources openclaw pressure [--json]`: reads cgroup and `/proc`, two samples `OPENCLAW_HEALTH_CONFIRM_S` apart, classifies `healthy`, `pressure`, `hard`, `frozen`, `refused-probe` or `health-fail`. Read-only; an unreadable signal is `refused-probe` and nothing acts | `scripts/ai_resources/openclaw_pressure.py` |
+| Act | `ai-resources openclaw graceful-restart`: gated, snapshotted, reported. Called by the health timer in mode `on`, or by you | `scripts/ai_resources/openclaw_host.py` |
+
+### Modes and knobs
+
+`OPENCLAW_GRACEFUL_RESTART` in `~/.openclaw/kit-host.env`: `off` (log only), `notify` (the shipped
+default: tell you once per episode what it WOULD do, restart nothing) or `on`. Anything else behaves as
+`notify`. **Open risk:** whether Slack or Telegram messages were duplicated or lost after the 2026-10-10
+13:20 restart has not been verified, so enable `on` only after one supervised restart (below).
+
+| Knob | Default | Meaning |
+|---|---|---|
+| `OPENCLAW_RESTART_WINDOW` | `02:00-05:00` | `HH:MM-HH:MM`, may wrap midnight; empty = never inside a window |
+| `OPENCLAW_RESTART_TZ` | `America/Guayaquil` | the zone the window is read in. The host clock is UTC; the window is NOT the host's local time |
+| `OPENCLAW_RESTART_HARD_PCT` | `105` | % of `MemoryHigh` above which the ceiling overrides the window |
+| `OPENCLAW_RESTART_PRESSURE_PCT` | `90` | % of `MemoryHigh` that counts as pressure (swap must also be >= 90 %) |
+| `OPENCLAW_RESTART_COOLDOWN_S` | `10800` | 3 h between restarts |
+| `OPENCLAW_RESTART_DAILY_CAP` | `2` | restarts per local day; `0` = no cap |
+| `OPENCLAW_HEALTH_CONFIRM_S` | `60` | seconds between the two samples |
+| `OPENCLAW_FROZEN_MIN_S` | `600` | "still starting" for this long counts as frozen |
+| `OPENCLAW_RESTART_SETTLE_S` | `120` | wait after the restart before the post-snapshot |
+| `OPENCLAW_RESTART_SNAPSHOTS_KEEP` | `10` | snapshot directories kept |
+| `OPENCLAW_RESOURCE_GUARDS` | `on` | `off`: setup does not fill the two prevention keys |
+
+The timer runs every 15 minutes. Opt out of the prevention keys with `OPENCLAW_RESOURCE_GUARDS=off` (the
+wizard asks). The overrides `keep` list protects a value that already exists; it cannot say "do not fill an
+unset key", which is why the env switch exists. `off` does not revert a value already written
+(`openclaw config unset mcp.sessionIdleTtlMs`).
+
+### What the gates are
+
+`graceful-restart` refuses, naming the gate, when: it runs inside the gateway cgroup (T29); another
+graceful restart holds `~/.openclaw/health-restart.lock`; `watchdog.off` exists; the unit is not `active`;
+the mode is not `on` (a manual run skips this and the pressure gate); the pressure is not confirmed; the
+cooldown or the daily cap says no; or it is outside the window and below the ceiling. It never passes
+`--force`, never kills a process and never restarts a `frozen` gateway. Success is health plus a NEW
+MainPID. A `GATEWAY_RESTART_PREPARATION_REFUSED` is retried after 20, 40 and 80 s and reported as
+`refused`, never as frozen.
+
+### Look first, then do it once by hand
+
+```bash
+ai-resources openclaw pressure --json                    # the classification and its numbers
+ai-resources openclaw graceful-restart --dry-run          # every gate verdict; changes nothing
+ai-resources openclaw restart-report --since 2026-10-10T13:15:00Z   # recovery counts from the journal
+# One SUPERVISED restart, inside the window, from a shell that is not a gateway child:
+ai-resources openclaw graceful-restart --reason manual
+```
+
+Read the report (`~/.openclaw/logs/restart-snapshots/<UTC timestamp>/report.txt`), watch Slack and Telegram
+for duplicates or losses, and only then set `OPENCLAW_GRACEFUL_RESTART=on`. `ai-resources openclaw status`
+shows the mode, restarts today against the cap, the last restart (reason, result, memory freed, recovery
+counts, report path) and the current classification; `ai-resources verify` warns on a failed last restart, a
+frozen last tick, a stale `watchdog.off`, too many snapshots, guards missing from the config and
+`MemoryHigh` drift.
+
+### A frozen gateway
+
+`frozen` means the main thread is in state `D` waiting on the `MemoryHigh` throttle (or `openclaw health`
+says "still starting" too long): the restart is refused ("database is locked") and the kit does NOT try
+one. The check logs the evidence, sends one notice (retried until delivered), and exits 2 so systemd shows
+the run as failed. The remedy is yours: stop the heavy agent children (Unity, tsc, Gradle) by hand until the
+cgroup is under `MemoryHigh` (pitfall T41). The kit does not raise `MemoryHigh`, at runtime or otherwise.
+
+### Snapshots and rollback
+
+Each restart writes `~/.openclaw/logs/restart-snapshots/<UTC timestamp>/{before,after}/` (directories 0700,
+files 0600): busy count, unit properties, `free -b`, cgroup files, `ps` without arguments and a whitelisted
+session list, plus `report.txt`. Rollback needs no code change: `OPENCLAW_GRACEFUL_RESTART=off` disables the
+valve, `OPENCLAW_RESOURCE_GUARDS=off` stops the fill, and `touch ~/.openclaw/watchdog.off` stands every
+automation down.
+
+`ai-resources openclaw doctor` now refuses a gateway with runs in flight (exit 6, nothing stopped) unless
+you pass `--even-if-busy`.
 
 ## Force a backup and check it left the node
 
