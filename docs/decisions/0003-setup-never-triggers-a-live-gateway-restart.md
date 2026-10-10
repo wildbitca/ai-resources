@@ -49,7 +49,8 @@ sessions, T39, which made the forced restart slow). The root cause, in order:
    in. Array keys are still unioned (add-only). An agent on a haiku primary is still replaced (T29). The
    engine section remains a deliberate wizard choice, but the keys it changed are now listed. (Q2, Q8)
 6. **A bounded, backgrounded, cancellable post-setup watch reverts the run on failure.** A transient user
-   unit (`systemd-run --user`, `RuntimeMaxSec=660`) polls `openclaw health` for 10 minutes. After three
+   unit (`systemd-run --user`, `RuntimeMaxSec=1800`, `TimeoutStopSec=600`) polls `openclaw health` for 10 minutes. The unit outlives that poll
+   because a revert's drained window alone can take up to ~5.5 min, and a SIGTERM needs time to unwind it. After three
    consecutive failures it reverts everything the run recorded (host profile keys and the engine section's
    keys): hot keys immediately and without a restart; restart-required keys only through the same drained
    window, never as a blind patch while the gateway is live (reverting such a key would make OpenClaw force

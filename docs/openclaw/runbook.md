@@ -107,6 +107,8 @@ same drained window (never a blind patch on a live gateway), then a Telegram not
 with `journalctl --user -u openclaw-config-watch-<id>`, cancel it with `systemctl --user stop
 openclaw-config-watch-<id>`. It stands down on `watchdog.off`, and a newer setup run supersedes it. Without
 `systemd-run` or a user bus setup says `post-setup watch not started`; there is no foreground fallback.
+The unit runs with `RuntimeMaxSec=1800` and `TimeoutStopSec=600`: the drained window of a revert can take up to
+~5.5 min by itself, so the unit must outlive it and be given time to unwind on SIGTERM.
 
 ## Verification: what setup left behind
 

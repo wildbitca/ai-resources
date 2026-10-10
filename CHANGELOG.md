@@ -39,7 +39,9 @@ Prepared, not released: no version file, tag or Formula change belongs to this e
   restart-required keys in a drained window) and `config-watch` (started by setup).
 - A post-setup watch (transient `openclaw-config-watch-<id>` unit, 10 minutes): after three failed
   `openclaw health` checks it reverts what the run wrote. Hot keys are reverted at once; restart-required
-  keys only inside the drained window. It notifies over Telegram.
+  keys only inside the drained window. It notifies over Telegram. The unit has `RuntimeMaxSec=1800` and
+  `TimeoutStopSec=600`: the drained window alone can take up to ~5.5 min, so the unit must outlive it and
+  be given time to unwind on SIGTERM.
 - `status` and `verify` list pending restart-required keys and the last watch result.
 
 ## [2.0.1] — 2026-10-09 — setup no longer binds the gateway to a tailnet that is not there
