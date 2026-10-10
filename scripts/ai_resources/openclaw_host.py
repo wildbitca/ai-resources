@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from typing import Callable, NamedTuple
 
-from . import model_pins, openclaw_reload_rules, repo_root
+from . import model_pins, openclaw_pressure, openclaw_reload_rules, repo_root
 
 # (return code, combined output). 127 means the binary is missing.
 Runner = Callable[..., "tuple[int, str]"]
@@ -62,6 +62,47 @@ def default_runner(argv: list[str], *, env: dict | None = None, timeout: float |
     except OSError as e:
         return 1, str(e)
     return r.returncode, (r.stdout + r.stderr).strip()
+
+
+# --- resource-safety knobs (ADR-0004) -----------------------------------------------------------------------
+#
+# The same keys the health-restart script reads from ~/.openclaw/kit-host.env (defaults in
+# scripts/openclaw/_common.sh). The process environment wins over the file, the file over the default.
+
+RESTART_KNOB_DEFAULTS: dict[str, str] = {
+    "OPENCLAW_GRACEFUL_RESTART": "notify",       # off | notify | on
+    "OPENCLAW_RESTART_WINDOW": "02:00-05:00",    # HH:MM-HH:MM in OPENCLAW_RESTART_TZ; "" = never inside a window
+    "OPENCLAW_RESTART_TZ": "America/Guayaquil",  # the host clock is UTC; the operator's zone is explicit
+    "OPENCLAW_RESTART_HARD_PCT": "105",          # of MemoryHigh; overrides the window
+    "OPENCLAW_RESTART_PRESSURE_PCT": "90",
+    "OPENCLAW_RESTART_COOLDOWN_S": "10800",
+    "OPENCLAW_RESTART_DAILY_CAP": "2",
+    "OPENCLAW_HEALTH_CONFIRM_S": "60",
+    "OPENCLAW_RESTART_SNAPSHOTS_KEEP": "10",
+    "OPENCLAW_FROZEN_MIN_S": "600",
+    "OPENCLAW_RESTART_SETTLE_S": "120",
+}
+
+
+def restart_knobs(env: dict[str, str] | None = None, host_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Effective knob values as strings (process env, then the host env file, then the default)."""
+    env = os.environ if env is None else env
+    file_env = read_host_env() if host_env is None else host_env
+    out: dict[str, str] = {}
+    for key, default in RESTART_KNOB_DEFAULTS.items():
+        val = env.get(key)
+        if val is None:
+            val = file_env.get(key)
+        out[key] = default if val is None else val.strip()
+    return out
+
+
+def knob_number(knobs: dict[str, str], key: str) -> float:
+    """A numeric knob; a malformed value falls back to the default (never an exception in a timer)."""
+    try:
+        return float(knobs[key])
+    except (KeyError, ValueError):
+        return float(RESTART_KNOB_DEFAULTS[key])
 
 
 def kit_root() -> Path:
@@ -2595,6 +2636,40 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return rc
 
 
+def cmd_pressure(args: argparse.Namespace, runner: Runner | None = None, **kw) -> int:
+    """`ai-resources openclaw pressure [--json] [--confirm-seconds N]`: read-only classification.
+
+    Exit 0 whatever the classification (the caller reads it); 1 only for an internal error. It
+    runs `systemctl show`, `openclaw health` and `free -b` and reads cgroup and /proc files.
+    """
+    knobs = restart_knobs()
+    confirm = args.confirm_seconds if args.confirm_seconds is not None else knob_number(knobs, "OPENCLAW_HEALTH_CONFIRM_S")
+    result = openclaw_pressure.evaluate(
+        runner=runner or default_runner, openclaw_bin=resolve_openclaw_bin(), confirm_seconds=confirm,
+        pressure_pct=knob_number(knobs, "OPENCLAW_RESTART_PRESSURE_PCT"),
+        hard_pct=knob_number(knobs, "OPENCLAW_RESTART_HARD_PCT"),
+        frozen_min_s=knob_number(knobs, "OPENCLAW_FROZEN_MIN_S"), **kw)
+    if args.json:
+        print(json.dumps(result, sort_keys=True))
+    else:
+        ev = result["evidence"]
+        print(f"{result['classification']}: memory {ev.get('memory_pct')}% of MemoryHigh, swap {ev.get('swap_pct')}%, "
+              f"high events +{ev.get('high_events_delta')}, state {ev.get('proc_state')}"
+              + (f" ({ev['reason']})" if ev.get("reason") else ""))
+    return 0
+
+
+def cmd_restart_report(args: argparse.Namespace, runner: Runner | None = None) -> int:
+    """`ai-resources openclaw restart-report --since <epoch|iso> [--json]`: parse the journal (read-only)."""
+    report = openclaw_pressure.read_report(args.since, runner or default_runner)
+    if args.json:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        print("journal unavailable" if not report["available"] else
+              ", ".join(f"{k}={v}" for k, v in report.items() if k != "available"))
+    return 0 if report["available"] else 1
+
+
 def cmd_busy(args: argparse.Namespace) -> int:
     """Exit 0 idle, 1 busy, 2 the probe could not tell (callers treat 2 as busy)."""
     n = gateway_busy_strict()
@@ -2685,6 +2760,17 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_doc.add_argument("--cleanup-sessions", action="store_true",
                        help="Also run `openclaw sessions cleanup --all-agents` inside the drained window")
     p_doc.set_defaults(func=cmd_doctor)
+
+    p_pr = verbs.add_parser("pressure", help="Classify the gateway's memory pressure (read-only; ADR-0004)")
+    p_pr.add_argument("--json", action="store_true", help="Print the classification and its evidence as JSON")
+    p_pr.add_argument("--confirm-seconds", type=float, default=None,
+                      help="Seconds between the two samples (default OPENCLAW_HEALTH_CONFIRM_S, 60)")
+    p_pr.set_defaults(func=cmd_pressure)
+
+    p_rr = verbs.add_parser("restart-report", help="Count the restart-recovery markers in the gateway journal (read-only)")
+    p_rr.add_argument("--since", required=True, help="Epoch seconds or an ISO timestamp")
+    p_rr.add_argument("--json", action="store_true", help="Print the counts as JSON")
+    p_rr.set_defaults(func=cmd_restart_report)
 
     p_busy = verbs.add_parser("busy", help="How many agent runs are in flight (exit 0 idle, 1 busy, 2 unknown)")
     p_busy.add_argument("--json", action="store_true", help="Print {busy, probe_ok} as JSON")

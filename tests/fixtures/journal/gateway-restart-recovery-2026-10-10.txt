@@ -1,0 +1,23 @@
+# Captured 2026-10-10 from `journalctl --user -u openclaw-gateway -o short-iso` (OpenClaw 2026.9.9, host bithome),
+# graceful `openclaw gateway restart` with runs in flight. Session ids, thread ids and the home
+# directory are redacted; the lines are otherwise verbatim. Not synthetic.
+# Annotated counts the parser must reproduce (AC-RSG-12):
+#   marked_interrupted=3 aborted_runs=4 shutdown_deadline=1 recovery_started=1 tombstoned=0
+#   use_resume_true=3 use_resume_false=3
+2026-10-10T13:15:23+00:00 bithome node[1288281]: 2026-10-10T13:15:23.087+00:00 [gateway] received SIGTERM; restarting
+2026-10-10T13:15:23+00:00 bithome node[1288281]: 2026-10-10T13:15:23.810+00:00 [gateway] shutdown budget at shutdown: drain=314272ms shutdown=324272ms reserve=10000ms exitMargin=5000ms; source=systemd user openclaw-gateway.service TimeoutStopUSec=330000ms
+2026-10-10T13:15:23+00:00 bithome node[1288281]: 2026-10-10T13:15:23.901+00:00 [gateway] draining active work before external-restart with timeout 299271.0129309967ms: queueSize=6 pendingReplies=5 embeddedRuns=6 agentRuns=6 sessionAdmissions=7 rootRequests=4 cronRuns=2
+2026-10-10T13:20:23+00:00 bithome node[1288281]: 2026-10-10T13:20:23.376+00:00 [main-session-restart-recovery] marked 3 interrupted main session(s) for restart recovery (gateway restart shutdown)
+2026-10-10T13:20:23+00:00 bithome node[1288281]: 2026-10-10T13:20:23.396+00:00 [shutdown] aborted 4 active run(s) during restart shutdown
+2026-10-10T13:20:48+00:00 bithome node[1288281]: 2026-10-10T13:20:48.083+00:00 [gateway] shutdown deadline reached; abandoning unfinished cleanup and active work before external-restart; last observed: queueSize=4 pendingReplies=3 embeddedRuns=4 agentRuns=4 sessionAdmissions=5 rootRequests=2 cronRuns=1; cleanup incomplete; exitCode=0
+2026-10-10T13:20:48+00:00 bithome node[1288281]: 2026-10-10T13:20:48.097+00:00 [gateway] wrote stability bundle: ~/.openclaw/logs/stability/openclaw-stability-2026-10-10T13-20-48-085Z-1288281-gateway.restart_shutdown_timeout.json
+2026-10-10T13:20:57+00:00 bithome node[2709234]: 2026-10-10T13:20:57.545+00:00 [gateway] starting...
+2026-10-10T13:20:58+00:00 bithome node[2709234]: 2026-10-10T13:20:58.383+00:00 [gateway] shutdown budget at startup: drain=315000ms shutdown=325000ms reserve=10000ms exitMargin=5000ms; source=systemd user openclaw-gateway.service TimeoutStopUSec=330000ms
+2026-10-10T13:21:18+00:00 bithome node[2709234]: 2026-10-10T13:21:18.822+00:00 [gateway] ready
+2026-10-10T13:21:23+00:00 bithome node[2709234]: 2026-10-10T13:21:23.833+00:00 [main-session-restart-recovery] started interrupted main session: agent:main:slack:channel:<redacted>:thread:<redacted>
+2026-10-10T13:21:26+00:00 bithome node[2709234]: 2026-10-10T13:21:26.875+00:00 [agent/cli-backend] cli exec: provider=claude-cli model=claude-sonnet-5 promptChars=1802 trigger=user useResume=true session=present resumeSession=<sid> reuse=reusable-drift:system-prompt,prompt-tools historyPrompt=none
+2026-10-10T13:21:27+00:00 bithome node[2709234]: 2026-10-10T13:21:27.265+00:00 [agent/cli-backend] cli exec: provider=claude-cli model=claude-sonnet-5 promptChars=3731 trigger=user useResume=false session=none resumeSession=none reuse=invalidated:mcp historyPrompt=none
+2026-10-10T13:21:29+00:00 bithome node[2709234]: 2026-10-10T13:21:29.207+00:00 [agent/cli-backend] cli exec: provider=claude-cli model=claude-sonnet-5 promptChars=79190 trigger=user useResume=false session=none resumeSession=none reuse=none historyPrompt=none
+2026-10-10T13:21:30+00:00 bithome node[2709234]: 2026-10-10T13:21:30.334+00:00 [agent/cli-backend] cli exec: provider=claude-cli model=claude-sonnet-5 promptChars=48816 trigger=user useResume=false session=none resumeSession=none reuse=none historyPrompt=none
+2026-10-10T13:21:33+00:00 bithome node[2709234]: 2026-10-10T13:21:33.160+00:00 [agent/cli-backend] cli exec: provider=claude-cli model=claude-sonnet-5 promptChars=2440 trigger=user useResume=true session=present resumeSession=<sid> reuse=reusable historyPrompt=none
+2026-10-10T13:22:23+00:00 bithome node[2709234]: 2026-10-10T13:22:23.462+00:00 [agent/cli-backend] cli exec: provider=claude-cli model=claude-sonnet-5 promptChars=2780 trigger=user useResume=true session=present resumeSession=<sid> reuse=reusable historyPrompt=none
