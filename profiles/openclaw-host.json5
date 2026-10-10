@@ -35,6 +35,9 @@
     "defaults": {
       // T20: heartbeats off by default (every=0m); only the main agent wakes up, every 2 hours.
       "heartbeat": { "every": "0m" },
+      // ADR-0004 (resource guard, `OPENCLAW_RESOURCE_GUARDS=off` skips it): a run is capped at 4 hours;
+      // the unset default is 48 hours, and one Slack thread sat 102 minutes in a model call.
+      "timeoutSeconds": 14400,
     },
     "entries": {
       // T29: an orchestrator on haiku confabulates topics. Sonnet 5 for every entry that is not
@@ -45,6 +48,13 @@
         "heartbeat": { "every": "2h" },
       },
     },
+  },
+
+  "mcp": {
+    // ADR-0004 (resource guard): evict a per-session MCP runtime after 30 minutes idle. Unset means
+    // "live until the session is cleaned up or the gateway stops", which leaked ~130 helper stacks and
+    // made the gateway cgroup hit MemoryHigh. Only the leaf key: `mcp.servers` stays the operator's.
+    "sessionIdleTtlMs": 1800000,
   },
 
   "tools": {

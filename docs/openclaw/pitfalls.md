@@ -1317,7 +1317,11 @@ timeout; then the unit is killed with everything in its cgroup.
 
 - An agent rule in the kit block (`## Long-running commands never block a tool call`): work over about
   2 min runs in the background and is polled, no long waits in one call, `ask_user` once then end the
-  turn, cron jobs report per phase. Live sessions see it only after `/new` (T19).
+  turn, cron jobs report per phase. Live sessions see it only after `/new` (T19). Since ADR-0004 the
+  rule also covers claude-cli children, which cannot use `run_in_background`: wrap the command in
+  `timeout <N>` or detach it (`setsid nohup cmd >file 2>&1 &`) and poll the file; and the native
+  AskUserQuestion is never used in a headless or subagent session (it hangs until the watchdog fires):
+  `ask_user` with `timeoutSeconds` 120-300, then end the turn.
 - `scripts/openclaw/openclaw-watchdog.sh` sends a Telegram alert on a new `stop_shutdown_timeout` bundle
   (the first run only records a baseline) and when the unit stays in `deactivating` past
   `OPENCLAW_WATCHDOG_DEACTIVATING_ALERT_SEC` (default 240 s). A 360 s threshold would NOT have fired on

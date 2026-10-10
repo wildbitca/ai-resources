@@ -3,7 +3,8 @@
     "defaults": {
       "heartbeat": {
         "every": "0m"
-      }
+      },
+      "timeoutSeconds": 14400
     },
     "entries": {
       "*": {
@@ -57,6 +58,9 @@
   "logging": {
     "file": "@HOME@/.openclaw/logs/gateway.log",
     "maxFileBytes": 33554432
+  },
+  "mcp": {
+    "sessionIdleTtlMs": 1800000
   },
   "plugins": {
     "entries": {

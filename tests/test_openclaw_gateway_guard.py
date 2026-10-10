@@ -176,3 +176,47 @@ def test_the_guard_registers_under_the_bash_matcher_and_is_removed_cleanly(tmp_p
     assert claude.install_openclaw_hooks("/kit", team=False, guard=True, settings_path=path) is False
     claude.remove_openclaw_hooks(path)
     assert json.loads(path.read_text(encoding="utf-8")) == original
+
+
+# --- ADR-0004 (D10): `openclaw gateway restart` from an agent call --------------------------------------------------
+
+RESTART_DENIED = [
+    "openclaw gateway restart",
+    "/home/linuxbrew/.linuxbrew/bin/openclaw gateway restart",
+    "timeout 600 openclaw gateway restart",
+    "cd ~ && openclaw gateway restart",
+    'bash -c "openclaw gateway restart"',
+    "sudo openclaw --profile x gateway restart",
+]
+
+RESTART_ALLOWED = [
+    "openclaw gateway status",
+    "openclaw gateway start",
+    "openclaw gateway --help",
+    'grep -rn "openclaw gateway restart" docs/',
+    'echo "openclaw gateway restart"',
+    "ai-resources openclaw graceful-restart --dry-run",
+    "ai-resources openclaw graceful-restart --reason manual",
+]
+
+
+@pytest.mark.parametrize("command", RESTART_DENIED)
+def test_a_gateway_restart_is_denied_while_the_gateway_is_live(guard, monkeypatch, capsys, command):
+    code, err = run(guard, monkeypatch, command, capsys=capsys)
+    assert code == 2
+    assert "T29" in err and "ai-resources openclaw graceful-restart" in err
+
+
+@pytest.mark.parametrize("command", RESTART_ALLOWED)
+def test_gateway_status_and_the_sanctioned_cli_are_not_matched(guard, monkeypatch, capsys, command):
+    assert run(guard, monkeypatch, command, capsys=capsys) == (0, "")
+
+
+def test_a_gateway_restart_is_allowed_when_watchdog_off_is_present(guard, monkeypatch, capsys, tmp_path):
+    (tmp_path / "watchdog.off").write_text("", encoding="utf-8")
+    assert run(guard, monkeypatch, "openclaw gateway restart", capsys=capsys) == (0, "")
+
+
+def test_a_gateway_restart_is_allowed_when_the_gateway_is_inactive(guard, monkeypatch, capsys):
+    guard.state["active"] = False
+    assert run(guard, monkeypatch, "openclaw gateway restart", capsys=capsys) == (0, "")

@@ -15,8 +15,9 @@ Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upg
 
 - A tool call that is still open holds a gateway stop until the stop timeout; then systemd SIGKILLs the gateway and every child it started (T39).
 - Work that may take more than about 2 minutes runs in the background, writes to a file, and is polled with short reads.
+- When `run_in_background` is not available (OpenClaw claude-cli children cannot background a Bash call), wrap the command in `timeout <N>` with N well under the tool-call limit, or detach it (`setsid nohup cmd >file 2>&1 &`) and poll the file with short reads.
 - Never put a long `sleep` or a wait loop inside one call.
-- Ask the user once with `ask_user`, then end the turn; never leave it open waiting.
+- Never call the native AskUserQuestion in a headless or subagent session: it hangs until the watchdog fires. Use `ask_user` with a `timeoutSeconds` of 120-300, then end the turn; never leave it open waiting. A subagent returns its question to the parent.
 - A cron job reports at each phase, so a timeout names the phase that hung.
 
 ## Worktrees

@@ -432,7 +432,7 @@ def test_configure_applies_every_section(sim, script):
 
     # The unpinned MCP server is reported, never rewritten; the gateway is never restarted.
     assert any("supa" in m and "@latest" in m for m in script.messages("warn"))
-    assert doc["mcp"] == json.loads(sim.original_config)["mcp"]
+    assert doc["mcp"]["servers"] == json.loads(sim.original_config)["mcp"]["servers"]
     assert section.RESTART_NOTE in script.messages("warn")
     for argv in [a for a, _ in sim.oc.calls] + sim.systemd.calls:
         assert "restart" not in argv and "doctor" not in argv

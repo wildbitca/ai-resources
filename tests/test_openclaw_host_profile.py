@@ -29,6 +29,7 @@ VALUES = {"DOMAIN": "ai.example.org", "POD_CIDR": "10.9.0.0/24", "HOME": "/home/
 # Every documented key (T04, T05, T14, T20, T26, T28, T29, T31), as dotted paths.
 CANONICAL = {
     "agents.defaults.heartbeat.every",
+    "agents.defaults.timeoutSeconds", "mcp.sessionIdleTtlMs",      # ADR-0004 resource guards
     "agents.entries.app.model.primary", "agents.entries.infra.model.primary",
     "agents.entries.main.thinkingDefault", "agents.entries.main.heartbeat.every",
     "tools.profile", "tools.alsoAllow",
@@ -192,7 +193,7 @@ def test_logging_resolves_outside_tmp_and_no_mcp_server_is_latest(doc):
     assert patch["logging"]["file"] == "/home/u/.openclaw/logs/gateway.log"
     assert not patch["logging"]["file"].startswith("/tmp")
     assert "@latest" not in json.dumps(host.load_host_profile())
-    assert "mcp" not in patch
+    assert "servers" not in patch.get("mcp", {}) and "apps" not in patch.get("mcp", {})  # only the ADR-0004 leaf
 
 
 def test_the_profile_carries_no_host_literal():
@@ -219,7 +220,7 @@ def test_a_plugin_that_is_not_configured_is_not_created(doc):
 
 def test_an_unpinned_mcp_server_is_reported_not_rewritten(doc):
     assert host.mcp_latest_findings(doc) == ["supa"]
-    assert "mcp" not in build(doc)["patch"]
+    assert "servers" not in build(doc)["patch"].get("mcp", {})
 
 
 # --- teardown reversal ------------------------------------------------------------------------------------------------------------
@@ -434,3 +435,47 @@ def test_the_overrides_file_is_never_shell_sourced():
     # kit-host.env is sourced by bash; the overrides file must stay out of it and out of _check_env_pair.
     assert host.host_overrides_path().name == "kit-host-overrides.json5"
     assert host.host_overrides_path() != host.HOST_ENV_PATH
+
+
+# --- ADR-0004: the resource guards ---------------------------------------------------------------------------------
+
+def test_profile_guard_keys_fill_an_empty_config_and_classify_hot():
+    from ai_resources import openclaw_reload_rules as rr
+    built = host.build_host_patch(host.load_host_profile(), {}, dict(VALUES))
+    assert built["patch"]["mcp"] == {"sessionIdleTtlMs": 1800000}
+    assert built["patch"]["agents"]["defaults"]["timeoutSeconds"] == 14400
+    assert rr.restart_paths({"mcp": {"sessionIdleTtlMs": 1800000},
+                             "agents": {"defaults": {"timeoutSeconds": 14400}}},
+                            openclaw_version=rr.PINNED_OPENCLAW_VERSION) == []
+    assert "mcp.sessionIdleTtlMs" in built["filled"] and "agents.defaults.timeoutSeconds" in built["filled"]
+
+
+def test_profile_never_sends_mcp_apps_or_servers():
+    built = host.build_host_patch(host.load_host_profile(), {}, dict(VALUES))
+    assert set(built["patch"]["mcp"]) == {"sessionIdleTtlMs"}
+
+
+def test_an_operator_value_for_a_guard_key_is_kept_and_listed_including_zero():
+    doc = {"mcp": {"sessionIdleTtlMs": 0}, "agents": {"defaults": {"timeoutSeconds": 600}}}
+    built = host.build_host_patch(host.load_host_profile(), doc, dict(VALUES))
+    assert "mcp" not in built["patch"] and "timeoutSeconds" not in built["patch"].get("agents", {}).get("defaults", {})
+    assert {"mcp.sessionIdleTtlMs", "agents.defaults.timeoutSeconds"} <= set(built["kept"])
+
+
+def test_resource_guards_off_fills_neither_key(monkeypatch):
+    monkeypatch.delenv("OPENCLAW_RESOURCE_GUARDS", raising=False)
+    built = host.build_host_patch(host.load_host_profile(), {}, {**VALUES, "RESOURCE_GUARDS": "off"})
+    assert "mcp" not in built["patch"]
+    assert "timeoutSeconds" not in built["patch"]["agents"]["defaults"]
+    assert any("resource guards are off" in n for n in built["skipped"])
+    # the process environment wins over the host env file value
+    monkeypatch.setenv("OPENCLAW_RESOURCE_GUARDS", "off")
+    built = host.build_host_patch(host.load_host_profile(), {}, {**VALUES, "RESOURCE_GUARDS": "on"})
+    assert "mcp" not in built["patch"]
+    monkeypatch.setenv("OPENCLAW_RESOURCE_GUARDS", "on")
+    built = host.build_host_patch(host.load_host_profile(), {}, {**VALUES, "RESOURCE_GUARDS": "off"})
+    assert built["patch"]["mcp"] == {"sessionIdleTtlMs": 1800000}
+
+
+def test_resource_guards_env_is_an_allowed_host_env_key():
+    host._check_env_pair("OPENCLAW_RESOURCE_GUARDS", "off")

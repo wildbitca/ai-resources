@@ -1246,6 +1246,22 @@ def is_secret_path(path: list[str]) -> bool:
     return bool(path) and bool(_SECRET_KEY.search(str(path[-1])))
 
 
+# The resource-guard leaves (ADR-0004). Filled like any other profile key (fill-only, hot), and skipped as a
+# group when OPENCLAW_RESOURCE_GUARDS=off. The overrides `keep` list cannot express "do not fill an unset
+# key" (it only protects a value that is already there), so this switch exists.
+RESOURCE_GUARD_PATHS: tuple[tuple[str, ...], ...] = (("mcp", "sessionIdleTtlMs"),
+                                                     ("agents", "defaults", "timeoutSeconds"))
+
+
+def resource_guards_off(values: dict[str, str] | None = None, env: dict[str, str] | None = None) -> bool:
+    """True when OPENCLAW_RESOURCE_GUARDS is `off`: the process environment wins over the host env file."""
+    env = os.environ if env is None else env
+    raw = env.get("OPENCLAW_RESOURCE_GUARDS")
+    if raw is None:
+        raw = (values or {}).get("RESOURCE_GUARDS", "")
+    return raw.strip().lower() == "off"
+
+
 def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
                      overrides: dict | None = None) -> dict:
     """The minimal patch that FILLS the keys `doc` lacks (ADR-0003: the profile never overwrites).
@@ -1273,8 +1289,12 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
     changes: list[dict] = []
     replace_paths: list[str] = []
     kept: list[str] = []
+    guards_off = resource_guards_off(values)
     for path, wanted in _leaves(tree, []):
         dotted = ".".join(path)
+        if guards_off and tuple(path) in RESOURCE_GUARD_PATHS:
+            skipped.append(f"{dotted}: resource guards are off (OPENCLAW_RESOURCE_GUARDS=off)")
+            continue
         if _has_marker(wanted):
             skipped.append(f"{dotted}: needs " + ", ".join(sorted(missing)) + " (not set)")
             continue

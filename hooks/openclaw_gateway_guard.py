@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """PreToolUse hook (ai-resources, OpenClaw hosts): stop an undrained gateway stop (pitfall T01).
 
-Denies exactly two shapes of Bash command, and only while the gateway is live and unguarded
+Denies exactly three shapes of Bash command, and only while the gateway is live and unguarded
 (the unit is active AND ~/.openclaw/watchdog.off does not exist):
 
   - `openclaw doctor --fix`
   - `systemctl --user stop openclaw-gateway.service`
+  - `openclaw gateway restart` (ADR-0004, D10): from an agent session that is a child of the
+    gateway it kills the session itself (T29) and cuts every run in flight. The sanctioned way
+    is `ai-resources openclaw graceful-restart`, run from outside the gateway cgroup.
 
 Why: `openclaw doctor --fix` stops the gateway and re-inspects the stopped unit. If a child
 (claude, engram, npx) is still alive it aborts with "ownership or manager identity changed" and
@@ -46,6 +49,14 @@ REASON = (
 )
 
 
+REASON_RESTART = (
+    "Blocked (T29): `openclaw gateway restart` from an agent call restarts the gateway under every run in "
+    "flight, and when this session is a child of the gateway it kills this session too. Run "
+    "`ai-resources openclaw graceful-restart` from outside the gateway (it is gated and notified), or "
+    "open a maintenance window yourself with `touch ~/.openclaw/watchdog.off` and this check steps aside.\n"
+)
+
+
 def strip_heredocs(command: str) -> str:
     """Remove heredoc bodies: text fed to a command is not a command."""
     out: list[str] = []
@@ -82,6 +93,12 @@ def _command_words(stmt: list[str]) -> list[str]:
         base = os.path.basename(tok)
         if _ASSIGNMENT.match(tok) or tok in _KEYWORDS:
             i += 1
+        elif base == "timeout":
+            # `timeout [-s SIG] [-k D] DURATION cmd`: look through to the real command.
+            i += 1
+            while i < len(stmt) and stmt[i].startswith("-"):
+                i += 2 if stmt[i] in ("-s", "-k", "--signal", "--kill-after") else 1
+            i += 1                      # the duration
         elif base in _WRAPPERS:
             i += 1
             # `sudo -u x`, `env -i`, `nice -n 5`: skip the flags (and a flag's value)
@@ -102,10 +119,18 @@ def _is_gateway_stop(words: list[str]) -> bool:
             and any(w in (UNIT, UNIT[: -len(".service")]) for w in words[1:]))
 
 
-def dangerous(command: str, _depth: int = 0) -> bool:
-    """True when the command RUNS one of the two guarded shapes."""
-    if _depth > 2:
+def _is_gateway_restart(words: list[str]) -> bool:
+    if not words or os.path.basename(words[0]) != "openclaw":
         return False
+    rest = words[1:]
+    return "gateway" in rest[:4] and rest.index("gateway") + 1 < len(rest) \
+        and rest[rest.index("gateway") + 1] == "restart"
+
+
+def shape(command: str, _depth: int = 0) -> str | None:
+    """"doctor", "stop" or "restart" when the command RUNS a guarded shape, else None."""
+    if _depth > 2:
+        return None
     for line in strip_heredocs(command).splitlines():
         try:
             statements = _statements(line)
@@ -113,14 +138,25 @@ def dangerous(command: str, _depth: int = 0) -> bool:
             continue
         for stmt in statements:
             words = _command_words(stmt)
-            if _is_doctor_fix(words) or _is_gateway_stop(words):
-                return True
+            if _is_doctor_fix(words):
+                return "doctor"
+            if _is_gateway_stop(words):
+                return "stop"
+            if _is_gateway_restart(words):
+                return "restart"
             # `bash -c "openclaw doctor --fix"`: the string IS a command.
             if words and os.path.basename(words[0]) in _SHELLS and "-c" in words[1:]:
                 idx = words.index("-c") + 1
-                if idx < len(words) and dangerous(words[idx], _depth + 1):
-                    return True
-    return False
+                if idx < len(words):
+                    inner = shape(words[idx], _depth + 1)
+                    if inner:
+                        return inner
+    return None
+
+
+def dangerous(command: str, _depth: int = 0) -> bool:
+    """True when the command RUNS one of the guarded shapes."""
+    return shape(command, _depth) is not None
 
 
 def gateway_active() -> bool:
@@ -145,11 +181,12 @@ def main() -> int:
         command = str((data.get("tool_input") or {}).get("command", ""))
         if not command or not dangerous(command):
             return 0
+        found = shape(command)
         if os.path.exists(WATCHDOG_OFF) or not gateway_active():
             return 0
     except Exception:
         return 0
-    sys.stderr.write(REASON)
+    sys.stderr.write(REASON_RESTART if found == "restart" else REASON)
     return 2
 
 

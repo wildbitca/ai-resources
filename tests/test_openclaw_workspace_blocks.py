@@ -341,3 +341,27 @@ def test_workspace_targets_resolve_spellings_to_one_key(sim):
     keys = [k for k in openclaw._workspace_targets(doc) if k == real.resolve()]
     assert len(keys) == 1
     assert sorted(openclaw._workspace_targets(doc)[real.resolve()]["aids"]) == ["", "claude", "security"]
+
+
+# --- ADR-0004: the agent-side resource rules ---------------------------------------------------------------------------
+
+def test_the_long_running_rule_covers_children_without_run_in_background_and_ask_user_timeouts():
+    text = _shared.openclaw_agent_kit_md("/kit")
+    section = text.split(_shared.OPENCLAW_LONG_RUNNING_HEADING, 1)[1].split("\n## ", 1)[0]
+    assert _shared.OPENCLAW_LONG_RUNNING_HEADING == "## Long-running commands never block a tool call"
+    for needle in ("run_in_background", "timeout <N>", "setsid nohup", "AskUserQuestion",
+                   "`timeoutSeconds` of 120-300", "subagent returns its question to the parent"):
+        assert needle in section, needle
+
+
+def test_rerendering_the_block_leaves_every_byte_outside_the_markers_alone(sim, script):
+    s = state.SetupState()
+    target = _agents(sim, "infra")
+    target.write_text(HAND_SHAPED + "\n## Tail\n\nkeep me\n", encoding="utf-8")
+    before_outside = outside_block(target.read_text(encoding="utf-8"))
+    openclaw._write_workspace_block(s, target, "/kit", "", kit=True, engine_part=False)
+    first = target.read_bytes()
+    assert outside_block(target.read_text(encoding="utf-8")) == before_outside
+    openclaw._write_workspace_block(s, target, "/kit", "", kit=True, engine_part=False)
+    assert target.read_bytes() == first, "a second render changes nothing"
+    assert "AskUserQuestion" in target.read_text(encoding="utf-8")

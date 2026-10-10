@@ -546,8 +546,13 @@ OPENCLAW_LONG_RUNNING_MD = (
     "SIGKILLs the gateway and every child it started (T39).\n"
     "- Work that may take more than about 2 minutes runs in the background, writes to a file, and "
     "is polled with short reads.\n"
+    "- When `run_in_background` is not available (OpenClaw claude-cli children cannot background a "
+    "Bash call), wrap the command in `timeout <N>` with N well under the tool-call limit, or detach "
+    "it (`setsid nohup cmd >file 2>&1 &`) and poll the file with short reads.\n"
     "- Never put a long `sleep` or a wait loop inside one call.\n"
-    "- Ask the user once with `ask_user`, then end the turn; never leave it open waiting.\n"
+    "- Never call the native AskUserQuestion in a headless or subagent session: it hangs until the "
+    "watchdog fires. Use `ask_user` with a `timeoutSeconds` of 120-300, then end the turn; never "
+    "leave it open waiting. A subagent returns its question to the parent.\n"
     "- A cron job reports at each phase, so a timeout names the phase that hung.\n"
 )
 

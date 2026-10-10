@@ -81,7 +81,8 @@ def _gate(message: str, detail: str = "") -> bool:
 
 def _values(o: state.OpenClawState) -> dict[str, str]:
     return {"DOMAIN": o.host_domain, "POD_CIDR": o.host_pod_cidr, "OWNER_TELEGRAM_ID": o.host_operator_id,
-            "BACKUP_DIR": o.host_backup_dir, "TAILNET": "1" if host.tailnet_available() else "0"}
+            "BACKUP_DIR": o.host_backup_dir, "TAILNET": "1" if host.tailnet_available() else "0",
+            "RESOURCE_GUARDS": host.read_host_env().get("OPENCLAW_RESOURCE_GUARDS", "on")}
 
 
 # --- the questions ----------------------------------------------------------------------------------------
