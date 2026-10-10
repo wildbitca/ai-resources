@@ -1,6 +1,6 @@
 # ADR-0003: Setup never triggers a live gateway restart, and never overwrites a value the operator set
 
-**Status**: accepted (unreleased, target 2.0.2)
+**Status**: accepted; decision 7 superseded by [ADR-0004](0004-bounded-graceful-restart-under-memory-pressure.md) for the memory trigger (unreleased, target 2.0.2)
 **Date**: 2026-10-09
 **Decision makers**: planner, implementer; open questions answered by the operator (Q1-Q9 below)
 **Builds on**: [ADR-0001](0001-model-pins-and-auto-update.md) (defer, never force; `config patch` is the only writer)
@@ -57,7 +57,8 @@ sessions, T39, which made the forced restart slow). The root cause, in order:
    a restart over live runs). It stands down on `watchdog.off`, a newer run, a cancel or `done`; states
    `activating`/`deactivating`/`reloading` count neither way; it notifies on Telegram with key paths only.
    If the window fails, the key stays pending. (Q6, as changed by the operator)
-7. **The health-restart timer is adopted into the kit and cannot force anything.**
+7. **The health-restart timer is adopted into the kit and cannot force anything.** (Superseded by
+   [ADR-0004](0004-bounded-graceful-restart-under-memory-pressure.md) for confirmed memory pressure only.)
    `scripts/openclaw/openclaw-health-restart.sh` keeps the triggers, the 3 h cooldown (same state file)
    and `watchdog.off`; with runs in flight or an unreadable probe it only notifies once per episode; an
    idle gateway gets the drained doctor; it never stops, starts or restarts anything itself. Setup takes a
@@ -73,7 +74,7 @@ sessions, T39, which made the forced restart slow). The root cause, in order:
 | Ask the CLI which keys restart | `config patch --dry-run --json` has no such field |
 | Parse the installed dist at runtime | the dist files have hashed names and change shape between releases; a parse failure would fail open |
 | Apply hot keys unattended and pend only the restart ones | an unattended run changing a live gateway's behaviour at all is what ADR-0001 rejects; unattended applies nothing |
-| Wait up to N minutes for a drain, then apply | a bounded wait is still a forced restart in disguise |
+| Wait up to N minutes for a drain, then apply | a bounded wait is still a forced restart in disguise (for setup; the memory valve of [ADR-0004](0004-bounded-graceful-restart-under-memory-pressure.md) is a different, gated mechanism) |
 | Patch the host copy of the health timer in place | the kit could not test, version or restore it |
 | Make the engine section's primary model fill-only too | it is a wizard choice the operator just made |
 
@@ -113,3 +114,7 @@ Target label **2.0.2**, with the fill-only behaviour change called out; see `CHA
   (`drained_window`, `apply_drained`, `watch_config`), `scripts/ai_resources/setup/cockpits/_openclaw_host.py`
 - Tests: `tests/test_openclaw_reload_rules.py`, `tests/test_openclaw_restart_gate.py`,
   `tests/test_openclaw_config_watch.py`
+
+## Links
+
+- [ADR-0004](0004-bounded-graceful-restart-under-memory-pressure.md): supersedes decision 7 for the memory trigger.

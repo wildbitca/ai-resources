@@ -4,6 +4,12 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [Unreleased]
+
+Not released. The release label and version bump are a separate step.
+
+- Resource-safe gateway (ADR-0004): details are filled in as the work lands.
+
 ## [2.0.2] — 2026-10-10 — setup can no longer take a live gateway down
 
 See [ADR-0003](docs/decisions/0003-setup-never-triggers-a-live-gateway-restart.md) and pitfall T40.

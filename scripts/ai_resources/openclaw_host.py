@@ -11,7 +11,9 @@ Two rules run through the whole module, both learned the hard way on a live gate
   every change goes through `openclaw config patch --stdin` (see `cockpits/openclaw.py`).
 * Nothing here restarts the gateway on its own initiative. `doctor` stops and starts it, but
   only because that is what its user asked for, and it is built so the gateway is always
-  started again (T01). Every other verb reports "restart needed" and stops.
+  started again (T01). Every other verb reports "restart needed" and stops. The one sanctioned
+  self-initiated restart is `graceful_restart` (ADR-0004): bounded by gates, only on confirmed
+  memory pressure, never `--force`, with watchdog.off held by a signal-safe marker guard.
 
 Every function that touches the system takes an injectable `runner`, so the tests drive the
 real state machines against a fake and nothing in the suite can reach a live unit.
