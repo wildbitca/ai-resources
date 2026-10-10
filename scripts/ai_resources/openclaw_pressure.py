@@ -16,7 +16,9 @@ The whole module is the SOLE owner of one concern: turning raw signals into one 
 * `frozen`: the gateway cannot restart gracefully. Its main thread sits in state D with a `wchan` naming
   `mem_cgroup_handle_over_high` (the MemoryHigh throttle), or `openclaw health` says "still starting" for
   longer than FROZEN_MIN_S, or health fails while the cgroup is over the pressure threshold. Never restarted.
-* `refused-probe`: a required signal could not be read. Fail closed: nothing acts.
+* `refused-probe`: a required signal could not be read (cgroup memory.current/high/events, the main PID's
+  stat while the unit is active, and `free -b` when the decision needs swap). A host with no swap is a
+  valid reading (`Swap: 0 0 0`), not a failure. Fail closed: nothing acts.
 * `health-fail`: health fails and there is no memory pressure (the legacy trigger).
 
 Restart GATES (window, cooldown, cap, flock) are NOT here: they live next to the action in
@@ -168,14 +170,24 @@ def sample(*, runner: Runner, openclaw_bin: str = "openclaw", unit: str = UNIT,
     lowered = (text or "").lower()
     pid = props.get("MainPID", "")
     swap_rc, swap_text = runner(["free", "-b"], env=env)
+    # A host without swap prints `Swap: 0 0 0`: a valid reading. Only a failed or unparsable `free` is an
+    # unreadable signal, and `classify` refuses on it when (and only when) the decision needs swap.
+    swap = parse_swap(swap_text or "") if swap_rc == 0 else None
+    active = props.get("ActiveState", "")
+    proc = read_proc(pid, proc_root) if pid.isdigit() and int(pid) > 0 else {"state": None, "wchan": None}
+    if active == "active" and proc["state"] is None:
+        # The throttle test reads the main thread's state; without it "not frozen" would be a guess.
+        raise ProbeError(f"/proc/<MainPID>/stat: unreadable (MainPID={pid or 'unset'})")
     return {
         "ts": clock(),
-        "unit": {"active": props.get("ActiveState", ""), "main_pid": pid,
+        "unit": {"active": active, "main_pid": pid,
                  "active_enter": int(m.group(1)) if m else None},
         "cgroup": read_cgroup(cg, cgroup_root),
-        "proc": read_proc(pid, proc_root) if pid.isdigit() and int(pid) > 0 else {"state": None, "wchan": None},
+        "proc": proc,
         "health": {"rc": rc, "starting": "still starting" in lowered},
-        "swap": parse_swap(swap_text) if swap_rc == 0 else None,
+        "swap": swap,
+        "swap_error": None if swap is not None else
+        ("`free -b` failed" if swap_rc != 0 else "`free -b` has no parsable Swap line"),
     }
 
 
@@ -234,6 +246,12 @@ def classify(samples: list[dict], *, pressure_pct: float = PRESSURE_PCT, hard_pc
     if ev["memory_high"] is None:
         ev["reason"] = "MemoryHigh is not set: no throttle to confirm against"
         return {"classification": "healthy", "evidence": ev}
+
+    unreadable = next((s for s in samples if s.get("swap") is None), None)
+    if unreadable is not None:
+        # Fail closed: "no swap pressure" must come from a reading, not from a missing one.
+        ev["reason"] = "swap: " + (unreadable.get("swap_error") or "not read")
+        return {"classification": "refused-probe", "evidence": ev}
 
     over = all(p is not None and p >= pressure_pct for p in pcts)
     swapped = all(p is not None and p >= swap_pct for p in sw)

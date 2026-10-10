@@ -31,11 +31,13 @@ class Fake:
     """A runner that answers the three read-only commands and records every call."""
 
     def __init__(self, *, pid="1001", health_rc=0, health_text="ok", swap_used=15 * GIB, swap_total=16 * GIB,
-                 active="active", entered=ENTERED, cgroup="/openclaw-gateway.service", show_rc=0):
+                 active="active", entered=ENTERED, cgroup="/openclaw-gateway.service", show_rc=0,
+                 free_rc=0, free_text=None):
         self.calls: list[list[str]] = []
         self.pid, self.health_rc, self.health_text = pid, health_rc, health_text
         self.swap_used, self.swap_total, self.active, self.entered = swap_used, swap_total, active, entered
         self.cgroup, self.show_rc = cgroup, show_rc
+        self.free_rc, self.free_text = free_rc, free_text
         self.on_health = None
 
     def __call__(self, argv, **kw):
@@ -50,6 +52,8 @@ class Fake:
                 self.on_health()
             return self.health_rc, self.health_text
         if argv[:2] == ["free", "-b"]:
+            if self.free_rc or self.free_text is not None:
+                return self.free_rc, self.free_text or ""
             return 0, ("              total        used        free\n"
                        f"Mem:    33000000000 20000000000 1000000000\n"
                        f"Swap:   {self.swap_total} {self.swap_used} {self.swap_total - self.swap_used}\n")
@@ -215,6 +219,52 @@ def test_wchan_unreadable_degrades_to_the_still_starting_variant(tmp_path, tree)
     out = pr.evaluate(runner=fake, cgroup_root=tree / "frozen", proc_root=proc, confirm_seconds=0,
                       sleep=lambda s: None, clock=lambda: NOW)
     assert out["classification"] != "frozen"      # D alone, with health ok, is not enough to call it
+
+
+# --- fail closed on every required signal (swap, main PID stat) ------------------------------------------
+
+def test_a_failing_free_is_refused_probe_not_health_fail(tree):
+    # Without the fix the unreadable swap read as "no swap pressure" and a failing health became health-fail.
+    out = run(tree / "pressure", Fake(free_rc=1, health_rc=1, health_text="refused"))
+    assert out["classification"] == "refused-probe" and "swap" in out["evidence"]["reason"]
+    out = run(tree / "normal", Fake(free_rc=127))
+    assert out["classification"] == "refused-probe"
+
+
+@pytest.mark.parametrize("garbage", ["", "total used free\n", "Mem: 1 2 3\n", "Swap: abc def ghi\n",
+                                     "Swap: -\n"])
+def test_a_free_that_returns_garbage_is_refused_probe(tree, garbage):
+    out = run(tree / "pressure", Fake(free_text=garbage))
+    assert out["classification"] == "refused-probe", garbage
+    assert "swap" in out["evidence"]["reason"]
+
+
+def test_an_unreadable_pid_stat_with_an_active_unit_is_refused_probe(tree):
+    # PID 4242 has no /proc entry in the fixture tree: the throttle test cannot be answered.
+    out = run(tree / "normal", Fake(pid="4242"))
+    assert out["classification"] == "refused-probe" and "stat" in out["evidence"]["reason"]
+    assert run(tree / "normal", Fake(pid="0"))["classification"] == "refused-probe"
+    assert run(tree / "normal", Fake(pid=""))["classification"] == "refused-probe"
+
+
+def test_a_host_without_swap_stays_classifiable(tree):
+    zero = "              total        used        free\nMem:    33000000000 20000000000 1000000000\nSwap:   0 0 0\n"
+    assert run(tree / "normal", Fake(free_text=zero))["classification"] == "healthy"
+    assert run(tree / "normal", Fake(free_text=zero, health_rc=1, health_text="refused"))["classification"] \
+        == "health-fail"
+    # no swap means swap pressure cannot be confirmed: memory pressure alone never restarts
+    assert run(tree / "pressure", Fake(free_text=zero))["classification"] == "healthy"
+
+
+def test_an_unreadable_swap_does_not_hide_a_frozen_throttle(tree):
+    # the frozen verdict does not depend on swap, so it is still reported
+    out = run(tree / "frozen", Fake(pid="1002", free_rc=1))
+    assert out["classification"] == "frozen"
+
+
+def test_no_memory_high_does_not_need_swap(tree):
+    (tree / "normal" / "openclaw-gateway.service" / "memory.high").write_text("max\n")
+    assert run(tree / "normal", Fake(free_rc=1))["classification"] == "healthy"
 
 
 # --- window ----------------------------------------------------------------------------------------------
