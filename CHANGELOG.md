@@ -4,10 +4,9 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
-## Unreleased (2.0.2) — setup can no longer take a live gateway down
+## [2.0.2] — 2026-10-10 — setup can no longer take a live gateway down
 
-Prepared, not released: no version file, tag or Formula change belongs to this entry. See
-[ADR-0003](docs/decisions/0003-setup-never-triggers-a-live-gateway-restart.md) and pitfall T40.
+See [ADR-0003](docs/decisions/0003-setup-never-triggers-a-live-gateway-restart.md) and pitfall T40.
 
 ### Fixed
 
