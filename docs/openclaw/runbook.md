@@ -1094,6 +1094,11 @@ flight, logged `healthy`.
 | Detect | `ai-resources openclaw pressure [--json]`: reads cgroup and `/proc`, two samples `OPENCLAW_HEALTH_CONFIRM_S` apart, classifies `healthy`, `pressure`, `hard`, `frozen`, `refused-probe` or `health-fail`. Read-only; an unreadable signal is `refused-probe` and nothing acts | `scripts/ai_resources/openclaw_pressure.py` |
 | Act | `ai-resources openclaw graceful-restart`: gated, snapshotted, reported. Called by the health timer in mode `on`, or by you | `scripts/ai_resources/openclaw_host.py` |
 
+**Time budget.** A graceful restart is bounded phase by phase (restart attempts and backoffs 900 s, health
+poll 180 s wall clock, settle at most 180 s, every bookkeeping probe capped at 30 s), so the worst case is
+2585 s and the timer unit's `TimeoutStartSec=50min` (3000 s) is never hit by a hung probe. The reasoning is
+in ADR-0004, limit 9.
+
 ### Modes and knobs
 
 `OPENCLAW_GRACEFUL_RESTART` in `~/.openclaw/kit-host.env`: `off` (log only), `notify` (the shipped

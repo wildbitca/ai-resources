@@ -460,3 +460,88 @@ def test_the_cli_is_registered_with_manual_as_the_default_reason():
     a = ap.parse_args(["openclaw", "graceful-restart", "--dry-run"])
     assert a.reason == "manual" and a.dry_run is True and a.classification is None
     assert ap.parse_args(["openclaw", "graceful-restart", "--reason", "memory", "--classification", "hard"]).classification == "hard"
+
+
+# --- the time budget (ADR-0004, limit 9) ---------------------------------------------------------------------------
+
+class FakeClock:
+    """A monotonic clock that only moves when a fake sleep or a fake probe spends time."""
+
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+
+def test_poll_health_is_bounded_by_a_wall_clock_deadline_with_hanging_probes():
+    clock = FakeClock()
+
+    def runner(argv, **kw):
+        clock.t += kw["timeout"]          # a hung `openclaw health`: it burns its whole timeout
+        return 124, "timed out"
+    ok = host.poll_health(runner, "oc", timeout=180, interval=5, sleep=clock.sleep, clock=clock)
+    assert ok is False
+    assert clock.t <= 180 + host.HEALTH_FINAL_PROBE_MIN_S, f"poll ran {clock.t}s past a 180 s budget"
+
+
+def test_poll_health_still_succeeds_when_a_probe_answers_after_slow_ones():
+    clock = FakeClock()
+    n = []
+
+    def runner(argv, **kw):
+        n.append(1)
+        clock.t += 40
+        return (0 if len(n) == 3 else 124), ""
+    assert host.poll_health(runner, "oc", timeout=180, interval=5, sleep=clock.sleep, clock=clock) is True
+
+
+def test_a_restart_whose_every_step_hangs_ends_inside_the_unit_budget(env):
+    """Restart attempts that refuse only after their full timeout, then a health probe that hangs."""
+    clock = FakeClock()
+    stub = stub_for(env)
+    refusal = (1, host.REFUSAL_CODE)
+    stub.restart_results = [refusal] * 4
+
+    def runner(argv, **kw):
+        if argv[-2:] == ["gateway", "restart"]:
+            stub.calls.append(list(argv))
+            clock.t += kw["timeout"]
+            return stub.restart_results.pop(0)
+        if argv[-1:] == ["health"]:
+            clock.t += kw["timeout"]
+            return 124, "timed out"
+        return stub(argv, **kw)
+    res = env.run(runner, sleep=clock.sleep, clock=clock)
+    assert res["exit_code"] == host.EXIT_RESTART_REFUSED
+    assert clock.t <= host.RESTART_PHASE_BUDGET_S, f"restart phase ran {clock.t}s"
+    assert res["attempts"] == 1 and res.get("budget_exhausted") is True, "no retry can finish inside the budget"
+    assert not env.marker.exists()
+
+
+def test_fast_refusals_still_get_every_retry_inside_the_budget(env):
+    clock = FakeClock()
+    stub = stub_for(env, restart_results=[(1, host.REFUSAL_CODE)] * 3 + [(0, "ok")])
+
+    def runner(argv, **kw):
+        if argv[-2:] == ["gateway", "restart"]:
+            clock.t += 5
+        return stub(argv, **kw)
+    res = env.run(runner, sleep=clock.sleep, clock=clock)
+    assert res["exit_code"] == 0 and res["attempts"] == 4 and "budget_exhausted" not in res
+
+
+def test_the_worst_case_sum_fits_the_timer_units_timeout_start_sec():
+    unit = (REPO / "templates" / "systemd" / "openclaw-health-restart.service.template").read_text()
+    limit = int(next(l for l in unit.splitlines() if l.startswith("TimeoutStartSec=")).split("=")[1].removesuffix("min")) * 60
+    script_probes = 30 + 30 + 300
+    health = host.RESTART_HEALTH_TIMEOUT_S + host.HEALTH_FINAL_PROBE_MIN_S
+    bookkeeping = 18 * host.PROBE_CAP_S + 60 + 6 * host.PROBE_CAP_S      # probes + the confirm sample
+    notices = 3 * (30 + 20) + 30
+    total = script_probes + host.RESTART_PHASE_BUDGET_S + health + host.RESTART_SETTLE_MAX_S + bookkeeping + notices
+    assert total == 2585
+    assert limit - total >= 300, f"margin {limit - total}s under TimeoutStartSec={limit}s"
+    assert host.RESTART_PHASE_BUDGET_S >= host.RESTART_COMMAND_TIMEOUT_S + host.RESTART_COMMAND_GRACE_S

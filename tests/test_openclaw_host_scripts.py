@@ -1025,11 +1025,13 @@ def test_the_only_gateway_mutation_is_the_graceful_restart_cli():
 def test_the_health_restart_units_carry_the_adr_0004_budget_and_cadence():
     service = (REPO / "templates" / "systemd" / "openclaw-health-restart.service.template").read_text()
     timer = (REPO / "templates" / "systemd" / "openclaw-health-restart.timer.template").read_text()
-    assert "TimeoutStartSec=25min" in service and "ADR-0004" in service
+    assert "TimeoutStartSec=50min" in service and "ADR-0004" in service
     assert "OnUnitActiveSec=15min" in timer and "OnBootSec=30min" in timer
     # the budget comment names every term of the sum, so a future edit knows what it must keep
-    for term in ("confirm 60 s", "restart up to 600 s", "retries 140 s", "health 180 s", "settle 120 s"):
-        assert term in service, term
+    flat = " ".join(l.lstrip("# ").strip() for l in service.splitlines() if l.startswith("#"))
+    for term in ("script probes 360 s", "restart attempts and backoffs 900 s", "health poll 185 s",
+                 "settle 180 s", "bookkeeping probes 780 s", "= 2585 s"):
+        assert term in flat, term
 
 
 def test_the_script_defaults_ship_mode_notify_and_the_operators_window():

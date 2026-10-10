@@ -85,14 +85,16 @@ if [ -e "$OPENCLAW_WATCHDOG_OFF" ]; then
 fi
 
 # Only act on a settled, active unit; transitions and downtime belong to openclaw-watchdog.
-state="$(systemctl --user is-active "$OPENCLAW_UNIT" 2>/dev/null || true)"
+state="$(timeout 30 systemctl --user is-active "$OPENCLAW_UNIT" 2>/dev/null || true)"
 if [ "$state" != active ]; then log "unit is '$state': skipping (the watchdog's job)"; exit 0; fi
 
 # --- signals ---
-stalls="$(journalctl --user -u "$OPENCLAW_UNIT" --since '1 hour ago' --no-pager 2>/dev/null | grep -c 'CLI produced no output')"
+stalls="$(timeout 30 journalctl --user -u "$OPENCLAW_UNIT" --since '1 hour ago' --no-pager 2>/dev/null | grep -c 'CLI produced no output')"
 stalls="${stalls:-0}"
 
-pjson="$(ai-resources openclaw pressure --json --confirm-seconds "$OPENCLAW_HEALTH_CONFIRM_S" 2>/dev/null || true)"
+# `timeout 300`: part of the unit's time budget (openclaw_host.py, "Time budget"); a timed-out sample is
+# an empty reading, which classifies refused-probe and fails closed.
+pjson="$(timeout 300 ai-resources openclaw pressure --json --confirm-seconds "$OPENCLAW_HEALTH_CONFIRM_S" 2>/dev/null || true)"
 class="$(jget "$pjson" 'd["classification"]' refused-probe)"
 mem_pct="$(jget "$pjson" 'd["evidence"]["memory_pct"][-1]' '?')"
 swap_pct="$(jget "$pjson" 'd["evidence"]["swap_pct"][-1]' '?')"

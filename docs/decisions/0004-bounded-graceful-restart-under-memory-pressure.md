@@ -54,6 +54,14 @@ only by **confirmed memory pressure**, from the health-restart timer or from the
    cgroup-plus-swap predicate. An unreadable required signal fails closed: nothing acts.
 8. Success means a new MainPID plus `openclaw health`; a `PREPARATION_REFUSED` is retried with a bounded
    backoff and is never classified as frozen.
+9. **Time budget.** Every phase has a monotonic bound, so one run provably ends before the unit's
+   `TimeoutStartSec=50min` (3000 s). Restart attempts plus backoffs share a 900 s phase budget: a retry
+   starts only if its backoff plus a full attempt (600 s command + 30 s grace) still ends inside it. The
+   health poll is a 180 s wall-clock budget that includes its probes (at most +5 s). Settle is clipped to
+   180 s and every bookkeeping probe is capped at 30 s. Worst case: script probes 360 s + restart phase
+   900 s + health 185 s + settle 180 s + at most 18 capped probes and the confirm sample 780 s + notices
+   180 s = 2585 s (43 min), a margin of about 7 minutes. (The first revision budgeted 25 min and counted
+   loop iterations; a hung probe stretched the poll to about 39 min.)
 
 ### Forbidden (unchanged)
 

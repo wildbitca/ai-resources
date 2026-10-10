@@ -408,7 +408,7 @@ unit files in all, counting the later backup guard and uploader). State and logs
 notice) and `~/.openclaw/backups/models-update/` (the last ten forensic copies). The backup script includes
 the overlay.
 
-Since 2.0.2 (ADR-0003; ADR-0004 in the unreleased work changes the cadence to every 15 minutes and the budget to `TimeoutStartSec=25min`): `openclaw-health-restart.service` + `.timer` (`OnBootSec=30min`) run
+Since 2.0.2 (ADR-0003; ADR-0004 in the unreleased work changes the cadence to every 15 minutes and the budget to `TimeoutStartSec=50min`): `openclaw-health-restart.service` + `.timer` (`OnBootSec=30min`) run
 `scripts/openclaw/openclaw-health-restart.sh`, which replaces the host's hand-installed copy (historical
 path `~/.local/bin/openclaw-health-restart.sh`, originally there, moved to `~/.openclaw/backup/hand-units/` on
 adoption) and never forces a restart over live runs; ten timers and eighteen unit files in all. State and logs:

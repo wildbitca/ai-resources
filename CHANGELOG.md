@@ -45,7 +45,7 @@ See [ADR-0004](docs/decisions/0004-bounded-graceful-restart-under-memory-pressur
   stopped) unless `--even-if-busy`.
 - **Behaviour change: `openclaw-health-restart.sh --dry-run` is stricter**: no notice, no state, no episode
   file, no marker.
-- The health-restart timer runs every 15 minutes (was hourly) with `TimeoutStartSec=25min`; a frozen gateway
+- The health-restart timer runs every 15 minutes (was hourly) with `TimeoutStartSec=50min` (every phase of a restart is bounded; ADR-0004, Time budget); a frozen gateway
   exits 2 and notifies (retried until delivered) instead of staying quiet.
 
 ### Fixed (2.0.2 defects)

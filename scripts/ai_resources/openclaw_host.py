@@ -479,16 +479,32 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
                           skip_message=f"doctor=skipped (the cgroup did not drain in {drain_timeout:g}s)")
 
 
+HEALTH_PROBE_TIMEOUT_S = 60      # one `openclaw health` probe, at most
+HEALTH_FINAL_PROBE_MIN_S = 5     # the last probe of a poll may start with less than this left: it gets this much
+
+
 def poll_health(runner: Runner, oc: str, *, env: dict | None = None, timeout: float = 120,
-                interval: float = 5, sleep: Callable[[float], None] = time.sleep) -> bool:
+                interval: float = 5, sleep: Callable[[float], None] = time.sleep,
+                clock: Callable[[], float] = time.monotonic) -> bool:
     """Poll `openclaw health` until it answers or `timeout` is spent. It sleeps BEFORE each probe: the
     caller has just started or restarted the gateway, so an immediate probe would only fail.
 
-    Extracted from `drained_window` unchanged; `graceful_restart` shares it (ADR-0004).
+    `timeout` is a wall-clock budget on `clock` (monotonic) that INCLUDES the probes: each sleep is
+    clipped to what is left and each probe's own timeout is clipped to it, so a hung `openclaw health`
+    (rc 124 after its timeout) cannot stretch the poll. The call returns within `timeout` plus at most
+    HEALTH_FINAL_PROBE_MIN_S. The iteration count stays as a second bound for a clock that does not move.
+
+    Extracted from `drained_window` unchanged in behaviour; `graceful_restart` shares it (ADR-0004).
     """
+    deadline = clock() + timeout
     for _ in range(max(1, int(timeout // interval))):
-        sleep(interval)
-        rc, _text = runner([oc, "health"], env=env, timeout=60)
+        remaining = deadline - clock()
+        if remaining <= 0:
+            return False
+        sleep(min(interval, remaining))
+        left = deadline - clock()
+        probe_timeout = min(HEALTH_PROBE_TIMEOUT_S, max(left, HEALTH_FINAL_PROBE_MIN_S))
+        rc, _text = runner([oc, "health"], env=env, timeout=probe_timeout)
         if rc == 0:
             return True
     return False
@@ -2720,8 +2736,24 @@ EXIT_HEALTH_TIMEOUT = 13     # the command returned 0 but health did not answer 
 EXIT_RESTART_REFUSED = 14    # the gateway refused to prepare the restart on every attempt
 
 RESTART_COMMAND_TIMEOUT_S = 600
+RESTART_COMMAND_GRACE_S = 30       # the runner's own timeout is `timeout 600` plus this, as a backstop
 RESTART_HEALTH_TIMEOUT_S = 180
 RESTART_RETRY_BACKOFF_S = (20, 40, 80)
+# Time budget (ADR-0004, "Time budget"). Every phase has a monotonic bound, so the worst case is a sum and
+# not a hope; the timer unit's TimeoutStartSec (templates/systemd/openclaw-health-restart.service.template)
+# must stay above it:
+#   script, before the CLI    is-active 30 + journal 30 + pressure sample (`timeout`) 300  =  360 s
+#   restart attempts+backoffs RESTART_PHASE_BUDGET_S (an attempt starts only if it can end inside it) = 900 s
+#   health poll               RESTART_HEALTH_TIMEOUT_S + HEALTH_FINAL_PROBE_MIN_S             =  185 s
+#   settle                    OPENCLAW_RESTART_SETTLE_S, clipped to RESTART_SETTLE_MAX_S      <= 180 s
+#   bookkeeping probes        at most 18 (each capped at PROBE_CAP_S) + the confirm sample
+#                             that a run without a classification takes (60 + 6 probes)       =  780 s
+#   notices (send_result)     3 x (30 + 20) + one notify_once 30                              =  180 s
+#   total                                                                                     = 2585 s
+# TimeoutStartSec=50min is 3000 s: a margin of about 7 minutes.
+RESTART_PHASE_BUDGET_S = 900
+RESTART_SETTLE_MAX_S = 180
+PROBE_CAP_S = 30
 REFUSAL_CODE = "GATEWAY_RESTART_PREPARATION_REFUSED"
 SNAPSHOT_FILES = ("memory.current", "memory.high", "memory.max", "memory.events", "memory.stat",
                   "memory.pressure", "pids.current")
@@ -2924,7 +2956,8 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
                      snapshot_root: Path | None = None, cgroup_root: Path = CGROUP_ROOT,
                      proc_root: Path = PROC_ROOT, self_cgroup_path: Path | str = "/proc/self/cgroup",
                      now: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep,
-                     openclaw_bin: str | None = None, out: Callable[[str], None] = print) -> dict:
+                     openclaw_bin: str | None = None, out: Callable[[str], None] = print,
+                     clock: Callable[[], float] = time.monotonic) -> dict:
     """Restart the gateway gracefully under confirmed memory pressure, or say which gate refused.
 
     Returns a JSON-able dict with `exit_code`, `result` (ok | failed | refused | refused-gate |
@@ -2935,7 +2968,8 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
       3. gates: watchdog.off, unit active, mode, pressure, cooldown, daily cap, window or hard ceiling
       4. `dry_run`: report every verdict and stop, with no state, marker, snapshot or restart
       5. state BEFORE acting, pre-snapshot, `timeout 600 openclaw gateway restart` inside MarkerGuard
-         (retried on PREPARATION_REFUSED with a 20/40/80 s backoff), success = health plus a NEW MainPID
+         (retried on PREPARATION_REFUSED with a 20/40/80 s backoff, all inside RESTART_PHASE_BUDGET_S),
+         success = health (a wall-clock budget, probes included) plus a NEW MainPID
       6. settle, post-snapshot, journal report, state, summary
     """
     knobs = dict(knobs) if knobs is not None else restart_knobs()
@@ -2981,7 +3015,7 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
                                             classification=classification, runner=runner, knobs=knobs,
                                             marker=marker, state_path=state_path, snapshot_root=snapshot_root,
                                             cgroup_root=cgroup_root, proc_root=proc_root, now=now, sleep=sleep,
-                                            oc=oc, out=out)
+                                            oc=oc, out=out, clock=clock)
         except Exception as e:  # noqa: BLE001  (MarkerGuard already removed watchdog.off)
             if not dry_run:
                 state_set("last_restart_result", "failed", state_path)
@@ -2999,7 +3033,15 @@ def _graceful_restart_locked(result: dict, finish, *, reason: str, manual: bool,
                              classification: str | None, runner: Runner, knobs: dict[str, str], marker: Marker,
                              state_path: Path, snapshot_root: Path, cgroup_root: Path, proc_root: Path,
                              now: Callable[[], float], sleep: Callable[[float], None], oc: str,
-                             out: Callable[[str], None]) -> dict:
+                             out: Callable[[str], None],
+                             clock: Callable[[], float] = time.monotonic) -> dict:
+    raw_runner = runner
+
+    def runner(argv, **kw):  # noqa: F811  (bookkeeping probes: capped so the time budget above holds)
+        t = kw.get("timeout", 120)
+        kw["timeout"] = PROBE_CAP_S if t is None else min(t, PROBE_CAP_S)
+        return raw_runner(argv, **kw)
+
     t_now = now()
     tz = knobs["OPENCLAW_RESTART_TZ"]
     gates: list[dict] = result["gates"]
@@ -3087,23 +3129,29 @@ def _graceful_restart_locked(result: dict, finish, *, reason: str, manual: bool,
     attempts = 0
     rc = -1
     refused = False
-    started = time.monotonic()
+    started = clock()
+    phase_end = started + RESTART_PHASE_BUDGET_S
     health_ok = False
     with MarkerGuard(marker):
         for backoff in (0, *RESTART_RETRY_BACKOFF_S):
             if backoff:
+                # A further attempt starts only if backoff + the longest attempt still end inside the
+                # phase budget, so the budget bounds the marker's lifetime (never a half-run restart).
+                if phase_end - clock() < backoff + RESTART_COMMAND_TIMEOUT_S + RESTART_COMMAND_GRACE_S:
+                    result["budget_exhausted"] = True
+                    break
                 sleep(backoff)
             attempts += 1
-            rc, text = runner(["timeout", str(RESTART_COMMAND_TIMEOUT_S), oc, "gateway", "restart"],
-                              env=systemd_env(), timeout=RESTART_COMMAND_TIMEOUT_S + 30)
+            rc, text = raw_runner(["timeout", str(RESTART_COMMAND_TIMEOUT_S), oc, "gateway", "restart"],
+                                  env=systemd_env(), timeout=RESTART_COMMAND_TIMEOUT_S + RESTART_COMMAND_GRACE_S)
             refused = rc != 0 and REFUSAL_CODE in (text or "")
             if not refused:
                 break
         result["restart_rc"], result["attempts"] = rc, attempts
-        result["restart_seconds"] = int(time.monotonic() - started)
+        result["restart_seconds"] = int(clock() - started)
         if rc == 0:
-            health_ok = poll_health(runner, oc, env=systemd_env(), timeout=RESTART_HEALTH_TIMEOUT_S,
-                                    interval=5, sleep=sleep)
+            health_ok = poll_health(raw_runner, oc, env=systemd_env(), timeout=RESTART_HEALTH_TIMEOUT_S,
+                                    interval=5, sleep=sleep, clock=clock)
         new_pid = gateway_main_pid(runner)
         result["new_pid"] = new_pid
     # watchdog.off is gone from here on, on every path above.
@@ -3119,7 +3167,8 @@ def _graceful_restart_locked(result: dict, finish, *, reason: str, manual: bool,
     else:
         code, outcome, label = EXIT_OK, "ok", "ok"
 
-    settle = int(knob_number(knobs, "OPENCLAW_RESTART_SETTLE_S")) if code == EXIT_OK else 0
+    settle = (min(int(knob_number(knobs, "OPENCLAW_RESTART_SETTLE_S")), RESTART_SETTLE_MAX_S)
+              if code == EXIT_OK else 0)
     if settle:
         sleep(settle)
     after = None
