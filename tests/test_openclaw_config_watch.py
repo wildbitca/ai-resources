@@ -204,12 +204,17 @@ def test_a_gateway_that_is_down_drains_trivially(rig):
 # --- secrets ---------------------------------------------------------------------------------------------------------
 
 def test_a_secret_leaf_is_named_but_its_value_is_never_printed(rig):
-    had_secret = {"path": ["gateway", "controlUi", "github", "token"], "previous": None, "had": True,
+    # The value sits where a buggy watch could leak it: in the records' `previous` fields.
+    leaky = {**TOKEN, "previous": SECRET_VALUE}
+    had_secret = {"path": ["gateway", "controlUi", "github", "token"], "previous": SECRET_VALUE, "had": True,
                   "secret": True, "action": "forced"}
-    r = rig([TOKEN, had_secret, HOT])
+    r = rig([leaky, had_secret, HOT])
     r.run()
-    everything = " ".join(r.out + r.notes) + json.dumps(r.applied) + json.dumps(r.s.openclaw.config_watch)
+    assert r.notes, "the revert notified the operator"
+    everything = " ".join(r.out + r.notes) + json.dumps(r.applied) + json.dumps(r.s.openclaw.config_watch["result"]) \
+        + json.dumps(r.s.openclaw.host_restart_pending)
     assert SECRET_VALUE not in everything
+    assert "gateway.controlUi.github" in " ".join(r.out + r.notes), "the leaf is named, never its value"
     # A credential that existed before is never deleted or rewritten by a revert.
     assert all("token" not in json.dumps(p) or p == {"gateway": {"controlUi": {"github": None}}}
                for p, *_ in r.real_writes())
@@ -249,7 +254,8 @@ def test_setup_starts_a_bounded_transient_unit_and_never_watches_in_process(sim,
     s = _state()
     _run_wizard(s)
     [argv] = _launches(sim)
-    assert argv[:2] == ["systemd-run", "--user"] and "--collect" in argv and "RuntimeMaxSec=660" in argv
+    assert argv[:2] == ["systemd-run", "--user"] and "--collect" in argv and "RuntimeMaxSec=1800" in argv
+    assert "TimeoutStopSec=600" in argv, "a SIGTERM has time to finish the drained window's cleanup"
     unit = next(a for a in argv if a.startswith("--unit=")).split("=", 1)[1]
     assert unit.startswith("openclaw-config-watch-")
     assert argv[-5:] == ["/opt/bin/ai-resources", "openclaw", "config-watch", "--run-id", unit.rsplit("-", 1)[1]]
@@ -259,6 +265,46 @@ def test_setup_starts_a_bounded_transient_unit_and_never_watches_in_process(sim,
     assert "gateway.bind" in paths and "tools.profile" in paths, "hot and restart-required changes are both recorded"
     msgs = " ".join(m for _l, m in script.log)
     assert f"journalctl --user -u {unit}" in msgs and f"systemctl --user stop {unit}" in msgs
+
+
+def test_the_run_id_is_on_disk_before_the_unit_starts(sim, script, ai_resources_on_path, monkeypatch):
+    real = sim.systemd
+    seen = []
+
+    def spy(argv, **kw):
+        if argv[0] == "systemd-run":
+            cw = state.load().openclaw.config_watch
+            seen.append(cw and cw.get("run_id"))
+        return real(argv, **kw)
+
+    monkeypatch.setattr(section, "_runner", lambda: spy)
+    s = _state()
+    _run_wizard(s)
+    assert seen and seen[0] == s.openclaw.config_watch["run_id"]
+
+
+def test_sigterm_becomes_an_exception_so_the_window_cleans_up(monkeypatch):
+    import argparse
+    import signal
+
+    installed = {}
+    monkeypatch.setattr(signal, "signal", lambda sig, h: installed.__setitem__(sig, h))
+    monkeypatch.setattr(host, "watch_config", lambda *a, **k: 0)
+    host.cmd_config_watch(argparse.Namespace(run_id="r1", window=600, interval=30))
+    with pytest.raises(SystemExit):
+        installed[signal.SIGTERM](signal.SIGTERM, None)
+
+
+def test_stop_config_watch_leaves_a_watch_inside_its_window_alone(sim, tmp_path, monkeypatch):
+    marker = host.Marker(tmp_path / "watchdog.off")
+    monkeypatch.setattr(host, "Marker", lambda *a, **k: marker)
+    marker.touch()
+    sim.systemd.calls.clear()
+    section.stop_config_watch()
+    assert not [c for c in sim.systemd.calls if c[:3] == ["systemctl", "--user", "stop"]], "no systemctl stop while watchdog.off exists"
+    marker.remove()
+    section.stop_config_watch()
+    assert any(c[:3] == ["systemctl", "--user", "stop"] for c in sim.systemd.calls)
 
 
 def test_a_failing_systemd_run_prints_a_skip_and_setup_continues(sim, script, ai_resources_on_path, monkeypatch):
@@ -331,3 +377,14 @@ def test_the_config_watch_verb_is_registered():
     assert ns.run_id == "abc" and ns.func is host.cmd_config_watch
     ns = root.parse_args(["openclaw", "apply-pending", "--yes"])
     assert ns.yes is True and ns.func is host.cmd_apply_pending
+
+
+def test_restore_bindings_survives_a_restart_required_refusal():
+    o = state.SetupState().openclaw
+    o.bindings_applied, o.bindings_previous = True, [{"agentId": "main"}]
+
+    def refuse(*a, **k):
+        raise openclaw.RestartRequired(["bindings"])
+
+    assert section._restore_bindings(o, {"bindings": []}, refuse) is False
+    assert o.bindings_applied is True, "nothing was restored, so the record stays"

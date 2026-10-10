@@ -683,6 +683,14 @@ def restore_path_of(ch: dict) -> list[str]:
 
 
 def cmd_config_watch(args: argparse.Namespace) -> int:
+    import signal
+
+    def _term(_signum, _frame):
+        # systemd stops the unit with SIGTERM. Raise, so the `finally` of an open drained window runs:
+        # watchdog.off removed and the gateway started again on EVERY exit path.
+        raise SystemExit(143)
+
+    signal.signal(signal.SIGTERM, _term)
     return watch_config(args.run_id, window=args.window, interval=args.interval)
 
 

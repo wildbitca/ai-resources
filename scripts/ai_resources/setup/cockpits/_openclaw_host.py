@@ -593,7 +593,17 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
 # --- the post-setup watch (R3) ------------------------------------------------------------------------------
 
 def stop_config_watch(*, forget: bool = False, o: state.OpenClawState | None = None) -> None:
-    """Stop any `openclaw-config-watch-*` unit (a new run supersedes it; teardown cancels it)."""
+    """Stop any `openclaw-config-watch-*` unit (a new run supersedes it; teardown cancels it).
+
+    A watch that is inside its drained window (`watchdog.off` present) is never stopped: killing it
+    would leave the gateway down. It stands down by itself at its next check, because the run id it
+    watches is no longer the recorded one.
+    """
+    if host.Marker().exists():
+        ui.info("a maintenance window is open (watchdog.off); leaving the post-setup watch to finish it")
+        if forget and o is not None:
+            o.config_watch = None
+        return
     _runner()(["systemctl", "--user", "stop", host.WATCH_UNIT_PREFIX + "*"], env=host.systemd_env())
     if forget and o is not None:
         o.config_watch = None
@@ -620,10 +630,14 @@ def start_config_watch(s: state.SetupState, run_changes: list[dict]) -> bool:
         return False
     o.config_watch = {"run_id": run_id, "unit": unit, "started_at": _now(), "changes": run_changes,
                       "done": False, "result": None}
-    rc, out = _runner()(["systemd-run", "--user", f"--unit={unit}", "--collect", "-p", "RuntimeMaxSec=660",
+    # The watch reads the state file from its very first tick: it must be on disk before the unit starts.
+    state.save(s)
+    rc, out = _runner()(["systemd-run", "--user", f"--unit={unit}", "--collect", "-p", "RuntimeMaxSec=1800",
+                         "-p", "TimeoutStopSec=600",
                          cli, "openclaw", "config-watch", "--run-id", run_id], env=host.systemd_env(), timeout=30)
     if rc != 0:
         o.config_watch = None
+        state.save(s)
         ui.warn(f"post-setup watch not started: {out.strip()[-160:] or 'systemd-run failed'}; run "
                 "`ai-resources openclaw status` in 10 minutes")
         return False
@@ -691,7 +705,12 @@ def _configure_bindings(o: state.OpenClawState, doc: dict, path: Path, written: 
     if not _gate("Apply the group bindings to the running gateway's config?",
                  detail=f"{len(notes)} binding(s) change. OpenClaw validated it with --dry-run."):
         return False
-    ok, out = apply_patch(patch, replace_paths=["bindings"])
+    try:
+        ok, out = apply_patch(patch, replace_paths=["bindings"])
+    except rr.RestartRequired as e:
+        ui.warn(f"bindings not applied: {e}. They need a gateway restart on this OpenClaw version; "
+                "apply them by hand in a drained window.")
+        return False
     if not ok:
         ui.error(f"OpenClaw rejected the bindings patch: {out[-400:]}")
         return False
@@ -896,8 +915,12 @@ def _restore_bindings(o: state.OpenClawState, doc: dict,
                 "Remove the groups you no longer want with `openclaw config set bindings ...`.")
     else:
         previous = o.bindings_previous
-        done, out = apply_patch({"bindings": previous},
-                                replace_paths=["bindings"] if isinstance(previous, list) else None)
+        try:
+            done, out = apply_patch({"bindings": previous},
+                                    replace_paths=["bindings"] if isinstance(previous, list) else None)
+        except rr.RestartRequired as e:
+            ui.warn(f"bindings not restored: {e}. The array is left as it is now; restore it by hand.")
+            return False
         if not done:
             ui.error(f"OpenClaw bindings teardown failed: {out[-300:]}")
             return False
