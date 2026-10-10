@@ -630,9 +630,29 @@ def test_status_shows_the_mode_the_restarts_today_and_the_last_restart(env, tmp_
     assert str(report_file) in text
 
 
-def test_status_without_any_restart_history_and_with_an_unreadable_probe_never_raises(env):
+def _resource_line(text: str) -> str:
+    assert "Traceback" not in text
+    [line] = [l for l in text.splitlines() if l.strip().startswith("resource")]
+    return line
+
+
+def test_status_with_an_unreadable_probe_is_refused_probe_and_one_clear_line(env):
+    """The unit shows no ControlGroup (the fake `systemctl show` has none): a required signal is unreadable."""
     report = collect(env, Canned(doctor=doctor_text("doctor_noise_only.txt"), health_rc=1))
     r = report["health"]["restart"]
     assert r["mode"] == "notify" and r["last"] == {}
-    assert r["current"]["classification"] in ("refused-probe", "unavailable", "health-fail")
-    assert "resource" in host.render_status(report)
+    assert r["current"]["classification"] == "refused-probe"
+    assert "ControlGroup" in r["current"]["reason"]
+    line = _resource_line(host.render_status(report))
+    assert "now: refused-probe (" in line and "ControlGroup" in line and "nothing acts" in line
+
+
+def test_status_when_the_classifier_itself_raises_is_unavailable_and_never_a_traceback(env, monkeypatch):
+    def boom(**_kw):
+        raise RuntimeError("probe exploded")
+    monkeypatch.setattr(host.openclaw_pressure, "evaluate", boom)
+    report = collect(env, Canned(doctor=doctor_text("doctor_noise_only.txt"), health_rc=1))
+    assert report["health"]["restart"]["current"] == {"classification": "unavailable", "memory_pct": None,
+                                                      "reason": "RuntimeError"}
+    line = _resource_line(host.render_status(report))
+    assert "now: unavailable (RuntimeError; nothing acts" in line

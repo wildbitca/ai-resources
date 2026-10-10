@@ -369,12 +369,16 @@ def test_snapshots_are_pruned_to_the_bound(env):
 
 
 def test_the_report_has_the_downtime_memory_and_recovery_fields(env):
-    res = env.run(stub_for(env))
-    assert res["memory_before"] == 6442450944 and res["memory_after"] == 6442450944
+    """memory.current differs before and after the restart, so swapped, constant or never re-read fields fail."""
+    BEFORE, AFTER = 6442450944, 3221225472
+    current = env.cgroup / CG.lstrip("/") / "memory.current"
+    assert int(current.read_text()) == BEFORE, "the fixture is the 'before' value"
+    res = env.run(stub_for(env, restart_hook=lambda: current.write_text(f"{AFTER}\n")))
+    assert res["memory_before"] == BEFORE and res["memory_after"] == AFTER
     assert res["recovery"]["available"] is True and res["recovery"]["aborted_runs"] == 4
     text = pathlib.Path(res["report"]).read_text()
-    for needle in ("reason=memory", "result=ok", "memory_before=", "marked_interrupted=3", "aborted_runs=4",
-                   "restart_command_seconds="):
+    for needle in ("reason=memory", "result=ok", f"memory_before={BEFORE} memory_after={AFTER}",
+                   "marked_interrupted=3", "aborted_runs=4", "restart_command_seconds="):
         assert needle in text, needle
     assert host.state_get("last_report", env.state) == res["report"]
 

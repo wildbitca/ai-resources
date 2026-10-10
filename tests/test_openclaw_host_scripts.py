@@ -914,6 +914,31 @@ def test_a_gate_refusal_is_one_notice_naming_the_gate(host):
     assert _hr(host).returncode == 0 and len(host.sent()) == 1
 
 
+def test_a_held_lock_exits_zero_logs_it_and_sends_no_notice(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
+    host.set_graceful(9, {"result": "locked", "exit_code": 9})
+    r = _hr(host)
+    assert r.returncode == 0, r.stderr
+    assert len(_graceful_calls(host)) == 1 and host.sent() == []
+    log = (host.home / ".openclaw" / "logs" / "health-restart.log").read_text(encoding="utf-8")
+    assert "holds the lock" in log
+    assert not (host.home / ".openclaw" / "logs" / "health-restart.notified").exists()
+
+
+def test_running_inside_the_gateway_cgroup_notifies_once_and_exits_nonzero(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
+    host.set_graceful(8, {"result": "refused-self", "exit_code": 8})
+    r = _hr(host)
+    assert r.returncode == 1, r.stderr
+    [notice] = host.sent()
+    assert "gateway cgroup" in notice and "refused" in notice
+    assert (host.home / ".openclaw" / "logs" / "health-restart.notified").read_text().strip() == "self"
+    assert _hr(host).returncode == 1 and len(host.sent()) == 1, "deduplicated by the episode key"
+    log = (host.home / ".openclaw" / "logs" / "health-restart.log").read_text(encoding="utf-8")
+    assert "inside the gateway cgroup" in log
+    assert not (host.home / ".openclaw" / "watchdog.off").exists()
+
+
 def test_a_failed_restart_is_one_notice_exit_one_and_no_marker_left(host):
     _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
     host.set_graceful(11, {"result": "failed", "exit_code": 11, "snapshot_dir": "/snap"})

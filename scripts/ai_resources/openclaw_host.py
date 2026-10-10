@@ -2585,6 +2585,8 @@ def _render_restart(r: dict | None) -> list[str]:
         return []
     cur = r["current"]
     now = cur["classification"] + (f" ({cur['memory_pct']}% of MemoryHigh)" if cur.get("memory_pct") is not None else "")
+    if cur["classification"] in ("refused-probe", "unavailable") and cur.get("reason"):
+        now += f" ({cur['reason']}; nothing acts on an unreadable signal)"
     out = [f"  resource  mode {r['mode']}; window {r['window'] or 'none'} {r['tz']}, ceiling {r['hard_pct']}% of "
            f"MemoryHigh; {r['today']}/{r['cap'] or 'no cap'} restarts today; now: {now}"]
     last = r.get("last") or {}
