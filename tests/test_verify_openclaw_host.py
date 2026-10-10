@@ -320,3 +320,84 @@ def test_verify_reports_a_watch_revert_and_an_unfinished_one(box):
     found = _run(HostRunner(), config_watch=cw)
     assert any(f.level == "warn" and "post-setup watch reverted: tools.profile" in f.message for f in found)
     assert any(f.level == "error" and "could not finish its revert" in f.message for f in found)
+
+
+# --- ADR-0004: the resource-safety findings (warnings only) -------------------------------------------------------------
+
+def _warns(found):
+    return [f.message for f in found if f.level == "warn"]
+
+
+def test_a_clean_host_has_no_resource_findings(box):
+    assert not [m for m in _warns(_run(HostRunner())) if "graceful" in m or "MemoryHigh" in m or "frozen" in m
+                or "watchdog.off" in m or "guards" in m]
+
+
+def test_a_failed_last_restart_is_a_warn(box):
+    host.state_set("last_restart", "1790000000")
+    host.state_set("last_restart_result", "failed")
+    host.state_set("last_restart_reason", "memory")
+    found = _run(HostRunner())
+    assert any("last graceful restart failed" in m for m in _warns(found))
+    assert not [f for f in found if f.level == "error"]
+
+
+class FrozenTick(HostRunner):
+    def __call__(self, argv, **kw):
+        a = list(argv)
+        if a[:3] == ["systemctl", "--user", "show"] and "openclaw-health-restart.service" in a:
+            return 0, "Result=exit-code\nExecMainStatus=2"
+        return super().__call__(argv, **kw)
+
+
+def test_a_last_tick_that_exited_two_is_a_frozen_warning(box):
+    assert any("found the gateway frozen" in m for m in _warns(_run(FrozenTick())))
+
+
+def test_a_stale_watchdog_off_with_no_window_running_is_a_warn_and_a_fresh_one_is_not(box):
+    import time
+    marker = host.Marker()
+    marker.touch()
+    assert not any("watchdog.off" in m for m in _warns(_run(HostRunner()))), "a fresh marker is a live window"
+    old = time.time() - 3 * 3600
+    os.utime(marker.path, (old, old))
+    found = _warns(_run(HostRunner()))
+    marker.remove()
+    assert any("watchdog.off" in m and "no graceful restart" in m for m in found)
+
+
+def test_snapshot_directories_over_the_bound_are_a_warn(box):
+    host.SNAPSHOT_ROOT.mkdir(parents=True)
+    for i in range(13):
+        (host.SNAPSHOT_ROOT / f"20261010T0000{i:02d}Z").mkdir()
+    assert any("restart snapshot directories" in m for m in _warns(_run(HostRunner())))
+
+
+def test_guards_on_with_the_keys_missing_is_a_warn_and_off_or_present_is_not(box, tmp_path):
+    cfg = pathlib.Path(os.environ["OPENCLAW_CONFIG_PATH"])
+    cfg.write_text('{"agents": {"defaults": {}}}', encoding="utf-8")
+    assert any("resource guards are on but missing" in m for m in _warns(_run(HostRunner())))
+    cfg.write_text('{"mcp": {"sessionIdleTtlMs": 1800000}, "agents": {"defaults": {"timeoutSeconds": 14400}}}',
+                   encoding="utf-8")
+    assert not any("resource guards" in m for m in _warns(_run(HostRunner())))
+    cfg.write_text('{"agents": {"defaults": {}}}', encoding="utf-8")
+    box.write_text(box.read_text() + "OPENCLAW_RESOURCE_GUARDS=off\n", encoding="utf-8")
+    assert not any("resource guards" in m for m in _warns(_run(HostRunner())))
+
+
+class DriftRunner(HostRunner):
+    def __init__(self, value, **kw):
+        super().__init__(**kw)
+        self.value = value
+
+    def __call__(self, argv, **kw):
+        a = list(argv)
+        if a[:3] == ["systemctl", "--user", "show"] and "MemoryHigh" in a and host.GATEWAY_UNIT in a:
+            return 0, self.value
+        return super().__call__(argv, **kw)
+
+
+def test_memory_high_drift_is_reported_and_the_setup_value_is_not(box):
+    assert any("not setup's 12 GiB" in m for m in _warns(_run(DriftRunner(str(16 * 1024 ** 3)))))
+    assert not any("MemoryHigh" in m for m in _warns(_run(DriftRunner(str(12 * 1024 ** 3)))))
+    assert any("not set on the gateway unit" in m for m in _warns(_run(DriftRunner("infinity"))))

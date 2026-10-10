@@ -137,9 +137,9 @@ def parse_swap(text: str) -> dict | None:
     return None
 
 
-def _unit_props(runner: Runner, unit: str) -> dict[str, str]:
+def _unit_props(runner: Runner, unit: str, env: dict | None = None) -> dict[str, str]:
     rc, out = runner(["systemctl", "--user", "show", unit, "-p", "ControlGroup", "-p", "MainPID",
-                      "-p", "ActiveState", "-p", "ActiveEnterTimestamp", "--timestamp=unix"])
+                      "-p", "ActiveState", "-p", "ActiveEnterTimestamp", "--timestamp=unix"], env=env)
     if rc != 0:
         raise ProbeError("systemctl show failed")
     props: dict[str, str] = {}
@@ -151,18 +151,23 @@ def _unit_props(runner: Runner, unit: str) -> dict[str, str]:
 
 def sample(*, runner: Runner, openclaw_bin: str = "openclaw", unit: str = UNIT,
            cgroup_root: Path = CGROUP_ROOT, proc_root: Path = PROC_ROOT,
-           clock: Callable[[], float] = time.time) -> dict:
-    """One reading of everything the classifier needs. Raises ProbeError on a required signal."""
-    props = _unit_props(runner, unit)
+           clock: Callable[[], float] = time.time, health: "tuple[int, str] | None" = None,
+           env: dict | None = None) -> dict:
+    """One reading of everything the classifier needs. Raises ProbeError on a required signal.
+
+    `health` is an `(rc, text)` the caller already measured (status does), so a gateway that does not
+    answer is not asked twice."""
+    props = _unit_props(runner, unit, env)
     cg = props.get("ControlGroup", "")
     if not cg:
         raise ProbeError("the unit has no ControlGroup (not running)")
     entered = props.get("ActiveEnterTimestamp", "")
     m = re.fullmatch(r"@(\d+)", entered)
-    rc, text = runner([openclaw_bin, "health"], timeout=HEALTH_TIMEOUT_S)
+    rc, text = health if health is not None else runner([openclaw_bin, "health"], env=env,
+                                                        timeout=HEALTH_TIMEOUT_S)
     lowered = (text or "").lower()
     pid = props.get("MainPID", "")
-    swap_rc, swap_text = runner(["free", "-b"])
+    swap_rc, swap_text = runner(["free", "-b"], env=env)
     return {
         "ts": clock(),
         "unit": {"active": props.get("ActiveState", ""), "main_pid": pid,
@@ -252,10 +257,11 @@ def evaluate(*, runner: Runner, openclaw_bin: str = "openclaw", unit: str = UNIT
              cgroup_root: Path = CGROUP_ROOT, proc_root: Path = PROC_ROOT, confirm_seconds: float = CONFIRM_S,
              sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.time,
              pressure_pct: float = PRESSURE_PCT, hard_pct: float = HARD_PCT, swap_pct: float = SWAP_PCT,
-             frozen_min_s: float = FROZEN_MIN_S) -> dict:
+             frozen_min_s: float = FROZEN_MIN_S, health: "tuple[int, str] | None" = None,
+             env: dict | None = None) -> dict:
     """Sample, wait `confirm_seconds`, sample again, classify. Any ProbeError is `refused-probe`."""
     kw = dict(runner=runner, openclaw_bin=openclaw_bin, unit=unit, cgroup_root=cgroup_root,
-              proc_root=proc_root, clock=clock)
+              proc_root=proc_root, clock=clock, health=health, env=env)
     try:
         a = sample(**kw)
         if confirm_seconds > 0:

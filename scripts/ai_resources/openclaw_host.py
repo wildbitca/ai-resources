@@ -2357,6 +2357,50 @@ def recorded_pending() -> dict:
 
 PENDING_COMMAND = "ai-resources openclaw apply-pending"
 
+
+def read_last_restart(state_path: Path | None = None) -> dict:
+    """What the last graceful restart left in the state file and its report ({} when there was none)."""
+    at = state_get("last_restart", state_path)
+    if not at.isdigit():
+        return {}
+    out: dict = {"at": int(at), "reason": state_get("last_restart_reason", state_path),
+                 "result": state_get("last_restart_result", state_path),
+                 "report": state_get("last_report", state_path)}
+    counts: dict[str, str] = {}
+    try:
+        for line in Path(out["report"]).read_text(encoding="utf-8").splitlines():
+            k, _, v = line.partition("=")
+            if k in ("marked_interrupted", "aborted_runs", "recovery_started", "tombstoned",
+                     "memory_before", "memory_after"):
+                counts[k] = v
+    except OSError:
+        pass
+    out["counts"] = counts
+    return out
+
+
+def restart_summary(knobs: dict[str, str], *, runner: Runner, health: "tuple[int, str]", oc: str,
+                    state_path: Path | None = None, now: float | None = None) -> dict:
+    """The resource-safety facts `status` shows: mode, window, restarts today, last restart, and the
+    classification right now (one sample, no confirmation, health reused). Never raises."""
+    now = time.time() if now is None else now
+    try:
+        verdict = openclaw_pressure.evaluate(
+            runner=runner, openclaw_bin=oc, confirm_seconds=0, health=health, env=systemd_env(),
+            pressure_pct=knob_number(knobs, "OPENCLAW_RESTART_PRESSURE_PCT"),
+            hard_pct=knob_number(knobs, "OPENCLAW_RESTART_HARD_PCT"),
+            frozen_min_s=knob_number(knobs, "OPENCLAW_FROZEN_MIN_S"))
+        current = {"classification": verdict["classification"],
+                   "memory_pct": (verdict["evidence"].get("memory_pct") or [None])[-1],
+                   "reason": verdict["evidence"].get("reason", "")}
+    except Exception as e:  # noqa: BLE001  (status must keep working whatever the probe does)
+        current = {"classification": "unavailable", "memory_pct": None, "reason": type(e).__name__}
+    tz = knobs["OPENCLAW_RESTART_TZ"]
+    return {"mode": knobs["OPENCLAW_GRACEFUL_RESTART"], "window": knobs["OPENCLAW_RESTART_WINDOW"], "tz": tz,
+            "hard_pct": knobs["OPENCLAW_RESTART_HARD_PCT"], "today": restarts_today(now, tz, state_path),
+            "cap": int(knob_number(knobs, "OPENCLAW_RESTART_DAILY_CAP")), "current": current,
+            "last": read_last_restart(state_path)}
+
 _DURATION_UNITS = (("d", 86400), ("h", 3600), ("min", 60), ("ms", 0.001), ("us", 0.000001), ("s", 1))
 
 
@@ -2444,6 +2488,8 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
     oc = resolve_openclaw_bin()   # one resolution for health and doctor: a login PATH may lack brew
     rc, _health = runner([oc, "health"], env=env)
     report["health"] = {"ok": rc == 0}
+    report["health"]["restart"] = restart_summary(restart_knobs(env={}, host_env=hostenv), runner=runner,
+                                                  health=(rc, _health), oc=oc, now=now)
 
     timers = []
     uptime = read_uptime(os.environ.get("OPENCLAW_UPTIME_FILE") or hostenv.get("OPENCLAW_UPTIME_FILE") or "/proc/uptime")
@@ -2518,6 +2564,27 @@ def _render_stability(s: dict) -> str:
             f"oldest {round(s['max_stalled_age_s'] / 60)} min{dropped} (counts are lower bounds); see T39")
 
 
+def _render_restart(r: dict | None) -> list[str]:
+    if not r:
+        return []
+    cur = r["current"]
+    now = cur["classification"] + (f" ({cur['memory_pct']}% of MemoryHigh)" if cur.get("memory_pct") is not None else "")
+    out = [f"  resource  mode {r['mode']}; window {r['window'] or 'none'} {r['tz']}, ceiling {r['hard_pct']}% of "
+           f"MemoryHigh; {r['today']}/{r['cap'] or 'no cap'} restarts today; now: {now}"]
+    last = r.get("last") or {}
+    if last:
+        when = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(last["at"]))
+        c = last.get("counts") or {}
+        freed = ""
+        if c.get("memory_before", "").isdigit() and c.get("memory_after", "").isdigit():
+            freed = f", memory {int(c['memory_before']) / 1024 ** 3:.1f} -> {int(c['memory_after']) / 1024 ** 3:.1f} GiB"
+        rec = (f", recovery: {c.get('marked_interrupted', '?')} marked, {c.get('aborted_runs', '?')} aborted, "
+               f"{c.get('recovery_started', '?')} resumed, {c.get('tombstoned', '?')} tombstoned") if c else ""
+        out.append(f"  last      {when} reason {last['reason'] or '?'}: {last['result'] or '?'}{freed}{rec}"
+                   + (f"; report {last['report']}" if last.get("report") else ""))
+    return out
+
+
 def render_status(report: dict) -> str:
     lines = ["OpenClaw host status", ""]
     u, b = report["unit"], report["boot"]
@@ -2527,6 +2594,7 @@ def render_status(report: dict) -> str:
     addr = ", ".join(ls["addresses"]) or "nothing listening"
     lines.append(f"listeners   port {ls['port']}: {addr}" + ("   ATTENTION: bound to all interfaces (T04)" if ls["wildcard"] else ""))
     lines.append(f"health      {'answers' if report['health']['ok'] else 'DOES NOT ANSWER'}")
+    lines += _render_restart(report["health"].get("restart"))
     lines.append("timers")
     for t in report["timers"]:
         lines.append(f"  {t['name']:<34} {'enabled' if t['enabled'] else 'OFF':<8} next {t['next']}")
@@ -2952,7 +3020,7 @@ def _graceful_restart_locked(result: dict, finish, *, reason: str, manual: bool,
             knob_confirm = knob_number(knobs, "OPENCLAW_HEALTH_CONFIRM_S")
             verdict = openclaw_pressure.evaluate(
                 runner=runner, openclaw_bin=oc, cgroup_root=cgroup_root, proc_root=proc_root,
-                confirm_seconds=knob_confirm, sleep=sleep, clock=now,
+                confirm_seconds=knob_confirm, sleep=sleep, clock=now, env=systemd_env(),
                 pressure_pct=knob_number(knobs, "OPENCLAW_RESTART_PRESSURE_PCT"),
                 hard_pct=knob_number(knobs, "OPENCLAW_RESTART_HARD_PCT"),
                 frozen_min_s=knob_number(knobs, "OPENCLAW_FROZEN_MIN_S"))
@@ -3107,6 +3175,7 @@ def cmd_pressure(args: argparse.Namespace, runner: Runner | None = None, **kw) -
     confirm = args.confirm_seconds if args.confirm_seconds is not None else knob_number(knobs, "OPENCLAW_HEALTH_CONFIRM_S")
     result = openclaw_pressure.evaluate(
         runner=runner or default_runner, openclaw_bin=resolve_openclaw_bin(), confirm_seconds=confirm,
+        env=systemd_env(),
         pressure_pct=knob_number(knobs, "OPENCLAW_RESTART_PRESSURE_PCT"),
         hard_pct=knob_number(knobs, "OPENCLAW_RESTART_HARD_PCT"),
         frozen_min_s=knob_number(knobs, "OPENCLAW_FROZEN_MIN_S"), **kw)

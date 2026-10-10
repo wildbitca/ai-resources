@@ -38,6 +38,8 @@ ANSWERS = {
     "Where the backup tiers are written": "/srv/backups",
     "Public host name": "ai.example.org",
     "CIDR of the ingress": "10.9.0.0/24",
+    "Let the health check restart the gateway gracefully": "notify",   # ADR-0004
+    "Let setup fill the gateway's resource guards": "on",
     "Telegram group chat id for agent": "",          # empty: leave every binding alone (C2)
     "Enable the workboard plugin (a shared": True,
     "Write an AGENTS.md into every agent workspace": True,
@@ -317,7 +319,10 @@ def test_a_first_run_defaults_every_answer_to_no_except_the_workboard(sim, scrip
     # each defaults to empty, which leaves that agent unbound.
     group_questions = [k for k in defaults if k.startswith("Telegram group chat id for agent")]
     assert len(group_questions) == 3 and all(defaults[k] == "" for k in group_questions)
-    assert len(defaults) == 12 + 3 + 1, sorted(defaults)   # +1: the stale-plugin question
+    # +1: the stale-plugin question; +2: the ADR-0004 resource-safety questions (graceful restart, guards)
+    assert len(defaults) == 12 + 3 + 1 + 2, sorted(defaults)
+    assert default_of("Let the health check restart the gateway") == "notify"
+    assert default_of("Let setup fill the gateway's resource guard") == "on"
 
 
 def test_declining_the_master_question_asks_nothing_else(sim, script):
@@ -382,7 +387,8 @@ def test_configure_applies_every_section(sim, script):
     env = host.read_host_env(sim.env_file)
     assert env == {"OPENCLAW_OWNER_TELEGRAM_ID": "123456789", "OPENCLAW_BACKUP_DIR": "/srv/backups",
                    "OPENCLAW_PUBLIC_DOMAIN": "ai.example.org", "OPENCLAW_POD_CIDR": "10.9.0.0/24",
-                   "OPENCLAW_NARRATION": "milestones", "OPENCLAW_GUARD": "1"}
+                   "OPENCLAW_NARRATION": "milestones", "OPENCLAW_GUARD": "1",
+                   "OPENCLAW_GRACEFUL_RESTART": "notify", "OPENCLAW_RESOURCE_GUARDS": "on"}
 
     # Hooks: the kit's are in, the user's own stays, the hand-installed legacy copy is replaced.
     hooks = sim.hooks()
@@ -1036,3 +1042,68 @@ def test_verify_flags_a_hand_copy_that_is_still_present(sim, script):
     _put_hand_copy(sim)
     [finding] = sec._hand_copy_findings()
     assert finding.level == "warn" and "openclaw-health-restart.sh" in finding.message
+
+
+# --- ADR-0004: the resource-safety answers -------------------------------------------------------------------------
+
+def test_the_graceful_restart_answer_is_written_and_a_rerun_is_idempotent(sim, script):
+    script.answers["Let the health check restart the gateway gracefully"] = "on"
+    script.answers["Let setup fill the gateway's resource guards"] = "off"
+    s = _state()
+    _run_wizard(s)
+    env = host.read_host_env(sim.env_file)
+    assert env["OPENCLAW_GRACEFUL_RESTART"] == "on" and env["OPENCLAW_RESOURCE_GUARDS"] == "off"
+    assert s.openclaw.host_graceful_restart == "on" and s.openclaw.host_resource_guards == "off"
+    before = sim.env_file.read_bytes()
+    _run_wizard(s)
+    assert sim.env_file.read_bytes() == before, "a second run with the same answers changes nothing"
+    # `off` really keeps the guard keys out of the live config
+    doc = json.loads(sim.cfg.read_text())
+    assert "sessionIdleTtlMs" not in (doc.get("mcp") or {})
+    assert "timeoutSeconds" not in doc["agents"]["defaults"]
+
+
+def test_guards_on_fill_both_keys_in_the_live_config(sim, script):
+    s = _state()
+    _run_wizard(s)
+    doc = json.loads(sim.cfg.read_text())
+    assert doc["mcp"]["sessionIdleTtlMs"] == 1800000
+    assert doc["agents"]["defaults"]["timeoutSeconds"] == 14400
+
+
+def test_unattended_runs_keep_an_existing_answer_and_otherwise_take_the_safe_default(sim, script):
+    sim.env_file.parent.mkdir(parents=True, exist_ok=True)
+    sim.env_file.write_text("OPENCLAW_GRACEFUL_RESTART=on\n", encoding="utf-8")
+    seen = {}
+
+    def select(message, choices, default=None, instruction=""):
+        seen[message[:40]] = default
+        return default                     # what ui.select returns when non-interactive
+
+    import ai_resources.setup.ui as ui_mod
+    script.answers["Configure this machine as an OpenClaw host"] = True
+    real = ui_mod.select
+    ui_mod.select = lambda m, c, default=None, instruction="": select(m, c, default, instruction) \
+        if m.startswith(("Let the health", "Let setup fill")) else real(m, c, default, instruction)
+    try:
+        s = _state()
+        openclaw.prompt(s)
+    finally:
+        ui_mod.select = real
+    assert s.openclaw.host_graceful_restart == "on", "an existing value is kept"
+    assert s.openclaw.host_resource_guards == "on", "no value: the shipped default"
+
+
+def test_setup_never_runs_gateway_restart_itself_and_a_second_run_is_a_no_op(sim, script):
+    s = _state()
+    _run_wizard(s)
+    after_first = sim.cfg.read_bytes()
+    env_first = sim.env_file.read_bytes()
+    sim.oc.calls.clear()
+    sim.systemd.calls.clear()
+    _run_wizard(s)
+    assert sim.cfg.read_bytes() == after_first and sim.env_file.read_bytes() == env_first
+    assert sim.oc.real_patches() == [], "the second run writes nothing"
+    every = [a for a, _p in sim.oc.calls]
+    assert ["gateway", "restart"] not in every
+    assert not any(c[:3] == ["systemctl", "--user", "restart"] for c in sim.systemd.calls)

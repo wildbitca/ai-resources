@@ -602,3 +602,37 @@ def test_parse_systemd_duration_and_garbage():
     assert host.parse_systemd_duration("") is None and host.parse_systemd_duration("soon") is None
     assert host.next_elapse_display("", "", uptime_s=5.0, now=NOW) == "-"
     assert host.next_elapse_display("Sun 2026-09-20 03:30:00 UTC", "", uptime_s=None, now=NOW).startswith("Sun")
+
+
+# --- ADR-0004: the resource-safety lines of `status` --------------------------------------------------------------------
+
+def test_status_shows_the_mode_the_restarts_today_and_the_last_restart(env, tmp_path, monkeypatch):
+    import time as _t
+    state_file = tmp_path / "restart.state"
+    monkeypatch.setattr(host, "STATE_PATH", state_file)
+    report_file = tmp_path / "report.txt"
+    report_file.write_text("marked_interrupted=3\naborted_runs=4\nrecovery_started=1\ntombstoned=0\n"
+                           f"memory_before={14 * 1024 ** 3}\nmemory_after={6 * 1024 ** 3}\n", encoding="utf-8")
+    today = host._local_date(NOW, "America/Guayaquil")
+    host.state_set("last_restart", str(int(NOW) - 600), state_file)
+    host.state_set("last_restart_reason", "memory", state_file)
+    host.state_set("last_restart_result", "ok", state_file)
+    host.state_set("last_report", str(report_file), state_file)
+    host.state_set("restarts_day", f"{today}:1", state_file)
+    env.hostenv.write_text(env.hostenv.read_text(encoding="utf-8") + "OPENCLAW_GRACEFUL_RESTART=on\n",
+                           encoding="utf-8")
+    report = collect(env, Canned(doctor=doctor_text("doctor_noise_only.txt")))
+    r = report["health"]["restart"]
+    assert r["mode"] == "on" and r["today"] == 1 and r["cap"] == 2 and r["last"]["result"] == "ok"
+    text = host.render_status(report)
+    assert "mode on" in text and "1/2 restarts today" in text
+    assert "memory 14.0 -> 6.0 GiB" in text and "3 marked, 4 aborted, 1 resumed, 0 tombstoned" in text
+    assert str(report_file) in text
+
+
+def test_status_without_any_restart_history_and_with_an_unreadable_probe_never_raises(env):
+    report = collect(env, Canned(doctor=doctor_text("doctor_noise_only.txt"), health_rc=1))
+    r = report["health"]["restart"]
+    assert r["mode"] == "notify" and r["last"] == {}
+    assert r["current"]["classification"] in ("refused-probe", "unavailable", "health-fail")
+    assert "resource" in host.render_status(report)

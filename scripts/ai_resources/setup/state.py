@@ -206,6 +206,9 @@ class OpenClawState:
     host_workboard: bool = True       # `openclaw plugins enable workboard` (asked; defaults to yes)
     host_agents_md: bool = False      # AGENTS.md templates for workspaces that have none
     host_check: bool = False          # report (and offer to fix) what `openclaw bootstrap` finds
+    # ADR-0004. "" means "keep whatever kit-host.env holds, else the shipped default".
+    host_graceful_restart: str = ""   # off | notify | on: what the health check does under memory pressure
+    host_resource_guards: str = ""    # on | off: fill mcp.sessionIdleTtlMs and agents.defaults.timeoutSeconds
     host_domain: str = ""             # public host name of the control UI (no scheme)
     host_pod_cidr: str = ""           # CIDR of the ingress that reaches the gateway
     host_operator_id: str = ""        # numeric Telegram id that failure notices go to

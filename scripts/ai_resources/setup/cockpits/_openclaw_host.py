@@ -38,6 +38,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,7 +83,7 @@ def _gate(message: str, detail: str = "") -> bool:
 def _values(o: state.OpenClawState) -> dict[str, str]:
     return {"DOMAIN": o.host_domain, "POD_CIDR": o.host_pod_cidr, "OWNER_TELEGRAM_ID": o.host_operator_id,
             "BACKUP_DIR": o.host_backup_dir, "TAILNET": "1" if host.tailnet_available() else "0",
-            "RESOURCE_GUARDS": host.read_host_env().get("OPENCLAW_RESOURCE_GUARDS", "on")}
+            "RESOURCE_GUARDS": o.host_resource_guards or host.read_host_env().get("OPENCLAW_RESOURCE_GUARDS", "on")}
 
 
 # --- the questions ----------------------------------------------------------------------------------------
@@ -116,6 +117,7 @@ def prompt(s: state.SetupState, doc: dict | None = None) -> None:
 
     if o.host_units or o.host_config:
         _ask_host_values(o, env)
+    _ask_resource_safety(o, env)
     o.host_workboard = bool(ui.confirm(
         "Enable the workboard plugin (a shared task board for the agents)?", default=o.host_workboard))
     o.host_agents_md = bool(ui.confirm(
@@ -126,6 +128,36 @@ def prompt(s: state.SetupState, doc: dict | None = None) -> None:
         "Check this host against the documented setup (node, openclaw install, unit, linger, backup dirs, "
         "MemoryHigh) and offer to fix what differs?", default=o.host_check))
     ui.detail("Secrets are not asked here: set them with `openclaw configure`.")
+
+
+GRACEFUL_CHOICES = (
+    ("notify", "notify: tell me once what it would do, restart nothing (recommended until one supervised "
+               "restart has been checked)"),
+    ("on", "on: restart gracefully by itself under confirmed memory pressure (inside the window, or above "
+           "the hard ceiling)"),
+    ("off", "off: never; only log"),
+)
+GUARD_CHOICES = (
+    ("on", "on: fill mcp.sessionIdleTtlMs (30 min) and agents.defaults.timeoutSeconds (4 h) when unset"),
+    ("off", "off: leave both keys alone"),
+)
+
+
+def _ask_resource_safety(o: state.OpenClawState, env: dict[str, str]) -> None:
+    """ADR-0004. Two answers; unattended runs keep an existing value and otherwise take the safe default."""
+    if o.host_units:
+        current = o.host_graceful_restart or env.get("OPENCLAW_GRACEFUL_RESTART") or "notify"
+        o.host_graceful_restart = ui.select(
+            "Let the health check restart the gateway gracefully under memory pressure? A restart aborts runs "
+            "that outlast its 5 minute drain, and whether Slack/Telegram messages survive it is not yet "
+            "verified on this host.",
+            [ui.Choice(label, value=value) for value, label in GRACEFUL_CHOICES], default=current)
+    if o.host_config:
+        current = o.host_resource_guards or env.get("OPENCLAW_RESOURCE_GUARDS") or "on"
+        o.host_resource_guards = ui.select(
+            "Let setup fill the gateway's resource guards (idle MCP runtime eviction and a per-run time cap)? "
+            "A value you already set is never overwritten.",
+            [ui.Choice(label, value=value) for value, label in GUARD_CHOICES], default=current)
 
 
 def _routed_agents(doc: dict) -> list[str]:
@@ -227,6 +259,8 @@ def _configure_env(o: state.OpenClawState, *, dry_run: bool) -> None:
         "OPENCLAW_POD_CIDR": o.host_pod_cidr or None,
         "OPENCLAW_NARRATION": o.host_narration or None,
         "OPENCLAW_GUARD": "1" if o.host_guard else None,
+        "OPENCLAW_GRACEFUL_RESTART": (o.host_graceful_restart if o.host_units else "") or None,
+        "OPENCLAW_RESOURCE_GUARDS": (o.host_resource_guards if o.host_config else "") or None,
     }
     current = host.read_host_env()
     todo = {k: v for k, v in wanted.items() if current.get(k) != v}
@@ -1075,6 +1109,7 @@ def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> l
         out.append(Finding("warn", who, "no off-box backup listing is configured", OFFBOX_REMEDY))
     out += _stability_findings(report.get("stability") or {})
     out += _pending_findings(s.openclaw)
+    out += _resource_findings(s.openclaw, watch, report)
     out += _watchdog_unit_findings()
     out += _hand_copy_findings()
     from ... import model_pins, models
@@ -1119,6 +1154,84 @@ def _stability_findings(s: dict) -> list:
     what = (f">={blocked} blocked tool calls ({', '.join(sorted(s.get('tools', {}))) or 'unnamed tools'})"
             if blocked else f">={sum(held.values())} stalled sessions")
     return [Finding("warn", "openclaw", f"gateway stop on {day} was held by {what}", _STABILITY_REMEDY)]
+
+
+STALE_MARKER_MIN_S = 1800
+
+
+def _resource_findings(o: state.OpenClawState, runner, report: dict) -> list:
+    """ADR-0004: the resource-safety layer. Warnings only (the gateway being up is what verify's errors are
+    about). Reads files and one `systemctl show`; nothing is run that changes anything."""
+    import time as _time
+    from ...verify import Finding
+
+    who = "openclaw"
+    out: list = []
+    knobs = host.restart_knobs()
+    last = (report.get("health", {}).get("restart") or {}).get("last") or host.read_last_restart()
+    if last and last.get("result") == "failed":
+        out.append(Finding("warn", who, f"the last graceful restart failed ({last.get('reason') or 'unknown reason'})",
+                           f"read {last.get('report') or '~/.openclaw/logs/restart-snapshots/'} and "
+                           "`ai-resources openclaw status`; the cooldown still applies"))
+    # The last tick of the health check that exited 2 found the gateway frozen (never restarts it).
+    try:
+        rc, text = runner(["systemctl", "--user", "show", "openclaw-health-restart.service",
+                           "-p", "Result", "-p", "ExecMainStatus"], env=host.systemd_env())
+    except Exception:  # noqa: BLE001
+        rc, text = 1, ""
+    props = dict(ln.partition("=")[::2] for ln in text.splitlines()) if rc == 0 else {}
+    if props.get("ExecMainStatus", "").strip() == "2":
+        out.append(Finding("warn", who, "the last health check found the gateway frozen under its memory limit "
+                                        "(it exited 2 and restarted nothing)",
+                           "stop heavy agent children by hand to bring the cgroup under MemoryHigh; see T41"))
+    # A watchdog.off nobody is working under pauses the watchdog and the health check for good.
+    marker = host.Marker()
+    if marker.exists() and not host._lock_held_by_other(host.LOCK_PATH):
+        try:
+            age = _time.time() - marker.path.stat().st_mtime
+        except OSError:
+            age = 0
+        if age > STALE_MARKER_MIN_S:
+            out.append(Finding("warn", who, f"{marker.path} has been there {int(age // 60)} min and no graceful "
+                                            "restart or drained window is running",
+                               "if nobody is maintaining the host, remove it: the watchdog and the health check "
+                               "are standing down"))
+    keep = int(host.knob_number(knobs, "OPENCLAW_RESTART_SNAPSHOTS_KEEP"))
+    try:
+        n = sum(1 for p in host.SNAPSHOT_ROOT.iterdir() if p.is_dir())
+    except OSError:
+        n = 0
+    if n > keep:
+        out.append(Finding("warn", who, f"{n} restart snapshot directories exist; the bound is {keep}",
+                           f"remove the oldest under {host.SNAPSHOT_ROOT} (they hold unit and cgroup facts)"))
+    # Guards on, but the keys are not in the live config (setup was not run since, or the operator removed them).
+    if not host.resource_guards_off({"RESOURCE_GUARDS": host.read_host_env().get("OPENCLAW_RESOURCE_GUARDS", "on")}):
+        cfg_file = Path(os.environ.get("OPENCLAW_CONFIG_PATH") or Path.home() / ".openclaw" / "openclaw.json")
+        try:
+            doc = host.load_json5(cfg_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            doc = None
+        if isinstance(doc, dict):
+            missing = [".".join(p) for p in host.RESOURCE_GUARD_PATHS if not host._get_path(doc, list(p))[1]]
+            if missing:
+                out.append(Finding("warn", who, "resource guards are on but missing from the config: " + ", ".join(missing),
+                                   "run `ai-resources setup` (fill-only, hot keys), or set "
+                                   "OPENCLAW_RESOURCE_GUARDS=off to opt out"))
+    # MemoryHigh drift: a runtime raise is reverted by the next setup run (`_step_memory_high`).
+    rc, cur = runner(["systemctl", "--user", "show", host.GATEWAY_UNIT, "-p", "MemoryHigh", "--value"],
+                     env=host.systemd_env())
+    live = cur.strip()
+    if rc == 0 and live:
+        want = host._bytes("12G")
+        if live.isdigit() and int(live) != want:
+            out.append(Finding("warn", who, f"MemoryHigh is {int(live) / 1024 ** 3:.1f} GiB, not setup's "
+                                            f"{want / 1024 ** 3:.0f} GiB",
+                               "`ai-resources openclaw bootstrap` re-asserts it; a runtime change is reverted "
+                               "(ADR-0004 keeps MemoryHigh as it is)"))
+        elif live == "infinity":
+            out.append(Finding("warn", who, "MemoryHigh is not set on the gateway unit: no throttle, no pressure signal",
+                               "`ai-resources openclaw bootstrap` sets it"))
+    return out
 
 
 def _watchdog_unit_findings() -> list:
