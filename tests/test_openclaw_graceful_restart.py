@@ -467,6 +467,24 @@ def test_the_cli_is_registered_with_manual_as_the_default_reason():
     assert ap.parse_args(["openclaw", "graceful-restart", "--reason", "memory", "--classification", "hard"]).classification == "hard"
 
 
+def test_the_help_text_says_what_a_manual_run_does_and_to_check_the_pressure_first():
+    """Pins the operator-facing contract: a manual run measures nothing, so it must not claim to."""
+    import argparse
+    import re
+    ap = argparse.ArgumentParser()
+    sub = ap.add_subparsers(dest="cmd")
+    host.add_subparser(sub)
+    top = sub.choices["openclaw"]
+    gr = next(a for a in top._actions if isinstance(a, argparse._SubParsersAction)).choices["graceful-restart"]
+    text = re.sub(r"\s+", " ", gr.format_help())
+    assert "manual" in text and "memory" in text
+    assert "NOT measured" in text, "an omitted classification is not measured for --reason manual"
+    assert "stays null" in text and "no pressure gate runs" in text
+    assert "outside the window" in text and "`hard`" in text
+    assert "ai-resources openclaw pressure --json" in text
+    assert "skips the mode and pressure gates" in text
+
+
 # --- the time budget (ADR-0004, limit 9) ---------------------------------------------------------------------------
 
 class FakeClock:

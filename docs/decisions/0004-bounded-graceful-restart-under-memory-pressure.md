@@ -39,6 +39,11 @@ A deliberate, bounded and notified graceful `openclaw gateway restart`, with run
 only by **confirmed memory pressure**, from the health-restart timer or from the operator's CLI
 (`ai-resources openclaw graceful-restart`). It relies on OpenClaw's native restart recovery.
 
+The timer measures the pressure (`--reason memory`). An operator run (`--reason manual`, the default) does
+not: nothing is measured, the classification stays null, and the mode and pressure gates are skipped. It is
+still subject to the window (unless `--classification hard` is given), the cooldown and the daily cap, so the
+operator runs `ai-resources openclaw pressure --json` first.
+
 ### Limits
 
 1. A mode knob `OPENCLAW_GRACEFUL_RESTART=off|notify|on`, shipped as `notify` (D5). `on` is enabled by the

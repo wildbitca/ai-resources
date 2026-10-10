@@ -3356,11 +3356,17 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_gr = verbs.add_parser("graceful-restart",
                             help="Restart the gateway gracefully under confirmed memory pressure (ADR-0004)")
     p_gr.add_argument("--reason", default="manual",
-                      help="`memory` (the timer) or `manual` (a supervised run; skips the mode and pressure gates)")
+                      help="`memory` (the timer): the mode and pressure gates apply. `manual` (the default; a "
+                           "supervised run): skips the mode and pressure gates, so NOTHING is measured and the "
+                           "classification stays null; it is refused outside the restart window unless "
+                           "--classification hard is given. Run `ai-resources openclaw pressure --json` first.")
     p_gr.add_argument("--dry-run", action="store_true",
                       help="Evaluate every gate and print the plan; change nothing (no state, marker, snapshot)")
     p_gr.add_argument("--classification", choices=("pressure", "hard"), default=None,
-                      help="The caller's confirmed classification (the timer passes it); omitted, it is measured")
+                      help="The caller's confirmed classification (the timer passes it). Omitted with `--reason "
+                           "memory`, it is measured now. Omitted with `--reason manual`, it is NOT measured "
+                           "(it stays null and no pressure gate runs). `hard` lets the run through outside the "
+                           "window; confirm it with `ai-resources openclaw pressure --json` first")
     p_gr.add_argument("--json", action="store_true", help="Print the summary as JSON")
     p_gr.set_defaults(func=cmd_graceful_restart)
 

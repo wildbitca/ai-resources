@@ -1130,7 +1130,13 @@ unset key", which is why the env switch exists. `off` does not revert a value al
 `graceful-restart` refuses, naming the gate, when: it runs inside the gateway cgroup (T29); another
 graceful restart holds `~/.openclaw/health-restart.lock`; `watchdog.off` exists; the unit is not `active`;
 the mode is not `on` (a manual run skips this and the pressure gate); the pressure is not confirmed; the
-cooldown or the daily cap says no; or it is outside the window and below the ceiling. It never passes
+cooldown or the daily cap says no; or it is outside the window and below the ceiling.
+
+What `--classification` does depends on `--reason`. With `--reason memory` (the timer) an omitted
+classification is measured at run time. With `--reason manual` (the default) it is NOT measured: it stays
+null, no pressure gate runs, and the run is refused outside the window unless you pass
+`--classification hard`. So run `ai-resources openclaw pressure --json` first and pass `hard` only when it
+reports `hard`. It never passes
 `--force`, never kills a process and never restarts a `frozen` gateway. Success is health plus a NEW
 MainPID. A `GATEWAY_RESTART_PREPARATION_REFUSED` is retried after 20, 40 and 80 s and reported as
 `refused`, never as frozen.
