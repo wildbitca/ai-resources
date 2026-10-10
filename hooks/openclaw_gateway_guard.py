@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """PreToolUse hook (ai-resources, OpenClaw hosts): stop an undrained gateway stop (pitfall T01).
 
-Denies exactly three shapes of Bash command, and only while the gateway is live and unguarded
+Denies three families of Bash command, and only while the gateway is live and unguarded
 (the unit is active AND ~/.openclaw/watchdog.off does not exist):
 
   - `openclaw doctor --fix`
-  - `systemctl --user stop openclaw-gateway.service`
-  - `openclaw gateway restart` (ADR-0004, D10): from an agent session that is a child of the
-    gateway it kills the session itself (T29) and cuts every run in flight. The sanctioned way
-    is `ai-resources openclaw graceful-restart`, run from outside the gateway cgroup.
+  - stopping the gateway: `systemctl [--user] stop|kill openclaw-gateway[.service]` and
+    `openclaw gateway stop`
+  - restarting it (ADR-0004, D10): `openclaw gateway restart`, `systemctl [--user]
+    restart|try-restart|reload-or-restart openclaw-gateway[.service]`. From an agent session that
+    is a child of the gateway it kills the session itself (T29) and cuts every run in flight. The
+    sanctioned way is `ai-resources openclaw graceful-restart`, run from outside the gateway cgroup.
+
+The recogniser is token based: options may sit between the words (`openclaw gateway --json
+restart`, `systemctl --user --no-block restart ...`) and the command may be wrapped in `sudo`,
+`env`, `timeout`, `nohup`, `setsid`, `bash -c`, `sh -c` or `eval`. Read-only verbs (`status`,
+`show`, `is-active`, `list-units`, `logs`, `cat`, ...) are never matched.
 
 Why: `openclaw doctor --fix` stops the gateway and re-inspects the stopped unit. If a child
 (claude, engram, npx) is still alive it aborts with "ownership or manager identity changed" and
@@ -35,7 +42,29 @@ WATCHDOG_OFF = os.path.expanduser("~/.openclaw/watchdog.off")
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 # Tokens that only wrap another command: look through them to the real one.
-_WRAPPERS = {"sudo", "env", "command", "nohup", "time", "exec", "nice", "ionice", "stdbuf"}
+_WRAPPERS = {"sudo", "doas", "env", "command", "nohup", "setsid", "time", "exec", "nice", "ionice", "stdbuf",
+             "unbuffer"}
+# systemctl verbs that stop or restart a unit. Everything else (status, show, is-active, list-units,
+# cat, reload, start, ...) is read-only or harmless for this guard.
+_SYSTEMCTL_STOP = {"stop", "kill"}
+_SYSTEMCTL_RESTART = {"restart", "try-restart", "reload-or-restart", "try-reload-or-restart", "condrestart"}
+# systemctl options that take a separate value (`-p MainPID`, `-H host`): the value is not the verb.
+_SYSTEMCTL_VALUE_OPTS = {"-H", "--host", "-M", "--machine", "-p", "--property", "-t", "--type", "-s",
+                         "--signal", "-n", "--lines", "-o", "--output", "-T", "--kill-whom", "--state",
+                         "--job-mode", "--root", "--preset-mode", "-C", "--check-inhibitors"}
+# `openclaw gateway` subcommands: the first one found after `gateway` is the verb, so a flag VALUE such
+# as `--port 18789` is skipped and a later word (`status --note restart`) is not taken for the verb.
+_GATEWAY_VERBS = {"restart", "stop", "start", "status", "install", "uninstall", "health", "probe", "call",
+                   "discover", "run", "logs", "usage-cost"}
+# Flags of a wrapper that take a separate value (`sudo -u root`, `nice -n 5`); `sudo -n` takes none.
+_WRAPPER_VALUE_FLAGS = {
+    "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group", "--host"},
+    "doas": {"-u", "-C"},
+    "env": {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"},
+    "nice": {"-n", "--adjustment"},
+    "ionice": {"-c", "-n", "-p", "--class", "--classdata"},
+    "setsid": set(),
+}
 _KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}
 _SHELLS = {"bash", "sh", "zsh", "dash"}
 _OPERATORS = {";", "&&", "||", "|", "&", "|&", "(", ")", "{", "}"}
@@ -50,7 +79,8 @@ REASON = (
 
 
 REASON_RESTART = (
-    "Blocked (T29): `openclaw gateway restart` from an agent call restarts the gateway under every run in "
+    "Blocked (T29): restarting the gateway (`openclaw gateway restart`, `systemctl restart`) from an agent "
+    "call restarts it under every run in "
     "flight, and when this session is a child of the gateway it kills this session too. Run "
     "`ai-resources openclaw graceful-restart` from outside the gateway (it is gated and notified), or "
     "open a maintenance window yourself with `touch ~/.openclaw/watchdog.off` and this check steps aside.\n"
@@ -102,8 +132,9 @@ def _command_words(stmt: list[str]) -> list[str]:
         elif base in _WRAPPERS:
             i += 1
             # `sudo -u x`, `env -i`, `nice -n 5`: skip the flags (and a flag's value)
+            takes_value = _WRAPPER_VALUE_FLAGS.get(base, set())
             while i < len(stmt) and stmt[i].startswith("-"):
-                i += 2 if stmt[i] in ("-u", "-n", "-g") else 1
+                i += 2 if stmt[i] in takes_value else 1
         else:
             break
     return stmt[i:]
@@ -114,22 +145,74 @@ def _is_doctor_fix(words: list[str]) -> bool:
             and "doctor" in words[1:3] and "--fix" in words[1:])
 
 
-def _is_gateway_stop(words: list[str]) -> bool:
-    return (bool(words) and os.path.basename(words[0]) == "systemctl" and "stop" in words[1:]
-            and any(w in (UNIT, UNIT[: -len(".service")]) for w in words[1:]))
+def _systemctl_verb(words: list[str]) -> tuple[str | None, list[str]]:
+    """(verb, operands) of a `systemctl ...` command: the first positional word, options skipped."""
+    i = 1
+    while i < len(words):
+        w = words[i]
+        if w == "--":
+            i += 1
+            break
+        if w.startswith("-"):
+            i += 2 if w in _SYSTEMCTL_VALUE_OPTS else 1
+            continue
+        break
+    if i >= len(words):
+        return None, []
+    return words[i], words[i + 1:]
 
 
-def _is_gateway_restart(words: list[str]) -> bool:
+def _is_gateway_unit(operand: str) -> bool:
+    return operand in (UNIT, UNIT[: -len(".service")])
+
+
+def _systemctl_action(words: list[str]) -> str | None:
+    """"stop" or "restart" for `systemctl ... <verb> openclaw-gateway[.service]`, else None."""
+    if not words or os.path.basename(words[0]) != "systemctl":
+        return None
+    verb, operands = _systemctl_verb(words)
+    if verb is None or not any(_is_gateway_unit(o) for o in operands):
+        return None
+    if verb in _SYSTEMCTL_STOP:
+        return "stop"
+    if verb in _SYSTEMCTL_RESTART:
+        return "restart"
+    return None
+
+
+def _gateway_action(words: list[str]) -> str | None:
+    """"stop" or "restart" for `openclaw [opts] gateway [opts] stop|restart`, else None."""
     if not words or os.path.basename(words[0]) != "openclaw":
-        return False
+        return None
     rest = words[1:]
-    return "gateway" in rest[:4] and rest.index("gateway") + 1 < len(rest) \
-        and rest[rest.index("gateway") + 1] == "restart"
+    # the `gateway` word sits after at most a few global options (`--profile x`, `--log-level y`)
+    idx = next((n for n, w in enumerate(rest[:6]) if w == "gateway"), None)
+    if idx is None:
+        return None
+    verb = next((w for w in rest[idx + 1:] if w in _GATEWAY_VERBS), None)
+    return verb if verb in ("stop", "restart") else None
+
+
+def _inner_command(words: list[str]) -> str | None:
+    """The string a shell or `eval` is asked to run, when it is a literal in the command line."""
+    if not words:
+        return None
+    base = os.path.basename(words[0])
+    if base == "eval":
+        return " ".join(words[1:]) or None
+    if base in _SHELLS:
+        for n, w in enumerate(words[1:], start=1):
+            # -c, and combined short flags such as -lc / -ic / -ec
+            if w == "-c" or (re.fullmatch(r"-[A-Za-z]+", w) and w.endswith("c")):
+                return words[n + 1] if n + 1 < len(words) else None
+            if not w.startswith("-"):
+                return None
+    return None
 
 
 def shape(command: str, _depth: int = 0) -> str | None:
     """"doctor", "stop" or "restart" when the command RUNS a guarded shape, else None."""
-    if _depth > 2:
+    if _depth > 3:
         return None
     for line in strip_heredocs(command).splitlines():
         try:
@@ -140,17 +223,15 @@ def shape(command: str, _depth: int = 0) -> str | None:
             words = _command_words(stmt)
             if _is_doctor_fix(words):
                 return "doctor"
-            if _is_gateway_stop(words):
-                return "stop"
-            if _is_gateway_restart(words):
-                return "restart"
-            # `bash -c "openclaw doctor --fix"`: the string IS a command.
-            if words and os.path.basename(words[0]) in _SHELLS and "-c" in words[1:]:
-                idx = words.index("-c") + 1
-                if idx < len(words):
-                    inner = shape(words[idx], _depth + 1)
-                    if inner:
-                        return inner
+            action = _systemctl_action(words) or _gateway_action(words)
+            if action:
+                return action
+            # `bash -c "openclaw doctor --fix"`, `eval "..."`: the string IS a command.
+            inner_cmd = _inner_command(words)
+            if inner_cmd:
+                inner = shape(inner_cmd, _depth + 1)
+                if inner:
+                    return inner
     return None
 
 

@@ -220,3 +220,125 @@ def test_a_gateway_restart_is_allowed_when_watchdog_off_is_present(guard, monkey
 def test_a_gateway_restart_is_allowed_when_the_gateway_is_inactive(guard, monkeypatch, capsys):
     guard.state["active"] = False
     assert run(guard, monkeypatch, "openclaw gateway restart", capsys=capsys) == (0, "")
+
+
+# --- equivalent forms of the same stop and restart (D10 coverage) ------------------------------------------------
+
+EQUIVALENT_RESTART_DENIED = [
+    "systemctl --user restart openclaw-gateway",
+    "systemctl --user restart openclaw-gateway.service",
+    "systemctl restart openclaw-gateway.service",
+    "systemctl --user try-restart openclaw-gateway.service",
+    "systemctl --user reload-or-restart openclaw-gateway.service",
+    "systemctl --user --no-block restart openclaw-gateway.service",
+    "systemctl --user restart --no-block openclaw-gateway.service",
+    "systemctl --user restart openclaw-gateway.service openclaw-watchdog.timer",
+    "/usr/bin/systemctl --user restart openclaw-gateway.service",
+    "openclaw gateway --json restart",
+    "openclaw gateway --port 18789 restart",
+    "openclaw --profile dev gateway restart",
+    "openclaw --log-level debug gateway --json restart",
+    "setsid openclaw gateway restart",
+    "setsid -f openclaw gateway restart",
+    "nohup openclaw gateway restart &",
+    "env OPENCLAW_X=1 openclaw gateway restart",
+    "env -i PATH=/usr/bin openclaw gateway restart",
+    "sudo -n systemctl --user restart openclaw-gateway.service",
+    "timeout 30 systemctl --user restart openclaw-gateway.service",
+    "timeout -s KILL 30 openclaw gateway restart",
+    "bash -c 'systemctl --user restart openclaw-gateway.service'",
+    "bash -lc 'openclaw gateway restart'",
+    "sh -c \"openclaw gateway --json restart\"",
+    "eval 'openclaw gateway restart'",
+    "eval openclaw gateway restart",
+    "sudo bash -c 'setsid openclaw gateway restart'",
+    "bash -c 'bash -c \"systemctl --user restart openclaw-gateway\"'",
+    "true && systemctl --user restart openclaw-gateway.service",
+]
+
+EQUIVALENT_STOP_DENIED = [
+    "systemctl --user kill openclaw-gateway",
+    "systemctl --user kill openclaw-gateway.service",
+    "systemctl --user kill -s KILL openclaw-gateway.service",
+    "systemctl --user --signal=SIGKILL kill openclaw-gateway.service",
+    "systemctl stop openclaw-gateway.service",
+    "systemctl --user --no-block stop openclaw-gateway.service",
+    "openclaw gateway stop",
+    "openclaw gateway --json stop",
+    "setsid openclaw gateway stop",
+    "env FOO=1 systemctl --user stop openclaw-gateway.service",
+    "bash -c 'systemctl --user kill openclaw-gateway'",
+    "eval \"systemctl --user stop openclaw-gateway.service\"",
+]
+
+EQUIVALENT_ALLOWED = [
+    # read-only verbs on the gateway unit
+    "systemctl --user status openclaw-gateway.service",
+    "systemctl --user show openclaw-gateway.service -p MainPID --value",
+    "systemctl --user show openclaw-gateway -p ControlGroup -p MainPID",
+    "systemctl --user is-active openclaw-gateway.service",
+    "systemctl --user is-enabled openclaw-gateway.service",
+    "systemctl --user cat openclaw-gateway.service",
+    "systemctl --user list-units 'openclaw-*'",
+    "systemctl --user list-units --type=service --all",
+    "systemctl --user list-dependencies openclaw-gateway.service",
+    "systemctl --user start openclaw-gateway.service",
+    "systemctl --user reload openclaw-gateway.service",
+    "systemctl --user daemon-reload",
+    "journalctl --user -u openclaw-gateway.service --since '1 hour ago' --no-pager",
+    "journalctl --user -u openclaw-gateway -f",
+    "openclaw logs --follow",
+    "openclaw gateway status",
+    "openclaw gateway --json status",
+    "openclaw gateway status --note restart",
+    "openclaw gateway --port 18789 status",
+    "openclaw gateway health",
+    "openclaw gateway --help",
+    # another unit with the same verbs
+    "systemctl --user restart openclaw-watchdog.timer",
+    "systemctl --user kill openclaw-other.service",
+    "systemctl --user stop openclaw-gateway-helper.service",
+    # the verb as the VALUE of an option, or the unit named only in text
+    "systemctl --user show openclaw-gateway.service -p restart",
+    "systemctl --user -p restart show openclaw-gateway.service",
+    'echo "systemctl --user restart openclaw-gateway.service"',
+    "grep -rn 'openclaw gateway --json restart' docs/",
+    "git commit -m 'docs: setsid openclaw gateway restart is guarded'",
+    "cat <<'EOF'\nsystemctl --user restart openclaw-gateway.service\nEOF",
+    "bash -c 'echo systemctl --user restart openclaw-gateway.service'",
+    "bash -c 'systemctl --user status openclaw-gateway.service'",
+    "bash script.sh restart openclaw-gateway",
+    "eval 'echo openclaw gateway restart'",
+    "setsid openclaw gateway status",
+    "ai-resources openclaw graceful-restart --reason manual",
+]
+
+
+@pytest.mark.parametrize("command", EQUIVALENT_RESTART_DENIED)
+def test_equivalent_restart_forms_are_denied_with_the_graceful_restart_alternative(guard, monkeypatch, capsys,
+                                                                                 command):
+    code, err = run(guard, monkeypatch, command, capsys=capsys)
+    assert code == 2, command
+    assert "T29" in err and "ai-resources openclaw graceful-restart" in err
+
+
+@pytest.mark.parametrize("command", EQUIVALENT_STOP_DENIED)
+def test_equivalent_stop_forms_are_denied_with_the_doctor_alternative(guard, monkeypatch, capsys, command):
+    code, err = run(guard, monkeypatch, command, capsys=capsys)
+    assert code == 2, command
+    assert "T01" in err and "ai-resources openclaw doctor" in err
+
+
+@pytest.mark.parametrize("command", EQUIVALENT_ALLOWED)
+def test_read_only_and_look_alike_commands_stay_allowed(guard, monkeypatch, capsys, command):
+    assert run(guard, monkeypatch, command, capsys=capsys) == (0, ""), command
+
+
+@pytest.mark.parametrize("command", EQUIVALENT_RESTART_DENIED[:4] + EQUIVALENT_STOP_DENIED[:3])
+def test_equivalent_forms_step_aside_for_a_maintenance_window_or_a_stopped_gateway(guard, monkeypatch, capsys,
+                                                                                 tmp_path, command):
+    guard.state["active"] = False
+    assert run(guard, monkeypatch, command, capsys=capsys) == (0, "")
+    guard.state["active"] = True
+    (tmp_path / "watchdog.off").write_text("", encoding="utf-8")
+    assert run(guard, monkeypatch, command, capsys=capsys) == (0, "")
