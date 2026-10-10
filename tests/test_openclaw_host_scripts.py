@@ -841,6 +841,16 @@ def test_confirmed_memory_pressure_with_runs_in_flight_in_window_mode_on_restart
     assert "/snap/report.txt" in notice
 
 
+def test_hard_ceiling_reading_forwards_classification_hard_to_graceful_restart(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
+    host.set_pressure("hard", mem=106.0)
+    host.set_graceful(0, OK_RESULT)
+    r = _hr(host)
+    assert r.returncode == 0, r.stderr
+    [call] = _graceful_calls(host)
+    assert "--classification hard" in call and "--reason memory" in call and "--force" not in call
+
+
 def test_mode_notify_and_mode_off_never_call_graceful_restart(host):
     _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="notify")
     assert _hr(host).returncode == 0
