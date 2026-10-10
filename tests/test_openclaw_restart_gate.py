@@ -437,3 +437,33 @@ def test_apply_pending_with_a_bad_overrides_file_errors_cleanly_and_applies_noth
     assert len(errors) == 1 and str(sim.overrides_file) in errors[0] and problem in errors[0]
     assert stops(events) == [] and not [e for e in events if e[0] == "patch"]
     assert "gateway.bind" in pending_paths(s)                       # the key stays pending
+
+
+# --- (o) the engine section's changes are listed and recorded (Q8) -----------------------------------------------------------
+
+def test_engine_section_lists_its_changes_and_records_them_for_the_watch_without_leaking_a_secret(
+        sim, script, monkeypatch):
+    s = _state()
+    s.openclaw.engine = "claude-code"
+    secret = "sk-live-0123456789SECRETVALUE"
+    doc = {"agents": {"defaults": {"model": {"primary": "anthropic/old-model"}}}}
+
+    def fake_patch(*_a, **_k):
+        return {"agents": {"defaults": {"model": {"primary": "anthropic/new-model"}}},
+                "models": {"providers": {"x": {"apiKey": secret}}}}
+
+    monkeypatch.setattr(openclaw, "build_patch", fake_patch)
+    monkeypatch.setattr(openclaw, "_apply_hot", lambda patch, **_k: (True, ""))
+    run_changes: list[dict] = []
+    written: list = []
+    ctx = {"state": s, "dry_run": False, "run_changes": run_changes}
+    assert openclaw._configure_engine(ctx, doc, sim.cfg, "/kit", written) is True
+
+    listed = [m for m in script.messages("info") if m.startswith("changed by the engine section: ")]
+    assert len(listed) == 1 and "agents.defaults.model.primary" in listed[0]
+    rec = [c for c in run_changes if c["path"] == ["agents", "defaults", "model", "primary"]]
+    assert len(rec) == 1 and rec[0]["action"] == "engine" and rec[0]["previous"] == "anthropic/old-model"
+    # the watch's revert path can invert what was recorded
+    inverse, _rp = host.restore_patch(rec)
+    assert inverse["agents"]["defaults"]["model"]["primary"] == "anthropic/old-model"
+    assert secret not in " ".join(m for _l, m in script.log) and secret not in json.dumps(run_changes)
