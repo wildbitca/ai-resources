@@ -721,6 +721,14 @@ def applied_engine(s: state.SetupState) -> Engine | None:
     return None
 
 
+def _file_sha256(path: Path) -> str | None:
+    import hashlib
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 def configure(ctx: dict) -> list[Path]:
     global _before_first_write
     s = ctx["state"]
@@ -741,8 +749,18 @@ def configure(ctx: dict) -> list[Path]:
     # A new run supersedes the previous watch: it is stopped just BEFORE this run's first write, so an old
     # revert can never race the new writes, while a run that writes nothing leaves the old watch (and the
     # state) alone. (setup-state records every watch it starts.)
-    _before_first_write = ((lambda: host_section.stop_config_watch(forget=True, o=s.openclaw))
-                           if (s.openclaw.config_watch and not dry_run) else None)
+    # The same hook also measures the health baseline (E2): one `openclaw health` BEFORE anything is
+    # written, so the watch can tell "setup broke it" from "it was already failing".
+    baseline: dict[str, Any] = {"sha": _file_sha256(path), "healthy": None}
+    ctx["watch_baseline"] = baseline
+
+    def _first_write() -> None:
+        if s.openclaw.config_watch:
+            host_section.stop_config_watch(forget=True, o=s.openclaw)
+        rc, _out = _openclaw(["health"], timeout=45)
+        baseline["healthy"] = rc == 0
+
+    _before_first_write = None if dry_run else _first_write
     try:
         return _configure(ctx, s, cs, dry_run, written, path, doc, ak_path, run_changes)
     finally:
@@ -763,7 +781,7 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
                                           run_changes=run_changes)
     changed = engine_changed or mcp_changed or voice_changed or workshop_changed or host_changed
     if not dry_run and run_changes:
-        host_section.start_config_watch(s, run_changes)
+        host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
     # The kit block in every agent workspace does not depend on the engine, on the host section's
     # answers or on openclaw.json having changed: it is refreshed on every run (B1, v1.9.7).
     _configure_workspace_blocks(s, doc, ak_path, ctx.get("gateway_url", ""), written,
@@ -1177,10 +1195,14 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
     if dry_run:
         return False
     written.append(path)
+    # Only the keys whose value really changes are recorded and listed (E1): a no-op write is not a change.
+    records = openclaw_host.change_records(doc, patch, replace_paths, "engine")
     if ctx.get("run_changes") is not None:
-        ctx["run_changes"].extend(openclaw_host.change_records(doc, patch, replace_paths, "engine"))
+        ctx["run_changes"].extend(records)
     # The engine section is a deliberate wizard choice, not fill-only (ADR-0003), so say which keys it wrote.
-    ui.info("changed by the engine section: " + ", ".join(openclaw_reload_rules.leaf_paths(patch)))
+    changed = [".".join(r["path"]) for r in records]
+    if changed:
+        ui.info("changed by the engine section: " + ", ".join(changed))
 
     if switching_away_from_antigravity:
         if s.openclaw.plugin_linked:

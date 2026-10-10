@@ -379,6 +379,7 @@ class Marker:
 
 
 def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: bool = False,
+           even_if_busy: bool = False, busy_probe: Callable[[], "int | None"] | None = None,
            cleanup_sessions: bool = False, drain_timeout: float = 90, drain_interval: float = 3,
            health_timeout: float = 120, health_interval: float = 5,
            sleep: Callable[[float], None] = time.sleep, marker: Marker | None = None,
@@ -398,7 +399,10 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
     failure this function exists to prevent.
 
     Exit codes: 0 ok; 2 refused (marker present); 3 not drained; 4 doctor failed; 5 gateway did
-    not come back.
+    not come back; 6 refused (agent runs in flight, or the busy probe could not tell).
+
+    The stop aborts every run in flight, so the doctor refuses a busy gateway before anything is
+    stopped unless `even_if_busy` (`--even-if-busy`) says the operator accepts that (E4, ADR-0004).
     """
     oc = openclaw_bin or resolve_openclaw_bin()
 
@@ -426,7 +430,8 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
             out("sessions cleanup: " + " ".join(cleaned.splitlines()[-2:]))
         return doctor_ok
 
-    return drained_window(run_doctor, runner=runner, force=force, drain_timeout=drain_timeout,
+    return drained_window(run_doctor, runner=runner, force=force, require_idle=not even_if_busy,
+                          busy_probe=busy_probe, drain_timeout=drain_timeout,
                           drain_interval=drain_interval, health_timeout=health_timeout,
                           health_interval=health_interval, sleep=sleep, marker=marker,
                           openclaw_bin=oc, out=out,
@@ -576,6 +581,7 @@ def watch_config(run_id: str, *, runner: Runner = default_runner,
                  apply_patch: Callable[..., "tuple[bool, str]"] | None = None,
                  notify: Callable[[str], bool] | None = None, marker: Marker | None = None,
                  reload_mode: Callable[[], "str | None"] | None = None,
+                 load_doc: Callable[[], "dict | None"] | None = None,
                  out: Callable[[str], None] = print, **window_kw: object) -> int:
     """Watch the gateway for `window` seconds after a setup run; revert that run's changes if it stops answering.
 
@@ -620,18 +626,31 @@ def watch_config(run_id: str, *, runner: Runner = default_runner,
             continue
         bad += 1
         if bad >= failures:
+            if cw.get("baseline_healthy") is False:
+                # The gateway was already failing before this run wrote anything (E2): the writes are not the
+                # cause, so reverting them would only add change. Say so once and stop.
+                cw["done"] = True
+                cw["result"] = {"hot": [], "restart": [], "problems": [], "skipped": "baseline-unhealthy"}
+                save(s)
+                message = ("OpenClaw is not answering `openclaw health`, but it was already failing before the "
+                           "last `ai-resources setup` wrote anything, so the kit did not revert that run. "
+                           "Check `ai-resources openclaw status`.")
+                out(message)
+                if not notify(message):
+                    out("watch: no Telegram target configured or the send failed; the journal has the details")
+                return 0
             return _revert_run(s, cw, runner=runner, sleep=sleep, save=save, apply_patch=apply_patch, notify=notify,
-                               reload_mode=reload_mode, marker=marker, out=out, **window_kw)
+                               reload_mode=reload_mode, marker=marker, out=out, load_doc=load_doc, **window_kw)
     out("watch: the gateway stayed healthy; nothing to revert")
     return 0
 
 
 def _revert_run(s, cw: dict, *, runner: Runner, sleep, save, apply_patch, notify, reload_mode, marker, out,
-                **window_kw) -> int:
+                load_doc=None, **window_kw) -> int:
     rr = openclaw_reload_rules
 
     changes = list(cw.get("changes") or [])
-    patch, rp = restore_patch(changes)
+    patch, rp = restore_patch(changes, load_doc() if load_doc else None)
     version = rr.installed_openclaw_version(lambda argv, **kw: runner([resolve_openclaw_bin(), *argv[1:]], **kw))
     restart = rr.restart_paths(patch, openclaw_version=version, reload_mode=reload_mode())
     hot, res = rr.split_patch(patch, restart)
@@ -693,7 +712,15 @@ def cmd_config_watch(args: argparse.Namespace) -> int:
         raise SystemExit(143)
 
     signal.signal(signal.SIGTERM, _term)
-    return watch_config(args.run_id, window=args.window, interval=args.interval)
+    from .setup.cockpits import openclaw as cockpit
+
+    def load_doc():
+        try:
+            return cockpit.read_config(cockpit.config_path())
+        except Exception:                      # an unreadable live file means "do not filter"
+            return None
+
+    return watch_config(args.run_id, window=args.window, interval=args.interval, load_doc=load_doc)
 
 
 # --- the restart guard: is a turn in flight right now? --------------------------------------------
@@ -1328,6 +1355,8 @@ def change_records(doc: dict, patch: dict, replace_paths: list[str] | None, acti
                 walk(v, path + [str(k)])
             return
         current, had = _get_path(doc, path)
+        if (had and current == node) or (not had and node is None):
+            return                    # a no-op write: nothing to record, nothing to put back (E1)
         secret = is_secret_path(path)
         ch: dict = {"path": path, "previous": None if secret else (copy.deepcopy(current) if had else None),
                     "had": had, "action": action}
@@ -1341,13 +1370,21 @@ def change_records(doc: dict, patch: dict, replace_paths: list[str] | None, acti
     return out
 
 
-def restore_patch(changes: list[dict]) -> tuple[dict, list[str]]:
-    """The patch that puts every changed leaf back as it was (absent leaves are deleted)."""
+def restore_patch(changes: list[dict], doc: dict | None = None) -> tuple[dict, list[str]]:
+    """The patch that puts every changed leaf back as it was (absent leaves are deleted).
+
+    With `doc` (the live config), a leaf that already holds the restore target is skipped: a no-op
+    must never open a drained window (E1).
+    """
     patch: dict = {}
     replace_paths: list[str] = []
     for ch in changes:
         if ch.get("action") == "kept":
             continue                  # a kept value was never written, so there is nothing to put back
+        if doc is not None and not (ch.get("secret") and ch["had"]):
+            live, live_had = _get_path(doc, ch["path"])
+            if (ch["had"] and live_had and live == ch["previous"]) or (not ch["had"] and not live_had):
+                continue
         if ch.get("secret") and ch["had"]:
             # The old value was never stored, so there is nothing to put back. Deleting the leaf
             # would destroy a credential; leave it and let the operator run `openclaw configure`.
@@ -2250,6 +2287,42 @@ def recorded_pending() -> dict:
 
 PENDING_COMMAND = "ai-resources openclaw apply-pending"
 
+_DURATION_UNITS = (("d", 86400), ("h", 3600), ("min", 60), ("ms", 0.001), ("us", 0.000001), ("s", 1))
+
+
+def parse_systemd_duration(text: str) -> float | None:
+    """"4d 21h 7min 25.721953s" -> seconds; None for anything that is not a systemd time span."""
+    total, seen = 0.0, False
+    for tok in text.split():
+        for unit, mult in _DURATION_UNITS:
+            if tok.endswith(unit) and re.fullmatch(r"\d+(\.\d+)?", tok[: -len(unit)] or "x"):
+                total += float(tok[: -len(unit)]) * mult
+                seen = True
+                break
+        else:
+            return None
+    return total if seen else None
+
+
+def next_elapse_display(realtime: str, monotonic: str, *, uptime_s: float | None, now: float) -> str:
+    """The "next" column of a timer. A monotonic-only timer (OnBootSec/OnUnitActiveSec) has an empty
+    NextElapseUSecRealtime; its NextElapseUSecMonotonic is a span since boot, so it is converted
+    through the uptime (E6). "-" when neither says anything."""
+    if realtime.strip():
+        return realtime.strip()
+    span = parse_systemd_duration(monotonic.strip()) if monotonic.strip() else None
+    if span is None or uptime_s is None:
+        return "-"
+    when = now + (span - uptime_s)
+    return time.strftime("%a %Y-%m-%d %H:%M:%S UTC", time.gmtime(when))
+
+
+def read_uptime(path: str = "/proc/uptime") -> float | None:
+    try:
+        return float(Path(path).read_text(encoding="utf-8").split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
 
 def pending_lines(pending: dict) -> list[str]:
     out: list[str] = []
@@ -2303,10 +2376,15 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
     report["health"] = {"ok": rc == 0}
 
     timers = []
+    uptime = read_uptime(os.environ.get("OPENCLAW_UPTIME_FILE") or hostenv.get("OPENCLAW_UPTIME_FILE") or "/proc/uptime")
     for name in TIMER_NAMES:
         _rc, nxt = sc("show", name, "-p", "NextElapseUSecRealtime", "--value")
+        mono = ""
+        if not nxt.strip():
+            _rc, mono = sc("show", name, "-p", "NextElapseUSecMonotonic", "--value")
         rc_e, en = sc("is-enabled", name)
-        timers.append({"name": name, "enabled": rc_e == 0 and en.strip() == "enabled", "next": nxt.strip() or "-"})
+        timers.append({"name": name, "enabled": rc_e == 0 and en.strip() == "enabled",
+                       "next": next_elapse_display(nxt, mono, uptime_s=uptime, now=time.time() if now is None else now)})
     report["timers"] = timers
 
     base = Path(hostenv.get("OPENCLAW_BACKUP_DIR", "/srv/openclaw-backups"))
@@ -2489,8 +2567,12 @@ def cmd_render_gitops_backups(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    return doctor(force=args.force, dry_run=args.dry_run, cleanup_sessions=args.cleanup_sessions,
-                  drain_timeout=args.drain_timeout, health_timeout=args.health_timeout)
+    rc = doctor(force=args.force, dry_run=args.dry_run, cleanup_sessions=args.cleanup_sessions,
+                even_if_busy=getattr(args, "even_if_busy", False),
+                drain_timeout=args.drain_timeout, health_timeout=args.health_timeout)
+    if rc == EXIT_REFUSED_BUSY:
+        print("nothing was stopped. Pass --even-if-busy to run it anyway (it aborts the runs in flight).")
+    return rc
 
 
 def cmd_busy(args: argparse.Namespace) -> int:
@@ -2576,6 +2658,8 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_doc = verbs.add_parser("doctor", help="Run `openclaw doctor --fix` safely: drain, fix, restart, verify")
     p_doc.add_argument("--force", action="store_true", help="Proceed although watchdog.off already exists")
     p_doc.add_argument("--dry-run", action="store_true", help="Print the sequence; touch nothing")
+    p_doc.add_argument("--even-if-busy", action="store_true",
+                       help="Proceed although agent runs are in flight (or the probe cannot tell); the stop aborts them")
     p_doc.add_argument("--drain-timeout", type=float, default=90, help="Seconds to wait for the cgroup to drain")
     p_doc.add_argument("--health-timeout", type=float, default=120, help="Seconds to wait for the gateway to answer")
     p_doc.add_argument("--cleanup-sessions", action="store_true",

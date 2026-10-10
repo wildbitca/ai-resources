@@ -388,3 +388,52 @@ def test_restore_bindings_survives_a_restart_required_refusal():
 
     assert section._restore_bindings(o, {"bindings": []}, refuse) is False
     assert o.bindings_applied is True, "nothing was restored, so the record stays"
+
+
+# --- E2: the watch needs a baseline ------------------------------------------------------------------------------------
+
+def test_a_failing_baseline_never_reverts_notifies_once_and_exits_zero(rig):
+    r = rig([HOT, BIND])
+    r.s.openclaw.config_watch["baseline_healthy"] = False
+    assert r.run() == 0
+    assert r.real_writes() == [] and r.systemctl_changes() == []
+    assert len(r.notes) == 1 and "already failing" in r.notes[0]
+    assert r.s.openclaw.config_watch["done"] is True
+    assert r.s.openclaw.config_watch["result"]["skipped"] == "baseline-unhealthy"
+
+
+def test_a_healthy_baseline_still_reverts(rig):
+    r = rig([HOT])
+    r.s.openclaw.config_watch["baseline_healthy"] = True
+    assert r.run() == 0
+    assert len(r.real_writes()) == 1
+
+
+def test_an_unchanged_config_sha_starts_no_systemd_run(sim, script, ai_resources_on_path):
+    s = _state()
+    sim.systemd.calls.clear()
+    path = sim.cfg
+    baseline = {"sha": __import__("hashlib").sha256(path.read_bytes()).hexdigest(), "healthy": True}
+    started = section.start_config_watch(s, [dict(HOT)], config_path=path, baseline=baseline)
+    assert started is False and s.openclaw.config_watch is None
+    assert not [c for c in sim.systemd.calls if c[0] == "systemd-run"]
+    assert any("byte-identical" in m for m in script.messages("info"))
+
+
+def test_the_wizard_stores_the_baseline_health_it_measured_before_writing(sim, script, ai_resources_on_path, monkeypatch):
+    real = sim.oc
+    order = []
+
+    def oc(args, stdin=None, timeout=120):
+        if args[:1] == ["health"]:
+            order.append("health")
+            return 1, "down"
+        if args[:2] == ["config", "patch"] and "--dry-run" not in args:
+            order.append("write")
+        return real(args, stdin=stdin, timeout=timeout)
+
+    monkeypatch.setattr(openclaw, "_openclaw", oc)
+    s = _state()
+    _run_wizard(s)
+    assert order and order[0] == "health" and "write" in order
+    assert s.openclaw.config_watch["baseline_healthy"] is False

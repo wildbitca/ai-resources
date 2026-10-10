@@ -571,3 +571,34 @@ def test_status_prints_the_pending_lines_after_the_report(monkeypatch, capsys):
     assert host.cmd_status(argparse.Namespace(no_doctor=True)) == 0
     out = capsys.readouterr().out
     assert out.index("REPORT") < out.index("restart-required config pending: gateway.bind")
+
+
+# --- E6: a timer scheduled on the monotonic clock still shows a time -----------------------------------------------------
+
+def test_only_the_monotonic_value_set_shows_a_timestamp_not_a_dash(env, tmp_path):
+    uptime = tmp_path / "uptime"
+    uptime.write_text("1000.50 2000.0\n", encoding="utf-8")
+    env.hostenv.write_text(env.hostenv.read_text(encoding="utf-8") + f"OPENCLAW_UPTIME_FILE={uptime}\n",
+                           encoding="utf-8")
+
+    class Mono(Canned):
+        def __call__(self, argv, **kw):
+            a = list(argv)
+            if a[:3] == ["systemctl", "--user", "show"] and "NextElapseUSecRealtime" in a:
+                return 0, ""
+            if a[:3] == ["systemctl", "--user", "show"] and "NextElapseUSecMonotonic" in a:
+                return 0, "1h 16min 40.5s"          # 4600.5 s since boot; 3600 s from now at uptime 1000.5
+            return super().__call__(argv, **kw)
+
+    report = collect(env, Mono(doctor=doctor_text("doctor_noise_only.txt")))
+    nxt = [t["next"] for t in report["timers"]]
+    assert all(n != "-" for n in nxt)
+    import time as _t
+    assert nxt[0] == _t.strftime("%a %Y-%m-%d %H:%M:%S UTC", _t.gmtime(NOW + 3600))
+
+
+def test_parse_systemd_duration_and_garbage():
+    assert host.parse_systemd_duration("4d 21h 7min 25.721953s") == pytest.approx(4 * 86400 + 21 * 3600 + 7 * 60 + 25.721953)
+    assert host.parse_systemd_duration("") is None and host.parse_systemd_duration("soon") is None
+    assert host.next_elapse_display("", "", uptime_s=5.0, now=NOW) == "-"
+    assert host.next_elapse_display("Sun 2026-09-20 03:30:00 UTC", "", uptime_s=None, now=NOW).startswith("Sun")

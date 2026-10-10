@@ -571,7 +571,7 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
         changes += [c for c in built["changes"] if ".".join(c["path"]) in wanted]
     restores = [e["change"] for e in pending if e.get("op") == "restore"]
     if restores:
-        rpatch, rrp = host.restore_patch(restores)
+        rpatch, rrp = host.restore_patch(restores, doc)      # a restore the live value already satisfies is a no-op
         patch = rr.deep_merge(patch, rpatch)
         rp += rrp
     if not patch:
@@ -614,7 +614,8 @@ def stop_config_watch(*, forget: bool = False, o: state.OpenClawState | None = N
         o.config_watch = None
 
 
-def start_config_watch(s: state.SetupState, run_changes: list[dict]) -> bool:
+def start_config_watch(s: state.SetupState, run_changes: list[dict], *, config_path: Path | None = None,
+                       baseline: dict | None = None) -> bool:
     """Record this run's changes and start the bounded health watch as a transient user unit.
 
     Never a foreground loop (T39: an open tool call holds a gateway stop). When `systemd-run` or
@@ -626,6 +627,15 @@ def start_config_watch(s: state.SetupState, run_changes: list[dict]) -> bool:
     o = s.openclaw
     if not run_changes:
         return False
+    if baseline and config_path is not None and baseline.get("sha") is not None:
+        import hashlib
+        try:
+            now_sha = hashlib.sha256(config_path.read_bytes()).hexdigest()
+        except OSError:
+            now_sha = None
+        if now_sha == baseline["sha"]:
+            ui.info("post-setup watch not started: openclaw.json is byte-identical to before this run")
+            return False
     run_id = uuid.uuid4().hex[:8]
     unit = host.WATCH_UNIT_PREFIX + run_id
     cli = shutil.which("ai-resources")
@@ -633,8 +643,9 @@ def start_config_watch(s: state.SetupState, run_changes: list[dict]) -> bool:
         ui.warn("post-setup watch not started: `ai-resources` is not on PATH; run `ai-resources openclaw status` "
                 "in 10 minutes")
         return False
+    healthy = (baseline or {}).get("healthy")
     o.config_watch = {"run_id": run_id, "unit": unit, "started_at": _now(), "changes": run_changes,
-                      "done": False, "result": None}
+                      "baseline_healthy": healthy is not False, "done": False, "result": None}
     # The watch reads the state file from its very first tick: it must be on disk before the unit starts.
     state.save(s)
     rc, out = _runner()(["systemd-run", "--user", f"--unit={unit}", "--collect", "-p", "RuntimeMaxSec=1800",

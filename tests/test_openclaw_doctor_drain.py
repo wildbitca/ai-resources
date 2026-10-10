@@ -85,6 +85,7 @@ class Fake:
         kw.setdefault("drain_interval", 3)
         kw.setdefault("health_timeout", 20)
         kw.setdefault("health_interval", 5)
+        kw.setdefault("even_if_busy", True)     # the sequence tests are about the order, not the busy gate
         code = host.doctor(self, sleep=self.sleep, marker=self.marker, openclaw_bin="openclaw",
                            out=lines.append, **kw)
         return code, lines
@@ -314,3 +315,34 @@ def test_the_busy_verb_exit_codes(monkeypatch, capsys):
         assert host.cmd_busy(argparse.Namespace(json=True)) == code
     out = capsys.readouterr().out.strip().splitlines()
     assert '"probe_ok": false' in out[-1] and '"busy": null' in out[-1]
+
+
+# --- E4 (ADR-0004): the doctor refuses a busy gateway unless --even-if-busy --------------------------------------
+
+@pytest.mark.parametrize("busy", [3, None])
+def test_a_busy_or_unknown_gateway_is_refused_with_rc_6_and_nothing_is_stopped(busy):
+    fake = Fake()
+    code, lines = fake.run(even_if_busy=False, busy_probe=lambda: busy)
+    assert code == host.EXIT_REFUSED_BUSY == 6
+    assert fake.events == [], "no marker, no stop, no doctor"
+    assert any("nothing was stopped" in l for l in lines)
+
+
+def test_an_idle_gateway_runs_the_doctor_without_the_flag():
+    fake = Fake()
+    code, _ = fake.run(even_if_busy=False, busy_probe=lambda: 0)
+    assert code == 0 and "doctor" in fake.events
+
+
+def test_even_if_busy_keeps_the_old_path():
+    fake = Fake()
+    code, _ = fake.run(even_if_busy=True, busy_probe=lambda: 7)
+    assert code == 0 and fake.ops() == ["touch", "stop", "drain", "doctor", "rm", "start", "health"]
+
+
+def test_the_cli_exposes_even_if_busy_and_defaults_it_off():
+    import argparse
+    ap = argparse.ArgumentParser()
+    host.add_subparser(ap.add_subparsers(dest="cmd"))
+    assert ap.parse_args(["openclaw", "doctor"]).even_if_busy is False
+    assert ap.parse_args(["openclaw", "doctor", "--even-if-busy"]).even_if_busy is True

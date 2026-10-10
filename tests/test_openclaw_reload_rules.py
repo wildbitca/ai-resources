@@ -163,3 +163,54 @@ def test_reload_mode_of():
     assert rr.reload_mode_of({"gateway": {"reload": {"mode": "off"}}}) == "off"
     assert rr.reload_mode_of({"gateway": {}}) is None
     assert rr.reload_mode_of(None) is None
+
+
+# --- E3: the version comes from package.json, not the CLI --------------------------------------------------------------
+
+def _pkg(tmp_path, body):
+    p = tmp_path / "package.json"
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_package_json_version_never_calls_the_cli(tmp_path, monkeypatch):
+    pj = _pkg(tmp_path, '{"name": "openclaw", "version": "2026.9.9"}')
+    monkeypatch.setattr(rr, "_find_package_json", lambda: pj)
+
+    def boom(argv, **kw):
+        raise AssertionError("the CLI must not be called when package.json answers")
+
+    assert rr.read_installed_version(boom, refresh=True) == "2026.9.9"
+
+
+def test_a_missing_package_json_falls_back_to_the_cli(monkeypatch):
+    monkeypatch.setattr(rr, "_find_package_json", lambda: None)
+    assert rr.read_installed_version(lambda argv, **kw: (0, "OpenClaw 2026.9.9 (x)"), refresh=True) == "2026.9.9"
+
+
+def test_garbage_package_json_and_garbage_cli_give_none(tmp_path, monkeypatch):
+    pj = _pkg(tmp_path, '{"name": "openclaw", "version": "not-a-version"}')
+    monkeypatch.setattr(rr, "_find_package_json", lambda: pj)
+    assert rr.read_installed_version(lambda argv, **kw: (0, "garbage"), refresh=True) is None
+    pj2 = _pkg(tmp_path, "{{{ not json")
+    monkeypatch.setattr(rr, "_find_package_json", lambda: pj2)
+    assert rr.read_installed_version(lambda argv, **kw: (1, "boom"), refresh=True) is None
+    pj3 = _pkg(tmp_path, '{"name": "other", "version": "2026.9.9"}')
+    monkeypatch.setattr(rr, "_find_package_json", lambda: pj3)
+    assert rr.read_installed_version(lambda argv, **kw: (1, "boom"), refresh=True) is None
+
+
+def test_locate_package_json_resolves_the_symlinked_entry_point(tmp_path, monkeypatch):
+    import shutil
+    pkg = tmp_path / "lib" / "node_modules" / "openclaw"
+    pkg.mkdir(parents=True)
+    (pkg / "openclaw.mjs").write_text("", encoding="utf-8")
+    (pkg / "package.json").write_text('{"name": "openclaw", "version": "2026.9.9"}', encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "openclaw").symlink_to(pkg / "openclaw.mjs")
+    monkeypatch.setattr(shutil, "which", lambda n, *a, **k: str(bin_dir / n))
+    found = rr.locate_package_json()
+    assert found is not None and found.name == "package.json" and found.parent.samefile(pkg)
+    monkeypatch.setattr(shutil, "which", lambda n, *a, **k: None)
+    assert rr.locate_package_json() is None

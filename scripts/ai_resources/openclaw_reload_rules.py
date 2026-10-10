@@ -270,14 +270,59 @@ def deep_merge(a: dict, b: dict) -> dict:
 _VERSION_CACHE: dict[int, tuple[object, str | None]] = {}
 
 
-def read_installed_version(runner: Callable[..., "tuple[int, str]"], *, refresh: bool = False) -> str | None:
-    """`openclaw --version` parsed to e.g. "2026.9.9"; None when it cannot be read. Cached per runner."""
+_VERSION_RE = r"\b(\d{4}\.\d+\.\d+)\b"
+
+
+def locate_package_json() -> "Path | None":
+    """The `package.json` next to the `openclaw` entry point the PATH resolves, or None.
+
+    Reading the file needs no gateway and no subprocess: the CLI answers slowly (or not at all) while the
+    gateway is under memory pressure, and a None version makes every key restart-required (E3).
+    """
+    import os
+    import shutil
+    from pathlib import Path
+    found = shutil.which("openclaw")
+    if not found:
+        return None
+    pj = Path(os.path.realpath(found)).parent / "package.json"
+    return pj if pj.is_file() else None
+
+
+# The name read_installed_version calls; the test suite replaces THIS name (conftest).
+_find_package_json = locate_package_json
+
+
+def _version_from_package_json(path) -> str | None:
+    import json
     import re
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("name") != "openclaw":
+        return None
+    v = data.get("version")
+    return v if isinstance(v, str) and re.fullmatch(r"\d{4}\.\d+\.\d+", v) else None
+
+
+def read_installed_version(runner: Callable[..., "tuple[int, str]"], *, refresh: bool = False) -> str | None:
+    """The installed OpenClaw version, e.g. "2026.9.9"; None when it cannot be read. Cached per runner.
+
+    The installed package's `package.json` comes first (no gateway needed); `openclaw --version` is
+    the fallback. Garbage in either gives None, so the fail-closed rule is unchanged.
+    """
+    import re
+    pj = _find_package_json()
+    if pj is not None:
+        from_file = _version_from_package_json(pj)
+        if from_file:
+            return from_file
     hit = _VERSION_CACHE.get(id(runner))
     if hit is not None and hit[0] is runner and not refresh:
         return hit[1]
     rc, out = runner(["openclaw", "--version"], timeout=30)
-    m = re.search(r"\b(\d{4}\.\d+\.\d+)\b", out or "") if rc == 0 else None
+    m = re.search(_VERSION_RE, out or "") if rc == 0 else None
     version = m.group(1) if m else None
     _VERSION_CACHE[id(runner)] = (runner, version)
     return version

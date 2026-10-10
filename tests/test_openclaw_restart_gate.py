@@ -467,3 +467,41 @@ def test_engine_section_lists_its_changes_and_records_them_for_the_watch_without
     inverse, _rp = host.restore_patch(rec)
     assert inverse["agents"]["defaults"]["model"]["primary"] == "anthropic/old-model"
     assert secret not in " ".join(m for _l, m in script.log) and secret not in json.dumps(run_changes)
+
+
+# --- (p) E1: a no-op change leaves no record and opens no window -------------------------------------------------------------
+
+def test_an_equal_value_change_makes_no_record_and_a_real_one_still_does():
+    doc = {"agents": {"defaults": {"model": {"primary": "claude-sonnet-5"}},
+                      "models": {"m": {"agentRuntime": {"id": "claude-cli"}}}}}
+    patch = {"agents": {"defaults": {"model": {"primary": "claude-sonnet-5"}},
+                        "models": {"m": {"agentRuntime": {"id": "claude-cli"}}, "n": {"x": None}}}}
+    assert host.change_records(doc, patch, None, "engine") == []
+    patch["agents"]["defaults"]["model"]["primary"] = "claude-sonnet-6"
+    recs = host.change_records(doc, patch, None, "engine")
+    assert [".".join(r["path"]) for r in recs] == ["agents.defaults.model.primary"]
+
+
+def test_restore_patch_with_the_live_doc_skips_a_value_that_is_already_back():
+    changes = [{"path": ["gateway", "bind"], "previous": "lan", "had": True, "action": "engine"},
+               {"path": ["a", "b"], "previous": None, "had": False, "delete": ["a"], "action": "engine"}]
+    doc = {"gateway": {"bind": "lan"}}
+    assert host.restore_patch(changes, doc) == ({}, [])
+    patch, _rp = host.restore_patch(changes, {"gateway": {"bind": "tailnet"}, "a": {"b": 1}})
+    assert patch == {"gateway": {"bind": "lan"}, "a": None}
+    # without a doc the old behaviour is unchanged
+    assert host.restore_patch(changes)[0] == {"gateway": {"bind": "lan"}, "a": None}
+
+
+def test_apply_pending_with_only_no_op_restores_opens_no_window_and_clears_them(sim, script, events):
+    s = _state()
+    doc = json.loads(sim.cfg.read_text())
+    doc.setdefault("gateway", {})["bind"] = "lan"
+    sim.cfg.write_text(json.dumps(doc))
+    s.openclaw.host_restart_pending = [{"op": "restore", "path": "gateway.bind", "source": "watch", "at": "x",
+                                        "change": {"path": ["gateway", "bind"], "previous": "lan", "had": True,
+                                                   "action": "engine"}}]
+    events.clear()
+    assert section.apply_pending(s, assume_yes=True) == 0
+    assert s.openclaw.host_restart_pending == []
+    assert stops(events) == [] and not [e for e in events if e[0] == "patch"]

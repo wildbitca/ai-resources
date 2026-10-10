@@ -51,6 +51,8 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     from ai_resources import openclaw_reload_rules
     monkeypatch.setattr(openclaw_reload_rules, "installed_openclaw_version",
                         lambda runner, **kw: openclaw_reload_rules.PINNED_OPENCLAW_VERSION)
+    # E3: the package.json lookup would read the operator's installed OpenClaw; a test never depends on it.
+    monkeypatch.setattr(openclaw_reload_rules, "_find_package_json", lambda: None)
     from ai_resources.setup.cockpits import _openclaw_host as host_section
     monkeypatch.setattr(host_section, "_in_flight", lambda: (0, "0"))
     monkeypatch.setattr(openclaw_cockpit, "_live_reload_mode", lambda: None)
