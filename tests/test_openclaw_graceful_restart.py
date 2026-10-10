@@ -279,9 +279,10 @@ def test_sigterm_during_the_restart_removes_the_marker(env, tmp_path):
                 pathlib.Path({str(ready)!r}).write_text("x")
                 time.sleep(60)
             return 0, ""
-        host.graceful_restart(reason="memory", classification="pressure", runner=runner,
+        # a fixed instant (2026-10-11 03:00 UTC) inside 02:00-05:00 UTC: the test never reads the wall clock
+        host.graceful_restart(reason="memory", classification="pressure", runner=runner, now=lambda: 1791687600.0,
                               knobs={{**host.RESTART_KNOB_DEFAULTS, "OPENCLAW_GRACEFUL_RESTART": "on",
-                                      "OPENCLAW_RESTART_WINDOW": "00:00-23:59", "OPENCLAW_RESTART_TZ": "UTC"}},
+                                      "OPENCLAW_RESTART_WINDOW": "02:00-05:00", "OPENCLAW_RESTART_TZ": "UTC"}},
                               marker=marker, state_path=pathlib.Path({str(home / 'state')!r}),
                               lock_path=pathlib.Path({str(home / 'lock')!r}),
                               snapshot_root=pathlib.Path({str(home / 'snaps')!r}),

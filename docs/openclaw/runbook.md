@@ -1108,7 +1108,7 @@ default: tell you once per episode what it WOULD do, restart nothing) or `on`. A
 
 | Knob | Default | Meaning |
 |---|---|---|
-| `OPENCLAW_RESTART_WINDOW` | `02:00-05:00` | `HH:MM-HH:MM`, may wrap midnight; empty = never inside a window |
+| `OPENCLAW_RESTART_WINDOW` | `02:00-05:00` | `HH:MM-HH:MM`, both ends inclusive to the minute (`00:00-23:59` is the whole day), may wrap midnight; empty = never inside a window |
 | `OPENCLAW_RESTART_TZ` | `America/Guayaquil` | the zone the window is read in. The host clock is UTC; the window is NOT the host's local time |
 | `OPENCLAW_RESTART_HARD_PCT` | `105` | % of `MemoryHigh` above which the ceiling overrides the window |
 | `OPENCLAW_RESTART_PRESSURE_PCT` | `90` | % of `MemoryHigh` that counts as pressure (swap must also be >= 90 %) |

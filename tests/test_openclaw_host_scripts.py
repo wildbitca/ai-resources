@@ -934,6 +934,23 @@ def test_two_ticks_in_one_episode_send_one_notice_and_a_healthy_tick_starts_a_ne
     assert len(host.sent()) == 2
 
 
+def _run_line(host) -> str:
+    text = (host.home / ".openclaw" / "logs" / "health-restart.log").read_text(encoding="utf-8")
+    [line] = [l for l in text.splitlines() if "mode on: running the graceful restart" in l]
+    return line
+
+
+def test_a_real_run_is_not_logged_as_a_dry_run_and_a_dry_run_is(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
+    host.set_graceful(0, OK_RESULT)
+    assert _hr(host).returncode == 0
+    assert "[dry run]" not in _run_line(host)
+    (host.home / ".openclaw" / "logs" / "health-restart.log").unlink()
+    host.set_graceful(0, {"result": "dry-run", "exit_code": 0})
+    assert _hr(host, "--dry-run").returncode == 0
+    assert _run_line(host).endswith("[dry run]")
+
+
 def test_dry_run_in_mode_on_passes_dry_run_and_changes_nothing(host):
     _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
     host.set_graceful(0, {"result": "dry-run", "exit_code": 0})

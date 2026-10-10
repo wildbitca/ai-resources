@@ -312,6 +312,9 @@ def window_open(now: float, window: str, tz: str = DEFAULT_TZ) -> bool:
     The host clock is UTC while the operator lives in America/Guayaquil (UTC-5), so the zone is an
     explicit knob (OPENCLAW_RESTART_TZ) and never the host's local time. A window that wraps past
     midnight ("22:00-04:00") is handled. Empty, malformed or an unresolvable zone: closed.
+
+    Both ends are INCLUSIVE at minute granularity: "00:00-23:59" is the whole day and "02:00-05:00"
+    is open through 05:00:59. "HH:MM-HH:MM" with equal ends is closed (use "00:00-23:59" for a day).
     """
     span = parse_window(window)
     if span is None:
@@ -323,8 +326,8 @@ def window_open(now: float, window: str, tz: str = DEFAULT_TZ) -> bool:
     if start == end:
         return False
     if start < end:
-        return start <= minute < end
-    return minute >= start or minute < end
+        return start <= minute <= end
+    return minute >= start or minute <= end
 
 
 # --- the recovery report ---------------------------------------------------------------------------

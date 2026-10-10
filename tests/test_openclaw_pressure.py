@@ -231,13 +231,23 @@ def test_the_window_is_evaluated_in_the_operators_zone_not_the_host_clock():
     assert not pr.window_open(_epoch(2026, 10, 10, 18, 20), "02:00-05:00", "America/Guayaquil")   # 13:20 local
 
 
-def test_window_edges_are_start_inclusive_end_exclusive():
+def test_window_edges_are_inclusive_at_minute_granularity():
+    assert not pr.window_open(_epoch(2026, 10, 10, 1, 59), "02:00-05:00", "UTC")
     assert pr.window_open(_epoch(2026, 10, 10, 2, 0), "02:00-05:00", "UTC")
-    assert not pr.window_open(_epoch(2026, 10, 10, 5, 0), "02:00-05:00", "UTC")
+    assert pr.window_open(_epoch(2026, 10, 10, 5, 0), "02:00-05:00", "UTC")
+    assert pr.window_open(_epoch(2026, 10, 10, 5, 0) + 59, "02:00-05:00", "UTC"), "open through 05:00:59"
+    assert not pr.window_open(_epoch(2026, 10, 10, 5, 1), "02:00-05:00", "UTC")
+
+
+def test_a_whole_day_window_is_open_at_every_minute_including_the_last():
+    for window in ("00:00-23:59", "00:00-24:00"):
+        for h, m in ((0, 0), (12, 30), (23, 58), (23, 59)):
+            assert pr.window_open(_epoch(2026, 10, 10, h, m), window, "UTC"), (window, h, m)
 
 
 def test_a_window_may_wrap_past_midnight():
-    for h, m, want in ((23, 0, True), (1, 59, True), (3, 59, True), (4, 0, False), (12, 0, False), (21, 59, False)):
+    for h, m, want in ((23, 0, True), (1, 59, True), (3, 59, True), (4, 0, True), (4, 1, False),
+                       (12, 0, False), (21, 59, False)):
         assert pr.window_open(_epoch(2026, 10, 10, h, m), "22:00-04:00", "UTC") is want, (h, m)
 
 

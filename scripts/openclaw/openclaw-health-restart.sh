@@ -141,7 +141,8 @@ if [ "$key" = memory ]; then
   # ONE call site. A dry run passes --dry-run: the CLI evaluates every gate and mutates nothing.
   gr_args=(--reason memory --classification "$class" --json)
   [ "$DRY" = 1 ] && gr_args+=(--dry-run)
-  log "mode on: running the graceful restart ($reason)${DRY:+ [dry run]}"
+  dry_note=""; [ "$DRY" = 1 ] && dry_note=" [dry run]"
+  log "mode on: running the graceful restart ($reason)$dry_note"
   out="$(ai-resources openclaw graceful-restart "${gr_args[@]}" 2>>"$LOG")"
   rrc=$?
   result="$(jget "$out" 'd["result"]' unknown)"
