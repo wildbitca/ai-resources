@@ -27,6 +27,29 @@ fi
 # Where the watchdog reads the monotonic clock; a test points it at a file.
 : "${OPENCLAW_UPTIME_FILE:=/proc/uptime}"
 
+# Resource-safety knobs (ADR-0004), read by openclaw-health-restart.sh and by the Python CLIs it calls
+# (`ai-resources openclaw pressure|graceful-restart`, which have the same defaults). Exported so both
+# sides see one value.
+#   OPENCLAW_GRACEFUL_RESTART  off | notify | on. `notify` tells the operator what would be done; only `on`
+#                              restarts, and only after a supervised restart proved it safe on this host.
+#   OPENCLAW_RESTART_WINDOW    HH:MM-HH:MM in OPENCLAW_RESTART_TZ (the host clock is UTC, the operator's zone
+#                              is America/Guayaquil). Empty: never inside a window, only the ceiling acts.
+#   OPENCLAW_RESTART_HARD_PCT  % of MemoryHigh above which the window is overridden.
+: "${OPENCLAW_GRACEFUL_RESTART:=notify}"
+: "${OPENCLAW_RESTART_WINDOW=02:00-05:00}"
+: "${OPENCLAW_RESTART_TZ:=America/Guayaquil}"
+: "${OPENCLAW_RESTART_HARD_PCT:=105}"
+: "${OPENCLAW_RESTART_PRESSURE_PCT:=90}"
+: "${OPENCLAW_RESTART_COOLDOWN_S:=10800}"
+: "${OPENCLAW_RESTART_DAILY_CAP:=2}"
+: "${OPENCLAW_HEALTH_CONFIRM_S:=60}"
+: "${OPENCLAW_RESTART_SNAPSHOTS_KEEP:=10}"
+: "${OPENCLAW_FROZEN_MIN_S:=600}"
+: "${OPENCLAW_RESTART_SETTLE_S:=120}"
+export OPENCLAW_GRACEFUL_RESTART OPENCLAW_RESTART_WINDOW OPENCLAW_RESTART_TZ OPENCLAW_RESTART_HARD_PCT \
+  OPENCLAW_RESTART_PRESSURE_PCT OPENCLAW_RESTART_COOLDOWN_S OPENCLAW_RESTART_DAILY_CAP \
+  OPENCLAW_HEALTH_CONFIRM_S OPENCLAW_RESTART_SNAPSHOTS_KEEP OPENCLAW_FROZEN_MIN_S OPENCLAW_RESTART_SETTLE_S
+
 # OPENCLAW_EXTRA_PATH goes FIRST: an operator who sets it wants that openclaw, not the default.
 export PATH="${OPENCLAW_EXTRA_PATH:+$OPENCLAW_EXTRA_PATH:}/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin:$HOME/.local/bin"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"

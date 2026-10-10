@@ -93,6 +93,7 @@ class Host:
             self._stub(name)
         self.env_file = self.home / ".openclaw" / "kit-host.env"
         self.uptime_file = tmp / "uptime"
+        self.set_pressure("healthy", mem=10.0, swap=0.0)
 
     def _stub(self, name: str):
         script = self.bin / name
@@ -113,6 +114,8 @@ case "{name} $1 $2" in
   "openclaw health "*) exit "$(cat "{self.bin}/health-rc" 2>/dev/null || echo 0)" ;;
   "ai-resources models"*) cat "{self.bin}/models-out" 2>/dev/null; exit "$(cat "{self.bin}/models-rc" 2>/dev/null || echo 0)" ;;
   "ai-resources openclaw busy"*) exit "$(cat "{self.bin}/busy-rc" 2>/dev/null || echo 0)" ;;
+  "ai-resources openclaw pressure") cat "{self.bin}/pressure-out" 2>/dev/null; exit 0 ;;
+  "ai-resources openclaw graceful-restart") cat "{self.bin}/graceful-out" 2>/dev/null; exit "$(cat "{self.bin}/graceful-rc" 2>/dev/null || echo 0)" ;;
   "ai-resources openclaw"*) echo "Repaired legacy bindings 2"; exit "$(cat "{self.bin}/doctor-rc" 2>/dev/null || echo 0)" ;;
 esac
 exit 0
@@ -132,6 +135,18 @@ exit 0
         (self.bin / "mem-current").write_text("95\n", encoding="utf-8")
         (self.bin / "mem-high").write_text("100\n", encoding="utf-8")
         (self.bin / "free-out").write_text("Swap: 1000 950 50\n", encoding="utf-8")
+        self.set_pressure("pressure")
+
+    def set_pressure(self, classification: str, *, mem: float = 94.0, swap: float = 96.0, **evidence):
+        """What `ai-resources openclaw pressure --json` answers (the detector has its own tests)."""
+        payload = {"classification": classification,
+                   "evidence": {"memory_pct": [mem, mem], "swap_pct": [swap, swap], **evidence}}
+        (self.bin / "pressure-out").write_text(json.dumps(payload), encoding="utf-8")
+
+    def set_graceful(self, rc: int, payload: dict | None = None):
+        """What `ai-resources openclaw graceful-restart --json` answers and exits with."""
+        (self.bin / "graceful-rc").write_text(str(rc), encoding="utf-8")
+        (self.bin / "graceful-out").write_text(json.dumps(payload or {}), encoding="utf-8")
 
     def set_doctor_rc(self, rc: int):
         (self.bin / "doctor-rc").write_text(str(rc), encoding="utf-8")
@@ -161,6 +176,8 @@ exit 0
 
     def set_health(self, rc: int):
         (self.bin / "health-rc").write_text(str(rc), encoding="utf-8")
+        # The health-restart script reads health through the pressure CLI; keep both views in step.
+        self.set_pressure("health-fail" if rc else "healthy", mem=10.0, swap=0.0)
 
     def write_env(self, **kv: str):
         self.env_file.write_text("".join(f"{k}={v}\n" for k, v in kv.items()), encoding="utf-8")
@@ -749,9 +766,18 @@ def _doctor_calls(host):
     return [c for c in host.calls() if c.startswith("ai-resources openclaw doctor")]
 
 
-def _forbidden_calls(host):
-    return [c for c in host.calls() if c.startswith("ai-resources openclaw doctor")
-            or re.match(r"systemctl --user (restart|stop|start)\b", c)]
+def _graceful_calls(host):
+    return [c for c in host.calls() if c.startswith("ai-resources openclaw graceful-restart")]
+
+
+def _forbidden_calls(host, *, mode_on: bool = False):
+    """Calls that change the gateway. The graceful-restart CLI is the one sanctioned mutation, and only
+    in mode `on` (ADR-0004); everywhere else it is as forbidden as the doctor or a bare systemctl."""
+    bad = [c for c in host.calls() if c.startswith("ai-resources openclaw doctor")
+           or re.match(r"systemctl --user (restart|stop|start)\b", c)]
+    if not mode_on:
+        bad += _graceful_calls(host)
+    return bad
 
 
 @pytest.mark.parametrize("busy_rc", [1, 2])
@@ -779,17 +805,142 @@ def test_a_new_episode_notifies_again_after_the_gateway_was_healthy(host):
     assert len(host.sent()) == 2
 
 
-@pytest.mark.parametrize("trigger", ["stalls", "memory"])
-def test_every_trigger_honours_the_busy_probe(host, trigger):
-    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+@pytest.mark.parametrize("trigger", ["stalls", "health"])
+def test_the_health_and_stalls_triggers_honour_the_busy_probe(host, trigger):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42", OPENCLAW_GRACEFUL_RESTART="on")
     host.set_busy_rc(1)
     if trigger == "stalls":
         host.set_stalls(8)
     else:
-        host.set_memory_pressure()
-        host.set_stalls(1)
+        host.set_health(1)
     _hr(host)
     assert _forbidden_calls(host) == [] and len(host.sent()) == 1
+
+
+def _pressure_env(host, **extra):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42", **extra)
+    host.set_busy_rc(1)                 # 6-12 runs in flight is this host's normal state
+    host.set_pressure("pressure")
+
+
+OK_RESULT = {"result": "ok", "exit_code": 0, "reason": "memory", "memory_before": 14 * 1024 ** 3,
+             "memory_after": 6 * 1024 ** 3, "report": "/snap/report.txt", "snapshot_dir": "/snap",
+             "recovery": {"marked_interrupted": 3, "aborted_runs": 4, "recovery_started": 1, "tombstoned": 0}}
+
+
+def test_confirmed_memory_pressure_with_runs_in_flight_in_window_mode_on_restarts_once(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
+    host.set_graceful(0, OK_RESULT)
+    r = _hr(host)
+    assert r.returncode == 0, r.stderr
+    [call] = _graceful_calls(host)
+    assert "--reason memory" in call and "--classification pressure" in call and "--force" not in call
+    assert _doctor_calls(host) == [], "the memory path never goes through the doctor"
+    [notice] = host.sent()
+    assert "14.0 GiB -> 6.0 GiB" in notice and "3 marked interrupted" in notice and "4 aborted" in notice
+    assert "/snap/report.txt" in notice
+
+
+def test_mode_notify_and_mode_off_never_call_graceful_restart(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="notify")
+    assert _hr(host).returncode == 0
+    assert _graceful_calls(host) == [] and len(host.sent()) == 1
+    assert "nothing was restarted" in host.sent()[0]
+    host.log.write_text("", encoding="utf-8")
+    (host.home / ".openclaw" / "logs" / "health-restart.notified").unlink()
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42", OPENCLAW_GRACEFUL_RESTART="off")
+    assert _hr(host).returncode == 0
+    assert _graceful_calls(host) == [] and host.sent() == []
+
+
+def test_an_unrecognised_mode_fails_safe_to_notify(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="yes please")
+    assert _hr(host).returncode == 0
+    assert _graceful_calls(host) == [] and len(host.sent()) == 1
+
+
+def test_frozen_exits_two_notifies_once_and_never_restarts(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
+    host.set_pressure("frozen", mem=114.0, frozen_by="memory-throttle")
+    assert _hr(host).returncode == 2
+    assert _forbidden_calls(host, mode_on=True) == [] and _graceful_calls(host) == []
+    assert len(host.sent()) == 1 and "frozen" in host.sent()[0] and "T41" in host.sent()[0]
+    assert _hr(host).returncode == 2 and len(host.sent()) == 1, "a second tick of the same episode is quiet"
+
+
+def test_a_frozen_notice_that_could_not_be_sent_is_retried_on_the_next_tick(host):
+    _pressure_env(host)
+    host.set_pressure("frozen", mem=114.0, frozen_by="memory-throttle")
+    host.set_send_rc(1)
+    assert _hr(host).returncode == 2
+    assert len(host.sent()) == 1                    # attempted, not delivered
+    host.set_send_rc(0)
+    assert _hr(host).returncode == 2
+    assert len(host.sent()) == 2                    # retried and delivered
+    assert _hr(host).returncode == 2
+    assert len(host.sent()) == 2                    # and then quiet
+
+
+def test_a_probe_that_cannot_read_a_signal_never_acts_or_notifies(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
+    host.set_pressure("refused-probe", reason="memory.current: No such file or directory")
+    assert _hr(host).returncode == 0
+    assert _forbidden_calls(host, mode_on=True) == [] and host.sent() == []
+
+
+def test_a_missing_pressure_command_is_a_refused_probe(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42", OPENCLAW_GRACEFUL_RESTART="on")
+    (host.bin / "pressure-out").write_text("not json at all", encoding="utf-8")
+    assert _hr(host).returncode == 0
+    assert _forbidden_calls(host, mode_on=True) == [] and host.sent() == []
+
+
+def test_a_gate_refusal_is_one_notice_naming_the_gate(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
+    host.set_graceful(10, {"result": "refused-gate", "gate": "cooldown", "exit_code": 10,
+                           "gates": [{"name": "cooldown", "ok": False, "detail": "last restart 600s ago, cooldown 10800s"}]})
+    assert _hr(host).returncode == 0
+    assert len(host.sent()) == 1 and "cooldown" in host.sent()[0]
+    assert _hr(host).returncode == 0 and len(host.sent()) == 1
+
+
+def test_a_failed_restart_is_one_notice_exit_one_and_no_marker_left(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
+    host.set_graceful(11, {"result": "failed", "exit_code": 11, "snapshot_dir": "/snap"})
+    r = _hr(host)
+    assert r.returncode == 1 and len(host.sent()) == 1 and "failed" in host.sent()[0]
+    assert not (host.home / ".openclaw" / "watchdog.off").exists()
+
+
+def test_two_ticks_in_one_episode_send_one_notice_and_a_healthy_tick_starts_a_new_episode(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="notify")
+    _hr(host)
+    _hr(host)
+    assert len(host.sent()) == 1
+    host.set_pressure("healthy", mem=10.0, swap=0.0)
+    _hr(host)
+    host.set_pressure("pressure")
+    _hr(host)
+    assert len(host.sent()) == 2
+
+
+def test_dry_run_in_mode_on_passes_dry_run_and_changes_nothing(host):
+    _pressure_env(host, OPENCLAW_GRACEFUL_RESTART="on")
+    host.set_graceful(0, {"result": "dry-run", "exit_code": 0})
+    assert _hr(host, "--dry-run").returncode == 0
+    [call] = _graceful_calls(host)
+    assert "--dry-run" in call
+    assert host.sent() == []
+    assert not (host.home / ".openclaw" / "health-restart.state").exists()
+    assert not (host.home / ".openclaw" / "watchdog.off").exists()
+    assert not (host.home / ".openclaw" / "logs" / "health-restart.notified").exists()
+
+
+def test_dry_run_with_frozen_sends_nothing_and_writes_no_episode_file(host):
+    _pressure_env(host)
+    host.set_pressure("frozen", mem=114.0, frozen_by="memory-throttle")
+    assert _hr(host, "--dry-run").returncode == 0
+    assert host.sent() == [] and not (host.home / ".openclaw" / "logs" / "health-restart.notified").exists()
 
 
 def test_idle_with_a_health_failure_runs_the_drained_doctor_once_and_writes_the_cooldown(host):
@@ -837,14 +988,53 @@ def test_a_gateway_that_is_not_active_is_left_to_the_watchdog(host, state):
 
 
 def test_dry_run_decides_but_does_not_act(host):
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
     host.set_health(1)
     assert _hr(host, "--dry-run").returncode == 0
     assert _doctor_calls(host) == []
+    # ADR-0004: stricter than 2.0.2. No notice, no state, no episode file, no marker.
+    assert host.sent() == []
+    assert not (host.home / ".openclaw" / "health-restart.state").exists()
+    assert not (host.home / ".openclaw" / "logs" / "health-restart.notified").exists()
+    assert not (host.home / ".openclaw" / "watchdog.off").exists()
 
 
-def test_the_health_restart_script_never_restarts_stops_or_starts_the_gateway_and_has_no_chat_id():
+def test_the_only_gateway_mutation_is_the_graceful_restart_cli():
     code = "\n".join(ln.split("#", 1)[0] for ln in _text("openclaw-health-restart.sh").splitlines())
     assert not re.search(r"systemctl\s+--user\s+(restart|stop|start|kill)", code)
-    assert "gateway restart" not in code and "kill" not in code.replace("skipping", "")
+    assert "gateway restart" not in code and "--force" not in code
+    assert "kill" not in code.replace("skipping", "")
     assert not re.search(r"\b\d{6,}\b", code), "no hard-coded chat id or other long numeric literal"
     assert "OPENCLAW_OWNER_TELEGRAM_ID" in _text("_common.sh")
+    call_sites = re.findall(r"ai-resources openclaw graceful-restart", code)
+    assert len(call_sites) == 1, "exactly one call site (a dry run is the same call with --dry-run)"
+    # the gate logic is not duplicated in bash: no cooldown arithmetic for the memory path, no window parsing
+    assert "OPENCLAW_RESTART_WINDOW" not in code and "OPENCLAW_RESTART_DAILY_CAP" not in code
+
+
+def test_the_health_restart_units_carry_the_adr_0004_budget_and_cadence():
+    service = (REPO / "templates" / "systemd" / "openclaw-health-restart.service.template").read_text()
+    timer = (REPO / "templates" / "systemd" / "openclaw-health-restart.timer.template").read_text()
+    assert "TimeoutStartSec=25min" in service and "ADR-0004" in service
+    assert "OnUnitActiveSec=15min" in timer and "OnBootSec=30min" in timer
+    # the budget comment names every term of the sum, so a future edit knows what it must keep
+    for term in ("confirm 60 s", "restart up to 600 s", "retries 140 s", "health 180 s", "settle 120 s"):
+        assert term in service, term
+
+
+def test_the_script_defaults_ship_mode_notify_and_the_operators_window():
+    common = _text("_common.sh")
+    for needle in (": \"${OPENCLAW_GRACEFUL_RESTART:=notify}\"", "OPENCLAW_RESTART_WINDOW=02:00-05:00",
+                   ": \"${OPENCLAW_RESTART_TZ:=America/Guayaquil}\"", ": \"${OPENCLAW_RESTART_HARD_PCT:=105}\"",
+                   ": \"${OPENCLAW_RESTART_COOLDOWN_S:=10800}\"", ": \"${OPENCLAW_RESTART_DAILY_CAP:=2}\"",
+                   ": \"${OPENCLAW_HEALTH_CONFIRM_S:=60}\""):
+        assert needle in common, needle
+
+
+def test_the_bash_and_python_knob_defaults_are_one_set():
+    import sys
+    sys.path.insert(0, str(REPO / "scripts"))
+    from ai_resources import openclaw_host as oh
+    found = dict(re.findall(r': "\$\{(OPENCLAW_[A-Z_]+):?=([^}]*)\}"', _text("_common.sh")))
+    for key, default in oh.RESTART_KNOB_DEFAULTS.items():
+        assert found.get(key) == default, f"{key}: bash {found.get(key)!r} vs python {default!r}"

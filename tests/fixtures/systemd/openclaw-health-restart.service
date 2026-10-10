@@ -1,10 +1,11 @@
 [Unit]
-Description=OpenClaw gateway health check (acts only on an idle, degraded gateway, through the drained doctor)
+Description=OpenClaw gateway health check (confirmed memory pressure: a gated graceful restart, ADR-0004; otherwise it only notifies)
 Documentation=file:///LIVE/bin/openclaw-health-restart.sh
 
 [Service]
 Type=oneshot
-# The drained doctor waits for the cgroup (90 s), runs doctor and polls health (120 s); the gateway
-# stop alone can take TimeoutStopSec=330 s.
-TimeoutStartSec=15min
+# Budget of one memory-triggered run (ADR-0004): confirm 60 s + restart up to 600 s + retries 140 s +
+# health 180 s + settle 120 s + snapshots and report, about 19 min. A drained doctor (legacy health
+# trigger) needs less. SIGKILL at this limit would skip the marker cleanup, so keep it comfortably above.
+TimeoutStartSec=25min
 ExecStart=/LIVE/bin/openclaw-health-restart.sh
