@@ -342,3 +342,132 @@ def test_equivalent_forms_step_aside_for_a_maintenance_window_or_a_stopped_gatew
     guard.state["active"] = True
     (tmp_path / "watchdog.off").write_text("", encoding="utf-8")
     assert run(guard, monkeypatch, command, capsys=capsys) == (0, "")
+
+
+# --- option tables: which options take a value (audited against the host's --help) --------------------------------
+# `-T` is --show-transaction, a boolean flag in systemctl: it must not swallow the verb. Short options that DO
+# take a value (-C -H -M -t -p -P -s -n -o) must be skipped together with that value, alone or in a cluster.
+
+OPTION_TABLE_RESTART_DENIED = [
+    # systemctl boolean short flags, alone and combined
+    "systemctl --user -T restart openclaw-gateway",
+    "systemctl --user -T restart openclaw-gateway.service",
+    "systemctl -T --user restart openclaw-gateway.service",
+    "systemctl --user -aT restart openclaw-gateway",
+    "systemctl --user -Ta restart openclaw-gateway",
+    "systemctl --user -lq restart openclaw-gateway",
+    "systemctl --user -fT try-restart openclaw-gateway",
+    "systemctl --user --show-transaction restart openclaw-gateway",
+    # value-taking short options: the value is not the verb
+    "systemctl --user -p Foo restart openclaw-gateway",
+    "systemctl --user -pFoo restart openclaw-gateway",
+    "systemctl --user -ap Foo restart openclaw-gateway",
+    "systemctl --user -aTp Foo restart openclaw-gateway",
+    "systemctl --user -P Foo restart openclaw-gateway",
+    "systemctl --user -t service restart openclaw-gateway",
+    "systemctl --user -n 5 restart openclaw-gateway",
+    "systemctl --user -o json restart openclaw-gateway",
+    "systemctl -M mycontainer restart openclaw-gateway",
+    "systemctl -H user@host -T restart openclaw-gateway",
+    "systemctl -C capsule restart openclaw-gateway",
+    "systemctl --user -s KILL -T restart openclaw-gateway",
+    # long options: separate value, attached value, an unambiguous prefix
+    "systemctl --user --property Foo restart openclaw-gateway",
+    "systemctl --user --property=Foo restart openclaw-gateway",
+    "systemctl --user --prop Foo restart openclaw-gateway",
+    "systemctl --user --job-mode replace restart openclaw-gateway",
+    "systemctl --user --kill-whom main restart openclaw-gateway",
+    "systemctl --user --timestamp unix restart openclaw-gateway",
+    # openclaw gateway: a value-taking option holding a verb-looking word is that option's value
+    "openclaw gateway --token status restart",
+    "openclaw gateway --password health restart",
+    "openclaw gateway --ws-log compact restart",
+    "openclaw gateway --port=18789 restart",
+    "openclaw --profile gateway gateway restart",
+    "openclaw --container c --log-level debug gateway restart",
+    # wrappers with a value-taking option the table used to miss
+    "sudo -r sysadm_r systemctl --user restart openclaw-gateway",
+    "sudo -t sysadm_t systemctl --user restart openclaw-gateway",
+    "sudo -u root -g wheel systemctl --user -T restart openclaw-gateway",
+    "sudo --prompt x systemctl --user restart openclaw-gateway",
+    "stdbuf -o L systemctl --user restart openclaw-gateway",
+    "stdbuf -oL openclaw gateway restart",
+    "/usr/bin/time -f %e systemctl --user restart openclaw-gateway",
+    "time -o out.txt openclaw gateway restart",
+    "exec -a name systemctl --user restart openclaw-gateway",
+    "env -a name openclaw gateway restart",
+    "env -u FOO -C /tmp openclaw gateway restart",
+    "ionice -c 3 -n 7 openclaw gateway restart",
+    "ionice -u 1000 -t openclaw gateway restart",
+    "nice -n 5 openclaw gateway restart",
+    "timeout -vs KILL 30 openclaw gateway restart",
+    "timeout -v -k 5 30 openclaw gateway restart",
+    "timeout --signal KILL 30 openclaw gateway restart",
+    "timeout --kill-after=5 30 openclaw gateway restart",
+    # shells: an option value ahead of -c
+    "bash -o pipefail -c 'systemctl --user restart openclaw-gateway'",
+    "bash -O extglob -c 'openclaw gateway restart'",
+    "bash --rcfile /dev/null -c 'openclaw gateway restart'",
+    "sh -eu -c 'systemctl --user -T restart openclaw-gateway'",
+]
+
+OPTION_TABLE_STOP_DENIED = [
+    "systemctl --user -T stop openclaw-gateway",
+    "systemctl --user -aT kill openclaw-gateway",
+    "systemctl --user -ap Foo stop openclaw-gateway",
+    "systemctl --user -T kill -s KILL openclaw-gateway",
+    "openclaw gateway --token status stop",
+]
+
+OPTION_TABLE_ALLOWED = [
+    "systemctl --user -T status openclaw-gateway",
+    "systemctl --user -aT status openclaw-gateway.service",
+    "systemctl --user -T is-active openclaw-gateway",
+    "systemctl --user -T start openclaw-gateway",
+    "systemctl --user -ap restart show openclaw-gateway.service",
+    "systemctl --user -pFoo show openclaw-gateway.service",
+    "systemctl --user -T show openclaw-gateway -p restart",
+    "systemctl --user -T restart openclaw-watchdog.timer",
+    "systemctl --user -s TERM -T restart openclaw-other.service",
+    "systemctl --user --property restart show openclaw-gateway.service",
+    "openclaw gateway --token restart status",
+    "openclaw gateway --password stop health",
+    "openclaw --profile gateway sessions restart",
+    "sudo -r sysadm_r systemctl --user status openclaw-gateway",
+    "stdbuf -o L openclaw gateway status",
+    "timeout -vs KILL 30 openclaw gateway status",
+    "bash -o pipefail -c 'systemctl --user status openclaw-gateway'",
+    "bash -o pipefail script.sh restart openclaw-gateway",
+]
+
+
+@pytest.mark.parametrize("command", OPTION_TABLE_RESTART_DENIED)
+def test_option_value_tables_never_hide_a_restart(guard, monkeypatch, capsys, command):
+    code, err = run(guard, monkeypatch, command, capsys=capsys)
+    assert code == 2, command
+    assert "T29" in err
+
+
+@pytest.mark.parametrize("command", OPTION_TABLE_STOP_DENIED)
+def test_option_value_tables_never_hide_a_stop(guard, monkeypatch, capsys, command):
+    code, err = run(guard, monkeypatch, command, capsys=capsys)
+    assert code == 2, command
+    assert "T01" in err
+
+
+@pytest.mark.parametrize("command", OPTION_TABLE_ALLOWED)
+def test_option_value_tables_keep_the_false_positive_guards(guard, monkeypatch, capsys, command):
+    assert run(guard, monkeypatch, command, capsys=capsys) == (0, ""), command
+
+
+@pytest.mark.parametrize("short, takes_value", [
+    ("-T", False), ("-a", False), ("-l", False), ("-q", False), ("-r", False), ("-f", False), ("-v", False),
+    ("-i", False), ("-p", True), ("-P", True), ("-t", True), ("-s", True), ("-n", True), ("-o", True),
+    ("-H", True), ("-M", True), ("-C", True),
+])
+def test_the_systemctl_short_option_classification_matches_the_host_help(guard, short, takes_value):
+    verb, operands = guard._systemctl_verb(["systemctl", short, "restart", "openclaw-gateway"])
+    if takes_value:
+        assert verb == "openclaw-gateway", short       # `restart` was consumed as the option's value
+    else:
+        assert (verb, operands) == ("restart", ["openclaw-gateway"]), short

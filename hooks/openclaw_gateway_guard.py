@@ -48,23 +48,47 @@ _WRAPPERS = {"sudo", "doas", "env", "command", "nohup", "setsid", "time", "exec"
 # cat, reload, start, ...) is read-only or harmless for this guard.
 _SYSTEMCTL_STOP = {"stop", "kill"}
 _SYSTEMCTL_RESTART = {"restart", "try-restart", "reload-or-restart", "try-reload-or-restart", "condrestart"}
-# systemctl options that take a separate value (`-p MainPID`, `-H host`): the value is not the verb.
-_SYSTEMCTL_VALUE_OPTS = {"-H", "--host", "-M", "--machine", "-p", "--property", "-t", "--type", "-s",
-                         "--signal", "-n", "--lines", "-o", "--output", "-T", "--kill-whom", "--state",
-                         "--job-mode", "--root", "--preset-mode", "-C", "--check-inhibitors"}
+# Option tables. A short option takes a value when its letter is in the SHORT set (`-p MainPID`, `-pMainPID`,
+# or last in a cluster: `-ap MainPID`); every other letter is a flag, so `-T` or `-aT` never swallows the
+# verb. A long option takes the NEXT word only when it is in the LONG set and has no `=`. Verified against
+# `systemctl --help`, `openclaw gateway --help`, `openclaw --help`, `sudo -h`, `env --help`, `timeout --help`.
+#
+# systemctl: value-taking short options are -C -H -M -t -p -P -s -n -o. Flags (never take a value):
+# -a -l -r -f -q -v -i -T -h. `-T` is --show-transaction (boolean); `--kill-whom` has no short form.
+_SYSTEMCTL_SHORT_VALUE = frozenset("CHMtpPsno")
+_SYSTEMCTL_LONG_VALUE = frozenset({
+    "--host", "--machine", "--capsule", "--type", "--state", "--property", "--job-mode", "--check-inhibitors",
+    "--signal", "--kill-whom", "--kill-who", "--kill-value", "--kill-subgroup", "--what", "--message",
+    "--legend", "--preset-mode", "--root", "--image", "--image-policy", "--lines", "--output",
+    "--boot-loader-menu", "--boot-loader-entry", "--reboot-argument", "--timestamp", "--drop-in", "--when"})
 # `openclaw gateway` subcommands: the first one found after `gateway` is the verb, so a flag VALUE such
 # as `--port 18789` is skipped and a later word (`status --note restart`) is not taken for the verb.
 _GATEWAY_VERBS = {"restart", "stop", "start", "status", "install", "uninstall", "health", "probe", "call",
                    "discover", "run", "logs", "usage-cost"}
+# `openclaw gateway` options with a value (the only short option is -h, a flag) and the global options
+# placed before `gateway` (`--profile x`, `--log-level y`, `--container c`).
+_GATEWAY_LONG_VALUE = frozenset({"--auth", "--bind", "--password", "--password-file", "--port",
+                                 "--raw-stream-path", "--tailscale", "--token", "--ws-log"})
+_OPENCLAW_GLOBAL_LONG_VALUE = frozenset({"--container", "--profile", "--log-level"})
 # Flags of a wrapper that take a separate value (`sudo -u root`, `nice -n 5`); `sudo -n` takes none.
-_WRAPPER_VALUE_FLAGS = {
-    "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group", "--host"},
-    "doas": {"-u", "-C"},
-    "env": {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"},
-    "nice": {"-n", "--adjustment"},
-    "ionice": {"-c", "-n", "-p", "--class", "--classdata"},
-    "setsid": set(),
+# base -> (short letters with a value, long options with a value).
+_WRAPPER_FLAGS: dict[str, tuple[frozenset, frozenset]] = {
+    "sudo": (frozenset("ugCDRrTtUhp"), frozenset({"--user", "--group", "--host", "--prompt", "--chdir",
+                                                    "--chroot", "--role", "--type", "--other-user",
+                                                    "--close-from", "--command-timeout"})),
+    "doas": (frozenset("uC"), frozenset()),
+    "env": (frozenset("uCSaPf"), frozenset({"--unset", "--chdir", "--split-string", "--argv0", "--file"})),
+    "nice": (frozenset("n"), frozenset({"--adjustment"})),
+    "ionice": (frozenset("cnpPu"), frozenset({"--class", "--classdata", "--pid", "--pgid", "--uid"})),
+    "stdbuf": (frozenset("ioe"), frozenset({"--input", "--output", "--error"})),
+    "time": (frozenset("fo"), frozenset({"--format", "--output"})),
+    "exec": (frozenset("a"), frozenset()),
+    "timeout": (frozenset("sk"), frozenset({"--signal", "--kill-after"})),
 }
+_NO_VALUES: tuple[frozenset, frozenset] = (frozenset(), frozenset())
+# Shell options with a value that may sit before `-c` (`bash -o pipefail -c '...'`, `bash --rcfile f -c`).
+_SHELL_SHORT_VALUE = frozenset("oO")
+_SHELL_LONG_VALUE = frozenset({"--rcfile", "--init-file"})
 _KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}
 _SHELLS = {"bash", "sh", "zsh", "dash"}
 _OPERATORS = {";", "&&", "||", "|", "&", "|&", "(", ")", "{", "}"}
@@ -115,6 +139,22 @@ def _statements(line: str) -> list[list[str]]:
     return [s for s in stmts if s]
 
 
+def _option_width(tok: str, short_value, long_value) -> int:
+    """How many words the option `tok` occupies: 2 when its value is the next word, else 1."""
+    if tok.startswith("--"):
+        if "=" in tok:
+            return 1
+        # getopt accepts an unambiguous prefix (`--prop Foo`), so a prefix of a value option counts too.
+        if tok in long_value or (len(tok) >= 4 and any(o.startswith(tok) for o in long_value)):
+            return 2
+        return 1
+    last = len(tok) - 1
+    for n, ch in enumerate(tok[1:], start=1):
+        if ch in short_value:
+            return 1 if n < last else 2      # `-pFoo` carries its value; `-ap` takes the next word
+    return 1
+
+
 def _command_words(stmt: list[str]) -> list[str]:
     """The statement with leading VAR=x assignments and transparent wrappers removed."""
     i = 0
@@ -126,15 +166,16 @@ def _command_words(stmt: list[str]) -> list[str]:
         elif base == "timeout":
             # `timeout [-s SIG] [-k D] DURATION cmd`: look through to the real command.
             i += 1
+            short, long = _WRAPPER_FLAGS["timeout"]
             while i < len(stmt) and stmt[i].startswith("-"):
-                i += 2 if stmt[i] in ("-s", "-k", "--signal", "--kill-after") else 1
+                i += _option_width(stmt[i], short, long)
             i += 1                      # the duration
         elif base in _WRAPPERS:
             i += 1
             # `sudo -u x`, `env -i`, `nice -n 5`: skip the flags (and a flag's value)
-            takes_value = _WRAPPER_VALUE_FLAGS.get(base, set())
+            short, long = _WRAPPER_FLAGS.get(base, _NO_VALUES)
             while i < len(stmt) and stmt[i].startswith("-"):
-                i += 2 if stmt[i] in takes_value else 1
+                i += _option_width(stmt[i], short, long)
         else:
             break
     return stmt[i:]
@@ -154,7 +195,7 @@ def _systemctl_verb(words: list[str]) -> tuple[str | None, list[str]]:
             i += 1
             break
         if w.startswith("-"):
-            i += 2 if w in _SYSTEMCTL_VALUE_OPTS else 1
+            i += _option_width(w, _SYSTEMCTL_SHORT_VALUE, _SYSTEMCTL_LONG_VALUE)
             continue
         break
     if i >= len(words):
@@ -186,10 +227,25 @@ def _gateway_action(words: list[str]) -> str | None:
         return None
     rest = words[1:]
     # the `gateway` word sits after at most a few global options (`--profile x`, `--log-level y`)
-    idx = next((n for n, w in enumerate(rest[:6]) if w == "gateway"), None)
+    idx, n = None, 0
+    while n < len(rest) and n < 6:
+        if rest[n] == "gateway":
+            idx = n
+            break
+        n += _option_width(rest[n], frozenset(), _OPENCLAW_GLOBAL_LONG_VALUE) if rest[n].startswith("-") else 1
     if idx is None:
         return None
-    verb = next((w for w in rest[idx + 1:] if w in _GATEWAY_VERBS), None)
+    verb = None
+    n = idx + 1
+    while n < len(rest):
+        w = rest[n]
+        if w.startswith("-"):
+            n += _option_width(w, frozenset(), _GATEWAY_LONG_VALUE)
+        elif w in _GATEWAY_VERBS:
+            verb = w
+            break
+        else:
+            n += 1
     return verb if verb in ("stop", "restart") else None
 
 
@@ -201,12 +257,17 @@ def _inner_command(words: list[str]) -> str | None:
     if base == "eval":
         return " ".join(words[1:]) or None
     if base in _SHELLS:
-        for n, w in enumerate(words[1:], start=1):
+        n = 1
+        while n < len(words):
+            w = words[n]
             # -c, and combined short flags such as -lc / -ic / -ec
             if w == "-c" or (re.fullmatch(r"-[A-Za-z]+", w) and w.endswith("c")):
                 return words[n + 1] if n + 1 < len(words) else None
-            if not w.startswith("-"):
+            if not w.startswith(("-", "+")):
                 return None
+            # `-o pipefail`, `+O extglob`, `--rcfile f`: the value is not the script name
+            n += _option_width(w.replace("+", "-", 1) if w.startswith("+") else w,
+                               _SHELL_SHORT_VALUE, _SHELL_LONG_VALUE)
     return None
 
 
