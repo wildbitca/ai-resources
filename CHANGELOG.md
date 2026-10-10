@@ -4,10 +4,11 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
-## [Unreleased]
+## [2.1.0] — 2026-10-10 — a resource-safe gateway: prevention first, a bounded graceful restart as the valve
 
-Not released: the release label (2.1.0 is recommended) and the version bump are a separate step.
-See [ADR-0004](docs/decisions/0004-bounded-graceful-restart-under-memory-pressure.md) and pitfall T41.
+This is a minor release because it changes the contract of the health-restart timer: under confirmed memory
+pressure it can now restart the gateway gracefully with runs in flight (mode `notify` by default; `on` is
+opt-in). See [ADR-0004](docs/decisions/0004-bounded-graceful-restart-under-memory-pressure.md) and pitfall T41.
 
 ### Added
 
