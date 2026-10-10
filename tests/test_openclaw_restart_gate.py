@@ -416,3 +416,24 @@ def test_without_overrides_a_customised_bind_is_kept_and_nothing_is_pending_or_r
     _run_wizard(s)
     assert stops(events) == [] and s.openclaw.host_restart_pending == []
     assert json.loads(sim.cfg.read_text())["gateway"]["bind"] == "lan"
+
+
+# --- (n) apply-pending with a malformed overrides file ----------------------------------------------------------------------
+
+@pytest.mark.parametrize("content, problem", [
+    ("{ keep: [", "not valid JSON5"),
+    ('["gateway.bind"]', "expected an object"),
+    ('{"keep": "gateway.bind"}', "must be a list"),
+    ('{"force": ["gateway bind!"]}', "invalid path"),
+    ('{"force": ["channels.telegram.botToken"]}', "credential path"),
+])
+def test_apply_pending_with_a_bad_overrides_file_errors_cleanly_and_applies_nothing(
+        sim, script, events, content, problem):
+    s = _pend_unattended(sim, script)
+    sim.overrides_file.write_text(content, encoding="utf-8")
+    events.clear()
+    assert section.apply_pending(s, assume_yes=True) == 1          # no ValueError, no traceback
+    errors = script.messages("error")
+    assert len(errors) == 1 and str(sim.overrides_file) in errors[0] and problem in errors[0]
+    assert stops(events) == [] and not [e for e in events if e[0] == "patch"]
+    assert "gateway.bind" in pending_paths(s)                       # the key stays pending

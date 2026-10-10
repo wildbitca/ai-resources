@@ -555,7 +555,12 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
     changes: list[dict] = []
     wanted = {e["path"] for e in pending if e.get("op") == "profile"}
     if wanted:
-        ov = host.load_host_overrides()
+        try:
+            ov = host.load_host_overrides()
+        except ValueError as e:
+            # A hand-edited overrides file: say which one and why (no contents), apply nothing.
+            ui.error(f"apply-pending: {e}. Nothing was applied; the keys stay pending.")
+            return 1
         forced = frozenset(e["path"] for e in pending if e.get("op") == "profile" and e.get("action") == "forced")
         built = host.build_host_patch(host.load_host_profile(), doc, _values(o),
                                       overrides={"keep": ov["keep"], "force": ov["force"] | forced})
