@@ -1018,14 +1018,19 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
                         cap=wait_cap, interval=wait_interval)
         elif answer != RESTART_NOW:
             raise RestartDeferred(reason, workers)
-    rc, out = _openclaw(["gateway", "restart"], timeout=restart_timeout)
-    if rc != 0:
-        ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")
-        return False
-    for _ in range(BACKEND_WAIT_TRIES):
-        if backend_registered(backend):
-            return True
-        time.sleep(BACKEND_WAIT_SECONDS)
+    # ADR-0004 (D11): the one restart setup itself performs holds watchdog.off for its whole duration, so
+    # openclaw-watchdog does not start a second restart on top of it, and it is removed on every exit path
+    # (an exception or a SIGTERM included). A window somebody else opened is left alone.
+    ui.info("restarting the gateway inside a maintenance window (watchdog.off is held until it is back)")
+    with openclaw_host.MarkerGuard():
+        rc, out = _openclaw(["gateway", "restart"], timeout=restart_timeout)
+        if rc != 0:
+            ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")
+            return False
+        for _ in range(BACKEND_WAIT_TRIES):
+            if backend_registered(backend):
+                return True
+            time.sleep(BACKEND_WAIT_SECONDS)
     return False
 
 

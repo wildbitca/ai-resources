@@ -479,6 +479,21 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
                           skip_message=f"doctor=skipped (the cgroup did not drain in {drain_timeout:g}s)")
 
 
+def poll_health(runner: Runner, oc: str, *, env: dict | None = None, timeout: float = 120,
+                interval: float = 5, sleep: Callable[[float], None] = time.sleep) -> bool:
+    """Poll `openclaw health` until it answers or `timeout` is spent. It sleeps BEFORE each probe: the
+    caller has just started or restarted the gateway, so an immediate probe would only fail.
+
+    Extracted from `drained_window` unchanged; `graceful_restart` shares it (ADR-0004).
+    """
+    for _ in range(max(1, int(timeout // interval))):
+        sleep(interval)
+        rc, _text = runner([oc, "health"], env=env, timeout=60)
+        if rc == 0:
+            return True
+    return False
+
+
 EXIT_REFUSED_BUSY = 6     # require_idle was set and agent runs are in flight (or the probe failed)
 
 
@@ -540,13 +555,7 @@ def drained_window(action: Callable[[], bool], *, runner: Runner = default_runne
     finally:
         marker.remove()
         runner(sysctl + ["start", GATEWAY_UNIT], env=env, timeout=120)
-        healthy = False
-        for _ in range(max(1, int(health_timeout // health_interval))):
-            sleep(health_interval)
-            rc, _text = runner([oc, "health"], env=env, timeout=60)
-            if rc == 0:
-                healthy = True
-                break
+        healthy = poll_health(runner, oc, env=env, timeout=health_timeout, interval=health_interval, sleep=sleep)
         out(f"healthy={'yes' if healthy else 'no'}")
         if not healthy:
             code = EXIT_NOT_HEALTHY
@@ -2627,6 +2636,458 @@ def cmd_render_gitops_backups(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- the graceful restart (ADR-0004) -------------------------------------------------------------------------
+#
+# The ONE self-initiated restart of the gateway. Gates, action, snapshots and report live together here so the
+# operator's CLI and the health timer cannot disagree about when it is allowed. Signal reading is
+# `openclaw_pressure`; scheduling, the mode and the notice are the health-restart script. It never passes
+# `--force`, never kills anything and never edits openclaw.json.
+
+EXIT_REFUSED_SELF = 8        # the caller is a child of the gateway cgroup: its own restart would kill it (T29)
+EXIT_LOCKED = 9              # another graceful restart (timer or manual) holds the lock
+EXIT_REFUSED_GATE = 10       # a gate said no; the gate's name is in the JSON
+EXIT_RESTART_FAILED = 11     # `openclaw gateway restart` returned non-zero
+EXIT_NO_NEW_PID = 12         # health answered but the MainPID did not change: nothing was restarted
+EXIT_HEALTH_TIMEOUT = 13     # the command returned 0 but health did not answer in time
+EXIT_RESTART_REFUSED = 14    # the gateway refused to prepare the restart on every attempt
+
+RESTART_COMMAND_TIMEOUT_S = 600
+RESTART_HEALTH_TIMEOUT_S = 180
+RESTART_RETRY_BACKOFF_S = (20, 40, 80)
+REFUSAL_CODE = "GATEWAY_RESTART_PREPARATION_REFUSED"
+SNAPSHOT_FILES = ("memory.current", "memory.high", "memory.max", "memory.events", "memory.stat",
+                  "memory.pressure", "pids.current")
+SESSION_SAFE_KEYS = ("key", "agentId", "kind", "status", "model", "channel", "updatedAt", "ageMs")
+
+STATE_PATH = Path.home() / ".openclaw" / "health-restart.state"
+LOCK_PATH = Path.home() / ".openclaw" / "health-restart.lock"
+SNAPSHOT_ROOT = Path.home() / ".openclaw" / "logs" / "restart-snapshots"
+
+
+class MarkerGuard:
+    """`watchdog.off` held for exactly the life of a `with` block, on EVERY exit path.
+
+    Normal exit and an exception are the `finally`. SIGTERM (what systemd sends at TimeoutStopSec or a
+    `systemctl stop` of the timer's service) and SIGINT are turned into an exception by a handler, so the
+    same `finally` removes the file; the previous handlers are restored afterwards. Handlers are only
+    installed from the main thread. SIGKILL cannot be caught: `verify` flags a stale marker (ADR-0004).
+    """
+
+    def __init__(self, marker: Marker | None = None, *, signals: tuple[int, ...] | None = None):
+        import signal
+        self.marker = marker or Marker()
+        self._signals = signals if signals is not None else (signal.SIGTERM, signal.SIGINT)
+        self._previous: dict[int, object] = {}
+        self._owned = False
+
+    def __enter__(self) -> "MarkerGuard":
+        import signal
+        import threading
+
+        def _raise(signum, _frame):
+            raise SystemExit(128 + signum)
+
+        if threading.current_thread() is threading.main_thread():
+            for sig in self._signals:
+                self._previous[sig] = signal.signal(sig, _raise)
+        # A window the operator (or a drained window) already opened is not ours to close.
+        self._owned = not self.marker.exists()
+        try:
+            self.marker.touch()
+        except BaseException:
+            self._restore()
+            raise
+        return self
+
+    def _restore(self) -> None:
+        import signal
+        for sig, handler in self._previous.items():
+            signal.signal(sig, handler)  # type: ignore[arg-type]
+        self._previous.clear()
+
+    def __exit__(self, *_exc) -> None:
+        try:
+            if self._owned:
+                self.marker.remove()
+        finally:
+            self._restore()
+
+
+def state_get(key: str, path: Path | None = None) -> str:
+    """The last `key=value` line for `key` in the health-restart state file ("" when absent)."""
+    try:
+        lines = (path or STATE_PATH).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    found = ""
+    for line in lines:
+        if line.startswith(key + "="):
+            found = line.partition("=")[2]
+    return found
+
+
+def state_set(key: str, value: str, path: Path | None = None) -> None:
+    """Set `key` keeping every other line. Atomic (tmp + rename), the same shape the script's `setv` writes."""
+    path = path or STATE_PATH
+    try:
+        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if not ln.startswith(key + "=")]
+    except OSError:
+        lines = []
+    lines.append(f"{key}={value}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _local_date(now: float, tz: str) -> str:
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        return datetime.fromtimestamp(now, tz=ZoneInfo(tz)).strftime("%Y-%m-%d")
+    except Exception:  # noqa: BLE001
+        return time.strftime("%Y-%m-%d", time.gmtime(now))
+
+
+def restarts_today(now: float, tz: str, state_path: Path | None = None) -> int:
+    day, _, n = state_get("restarts_day", state_path).partition(":")
+    return int(n) if day == _local_date(now, tz) and n.isdigit() else 0
+
+
+def _private_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path, 0o700)
+
+
+def _write_private(path: Path, text: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.chmod(path, 0o600)
+
+
+def _safe_sessions(text: str) -> str:
+    """A bounded, prompt-free view of `openclaw sessions list --json`: only whitelisted scalar fields."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return json.dumps({"unparsed_bytes": len(text.encode("utf-8"))})
+    items = data if isinstance(data, list) else (data.get("sessions") if isinstance(data, dict) else None)
+    if not isinstance(items, list):
+        return json.dumps({"unrecognised_shape": type(data).__name__})
+    slim = [{k: v for k, v in it.items() if k in SESSION_SAFE_KEYS and isinstance(v, (str, int, float, bool))}
+            for it in items[:200] if isinstance(it, dict)]
+    return json.dumps({"count": len(items), "sessions": slim}, indent=1)
+
+
+def take_snapshot(dest: Path, *, runner: Runner, control_group: str, cgroup_root: Path = CGROUP_ROOT,
+                  proc_root: Path = PROC_ROOT, openclaw_bin: str = "openclaw", with_sessions: bool = True) -> None:
+    """Write the evidence of one moment into `dest` (0700 dir, 0600 files). No process argv, no prompt text."""
+    _private_dir(dest)
+    env = systemd_env()
+    busy = gateway_busy_strict(runner, cgroup_root=cgroup_root, proc_root=proc_root)
+    _write_private(dest / "busy.txt", "unknown\n" if busy is None else f"{busy}\n")
+    _rc, unit = runner(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "MainPID", "-p", "MemoryCurrent",
+                        "-p", "MemoryHigh", "-p", "ActiveState", "-p", "SubState", "-p", "ActiveEnterTimestamp",
+                        "-p", "NRestarts"], env=env)
+    _write_private(dest / "unit.txt", unit + "\n")
+    _rc, free = runner(["free", "-b"])
+    _write_private(dest / "free.txt", free + "\n")
+    cg = cgroup_root / control_group.lstrip("/")
+    parts = []
+    for name in SNAPSHOT_FILES:
+        try:
+            parts.append(f"== {name}\n{(cg / name).read_text(encoding='utf-8').strip()}\n")
+        except OSError:
+            parts.append(f"== {name}\n(unreadable)\n")
+    _write_private(dest / "cgroup.txt", "".join(parts))
+    try:
+        pids = [p for p in (cg / "cgroup.procs").read_text(encoding="utf-8").split() if p.isdigit()][:2000]
+    except OSError:
+        pids = []
+    if pids:
+        # comm only: `args`/`cmd` can carry prompt text or tokens, so they are never asked for.
+        _rc, ps = runner(["ps", "-o", "pid,ppid,stat,etimes,rss,comm", "-p", ",".join(pids)])
+        _write_private(dest / "ps.txt", ps + "\n")
+    if with_sessions:
+        _rc, sessions = runner(["timeout", "30", openclaw_bin, "sessions", "list", "--json"], env=env, timeout=40)
+        _write_private(dest / "sessions.json", _safe_sessions(sessions) + "\n")
+
+
+def prune_snapshots(root: Path, keep: int) -> list[str]:
+    """Keep the newest `keep` snapshot directories (names sort by timestamp). Returns what was removed."""
+    try:
+        dirs = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError:
+        return []
+    removed = []
+    for old in dirs[: max(0, len(dirs) - max(1, keep))]:
+        shutil.rmtree(old, ignore_errors=True)
+        removed.append(old.name)
+    return removed
+
+
+def _gateway_active_state(runner: Runner) -> str:
+    rc, out = runner(["systemctl", "--user", "is-active", GATEWAY_UNIT], env=systemd_env())
+    return out.strip() or ("active" if rc == 0 else "unknown")
+
+
+def _lock_held_by_other(path: Path) -> bool:
+    """Read-only check used by --dry-run (it must not create the lock file)."""
+    import fcntl
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
+def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classification: str | None = None,
+                     runner: Runner = default_runner, knobs: dict[str, str] | None = None,
+                     marker: Marker | None = None, state_path: Path | None = None, lock_path: Path | None = None,
+                     snapshot_root: Path | None = None, cgroup_root: Path = CGROUP_ROOT,
+                     proc_root: Path = PROC_ROOT, self_cgroup_path: Path | str = "/proc/self/cgroup",
+                     now: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep,
+                     openclaw_bin: str | None = None, out: Callable[[str], None] = print) -> dict:
+    """Restart the gateway gracefully under confirmed memory pressure, or say which gate refused.
+
+    Returns a JSON-able dict with `exit_code`, `result` (ok | failed | refused | refused-gate |
+    refused-self | locked | dry-run) and the evidence. The fixed order is:
+
+      1. refuse when this process is inside the gateway cgroup (EXIT_REFUSED_SELF)
+      2. take a non-blocking flock (EXIT_LOCKED)
+      3. gates: watchdog.off, unit active, mode, pressure, cooldown, daily cap, window or hard ceiling
+      4. `dry_run`: report every verdict and stop, with no state, marker, snapshot or restart
+      5. state BEFORE acting, pre-snapshot, `timeout 600 openclaw gateway restart` inside MarkerGuard
+         (retried on PREPARATION_REFUSED with a 20/40/80 s backoff), success = health plus a NEW MainPID
+      6. settle, post-snapshot, journal report, state, summary
+    """
+    knobs = dict(knobs) if knobs is not None else restart_knobs()
+    marker = marker or Marker()
+    state_path = state_path or STATE_PATH
+    lock_path = lock_path or LOCK_PATH
+    snapshot_root = snapshot_root or SNAPSHOT_ROOT
+    oc = openclaw_bin or resolve_openclaw_bin()
+    manual = reason == "manual"
+    result: dict = {"reason": reason, "dry_run": dry_run, "gates": [], "result": "", "exit_code": EXIT_OK}
+
+    def finish(code: int, outcome: str, **extra) -> dict:
+        result.update(exit_code=code, result=outcome, **extra)
+        return result
+
+    # 1. never from inside the gateway cgroup
+    try:
+        own = Path(self_cgroup_path).read_text(encoding="utf-8")
+    except OSError:
+        own = ""
+    if GATEWAY_UNIT in own:
+        out("refusing: this process runs inside the gateway cgroup; its own restart would kill it (T29)")
+        return finish(EXIT_REFUSED_SELF, "refused-self")
+
+    # 2. one graceful restart at a time (the timer and a manual run share the lock)
+    import fcntl
+    lock_fd = None
+    if dry_run:
+        if _lock_held_by_other(lock_path):
+            return finish(EXIT_LOCKED, "locked")
+    else:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(lock_fd)
+            out("refusing: another graceful restart holds the lock")
+            return finish(EXIT_LOCKED, "locked")
+    try:
+        try:
+            return _graceful_restart_locked(result, finish, reason=reason, manual=manual, dry_run=dry_run,
+                                            classification=classification, runner=runner, knobs=knobs,
+                                            marker=marker, state_path=state_path, snapshot_root=snapshot_root,
+                                            cgroup_root=cgroup_root, proc_root=proc_root, now=now, sleep=sleep,
+                                            oc=oc, out=out)
+        except Exception as e:  # noqa: BLE001  (MarkerGuard already removed watchdog.off)
+            if not dry_run:
+                state_set("last_restart_result", "failed", state_path)
+            out(f"graceful restart failed: {type(e).__name__}")
+            return finish(EXIT_RESTART_FAILED, "failed", error=type(e).__name__)
+    finally:
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+
+
+def _graceful_restart_locked(result: dict, finish, *, reason: str, manual: bool, dry_run: bool,
+                             classification: str | None, runner: Runner, knobs: dict[str, str], marker: Marker,
+                             state_path: Path, snapshot_root: Path, cgroup_root: Path, proc_root: Path,
+                             now: Callable[[], float], sleep: Callable[[float], None], oc: str,
+                             out: Callable[[str], None]) -> dict:
+    t_now = now()
+    tz = knobs["OPENCLAW_RESTART_TZ"]
+    gates: list[dict] = result["gates"]
+
+    def gate(name: str, ok: bool, detail: str) -> bool:
+        gates.append({"name": name, "ok": ok, "detail": detail})
+        return ok
+
+    # --- gates (all evaluated in dry-run; the first failure stops a real run) ---
+    gate("watchdog_off", not marker.exists(),
+         "a maintenance window is open (watchdog.off)" if marker.exists() else "absent")
+    state = _gateway_active_state(runner)
+    gate("unit_active", state == "active", f"unit is {state}")
+    mode = knobs["OPENCLAW_GRACEFUL_RESTART"]
+    gate("mode", manual or mode == "on", f"mode={mode}" + (" (manual run)" if manual else ""))
+    if not manual:
+        if classification is None:
+            knob_confirm = knob_number(knobs, "OPENCLAW_HEALTH_CONFIRM_S")
+            verdict = openclaw_pressure.evaluate(
+                runner=runner, openclaw_bin=oc, cgroup_root=cgroup_root, proc_root=proc_root,
+                confirm_seconds=knob_confirm, sleep=sleep, clock=now,
+                pressure_pct=knob_number(knobs, "OPENCLAW_RESTART_PRESSURE_PCT"),
+                hard_pct=knob_number(knobs, "OPENCLAW_RESTART_HARD_PCT"),
+                frozen_min_s=knob_number(knobs, "OPENCLAW_FROZEN_MIN_S"))
+            classification = verdict["classification"]
+        gate("pressure", classification in ("pressure", "hard"), f"classification={classification}")
+    result["classification"] = classification
+    last = state_get("last_restart", state_path)
+    cooldown = int(knob_number(knobs, "OPENCLAW_RESTART_COOLDOWN_S"))
+    since = t_now - int(last) if last.isdigit() else None
+    gate("cooldown", since is None or since >= cooldown,
+         "no earlier restart" if since is None else f"last restart {int(since)}s ago, cooldown {cooldown}s")
+    cap = int(knob_number(knobs, "OPENCLAW_RESTART_DAILY_CAP"))
+    today = restarts_today(t_now, tz, state_path)
+    gate("daily_cap", cap <= 0 or today < cap, f"{today} restart(s) today, cap {cap or 'none'}")
+    in_window = openclaw_pressure.window_open(t_now, knobs["OPENCLAW_RESTART_WINDOW"], tz)
+    gate("window", in_window or classification == "hard",
+         ("inside the window" if in_window else
+          f"outside {knobs['OPENCLAW_RESTART_WINDOW'] or '(no window)'} {tz}")
+         + (", hard ceiling overrides" if (not in_window and classification == "hard") else ""))
+
+    failed = [g for g in gates if not g["ok"]]
+    if failed:
+        result["gate"] = failed[0]["name"]
+        out("refusing: " + "; ".join(f"{g['name']}: {g['detail']}" for g in failed))
+        return finish(EXIT_REFUSED_GATE, "refused-gate")
+    if dry_run:
+        result["planned"] = ["write state", "pre-snapshot", "touch watchdog.off",
+                             f"timeout {RESTART_COMMAND_TIMEOUT_S} {oc} gateway restart",
+                             f"poll health up to {RESTART_HEALTH_TIMEOUT_S}s and require a new MainPID",
+                             "remove watchdog.off", f"settle {knobs['OPENCLAW_RESTART_SETTLE_S']}s",
+                             "post-snapshot and recovery report"]
+        for step in result["planned"]:
+            out("  would: " + step)
+        return finish(EXIT_OK, "dry-run")
+
+    # --- act: state BEFORE the restart, so a crash leaves the cooldown in force ---
+    t0 = t_now
+    state_set("last_restart", str(int(t0)), state_path)
+    state_set("restarts_day", f"{_local_date(t0, tz)}:{today + 1}", state_path)
+    state_set("last_restart_reason", reason, state_path)
+    state_set("last_restart_result", "started", state_path)
+
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(t0))
+    snap = snapshot_root / stamp
+    group = ""
+    rc_g, grp = runner(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "ControlGroup", "--value"],
+                       env=systemd_env())
+    if rc_g == 0:
+        group = grp.strip()
+    before = None
+    try:
+        before = openclaw_pressure.read_cgroup(group, cgroup_root)["current"] if group else None
+    except openclaw_pressure.ProbeError:
+        before = None
+    result.update(snapshot_dir=str(snap), memory_before=before)
+    _private_dir(snapshot_root)
+    _private_dir(snap)
+    take_snapshot(snap / "before", runner=runner, control_group=group, cgroup_root=cgroup_root,
+                  proc_root=proc_root, openclaw_bin=oc)
+    prune_snapshots(snapshot_root, int(knob_number(knobs, "OPENCLAW_RESTART_SNAPSHOTS_KEEP")))
+
+    old_pid = gateway_main_pid(runner)
+    result["old_pid"] = old_pid
+    attempts = 0
+    rc = -1
+    refused = False
+    started = time.monotonic()
+    health_ok = False
+    with MarkerGuard(marker):
+        for backoff in (0, *RESTART_RETRY_BACKOFF_S):
+            if backoff:
+                sleep(backoff)
+            attempts += 1
+            rc, text = runner(["timeout", str(RESTART_COMMAND_TIMEOUT_S), oc, "gateway", "restart"],
+                              env=systemd_env(), timeout=RESTART_COMMAND_TIMEOUT_S + 30)
+            refused = rc != 0 and REFUSAL_CODE in (text or "")
+            if not refused:
+                break
+        result["restart_rc"], result["attempts"] = rc, attempts
+        result["restart_seconds"] = int(time.monotonic() - started)
+        if rc == 0:
+            health_ok = poll_health(runner, oc, env=systemd_env(), timeout=RESTART_HEALTH_TIMEOUT_S,
+                                    interval=5, sleep=sleep)
+        new_pid = gateway_main_pid(runner)
+        result["new_pid"] = new_pid
+    # watchdog.off is gone from here on, on every path above.
+
+    if refused:
+        code, outcome, label = EXIT_RESTART_REFUSED, "refused", "refused"
+    elif rc != 0:
+        code, outcome, label = EXIT_RESTART_FAILED, "failed", "failed"
+    elif not health_ok:
+        code, outcome, label = EXIT_HEALTH_TIMEOUT, "failed", "failed"
+    elif not new_pid or new_pid == old_pid:
+        code, outcome, label = EXIT_NO_NEW_PID, "failed", "failed"
+    else:
+        code, outcome, label = EXIT_OK, "ok", "ok"
+
+    settle = int(knob_number(knobs, "OPENCLAW_RESTART_SETTLE_S")) if code == EXIT_OK else 0
+    if settle:
+        sleep(settle)
+    after = None
+    try:
+        after = openclaw_pressure.read_cgroup(group, cgroup_root)["current"] if group else None
+    except openclaw_pressure.ProbeError:
+        after = None
+    take_snapshot(snap / "after", runner=runner, control_group=group, cgroup_root=cgroup_root,
+                  proc_root=proc_root, openclaw_bin=oc, with_sessions=False)
+    journal = openclaw_pressure.read_report(str(int(t0)), runner)
+    result.update(memory_after=after, recovery=journal)
+    report = snap / "report.txt"
+    lines = [f"restart {stamp} reason={reason} result={label} exit={code}",
+             f"command_rc={rc} attempts={attempts} old_pid={old_pid} new_pid={result.get('new_pid', '')}",
+             f"restart_command_seconds={result.get('restart_seconds')}",
+             f"memory_before={before} memory_after={after}"]
+    lines += [f"{k}={v}" for k, v in journal.items()]
+    _write_private(report, "\n".join(lines) + "\n")
+    state_set("last_restart_result", label, state_path)
+    state_set("last_report", str(report), state_path)
+    result["report"] = str(report)
+    out(f"graceful restart {label}: attempts={attempts} old_pid={old_pid} new_pid={result.get('new_pid', '')}")
+    return finish(code, outcome)
+
+
+def cmd_graceful_restart(args: argparse.Namespace, **kw) -> int:
+    res = graceful_restart(reason=args.reason, dry_run=args.dry_run, classification=args.classification,
+                           out=(lambda _m: None) if args.json else print, **kw)
+    if args.json:
+        print(json.dumps(res, sort_keys=True))
+    else:
+        print(f"{res['result']} (exit {res['exit_code']})" + (f" gate={res['gate']}" if res.get("gate") else ""))
+    return int(res["exit_code"])
+
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     rc = doctor(force=args.force, dry_run=args.dry_run, cleanup_sessions=args.cleanup_sessions,
                 even_if_busy=getattr(args, "even_if_busy", False),
@@ -2771,6 +3232,17 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_rr.add_argument("--since", required=True, help="Epoch seconds or an ISO timestamp")
     p_rr.add_argument("--json", action="store_true", help="Print the counts as JSON")
     p_rr.set_defaults(func=cmd_restart_report)
+
+    p_gr = verbs.add_parser("graceful-restart",
+                            help="Restart the gateway gracefully under confirmed memory pressure (ADR-0004)")
+    p_gr.add_argument("--reason", default="manual",
+                      help="`memory` (the timer) or `manual` (a supervised run; skips the mode and pressure gates)")
+    p_gr.add_argument("--dry-run", action="store_true",
+                      help="Evaluate every gate and print the plan; change nothing (no state, marker, snapshot)")
+    p_gr.add_argument("--classification", choices=("pressure", "hard"), default=None,
+                      help="The caller's confirmed classification (the timer passes it); omitted, it is measured")
+    p_gr.add_argument("--json", action="store_true", help="Print the summary as JSON")
+    p_gr.set_defaults(func=cmd_graceful_restart)
 
     p_busy = verbs.add_parser("busy", help="How many agent runs are in flight (exit 0 idle, 1 busy, 2 unknown)")
     p_busy.add_argument("--json", action="store_true", help="Print {busy, probe_ok} as JSON")

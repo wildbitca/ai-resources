@@ -30,6 +30,11 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     from ai_resources import openclaw_host
     monkeypatch.setattr(openclaw_host, "HOST_ENV_PATH", root / "openclaw" / "kit-host.env", raising=False)
     monkeypatch.setattr(openclaw_host, "WATCHDOG_OFF", root / "openclaw" / "watchdog.off", raising=False)
+    # ADR-0004: the graceful restart's state, lock and snapshots live under ~/.openclaw too.
+    monkeypatch.setattr(openclaw_host, "STATE_PATH", root / "openclaw" / "health-restart.state", raising=False)
+    monkeypatch.setattr(openclaw_host, "LOCK_PATH", root / "openclaw" / "health-restart.lock", raising=False)
+    monkeypatch.setattr(openclaw_host, "SNAPSHOT_ROOT", root / "openclaw" / "logs" / "restart-snapshots",
+                        raising=False)
     # And the OpenClaw cockpit's own root. A teardown test whose config names no
     # `agents.defaults.workspace` resolves the workspace to `CONFIG_ROOT / "workspace"`, which was
     # the operator's real ~/.openclaw/workspace: its teardown removed the kit block from the live
