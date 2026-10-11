@@ -693,6 +693,97 @@ def test_a_window_that_could_not_drain_queues_the_restore_as_a_corroborated_entr
     assert r.result()["outcome"] == "revert-failed"
 
 
+# --- 2.1.1 F5: the kill path and the failed-window queue rule ------------------------------------------------------
+
+def test_sigterm_inside_the_drained_window_starts_the_gateway_again_and_queues_nothing(wrig, monkeypatch):
+    import argparse
+    import signal
+
+    r = wrig([BIND], pid=lambda t: "100" if t < 10 else "500",
+             probe=lambda t: (0, "") if any(c[:3] == ["systemctl", "--user", "start"] for c in r.commands)
+             else (1, ""))
+    installed = {}
+    monkeypatch.setattr(signal, "signal", lambda sig, h: installed.__setitem__(sig, h))
+    real = WRig.apply_patch
+
+    def killed_while_applying(patch, *, dry_run=False, **kw):
+        if not dry_run:
+            installed[signal.SIGTERM](signal.SIGTERM, None)      # what systemd sends at TimeoutStopSec
+        return real(r, patch, dry_run=dry_run, **kw)
+
+    r.apply_patch = killed_while_applying
+    original = host.watch_config
+
+    def run_the_rig(*_a, **_k):
+        monkeypatch.setattr(host, "watch_config", original)     # r.run() calls the real one
+        return r.run()
+
+    monkeypatch.setattr(host, "watch_config", run_the_rig)
+    with pytest.raises(SystemExit) as exc:
+        host.cmd_config_watch(argparse.Namespace(run_id="r1", window=900, interval=30))
+    assert exc.value.code == 143
+    assert [(e[0], e[1]) for e in r.systemctl_changes()] == [("stop", True), ("start", False)], \
+        "the gateway was stopped inside the window and started again with watchdog.off already removed"
+    assert not r.marker.exists()
+    assert r.s.openclaw.host_restart_pending == [], "a killed watch queues no restore"
+    assert r.s.openclaw.config_watch["done"] is False and r.s.openclaw.config_watch["result"] is None
+
+
+def test_a_watch_left_unfinished_is_never_an_error():
+    o = _o(config_watch={"run_id": "r1", "unit": "openclaw-config-watch-r1", "done": False, "result": None,
+                         "changes": [BIND]})
+    assert [lv for lv, _m in _levels(o)] == []
+    assert host.pending_summary(o) == {}, "not finished: it claims no revert and no failure"
+    assert not any("reverted" in line or "could not finish" in line
+                   for line in host.pending_lines(host.pending_summary(o)))
+
+
+def _failing_window(wrig, *, patch_ok=True, marker_opens=False, healthy_after_start=True, **kw):
+    holder = {}
+
+    def probe(t):
+        started = any(c[:3] == ["systemctl", "--user", "start"] for c in holder["r"].commands)
+        return (0, "") if (started and healthy_after_start) or t < 10 else (1, "")
+
+    r = holder["r"] = wrig([BIND], probe=probe, pid=lambda t: "100" if t < 10 else "500", **kw)
+    real = WRig.apply_patch
+
+    def patch(p, *, dry_run=False, **k):
+        if dry_run:
+            if marker_opens:
+                r.marker.touch()              # another window opened between the dry run and ours
+            return real(r, p, dry_run=True, **k)
+        return (True, "ok") if patch_ok else (False, "boom")
+
+    r.apply_patch = patch
+    return r
+
+
+@pytest.mark.parametrize("label,kw,queued", [
+    ("exit 2: another window is open", dict(marker_opens=True), True),
+    ("exit 4: the patch failed inside the window", dict(patch_ok=False), True),
+    ("exit 5: the patch was written, the gateway did not come back", dict(healthy_after_start=False), False),
+])
+def test_a_failed_drained_window_queues_a_restore_only_when_the_write_did_not_happen(wrig, label, kw, queued):
+    r = _failing_window(wrig, **kw)
+    r.run(drain_timeout=3, health_timeout=3)
+    pending = r.s.openclaw.host_restart_pending
+    assert bool(pending) is queued, label
+    if queued:
+        [entry] = pending
+        assert entry["source"] == "watch" and entry["corroborated"] is True
+        assert r.result()["outcome"] == "revert-failed"
+    else:
+        assert r.result()["outcome"] == "reverted"
+
+
+def test_an_uncorroborated_failure_never_reaches_the_window_and_queues_nothing(wrig):
+    r = wrig([BIND], probe=lambda t: (1, ""))        # same MainPID, active, listening: nothing corroborates
+    assert r.run() == 0
+    assert r.s.openclaw.host_restart_pending == [] and r.systemctl_changes() == []
+    assert r.result()["outcome"] == "inconclusive"
+
+
 # --- AC-D1-routing -------------------------------------------------------------------------------------------------
 
 def _recorded(path, kind=None, version=_rr.PINNED_OPENCLAW_VERSION):
