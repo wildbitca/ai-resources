@@ -143,7 +143,8 @@ def read_host_env(path: Path | None = None) -> dict[str, str]:
 
 
 _ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
-_ENV_SAFE_VALUE = re.compile(r"^[A-Za-z0-9_@%+=:,./~ -]*$")
+# No space: the file is sourced by bash, so `KEY=a /path/cmd` would run /path/cmd.
+_ENV_SAFE_VALUE = re.compile(r"^[A-Za-z0-9_@%+=:,./~-]*$")
 
 
 def _check_env_pair(key: str, value: str) -> None:
@@ -3826,6 +3827,23 @@ def _gcloud_configs(runner: Runner) -> "dict[str, bool] | None":
     return out
 
 
+_OFFBOX_SA_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9-]+\.iam\.gserviceaccount\.com$")
+_OFFBOX_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+_OFFBOX_ACCOUNT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}$")
+_OFFBOX_PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+
+
+def offbox_identity_value_problems(*, name: str, sa: str, account: str = "", project: str = "") -> list[str]:
+    """Shape check of the values that end up in gcloud argv and in the sourced kit-host.env. An empty account
+    or project means "not given yet" and is not checked here. Anything starting with `-` never matches."""
+    checks = (("--name", name, _OFFBOX_NAME_RE, "a lowercase configuration name (letters, digits, dashes)"),
+              ("--sa", sa, _OFFBOX_SA_RE, "a service account e-mail (NAME@PROJECT.iam.gserviceaccount.com)"),
+              ("--account", account, _OFFBOX_ACCOUNT_RE, "an e-mail address"),
+              ("--project", project, _OFFBOX_PROJECT_RE, "a GCP project id"))
+    return [f"{flag} {value!r} is not {what}" for flag, value, rx, what in checks
+            if (value or flag in ("--name", "--sa")) and not rx.match(value)]
+
+
 def offbox_identity_account(runner: Runner) -> str:
     """The operator's own login: the active credentialed account, when it is not a service account."""
     acct = _gcloud_value(runner, "auth", "list", "--filter=status:ACTIVE", "--format=value(account)")
@@ -3840,9 +3858,14 @@ def offbox_identity_plan(runner: Runner, *, name: str = OFFBOX_CONFIG_NAME, sa: 
     when the configuration already matches (idempotent), and `problems` non-empty means nothing may be applied.
     """
     created = created or {}
-    problems: list[str] = []
+    problems: list[str] = offbox_identity_value_problems(name=name, sa=sa, account=account, project=project)
+    if problems:
+        return {"name": name, "account": account, "sa": sa, "project": project, "exists": False, "steps": [],
+                "problems": problems}
     project = project or (sa.split("@", 1)[1].split(".", 1)[0] if "@" in sa else "")
     account = account or offbox_identity_account(runner)
+    if account and not _OFFBOX_ACCOUNT_RE.match(account):
+        problems.append(f"the active gcloud login {account!r} is not an e-mail address; pass --account")
     if not account:
         problems.append("no operator login found (`gcloud auth list` has no active user account); pass --account")
     if name in OFFBOX_PROTECTED_CONFIGS:
@@ -3937,6 +3960,11 @@ def cmd_offbox_identity(args: argparse.Namespace) -> int:
             setup_state.save(s)
             print(f"removed the gcloud configuration {record['name']!r}")
             return 0
+        return 1
+    bad = offbox_identity_value_problems(name=args.name, sa=args.sa, account=args.account, project=args.project)
+    if bad:
+        for problem in bad:
+            print(f"refusing: {problem}")
         return 1
     plan = offbox_identity_plan(runner, name=args.name, sa=args.sa, account=args.account, project=args.project,
                                 created=o.host_offbox_config_created)

@@ -46,6 +46,10 @@ Notes for the next patch release. Nothing here is released; the version label is
 - `ai-resources openclaw apply-pending` no longer applies leftover 2.1.0 `source=watch` restores; `verify` warns
   they are likely false positives and `apply-pending --discard-watch-restores` lists them (dry run) and drops
   them with `--yes`.
+- **`offbox-identity` validates its values (hardening pass).** `--sa`, `--name`, `--account` and `--project` are
+  checked against their shapes (and anything starting with `-` is refused) in the plan and in the flag parsing,
+  and `kit-host.env` no longer accepts a value with a space: the file is sourced by bash, so `KEY=a /path/cmd`
+  would have run `/path/cmd`.
 
 ## [2.1.0] — 2026-10-10 — a resource-safe gateway: prevention first, a bounded graceful restart as the valve
 

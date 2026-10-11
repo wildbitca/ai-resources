@@ -1228,6 +1228,62 @@ def test_the_verb_dry_run_runs_no_write_and_names_the_infra_step(monkeypatch, ca
     assert g.writes() == []
 
 
+_HOSTILE_OFFBOX_VALUES = [
+    ("sa", "x@p.iam.gserviceaccount.com /usr/bin/id"),
+    ("sa", "--configuration=default"),
+    ("sa", "not-an-email"),
+    ("name", "--activate"),
+    ("name", "a b"),
+    ("name", "Upper"),
+    ("account", "--help"),
+    ("account", "me@example.org /usr/bin/id"),
+    ("project", "-p"),
+    ("project", "p q"),
+]
+
+
+@pytest.mark.parametrize("field,value", _HOSTILE_OFFBOX_VALUES)
+def test_the_plan_refuses_a_hostile_value_and_runs_no_gcloud(field, value):
+    g = FakeGcloud()
+    kwargs = {"account": "me@example.org", field: value}
+    plan = host.offbox_identity_plan(g, **kwargs)
+    assert plan["steps"] == [] and plan["problems"], plan
+    assert host.offbox_identity_apply(g, plan) is None
+    assert g.writes() == []
+
+
+@pytest.mark.parametrize("field,value", _HOSTILE_OFFBOX_VALUES)
+def test_the_verb_refuses_a_hostile_flag_and_writes_nothing(field, value, monkeypatch, tmp_path, capsys):
+    import argparse
+    g = FakeGcloud()
+    monkeypatch.setattr(host, "default_runner", g)
+    env = tmp_path / "kit-host.env"
+    monkeypatch.setattr(host, "HOST_ENV_PATH", env)
+    saved: list[object] = []
+    monkeypatch.setattr(state, "load", lambda: state.SetupState())
+    monkeypatch.setattr(state, "save", lambda s: saved.append(s))
+    kw = dict(dry_run=False, remove=False, yes=True, name="openclaw-backup", sa=host.OFFBOX_SA_DEFAULT,
+              account="me@example.org", project="")
+    kw[field] = value
+    assert host.cmd_offbox_identity(argparse.Namespace(**kw)) != 0
+    assert "refusing" in capsys.readouterr().out
+    assert g.writes() == [] and not env.exists() and saved == []
+
+
+def test_a_valid_set_of_values_still_passes_the_check():
+    g = FakeGcloud()
+    plan = host.offbox_identity_plan(g, name="up-1", sa="uploader-sa@my-proj-1.iam.gserviceaccount.com",
+                                     account="op.erator+x@example.org", project="my-proj-1")
+    assert plan["problems"] == [] and plan["steps"]
+
+
+def test_the_host_env_refuses_a_value_with_a_space(tmp_path):
+    with pytest.raises(ValueError):
+        host.write_host_env({"OPENCLAW_OFFBOX_IMPERSONATE_SA": "a@p.iam.gserviceaccount.com /usr/bin/id"},
+                            tmp_path / "e")
+    assert not (tmp_path / "e").exists()
+
+
 def test_setup_offers_the_step_only_with_a_bucket_and_defaults_to_no(monkeypatch):
     asked: list[str] = []
     monkeypatch.setattr(ui, "confirm", lambda msg, default=False, **_k: asked.append(msg) or default)
