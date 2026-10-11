@@ -1052,13 +1052,19 @@ def watch_config(run_id: str, *, runner: Runner = default_runner,
                                reload_mode=reload_mode, marker=marker, out=out, load_doc=load_doc, kept=kept,
                                reason=verdict.reason, corroborated=bool(corroborated), **window_kw)
     trailing = failing_run(probes, 0.0)
-    if trailing:
-        s = load()
-        cw = s.openclaw.config_watch
-        if cw and cw.get("run_id") == run_id and not cw.get("done"):
-            return _finish_inconclusive(
-                s, cw, f"the gateway was not answering at the end of the watch ({len(trailing)} probe(s)) but the "
-                       "failure was not sustained long enough to act on", save=save, notify=notify, out=out)
+    s = load()
+    cw = s.openclaw.config_watch
+    ours = bool(cw and cw.get("run_id") == run_id and not cw.get("done"))
+    if trailing and ours:
+        return _finish_inconclusive(
+            s, cw, f"the gateway was not answering at the end of the watch ({len(trailing)} probe(s)) but the "
+                   "failure was not sustained long enough to act on", save=save, notify=notify, out=out)
+    if ours and not trailing:
+        # Close the record (T4): a healthy window is a finished watch, not one that looks like it is still running.
+        cw["done"] = True
+        cw["result"] = {"outcome": "healthy", "reason": "", "hot": [], "restart": [], "problems": [],
+                        "kept_confirmed": []}
+        save(s)
     out("watch: the gateway stayed healthy; nothing to revert")
     return 0
 
@@ -2820,7 +2826,8 @@ def pending_summary(o) -> dict:
                  "problems": list(r.get("problems") or []), "run_id": cw.get("run_id", ""),
                  "outcome": r.get("outcome", ""), "reason": r.get("reason", ""),
                  "kept_confirmed": list(r.get("kept_confirmed") or [])}
-    watch_worth = bool(watch and (watch["reverted"] or watch["problems"] or watch["outcome"] == "inconclusive"))
+    watch_worth = bool(watch and (watch["reverted"] or watch["problems"]
+                                  or watch["outcome"] in ("inconclusive", "healthy")))
     if not paths and not leftover and not watch_worth:
         return {}
     return {"paths": paths, "leftover_watch": leftover, "watch": watch if watch_worth else None}
@@ -2989,6 +2996,8 @@ def pending_lines(pending: dict) -> list[str]:
         out.append("the post-setup watch reverted: " + ", ".join(w["reverted"]))
     if w and w.get("problems"):
         out.append("the post-setup watch could not finish its revert: " + "; ".join(w["problems"]))
+    if w and w.get("outcome") == "healthy":
+        out.append("post-setup watch finished: healthy")
     if w and w.get("outcome") == "inconclusive":
         out.append(f"post-setup watch inconclusive: {w.get('reason') or 'unknown'}; "
                    "nothing was reverted or queued")

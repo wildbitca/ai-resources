@@ -125,7 +125,10 @@ def test_a_healthy_gateway_for_the_whole_window_reverts_nothing_and_stays_bounde
     assert r.run() == 0
     assert r.real_writes() == [] and r.notes == []
     assert r.health_calls == 21 and r.sleeps == 20           # 600 / 30 + 1 ticks, never more
-    assert r.s.openclaw.config_watch["done"] is False
+    # T4: a watch that ended healthy is a finished watch with a recorded outcome, not a "running" one.
+    assert r.s.openclaw.config_watch["done"] is True
+    assert r.s.openclaw.config_watch["result"]["outcome"] == "healthy"
+    assert r.s.openclaw.config_watch["result"]["problems"] == []
 
 
 def test_two_failures_then_a_success_reset_the_count(rig):
@@ -1231,3 +1234,19 @@ def test_a_confirmed_discard_prints_the_dry_run_line_only_when_it_is_one(monkeyp
                                         "change": dict(IDLE_KEY)}]
     assert section.discard_watch_restores(s, assume_yes=False) == 0
     assert any(m.startswith("dry run:") for m in messages2) and s.openclaw.host_restart_pending
+
+
+# --- 2.1.1 pass 3, T4: a watch that finished healthy says so --------------------------------------------------------
+
+def test_a_healthy_watch_is_rendered_as_finished_healthy_and_is_never_an_error():
+    o = _o(config_watch={"run_id": "r", "done": True, "changes": [], "result": {
+        "outcome": "healthy", "reason": "", "hot": [], "restart": [], "problems": [], "kept_confirmed": []}})
+    lines = host.pending_lines(host.pending_summary(o))
+    assert lines == ["post-setup watch finished: healthy"]
+    assert [lv for lv, _m in _levels(o) if lv == "error"] == []
+    assert not [lv for lv, _m in _levels(o) if lv == "warn"], "a healthy watch is not a warning either"
+
+
+def test_a_running_watch_still_says_nothing():
+    o = _o(config_watch={"run_id": "r", "done": False, "changes": [], "result": None})
+    assert host.pending_lines(host.pending_summary(o)) == [] and _levels(o) == []
