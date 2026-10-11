@@ -18,6 +18,7 @@ set -uo pipefail
 LOG="$OPENCLAW_LOG_DIR/maintenance.log"
 REPORT="$(mktemp)"
 rc=0
+skipped=0
 
 mkdir -p "$(dirname "$LOG")"
 log(){ echo "$(date '+%F %T') $*" | tee -a "$LOG" >&2; }
@@ -39,6 +40,10 @@ case "$drc" in
   3) say "WARNING: the cgroup did not drain in 90 s: doctor --fix skipped"; rc=1 ;;
   4) say "WARNING: doctor did not complete the maintenance (see maintenance.log)"; rc=1 ;;
   5) say "ALERT: the gateway does NOT answer after the maintenance"; rc=1 ;;
+  # 6 = the drained doctor refused because agent runs are in flight (or the busy probe could not tell).
+  # Nothing was stopped, so this is a skipped week and not a failure: the unit stays green and the report
+  # says so once.
+  6) say "WARNING: skipped: agent runs are in flight (or the busy probe could not tell); doctor was not run and nothing was stopped"; skipped=1 ;;
   *) say "ALERT: ai-resources openclaw doctor failed unexpectedly (exit $drc)"; rc=1 ;;
 esac
 
@@ -62,7 +67,7 @@ say "disk: ~/.claude/jobs $(du -sh "$HOME/.claude/jobs" 2>/dev/null | cut -f1), 
 
 body="$(cat "$REPORT")"
 log "summary: $(tr '\n' ' ' <<<"$body")"
-if [ "$rc" -ne 0 ] || grep -q "^UPDATE:" <<<"$body"; then
+if [ "$rc" -ne 0 ] || [ "$skipped" -ne 0 ] || grep -q "^UPDATE:" <<<"$body"; then
   notify "OpenClaw weekly maintenance:
 $body" || log "note: could not notify over Telegram"
 fi

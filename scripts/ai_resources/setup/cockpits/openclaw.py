@@ -1734,7 +1734,9 @@ def _verify_workspace_blocks(doc: dict, o: state.OpenClawState, F: Any) -> list:
             out.append(F("warn", "openclaw",
                          f"{agents_md} repeats the kit section "
                          f"\"{_shared.OPENCLAW_LONG_RUNNING_HEADING.removeprefix('## ')}\" outside the markers",
-                         "delete the hand-written copy; the kit never touches bytes outside its markers"))
+                         "`ai-resources openclaw dedupe-agents-md` shows the diff and, with --apply and a "
+                         "confirmation, removes an identical copy after a backup; the kit never touches bytes "
+                         "outside its markers on its own"))
         if stale:
             out.append(F("warn", "openclaw",
                          f"{agents_md} documents routing the live config does not have: {', '.join(stale)}",

@@ -557,6 +557,74 @@ OPENCLAW_LONG_RUNNING_MD = (
 )
 
 
+def _squash(text: str) -> str:
+    return " ".join(text.split())
+
+
+def long_running_duplicate(text: str) -> "tuple[int, int, bool] | None":
+    """The hand-written copy of the kit's long-running section OUTSIDE the managed block.
+
+    (first line, end line exclusive, whether its body equals the kit's after whitespace normalisation), or None
+    when the heading is not there. A section ends at the next level 1 or 2 heading, the managed block or EOF."""
+    lines = text.splitlines(keepends=True)
+    inside: set[int] = set()
+    offset = 0
+    rest = lines
+    while rest:
+        begin, end = _managed_block_span(rest)
+        if begin is None:
+            break
+        stop = end if end is not None else len(rest) - 1
+        inside.update(range(offset + begin, offset + stop + 1))
+        offset += stop + 1
+        rest = rest[stop + 1:]
+    heading = re.compile(rf"^{re.escape(OPENCLAW_LONG_RUNNING_HEADING)}[ \t]*\r?$")
+    start = next((i for i, ln in enumerate(lines) if i not in inside and heading.match(ln.rstrip("\n"))), None)
+    if start is None:
+        return None
+    stop = len(lines)
+    for j in range(start + 1, len(lines)):
+        if j in inside or re.match(r"^#{1,2} ", lines[j]):
+            stop = j
+            break
+    body = _squash("".join(lines[start + 1:stop]))
+    kit = _squash(OPENCLAW_LONG_RUNNING_MD.split(OPENCLAW_LONG_RUNNING_HEADING, 1)[1])
+    return start, stop, body == kit
+
+
+def dedupe_long_running(path: Path, *, apply: bool, now: "str | None" = None) -> dict:
+    """One AGENTS.md: {"status": "none"|"removed"|"would-remove"|"differs", "diff": str, "backup": str}.
+
+    An identical copy is removed (after a `<file>.bak-<UTC timestamp>` backup, only with `apply`); a copy that
+    differs from the kit's text is never touched: the diff shows how. Every byte outside the section is kept."""
+    import difflib
+    import time as _time
+
+    raw = _read_raw(path)
+    found = long_running_duplicate(raw)
+    if found is None:
+        return {"status": "none", "diff": "", "backup": ""}
+    start, stop, same = found
+    lines = raw.splitlines(keepends=True)
+    if not same:
+        kit = OPENCLAW_LONG_RUNNING_MD.strip("\n").splitlines(keepends=True)
+        diff = "".join(difflib.unified_diff(kit, lines[start:stop], "kit text", f"{path} (hand-written)"))
+        return {"status": "differs", "diff": diff, "backup": ""}
+    kept = lines[:start] + lines[stop:]
+    if start > 0 and kept[start - 1:start] and not kept[start - 1].strip() and (
+            start >= len(kept) or not kept[start].strip()):
+        kept.pop(start - 1)            # do not leave two blank lines where the section was
+    new = "".join(kept)
+    diff = "".join(difflib.unified_diff(lines, kept, str(path), f"{path} (deduplicated)"))
+    if not apply:
+        return {"status": "would-remove", "diff": diff, "backup": ""}
+    stamp = now or _time.strftime("%Y%m%dT%H%M%SZ", _time.gmtime())
+    backup = path.with_name(f"{path.name}.bak-{stamp}")
+    backup.write_text(raw, encoding="utf-8")
+    path.write_text(new, encoding="utf-8")
+    return {"status": "removed", "diff": diff, "backup": str(backup)}
+
+
 def openclaw_agent_kit_md(ak_path: str, *, delegates: bool = True) -> str:
     """The kit block for an OpenClaw agent workspace `AGENTS.md`.
 

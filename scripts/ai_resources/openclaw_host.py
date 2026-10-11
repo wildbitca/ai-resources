@@ -3996,6 +3996,53 @@ def _forget_offbox_knobs(o, record: dict) -> None:
         o.host_env_previous.pop(key, None)
 
 
+def cmd_dedupe_agents_md(args: argparse.Namespace) -> int:
+    """`dedupe-agents-md [--apply] [PATH...]`: remove the hand-written copy of the kit's long-running section.
+
+    Never silent and never unattended: a dry run (the diff) unless `--apply`, and `--apply` asks first. A copy that
+    differs from the kit's text is shown and left alone."""
+    from .setup import ui
+    from .setup.cockpits import _shared
+    from .setup.cockpits import openclaw as cockpit
+
+    if args.paths:
+        targets = [Path(p).expanduser() for p in args.paths]
+    else:
+        doc = cockpit.read_config(cockpit._verify_config_path()) or {}
+        targets = [ws / "AGENTS.md" for ws in cockpit._workspace_targets(doc) if (ws / "AGENTS.md").is_file()]
+    if not targets:
+        print("no AGENTS.md file to look at")
+        return 0
+    rc = 0
+    pending = []
+    for path in targets:
+        res = _shared.dedupe_long_running(path, apply=False)
+        if res["status"] == "none":
+            print(f"{path}: no hand-written copy of the kit section")
+        elif res["status"] == "differs":
+            print(f"{path}: the hand-written section differs from the kit's text; left alone. How it differs:")
+            print(res["diff"])
+            rc = 1
+        else:
+            print(f"{path}: an identical hand-written copy would be removed:")
+            print(res["diff"])
+            pending.append(path)
+    if not pending:
+        return rc
+    if not args.apply:
+        print("dry run: nothing changed. Re-run with --apply to remove the identical copies (a backup is written first).")
+        return rc
+    if ui.is_non_interactive() or not ui.confirm(
+            f"Remove the hand-written copy from {len(pending)} file(s)? A .bak-<timestamp> file is written first.",
+            default=False):
+        print("nothing changed (--apply needs an interactive confirmation)")
+        return 1
+    for path in pending:
+        res = _shared.dedupe_long_running(path, apply=True)
+        print(f"{path}: removed; backup {res['backup']}")
+    return rc
+
+
 def cmd_apply_pending(args: argparse.Namespace) -> int:
     from .setup import state as setup_state
     from .setup.cockpits import _openclaw_host as section
@@ -4120,6 +4167,13 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
                       help="List the restore entries the post-setup watch queued (a dry run); with --yes or a "
                            "confirmation, drop them. Applies nothing")
     p_ap.set_defaults(func=cmd_apply_pending)
+
+    p_dd = verbs.add_parser("dedupe-agents-md",
+                            help="Show (and with --apply and a confirmation, remove) the hand-written copy of the "
+                                 "kit's long-running section that `verify` flags in an AGENTS.md")
+    p_dd.add_argument("paths", nargs="*", help="AGENTS.md files (default: the ones `verify` looks at)")
+    p_dd.add_argument("--apply", action="store_true", help="Remove identical copies after a confirmation and a backup")
+    p_dd.set_defaults(func=cmd_dedupe_agents_md)
 
     p_oi = verbs.add_parser("offbox-identity",
                             help="Create (or with --remove, delete) the named gcloud configuration the off-box "

@@ -14,7 +14,9 @@ Denies three families of Bash command, and only while the gateway is live and un
 
 The recogniser is token based: options may sit between the words (`openclaw gateway --json
 restart`, `systemctl --user --no-block restart ...`) and the command may be wrapped in `sudo`,
-`env`, `timeout`, `nohup`, `setsid`, `bash -c`, `sh -c` or `eval`. Read-only verbs (`status`,
+`env`, `timeout`, `nohup`, `setsid`, `bash -c`, `sh -c` or `eval`. `env -S '<string>'` (and `-S<s>`, `--split-string`) runs its string as a
+command, so the string is re-tokenised and checked again (bounded depth); a string that cannot be tokenised
+and names the gateway is denied. Read-only verbs (`status`,
 `show`, `is-active`, `list-units`, `logs`, `cat`, ...) are never matched.
 
 Why: `openclaw doctor --fix` stops the gateway and re-inspects the stopped unit. If a child
@@ -155,8 +157,46 @@ def _option_width(tok: str, short_value, long_value) -> int:
     return 1
 
 
-def _command_words(stmt: list[str]) -> list[str]:
-    """The statement with leading VAR=x assignments and transparent wrappers removed."""
+def _env_split_values(flags: list[str]) -> list[str]:
+    """The strings `env -S <s>`, `-S<s>`, `-vS <s>`, `--split-string <s>` and `--split-string=<s>` carry.
+
+    `env` splits such a string into words and runs them, so the string IS a command (the 2.1.0 gap)."""
+    values: list[str] = []
+    short_value = _WRAPPER_FLAGS["env"][0] - {"S"}
+    k = 0
+    while k < len(flags):
+        tok = flags[k]
+        if tok.startswith("--"):
+            name, eq, val = tok.partition("=")
+            if len(name) >= 3 and "--split-string".startswith(name):
+                if eq:
+                    values.append(val)
+                elif k + 1 < len(flags):
+                    values.append(flags[k + 1])
+                    k += 1
+            elif not eq and name in _WRAPPER_FLAGS["env"][1]:
+                k += 1
+        elif tok.startswith("-") and len(tok) > 1:
+            for n, ch in enumerate(tok[1:], start=1):
+                if ch == "S":
+                    if tok[n + 1:]:
+                        values.append(tok[n + 1:])
+                    elif k + 1 < len(flags):
+                        values.append(flags[k + 1])
+                        k += 1
+                    break
+                if ch in short_value:
+                    if n == len(tok) - 1:
+                        k += 1
+                    break
+        k += 1
+    return values
+
+
+def _command_words(stmt: list[str], splits: list[str] | None = None) -> list[str]:
+    """The statement with leading VAR=x assignments and transparent wrappers removed.
+
+    `splits`, when given, collects the `env -S` strings seen on the way."""
     i = 0
     while i < len(stmt):
         tok = stmt[i]
@@ -172,10 +212,13 @@ def _command_words(stmt: list[str]) -> list[str]:
             i += 1                      # the duration
         elif base in _WRAPPERS:
             i += 1
+            first_flag = i
             # `sudo -u x`, `env -i`, `nice -n 5`: skip the flags (and a flag's value)
             short, long = _WRAPPER_FLAGS.get(base, _NO_VALUES)
             while i < len(stmt) and stmt[i].startswith("-"):
                 i += _option_width(stmt[i], short, long)
+            if base == "env" and splits is not None:
+                splits.extend(_env_split_values(stmt[first_flag:i]))
         else:
             break
     return stmt[i:]
@@ -271,6 +314,27 @@ def _inner_command(words: list[str]) -> str | None:
     return None
 
 
+def _mentions_gateway(text: str) -> bool:
+    lowered = text.lower()
+    return "gateway" in lowered and "openclaw" in lowered
+
+
+def _env_split_shape(split: str, rest: list[str], depth: int) -> str | None:
+    """Re-enter the recogniser on an `env -S` string followed by the words after env's options.
+
+    A string that cannot be tokenised, or nests too deep, is denied when it mentions the gateway and allowed
+    otherwise: the guard fails toward blocking only where the gateway is named."""
+    if depth > 2:
+        return "restart" if _mentions_gateway(split) else None
+    try:
+        words = shlex.split(split)
+    except ValueError:
+        return "restart" if _mentions_gateway(split) else None
+    if not words:
+        return None
+    return shape(" ".join(shlex.quote(w) for w in [*words, *rest]), depth + 1)
+
+
 def shape(command: str, _depth: int = 0) -> str | None:
     """"doctor", "stop" or "restart" when the command RUNS a guarded shape, else None."""
     if _depth > 3:
@@ -281,7 +345,12 @@ def shape(command: str, _depth: int = 0) -> str | None:
         except ValueError:
             continue
         for stmt in statements:
-            words = _command_words(stmt)
+            splits: list[str] = []
+            words = _command_words(stmt, splits)
+            for split in splits:
+                found = _env_split_shape(split, words, _depth)
+                if found:
+                    return found
             if _is_doctor_fix(words):
                 return "doctor"
             action = _systemctl_action(words) or _gateway_action(words)

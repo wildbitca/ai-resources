@@ -471,3 +471,67 @@ def test_the_systemctl_short_option_classification_matches_the_host_help(guard, 
         assert verb == "openclaw-gateway", short       # `restart` was consumed as the option's value
     else:
         assert (verb, operands) == ("restart", ["openclaw-gateway"]), short
+
+
+# --- 2.1.1: `env -S` runs its split string as a command ------------------------------------------------------------
+
+ENV_SPLIT_RESTART_DENIED = [
+    "env -S 'systemctl --user restart openclaw-gateway'",
+    "env -S'systemctl --user restart openclaw-gateway.service'",
+    "env --split-string 'systemctl --user restart openclaw-gateway'",
+    "env --split-string='systemctl --user try-restart openclaw-gateway'",
+    "env -iS 'openclaw gateway restart'",
+    "env -vS 'systemctl --user restart openclaw-gateway'",
+    "env -S 'systemctl --user' restart openclaw-gateway",
+    "sudo env -S 'openclaw gateway --json restart'",
+    "env -S 'bash -c \"systemctl --user restart openclaw-gateway\"'",
+    "env --split 'openclaw gateway restart'",
+    "env -u HOME -S 'openclaw gateway restart'",
+]
+ENV_SPLIT_STOP_DENIED = [
+    "env -S 'systemctl --user stop openclaw-gateway'",
+    "env -S 'openclaw doctor --fix'",
+    "env -S 'openclaw gateway stop'",
+]
+ENV_SPLIT_ALLOWED = [
+    "env -S 'echo hi'",
+    "env -S 'systemctl --user status openclaw-gateway'",
+    "env -S 'grep restart docs/openclaw.md'",
+    "env -S 'echo hi; systemctl --user restart openclaw-gateway'",     # env execs echo: the rest are its arguments
+    "env -S 'openclaw gateway status'",
+    "env FOO=1 echo restart openclaw-gateway",
+    "env FOO=1 -S 'openclaw gateway restart'",                          # getopt stops at FOO=1: `-S` is the command
+    "env -S 'echo \"unbalanced'",                                       # unparseable and the gateway is not named
+]
+
+
+@pytest.mark.parametrize("command", ENV_SPLIT_RESTART_DENIED)
+def test_an_env_split_string_that_restarts_the_gateway_is_denied(guard, monkeypatch, capsys, command):
+    code, err = run(guard, monkeypatch, command, capsys=capsys)
+    assert code == 2, command
+    assert "T29" in err
+
+
+@pytest.mark.parametrize("command", ENV_SPLIT_STOP_DENIED)
+def test_an_env_split_string_that_stops_the_gateway_is_denied(guard, monkeypatch, capsys, command):
+    code, err = run(guard, monkeypatch, command, capsys=capsys)
+    assert code == 2, command
+    assert "T01" in err
+
+
+@pytest.mark.parametrize("command", ENV_SPLIT_ALLOWED)
+def test_harmless_env_split_strings_stay_allowed(guard, monkeypatch, capsys, command):
+    assert run(guard, monkeypatch, command, capsys=capsys) == (0, ""), command
+
+
+def test_an_unparseable_split_string_that_names_the_gateway_fails_closed(guard, monkeypatch, capsys):
+    code, err = run(guard, monkeypatch, "env -S 'systemctl --user restart openclaw-gateway \"'", capsys=capsys)
+    assert code == 2 and "T29" in err
+
+
+def test_nested_env_split_strings_are_bounded_and_fail_closed_when_they_name_the_gateway(guard, monkeypatch, capsys):
+    nested = "systemctl --user restart openclaw-gateway"
+    for _ in range(5):
+        nested = f"env -S '{nested}'" if "'" not in nested else "env -S " + __import__("shlex").quote(nested)
+    code, _err = run(guard, monkeypatch, nested, capsys=capsys)
+    assert code in (0, 2)   # bounded: it returns instead of recursing without end

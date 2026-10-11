@@ -1227,3 +1227,17 @@ def test_a_failed_run_keeps_what_the_last_good_run_knew(host):
     failed = _state_file(host)
     assert failed["outcome"] == "failed"
     assert failed["newest_offbox"] == ok["newest_offbox"] and failed["last_ok_epoch"] == ok["last_ok_epoch"]
+
+
+def test_maintenance_reports_a_busy_refusal_as_a_skipped_week_not_an_alert(host):
+    """EXIT_REFUSED_BUSY (6) stopped nothing: the unit stays green and the report says it was skipped (2.1.1)."""
+    host.fresh_backup()
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    host.set_doctor_rc(6)
+    r = host.run("openclaw-maintenance.sh")
+    assert r.returncode == 0, r.stderr
+    log = "\n".join(host.calls())
+    assert log.count("openclaw message send") == 1
+    assert "skipped: agent runs are in flight" in log
+    assert "failed unexpectedly" not in log and "ALERT" not in log
+    assert not any(c.startswith("systemctl --user stop") for c in host.calls())

@@ -32,6 +32,14 @@ Notes for the next patch release. Nothing here is released; the version label is
   with `OPENCLAW_OFFBOX_BUCKET` set) create the named configuration: never activated, no credential file, no IAM,
   idempotent, and the removal only deletes what the kit created and that still matches. The IAM grant stays an
   infra step.
+- **`env -S` no longer hides a gateway stop or restart from the guard hook.** The split string is re-tokenised and
+  checked again (bounded depth); an unparseable string that names the gateway is denied.
+- **`ai-resources openclaw dedupe-agents-md [--apply] [PATH...]`**: shows the diff of the hand-written copy of the
+  kit's "Long-running commands" section that `verify` flags; `--apply` needs an interactive confirmation, writes
+  `<file>.bak-<UTC timestamp>` first and removes only an identical copy (a copy that differs is shown, never
+  touched).
+- The weekly maintenance script reports a busy-refused doctor (exit 6) as "skipped" with one notice and exit 0,
+  instead of an ALERT "doctor failed unexpectedly".
 - **Voice language no longer reverts to `auto` (D2).** The voice question starts from the live
   `tools.media` `--language` value (it wins over a saved answer and over the locale, and prints "kept your
   value"), and a run with no saved answer keeps the live value instead of writing `auto` over it.
