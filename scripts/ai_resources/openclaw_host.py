@@ -615,12 +615,241 @@ def apply_drained(patch: dict, replace_paths: list[str] | None, *, apply_patch: 
 # Started by setup as a transient user unit (`systemd-run --user`), never in the foreground: the loop is
 # minutes long and an open tool call holds a gateway stop (T39). It is bounded, cancellable (stop the unit,
 # or a newer setup run, or watchdog.off) and reverts at most once.
+#
+# 2.1.1 (D1, 2026-10-10): a probe that cannot RUN is not a failed gateway. The unit inherited the user
+# manager's PATH, which has neither openclaw's directory nor node, so every `openclaw health` returned 127 and
+# the watch "reverted" a healthy gateway. The verdict is now pure (`judge`), distinguishes four probe classes,
+# waits for the reload to settle, needs a sustained failure AND a corroborating signal, and ends INCONCLUSIVE
+# (nothing reverted, nothing queued, operator told) whenever it cannot tell.
 
 WATCH_UNIT_PREFIX = "openclaw-config-watch-"
-WATCH_WINDOW = 600.0
+WATCH_WINDOW = 900.0            # seconds the unit watches after a setup run
 WATCH_INTERVAL = 30.0
-WATCH_FAILURES = 3
+WATCH_FAILURES = 3              # the count rule `watch_config` falls back to when no `sustain_s` is given
+WATCH_SETTLE_S = 120.0          # probes are ignored this long after the last reload of a recorded key
+WATCH_SUSTAIN_S = 300.0         # the failure must last this long (after the settle) ...
+WATCH_MAX_TICKS = 61            # hard bound on the loop, whatever window and interval say
+GATEWAY_PORT = 18789
+# ... and be corroborated. This is what the post-setup unit runs with (`cmd_config_watch`).
+WATCH_POLICY: dict = {"settle_s": WATCH_SETTLE_S, "sustain_s": WATCH_SUSTAIN_S, "need_corroboration": True}
 _TRANSIENT_STATES = frozenset({"activating", "deactivating", "reloading"})
+
+PROBE_ANSWERED = "answered"        # rc 0
+PROBE_NO_ANSWER = "no-answer"      # the CLI ran and the gateway did not answer
+PROBE_SLOW = "slow"                # rc 124: a timeout. Counted as a failure only when corroborated
+PROBE_CANNOT = "cannot-probe"      # rc 126/127, a missing interpreter: the PROBE failed, never the gateway
+
+V_HEALTHY, V_WATCHING, V_FAILING, V_INCONCLUSIVE = "healthy", "watching", "failing", "inconclusive"
+
+OUTCOMES = ("healthy", "reverted", "inconclusive", "revert-failed", "baseline-unhealthy")
+
+
+class Probe(NamedTuple):
+    t: float            # seconds since the watch started
+    cls: str            # PROBE_*
+    rc: int
+    detail: str = ""    # first line of the output (never a secret: it is `openclaw health` text)
+
+
+class Verdict(NamedTuple):
+    kind: str
+    reason: str = ""
+
+
+def classify_probe(rc: int, text: str = "") -> str:
+    """The class of one `openclaw health` call."""
+    if rc == 0:
+        return PROBE_ANSWERED
+    if rc == 124:
+        return PROBE_SLOW
+    first = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
+    if rc in (126, 127) or first.startswith("env: ") or "not found on PATH" in first:
+        return PROBE_CANNOT
+    return PROBE_NO_ANSWER
+
+
+def failing_run(probes: list[Probe], settle_until: float = 0.0) -> list[Probe]:
+    """The trailing run of probes that did not answer, counting only probes taken after the settle period."""
+    run: list[Probe] = []
+    for p in probes:
+        if p.t < settle_until:
+            continue
+        if p.cls == PROBE_ANSWERED:
+            run = []
+        else:
+            run.append(p)
+    return run
+
+
+def run_sustained(run: list[Probe], sustain_s: float | None, min_failures: int = WATCH_FAILURES) -> bool:
+    """`sustain_s` None is the legacy rule: `min_failures` failed probes in a row."""
+    if not run:
+        return False
+    if sustain_s is None:
+        return len(run) >= min_failures
+    return run[-1].t - run[0].t >= sustain_s
+
+
+def judge(probes: list[Probe], *, settle_until: float = 0.0, sustain_s: float | None = None,
+          min_failures: int = WATCH_FAILURES, need_corroboration: bool = False,
+          corroborated: "bool | None" = None, baseline_healthy: bool = True,
+          corroboration: str = "") -> Verdict:
+    """The verdict on the probes so far. Pure: no clock, no I/O.
+
+    healthy       the last counted probe answered (or nothing was counted yet)
+    watching      failing, not yet for long enough
+    failing       sustained failure that is corroborated (or the legacy count rule)
+    inconclusive  the probe cannot run, the baseline was already failing, or the failure is uncorroborated
+    """
+    for p in probes:
+        if p.cls == PROBE_CANNOT:
+            return Verdict(V_INCONCLUSIVE, f"probe could not run: {p.detail or f'rc {p.rc}'}")
+    run = failing_run(probes, settle_until)
+    if not run:
+        return Verdict(V_HEALTHY, "answering" if probes else "no probe yet")
+    if not run_sustained(run, sustain_s, min_failures):
+        return Verdict(V_WATCHING, f"{len(run)} failed probe(s), not sustained yet")
+    if not baseline_healthy:
+        return Verdict(V_INCONCLUSIVE, "baseline-unhealthy")
+    if need_corroboration and not corroborated:
+        return Verdict(V_INCONCLUSIVE, "the gateway did not answer, but nothing corroborates a failure "
+                                       "(same process, port listening, no restart in the journal)")
+    span = run[-1].t - run[0].t
+    return Verdict(V_FAILING, f"no answer for {span:.0f}s" + (f"; {corroboration}" if corroboration else ""))
+
+
+# --- what the gateway's own journal says about a reload (2026.9.9 wording) -----------------------------------------
+
+class ReloadEvent(NamedTuple):
+    epoch: float
+    applied: bool          # "config hot reload applied" (True) or "config change detected" (False)
+    paths: list
+
+
+_RELOAD_RE = re.compile(r"\[reload\] config (change detected; evaluating reload|hot reload applied) \(([^)]*)\)")
+_STAMP_RE = re.compile(r"(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.\d+)?(Z|[+-]\d\d:?\d\d)")
+_CRASH_RE = re.compile(r"Main process exited|Failed with result|Scheduled restart job|Stopping openclaw-gateway|"
+                       r"Stopped openclaw-gateway|Started openclaw-gateway")
+
+
+def _line_epoch(line: str) -> float | None:
+    """The epoch of a `journalctl -o short-iso` line (`2026-10-10T15:32:59+00:00 host unit[pid]: msg`)."""
+    tok = line.split(None, 1)[0] if line.strip() else ""
+    m = _STAMP_RE.fullmatch(tok)
+    if not m:
+        return None
+    from datetime import datetime, timedelta, timezone
+    y, mo, d, h, mi, sec = (int(x) for x in m.groups()[:6])
+    zone = m.group(7)
+    off = timedelta(0)
+    if zone != "Z":
+        digits = zone[1:].replace(":", "")
+        off = timedelta(hours=int(digits[:2]), minutes=int(digits[2:])) * (1 if zone[0] == "+" else -1)
+    try:
+        return (datetime(y, mo, d, h, mi, sec, tzinfo=timezone.utc) - off).timestamp()
+    except ValueError:
+        return None
+
+
+def parse_reload_events(lines: list[str]) -> list[ReloadEvent]:
+    """Every reload line that carries a timestamp and a path list. A line it cannot read is skipped, never raised."""
+    out: list[ReloadEvent] = []
+    for line in lines:
+        m = _RELOAD_RE.search(line)
+        epoch = _line_epoch(line) if m else None
+        if m and epoch is not None:
+            paths = [p.strip() for p in m.group(2).split(",") if p.strip()]
+            out.append(ReloadEvent(epoch, m.group(1).startswith("hot reload"), paths))
+    return out
+
+
+def _names(event_path: str, recorded: str) -> bool:
+    return event_path == recorded or event_path.startswith(recorded + ".") or recorded.startswith(event_path + ".")
+
+
+def last_reload_event(lines: list[str], paths: list[str]) -> "ReloadEvent | None":
+    """The latest reload line (detected or applied) that names one of the recorded paths."""
+    hits = [e for e in parse_reload_events(lines) if any(_names(p, r) for p in e.paths for r in paths)]
+    return max(hits, key=lambda e: e.epoch) if hits else None
+
+
+def applied_paths(lines: list[str], paths: list[str]) -> dict[str, float]:
+    """{recorded path: epoch of its latest `config hot reload applied` line}."""
+    out: dict[str, float] = {}
+    for e in parse_reload_events(lines):
+        if not e.applied:
+            continue
+        for r in paths:
+            if any(_names(p, r) for p in e.paths):
+                out[r] = max(out.get(r, 0.0), e.epoch)
+    return out
+
+
+def journal_shows_crash(lines: list[str], *, since: float) -> bool:
+    """A systemd stop/restart/failure line for the gateway unit at or after `since` (epoch)."""
+    for line in lines:
+        epoch = _line_epoch(line)
+        if epoch is not None and epoch >= since and _CRASH_RE.search(line):
+            return True
+    return False
+
+
+# --- the unit's own environment (the primary D1 fix) --------------------------------------------------------------
+
+def unit_path(*, openclaw: str | None = None, which: Callable[[str], "str | None"] = shutil.which) -> str:
+    """PATH for a transient unit, in the order of scripts/openclaw/_common.sh.
+
+    A `systemd-run --user` unit inherits the USER MANAGER's environment, not the login shell's, so
+    `/home/linuxbrew/.linuxbrew/bin` (openclaw and node) is not on it and `#!/usr/bin/env node` fails with 127.
+    Order: OPENCLAW_EXTRA_PATH (the operator's choice, process env then kit-host.env), the directory of the
+    resolved openclaw, the directory of the node it runs on, brew's bin, then the system directories. A
+    version manager's ephemeral directory (`_EPHEMERAL_PATH`) is never put on it.
+    """
+    oc = openclaw or resolve_openclaw_bin()
+    parts: list[str] = []
+    extra = os.environ.get("OPENCLAW_EXTRA_PATH") or read_host_env().get("OPENCLAW_EXTRA_PATH", "")
+    parts += [p for p in extra.split(":") if p]
+    if os.path.isabs(oc):
+        parts.append(os.path.dirname(oc))
+        try:
+            bundled = Path(os.path.realpath(oc)).parent / "node"
+        except OSError:
+            bundled = None
+        if bundled is not None and bundled.is_file():
+            parts.append(str(bundled.parent))
+    brew_node = Path("/home/linuxbrew/.linuxbrew/opt/node/bin/node")
+    node = which("node")
+    if node:
+        parts.append(os.path.dirname(node))
+    elif brew_node.is_file():
+        parts.append(str(brew_node.parent))
+    parts += ["/home/linuxbrew/.linuxbrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in parts:
+        if p in seen or any(bad in p for bad in _EPHEMERAL_PATH):
+            continue
+        seen.add(p)
+        out.append(p)
+    return ":".join(out)
+
+
+def _with_unit_path() -> "Callable[[], None]":
+    """Prepend `unit_path()` to this process's PATH (ephemeral entries dropped); returns the restore function."""
+    before = os.environ.get("PATH")
+    existing = [p for p in (before or "").split(":") if p and not any(bad in p for bad in _EPHEMERAL_PATH)]
+    merged: list[str] = []
+    for p in unit_path().split(":") + existing:
+        if p not in merged:
+            merged.append(p)
+    os.environ["PATH"] = ":".join(merged)
+
+    def restore() -> None:
+        if before is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = before
+    return restore
 
 
 def notify_owner(message: str, runner: Runner = default_runner) -> bool:
@@ -640,6 +869,67 @@ def _unit_state(runner: Runner) -> str:
     return text.strip() if rc == 0 else ""
 
 
+def _unit_props(runner: Runner) -> "dict[str, str] | None":
+    rc, text = runner(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "MainPID,NRestarts,ActiveState"],
+                      env=systemd_env(), timeout=15)
+    if rc != 0:
+        return None
+    props: dict[str, str] = {}
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if key in ("MainPID", "NRestarts", "ActiveState"):
+            props[key] = value.strip()
+    return props or None
+
+
+def _port_listening(runner: Runner, port: int) -> "bool | None":
+    rc, text = runner(["ss", "-H", "-ltn", f"sport = :{port}"], timeout=10)
+    return bool(text.strip()) if rc == 0 else None
+
+
+def _gateway_journal(runner: Runner, since_epoch: float) -> "list[str] | None":
+    """A bounded read of the gateway unit's journal; None when unreadable (the watch then settles on time alone)."""
+    rc, text = runner(["journalctl", "--user", "-u", GATEWAY_UNIT, f"--since=@{int(since_epoch)}", "--no-pager",
+                       "-o", "short-iso", "-n", "400"], env=systemd_env(), timeout=20)
+    return text.splitlines() if rc == 0 else None
+
+
+def _corroboration(runner: Runner, base: "dict[str, str] | None", journal: "list[str] | None", *,
+                   since: float, port: int) -> "tuple[bool | None, str]":
+    """(True | False | None for unknown, why). Any one signal that the gateway really went down is enough."""
+    reasons: list[str] = []
+    readable = False
+    props = _unit_props(runner)
+    if props:
+        readable = True
+        if props.get("ActiveState") in ("failed", "inactive"):
+            reasons.append(f"unit {props['ActiveState']}")
+        if base and base.get("MainPID") and props.get("MainPID") != base["MainPID"]:
+            reasons.append("MainPID changed")
+        try:
+            if base and int(props.get("NRestarts", "0") or 0) > int(base.get("NRestarts", "0") or 0):
+                reasons.append("the unit restarted")
+        except ValueError:
+            pass
+    listening = _port_listening(runner, port)
+    if listening is not None:
+        readable = True
+        if listening is False:
+            reasons.append(f"port {port} not listening")
+    if journal is not None:
+        readable = True
+        if journal_shows_crash(journal, since=since):
+            reasons.append("the journal shows a stop or restart after the change")
+    if reasons:
+        return True, ", ".join(reasons)
+    return (False if readable else None), ""
+
+
+def _first_line(text: str) -> str:
+    text = (text or "").strip()
+    return text.splitlines()[0][:160] if text else ""
+
+
 def watch_config(run_id: str, *, runner: Runner = default_runner,
                  sleep: Callable[[float], None] = time.sleep, window: float = WATCH_WINDOW,
                  interval: float = WATCH_INTERVAL, failures: int = WATCH_FAILURES,
@@ -648,18 +938,25 @@ def watch_config(run_id: str, *, runner: Runner = default_runner,
                  notify: Callable[[str], bool] | None = None, marker: Marker | None = None,
                  reload_mode: Callable[[], "str | None"] | None = None,
                  load_doc: Callable[[], "dict | None"] | None = None,
-                 out: Callable[[str], None] = print, **window_kw: object) -> int:
-    """Watch the gateway for `window` seconds after a setup run; revert that run's changes if it stops answering.
+                 out: Callable[[str], None] = print, settle_s: float = 0.0, sustain_s: float | None = None,
+                 need_corroboration: bool = False, clock: Callable[[], float] = time.monotonic,
+                 wall: Callable[[], float] = time.time, **window_kw: object) -> int:
+    """Watch the gateway for `window` seconds after a setup run; revert that run's changes if it really failed.
 
     Exit 0 whether or not it reverted (the unit's job is done); 1 when the revert itself failed.
+
+    The defaults keep the original rule (`failures` failed probes in a row, no settle, no corroboration);
+    the post-setup unit passes `WATCH_POLICY`: settle 120 s after the last reload, a failure sustained for
+    300 s, and a corroborating signal (the process changed, the unit restarted or is down, the port is closed,
+    the journal shows a stop). A probe that cannot run (127, a missing node) ends the watch INCONCLUSIVE
+    without counting: nothing is reverted and nothing is queued.
 
     A tick that finds no `config_watch` for this run id (cancelled or superseded), `done` already
     set, or `watchdog.off` present (a maintenance window is open) ends the watch without a revert.
     A gateway that is activating, deactivating or reloading is neither a failure nor a success: a
-    restart by OpenClaw, the watchdog or a kit window is in progress. After `failures` consecutive
-    failed `openclaw health` calls everything the run recorded is reverted: hot keys at once with no
-    restart; restart-required keys only inside the kit's drained window (a blind `config patch` of
-    such a key would make OpenClaw force a restart over live runs after 300 s).
+    restart by OpenClaw, the watchdog or a kit window is in progress. On a corroborated failure hot keys are
+    reverted at once with no restart; restart-required keys only inside the kit's drained window (a blind
+    `config patch` of such a key would make OpenClaw force a restart over live runs after 300 s).
     """
     from .setup import state as setup_state
     from .setup.cockpits import openclaw as cockpit
@@ -671,8 +968,18 @@ def watch_config(run_id: str, *, runner: Runner = default_runner,
     reload_mode = reload_mode or cockpit._live_reload_mode
     marker = marker or Marker()
     oc = resolve_openclaw_bin()
-    ticks = min(21, int(window // interval) + 1)
-    bad = 0
+    ticks = min(WATCH_MAX_TICKS, int(window // interval) + 1)
+    t0, w0 = clock(), wall()
+    probes: list[Probe] = []
+    base = _unit_props(runner) if need_corroboration else None
+    journal: "list[str] | None" = None
+    version_checked = False
+    port = GATEWAY_PORT
+    if load_doc is not None:
+        try:
+            port = int(((load_doc() or {}).get("gateway") or {}).get("port") or GATEWAY_PORT)
+        except (TypeError, ValueError):
+            port = GATEWAY_PORT
     for tick in range(ticks):
         if tick:
             sleep(interval)
@@ -686,45 +993,147 @@ def watch_config(run_id: str, *, runner: Runner = default_runner,
             return 0
         if _unit_state(runner) in _TRANSIENT_STATES:
             continue
-        rc, _text = runner([oc, "health"], timeout=45)
-        if rc == 0:
-            bad = 0
+        recorded = _recorded_paths(cw)
+        if not version_checked:
+            # The precondition: the probe's own tool must run at all, or no probe means anything.
+            version_checked = True
+            vrc, vtext = runner([oc, "--version"], timeout=30)
+            if vrc != 0:
+                return _finish_inconclusive(
+                    s, cw, f"probe could not run: `openclaw --version` failed (rc {vrc}): {_first_line(vtext)}",
+                    save=save, notify=notify, out=out)
+        elapsed = clock() - t0
+        rc, text = runner([oc, "health"], timeout=HEALTH_PROBE_TIMEOUT_S)
+        cls = classify_probe(rc, text)
+        probes.append(Probe(elapsed, cls, rc, _first_line(text)))
+        out(f"tick={tick} rc={rc} class={cls} elapsed={elapsed:.0f}s")
+        if cls == PROBE_CANNOT:
+            return _finish_inconclusive(s, cw, f"probe could not run: {_first_line(text) or f'rc {rc}'}",
+                                        save=save, notify=notify, out=out)
+        if cls == PROBE_ANSWERED:
             continue
-        bad += 1
-        if bad >= failures:
-            if cw.get("baseline_healthy") is False:
-                # The gateway was already failing before this run wrote anything (E2): the writes are not the
-                # cause, so reverting them would only add change. Say so once and stop.
-                cw["done"] = True
-                cw["result"] = {"hot": [], "restart": [], "problems": [], "skipped": "baseline-unhealthy"}
-                save(s)
-                message = ("OpenClaw is not answering `openclaw health`, but it was already failing before the "
-                           "last `ai-resources setup` wrote anything, so the kit did not revert that run. "
-                           "Check `ai-resources openclaw status`.")
-                out(message)
-                if not notify(message):
-                    out("watch: no Telegram target configured or the send failed; the journal has the details")
-                return 0
+        # A failing probe: settle against the gateway's own reload lines, then ask for corroboration.
+        settle_until = settle_s
+        if settle_s or need_corroboration:
+            journal = _gateway_journal(runner, w0 - 600)
+            ev = last_reload_event(journal or [], recorded)
+            if ev is not None:
+                settle_until = max(settle_until, (ev.epoch - w0) + settle_s)
+        run = failing_run(probes, settle_until)
+        corroborated, why = None, ""
+        if need_corroboration and run_sustained(run, sustain_s, failures):
+            corroborated, why = _corroboration(runner, base, journal, since=w0, port=port)
+        verdict = judge(probes, settle_until=settle_until, sustain_s=sustain_s, min_failures=failures,
+                        need_corroboration=need_corroboration, corroborated=corroborated,
+                        baseline_healthy=cw.get("baseline_healthy") is not False, corroboration=why)
+        if verdict.kind == V_INCONCLUSIVE and verdict.reason == "baseline-unhealthy":
+            # The gateway was already failing before this run wrote anything (E2): the writes are not the
+            # cause, so reverting them would only add change. Say so once and stop.
+            cw["done"] = True
+            cw["result"] = {"outcome": "baseline-unhealthy", "reason": "baseline-unhealthy", "hot": [],
+                            "restart": [], "problems": [], "kept_confirmed": [], "skipped": "baseline-unhealthy"}
+            save(s)
+            message = ("OpenClaw is not answering `openclaw health`, but it was already failing before the "
+                       "last `ai-resources setup` wrote anything, so the kit did not revert that run. "
+                       "Check `ai-resources openclaw status`.")
+            out(message)
+            if not notify(message):
+                out("watch: no Telegram target configured or the send failed; the journal has the details")
+            return 0
+        if verdict.kind == V_INCONCLUSIVE:
+            return _finish_inconclusive(s, cw, verdict.reason, save=save, notify=notify, out=out)
+        if verdict.kind == V_FAILING:
+            answered = [p.t for p in probes if p.cls == PROBE_ANSWERED]
+            kept = sorted(p for p, epoch in applied_paths(journal or [], recorded).items()
+                          if any(t >= epoch - w0 for t in answered))
             return _revert_run(s, cw, runner=runner, sleep=sleep, save=save, apply_patch=apply_patch, notify=notify,
-                               reload_mode=reload_mode, marker=marker, out=out, load_doc=load_doc, **window_kw)
+                               reload_mode=reload_mode, marker=marker, out=out, load_doc=load_doc, kept=kept,
+                               reason=verdict.reason, corroborated=bool(corroborated), **window_kw)
+    trailing = failing_run(probes, 0.0)
+    if trailing:
+        s = load()
+        cw = s.openclaw.config_watch
+        if cw and cw.get("run_id") == run_id and not cw.get("done"):
+            return _finish_inconclusive(
+                s, cw, f"the gateway was not answering at the end of the watch ({len(trailing)} probe(s)) but the "
+                       "failure was not sustained long enough to act on", save=save, notify=notify, out=out)
     out("watch: the gateway stayed healthy; nothing to revert")
     return 0
 
 
+def _recorded_paths(cw: dict) -> list[str]:
+    paths: list[str] = []
+    for ch in cw.get("changes") or []:
+        for p in (".".join(ch["path"]), ".".join(restore_path_of(ch))):
+            if p not in paths:
+                paths.append(p)
+    return paths
+
+
+def _finish_inconclusive(s, cw: dict, reason: str, *, save, notify, out, kept: list[str] | None = None) -> int:
+    """End the watch having verified nothing: no revert, no restore entry, one notice. Exit 0."""
+    cw["done"] = True
+    cw["result"] = {"outcome": "inconclusive", "reason": reason, "hot": [], "restart": [], "problems": [],
+                    "kept_confirmed": sorted(kept or [])}
+    save(s)
+    message = (f"The post-setup watch could not tell whether the last `ai-resources setup` broke the gateway "
+               f"({reason}); it reverted nothing and queued nothing. Check `ai-resources openclaw status`.")
+    out(message)
+    if not notify(message):
+        out("watch: no Telegram target configured or the send failed; the journal has the details")
+    return 0
+
+
+def _route_restart(changes: list[dict], patch: dict, version: "str | None", mode: "str | None") -> list[str]:
+    """The leaf paths of the restore patch that need the drained window.
+
+    The kind recorded when the key was written is used when the live version cannot be read or is the one
+    the record was made on: re-classifying in a degraded environment is what made D1 queue hot keys. A record
+    from before 2.1.1 (no kind) and a different readable version go through the pinned table, which fails
+    closed.
+    """
+    rr = openclaw_reload_rules
+    live = set(rr.restart_paths(patch, openclaw_version=version, reload_mode=mode))
+    by_path: dict[str, dict] = {}
+    for ch in changes:
+        for key in (".".join(ch["path"]), ".".join(restore_path_of(ch))):
+            by_path.setdefault(key, ch)
+    restart: list[str] = []
+    for leaf in rr.leaf_paths(patch):
+        ch = by_path.get(leaf) or next((c for k, c in by_path.items()
+                                        if leaf.startswith(k + ".") or k.startswith(leaf + ".")), None)
+        kind = ch.get("kind") if ch else None
+        trusted = (kind in ("hot", "restart", "none") and mode != "off"
+                   and (version is None or ch.get("openclaw_version") in (None, version)))
+        is_restart = (kind == "restart") if trusted else (leaf in live)
+        if is_restart:
+            restart.append(leaf)
+    return restart
+
+
 def _revert_run(s, cw: dict, *, runner: Runner, sleep, save, apply_patch, notify, reload_mode, marker, out,
-                load_doc=None, **window_kw) -> int:
+                load_doc=None, kept: list[str] | None = None, reason: str = "", corroborated: bool = False,
+                **window_kw) -> int:
     rr = openclaw_reload_rules
 
-    changes = list(cw.get("changes") or [])
+    kept = list(kept or [])
+    changes = [ch for ch in (cw.get("changes") or [])
+               if not any(_names(".".join(ch["path"]), k) for k in kept)]
+    if kept and not changes:
+        return _finish_inconclusive(
+            s, cw, "every recorded key was hot-applied and the gateway answered afterwards, so the later failure "
+                   "is not attributed to this run", save=save, notify=notify, out=out, kept=kept)
     patch, rp = restore_patch(changes, load_doc() if load_doc else None)
     version = rr.installed_openclaw_version(lambda argv, **kw: runner([resolve_openclaw_bin(), *argv[1:]], **kw))
-    restart = rr.restart_paths(patch, openclaw_version=version, reload_mode=reload_mode())
+    restart = _route_restart(changes, patch, version, reload_mode())
     hot, res = rr.split_patch(patch, restart)
     hot_rp, res_rp = rr.split_replace_paths(rp, restart)
     hot_paths, res_paths = rr.leaf_paths(hot), rr.leaf_paths(res)
     problems: list[str] = []
+    rejected = ""
     done_hot = done_res = False
-    out("watch: the gateway stopped answering; reverting this run's config changes")
+    out("watch: the gateway stopped answering"
+        + (f" ({reason})" if reason else "") + "; reverting this run's config changes")
     if hot:
         try:
             ok, text = apply_patch(hot, dry_run=True, replace_paths=hot_rp)
@@ -739,22 +1148,38 @@ def _revert_run(s, cw: dict, *, runner: Runner, sleep, save, apply_patch, notify
         code, written = apply_drained(res, res_rp, apply_patch=apply_patch, runner=runner, out=out,
                                       require_idle=False, sleep=sleep, marker=marker, **window_kw)
         done_res = written
-        if not written:
+        if code == EXIT_APPLY_REJECTED:
+            # The dry run was rejected, so nothing was stopped and nothing is known about the keys: never queue a
+            # restore for it (D1 c). The reason is reported; the operator decides.
+            rejected = f"the drained-window dry run was rejected (exit {code}); nothing was stopped or queued"
+        elif not written:
             problems.append(f"restart-required keys not reverted (drained window exit {code})")
             for ch in changes:
                 if ".".join(restore_path_of(ch)) in res_paths:
                     s.openclaw.host_restart_pending.append(
                         {"op": "restore", "path": ".".join(ch["path"]), "change": ch, "source": "watch",
-                         "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+                         "corroborated": corroborated, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+    if problems:
+        outcome = "revert-failed"
+    elif done_hot or done_res:
+        outcome = "reverted"
+    else:
+        outcome = "inconclusive"
     cw["done"] = True
-    cw["result"] = {"hot": hot_paths if done_hot else [], "restart": res_paths if done_res else [],
-                    "problems": problems}
+    cw["result"] = {"outcome": outcome, "reason": rejected or ("" if outcome != "inconclusive" else
+                                                                "nothing needed reverting"),
+                    "hot": hot_paths if done_hot else [], "restart": res_paths if done_res else [],
+                    "problems": problems, "kept_confirmed": sorted(kept)}
     save(s)
     parts = []
     if done_hot:
         parts.append("reverted: " + ", ".join(hot_paths))
     if done_res:
         parts.append("reverted in a drained window (restart-required): " + ", ".join(res_paths))
+    if rejected:
+        parts.append(rejected)
+    if kept:
+        parts.append("kept (applied and answered afterwards): " + ", ".join(sorted(kept)))
     if problems:
         parts.append("; ".join(problems) + ". Check `ai-resources openclaw status`.")
     message = ("OpenClaw did not answer `openclaw health` after the last `ai-resources setup`, so the kit "
@@ -786,7 +1211,14 @@ def cmd_config_watch(args: argparse.Namespace) -> int:
         except Exception:                      # an unreadable live file means "do not filter"
             return None
 
-    return watch_config(args.run_id, window=args.window, interval=args.interval, load_doc=load_doc)
+    # Belt and braces for D1: the unit was started with its own PATH, and this makes a unit started by an older
+    # setup (or by hand) find openclaw and node as well. Restored on the way out so nothing leaks.
+    restore = _with_unit_path()
+    try:
+        return watch_config(args.run_id, window=args.window, interval=args.interval, load_doc=load_doc,
+                            **WATCH_POLICY)
+    finally:
+        restore()
 
 
 # --- the restart guard: is a turn in flight right now? --------------------------------------------
@@ -2347,19 +2779,56 @@ def recorded_selection():
         return None
 
 
+def is_leftover_watch_restore(entry: dict) -> bool:
+    """A `source=watch` restore that was not corroborated: what the 2.1.0 watch queued on a probe that could not
+    run (D1). A 2.1.1 entry carries `corroborated: True` and is a real pending revert."""
+    return entry.get("source") == "watch" and entry.get("op") == "restore" and not entry.get("corroborated")
+
+
 def pending_summary(o) -> dict:
     """What status and verify show about the restart-required config setup did not apply:
-    {"paths": [...], "watch": {...}|None}, {} when there is nothing to say. Paths only, never values."""
-    paths = sorted({str(e.get("path", "")) for e in (getattr(o, "host_restart_pending", None) or []) if e.get("path")})
+    {"paths": [...], "leftover_watch": [...], "watch": {...}|None}, {} when there is nothing to say.
+    Paths only, never values. `leftover_watch` is kept apart from `paths`: applying it is not what the
+    operator wants (see `is_leftover_watch_restore`)."""
+    entries = list(getattr(o, "host_restart_pending", None) or [])
+    paths = sorted({str(e.get("path", "")) for e in entries if e.get("path") and not is_leftover_watch_restore(e)})
+    leftover = sorted({str(e.get("path", "")) for e in entries if e.get("path") and is_leftover_watch_restore(e)})
     cw = getattr(o, "config_watch", None) or {}
     watch = None
     if cw.get("done") and cw.get("result"):
         r = cw["result"]
         watch = {"reverted": sorted(set(r.get("hot") or []) | set(r.get("restart") or [])),
-                 "problems": list(r.get("problems") or []), "run_id": cw.get("run_id", "")}
-    if not paths and not (watch and (watch["reverted"] or watch["problems"])):
+                 "problems": list(r.get("problems") or []), "run_id": cw.get("run_id", ""),
+                 "outcome": r.get("outcome", ""), "reason": r.get("reason", ""),
+                 "kept_confirmed": list(r.get("kept_confirmed") or [])}
+    watch_worth = bool(watch and (watch["reverted"] or watch["problems"] or watch["outcome"] == "inconclusive"))
+    if not paths and not leftover and not watch_worth:
         return {}
-    return {"paths": paths, "watch": watch}
+    return {"paths": paths, "leftover_watch": leftover, "watch": watch if watch_worth else None}
+
+
+def discard_watch_restores(o, *, apply: bool, out: Callable[[str], None] = print) -> list[str]:
+    """`apply-pending --discard-watch-restores`: drop the `source=watch` restore entries. Returns their paths.
+
+    A dry run (`apply=False`) lists them and changes nothing. Never automatic: the entries are the only record
+    of a revert the watch could not finish, and on a host that ran the 2.1.0 watch they are most likely false
+    positives (the probe could not run), which is for the operator to confirm."""
+    entries = [e for e in (o.host_restart_pending or []) if e.get("source") == "watch"]
+    names = sorted({str(e.get("path", "")) for e in entries})
+    if not entries:
+        out("no `source=watch` restore entries are pending")
+        return []
+    for e in sorted(entries, key=lambda e: str(e.get("path", ""))):
+        tag = ("queued by a corroborated 2.1.1 failure" if e.get("corroborated")
+               else "likely false positive from the 2.1.0 watch")
+        out(f"  {e.get('path')}: {tag}")
+    if not apply:
+        out(f"dry run: {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} would be discarded; "
+            "nothing was changed")
+        return names
+    o.host_restart_pending = [e for e in o.host_restart_pending if e.get("source") != "watch"]
+    out(f"discarded {len(entries)} `source=watch` restore entr{'y' if len(entries) == 1 else 'ies'}")
+    return names
 
 
 def recorded_pending() -> dict:
@@ -2459,11 +2928,18 @@ def pending_lines(pending: dict) -> list[str]:
     if pending.get("paths"):
         out.append("restart-required config pending: " + ", ".join(pending["paths"])
                    + f"; run `{PENDING_COMMAND}` when idle")
+    if pending.get("leftover_watch"):
+        out.append("restore entries queued by the 2.1.0 post-setup watch, likely false positives (it could not run "
+                   "its probes): " + ", ".join(pending["leftover_watch"])
+                   + f"; inspect with `{PENDING_COMMAND} --discard-watch-restores` (a dry run, nothing changes)")
     w = pending.get("watch")
     if w and w.get("reverted"):
         out.append("the post-setup watch reverted: " + ", ".join(w["reverted"]))
     if w and w.get("problems"):
         out.append("the post-setup watch could not finish its revert: " + "; ".join(w["problems"]))
+    if w and w.get("outcome") == "inconclusive":
+        out.append(f"post-setup watch inconclusive: {w.get('reason') or 'unknown'}; "
+                   "nothing was reverted or queued")
     return out
 
 
@@ -3265,6 +3741,10 @@ def cmd_apply_pending(args: argparse.Namespace) -> int:
     from .setup import state as setup_state
     from .setup.cockpits import _openclaw_host as section
     s = setup_state.load()
+    if getattr(args, "discard_watch_restores", False):
+        rc = section.discard_watch_restores(s, assume_yes=args.yes)
+        setup_state.save(s)
+        return rc
     rc = section.apply_pending(s, assume_yes=args.yes)
     setup_state.save(s)
     return rc
@@ -3377,12 +3857,15 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_ap = verbs.add_parser("apply-pending",
                             help="Apply the restart-required config setup deferred, inside a drained window (only when idle)")
     p_ap.add_argument("--yes", action="store_true", help="Do not ask for confirmation (it still refuses while busy)")
+    p_ap.add_argument("--discard-watch-restores", action="store_true",
+                      help="List the restore entries the post-setup watch queued (a dry run); with --yes or a "
+                           "confirmation, drop them. Applies nothing")
     p_ap.set_defaults(func=cmd_apply_pending)
 
     p_cw = verbs.add_parser("config-watch",
                             help="(started by setup) watch the gateway after a setup run; revert the run if it stops answering")
     p_cw.add_argument("--run-id", required=True, help="The setup run this watch belongs to")
-    p_cw.add_argument("--window", type=float, default=WATCH_WINDOW, help="Seconds to watch (default 600)")
+    p_cw.add_argument("--window", type=float, default=WATCH_WINDOW, help="Seconds to watch (default 900)")
     p_cw.add_argument("--interval", type=float, default=WATCH_INTERVAL, help="Seconds between checks (default 30)")
     p_cw.set_defaults(func=cmd_config_watch)
 

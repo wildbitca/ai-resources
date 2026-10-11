@@ -214,3 +214,9 @@ def test_locate_package_json_resolves_the_symlinked_entry_point(tmp_path, monkey
     assert found is not None and found.name == "package.json" and found.parent.samefile(pkg)
     monkeypatch.setattr(shutil, "which", lambda n, *a, **k: None)
     assert rr.locate_package_json() is None
+
+
+def test_the_two_resource_guard_keys_are_hot_on_the_pinned_version():
+    """The keys the 2026-10-10 setup wrote: the watch must never route them to a drained window (D1 b)."""
+    kinds = rr.classify(["agents.defaults.timeoutSeconds", "mcp.sessionIdleTtlMs"], openclaw_version="2026.9.9")
+    assert kinds == {"agents.defaults.timeoutSeconds": "hot", "mcp.sessionIdleTtlMs": "hot"}

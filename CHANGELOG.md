@@ -4,6 +4,26 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [Unreleased]
+
+Notes for the next patch release. Nothing here is released; the version label is the operator's decision.
+
+### Fixed
+
+- **The post-setup watch no longer reverts a healthy gateway (D1, pitfall T42).** The transient unit now gets its
+  own PATH (`--setenv=PATH=`), so `openclaw health` finds node. A probe that cannot run (rc 126/127, a missing
+  interpreter, `openclaw --version` failing) ends the watch INCONCLUSIVE: nothing is reverted, nothing is
+  queued, and `status`/`verify` warn instead of erroring.
+- A revert now needs a failure sustained for 5 minutes after a 120 s settle period AND a corroborating signal
+  (MainPID changed, restart, unit down, port closed, a stop in the journal). The watch window is 15 minutes
+  and every probe logs `tick=N rc=R class=C elapsed=Ts`.
+- Setup records `kind` and `openclaw_version` per change; the watch routes by the recorded kind and never
+  re-classifies in a degraded environment. A key whose hot reload was applied and answered afterwards is kept.
+  A rejected drained-window dry run (exit 7) never queues a restore entry.
+- `ai-resources openclaw apply-pending` no longer applies leftover 2.1.0 `source=watch` restores; `verify` warns
+  they are likely false positives and `apply-pending --discard-watch-restores` lists them (dry run) and drops
+  them with `--yes`.
+
 ## [2.1.0] — 2026-10-10 — a resource-safe gateway: prevention first, a bounded graceful restart as the valve
 
 This is a minor release because it changes the contract of the health-restart timer: under confirmed memory

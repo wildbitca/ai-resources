@@ -1,0 +1,8 @@
+2026-10-10T15:32:30+00:00 bithome node[PID]: 2026-10-10T15:32:30.742+00:00 [reload] config reload superseded: GatewayConfigReloadSupersededError: config reload superseded by a newer runtime config source
+2026-10-10T15:32:39+00:00 bithome node[PID]: 2026-10-10T15:32:39.257+00:00 [reload] config change detected; evaluating reload (tools.media.models)
+2026-10-10T15:32:39+00:00 bithome node[PID]: 2026-10-10T15:32:39.390+00:00 [reload] config hot reload applied (tools.media.models)
+2026-10-10T15:32:39+00:00 bithome node[PID]: 2026-10-10T15:32:39.433+00:00 [reload] config source revision 2 accepted (file)
+2026-10-10T15:32:58+00:00 bithome node[PID]: 2026-10-10T15:32:58.909+00:00 [reload] config change detected; evaluating reload (agents.defaults.timeoutSeconds, mcp.sessionIdleTtlMs)
+2026-10-10T15:32:59+00:00 bithome node[PID]: 2026-10-10T15:32:59.009+00:00 [reload] bundle-mcp runtime disposal during config reload failed: Error: MCP runtime cleanup could not confirm closure
+2026-10-10T15:32:59+00:00 bithome node[PID]: 2026-10-10T15:32:59.010+00:00 [reload] config hot reload applied (agents.defaults.timeoutSeconds, mcp.sessionIdleTtlMs)
+2026-10-10T15:32:59+00:00 bithome node[PID]: 2026-10-10T15:32:59.031+00:00 [reload] config source revision 3 accepted (file)

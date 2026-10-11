@@ -578,6 +578,7 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
         ui.ok("No restart-required config is pending.")
         return 0
     pending = list(o.host_restart_pending)
+    leftover: list[dict] = []
     ui.info("Pending restart-required keys: " + ", ".join(sorted({e["path"] for e in pending})))
     n, shown = _in_flight()
     ui.info(f"agent runs in flight: {shown}")
@@ -585,6 +586,18 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
         ui.warn("Refusing: a restart would cut the runs in flight (or the probe cannot tell). Try again when idle.")
         return 1
     doc = cockpit.read_config(cockpit.config_path())
+    # A restore the 2.1.0 watch queued on a probe that could not run is never APPLIED here (that would remove a
+    # working key); one the live value already satisfies is a no-op and clears as before. Never dropped silently.
+    for e in list(pending):
+        if host.is_leftover_watch_restore(e) and e.get("change") and host.restore_patch([e["change"]], doc)[0]:
+            pending.remove(e)
+            leftover.append(e)
+    if leftover:
+        ui.warn("Not applying " + ", ".join(sorted({e["path"] for e in leftover})) + ": the 2.1.0 post-setup watch "
+                "queued them on a probe that could not run (likely false positives). Inspect with "
+                f"`{host.PENDING_COMMAND} --discard-watch-restores`.")
+    if not pending:
+        return 0
     patch: dict = {}
     rp: list[str] = []
     changes: list[dict] = []
@@ -611,7 +624,7 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
         rp += rrp
     if not patch:
         ui.ok("Nothing left to apply: the pending keys already match.")
-        o.host_restart_pending = []
+        o.host_restart_pending = list(leftover)
         return 0
     ui.info("Will apply (keys only): " + ", ".join(rr.leaf_paths(patch)))
     if not assume_yes:
@@ -625,9 +638,23 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
     if not written:
         return 1
     _record_changes(o, changes)
-    o.host_restart_pending = []
+    o.host_restart_pending = list(leftover)
     ui.ok("Restart-required config applied in a drained window.")
     return 0 if window_ok else 1
+
+
+def discard_watch_restores(s: state.SetupState, *, assume_yes: bool = False) -> int:
+    """`apply-pending --discard-watch-restores`: a dry run unless confirmed (`--yes` or an interactive yes)."""
+    names = host.discard_watch_restores(s.openclaw, apply=False, out=ui.info)
+    if not names:
+        return 0
+    if not assume_yes:
+        if ui.is_non_interactive() or not ui.confirm("Discard these entries? Nothing is applied to the gateway.",
+                                                     default=False):
+            ui.info("nothing changed; re-run with --yes to discard")
+            return 0
+    host.discard_watch_restores(s.openclaw, apply=True, out=ui.info)
+    return 0
 
 
 # --- the post-setup watch (R3) ------------------------------------------------------------------------------
@@ -679,12 +706,16 @@ def start_config_watch(s: state.SetupState, run_changes: list[dict], *, config_p
                 "in 10 minutes")
         return False
     healthy = (baseline or {}).get("healthy")
-    o.config_watch = {"run_id": run_id, "unit": unit, "started_at": _now(), "changes": run_changes,
-                      "baseline_healthy": healthy is not False, "done": False, "result": None}
+    version, mode, records = _record_kinds(run_changes)
+    o.config_watch = {"run_id": run_id, "unit": unit, "started_at": _now(), "changes": records,
+                      "baseline_healthy": healthy is not False, "openclaw_version": version, "reload_mode": mode,
+                      "done": False, "result": None}
     # The watch reads the state file from its very first tick: it must be on disk before the unit starts.
     state.save(s)
+    # A transient unit inherits the USER MANAGER's environment, not this shell's: without its own PATH the watch
+    # cannot find node and every probe fails with 127 (D1, 2026-10-10). `--setenv` sets it on the unit itself.
     rc, out = _runner()(["systemd-run", "--user", f"--unit={unit}", "--collect", "-p", "RuntimeMaxSec=1800",
-                         "-p", "TimeoutStopSec=600",
+                         "-p", "TimeoutStopSec=600", f"--setenv=PATH={host.unit_path()}",
                          cli, "openclaw", "config-watch", "--run-id", run_id], env=host.systemd_env(), timeout=30)
     if rc != 0:
         o.config_watch = None
@@ -692,9 +723,39 @@ def start_config_watch(s: state.SetupState, run_changes: list[dict], *, config_p
         ui.warn(f"post-setup watch not started: {out.strip()[-160:] or 'systemd-run failed'}; run "
                 "`ai-resources openclaw status` in 10 minutes")
         return False
-    ui.info(f"Post-setup watch started ({unit}): if `openclaw health` fails 3 times within 10 minutes, this run's "
-            f"changes are reverted.\n  follow:  journalctl --user -u {unit}\n  cancel:  systemctl --user stop {unit}")
+    ui.info(f"Post-setup watch started ({unit}): if `openclaw health` stops answering for 5 minutes and the "
+            f"gateway really went down (not just a probe that could not run), this run's changes are reverted; "
+            f"otherwise it ends inconclusive and reverts nothing.\n  follow:  journalctl --user -u {unit}\n"
+            f"  cancel:  systemctl --user stop {unit}")
     return True
+
+
+def _record_kinds(run_changes: list[dict]) -> tuple["str | None", "str | None", list[dict]]:
+    """(installed version, live reload mode, records with `kind` and `openclaw_version`).
+
+    The watch must not re-classify a key in a degraded environment (a probe PATH without node reads no
+    version, and the fail-closed table then calls every key restart-required): the kind it will route by is
+    recorded here, where the version is readable (D1 b).
+    """
+    from . import openclaw as cockpit
+
+    try:
+        version = rr.installed_openclaw_version(cockpit._version_runner, refresh=True)
+    except Exception:  # noqa: BLE001 - a version that cannot be read is recorded as unknown
+        version = None
+    try:
+        mode = cockpit._live_reload_mode()
+    except Exception:  # noqa: BLE001
+        mode = None
+    paths = [".".join(ch["path"]) for ch in run_changes]
+    kinds = rr.classify(paths, openclaw_version=version, reload_mode=mode) if paths else {}
+    records = []
+    for ch, dotted in zip(run_changes, paths):
+        rec = dict(ch)
+        rec["kind"] = kinds.get(dotted, rr.RESTART)
+        rec["openclaw_version"] = version
+        records.append(rec)
+    return version, mode, records
 
 
 def _configure_workboard(o: state.OpenClawState, doc: dict, *, dry_run: bool,
@@ -1280,11 +1341,24 @@ def _pending_findings(o: state.OpenClawState) -> list:
     if summary.get("paths"):
         out.append(Finding("warn", "openclaw", host.pending_lines({"paths": summary["paths"]})[0].split("; run")[0],
                            f"run `{host.PENDING_COMMAND}` when no agent run is in flight"))
+    if summary.get("leftover_watch"):
+        out.append(Finding("warn", "openclaw",
+                           "restore entries queued by the 2.1.0 post-setup watch are likely false positives (its probes "
+                           "could not run): " + ", ".join(summary["leftover_watch"]),
+                           f"`{host.PENDING_COMMAND} --discard-watch-restores` lists them (dry run); add --yes to "
+                           "drop them. Do not run apply-pending to 'fix' them: it would remove working keys"))
     w = summary.get("watch") or {}
     if w.get("reverted"):
         out.append(Finding("warn", "openclaw", "the post-setup watch reverted: " + ", ".join(w["reverted"]),
                            "the gateway stopped answering after the last `ai-resources setup`; check "
                            "`ai-resources openclaw status` before running setup again"))
+    if w.get("outcome") == "inconclusive" and not w.get("problems"):
+        out.append(Finding("warn", "openclaw",
+                           f"post-setup watch inconclusive: {w.get('reason') or 'unknown'}; nothing was reverted or "
+                           "queued",
+                           "the watch could not tell whether the gateway failed because of the last setup; "
+                           "`ai-resources openclaw status` shows the gateway now, and "
+                           "`journalctl --user -u openclaw-config-watch-" + (w.get("run_id") or "<id>") + "` has the probes"))
     if w.get("problems"):
         out.append(Finding("error", "openclaw", "the post-setup watch could not finish its revert: " + "; ".join(w["problems"]),
                            f"`{host.PENDING_COMMAND}` retries the restart-required part when idle"))

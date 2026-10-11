@@ -437,3 +437,475 @@ def test_the_wizard_stores_the_baseline_health_it_measured_before_writing(sim, s
     _run_wizard(s)
     assert order and order[0] == "health" and "write" in order
     assert s.openclaw.config_watch["baseline_healthy"] is False
+
+
+# ======================================================================================================================
+# 2.1.1: the watch must not mistake "I could not probe" for "the gateway failed" (D1, 2026-10-10)
+# ======================================================================================================================
+
+import datetime as _dt
+from pathlib import Path as _Path
+
+FIXTURES = _Path(__file__).parent / "fixtures" / "openclaw" / "watch-2026-10-10"
+WALL0 = _dt.datetime(2026, 10, 10, 15, 33, 47, tzinfo=_dt.timezone.utc).timestamp()
+NODE_MISSING = "env: 'node': No such file or directory\nenv: use -[v]S to pass options in shebang lines"
+
+# the two records the 2026-10-10 15:32 run wrote (tests/fixtures/openclaw/watch-2026-10-10/setup-state-excerpt.yaml)
+TIMEOUT_KEY = {"path": ["agents", "defaults", "timeoutSeconds"], "previous": None, "had": False, "action": "filled",
+               "delete": ["agents", "defaults", "timeoutSeconds"]}
+IDLE_KEY = {"path": ["mcp", "sessionIdleTtlMs"], "previous": None, "had": False, "action": "filled",
+            "delete": ["mcp", "sessionIdleTtlMs"]}
+D1_CHANGES = [TIMEOUT_KEY, IDLE_KEY]
+POLICY = dict(settle_s=120.0, sustain_s=300.0, need_corroboration=True)
+
+
+def _journal_line(epoch: float, message: str) -> str:
+    stamp = _dt.datetime.fromtimestamp(epoch, tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    return f"{stamp} bithome node[1]: {stamp} [reload] {message}"
+
+
+class WRig(Rig):
+    """A Rig with a virtual clock, scripted probes by time, corroboration signals and a gateway journal."""
+
+    def __init__(self, tmp_path, changes, *, probe=None, version=(0, "OpenClaw 2026.9.9 (abc)"), pid=lambda t: "100",
+                 restarts=lambda t: "0", unit_state=lambda t: "active", listening=lambda t: True,
+                 journal=(), patch_ok=True, **kw):
+        super().__init__(tmp_path, changes, **kw)
+        self.now = 0.0
+        self.probe = probe or (lambda t: (1, ""))
+        self.version = version
+        self.pid, self.restarts, self.unit_state, self.listening = pid, restarts, unit_state, listening
+        self.journal = list(journal)               # (epoch, message) pairs, visible once the wall clock reaches them
+        self.patch_ok = patch_ok
+        self.probes: list[tuple[float, int]] = []
+        self.commands: list[list[str]] = []
+
+    def clock(self):
+        return self.now
+
+    def wall(self):
+        return WALL0 + self.now
+
+    def sleep(self, s):
+        super().sleep(s)
+        self.now += s
+
+    def __call__(self, argv, **kw):
+        self.commands.append(list(argv))
+        if argv[:3] == ["systemctl", "--user", "show"] and "MainPID,NRestarts,ActiveState" in argv:
+            return 0, (f"MainPID={self.pid(self.now)}\nNRestarts={self.restarts(self.now)}\n"
+                       f"ActiveState={self.unit_state(self.now)}")
+        if argv[:1] == ["journalctl"]:
+            return 0, "\n".join(_journal_line(e, m) for e, m in self.journal if e <= self.wall())
+        if argv[:1] == ["ss"]:
+            return 0, ("LISTEN 0 511 127.0.0.1:18789 0.0.0.0:*" if self.listening(self.now) else "")
+        if argv[-1:] == ["--version"]:
+            return self.version
+        if argv[-1:] == ["health"]:
+            self.health_calls += 1
+            self.events.append(("health",))
+            rc, text = self.probe(self.now)
+            self.probes.append((self.now, rc))
+            return rc, text
+        return super().__call__(argv, **kw)
+
+    def apply_patch(self, patch, *, dry_run=False, replace_paths=None, allow_restart=False, reload_mode=None):
+        if not self.patch_ok:
+            self.applied.append((patch, dry_run, replace_paths, allow_restart))
+            return False, "openclaw not found on PATH"
+        return super().apply_patch(patch, dry_run=dry_run, replace_paths=replace_paths,
+                                   allow_restart=allow_restart, reload_mode=reload_mode)
+
+    def run(self, **kw):
+        kw.setdefault("window", 900)
+        kw.setdefault("interval", 30)
+        for k, v in POLICY.items():
+            kw.setdefault(k, v)
+        return host.watch_config(self.s.openclaw.config_watch["run_id"], runner=self, sleep=self.sleep,
+                                 load=lambda: self.s, save=lambda s: setattr(self, "saves", self.saves + 1),
+                                 apply_patch=self.apply_patch, notify=lambda m: self.notes.append(m) or True,
+                                 marker=self.marker, reload_mode=lambda: None, out=self.out.append,
+                                 drain_interval=1, health_interval=1, clock=self.clock, wall=self.wall, **kw)
+
+    def result(self):
+        return self.s.openclaw.config_watch["result"]
+
+
+@pytest.fixture
+def wrig(tmp_path):
+    def make(changes, **kw):
+        return WRig(tmp_path, changes, **kw)
+    return make
+
+
+def _no_errors(o):
+    from ai_resources.setup.cockpits import _openclaw_host as sec
+    return [f for f in sec._pending_findings(o) if f.level == "error"]
+
+
+# --- AC-D1-regression ---------------------------------------------------------------------------------------------
+
+def test_the_2026_10_10_run_is_inconclusive_and_reverts_nothing(wrig):
+    """Probes that cannot run (node not on the unit's PATH) once ended in exit 1 and two source=watch restores."""
+    r = wrig(D1_CHANGES, probe=lambda t: (127, NODE_MISSING), patch_ok=False)
+    assert r.run() == 0
+    assert r.applied == [], "the revert path was never entered"
+    assert r.s.openclaw.host_restart_pending == []
+    assert r.result()["outcome"] == "inconclusive" and "could not run" in r.result()["reason"]
+    assert r.s.openclaw.config_watch["done"] is True and r.systemctl_changes() == []
+    assert len(r.notes) == 1 and "reverted nothing" in r.notes[0]
+    assert _no_errors(r.s.openclaw) == []
+
+
+def test_legacy_defaults_also_treat_an_unrunnable_probe_as_inconclusive(rig):
+    r = rig(D1_CHANGES)
+    r.health = []
+    real = r.__call__
+
+    def runner(argv, **kw):
+        if argv[-1:] == ["health"]:
+            return 127, NODE_MISSING
+        return real(argv, **kw)
+
+    out = host.watch_config("r1", runner=runner, sleep=r.sleep, load=lambda: r.s, save=lambda s: None,
+                            apply_patch=r.apply_patch, notify=lambda m: r.notes.append(m) or True,
+                            marker=r.marker, reload_mode=lambda: None, out=r.out.append, window=600, interval=30)
+    assert out == 0 and r.real_writes() == [] and r.applied == []
+    assert r.s.openclaw.host_restart_pending == []
+
+
+def test_a_failing_version_check_ends_inconclusive_before_any_probe_is_counted(wrig):
+    r = wrig(D1_CHANGES, version=(127, NODE_MISSING))
+    assert r.run() == 0
+    assert r.health_calls == 0 and r.applied == []
+    assert r.result()["outcome"] == "inconclusive"
+
+
+def test_probes_that_fail_with_a_live_unit_and_no_corroboration_are_inconclusive(wrig):
+    r = wrig(D1_CHANGES, probe=lambda t: (1, "gateway closed"))          # same pid, port listening, no restart
+    assert r.run() == 0
+    assert r.applied == [] and r.s.openclaw.host_restart_pending == []
+    assert r.result()["outcome"] == "inconclusive" and "corroborat" in r.result()["reason"]
+    assert len(r.notes) == 1
+
+
+def test_a_timeout_is_slow_not_unrunnable_and_is_never_reverted_without_corroboration(wrig):
+    r = wrig(D1_CHANGES, probe=lambda t: (124, "timed out"))
+    assert r.run() == 0
+    assert r.applied == []
+    assert "could not run" not in r.result()["reason"]
+    assert r.health_calls > 3, "a timeout does not end the watch the way an unrunnable probe does"
+
+
+def test_every_probe_leaves_one_journal_line(wrig):
+    r = wrig(D1_CHANGES, probe=lambda t: (0, "ok"))
+    r.run(window=90)
+    lines = [m for m in r.out if m.startswith("tick=")]
+    assert len(lines) == r.health_calls == 4
+    assert lines[0] == "tick=0 rc=0 class=answered elapsed=0s" and lines[1].endswith("elapsed=30s")
+
+
+# --- AC-D1-real-outage: a corroborated outage after the settle period is still reverted ------------------------------
+
+def test_a_corroborated_sustained_outage_reverts_hot_keys_and_only_then(wrig):
+    r = wrig([HOT, CREATED], probe=lambda t: (0, "") if t < 90 else (1, ""),
+             pid=lambda t: "100" if t < 90 else "200")
+    assert r.run() == 0
+    [(patch, _d, _rp, allow)] = r.real_writes()
+    assert patch == {"tools": {"profile": "minimal"}, "gateway": {"publicOrigin": None}} and allow is False
+    assert r.systemctl_changes() == []
+    assert r.result()["outcome"] == "reverted"
+    revert_at = next(t for t, _rc in r.probes if t >= 90 + 300)
+    assert r.now >= revert_at, "not before the failure was sustained for 5 minutes"
+    assert r.now < 90 + 300 + 3 * 30
+
+
+def test_a_restart_required_key_is_reverted_only_in_the_drained_window_after_a_corroborated_outage(wrig):
+    r = wrig([HOT, BIND], probe=lambda t: (0, "") if t < 30 else (1, ""), pid=lambda t: "100" if t < 30 else "300")
+    assert r.run() == 0
+    assert ("patch", ("gateway.bind",), True) in r.events
+    assert not any(e[0] == "patch" and e[2] is False and "gateway.bind" in e[1] for e in r.events)
+
+
+def test_probes_are_ignored_until_the_settle_period_after_the_last_reload_has_passed(wrig):
+    reloads = [(WALL0 + 100, "config hot reload applied (tools.profile)")]
+    r = wrig([HOT], pid=lambda t: "100" if t < 1 else "200", journal=reloads)   # failing; the process changed at once
+    assert r.run() == 0
+    assert len(r.real_writes()) == 1
+    # settle ends at 100 + 120; the first counted probe is at 240 and the failure must last 300 s from there
+    assert r.now >= 240 + 300
+
+
+def test_a_probe_answered_after_the_hot_reload_keeps_the_key_and_nothing_is_queued(wrig):
+    applied = (WALL0 - 48, "config hot reload applied (agents.defaults.timeoutSeconds, mcp.sessionIdleTtlMs)")
+    r = wrig(D1_CHANGES, probe=lambda t: (0, "") if t < 30 else (1, ""), pid=lambda t: "100" if t < 30 else "400",
+             journal=[applied])
+    assert r.run() == 0
+    assert r.applied == [] and r.s.openclaw.host_restart_pending == []
+    assert sorted(r.result()["kept_confirmed"]) == ["agents.defaults.timeoutSeconds", "mcp.sessionIdleTtlMs"]
+    assert r.result()["outcome"] == "inconclusive"
+
+
+def test_a_baseline_that_was_not_healthy_is_never_blamed_on_the_run(wrig):
+    r = wrig([HOT, BIND], pid=lambda t: "9")
+    r.s.openclaw.config_watch["baseline_healthy"] = False
+    assert r.run() == 0
+    assert r.applied == [] and r.result()["outcome"] == "baseline-unhealthy"
+    assert r.result()["skipped"] == "baseline-unhealthy" and "already failing" in r.notes[0]
+
+
+def test_a_stop_in_the_journal_after_the_change_corroborates(wrig):
+    r = wrig([HOT])                                   # same pid, port listening: only the journal speaks
+    original = r.__call__
+
+    def runner(argv, **kw):
+        if argv[:1] == ["journalctl"]:
+            stamp = _dt.datetime.fromtimestamp(WALL0 + 20, tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+            return 0, f"{stamp} bithome systemd[1]: openclaw-gateway.service: Main process exited, code=killed"
+        return original(argv, **kw)
+
+    code = host.watch_config("r1", runner=runner, sleep=r.sleep, load=lambda: r.s, save=lambda s: None,
+                             apply_patch=r.apply_patch, notify=lambda m: r.notes.append(m) or True, marker=r.marker,
+                             reload_mode=lambda: None, out=r.out.append, window=900, interval=30,
+                             clock=r.clock, wall=r.wall, drain_interval=1, health_interval=1, **POLICY)
+    assert code == 0 and len(r.real_writes()) == 1
+
+
+# --- AC-D1-exit7 ---------------------------------------------------------------------------------------------------
+
+def test_a_rejected_dry_run_of_the_drained_window_queues_no_restore(wrig):
+    r = wrig([BIND], pid=lambda t: "100" if t < 10 else "500", patch_ok=False)
+    assert r.run() == 0
+    assert r.s.openclaw.host_restart_pending == []
+    assert r.systemctl_changes() == [], "nothing was stopped"
+    assert r.result()["outcome"] == "inconclusive" and "problems" in r.result() and r.result()["problems"] == []
+    assert _no_errors(r.s.openclaw) == []
+
+
+def test_a_window_that_could_not_drain_queues_the_restore_as_a_corroborated_entry(wrig):
+    r = wrig([BIND], pid=lambda t: "100" if t < 10 else "500", drain_ok=False)
+    r.run(drain_timeout=3)
+    [entry] = r.s.openclaw.host_restart_pending
+    assert entry["source"] == "watch" and entry["corroborated"] is True
+    assert r.result()["outcome"] == "revert-failed"
+
+
+# --- AC-D1-routing -------------------------------------------------------------------------------------------------
+
+def _recorded(path, kind=None, version="2026.9.9"):
+    rec = {"path": path, "previous": None, "had": False, "action": "filled", "delete": path}
+    if kind:
+        rec.update(kind=kind, openclaw_version=version)
+    return rec
+
+
+def test_recorded_hot_keys_stay_on_the_hot_path_when_the_version_cannot_be_read(wrig, monkeypatch):
+    monkeypatch.setattr(host.openclaw_reload_rules, "installed_openclaw_version", lambda runner, **kw: None)
+    r = wrig([_recorded(["agents", "defaults", "timeoutSeconds"], "hot"),
+              _recorded(["mcp", "sessionIdleTtlMs"], "hot")], pid=lambda t: "100" if t < 10 else "9")
+    assert r.run() == 0
+    [(patch, _d, _rp, allow)] = r.real_writes()
+    assert allow is False and r.systemctl_changes() == [], "no drained window for a hot key"
+    assert r.result()["outcome"] == "reverted"
+
+
+def test_a_legacy_record_with_no_version_still_routes_to_the_drained_window(wrig, monkeypatch):
+    monkeypatch.setattr(host.openclaw_reload_rules, "installed_openclaw_version", lambda runner, **kw: None)
+    r = wrig([_recorded(["tools", "profile"])], pid=lambda t: "100" if t < 10 else "9")
+    assert r.run() == 0
+    assert ("patch", ("tools.profile",), True) in r.events, "fail closed: restart routing"
+    assert [e[0] for e in r.systemctl_changes()] == ["stop", "start"]
+
+
+def test_a_different_readable_version_reclassifies_instead_of_trusting_the_record(wrig, monkeypatch):
+    monkeypatch.setattr(host.openclaw_reload_rules, "installed_openclaw_version", lambda runner, **kw: "2026.10.1")
+    r = wrig([_recorded(["tools", "profile"], "hot", "2026.9.9")], pid=lambda t: "100" if t < 10 else "9")
+    assert r.run() == 0
+    assert ("patch", ("tools.profile",), True) in r.events, "the pin does not know 2026.10.1: fail closed"
+
+
+# --- the pure verdict ------------------------------------------------------------------------------------------------
+
+def _p(t, cls):
+    return host.Probe(t, cls, {"answered": 0, "no-answer": 1, "slow": 124, "cannot-probe": 127}[cls], "")
+
+
+@pytest.mark.parametrize("probes,kw,kind,why", [
+    ([_p(0, "answered"), _p(30, "answered")], {}, "healthy", ""),
+    ([_p(0, "no-answer"), _p(30, "no-answer")], dict(sustain_s=300), "watching", ""),
+    ([_p(0, "no-answer"), _p(300, "no-answer")], dict(sustain_s=300, need_corroboration=True), "inconclusive",
+     "corroborat"),
+    ([_p(0, "no-answer"), _p(300, "slow")], dict(sustain_s=300, need_corroboration=True, corroborated=True),
+     "failing", ""),
+    ([_p(0, "no-answer"), _p(300, "no-answer")], dict(sustain_s=300, need_corroboration=True, corroborated=True,
+                                                      baseline_healthy=False), "inconclusive", "baseline-unhealthy"),
+    ([_p(0, "cannot-probe")], {}, "inconclusive", "could not run"),
+    ([_p(0, "no-answer"), _p(30, "answered"), _p(60, "no-answer"), _p(90, "no-answer")],
+     dict(sustain_s=300), "watching", ""),
+    ([_p(i * 30, "no-answer") for i in range(3)], {}, "failing", ""),                    # legacy: three in a row
+    ([_p(0, "no-answer"), _p(130, "no-answer"), _p(430, "no-answer")],
+     dict(settle_until=120, sustain_s=300, need_corroboration=True, corroborated=True), "failing", ""),
+    ([_p(0, "no-answer"), _p(130, "no-answer"), _p(300, "no-answer")],
+     dict(settle_until=120, sustain_s=300, need_corroboration=True, corroborated=True), "watching", ""),
+])
+def test_judge_table(probes, kw, kind, why):
+    v = host.judge(probes, **kw)
+    assert v.kind == kind and why in v.reason
+
+
+@pytest.mark.parametrize("rc,text,cls", [
+    (0, "ok", "answered"), (1, "gateway closed (1006)", "no-answer"), (124, "Command timed out", "slow"),
+    (127, "x", "cannot-probe"), (126, "", "cannot-probe"), (1, NODE_MISSING, "cannot-probe"),
+    (1, "openclaw not found on PATH", "cannot-probe"), (1, "ECONNREFUSED 127.0.0.1:18789", "no-answer"),
+])
+def test_probe_classes(rc, text, cls):
+    assert host.classify_probe(rc, text) == cls
+
+
+# --- the reload-line parser, on the lines 2026.9.9 really wrote -------------------------------------------------------
+
+def test_reload_events_come_from_the_recorded_gateway_journal():
+    lines = (FIXTURES / "gateway-reload.journal").read_text(encoding="utf-8").splitlines()
+    paths = ["agents.defaults.timeoutSeconds", "mcp.sessionIdleTtlMs"]
+    ev = host.last_reload_event(lines, paths)
+    assert ev is not None and ev.applied is True and sorted(ev.paths) == paths
+    assert _dt.datetime.fromtimestamp(ev.epoch, tz=_dt.timezone.utc).isoformat() == "2026-10-10T15:32:59+00:00"
+    assert host.applied_paths(lines, paths) == {p: ev.epoch for p in paths}
+    # another key's reload and the superseded line name no recorded path
+    assert host.last_reload_event(lines, ["gateway.bind"]) is None
+
+
+def test_a_disposal_failure_and_a_superseded_reload_are_not_failures():
+    lines = (FIXTURES / "gateway-reload.journal").read_text(encoding="utf-8").splitlines()
+    kinds = [(e.applied, e.paths) for e in host.parse_reload_events(lines)]
+    assert (False, ["tools.media.models"]) in kinds and (True, ["tools.media.models"]) in kinds
+    assert all("disposal" not in str(k) for k in kinds)
+    assert host.journal_shows_crash(lines, since=0) is False
+
+
+def test_an_unparseable_journal_degrades_to_nothing():
+    assert host.parse_reload_events(["garbage", "", "[reload] config hot reload applied (a.b)"]) == []
+
+
+# --- the unit's own environment (primary fix) ------------------------------------------------------------------------
+
+def test_the_unit_path_has_openclaw_and_node_and_never_an_ephemeral_dir(tmp_path, monkeypatch):
+    brew = tmp_path / "brew" / "bin"
+    brew.mkdir(parents=True)
+    (brew / "openclaw").write_text("#!/usr/bin/env node\n")
+    (brew / "node").write_text("")
+    monkeypatch.setattr(host, "read_host_env", lambda *a, **k: {"OPENCLAW_EXTRA_PATH": "/run/user/1000/fnm_multishells/1/bin"})
+    path = host.unit_path(openclaw=str(brew / "openclaw"), which=lambda n: None)
+    parts = path.split(":")
+    assert parts[0] == str(brew), "the dir of the resolved openclaw comes first, node sits next to it"
+    assert not any("multishell" in p or p.startswith("/run/user/") for p in parts)
+    assert parts[-3:] == ["/usr/local/bin", "/usr/bin", "/bin"]
+    assert len(parts) == len(set(parts))
+
+
+def test_the_unit_path_honours_the_operator_extra_path_first(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "read_host_env", lambda *a, **k: {"OPENCLAW_EXTRA_PATH": "/opt/mine/bin"})
+    monkeypatch.delenv("OPENCLAW_EXTRA_PATH", raising=False)
+    path = host.unit_path(openclaw="/home/linuxbrew/.linuxbrew/bin/openclaw", which=lambda n: None)
+    assert path.split(":")[0] == "/opt/mine/bin"
+
+
+def test_the_config_watch_verb_runs_with_the_unit_path_and_restores_the_environment(monkeypatch):
+    import argparse
+    import os
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setattr(host, "unit_path", lambda **k: "/x/brew/bin:/usr/bin")
+    seen = {}
+    monkeypatch.setattr(host, "watch_config", lambda *a, **k: seen.setdefault("path", os.environ["PATH"]) and 0)
+    monkeypatch.setattr("signal.signal", lambda *a: None)
+    host.cmd_config_watch(argparse.Namespace(run_id="r1", window=900, interval=30))
+    assert seen["path"].split(":")[:2] == ["/x/brew/bin", "/usr/bin"]
+    assert os.environ["PATH"] == "/usr/bin:/bin"
+
+
+def test_setup_starts_the_unit_with_its_own_path_and_records_version_mode_and_kind(sim, script, monkeypatch,
+                                                                                    ai_resources_on_path):
+    monkeypatch.setattr(host, "unit_path", lambda **k: "/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin")
+    s = _state()
+    _run_wizard(s)
+    [argv] = _launches(sim)
+    setenv = [a for a in argv if a.startswith("--setenv=PATH=")]
+    assert setenv == ["--setenv=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin"]
+    assert argv.index(setenv[0]) < argv.index("/opt/bin/ai-resources")
+    cw = s.openclaw.config_watch
+    assert cw["openclaw_version"] == "2026.9.9"
+    assert "reload_mode" in cw
+    kinds = {".".join(c["path"]): c.get("kind") for c in cw["changes"]}
+    assert kinds["tools.profile"] == "hot" and kinds["gateway.bind"] == "restart"
+    assert all(c.get("openclaw_version") == "2026.9.9" for c in cw["changes"])
+
+
+# --- AC-D1-report: inconclusive and leftover entries are warnings, never errors -------------------------------------
+
+def _o(**kw):
+    o = state.SetupState().openclaw
+    for k, v in kw.items():
+        setattr(o, k, v)
+    return o
+
+
+def _levels(o):
+    from ai_resources.setup.cockpits import _openclaw_host as sec
+    return [(f.level, f.message) for f in sec._pending_findings(o)]
+
+
+def test_an_inconclusive_watch_is_reported_as_a_warning_with_its_reason():
+    o = _o(config_watch={"run_id": "r", "done": True, "changes": [], "result": {
+        "outcome": "inconclusive", "reason": "probe could not run: env: 'node'", "hot": [], "restart": [],
+        "problems": [], "kept_confirmed": []}})
+    levels = _levels(o)
+    assert [lv for lv, _m in levels] == ["warn"]
+    assert "inconclusive" in levels[0][1] and "nothing was reverted or queued" in levels[0][1]
+    assert any("inconclusive" in line for line in host.pending_lines(host.pending_summary(o)))
+
+
+def test_a_failed_revert_stays_an_error():
+    o = _o(config_watch={"run_id": "r", "done": True, "changes": [], "result": {
+        "outcome": "revert-failed", "hot": [], "restart": [], "problems": ["hot keys not reverted: x"]}})
+    assert [lv for lv, _m in _levels(o)] == ["error"]
+
+
+def test_a_leftover_2_1_0_watch_restore_is_a_warning_naming_the_discard_command():
+    entry = {"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch", "change": IDLE_KEY}
+    o = _o(host_restart_pending=[entry])
+    levels = _levels(o)
+    assert all(lv == "warn" for lv, _m in levels)
+    text = " ".join(m for _lv, m in levels)
+    assert "likely false positive" in text
+    summary = host.pending_summary(o)
+    assert summary["leftover_watch"] == ["mcp.sessionIdleTtlMs"]
+    assert any("--discard-watch-restores" in line for line in host.pending_lines(summary))
+
+
+def test_discard_dry_run_changes_nothing_and_confirm_removes_only_watch_entries(tmp_path):
+    keep = {"op": "profile", "path": "gateway.bind", "action": "forced"}
+    leftovers = [{"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch", "change": IDLE_KEY},
+                 {"op": "restore", "path": "agents.defaults.timeoutSeconds", "source": "watch", "change": TIMEOUT_KEY}]
+    o = _o(host_restart_pending=[keep, *leftovers])
+    lines: list[str] = []
+    dropped = host.discard_watch_restores(o, apply=False, out=lines.append)
+    assert dropped == ["agents.defaults.timeoutSeconds", "mcp.sessionIdleTtlMs"]
+    assert len(o.host_restart_pending) == 3, "a dry run mutates nothing"
+    assert any("dry run" in line for line in lines)
+    host.discard_watch_restores(o, apply=True, out=lines.append)
+    assert o.host_restart_pending == [keep]
+
+
+def test_apply_pending_never_applies_a_leftover_watch_restore_that_would_change_the_config(sim, script):
+    doc = json.loads(sim.cfg.read_text())
+    doc.setdefault("mcp", {})["sessionIdleTtlMs"] = 1800000      # the live guard the 2.1.0 watch wanted removed
+    sim.cfg.write_text(json.dumps(doc))
+    s = _state()
+    entry = {"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch", "change": dict(IDLE_KEY)}
+    s.openclaw.host_restart_pending = [entry]
+    sim.systemd.calls.clear()
+    assert section.apply_pending(s, assume_yes=True) == 0
+    assert s.openclaw.host_restart_pending == [entry], "never dropped silently"
+    assert not [c for c in sim.systemd.calls if c[:3] == ["systemctl", "--user", "stop"]]
+    assert json.loads(sim.cfg.read_text())["mcp"]["sessionIdleTtlMs"] == 1800000
+    assert any("likely false positives" in m for m in script.messages("warn"))

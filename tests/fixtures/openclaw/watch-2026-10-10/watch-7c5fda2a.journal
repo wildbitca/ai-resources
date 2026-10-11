@@ -1,0 +1,7 @@
+2026-10-10T15:33:47+00:00 bithome systemd[890]: Started openclaw-config-watch-7c5fda2a.service - [systemd-run] /home/linuxbrew/.linuxbrew/bin/ai-resources openclaw config-watch --run-id 7c5fda2a.
+2026-10-10T15:34:48+00:00 bithome ai-resources[PID]: watch: the gateway stopped answering; reverting this run's config changes
+2026-10-10T15:34:48+00:00 bithome ai-resources[PID]: OpenClaw rejected the patch in a dry run; nothing was stopped or applied: openclaw not found on PATH
+2026-10-10T15:34:48+00:00 bithome ai-resources[PID]: OpenClaw did not answer `openclaw health` after the last `ai-resources setup`, so the kit reverted what that run wrote. restart-required keys not reverted (drained window exit 7). Check `ai-resources openclaw status`.
+2026-10-10T15:34:48+00:00 bithome ai-resources[PID]: watch: no Telegram target configured or the send failed; the journal has the details
+2026-10-10T15:34:48+00:00 bithome systemd[890]: openclaw-config-watch-7c5fda2a.service: Main process exited, code=exited, status=1/FAILURE
+2026-10-10T15:34:48+00:00 bithome systemd[890]: openclaw-config-watch-7c5fda2a.service: Failed with result 'exit-code'.

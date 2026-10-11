@@ -1,0 +1,18 @@
+# Redacted excerpt of the setup state the 2026-10-10 15:32 run recorded (values are not secrets).
+openclaw:
+  config_watch:
+    run_id: 7c5fda2a
+    unit: openclaw-config-watch-7c5fda2a
+    baseline_healthy: true
+    done: false
+    changes:
+      - path: [agents, defaults, timeoutSeconds]
+        previous: null
+        had: false
+        action: filled
+        delete: [agents, defaults, timeoutSeconds]
+      - path: [mcp, sessionIdleTtlMs]
+        previous: null
+        had: false
+        action: filled
+        delete: [mcp, sessionIdleTtlMs]

@@ -106,6 +106,26 @@ sessions, T39, which made the forced restart slow). The root cause, in order:
 
 Target label **2.0.2**, with the fill-only behaviour change called out; see `CHANGELOG.md`, "Unreleased".
 
+## Amendment (kit 2.1.1): the watch's outcome model
+
+The 2026-10-10 run showed the watch reverting a healthy gateway because its own probes could not run
+(pitfall T42). The revert rule above stands; what changed is when the watch is allowed to conclude "failed":
+
+- **Probe classes.** answered (rc 0), no-answer, slow (rc 124) and cannot-probe (rc 126/127, a missing
+  interpreter, `openclaw --version` failing). A cannot-probe ends the watch INCONCLUSIVE at once.
+- **Settle, sustain, corroborate.** Probes are ignored for 120 s after the last reload line that names a
+  recorded key (the journal read degrades to time-only); the failure must last 300 s; and one of MainPID
+  changed, NRestarts grew, unit failed/inactive, port not listening, a stop in the journal must hold. Without
+  corroboration the watch ends INCONCLUSIVE; the health timer (T41) remains the backstop for a wedged gateway.
+- **Recorded kind.** Setup records `kind` (hot|restart|none) and `openclaw_version` per change. The watch
+  routes by the recorded kind when the live version is unreadable or equal; a different readable version goes
+  through the pinned table (fail closed); a record from before 2.1.1 stays fail-closed restart.
+- **Confirmed keys.** A key whose `config hot reload applied` line was followed by an answered probe is
+  reported as `kept_confirmed` and never reverted or queued.
+- **Exit 7.** A rejected dry run of the drained window (`EXIT_APPLY_REJECTED`) never queues a restore entry.
+- **Outcomes** recorded in `config_watch.result.outcome`: healthy, reverted, inconclusive, revert-failed,
+  baseline-unhealthy. Only revert-failed is an ERROR in `verify`.
+
 ## Related
 
 - Pitfall T40 (`docs/openclaw/pitfalls.md`); runbook "How setup asks", "Operator overrides", "Pending

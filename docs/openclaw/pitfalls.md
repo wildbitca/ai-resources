@@ -1398,6 +1398,33 @@ prevents eviction), `agents.defaults.timeoutSeconds` caps a run, and the health 
 **How to catch it.** `ai-resources openclaw pressure --json`, `ai-resources openclaw status` ("resource" line),
 `ai-resources verify` (frozen last tick, `MemoryHigh` drift).
 
+## T42 — A transient user unit does not inherit the login PATH: the post-setup watch could not run its own probes *(added 2026-10-11; fixed in the unreleased 2.1.1 work, ADR-0003 amendment)*
+
+**Symptom.** 61 s after a `setup` that wrote two hot keys, the watch unit exited 1, "reverted" a healthy gateway,
+and queued two `source=watch` restore entries that `apply-pending` would have applied in a drained window
+(removing the working `mcp.sessionIdleTtlMs` and `agents.defaults.timeoutSeconds` guards). The gateway log shows
+`config hot reload applied (...)` and nothing wrong afterwards.
+
+**Cause.** `systemd-run --user` starts the unit with the USER MANAGER's environment, whose PATH has no
+`/home/linuxbrew/.linuxbrew/bin`. `openclaw` resolved through the kit's brew fallback, but its shebang is
+`#!/usr/bin/env node` and node was not on PATH: every `openclaw health` returned 127
+(`env: 'node': No such file or directory`), the version read failed (so the fail-closed table called both keys
+restart-required), and the dry run through `shutil.which` said "openclaw not found on PATH" (exit 7). The same
+class as the 2.0.2 incident: an environment-dependent probe treated as a gateway failure.
+
+**Fix.** The unit gets its own PATH (`--setenv=PATH=...`, order of `scripts/openclaw/_common.sh`, never an
+ephemeral version-manager directory) and the verb prepends it again. A probe that cannot run (rc 126/127, a
+missing interpreter, `openclaw --version` failing) ends the watch INCONCLUSIVE: nothing is reverted, nothing is
+queued, one notice is sent, and `status`/`verify` warn instead of erroring. A real revert needs a failure
+sustained for 5 minutes after the reload settled (120 s) AND a corroborating signal (MainPID changed, the unit
+restarted or is down, the port is closed, a stop in the journal). A key whose hot reload was applied and
+answered afterwards is never reverted. A dry-run rejection (exit 7) never queues a restore.
+
+**How to catch it.** `ai-resources openclaw status` and `ai-resources verify` ("post-setup watch inconclusive");
+`journalctl --user -u openclaw-config-watch-<id>` has one `tick=N rc=R class=C elapsed=Ts` line per probe. A
+host that ran the 2.1.0 watch may hold leftover `source=watch` restores: `ai-resources openclaw apply-pending
+--discard-watch-restores` lists them (a dry run) and drops them after a confirmation.
+
 
 ---
 
