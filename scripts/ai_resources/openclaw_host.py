@@ -1858,6 +1858,21 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
             "forced": [".".join(c["path"]) for c in changes if c["action"] == "forced"]}
 
 
+def _strict_equal(a, b) -> bool:
+    """Structural equality that never conflates types: True is not 1, 1 is not 1.0, "1" is not 1.
+
+    Python's `==` says True == 1 and 1 == 1.0, which would report a real change as "nothing changed" and
+    silently drop the patch. Anything unclear compares as different, so the patch is sent (fail open).
+    """
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(_strict_equal(a[k], b[k]) for k in a)
+    if isinstance(a, list):
+        return len(a) == len(b) and all(_strict_equal(x, y) for x, y in zip(a, b))
+    return a == b
+
+
 def change_records(doc: dict, patch: dict, replace_paths: list[str] | None, action: str) -> list[dict]:
     """Records (the shape `restore_patch` inverts) for every leaf `patch` writes into `doc`.
 
@@ -1875,8 +1890,10 @@ def change_records(doc: dict, patch: dict, replace_paths: list[str] | None, acti
                 walk(v, path + [str(k)])
             return
         current, had = _get_path(doc, path)
-        if (had and current == node) or (not had and node is None):
-            return                    # a no-op write: nothing to record, nothing to put back (E1)
+        # A no-op write records nothing and puts nothing back (E1). A `null` is a delete: a key the file holds
+        # (even as an explicit null) is present, so deleting it is a change and is sent.
+        if (had and node is not None and _strict_equal(current, node)) or (not had and node is None):
+            return
         secret = is_secret_path(path)
         ch: dict = {"path": path, "previous": None if secret else (copy.deepcopy(current) if had else None),
                     "had": had, "action": action}
@@ -1903,7 +1920,7 @@ def restore_patch(changes: list[dict], doc: dict | None = None) -> tuple[dict, l
             continue                  # a kept value was never written, so there is nothing to put back
         if doc is not None and not (ch.get("secret") and ch["had"]):
             live, live_had = _get_path(doc, ch["path"])
-            if (ch["had"] and live_had and live == ch["previous"]) or (not ch["had"] and not live_had):
+            if (ch["had"] and live_had and _strict_equal(live, ch["previous"])) or (not ch["had"] and not live_had):
                 continue
         if ch.get("secret") and ch["had"]:
             # The old value was never stored, so there is nothing to put back. Deleting the leaf

@@ -14,6 +14,8 @@ Notes for the next patch release. Nothing here is released; the version label is
   id, so `--sa x@--log-http.iam.gserviceaccount.com` can no longer reach gcloud as a flag (M1). The value
   validators use `\Z`, so a trailing newline is refused (L1). A gcloud configuration created before a later step
   failed is recorded at once, so `--remove`, teardown or a rerun owns it (L5).
+  The "no changed leaf" check compares by type: `true` is not `1`, `1` is not `1.0`, and deleting a key the file
+  holds as an explicit `null` is a change, so such a patch is sent instead of dropped (M2).
 - **Hardening pass 2.** A second `ai-resources setup` run no longer cancels the first run's post-setup watch:
   a patch with no changed leaf is never sent, so the first-write hook never fires for it (G1).
   `apply-pending --discard-watch-restores --yes` also closes a 2.1.0 watch record, so `verify` stops reporting

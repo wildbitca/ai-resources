@@ -508,3 +508,51 @@ def test_apply_pending_with_only_no_op_restores_opens_no_window_and_clears_them(
     assert section.apply_pending(s, assume_yes=True) == 0
     assert s.openclaw.host_restart_pending == []
     assert stops(events) == [] and not [e for e in events if e[0] == "patch"]
+
+
+# --- 2.1.1 pass 3, M2: the no-changed-leaf comparison is type-strict -------------------------------------------------
+
+_SENT = [
+    ("true-vs-1", {"a": 1}, {"a": True}, None),
+    ("false-vs-0", {"a": 0}, {"a": False}, None),
+    ("1-vs-true", {"a": True}, {"a": 1}, None),
+    ("int-vs-float", {"a": 1.0}, {"a": 1}, None),
+    ("bool-in-list", {"a": [1, 2]}, {"a": [True, 2]}, None),
+    ("bool-in-replace-subtree", {"a": {"b": 1, "c": [0]}}, {"a": {"b": True, "c": [False]}}, ["a"]),
+    ("explicit-null-vs-delete", {"a": None}, {"a": None}, None),
+    ("explicit-null-nested", {"a": {"b": None}}, {"a": {"b": None}}, None),
+    ("list-order", {"a": [1, 2]}, {"a": [2, 1]}, None),
+    ("string-vs-int", {"a": "1"}, {"a": 1}, None),
+    ("extra-keys-under-replace", {"a": {"b": 1, "x": 2}}, {"a": {"b": 1}}, ["a"]),
+    ("empty-dict-vs-populated", {"a": {"x": 1}}, {"a": {}}, None),
+    ("missing-vs-empty-dict", {}, {"a": {}}, None),
+]
+
+
+@pytest.mark.parametrize("label,doc,patch,replace", _SENT, ids=[c[0] for c in _SENT])
+def test_a_change_python_equality_would_hide_is_recorded(label, doc, patch, replace):
+    assert host.change_records(doc, patch, replace, "check"), label
+
+
+_NOOP = [
+    ("same", {"a": 1}, {"a": 1}, None),
+    ("key-order", {"a": {"b": 1, "c": 2}}, {"a": {"c": 2, "b": 1}}, ["a"]),
+    ("list-same", {"a": [1, "x", {"k": True}]}, {"a": [1, "x", {"k": True}]}, None),
+    ("extra-keys-under-merge", {"a": {"b": 1, "x": 2}}, {"a": {"b": 1}}, None),
+    ("empty-dict-vs-empty-dict", {"a": {}}, {"a": {}}, None),
+    ("delete-of-absent", {}, {"a": None}, None),
+    ("none-string", {"a": "x"}, {"a": "x"}, None),
+]
+
+
+@pytest.mark.parametrize("label,doc,patch,replace", _NOOP, ids=[c[0] for c in _NOOP])
+def test_a_genuine_noop_still_makes_no_record(label, doc, patch, replace):
+    assert host.change_records(doc, patch, replace, "check") == [], label
+
+
+def test_restore_patch_does_not_treat_true_as_the_one_it_was():
+    changes = [{"path": ["a"], "previous": 1, "had": True, "action": "engine"}]
+    assert host.restore_patch(changes, {"a": True}) == ({"a": 1}, [])
+    assert host.restore_patch(changes, {"a": 1}) == ({}, [])
+    floats = [{"path": ["a"], "previous": 1, "had": True, "action": "engine"}]
+    assert host.restore_patch(floats, {"a": 1.0})[0] == {"a": 1}
