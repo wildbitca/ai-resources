@@ -2837,16 +2837,22 @@ def discard_watch_restores(o, *, apply: bool, out: Callable[[str], None] = print
     return names
 
 
+def legacy_watch_result_open(o) -> bool:
+    """True when a done 2.1.0 watch result still carries `problems` and no `outcome`."""
+    cw = getattr(o, "config_watch", None)
+    r = cw.get("result") if isinstance(cw, dict) else None
+    return bool(isinstance(cw, dict) and cw.get("done") and isinstance(r, dict) and r.get("problems")
+                and not r.get("outcome"))
+
+
 def _close_legacy_watch_result(o) -> bool:
     """A 2.1.0 watch result carries `problems` and no `outcome`. Once the operator discards the restore
     entries it queued, nothing is left to retry, so verify and status must not keep calling it an ERROR.
     The result becomes `inconclusive` (the old problems are kept as `discarded_problems`). Never touches
     the config. True when a result was rewritten."""
-    cw = getattr(o, "config_watch", None)
-    r = cw.get("result") if isinstance(cw, dict) else None
-    if not (isinstance(cw, dict) and cw.get("done") and isinstance(r, dict) and r.get("problems")
-            and not r.get("outcome")):
+    if not legacy_watch_result_open(o):
         return False
+    r = o.config_watch["result"]
     r["discarded_problems"] = list(r["problems"])
     r["problems"] = []
     r["outcome"] = "inconclusive"

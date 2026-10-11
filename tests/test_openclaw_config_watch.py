@@ -1135,3 +1135,18 @@ def test_discard_without_yes_and_without_a_terminal_is_one_line_and_changes_noth
     assert messages[-1] == "needs a terminal; re-run with --yes"
     assert s.openclaw.host_restart_pending == [entry]
     assert any("dry run" in m for m in messages), "the dry run is printed first"
+
+
+def test_cockpit_discard_closes_a_legacy_watch_failure_whose_restore_entries_are_already_gone(monkeypatch):
+    from ai_resources.setup import ui
+
+    monkeypatch.setattr(ui, "info", lambda *_a, **_k: None)
+    s = state.SetupState()
+    s.openclaw.config_watch = {"run_id": "old", "unit": "u", "done": True,
+                               "result": {"hot": [], "restart": [], "problems": ["restart-required not reverted: x"]}}
+    s.openclaw.host_restart_pending = []
+    assert [m for lv, m in _levels(s.openclaw) if lv == "error" and "could not finish its revert" in m]
+    assert section.discard_watch_restores(s, assume_yes=True) == 0
+    r = s.openclaw.config_watch["result"]
+    assert r["outcome"] == "inconclusive" and r["problems"] == []
+    assert not [lv for lv, _m in _levels(s.openclaw) if lv == "error"]

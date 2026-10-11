@@ -696,14 +696,15 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
 def discard_watch_restores(s: state.SetupState, *, assume_yes: bool = False) -> int:
     """`apply-pending --discard-watch-restores`: a dry run unless confirmed (`--yes` or an interactive yes)."""
     names = host.discard_watch_restores(s.openclaw, apply=False, out=ui.info)
-    if not names:
+    if not names and not host.legacy_watch_result_open(s.openclaw):
         return 0
     if not assume_yes:
         if ui.is_non_interactive():
             ui.info("nothing changed; re-run with --yes to discard")
             return 0
         try:
-            answered = ui.confirm("Discard these entries? Nothing is applied to the gateway.", default=False)
+            answered = ui.confirm("Close the 2.1.0 watch failure record? Nothing is applied to the gateway." if not names
+                                  else "Discard these entries? Nothing is applied to the gateway.", default=False)
         except EOFError:             # stdin is not a terminal: one line, not a questionary traceback (G3)
             ui.error("needs a terminal; re-run with --yes")
             return 1
