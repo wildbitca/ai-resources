@@ -464,3 +464,42 @@ def test_cockpit_configure_mirrors_only_for_the_claude_code_engine(engine, mirro
     assert ("clickup" in servers) is mirrored
     assert ("stripe" in s.openclaw.mcp_mirrored) is mirrored, "identical hand-added server is adopted"
     assert "grafana" not in servers
+
+
+# --- kit 2.1.1 pass 4, S3: the plan compares by type -------------------------------------------------------------------
+
+def _entry_with(monkeypatch, **extra):
+    entry = {"command": "npx", "args": ["-y", "demo"], **extra}
+    monkeypatch.setattr(mcp, "build_entry", lambda _src: (dict(entry), []))
+    return mcp.Source("demo", "stdio", "test", {"command": "npx"}), entry
+
+
+def test_a_server_defined_with_1_is_not_adopted_as_the_kits_true(monkeypatch):
+    src, entry = _entry_with(monkeypatch, timeout=True)
+    item = mcp.plan([src], {"demo": dict(entry, timeout=1)}, {})[0]
+    assert item.action == "skip" and "different settings" in item.reason
+    assert mcp.plan([src], {"demo": dict(entry)}, {})[0].action == "adopt"
+
+
+def test_a_kit_server_whose_live_value_only_equals_the_new_entry_by_python_is_updated(monkeypatch):
+    src, entry = _entry_with(monkeypatch, timeout=True)
+    live = dict(entry, timeout=1)
+    item = mcp.plan([src], {"demo": live}, {"demo": {"applied": dict(live)}})[0]
+    assert item.action == "update"
+    same = mcp.plan([src], {"demo": dict(entry)}, {"demo": {"applied": dict(entry)}})[0]
+    assert same.action == "unchanged"
+
+
+def test_a_kit_written_server_is_not_overwritten_when_the_live_value_only_equals_by_python():
+    src = mcp.Source("demo", "stdio", "test", {"command": "npx", "args": ["-y", "demo"]})
+    entry = mcp.plan([src], {}, {})[0].entry
+    applied = dict(entry, timeout=1)
+    live_same = dict(entry, timeout=1)
+    live_conflated = dict(entry, timeout=True)
+    record = {"demo": {"applied": applied}}
+    assert mcp.plan([src], {"demo": live_conflated}, record)[0].reason.startswith("changed in OpenClaw by hand")
+    assert not (mcp.plan([src], {"demo": live_same}, record)[0].reason or "").startswith("changed in OpenClaw")
+    # the removal path: a server gone from Claude Code is removed only while it still holds what the kit wrote
+    gone = mcp.plan([], {"demo": live_conflated}, record)
+    assert [i.action for i in gone] == ["skip"]
+    assert [i.action for i in mcp.plan([], {"demo": live_same}, record)] == ["remove"]

@@ -533,6 +533,7 @@ _SENT = [
     ("extra-keys-under-replace", {"a": {"b": 1, "x": 2}}, {"a": {"b": 1}}, ["a"]),
     ("empty-dict-vs-populated", {"a": {"x": 1}}, {"a": {}}, None),
     ("missing-vs-empty-dict", {}, {"a": {}}, None),
+    ("list-longer", {"a": [1, 2]}, {"a": [1, 2, 3]}, None),
 ]
 
 
@@ -647,3 +648,81 @@ def test_apply_pending_verb_with_nothing_pending_does_not_rewrite_the_state(sim,
     before = hashlib.sha256(path.read_bytes()).hexdigest()
     assert host.cmd_apply_pending(argparse.Namespace(discard_watch_restores=False, yes=False)) == 0
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+
+
+# --- kit 2.1.1 pass 4, S3: type-strict comparison at the remaining sites -----------------------------------------------
+
+_TYPE_CONFLATIONS = [("1-vs-true", 1, True), ("0-vs-false", 0, False), ("1.0-vs-1", 1.0, 1), ("true-vs-1", True, 1)]
+
+
+@pytest.mark.parametrize("label,live,wanted", _TYPE_CONFLATIONS, ids=[c[0] for c in _TYPE_CONFLATIONS])
+def test_build_host_patch_does_not_take_a_live_1_for_the_profile_true(label, live, wanted):
+    profile = {"x": {"flag": wanted}}
+    doc = {"x": {"flag": live}}
+    # not forced: the operator's value is kept, and it is LISTED as kept (it used to vanish from the report)
+    built = host.build_host_patch(profile, doc, {}, overrides={})
+    assert built["patch"] == {} and built["kept"] == ["x.flag"], label
+    # forced: the profile value is sent
+    forced = host.build_host_patch(profile, doc, {}, overrides={"force": frozenset({"x.flag"})})
+    assert forced["patch"] == {"x": {"flag": wanted}}, label
+    assert type(forced["patch"]["x"]["flag"]) is type(wanted)
+
+
+def test_build_host_patch_still_skips_a_value_that_really_matches():
+    built = host.build_host_patch({"x": {"flag": True, "n": 1}}, {"x": {"flag": True, "n": 1}}, {}, overrides={})
+    assert built["patch"] == {} and built["kept"] == [] and built["changes"] == []
+
+
+def test_a_legacy_revert_is_offered_when_the_live_true_only_equals_the_recorded_1_by_python(monkeypatch):
+    from ai_resources.setup import ui
+    asked = []
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "warn", lambda *_a, **_k: None)
+    monkeypatch.setattr(ui, "info", lambda *_a, **_k: None)
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: asked.append(msg) or False)
+    monkeypatch.setattr(section, "_in_flight", lambda: (0, "0"))
+    monkeypatch.setattr(section, "_profile_value", lambda _p, _o: True)
+    monkeypatch.setattr(rr, "restart_paths", lambda *_a, **_k: ["x.flag"])
+    s = _state()
+    s.openclaw.host_config_changes = [{"path": ["x", "flag"], "previous": 1, "had": True}]
+    reverted = section._offer_legacy_revert(s.openclaw, {"x": {"flag": True}}, V, None, dry_run=False,
+                                            apply_patch=lambda *_a, **_k: (True, ""))
+    assert reverted is False and len(asked) == 1 and asked[0].startswith("Restore x.flag to `1`")
+
+
+def test_a_legacy_value_the_operator_set_to_the_same_type_is_not_offered(monkeypatch):
+    from ai_resources.setup import ui
+    asked = []
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: asked.append(msg) or False)
+    monkeypatch.setattr(section, "_profile_value", lambda _p, _o: True)
+    monkeypatch.setattr(rr, "restart_paths", lambda *_a, **_k: ["x.flag"])
+    s = _state()
+    s.openclaw.host_config_changes = [{"path": ["x", "flag"], "previous": True, "had": True}]
+    assert section._offer_legacy_revert(s.openclaw, {"x": {"flag": True}}, V, None, dry_run=False,
+                                        apply_patch=lambda *_a, **_k: (True, "")) is False
+    assert asked == []
+
+
+# --- kit 2.1.1 pass 4, S4: the JSON5 reader leaves string contents alone -----------------------------------------------
+
+_JSON5_STRINGS = ["x,]", "x,}", "x, ]", "a,\n}", "http://host/path", "/* not a comment */", "a // b", 'q"uote,]',
+                  "back\\slash,]", "ends with comma,", ",]", ",}"]
+
+
+@pytest.mark.parametrize("value", _JSON5_STRINGS)
+def test_load_json5_round_trips_string_values_that_look_like_syntax(value):
+    text = "{\n  // a comment\n  \"a\": " + json.dumps(value) + ",\n  \"b\": [1, 2,],\n  /* c */ \"c\": {\"k\": 1,},\n}"
+    assert host.load_json5(text) == {"a": value, "b": [1, 2], "c": {"k": 1}}
+
+
+def test_a_change_to_a_value_that_ends_in_a_comma_bracket_is_sent():
+    live = host.load_json5('{"x": {"v": "a,]"}}')
+    assert live == {"x": {"v": "a,]"}}
+    built = host.build_host_patch({"x": {"v": "a]"}}, live, {}, overrides={"force": frozenset({"x.v"})})
+    assert built["patch"] == {"x": {"v": "a]"}}
+
+
+def test_load_json5_still_strips_trailing_commas_and_comments_outside_strings():
+    assert host.load_json5('{"a": [1, 2 , // c\n ], "b": {"k": "v" /* x */ , },}') == {"a": [1, 2], "b": {"k": "v"}}
+    assert host.load_json5('[1, [2,],]') == [1, [2]]

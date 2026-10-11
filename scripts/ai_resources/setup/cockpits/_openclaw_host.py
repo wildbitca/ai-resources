@@ -585,7 +585,8 @@ def _offer_legacy_revert(o: state.OpenClawState, doc: dict, version, mode, *, dr
         if not rr.restart_paths(_nest(ch["path"], 0), openclaw_version=version, reload_mode=mode):
             continue                      # a hot key left behind is harmless: nothing to offer
         live, had = host._get_path(doc, ch["path"])
-        if not had or live == ch["previous"] or live != _profile_value(ch["path"], o):
+        if (not had or host._strict_equal(live, ch["previous"])
+                or not host._strict_equal(live, _profile_value(ch["path"], o))):
             continue                      # gone, already back, or changed by the operator since
         n, shown = _in_flight()
         ui.warn(f"{dotted} is `{live}`, written by an earlier setup that replaced your `{ch['previous']}`. "

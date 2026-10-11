@@ -33,6 +33,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qsl, urlsplit
 
 from .. import state, ui
+from ... import openclaw_host as _host
 
 Runner = Callable[..., tuple[int, str]]
 
@@ -312,13 +313,13 @@ def plan(sources: list[Source], servers: dict, mirrored: dict) -> list[Item]:
         current = servers.get(src.name)
         record = mirrored.get(src.name)
         if record is not None:
-            if current != record.get("applied"):
+            if not _host._strict_equal(current, record.get("applied")):
                 item.reason = "changed in OpenClaw by hand since the kit wrote it; left alone"
             else:
-                item.action = "unchanged" if current == entry else "update"
+                item.action = "unchanged" if _host._strict_equal(current, entry) else "update"
         elif current is None:
             item.action = "add"
-        elif current == entry:
+        elif _host._strict_equal(current, entry):
             item.action = "adopt"
         else:
             item.reason = "already defined in OpenClaw with different settings; left alone"
@@ -327,7 +328,7 @@ def plan(sources: list[Source], servers: dict, mirrored: dict) -> list[Item]:
         if name in seen:
             continue
         current = servers.get(name)
-        if current == record.get("applied"):
+        if _host._strict_equal(current, record.get("applied")):
             items.append(Item(name, "", "kit", "remove"))
         else:
             items.append(Item(name, "", "kit", "skip",

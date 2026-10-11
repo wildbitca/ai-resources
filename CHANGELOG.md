@@ -17,6 +17,10 @@ Notes for the next patch release. Nothing here is released; the version label is
   string that spans lines before tokenising, so `systemctl --user \<newline> restart openclaw-gateway` and
   `sh -c 'openclaw gateway \<newline> restart'` are denied, and a remote `ssh host \<newline> systemctl ...` is
   no longer split into a denied second line (S2).
+  The remaining plain-equality sites compare by type as well (`1` is not `true`, `1.0` is not `1`): the host
+  profile fill, the legacy-revert offer and the MCP mirror plan, so such a value is listed as kept, patched or
+  updated instead of being dropped (S3). The JSON5 reader no longer edits string contents when it drops trailing
+  commas: a live `"x,]"` stays `"x,]"` and a change to it is sent (S4).
 - **Hardening pass 3.** `offbox-identity` derives the project from `--sa` only when it has the shape of a GCP project
   id, so `--sa x@--log-http.iam.gserviceaccount.com` can no longer reach gcloud as a flag (M1). The value
   validators use `\Z`, so a trailing newline is refused (L1). A gcloud configuration created before a later step

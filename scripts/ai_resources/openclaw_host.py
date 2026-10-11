@@ -1500,8 +1500,38 @@ def load_json5(text: str) -> dict:
         else:
             out.append(c)
         i += 1
-    cleaned = re.sub(r",(\s*[\]}])", r"\1", "".join(out))
-    return json.loads(cleaned)
+    return json.loads(_drop_trailing_commas("".join(out)))
+
+
+def _drop_trailing_commas(text: str) -> str:
+    """`text` without the commas that sit right before a `]` or `}` (whitespace between is allowed).
+
+    String-aware: a `,]` inside a quoted value is the value, not a trailing comma."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 1
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+            out.append(c)
+        elif c == ",":
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j >= n or text[j] not in "]}":
+                out.append(c)
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
 
 
 def load_host_profile(path: Path | None = None) -> dict:
@@ -1822,11 +1852,11 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
         if isinstance(wanted, list):
             merged = _union(current, wanted)
             if had and _override_hit(path, keep_set):
-                if merged != current:
+                if not _strict_equal(merged, current):
                     kept.append(dotted)        # `keep` blocks the union under this path
                 continue
             wanted = merged
-        if had and current == wanted:
+        if had and _strict_equal(current, wanted):
             continue
         if had and isinstance(wanted, list) and isinstance(current, list):
             action = "filled"            # an add-only union: nothing the operator listed is lost
