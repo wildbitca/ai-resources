@@ -52,6 +52,14 @@ def test_version_mismatch_or_unknown_is_all_restart():
         assert kind("agents.defaults.model.primary", openclaw_version=ver) == "restart"
 
 
+def test_a_host_on_the_previous_pin_fails_closed_until_the_pin_follows():
+    """2.1.1 F6: the pin moved to 2026.10.1, so a host still on 2026.9.9 classifies every key restart-required."""
+    assert V != "2026.9.9"
+    keys = ["agents.defaults.timeoutSeconds", "mcp.sessionIdleTtlMs", "tools.profile"]
+    assert set(rr.classify(keys, openclaw_version="2026.9.9").values()) == {"restart"}
+    assert set(rr.classify(keys, openclaw_version=V).values()) == {"hot"}
+
+
 def test_reload_mode_off_is_all_restart():
     assert kind("tools.profile", reload_mode="off") == "restart"
     assert kind("tools.profile", reload_mode="hybrid") == "hot"

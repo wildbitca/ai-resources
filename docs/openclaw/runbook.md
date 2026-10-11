@@ -1237,6 +1237,16 @@ reason and the newest daily that is off-box. A failure is ONE line, `ERROR: <ide
 run gcloud): WARN when the newest off-box daily is older than 30 h (`OPENCLAW_OFFBOX_WARN_AGE_H`), ERROR above 54 h
 (`OPENCLAW_OFFBOX_ERROR_AGE_H`), WARN when the uploader never reported.
 
+## An egress-proxy "TLS certificate unavailable" refusal (T44)
+
+`[secrets/egress-proxy] secret egress TLS certificate unavailable ... kind=refused host=<H>` means the proxy cannot
+mint a certificate for that host. It is not the traffic allowlist: leave `allowedHosts` omitted (traffic is then
+unrestricted; setting a single host flips the proxy to lockdown). The documented fix is
+`secrets.egressProxy.bypassHosts`: the exact lowercase hostname, per cluster, no wildcards. The key is
+restart-required, and OpenClaw forces the restart (SIGUSR2) after about 5 minutes of deferring it, which cuts
+in-flight runs. So apply it with `openclaw config patch --stdin --dry-run` first, then for real, leave the restart
+pending, and restart yourself in the window with `ai-resources openclaw graceful-restart`.
+
 ## Get into the UI
 
 In a browser, on the tailnet: **https://iai.wildbit.dev** plus the gateway password.

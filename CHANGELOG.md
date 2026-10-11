@@ -58,6 +58,13 @@ Notes for the next patch release. Nothing here is released; the version label is
   `GOOGLE_*` credential variables.
 - Teardown keeps the `host_offbox_config_created` record when the gcloud configuration could not be removed
   (changed or active), so a later teardown can retry.
+- **Reload table pinned to OpenClaw 2026.10.1.** A host on an older OpenClaw (for example 2026.9.9) classifies
+  every key restart-required until the pin follows its version: the classification fails closed, it never guesses.
+  `classify(..., '2026.9.9')` therefore no longer reports the two resource-guard keys as hot; the 2026.10.1 test
+  is the regression for them.
+- Docs: pitfall T44 and a runbook paragraph on `[secrets/egress-proxy] secret egress TLS certificate unavailable`
+  (it is not the traffic allowlist; the fix is `secrets.egressProxy.bypassHosts`, a restart-required key, applied
+  pending and restarted with `graceful-restart` in the window).
 
 ## [2.1.0] — 2026-10-10 — a resource-safe gateway: prevention first, a bounded graceful restart as the valve
 

@@ -1449,6 +1449,27 @@ configuration (opt-in, never activated, no credential file, no IAM). The IAM gra
 `journalctl --user -u openclaw-backup-uploader`.
 
 
+## T44 — `secret egress TLS certificate unavailable` is not the traffic allowlist, and its fix is a restart-required key *(added 2026-10-11; documented in the unreleased 2.1.1 work)*
+
+**Symptom.** The gateway log has `[secrets/egress-proxy] secret egress TLS certificate unavailable ... kind=refused
+host=<H>` for one host, and calls to that host fail. A while after someone changes the config, runs in flight are cut
+and subagent completions are lost.
+
+**Cause.** The line is about the egress proxy being unable to mint a certificate for a pinned or otherwise
+unmintable host. It is NOT the traffic allowlist: with `allowedHosts` omitted, traffic is unrestricted, and setting a
+single host there flips the proxy to lockdown (everything else is refused), which turns one host's problem into an
+outage. Separately, the fix key is restart-required: OpenClaw defers the restart until runs are idle and forces it
+(SIGUSR2) after about 5 minutes, which cut in-flight runs and lost subagent completions on 2026-10-11 at 20:30.
+
+**Fix.** Add the host to `secrets.egressProxy.bypassHosts`: an exact, lowercase hostname, per cluster, no wildcards.
+Do not touch `allowedHosts`. Apply it with `openclaw config patch` (`--dry-run` first), leave it pending, and restart in
+the window with `ai-resources openclaw graceful-restart` instead of letting OpenClaw force the restart.
+
+**How to catch it.** `journalctl --user -u openclaw-gateway | grep 'secrets/egress-proxy'`, and a recent
+`gateway.restart_close_failed` event with missing subagent completions. A `status`/`verify` finding for both is a
+2.2 candidate.
+
+
 ---
 
 # SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT (implemented in 1.9.0)

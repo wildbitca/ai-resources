@@ -75,3 +75,18 @@ def test_the_runbook_and_readme_name_the_verify_command_and_its_exit_rule():
     assert "ai-resources verify" in runbook and "OPENCLAW_OFFBOX_LIST_CMD" in runbook
     assert "never `openclaw doctor --fix` bare" in runbook and "OPENCLAW_CLI" in runbook
     assert "ai-resources verify" in (REPO / "README.md").read_text(encoding="utf-8")
+
+
+def test_the_egress_proxy_refusal_is_documented_as_bypass_hosts_not_the_allowlist():
+    """2.1.1 F7: T44 and the runbook paragraph, with no host-specific name."""
+    pit = (REPO / "docs" / "openclaw" / "pitfalls.md").read_text(encoding="utf-8")
+    m = re.search(r"^## T44 — .*?(?=^## |^# SECTION|^---$)", pit, re.M | re.S)
+    assert m, "T44 is missing"
+    run = (REPO / "docs" / "openclaw" / "runbook.md").read_text(encoding="utf-8")
+    para = re.search(r"^## An egress-proxy .*?(?=^## )", run, re.M | re.S)
+    assert para, "the runbook paragraph is missing"
+    for text in (m.group(0), para.group(0)):
+        for needle in ("TLS certificate unavailable", "secrets.egressProxy.bypassHosts", "allowedHosts",
+                       "graceful-restart", "--dry-run"):
+            assert needle in text, needle
+    assert "no wildcards" in m.group(0) and "SIGUSR2" in m.group(0)
