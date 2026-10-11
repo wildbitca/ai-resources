@@ -1196,13 +1196,13 @@ def _remove_units(o: state.OpenClawState) -> None:
         src, dst = Path(moved), Path(original)
         valid = (dst == script or (dst.name in host.HEALTH_UNITS and _inside(dst, dest))) \
             and ".." not in src.parts and src.name == dst.name and src.parent.parent == backups \
-            and not src.is_symlink() and not dst.is_symlink()
+            and not dst.is_symlink()
         if not valid:
             _not_managed(f"{original}")
             o.host_hand_moved.pop(original, None)
             o.host_hand_kit_sha.pop(original, None)
             continue
-        if src.exists() and not dst.exists():
+        if (src.exists() or src.is_symlink()) and not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
             host.shutil.move(str(src), str(dst))
         elif src.exists() and dst.is_file() and src.read_bytes() != dst.read_bytes():

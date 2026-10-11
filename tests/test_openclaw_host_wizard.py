@@ -1063,6 +1063,21 @@ def test_teardown_puts_the_hand_installed_units_back_over_the_kits_copy(sim, scr
     assert s.openclaw.host_hand_moved == {}
 
 
+def test_teardown_puts_back_a_hand_unit_that_was_a_symlink(sim, script, tmp_path):
+    target = tmp_path / "dotfiles-unit.service"
+    target.write_text("# stowed hand unit\n[Unit]\nDescription=mine\n", encoding="utf-8")
+    _put_hand_copy(sim)
+    sim.units.mkdir(parents=True, exist_ok=True)
+    link = sim.units / "openclaw-health-restart.service"
+    link.symlink_to(target)
+    s = _state()
+    _run_wizard(s)
+    assert str(link) in s.openclaw.host_hand_moved
+    openclaw.teardown(s)
+    assert link.is_symlink() and link.resolve() == target.resolve(), "the operator's link is back"
+    assert s.openclaw.host_hand_moved == {}
+
+
 def test_teardown_warns_and_leaves_a_unit_the_operator_changed_after_adoption(sim, script):
     _put_hand_copy(sim)
     units = _put_hand_units(sim)
