@@ -174,6 +174,9 @@ class OpenClawState:
     # Homebrew formulas that were missing before, and Whisper model files it downloaded.
     voice_formulas_installed: list[str] = field(default_factory=list)
     voice_models_downloaded: list[str] = field(default_factory=list)
+    # The default glossary the kit created (path -> sha256 of what it wrote); teardown removes it only
+    # while it is still byte-identical, because the operator is told to edit it.
+    voice_glossary_created: dict[str, str] = field(default_factory=dict)
     # MCP servers mirrored from Claude Code. `mcp` is the last answer (mirror | keep);
     # `mcp_skipped` the servers the user unticked. `mcp_mirrored` holds each server the kit
     # manages: {name: {"previous": definition before the kit (None: absent), "applied": ...}}.
@@ -228,6 +231,9 @@ class OpenClawState:
     # Hand-installed health-restart files the kit moved aside when it adopted that timer:
     # original path -> where it was moved. Teardown moves them back; nothing is ever deleted.
     host_hand_moved: dict[str, str] = field(default_factory=dict)
+    # original path -> sha256 of the kit's file the kit wrote at that path after the hand copy was moved
+    # aside, so teardown replaces exactly that file and never one the operator changed since.
+    host_hand_kit_sha: dict[str, str] = field(default_factory=dict)
     # Hand-installed legacy team-hook registrations the kit replaced: [{"event", "entry"}], put back
     # by teardown.
     host_legacy_hooks: list[Any] = field(default_factory=list)

@@ -1036,6 +1036,44 @@ def test_an_interactive_run_adopts_it_and_teardown_puts_the_script_back(sim, scr
     assert s.openclaw.host_hand_moved == {}
 
 
+def _put_hand_units(sim):
+    """A hand-installed health-restart pair in the user unit dir, next to the script under ~/.local/bin."""
+    files = {}
+    sim.units.mkdir(parents=True, exist_ok=True)
+    for name in ("openclaw-health-restart.service", "openclaw-health-restart.timer"):
+        p = sim.units / name
+        p.write_bytes(f"# hand copy of {name}\n[Unit]\nDescription=mine\n".encode())
+        files[p] = p.read_bytes()
+    return files
+
+
+def test_teardown_puts_the_hand_installed_units_back_over_the_kits_copy(sim, script):
+    hand = _put_hand_copy(sim)
+    hand.chmod(0o755)
+    units = _put_hand_units(sim)
+    s = _state()
+    _run_wizard(s)
+    for p, original in units.items():
+        assert p.read_bytes() != original, "setup installed the kit's unit over the adopted one"
+    openclaw.teardown(s)
+    for p, original in units.items():
+        assert p.read_bytes() == original, f"{p.name}: the operator's original bytes are back"
+    assert hand.stat().st_mode & 0o111, "the exec bit of the hand script survives the round trip"
+    assert s.openclaw.host_hand_moved == {}
+
+
+def test_teardown_warns_and_leaves_a_unit_the_operator_changed_after_adoption(sim, script):
+    _put_hand_copy(sim)
+    units = _put_hand_units(sim)
+    s = _state()
+    _run_wizard(s)
+    target = next(iter(units))
+    target.write_text("# edited after adoption\n", encoding="utf-8")
+    openclaw.teardown(s)
+    assert target.read_text(encoding="utf-8") == "# edited after adoption\n"
+    assert any(target.name in m and "left" in m for m in script.messages("warn"))
+
+
 def test_verify_flags_a_hand_copy_that_is_still_present(sim, script):
     from ai_resources.setup.cockpits import _openclaw_host as sec
     assert sec._hand_copy_findings() == []

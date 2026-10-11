@@ -348,6 +348,10 @@ def _configure_hooks(s: state.SetupState, ak_path: str, *, dry_run: bool) -> Non
     o.host_hooks_applied = team or guard
 
 
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _unit_text(name: str, dest: Path) -> str | None:
     try:
         return (dest / name).read_text(encoding="utf-8")
@@ -386,6 +390,8 @@ def _configure_units(o: state.OpenClawState, *, dry_run: bool) -> None:
         name = Path(moved).name
         original = (Path.home() / ".local" / "bin" / name) if name.endswith(".sh") else dest / name
         o.host_hand_moved[str(original)] = moved
+        if original.is_file():          # the kit's own file now sits where the hand copy was
+            o.host_hand_kit_sha[str(original)] = _sha256_file(original)
     # Only the timers that were NOT enabled before are the kit's to disable again.
     for timer in result["enabled"]:
         if timer in disabled and timer not in o.host_timers_enabled:
@@ -1125,7 +1131,20 @@ def _remove_units(o: state.OpenClawState) -> None:
         if src.exists() and not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
             host.shutil.move(str(src), str(dst))
+        elif src.exists() and dst.is_file() and src.read_bytes() != dst.read_bytes():
+            # The kit's copy sits where the operator's was: put the original back, but only over a file that
+            # is still exactly what the kit wrote (G4). Anything else is the operator's edit.
+            recorded = o.host_hand_kit_sha.get(original)
+            if recorded is None:
+                rendered = host.render_units().get(dst.name)
+                recorded = hashlib.sha256(rendered.encode("utf-8")).hexdigest() if rendered is not None else None
+            if recorded is not None and _sha256_file(dst) == recorded:
+                host.shutil.move(str(src), str(dst))
+            else:
+                ui.warn(f"{dst} changed after the kit adopted your hand-installed copy; it was left as it is. "
+                        f"Your original is at {src}.")
         o.host_hand_moved.pop(original, None)
+        o.host_hand_kit_sha.pop(original, None)
     runner(["systemctl", "--user", "daemon-reload"], env=env)
     o.host_units_applied = False
 

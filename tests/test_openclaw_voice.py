@@ -706,3 +706,42 @@ def test_openclaw_prompt_hands_the_live_media_to_the_voice_question(monkeypatch,
     asked = _answers(monkeypatch, "agy", "es")
     openclaw.prompt(state.SetupState())
     assert asked[1][2] == "es"
+
+
+# --- G4: teardown removes the glossary the kit created, and only while it is still the kit's ---------------------
+
+def _real_glossary(bot, monkeypatch, tmp_path):
+    glossary = tmp_path / "cfg" / "openclaw-voice" / "glossary.txt"
+    monkeypatch.setenv("VOICE_GLOSSARY", str(glossary))
+    monkeypatch.setattr(voice, "ensure_glossary", _REAL_ENSURE_GLOSSARY)
+    return glossary
+
+
+_REAL_ENSURE_GLOSSARY = voice.ensure_glossary
+
+
+def test_teardown_removes_a_glossary_the_kit_created(bot, monkeypatch, tmp_path):
+    glossary = _real_glossary(bot, monkeypatch, tmp_path)
+    s = _state("cloud")
+    openclaw.configure({"state": s})
+    assert glossary.is_file() and s.openclaw.voice_glossary_created == {
+        str(glossary): hashlib.sha256(glossary.read_bytes()).hexdigest()}
+    openclaw.teardown(s)
+    assert not glossary.exists()
+    assert s.openclaw.voice_glossary_created == {}
+
+
+def test_teardown_keeps_a_glossary_the_operator_edited_or_owned(bot, monkeypatch, tmp_path):
+    glossary = _real_glossary(bot, monkeypatch, tmp_path)
+    s = _state("cloud")
+    openclaw.configure({"state": s})
+    glossary.write_text(glossary.read_text() + "\nmy own term\n", encoding="utf-8")
+    openclaw.teardown(s)
+    assert glossary.is_file() and "my own term" in glossary.read_text()
+    # a glossary that was already there is never recorded, so never removed
+    glossary.write_text("mine", encoding="utf-8")
+    s2 = _state("cloud")
+    openclaw.configure({"state": s2})
+    assert s2.openclaw.voice_glossary_created == {}
+    openclaw.teardown(s2)
+    assert glossary.read_text() == "mine"

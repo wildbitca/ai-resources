@@ -329,6 +329,25 @@ def remove_installed(s: state.SetupState) -> None:
             ui.ok(f"Removed {path}")
     s.openclaw.voice_models_downloaded = []
 
+    # The default glossary: removed only while it is byte-identical to what the kit wrote. The operator is
+    # told to edit it, so an edited file is theirs and stays.
+    for gloss, digest in list(s.openclaw.voice_glossary_created.items()):
+        path = Path(gloss)
+        try:
+            same = path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        except OSError:
+            same = False
+        if same:
+            path.unlink()
+            ui.ok(f"Removed {path}")
+            try:
+                path.parent.rmdir()        # only when the kit's directory is now empty
+            except OSError:
+                pass
+        elif path.exists():
+            ui.info(f"Kept {path}: you edited it.")
+    s.openclaw.voice_glossary_created = {}
+
     formulas = list(s.openclaw.voice_formulas_installed)
     brew = transcriber.find_binary("brew") if formulas else ""
     if formulas and not brew:

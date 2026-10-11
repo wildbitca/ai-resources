@@ -51,6 +51,7 @@ straight to openclaw.json: the gateway journals and fingerprints that file. `cha
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -1360,7 +1361,12 @@ def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
             return False
     # agy needs no local engine (no whisper, no ffmpeg), but every mode uses the glossary.
     if not dry_run and mode in ("agy", "cloud", "local") and voice.ensure_glossary():
-        ui.ok(f"Voice glossary → {voice.transcriber.glossary_path()} (edit it freely)")
+        gpath = voice.transcriber.glossary_path()
+        ui.ok(f"Voice glossary → {gpath} (edit it freely)")
+        try:        # recorded so teardown can remove it while it is still exactly what the kit wrote
+            s.openclaw.voice_glossary_created[str(gpath)] = hashlib.sha256(gpath.read_bytes()).hexdigest()
+        except OSError:
+            pass
 
     current = _get(doc, "tools", "media")
     media = voice.build_media(mode, voice.interpreter(ak_path),
