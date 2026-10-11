@@ -1021,3 +1021,52 @@ def test_every_health_probe_in_a_watch_run_uses_the_sixty_second_timeout(wrig):
     r = wrig(D1_CHANGES, probe=lambda t: (1, "gateway closed"))
     assert r.run() == 0
     assert r.health_timeouts and all(t == 60 for t in r.health_timeouts)
+
+
+# --- G1: a patch with no changed leaf is never sent and never cancels the previous watch ------------------------------
+
+def _voice_run(sim, s):
+    """One `configure()` pass that only the voice-notes section can write; returns (real patches, stops)."""
+    sim.oc.calls.clear()
+    sim.systemd.calls.clear()
+    openclaw.configure({"state": s, "dry_run": False})
+    stops = [c for c in sim.systemd.calls if c[:3] == ["systemctl", "--user", "stop"] and "openclaw-config-watch-*" in c]
+    return sim.oc.real_patches(), stops
+
+
+def test_a_second_run_with_the_same_voice_patch_sends_nothing_and_keeps_the_watch(sim, script, ai_resources_on_path):
+    s = _state()
+    _run_wizard(s)                                     # run 1: the profile, plus its watch
+    s.openclaw.voice = "agy"
+    patches, _stops = _voice_run(sim, s)               # a real voice change goes out as before
+    assert [p for _a, p in patches if "tools" in p and "media" in p["tools"]], "the first voice write is sent"
+
+    watch = {"run_id": "r1", "unit": "openclaw-config-watch-r1", "started_at": "", "changes": [dict(HOT)],
+             "done": False, "result": None}
+    s.openclaw.config_watch = dict(watch)              # run 1's safety net, still inside its window
+    patches, stops = _voice_run(sim, s)                # run 2: the identical media patch
+    assert patches == [], "a patch with no changed leaf must not be sent"
+    assert stops == [] and s.openclaw.config_watch == watch, "and it must not cancel the watch of run 1"
+
+
+def test_a_real_voice_change_still_supersedes_the_previous_watch(sim, script, ai_resources_on_path):
+    s = _state()
+    s.openclaw.voice = "agy"
+    _voice_run(sim, s)
+    s.openclaw.config_watch = {"run_id": "r1", "unit": "openclaw-config-watch-r1", "started_at": "",
+                               "changes": [dict(HOT)], "done": False, "result": None}
+    s.openclaw.voice_language = "es"                   # a different transcription language: a real change
+    patches, stops = _voice_run(sim, s)
+    assert patches and stops, "a patch that changes a leaf is written and supersedes the previous watch"
+    assert s.openclaw.config_watch is None
+
+
+def test_apply_patch_skips_a_noop_and_fires_the_first_write_hook_only_for_a_real_write(sim, monkeypatch):
+    fired: list[int] = []
+    doc = json.loads(sim.cfg.read_text())
+    current = doc["tools"]["profile"]
+    monkeypatch.setattr(openclaw, "_before_first_write", lambda: fired.append(1))
+    ok, _out = openclaw.apply_patch({"tools": {"profile": current}})
+    assert ok and fired == [] and sim.oc.real_patches() == []
+    ok, _out = openclaw.apply_patch({"tools": {"profile": current + "-changed"}})
+    assert ok and fired == [1] and len(sim.oc.real_patches()) == 1

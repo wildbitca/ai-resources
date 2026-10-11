@@ -462,6 +462,20 @@ def _live_reload_mode() -> str | None:
         return "off"
 
 
+def _patch_changes_a_leaf(patch: dict, replace_paths: list[str] | None) -> bool:
+    """False only when the live file is readable and already holds every leaf of `patch`.
+
+    Fail open: an unreadable or unparseable file means "send it" and let OpenClaw validate.
+    """
+    try:
+        live = openclaw_host.load_json5(config_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    if not isinstance(live, dict):
+        return True
+    return bool(openclaw_host.change_records(live, patch, replace_paths, "check"))
+
+
 def apply_patch(patch: dict, *, dry_run: bool = False,
                 replace_paths: list[str] | None = None, allow_restart: bool = False,
                 reload_mode: str | None = None) -> tuple[bool, str]:
@@ -477,6 +491,10 @@ def apply_patch(patch: dict, *, dry_run: bool = False,
             reload_mode=reload_mode if reload_mode is not None else _live_reload_mode())
         if restart:
             raise RestartRequired(restart)
+    if not dry_run and not _patch_changes_a_leaf(patch, replace_paths):
+        # Nothing to write: no CLI call, and no first-write hook either, so a run that changes nothing
+        # never cancels the post-setup watch of the run before it (G1).
+        return True, "no changed leaf; not sent"
     if not dry_run and _before_first_write is not None:
         hook, _before_first_write = _before_first_write, None
         hook()
