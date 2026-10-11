@@ -15,8 +15,8 @@ Denies three families of Bash command, and only while the gateway is live and un
 The recogniser is token based: options may sit between the words (`openclaw gateway --json
 restart`, `systemctl --user --no-block restart ...`) and the command may be wrapped in `sudo`,
 `env`, `timeout`, `nohup`, `setsid`, `bash -c`, `sh -c` or `eval`. `env -S '<string>'` (and `-S<s>`, `--split-string`) runs its string as a
-command, so the string is re-tokenised and checked again (bounded depth); a string that cannot be tokenised
-and names the gateway is denied. Read-only verbs (`status`,
+command, so the string is re-tokenised and checked again (bounded depth); a string that cannot be tokenised,
+or nests past the depth limit, is denied only when a stop/restart verb sits next to the gateway. Read-only verbs (`status`,
 `show`, `is-active`, `list-units`, `logs`, `cat`, ...) are never matched.
 
 Why: `openclaw doctor --fix` stops the gateway and re-inspects the stopped unit. If a child
@@ -314,22 +314,45 @@ def _inner_command(words: list[str]) -> str | None:
     return None
 
 
-def _mentions_gateway(text: str) -> bool:
-    lowered = text.lower()
-    return "gateway" in lowered and "openclaw" in lowered
+_STOP_WORDS = {"stop", "kill"}
+_RESTART_WORDS = {"restart", "try-restart", "reload-or-restart", "try-reload-or-restart", "condrestart"}
+_NEAR = 8          # how many words after the gateway word a verb still counts as "next to" it
+
+
+def _verb_next_to_gateway(text: str) -> str | None:
+    """"stop" or "restart" when `text` (a string that could not be tokenised, or nests too deep to follow)
+    has a stop/restart verb right after the gateway: `openclaw [opts] gateway [opts] <verb>` or
+    `<verb> [opts] openclaw-gateway[.service]`. The two words alone (`echo openclaw gateway`) are not enough
+    (L4): the fallback denies only where a restart or stop is actually being asked for."""
+    words = [w for w in re.split(r"[\s'\"();&|]+", text.lower()) if w]
+    found: str | None = None
+    for i, w in enumerate(words):
+        if os.path.basename(w) == "openclaw" and "gateway" in words[i + 1:i + 1 + _NEAR]:
+            g = i + 1 + words[i + 1:i + 1 + _NEAR].index("gateway")
+            after = words[g + 1:g + 1 + _NEAR]
+        elif w in (UNIT, UNIT[: -len(".service")]):
+            after = words[max(0, i - _NEAR):i]
+        else:
+            continue
+        for v in after:
+            if v in _STOP_WORDS:
+                found = found or "stop"
+            elif v in _RESTART_WORDS:
+                return "restart"
+    return found
 
 
 def _env_split_shape(split: str, rest: list[str], depth: int) -> str | None:
     """Re-enter the recogniser on an `env -S` string followed by the words after env's options.
 
-    A string that cannot be tokenised, or nests too deep, is denied when it mentions the gateway and allowed
-    otherwise: the guard fails toward blocking only where the gateway is named."""
+    A string that cannot be tokenised, or nests too deep, is denied only when a stop/restart verb sits next to
+    the gateway (see `_verb_next_to_gateway`) and allowed otherwise."""
     if depth > 2:
-        return "restart" if _mentions_gateway(split) else None
+        return _verb_next_to_gateway(split)
     try:
         words = shlex.split(split)
     except ValueError:
-        return "restart" if _mentions_gateway(split) else None
+        return _verb_next_to_gateway(split)
     if not words:
         return None
     return shape(" ".join(shlex.quote(w) for w in [*words, *rest]), depth + 1)

@@ -485,13 +485,15 @@ def apply_patch(patch: dict, *, dry_run: bool = False,
     # no patch may carry an allowlist or a topic binding, and no --replace-path may name channels.
     openclaw_host.assert_channels_safe(patch, replace_paths)
     if not dry_run and not _patch_changes_a_leaf(patch, replace_paths):
-        # Nothing to write: no CLI call, and no first-write hook either, so a run that changes nothing
-        # never cancels the post-setup watch of the run before it (G1). Checked before the restart gate: a patch that
+        # Nothing to write: no `config patch`, and no first-write hook either, so a run that changes nothing
+        # never cancels the post-setup watch of the run before it (G1). The only call made on the way is the
+        # read-only config-file lookup. Checked before the restart gate: a patch that
         # sends nothing cannot restart anything, and an unclassifiable key must not turn a no-op into a refusal.
         return True, "no changed leaf; not sent"
     if not dry_run and not allow_restart:
         # The single writer's gate (ADR-0003): a key that makes OpenClaw restart a live gateway is never
-        # written here. Raise before any CLI call; `apply_drained` is the one caller that passes allow_restart.
+        # written here. Raise before any write; the only call so far is the read-only config-file lookup (and the
+        # version probe the table needs). `apply_drained` is the one caller that passes allow_restart.
         restart = openclaw_reload_rules.restart_paths(
             patch, openclaw_version=openclaw_reload_rules.installed_openclaw_version(_version_runner, refresh=True),
             reload_mode=reload_mode if reload_mode is not None else _live_reload_mode())

@@ -535,3 +535,53 @@ def test_nested_env_split_strings_are_bounded_and_fail_closed_when_they_name_the
         nested = f"env -S '{nested}'" if "'" not in nested else "env -S " + __import__("shlex").quote(nested)
     code, err = run(guard, monkeypatch, nested, capsys=capsys)
     assert code == 2 and "T29" in err
+
+
+# --- 2.1.1 pass 3, L4: the fail-closed fallbacks deny only when a stop/restart verb sits next to the gateway ----------
+
+def _nest(command: str, times: int = 5) -> str:
+    import shlex
+    for _ in range(times):
+        command = "env -S " + shlex.quote(command)
+    return command
+
+
+FALLBACK_ALLOWED = [
+    "env -S 'echo \"openclaw gateway'",                          # unparseable, names the gateway, no verb
+    "env -S 'echo \"openclaw gateway status'",
+    "env -S 'echo \"restart the openclaw logs gateway'",         # the verb is not after the gateway word
+    "env -S 'grep \"openclaw-gateway.service /var/log/syslog'",
+    _nest("echo openclaw gateway"),                              # past the depth limit, nothing to act on
+    _nest("echo openclaw gateway status"),
+    _nest("cat docs/openclaw-gateway.md"),
+]
+FALLBACK_DENIED = [
+    "env -S 'openclaw gateway restart \"'",
+    "env -S 'openclaw --profile x gateway --port 1 stop \"'",
+    "env -S 'systemctl --user kill openclaw-gateway.service \"'",
+    "env -S 'sudo systemctl --user try-restart openclaw-gateway \"'",
+    "env -S 'systemctl --user stop openclaw-gateway \"'",
+    _nest("openclaw gateway restart"),
+    _nest("systemctl --user stop openclaw-gateway"),
+    _nest("systemctl --user kill openclaw-gateway.service"),
+]
+
+
+@pytest.mark.parametrize("command", FALLBACK_ALLOWED)
+def test_a_fallback_without_a_verb_next_to_the_gateway_is_allowed(guard, monkeypatch, capsys, command):
+    assert run(guard, monkeypatch, command, capsys=capsys) == (0, ""), command
+
+
+@pytest.mark.parametrize("command", FALLBACK_DENIED)
+def test_a_fallback_with_a_verb_next_to_the_gateway_is_still_denied(guard, monkeypatch, capsys, command):
+    code, err = run(guard, monkeypatch, command, capsys=capsys)
+    assert code == 2, command
+    assert "T29" in err or "T01" in err
+
+
+def test_an_internal_error_still_fails_open(guard, monkeypatch, capsys):
+    def boom(*_a, **_k):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(guard, "shape", boom)
+    assert run(guard, monkeypatch, "env -S 'openclaw gateway restart'", capsys=capsys) == (0, "")

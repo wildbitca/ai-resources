@@ -26,6 +26,10 @@ Notes for the next patch release. Nothing here is released; the version label is
   --apply`, `apply-pending --discard-watch-restores` without `--yes`) need a real terminal: a piped `y` is not a
   confirmation (T2). A refused or dry-run discard no longer rewrites `setup-state.yaml`, prints the "none
   pending" line once and says "dry run:" only when it is one (T3).
+  A post-setup watch whose window ended healthy is recorded as finished (`outcome: healthy`) and `status` says
+  so, instead of looking like a watch that is still running (T4). The gateway guard hook's fail-closed fallbacks
+  (an `env -S` string that cannot be tokenised, or nests past the depth limit) deny only when a stop or restart
+  verb sits next to the gateway, so `env -S '... echo openclaw gateway'` is no longer blocked (L4).
 - **Hardening pass 2.** A second `ai-resources setup` run no longer cancels the first run's post-setup watch:
   a patch with no changed leaf is never sent, so the first-write hook never fires for it (G1).
   `apply-pending --discard-watch-restores --yes` also closes a 2.1.0 watch record, so `verify` stops reporting
