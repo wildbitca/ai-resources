@@ -1107,3 +1107,169 @@ def test_setup_never_runs_gateway_restart_itself_and_a_second_run_is_a_no_op(sim
     every = [a for a, _p in sim.oc.calls]
     assert ["gateway", "restart"] not in every
     assert not any(c[:3] == ["systemctl", "--user", "restart"] for c in sim.systemd.calls)
+
+
+# --- 2.1.1 D3: the uploader's named gcloud configuration (opt-in, never activated) -----------------------------------
+
+class FakeGcloud:
+    """A gcloud that holds configurations in memory and records every call."""
+
+    def __init__(self, configs=None, account="me@example.org", active="claude-ro"):
+        self.calls: list[list[str]] = []
+        self.configs: dict[str, dict[str, str]] = configs if configs is not None else {
+            "default": {}, "claude-ro": {"auth/credential_file_override": "/agent/cred.json"}}
+        self.account = account
+        self.active = active
+
+    def __call__(self, argv, **_kw):
+        a = list(argv)
+        self.calls.append(a)
+        assert a[0] == "gcloud", a
+        if a[1:3] == ["auth", "list"]:
+            return 0, self.account
+        if a[1:4] == ["config", "configurations", "list"]:
+            return 0, "\n".join(f"{n}\t{str(n == self.active)}" for n in self.configs)
+        if a[1:4] == ["config", "configurations", "create"]:
+            assert "--no-activate" in a
+            self.configs[a[4]] = {}
+            return 0, ""
+        if a[1:4] == ["config", "configurations", "delete"]:
+            self.configs.pop(a[4], None)
+            return 0, ""
+        if a[1:3] == ["config", "set"]:
+            cfg = next(x.split("=", 1)[1] for x in a if x.startswith("--configuration="))
+            self.configs[cfg][a[3]] = a[4]
+            return 0, ""
+        if a[1:3] == ["config", "get"]:
+            cfg = next(x.split("=", 1)[1] for x in a if x.startswith("--configuration="))
+            return 0, self.configs.get(cfg, {}).get(a[3], "(unset)")
+        raise AssertionError(f"unexpected gcloud call {a}")
+
+    def writes(self):
+        return [c for c in self.calls if c[1:3] == ["config", "set"] or c[1:4] in (
+            ["config", "configurations", "create"], ["config", "configurations", "delete"])]
+
+
+def test_the_plan_creates_a_named_configuration_that_is_never_activated_and_has_no_override():
+    g = FakeGcloud()
+    plan = host.offbox_identity_plan(g)
+    assert plan["problems"] == [] and plan["account"] == "me@example.org" and plan["project"] == "wildbit-iac"
+    flat = [" ".join(s) for s in plan["steps"]]
+    assert flat == [
+        "gcloud config configurations create openclaw-backup --no-activate",
+        "gcloud config set account me@example.org --configuration=openclaw-backup",
+        f"gcloud config set auth/impersonate_service_account {host.OFFBOX_SA_DEFAULT} --configuration=openclaw-backup",
+        "gcloud config set core/project wildbit-iac --configuration=openclaw-backup"]
+    assert not any("credential_file_override" in s or "iam-policy" in s or "policy-binding" in s
+                   or s.startswith("gcloud config configurations activate") for s in flat)
+    assert g.writes() == [], "planning writes nothing"
+
+
+def test_apply_is_idempotent_and_a_second_plan_has_no_steps():
+    g = FakeGcloud()
+    record = host.offbox_identity_apply(g, host.offbox_identity_plan(g))
+    assert record == {"name": "openclaw-backup", "account": "me@example.org", "impersonate": host.OFFBOX_SA_DEFAULT,
+                      "project": "wildbit-iac"}
+    again = host.offbox_identity_plan(g, created=record)
+    assert again["steps"] == [] and again["problems"] == []
+    assert g.active == "claude-ro", "the active configuration was never changed"
+    assert g.configs["claude-ro"] == {"auth/credential_file_override": "/agent/cred.json"}
+
+
+def test_an_existing_configuration_the_kit_did_not_create_is_refused():
+    g = FakeGcloud(configs={"default": {}, "openclaw-backup": {"account": "x"}})
+    plan = host.offbox_identity_plan(g)
+    assert plan["steps"] == [] and any("did not create it" in p for p in plan["problems"])
+    assert host.offbox_identity_apply(g, plan) is None and g.writes() == []
+
+
+def test_the_protected_configurations_are_never_a_target():
+    plan = host.offbox_identity_plan(FakeGcloud(), name="claude-ro")
+    assert plan["steps"] == [] and any("never touches" in p for p in plan["problems"])
+
+
+def test_a_service_account_login_is_not_taken_for_the_operator():
+    plan = host.offbox_identity_plan(FakeGcloud(account="ai-ops-ro@proj.iam.gserviceaccount.com"))
+    assert plan["steps"] == [] and any("no operator login" in p for p in plan["problems"])
+
+
+def test_remove_deletes_only_a_kit_created_configuration_that_still_matches():
+    g = FakeGcloud()
+    record = host.offbox_identity_apply(g, host.offbox_identity_plan(g))
+    g.calls.clear()
+    assert host.offbox_identity_remove(g, record) is True
+    assert [c[1:5] for c in g.writes()] == [["config", "configurations", "delete", "openclaw-backup"]]
+    assert "claude-ro" in g.configs and "default" in g.configs
+
+
+def test_remove_leaves_a_configuration_somebody_changed_or_activated():
+    g = FakeGcloud()
+    record = host.offbox_identity_apply(g, host.offbox_identity_plan(g))
+    g.configs["openclaw-backup"]["account"] = "someone-else@example.org"
+    lines: list[str] = []
+    assert host.offbox_identity_remove(g, record, out=lines.append) is False
+    assert "openclaw-backup" in g.configs and any("changed since" in ln for ln in lines)
+    g.configs["openclaw-backup"]["account"] = "me@example.org"
+    g.active = "openclaw-backup"
+    assert host.offbox_identity_remove(g, record, out=lines.append) is False
+    assert "openclaw-backup" in g.configs
+
+
+def test_the_verb_dry_run_runs_no_write_and_names_the_infra_step(monkeypatch, capsys):
+    import argparse
+    g = FakeGcloud()
+    monkeypatch.setattr(host, "default_runner", g)
+    args = argparse.Namespace(dry_run=True, remove=False, yes=False, name="openclaw-backup",
+                              sa=host.OFFBOX_SA_DEFAULT, account="", project="")
+    monkeypatch.setattr(state, "load", lambda: state.SetupState())
+    assert host.cmd_offbox_identity(args) == 0
+    out = capsys.readouterr().out
+    assert "roles/iam.serviceAccountTokenCreator" in out and "--no-activate" in out
+    assert g.writes() == []
+
+
+def test_setup_offers_the_step_only_with_a_bucket_and_defaults_to_no(monkeypatch):
+    asked: list[str] = []
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=False, **_k: asked.append(msg) or default)
+    monkeypatch.setattr(ui, "select", lambda msg, choices, default=None, **_k: default)
+    monkeypatch.setattr(ui, "ask", lambda *a, **k: k.get("default", ""), raising=False)
+    monkeypatch.setattr(host, "read_host_env", lambda *a, **k: {})
+    o = state.SetupState()
+    section.prompt(o, {})
+    assert not any("off-box uploader" in m for m in asked)
+
+
+def test_configure_dry_run_prints_the_commands_and_runs_nothing(monkeypatch):
+    g = FakeGcloud()
+    monkeypatch.setattr(section, "_runner", lambda: g)
+    infos: list[str] = []
+    monkeypatch.setattr(ui, "info", infos.append)
+    monkeypatch.setattr(ui, "detail", infos.append)
+    s = state.SetupState()
+    s.openclaw.host_offbox_identity = True
+    section._configure_offbox_identity(s.openclaw, dry_run=True)
+    assert g.writes() == [] and any("--no-activate" in m for m in infos)
+    assert s.openclaw.host_offbox_config_created == {}
+
+
+def test_configure_creates_records_and_teardown_removes_only_what_it_made(monkeypatch, tmp_path):
+    g = FakeGcloud()
+    monkeypatch.setattr(section, "_runner", lambda: g)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    env = tmp_path / "kit-host.env"
+    monkeypatch.setattr(host, "HOST_ENV_PATH", env)
+    s = state.SetupState()
+    s.openclaw.host_offbox_identity = True
+    section._configure_offbox_identity(s.openclaw, dry_run=False)
+    assert s.openclaw.host_offbox_config_created["name"] == "openclaw-backup"
+    text = env.read_text()
+    assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG=openclaw-backup" in text
+    assert f"OPENCLAW_OFFBOX_IMPERSONATE_SA={host.OFFBOX_SA_DEFAULT}" in text
+    g.calls.clear()
+    section._configure_offbox_identity(s.openclaw, dry_run=False)
+    assert g.writes() == [], "a second run is a no-op"
+    assert g.active == "claude-ro"
+    section.teardown(s, apply_patch=lambda *a, **k: (True, ""), oc=lambda *a, **k: (0, ""))
+    assert "openclaw-backup" not in g.configs and {"default", "claude-ro"} <= set(g.configs)
+    assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG" not in env.read_text()

@@ -1092,3 +1092,138 @@ def test_the_bash_and_python_knob_defaults_are_one_set():
     found = dict(re.findall(r': "\$\{(OPENCLAW_[A-Z_]+):?=([^}]*)\}"', _text("_common.sh")))
     for key, default in oh.RESTART_KNOB_DEFAULTS.items():
         assert found.get(key) == default, f"{key}: bash {found.get(key)!r} vs python {default!r}"
+
+
+# --- 2.1.1 D3: the uploader's identity, the early readable failure and the state file ---------------------------------
+
+def _fake_gcloud(host: "Host", *, ls_error: str = "", ls_rc: int = 0, cp_rc: int = 0, account: str = "me@example.org"):
+    """A gcloud that logs argv and the identity-relevant environment, and fails the way a test says."""
+    log = host.bin / "gcloud.log"
+    log.write_text("", encoding="utf-8")
+    script = host.bin / "gcloud"
+    script.write_text(f"""#!/bin/sh
+echo "ARGV $* | CFG=${{CLOUDSDK_ACTIVE_CONFIG_NAME-unset}} OVR=${{CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE-unset}} ADC=${{GOOGLE_APPLICATION_CREDENTIALS-unset}} EXE=${{GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES-unset}}" >> "{log}"
+case "$1 $2" in
+  "config get") echo "{account}"; exit 0 ;;
+  "storage ls")
+    if [ -n "{ls_error}" ]; then echo "{ls_error}" >&2; exit {ls_rc or 1}; fi
+    exit 0 ;;
+  "storage cp") exit {cp_rc} ;;
+esac
+exit 0
+""", encoding="utf-8")
+    script.chmod(0o755)
+    return log
+
+
+def _uploader_env(host: "Host", **kv: str):
+    host.write_env(OPENCLAW_OFFBOX_BUCKET="gs://test-bucket", **kv)
+    host.fresh_backup()
+
+
+def _state_file(host: "Host") -> dict:
+    return json.loads((host.home / ".openclaw" / "state" / "offbox-last.json").read_text(encoding="utf-8"))
+
+
+HIJACK = {"CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE": "/agent/cred.json", "GOOGLE_APPLICATION_CREDENTIALS": "/agent/adc.json",
+          "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES": "1"}
+
+
+def _run_uploader(host: "Host", **extra_env: str):
+    env = {"HOME": str(host.home), "USER": "tester", "LOGNAME": "tester", "XDG_RUNTIME_DIR": str(host.run_dir),
+           "OPENCLAW_EXTRA_PATH": str(host.bin), "OPENCLAW_BACKUP_DIR": str(host.backups),
+           "OPENCLAW_HOST_ENV": str(host.env_file), "PATH": os.environ["PATH"], **extra_env}
+    return subprocess.run(["bash", str(SCRIPTS / "openclaw-backup-uploader.sh")], env=env, capture_output=True,
+                          text=True, timeout=60)
+
+
+def test_the_uploader_without_knobs_runs_gcloud_as_the_environment_has_it(host):
+    log = _fake_gcloud(host)
+    _uploader_env(host)
+    r = _run_uploader(host, **HIJACK)
+    assert r.returncode == 0, r.stderr
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert all("CFG=unset" in ln and "OVR=/agent/cred.json" in ln for ln in lines)
+    assert not any("--impersonate-service-account" in ln for ln in lines)
+    assert "credential_file_override=/agent/cred.json" in r.stdout, "the identity line names the hijack"
+    state = _state_file(host)
+    assert state["outcome"] == "ok" and state["newest_offbox"] == "openclaw-20260101-000000.tar.gz"
+    assert isinstance(state["newest_offbox_epoch"], int)
+
+
+def test_a_named_configuration_removes_the_three_credential_variables_for_gcloud(host):
+    log = _fake_gcloud(host)
+    _uploader_env(host, OPENCLAW_OFFBOX_GCLOUD_CONFIG="openclaw-backup")
+    r = _run_uploader(host, **HIJACK)
+    assert r.returncode == 0, r.stderr
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert lines and all("CFG=openclaw-backup" in ln and "OVR=unset" in ln and "ADC=unset" in ln and "EXE=unset" in ln
+                         for ln in lines)
+    assert "config=openclaw-backup" in r.stdout
+
+
+def test_the_impersonation_knob_adds_the_flag_to_every_call(host):
+    log = _fake_gcloud(host)
+    _uploader_env(host, OPENCLAW_OFFBOX_IMPERSONATE_SA="k3s-backup@proj.iam.gserviceaccount.com")
+    r = _run_uploader(host)
+    assert r.returncode == 0, r.stderr
+    lines = [ln for ln in log.read_text(encoding="utf-8").splitlines() if "storage" in ln]
+    assert lines and all("--impersonate-service-account=k3s-backup@proj.iam.gserviceaccount.com" in ln for ln in lines)
+    assert "impersonating=k3s-backup@proj.iam.gserviceaccount.com" in r.stdout
+
+
+def test_a_permission_error_is_one_readable_line_naming_the_identity_and_the_state_file(host):
+    _fake_gcloud(host, ls_error="ERROR: (gcloud.storage.ls) HTTPError 403: caller does not have storage.objects.list "
+                                "access to the bucket")
+    _uploader_env(host, OPENCLAW_OFFBOX_GCLOUD_CONFIG="openclaw-backup",
+                  OPENCLAW_OFFBOX_IMPERSONATE_SA="k3s-backup@proj.iam.gserviceaccount.com")
+    r = _run_uploader(host)
+    assert r.returncode == 1
+    errors = [ln for ln in r.stderr.splitlines() if ln.startswith("ERROR:")]
+    assert len(errors) == 1, r.stderr
+    assert "config=openclaw-backup" in errors[0] and "k3s-backup@proj.iam.gserviceaccount.com" in errors[0]
+    assert "gs://test-bucket" in errors[0] and "403" in errors[0]
+    assert "docs: off-box identity" in errors[0]
+    state = _state_file(host)
+    assert state["outcome"] == "failed" and "403" in state["reason"] and state["newest_offbox"] == ""
+
+
+def test_the_executables_not_allowed_class_gets_its_own_hint(host):
+    _fake_gcloud(host, ls_error="ERROR: Executables need to be explicitly allowed (set "
+                                "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES to 1).")
+    _uploader_env(host)
+    r = _run_uploader(host, **HIJACK)
+    assert r.returncode == 1
+    [err] = [ln for ln in r.stderr.splitlines() if ln.startswith("ERROR:")]
+    assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG" in err and "credential_file_override=/agent/cred.json" in err
+
+
+def test_an_impersonation_refusal_names_the_missing_role(host):
+    _fake_gcloud(host, ls_error="ERROR: Failed to impersonate [k3s-backup@proj.iam.gserviceaccount.com]. "
+                                "iam.serviceAccounts.getAccessToken permission denied")
+    _uploader_env(host, OPENCLAW_OFFBOX_IMPERSONATE_SA="k3s-backup@proj.iam.gserviceaccount.com")
+    r = _run_uploader(host)
+    assert "roles/iam.serviceAccountTokenCreator" in r.stderr
+
+
+def test_an_empty_daily_tier_is_not_a_preflight_failure(host):
+    _fake_gcloud(host)
+    host.bin.joinpath("gcloud").write_text(
+        host.bin.joinpath("gcloud").read_text(encoding="utf-8").replace(
+            '"storage ls")', '"storage ls") case "$*" in */daily/) echo "ERROR: One or more URLs matched no objects" >&2; exit 1 ;; esac ;;\n  "storage ls-x")'),
+        encoding="utf-8")
+    _uploader_env(host)
+    r = _run_uploader(host)
+    assert "cannot access" not in r.stderr
+
+
+def test_a_failed_run_keeps_what_the_last_good_run_knew(host):
+    _fake_gcloud(host)
+    _uploader_env(host)
+    assert _run_uploader(host).returncode == 0
+    ok = _state_file(host)
+    _fake_gcloud(host, ls_error="ERROR: 403 permission denied")
+    assert _run_uploader(host).returncode == 1
+    failed = _state_file(host)
+    assert failed["outcome"] == "failed"
+    assert failed["newest_offbox"] == ok["newest_offbox"] and failed["last_ok_epoch"] == ok["last_ok_epoch"]

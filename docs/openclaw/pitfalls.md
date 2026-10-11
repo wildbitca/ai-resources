@@ -1425,6 +1425,29 @@ answered afterwards is never reverted. A dry-run rejection (exit 7) never queues
 host that ran the 2.1.0 watch may hold leftover `source=watch` restores: `ai-resources openclaw apply-pending
 --discard-watch-restores` lists them (a dry run) and drops them after a confirmation.
 
+## T43 — An `environment.d` credential override and a gcloud property hijack the uploader's identity *(added 2026-10-11; kit side fixed in the unreleased 2.1.1 work)*
+
+**Symptom.** `openclaw-backup-uploader` fails with `Executables need to be explicitly allowed` (or a 403 on the
+bucket) from 2026-10-09; the last off-box daily is days old and `openclaw status` says only "the listing command
+failed".
+
+**Cause.** Two layers hand the uploader an identity it did not choose. (1) `~/.config/environment.d/50-agent-wif.conf`
+exports `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, `GOOGLE_APPLICATION_CREDENTIALS` and
+`GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES` into every user service, so gcloud runs as the read-only agent
+identity. (2) The ACTIVE gcloud configuration has the property `auth/credential_file_override`, so even a unit
+with those variables unset still uses the override. A drop-in with only `UnsetEnvironment=` cannot work.
+
+**Fix (kit side).** `OPENCLAW_OFFBOX_GCLOUD_CONFIG` and `OPENCLAW_OFFBOX_IMPERSONATE_SA` in `kit-host.env` give the
+uploader a NAMED configuration and an optional impersonation, with the three variables removed from gcloud's
+environment for the uploader only. The uploader preflights the bucket, prints one `ERROR: <identity> cannot access
+<bucket>: ...` line with a hint, and writes `~/.openclaw/state/offbox-last.json` on every exit; `status` and
+`verify` read it and warn at 30 h and error at 54 h. `ai-resources openclaw offbox-identity` creates the named
+configuration (opt-in, never activated, no credential file, no IAM). The IAM grant
+(`roles/iam.serviceAccountTokenCreator`) stays an infra step.
+
+**How to catch it.** `ai-resources verify` ("the newest off-box daily backup is Nh old"), the state file, and
+`journalctl --user -u openclaw-backup-uploader`.
+
 
 ---
 

@@ -401,3 +401,70 @@ def test_memory_high_drift_is_reported_and_the_setup_value_is_not(box):
     assert any("not setup's 12 GiB" in m for m in _warns(_run(DriftRunner(str(16 * 1024 ** 3)))))
     assert not any("MemoryHigh" in m for m in _warns(_run(DriftRunner(str(12 * 1024 ** 3)))))
     assert any("not set on the gateway unit" in m for m in _warns(_run(DriftRunner("infinity"))))
+
+
+# --- 2.1.1 D3: the off-box age, read from the uploader's state file; verify never runs gcloud -----------------------
+
+def _bucket(box, **extra):
+    lines = "".join(f"{k}={v}\n" for k, v in {"OPENCLAW_OFFBOX_BUCKET": "gs://b", **extra}.items())
+    box.write_text(box.read_text() + lines, encoding="utf-8")
+
+
+def _uploader_state(age_h, *, outcome="ok", reason="uploaded 1", identity="config=openclaw-backup account=me"):
+    import json
+    import time
+    d = pathlib.Path(os.environ["HOME"]) / ".openclaw" / "state"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "offbox-last.json").write_text(json.dumps({
+        "at": "2026-10-11T04:44:00Z", "identity": identity, "outcome": outcome, "reason": reason,
+        "newest_offbox": "openclaw-1.tar.gz",
+        "newest_offbox_epoch": None if age_h is None else time.time() - age_h * 3600}), encoding="utf-8")
+
+
+def _offbox_findings(found):
+    return [f for f in found if "off-box" in f.message and "listing" not in f.message]
+
+
+@pytest.mark.parametrize("age,level", [(2, "ok"), (29, "ok"), (31, "warn"), (53, "warn"), (55, "error")])
+def test_the_off_box_age_has_a_warn_and_an_error_threshold(box, age, level):
+    _bucket(box)
+    _uploader_state(age)
+    runner = HostRunner()
+    [f] = _offbox_findings(_run(runner))
+    assert f.level == level, f
+    assert "config=openclaw-backup" in f.message
+    assert not any("gcloud" in c[0] for c in runner.calls), "verify never runs gcloud"
+
+
+def test_a_failed_upload_names_the_reason_and_the_identity(box):
+    _bucket(box)
+    _uploader_state(20, outcome="failed", reason="permission denied on gs://b")
+    [f] = _offbox_findings(_run(HostRunner()))
+    assert f.level == "warn" and "permission denied" in f.message and "config=openclaw-backup" in f.message
+
+
+def test_a_failed_upload_with_no_known_off_box_copy_is_an_error(box):
+    _bucket(box)
+    _uploader_state(None, outcome="failed", reason="executables not allowed")
+    [f] = _offbox_findings(_run(HostRunner()))
+    assert f.level == "error" and "executables not allowed" in f.message
+
+
+def test_an_unconfigured_uploader_adds_no_finding(box):
+    assert _offbox_findings(_run(HostRunner())) == []
+
+
+def test_a_missing_state_file_with_a_bucket_is_a_warn(box):
+    _bucket(box)
+    [f] = _offbox_findings(_run(HostRunner()))
+    assert f.level == "warn" and "never reported" in f.message
+
+
+def test_the_thresholds_come_from_the_host_env(box):
+    _bucket(box, OPENCLAW_OFFBOX_WARN_AGE_H="10", OPENCLAW_OFFBOX_ERROR_AGE_H="20")
+    _uploader_state(15)
+    [f] = _offbox_findings(_run(HostRunner()))
+    assert f.level == "warn"
+    _uploader_state(25)
+    [f] = _offbox_findings(_run(HostRunner()))
+    assert f.level == "error"

@@ -62,7 +62,8 @@ NARRATION_CHOICES = (
 def applied_any(o: state.OpenClawState) -> bool:
     return bool(o.host_hooks_applied or o.host_units_applied or o.host_config_changes
                 or o.host_workboard_applied == "enabled-by-kit" or o.host_agents_md_written
-                or o.host_env_previous or o.host_env_created or o.bindings_applied)
+                or o.host_env_previous or o.host_env_created or o.bindings_applied
+                or o.host_offbox_config_created)
 
 
 def _runner() -> Callable[..., tuple[int, str]]:
@@ -118,6 +119,12 @@ def prompt(s: state.SetupState, doc: dict | None = None) -> None:
     if o.host_units or o.host_config:
         _ask_host_values(o, env)
     _ask_resource_safety(o, env)
+    if env.get("OPENCLAW_OFFBOX_BUCKET") and not o.host_offbox_config_created:
+        o.host_offbox_identity = bool(ui.confirm(
+            "Create a named gcloud configuration for the off-box uploader, so it stops running as the agent "
+            "identity the environment exports (T43)? It is created but never activated, uses your login to "
+            "impersonate the backup service account, and you see the exact commands first. The IAM grant is an "
+            "infra step.", default=o.host_offbox_identity))
     o.host_workboard = bool(ui.confirm(
         "Enable the workboard plugin (a shared task board for the agents)?", default=o.host_workboard))
     o.host_agents_md = bool(ui.confirm(
@@ -239,6 +246,7 @@ def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path],
         return False
 
     _configure_env(o, dry_run=dry_run)
+    _configure_offbox_identity(o, dry_run=dry_run)
     _configure_hooks(s, ak_path, dry_run=dry_run)
     _configure_units(o, dry_run=dry_run)
     changed = _configure_config(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
@@ -276,6 +284,42 @@ def _configure_env(o: state.OpenClawState, *, dry_run: bool) -> None:
         o.host_env_created = True
     host.write_host_env(todo)
     ui.ok(f"{host.HOST_ENV_PATH} updated ({', '.join(sorted(todo))})")
+
+
+def _configure_offbox_identity(o: state.OpenClawState, *, dry_run: bool) -> None:
+    """The opt-in named gcloud configuration for the uploader. Dry-run summary first, then one confirm.
+
+    Created, never activated; no credential_file_override; no other configuration is touched; idempotent
+    (it reads first and skips what already matches). The IAM grant is documented, never run."""
+    if not o.host_offbox_identity:
+        return
+    runner = _runner()
+    plan = host.offbox_identity_plan(runner, created=o.host_offbox_config_created)
+    if plan["problems"]:
+        ui.warn("Off-box uploader identity not set up: " + "; ".join(plan["problems"]))
+        return
+    if not plan["steps"]:
+        host._write_offbox_knobs(o, plan["name"], plan["sa"]) if not dry_run else None
+        ui.info(f"The gcloud configuration {plan['name']!r} for the uploader already matches.")
+        return
+    ui.info("Off-box uploader identity: these gcloud commands create a named configuration (never activated, "
+            "no credential file, no IAM):")
+    for argv in plan["steps"]:
+        ui.detail(" ".join(argv))
+    ui.detail(host.OFFBOX_INFRA_NOTE.format(sa=plan["sa"], name=plan["name"]))
+    if dry_run:
+        return
+    if not _gate("Create the gcloud configuration for the off-box uploader?"):
+        return
+    record = host.offbox_identity_apply(runner, plan, out=ui.error)
+    if record is None:
+        ui.error("Off-box uploader identity: a gcloud command failed; the uploader keeps its current identity.")
+        return
+    if not plan["exists"]:
+        o.host_offbox_config_created = record
+    written = host._write_offbox_knobs(o, plan["name"], plan["sa"])
+    ui.ok(f"gcloud configuration {plan['name']!r} ready for the uploader"
+          + (f" ({', '.join(written)} set in {host.HOST_ENV_PATH})" if written else ""))
 
 
 def _configure_hooks(s: state.SetupState, ak_path: str, *, dry_run: bool) -> None:
@@ -946,6 +990,15 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             pass
         o.host_agents_md_written.pop(path_str, None)   # an edited file is the user's now
 
+    if o.host_offbox_config_created:
+        record = dict(o.host_offbox_config_created)
+        if host.offbox_identity_remove(_runner(), record, out=ui.warn):
+            o.host_offbox_config_created = {}
+            host._forget_offbox_knobs(o, record)
+        else:
+            ui.warn(f"The gcloud configuration {record.get('name')!r} was left as it is.")
+            o.host_offbox_config_created = {}
+
     if o.bindings_applied:
         ok = _restore_bindings(o, doc or {}, apply_patch) and ok
 
@@ -1168,6 +1221,13 @@ def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> l
                            "set gateway.bind to loopback or a tailnet address"))
     if not report["off-box"]["configured"]:
         out.append(Finding("warn", who, "no off-box backup listing is configured", OFFBOX_REMEDY))
+    uploader = report["off-box"].get("uploader")
+    if uploader is not None:
+        level, message = host.offbox_uploader_finding(uploader)
+        remedy = ("" if level == "ok" else
+                  "see docs/openclaw/runbook.md (Off-box backup identity, T43); `systemctl --user start openclaw-backup-uploader.service` "
+                  "re-runs it and rewrites the state file")
+        out.append(Finding(level, who, message, remedy))
     out += _stability_findings(report.get("stability") or {})
     out += _pending_findings(s.openclaw)
     out += _resource_findings(s.openclaw, watch, report)

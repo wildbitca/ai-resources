@@ -103,9 +103,15 @@ forces that restart after 300 s whatever is running (T40).
 
 ### Post-setup watch (`openclaw-config-watch-*`)
 
-After a run that wrote OpenClaw config, setup starts a transient user unit that checks `openclaw health` every
-30 s for 10 minutes. Three failures in a row revert the run: hot keys at once, restart-required keys in the
-same drained window (never a blind patch on a live gateway), then a Telegram notice with key paths. Follow it
+After a run that wrote OpenClaw config, setup starts a transient user unit (with its own `PATH`, T42) that
+checks `openclaw health` every 30 s for 15 minutes. It ignores probes for 120 s after the last reload of a
+recorded key, and reverts the run only when the gateway did not answer for 5 minutes AND something corroborates
+a real failure (the process changed, the unit restarted or is down, the port is closed, a stop in the journal):
+hot keys at once, restart-required keys in the same drained window (never a blind patch on a live gateway),
+then a Telegram notice with key paths. A probe that cannot run, or a failure nothing corroborates, ends the
+watch INCONCLUSIVE: nothing is reverted or queued and `status`/`verify` show a warning with the reason. A key
+whose hot reload was applied and answered afterwards is never reverted. One line per probe
+(`tick=N rc=R class=C elapsed=Ts`) is in the journal. Follow it
 with `journalctl --user -u openclaw-config-watch-<id>`, cancel it with `systemctl --user stop
 openclaw-config-watch-<id>`. It stands down on `watchdog.off`, and a newer setup run supersedes it. Without
 `systemd-run` or a user bus setup says `post-setup watch not started`; there is no foreground fallback.
@@ -1193,6 +1199,43 @@ gcloud storage ls -r "gs://wildbit-iac-openclaw-backups"
 kubectl --context default create job --from=cronjob/openclaw-backup-guard \
   guard-now-$(date +%s) -n monitoring     # "daily y weekly estan al dia"
 ```
+
+## Off-box backup identity (T43)
+
+`openclaw-backup-uploader` runs `gcloud` as whatever identity the environment gives it. A host whose user manager
+exports `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, `GOOGLE_APPLICATION_CREDENTIALS` and
+`GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES` (an `environment.d` drop-in for an agent identity) hands it a
+read-only identity, and the ACTIVE gcloud configuration may carry `auth/credential_file_override` too, so an
+environment-only unit drop-in cannot fix it. Two optional knobs in `~/.openclaw/kit-host.env` do:
+
+| Knob | Effect |
+|---|---|
+| `OPENCLAW_OFFBOX_GCLOUD_CONFIG` | the uploader runs gcloud with `CLOUDSDK_ACTIVE_CONFIG_NAME=<name>` and the three variables removed from gcloud's environment (for the uploader only) |
+| `OPENCLAW_OFFBOX_IMPERSONATE_SA` | every gcloud call gets `--impersonate-service-account=<SA>` |
+
+With both unset the uploader behaves as before. `OPENCLAW_OFFBOX_LIST_CMD` (read by `status`) is a separate
+command of yours and keeps whatever identity it uses.
+
+**Create the configuration (opt-in).** `ai-resources openclaw offbox-identity --dry-run` prints the exact commands;
+`ai-resources openclaw offbox-identity` applies them after a confirmation (the confirmation flag skips the question) and `--remove` deletes
+only the configuration the kit created, only while it still matches. Setup offers the same step, default No, once
+`OPENCLAW_OFFBOX_BUCKET` is set. The configuration is created with `--no-activate`, uses your login, impersonates
+`k3s-backup@wildbit-iac.iam.gserviceaccount.com` through `auth/impersonate_service_account`, never sets
+`credential_file_override` and never touches `claude-ro` or `default`.
+
+**Infra step, not done by the kit.** Your account needs `roles/iam.serviceAccountTokenCreator` on that service
+account (the org-iac draft `openclaw-backup-host-iam.yaml`). Then test it:
+
+```bash
+CLOUDSDK_ACTIVE_CONFIG_NAME=openclaw-backup gcloud storage ls gs://wildbit-iac-openclaw-backups/daily/
+systemctl --user start openclaw-backup-uploader.service
+```
+
+**What the uploader leaves.** `~/.openclaw/state/offbox-last.json`: when it ran, the identity, `ok|failed`, the
+reason and the newest daily that is off-box. A failure is ONE line, `ERROR: <identity> cannot access <bucket>:
+<first gcloud error>; <hint>`. `ai-resources openclaw status` and `ai-resources verify` read that file (they never
+run gcloud): WARN when the newest off-box daily is older than 30 h (`OPENCLAW_OFFBOX_WARN_AGE_H`), ERROR above 54 h
+(`OPENCLAW_OFFBOX_ERROR_AGE_H`), WARN when the uploader never reported.
 
 ## Get into the UI
 

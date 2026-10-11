@@ -263,6 +263,11 @@ class OpenClawState:
     # {run_id, unit, started_at, changes, done, result}. `changes` are this run's written keys with
     # their previous values (never a secret value). Cleared by a newer run or a teardown.
     config_watch: Any = None
+    # The opt-in named gcloud configuration for the off-box uploader (2.1.1, `openclaw offbox-identity`):
+    # the answer, and what the kit CREATED ({name, account, impersonate, project}; empty when it created
+    # nothing). Teardown deletes only a configuration recorded here that still matches.
+    host_offbox_identity: bool = False
+    host_offbox_config_created: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

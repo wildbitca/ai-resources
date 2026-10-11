@@ -20,6 +20,18 @@ Notes for the next patch release. Nothing here is released; the version label is
 - Setup records `kind` and `openclaw_version` per change; the watch routes by the recorded kind and never
   re-classifies in a degraded environment. A key whose hot reload was applied and answered afterwards is kept.
   A rejected drained-window dry run (exit 7) never queues a restore entry.
+- **The off-box uploader's identity (D3, pitfall T43).** `OPENCLAW_OFFBOX_GCLOUD_CONFIG` and
+  `OPENCLAW_OFFBOX_IMPERSONATE_SA` give `openclaw-backup-uploader` a named gcloud configuration (the three agent
+  credential variables are removed from gcloud's environment for it) and an optional impersonation; with both
+  unset nothing changes. The uploader preflights the bucket, fails with one readable `ERROR: <identity> cannot
+  access <bucket>` line and a hint, and writes `~/.openclaw/state/offbox-last.json` on every exit.
+- `status` and `verify` read that state file (they never run gcloud): WARN when the newest off-box daily is
+  older than 30 h, ERROR above 54 h (`OPENCLAW_OFFBOX_WARN_AGE_H`, `OPENCLAW_OFFBOX_ERROR_AGE_H`), WARN when the
+  uploader never reported.
+- **`ai-resources openclaw offbox-identity [--dry-run|--remove]`** and an opt-in setup step (default No, only
+  with `OPENCLAW_OFFBOX_BUCKET` set) create the named configuration: never activated, no credential file, no IAM,
+  idempotent, and the removal only deletes what the kit created and that still matches. The IAM grant stays an
+  infra step.
 - **Voice language no longer reverts to `auto` (D2).** The voice question starts from the live
   `tools.media` `--language` value (it wins over a saved answer and over the locale, and prints "kept your
   value"), and a run with no saved answer keeps the live value instead of writing `auto` over it.

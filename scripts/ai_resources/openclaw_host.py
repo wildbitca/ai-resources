@@ -29,6 +29,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Callable, NamedTuple
@@ -2943,6 +2944,57 @@ def pending_lines(pending: dict) -> list[str]:
     return out
 
 
+OFFBOX_WARN_AGE_H = 30.0     # the newest off-box daily is older than this: WARN (Q5)
+OFFBOX_ERROR_AGE_H = 54.0    # ... and older than this: ERROR
+
+
+def offbox_uploader_state(home: Path, hostenv: dict, now: float) -> dict:
+    """What the uploader's last run left in `~/.openclaw/state/offbox-last.json` (never runs gcloud)."""
+
+    def hours(key: str, default: float) -> float:
+        try:
+            return float(hostenv.get(key, "") or default)
+        except ValueError:
+            return default
+
+    path = Path(hostenv.get("OPENCLAW_OFFBOX_STATE") or home / ".openclaw" / "state" / "offbox-last.json")
+    out: dict = {"path": str(path), "warn_h": hours("OPENCLAW_OFFBOX_WARN_AGE_H", OFFBOX_WARN_AGE_H),
+                 "error_h": hours("OPENCLAW_OFFBOX_ERROR_AGE_H", OFFBOX_ERROR_AGE_H), "reported": False}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return out
+    if not isinstance(data, dict):
+        return out
+    epoch = data.get("newest_offbox_epoch")
+    age = (now - epoch) / 3600 if isinstance(epoch, (int, float)) and not isinstance(epoch, bool) else None
+    out.update(reported=True, outcome=str(data.get("outcome", "")), identity=str(data.get("identity", "")),
+               reason=str(data.get("reason", "")), at=str(data.get("at", "")),
+               newest=str(data.get("newest_offbox", "")), age_hours=age)
+    return out
+
+
+def offbox_uploader_finding(u: dict) -> tuple[str, str]:
+    """(level, message) for an `offbox_uploader_state`: ok | warn | error."""
+    if not u.get("reported"):
+        return "warn", f"the off-box uploader has never reported (no readable state file at {u.get('path')})"
+    who = f"uploader last ran as {u.get('identity') or 'an unknown identity'} at {u.get('at') or '?'}"
+    age = u.get("age_hours")
+    if u.get("outcome") != "ok":
+        if age is None:
+            return "error", f"the off-box upload fails and no off-box copy is known: {u.get('reason')} ({who})"
+        level = "error" if age >= u["error_h"] else "warn"
+        return level, (f"the last off-box upload failed: {u.get('reason')}; the newest off-box daily is "
+                       f"{age:.0f}h old ({who})")
+    if age is None:
+        return "warn", f"the off-box uploader reported ok but no newest off-box daily is recorded ({who})"
+    if age >= u["error_h"]:
+        return "error", f"the newest off-box daily backup is {age:.0f}h old ({who})"
+    if age >= u["warn_h"]:
+        return "warn", f"the newest off-box daily backup is {age:.0f}h old ({who})"
+    return "ok", f"the newest off-box daily backup is {age:.0f}h old ({who})"
+
+
 def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                    host_env_path: Path | None = None, config_path: Path | None = None,
                    now: float | None = None, run_doctor: bool = True, probe_offbox: bool = True,
@@ -3005,6 +3057,8 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
         rc, listing = runner(shlex.split(remote_cmd), env=env)
         offbox.update(ok=rc == 0, present=tiers["daily"]["name"] in listing if rc == 0 else False,
                       name=tiers["daily"]["name"])
+    if hostenv.get("OPENCLAW_OFFBOX_BUCKET"):
+        offbox["uploader"] = offbox_uploader_state(home, hostenv, time.time() if now is None else now)
     report["off-box"] = offbox
 
     default_model = model_primary((cfg.get("agents") or {}).get("defaults")) or "?"
@@ -3110,6 +3164,9 @@ def render_status(report: dict) -> str:
         lines.append("off-box     " + (f"newest daily {ob['name']} is present" if ob["present"]
                                        else f"newest daily {ob['name']} is MISSING off-box"
                                        if ob["ok"] else "the listing command failed"))
+    if ob.get("uploader") is not None:
+        level, msg = offbox_uploader_finding(ob["uploader"])
+        lines.append(f"off-box up  {'' if level == 'ok' else level.upper() + ': '}{msg}")
     lines.append("models")
     for m in report["models"]:
         lines.append(f"  {m['agent']:<16} {m['model']}"
@@ -3737,6 +3794,208 @@ def cmd_busy(args: argparse.Namespace) -> int:
     return 2 if n is None else (1 if n > 0 else 0)
 
 
+# --- the uploader's own gcloud configuration (opt-in, 2.1.1) --------------------------------------------------------
+#
+# The uploader must not run as the agent identity the user manager exports (pitfall T43). The kit can create a
+# NAMED gcloud configuration for it: operator account + impersonation of the backup service account, never
+# activated, never with a credential_file_override, never touching another configuration. The IAM grant that lets
+# the operator impersonate the service account is an infra step the kit documents and does not perform.
+
+OFFBOX_CONFIG_NAME = "openclaw-backup"
+OFFBOX_SA_DEFAULT = "k3s-backup@wildbit-iac.iam.gserviceaccount.com"
+OFFBOX_PROTECTED_CONFIGS = ("default", "claude-ro")
+_GCLOUD_UNSET = ("", "(unset)")
+
+
+def _gcloud_value(runner: Runner, *args: str) -> str:
+    rc, text = runner(["gcloud", *args], timeout=30)
+    value = text.strip().splitlines()[-1].strip() if rc == 0 and text.strip() else ""
+    return "" if value in _GCLOUD_UNSET else value
+
+
+def _gcloud_configs(runner: Runner) -> "dict[str, bool] | None":
+    """{configuration name: is_active}, None when gcloud cannot say."""
+    rc, text = runner(["gcloud", "config", "configurations", "list", "--format=value(name,is_active)"], timeout=30)
+    if rc != 0:
+        return None
+    out: dict[str, bool] = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if parts:
+            out[parts[0]] = len(parts) > 1 and parts[1].lower() == "true"
+    return out
+
+
+def offbox_identity_account(runner: Runner) -> str:
+    """The operator's own login: the active credentialed account, when it is not a service account."""
+    acct = _gcloud_value(runner, "auth", "list", "--filter=status:ACTIVE", "--format=value(account)")
+    return "" if acct.endswith(".gserviceaccount.com") else acct
+
+
+def offbox_identity_plan(runner: Runner, *, name: str = OFFBOX_CONFIG_NAME, sa: str = OFFBOX_SA_DEFAULT,
+                         account: str = "", project: str = "", created: "dict | None" = None) -> dict:
+    """Read first, then list the exact gcloud commands that are still needed. Runs no write.
+
+    {"name", "account", "sa", "project", "exists", "steps": [argv...], "problems": [...]}; `steps` is empty
+    when the configuration already matches (idempotent), and `problems` non-empty means nothing may be applied.
+    """
+    created = created or {}
+    problems: list[str] = []
+    project = project or (sa.split("@", 1)[1].split(".", 1)[0] if "@" in sa else "")
+    account = account or offbox_identity_account(runner)
+    if not account:
+        problems.append("no operator login found (`gcloud auth list` has no active user account); pass --account")
+    if name in OFFBOX_PROTECTED_CONFIGS:
+        problems.append(f"{name!r} is a configuration the kit never touches; pick another --name")
+    configs = _gcloud_configs(runner)
+    if configs is None:
+        problems.append("gcloud could not list its configurations (is gcloud installed and signed in?)")
+        configs = {}
+    exists = name in configs
+    if exists and created.get("name") != name:
+        problems.append(f"a gcloud configuration named {name!r} already exists and the kit did not create it; "
+                        "pick another --name or remove it yourself")
+    steps: list[list[str]] = []
+    if not problems:
+        if not exists:
+            steps.append(["gcloud", "config", "configurations", "create", name, "--no-activate"])
+        wanted = (("account", account), ("auth/impersonate_service_account", sa), ("core/project", project))
+        for prop, want in wanted:
+            if not want:
+                continue
+            have = _gcloud_value(runner, "config", "get", prop, f"--configuration={name}") if exists else ""
+            if have != want:
+                steps.append(["gcloud", "config", "set", prop, want, f"--configuration={name}"])
+    return {"name": name, "account": account, "sa": sa, "project": project, "exists": exists, "steps": steps,
+            "problems": problems}
+
+
+def offbox_identity_apply(runner: Runner, plan: dict, *, out: Callable[[str], None] = print) -> "dict | None":
+    """Run `plan["steps"]`. The record to keep ({name, account, impersonate, project}) or None on a failure.
+
+    The configuration is never activated and `credential_file_override` is never set: the plan has no such step."""
+    if plan["problems"]:
+        return None
+    for argv in plan["steps"]:
+        rc, text = runner(argv, timeout=60)
+        if rc != 0:
+            out(f"failed: {' '.join(argv)}: {text.strip()[-200:]}")
+            return None
+    return {"name": plan["name"], "account": plan["account"], "impersonate": plan["sa"],
+            "project": plan["project"]}
+
+
+def offbox_identity_remove(runner: Runner, record: dict, *, out: Callable[[str], None] = print) -> bool:
+    """Delete the configuration the kit created, only while it still matches what the kit set. True when done
+    (or already gone); False when it was left alone."""
+    name = record.get("name", "")
+    configs = _gcloud_configs(runner)
+    if not name or name in OFFBOX_PROTECTED_CONFIGS:
+        return False
+    if configs is None:
+        out("gcloud could not list its configurations; the uploader configuration was left as it is")
+        return False
+    if name not in configs:
+        return True
+    if configs[name]:
+        out(f"the gcloud configuration {name!r} is ACTIVE now; it was left as it is")
+        return False
+    for prop, key in (("account", "account"), ("auth/impersonate_service_account", "impersonate"),
+                      ("core/project", "project")):
+        have = _gcloud_value(runner, "config", "get", prop, f"--configuration={name}")
+        if have != (record.get(key) or ""):
+            out(f"the gcloud configuration {name!r} changed since the kit created it ({prop}); it was left as it is")
+            return False
+    rc, text = runner(["gcloud", "config", "configurations", "delete", name, "--quiet"], timeout=60)
+    if rc != 0:
+        out(f"could not delete the gcloud configuration {name!r}: {text.strip()[-200:]}")
+        return False
+    return True
+
+
+OFFBOX_INFRA_NOTE = ("Infra step, not done by the kit: the operator account needs roles/iam.serviceAccountTokenCreator "
+                     "on {sa} (apply the org-iac IAM draft). Then test with:\n"
+                     "  CLOUDSDK_ACTIVE_CONFIG_NAME={name} gcloud storage ls gs://<bucket>/daily/")
+
+
+def cmd_offbox_identity(args: argparse.Namespace) -> int:
+    from .setup import state as setup_state
+    s = setup_state.load()
+    o = s.openclaw
+    runner = default_runner
+    if getattr(args, "remove", False):
+        record = dict(o.host_offbox_config_created)
+        if not record:
+            print("the kit created no gcloud configuration here; nothing to remove")
+            return 0
+        if getattr(args, "dry_run", False):
+            print(f"dry run -- would delete the gcloud configuration {record['name']!r} if it still matches")
+            return 0
+        if offbox_identity_remove(runner, record):
+            o.host_offbox_config_created = {}
+            _forget_offbox_knobs(o, record)
+            setup_state.save(s)
+            print(f"removed the gcloud configuration {record['name']!r}")
+            return 0
+        return 1
+    plan = offbox_identity_plan(runner, name=args.name, sa=args.sa, account=args.account, project=args.project,
+                                created=o.host_offbox_config_created)
+    for problem in plan["problems"]:
+        print(f"refusing: {problem}")
+    if plan["problems"]:
+        return 1
+    if plan["steps"]:
+        print("would run, in order (the configuration is never activated; no credential file, no IAM):")
+        for argv in plan["steps"]:
+            print("  " + shlex.join(argv))
+    else:
+        print(f"the gcloud configuration {plan['name']!r} already matches; nothing to run")
+    print(OFFBOX_INFRA_NOTE.format(sa=plan["sa"], name=plan["name"]))
+    if getattr(args, "dry_run", False):
+        return 0
+    if plan["steps"] and not getattr(args, "yes", False):
+        answer = input("Apply these commands? [y/N] ").strip().lower() if sys.stdin.isatty() else ""
+        if answer not in ("y", "yes"):
+            print("nothing applied (use --yes to apply without asking)")
+            return 1
+    record = offbox_identity_apply(runner, plan) if plan["steps"] else dict(o.host_offbox_config_created) or {
+        "name": plan["name"], "account": plan["account"], "impersonate": plan["sa"], "project": plan["project"]}
+    if record is None:
+        return 1
+    if plan["steps"] and not plan["exists"]:
+        o.host_offbox_config_created = record
+    written = _write_offbox_knobs(o, plan["name"], plan["sa"])
+    setup_state.save(s)
+    print("kit-host.env: " + (", ".join(written) if written else "knobs already set"))
+    return 0
+
+
+def _write_offbox_knobs(o, name: str, sa: str) -> list[str]:
+    """Fill-only: a knob the operator already set is left alone. Records the previous value for teardown."""
+    current = read_host_env()
+    todo = {k: v for k, v in (("OPENCLAW_OFFBOX_GCLOUD_CONFIG", name), ("OPENCLAW_OFFBOX_IMPERSONATE_SA", sa))
+            if not current.get(k)}
+    for key in todo:
+        o.host_env_previous.setdefault(key, None)
+    if todo:
+        write_host_env(todo)
+    return sorted(todo)
+
+
+def _forget_offbox_knobs(o, record: dict) -> None:
+    """Remove the knobs only when they still hold exactly what the kit wrote."""
+    current = read_host_env()
+    todo: dict[str, None] = {}
+    if current.get("OPENCLAW_OFFBOX_GCLOUD_CONFIG") == record.get("name"):
+        todo["OPENCLAW_OFFBOX_GCLOUD_CONFIG"] = None
+    if current.get("OPENCLAW_OFFBOX_IMPERSONATE_SA") == record.get("impersonate"):
+        todo["OPENCLAW_OFFBOX_IMPERSONATE_SA"] = None
+    if todo:
+        write_host_env(dict(todo))
+    for key in todo:
+        o.host_env_previous.pop(key, None)
+
+
 def cmd_apply_pending(args: argparse.Namespace) -> int:
     from .setup import state as setup_state
     from .setup.cockpits import _openclaw_host as section
@@ -3861,6 +4120,18 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
                       help="List the restore entries the post-setup watch queued (a dry run); with --yes or a "
                            "confirmation, drop them. Applies nothing")
     p_ap.set_defaults(func=cmd_apply_pending)
+
+    p_oi = verbs.add_parser("offbox-identity",
+                            help="Create (or with --remove, delete) the named gcloud configuration the off-box "
+                                 "uploader uses; never activated, no credential file, no IAM")
+    p_oi.add_argument("--dry-run", action="store_true", help="Print the exact commands; change nothing")
+    p_oi.add_argument("--remove", action="store_true", help="Delete the configuration the kit created, if unchanged")
+    p_oi.add_argument("--yes", action="store_true", help="Apply without asking")
+    p_oi.add_argument("--name", default=OFFBOX_CONFIG_NAME, help=f"Configuration name (default {OFFBOX_CONFIG_NAME})")
+    p_oi.add_argument("--sa", default=OFFBOX_SA_DEFAULT, help="Service account to impersonate")
+    p_oi.add_argument("--account", default="", help="Operator account (default: the active gcloud login)")
+    p_oi.add_argument("--project", default="", help="core/project (default: the service account's project)")
+    p_oi.set_defaults(func=cmd_offbox_identity)
 
     p_cw = verbs.add_parser("config-watch",
                             help="(started by setup) watch the gateway after a setup run; revert the run if it stops answering")
