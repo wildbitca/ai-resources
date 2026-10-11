@@ -996,8 +996,11 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             o.host_offbox_config_created = {}
             host._forget_offbox_knobs(o, record)
         else:
-            # Keep the record: a later teardown can retry, and the knobs stay tied to it.
+            # Keep the record and report the teardown as unfinished: the cockpit teardown then keeps
+            # the OpenClaw state, so a later teardown retries the removal. The off-box env knobs are
+            # still restored below with the rest of host_env_previous; the retry needs only the record.
             ui.warn(f"The gcloud configuration {record.get('name')!r} was left as it is.")
+            ok = False
 
     if o.bindings_applied:
         ok = _restore_bindings(o, doc or {}, apply_patch) and ok

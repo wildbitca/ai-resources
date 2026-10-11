@@ -1294,10 +1294,27 @@ def test_teardown_keeps_the_record_when_the_configuration_was_left_alone(monkeyp
     s.openclaw.host_offbox_identity = True
     section._configure_offbox_identity(s.openclaw, dry_run=False)
     g.configs["openclaw-backup"]["account"] = "someone-else@example.org"
-    section.teardown(s, apply_patch=lambda *a, **k: (True, ""), oc=lambda *a, **k: (0, ""))
+    assert section.teardown(s, apply_patch=lambda *a, **k: (True, ""), oc=lambda *a, **k: (0, "")) is False
     assert "openclaw-backup" in g.configs
     assert s.openclaw.host_offbox_config_created.get("name") == "openclaw-backup", \
         "a failed removal must keep the record so a later teardown can retry"
+
+
+def test_cockpit_teardown_keeps_the_record_when_the_configuration_was_left_alone(monkeypatch, tmp_path):
+    g = FakeGcloud()
+    monkeypatch.setattr(section, "_runner", lambda: g)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(tmp_path / "openclaw.json"))
+    s = state.SetupState()
+    s.openclaw.host_offbox_identity = True
+    section._configure_offbox_identity(s.openclaw, dry_run=False)
+    g.configs["openclaw-backup"]["account"] = "someone-else@example.org"
+    openclaw.teardown(s)
+    assert "openclaw-backup" in g.configs
+    assert s.openclaw.host_offbox_config_created.get("name") == "openclaw-backup", \
+        "the cockpit teardown must not reset the state while the configuration is still owed"
 
 
 def test_setup_offers_the_step_only_with_a_bucket_and_defaults_to_no(monkeypatch):
