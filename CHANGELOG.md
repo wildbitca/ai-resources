@@ -16,6 +16,11 @@ Notes for the next patch release. Nothing here is released; the version label is
   failed is recorded at once, so `--remove`, teardown or a rerun owns it (L5).
   The "no changed leaf" check compares by type: `true` is not `1`, `1` is not `1.0`, and deleting a key the file
   holds as an explicit `null` is a change, so such a patch is sent instead of dropped (M2).
+  Teardown restores `kit-host.env` per key: a previous value it cannot write back safely is warned about by name,
+  the teardown reports itself unfinished and a rerun no longer crashes (M3). Teardown acts only on the kit's own
+  unit names inside the user unit dir, the hand script under `~/.local/bin` and the transcriber's glossary path,
+  never through a symlink or a `..` (L2). The kit's health-restart timer written next to a hand `.service` is
+  removed again (T1).
 - **Hardening pass 2.** A second `ai-resources setup` run no longer cancels the first run's post-setup watch:
   a patch with no changed leaf is never sent, so the first-write hook never fires for it (G1).
   `apply-pending --discard-watch-restores --yes` also closes a 2.1.0 watch record, so `verify` stops reporting

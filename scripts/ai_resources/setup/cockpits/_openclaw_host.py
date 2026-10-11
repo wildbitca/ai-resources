@@ -384,8 +384,14 @@ def _configure_units(o: state.OpenClawState, *, dry_run: bool) -> None:
     if not _gate("Install the openclaw-* systemd units and enable their timers?",
                  detail=summary + ": " + ", ".join(changed)):
         return
-    for name in changed:
-        o.host_units_previous.setdefault(name, _unit_text(name, dest))
+    # Every unit file this run writes is recorded, also the ones `units_state` leaves out while a hand copy of
+    # the health-restart pair is present: adoption writes the kit's timer next to a hand `.service`, and
+    # teardown can only remove what it has a record of (T1). A hand file is restored through `host_hand_moved`.
+    hand_in_dest = {p.name for p in hand if p.parent == dest}
+    plan = host.install_units(dest, dry_run=True, runner=_runner(), adopt_hand_copy=True)
+    for name in dict.fromkeys([*changed, *plan["changed"]]):
+        if name in changed or name not in hand_in_dest:
+            o.host_units_previous.setdefault(name, _unit_text(name, dest))
     result = host.install_units(dest, enable=True, runner=_runner(), adopt_hand_copy=True)
     o.host_units_applied = True
     for moved in result["adopted"]:
@@ -1050,10 +1056,30 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             o.host_legacy_hooks = []
 
     if o.host_env_previous or o.host_env_created:
-        host.write_host_env(dict(o.host_env_previous))
-        if o.host_env_created and not host.read_host_env():
-            host.HOST_ENV_PATH.unlink(missing_ok=True)
-        o.host_env_previous, o.host_env_created = {}, False
+        # Per key: a previous value that kit-host.env cannot hold safely (a space, `$`, quotes) is warned about
+        # by name and left as it is; it must not abort the teardown after the units and hooks are already undone.
+        restorable: dict[str, str | None] = {}
+        stuck: list[str] = []
+        for key, value in o.host_env_previous.items():
+            try:
+                host._check_env_pair(key, value if value is not None else "")
+            except ValueError:
+                stuck.append(key)
+                continue
+            restorable[key] = value
+        if restorable:
+            host.write_host_env(restorable)
+            for key in restorable:
+                o.host_env_previous.pop(key, None)
+        if stuck:
+            ui.warn(f"{host.HOST_ENV_PATH}: the previous value of {', '.join(sorted(stuck))} cannot be written "
+                    "back safely (a value with a space, `$` or quotes); it was left as it is. Set it by hand; "
+                    "a later teardown retries.")
+            ok = False
+        else:
+            if o.host_env_created and not host.read_host_env():
+                host.HOST_ENV_PATH.unlink(missing_ok=True)
+            o.host_env_previous, o.host_env_created = {}, False
     return ok
 
 
@@ -1114,6 +1140,15 @@ def _restore_bindings(o: state.OpenClawState, doc: dict,
     return True
 
 
+def _not_managed(what: str) -> None:
+    ui.warn(f"{what} is not a unit the kit manages; the setup state entry was ignored.")
+
+
+def _inside(path: Path, parent: Path) -> bool:
+    """`path` is a direct child of `parent`, spelled without `..`, and is not a symlink."""
+    return ".." not in path.parts and path.parent == parent and not path.is_symlink()
+
+
 def _remove_units(o: state.OpenClawState) -> None:
     """Undo the units: disable exactly the timers the kit enabled (a timer that was already
     enabled stays enabled), then put every unit file back as it was: its old text, or gone if
@@ -1121,17 +1156,40 @@ def _remove_units(o: state.OpenClawState) -> None:
     dest = host.user_unit_dir()
     runner = _runner()
     env = host.systemd_env()
+    # The setup state is the operator's file: act only on the kit's own unit names, inside the user unit dir
+    # (L2). An entry that names anything else could make teardown overwrite or delete a file the user owns.
+    known = set(host.UNIT_NAMES)
     for timer in list(o.host_timers_enabled):
-        runner(["systemctl", "--user", "disable", "--now", timer], env=env)
+        if timer in host.TIMER_NAMES:
+            runner(["systemctl", "--user", "disable", "--now", timer], env=env)
+        else:
+            _not_managed(f"The timer {timer!r}")
         o.host_timers_enabled.remove(timer)
     for name, previous in list(o.host_units_previous.items()):
+        o.host_units_previous.pop(name, None)
+        if name not in known:
+            _not_managed(f"The unit {name!r}")
+            continue
+        if (dest / name).is_symlink():
+            _not_managed(f"The symlink {dest / name}")
+            continue
         if previous is None:
             (dest / name).unlink(missing_ok=True)
         else:
             (dest / name).write_text(previous, encoding="utf-8")
-        o.host_units_previous.pop(name, None)
+    home = Path.home()
+    script = home / ".local" / "bin" / host.HAND_SCRIPT_NAME
+    backups = home / ".openclaw" / "backup" / "hand-units"
     for original, moved in list(o.host_hand_moved.items()):
         src, dst = Path(moved), Path(original)
+        valid = (dst == script or (dst.name in host.HEALTH_UNITS and _inside(dst, dest))) \
+            and ".." not in src.parts and src.name == dst.name and src.parent.parent == backups \
+            and not src.is_symlink() and not dst.is_symlink()
+        if not valid:
+            _not_managed(f"{original}")
+            o.host_hand_moved.pop(original, None)
+            o.host_hand_kit_sha.pop(original, None)
+            continue
         if src.exists() and not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
             host.shutil.move(str(src), str(dst))

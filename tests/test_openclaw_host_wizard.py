@@ -10,6 +10,7 @@ temporary openclaw.json, systemctl is a recorder, and HOME, XDG_CONFIG_HOME, kit
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import pathlib
 import sys
@@ -1540,3 +1541,97 @@ def test_a_rerun_after_a_failed_apply_adopts_the_configuration_and_finishes(monk
     assert s.openclaw.host_offbox_config_created["project"] == "wildbit-iac"
     section.teardown(s, apply_patch=lambda *a, **k: (True, ""), oc=lambda *a, **k: (0, ""))
     assert "openclaw-backup" not in g.configs
+
+
+# --- 2.1.1 pass 3: M3 env restore per key, L2 teardown path confinement, T1 hand .service only -----------------------
+
+def test_teardown_survives_a_previous_env_value_it_cannot_write_back(sim, script):
+    s = _state()
+    _run_wizard(s)
+    text = sim.env_file.read_text(encoding="utf-8")
+    sim.env_file.write_text(text + "OPENCLAW_PASS3_A=kit\nOPENCLAW_PASS3_B=kit\nOPENCLAW_PASS3_C=kit\n"
+                            "OPENCLAW_PASS3_D=kit\n", encoding="utf-8")
+    s.openclaw.host_env_previous.update({"OPENCLAW_PASS3_A": "x y", "OPENCLAW_PASS3_B": "$HOME",
+                                         "OPENCLAW_PASS3_C": "fine", "OPENCLAW_PASS3_D": None})
+    removed = openclaw.teardown(s)
+    assert removed == [], "an unfinished teardown reports nothing removed"
+    assert not [p for p in sim.units.glob("openclaw-*")] if sim.units.exists() else True, \
+        "the units were still undone"
+    warned = " ".join(script.messages("warn"))
+    assert "OPENCLAW_PASS3_A" in warned and "OPENCLAW_PASS3_B" in warned and "$HOME" not in warned
+    env = sim.env_file.read_text(encoding="utf-8")
+    assert "OPENCLAW_PASS3_A=kit" in env and "OPENCLAW_PASS3_B=kit" in env, "left as they are"
+    assert "OPENCLAW_PASS3_C=fine" in env and "OPENCLAW_PASS3_D" not in env, "the other keys were restored"
+    assert set(s.openclaw.host_env_previous) == {"OPENCLAW_PASS3_A", "OPENCLAW_PASS3_B"}, "kept for a retry"
+    assert s.openclaw.host_env_created in (True, False)
+    assert openclaw.teardown(s) == [], "a rerun does not crash and stays unfinished"
+    assert set(s.openclaw.host_env_previous) == {"OPENCLAW_PASS3_A", "OPENCLAW_PASS3_B"}
+
+
+def _victim(tmp_path, name="victim.txt", text="the operator's file\n"):
+    v = tmp_path / "elsewhere" / name
+    v.parent.mkdir(exist_ok=True)
+    v.write_text(text, encoding="utf-8")
+    return v
+
+
+def test_teardown_ignores_unit_records_that_point_outside_the_unit_dir(sim, script, tmp_path):
+    victim = _victim(tmp_path)
+    s = _state()
+    _run_wizard(s)
+    rel = "../" * 8 + str(victim).lstrip("/")
+    s.openclaw.host_units_previous.update({rel: "pwned", str(victim): "pwned", "not-a-kit-unit.service": "x"})
+    openclaw.teardown(s)
+    assert victim.read_text(encoding="utf-8") == "the operator's file\n"
+    assert not (sim.units / "not-a-kit-unit.service").exists()
+    assert any("not a unit the kit manages" in m or "ignored" in m for m in script.messages("warn"))
+
+
+def test_teardown_does_not_write_through_a_symlinked_unit(sim, script, tmp_path):
+    victim = _victim(tmp_path)
+    s = _state()
+    _run_wizard(s)
+    link = sim.units / "openclaw-watchdog.timer"
+    link.unlink()
+    link.symlink_to(victim)
+    s.openclaw.host_units_previous["openclaw-watchdog.timer"] = "pwned"
+    openclaw.teardown(s)
+    assert victim.read_text(encoding="utf-8") == "the operator's file\n"
+
+
+def test_teardown_does_not_move_a_file_over_a_path_outside_the_unit_dir(sim, script, tmp_path):
+    victim = _victim(tmp_path)
+    moved = _victim(tmp_path, "moved.txt", "payload\n")
+    s = _state()
+    _run_wizard(s)
+    s.openclaw.host_hand_moved[str(victim)] = str(moved)
+    s.openclaw.host_hand_kit_sha[str(victim)] = hashlib.sha256(victim.read_bytes()).hexdigest()
+    openclaw.teardown(s)
+    assert victim.read_text(encoding="utf-8") == "the operator's file\n"
+    assert moved.read_text(encoding="utf-8") == "payload\n"
+    assert any(str(victim) in m for m in script.messages("warn"))
+
+
+def test_teardown_does_not_disable_a_timer_the_kit_never_manages(sim, script):
+    s = _state()
+    _run_wizard(s)
+    s.openclaw.host_timers_enabled.extend(["--now", "ssh.timer"])
+    sim.systemd.calls.clear()
+    openclaw.teardown(s)
+    disables = [c for c in sim.systemd.calls if c[:3] == ["systemctl", "--user", "disable"]]
+    assert not any(c[-1] in ("--now", "ssh.timer") for c in disables)
+
+
+def test_teardown_removes_the_kit_timer_written_next_to_a_hand_service_only(sim, script):
+    """T1: only the hand .service exists; the kit writes its own timer, so teardown must remove it again."""
+    sim.units.mkdir(parents=True, exist_ok=True)
+    service = sim.units / "openclaw-health-restart.service"
+    service.write_bytes(b"# hand copy of the service\n[Unit]\nDescription=mine\n")
+    before = {p.name: p.read_bytes() for p in sim.units.iterdir()}
+    s = _state()
+    _run_wizard(s)
+    assert (sim.units / "openclaw-health-restart.timer").exists(), "setup wrote the kit's timer"
+    openclaw.teardown(s)
+    after = {p.name: p.read_bytes() for p in sim.units.iterdir()}
+    assert after == before, "the unit directory is what it was before setup"
+

@@ -745,3 +745,30 @@ def test_teardown_keeps_a_glossary_the_operator_edited_or_owned(bot, monkeypatch
     assert s2.openclaw.voice_glossary_created == {}
     openclaw.teardown(s2)
     assert glossary.read_text() == "mine"
+
+
+# --- 2.1.1 pass 3, L2: teardown only touches the transcriber's own glossary ---------------------------------------
+
+def test_teardown_leaves_a_recorded_glossary_path_that_is_not_the_transcribers(bot, monkeypatch, tmp_path):
+    glossary = _real_glossary(bot, monkeypatch, tmp_path)
+    s = _state("cloud")
+    openclaw.configure({"state": s})
+    victim = tmp_path / "victim.txt"
+    victim.write_text("the operator's file\n", encoding="utf-8")
+    s.openclaw.voice_glossary_created[str(victim)] = hashlib.sha256(victim.read_bytes()).hexdigest()
+    openclaw.teardown(s)
+    assert victim.read_text(encoding="utf-8") == "the operator's file\n"
+    assert not glossary.exists(), "the kit's own glossary is still removed"
+
+
+def test_teardown_does_not_remove_a_symlinked_glossary(bot, monkeypatch, tmp_path):
+    glossary = _real_glossary(bot, monkeypatch, tmp_path)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("shared\n", encoding="utf-8")
+    s = _state("cloud")
+    openclaw.configure({"state": s})
+    glossary.unlink()
+    glossary.symlink_to(victim)
+    s.openclaw.voice_glossary_created[str(glossary)] = hashlib.sha256(victim.read_bytes()).hexdigest()
+    openclaw.teardown(s)
+    assert glossary.is_symlink() and victim.read_text(encoding="utf-8") == "shared\n"

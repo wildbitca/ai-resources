@@ -333,6 +333,9 @@ def remove_installed(s: state.SetupState) -> None:
     # told to edit it, so an edited file is theirs and stays.
     for gloss, digest in list(s.openclaw.voice_glossary_created.items()):
         path = Path(gloss)
+        if path != transcriber.glossary_path() or ".." in path.parts or path.is_symlink():
+            ui.warn(f"{path} is not the voice glossary path the kit manages; it was left as it is.")
+            continue
         try:
             same = path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest
         except OSError:
