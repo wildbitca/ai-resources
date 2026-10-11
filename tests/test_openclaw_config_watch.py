@@ -1078,6 +1078,17 @@ def test_apply_patch_skips_a_noop_and_fires_the_first_write_hook_only_for_a_real
     assert ok and fired == [1] and len(sim.oc.real_patches()) == 1
 
 
+def test_a_noop_patch_is_not_refused_when_the_key_cannot_be_classified(sim, monkeypatch):
+    """The no-op check runs before the restart gate: a repeat of a patch the file already holds sends nothing, so an
+    unclassifiable OpenClaw version (fail closed) must not turn it into a RestartRequired refusal."""
+    current = json.loads(sim.cfg.read_text())["tools"]["profile"]
+    monkeypatch.setattr(_rr, "installed_openclaw_version", lambda *a, **k: "2099.1.1")
+    ok, out = openclaw.apply_patch({"tools": {"profile": current}})
+    assert ok and "no changed leaf" in out and sim.oc.real_patches() == []
+    with pytest.raises(openclaw.RestartRequired):
+        openclaw.apply_patch({"tools": {"profile": current + "-changed"}})
+
+
 # --- G2: discarding the watch restores also closes a legacy 2.1.0 failure record ----------------------------------------
 
 def _legacy_failed_watch_state():

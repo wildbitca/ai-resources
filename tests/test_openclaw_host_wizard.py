@@ -1074,6 +1074,31 @@ def test_teardown_warns_and_leaves_a_unit_the_operator_changed_after_adoption(si
     assert any(target.name in m and "left" in m for m in script.messages("warn"))
 
 
+def test_teardown_restores_a_unit_adopted_before_the_kit_sha_was_recorded(sim, script):
+    """State written under 2.1.0 has no host_hand_kit_sha: teardown falls back to hashing the rendered unit."""
+    _put_hand_copy(sim)
+    units = _put_hand_units(sim)
+    s = _state()
+    _run_wizard(s)
+    s.openclaw.host_hand_kit_sha = {}
+    openclaw.teardown(s)
+    for p, original in units.items():
+        assert p.read_bytes() == original, f"{p.name}: restored through the fallback"
+
+
+def test_the_moved_aside_original_survives_when_teardown_leaves_an_edited_unit(sim, script):
+    _put_hand_copy(sim)
+    units = _put_hand_units(sim)
+    s = _state()
+    _run_wizard(s)
+    target = next(iter(units))
+    target.write_text("# edited after adoption\n", encoding="utf-8")
+    openclaw.teardown(s)
+    backups = [p for d in (sim.home / ".openclaw" / "backup" / "hand-units").iterdir() for p in d.iterdir()]
+    saved = next(p for p in backups if p.name == target.name)
+    assert saved.read_bytes() == units[target], "the operator's original is still in the moved-aside copy"
+
+
 def test_verify_flags_a_hand_copy_that_is_still_present(sim, script):
     from ai_resources.setup.cockpits import _openclaw_host as sec
     assert sec._hand_copy_findings() == []

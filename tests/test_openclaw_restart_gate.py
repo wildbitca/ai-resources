@@ -172,9 +172,12 @@ def test_apply_patch_raises_before_any_cli_call_for_a_restart_key(monkeypatch):
     monkeypatch.setattr(openclaw, "_openclaw", lambda *a, **k: calls.append(a) or (0, "ok"))
     with pytest.raises(rr.RestartRequired) as e:
         openclaw.apply_patch(BIND)
-    assert e.value.paths == ["gateway.bind"] and calls == []
+    # the gate raises before any WRITE: the only CLI call allowed is the read-only `config file` lookup that
+    # the no-op check (which runs first, G1) makes to find the live file
+    assert e.value.paths == ["gateway.bind"] and [c for c in calls if c[0][:2] == ["config", "patch"]] == []
+    n = len(calls)
     ok, _ = openclaw.apply_patch(BIND, dry_run=True)          # a dry run is never gated
-    assert ok and len(calls) == 1
+    assert ok and len(calls) == n + 1
     ok, _ = openclaw.apply_patch(BIND, allow_restart=True)    # the drained window's own call
     assert ok and calls[-1][0][:2] == ["config", "patch"]
 
@@ -193,7 +196,7 @@ def test_a_version_other_than_the_pin_gates_even_a_hot_only_patch(monkeypatch):
     monkeypatch.setattr(openclaw, "_openclaw", lambda *a, **k: calls.append(a) or (0, "ok"))
     with pytest.raises(rr.RestartRequired):
         openclaw.apply_patch({"tools": {"profile": "coding"}})
-    assert calls == []
+    assert [c for c in calls if c[0][:2] == ["config", "patch"]] == [], "nothing is written"
 
 
 def test_a_version_mismatch_defers_the_whole_host_patch_in_the_wizard(sim, script, events, monkeypatch):
