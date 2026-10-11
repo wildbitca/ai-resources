@@ -609,6 +609,7 @@ def dedupe_long_running(path: Path, *, apply: bool, now: "str | None" = None) ->
     if not same:
         kit = OPENCLAW_LONG_RUNNING_MD.strip("\n").splitlines(keepends=True)
         diff = "".join(difflib.unified_diff(kit, lines[start:stop], "kit text", f"{path} (hand-written)"))
+        diff += "" if not diff or diff.endswith("\n") else "\n"     # the last line of a file may have none
         return {"status": "differs", "diff": diff, "backup": ""}
     kept = lines[:start] + lines[stop:]
     if start > 0 and kept[start - 1:start] and not kept[start - 1].strip() and (
@@ -616,6 +617,7 @@ def dedupe_long_running(path: Path, *, apply: bool, now: "str | None" = None) ->
         kept.pop(start - 1)            # do not leave two blank lines where the section was
     new = "".join(kept)
     diff = "".join(difflib.unified_diff(lines, kept, str(path), f"{path} (deduplicated)"))
+    diff += "" if not diff or diff.endswith("\n") else "\n"         # the last line of a file may have none
     if not apply:
         return {"status": "would-remove", "diff": diff, "backup": ""}
     stamp = now or _time.strftime("%Y%m%dT%H%M%SZ", _time.gmtime())

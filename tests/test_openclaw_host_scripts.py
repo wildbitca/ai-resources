@@ -1256,3 +1256,12 @@ def test_maintenance_reports_a_busy_refusal_as_a_skipped_week_not_an_alert(host)
     assert "skipped: agent runs are in flight" in log
     assert "failed unexpectedly" not in log and "ALERT" not in log
     assert not any(c.startswith("systemctl --user stop") for c in host.calls())
+
+
+def test_a_named_configuration_without_an_account_prints_the_configuration_not_unset(host):
+    _fake_gcloud(host, account="(unset)")
+    _uploader_env(host, OPENCLAW_OFFBOX_GCLOUD_CONFIG="openclaw-backup")
+    r = _run_uploader(host)
+    assert r.returncode == 0, r.stderr
+    assert "config=openclaw-backup" in r.stdout and "(unset)" not in r.stdout
+    assert "(unset)" not in _state_file(host)["identity"]

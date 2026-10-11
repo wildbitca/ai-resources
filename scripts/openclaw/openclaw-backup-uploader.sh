@@ -78,8 +78,16 @@ json_esc() {
 identity() {
   local acct s
   acct=$(gc config get account 2>/dev/null | head -n 1 || true)
-  s="account=${acct:-unknown}"
-  [ -n "$GCFG" ] && s="config=$GCFG $s"
+  # gcloud prints "(unset)" for a configuration that has no account: that is "no account", not a name.
+  [ "$acct" = "(unset)" ] && acct=""
+  if [ -n "$acct" ]; then
+    s="account=$acct"
+    [ -n "$GCFG" ] && s="config=$GCFG $s"
+  elif [ -n "$GCFG" ]; then
+    s="config=$GCFG"
+  else
+    s="account=unknown"
+  fi
   [ -n "$GSA" ] && s="$s impersonating=$GSA"
   if [ -z "$GCFG" ] && [ -n "${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-}" ]; then
     s="$s credential_file_override=$CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"

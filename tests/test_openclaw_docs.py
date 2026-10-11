@@ -90,3 +90,8 @@ def test_the_egress_proxy_refusal_is_documented_as_bypass_hosts_not_the_allowlis
                        "graceful-restart", "--dry-run"):
             assert needle in text, needle
     assert "no wildcards" in m.group(0) and "SIGUSR2" in m.group(0)
+    # The claim in the docstring: neither new section names a host (a GKE internal host is the shape that
+    # leaked into the first draft).
+    for text in (m.group(0), para.group(0)):
+        assert not re.search(r"\.gke\.goog|\bgke-[a-z0-9-]+|\.internal\b|\b\d{1,3}(?:\.\d{1,3}){3}\b", text), \
+            "a host-specific name leaked into the new documentation"

@@ -183,3 +183,10 @@ def test_apply_without_a_terminal_says_so_in_one_line_and_changes_nothing(tmp_pa
     assert "would be removed" in out, "the dry run is printed first"
     assert out.rstrip().splitlines()[-1] == "nothing changed (--apply needs an interactive confirm)"
     assert p.read_bytes() == before and list(tmp_path.glob("*.bak-*")) == []
+
+
+def test_the_diff_of_a_file_without_a_final_newline_ends_with_one(tmp_path):
+    p = tmp_path / "AGENTS.md"
+    p.write_text("# Mine\n\n" + KIT.lstrip("\n").rstrip("\n"), encoding="utf-8")      # no trailing newline
+    res = _shared.dedupe_long_running(p, apply=False)
+    assert res["status"] == "would-remove" and res["diff"].endswith("\n")

@@ -656,3 +656,12 @@ def test_status_when_the_classifier_itself_raises_is_unavailable_and_never_a_tra
                                                       "reason": "RuntimeError"}
     line = _resource_line(host.render_status(report))
     assert "now: unavailable (RuntimeError; nothing acts" in line
+
+
+def test_a_bucket_without_a_listing_command_does_not_repeat_not_configured_beside_the_uploader(env):
+    env.hostenv.write_text(env.hostenv.read_text(encoding="utf-8") + "OPENCLAW_OFFBOX_BUCKET=gs://b\n",
+                           encoding="utf-8")
+    text = host.render_status(collect(env, Canned()))
+    off = [ln for ln in text.splitlines() if ln.startswith("off-box")]
+    assert any(ln.startswith("off-box up") for ln in off), off
+    assert not [ln for ln in off if "not configured" in ln], off

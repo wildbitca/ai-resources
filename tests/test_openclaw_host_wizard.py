@@ -1400,3 +1400,18 @@ def test_configure_creates_records_and_teardown_removes_only_what_it_made(monkey
     section.teardown(s, apply_patch=lambda *a, **k: (True, ""), oc=lambda *a, **k: (0, ""))
     assert "openclaw-backup" not in g.configs and {"default", "claude-ro"} <= set(g.configs)
     assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG" not in env.read_text()
+
+
+def test_the_verb_with_yes_says_it_is_running_not_that_it_would(monkeypatch, capsys):
+    import argparse
+    g = FakeGcloud()
+    monkeypatch.setattr(host, "default_runner", g)
+    args = argparse.Namespace(dry_run=False, remove=False, yes=True, name="openclaw-backup",
+                              sa=host.OFFBOX_SA_DEFAULT, account="", project="")
+    monkeypatch.setattr(state, "load", lambda: state.SetupState())
+    monkeypatch.setattr(state, "save", lambda s: None)
+    monkeypatch.setattr(host, "_write_offbox_knobs", lambda *a, **k: [])
+    assert host.cmd_offbox_identity(args) == 0
+    out = capsys.readouterr().out
+    assert g.writes(), "the commands really ran"
+    assert "would run" not in out and "running, in order" in out

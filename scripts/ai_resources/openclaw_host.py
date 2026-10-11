@@ -3178,7 +3178,9 @@ def render_status(report: dict) -> str:
         lines.append(f"  {tier:<8} {_humanize(info['age_hours'] * 3600)} old, {_size(info['size'])}, "
                      f"{info['count']} on disk{flag}{chk}")
     ob = report["off-box"]
-    if not ob["configured"]:
+    if not ob["configured"] and ob.get("uploader") is not None:
+        lines.append("off-box     no listing command (set OPENCLAW_OFFBOX_LIST_CMD to also check presence)")
+    elif not ob["configured"]:
         lines.append("off-box     not configured (set OPENCLAW_OFFBOX_LIST_CMD in kit-host.env)")
     elif "ok" not in ob:
         lines.append("off-box     no local daily to look for")
@@ -3994,7 +3996,8 @@ def cmd_offbox_identity(args: argparse.Namespace) -> int:
     if plan["problems"]:
         return 1
     if plan["steps"]:
-        print("would run, in order (the configuration is never activated; no credential file, no IAM):")
+        verb = "running" if getattr(args, "yes", False) and not getattr(args, "dry_run", False) else "would run"
+        print(f"{verb}, in order (the configuration is never activated; no credential file, no IAM):")
         for argv in plan["steps"]:
             print("  " + shlex.join(argv))
     else:
@@ -4070,11 +4073,11 @@ def cmd_dedupe_agents_md(args: argparse.Namespace) -> int:
             print(f"{path}: no hand-written copy of the kit section")
         elif res["status"] == "differs":
             print(f"{path}: the hand-written section differs from the kit's text; left alone. How it differs:")
-            print(res["diff"])
+            print(res["diff"], end="")
             rc = 1
         else:
             print(f"{path}: an identical hand-written copy would be removed:")
-            print(res["diff"])
+            print(res["diff"], end="")
             pending.append(path)
     if not pending:
         return rc

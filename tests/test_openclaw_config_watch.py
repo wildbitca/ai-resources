@@ -759,12 +759,16 @@ def _failing_window(wrig, *, patch_ok=True, marker_opens=False, healthy_after_st
     return r
 
 
-@pytest.mark.parametrize("label,kw,queued", [
-    ("exit 2: another window is open", dict(marker_opens=True), True),
-    ("exit 4: the patch failed inside the window", dict(patch_ok=False), True),
-    ("exit 5: the patch was written, the gateway did not come back", dict(healthy_after_start=False), False),
+@pytest.mark.parametrize("label,kw,queued,problem", [
+    ("exit 2: another window is open", dict(marker_opens=True), True,
+     "restart-required keys not reverted (drained window exit 2)"),
+    ("exit 4: the patch failed inside the window", dict(patch_ok=False), True,
+     "restart-required keys not reverted (drained window exit 4)"),
+    # Exit 5 happens after the write: nothing was left unreverted, so there is no problem to report.
+    ("exit 5: the patch was written, the gateway did not come back", dict(healthy_after_start=False), False, None),
 ])
-def test_a_failed_drained_window_queues_a_restore_only_when_the_write_did_not_happen(wrig, label, kw, queued):
+def test_a_failed_drained_window_queues_a_restore_only_when_the_write_did_not_happen(wrig, label, kw, queued,
+                                                                                    problem):
     r = _failing_window(wrig, **kw)
     r.run(drain_timeout=3, health_timeout=3)
     pending = r.s.openclaw.host_restart_pending
@@ -773,8 +777,10 @@ def test_a_failed_drained_window_queues_a_restore_only_when_the_write_did_not_ha
         [entry] = pending
         assert entry["source"] == "watch" and entry["corroborated"] is True
         assert r.result()["outcome"] == "revert-failed"
+        assert r.result()["problems"] == [problem], "the exit code of the drained window is carried verbatim"
     else:
         assert r.result()["outcome"] == "reverted"
+        assert r.result()["problems"] == []
 
 
 def test_an_uncorroborated_failure_never_reaches_the_window_and_queues_nothing(wrig):

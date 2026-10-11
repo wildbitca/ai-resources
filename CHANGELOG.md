@@ -10,6 +10,17 @@ Notes for the next patch release. Nothing here is released; the version label is
 
 ### Fixed
 
+- **Hardening pass 2.** A second `ai-resources setup` run no longer cancels the first run's post-setup watch:
+  a patch with no changed leaf is never sent, so the first-write hook never fires for it (G1).
+  `apply-pending --discard-watch-restores --yes` also closes a 2.1.0 watch record, so `verify` stops reporting
+  an ERROR for a revert that can no longer be retried (G2). `apply-pending --discard-watch-restores` and
+  `dedupe-agents-md --apply` without a terminal end with one line and a non-zero exit instead of a traceback (G3).
+  Teardown puts the operator's hand-installed health-restart units back over the kit's copy (never over a file
+  changed since) and removes the default voice glossary only while it is still the kit's (G4). Wording: `offbox-identity
+  --yes` says "running", `status` no longer repeats "not configured" beside the uploader, the dedupe diff ends with a
+  newline and the uploader identity names the configuration when it has no account (G5).
+- Teardown reports itself unfinished (and keeps the OpenClaw state) when the gcloud configuration was left alone (H0).
+
 - **The post-setup watch no longer reverts a healthy gateway (D1, pitfall T42).** The transient unit now gets its
   own PATH (`--setenv=PATH=`), so `openclaw health` finds node. A probe that cannot run (rc 126/127, a missing
   interpreter, `openclaw --version` failing) ends the watch INCONCLUSIVE: nothing is reverted, nothing is
