@@ -10,6 +10,10 @@ Notes for the next patch release. Nothing here is released; the version label is
 
 ### Fixed
 
+- **Hardening pass 3.** `offbox-identity` derives the project from `--sa` only when it has the shape of a GCP project
+  id, so `--sa x@--log-http.iam.gserviceaccount.com` can no longer reach gcloud as a flag (M1). The value
+  validators use `\Z`, so a trailing newline is refused (L1). A gcloud configuration created before a later step
+  failed is recorded at once, so `--remove`, teardown or a rerun owns it (L5).
 - **Hardening pass 2.** A second `ai-resources setup` run no longer cancels the first run's post-setup watch:
   a patch with no changed leaf is never sent, so the first-write hook never fires for it (G1).
   `apply-pending --discard-watch-restores --yes` also closes a 2.1.0 watch record, so `verify` stops reporting

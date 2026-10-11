@@ -142,9 +142,9 @@ def read_host_env(path: Path | None = None) -> dict[str, str]:
     return out
 
 
-_ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*\Z")   # \Z, never `$`: `$` also matches before a trailing newline
 # No space: the file is sourced by bash, so `KEY=a /path/cmd` would run /path/cmd.
-_ENV_SAFE_VALUE = re.compile(r"^[A-Za-z0-9_@%+=:,./~-]*$")
+_ENV_SAFE_VALUE = re.compile(r"^[A-Za-z0-9_@%+=:,./~-]*\Z")
 
 
 def _check_env_pair(key: str, value: str) -> None:
@@ -3856,10 +3856,12 @@ def _gcloud_configs(runner: Runner) -> "dict[str, bool] | None":
     return out
 
 
-_OFFBOX_SA_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9-]+\.iam\.gserviceaccount\.com$")
-_OFFBOX_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-_OFFBOX_ACCOUNT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}$")
-_OFFBOX_PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+# `\Z`, never `$`: `$` also matches before a trailing newline. The domain of the service account has the shape of
+# a project id, so the project derived from it can never start with `-` or reach gcloud as a flag.
+_OFFBOX_SA_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com\Z")
+_OFFBOX_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*\Z")
+_OFFBOX_ACCOUNT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}\Z")
+_OFFBOX_PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]\Z")
 
 
 def offbox_identity_value_problems(*, name: str, sa: str, account: str = "", project: str = "") -> list[str]:
@@ -3892,6 +3894,9 @@ def offbox_identity_plan(runner: Runner, *, name: str = OFFBOX_CONFIG_NAME, sa: 
         return {"name": name, "account": account, "sa": sa, "project": project, "exists": False, "steps": [],
                 "problems": problems}
     project = project or (sa.split("@", 1)[1].split(".", 1)[0] if "@" in sa else "")
+    if not _OFFBOX_PROJECT_RE.match(project):
+        return {"name": name, "account": account, "sa": sa, "project": project, "exists": False, "steps": [],
+                "problems": [f"the project {project!r} derived from --sa is not a GCP project id; pass --project"]}
     account = account or offbox_identity_account(runner)
     if account and not _OFFBOX_ACCOUNT_RE.match(account):
         problems.append(f"the active gcloud login {account!r} is not an e-mail address; pass --account")
@@ -3922,8 +3927,17 @@ def offbox_identity_plan(runner: Runner, *, name: str = OFFBOX_CONFIG_NAME, sa: 
             "problems": problems}
 
 
-def offbox_identity_apply(runner: Runner, plan: dict, *, out: Callable[[str], None] = print) -> "dict | None":
+_OFFBOX_PROP_KEYS = {"account": "account", "auth/impersonate_service_account": "impersonate",
+                     "core/project": "project"}
+
+
+def offbox_identity_apply(runner: Runner, plan: dict, *, out: Callable[[str], None] = print,
+                          progress: "dict | None" = None) -> "dict | None":
     """Run `plan["steps"]`. The record to keep ({name, account, impersonate, project}) or None on a failure.
+
+    `progress`, when given, is filled as the steps succeed: the moment `configurations create` returns it holds
+    the name, and each `config set` adds its property. A caller that gets None back can still keep what was
+    created, so a teardown or a rerun can remove or adopt the configuration (L5).
 
     The configuration is never activated and `credential_file_override` is never set: the plan has no such step."""
     if plan["problems"]:
@@ -3933,6 +3947,11 @@ def offbox_identity_apply(runner: Runner, plan: dict, *, out: Callable[[str], No
         if rc != 0:
             out(f"failed: {' '.join(argv)}: {text.strip()[-200:]}")
             return None
+        if progress is not None:
+            if argv[:4] == ["gcloud", "config", "configurations", "create"]:
+                progress.update({"name": plan["name"], "account": "", "impersonate": "", "project": ""})
+            elif argv[:3] == ["gcloud", "config", "set"] and argv[3] in _OFFBOX_PROP_KEYS:
+                progress[_OFFBOX_PROP_KEYS[argv[3]]] = argv[4]
     return {"name": plan["name"], "account": plan["account"], "impersonate": plan["sa"],
             "project": plan["project"]}
 
@@ -4016,11 +4035,20 @@ def cmd_offbox_identity(args: argparse.Namespace) -> int:
         if answer not in ("y", "yes"):
             print("nothing applied (use --yes to apply without asking)")
             return 1
-    record = offbox_identity_apply(runner, plan) if plan["steps"] else dict(o.host_offbox_config_created) or {
-        "name": plan["name"], "account": plan["account"], "impersonate": plan["sa"], "project": plan["project"]}
+    progress: dict = dict(o.host_offbox_config_created)
+    record = offbox_identity_apply(runner, plan, progress=progress) if plan["steps"] else (
+        dict(o.host_offbox_config_created) or {
+            "name": plan["name"], "account": plan["account"], "impersonate": plan["sa"],
+            "project": plan["project"]})
     if record is None:
+        if progress.get("name") == plan["name"] and progress != o.host_offbox_config_created:
+            # Created, then a later step failed: keep what exists so `--remove` or a rerun can deal with it.
+            o.host_offbox_config_created = progress
+            setup_state.save(s)
+            print(f"the gcloud configuration {plan['name']!r} was created but not finished; "
+                  "re-run to complete it, or use --remove")
         return 1
-    if plan["steps"] and not plan["exists"]:
+    if plan["steps"] and (not plan["exists"] or o.host_offbox_config_created.get("name") == plan["name"]):
         o.host_offbox_config_created = record
     written = _write_offbox_knobs(o, plan["name"], plan["sa"])
     setup_state.save(s)

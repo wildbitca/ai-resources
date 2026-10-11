@@ -311,11 +311,14 @@ def _configure_offbox_identity(o: state.OpenClawState, *, dry_run: bool) -> None
         return
     if not _gate("Create the gcloud configuration for the off-box uploader?"):
         return
-    record = host.offbox_identity_apply(runner, plan, out=ui.error)
+    progress: dict = dict(o.host_offbox_config_created)
+    record = host.offbox_identity_apply(runner, plan, out=ui.error, progress=progress)
     if record is None:
+        if progress.get("name") == plan["name"]:
+            o.host_offbox_config_created = progress     # created, then a step failed: teardown or a rerun owns it
         ui.error("Off-box uploader identity: a gcloud command failed; the uploader keeps its current identity.")
         return
-    if not plan["exists"]:
+    if not plan["exists"] or o.host_offbox_config_created.get("name") == plan["name"]:
         o.host_offbox_config_created = record
     written = host._write_offbox_knobs(o, plan["name"], plan["sa"])
     ui.ok(f"gcloud configuration {plan['name']!r} ready for the uploader"

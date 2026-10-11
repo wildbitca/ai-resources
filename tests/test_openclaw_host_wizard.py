@@ -1440,3 +1440,103 @@ def test_the_verb_with_yes_says_it_is_running_not_that_it_would(monkeypatch, cap
     out = capsys.readouterr().out
     assert g.writes(), "the commands really ran"
     assert "would run" not in out and "running, in order" in out
+
+
+# --- 2.1.1 pass 3: M1 derived project, L1 trailing newline, L5 orphaned configuration --------------------------------
+
+@pytest.mark.parametrize("sa", [
+    "kit-uploader@--.iam.gserviceaccount.com",
+    "kit-uploader@--log-http.iam.gserviceaccount.com",
+    "kit-uploader@-abcdef.iam.gserviceaccount.com",
+    "kit-uploader@abc.iam.gserviceaccount.com",
+])
+def test_a_service_account_whose_project_part_is_not_a_project_id_is_refused(sa):
+    g = FakeGcloud()
+    plan = host.offbox_identity_plan(g, sa=sa, account="me@example.org")
+    assert plan["steps"] == [] and plan["problems"], plan
+    assert host.offbox_identity_apply(g, plan) is None
+    assert g.writes() == [] and not any("--" in " ".join(c) and "core/project" in c for c in g.calls)
+
+
+@pytest.mark.parametrize("field", ["name", "sa", "account", "project"])
+def test_a_value_with_a_trailing_newline_is_refused(field):
+    good = {"name": "openclaw-backup", "sa": host.OFFBOX_SA_DEFAULT, "account": "me@example.org",
+            "project": "wildbit-iac"}
+    assert host.offbox_identity_value_problems(**good) == []
+    bad = dict(good, **{field: good[field] + "\n"})
+    assert host.offbox_identity_value_problems(**bad), field
+
+
+def test_the_host_env_refuses_a_trailing_newline_and_a_repeat_write_is_a_no_op(tmp_path):
+    env = tmp_path / "kit-host.env"
+    with pytest.raises(ValueError):
+        host.write_host_env({"A": "x\n"}, env)
+    with pytest.raises(ValueError):
+        host.write_host_env({"A\n": "x"}, env)
+    assert not env.exists()
+    assert host.write_host_env({"A": "x"}, env) is True
+    assert host.write_host_env({"A": "x"}, env) is False
+
+
+class _FailingSetGcloud(FakeGcloud):
+    def __init__(self, fail_on="core/project", **kw):
+        super().__init__(**kw)
+        self.fail_on = fail_on
+
+    def __call__(self, argv, **kw):
+        a = list(argv)
+        if a[1:3] == ["config", "set"] and a[3] == self.fail_on:
+            self.calls.append(a)
+            return 1, "ERROR: boom"
+        return super().__call__(argv, **kw)
+
+
+def test_a_failed_apply_after_create_leaves_a_record_the_verb_can_remove(monkeypatch, tmp_path, capsys):
+    import argparse
+    g = _FailingSetGcloud()
+    monkeypatch.setattr(host, "default_runner", g)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    s = state.SetupState()
+    monkeypatch.setattr(state, "load", lambda: s)
+    monkeypatch.setattr(state, "save", lambda _s: None)
+    kw = dict(dry_run=False, remove=False, yes=True, name="openclaw-backup", sa=host.OFFBOX_SA_DEFAULT,
+              account="me@example.org", project="")
+    assert host.cmd_offbox_identity(argparse.Namespace(**kw)) == 1
+    assert "openclaw-backup" in g.configs, "the create succeeded"
+    assert s.openclaw.host_offbox_config_created.get("name") == "openclaw-backup"
+    kw.update(remove=True)
+    assert host.cmd_offbox_identity(argparse.Namespace(**kw)) == 0
+    assert "openclaw-backup" not in g.configs
+    assert s.openclaw.host_offbox_config_created == {}
+
+
+def test_a_failed_cockpit_apply_after_create_is_recorded_and_teardown_removes_it(monkeypatch, tmp_path):
+    g = _FailingSetGcloud()
+    monkeypatch.setattr(section, "_runner", lambda: g)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    s = state.SetupState()
+    s.openclaw.host_offbox_identity = True
+    section._configure_offbox_identity(s.openclaw, dry_run=False)
+    assert "openclaw-backup" in g.configs
+    assert s.openclaw.host_offbox_config_created.get("name") == "openclaw-backup"
+    section.teardown(s, apply_patch=lambda *a, **k: (True, ""), oc=lambda *a, **k: (0, ""))
+    assert "openclaw-backup" not in g.configs and {"default", "claude-ro"} <= set(g.configs)
+
+
+def test_a_rerun_after_a_failed_apply_adopts_the_configuration_and_finishes(monkeypatch, tmp_path):
+    g = _FailingSetGcloud()
+    monkeypatch.setattr(section, "_runner", lambda: g)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    s = state.SetupState()
+    s.openclaw.host_offbox_identity = True
+    section._configure_offbox_identity(s.openclaw, dry_run=False)
+    g.fail_on = ""
+    section._configure_offbox_identity(s.openclaw, dry_run=False)
+    assert g.configs["openclaw-backup"]["core/project"] == "wildbit-iac"
+    assert s.openclaw.host_offbox_config_created["project"] == "wildbit-iac"
+    section.teardown(s, apply_patch=lambda *a, **k: (True, ""), oc=lambda *a, **k: (0, ""))
+    assert "openclaw-backup" not in g.configs
