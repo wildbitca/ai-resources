@@ -4193,8 +4193,11 @@ def cmd_apply_pending(args: argparse.Namespace) -> int:
         if s.openclaw != before:          # a dry run or a refusal changes nothing, so it must not bump `last_run`
             setup_state.save(s)
         return rc
+    import copy
+    before = copy.deepcopy(s.openclaw)
     rc = section.apply_pending(s, assume_yes=args.yes)
-    setup_state.save(s)
+    if s.openclaw != before:              # a refusal, a decline or nothing pending changes nothing: no `last_run` bump
+        setup_state.save(s)
     return rc
 
 

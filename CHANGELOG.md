@@ -10,6 +10,9 @@ Notes for the next patch release. Nothing here is released; the version label is
 
 ### Fixed
 
+- **Hardening pass 4.** `apply-pending` (the drained gateway stop and start) without `--yes` needs a real
+  terminal, like the discard verb: a piped `y` is not a confirmation, an empty or closed stdin ends in one line
+  instead of a traceback, and a refused, declined or empty run no longer rewrites `setup-state.yaml` (S1, S1b).
 - **Hardening pass 3.** `offbox-identity` derives the project from `--sa` only when it has the shape of a GCP project
   id, so `--sa x@--log-http.iam.gserviceaccount.com` can no longer reach gcloud as a flag (M1). The value
   validators use `\Z`, so a trailing newline is refused (L1). A gcloud configuration created before a later step

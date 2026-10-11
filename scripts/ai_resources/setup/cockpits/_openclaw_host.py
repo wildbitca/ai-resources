@@ -690,8 +690,16 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
         if ui.is_non_interactive():
             ui.warn("Needs an interactive confirm, or pass --yes.")
             return 1
-        if not ui.confirm("Apply in a drained window? The gateway will stop and start "
-                          f"(N={n} runs in flight).", default=False):
+        if not ui.stdin_is_a_terminal():       # a piped `y` is not a confirmation (T2, same rule as the discard)
+            ui.error("needs a terminal; re-run with --yes")
+            return 1
+        try:
+            answered = ui.confirm("Apply in a drained window? The gateway will stop and start "
+                                  f"(N={n} runs in flight).", default=False)
+        except EOFError:             # stdin gave out under the prompt: one line, not a traceback
+            ui.error("needs a terminal; re-run with --yes")
+            return 1
+        if not answered:
             return 1
     written, window_ok = _drained_apply(patch, rp, cockpit.apply_patch)
     if not written:

@@ -20,6 +20,11 @@ from ai_resources import openclaw_reload_rules as rr
 from ai_resources.setup import state
 from ai_resources.setup.cockpits import _openclaw_host as section, openclaw
 
+from ai_resources.setup import ui as _ui
+
+_REAL_CONFIRM = _ui.confirm
+_REAL_STDIN_IS_A_TERMINAL = _ui.stdin_is_a_terminal
+
 BIND = {"gateway": {"bind": "tailnet"}}
 
 
@@ -330,7 +335,9 @@ def test_apply_pending_applies_in_a_window_and_clears_when_idle(sim, script, eve
     assert any(c["path"] == ["gateway", "bind"] for c in s.openclaw.host_config_changes)
 
 
-def test_apply_pending_without_yes_asks_and_declining_changes_nothing(sim, script, events):
+def test_apply_pending_without_yes_asks_and_declining_changes_nothing(sim, script, events, monkeypatch):
+    from ai_resources.setup import ui
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)      # a person at a terminal answers No
     s = _pend_unattended(sim, script)
     script.answers["Apply in a drained window"] = False
     events.clear()
@@ -556,3 +563,87 @@ def test_restore_patch_does_not_treat_true_as_the_one_it_was():
     assert host.restore_patch(changes, {"a": 1}) == ({}, [])
     floats = [{"path": ["a"], "previous": 1, "had": True, "action": "engine"}]
     assert host.restore_patch(floats, {"a": 1.0})[0] == {"a": 1}
+
+
+# --- kit 2.1.1 pass 4, S1/S1b: apply-pending confirms only at a terminal -------------------------------------------------
+
+def _no_terminal(monkeypatch):
+    from ai_resources.setup import ui
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: False)
+
+
+def test_a_piped_y_does_not_confirm_apply_pending(sim, script, events, monkeypatch):
+    _no_terminal(monkeypatch)
+    s = _pend_unattended(sim, script)
+    script.answers["Apply in a drained window"] = True            # what a piped `y` would answer
+    events.clear()
+    script.asked.clear()
+    assert section.apply_pending(s) == 1
+    assert stops(events) == [] and not bind_written(sim)
+    assert "gateway.bind" in pending_paths(s)
+    assert not any("Apply in a drained window" in q for q in script.asked), "no prompt without a terminal"
+    assert any("Will apply (keys only)" in m for m in script.messages("info")), "the plan is printed first"
+    assert script.messages("error")[-1] == "needs a terminal; re-run with --yes"
+
+
+def test_apply_pending_with_yes_still_runs_without_a_terminal(sim, script, events, monkeypatch):
+    _no_terminal(monkeypatch)
+    s = _pend_unattended(sim, script)
+    events.clear()
+    assert section.apply_pending(s, assume_yes=True) == 0
+    assert [e[0] for e in events if e[0] in ("stop", "start")] == ["stop", "start"]
+
+
+def test_an_eof_at_the_apply_pending_prompt_is_one_line_and_changes_nothing(sim, script, events, monkeypatch):
+    from ai_resources.setup import ui
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+
+    def eof(*_a, **_k):
+        raise EOFError
+    s = _pend_unattended(sim, script)
+    monkeypatch.setattr(ui, "confirm", eof)
+    events.clear()
+    assert section.apply_pending(s) == 1                           # no traceback
+    assert stops(events) == [] and "gateway.bind" in pending_paths(s)
+    assert script.messages("error")[-1] == "needs a terminal; re-run with --yes"
+
+
+def _cli_state(sim, script, monkeypatch, tmp_path):
+    """A pending bind in a real setup-state.yaml under tmp (XDG_CONFIG_HOME), as the verb loads it."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    s = _pend_unattended(sim, script)
+    state.save(s)
+    return state.state_path()
+
+
+@pytest.mark.parametrize("kind", ["devnull", "closed", "empty-pipe"])
+def test_apply_pending_verb_without_a_terminal_changes_neither_host_nor_state(
+        sim, script, events, monkeypatch, tmp_path, kind):
+    import argparse
+    import hashlib
+    import io
+    from ai_resources.setup import ui
+
+    path = _cli_state(sim, script, monkeypatch, tmp_path)
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(ui, "confirm", _REAL_CONFIRM)              # the real prompt, not the scripted one
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", _REAL_STDIN_IS_A_TERMINAL)
+    stdin = {"devnull": lambda: open("/dev/null"), "closed": lambda: None,
+             "empty-pipe": lambda: io.StringIO("")}[kind]()
+    monkeypatch.setattr(sys, "stdin", stdin)
+    events.clear()
+    assert host.cmd_apply_pending(argparse.Namespace(discard_watch_restores=False, yes=False)) == 1
+    assert stops(events) == [] and not bind_written(sim)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before, "state untouched (no last_run bump)"
+    assert script.messages("error")[-1] == "needs a terminal; re-run with --yes"
+
+
+def test_apply_pending_verb_with_nothing_pending_does_not_rewrite_the_state(sim, script, monkeypatch, tmp_path):
+    import argparse
+    import hashlib
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    state.save(_state())
+    path = state.state_path()
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert host.cmd_apply_pending(argparse.Namespace(discard_watch_restores=False, yes=False)) == 0
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
