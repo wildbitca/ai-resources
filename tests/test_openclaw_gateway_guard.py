@@ -591,3 +591,99 @@ def test_an_internal_error_still_fails_open(guard, monkeypatch, capsys):
 
     monkeypatch.setattr(guard, "shape", boom)
     assert run(guard, monkeypatch, "env -S 'openclaw gateway restart'", capsys=capsys) == (0, "")
+
+
+# --- kit 2.1.1 pass 4, S2: shell line continuation ------------------------------------------------------------------
+# `\<newline>` is removed by the shell outside single quotes, so a verb or a unit may be broken across lines
+# at any character, and a quoted `sh -c '...'` string is joined again by the inner shell.
+
+_CONT_FAMILIES = {
+    "doctor": ["openclaw doctor --fix", "openclaw doctor --non-interactive --fix"],
+    "stop": ["systemctl --user stop openclaw-gateway.service", "systemctl kill openclaw-gateway",
+             "openclaw gateway stop", "openclaw gateway --port 1 stop"],
+    "restart": ["systemctl --user restart openclaw-gateway", "systemctl --user try-restart openclaw-gateway.service",
+                "openclaw gateway restart", "openclaw gateway --json restart"],
+}
+
+# Wrapper templates. In `sh -c '...'` the backslash-newline is literal for the outer shell and removed by the inner.
+_CONT_WRAPPERS = [
+    "{c}",
+    "sudo {c}",
+    "FOO=1 {c}",
+    "cd ~ && {c}",
+    "echo hi; {c} | tee out",
+    "timeout 5 {c}",
+    'bash -c "{c}"',
+    "sh -c '{c}'",
+    "eval '{c}'",
+    'env -S "{c}"',
+]
+
+
+def _continued_at_every_position(cmd: str) -> list[str]:
+    return [cmd[:i] + "\\\n" + cmd[i:] for i in range(1, len(cmd))]
+
+
+@pytest.mark.parametrize("wrapper", _CONT_WRAPPERS)
+@pytest.mark.parametrize("family", sorted(_CONT_FAMILIES))
+def test_a_line_continuation_at_any_position_does_not_hide_a_guarded_command(guard, family, wrapper):
+    missed = []
+    for base in _CONT_FAMILIES[family]:
+        for broken in _continued_at_every_position(base):
+            command = wrapper.format(c=broken)
+            if guard.shape(command) != family:
+                missed.append(command)
+    assert missed == [], f"{len(missed)} continued forms were not recognised, e.g. {missed[:2]!r}"
+
+
+def test_a_continuation_with_indentation_on_the_next_line_is_denied(guard):
+    assert guard.shape("systemctl --user \\\n    restart \\\n    openclaw-gateway") == "restart"
+    assert guard.shape("openclaw \\\n\tgateway \\\n  stop") == "stop"
+    assert guard.shape("openclaw \\\n doctor \\\n --fix") == "doctor"
+
+
+def test_a_comment_does_not_continue_onto_the_next_line(guard):
+    # the comment ends at the newline, so the next line is its own command
+    assert guard.shape("# note \\\nsystemctl --user restart openclaw-gateway") == "restart"
+    assert guard.shape("# systemctl --user restart openclaw-gateway \\\nls") is None
+
+
+def test_an_escaped_backslash_at_the_end_of_a_line_is_not_a_continuation(guard):
+    assert guard.shape("echo foo\\\\\nsystemctl --user restart openclaw-gateway") == "restart"
+    assert guard.shape("echo foo\\\\\nsystemctl --user status openclaw-gateway") is None
+
+
+CONTINUATION_ALLOWED = [
+    'git commit -m "docs: never run \\\nsystemctl --user restart openclaw-gateway \\\nfrom an agent"',
+    'echo "systemctl --user \\\nrestart openclaw-gateway"',
+    "echo 'systemctl --user \\\nrestart openclaw-gateway'",
+    'grep -rn "openclaw gateway restart" \\\n  docs/ \\\n  README.md',
+    "cat <<'EOF' > notes.md\nsystemctl --user \\\nrestart openclaw-gateway\nEOF\nls",
+    "cat <<EOF\nopenclaw doctor \\\n--fix\nEOF\nls",
+    # a body line that ends in a backslash must not swallow the delimiter and hide what follows
+    "cat <<EOF\nfoo \\\nEOF\nsystemctl --user status openclaw-gateway",
+    "python3 script.py \\\n  --note 'systemctl --user restart openclaw-gateway' \\\n  --verbose",
+    "systemctl --user \\\n  status \\\n  openclaw-gateway.service",
+    "systemctl --user \\\n  restart \\\n  openclaw-watchdog.timer",
+    "openclaw \\\n  doctor \\\n  --non-interactive",
+    "openclaw gateway \\\n  status",
+    "ssh other-host \\\n  systemctl --user restart openclaw-gateway",
+    "ai-resources openclaw \\\n  graceful-restart \\\n  --dry-run",
+    "echo a \\\n&& echo b \\\n&& ls",
+]
+
+
+@pytest.mark.parametrize("command", CONTINUATION_ALLOWED)
+def test_benign_multi_line_commands_stay_allowed(guard, monkeypatch, capsys, command):
+    assert run(guard, monkeypatch, command, capsys=capsys) == (0, ""), command
+
+
+def test_a_heredoc_delimiter_after_a_backslash_ended_body_line_still_closes_the_body(guard):
+    assert guard.shape("cat <<EOF\nfoo \\\nEOF\nsystemctl --user restart openclaw-gateway") == "restart"
+    assert guard.shape("cat <<EOF && \\\nsystemctl --user restart openclaw-gateway\nbody\nEOF") == "restart"
+
+
+def test_a_stray_apostrophe_cannot_hide_the_next_line(guard):
+    # the joined text does not tokenise, so the physical lines are read one by one as before
+    assert guard.shape("echo it's\nsystemctl --user restart openclaw-gateway") == "restart"
+    assert guard.shape("echo it's\nsystemctl --user status openclaw-gateway") is None

@@ -19,6 +19,9 @@ command, so the string is re-tokenised and checked again (bounded depth); a stri
 or nests past the depth limit, is denied only when a stop/restart verb sits next to the gateway. Read-only verbs (`status`,
 `show`, `is-active`, `list-units`, `logs`, `cat`, ...) are never matched.
 
+A shell line continuation (a backslash before the newline, outside single quotes) and a quoted string that
+spans lines are joined before the command is tokenised, so a verb or a unit moved to the next line is still seen.
+
 Why: `openclaw doctor --fix` stops the gateway and re-inspects the stopped unit. If a child
 (claude, engram, npx) is still alive it aborts with "ownership or manager identity changed" and
 leaves the gateway DOWN, with the watchdog free to fight the stop. On 2026-09-18 that cost half
@@ -113,18 +116,78 @@ REASON_RESTART = (
 )
 
 
-def strip_heredocs(command: str) -> str:
-    """Remove heredoc bodies: text fed to a command is not a command."""
-    out: list[str] = []
+def _scan_piece(piece: str, quote: str | None, prev: str) -> tuple[str | None, str, bool]:
+    """Walk one physical line as the shell reads it. Returns (quote state at its end, last significant
+    character, whether it ends in an unquoted-or-double-quoted `\\<newline>`).
+
+    `quote` is None, `'`, `"` or `$'` (ANSI-C: a backslash escapes there). Inside single quotes a backslash is
+    literal; elsewhere it escapes the next character, and at the end of the line it is a continuation. A `#` at
+    the start of a word is a comment up to the newline, which a trailing backslash does not continue."""
+    i, n = 0, len(piece)
+    while i < n:
+        ch = piece[i]
+        if quote == "'":
+            j = piece.find("'", i)
+            if j < 0:
+                return quote, prev, False
+            quote, i, prev = None, j + 1, "'"
+            continue
+        if ch == "\\":
+            if i + 1 >= n:
+                return quote, prev, True
+            i, prev = i + 2, "x"
+            continue
+        if quote == '"':
+            if ch == '"':
+                quote = None
+        elif quote == "$'":
+            if ch == "'":
+                quote = None
+        elif ch == "'":
+            quote = "$'" if prev == "$" else "'"
+        elif ch == '"':
+            quote = '"'
+        elif ch == "#" and (prev.isspace() or prev in ";&|()"):
+            return quote, prev, False
+        prev = ch
+        i += 1
+    return quote, prev, False
+
+
+def _logical_lines(command: str) -> list[tuple[str, list[str]]]:
+    """The command as the shell reads it, as (logical line, its physical lines) pairs: heredoc bodies removed
+    (text fed to a command is not a command), `\\<newline>` removed outside single quotes, and a line that
+    opens a quote joined with the lines up to its close (the newline kept inside the string).
+
+    The body of a heredoc is raw text: its delimiter is matched on the physical line, so a body line that
+    ends in a backslash cannot swallow the delimiter and hide what follows it."""
+    out: list[tuple[str, list[str]]] = []
     pending: list[str] = []
+    buf = ""
+    parts: list[str] = []
+    quote: str | None = None
+    prev = " "
     for line in command.splitlines():
         if pending:
             if line.strip() == pending[0]:
                 pending.pop(0)
             continue
-        out.append(line)
-        pending.extend(m.group(2) for m in _HEREDOC.finditer(line))
-    return "\n".join(out)
+        parts.append(line)
+        quote, prev, cont = _scan_piece(line, quote, prev)
+        if cont:
+            buf += line[:-1]                 # the backslash and the newline are both removed
+            continue
+        if quote is not None:
+            buf += line + "\n"               # inside a quote the newline is part of the string
+            prev = " "
+            continue
+        buf += line
+        out.append((buf, parts))
+        pending.extend(m.group(2) for m in _HEREDOC.finditer(buf))
+        buf, parts, prev = "", [], " "
+    if parts:                                # the command ends inside a continuation or an open quote
+        out.append((buf, parts))
+    return out
 
 
 def _statements(line: str) -> list[list[str]]:
@@ -371,11 +434,18 @@ def shape(command: str, _depth: int = 0) -> str | None:
     """"doctor", "stop" or "restart" when the command RUNS a guarded shape, else None."""
     if _depth > 3:
         return None
-    for line in strip_heredocs(command).splitlines():
+    for logical, physical in _logical_lines(command):
         try:
-            statements = _statements(line)
+            statements = _statements(logical)
         except ValueError:
-            continue
+            # An unbalanced quote in the joined text: read the physical lines one by one, as before, so a
+            # stray apostrophe on one line cannot hide the commands on the next.
+            statements = []
+            for line in physical:
+                try:
+                    statements += _statements(line)
+                except ValueError:
+                    continue
         for stmt in statements:
             splits: list[str] = []
             words = _command_words(stmt, splits)
