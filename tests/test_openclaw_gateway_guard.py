@@ -533,5 +533,5 @@ def test_nested_env_split_strings_are_bounded_and_fail_closed_when_they_name_the
     nested = "systemctl --user restart openclaw-gateway"
     for _ in range(5):
         nested = f"env -S '{nested}'" if "'" not in nested else "env -S " + __import__("shlex").quote(nested)
-    code, _err = run(guard, monkeypatch, nested, capsys=capsys)
-    assert code in (0, 2)   # bounded: it returns instead of recursing without end
+    code, err = run(guard, monkeypatch, nested, capsys=capsys)
+    assert code == 2 and "T29" in err

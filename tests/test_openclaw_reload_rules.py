@@ -218,5 +218,5 @@ def test_locate_package_json_resolves_the_symlinked_entry_point(tmp_path, monkey
 
 def test_the_two_resource_guard_keys_are_hot_on_the_pinned_version():
     """The keys the 2026-10-10 setup wrote: the watch must never route them to a drained window (D1 b)."""
-    kinds = rr.classify(["agents.defaults.timeoutSeconds", "mcp.sessionIdleTtlMs"], openclaw_version="2026.9.9")
+    kinds = rr.classify(["agents.defaults.timeoutSeconds", "mcp.sessionIdleTtlMs"], openclaw_version=V)
     assert kinds == {"agents.defaults.timeoutSeconds": "hot", "mcp.sessionIdleTtlMs": "hot"}

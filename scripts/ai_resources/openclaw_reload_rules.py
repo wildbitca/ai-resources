@@ -17,7 +17,7 @@ from __future__ import annotations
 import copy
 from typing import Callable
 
-PINNED_OPENCLAW_VERSION = "2026.9.9"
+PINNED_OPENCLAW_VERSION = "2026.10.1"
 
 
 class RestartRequired(Exception):

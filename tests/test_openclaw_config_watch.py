@@ -14,6 +14,7 @@ from test_openclaw_host_wizard import (  # noqa: F401  (fixtures are used by nam
     _run_wizard, _state, script, sim,
 )
 from ai_resources import openclaw_host as host
+from ai_resources import openclaw_reload_rules as _rr
 from ai_resources.setup import state
 from ai_resources.setup.cockpits import _openclaw_host as section, openclaw
 
@@ -62,7 +63,7 @@ class Rig:
             ok = self.health.pop(0) if self.health else False
             return (0 if ok else 1), ""
         if argv[-1:] == ["--version"]:
-            return 0, "OpenClaw 2026.9.9 (abc)"
+            return 0, f"OpenClaw {_rr.PINNED_OPENCLAW_VERSION} (abc)"
         raise AssertionError(f"unexpected command {argv}")
 
     def sleep(self, _s):
@@ -467,7 +468,7 @@ def _journal_line(epoch: float, message: str) -> str:
 class WRig(Rig):
     """A Rig with a virtual clock, scripted probes by time, corroboration signals and a gateway journal."""
 
-    def __init__(self, tmp_path, changes, *, probe=None, version=(0, "OpenClaw 2026.9.9 (abc)"), pid=lambda t: "100",
+    def __init__(self, tmp_path, changes, *, probe=None, version=(0, f"OpenClaw {_rr.PINNED_OPENCLAW_VERSION} (abc)"), pid=lambda t: "100",
                  restarts=lambda t: "0", unit_state=lambda t: "active", listening=lambda t: True,
                  journal=(), patch_ok=True, **kw):
         super().__init__(tmp_path, changes, **kw)
@@ -478,6 +479,7 @@ class WRig(Rig):
         self.journal = list(journal)               # (epoch, message) pairs, visible once the wall clock reaches them
         self.patch_ok = patch_ok
         self.probes: list[tuple[float, int]] = []
+        self.health_timeouts: list = []
         self.commands: list[list[str]] = []
 
     def clock(self):
@@ -503,6 +505,7 @@ class WRig(Rig):
             return self.version
         if argv[-1:] == ["health"]:
             self.health_calls += 1
+            self.health_timeouts.append(kw.get("timeout"))
             self.events.append(("health",))
             rc, text = self.probe(self.now)
             self.probes.append((self.now, rc))
@@ -692,7 +695,7 @@ def test_a_window_that_could_not_drain_queues_the_restore_as_a_corroborated_entr
 
 # --- AC-D1-routing -------------------------------------------------------------------------------------------------
 
-def _recorded(path, kind=None, version="2026.9.9"):
+def _recorded(path, kind=None, version=_rr.PINNED_OPENCLAW_VERSION):
     rec = {"path": path, "previous": None, "had": False, "action": "filled", "delete": path}
     if kind:
         rec.update(kind=kind, openclaw_version=version)
@@ -718,10 +721,10 @@ def test_a_legacy_record_with_no_version_still_routes_to_the_drained_window(wrig
 
 
 def test_a_different_readable_version_reclassifies_instead_of_trusting_the_record(wrig, monkeypatch):
-    monkeypatch.setattr(host.openclaw_reload_rules, "installed_openclaw_version", lambda runner, **kw: "2026.10.1")
-    r = wrig([_recorded(["tools", "profile"], "hot", "2026.9.9")], pid=lambda t: "100" if t < 10 else "9")
+    monkeypatch.setattr(host.openclaw_reload_rules, "installed_openclaw_version", lambda runner, **kw: "2099.1.1")
+    r = wrig([_recorded(["tools", "profile"], "hot", _rr.PINNED_OPENCLAW_VERSION)], pid=lambda t: "100" if t < 10 else "9")
     assert r.run() == 0
-    assert ("patch", ("tools.profile",), True) in r.events, "the pin does not know 2026.10.1: fail closed"
+    assert ("patch", ("tools.profile",), True) in r.events, "the pin does not know 2099.1.1: fail closed"
 
 
 # --- the pure verdict ------------------------------------------------------------------------------------------------
@@ -816,10 +819,22 @@ def test_the_config_watch_verb_runs_with_the_unit_path_and_restores_the_environm
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setattr(host, "unit_path", lambda **k: "/x/brew/bin:/usr/bin")
     seen = {}
-    monkeypatch.setattr(host, "watch_config", lambda *a, **k: seen.setdefault("path", os.environ["PATH"]) and 0)
+
+    def stub(*a, **k):
+        seen["path"] = os.environ["PATH"]
+        seen["kw"] = k
+        return 0
+
+    monkeypatch.setattr(host, "watch_config", stub)
     monkeypatch.setattr("signal.signal", lambda *a: None)
     host.cmd_config_watch(argparse.Namespace(run_id="r1", window=900, interval=30))
     assert seen["path"].split(":")[:2] == ["/x/brew/bin", "/usr/bin"]
+    # the post-setup unit must run with the Q1 policy, not the legacy "3 failures in a row" rule
+    assert seen["kw"]["settle_s"] == 120.0
+    assert seen["kw"]["sustain_s"] == 300.0
+    assert seen["kw"]["need_corroboration"] is True
+    assert host.WATCH_POLICY == {"settle_s": 120, "sustain_s": 300, "need_corroboration": True}
+    assert host.HEALTH_PROBE_TIMEOUT_S == 60
     assert os.environ["PATH"] == "/usr/bin:/bin"
 
 
@@ -833,11 +848,11 @@ def test_setup_starts_the_unit_with_its_own_path_and_records_version_mode_and_ki
     assert setenv == ["--setenv=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin"]
     assert argv.index(setenv[0]) < argv.index("/opt/bin/ai-resources")
     cw = s.openclaw.config_watch
-    assert cw["openclaw_version"] == "2026.9.9"
+    assert cw["openclaw_version"] == _rr.PINNED_OPENCLAW_VERSION
     assert "reload_mode" in cw
     kinds = {".".join(c["path"]): c.get("kind") for c in cw["changes"]}
     assert kinds["tools.profile"] == "hot" and kinds["gateway.bind"] == "restart"
-    assert all(c.get("openclaw_version") == "2026.9.9" for c in cw["changes"])
+    assert all(c.get("openclaw_version") == _rr.PINNED_OPENCLAW_VERSION for c in cw["changes"])
 
 
 # --- AC-D1-report: inconclusive and leftover entries are warnings, never errors -------------------------------------
@@ -909,3 +924,9 @@ def test_apply_pending_never_applies_a_leftover_watch_restore_that_would_change_
     assert not [c for c in sim.systemd.calls if c[:3] == ["systemctl", "--user", "stop"]]
     assert json.loads(sim.cfg.read_text())["mcp"]["sessionIdleTtlMs"] == 1800000
     assert any("likely false positives" in m for m in script.messages("warn"))
+
+
+def test_every_health_probe_in_a_watch_run_uses_the_sixty_second_timeout(wrig):
+    r = wrig(D1_CHANGES, probe=lambda t: (1, "gateway closed"))
+    assert r.run() == 0
+    assert r.health_timeouts and all(t == 60 for t in r.health_timeouts)
