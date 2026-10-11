@@ -419,7 +419,9 @@ adoption) and never forces a restart over live runs; ten timers and eighteen uni
 flock shared by the timer and a manual `graceful-restart`); and
 `~/.openclaw/logs/restart-snapshots/<UTC timestamp>/` (0700, `before/`, `after/`, `report.txt`, the newest
 `OPENCLAW_RESTART_SNAPSHOTS_KEEP`). Setup also starts a transient
-`openclaw-config-watch-<id>` unit after a run that wrote config (not a timer; at most 11 minutes).
+`openclaw-config-watch-<id>` unit after a run that wrote config (not a timer; a 15-minute window, bounded by
+`RuntimeMaxSec=1800`). The uploader writes `~/.openclaw/state/offbox-last.json` on every run (2.1.1; `status` and
+`verify` read it).
 
 **What the backup left out.** Before 1.9.0 the list in `openclaw-backup.sh` held only
 `openclaw.json`, `gateway.systemd.env`, the gateway and watchdog units, and the backup and
