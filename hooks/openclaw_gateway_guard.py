@@ -324,7 +324,9 @@ def _verb_next_to_gateway(text: str) -> str | None:
     has a stop/restart verb right after the gateway: `openclaw [opts] gateway [opts] <verb>` or
     `<verb> [opts] openclaw-gateway[.service]`. The two words alone (`echo openclaw gateway`) are not enough
     (L4): the fallback denies only where a restart or stop is actually being asked for."""
-    words = [w for w in re.split(r"[\s'\"();&|]+", text.lower()) if w]
+    # Quotes and backslashes are dropped first so a verb split by shell quoting joins up (`re''start`,
+    # `res\tart` -> `restart`); `$` and backticks stay in the words so an expansion can be seen.
+    words = [w for w in re.split(r"[\s();&|]+", re.sub(r"['\"\\]", "", text.lower())) if w]
     found: str | None = None
     for i, w in enumerate(words):
         if os.path.basename(w) == "openclaw" and "gateway" in words[i + 1:i + 1 + _NEAR]:
@@ -334,6 +336,11 @@ def _verb_next_to_gateway(text: str) -> str | None:
             after = words[max(0, i - _NEAR):i]
         else:
             continue
+        # An expansion where the verb goes (`gateway $V`, `gateway $(...)`) hides the verb: fail closed.
+        slot = [v for v in (after if w == "openclaw" or os.path.basename(w) == "openclaw"
+                            else after[::-1]) if not v.startswith("-")][:1]
+        if slot and ("$" in slot[0] or "`" in slot[0]):
+            return "restart"
         for v in after:
             if v in _STOP_WORDS:
                 found = found or "stop"
@@ -347,12 +354,14 @@ def _env_split_shape(split: str, rest: list[str], depth: int) -> str | None:
 
     A string that cannot be tokenised, or nests too deep, is denied only when a stop/restart verb sits next to
     the gateway (see `_verb_next_to_gateway`) and allowed otherwise."""
+    # The words after env's options are the tail of the command `env -S` runs: the fallback sees them too.
+    whole = " ".join([split, *rest])
     if depth > 2:
-        return _verb_next_to_gateway(split)
+        return _verb_next_to_gateway(whole)
     try:
         words = shlex.split(split)
     except ValueError:
-        return _verb_next_to_gateway(split)
+        return _verb_next_to_gateway(whole)
     if not words:
         return None
     return shape(" ".join(shlex.quote(w) for w in [*words, *rest]), depth + 1)

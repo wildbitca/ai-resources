@@ -564,6 +564,12 @@ FALLBACK_DENIED = [
     _nest("openclaw gateway restart"),
     _nest("systemctl --user stop openclaw-gateway"),
     _nest("systemctl --user kill openclaw-gateway.service"),
+    # the verb split by shell quoting, a backslash or an expansion, and the tail words past the depth limit
+    "env -S \"env -S 'env -S \\\"env -S openclaw gateway re\\\\'\\\\'start\\\"'\"",
+    "env -S \"openclaw gateway re''start \\\"\"",
+    "env -S 'openclaw gateway res\\tart \"'",
+    "env -S 'openclaw gateway $V \"'",
+    "env -S \"env -S 'env -S \\\"env -S openclaw gateway restart\\\"'\"",
 ]
 
 
