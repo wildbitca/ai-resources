@@ -21,6 +21,12 @@ Notes for the next patch release. Nothing here is released; the version label is
   profile fill, the legacy-revert offer and the MCP mirror plan, so such a value is listed as kept, patched or
   updated instead of being dropped (S3). The JSON5 reader no longer edits string contents when it drops trailing
   commas: a live `"x,]"` stays `"x,]"` and a change to it is sent (S4).
+  `offbox-identity` (and setup) refuse a second `--name` while a recorded configuration exists, in one line that
+  says how to remove it, so a rerun can no longer forget the first one (S5). Teardown also survives a non-string
+  previous env value (warned by name, reported unfinished), writes `kit-host.env` keys back only under the kit's
+  own `OPENCLAW_*` namespace (`LD_PRELOAD=` is never written), and deletes a gcloud configuration only when the
+  recorded name is one the kit would create (S6). Single-violation tests pin each condition of the hand-move
+  confinement rule (S6) and the adopt-on-rerun and "no entries" line behaviours are pinned (S7).
 - **Hardening pass 3.** `offbox-identity` derives the project from `--sa` only when it has the shape of a GCP project
   id, so `--sa x@--log-http.iam.gserviceaccount.com` can no longer reach gcloud as a flag (M1). The value
   validators use `\Z`, so a trailing newline is refused (L1). A gcloud configuration created before a later step

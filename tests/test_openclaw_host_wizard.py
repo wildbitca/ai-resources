@@ -1650,3 +1650,192 @@ def test_teardown_removes_the_kit_timer_written_next_to_a_hand_service_only(sim,
     after = {p.name: p.read_bytes() for p in sim.units.iterdir()}
     assert after == before, "the unit directory is what it was before setup"
 
+
+
+# --- kit 2.1.1 pass 4, S5/S6: one off-box configuration at a time, robust teardown, single-violation hand moves ----------
+
+def test_the_plan_refuses_a_second_name_while_the_first_is_recorded_and_says_how_to_remove_it():
+    g = FakeGcloud()
+    first = host.offbox_identity_apply(g, host.offbox_identity_plan(g, name="first-cfg"))
+    plan = host.offbox_identity_plan(g, name="second-cfg", created=first)
+    assert plan["steps"] == [] and len(plan["problems"]) == 1
+    assert "first-cfg" in plan["problems"][0] and "--remove" in plan["problems"][0]
+    assert host.offbox_identity_apply(g, plan) is None
+    assert "second-cfg" not in g.configs, "nothing was created"
+    again = host.offbox_identity_plan(g, name="first-cfg", created=first)
+    assert again["problems"] == [] and again["steps"] == [], "the recorded name itself is still idempotent"
+
+
+def test_the_verb_run_with_another_name_is_refused_and_teardown_still_removes_the_first(monkeypatch, tmp_path, capsys):
+    import argparse
+    g = FakeGcloud()
+    monkeypatch.setattr(host, "default_runner", g)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    s = state.SetupState()
+    monkeypatch.setattr(state, "load", lambda: s)
+    monkeypatch.setattr(state, "save", lambda _s: None)
+
+    def run(**kw):
+        base = dict(dry_run=False, remove=False, yes=True, name="openclaw-backup", sa=host.OFFBOX_SA_DEFAULT,
+                    account="me@example.org", project="")
+        base.update(kw)
+        return host.cmd_offbox_identity(argparse.Namespace(**base))
+
+    assert run(name="first-cfg") == 0
+    assert s.openclaw.host_offbox_config_created["name"] == "first-cfg"
+    capsys.readouterr()
+    assert run(name="second-cfg") == 1
+    out = capsys.readouterr().out
+    assert [ln for ln in out.splitlines() if ln.startswith("refusing:")] and "--remove" in out
+    assert "second-cfg" not in g.configs
+    assert s.openclaw.host_offbox_config_created["name"] == "first-cfg", "the first record is not replaced"
+    assert run(remove=True) == 0
+    assert "first-cfg" not in g.configs and s.openclaw.host_offbox_config_created == {}
+
+
+def test_remove_refuses_a_recorded_name_the_kit_would_not_create(monkeypatch):
+    for bad in ("Bad_Name", "-flag", "has space", "UPPER", "1abc", ""):
+        g = FakeGcloud(configs={"default": {}, "claude-ro": {}, bad: {}} if bad else None)
+        lines: list[str] = []
+        assert host.offbox_identity_remove(g, {"name": bad}, out=lines.append) is False, bad
+        assert not [c for c in g.calls if c[1:4] == ["config", "configurations", "delete"]], bad
+
+
+def test_remove_still_deletes_a_well_formed_recorded_name():
+    g = FakeGcloud(configs={"default": {}, "up-1": {}})
+    assert host.offbox_identity_remove(g, {"name": "up-1"}) is True
+    assert "up-1" not in g.configs
+
+
+def test_teardown_survives_a_non_string_previous_env_value(sim, script):
+    s = _state()
+    _run_wizard(s)
+    sim.env_file.write_text(sim.env_file.read_text(encoding="utf-8") + "OPENCLAW_PASS4_A=kit\nOPENCLAW_PASS4_B=kit\n",
+                            encoding="utf-8")
+    s.openclaw.host_env_previous.update({"OPENCLAW_PASS4_A": 5, "OPENCLAW_PASS4_B": "fine"})
+    assert openclaw.teardown(s) == [], "unfinished, not a crash"
+    warned = " ".join(script.messages("warn"))
+    assert "OPENCLAW_PASS4_A" in warned
+    env = sim.env_file.read_text(encoding="utf-8")
+    assert "OPENCLAW_PASS4_A=kit" in env and "OPENCLAW_PASS4_B=fine" in env, "the other key was restored"
+    assert set(s.openclaw.host_env_previous) == {"OPENCLAW_PASS4_A"}
+
+
+@pytest.mark.parametrize("key", ["LD_PRELOAD", "PATH", "BASH_ENV", "HOME", "OPENCLAW-X", "openclaw_lower"])
+def test_teardown_never_writes_back_a_key_outside_the_kits_own_namespace(sim, script, key):
+    s = _state()
+    _run_wizard(s)
+    s.openclaw.host_env_previous[key] = "/home/u/evil.so"
+    openclaw.teardown(s)
+    after = sim.env_file.read_text(encoding="utf-8") if sim.env_file.exists() else ""
+    assert key not in after and f"{key}=" not in after
+    assert key in " ".join(script.messages("warn"))
+    assert key not in s.openclaw.host_env_previous, "there is nothing the kit owns to retry"
+
+
+def _hand_move_fixture(sim):
+    """A valid recorded hand move: the script under ~/.local/bin that the kit moved to the backup directory."""
+    backups = sim.home / ".openclaw" / "backup" / "hand-units"
+    ts = backups / "20260101T000000Z"
+    ts.mkdir(parents=True)
+    return backups, ts
+
+
+def _moved_state(original: pathlib.Path, moved: pathlib.Path):
+    s = _state()
+    s.openclaw.host_hand_moved[str(original)] = str(moved)
+    s.openclaw.host_hand_kit_sha[str(original)] = "0" * 64
+    return s
+
+
+def test_a_valid_hand_move_is_put_back_control(sim, script):
+    _backups, ts = _hand_move_fixture(sim)
+    dst = sim.home / ".local" / "bin" / host.HAND_SCRIPT_NAME
+    dst.parent.mkdir(parents=True)
+    src = ts / host.HAND_SCRIPT_NAME
+    src.write_text("hand\n", encoding="utf-8")
+    s = _moved_state(dst, src)
+    section._remove_units(s.openclaw)
+    assert dst.read_text(encoding="utf-8") == "hand\n" and not src.exists()
+    assert s.openclaw.host_hand_moved == {}
+
+
+def _violation_cases(sim, tmp_path):
+    """(id, original, moved): each breaks exactly ONE condition of the confinement rule."""
+    backups, ts = _hand_move_fixture(sim)
+    bin_dir = sim.home / ".local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    sim.units.mkdir(parents=True, exist_ok=True)
+    script_name = host.HAND_SCRIPT_NAME
+    cases = []
+
+    def mk(path: pathlib.Path, text="payload\n"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    # src.parent.parent is not the backup directory
+    cases.append(("src-parent-parent", bin_dir / script_name,
+                  mk(sim.home / ".openclaw" / "backup" / "other" / script_name)))
+    # src.name != dst.name
+    cases.append(("src-name", bin_dir / script_name, mk(ts / "something-else.sh")))
+    # `..` in the source path (its parent.parent is still the backup directory)
+    cases.append(("dotdot-in-src", bin_dir / script_name, mk(backups / ".." / script_name)))
+    # the destination is neither the hand script nor a health-restart unit: a file in ~/.local/bin
+    cases.append(("script-path", bin_dir / "some-other-tool.sh", mk(ts / "some-other-tool.sh")))
+    # a unit the kit manages elsewhere, inside the unit dir, is not a hand health-restart unit
+    cases.append(("kit-unit-name", sim.units / "openclaw-gateway.service", mk(ts / "openclaw-gateway.service")))
+    # a health-restart unit name outside the user unit dir
+    cases.append(("path-parent-is-unit-dir", tmp_path / "elsewhere" / "openclaw-health-restart.service",
+                  mk(ts / "openclaw-health-restart.service")))
+    return cases
+
+
+_VIOLATION_IDS = ["src-parent-parent", "src-name", "dotdot-in-src", "script-path", "kit-unit-name",
+                  "path-parent-is-unit-dir"]
+
+
+@pytest.mark.parametrize("case_id", _VIOLATION_IDS)
+def test_a_hand_move_that_breaks_one_confinement_condition_is_ignored(sim, script, tmp_path, case_id):
+    cases = {c[0]: c for c in _violation_cases(sim, tmp_path)}
+    _id, original, moved = cases[case_id]
+    before_moved = moved.read_bytes()
+    (original.parent).mkdir(parents=True, exist_ok=True)
+    s = _moved_state(original, moved)
+    section._remove_units(s.openclaw)
+    assert not original.exists(), f"{case_id}: nothing was moved onto {original}"
+    assert moved.read_bytes() == before_moved, f"{case_id}: the source was left where it was"
+    assert s.openclaw.host_hand_moved == {} and s.openclaw.host_hand_kit_sha == {}, "the entry is dropped"
+    assert any(str(original) in m for m in script.messages("warn")), f"{case_id}: warned by name"
+
+
+def test_a_hand_move_onto_a_symlinked_destination_is_ignored(sim, script, tmp_path):
+    _backups, ts = _hand_move_fixture(sim)
+    victim = _victim(tmp_path)
+    dst = sim.home / ".local" / "bin" / host.HAND_SCRIPT_NAME
+    dst.parent.mkdir(parents=True)
+    dst.symlink_to(victim)
+    src = ts / host.HAND_SCRIPT_NAME
+    src.write_text("payload\n", encoding="utf-8")
+    s = _moved_state(dst, src)
+    section._remove_units(s.openclaw)
+    assert victim.read_text(encoding="utf-8") == "the operator's file\n" and src.exists()
+    assert s.openclaw.host_hand_moved == {}
+
+
+def test_the_verb_rerun_with_the_recorded_name_replaces_a_partial_record_with_the_full_one(monkeypatch, tmp_path):
+    """L5 verb side: a configuration created and then left half-configured is adopted by a rerun."""
+    import argparse
+    g = FakeGcloud(configs={"default": {}, "claude-ro": {}, "up-1": {}})
+    monkeypatch.setattr(host, "default_runner", g)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    s = state.SetupState()
+    s.openclaw.host_offbox_config_created = {"name": "up-1", "account": "", "impersonate": "", "project": ""}
+    monkeypatch.setattr(state, "load", lambda: s)
+    monkeypatch.setattr(state, "save", lambda _s: None)
+    ns = argparse.Namespace(dry_run=False, remove=False, yes=True, name="up-1", sa=host.OFFBOX_SA_DEFAULT,
+                            account="me@example.org", project="")
+    assert host.cmd_offbox_identity(ns) == 0
+    assert s.openclaw.host_offbox_config_created == {
+        "name": "up-1", "account": "me@example.org", "impersonate": host.OFFBOX_SA_DEFAULT, "project": "wildbit-iac"}
+    assert g.configs["up-1"]["account"] == "me@example.org"

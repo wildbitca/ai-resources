@@ -143,6 +143,10 @@ def read_host_env(path: Path | None = None) -> dict[str, str]:
 
 
 _ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*\Z")   # \Z, never `$`: `$` also matches before a trailing newline
+# The keys the kit manages in kit-host.env are all in its own namespace. Teardown writes a recorded previous value
+# back only under such a key: a hand-edited state must not be able to make it write `LD_PRELOAD=` or `BASH_ENV=`
+# into a file that bash sources.
+_ENV_KIT_KEY = re.compile(r"^OPENCLAW_[A-Z0-9_]+\Z")
 # No space: the file is sourced by bash, so `KEY=a /path/cmd` would run /path/cmd.
 _ENV_SAFE_VALUE = re.compile(r"^[A-Za-z0-9_@%+=:,./~-]*\Z")
 
@@ -3970,6 +3974,9 @@ def offbox_identity_plan(runner: Runner, *, name: str = OFFBOX_CONFIG_NAME, sa: 
     if configs is None:
         problems.append("gcloud could not list its configurations (is gcloud installed and signed in?)")
         configs = {}
+    if created.get("name") and created["name"] != name:
+        problems.append(f"the kit already created the gcloud configuration {created['name']!r}; remove it first with "
+                        f"`ai-resources openclaw offbox-identity --remove`, then create {name!r}")
     exists = name in configs
     if exists and created.get("name") != name:
         problems.append(f"a gcloud configuration named {name!r} already exists and the kit did not create it; "
@@ -4022,9 +4029,12 @@ def offbox_identity_remove(runner: Runner, record: dict, *, out: Callable[[str],
     """Delete the configuration the kit created, only while it still matches what the kit set. True when done
     (or already gone); False when it was left alone."""
     name = record.get("name", "")
-    configs = _gcloud_configs(runner)
-    if not name or name in OFFBOX_PROTECTED_CONFIGS:
+    # A recorded name is state the operator can edit: only a name the kit itself would create is ever deleted.
+    if not isinstance(name, str) or not _OFFBOX_NAME_RE.match(name) or name in OFFBOX_PROTECTED_CONFIGS:
+        if name:
+            out(f"the recorded gcloud configuration name {name!r} is not one the kit creates; it was left as it is")
         return False
+    configs = _gcloud_configs(runner)
     if configs is None:
         out("gcloud could not list its configurations; the uploader configuration was left as it is")
         return False

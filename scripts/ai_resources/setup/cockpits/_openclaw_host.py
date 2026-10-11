@@ -1081,13 +1081,23 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
         # by name and left as it is; it must not abort the teardown after the units and hooks are already undone.
         restorable: dict[str, str | None] = {}
         stuck: list[str] = []
+        foreign: list[str] = []
         for key, value in o.host_env_previous.items():
+            if not isinstance(key, str) or not host._ENV_KIT_KEY.match(key):
+                foreign.append(str(key))          # not a key the kit manages: never written back
+                continue
             try:
                 host._check_env_pair(key, value if value is not None else "")
-            except ValueError:
+            except (ValueError, TypeError):       # TypeError: a non-string value in a hand-edited state
                 stuck.append(key)
                 continue
             restorable[key] = value
+        if foreign:
+            ui.warn(f"{host.HOST_ENV_PATH}: the recorded previous value of {', '.join(sorted(foreign))} is not a key "
+                    "the kit manages (OPENCLAW_*); it was ignored and nothing was written for it.")
+            for key in list(o.host_env_previous):
+                if str(key) in foreign:
+                    o.host_env_previous.pop(key, None)
         if restorable:
             host.write_host_env(restorable)
             for key in restorable:
