@@ -2819,6 +2819,8 @@ def discard_watch_restores(o, *, apply: bool, out: Callable[[str], None] = print
     names = sorted({str(e.get("path", "")) for e in entries})
     if not entries:
         out("no `source=watch` restore entries are pending")
+        if apply and _close_legacy_watch_result(o):
+            out("marked the 2.1.0 watch result inconclusive (discarded by the operator)")
         return []
     for e in sorted(entries, key=lambda e: str(e.get("path", ""))):
         tag = ("queued by a corroborated 2.1.1 failure" if e.get("corroborated")
@@ -2830,7 +2832,26 @@ def discard_watch_restores(o, *, apply: bool, out: Callable[[str], None] = print
         return names
     o.host_restart_pending = [e for e in o.host_restart_pending if e.get("source") != "watch"]
     out(f"discarded {len(entries)} `source=watch` restore entr{'y' if len(entries) == 1 else 'ies'}")
+    if _close_legacy_watch_result(o):
+        out("marked the 2.1.0 watch result inconclusive (discarded by the operator)")
     return names
+
+
+def _close_legacy_watch_result(o) -> bool:
+    """A 2.1.0 watch result carries `problems` and no `outcome`. Once the operator discards the restore
+    entries it queued, nothing is left to retry, so verify and status must not keep calling it an ERROR.
+    The result becomes `inconclusive` (the old problems are kept as `discarded_problems`). Never touches
+    the config. True when a result was rewritten."""
+    cw = getattr(o, "config_watch", None)
+    r = cw.get("result") if isinstance(cw, dict) else None
+    if not (isinstance(cw, dict) and cw.get("done") and isinstance(r, dict) and r.get("problems")
+            and not r.get("outcome")):
+        return False
+    r["discarded_problems"] = list(r["problems"])
+    r["problems"] = []
+    r["outcome"] = "inconclusive"
+    r["reason"] = "discarded by the operator"
+    return True
 
 
 def recorded_pending() -> dict:
@@ -4060,10 +4081,14 @@ def cmd_dedupe_agents_md(args: argparse.Namespace) -> int:
     if not args.apply:
         print("dry run: nothing changed. Re-run with --apply to remove the identical copies (a backup is written first).")
         return rc
-    if ui.is_non_interactive() or not ui.confirm(
+    try:
+        confirmed = not ui.is_non_interactive() and ui.confirm(
             f"Remove the hand-written copy from {len(pending)} file(s)? A .bak-<timestamp> file is written first.",
-            default=False):
-        print("nothing changed (--apply needs an interactive confirmation)")
+            default=False)
+    except EOFError:                 # stdin is not a terminal: one line, not a questionary traceback (G3)
+        confirmed = False
+    if not confirmed:
+        print("nothing changed (--apply needs an interactive confirm)")
         return 1
     for path in pending:
         try:

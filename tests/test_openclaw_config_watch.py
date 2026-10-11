@@ -1070,3 +1070,62 @@ def test_apply_patch_skips_a_noop_and_fires_the_first_write_hook_only_for_a_real
     assert ok and fired == [] and sim.oc.real_patches() == []
     ok, _out = openclaw.apply_patch({"tools": {"profile": current + "-changed"}})
     assert ok and fired == [1] and len(sim.oc.real_patches()) == 1
+
+
+# --- G2: discarding the watch restores also closes a legacy 2.1.0 failure record ----------------------------------------
+
+def _legacy_failed_watch_state():
+    entry = {"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch", "change": dict(IDLE_KEY)}
+    return _o(host_restart_pending=[entry],
+              config_watch={"run_id": "old", "unit": "openclaw-config-watch-old", "done": True,
+                            "result": {"hot": [], "restart": [], "problems": ["restart-required not reverted: x"]}})
+
+
+def test_a_legacy_failed_watch_is_still_an_error_until_the_restores_are_discarded():
+    o = _legacy_failed_watch_state()
+    assert [m for lv, m in _levels(o) if lv == "error" and "could not finish its revert" in m]
+    host.discard_watch_restores(o, apply=False, out=lambda _m: None)
+    assert [m for lv, m in _levels(o) if lv == "error" and "could not finish its revert" in m], \
+        "a dry run changes nothing"
+
+
+def test_discarding_the_watch_restores_closes_the_legacy_watch_result_without_an_error():
+    o = _legacy_failed_watch_state()
+    host.discard_watch_restores(o, apply=True, out=lambda _m: None)
+    assert o.host_restart_pending == []
+    r = o.config_watch["result"]
+    assert r["outcome"] == "inconclusive" and r["reason"] == "discarded by the operator" and r["problems"] == []
+    levels = _levels(o)
+    assert not [lv for lv, _m in levels if lv == "error"]
+    assert "could not finish its revert" not in " ".join(host.pending_lines(host.pending_summary(o)))
+
+
+def test_discard_leaves_a_2_1_1_failed_revert_record_alone():
+    o = _o(host_restart_pending=[{"op": "restore", "path": "gateway.bind", "source": "watch", "corroborated": True,
+                                  "change": dict(BIND)}],
+           config_watch={"run_id": "n", "unit": "u", "done": True,
+                         "result": {"outcome": "revert-failed", "hot": [], "restart": [],
+                                    "problems": ["drained window exit 2"]}})
+    host.discard_watch_restores(o, apply=True, out=lambda _m: None)
+    assert o.config_watch["result"]["problems"] == ["drained window exit 2"]
+    assert [lv for lv, _m in _levels(o) if lv == "error"]
+
+
+def test_discard_without_yes_and_without_a_terminal_is_one_line_and_changes_nothing(monkeypatch, capsys):
+    from ai_resources.setup import ui
+
+    def eof(*_a, **_k):
+        raise EOFError
+
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", eof)
+    messages: list[str] = []
+    monkeypatch.setattr(ui, "info", messages.append)
+    monkeypatch.setattr(ui, "error", messages.append)
+    s = state.SetupState()
+    entry = {"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch", "change": dict(IDLE_KEY)}
+    s.openclaw.host_restart_pending = [entry]
+    assert section.discard_watch_restores(s, assume_yes=False) == 1
+    assert messages[-1] == "needs a terminal; re-run with --yes"
+    assert s.openclaw.host_restart_pending == [entry]
+    assert any("dry run" in m for m in messages), "the dry run is printed first"

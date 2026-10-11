@@ -163,3 +163,23 @@ def test_a_file_that_changed_between_the_two_checks_is_reported_not_claimed_remo
     out = capsys.readouterr().out
     assert "file changed, nothing written" in out and "removed; backup" not in out
     assert p.read_text(encoding="utf-8") == edited and list(tmp_path.glob("*.bak-*")) == []
+
+
+def _no_terminal(monkeypatch):
+    """A confirm on a stdin that is not a terminal: questionary ends in EOFError."""
+    def eof(*_a, **_k):
+        raise EOFError
+
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", eof)
+
+
+def test_apply_without_a_terminal_says_so_in_one_line_and_changes_nothing(tmp_path, monkeypatch, capsys):
+    p = _file(tmp_path)
+    before = p.read_bytes()
+    _no_terminal(monkeypatch)
+    assert host.cmd_dedupe_agents_md(_args(p, apply=True)) == 1
+    out = capsys.readouterr().out
+    assert "would be removed" in out, "the dry run is printed first"
+    assert out.rstrip().splitlines()[-1] == "nothing changed (--apply needs an interactive confirm)"
+    assert p.read_bytes() == before and list(tmp_path.glob("*.bak-*")) == []

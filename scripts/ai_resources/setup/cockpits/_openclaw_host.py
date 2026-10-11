@@ -693,8 +693,15 @@ def discard_watch_restores(s: state.SetupState, *, assume_yes: bool = False) -> 
     if not names:
         return 0
     if not assume_yes:
-        if ui.is_non_interactive() or not ui.confirm("Discard these entries? Nothing is applied to the gateway.",
-                                                     default=False):
+        if ui.is_non_interactive():
+            ui.info("nothing changed; re-run with --yes to discard")
+            return 0
+        try:
+            answered = ui.confirm("Discard these entries? Nothing is applied to the gateway.", default=False)
+        except EOFError:             # stdin is not a terminal: one line, not a questionary traceback (G3)
+            ui.error("needs a terminal; re-run with --yes")
+            return 1
+        if not answered:
             ui.info("nothing changed; re-run with --yes to discard")
             return 0
     host.discard_watch_restores(s.openclaw, apply=True, out=ui.info)
