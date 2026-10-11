@@ -21,6 +21,11 @@ Notes for the next patch release. Nothing here is released; the version label is
   unit names inside the user unit dir, the hand script under `~/.local/bin` and the transcriber's glossary path,
   never through a symlink or a `..` (L2). The kit's health-restart timer written next to a hand `.service` is
   removed again (T1).
+  `dedupe-agents-md --apply` refuses a symlinked file, writes a temp file and renames it over the original (mode
+  kept) and says where the backup is when the write fails (L3). The destructive confirms (`dedupe-agents-md
+  --apply`, `apply-pending --discard-watch-restores` without `--yes`) need a real terminal: a piped `y` is not a
+  confirmation (T2). A refused or dry-run discard no longer rewrites `setup-state.yaml`, prints the "none
+  pending" line once and says "dry run:" only when it is one (T3).
 - **Hardening pass 2.** A second `ai-resources setup` run no longer cancels the first run's post-setup watch:
   a patch with no changed leaf is never sent, so the first-write hook never fires for it (G1).
   `apply-pending --discard-watch-restores --yes` also closes a 2.1.0 watch record, so `verify` stops reporting

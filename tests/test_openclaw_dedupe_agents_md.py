@@ -32,6 +32,12 @@ def _file(tmp_path, *, before="# Mine\n\nHand notes.\n\n", copy=KIT, after="\n##
     return p
 
 
+@pytest.fixture(autouse=True)
+def _a_terminal_by_default(monkeypatch):
+    """The confirm needs a real terminal (T2); the tests below that simulate an answer have one."""
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+
+
 def _args(*paths, apply=False):
     return argparse.Namespace(paths=[str(p) for p in paths], apply=apply)
 
@@ -190,3 +196,67 @@ def test_the_diff_of_a_file_without_a_final_newline_ends_with_one(tmp_path):
     p.write_text("# Mine\n\n" + KIT.lstrip("\n").rstrip("\n"), encoding="utf-8")      # no trailing newline
     res = _shared.dedupe_long_running(p, apply=False)
     assert res["status"] == "would-remove" and res["diff"].endswith("\n")
+
+
+# --- 2.1.1 pass 3, T2: a piped answer is not a confirmation ---------------------------------------------------------
+
+def test_a_piped_y_on_a_stdin_that_is_not_a_terminal_does_not_confirm(tmp_path, monkeypatch, capsys):
+    p = _file(tmp_path)
+    before = p.read_bytes()
+    asked: list[str] = []
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: asked.append("asked") or True)
+    assert host.cmd_dedupe_agents_md(_args(p, apply=True)) == 1
+    out = capsys.readouterr().out
+    assert asked == [], "the confirm is never even asked"
+    assert "would be removed" in out and out.rstrip().splitlines()[-1] == \
+        "nothing changed (--apply needs an interactive confirm)"
+    assert p.read_bytes() == before and list(tmp_path.glob("*.bak-*")) == []
+
+
+# --- 2.1.1 pass 3, L3: the rewrite never goes through a symlink and is atomic ---------------------------------------
+
+def test_a_symlinked_agents_md_is_refused_and_left_untouched(tmp_path, monkeypatch, capsys):
+    (tmp_path / "real").mkdir()
+    real = _file(tmp_path / "real")
+    link = tmp_path / "ws" / "AGENTS.md"
+    link.parent.mkdir()
+    link.symlink_to(real)
+    before = real.read_bytes()
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    assert host.cmd_dedupe_agents_md(_args(link, apply=True)) == 1
+    out = capsys.readouterr().out
+    assert "symlink" in out and str(real) in out
+    assert real.read_bytes() == before and link.is_symlink()
+    assert list(real.parent.glob("*.bak-*")) == [] and list(link.parent.glob("*.bak-*")) == []
+
+
+def test_a_failed_write_leaves_the_original_and_names_the_backup(tmp_path, monkeypatch, capsys):
+    p = _file(tmp_path)
+    before = p.read_bytes()
+
+    def boom(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(_shared.os, "replace", boom)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    assert host.cmd_dedupe_agents_md(_args(p, apply=True)) == 1
+    out = capsys.readouterr().out
+    [backup] = list(tmp_path.glob("AGENTS.md.bak-*"))
+    assert f"could not write AGENTS.md; the backup is at {backup}" in out
+    assert "could not write the backup" not in out
+    assert p.read_bytes() == before, "the original is intact"
+    assert [x.name for x in tmp_path.iterdir() if x.name.startswith(".AGENTS.md")] == [], "no temp file is left"
+
+
+def test_the_rewrite_keeps_the_file_mode(tmp_path, monkeypatch):
+    p = _file(tmp_path)
+    p.chmod(0o640)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    assert host.cmd_dedupe_agents_md(_args(p, apply=True)) == 0
+    assert (p.stat().st_mode & 0o777) == 0o640
+    assert HEAD not in p.read_text(encoding="utf-8").split(_shared.MANAGED_BEGIN)[0]

@@ -1161,3 +1161,73 @@ def test_cockpit_discard_closes_a_legacy_watch_failure_whose_restore_entries_are
     r = s.openclaw.config_watch["result"]
     assert r["outcome"] == "inconclusive" and r["problems"] == []
     assert not [lv for lv, _m in _levels(s.openclaw) if lv == "error"]
+
+
+# --- 2.1.1 pass 3: T2 terminal-only confirms, T3 no state bump and a single "no entries" line -------------------------
+
+def _discard_env(monkeypatch, *, tty: bool, answer: bool = True):
+    """A confirm that would answer `answer` (a piped `y`), on a stdin that is or is not a terminal."""
+    from ai_resources.setup import ui
+
+    messages: list[str] = []
+    asked: list[str] = []
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: tty)
+    monkeypatch.setattr(ui, "confirm", lambda msg, *a, **k: asked.append(msg) or answer)
+    monkeypatch.setattr(ui, "info", messages.append)
+    monkeypatch.setattr(ui, "error", messages.append)
+    return messages, asked
+
+
+def test_a_piped_y_does_not_confirm_the_discard(monkeypatch):
+    messages, asked = _discard_env(monkeypatch, tty=False)
+    s = state.SetupState()
+    entry = {"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch", "change": dict(IDLE_KEY)}
+    s.openclaw.host_restart_pending = [entry]
+    assert section.discard_watch_restores(s, assume_yes=False) == 1
+    assert s.openclaw.host_restart_pending == [entry] and asked == []
+    assert messages[-1] == "needs a terminal; re-run with --yes"
+    assert any(m.startswith("dry run:") for m in messages), "the dry run is still printed"
+
+
+def test_a_refused_discard_does_not_bump_last_run(monkeypatch):
+    import argparse
+    messages, _asked = _discard_env(monkeypatch, tty=False)
+    s = state.SetupState()
+    s.openclaw.host_restart_pending = [{"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch",
+                                        "change": dict(IDLE_KEY)}]
+    saved: list[object] = []
+    monkeypatch.setattr(state, "load", lambda: s)
+    monkeypatch.setattr(state, "save", lambda x: saved.append(x))
+    assert host.cmd_apply_pending(argparse.Namespace(discard_watch_restores=True, yes=False)) == 1
+    assert saved == [], "nothing changed, so nothing is saved"
+    assert host.cmd_apply_pending(argparse.Namespace(discard_watch_restores=True, yes=True)) == 0
+    assert len(saved) == 1 and s.openclaw.host_restart_pending == []
+
+
+def test_discard_with_nothing_pending_says_so_once_and_saves_nothing(monkeypatch):
+    import argparse
+    messages, _asked = _discard_env(monkeypatch, tty=True)
+    s = state.SetupState()
+    saved: list[object] = []
+    monkeypatch.setattr(state, "load", lambda: s)
+    monkeypatch.setattr(state, "save", lambda x: saved.append(x))
+    assert host.cmd_apply_pending(argparse.Namespace(discard_watch_restores=True, yes=True)) == 0
+    assert len([m for m in messages if "no `source=watch` restore entries" in m]) == 1
+    assert saved == []
+
+
+def test_a_confirmed_discard_prints_the_dry_run_line_only_when_it_is_one(monkeypatch):
+    messages, asked = _discard_env(monkeypatch, tty=True, answer=True)
+    s = state.SetupState()
+    s.openclaw.host_restart_pending = [{"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch",
+                                        "change": dict(IDLE_KEY)}]
+    assert section.discard_watch_restores(s, assume_yes=False) == 0
+    assert asked and s.openclaw.host_restart_pending == []
+    assert not any(m.startswith("dry run:") for m in messages)
+    assert len([m for m in messages if "mcp.sessionIdleTtlMs" in m]) == 1, "the entry is listed once"
+    messages2, _a = _discard_env(monkeypatch, tty=True, answer=False)
+    s.openclaw.host_restart_pending = [{"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch",
+                                        "change": dict(IDLE_KEY)}]
+    assert section.discard_watch_restores(s, assume_yes=False) == 0
+    assert any(m.startswith("dry run:") for m in messages2) and s.openclaw.host_restart_pending

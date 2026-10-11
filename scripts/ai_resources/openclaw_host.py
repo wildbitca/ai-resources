@@ -2826,26 +2826,32 @@ def pending_summary(o) -> dict:
     return {"paths": paths, "leftover_watch": leftover, "watch": watch if watch_worth else None}
 
 
-def discard_watch_restores(o, *, apply: bool, out: Callable[[str], None] = print) -> list[str]:
+def discard_watch_restores(o, *, apply: bool, out: Callable[[str], None] = print,
+                           list_entries: bool = True, dry_run_note: bool = True) -> list[str]:
     """`apply-pending --discard-watch-restores`: drop the `source=watch` restore entries. Returns their paths.
 
     A dry run (`apply=False`) lists them and changes nothing. Never automatic: the entries are the only record
     of a revert the watch could not finish, and on a host that ran the 2.1.0 watch they are most likely false
-    positives (the probe could not run), which is for the operator to confirm."""
+    positives (the probe could not run), which is for the operator to confirm.
+
+    `list_entries=False` skips the listing and the "none pending" line (the caller printed them already);
+    `dry_run_note=False` skips the "dry run:" line (the caller is about to apply, so it would be untrue)."""
     entries = [e for e in (o.host_restart_pending or []) if e.get("source") == "watch"]
     names = sorted({str(e.get("path", "")) for e in entries})
     if not entries:
-        out("no `source=watch` restore entries are pending")
+        if list_entries:
+            out("no `source=watch` restore entries are pending")
         if apply and _close_legacy_watch_result(o):
             out("marked the 2.1.0 watch result inconclusive (discarded by the operator)")
         return []
-    for e in sorted(entries, key=lambda e: str(e.get("path", ""))):
+    for e in (sorted(entries, key=lambda e: str(e.get("path", ""))) if list_entries else []):
         tag = ("queued by a corroborated 2.1.1 failure" if e.get("corroborated")
                else "likely false positive from the 2.1.0 watch")
         out(f"  {e.get('path')}: {tag}")
     if not apply:
-        out(f"dry run: {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} would be discarded; "
-            "nothing was changed")
+        if dry_run_note:
+            out(f"dry run: {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} would be discarded; "
+                "nothing was changed")
         return names
     o.host_restart_pending = [e for e in o.host_restart_pending if e.get("source") != "watch"]
     out(f"discarded {len(entries)} `source=watch` restore entr{'y' if len(entries) == 1 else 'ies'}")
@@ -4122,6 +4128,9 @@ def cmd_dedupe_agents_md(args: argparse.Namespace) -> int:
         res = _shared.dedupe_long_running(path, apply=False)
         if res["status"] == "none":
             print(f"{path}: no hand-written copy of the kit section")
+        elif res["status"] == "symlink":
+            print(f"{path}: is a symlink to {res['target']}; left alone. Run the verb on the real file.")
+            rc = 1
         elif res["status"] == "differs":
             print(f"{path}: the hand-written section differs from the kit's text; left alone. How it differs:")
             print(res["diff"], end="")
@@ -4136,7 +4145,8 @@ def cmd_dedupe_agents_md(args: argparse.Namespace) -> int:
         print("dry run: nothing changed. Re-run with --apply to remove the identical copies (a backup is written first).")
         return rc
     try:
-        confirmed = not ui.is_non_interactive() and ui.confirm(
+        # A real terminal is required: a piped `y` is not a person looking at the diff (T2).
+        confirmed = not ui.is_non_interactive() and ui.stdin_is_a_terminal() and ui.confirm(
             f"Remove the hand-written copy from {len(pending)} file(s)? A .bak-<timestamp> file is written first.",
             default=False)
     except EOFError:                 # stdin is not a terminal: one line, not a questionary traceback (G3)
@@ -4149,6 +4159,10 @@ def cmd_dedupe_agents_md(args: argparse.Namespace) -> int:
             res = _shared.dedupe_long_running(path, apply=True)
         except OSError as e:
             print(f"{path}: could not write the backup ({e}); nothing written")
+            rc = 1
+            continue
+        if res["status"] == "write-failed":
+            print(f"{path}: could not write {path.name}; the backup is at {res['backup']} ({res['error']})")
             rc = 1
             continue
         if res["status"] != "removed":
@@ -4164,8 +4178,11 @@ def cmd_apply_pending(args: argparse.Namespace) -> int:
     from .setup.cockpits import _openclaw_host as section
     s = setup_state.load()
     if getattr(args, "discard_watch_restores", False):
+        import copy
+        before = copy.deepcopy(s.openclaw)
         rc = section.discard_watch_restores(s, assume_yes=args.yes)
-        setup_state.save(s)
+        if s.openclaw != before:          # a dry run or a refusal changes nothing, so it must not bump `last_run`
+            setup_state.save(s)
         return rc
     rc = section.apply_pending(s, assume_yes=args.yes)
     setup_state.save(s)

@@ -704,23 +704,35 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
 
 def discard_watch_restores(s: state.SetupState, *, assume_yes: bool = False) -> int:
     """`apply-pending --discard-watch-restores`: a dry run unless confirmed (`--yes` or an interactive yes)."""
-    names = host.discard_watch_restores(s.openclaw, apply=False, out=ui.info)
+    # The listing is printed once. "dry run:" is only said when nothing is going to be applied.
+    names = host.discard_watch_restores(s.openclaw, apply=False, out=ui.info, dry_run_note=False)
     if not names and not host.legacy_watch_result_open(s.openclaw):
         return 0
+
+    def dry_run_note() -> None:
+        host.discard_watch_restores(s.openclaw, apply=False, out=ui.info, list_entries=False)
+
     if not assume_yes:
         if ui.is_non_interactive():
+            dry_run_note()
             ui.info("nothing changed; re-run with --yes to discard")
             return 0
+        if not ui.stdin_is_a_terminal():       # a piped `y` is not a confirmation (T2)
+            dry_run_note()
+            ui.error("needs a terminal; re-run with --yes")
+            return 1
         try:
             answered = ui.confirm("Close the 2.1.0 watch failure record? Nothing is applied to the gateway." if not names
                                   else "Discard these entries? Nothing is applied to the gateway.", default=False)
         except EOFError:             # stdin is not a terminal: one line, not a questionary traceback (G3)
+            dry_run_note()
             ui.error("needs a terminal; re-run with --yes")
             return 1
         if not answered:
+            dry_run_note()
             ui.info("nothing changed; re-run with --yes to discard")
             return 0
-    host.discard_watch_restores(s.openclaw, apply=True, out=ui.info)
+    host.discard_watch_restores(s.openclaw, apply=True, out=ui.info, list_entries=False)
     return 0
 
 

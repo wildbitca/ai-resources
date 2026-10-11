@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -593,13 +595,18 @@ def long_running_duplicate(text: str) -> "tuple[int, int, bool] | None":
 
 
 def dedupe_long_running(path: Path, *, apply: bool, now: "str | None" = None) -> dict:
-    """One AGENTS.md: {"status": "none"|"removed"|"would-remove"|"differs", "diff": str, "backup": str}.
+    """One AGENTS.md: {"status": "none"|"removed"|"would-remove"|"differs"|"symlink"|"write-failed", "diff": str,
+    "backup": str}. A symlinked file is never rewritten; a failed write leaves the original and names the backup.
 
     An identical copy is removed (after a `<file>.bak-<UTC timestamp>` backup, only with `apply`); a copy that
     differs from the kit's text is never touched: the diff shows how. Every byte outside the section is kept."""
     import difflib
     import time as _time
 
+    if path.is_symlink():
+        # The rewrite replaces the file, which would silently replace the link by a regular file (and a write in
+        # place would change whatever it points at). The operator names the real file instead (L3).
+        return {"status": "symlink", "diff": "", "backup": "", "target": str(path.resolve())}
     raw = _read_raw(path)
     found = long_running_duplicate(raw)
     if found is None:
@@ -626,7 +633,22 @@ def dedupe_long_running(path: Path, *, apply: bool, now: "str | None" = None) ->
     fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(raw)
-    path.write_text(new, encoding="utf-8")
+    # Write a temp file next to the original, then rename it over: a failed write leaves the original intact.
+    tmp_name = ""
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+        tfd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+        with os.fdopen(tfd, "w", encoding="utf-8") as fh:
+            fh.write(new)
+        os.chmod(tmp_name, mode)
+        os.replace(tmp_name, path)
+    except OSError as e:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        return {"status": "write-failed", "diff": diff, "backup": str(backup), "error": str(e)}
     return {"status": "removed", "diff": diff, "backup": str(backup)}
 
 
