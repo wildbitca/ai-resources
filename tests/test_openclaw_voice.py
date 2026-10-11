@@ -614,3 +614,95 @@ def test_ac18_shared_pool_warning_fires_only_for_agy_plus_gemini_and_never_block
     # local + gemini main agent: no shared-pool warning (not agy mode).
     _s, warnings = run_prompt("antigravity", "gemini-3.8-flash-low", "local")
     assert not [w for w in warnings if "Gemini pool" in w]
+
+
+# --- D2 (2.1.1): the live language is the operator's, and a run with no answer must not overwrite it -------------------
+
+LIVE_ES = {"models": [{"type": "cli", "command": "/py", "capabilities": ["audio"], "timeoutSeconds": 180,
+                       "args": ["/kit/t.py", "--mode", "agy", "--language", "es", "{{AttachmentPath}}"]}]}
+
+
+def test_current_language_reads_the_first_audio_cli_entry():
+    assert voice.current_language(LIVE_ES) == "es"
+    assert voice.current_language({"models": [{"type": "cli", "capabilities": ["audio"],
+                                               "args": ["--language=pt", "x"]}]}) == "pt"
+    assert voice.current_language(HAND_BUILT) is None, "a hand-built transcriber with no --language says nothing"
+    assert voice.current_language(None) is None and voice.current_language({"models": [IMAGE_MODEL]}) is None
+
+
+def _clear_locale(monkeypatch, **env):
+    for var in ("LC_ALL", "LANG"):
+        monkeypatch.delenv(var, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_a_live_language_beats_the_locale_and_says_it_kept_it(monkeypatch):
+    _clear_locale(monkeypatch, LANG="en_US.UTF-8")
+    asked = _answers(monkeypatch, "agy", "es")
+    infos: list[str] = []
+    monkeypatch.setattr(ui, "info", infos.append)
+    s = state.SetupState()
+    voice.prompt(s, LIVE_ES)
+    assert asked[1][2] == "es", "the question starts from the live value, not from LANG"
+    assert s.openclaw.voice_language == "es"
+    assert any("kept your value: voice language es" in m for m in infos)
+
+
+def test_the_live_value_wins_over_a_saved_answer(monkeypatch):
+    _clear_locale(monkeypatch, LANG="C")
+    s = state.SetupState()
+    s.openclaw.voice_language = "en"
+    assert voice.default_language(s, "es") == "es"
+    assert voice.default_language(s) == "en"
+    asked = _answers(monkeypatch, "agy", "es")
+    voice.prompt(s, LIVE_ES)
+    assert asked[1][2] == "es"
+
+
+def test_with_no_live_value_the_locale_then_spanish_decide(monkeypatch):
+    _clear_locale(monkeypatch, LANG="en_US.UTF-8")
+    asked = _answers(monkeypatch, "agy", "en")
+    voice.prompt(state.SetupState(), HAND_BUILT)
+    assert asked[1][2] == "en"
+    _clear_locale(monkeypatch, LANG="C")
+    asked = _answers(monkeypatch, "agy", "es")
+    voice.prompt(state.SetupState(), None)
+    assert asked[1][2] == "es"
+
+
+def test_a_run_with_no_saved_answer_keeps_the_live_language(bot, monkeypatch):
+    cfg, _ws, rec = bot
+    doc = json.loads(cfg.read_text())
+    doc["tools"]["media"] = LIVE_ES
+    cfg.write_text(json.dumps(doc), encoding="utf-8")
+    s = _state("agy", language="")                      # the state has no language answer
+    s.openclaw.voice_language = ""
+    written: list = []
+    openclaw._configure_voice(s, json.loads(cfg.read_text()), cfg, "/kit", written, dry_run=False)
+    [(_a, patch)] = [p for p in rec.patches() if p[1] and "tools" in p[1]]
+    args = patch["tools"]["media"]["models"][0]["args"]
+    assert args[args.index("--language") + 1] == "es", "never `auto` over a live value"
+
+
+def test_with_no_live_value_and_no_answer_the_apply_still_falls_back_to_auto(bot):
+    cfg, _ws, rec = bot
+    s = _state("agy", language="")
+    s.openclaw.voice_language = ""
+    openclaw._configure_voice(s, json.loads(cfg.read_text()), cfg, "/kit", [], dry_run=False)
+    [(_a, patch)] = [p for p in rec.patches() if p[1] and "tools" in p[1]]
+    args = patch["tools"]["media"]["models"][0]["args"]
+    assert args[args.index("--language") + 1] == "auto"
+
+
+def test_openclaw_prompt_hands_the_live_media_to_the_voice_question(monkeypatch, tmp_path):
+    cfg = tmp_path / "openclaw.json"
+    cfg.write_text(json.dumps({"tools": {"media": LIVE_ES}}), encoding="utf-8")
+    monkeypatch.setattr(openclaw, "config_path", lambda: cfg)
+    monkeypatch.setattr(openclaw, "_prompt_engine", lambda s, **_k: None)
+    monkeypatch.setattr(openclaw, "_prompt_stale_check", lambda s: None)
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=False, **_k: False)
+    _clear_locale(monkeypatch, LANG="en_US.UTF-8")
+    asked = _answers(monkeypatch, "agy", "es")
+    openclaw.prompt(state.SetupState())
+    assert asked[1][2] == "es"

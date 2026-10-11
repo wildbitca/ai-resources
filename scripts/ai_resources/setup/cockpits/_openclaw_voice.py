@@ -127,12 +127,32 @@ def locale_language() -> str:
     return ""
 
 
-def default_language(s: state.SetupState) -> str:
-    """The saved answer, else the system locale's language, else Spanish."""
-    return s.openclaw.voice_language or locale_language() or "es"
+def current_language(media: Any) -> str | None:
+    """The `--language <x>` of the first audio CLI model in a live `tools.media` value, or None.
+
+    The live value is the operator's: the question must start from it, or an unattended run (or a
+    saved answer that went stale) overwrites it with a guess (D2, 2026-10-10)."""
+    models = media.get("models") if isinstance(media, dict) else None
+    for entry in models if isinstance(models, list) else []:
+        if not (isinstance(entry, dict) and entry.get("type") == "cli"
+                and "audio" in (entry.get("capabilities") or [])):
+            continue
+        args = [a for a in (entry.get("args") or []) if isinstance(a, str)]
+        for i, arg in enumerate(args):
+            if arg == "--language" and i + 1 < len(args) and args[i + 1]:
+                return args[i + 1]
+            if arg.startswith("--language=") and arg.partition("=")[2]:
+                return arg.partition("=")[2]
+        return None
+    return None
 
 
-def prompt(s: state.SetupState) -> None:
+def default_language(s: state.SetupState, current: str | None = None) -> str:
+    """The live value (`current`), else the saved answer, else the system locale's language, else Spanish."""
+    return current or s.openclaw.voice_language or locale_language() or "es"
+
+
+def prompt(s: state.SetupState, current_media: Any = None) -> None:
     mode = ui.select(
         "Voice notes: how should OpenClaw transcribe them?",
         [ui.Choice(label, value=mid) for mid, label in MODES.items()],
@@ -152,7 +172,8 @@ def prompt(s: state.SetupState) -> None:
                 "every note will fall back to local whisper.cpp until one is added.")
     if mode not in ("agy", "cloud", "local"):
         return
-    default = default_language(s)
+    live = current_language(current_media)
+    default = live or default_language(s)
     codes = {default: LANGUAGES.get(default, default), **LANGUAGES}
     choices = [ui.Choice(f"{code} — {name}", value=code) for code, name in codes.items() if code != "auto"]
     s.openclaw.voice_language = ui.select(
@@ -160,6 +181,8 @@ def prompt(s: state.SetupState) -> None:
         [*choices, ui.Choice(AUTO_LABEL, value="auto")],
         default=default,
     )
+    if live and s.openclaw.voice_language == live:
+        ui.info(f"kept your value: voice language {live}")
     if mode == "local":
         s.openclaw.voice_correction = ui.select(
             "Correct local transcripts with an LLM? It fixes misheard technical terms and "

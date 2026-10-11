@@ -603,7 +603,11 @@ def prompt(s: state.SetupState, *, dry_run: bool = False) -> None:
     _prompt_engine(s, dry_run=dry_run)
     if s.openclaw.engine == "claude-code":
         mcp.prompt(s, _get(read_config(config_path()), "mcp", "servers") or {})
-    voice.prompt(s)
+    media = _get(read_config(config_path()), "tools", "media")
+    if media:      # the question starts from the live value (D2); with none live it is the old question
+        voice.prompt(s, current_media=media)
+    else:
+        voice.prompt(s)
     host_section.prompt(s, read_config(config_path()))
     _prompt_stale_check(s)
 
@@ -1343,7 +1347,7 @@ def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
     current = _get(doc, "tools", "media")
     media = voice.build_media(mode, voice.interpreter(ak_path),
                               str(Path(ak_path) / VOICE_SCRIPT),
-                              s.openclaw.voice_language or "auto", current,
+                              s.openclaw.voice_language or voice.current_language(current) or "auto", current,
                               s.openclaw.voice_correction or "llm")
     ok, out = _apply_hot({"tools": {"media": media}}, dry_run=dry_run)
     if not ok:

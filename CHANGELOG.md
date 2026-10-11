@@ -20,6 +20,9 @@ Notes for the next patch release. Nothing here is released; the version label is
 - Setup records `kind` and `openclaw_version` per change; the watch routes by the recorded kind and never
   re-classifies in a degraded environment. A key whose hot reload was applied and answered afterwards is kept.
   A rejected drained-window dry run (exit 7) never queues a restore entry.
+- **Voice language no longer reverts to `auto` (D2).** The voice question starts from the live
+  `tools.media` `--language` value (it wins over a saved answer and over the locale, and prints "kept your
+  value"), and a run with no saved answer keeps the live value instead of writing `auto` over it.
 - `ai-resources openclaw apply-pending` no longer applies leftover 2.1.0 `source=watch` restores; `verify` warns
   they are likely false positives and `apply-pending --discard-watch-restores` lists them (dry run) and drops
   them with `--yes`.
