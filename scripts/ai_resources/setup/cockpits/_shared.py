@@ -620,7 +620,10 @@ def dedupe_long_running(path: Path, *, apply: bool, now: "str | None" = None) ->
         return {"status": "would-remove", "diff": diff, "backup": ""}
     stamp = now or _time.strftime("%Y%m%dT%H%M%SZ", _time.gmtime())
     backup = path.with_name(f"{path.name}.bak-{stamp}")
-    backup.write_text(raw, encoding="utf-8")
+    # O_EXCL|O_NOFOLLOW: a symlink (or anything else) planted at the backup name is never written through.
+    fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(raw)
     path.write_text(new, encoding="utf-8")
     return {"status": "removed", "diff": diff, "backup": str(backup)}
 

@@ -50,6 +50,14 @@ Notes for the next patch release. Nothing here is released; the version label is
   checked against their shapes (and anything starting with `-` is refused) in the plan and in the flag parsing,
   and `kit-host.env` no longer accepts a value with a space: the file is sourced by bash, so `KEY=a /path/cmd`
   would have run `/path/cmd`.
+- `dedupe-agents-md` creates its backup with `O_EXCL|O_NOFOLLOW` (mode 0600): a symlink planted at the backup name
+  is never written through, and the run reports "nothing written". A file that changed between the check and the
+  write is reported as "file changed, nothing written" instead of "removed".
+- The off-box uploader, with a named gcloud configuration, removes every `CLOUDSDK_*` variable except
+  `CLOUDSDK_ACTIVE_CONFIG_NAME` (and `CLOUDSDK_CONFIG`, `CLOUDSDK_PYTHON*`, which are not identity) plus the two
+  `GOOGLE_*` credential variables.
+- Teardown keeps the `host_offbox_config_created` record when the gcloud configuration could not be removed
+  (changed or active), so a later teardown can retry.
 
 ## [2.1.0] — 2026-10-10 — a resource-safe gateway: prevention first, a bounded graceful restart as the valve
 

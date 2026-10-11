@@ -1162,6 +1162,21 @@ def test_a_named_configuration_removes_the_three_credential_variables_for_gcloud
     assert "config=openclaw-backup" in r.stdout
 
 
+def test_a_named_configuration_removes_every_cloudsdk_variable_but_the_configuration_name(host):
+    _fake_gcloud(host)
+    seen = host.bin / "gcloud.env"
+    script = host.bin / "gcloud"
+    script.write_text(script.read_text(encoding="utf-8").replace(
+        "case ", f'env | grep -E "^(CLOUDSDK_|GOOGLE_)" | sort >> "{seen}"\ncase ', 1), encoding="utf-8")
+    _uploader_env(host, OPENCLAW_OFFBOX_GCLOUD_CONFIG="openclaw-backup")
+    r = _run_uploader(host, **HIJACK, CLOUDSDK_CORE_PROJECT="other-proj", CLOUDSDK_AUTH_ACCESS_TOKEN_FILE="/agent/t",
+                      CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT="x@p.iam.gserviceaccount.com",
+                      CLOUDSDK_CORE_ACCOUNT="agent@example.org")
+    assert r.returncode == 0, r.stderr
+    names = {ln.split("=", 1)[0] for ln in seen.read_text(encoding="utf-8").splitlines()}
+    assert names == {"CLOUDSDK_ACTIVE_CONFIG_NAME"}, names
+
+
 def test_the_impersonation_knob_adds_the_flag_to_every_call(host):
     log = _fake_gcloud(host)
     _uploader_env(host, OPENCLAW_OFFBOX_IMPERSONATE_SA="k3s-backup@proj.iam.gserviceaccount.com")

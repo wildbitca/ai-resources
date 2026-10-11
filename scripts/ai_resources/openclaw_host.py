@@ -4066,7 +4066,16 @@ def cmd_dedupe_agents_md(args: argparse.Namespace) -> int:
         print("nothing changed (--apply needs an interactive confirmation)")
         return 1
     for path in pending:
-        res = _shared.dedupe_long_running(path, apply=True)
+        try:
+            res = _shared.dedupe_long_running(path, apply=True)
+        except OSError as e:
+            print(f"{path}: could not write the backup ({e}); nothing written")
+            rc = 1
+            continue
+        if res["status"] != "removed":
+            print(f"{path}: file changed, nothing written")
+            rc = 1
+            continue
         print(f"{path}: removed; backup {res['backup']}")
     return rc
 

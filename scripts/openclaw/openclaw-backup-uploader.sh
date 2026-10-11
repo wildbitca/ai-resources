@@ -46,15 +46,24 @@ GSA="${OPENCLAW_OFFBOX_IMPERSONATE_SA:-}"
 STATE_FILE="${OPENCLAW_OFFBOX_STATE:-$HOME/.openclaw/state/offbox-last.json}"
 
 # gc <gcloud args...>: gcloud under the identity this script is configured for. With a named
-# configuration the three variables that would hijack it are removed from gcloud's environment.
+# configuration every CLOUDSDK_* property variable (project, account, token file, impersonation, ...)
+# and the two GOOGLE_* credential variables are removed from gcloud's environment, so the configuration is
+# the only thing that decides the identity. CLOUDSDK_CONFIG (where the configurations live) and
+# CLOUDSDK_PYTHON* (how gcloud itself starts) are not identity and are kept.
 gc() {
-  local args=("$@")
+  local args=("$@") v
+  local -a unset_args=(-u GOOGLE_APPLICATION_CREDENTIALS -u GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES)
   if [ -n "$GSA" ]; then
     args+=("--impersonate-service-account=$GSA")
   fi
   if [ -n "$GCFG" ]; then
-    env -u CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE -u GOOGLE_APPLICATION_CREDENTIALS \
-      -u GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES CLOUDSDK_ACTIVE_CONFIG_NAME="$GCFG" gcloud "${args[@]}"
+    while IFS= read -r v; do
+      case "$v" in
+        CLOUDSDK_ACTIVE_CONFIG_NAME|CLOUDSDK_CONFIG|CLOUDSDK_PYTHON|CLOUDSDK_PYTHON_SITEPACKAGES) ;;
+        CLOUDSDK_*) unset_args+=(-u "$v") ;;
+      esac
+    done < <(compgen -e)
+    env "${unset_args[@]}" CLOUDSDK_ACTIVE_CONFIG_NAME="$GCFG" gcloud "${args[@]}"
   else
     gcloud "${args[@]}"
   fi

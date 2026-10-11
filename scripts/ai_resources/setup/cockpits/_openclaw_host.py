@@ -996,8 +996,8 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             o.host_offbox_config_created = {}
             host._forget_offbox_knobs(o, record)
         else:
+            # Keep the record: a later teardown can retry, and the knobs stay tied to it.
             ui.warn(f"The gcloud configuration {record.get('name')!r} was left as it is.")
-            o.host_offbox_config_created = {}
 
     if o.bindings_applied:
         ok = _restore_bindings(o, doc or {}, apply_patch) and ok

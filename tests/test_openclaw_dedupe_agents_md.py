@@ -110,3 +110,56 @@ def test_the_verb_is_registered_and_verify_names_it():
     ns = root.parse_args(["openclaw", "dedupe-agents-md", "--apply", "x.md"])
     assert ns.func is host.cmd_dedupe_agents_md and ns.apply is True and ns.paths == ["x.md"]
     assert "dedupe-agents-md" in (REPO / "scripts/ai_resources/setup/cockpits/openclaw.py").read_text(encoding="utf-8")
+
+
+def test_a_symlink_planted_at_the_backup_name_is_not_followed(tmp_path):
+    p = _file(tmp_path)
+    before = p.read_bytes()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious", encoding="utf-8")
+    (tmp_path / "AGENTS.md.bak-20260101T000000Z").symlink_to(victim)
+    with pytest.raises(OSError):
+        _shared.dedupe_long_running(p, apply=True, now="20260101T000000Z")
+    assert victim.read_text(encoding="utf-8") == "precious"
+    assert p.read_bytes() == before, "the file is not rewritten when the backup could not be made"
+
+
+def test_the_verb_fails_safely_when_the_backup_cannot_be_created(tmp_path, monkeypatch, capsys):
+    p = _file(tmp_path)
+    before = p.read_bytes()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious", encoding="utf-8")
+    real = _shared.dedupe_long_running
+
+    def planted(path, *, apply, now=None):
+        if apply:
+            (tmp_path / "AGENTS.md.bak-20260101T000000Z").symlink_to(victim)
+            now = "20260101T000000Z"
+        return real(path, apply=apply, now=now)
+
+    monkeypatch.setattr(_shared, "dedupe_long_running", planted)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    assert host.cmd_dedupe_agents_md(_args(p, apply=True)) == 1
+    assert victim.read_text(encoding="utf-8") == "precious" and p.read_bytes() == before
+    assert "nothing written" in capsys.readouterr().out
+
+
+def test_a_file_that_changed_between_the_two_checks_is_reported_not_claimed_removed(tmp_path, monkeypatch, capsys):
+    p = _file(tmp_path)
+    edited = p.read_text(encoding="utf-8").replace("about 2 minutes", "about 10 minutes")
+    assert edited != p.read_text(encoding="utf-8")
+    real = _shared.dedupe_long_running
+
+    def racing(path, *, apply, now=None):
+        if apply:
+            path.write_text(edited, encoding="utf-8")
+        return real(path, apply=apply, now=now)
+
+    monkeypatch.setattr(_shared, "dedupe_long_running", racing)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    assert host.cmd_dedupe_agents_md(_args(p, apply=True)) == 1
+    out = capsys.readouterr().out
+    assert "file changed, nothing written" in out and "removed; backup" not in out
+    assert p.read_text(encoding="utf-8") == edited and list(tmp_path.glob("*.bak-*")) == []
