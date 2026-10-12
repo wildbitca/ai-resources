@@ -169,3 +169,22 @@ def test_the_changelog_says_a_refused_graceful_restart_keeps_its_lock_file():
     assert "a refused `graceful-restart` create no lock file" not in flat
     assert "health-restart.lock" in flat and "keeps it, by design" in flat
     assert "graceful-restart --dry-run" in flat
+
+
+def test_t46_and_adr_0004_list_the_residual_classes_and_name_systemd_and_polkit_as_the_authority():
+    """2.2b 7a/8e/8f: the residual list is written down, the closed classes are not on it, and the false positive
+    that stays is said to stay."""
+    pit = (REPO / "docs" / "openclaw" / "pitfalls.md").read_text(encoding="utf-8")
+    m = re.search(r"^## T46 — .*?(?=^## |^# SECTION|^---$)", pit, re.M | re.S)
+    t46 = " ".join(m.group(0).split())
+    adr = " ".join(next((REPO / "docs" / "decisions").glob("0004*.md")).read_text(encoding="utf-8").split())
+    for text in (t46, adr):
+        for needle in ("xargs", "find -exec", "parallel", "alias", "zsh-only", "${V:-", "v=restart; openclaw gateway $v",
+                       "polkit", "accident"):
+            assert needle in text, needle
+    reads = t46.split("What it does not read")[0]
+    residual = t46.split("What it does not read")[1].split("A known false positive")[0]
+    for closed in ("bash <<EOF", "cat <<EOF | sh", "bash <<< '...'"):
+        assert closed in reads and closed not in residual, closed
+    assert "V='...'; eval" in reads and "V='...'; eval" not in residual
+    assert "A known false positive that stays" in t46 and "kept on purpose" in t46

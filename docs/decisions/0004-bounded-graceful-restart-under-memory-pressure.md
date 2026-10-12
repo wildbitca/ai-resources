@@ -102,11 +102,23 @@ choice stays. `ai-resources openclaw doctor` now refuses a busy gateway (exit 6)
   the shell. The fail-closed rule (a stop or restart verb, or an expansion where the verb goes, next to the
   gateway words) applies only inside the `env -S` fallback, where the string is otherwise unparseable.
 - 2.2 amendment, residual gaps of the guard (it is an accident guard, not a security boundary: pitfall T46). It
-  reads command substitutions, `env -S` split rules, `$'...'` strings, redirections and nesting to eight wrappers.
-  It still cannot see: a verb built at run time, `eval` of file contents, an alias defined in the same call, `xargs`
-  and similar wrappers that take the command from their arguments, a script run after being written, or a session
-  that does not use Claude Code's Bash tool (T45, an operator decision). Input above 256 KB is denied only when it
-  names the gateway next to a stop/restart verb; the check reads nothing more.
+  reads command substitutions, `env -S` split rules, `$'...'` strings, redirections and nesting with a cost bound.
+  It still cannot see: a verb built at run time (`openclaw gateway $VERB`, `v=restart; openclaw gateway $v`), `eval`
+  of file contents, a script run after being written, or a session that does not use Claude Code's Bash tool (T45,
+  an operator decision). Input above 256 KB is denied only when it names the gateway next to a stop/restart verb;
+  the check reads nothing more.
+- 2.2b amendment. The guard now also reads text fed to a shell (a heredoc, here-string or `echo`/`printf` pipe whose
+  consumer is `sh`, `bash`, `zsh`, `dash`, `ksh`, `eval` or `source /dev/stdin`), the literal command of `xargs`,
+  `find -exec` and `parallel`, an `alias` value, `trap 'CMD' SIG`, `V='...'; eval "$V"`, `builtin`, `coproc`,
+  `$"..."`, a `case` pattern's `)` inside `$(...)`, and `openclaw` global options before `doctor`. The residual
+  classes after this pass are: a verb assembled at run time, including `${V:-verb}` in the verb slot on the main
+  path; output produced at run time and then run (`eval "$(cat f)"`, `. <(echo ...)`, `cat f | sh`); bash 5.3
+  `${ cmd; }` and array-subscript evaluation; aliases and functions from an earlier call or an rc file; zsh-only
+  forms; `xargs`/`parallel` fed commands as data, `find -exec` with a name built from `{}`, `watch`, `su -c`,
+  `at`, `systemd-run` and interpreters that run a string (`python -c`, `node -e`, `perl -e`, `awk`). The guard
+  stays advisory: it keeps an agent from stopping or restarting the gateway BY ACCIDENT. The authority to stop or
+  restart the unit at all belongs at systemd and polkit, where the stop is executed, not in a filter on text.
+  `echo "$(date)\nopenclaw gateway restart\n"` stays denied by design (pitfall T46).
 
 ## Alternatives Considered
 

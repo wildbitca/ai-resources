@@ -1513,15 +1513,44 @@ the question is whether that is a bug.
 **Cause.** The hook reads the command text Claude Code is about to run and denies the guarded shapes (a stop,
 a restart, `doctor --fix`) where a shell would run them. It is meant to stop an agent from doing it by
 accident, with a message that names the sanctioned verb. It is not a security boundary, and it cannot be: a
-command built at run time (`$VERB`, `eval "$(cat file)"`, a script written and then run), an alias defined in
-the same call, a wrapper it does not know (`xargs`, `parallel`, `find -exec`), a session that does not go through
-Claude Code's Bash tool (T45) or one the operator drives from a terminal are all outside what text can decide. Each
-new reading rule also costs precision, and a wrong deny aborts the whole tool call (T24).
+command built at run time, text it never sees, a session that does not go through Claude Code's Bash tool (T45)
+or one the operator drives from a terminal are all outside what text can decide. Each new reading rule also costs
+precision, and a wrong deny aborts the whole tool call (T24). **Who may stop or restart the unit is decided where
+the stop is executed, at systemd and polkit, not by a filter on command text**: if an agent must never be able to
+do it, withhold the authority there (and keep the sanctioned verbs, which run outside the gateway, working).
 
-**What it does now (2.2).** It reads command substitutions (`$(...)`, backticks, `<(...)`, also inside double quotes
-and in an unquoted heredoc body), `env -S` by env's own split rules, `$'...'` strings, redirections and nesting up
-to eight wrappers, with a cost bound; past that, and for text it cannot tokenise, it denies only when a stop or
-restart verb sits after the gateway words. The residual gaps above are recorded in ADR-0004.
+**What it reads (2.2b).** Command substitutions (`$(...)`, backticks, `<(...)`, also inside double quotes and in an
+unquoted heredoc body, with a `case` pattern's `)` not ending them), `env -S` by env's own split rules, `$'...'` and
+`$"..."` strings, redirections, `builtin`, `coproc`, and nesting to forty wrappers with a cost bound. Text fed to a
+shell is command text: a heredoc or here-string whose consumer is `sh`/`bash`/`zsh`/`dash`/`ksh`/`eval`/`source`,
+and what `echo` or `printf` writes into one (`bash <<EOF`, `cat <<EOF | sh`, `bash <<< '...'`, `echo '...' | sh`).
+The commands that other commands run are read when they are literal: `xargs CMD`, `find -exec CMD`, `parallel
+CMD`, the value of an `alias`, `trap 'CMD' SIG`, and a literal assigned earlier in the same text and then evaluated
+(`V='...'; eval "$V"`). For text it cannot tokenise, or nests past the limit, it denies only when a stop or restart
+verb sits within a few words of the gateway words.
+
+**What it does not read (the residual classes).** These are known, recorded in ADR-0004, and not to be chased
+one by one:
+
+- a verb built at run time: `openclaw gateway $VERB`, `v=restart; openclaw gateway $v`, and an expansion such as
+  `${V:-stop}` in the verb slot on the main path;
+- text produced at run time and then run: `eval "$(cat f)"`, `eval "$(echo ...)"`, `. <(echo '...')`, `source f`, a
+  script written and then run, `cat f | sh`, `curl ... | sh`;
+- bash 5.3 `${ cmd; }` substitutions and an array subscript or arithmetic expression that runs a substitution
+  (`[[ -v 'a[$(cmd)]' ]]`);
+- aliases and functions defined in an earlier call or an rc file, and zsh-only forms (`=cmd`, glob qualifiers,
+  `${(e)...}`, anonymous functions);
+- wrappers that take the command from data: `xargs` or `parallel` fed commands on stdin or after `:::`,
+  `find -exec` with a name built from `{}`, `watch`, `su -c`, `at`, `systemd-run`, `script -c`, and interpreters
+  (`python -c`, `node -e`, `perl -e`, `awk 'BEGIN{system(...)}'`);
+- a command inside a string past the 256 KB input cap, which is denied only when it names the gateway next to a
+  stop/restart verb.
+
+**A known false positive that stays.** A multi-line double-quoted string that holds a command substitution and,
+on a line of its own, the guarded words (`echo "$(date)`, a newline, `openclaw gateway restart`, a newline, `"`) is
+denied although it only prints them: the line scanner cannot tell where such a string ends, so a joined group that
+holds a substitution is also read line by line and denied when either reading matches. A wrong allow there would
+hide a command; the wrong deny costs one rewritten call. It is kept on purpose.
 
 **What to do instead of widening it.** Use the sanctioned verbs (`ai-resources openclaw graceful-restart`,
 `ai-resources openclaw doctor`) and the `watchdog.off` window, and decide the policy of a native session (T45).
