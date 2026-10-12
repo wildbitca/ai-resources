@@ -108,3 +108,78 @@ def test_printed_only_process_substitutions_stay_allowed(tmp_path, command):
 def test_the_strict_view_looks_through_the_redirect_to_its_owner(guard):
     assert guard._cheap_view('sh < <(echo "gateway restart")', strict=True) == "restart"
     assert guard._cheap_view('cat < <(echo "gateway restart")', strict=True) is None
+
+
+# --- 2. the other-product allow list --------------------------------------------------------------------------------
+
+ASSEMBLED = ["${OC:-openclaw}", "/usr/local/bin/open*", "${o}${c}"]
+OTHER_PRODUCT_DRESS = [
+    "sudo -u docker {oc} gateway {v}",
+    "sudo -u nginx {oc} gateway {v}",
+    "sudo -u service {oc} gateway {v}",
+    "doas -u docker {oc} gateway {v}",
+    "sudo --user=docker {oc} gateway {v}",
+    "env -C /opt/docker {oc} gateway {v}",
+    "env -u docker {oc} gateway {v}",
+    "runuser -u docker -- {oc} gateway {v}",
+    "timeout 5 {oc} gateway {v} docker",
+    "ssh -p 22 host docker {oc} gateway {v}",
+    "docker ps $({oc} gateway {v})",
+    "docker ps `{oc} gateway {v}`",
+    "docker ps \"$({oc} gateway {v})\"",
+    "docker ps <({oc} gateway {v})",
+    "nginx -t $({oc} gateway {v})",
+    KC + " get pods $({oc} gateway {v})",
+    "timeout 5 docker ps $({oc} gateway {v})",
+]
+
+
+def _fed(command):
+    return f"bash <<EOF\n{command}\nEOF"
+
+
+@pytest.mark.parametrize("verb", ["restart", "stop"])
+@pytest.mark.parametrize("assembled", ASSEMBLED)
+@pytest.mark.parametrize("form", OTHER_PRODUCT_DRESS)
+def test_another_products_name_does_not_open_an_assembled_openclaw(tmp_path, form, assembled, verb):
+    assert _hook_rc(tmp_path, _fed(form.format(oc=assembled, v=verb))) == 2
+
+
+OTHER_PRODUCT_PLAIN = [
+    "docker restart gateway",
+    KC + " rollout restart deploy/gateway",
+    "systemctl restart api-gateway",
+    "docker ps",
+    "ssh host docker restart gateway",
+    "(docker restart gateway)",
+    "sudo -u docker docker restart gateway",
+    "env -u docker docker restart gateway",
+    "docker exec c1 ${OC:-x} gateway restart",
+    "timeout 5 docker restart gateway",
+]
+
+
+@pytest.mark.parametrize("command", OTHER_PRODUCT_PLAIN)
+def test_another_products_own_gateway_stays_allowed(tmp_path, command):
+    assert _hook_rc(tmp_path, _fed(command)) == 0
+
+
+@pytest.mark.parametrize("command", [
+    "${OC:-openclaw} gateway --password status restart",
+    "${OC:-openclaw} gateway --port restart stop",
+    "${OC:-openclaw} gateway --token status stop",
+])
+def test_the_value_of_a_gateway_option_does_not_answer_the_verb(tmp_path, command):
+    assert _hook_rc(tmp_path, _fed(command)) == 2
+
+
+def test_a_subcommand_still_answers_the_verb(guard):
+    assert guard._cheap_view("${OC:-openclaw} gateway status --note restart", strict=True) is None
+    assert guard._cheap_view("${OC:-openclaw} gateway --password x status --note restart", strict=True) is None
+
+
+def test_the_option_value_is_not_the_command_word(guard):
+    # the unit of the property: `-u docker` is a user name; case folding of the view must not turn `-C` into a flag
+    assert guard._another_product("sudo -u docker ${oc} gateway restart", 24) is False
+    assert guard._another_product("env -c /opt/docker ${oc} gateway restart", 24) is False
+    assert guard._another_product("docker restart gateway", 15) is True

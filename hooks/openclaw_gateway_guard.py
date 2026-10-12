@@ -1188,29 +1188,77 @@ _LINE_LOOKAHEAD = 4096                   # characters of a line read after the w
 
 
 def _statement_head(low: str, pos: int) -> str:
-    """The text of the statement that holds `pos`, from its start to `pos` (at most 400 characters back)."""
+    """The text of the statement that holds `pos`, from its start to `pos` (at most 400 characters back). A
+    substitution that is still open at `pos` (`$(`, `<(`, `>(`, an odd backtick) is a statement of its own: its
+    head starts after its opener, so the command it stands in an argument of does not own it (kit 2.2f, 2)."""
     lo = max(0, pos - 400)
     start = max(max(low.rfind(c, lo, pos) for c in ";&|\n"), lo - 1) + 1
+    for opener in ("$(", "<(", ">("):
+        k = pos
+        for _ in range(4):
+            k = low.rfind(opener, lo, k)
+            if k < 0:
+                break
+            inner = low[k + 2:pos]
+            if inner.count(")") <= inner.count("("):
+                start = max(start, k + 2)
+                break
+    tick = low.rfind("`", lo, pos)
+    if tick >= 0 and low.count("`", lo, pos) % 2 == 1:
+        start = max(start, tick + 1)
     return low[start:pos]
+
+
+# The word views read lower-cased text, so `env -C dir` reads as `-c dir`: the short options of the wrappers with
+# both cases of every letter, and a letter that is a flag in one case is read as taking a value (toward deny).
+_FOLDED_FLAGS = {name: (frozenset(c.lower() for c in short) | short, long) for name, (short, long)
+                 in _WRAPPER_FLAGS.items()}
+
+
+def _head_command(words: list[str]) -> tuple[str, int]:
+    """Where the command word of a statement head is: ("other", k) for another product's command, ("assembled",
+    k) for a word that is built at run time (`${OC:-x}`, `$o$c`, `open*`), ("plain", k) for any other word,
+    ("none", n) when there is none. Wrappers are looked through WITH their options and the options' values: the
+    value of `sudo -u docker` or `env -u docker` is a user name, not the command (kit 2.2f, 2)."""
+    wrapper = ""
+    k = 0
+    while k < len(words):
+        w = words[k].lstrip("({")
+        base = os.path.basename(w)
+        if w in ("-o", "+o", "-O", "+O"):
+            k += 2                           # a shell option and its value
+        elif w.startswith(("-", "+")):
+            short, long = _FOLDED_FLAGS.get(wrapper, _NO_VALUES)
+            k += _option_width(w, short, long) if w.startswith("-") else 1
+        elif not w or w.startswith(("<", "%")) or _ASSIGNMENT.match(w) or w in _KEYWORDS:
+            k += 1
+        elif base in _TRANSPARENT_WORDS or base in _PRINTING_COMMANDS:
+            wrapper = base                   # the printed text of `echo "docker ..." | sh` is read as the command
+            k += 1
+        elif base in _OTHER_PRODUCT_COMMANDS:
+            return "other", k
+        elif _ASSEMBLY_CHARS.intersection(w):
+            return "assembled", k
+        else:
+            return "plain", k
+    return "none", len(words)
 
 
 def _another_product(low: str, pos: int) -> bool:
     """True when the statement that holds `pos` is run by another product's command."""
     words = _statement_head(low, pos).split()
-    k = 0
-    while k < len(words):
-        w = words[k].lstrip("($`{")
-        if w in ("-o", "+o", "-O", "+O"):
-            k += 2                           # a shell option and its value
-        elif (not w or w.startswith(("-", "+", "<", "%")) or _ASSIGNMENT.match(w)
-              or os.path.basename(w) in _TRANSPARENT_WORDS or os.path.basename(w) in _PRINTING_COMMANDS):
-            k += 1                           # the printed text of `echo "docker ..." | sh` is read as the command
-        elif os.path.basename(w) in _OTHER_PRODUCT_COMMANDS:
+    kind, k = _head_command(words)
+    if kind == "other":
+        return True
+    if kind != "plain":
+        return False                         # an assembled command word: what follows is its options
+    # a plain wrapper (`ssh host docker ...`): another product further on. An option in between could carry the
+    # product's name as ITS value (`runuser -u docker -- ${OC} ...`), and an assembly could be the command: deny.
+    for x in words[k + 1:k + 6]:
+        if x.startswith(("-", "+")) or _ASSEMBLY_CHARS.intersection(x.lstrip("({")):
+            return False
+        if os.path.basename(x) in _OTHER_PRODUCT_COMMANDS:
             return True
-        elif _ASSEMBLY_CHARS.intersection(w):
-            return False                     # an assembled command word (`${o}claw`): what follows is its options
-        else:                                # a plain wrapper (`ssh host docker ...`): another product further on
-            return any(os.path.basename(x.lstrip("($`{")) in _OTHER_PRODUCT_COMMANDS for x in words[k + 1:k + 6])
     return False
 
 
@@ -1342,7 +1390,14 @@ def _gateway_answered(low: str, gw: int, verb: int, raw: str, plain: dict[str, b
     between = low[gw + 7:verb]
     if _STATEMENT_END.search(between) is not None or "(" in between:
         return False
-    for w in between.split():
+    words = between.split()
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w.startswith("-"):
+            i += _option_width(w, frozenset(), _GATEWAY_LONG_VALUE)       # `--password status`: a value, not a verb
+            continue
+        i += 1
         if w in _NOT_A_VERB:
             if w not in plain:               # one scan of the text per word and reading, not one per pair
                 plain[w] = re.search(r"(?<![\w$'\"\\.-])" + re.escape(w) + r"(?![\w'\"\\-])", raw) is not None
