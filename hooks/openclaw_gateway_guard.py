@@ -1368,31 +1368,36 @@ def _verb_kind(verb: str, found: str | None) -> str:
 # The deadline FAILS CLOSED (kit 2.2d, 6a). When the clock runs out the precise reading never finished, and the
 # cheap view's 160-character window can miss a guarded command that sits further apart than that (an option value
 # of 300 characters, a continuation line). So once the deadline has fired, a text that names OpenClaw as a command
-# word, or the unit `openclaw-gateway`, together with any word that could be the verb or the subject
-# (`gateway`, `restart`, `stop`, `kill`, `doctor`, `--fix`) anywhere in it is denied. It reads words, once, and is
-# wide on purpose: a benign text that mentions `openclaw` and `stop` is denied when the deadline fires, and the
-# precise reading is fast enough that realistic input never reaches this.
-_OC_COMMAND_WORD = re.compile(r"(?<![a-z0-9_.-])openclaw(?:\.mjs)?(?![a-z0-9_/-])(?!\.[a-z0-9])")
+# word, or the unit `openclaw-gateway` (a glob or brace form of it included, kit 2.2e), together with any word that
+# could be the verb or the subject (`gateway`, `restart`, `stop`, `kill`, `doctor`, `--fix`) anywhere in it is
+# denied. It reads words, once, over the same normalised text as the cheap view (continuations undone, ANSI-C
+# strings decoded, quotes removed), and is wide on purpose: a benign text that mentions `openclaw` and `stop` is
+# denied when the deadline fires, and the precise reading is fast enough that realistic input never reaches this.
+_OC_COMMAND_WORD = re.compile(r"(?<![a-z0-9_.-])openclaw(?:\.mjs)?(?:(?=-[{*?\[])|(?![a-z0-9_/-])(?!\.[a-z0-9]))")
 _FAIL_CLOSED_WORD = re.compile(
     r"(?P<restart>(?<![a-z0-9])(?:try-restart|reload-or-restart|try-reload-or-restart|condrestart|restart)"
     r"(?![a-z0-9])|gateway)|(?P<stop>(?<![a-z0-9])(?:stop|kill)(?![a-z0-9]))|"
     r"(?P<doctor>(?<![a-z0-9])doctor(?![a-z0-9])|--fix(?![a-z0-9]))")
 
 
-def _fail_closed_view(text: str, need_verb: bool = False) -> str | None:
-    """"restart", "stop" or "doctor" when `text` names OpenClaw (a command word, or the unit) and any guarded
-    word, wherever they sit; None otherwise. Line continuations (a backslash before a newline) are undone first, so
-    a word split over two lines is whole again, then quotes and backslashes are removed as the cheap view does.
-    One pass; a text above the cap is read as its head and its tail."""
-    if len(text) > _CHEAP_CAP:
-        text = text[:_CHEAP_CAP // 2] + "\n" + text[-_CHEAP_CAP // 2:]
-    low = _CHEAP_QUOTES.sub("", text.lower().replace("\\\n", ""))
-    if "openclaw-gateway" not in low and not _OC_COMMAND_WORD.search(low):
+def _names_openclaw(low: str) -> bool:
+    """True when the normalised text names OpenClaw: a command word, the unit, or a glob/brace form of the unit."""
+    if "openclaw-gateway" in low or _OC_COMMAND_WORD.search(low):
+        return True
+    for n, m in enumerate(_UNIT_GLOB_RX.finditer(low)):
+        if n >= _UNIT_GLOB_CHECKS or _is_gateway_unit(m.group()):
+            return True
+    return False
+
+
+def _fail_closed_view(text: str) -> str | None:
+    """"restart", "stop" or "doctor" when `text` names OpenClaw (a command word, the unit, or a glob or brace form
+    of the unit) and any guarded word, wherever they sit; None otherwise. One pass over the normalised text
+    (`_normalise`); a text above the cap is read as its head and its tail."""
+    low = _normalise(text)
+    if not _names_openclaw(low):
         return None
-    # `need_verb`: the bare word `gateway` does not count (the budget fallback must not deny a padded
-    # `openclaw gateway status`); the deadline fallback keeps counting it.
-    kinds = {m.lastgroup for m in _FAIL_CLOSED_WORD.finditer(low)
-             if not (need_verb and m.group(0) == "gateway")}
+    kinds = {m.lastgroup for m in _FAIL_CLOSED_WORD.finditer(low)}
     for kind in ("restart", "stop", "doctor"):
         if kind in kinds:
             return kind
