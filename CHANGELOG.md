@@ -11,6 +11,8 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Fixed
 
+- **Reload table pin follows OpenClaw 2026.10.2.** The rule table read from the installed 2026.10.2 dist is
+  identical to the 2026.10.1 one (108 rules); only `PINNED_OPENCLAW_VERSION` and the fixture name and version moved.
 - **Gateway guard (A).** The gateway guard hook reads a command substitution (`$(...)`, backticks, `<(...)`, also inside double
   quotes, in `${...}` and in an unquoted heredoc body) as the command it runs, `env -S` strings by env's own split
   rules (a backslash-underscore separates, a backslash-c ends, `${VAR}` fails closed when the gateway words are
