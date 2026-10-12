@@ -385,6 +385,8 @@ def save(state: SetupState) -> None:
         return
     state.last_run = datetime.now(timezone.utc).isoformat()
     path = state_path()
+    # A state file that is a symlink (a dotfile manager) is replaced at its target, not turned into a plain file.
+    path = Path(os.path.realpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = _to_dict(state)
     if doc.get("selection") is None:

@@ -2091,3 +2091,21 @@ def test_a_foreign_env_key_alone_does_not_hold_the_record_open(sim, script):
     assert s.openclaw.host_env_previous == {} and s.openclaw.host_env_created is False
     after = sim.env_file.read_text(encoding="utf-8") if sim.env_file.exists() else ""
     assert "LD_PRELOAD" not in after
+
+
+# --- pass 6, L2: a symlinked setup-state.yaml is replaced at its target, not turned into a plain file -------------
+
+def test_state_save_writes_through_a_symlinked_state_file(monkeypatch, tmp_path):
+    import os
+    path = _xdg_state(monkeypatch, tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    target = tmp_path / "dotfiles" / "setup-state.yaml"
+    target.parent.mkdir()
+    target.write_text("{}\n", encoding="utf-8")
+    path.symlink_to(target)
+    s = state.SetupState()
+    s.openclaw.host_domain = "linked.example.org"
+    state.save(s)
+    assert path.is_symlink(), "the link is kept"
+    assert "linked.example.org" in target.read_text(encoding="utf-8")
+    assert oct(target.stat().st_mode & 0o777) == "0o600"
