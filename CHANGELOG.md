@@ -19,8 +19,9 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   there), `$'...'` strings, redirections (even inside a word), a brace in an argument and a `#` inside a word the
   way bash does, and follows nesting with a cost bound (eight levels in this pass, forty since 2.2b). A brace or glob in the verb slot, a unit
   glob and a case variant through the CLI are denied; `echo "<<EOF"` no longer starts a heredoc skip. Against
-  real-bash corpora the executed-but-allowed count fell from 1850 to 185 and no class is worse than 2.1.0 or
-  2.1.1 (numbers in the handoff). The 256 KB input cap is kept and tested at 1 MB.
+  real-bash corpora of that pass the executed-but-allowed count fell from 1850 to 185; that figure was measured on
+  those corpora only and is superseded: the final numbers, over 100728 recorded rows, are in the 2.2c and 2.2d
+  entries below. The 256 KB input cap is kept and tested at 1 MB.
 - **Locks and files (C).** `setup` and `apply-pending` run under the setup-state lock (a busy lock is one line);
   stale `.setup-state.yaml.*.tmp` files are removed at the next save; `kit-host.env` is written through a unique temp
   file that keeps the file mode; managed blocks in AGENTS.md-style files are written atomically through a symlink to
@@ -103,8 +104,10 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   (recorded stub-binary runs, 100728 rows of which 38390 executed a guarded command; 2.1.0 / 2.1.1 / now):
   executed-but-allowed 16328 / 11970 / **545**; executed and denied by 2.1.0 or 2.1.1 yet allowed now **0**;
   benign rows denied 288 / 17 / **74** of 13716 (10 of them on the realistic corpora: 5 of the 44 hard negatives, 3
-  of the 776 generated commands, 2 of the 764; each really feeds a shell or runs the verb); slowest verdict 1.0 s
-  with the deadline never firing; the measured cost classes run in under 1.1 s.
+  of the 776 generated commands, 2 of the 764; each really feeds a shell or runs the verb); slowest verdict 1.1 s
+  with the deadline never firing; the measured cost classes run in under 1.2 s. (Corrected in 2.2d: the second view
+  was wider than it says here, it read the bare word `gateway`, and the fallback was blind to a verb wrapped in
+  backticks past the work budget or the nesting limit; see the 2.2d entries.)
 - **Setup and restart paths (2.2c, section 3).** `status`/`verify` say that any process writing to the unit's journal
   can cause an egress refusal and to bypass a host only if it is recognised and the skipped proxy is understood
   (T44); `setup --dry-run` offers and runs no installer and `--dry-run --yes` says it installs nothing; setup's and
@@ -123,6 +126,28 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   graceful-restart lock loser prints the same line as `doctor`; a symlinked lock says "is a symlink"; and the busy
   note of the strict restart path says "cannot tell" instead of "treating the gateway as idle".
 
+- **Gateway guard (2.2d, section 1).** The word view the guard falls back to (past the nesting limit, past the
+  work budget, on text that does not tokenise) cuts words at a backtick, so `` `openclaw gateway restart` `` is read
+  after 2016 or more adjacent substitutions and at nesting depth 41 or more, where 2.2c allowed it. The second view
+  (text that feeds a shell through a heredoc, here-string or pipe) now needs the OpenClaw gateway words, `openclaw`
+  before `gateway` or the unit `openclaw-gateway`, instead of the bare word: `docker restart gateway` or `kubectl
+  rollout restart deploy/gateway` in a heredoc to a shell is allowed (140 such generated rows: 126 denied by 2.2c, 0
+  now; the realistic corpora went from 74 to 67 benign rows denied of 13716, with no executed command newly
+  allowed). The deadline fallback keeps the wide rule on purpose and says so: when the deadline fires, a benign
+  text that names a gateway and a verb is denied.
+- **Watch-result marker (2.2d, sections 2 and 6b).** `setup-state.watch-result.json` is written with a temp file
+  and `os.replace` over its own name and read only as a regular file of this user: a symlink planted there is
+  replaced or unlinked, never followed (the next save no longer deletes or overwrites the link's target). `status`
+  and `verify` report a marker only while the state's `config_watch` is the run it names and has no recorded result,
+  so a forged or stale file says nothing and never hides a recorded failure; only the save that records that run
+  clears it, not any save, and the text no longer says a later setup run clears it.
+- **Teardown and refusals (2.2d, section 3).** A symlinked `hand-units` directory keeps the record of what was
+  moved aside and makes the teardown unfinished (the kit's own unit stays installed), so a second teardown after the
+  link is repaired puts the originals back. A refusal that names a copy of an unreadable state file makes the copy
+  (once per distinct content, 0600) before it speaks; `load()` and `save()` agree that `[]`, `0`, `false`, `''` and
+  any non-mapping are corrupt, so an interactive setup asks before replacing every file `save()` refuses. `models
+  update` and `models rollback` take the maintenance window with one exclusive create and never remove a
+  `watchdog.off` they did not create. A CR or a TAB inside a journal `host=` token drops the host.
 ### Added
 
 - **Findings (F).** `status` and `verify` WARN when the egress proxy refused hosts with `TLS certificate unavailable`

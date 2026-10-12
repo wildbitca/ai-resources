@@ -1508,7 +1508,7 @@ unexpected restart, and the `source=` field of the gateway's restart line (`cli`
 reload).
 
 
-## T46 — The gateway guard is an accident guard, not a security boundary *(added 2026-10-12; documented in the unreleased 2.2 work)*
+## T46 — The gateway guard is an accident guard, not a security boundary *(added 2026-10-12; documented in the unreleased 2.2 work, numbers corrected in 2.2d)*
 
 **Symptom.** A review finds a command that restarts or stops the gateway and that the guard hook allowed, and
 the question is whether that is a bug.
@@ -1534,20 +1534,34 @@ CMD`, the value of an `alias`, `trap 'CMD' SIG`, and a literal assigned earlier 
 (`V='...'; eval "$V"`, also after `then`/`do`). For text it cannot tokenise, or nests past the limit, it denies only
 when a stop or restart verb sits within a few words of the gateway words.
 
-**What it does when it runs out of time (2.2c).** The hook's own timeout fails open, so the analysis runs under a
+**What it does when it runs out of time (2.2c, 2.2d).** The hook's own timeout fails open, so the analysis runs under a
 wall-clock deadline (4 s, never above 8 s) and a work budget. When the deadline fires, or the analysis fails with an
 internal error, a word view decides instead: it lower-cases the text, removes quotes and backslashes, and denies
-when `gateway` sits within 160 characters of `restart`, `stop`, `kill`, `try-restart` or `reload-or-restart`, or
-`doctor` within that distance of `--fix`. It parses nothing, so its cost is one pass. The same view is a second
-opinion on text that feeds a shell (a heredoc or here-string next to a shell word in command position, a pipe into
-a shell, `eval "$(cat)"`, `xargs`/`parallel` starting a shell): the parser misses some of those shapes, and the
-words catch them. That second opinion has a price: text that really goes to a shell and names the verb, even in a
-comment, is denied (`bash <<'EOF'`, a comment that says `openclaw gateway restart`, `EOF`). A shell given its own
-literal `-c` string, a heredoc to `cat`, and a commit message that mentions a shell in prose are not touched.
-Measured against real bash on the recorded corpora (100728 rows, 38390 executed a guarded command): executed but
-allowed 545 (2.1.0: 16328, 2.1.1: 11970), none of which an older guard denied; benign rows denied 74 of 13716
-(2.1.0: 288, 2.1.1: 17), all of which feed a shell or run the verb; the slowest verdict took 1.0 s. Precise parsing
-of arbitrary shell is not attempted, and these numbers are a measurement of the corpora, not a promise.
+when ANY word `gateway` sits within 160 characters of `restart`, `stop`, `kill`, `try-restart` or
+`reload-or-restart`, or `doctor` within that distance of `--fix`. It parses nothing, so its cost is one pass, and it
+fails toward the words on purpose: **a benign text that names a gateway and a verb (`docker restart gateway`) is
+denied when the deadline fires.** Realistic input does not reach it: the slowest verdict over the recorded corpora was 1.1 s.
+
+**The second view (text that feeds a shell).** The same word view is a second opinion on text that feeds a shell (a
+heredoc or here-string next to a shell word in command position, a pipe into a shell, `eval "$(cat)"`,
+`xargs`/`parallel` starting a shell): the parser misses some of those shapes, and the words catch them. Here it is
+NARROWER than the deadline fallback (2.2d): the gateway word counts only as the OpenClaw gateway, that is `openclaw`
+(a command word: not `.openclaw`, `openclaw.json`, a path component, or another unit such as
+`openclaw-gateway-x.service`) within 160 characters before `gateway`, or the unit `openclaw-gateway[.service]`
+itself, so `docker restart gateway`, `kubectl rollout restart deploy/gateway` and `systemctl restart api-gateway`
+in a heredoc to a shell are allowed (140 such generated rows: 126 denied by 2.2c, 0 now). The price that remains:
+text that really goes to a shell and names the OpenClaw verb, even in a comment, is denied (`bash <<'EOF'`, a comment
+that says `openclaw gateway restart`, `EOF`). A shell given its own literal `-c` string, a heredoc to `cat`, and a
+commit message that mentions a shell in prose are not touched.
+
+**Measured, at the final 2.2d tree.** Against real bash on the recorded corpora (100728 rows, 38390 executed a
+guarded command): executed but allowed 545 (2.1.0: 16328, 2.1.1: 11970), none of which an older guard denied (0 rows
+executed and denied by 2.1.0 or 2.1.1 and allowed now), and no corpus-by-class cell misses more executed commands
+than the better of the two older guards; benign rows denied 67 of 13716 (2.1.0: 288, 2.1.1: 17; 74 before the second
+view was narrowed). Ten of those 67 are on the realistic corpora (5 of the 44 hard negatives, 3 benign-extra, 2 of the
+764: a commit message and a PR body that hold the verb in backticks, which bash runs); the rest are generated rows that
+feed a shell AND name the verb. The deadline fired 0 times on any benign row. Precise parsing of arbitrary shell is not
+attempted, and these numbers are a measurement of the corpora, not a promise.
 
 **What it does not read (the residual classes).** These are known, recorded in ADR-0004, and not to be chased
 one by one:
@@ -1564,8 +1578,16 @@ one by one:
 - wrappers that take the command from data: `xargs` or `parallel` fed commands on stdin or after `:::`,
   `find -exec` with a name built from `{}`, `watch`, `su -c`, `at`, `systemd-run`, `script -c`, and interpreters
   (`python -c`, `node -e`, `perl -e`, `awk 'BEGIN{system(...)}'`);
+- text produced at run time and then run, in the forms the audit found: `source <(...)`, `. <(...)` and `bash
+  <(...)`, an interpreter reading its program from a heredoc (`python3 - <<'EOF'` calling `os.system`), run-time
+  text read with `read` or `mapfile` and then evaluated, `$V` as the command word, and a variable copied along a
+  chain (`A=...; B=$A; eval "$B"`);
 - a command inside a string past the 256 KB input cap, which is denied only when it names the gateway next to a
   stop/restart verb.
+
+Closed in 2.2d and no longer residual: a backtick-wrapped verb after 2016 or more adjacent substitutions or at nesting
+depth 41 or more, and a backtick whose body carries `\"` (the word view cuts at the backtick, and the body is read as
+the command it is).
 
 **A known false positive that stays.** A multi-line double-quoted string that holds a command substitution and,
 on a line of its own, the guarded words (`echo "$(date)`, a newline, `openclaw gateway restart`, a newline, `"`) is

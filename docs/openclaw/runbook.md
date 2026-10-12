@@ -1285,6 +1285,21 @@ for an agent with no shell, or a plugin `before_tool_call` handler that blocks t
 agent behaves, so it is an operator decision and the kit does not change any of them. Whatever you choose, restart
 with `ai-resources openclaw graceful-restart` and apply a restart-required key in the window, not from a session.
 
+### What the guard hook denies, and what it does when it cannot finish (T46)
+
+The hook denies `openclaw doctor --fix`, `openclaw gateway stop|restart` and `systemctl [--user]
+stop|kill|restart|... openclaw-gateway` where a shell would run them, and only while the unit is active and
+`~/.openclaw/watchdog.off` does not exist. It is an accident guard, not a security boundary. Two details matter when
+a deny looks wrong:
+
+- Text that is fed to a shell (a heredoc or a pipe into `bash`, `sh`, `eval`) is read by a second, word-level view:
+  it denies when `openclaw` is before `gateway` (or the unit name appears) next to a stop/restart verb, even in a
+  comment. Another product's `docker restart gateway` is allowed there.
+- If the analysis runs out of its 4 s deadline, the verdict falls to the words: `gateway` within 160 characters of
+  a stop/restart verb is denied, and so is a plain `docker restart gateway`. Rewrite the call shorter, run the
+  sanctioned verb (`ai-resources openclaw graceful-restart`, `ai-resources openclaw doctor`), or open a window with
+  `touch ~/.openclaw/watchdog.off`.
+
 ## Get into the UI
 
 In a browser, on the tailnet: **https://iai.wildbit.dev** plus the gateway password.
