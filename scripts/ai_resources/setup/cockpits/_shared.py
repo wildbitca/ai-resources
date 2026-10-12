@@ -354,6 +354,59 @@ def managed_block_would_change(path: Path, body: str) -> bool:
     return _render_managed(raw, body)[0] != raw
 
 
+def _write_target(path: Path) -> Path | None:
+    """The file a write to `path` has to replace. A symlink (a dotfile manager) is followed to its target, so the
+    link survives and the target changes; a link whose target directory does not exist is left alone with one
+    line (None)."""
+    if not path.is_symlink():
+        return path
+    target = Path(os.path.realpath(path))
+    if not target.parent.is_dir():
+        ui.warn(f"{path} is a symlink to {target}, whose directory does not exist; left alone")
+        return None
+    return target
+
+
+def _replace_atomically(target: Path, text: str) -> None:
+    """Write `text` to a temp file next to `target` (same mode as `target`, line endings untouched) and move it
+    over: a reader sees the old file or the new one, never half of it, and an interrupted write changes nothing."""
+    try:
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+    except OSError:
+        mode = 0o644
+    fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _create_backup(target: Path, raw: str, stamp: str) -> Path:
+    """Save `raw` as `<name>.ai-resources-backup-<stamp>`, created exclusively (never through a planted link and
+    never over an existing file: the next free `-N` suffix is used)."""
+    try:
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+    except OSError:
+        mode = 0o600
+    for n in range(100):
+        backup = target.with_name(f"{target.name}.ai-resources-backup-{stamp}" + (f"-{n}" if n else ""))
+        try:
+            fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), mode)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(raw)
+        return backup
+    raise OSError(f"no free backup name for {target}")
+
+
 def remove_managed_block(path: Path) -> bool:
     """Drop the managed block from `path`, leaving every other byte as it was. True if it changed."""
     if not path.is_file():
@@ -368,8 +421,10 @@ def remove_managed_block(path: Path) -> bool:
     nl = "\r\n" if "\r\n" in raw else "\n"
     if begin == 0 and rest.startswith(nl):
         rest = rest[len(nl):]
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write(rest)
+    target = _write_target(path)
+    if target is None:
+        return False
+    _replace_atomically(target, rest)
     return True
 
 
@@ -380,21 +435,22 @@ def write_managed_block(path: Path, body: str, *, dry_run: bool = False) -> bool
     text written without markers (by kit versions up to 1.1.x, or a block whose END marker was
     deleted) is removed. Whenever text outside the block changes, the original is saved as
     `<name>.ai-resources-backup-<timestamp>` and the user is told. Line endings are preserved.
+    The write is atomic (temp file + replace), keeps the file mode and goes through a symlink to its target.
     Returns True if the file changed.
     """
     raw = _read_raw(path)
     updated, outside_changed = _render_managed(raw, body)
     if updated == raw or dry_run:
         return False
-    path.parent.mkdir(parents=True, exist_ok=True)
+    target = _write_target(path)
+    if target is None:
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
     if outside_changed and raw.strip():
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        backup = path.with_name(f"{path.name}.ai-resources-backup-{stamp}")
-        with open(backup, "w", encoding="utf-8", newline="") as fh:
-            fh.write(raw)
+        backup = _create_backup(target, raw, stamp)
         ui.warn(f"{path}: old kit sections moved into a managed block; original saved as {backup.name}")
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write(updated)
+    _replace_atomically(target, updated)
     return True
 
 

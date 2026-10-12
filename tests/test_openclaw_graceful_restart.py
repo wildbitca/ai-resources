@@ -568,3 +568,24 @@ def test_the_worst_case_sum_fits_the_timer_units_timeout_start_sec():
     assert total == 2585
     assert limit - total >= 300, f"margin {limit - total}s under TimeoutStartSec={limit}s"
     assert host.RESTART_PHASE_BUDGET_S >= host.RESTART_COMMAND_TIMEOUT_S + host.RESTART_COMMAND_GRACE_S
+
+
+# --- kit 2.2 C5: a refused run must not leave a lock file behind -------------------------------------------------
+
+def test_a_refused_gate_does_not_create_the_lock_file(env):
+    env.marker.touch()                                  # the watchdog_off gate refuses
+    res = env.run(stub_for(env))
+    assert res["result"] == "refused-gate"
+    assert not env.lock.exists(), "a refusal creates nothing"
+
+
+def test_a_refused_gate_keeps_a_lock_file_that_was_already_there(env):
+    env.lock.touch()
+    env.marker.touch()
+    assert env.run(stub_for(env))["result"] == "refused-gate"
+    assert env.lock.exists(), "a file this run did not create is not this run's to remove"
+
+
+def test_a_successful_run_still_leaves_its_lock_file(env):
+    assert env.run(stub_for(env))["result"] == "ok"
+    assert env.lock.exists()

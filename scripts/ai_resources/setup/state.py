@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -411,6 +412,32 @@ def save(state: SetupState) -> None:
         except OSError:
             pass
         raise
+    _remove_stale_temp_files(path)
+
+
+STALE_TEMP_AGE_S = 3600
+
+
+def _remove_stale_temp_files(path: Path) -> None:
+    """Remove `.<state file>.*.tmp` files a SIGKILLed save left behind: regular files this user owns, untouched
+    for over an hour (a younger one may be a save in flight). Never a link, never anything else, never the
+    state file itself."""
+    import time
+    prefix, now = f".{path.name}.", time.time()
+    try:
+        names = os.listdir(path.parent)
+    except OSError:
+        return
+    for name in names:
+        if not (name.startswith(prefix) and name.endswith(".tmp")) or len(name) <= len(prefix) + 4:
+            continue
+        candidate = path.parent / name
+        try:
+            st = os.lstat(candidate)
+            if (stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and now - st.st_mtime > STALE_TEMP_AGE_S):
+                os.unlink(candidate)
+        except OSError:
+            continue
 
 
 class StateLockUnusable(RuntimeError):
@@ -443,6 +470,28 @@ def exclusive():
         yield
     finally:
         os.close(fd)
+
+
+BUSY_LINE = ("refusing: another ai-resources run holds the setup-state lock; wait for it to finish and run this "
+             "again")
+
+
+def locked_run(fn, *, out=print, enabled: bool = True):
+    """Run `fn()` under the setup-state lock; a busy or unusable lock is ONE line and rc 1, never a hang.
+
+    `enabled=False` (a dry run) runs `fn()` as it is and creates no lock file."""
+    if not enabled:
+        return fn()
+    try:
+        with exclusive():
+            return fn()
+    except StateLockBusy:
+        out(BUSY_LINE)
+        return 1
+    except StateLockUnusable as e:
+        out(f"refusing: the setup-state lock file cannot be used ({e}); remove it or fix its permissions and "
+            "run this again")
+        return 1
 
 
 def is_first_run() -> bool:

@@ -28,8 +28,10 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable, NamedTuple
@@ -195,9 +197,24 @@ def write_host_env(values: dict[str, str | None], path: Path | None = None) -> b
     if new == original:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(new, encoding="utf-8")
-    os.replace(tmp, path)
+    # A unique temp file (created 0600 and exclusively, so a planted `kit-host.env.tmp` is never followed and two
+    # writers never share a name), given the mode the file already has, then moved over it.
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except OSError:
+        mode = 0o644
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(new)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return True
 
 
@@ -3635,12 +3652,17 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
     # 2. one graceful restart at a time (the timer and a manual run share the lock)
     import fcntl
     lock_fd = None
+    lock_created = False
     if dry_run:
         if _lock_held_by_other(lock_path):
             return finish(EXIT_LOCKED, "locked")
     else:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+            lock_created = True
+        except FileExistsError:
+            lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -3662,6 +3684,9 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
     finally:
         if lock_fd is not None:
             try:
+                if lock_created and result.get("result") == "refused-gate":
+                    # a refusal creates nothing: the lock file this run made for itself goes with it
+                    lock_path.unlink(missing_ok=True)
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:
                 os.close(lock_fd)
@@ -4077,6 +4102,8 @@ def cmd_offbox_identity(args: argparse.Namespace) -> int:
     """`offbox-identity`: the whole load -> modify -> save runs under the setup-state lock, so two runs cannot
     each create a configuration and record only the last one."""
     from .setup import state as setup_state
+    if getattr(args, "dry_run", False):
+        return _cmd_offbox_identity(args)        # a dry run writes nothing, so it takes (and creates) no lock
     try:
         with setup_state.exclusive():
             return _cmd_offbox_identity(args)
@@ -4259,6 +4286,12 @@ def cmd_dedupe_agents_md(args: argparse.Namespace) -> int:
 
 
 def cmd_apply_pending(args: argparse.Namespace) -> int:
+    """`apply-pending` (and `--discard-watch-restores`): load -> modify -> save under the setup-state lock."""
+    from .setup import state as setup_state
+    return setup_state.locked_run(lambda: _cmd_apply_pending(args))
+
+
+def _cmd_apply_pending(args: argparse.Namespace) -> int:
     from .setup import state as setup_state
     from .setup.cockpits import _openclaw_host as section
     s = setup_state.load()

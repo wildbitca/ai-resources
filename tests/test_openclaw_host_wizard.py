@@ -2128,3 +2128,210 @@ def test_an_unusable_state_lock_file_is_refused_in_one_line(monkeypatch, tmp_pat
     assert host.cmd_offbox_identity(argparse.Namespace(**kw)) == 1
     out = capsys.readouterr().out
     assert "lock file cannot be used" in out and "Traceback" not in out
+
+
+# =====================================================================================================================
+# Kit 2.2, group C: state locks, stale temp files, unique temp names, atomic managed blocks
+# =====================================================================================================================
+
+def _hold_state_lock(monkeypatch, tmp_path):
+    """Hold the setup-state lock the way another run does; returns the open descriptor."""
+    import fcntl
+    import os
+    path = _xdg_state(monkeypatch, tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path.with_name(path.name + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return fd
+
+
+def test_a_second_setup_run_is_refused_with_one_line_while_another_holds_the_state_lock(monkeypatch, tmp_path,
+                                                                                         capsys):
+    import argparse
+    import os
+    fd = _hold_state_lock(monkeypatch, tmp_path)
+    try:
+        monkeypatch.setattr(ui, "require_deps", lambda: None)
+        monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: False)    # pre-fix: "No terminal" and rc 1
+        rc = wizard.run(argparse.Namespace(dry_run=False, non_interactive=False, profile=""))
+    finally:
+        os.close(fd)
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert rc == 1
+    assert "setup-state lock" in text and len([ln for ln in text.splitlines() if "lock" in ln]) == 1
+    assert not state.state_path().exists(), "nothing was written"
+
+
+def test_a_setup_dry_run_does_not_take_or_create_the_state_lock(monkeypatch, tmp_path):
+    import argparse
+    _xdg_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(ui, "require_deps", lambda: None)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: False)
+    wizard.run(argparse.Namespace(dry_run=True, non_interactive=False, profile=""))
+    assert not state.state_path().with_name(state.state_path().name + ".lock").exists()
+
+
+@pytest.mark.parametrize("discard", [False, True])
+def test_apply_pending_is_refused_with_one_line_while_the_state_is_locked(monkeypatch, tmp_path, capsys, discard):
+    import argparse
+    import os
+    fd = _hold_state_lock(monkeypatch, tmp_path)
+    try:
+        rc = host.cmd_apply_pending(argparse.Namespace(discard_watch_restores=discard, yes=True))
+    finally:
+        os.close(fd)
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "setup-state lock" in out and len(out.strip().splitlines()) == 1
+
+
+def test_apply_pending_releases_the_lock_when_it_finishes(monkeypatch, tmp_path):
+    import argparse
+    _xdg_state(monkeypatch, tmp_path)
+    ns = argparse.Namespace(discard_watch_restores=False, yes=True)
+    host.cmd_apply_pending(ns)
+    fd = _hold_state_lock(monkeypatch, tmp_path)         # would raise BlockingIOError if still held
+    import os
+    os.close(fd)
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_an_offbox_identity_dry_run_creates_no_lock_file(monkeypatch, tmp_path, remove):
+    import argparse
+    _xdg_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    monkeypatch.setattr(host, "default_runner", FakeGcloud())
+    s = state.SetupState()
+    if remove:
+        s.openclaw.host_offbox_config_created = {"name": "up-1", "account": "me@example.org",
+                                                 "impersonate": host.OFFBOX_SA_DEFAULT, "project": ""}
+    state.save(s)
+    lock = state.state_path().with_name(state.state_path().name + ".lock")
+    lock.unlink(missing_ok=True)
+    ns = argparse.Namespace(dry_run=True, remove=remove, yes=False, name=None, sa=host.OFFBOX_SA_DEFAULT,
+                            account="me@example.org", project="")
+    assert host.cmd_offbox_identity(ns) == 0
+    assert not lock.exists()
+
+
+def test_a_stale_state_temp_file_is_removed_at_the_next_save(monkeypatch, tmp_path):
+    import os
+    import time
+    path = _xdg_state(monkeypatch, tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    state.save(state.SetupState())
+    old = path.parent / f".{path.name}.abc123.tmp"
+    old.write_text("half a save")
+    two_hours_ago = time.time() - 7200
+    os.utime(old, (two_hours_ago, two_hours_ago))
+    fresh = path.parent / f".{path.name}.fresh1.tmp"
+    fresh.write_text("a save in flight")
+    other = path.parent / ".setup-state.yaml.lock"
+    other.write_text("")
+    os.utime(other, (two_hours_ago, two_hours_ago))
+    unrelated = path.parent / ".other-file.tmp"
+    unrelated.write_text("x")
+    os.utime(unrelated, (two_hours_ago, two_hours_ago))
+    link = path.parent / f".{path.name}.link12.tmp"
+    link.symlink_to(path)
+    os.utime(link, (two_hours_ago, two_hours_ago), follow_symlinks=False)
+    before = path.read_bytes()
+    state.save(state.SetupState())
+    assert not old.exists(), "a temp file older than an hour is a SIGKILLed save"
+    assert fresh.exists(), "a temp file younger than an hour may be a save in flight"
+    assert other.exists() and unrelated.exists(), "only .setup-state.yaml.*.tmp files are candidates"
+    assert link.is_symlink() and path.is_file(), "a symlink is never followed or removed, and nor is the state"
+    assert path.read_bytes() != b"" and before
+
+
+def test_write_host_env_never_writes_through_a_fixed_temp_name(monkeypatch, tmp_path):
+    import os
+    env_path = tmp_path / "kit-host.env"
+    env_path.write_text("A=1\n", encoding="utf-8")
+    env_path.chmod(0o640)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep", encoding="utf-8")
+    (tmp_path / "kit-host.env.tmp").symlink_to(victim)             # what a fixed name would follow
+    seen: list[str] = []
+    real = os.replace
+    monkeypatch.setattr(host.os, "replace", lambda s, d, *a, **k: (seen.append(str(s)), real(s, d, *a, **k))[1])
+    assert host.write_host_env({"OPENCLAW_RESTART_TZ": "UTC"}, env_path) is True
+    assert victim.read_text(encoding="utf-8") == "keep"
+    assert seen and pathlib.Path(seen[0]).parent == tmp_path and pathlib.Path(seen[0]).name != "kit-host.env.tmp"
+    assert oct(env_path.stat().st_mode & 0o777) == "0o640", "the file mode is kept"
+    assert "OPENCLAW_RESTART_TZ=UTC" in env_path.read_text(encoding="utf-8")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["kit-host.env", "kit-host.env.tmp", "victim.txt"]
+
+
+def _freeze_backup_stamp(monkeypatch):
+    from ai_resources.setup.cockpits import _shared
+
+    class Frozen:
+        @staticmethod
+        def now(tz=None):
+            import datetime as _dt
+            return _dt.datetime(2026, 10, 12, 1, 2, 3, tzinfo=tz)
+    monkeypatch.setattr(_shared, "datetime", Frozen)
+    return _shared
+
+
+def test_a_managed_block_write_is_atomic_and_keeps_the_mode(monkeypatch, tmp_path):
+    import os
+    from ai_resources.setup.cockpits import _shared
+    target = tmp_path / "AGENTS.md"
+    target.write_text("# mine\n", encoding="utf-8")
+    target.chmod(0o640)
+    seen: list[tuple[str, str]] = []
+    real = os.replace
+    monkeypatch.setattr(_shared.os, "replace", lambda s, d, *a, **k: (seen.append((str(s), str(d))), real(s, d))[1])
+    assert _shared.write_managed_block(target, "kit text") is True
+    assert seen and seen[0][1] == str(target) and pathlib.Path(seen[0][0]).parent == tmp_path
+    assert oct(target.stat().st_mode & 0o777) == "0o640"
+    assert "kit text" in target.read_text(encoding="utf-8")
+    seen.clear()
+    assert _shared.remove_managed_block(target) is True
+    assert seen and seen[0][1] == str(target) and oct(target.stat().st_mode & 0o777) == "0o640"
+    assert target.read_text(encoding="utf-8") == "# mine\n"
+
+
+def test_a_managed_block_through_a_symlink_is_written_at_the_target(tmp_path):
+    from ai_resources.setup.cockpits import _shared
+    real = tmp_path / "dotfiles" / "AGENTS.md"
+    real.parent.mkdir()
+    real.write_text("# mine\n", encoding="utf-8")
+    link = tmp_path / "AGENTS.md"
+    link.symlink_to(real)
+    assert _shared.write_managed_block(link, "kit text") is True
+    assert link.is_symlink() and "kit text" in real.read_text(encoding="utf-8"), "the link survives, the target holds it"
+    assert _shared.remove_managed_block(link) is True
+    assert link.is_symlink() and real.read_text(encoding="utf-8") == "# mine\n"
+
+
+def test_a_managed_block_through_a_dangling_symlink_is_refused_with_one_line(monkeypatch, tmp_path):
+    from ai_resources.setup.cockpits import _shared
+    link = tmp_path / "AGENTS.md"
+    link.symlink_to(tmp_path / "no-such-dir" / "AGENTS.md")
+    warned: list[str] = []
+    monkeypatch.setattr(ui, "warn", lambda m, *_a, **_k: warned.append(m))
+    assert _shared.write_managed_block(link, "kit text") is False
+    assert len(warned) == 1 and "AGENTS.md" in warned[0]
+    assert not (tmp_path / "no-such-dir").exists()
+
+
+def test_the_backup_of_an_old_kit_section_is_created_exclusively(monkeypatch, tmp_path):
+    _shared = _freeze_backup_stamp(monkeypatch)
+    target = tmp_path / "AGENTS.md"
+    target.write_text("old kit text without markers\n", encoding="utf-8")
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep", encoding="utf-8")
+    squatter = tmp_path / "AGENTS.md.ai-resources-backup-20261012T010203Z"
+    squatter.symlink_to(victim)                                    # planted at the predictable name
+    monkeypatch.setattr(ui, "warn", lambda *_a, **_k: None)
+    monkeypatch.setattr(_shared, "_render_managed", lambda raw, body: ("new\n", True))
+    assert _shared.write_managed_block(target, "kit text") is True
+    assert victim.read_text(encoding="utf-8") == "keep", "the planted link was not written through"
+    backups = sorted(p.name for p in tmp_path.iterdir() if "backup" in p.name)
+    assert len(backups) == 2, backups
+    other = next(tmp_path / n for n in backups if (tmp_path / n) != squatter)
+    assert other.read_text(encoding="utf-8") == "old kit text without markers\n"

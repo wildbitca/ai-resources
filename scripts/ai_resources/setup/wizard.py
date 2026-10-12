@@ -55,7 +55,14 @@ def _reject_unavailable_requested_profile(available: list[str], context: str) ->
 
 
 def run(args: argparse.Namespace) -> int:
-    """Main wizard entry point."""
+    """Main wizard entry point: the whole run holds the setup-state lock (load -> modify -> save), so a second
+    `setup`, an `apply-pending` or a teardown cannot overwrite what this one records. A dry run writes nothing
+    and takes no lock."""
+    return state.locked_run(lambda: _run(args), out=lambda m: ui.error(m),
+                            enabled=not getattr(args, "dry_run", False))
+
+
+def _run(args: argparse.Namespace) -> int:
     ui.require_deps()
     global _APPLIED_TARGETS
     _APPLIED_TARGETS = []
