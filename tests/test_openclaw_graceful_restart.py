@@ -447,14 +447,49 @@ def test_the_setup_restart_removes_the_marker_when_the_restart_raises_or_fails(m
     assert not host.WATCHDOG_OFF.exists()
 
 
-def test_a_window_somebody_else_opened_is_not_closed_by_the_setup_restart(monkeypatch):
+def test_a_window_somebody_else_opened_makes_the_setup_restart_refuse_and_is_left_open(monkeypatch):
+    # 2.2c (3c): was "the restart runs inside the operator's window"; the graceful restart and the drained
+    # window refuse inside one, and setup's and `models update`'s restart now do the same, in one line
     from ai_resources.setup.cockpits import openclaw
     host.WATCHDOG_OFF.parent.mkdir(parents=True, exist_ok=True)
     host.WATCHDOG_OFF.touch()
-    monkeypatch.setattr(openclaw, "_openclaw", lambda *a, **k: (0, "ok"))
+    ran = []
+    monkeypatch.setattr(openclaw, "_openclaw", lambda *a, **k: ran.append(a) or (0, "ok"))
     monkeypatch.setattr(openclaw, "backend_registered", lambda _b: True)
-    assert openclaw.restart_gateway(probe=lambda: (0, []), interactive=False) is True
+    with pytest.raises(openclaw.RestartDeferred) as e:
+        openclaw.restart_gateway(probe=lambda: (0, []), interactive=False)
+    assert "maintenance window is open" in e.value.reason and "\n" not in e.value.reason
+    assert ran == [], "nothing was restarted"
     assert host.WATCHDOG_OFF.exists(), "an existing maintenance window stays open"
+    host.WATCHDOG_OFF.unlink()
+
+
+def test_a_window_opened_between_the_check_and_the_restart_is_refused_too(monkeypatch):
+    from ai_resources.setup.cockpits import openclaw
+    host.WATCHDOG_OFF.parent.mkdir(parents=True, exist_ok=True)
+    host.WATCHDOG_OFF.touch()
+    monkeypatch.setattr(host.Marker, "exists", lambda self: False)      # the early check saw no window
+    ran = []
+    monkeypatch.setattr(openclaw, "_openclaw", lambda *a, **k: ran.append(a) or (0, "ok"))
+    with pytest.raises(openclaw.RestartDeferred) as e:
+        openclaw.restart_gateway(probe=lambda: (0, []), interactive=False)
+    assert "was opened while the restart was being prepared" in e.value.reason
+    assert ran == [] and host.WATCHDOG_OFF.exists()
+    host.WATCHDOG_OFF.unlink()
+
+
+def test_the_models_update_restart_is_deferred_inside_an_operator_window(monkeypatch):
+    from ai_resources import models
+    from ai_resources.setup.cockpits import openclaw
+    host.WATCHDOG_OFF.parent.mkdir(parents=True, exist_ok=True)
+    host.WATCHDOG_OFF.touch()
+    monkeypatch.setattr(openclaw, "_probe_busy", lambda probe=None: (0, []))
+    monkeypatch.setattr(openclaw, "_openclaw", lambda *a, **k: (_ for _ in ()).throw(AssertionError("restarted")))
+    deps = models.default_deps()
+    with pytest.raises(models.RestartDeferred) as e:
+        deps.restart()
+    assert "maintenance window is open" in str(e.value)
+    assert host.WATCHDOG_OFF.exists()
     host.WATCHDOG_OFF.unlink()
 
 

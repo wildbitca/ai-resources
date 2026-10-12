@@ -1254,9 +1254,10 @@ run gcloud): WARN when the newest off-box daily is older than 30 h (`OPENCLAW_OF
 
 `[secrets/egress-proxy] secret egress TLS certificate unavailable ... kind=refused host=<H>` means the proxy cannot
 mint a certificate for that host. It is not the traffic allowlist: leave `allowedHosts` omitted (traffic is then
-unrestricted; setting a single host flips the proxy to lockdown). The documented fix is
-`secrets.egressProxy.bypassHosts`: the exact lowercase hostname, per cluster, no wildcards. The key is
-restart-required, and OpenClaw forces the restart (SIGUSR2) after about 5 minutes of deferring it, which cuts
+unrestricted; setting a single host flips the proxy to lockdown). Any process that writes to the unit's journal can
+produce such a line, so look at the host first: add it to `secrets.egressProxy.bypassHosts` only if you recognise it
+and accept that it then skips the secret egress proxy. The key takes the exact lowercase hostname, per cluster, no
+wildcards. It is restart-required, and OpenClaw forces the restart (SIGUSR2) after about 5 minutes of deferring it, which cuts
 in-flight runs. So apply it with `openclaw config patch --stdin --dry-run` first, then for real, leave the restart
 pending, and restart yourself in the window with `ai-resources openclaw graceful-restart`.
 

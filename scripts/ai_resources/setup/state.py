@@ -375,14 +375,86 @@ def _from_dict(cls: type, data: dict) -> Any:
     return cls(**kwargs)
 
 
+class StateCorrupt(RuntimeError):
+    """The state file exists and is not valid YAML (or not a mapping): a save would replace it with an empty
+    record. Unattended writers refuse; `setup` says so and, interactively, goes on from the backup (3d)."""
+
+
+_replace_corrupt_ok: str | None = None   # the state path `allow_replacing_corrupt()` was called for
+_corrupt_notice: str | None = None   # the backup path of the corrupt file `load()` found, until it is taken
+
+
+def _backup_corrupt(path: Path) -> str | None:
+    """Copy the unreadable state file beside itself, once: `<name>.corrupt`, `.corrupt-1`, ... created
+    exclusively (`O_EXCL|O_NOFOLLOW`, 0600). A copy with the same bytes that is already there is reused."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    for n in range(20):
+        target = path.with_name(path.name + ".corrupt" + (f"-{n}" if n else ""))
+        try:
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            try:
+                if not target.is_symlink() and target.read_bytes() == data:
+                    return str(target)
+            except OSError:
+                pass
+            continue
+        except OSError:
+            return None
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        return str(target)
+    return None
+
+
+def _corrupt_state(path: Path) -> bool:
+    """True when `path` is a regular file that does not parse as a YAML mapping."""
+    if yaml is None or not path.is_file():
+        return False
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, UnicodeDecodeError):
+        return True
+    except OSError:
+        return False
+    return data is not None and not isinstance(data, dict)
+
+
+def take_corrupt_notice() -> str | None:
+    """The backup path of a corrupt state file `load()` found since the last call (None when there was none).
+    `setup` prints it once; the file itself stays where it is until a save is allowed to replace it."""
+    global _corrupt_notice
+    notice, _corrupt_notice = _corrupt_notice, None
+    return notice
+
+
+def allow_replacing_corrupt() -> None:
+    """The operator was told that the state file is unreadable and its content is backed up: a save may now
+    replace it. Only an interactive `setup` calls this."""
+    global _replace_corrupt_ok
+    _replace_corrupt_ok = os.path.realpath(state_path())
+
+
 def load() -> SetupState:
-    """Load setup state from disk; return empty SetupState if absent."""
+    """Load setup state from disk; return empty SetupState if absent.
+
+    A file that is not valid YAML is copied aside once (0600) and read as empty; a later `save()` refuses to
+    replace it (StateCorrupt) until `allow_replacing_corrupt()`, so a writer nobody is watching cannot turn
+    the operator's record into an empty one."""
+    global _corrupt_notice
     path = state_path()
     if not path.is_file() or yaml is None:
         return SetupState()
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
+    except (yaml.YAMLError, UnicodeDecodeError):
+        data = None
+    if not isinstance(data, dict):
+        backup = _backup_corrupt(path)
+        _corrupt_notice = backup or "(no backup could be written)"
         return SetupState()
     loaded = _from_dict(SetupState, data)
     loaded.tracking.install_tools_answer = None      # 2.2b: a saved install answer is never replayed
@@ -395,6 +467,9 @@ def save(state: SetupState) -> None:
         return
     state.last_run = datetime.now(timezone.utc).isoformat()
     path = state_path()
+    if _replace_corrupt_ok != os.path.realpath(path) and _corrupt_state(Path(os.path.realpath(path))):
+        raise StateCorrupt(f"{path} is not valid YAML; a copy was made beside it (<name>.corrupt). Nothing was "
+                           "written. Fix or remove the file, or run `ai-resources setup` interactively.")
     # A state file that is a symlink (a dotfile manager) is replaced at its target, not turned into a plain file.
     path = Path(os.path.realpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -512,6 +587,9 @@ def update(mutator, *, wait_s: float = 10.0, poll_s: float = 0.2, sleep=None, mo
 
     def apply() -> bool:
         fresh = load()
+        real = os.path.realpath(state_path())
+        if _replace_corrupt_ok != real and _corrupt_state(Path(real)):
+            return False                 # an unattended writer never replaces an unreadable record
         if mutator(fresh) is False:
             return True
         save(fresh)

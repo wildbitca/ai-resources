@@ -708,6 +708,11 @@ def test_egress_tls_refusals_are_one_warn_that_lists_at_most_five_hosts_and_poin
     assert level == "warn"
     assert all(h in message for h in hosts[:5]) and hosts[5] not in message and "+2 more" in message
     assert "T44" in remedy and "bypassHosts" in remedy and "restart-required" in remedy
+    # 2.2c 3a: the line can be caused by any process that writes to the unit's journal, so the advice is
+    # conditional on the operator recognising the host and knowing that it skips the egress proxy
+    assert "any process that writes to the unit's journal" in remedy
+    assert "only if you recognise it" in remedy and "skips the secret egress proxy" in remedy
+    assert "add the exact host" not in remedy
 
 
 def test_a_failed_close_with_deferred_completions_warns_and_points_to_t39_and_t41():

@@ -1464,9 +1464,12 @@ single host there flips the proxy to lockdown (everything else is refused), whic
 outage. Separately, the fix key is restart-required: OpenClaw defers the restart until runs are idle and forces it
 (SIGUSR2) after about 5 minutes, which cut in-flight runs and lost subagent completions on 2026-10-11 at 20:30.
 
-**Fix.** Add the host to `secrets.egressProxy.bypassHosts`: an exact, lowercase hostname, per cluster, no wildcards.
-Do not touch `allowedHosts`. Apply it with `openclaw config patch` (`--dry-run` first), leave it pending, and restart in
-the window with `ai-resources openclaw graceful-restart` instead of letting OpenClaw force the restart.
+**Fix.** First ask whether you recognise the host: any process that writes to the unit's journal (a script, a log
+shipper, a hostile tool) can put such a line there, and a host in `secrets.egressProxy.bypassHosts` skips the secret
+egress proxy altogether. Add a host only when you recognise it and accept that. The key takes an exact, lowercase
+hostname, per cluster, no wildcards. Do not touch `allowedHosts`. Apply it with `openclaw config patch` (`--dry-run`
+first), leave it pending, and restart in the window with `ai-resources openclaw graceful-restart` instead of letting
+OpenClaw force the restart.
 
 **How to catch it.** `ai-resources openclaw status` and `ai-resources verify` WARN (since 2.2) when the egress proxy
 refused hosts with `TLS certificate unavailable` in the last 24 h: the finding lists at most five host names and points

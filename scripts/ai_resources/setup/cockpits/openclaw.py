@@ -1047,10 +1047,20 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
     prompt. Busy and interactive: ask (restart now / defer / wait). Busy and not interactive:
     defer. A deferral raises RestartDeferred; it never returns quietly.
     """
-    if openclaw_host.inside_gateway_cgroup(self_cgroup_path):
+    cg = openclaw_host.gateway_cgroup_state(self_cgroup_path)
+    if cg == "inside":
         # T29: a restart from a child of the gateway kills this very process before it can report anything
         raise RestartDeferred("this process runs inside the gateway cgroup, so restarting the gateway would "
                               "kill it (T29); run the restart from outside the gateway", [])
+    if cg == "unknown":
+        raise RestartDeferred("cannot tell whether this process runs inside the gateway cgroup "
+                              "(/proc/self/cgroup is unreadable), so the restart is not attempted; run it from "
+                              "outside the gateway once the file can be read", [])
+    if openclaw_host.Marker().exists():
+        # 2.2c (3c): a window the operator opened is theirs. The graceful restart and the drained window of
+        # `doctor` refuse inside one; setup's and `models update`'s restart refuse the same way, with one line.
+        raise RestartDeferred(f"a maintenance window is open ({openclaw_host.WATCHDOG_OFF} exists); close it, "
+                              "then run the restart", [])
     count, workers = _probe_busy(probe)
     if count:
         reason = _busy_reason(count)
@@ -1073,7 +1083,8 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
             raise RestartDeferred(reason, workers)
     # ADR-0004 (D11): the one restart setup itself performs holds watchdog.off for its whole duration, so
     # openclaw-watchdog does not start a second restart on top of it, and it is removed on every exit path
-    # (an exception or a SIGTERM included). A window somebody else opened is left alone.
+    # (an exception or a SIGTERM included). A window somebody else opened is not ours to restart inside: the
+    # restart is deferred (kit 2.2c, 3c), and the window is left as it is.
     # The lock is the one every path that stops or restarts the unit takes (graceful restart, the drained
     # window, this): a second one refuses with one line, as a deferral, and is reported like one.
     try:
@@ -1086,15 +1097,20 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
                               [])
     try:
         ui.info("restarting the gateway inside a maintenance window (watchdog.off is held until it is back)")
-        with openclaw_host.MarkerGuard():
-            rc, out = _openclaw(["gateway", "restart"], timeout=restart_timeout)
-            if rc != 0:
-                ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")
-                return False
-            for _ in range(BACKEND_WAIT_TRIES):
-                if backend_registered(backend):
-                    return True
-                time.sleep(BACKEND_WAIT_SECONDS)
+        try:
+            with openclaw_host.MarkerGuard(exclusive=True):
+                rc, out = _openclaw(["gateway", "restart"], timeout=restart_timeout)
+                if rc != 0:
+                    ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")
+                    return False
+                for _ in range(BACKEND_WAIT_TRIES):
+                    if backend_registered(backend):
+                        return True
+                    time.sleep(BACKEND_WAIT_SECONDS)
+        except openclaw_host.WindowBusy:
+            raise RestartDeferred("a maintenance window was opened while the restart was being prepared "
+                                  f"({openclaw_host.WATCHDOG_OFF} exists); close it, then run the restart",
+                                  []) from None
         return False
     finally:
         openclaw_host.release_restart_lock(lock_fd)

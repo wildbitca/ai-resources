@@ -184,7 +184,7 @@ def install_one(tool_id: str, s: state.SetupState) -> bool:
 
 
 def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, *,
-          assume_yes: bool = False) -> list[str]:
+          assume_yes: bool = False, dry_run: bool = False) -> list[str]:
     """Offer to install missing required tools; return the ids actually installed.
 
     Consent is per run and is never stored. The question defaults to No (Enter runs nothing: an install pipes
@@ -192,12 +192,19 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
     unattended (`--non-interactive`) run without `--yes` installs nothing. An answer saved by an older kit
     (`install_tools_answer`) is ignored and cleared: a "yes" given once must not authorise a later run, and a
     "no" must not stop the question being asked again.
+
+    A dry run offers nothing and installs nothing, with or without `--yes`: it says what it would have asked.
     """
     s.tracking.install_tools_answer = None           # migration: nothing is replayed, nothing is persisted
     missing = missing_tools(ids)
     if not missing:
         return []
     labels = ", ".join(TOOLS[t].label for t in missing)
+
+    if dry_run:
+        ui.info(f"DRY RUN: would offer to install {labels}; nothing is installed"
+                + (" (--yes does not install in a dry run)." if assume_yes else "."))
+        return []
 
     if not assume_yes:
         if ui.is_non_interactive():

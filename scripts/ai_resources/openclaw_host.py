@@ -545,13 +545,30 @@ class RestartLockUnusable(OSError):
 SELF_CGROUP_PATH = "/proc/self/cgroup"
 
 
+def gateway_cgroup_state(self_cgroup_path: Path | str | None = None) -> str:
+    """"inside", "outside" or "unknown" for this process and the gateway unit's cgroup.
+
+    No such file (a host without procfs: nothing to be inside of) is "outside"; a file that exists and cannot
+    be read or decoded is "unknown", and the restart paths refuse on it (kit 2.2c, 3e): a process that cannot
+    tell must not stop the unit it may be a child of."""
+    try:
+        text = Path(self_cgroup_path or SELF_CGROUP_PATH).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "outside"
+    except (OSError, UnicodeDecodeError):
+        return "unknown"
+    return "inside" if GATEWAY_UNIT in text else "outside"
+
+
 def inside_gateway_cgroup(self_cgroup_path: Path | str | None = None) -> bool:
     """True when this process is a child of the gateway unit: stopping or restarting the unit would kill
     the very process that has to finish the job (T29)."""
-    try:
-        return GATEWAY_UNIT in Path(self_cgroup_path or SELF_CGROUP_PATH).read_text(encoding="utf-8")
-    except OSError:
-        return False
+    return gateway_cgroup_state(self_cgroup_path) == "inside"
+
+
+CGROUP_UNKNOWN_LINE = ("refusing: cannot tell whether this process runs inside the gateway cgroup "
+                       "(/proc/self/cgroup is unreadable); nothing was stopped or restarted. Run this from "
+                       "outside the gateway once the file can be read.")
 
 
 def acquire_restart_lock(path: Path | None = None) -> int | None:
@@ -709,9 +726,13 @@ def drained_window(action: Callable[[], bool], *, runner: Runner = default_runne
     oc = openclaw_bin or resolve_openclaw_bin()
     sysctl = ["systemctl", "--user"]
 
-    if inside_gateway_cgroup(self_cgroup_path):
+    cg = gateway_cgroup_state(self_cgroup_path)
+    if cg == "inside":
         out("refusing: this process runs inside the gateway cgroup; stopping the gateway would kill it (T29). "
             "Run this from outside the gateway (a terminal, not an agent session).")
+        return EXIT_REFUSED_SELF
+    if cg == "unknown":
+        out(CGROUP_UNKNOWN_LINE)
         return EXIT_REFUSED_SELF
 
     # One lock for every path that stops or restarts the unit: a second one refuses, with one line.
@@ -3437,8 +3458,10 @@ def journal_findings(runner: Runner, stability: dict | None) -> list[tuple[str, 
                     f"the secret egress proxy refused {len(hosts)} host(s) in the last "
                     f"{openclaw_pressure.JOURNAL_SIGNAL_HOURS} h with `TLS certificate unavailable`: "
                     f"{', '.join(openclaw_pressure.printable(h) for h in shown)}{more}",
-                    "this is not the traffic allowlist: add the exact host to secrets.egressProxy.bypassHosts "
-                    "(a restart-required key: apply it in a window, see pitfall T44 and the runbook)"))
+                    "any process that writes to the unit's journal can cause this line, and it is not the traffic "
+                    "allowlist: add a host to secrets.egressProxy.bypassHosts only if you recognise it and "
+                    "understand that it then skips the secret egress proxy (a restart-required key: apply it in "
+                    "a window, see pitfall T44 and the runbook)"))
     stab = stability or {}
     reason = openclaw_pressure.printable(stab.get("reason") or "")
     age = stab.get("age_hours")
@@ -3896,8 +3919,12 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
         return result
 
     # 1. never from inside the gateway cgroup
-    if inside_gateway_cgroup(self_cgroup_path):
+    cg = gateway_cgroup_state(self_cgroup_path)
+    if cg == "inside":
         out("refusing: this process runs inside the gateway cgroup; its own restart would kill it (T29)")
+        return finish(EXIT_REFUSED_SELF, "refused-self")
+    if cg == "unknown":
+        out(CGROUP_UNKNOWN_LINE)
         return finish(EXIT_REFUSED_SELF, "refused-self")
 
     # 2. one restart path at a time: the timer, a manual run, the drained window and setup share the lock

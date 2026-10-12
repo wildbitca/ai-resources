@@ -39,6 +39,7 @@ RECOMMENDED_PROFILE = "measured-best"
 # not ask for and never mentioned it.
 _REQUESTED_PROFILE = ""
 _ASSUME_YES = False          # `setup --yes`: the explicit yes to the tool-install offer (kit 2.2, E1)
+_DRY_RUN = False             # `setup --dry-run`: no installer is offered or run (kit 2.2c, 3b)
 
 # The cockpits step 9 configured, in registry order. Step 10 verifies exactly these: re-deriving
 # the selection from the state would judge toolings the operator never picked, and that noise is
@@ -59,8 +60,11 @@ def run(args: argparse.Namespace) -> int:
     """Main wizard entry point: the whole run holds the setup-state lock (load -> modify -> save), so a second
     `setup`, an `apply-pending` or a teardown cannot overwrite what this one records. A dry run writes nothing
     and takes no lock."""
-    global _ASSUME_YES
+    global _ASSUME_YES, _DRY_RUN
     _ASSUME_YES = bool(getattr(args, "yes", False))
+    _DRY_RUN = bool(getattr(args, "dry_run", False))
+    if _DRY_RUN and _ASSUME_YES:
+        ui.info("DRY RUN: --yes installs nothing in a dry run; no installer is offered or run.")
     return state.locked_run(lambda: _run(args), out=lambda m: ui.error(m),
                             enabled=not getattr(args, "dry_run", False))
 
@@ -92,6 +96,20 @@ def _run(args: argparse.Namespace) -> int:
 
     prev_s = state.load()  # frozen snapshot of the previous run (used for teardown)
     s = state.load()
+    corrupt = state.take_corrupt_notice()
+    if corrupt:
+        # 2.2c (3d): the file could not be read; it was copied aside and is read as empty. Unattended runs stop
+        # here; an interactive one says so and goes on, the copy being the operator's way back.
+        ui.error(f"The setup state file {state.state_path()} is not valid YAML; its content was copied to "
+                 f"{corrupt}. Setup would start from empty answers and replace the file.")
+        if ui.is_non_interactive() or dry_run:
+            if not dry_run:
+                ui.error("Not replacing it in a non-interactive run: fix or remove the file, or run "
+                         "`ai-resources setup` from a terminal.")
+                return 1
+        elif not ui.confirm("Continue with empty answers and replace the file?", default=False):
+            return 1
+        state.allow_replacing_corrupt()
     is_first = state.is_first_run()
     if not is_first:
         last = s.last_run or "(unknown)"
@@ -600,7 +618,7 @@ def _step2_cockpits(s: state.SetupState) -> int:
 
     # Offer to install claude, agy and openclaw when missing — the antigravity OpenClaw
     # engine (step 7) needs all three, and re-detecting here means step 7 sees them.
-    installed_tools = tools.offer(s, assume_yes=_ASSUME_YES)
+    installed_tools = tools.offer(s, assume_yes=_ASSUME_YES, dry_run=_DRY_RUN)
     if installed_tools:
         for cid, det in detection.detect_all_cockpits().items():
             cs = s.cockpits.get(cid) or state.CockpitState()
@@ -700,6 +718,10 @@ def _step3_docker(s: state.SetupState) -> int:
     ) or litellm.DEFAULT_DOCKER_IMAGE
     s.litellm.local.image = image
 
+    if _DRY_RUN:
+        ui.info(f"DRY RUN: would offer to pull {image}; nothing is pulled and nothing is saved.")
+        return 0
+
     # Save state NOW so pull_image() can read s.litellm.local.runtime
     state.save(s)
 
@@ -745,6 +767,9 @@ def _step3_pipx(s: state.SetupState) -> int:
     pipx_det = detection.detect_pipx()
     if not pipx_det.installed:
         ui.warn("pipx not detected on this system.")
+        if _DRY_RUN:
+            ui.info("DRY RUN: would offer to install pipx; nothing is installed.")
+            return 0
         if not _try_install_pipx():
             return 1
         pipx_det = detection.detect_pipx()
@@ -771,7 +796,9 @@ def _step3_pipx(s: state.SetupState) -> int:
         ui.ok(f"litellm already installed: {existing.binary_path} v{existing.version}")
         s.litellm.local.binary_path = existing.binary_path
         # Pre-existing — do NOT track as our install (don't uninstall on teardown)
-        if ui.confirm("Reinstall to ensure latest?", default=False):
+        if _DRY_RUN:
+            ui.info("DRY RUN: would offer to reinstall LiteLLM via pipx; nothing is installed.")
+        elif ui.confirm("Reinstall to ensure latest?", default=False):
             with ui.spinner("Reinstalling LiteLLM via pipx"):
                 ok, msg = litellm.install_litellm_pipx()
             if not ok:
@@ -780,6 +807,9 @@ def _step3_pipx(s: state.SetupState) -> int:
             ui.ok("LiteLLM updated")
     else:
         # Installs code from PyPI: Enter skips, and an unattended run never does it (kit 2.2b, 3b).
+        if _DRY_RUN:
+            ui.info("DRY RUN: would offer `pipx install` of LiteLLM; nothing is installed.")
+            return 0
         if not ui.confirm(f"Install LiteLLM via `pipx install '{litellm.DEFAULT_LITELLM_PIP_SPEC}' --python {py.binary_path}`?",
                           default=False):
             ui.detail("LiteLLM was not installed. Run `ai-resources setup` from a terminal and answer yes, or "
@@ -827,7 +857,9 @@ def _step3_pipvenv(s: state.SetupState) -> int:
         # Pre-existing venv — already tracked by an earlier setup run; if tracking
         # is missing (e.g. user hand-created it), leave the flag alone so teardown
         # won't blow away a venv we didn't make.
-        if ui.confirm("Reinstall to ensure latest?", default=False):
+        if _DRY_RUN:
+            ui.info("DRY RUN: would offer to reinstall LiteLLM via pip; nothing is installed.")
+        elif ui.confirm("Reinstall to ensure latest?", default=False):
             with ui.spinner("Reinstalling LiteLLM via pip"):
                 ok, msg = litellm.install_litellm_venv(python_path=py.binary_path)
             if not ok:
@@ -838,6 +870,9 @@ def _step3_pipvenv(s: state.SetupState) -> int:
             ui.ok("LiteLLM updated")
         return 0
 
+    if _DRY_RUN:
+        ui.info("DRY RUN: would offer to create the LiteLLM venv and pip install into it; nothing is installed.")
+        return 0
     if not ui.confirm("Create venv at ~/.config/ai-resources/venv and pip install LiteLLM?",
                       default=False):
         ui.detail("LiteLLM was not installed. Run `ai-resources setup` from a terminal and answer yes.")
