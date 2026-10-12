@@ -10,6 +10,11 @@ Notes for the next patch release. Nothing here is released; the version label is
 
 ### Fixed
 
+- **Hardening pass 5.** The gateway guard no longer lets a multi-line quote join hide the next command (a quote
+  nested in `$(...)`, a backtick or `${...}`, or a quote after `$$`): a joined group that holds such a construct
+  is evaluated as the joined text and line by line, and denied when either view matches, `$$` is read as the PID
+  and an unquoted newline separates statements (P1, P8). A backslash before CRLF is no longer read as a
+  continuation, and only LF breaks a line (P2).
 - **Hardening pass 4.** `apply-pending` (the drained gateway stop and start) without `--yes` needs a real
   terminal, like the discard verb: a piped `y` is not a confirmation, an empty or closed stdin ends in one line
   instead of a traceback, and a refused, declined or empty run no longer rewrites `setup-state.yaml` (S1, S1b).

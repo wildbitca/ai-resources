@@ -21,6 +21,10 @@ or nests past the depth limit, is denied only when a stop/restart verb sits next
 
 A shell line continuation (a backslash before the newline, outside single quotes) and a quoted string that
 spans lines are joined before the command is tokenised, so a verb or a unit moved to the next line is still seen.
+Only LF breaks a line (a backslash before CRLF escapes the CR), and an unquoted newline separates statements.
+The line scanner cannot follow a quote nested in `$(...)`, a backtick or `${...}`, so a joined group that holds
+one is read twice, joined and line by line, and denied when either view matches (a join it got wrong cannot hide
+the next command).
 
 Why: `openclaw doctor --fix` stops the gateway and re-inspects the stopped unit. If a child
 (claude, engram, npx) is still alive it aborts with "ownership or manager identity changed" and
@@ -46,6 +50,10 @@ UNIT = "openclaw-gateway.service"
 WATCHDOG_OFF = os.path.expanduser("~/.openclaw/watchdog.off")
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+# Constructs inside a double-quoted string that the line scanner reads as flat text although the shell runs
+# a nested parse there (`$(...)`, backticks, `${...}`), and `$$` before a quote. A joined group that holds one
+# is also read line by line (see `shape`), so a quote the scanner thinks is still open cannot hide a command.
+_NESTED_EXPANSION = re.compile(r"\$\(|`|\$\{|\$\$['\"]")
 # Tokens that only wrap another command: look through them to the real one.
 _WRAPPERS = {"sudo", "doas", "env", "command", "nohup", "setsid", "time", "exec", "nice", "ionice", "stdbuf",
              "unbuffer"}
@@ -137,6 +145,9 @@ def _scan_piece(piece: str, quote: str | None, prev: str) -> tuple[str | None, s
                 return quote, prev, True
             i, prev = i + 2, "x"
             continue
+        if ch == "$" and quote is None and piece.startswith("$$", i):
+            i, prev = i + 2, "x"             # `$$` is the PID, so a quote after it is an ordinary quote
+            continue
         if quote == '"':
             if ch == '"':
                 quote = None
@@ -167,7 +178,7 @@ def _logical_lines(command: str) -> list[tuple[str, list[str]]]:
     parts: list[str] = []
     quote: str | None = None
     prev = " "
-    for line in command.splitlines():
+    for line in command.split("\n"):   # only LF breaks a line: `\r`, \v, \f ... are ordinary
         if pending:
             if line.strip() == pending[0]:
                 pending.pop(0)
@@ -190,17 +201,55 @@ def _logical_lines(command: str) -> list[tuple[str, list[str]]]:
     return out
 
 
-def _statements(line: str) -> list[list[str]]:
-    lex = shlex.shlex(line, posix=True, punctuation_chars=True)
-    lex.whitespace_split = True
-    lex.commenters = "#"
-    tokens = list(lex)  # ValueError on unbalanced quotes: the caller fails open
-    stmts: list[list[str]] = [[]]
-    for tok in tokens:
-        if tok and set(tok) <= set(";&|(){}"):
-            stmts.append([])
+def _unquoted_newline_segments(text: str) -> list[str]:
+    """`text` cut at every newline the tokeniser reads as a command separator: one outside quotes and outside
+    a comment. It follows shlex's own reading (a `#` outside quotes starts a comment up to the newline), so the
+    segments agree with the tokens; an unbalanced quote leaves the rest of the text in one segment."""
+    segments: list[str] = []
+    start, i, n = 0, 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+        elif ch == "'":
+            j = text.find("'", i + 1)
+            if j < 0:
+                break
+            i = j + 1
+        elif ch == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+        elif ch == "#":
+            j = text.find("\n", i)
+            if j < 0:
+                break
+            i = j
+        elif ch == "\n":
+            segments.append(text[start:i])
+            start = i = i + 1
         else:
-            stmts[-1].append(tok)
+            i += 1
+    segments.append(text[start:])
+    return segments
+
+
+def _statements(line: str) -> list[list[str]]:
+    """The simple commands of `line`. An unquoted newline separates statements like `;` does, and a comment
+    ends at its newline, so the line after a comment is never read as the comment's arguments."""
+    stmts: list[list[str]] = [[]]
+    for segment in _unquoted_newline_segments(line):
+        lex = shlex.shlex(segment, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = "#"
+        tokens = list(lex)  # ValueError on unbalanced quotes: the caller fails open
+        stmts.append([])
+        for tok in tokens:
+            if tok and set(tok) <= set(";&|(){}"):
+                stmts.append([])
+            else:
+                stmts[-1].append(tok)
     return [s for s in stmts if s]
 
 
@@ -430,22 +479,36 @@ def _env_split_shape(split: str, rest: list[str], depth: int) -> str | None:
     return shape(" ".join(shlex.quote(w) for w in [*words, *rest]), depth + 1)
 
 
+def _line_statements(lines: list[str]) -> list[list[str]]:
+    """The statements of each physical line on its own; a line that does not tokenise is skipped."""
+    out: list[list[str]] = []
+    for line in lines:
+        try:
+            out += _statements(line)
+        except ValueError:
+            continue
+    return out
+
+
+def _read_statements(logical: str, physical: list[str]) -> list[list[str]]:
+    """The statements of a logical line. When the joined text does not tokenise (a stray apostrophe), the
+    physical lines are read one by one, so one stray quote cannot hide the commands on the next lines."""
+    try:
+        return _statements(logical)
+    except ValueError:
+        return _line_statements(physical)
+
+
 def shape(command: str, _depth: int = 0) -> str | None:
     """"doctor", "stop" or "restart" when the command RUNS a guarded shape, else None."""
     if _depth > 3:
         return None
     for logical, physical in _logical_lines(command):
-        try:
-            statements = _statements(logical)
-        except ValueError:
-            # An unbalanced quote in the joined text: read the physical lines one by one, as before, so a
-            # stray apostrophe on one line cannot hide the commands on the next.
-            statements = []
-            for line in physical:
-                try:
-                    statements += _statements(line)
-                except ValueError:
-                    continue
+        statements = _read_statements(logical, physical)
+        if len(physical) > 1 and _NESTED_EXPANSION.search(logical):
+            # The scanner cannot follow a quote nested in an expansion, so the join may be imaginary: read
+            # the physical lines one by one as well (the 2.1.0 reading) and deny if either view matches.
+            statements += _line_statements(physical)
         for stmt in statements:
             splits: list[str] = []
             words = _command_words(stmt, splits)

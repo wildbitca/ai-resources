@@ -687,3 +687,115 @@ def test_a_stray_apostrophe_cannot_hide_the_next_line(guard):
     # the joined text does not tokenise, so the physical lines are read one by one as before
     assert guard.shape("echo it's\nsystemctl --user restart openclaw-gateway") == "restart"
     assert guard.shape("echo it's\nsystemctl --user status openclaw-gateway") is None
+
+
+# --- kit 2.1.1 pass 5, P1/P2/P8: a quote join must not hide the next command ----------------------------------------
+# Inside a double-quoted string the scanner reads `$(...)`, backticks and `${...}` as flat text, so a nested quote
+# made it believe a single quote was still open at the end of the line while the shell had closed it, and the
+# following lines were joined into an imaginary string. Each row below runs the guarded command in real bash.
+
+_FAMILY_COMMANDS = {
+    "doctor": "openclaw doctor --fix",
+    "stop-gateway": "openclaw gateway stop",
+    "restart-gateway": "openclaw gateway restart",
+    "stop-systemctl": "systemctl --user stop openclaw-gateway.service",
+    "restart-systemctl": "systemctl --user restart openclaw-gateway.service",
+}
+_FAMILY_SHAPE = {"doctor": "doctor", "stop-gateway": "stop", "restart-gateway": "restart",
+                 "stop-systemctl": "stop", "restart-systemctl": "restart"}
+
+# line 1: a double-quoted string with a command substitution holding an odd inner quote; line 2: the guarded
+# command; line 3: a comment with a single quote. {v} is the guarded command.
+_QUOTE_JOIN_SHAPES = {
+    "cmdsub": 'echo "$(echo "\'")"\n{v}\n# \'',
+    "backtick": 'echo "`echo "\'"`"\n{v}\n# \'',
+    "param-default": 'echo "${{x:-"\'"}}"\n{v}\n# \'',
+    "param-strip": 'echo "${{x#"\'"}}"\n{v}\n# \'',
+    "cmdsub-multi-line": 'echo "$(echo a\necho "\'")"\n{v}\n# \'',
+    "cmdsub-single-quoted-dq": 'echo "$(echo \'a"b\')"\n{v}\n# \'',
+    # P8: after `$$` bash does not read `$'...'` as ANSI-C quoting, `$$` is the PID
+    "dollar-dollar-quote": "echo $$'\\'\n{v}\n# '",
+    "dollar-dollar-quote-bare": "echo $$'\\'\n{v}",
+    # P8: a backtick substitution with an unbalanced double quote later
+    "backtick-unbalanced-dq": 'echo `echo "`\n{v}\n# "',
+}
+
+
+@pytest.mark.parametrize("family", sorted(_FAMILY_COMMANDS))
+@pytest.mark.parametrize("shape_name", sorted(_QUOTE_JOIN_SHAPES))
+def test_a_nested_quote_in_an_expansion_cannot_hide_the_next_line(guard, shape_name, family):
+    command = _QUOTE_JOIN_SHAPES[shape_name].format(v=_FAMILY_COMMANDS[family])
+    assert guard.shape(command) == _FAMILY_SHAPE[family], repr(command)
+
+
+@pytest.mark.parametrize("family", sorted(_FAMILY_COMMANDS))
+@pytest.mark.parametrize("shape_name", sorted(_QUOTE_JOIN_SHAPES))
+def test_the_quote_join_shapes_are_denied_through_the_hook_entry_point(guard, monkeypatch, capsys, shape_name,
+                                                                     family):
+    command = _QUOTE_JOIN_SHAPES[shape_name].format(v=_FAMILY_COMMANDS[family])
+    code, _ = run(guard, monkeypatch, command, capsys=capsys)
+    assert code == 2
+
+
+QUOTE_JOIN_ALLOWED = [
+    # the same shapes with a read-only verb in the second line
+    'echo "$(echo "\'")"\nopenclaw gateway status\n# \'',
+    'echo "`echo "\'"`"\nsystemctl --user status openclaw-gateway\n# \'',
+    "echo $$'\\'\nsystemctl --user is-active openclaw-gateway\n# '",
+    # multi-line strings and commands that only mention the words
+    'git commit -m "fix: guard\n\nnever run openclaw gateway restart by hand"',
+    "git commit -m 'fix: guard\n\nnever run systemctl --user restart openclaw-gateway'",
+    'echo "first\nsecond: openclaw doctor --fix\nthird"',
+    "echo $$\nopenclaw gateway status",
+    "echo $$ 'it'\"'\"'s'\nls",
+    'echo "$(date)"\nls\necho done',
+]
+
+
+@pytest.mark.parametrize("command", QUOTE_JOIN_ALLOWED)
+def test_benign_commands_next_to_the_quote_join_shapes_stay_allowed(guard, monkeypatch, capsys, command):
+    assert run(guard, monkeypatch, command, capsys=capsys) == (0, ""), command
+
+
+def test_an_ansi_c_string_with_an_escaped_quote_is_one_string(guard):
+    # S2e: `$'a\'b'` is a single ANSI-C string, so the mention inside it is text and the next line is a command
+    assert guard.shape("echo $'a\\'b openclaw gateway restart'\nls") is None
+    assert guard.shape("echo $'a\\'b'\nopenclaw gateway restart") == "restart"
+    assert guard.shape("echo $'a\\'b\nopenclaw gateway restart'\nls") is None
+
+
+def test_a_backslash_is_literal_inside_single_quotes_across_lines(guard):
+    # S2g: the `\` before the closing quote does not escape it, so the string ends on line 1
+    assert guard.shape("echo 'a\\'\nopenclaw gateway restart") == "restart"
+    assert guard.shape("echo 'a\\\nopenclaw gateway restart'\nls") is None
+
+
+def test_a_heredoc_operator_continued_onto_the_next_line_still_hides_its_body(guard):
+    # S2h: the delimiter is read from the joined text, not from the physical line
+    assert guard.shape("cat <<EOF \\\n> out\nopenclaw gateway restart\nEOF\nls") is None
+    assert guard.shape("cat \\\n<<EOF\nopenclaw doctor --fix\nEOF\nls") is None
+    assert guard.shape("cat <<EOF \\\n> out\nbody\nEOF\nopenclaw gateway restart") == "restart"
+
+
+def test_a_comment_before_the_next_line_does_not_join_it_to_the_statement(guard):
+    # the unquoted newline is a statement separator even when the joined text holds a comment
+    assert guard.shape("echo \"$(echo \"'\")\" # note\nopenclaw gateway restart\n# '") == "restart"
+
+
+# P2: a backslash before CRLF escapes the CR, it is not a continuation; the next line is its own command.
+def test_a_backslash_before_crlf_is_not_a_continuation(guard):
+    assert guard.shape("echo hi \\\r\nopenclaw gateway restart") == "restart"
+    assert guard.shape("echo\\\r\nopenclaw doctor --fix") == "doctor"
+    assert guard.shape("true \\\r\nsystemctl --user stop openclaw-gateway") == "stop"
+
+
+def test_a_backslash_before_lf_still_continues(guard):
+    assert guard.shape("openclaw \\\ngateway \\\nrestart") == "restart"
+    assert guard.shape("echo a \\\n  openclaw gateway restart") is None
+
+
+def test_a_carriage_return_or_other_line_separator_is_not_a_line_break(guard):
+    # splitlines() also breaks on \v \f \x1c-\x1e \x85 and \u2028; the shell does not
+    assert guard.shape("o\\\x0bpenclaw gateway restart") is None
+    assert guard.shape("echo a\\\x0c\nopenclaw gateway restart") == "restart"
+    assert guard.shape("echo 'a\x85b\nopenclaw gateway restart'") is None
