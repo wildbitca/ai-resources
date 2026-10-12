@@ -63,9 +63,13 @@ OPENCLAW_WATCHDOG_OFF="$HOME/.openclaw/watchdog.off"
 # start=<ticks> ...`, written by `ai-resources`) and that process is gone. An operator's marker (an empty file, or
 # any other content) is never stale: it is a maintenance window.
 watchdog_marker_is_stale() {
-  local line="" pid start now
+  local line="" raw pid start now
   [ -f "$OPENCLAW_WATCHDOG_OFF" ] && [ ! -L "$OPENCLAW_WATCHDOG_OFF" ] || return 1
-  IFS= read -r line < "$OPENCLAW_WATCHDOG_OFF" 2>/dev/null || [ -n "$line" ] || return 1
+  # Read through `head` under `timeout`: a FIFO swapped in between the check above and the open would block a
+  # redirect (`read < file`) for ever. A file that cannot be read in 2 s is not a regular marker: an operator's.
+  raw="$(timeout 2 head -c 512 -- "$OPENCLAW_WATCHDOG_OFF" 2>/dev/null)" || return 1
+  line="${raw%%$'\n'*}"
+  [ -n "$line" ] || return 1
   [[ "$line" =~ ^kit-run\ pid=([0-9]+)\ start=([0-9]+)(\ |$) ]] || return 1
   pid="${BASH_REMATCH[1]}"; start="${BASH_REMATCH[2]}"
   if [ -r "/proc/$pid/stat" ]; then

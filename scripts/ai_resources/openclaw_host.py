@@ -561,6 +561,25 @@ def _kit_run_alive(pid: int, start: int) -> bool:
     return True
 
 
+def _hold_termination() -> set[int] | None:
+    """Block SIGTERM and SIGINT for this thread; the mask to restore, None when it cannot be done (not the main
+    thread, no `pthread_sigmask`): then the caller runs unprotected as before."""
+    import signal
+    import threading
+    if threading.current_thread() is not threading.main_thread() or not hasattr(signal, "pthread_sigmask"):
+        return None
+    try:
+        return signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+    except (ValueError, OSError):
+        return None
+
+
+def _release_termination(previous: set[int] | None) -> None:
+    import signal
+    if previous is not None:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
 class Marker:
     """The `watchdog.off` file: while it exists the watchdog leaves the gateway alone.
 
@@ -575,6 +594,7 @@ class Marker:
         # (device, inode, mtime) of the file this object created: an inode number is reused at once when a file
         # is deleted and another created, the modification time tells those two apart
         self._created: tuple[int, int, int] | None = None
+        self._acquired = False             # this object made the file, whether or not its details were read
 
     def exists(self) -> bool:
         return self.path.exists()
@@ -588,30 +608,45 @@ class Marker:
 
         `exists()` followed by `touch()` lets two paths both conclude that the window is theirs; the exclusive
         create has exactly one winner. The file gets the signature line and its identity is remembered:
-        `remove()` leaves a file that is no longer this one alone."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
-        except FileExistsError:
-            return False
-        try:
-            try:
-                line = f"{KIT_MARKER_WORD} pid={os.getpid()} start={process_start_ticks(os.getpid()) or 0} " \
-                       f"at={int(time.time())}\n"
-                os.write(fd, line.encode("ascii"))
-            except OSError:
-                pass                       # an unsigned marker is an operator's: it errs toward standing down
-            try:
-                info = os.fstat(fd)        # after the write: its modification time is the one remembered
-                self._created = (info.st_dev, info.st_ino, info.st_mtime_ns)
-            except OSError:
-                self._created = None
-        finally:
-            os.close(fd)
-        return True
+        `remove()` leaves a file that is no longer this one alone.
 
-    def _signature(self) -> tuple[tuple[int, int], int, int] | None:
-        """((device, inode), pid, start) of a regular, signed marker; None for anything else."""
+        SIGTERM and SIGINT are held back from the create to the moment the identity is recorded: a handler that
+        raises there would leave a marker nobody owns, and an unsigned (still empty) one is a maintenance window
+        an operator opened. A signal that arrived meanwhile is delivered when the mask is lifted, with the
+        identity recorded (kit 2.2f, 4b)."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        held = _hold_termination()
+        try:
+            try:
+                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+            except FileExistsError:
+                return False
+            self._acquired = True
+            try:
+                try:
+                    line = f"{KIT_MARKER_WORD} pid={os.getpid()} start={process_start_ticks(os.getpid()) or 0} " \
+                           f"at={int(time.time())}\n"
+                    os.write(fd, line.encode("ascii"))
+                except OSError:
+                    pass                   # an unsigned marker is an operator's: it errs toward standing down
+                try:
+                    info = os.fstat(fd)    # after the write: its modification time is the one remembered
+                    self._created = (info.st_dev, info.st_ino, info.st_mtime_ns)
+                except OSError:
+                    self._created = None
+            finally:
+                os.close(fd)
+            return True
+        finally:
+            _release_termination(held)
+
+    @property
+    def acquired(self) -> bool:
+        """True when this object created the file (and so is the one that may remove it)."""
+        return self._acquired
+
+    def _signature(self) -> tuple[tuple[int, int, int], int, int] | None:
+        """((device, inode, mtime), pid, start) of a regular, signed marker; None for anything else."""
         try:
             fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
         except OSError:
@@ -626,7 +661,7 @@ class Marker:
         finally:
             os.close(fd)
         m = _KIT_MARKER.match(head)
-        return ((info.st_dev, info.st_ino), int(m.group(1)), int(m.group(2))) if m else None
+        return ((info.st_dev, info.st_ino, info.st_mtime_ns), int(m.group(1)), int(m.group(2))) if m else None
 
     def stale_kit_marker(self) -> bool:
         """True when the marker is one a kit run signed and that run no longer exists."""
@@ -636,13 +671,15 @@ class Marker:
     def reclaim_stale(self) -> bool:
         """Remove a stale kit marker (see `stale_kit_marker`); True when it was removed. An operator's marker,
         a live run's marker and anything that is not a regular file are left as they are; the file is unlinked
-        only if it is still the one that was read."""
+        only if it is still the one that was read: same device, inode AND modification time, so an operator who
+        overwrote it in place while the liveness of the run was being asked keeps the window he opened (kit 2.2f,
+        4a)."""
         sig = self._signature()
         if sig is None or _kit_run_alive(sig[1], sig[2]):
             return False
         try:
             info = os.lstat(self.path)
-            if (info.st_dev, info.st_ino) != sig[0]:
+            if (info.st_dev, info.st_ino, info.st_mtime_ns) != sig[0]:
                 return False
             os.unlink(self.path)
         except OSError:
@@ -651,9 +688,19 @@ class Marker:
 
     def remove(self) -> None:
         """Remove the marker. A marker this object created is removed only while it is still that file (same
-        device, inode and modification time): one an operator put in its place is theirs."""
+        device, inode and modification time): one an operator put in its place is theirs. When the file was
+        created here but its details could not be read there is nothing to compare with: it is left in place and
+        that is said (a signed marker of a run that is gone is reclaimed later), never deleted blind (kit 2.2f,
+        4c)."""
+        if self._acquired and self._created is None:
+            self._acquired = False
+            if self.path.exists():
+                sys.stderr.write(f"openclaw: {self.path} was created by this run but its identity could not be "
+                                 f"read; it is left in place (a signed marker of a finished run is reclaimed)\n")
+            return
         if self._created is not None:
             created, self._created = self._created, None
+            self._acquired = False
             try:
                 info = os.lstat(self.path)
             except OSError:
@@ -3883,7 +3930,12 @@ class MarkerGuard:
         try:
             self._owned = self.marker.acquire()
         except BaseException:
-            self._restore()
+            # a signal delivered as the mask was lifted: the file is ours and its identity is recorded
+            try:
+                if self.marker.acquired:
+                    self.marker.remove()
+            finally:
+                self._restore()
             raise
         if self.exclusive and not self._owned:
             self._restore()
