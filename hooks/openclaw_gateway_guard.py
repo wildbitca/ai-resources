@@ -1056,6 +1056,7 @@ _MAX_EXEC_EXPANSIONS = 64      # `xargs`/`find -exec` command lists followed per
 # newline, and at a backtick, so `` `openclaw `` and `restart` `` ` are the words `openclaw` and `restart` and not
 # words glued to the backtick that opens or closes the substitution.
 _SEGMENT = re.compile(r"[;&|()`\n]+")
+_INLINE_SUBST = re.compile(r"\$\([^()]*\)|`[^`]*`")
 _UNKNOWN_VERB = re.compile(r"[$`*?\[{~]")
 
 
@@ -1179,7 +1180,7 @@ _FAIL_CLOSED_WORD = re.compile(
     r"(?P<doctor>(?<![a-z0-9])doctor(?![a-z0-9])|--fix(?![a-z0-9]))")
 
 
-def _fail_closed_view(text: str) -> str | None:
+def _fail_closed_view(text: str, need_verb: bool = False) -> str | None:
     """"restart", "stop" or "doctor" when `text` names OpenClaw (a command word, or the unit) and any guarded
     word, wherever they sit; None otherwise. Line continuations (a backslash before a newline) are undone first, so
     a word split over two lines is whole again, then quotes and backslashes are removed as the cheap view does.
@@ -1189,7 +1190,10 @@ def _fail_closed_view(text: str) -> str | None:
     low = _CHEAP_QUOTES.sub("", text.lower().replace("\\\n", ""))
     if "openclaw-gateway" not in low and not _OC_COMMAND_WORD.search(low):
         return None
-    kinds = {m.lastgroup for m in _FAIL_CLOSED_WORD.finditer(low)}
+    # `need_verb`: the bare word `gateway` does not count (the budget fallback must not deny a padded
+    # `openclaw gateway status`); the deadline fallback keeps counting it.
+    kinds = {m.lastgroup for m in _FAIL_CLOSED_WORD.finditer(low)
+             if not (need_verb and m.group(0) == "gateway")}
     for kind in ("restart", "stop", "doctor"):
         if kind in kinds:
             return kind
@@ -1356,15 +1360,35 @@ def _verb_next_to_gateway(text: str, prepared: tuple[list[str], bool] | None = N
     return found
 
 
-def _text_shape(text: str) -> str | None:
+def _text_shape(text: str, fail_closed: bool = False) -> str | None:
     """The fallback for text the recogniser cannot (or may not) follow any further: "restart", "stop" or
-    "doctor" when the words are there, None when they are not. It reads words, not commands."""
+    "doctor" when the words are there, None when they are not. It reads words, not commands.
+
+    `fail_closed` is set when the precise analysis was ABANDONED (the work budget is spent, or the nesting is
+    past the limit): the text is then also read by the wide view that answers when the deadline fires, so
+    a padded command cannot turn a denied form (a line continuation, an inline substitution in an option slot)
+    into an allowed one. A line continuation is undone first in every case."""
     global _work
     _work += len(text)                       # the fallback is charged against the same bound
+    text = text.replace("\\\n", "")         # `openclaw gateway \<newline> restart` is one statement
     prepared = _word_segments(text)          # read once, by both passes below
     found = _verb_next_to_gateway(text, prepared)
     if found == "restart":
         return found
+    # The same words with every inline substitution (`$(...)`, a backtick pair) collapsed to one placeholder
+    # word: `openclaw --profile $(echo p) gateway restart` is ONE statement whose option value is the
+    # substitution, which the boundary split above cuts in three.
+    collapsed = text
+    if "openclaw" in text.lower() and ("$(" in text or "`" in text):   # nothing to collapse without both
+        for _ in range(3):                   # a few levels of nesting, innermost first; linear each time
+            collapsed, n = _INLINE_SUBST.subn(" x ", collapsed)
+            if not n:
+                break
+    if collapsed != text:
+        again = _verb_next_to_gateway(collapsed)
+        if again == "restart":
+            return again
+        found = found or again
     segments, skip_data = prepared
     for seg in segments:
         words = seg.split()

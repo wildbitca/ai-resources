@@ -11,6 +11,11 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Fixed
 
+- **Gateway guard, budget fallback (2.2e).** A prefix of about 8 KB of harmless substitutions spends the work
+  budget and the rest of the command was read by the word view, which did not join line continuations and cut at a
+  backtick: a guarded command split with `\` or with an inline substitution in an option slot was allowed
+  (183 of 1490 guarded rows that 2.1.x denied, measured by the independent audit). The word view now undoes
+  continuations and also reads the text with every inline substitution collapsed to one word.
 - **Reload table pin follows OpenClaw 2026.10.2.** The rule table read from the installed 2026.10.2 dist is
   identical to the 2026.10.1 one (108 rules); only `PINNED_OPENCLAW_VERSION` and the fixture name and version moved.
 - **Gateway guard (A).** The gateway guard hook reads a command substitution (`$(...)`, backticks, `<(...)`, also inside double

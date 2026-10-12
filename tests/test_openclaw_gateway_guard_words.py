@@ -443,3 +443,35 @@ def test_a_text_without_a_substitution_is_not_scanned_for_one(guard, monkeypatch
     assert scans == [], "a substitution opens with $( ` <( or >( : without one there is nothing to scan"
     assert guard._mask_substitutions("cat <(ls) >(wc)") == "cat _ _"
     assert scans
+
+
+# --- 2.2e item 1: a prefix that spends the work budget must not turn a denied form into an allowed one -------------
+
+def _padded(tail: str, n: int = 2200) -> str:
+    """About 8 KB of adjacent harmless substitutions: the work budget is spent in well under a second, the
+    deadline never fires, and the rest of the command is read by the fallback."""
+    return "echo " + "$(a)" * n + "\n" + tail
+
+
+@pytest.mark.parametrize("tail", [
+    "openclaw gateway \\\nrestart",                      # a line continuation inside the statement
+    "openclaw \\\ngateway restart",
+    "systemctl --user \\\nrestart openclaw-gateway",
+    "openclaw --profile `echo p` gateway restart",       # an inline substitution in an option slot
+    "openclaw --profile $(echo p) gateway restart",
+    "openclaw doctor \\\n--fix",
+])
+def test_a_budget_spending_prefix_does_not_hide_a_guarded_command(guard, tmp_path, tail):
+    cmd = _padded(tail)
+    assert guard.shape(cmd), "the fallback after the budget is spent must still deny"
+    rc, secs = _hook(tmp_path, cmd)
+    assert rc == 2 and secs < 3
+
+
+def test_a_budget_spending_prefix_with_a_harmless_tail_is_allowed(guard, tmp_path):
+    rc, secs = _hook(tmp_path, _padded("openclaw gateway status \\\n--json"))
+    assert rc == 0 and secs < 3
+
+
+def test_a_line_continuation_is_undone_in_the_word_fallback(guard):
+    assert guard._text_shape("openclaw gateway \\\nrestart") == "restart"
