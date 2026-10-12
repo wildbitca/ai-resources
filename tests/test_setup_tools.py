@@ -306,14 +306,26 @@ def test_pressing_enter_at_the_install_prompt_installs_nothing(monkeypatch):
     assert s.tracking.install_tools_answer == "no"
 
 
-def test_yes_installs_without_asking_and_records_the_answer(monkeypatch):
+def test_yes_installs_without_asking_and_does_not_persist_the_answer(monkeypatch):
     _all_missing(monkeypatch)
     monkeypatch.setattr(ui, "confirm", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
     ran = []
     monkeypatch.setattr(tools, "install_one", lambda tool_id, s: ran.append(tool_id) or True)
     s = state.SetupState()
     assert tools.offer(s, assume_yes=True) == ["claude", "agy", "openclaw"] and ran == ["claude", "agy", "openclaw"]
-    assert s.tracking.install_tools_answer == "yes"
+    assert s.tracking.install_tools_answer is None
+
+
+def test_a_yes_run_does_not_make_a_later_unattended_run_install(monkeypatch):
+    _all_missing(monkeypatch)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: True)
+    ran = []
+    monkeypatch.setattr(tools, "install_one", lambda tool_id, s: ran.append(tool_id) or True)
+    s = state.SetupState()
+    assert tools.offer(s, assume_yes=True) and ran
+    ran.clear()
+    assert tools.offer(s) == [] and ran == []
+    assert s.tracking.install_tools_answer is None
 
 
 def test_yes_also_answers_a_non_interactive_run_that_has_no_saved_answer(monkeypatch):

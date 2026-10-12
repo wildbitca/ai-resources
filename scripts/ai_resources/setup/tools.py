@@ -197,8 +197,10 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
         return []
     labels = ", ".join(TOOLS[t].label for t in missing)
 
+    # `--yes` applies to this run only; it is never stored, so a later unattended run without
+    # `--yes` cannot replay it.
     if assume_yes:
-        s.tracking.install_tools_answer = "yes"
+        pass
     elif ui.is_non_interactive():
         if s.tracking.install_tools_answer != "yes":
             return []
