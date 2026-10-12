@@ -472,6 +472,11 @@ def _logical_lines_docs(command: str
         buf, parts, prev = "", [], " "
     if parts:                                # the command ends inside a continuation or an open quote
         out.append((buf, parts))
+    for ent in pending:
+        # A heredoc whose delimiter line never comes (`EOF;ls` is not `EOF`) runs to the end of the text, and the
+        # shell still expands `$(...)` and backticks in an unquoted body.
+        if ent[1]:
+            bodies.append("\n".join(ent[4]))
     return out, bodies, line_docs
 
 
@@ -823,6 +828,25 @@ _XARGS_LONG_VALUE = frozenset({"--arg-file", "--delimiter", "--eof", "--max-args
                                "--max-lines", "--process-slot-var"})
 _PARALLEL_SHORT_VALUE = frozenset("jnNSaduLPsIrC")
 _FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
+
+
+def _parallel_text(words: list[str]) -> str | None:
+    """The command line GNU `parallel [opts] CMD ARGS ::: INPUTS` hands to a shell: the words after its own
+    options up to the first `:::`, joined by blanks. It is read again as shell text (a quoted list, a
+    substitution or a newline inside the argument is a command there)."""
+    if not words or os.path.basename(words[0]) != "parallel":
+        return None
+    i = 1
+    while i < len(words) and words[i].startswith("-") and words[i] != "--":
+        i += _option_width(words[i], _PARALLEL_SHORT_VALUE, frozenset())
+    if i < len(words) and words[i] == "--":
+        i += 1
+    rest: list[str] = []
+    for w in words[i:]:
+        if w.startswith(":::"):
+            break
+        rest.append(w)
+    return " ".join(rest) or None
 
 
 def _exec_inner(words: list[str]) -> list[list[str]]:
@@ -1525,7 +1549,12 @@ _ASSIGNERS = {"export", "declare", "typeset", "readonly", "local"}
 
 
 def _note_assignments(words: list[str], assigned: dict[str, str]) -> None:
-    """Remember `NAME=literal` statements (also after `export`/`declare`) so a later `eval "$NAME"` can be read."""
+    """Remember `NAME=literal` statements (also after `export`/`declare`, and after a keyword such as `then`
+    or `do`) so a later `eval "$NAME"` can be read."""
+    start = 0
+    while start < len(words) and words[start] in _KEYWORDS:
+        start += 1
+    words = words[start:]
     if not words:
         return
     rest = words
@@ -1680,6 +1709,12 @@ def _shape(command: str, _depth: int) -> str | None:
                 for extra in _exec_inner(words):
                     expanded += 1
                     statements.append((extra, False))
+            if base == "parallel":
+                text = _parallel_text(words)
+                if text:
+                    inner = shape(text, _depth + 1)
+                    if inner:
+                        return inner
             if base == "alias":
                 # the value of an alias is command text that runs when the alias is used
                 for w in words[1:]:

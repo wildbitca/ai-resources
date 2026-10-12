@@ -1455,3 +1455,29 @@ def test_a_hash_inside_a_word_does_not_start_a_comment_for_the_substitution_walk
 ])
 def test_an_untokenisable_line_with_a_shell_word_reads_its_heredoc_as_commands(guard, command, expected):
     assert guard.shape(command) == expected, command
+
+
+# --- 2.2c, 2: sub-classes the precise reader closes (the Verifier's gap 3) ----------------------------------------
+
+@pytest.mark.parametrize("command,expected", [
+    # an assignment after a keyword is still an assignment: `eval "$V"` runs the literal
+    ("if true; then V='openclaw gateway restart'; eval \"$V\"; fi", "restart"),
+    ("for i in 1; do V='systemctl --user restart openclaw-gateway'; eval $V; done", "restart"),
+    ("while true; do V='openclaw doctor --fix'; eval \"$V\"; break; done", "doctor"),
+    # `parallel` hands its command line to a shell: a quoted list, a substitution or a newline in it is read
+    ("parallel 'V='\"'\"'openclaw --profile p gateway restart'\"'\"'\neval $V' ::: 1 2", "restart"),
+    ("parallel 'echo \"$(openclaw doctor --fix)\"' ::: 1 2", "doctor"),
+    ("parallel 'x=\"$(systemctl --user stop openclaw-gateway)\"' ::: 1", "stop"),
+    # a heredoc whose delimiter line never comes still expands `$(...)` and backticks in an unquoted body
+    ("cat <<EOF >/dev/null\nhello $(openclaw --log-level debug gateway stop)\nEOF;test -d / && echo yes", "stop"),
+    ("cat <<EOF >/dev/null\nhello `systemctl --user stop openclaw-gateway.service`\nEOF;true", "stop"),
+    # the same text with a quoted delimiter is data, a closed heredoc is data, and a plain parallel is harmless
+    ("cat <<'EOF' >/dev/null\nhello $(openclaw gateway restart)\nEOF;true", None),
+    ("cat <<EOF\nhello $(date)\nEOF\nls", None),
+    ("cat <<EOF\nopenclaw gateway restart\nEOF\nls", None),
+    ("parallel -j2 echo ::: 'openclaw gateway restart'", None),
+    ("parallel gzip ::: *.log", None),
+    ("for i in 1; do V=restart; echo $V; done", None),
+])
+def test_keyword_assignments_parallel_command_lines_and_unterminated_heredocs_are_read(guard, command, expected):
+    assert guard.shape(command) == expected, command
