@@ -1097,57 +1097,255 @@ def _deadline_seconds() -> float:
 
 _CHEAP_CAP = 8 * 1024 * 1024             # characters the cheap view reads (the head and the tail when larger)
 _CHEAP_WINDOW = 160                      # characters between the gateway word and its verb
-_CHEAP_TOKEN = re.compile(r"(?P<gw>gateway)|(?P<verb>(?<![a-z0-9])(?:try-restart|reload-or-restart|"
-                          r"try-reload-or-restart|condrestart|restart|stop|kill)(?![a-z0-9]))|"
-                          r"(?P<doc>(?<![a-z0-9])doctor(?![a-z0-9]))|(?P<fix>--fix(?![a-z0-9]))")
-# The strict reading of the word view (the second view, see `decide`): the same verb, `doctor` and `--fix` tokens,
-# but a `gateway` word counts only when it is the OpenClaw gateway: `openclaw` stands within `_CHEAP_WINDOW`
-# characters before it, or it is the unit `openclaw-gateway[.service]` itself. `deploy/gateway`, `docker restart
-# gateway` and `api-gateway` are not (a deny there is a false positive that teaches people to disable the guard).
-# `openclaw` is a command word here: not `.openclaw` (the state directory), not `openclaw.json`, not a path
-# component (`openclaw/scripts`), not another unit (`openclaw-gateway-x.service`; a letter after the unit name is
-# not held against it: quotes and backslashes are removed first, so `openclaw-gateway\n` reads `...gatewayn`); a
-# path-qualified command
-# (`/usr/bin/openclaw`), `openclaw.mjs` and a unit name in the making (`openclaw-{gateway,x}`) are.
-_CHEAP_TOKEN_STRICT = re.compile(
-    r"(?P<unit>(?<![a-z0-9_.-])openclaw-gateway(?!-[a-z0-9_]))|"
-    r"(?P<oc>(?<![a-z0-9_.-])openclaw(?:\.mjs)?(?:(?=-[{*?\[])|(?![a-z0-9_/-])(?!\.[a-z0-9])))|(?P<gw>gateway)|"
-    r"(?P<verb>(?<![a-z0-9])(?:try-restart|reload-or-restart|try-reload-or-restart|condrestart|restart|stop|"
-    r"kill)(?![a-z0-9]))|(?P<doc>(?<![a-z0-9])doctor(?![a-z0-9]))|(?P<fix>--fix(?![a-z0-9]))")
 _CHEAP_QUOTES = re.compile(r"['\"\\]")
+_CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")   # an odd run of backslashes, then a newline
+_ANSI_C_STRING = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.S)
+_ANSI_C_BUDGET = 1 << 20                 # characters of `$'...'` strings decoded per reading
+# ONE token matcher for the three word views (the cheap view, its strict reading and the fail-closed view, kit
+# 2.2e): the unit `openclaw-gateway` (not `openclaw-gateway-x`), a unit glob or brace form that can reach it
+# (`openclaw-gate*`, `openclaw-{gateway,x}`), `openclaw` as a command word (not `.openclaw`, not `openclaw.json`,
+# not a path component, not another unit), the bare word `gateway`, the stop/restart verbs, `doctor` and `--fix`.
+# `openclaw` is also a command word when a unit name is in the making (`openclaw-{a,b}`), and a path-qualified
+# command (`/usr/bin/openclaw`) or `openclaw.mjs` is one.
+_UNIT_GLOB = r"(?<![a-z0-9_.-])openclaw-[a-z0-9_.,-]*[*?\[{][a-z0-9_.,*?\[\]{}-]*"
+_VERB_RX = r"(?:try-restart|reload-or-restart|try-reload-or-restart|condrestart|restart|stop|kill)"
+_CHEAP_TOKEN = re.compile(
+    r"(?P<unit>(?<![a-z0-9_.-])openclaw-gateway(?!-[a-z0-9_]))|(?P<uglob>" + _UNIT_GLOB + r")|"
+    r"(?P<oc>(?<![a-z0-9_.-])openclaw(?:\.mjs)?(?:(?=-[{*?\[])|(?![a-z0-9_/-])(?!\.[a-z0-9])))|(?P<gw>gateway)|"
+    r"(?P<verb>(?<![a-z0-9])" + _VERB_RX + r"(?![a-z0-9]))|"
+    r"(?P<doc>(?<![a-z0-9])doctor(?![a-z0-9]))|(?P<fix>--fix(?![a-z0-9]))")
+_UNIT_GLOB_RX = re.compile(_UNIT_GLOB)
+_UNIT_GLOB_CHECKS = 2000                 # unit-glob tokens expanded per reading; past it every one counts
+
+
+def _decode_text(text: str) -> str:
+    """`text` with a text above the cap cut to its head and its tail, line continuations undone (the shell removes
+    a backslash-newline) and `$'...'` strings decoded (`$'gat\\x65way'` is `gateway`). Quotes are kept."""
+    if len(text) > _CHEAP_CAP:
+        text = text[:_CHEAP_CAP // 2] + "\n" + text[-_CHEAP_CAP // 2:]
+    left = [_ANSI_C_BUDGET]
+
+    def decode(m: re.Match) -> str:
+        body = m.group(1)
+        if len(body) > left[0]:
+            return m.group(0)
+        left[0] -= len(body)
+        return _decode_ansi_c(body)
+
+    # a decoded string can hold a continuation (`$'open\\\nclaw'` is `open\<newline>claw` once decoded, and the
+    # shell that reads that text removes it) or another `$'...'`: a few rounds, each linear
+    for _ in range(4):
+        before = text
+        text = _CONTINUATION.sub(r"\1", text)      # a backslash that is not itself escaped, then a newline
+        if "$'" in text:
+            text = _ANSI_C_STRING.sub(decode, text)
+        if text == before:
+            break
+    return text
+
+
+def _words_of(decoded: str) -> str:
+    """The text the word views read: lower-cased, every backslash-newline that is left removed (wide on purpose:
+    `\\\\` + newline reads as one too), quotes and backslashes removed (`re''start`)."""
+    return _CHEAP_QUOTES.sub("", decoded.replace("\\\n", "").lower())
+
+
+def _normalise(text: str) -> str:
+    """`text` as the word views read it (`_decode_text`, then `_words_of`). No tokenising, no recursion."""
+    return _words_of(_decode_text(text))
+
+
+# What the strict reading excludes (kit 2.2e). The second view is the net for text the parser cannot follow, so it
+# reads the gateway words WIDE: `gateway` and a verb within `_CHEAP_WINDOW` characters deny, whatever spells
+# `openclaw` (a variable, an ANSI-C escape, a glob, a backtick) and wherever it sits, and the narrowing is done by
+# EXCLUDING contexts that are known to be harmless:
+#   - another product's gateway: a name glued to a plain one (`api-gateway`, `deploy/gateway`, `gateway-proxy`),
+#     a statement run by another product's CLI (`docker restart gateway`), `systemctl restart gateway` (a unit
+#     called `gateway`);
+#   - words that are only printed: `echo`, `printf` and `:` reached through `eval`, `bash -c`, `find -exec`, `<(...)`
+#     or `$(...)`, whose output is not piped, redirected or substituted into something that runs it
+#     (`echo ... | sh` and `$(echo ...)` stay denied; a bare `echo ...` statement of the text is still read);
+#   - `openclaw gateway status --note restart`: the first subcommand decides, as it does for the CLI.
+# An `openclaw` word within the window on either side keeps a denial except for the last two. Words in two
+# different statements pair only through a stored name (`g=gateway; ...`).
+_OTHER_PRODUCT_COMMANDS = frozenset({
+    "docker", "podman", "nerdctl", "crictl", "ctr", "docker-compose", "kubectl", "helm", "k3s", "k9s", "minikube",
+    "pm2", "forever", "supervisorctl", "supervisord", "nginx", "service", "rc-service", "initctl"})
+_PRINTING_COMMANDS = frozenset({"echo", "printf", ":"})
+_PRINTING_PASSTHROUGH = _TRANSPARENT_WORDS = frozenset({
+    "sudo", "doas", "env", "command", "builtin", "nohup", "time", "exec", "nice", "setsid", "stdbuf", "timeout",
+    "eval", "then", "do", "else", "elif", "if", "while", "until", "!", "sh", "bash", "zsh", "dash", "ksh"})
+_RUNS_ITS_INPUT = frozenset({"source", ".", "eval", "exec", "sh", "bash", "zsh", "dash", "ksh"})
+_NOT_A_VERB = frozenset({"status", "start", "install", "uninstall", "health", "probe", "call", "discover", "run",
+                         "logs", "usage-cost"})        # `openclaw gateway <one of these>`: the first one decides
+_STATEMENT_BREAK = re.compile(r"[;&|\n]")
+_STATEMENT_END = re.compile(r"[;&|\n)}]")
+_WORD_BEFORE = re.compile(r"[^\s;&|<>]*$")
+_ASSEMBLY_CHARS = frozenset("$`*?[{}()\\")
+_STRICT_PAIR_BUDGET = 2048               # exclusion checks per reading; past it every pair counts (fail closed)
+
+
+def _statement_head(low: str, pos: int) -> str:
+    """The text of the statement that holds `pos`, from its start to `pos` (at most 400 characters back)."""
+    lo = max(0, pos - 400)
+    start = max(max(low.rfind(c, lo, pos) for c in ";&|\n"), lo - 1) + 1
+    return low[start:pos]
+
+
+def _another_product(low: str, pos: int) -> bool:
+    """True when the statement that holds `pos` is run by another product's command."""
+    words = [w.lstrip("($`") for w in _statement_head(low, pos).split()[:6]]
+    return any(os.path.basename(w) in _OTHER_PRODUCT_COMMANDS for w in words)
+
+
+def _another_unit(low: str, gw: int) -> bool:
+    """True for a `gateway` that is part of another name or path (`api-gateway`, `deploy/gateway`,
+    `gateway-proxy`, `~/.openclaw/gateway`), or the plain unit `gateway` of `systemctl restart gateway`. A name
+    that is being assembled (a backtick, `$`, a glob or a brace in front of it) is not another name."""
+    prefix = _WORD_BEFORE.search(low, max(0, gw - 96), gw).group()
+    if prefix:
+        return prefix[-1] in "-/.:@_" and not _ASSEMBLY_CHARS.intersection(prefix)
+    follow = low[gw + 7:gw + 9]
+    if len(follow) == 2 and follow[0] == "-" and follow[1].isalnum():
+        return True
+    head = _statement_head(low, gw)
+    if any(c in head for c in "$`({"):
+        return False
+    return (any(os.path.basename(w) == "systemctl" for w in head.split()[:8])
+            and low[gw + 7:gw + 8] not in ("$", "`", "*", "?", "[", "{"))
+
+
+def _prints_only(low: str, a: int, b: int) -> bool:
+    """True when the words at `a`..`b` are the arguments of a command that only prints them (`echo`, `printf`,
+    `:`) and nothing takes that output as commands: the statement is not piped on, not redirected, has no
+    substitution, and is not itself the body of a `$(...)` or backtick (`:` is the exception: it prints nothing,
+    and what is inside `$(: ...)` is nothing)."""
+    lo = max(0, a - 400)
+    cut = max(low.rfind(c, lo, a) for c in ";&|\n(`{")
+    start = max(cut, lo - 1) + 1
+    opener = low[cut] if cut >= lo and low[cut] in "(`{" else ""
+    words = low[start:a].split()
+    k = 0
+    while k < len(words):
+        w = words[k]
+        base = os.path.basename(w)
+        if w in ("-o", "+o", "-O", "+O"):
+            k += 2                           # a shell option and its value (`bash +O extglob -c ...`)
+        elif w.startswith(("-", "+")) or _ASSIGNMENT.match(w) or base in _PRINTING_PASSTHROUGH:
+            k += 1
+        elif base == "find":                 # `find . -exec CMD ... ;`: the command is what follows -exec
+            k = next((j + 1 for j in range(k + 1, len(words)) if words[j] in _FIND_EXEC), len(words))
+        else:
+            break
+    if k >= len(words) or os.path.basename(words[k]) not in _PRINTING_COMMANDS:
+        return False
+    command = os.path.basename(words[k])
+    if k == 0 and not opener and command != ":":
+        return False                         # a bare `echo ...` statement of the text is still read (T46 price)
+    if command != ":":
+        if opener == "`" or (opener == "(" and low[cut - 1:cut] == "$"):
+            return False                     # `$(echo ...)`: the output is what runs
+        if opener == "(" and low[cut - 1:cut] == "<":
+            before = low[max(0, cut - 40):cut - 1].split()
+            if not before or os.path.basename(before[-1]) in _RUNS_ITS_INPUT:
+                return False                 # `source <(echo ...)`, `bash <(echo ...)`
+    if _STATEMENT_BREAK.search(low, a, b) is not None:
+        return False
+    # The statement is read to the end of its LINE, not to the first `;`: a quoted `;` inside the printed text
+    # is no boundary (quotes are gone from the text), and `echo 'a; b' | sh` pipes what it printed.
+    eol = low.find("\n", b)
+    body = low[start:eol if eol >= 0 else len(low)]
+    return not any(c in body for c in ("|", ">", "`", "$("))
+
+
+def _gateway_answered(low: str, gw: int, verb: int, raw: str) -> bool:
+    """True when another subcommand stands between `gateway` and the verb: `openclaw gateway status --note
+    restart` is `status`. The subcommand must also stand as a whole word in the text as it was written (`raw`,
+    lower-cased): a `status` that only exists once quotes, escapes or an ANSI-C string are resolved (`$'sta'tus`
+    read by a shell that does not know `$'...'`) does not answer anything."""
+    if verb < gw:
+        return False
+    between = low[gw + 7:verb]
+    if _STATEMENT_END.search(between) is not None or "(" in between:
+        return False
+    for w in between.split():
+        if w in _NOT_A_VERB and re.search(r"(?<![\w$'\"\\.-])" + re.escape(w) + r"(?![\w'\"\\-])", raw):
+            return True
+    return False
+
+
+def _strict_pair(low: str, raw: str, gw: int, near: bool, unit: bool, verb: int, spent: int) -> bool:
+    """True when the gateway word (or the unit) at `gw` and the verb at `verb`, within the window, are read as the
+    OpenClaw gateway being stopped or restarted (see the block comment above)."""
+    if spent >= _STRICT_PAIR_BUDGET:
+        return True
+    a, b = (gw, verb) if gw < verb else (verb, gw)
+    if _prints_only(low, a, b) or (not unit and _gateway_answered(low, gw, verb, raw)):
+        return False
+    if near:
+        return True
+    if _another_unit(low, gw) or _another_product(low, gw) or _another_product(low, verb):
+        return False
+    if _STATEMENT_BREAK.search(low, a, b) is None:
+        return True
+    return low[gw - 1:gw] == "=" or low[verb - 1:verb] == "="       # a name stored in a variable
 
 
 def _cheap_view(text: str, strict: bool = False) -> str | None:
     """The word-level view that decides when the precise analysis cannot (the deadline expired, or it failed):
     "restart", "stop" or "doctor" when `gateway` and a stop/restart verb sit within `_CHEAP_WINDOW` characters of
-    each other, or `doctor` and `--fix` do; None otherwise. One regular-expression pass over the lower-cased
-    text with its quotes and backslashes removed (`re''start`): no tokenising, no recursion, no nested loops.
+    each other, or `doctor` and `--fix` do; None otherwise. One regular-expression pass over the normalised text
+    (`_normalise`): no tokenising, no recursion, no nested loops.
 
-    `strict` is the second-opinion reading (text that feeds a shell): `gateway` counts only as the OpenClaw
-    gateway (see `_CHEAP_TOKEN_STRICT`). The deadline fallback is not strict: it fails toward the words, and a
-    benign text that names a gateway and a verb is denied when the deadline fires (documented in T46)."""
-    if len(text) > _CHEAP_CAP:
-        text = text[:_CHEAP_CAP // 2] + "\n" + text[-_CHEAP_CAP // 2:]
-    low = _CHEAP_QUOTES.sub("", text.lower())
-    last_gw = last_verb = last_doc = last_fix = last_oc = -_CHEAP_WINDOW * 4
+    `strict` is the second-opinion reading (text that feeds a shell, see `decide`): the same pairs, minus the
+    contexts that are known to be harmless (see `_strict_pair`); an `openclaw` word within the window on either
+    side, or the unit itself (a glob or brace form that reaches it included), keeps a pair. The deadline fallback
+    is not strict: it fails toward the words, and a benign text that names a gateway and a verb is denied when
+    the deadline fires (documented in T46)."""
+    decoded = _decode_text(text)
+    low = _words_of(decoded)
+    raw = decoded.lower()                    # quotes kept (for `_gateway_answered`)
+    far = -_CHEAP_WINDOW * 4
+    last_verb = last_doc = last_fix = last_oc = far
+    gws = [[far, False, False], [far, False, False]]   # [position, OpenClaw word next to it, is the unit]: the
+    # latest `gateway`, and the latest one stored in a variable (`g=gateway`, strict reading only)
     found: str | None = None
     verb_text = ""
-    for m in (_CHEAP_TOKEN_STRICT if strict else _CHEAP_TOKEN).finditer(low):
+    spent = globs = 0
+    for m in _CHEAP_TOKEN.finditer(low):
         pos = m.start()
         kind = m.lastgroup
+        if kind == "uglob":
+            globs += 1
+            kind = "unit" if globs > _UNIT_GLOB_CHECKS or _is_gateway_unit(m.group()) else "oc"
         if kind == "oc":
             last_oc = pos
+            if strict:
+                # an OpenClaw word AFTER the gateway word (`g=gateway; openclaw $g restart`) confirms it
+                for slot in gws:
+                    if pos - slot[0] <= _CHEAP_WINDOW and not slot[1]:
+                        slot[1] = True
+                        if abs(slot[0] - last_verb) <= _CHEAP_WINDOW:
+                            spent += 1
+                            if _strict_pair(low, raw, slot[0], True, slot[2], last_verb, spent):
+                                found = _verb_kind(verb_text, found)
             continue
-        if kind == "gw" and strict and pos - last_oc > _CHEAP_WINDOW:
-            continue                         # a gateway that is not the OpenClaw one
         if kind in ("gw", "unit"):
-            last_gw = pos
+            near = kind == "unit" or pos - last_oc <= _CHEAP_WINDOW
+            gws[0] = [pos, near, kind == "unit"]
+            if strict and low[pos - 1:pos] == "=":
+                gws[1] = [pos, near, False]
             if pos - last_verb <= _CHEAP_WINDOW:
-                found = _verb_kind(verb_text, found)
+                spent += 1
+                if not strict or _strict_pair(low, raw, pos, near, kind == "unit", last_verb, spent):
+                    found = _verb_kind(verb_text, found)
         elif kind == "verb":
             last_verb, verb_text = pos, m.group(0)
-            if pos - last_gw <= _CHEAP_WINDOW:
-                found = _verb_kind(verb_text, found)
+            for slot in gws:
+                if pos - slot[0] <= _CHEAP_WINDOW:
+                    spent += 1
+                    if not strict or _strict_pair(low, raw, slot[0], slot[1], slot[2], pos, spent):
+                        found = _verb_kind(verb_text, found)
         elif kind == "doc":
             last_doc = pos
             if pos - last_fix <= _CHEAP_WINDOW and found is None:
