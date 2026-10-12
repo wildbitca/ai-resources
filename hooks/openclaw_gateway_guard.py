@@ -47,10 +47,13 @@ an hour. `ai-resources openclaw doctor` does it in the one safe order.
 Cost and the deadline: the analysis is bounded by a work budget and by a wall-clock deadline (4 s, never
 more than 8 s: the hook's own timeout FAILS OPEN, so the guard must answer before it). When the deadline fires,
 or the analysis fails with an internal error, a CHEAP VIEW decides: it reads words, not commands, and denies
-when `gateway` sits next to a stop/restart verb (or `doctor` next to `--fix`) within a short window. The same view
-also runs, as a conservative second opinion, on text that feeds a shell through a heredoc, a here-string or a
-pipe: it may deny text that only mentions the verb there, and it never reads anything it cannot see in a
-single pass.
+when `gateway` sits next to a stop/restart verb (or `doctor` next to `--fix`) within a short window: ANY word
+`gateway` there, so a benign text that names a gateway and a verb is denied when the deadline fires (fail toward
+the words). The same view also runs, as a conservative second opinion, on text that feeds a shell through a
+heredoc, a here-string or a pipe, and there it is narrower: it needs the OpenClaw gateway words (`openclaw` before
+`gateway`, or the unit `openclaw-gateway[.service]`), not the bare word, so `docker restart gateway` or `kubectl
+rollout restart deploy/gateway` are allowed. It may still deny text that only mentions the verb there, and it
+never reads anything it cannot see in a single pass.
 
 Precision matters more than coverage. A deny aborts the WHOLE tool call, not the offending
 command (T24), and the kit's own docs are full of the literal strings above. So the command is
@@ -1045,7 +1048,10 @@ _VIEW_MAX_REFS = 64              # distinct pieces joined in the bounded view of
 _PRINTF_VIEW_CHARS = 65536       # size cap of the bounded view of a refused printf expansion
 _SHAPE_COST = 256                # charged for every shape() call and every logical line, whatever its size
 _MAX_EXEC_EXPANSIONS = 64      # `xargs`/`find -exec` command lists followed per command line
-_SEGMENT = re.compile(r"[;&|()\n]+")
+# The word view cuts a text into statements at these: `;`, `&`, `|`, a parenthesis (`$(`, `<(`, a subshell) and a
+# newline, and at a backtick, so `` `openclaw `` and `restart` `` ` are the words `openclaw` and `restart` and not
+# words glued to the backtick that opens or closes the substitution.
+_SEGMENT = re.compile(r"[;&|()`\n]+")
 _UNKNOWN_VERB = re.compile(r"[$`*?\[{~]")
 
 
@@ -1088,24 +1094,47 @@ _CHEAP_WINDOW = 160                      # characters between the gateway word a
 _CHEAP_TOKEN = re.compile(r"(?P<gw>gateway)|(?P<verb>(?<![a-z0-9])(?:try-restart|reload-or-restart|"
                           r"try-reload-or-restart|condrestart|restart|stop|kill)(?![a-z0-9]))|"
                           r"(?P<doc>(?<![a-z0-9])doctor(?![a-z0-9]))|(?P<fix>--fix(?![a-z0-9]))")
+# The strict reading of the word view (the second view, see `decide`): the same verb, `doctor` and `--fix` tokens,
+# but a `gateway` word counts only when it is the OpenClaw gateway: `openclaw` stands within `_CHEAP_WINDOW`
+# characters before it, or it is the unit `openclaw-gateway[.service]` itself. `deploy/gateway`, `docker restart
+# gateway` and `api-gateway` are not (a deny there is a false positive that teaches people to disable the guard).
+# `openclaw` is a command word here: not `.openclaw` (the state directory), not `openclaw.json`, not a path
+# component (`openclaw/scripts`), not another unit (`openclaw-gateway-x.service`; a letter after the unit name is
+# not held against it: quotes and backslashes are removed first, so `openclaw-gateway\n` reads `...gatewayn`); a
+# path-qualified command
+# (`/usr/bin/openclaw`), `openclaw.mjs` and a unit name in the making (`openclaw-{gateway,x}`) are.
+_CHEAP_TOKEN_STRICT = re.compile(
+    r"(?P<unit>(?<![a-z0-9_.-])openclaw-gateway(?!-[a-z0-9_]))|"
+    r"(?P<oc>(?<![a-z0-9_.-])openclaw(?:\.mjs)?(?:(?=-[{*?\[])|(?![a-z0-9_/-])(?!\.[a-z0-9])))|(?P<gw>gateway)|"
+    r"(?P<verb>(?<![a-z0-9])(?:try-restart|reload-or-restart|try-reload-or-restart|condrestart|restart|stop|"
+    r"kill)(?![a-z0-9]))|(?P<doc>(?<![a-z0-9])doctor(?![a-z0-9]))|(?P<fix>--fix(?![a-z0-9]))")
 _CHEAP_QUOTES = re.compile(r"['\"\\]")
 
 
-def _cheap_view(text: str) -> str | None:
+def _cheap_view(text: str, strict: bool = False) -> str | None:
     """The word-level view that decides when the precise analysis cannot (the deadline expired, or it failed):
     "restart", "stop" or "doctor" when `gateway` and a stop/restart verb sit within `_CHEAP_WINDOW` characters of
     each other, or `doctor` and `--fix` do; None otherwise. One regular-expression pass over the lower-cased
-    text with its quotes and backslashes removed (`re''start`): no tokenising, no recursion, no nested loops."""
+    text with its quotes and backslashes removed (`re''start`): no tokenising, no recursion, no nested loops.
+
+    `strict` is the second-opinion reading (text that feeds a shell): `gateway` counts only as the OpenClaw
+    gateway (see `_CHEAP_TOKEN_STRICT`). The deadline fallback is not strict: it fails toward the words, and a
+    benign text that names a gateway and a verb is denied when the deadline fires (documented in T46)."""
     if len(text) > _CHEAP_CAP:
         text = text[:_CHEAP_CAP // 2] + "\n" + text[-_CHEAP_CAP // 2:]
     low = _CHEAP_QUOTES.sub("", text.lower())
-    last_gw = last_verb = last_doc = last_fix = -_CHEAP_WINDOW * 4
+    last_gw = last_verb = last_doc = last_fix = last_oc = -_CHEAP_WINDOW * 4
     found: str | None = None
     verb_text = ""
-    for m in _CHEAP_TOKEN.finditer(low):
+    for m in (_CHEAP_TOKEN_STRICT if strict else _CHEAP_TOKEN).finditer(low):
         pos = m.start()
         kind = m.lastgroup
-        if kind == "gw":
+        if kind == "oc":
+            last_oc = pos
+            continue
+        if kind == "gw" and strict and pos - last_oc > _CHEAP_WINDOW:
+            continue                         # a gateway that is not the OpenClaw one
+        if kind in ("gw", "unit"):
             last_gw = pos
             if pos - last_verb <= _CHEAP_WINDOW:
                 found = _verb_kind(verb_text, found)
@@ -1237,7 +1266,10 @@ def _verb_next_to_gateway(text: str) -> str | None:
     `gateway` and `restart` far apart) are not enough (L4): the fallback denies only where a restart or stop is
     actually being asked for, that is when the verb is within `_NEAR` positional words of `gateway` (options
     and their values do not count) and `gateway` within `_NEAR` words of `openclaw`. An expansion, a glob or a
-    brace where the verb goes hides it: fail closed. Every scan is a window, so the cost is linear."""
+    brace where the verb goes hides it: fail closed. Every scan is a window over the words of one statement
+    (`_NEAR` words), so the work per `openclaw` word is bounded; the whole text is charged to the work budget by
+    its caller (`_text_shape`). Measured, not claimed: a 252 KB text of `openclaw` words in a 9-deep nest is
+    answered in 0.6 s and 240 KB of adjacent `$(a)` in 1.1 s through the whole hook (T46 has the table)."""
     # Quotes and backslashes are dropped first so a verb split by shell quoting joins up (`re''start`,
     # `res\tart` -> `restart`); `$` and backticks stay in the words so an expansion can be seen. Case is
     # folded: the CLI is the one path that could still reach the unit through a case variant.
@@ -1725,7 +1757,10 @@ def _shape(command: str, _depth: int) -> str | None:
         for sub in subs:
             # `"$(cmd)"`, `` `cmd` ``, `<(cmd)`: the shell runs the text inside as a command.
             if _work > _WORK_BUDGET:
-                found = _text_shape(logical)       # one pass over the line, not one parse per substitution
+                # The budget is spent: ONE linear word pass over the whole logical line (the substitutions already
+                # parsed and the REMAINDER of the line, which holds the ones not parsed), not one parse per
+                # substitution. A hit is the verdict; the loop is left only after that pass found nothing.
+                found = _text_shape(logical)
                 if found:
                     return found
                 break
@@ -1842,10 +1877,8 @@ def decide(command: str) -> str | None:
                     timer = False
             if dangerous(command):
                 found = shape(command)       # the same command: answered from the one-entry memo
-            if found is None:
-                cheap = _cheap_view(command)
-                if cheap and _feeds_a_shell_text(command):
-                    found = cheap
+            if found is None and _feeds_a_shell_text(command):
+                found = _cheap_view(command, strict=True)
         finally:
             _deadline_at = None              # the handler does nothing from here on
             if timer:
