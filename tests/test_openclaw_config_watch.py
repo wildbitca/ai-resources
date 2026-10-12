@@ -1303,3 +1303,48 @@ def test_declining_the_apply_pending_prompt_exits_one_too(monkeypatch):
     for name in ("info", "warn", "error", "ok"):
         monkeypatch.setattr(ui, name, lambda *a, **k: None)
     assert section.apply_pending(s, assume_yes=False) == 1
+
+
+# --- kit 2.2d, 4: the launch of the watch on a state file that is not valid YAML ---------------------------------
+
+def test_the_watch_is_not_started_when_the_state_file_is_not_valid_yaml(sim, script, ai_resources_on_path,
+                                                                        monkeypatch):
+    path = state.state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("profile: [unclosed\n", encoding="utf-8")
+    monkeypatch.setattr(state, "_replace_corrupt_ok", None, raising=False)
+    s = _state()
+    sim.systemd.calls.clear()
+    assert section.start_config_watch(s, [dict(HOT)]) is False
+    assert s.openclaw.config_watch is None
+    assert not [c for c in sim.systemd.calls if c[0] == "systemd-run"], "no unit without a recorded watch"
+    assert any("not valid YAML" in m for m in script.messages("warn"))
+    assert path.read_text(encoding="utf-8") == "profile: [unclosed\n"
+
+
+def test_a_failed_systemd_run_leaves_a_corrupt_state_file_alone_and_clears_the_record(sim, script,
+                                                                                       ai_resources_on_path,
+                                                                                       monkeypatch):
+    s = _state()
+    state.save(s)                                     # a valid file, so the first save succeeds
+    saves: list[int] = []
+    real_save = state.save
+
+    def save(st):
+        saves.append(1)
+        if len(saves) == 2:                           # the save after systemd-run failed meets a corrupt file
+            raise state.StateCorrupt("not valid YAML")
+        return real_save(st)
+
+    monkeypatch.setattr(state, "save", save)
+    real = sim.systemd
+
+    def runner(argv, **kw):
+        if argv[:1] == ["systemd-run"]:
+            return 1, "no user bus"
+        return real(argv, **kw)
+
+    monkeypatch.setattr(section, "_runner", lambda: runner)
+    assert section.start_config_watch(s, [dict(HOT)]) is False
+    assert saves == [1, 1] and s.openclaw.config_watch is None
+    assert any("post-setup watch not started" in m for m in script.messages("warn"))

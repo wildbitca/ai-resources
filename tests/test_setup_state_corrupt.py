@@ -229,3 +229,23 @@ def test_a_refusal_that_could_not_copy_does_not_claim_a_copy(corrupt_file, monke
     monkeypatch.setattr(state, "_backup_corrupt", lambda path: None)
     text = state.refusal_text()
     assert "a copy was made" not in text and "no copy" in text.lower()
+
+
+def test_the_state_lock_messages_are_exactly_the_sentences_the_operator_is_told(monkeypatch, tmp_path):
+    """2.2d (4): `<lock> is a symlink` for a link; `<lock>: <ErrorName>` for a directory."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    lock = state.state_path().with_name(state.state_path().name + ".lock")
+    lock.parent.mkdir(parents=True)
+    real = tmp_path / "elsewhere"
+    real.write_text("x", encoding="utf-8")
+    lock.symlink_to(real)
+    with pytest.raises(state.StateLockUnusable) as e:
+        with state.exclusive():
+            pass
+    assert str(e.value) == f"{lock} is a symlink"
+    lock.unlink()
+    lock.mkdir()
+    with pytest.raises(state.StateLockUnusable) as e2:
+        with state.exclusive():
+            pass
+    assert str(e2.value) == f"{lock}: IsADirectoryError"

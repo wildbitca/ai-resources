@@ -2891,3 +2891,48 @@ def test_a_symlinked_hand_units_directory_leaves_the_teardown_unfinished_and_a_s
     assert s.openclaw.host_hand_moved == {}
     for p, text in units.items():
         assert p.read_bytes() == text
+
+
+# =====================================================================================================================
+# Kit 2.2d, 4: the branches of host_env_problem
+# =====================================================================================================================
+
+import os as _os  # noqa: E402
+
+
+def test_host_env_problem_names_each_branch_in_one_clause(tmp_path):
+    env = tmp_path / "kit-host.env"
+    assert host.host_env_problem(env) == ""
+    env.mkdir()
+    assert host.host_env_problem(env) == f"{env} is a directory, not a file"
+    env.rmdir()
+    env.symlink_to("/dev/null")
+    assert host.host_env_problem(env) == f"{env} (a link to /dev/null) is not a regular file"
+    env.unlink()
+    env.symlink_to(tmp_path / "gone" / "kit-host.env")
+    assert host.host_env_problem(env) == (f"{env} is a symlink to {tmp_path / 'gone' / 'kit-host.env'}, "
+                                          "whose directory does not exist")
+    env.unlink()
+    env.write_text("A=1\n", encoding="utf-8")
+    assert host.host_env_problem(env) == ""
+
+
+@pytest.mark.skipif(_os.geteuid() == 0, reason="root can write anywhere")
+def test_host_env_problem_names_an_unwritable_parent(tmp_path):
+    parent = tmp_path / "ro"
+    parent.mkdir()
+    env = parent / "kit-host.env"
+    parent.chmod(0o555)
+    try:
+        assert host.host_env_problem(env) == f"{parent} is not writable, so {env} cannot be created"
+        env_missing_parent = parent / "sub" / "kit-host.env"
+        assert host.host_env_problem(env_missing_parent) == (
+            f"{parent} is not writable, so {env_missing_parent} cannot be created")
+    finally:
+        parent.chmod(0o755)
+    env.write_text("A=1\n", encoding="utf-8")
+    parent.chmod(0o555)
+    try:
+        assert host.host_env_problem(env) == f"{parent} is not writable, so {env} cannot be replaced"
+    finally:
+        parent.chmod(0o755)

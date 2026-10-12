@@ -293,3 +293,19 @@ def test_the_graceful_restart_lock_loser_prints_the_same_one_line_as_doctor_and_
         host.release_restart_lock(fd)
     assert lines == drained and len(lines) == 1
     assert "another restart or maintenance window is in progress" in lines[0] and "nothing was stopped" in lines[0]
+
+
+def test_the_lock_messages_are_exactly_the_sentences_the_operator_is_told(tmp_path):
+    """2.2d (4): `<path> is a symlink` (no colon) for a link, `<path>: <ErrorName>` for anything else."""
+    real = tmp_path / "elsewhere"
+    real.write_text("x", encoding="utf-8")
+    link = tmp_path / "health-restart.lock"
+    link.symlink_to(real)
+    with pytest.raises(host.RestartLockUnusable) as e:
+        host.acquire_restart_lock(link)
+    assert str(e.value) == f"{link} is a symlink"
+    plain = tmp_path / "dir.lock"
+    plain.mkdir()
+    with pytest.raises(host.RestartLockUnusable) as e2:
+        host.acquire_restart_lock(plain)
+    assert str(e2.value) == f"{plain}: IsADirectoryError"

@@ -249,3 +249,65 @@ def test_the_memo_is_keyed_on_the_command_and_cleared_by_decide(guard):
     assert guard.decide("openclaw gateway restart") == "restart"
     assert guard._memo is None
     assert guard.decide("openclaw gateway status") is None
+
+
+# --- 2.2d, 4: pins for the mutants the 2.2c verification left alive -------------------------------------------------
+
+def test_a_backtick_substitution_unescapes_only_a_backslash_a_dollar_and_the_backtick(guard):
+    assert guard._unescape_backticks("echo \\`x\\` \\$y \\\\ \\n \\\"") == "echo `x` $y \\ \\n \\\""
+    # the nested form: the outer body holds an escaped inner substitution that runs the verb
+    assert guard.decide("echo `echo \\`" + GW + "\\``") == "restart"
+    assert guard.decide("echo `echo \\`openclaw gateway status\\``") is None
+
+
+@pytest.mark.parametrize("payload", [
+    {"tool_name": "Read", "tool_input": {"command": GW}},
+    {"tool_name": "bash", "tool_input": {"command": GW}},
+    {"tool_input": {"command": GW}},
+    ["Bash", GW],
+])
+def test_main_looks_only_at_the_bash_tool(guard, monkeypatch, payload):
+    import io
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    assert guard.main() == 0
+
+
+def test_main_denies_the_bash_tool_with_the_same_command(guard, monkeypatch):
+    import io
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"tool_name": "Bash", "tool_input": {"command": GW}})))
+    assert guard.main() == 2
+
+
+def test_a_markdown_fence_before_a_shell_word_is_not_a_shell_that_is_fed(guard):
+    # the third backtick of a fence is preceded by a backtick: `bash` after it is prose, not a command word
+    command = "echo ```bash " + GW + " <<x"
+    assert guard._feeds_a_shell_text(command) is False
+    assert guard.decide(command) is None
+    assert guard._feeds_a_shell_text("echo `bash " + GW + " <<x") is True      # one backtick is a quote: kept
+
+
+def test_a_literal_c_string_is_not_a_consumer_up_to_its_bound_only(guard):
+    # `echo TEXT | bash -c 'SCRIPT'`: the shell runs SCRIPT, not the pipe; a literal longer than 2000 characters
+    # is not recognised as a literal any more, so the pipe is read as a consumer (the conservative side)
+    short = "echo '" + GW + "' | bash -c '" + "x" * 1900 + "'"
+    long = "echo '" + GW + "' | bash -c '" + "x" * 2100 + "'"
+    assert guard._feeds_a_shell_text(short) is False
+    assert guard._feeds_a_shell_text(long) is True
+    assert guard.decide(short) is None
+
+
+def test_the_word_fallback_is_charged_against_the_work_budget(guard):
+    guard._work = 0
+    guard._text_shape("x " * 5000)
+    assert guard._work >= 10000
+
+
+def test_the_cheap_view_reads_the_head_and_the_tail_above_its_cap(guard, monkeypatch):
+    monkeypatch.setattr(guard, "_CHEAP_CAP", 1000)
+    middle = "a" * 2000 + " " + GW + " " + "b" * 2000
+    head = GW + " " + "a" * 3000
+    tail = "a" * 3000 + " " + GW
+    assert guard._cheap_view(middle) is None
+    assert guard._cheap_view(head) == "restart"
+    assert guard._cheap_view(tail) == "restart"
+    assert guard._cheap_view(GW + " " + "x" * 900) == "restart"      # under the cap nothing is cut

@@ -86,3 +86,37 @@ def test_update_and_rollback_close_the_window_they_made(tmp_path, monkeypatch):
     assert not env.marker.path.exists()
     assert models.run_rollback(env.deps()).outcome == "rolled_back"
     assert not env.marker.path.exists() and env.marker_during_restart == [True, True]
+
+
+def _deps_with_the_real_restart(env):
+    """The Env's deps, but the restart is the real one (it refuses inside a window it was not told it owns); the
+    fake gateway's pid moves when it ran, as a restart does."""
+    real = _real_restart()
+
+    def restart():
+        real()
+        env.pid += 1
+        env.restarts += 1
+        return True
+
+    return dataclasses.replace(env.deps(), restart=restart)
+
+
+def test_rollback_restarts_inside_its_own_window(tmp_path, monkeypatch, calls):
+    """The real restart refuses inside a window it did not make: rollback must hand it the ownership of its own."""
+    env = Env(tmp_path, monkeypatch)
+    env.marker = host.Marker()                         # the window the real restart looks at
+    assert env.run(classes=["sonnet"]).rc == 0
+    result = models.run_rollback(_deps_with_the_real_restart(env))
+    assert result.outcome == "rolled_back", result
+    assert calls == [["gateway", "restart"]]
+    assert not env.marker.path.exists()
+
+
+def test_update_restarts_inside_its_own_window(tmp_path, monkeypatch, calls):
+    env = Env(tmp_path, monkeypatch)
+    env.marker = host.Marker()
+    result = models.run_update(models.Options(classes=["sonnet"]), _deps_with_the_real_restart(env))
+    assert (result.rc, result.outcome) == (0, "switched"), result
+    assert calls == [["gateway", "restart"]]
+    assert not env.marker.path.exists()
