@@ -106,8 +106,8 @@ def test_printed_only_process_substitutions_stay_allowed(tmp_path, command):
 
 
 def test_the_strict_view_looks_through_the_redirect_to_its_owner(guard):
-    assert guard._cheap_view('sh < <(echo "gateway restart")', strict=True) == "restart"
-    assert guard._cheap_view('cat < <(echo "gateway restart")', strict=True) is None
+    assert guard._cheap_view('sh < <(echo "openclaw gateway restart")', strict=True) == "restart"
+    assert guard._cheap_view('cat < <(echo "openclaw gateway restart")', strict=True) is None
 
 
 # --- 2. the other-product allow list --------------------------------------------------------------------------------
@@ -215,3 +215,84 @@ def test_a_backtick_pair_cut_by_the_look_back_window_does_not_cut_the_head(guard
         low = "`a`" * 300 + "x" * pad + "\nbash <<< open`printf `claw gateway restart"
         head = guard._statement_head(low, low.index("gateway"))
         assert "open`printf" in head, pad
+
+
+# --- 3. a bare `gateway` + verb needs a second signal ----------------------------------------------------------------
+
+BARE_GATEWAY_OF_OTHER_TOOLS = [
+    "npm run gateway:restart",
+    "yarn gateway:restart",
+    "pnpm run gateway:stop",
+    "git log --grep='gateway restart' --oneline",
+    "git log --grep=gateway --oneline restart",
+    "grep -rn 'gateway restart' docs/",
+    "rg 'restart the gateway' README.md",
+    "fly apps restart gateway",
+    "fly apps restart gateway --app $APP",
+    "heroku restart -a gateway",
+    "gh issue list --search 'gateway restart'",
+    "gh pr create --title 'fix: gateway restart loop' --body 'restart the gateway'",
+    "ssh -p 22 host docker restart gateway",
+    "echo 'gateway restarted'",
+    "curl -s -d '{\"note\":\"restart the gateway\"}' http://localhost:8080/notes",
+    "# fix(gateway): restart the api gateway after config reload",
+    "# restart the gateway deployment (" + KC + " rollout restart deploy/gateway)\necho ok",
+    "git commit -m 'fix(gateway): restart backoff'",
+]
+
+
+@pytest.mark.parametrize("command", BARE_GATEWAY_OF_OTHER_TOOLS)
+@pytest.mark.parametrize("feed", [
+    "bash <<EOF\n{c}\nEOF",
+    "sudo sh <<'EOF'\n{c}\nEOF",
+    "cat <<'EOF' | sh\n{c}\nEOF",
+    "eval \"$(cat <<'EOF'\n{c}\nEOF\n)\"",
+], ids=["heredoc", "sudo-sh", "pipe", "eval-cat"])
+def test_the_words_of_other_tools_are_not_an_openclaw_restart(tmp_path, command, feed):
+    assert _hook_rc(tmp_path, feed.format(c=command)) == 0
+
+
+BUILT_COMMANDS = [
+    "${OC:-openclaw} gateway restart",
+    "$o$c gateway stop",
+    "set -- gateway restart; $o$c \"$@\"",
+    "systemctl --user restart open``claw-gateway",
+    "systemctl --user restart \"$(printf 'openclaw-%s' gateway)\"",
+    "g=gateway; systemctl --user restart openclaw-$g",
+    "u=gateway; systemctl --user restart $p$q-$u",
+    "g=gateway; ${OC:-openclaw} $g restart",
+    "git log --grep=\"$(${OC:-openclaw} gateway restart)\"",
+    "git -c alias.x='!${OC:-openclaw} gateway restart' x",
+    "npm run x -- $(${OC:-openclaw} gateway stop)",
+    "# only a comment\n${OC:-openclaw} gateway restart",
+    "# a comment that ends in a backslash \\\n${OC:-openclaw} gateway restart",
+    "echo a # b\n${OC:-openclaw} gateway stop",
+]
+
+
+@pytest.mark.parametrize("command", BUILT_COMMANDS)
+@pytest.mark.parametrize("feed", ["bash <<EOF\n{c}\nEOF", "eval \"$(cat <<'EOF'\n{c}\nEOF\n)\""], ids=["heredoc", "eval-cat"])
+def test_a_command_that_is_built_at_run_time_is_still_denied(tmp_path, command, feed):
+    assert _hook_rc(tmp_path, feed.format(c=command)) == 2
+
+
+def test_a_far_option_value_does_not_separate_openclaw_from_gateway(tmp_path):
+    # `openclaw` and `gateway` more than the 160-character window apart, in one statement
+    command = "openclaw --profile " + "p" * 900 + " gateway --json restart"
+    assert _hook_rc(tmp_path, _fed(command)) == 2
+    assert _hook_rc(tmp_path, "eval \"$(cat <<'EOF'\n" + command + "\nEOF\n)\"") == 2
+
+
+def test_the_look_back_of_a_built_command_word_survives_a_run_of_backticks(tmp_path):
+    command = "echo " + "`a`" * 2000 + "\nbash <<< $'open`printf ''`claw gateway restart'"
+    assert _hook_rc(tmp_path, command) == 2
+
+
+def test_a_comment_line_is_not_a_statement_and_an_option_value_is_not_a_stored_name(guard):
+    assert guard._cheap_view("# deploy to $ENV: restart the gateway\nls", strict=True) is None
+    assert guard._cheap_view("  # deploy to $ENV: restart the gateway\nls", strict=True) is None
+    # a comment that names openclaw is still read (T46)
+    assert guard._cheap_view("# openclaw gateway restart is guarded\nls", strict=True) == "restart"
+    assert guard._cheap_view("echo a # b\nopenclaw gateway restart", strict=True) == "restart"
+    assert guard._cheap_view("git log --grep=gateway restart", strict=True) is None
+    assert guard._cheap_view("g=gateway; ${X} $g restart", strict=True) == "restart"

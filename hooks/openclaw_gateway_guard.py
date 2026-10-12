@@ -1168,6 +1168,9 @@ def _normalise(text: str) -> str:
 #   - `openclaw gateway status --note restart`: the first subcommand decides, as it does for the CLI.
 # An `openclaw` word within the window on either side keeps a denial except for the last two. Words in two
 # different statements pair only through a stored name (`g=gateway; ...`).
+# Kit 2.2f: a bare `gateway` + verb in one statement needs a second signal (`_second_signal`: the name is built at
+# run time); a comment line is not a statement; a wrapper's option value (`sudo -u docker`) is not the command
+# word and a substitution that is an argument of another product's command is a statement of its own.
 _OTHER_PRODUCT_COMMANDS = frozenset({
     "docker", "podman", "nerdctl", "crictl", "ctr", "docker-compose", "kubectl", "helm", "k3s", "k9s", "minikube",
     "pm2", "forever", "supervisorctl", "supervisord", "nginx", "service", "rc-service", "initctl"})
@@ -1183,7 +1186,13 @@ _STATEMENT_BREAK = re.compile(r"[;&|\n]")
 _STATEMENT_END = re.compile(r"[;&|\n)}]")
 _WORD_BEFORE = re.compile(r"[^\s;&|<>]*$")
 _ASSEMBLY_CHARS = frozenset("$`*?[{}()\\")
-_EXPANSION_CHARS = frozenset("$`*?[{")    # an expansion, a glob or a brace: a word built at run time
+_EXPANSION_CHARS = frozenset("$`*?[")      # an expansion or a glob: a word built at run time
+_BRACE_WORD = re.compile(r"\{[^{}\s]*(?:,|\.\.)[^{}\s]*\}")      # `{a,b}`, `{1..3}` in one word (JSON has spaces)
+
+
+def _built_word(word: str) -> bool:
+    """True for a word that is built at run time: an expansion, a glob, or a brace expansion."""
+    return bool(_EXPANSION_CHARS.intersection(word)) or _BRACE_WORD.search(word) is not None
 _STRICT_PAIR_BUDGET = 2048               # exclusion checks per reading; past it every pair counts (fail closed)
 _LINE_LOOKAHEAD = 4096                   # characters of a line read after the words of a printing statement
 
@@ -1217,7 +1226,7 @@ _FOLDED_FLAGS = {name: (frozenset(c.lower() for c in short) | short, long) for n
                  in _WRAPPER_FLAGS.items()}
 
 
-def _head_command(words: list[str]) -> tuple[str, int]:
+def _head_command(words: list[str], shells: bool = True) -> tuple[str, int]:
     """Where the command word of a statement head is: ("other", k) for another product's command, ("assembled",
     k) for a word that is built at run time (`${OC:-x}`, `$o$c`, `open*`), ("plain", k) for any other word,
     ("none", n) when there is none. Wrappers are looked through WITH their options and the options' values: the
@@ -1234,6 +1243,8 @@ def _head_command(words: list[str]) -> tuple[str, int]:
             k += _option_width(w, short, long) if w.startswith("-") else 1
         elif not w.strip("(){}") or w.startswith(("<", "%")) or _ASSIGNMENT.match(w) or w in _KEYWORDS:
             k += 1
+        elif not shells and base in _RUNS_ITS_INPUT:
+            return "plain", k                # `eval "$(cat <<EOF`: its argument is text, not a command word
         elif base in _TRANSPARENT_WORDS or base in _PRINTING_COMMANDS:
             wrapper = base                   # the printed text of `echo "docker ..." | sh` is read as the command
             k += 1
@@ -1264,7 +1275,7 @@ def _another_product(low: str, pos: int) -> bool:
         if os.path.basename(x) in _OTHER_PRODUCT_COMMANDS:
             # a built word after the name could be the real command (`su docker -c ${OC} ...`, `flock
             # /var/lock/docker ${OC} ...`): the name was a user, a host or a path
-            return not any(_EXPANSION_CHARS.intersection(y) for y in words[j:])
+            return not any(_built_word(y) for y in words[j:])
     return False
 
 
@@ -1412,6 +1423,46 @@ def _gateway_answered(low: str, gw: int, verb: int, raw: str, plain: dict[str, b
     return False
 
 
+# A bare `gateway` + verb in ONE statement is OpenClaw only with a second signal (kit 2.2f, 3): `npm run
+# gateway:restart`, `git log --grep='gateway restart'` and `fly apps restart gateway` have none. The signals that
+# are not an `openclaw` word or the unit (those are `near`, read before) are all "the name is built at run time":
+# an expansion, a glob or a brace in a word of the statement in front of the later of the two words (the command
+# word, or the argument of a wrapper: `${OC:-x} gateway restart`, `su docker -c $o$c gateway restart`), a
+# neighbour statement whose command word is built (`set -- gateway restart; $o$c "$@"`), an assembled
+# `openclaw` (`openclaw-$g`, `openclaw-%s`), or an assembled name glued in front of `gateway` (`open``claw-gateway`).
+_ASSEMBLED_OC = re.compile(r"(?<![a-z0-9_.~/-])openclaw(?:-[$`%*?\[{]|[$`{])")
+# a comment line that names `openclaw` is kept: `# openclaw gateway restart is guarded` stays denied (the T46 price)
+_COMMENT_LINE = re.compile(r"(?mi)^[ \t]*#(?![^\n]*openclaw)[^\n]*")
+_SEGMENT_BREAK = re.compile(r"[;&|\n]+")
+_ASSIGNMENT_PREFIX = re.compile(r"[a-z_][a-z0-9_]*\+?=")
+
+
+def _stored_name(low: str, pos: int) -> bool:
+    """True when the word at `pos` is the value of a variable assignment (`g=gateway`), not of an option
+    (`--grep=gateway`)."""
+    return low[pos - 1:pos] == "=" and _ASSIGNMENT_PREFIX.fullmatch(
+        _WORD_BEFORE.search(low, max(0, pos - 96), pos).group()) is not None
+
+
+def _second_signal(low: str, gw: int, verb: int) -> bool:
+    """True when the same-statement pair `gateway` / verb has a signal that the command is OpenClaw."""
+    prefix = _WORD_BEFORE.search(low, max(0, gw - 96), gw).group()
+    if prefix and _built_word(prefix):
+        return True                          # the name is being assembled in front of `gateway`
+    a, b = (gw, verb) if gw < verb else (verb, gw)
+    if any(_built_word(w) for w in _statement_head(low, b).split()):
+        return True                          # something in front of the words is built at run time
+    lo, hi = max(0, a - _CHEAP_WINDOW), b + _CHEAP_WINDOW
+    if _ASSEMBLED_OC.search(low, lo, hi) is not None:
+        return True
+    for n, seg in enumerate(_SEGMENT_BREAK.split(low[lo:hi])):
+        if n == 0 and lo > 0:
+            continue                         # a statement cut in the middle: its command word is not known
+        if _head_command(seg.split(), shells=False)[0] == "assembled":
+            return True                      # a neighbour statement runs what this one stored
+    return False
+
+
 def _strict_pair(low: str, raw: str, plain: dict[str, bool], gw: int, near: bool, unit: bool, verb: int,
                  spent: int) -> bool:
     """True when the gateway word (or the unit) at `gw` and the verb at `verb`, within the window, are read as the
@@ -1426,8 +1477,8 @@ def _strict_pair(low: str, raw: str, plain: dict[str, bool], gw: int, near: bool
     if _another_unit(low, gw) or _another_product(low, gw) or _another_product(low, verb):
         return False
     if _STATEMENT_BREAK.search(low, a, b) is None:
-        return True
-    return low[gw - 1:gw] == "=" or low[verb - 1:verb] == "="       # a name stored in a variable
+        return _second_signal(low, gw, verb)
+    return _stored_name(low, gw) or _stored_name(low, verb)        # a name stored in a variable (`g=gateway`)
 
 
 def _cheap_view(text: str, strict: bool = False) -> str | None:
@@ -1441,6 +1492,11 @@ def _cheap_view(text: str, strict: bool = False) -> str | None:
     side, or the unit itself (a glob or brace form that reaches it included), keeps a pair. The deadline fallback
     is not strict: it fails toward the words, and a benign text that names a gateway and a verb is denied when
     the deadline fires (documented in T46)."""
+    if strict and "#" in text:
+        # a comment line is not a statement (unless it names `openclaw`: that one stays read, T46). Dropped BEFORE
+        # the continuations are undone: the shell ends a comment at the newline even when the line ends in a
+        # backslash, so the next line is a command (kit 2.2f, 3)
+        text = _COMMENT_LINE.sub("", text)
     decoded = _decode_text(text)
     low = _words_of(decoded)
     raw = decoded.lower()                    # quotes kept (for `_gateway_answered`)
@@ -1471,7 +1527,9 @@ def _cheap_view(text: str, strict: bool = False) -> str | None:
                                 found = _verb_kind(verb_text, found)
             continue
         if kind in ("gw", "unit"):
-            near = kind == "unit" or pos - last_oc <= _CHEAP_WINDOW
+            near = (kind == "unit" or pos - last_oc <= _CHEAP_WINDOW
+                    or (0 <= last_oc and pos - last_oc <= _LINE_LOOKAHEAD
+                        and _STATEMENT_BREAK.search(low, last_oc, pos) is None))   # same statement, far apart
             gws[0] = [pos, near, kind == "unit"]
             if strict and low[pos - 1:pos] == "=":
                 gws[1] = [pos, near, False]
