@@ -1056,7 +1056,8 @@ _MAX_EXEC_EXPANSIONS = 64      # `xargs`/`find -exec` command lists followed per
 # newline, and at a backtick, so `` `openclaw `` and `restart` `` ` are the words `openclaw` and `restart` and not
 # words glued to the backtick that opens or closes the substitution.
 _SEGMENT = re.compile(r"[;&|()`\n]+")
-_INLINE_SUBST = re.compile(r"\$\([^()]*\)|`[^`]*`")
+# An INNERMOST inline substitution: no parenthesis, no backtick and no `$(` inside it.
+_INLINE_SUBST = re.compile(r"\$\([^()`]*\)|`[^`()]*`")
 _UNKNOWN_VERB = re.compile(r"[$`*?\[{~]")
 
 
@@ -1360,14 +1361,12 @@ def _verb_next_to_gateway(text: str, prepared: tuple[list[str], bool] | None = N
     return found
 
 
-def _text_shape(text: str, fail_closed: bool = False) -> str | None:
-    """The fallback for text the recogniser cannot (or may not) follow any further: "restart", "stop" or
-    "doctor" when the words are there, None when they are not. It reads words, not commands.
-
-    `fail_closed` is set when the precise analysis was ABANDONED (the work budget is spent, or the nesting is
-    past the limit): the text is then also read by the wide view that answers when the deadline fires, so
-    a padded command cannot turn a denied form (a line continuation, an inline substitution in an option slot)
-    into an allowed one. A line continuation is undone first in every case."""
+def _text_shape(text: str) -> str | None:
+    """The fallback for text the recogniser cannot (or may not) follow any further (the work budget is spent, the
+    nesting is past the limit, or the text does not tokenise): "restart", "stop" or "doctor" when the words are
+    there, None when they are not. It reads words, not commands. A line continuation is undone first, and an
+    inline substitution (`$(...)`, a backtick pair) in a statement is one unknown word of that statement, so a
+    padded command cannot turn a denied form into an allowed one."""
     global _work
     _work += len(text)                       # the fallback is charged against the same bound
     text = text.replace("\\\n", "")         # `openclaw gateway \<newline> restart` is one statement
@@ -1378,11 +1377,15 @@ def _text_shape(text: str, fail_closed: bool = False) -> str | None:
     # The same words with every inline substitution (`$(...)`, a backtick pair) collapsed to one placeholder
     # word: `openclaw --profile $(echo p) gateway restart` is ONE statement whose option value is the
     # substitution, which the boundary split above cuts in three.
+    # The placeholder is `$x`, an expansion: where it stands in the verb slot (`openclaw gateway `echo restart``)
+    # it is an unknown verb and fails closed, in an option slot it is the option's value and is skipped. A
+    # substitution that names openclaw is a statement of its own: it is kept, so that its words are read.
     collapsed = text
     if "openclaw" in text.lower() and ("$(" in text or "`" in text):   # nothing to collapse without both
         for _ in range(3):                   # a few levels of nesting, innermost first; linear each time
-            collapsed, n = _INLINE_SUBST.subn(" x ", collapsed)
-            if not n:
+            collapsed, n = _INLINE_SUBST.subn(
+                lambda m: m.group(0) if "openclaw" in m.group(0).lower() else " $x ", collapsed)
+            if collapsed == text or not n:
                 break
     if collapsed != text:
         again = _verb_next_to_gateway(collapsed)

@@ -475,3 +475,33 @@ def test_a_budget_spending_prefix_with_a_harmless_tail_is_allowed(guard, tmp_pat
 
 def test_a_line_continuation_is_undone_in_the_word_fallback(guard):
     assert guard._text_shape("openclaw gateway \\\nrestart") == "restart"
+
+
+# --- 2.2e: the placeholder of an inline substitution is an unknown word, not a plain one (found by the differential) --
+
+@pytest.mark.parametrize("text,expected", [
+    ("openclaw gateway `echo restart`", "restart"),
+    ("openclaw gateway `echo stop`", "restart"),            # an unknown verb fails closed as "restart"
+    ("openclaw --profile `echo p` gateway restart", "restart"),
+    ("openclaw gateway --port `echo 1` stop", "stop"),
+    ("echo $(openclaw gateway `echo restart`)", "restart"),
+    ("openclaw gateway status `date`", None),
+    ("openclaw gateway status", None),
+    ("echo `date` $(uname)", None),
+])
+def test_an_inline_substitution_in_the_verb_slot_is_an_unknown_verb(guard, text, expected):
+    assert guard._text_shape(text) == expected
+
+
+@pytest.mark.parametrize("word", ["restart", "stop"])
+@pytest.mark.parametrize("depth", [41, 44, 48])
+def test_a_substituted_verb_past_the_nesting_limit_is_denied(guard, word, depth):
+    command = "echo $(" * depth + f"openclaw gateway `echo {word}`" + ")" * depth
+    assert guard.decide(command) in ("restart", "stop")
+    assert guard._last_deadline_fired is False
+
+
+def test_a_substituted_verb_after_a_budget_spending_prefix_is_denied(tmp_path):
+    command = "echo " + "$(a)" * 2200 + '\na="`echo \\"x\\"`"; openclaw gateway `echo restart`'
+    rc, secs = _hook(tmp_path, command)
+    assert rc == 2 and secs < 3
