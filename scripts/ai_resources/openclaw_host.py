@@ -475,7 +475,8 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
            cleanup_sessions: bool = False, drain_timeout: float = 90, drain_interval: float = 3,
            health_timeout: float = 120, health_interval: float = 5,
            sleep: Callable[[float], None] = time.sleep, marker: Marker | None = None,
-           openclaw_bin: str | None = None, out: Callable[[str], None] = print) -> int:
+           openclaw_bin: str | None = None, out: Callable[[str], None] = print,
+           self_cgroup_path: Path | str = "/proc/self/cgroup") -> int:
     """`openclaw doctor --fix`, the only safe way, implemented once.
 
     `doctor --fix` stops the gateway and re-inspects the stopped unit; if a child (claude,
@@ -526,7 +527,7 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
                           busy_probe=busy_probe, drain_timeout=drain_timeout,
                           drain_interval=drain_interval, health_timeout=health_timeout,
                           health_interval=health_interval, sleep=sleep, marker=marker,
-                          openclaw_bin=oc, out=out,
+                          openclaw_bin=oc, out=out, self_cgroup_path=self_cgroup_path,
                           skip_message=f"doctor=skipped (the cgroup did not drain in {drain_timeout:g}s)")
 
 
@@ -570,7 +571,7 @@ def drained_window(action: Callable[[], bool], *, runner: Runner = default_runne
                    health_timeout: float = 120, health_interval: float = 5,
                    sleep: Callable[[float], None] = time.sleep, marker: Marker | None = None,
                    openclaw_bin: str | None = None, out: Callable[[str], None] = print,
-                   skip_message: str = "") -> int:
+                   skip_message: str = "", self_cgroup_path: Path | str = "/proc/self/cgroup") -> int:
     """The one maintenance window (T01), shared by `doctor` and the kit's restart-required config applies.
 
         touch watchdog.off  ->  stop  ->  poll until the cgroup drains  ->  action()
@@ -582,12 +583,22 @@ def drained_window(action: Callable[[], bool], *, runner: Runner = default_runne
     reports runs in flight or cannot tell (ADR-0001: defer, never force).
 
     Exit codes: 0 ok; 2 refused (marker present); 3 not drained; 4 action failed; 5 gateway did
-    not come back; 6 refused (busy).
+    not come back; 6 refused (busy); 8 refused (this process is a child of the gateway: stopping the unit
+    would kill the very process that has to start it again, T29).
     """
     marker = marker or Marker()
     env = systemd_env()
     oc = openclaw_bin or resolve_openclaw_bin()
     sysctl = ["systemctl", "--user"]
+
+    try:
+        own = Path(self_cgroup_path).read_text(encoding="utf-8")
+    except OSError:
+        own = ""
+    if GATEWAY_UNIT in own:
+        out("refusing: this process runs inside the gateway cgroup; stopping the gateway would kill it (T29). "
+            "Run this from outside the gateway (a terminal, not an agent session).")
+        return EXIT_REFUSED_SELF
 
     if marker.exists() and not force:
         out(f"refusing: {marker.path} exists, so another maintenance window is open. "
@@ -3893,6 +3904,11 @@ def cmd_graceful_restart(args: argparse.Namespace, **kw) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
+    """`doctor`: stops the gateway, so it needs a terminal or `--yes` (a pipe or a cron job asks nothing)."""
+    if not (getattr(args, "dry_run", False) or getattr(args, "yes", False) or sys.stdin.isatty()):
+        print("refusing: this stops the gateway and there is no terminal to ask; pass --yes to run it "
+              "unattended (nothing was stopped)")
+        return 1
     rc = doctor(force=args.force, dry_run=args.dry_run, cleanup_sessions=args.cleanup_sessions,
                 even_if_busy=getattr(args, "even_if_busy", False),
                 drain_timeout=args.drain_timeout, health_timeout=args.health_timeout)
@@ -4398,6 +4414,8 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_doc = verbs.add_parser("doctor", help="Run `openclaw doctor --fix` safely: drain, fix, restart, verify")
     p_doc.add_argument("--force", action="store_true", help="Proceed although watchdog.off already exists")
     p_doc.add_argument("--dry-run", action="store_true", help="Print the sequence; touch nothing")
+    p_doc.add_argument("--yes", action="store_true",
+                       help="Run without a terminal (it stops the gateway; with a terminal no flag is needed)")
     p_doc.add_argument("--even-if-busy", action="store_true",
                        help="Proceed although agent runs are in flight (or the probe cannot tell); the stop aborts them")
     p_doc.add_argument("--drain-timeout", type=float, default=90, help="Seconds to wait for the cgroup to drain")

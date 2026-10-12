@@ -28,7 +28,7 @@ trap finish EXIT
 
 log "=== maintenance window ==="
 
-out="$(ai-resources openclaw doctor --cleanup-sessions 2>&1)"
+out="$(ai-resources openclaw doctor --cleanup-sessions --yes 2>&1)"
 drc=$?
 echo "$out" >> "$LOG"
 case "$drc" in

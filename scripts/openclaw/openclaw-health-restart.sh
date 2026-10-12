@@ -194,7 +194,7 @@ if [ "$DRY" = 1 ]; then log "DRY RUN: would run the drained doctor ($reason)"; e
 # --- act: the drained doctor (it drains first, and refuses a busy gateway itself) ---
 log "idle: running the drained doctor ($reason)"
 setv last_restart "$now"
-out="$(ai-resources openclaw doctor 2>&1)"
+out="$(ai-resources openclaw doctor --yes 2>&1)"
 drc=$?
 log "doctor rc=$drc $(tr '\n' ' ' <<<"$out" | cut -c1-300)"
 if [ "$drc" -eq 0 ]; then

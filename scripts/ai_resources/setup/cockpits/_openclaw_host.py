@@ -780,7 +780,7 @@ def discard_watch_restores(s: state.SetupState, *, assume_yes: bool = False) -> 
         if not answered:
             dry_run_note()
             ui.info("nothing changed; re-run with --yes to discard")
-            return 0
+            return 1               # declined at a terminal: exit 1, like apply-pending (kit 2.2, E3)
     host.discard_watch_restores(s.openclaw, apply=True, out=ui.info, list_entries=False)
     return 0
 

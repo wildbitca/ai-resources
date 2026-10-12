@@ -1265,3 +1265,18 @@ def test_a_named_configuration_without_an_account_prints_the_configuration_not_u
     assert r.returncode == 0, r.stderr
     assert "config=openclaw-backup" in r.stdout and "(unset)" not in r.stdout
     assert "(unset)" not in _state_file(host)["identity"]
+
+
+# --- kit 2.2 E4: the unattended callers of `ai-resources openclaw doctor` pass --yes (a timer has no terminal) ----
+
+def test_the_unattended_scripts_call_the_doctor_verb_with_yes():
+    import re
+    root = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "openclaw"
+    calls = []
+    for name in ("openclaw-maintenance.sh", "openclaw-health-restart.sh"):
+        for line in (root / name).read_text(encoding="utf-8").splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            calls += re.findall(r"\$\(ai-resources openclaw doctor[^)]*\)", line)
+    assert len(calls) == 2, calls
+    assert all("--yes" in c for c in calls), calls

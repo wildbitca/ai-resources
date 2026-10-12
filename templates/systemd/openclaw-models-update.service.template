@@ -4,6 +4,8 @@ Documentation=file://@LIBEXEC@/scripts/openclaw/openclaw-models-update.sh
 
 [Service]
 Type=oneshot
+# Exit 75 is "deferred, the gateway is busy": a skip that resumes by itself, not a failed unit.
+SuccessExitStatus=75
 # 15 min covers the gateway stop (TimeoutStopSec=330), the health poll and the smoke calls.
 TimeoutStartSec=900
 ExecStart=/bin/bash @LIBEXEC@/scripts/openclaw/openclaw-models-update.sh

@@ -38,6 +38,7 @@ RECOMMENDED_PROFILE = "measured-best"
 # typed must not: substituting it silently ran setup under a profile they did
 # not ask for and never mentioned it.
 _REQUESTED_PROFILE = ""
+_ASSUME_YES = False          # `setup --yes`: the explicit yes to the tool-install offer (kit 2.2, E1)
 
 # The cockpits step 9 configured, in registry order. Step 10 verifies exactly these: re-deriving
 # the selection from the state would judge toolings the operator never picked, and that noise is
@@ -58,6 +59,8 @@ def run(args: argparse.Namespace) -> int:
     """Main wizard entry point: the whole run holds the setup-state lock (load -> modify -> save), so a second
     `setup`, an `apply-pending` or a teardown cannot overwrite what this one records. A dry run writes nothing
     and takes no lock."""
+    global _ASSUME_YES
+    _ASSUME_YES = bool(getattr(args, "yes", False))
     return state.locked_run(lambda: _run(args), out=lambda m: ui.error(m),
                             enabled=not getattr(args, "dry_run", False))
 
@@ -423,7 +426,8 @@ def _try_install_pipx() -> bool:
     options.append(("Skip — I'll install manually", [], ""))
 
     choices = [ui.Choice(f"{label}  {hint}", value=i) for i, (label, _, hint) in enumerate(options)]
-    pick = ui.select("How should I install pipx?", choices, default=0)
+    # Enter skips: the first entry is an installer (a package manager, sometimes with sudo).
+    pick = ui.select("How should I install pipx?", choices, default=len(options) - 1)
     if pick is None:
         return False
     label, cmd, _ = options[pick]
@@ -590,7 +594,7 @@ def _step2_cockpits(s: state.SetupState) -> int:
 
     # Offer to install claude, agy and openclaw when missing — the antigravity OpenClaw
     # engine (step 7) needs all three, and re-detecting here means step 7 sees them.
-    installed_tools = tools.offer(s)
+    installed_tools = tools.offer(s, assume_yes=_ASSUME_YES)
     if installed_tools:
         for cid, det in detection.detect_all_cockpits().items():
             cs = s.cockpits.get(cid) or state.CockpitState()

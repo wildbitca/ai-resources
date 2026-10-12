@@ -279,3 +279,65 @@ def test_teardown_under_non_interactive_removes_nothing(monkeypatch):
     s.tracking.tools_installed_by_us = ["agy"]
     assert tools.teardown(s) == []
     assert s.tracking.tools_installed_by_us == ["agy"]
+
+
+# --- kit 2.2 E1: an installer prompt defaults to No; `--yes` is the explicit way to say yes ---------------------
+
+def _all_missing(monkeypatch):
+    monkeypatch.setattr(detection, "detect_claude_code", lambda: _missing("Claude Code"))
+    monkeypatch.setattr(detection, "detect_agy", lambda: _missing("agy"))
+    monkeypatch.setattr(detection, "detect_openclaw", lambda: _missing("OpenClaw"))
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+
+
+def test_pressing_enter_at_the_install_prompt_installs_nothing(monkeypatch):
+    _all_missing(monkeypatch)
+    seen = {}
+
+    def enter(msg, default=True):
+        seen["default"] = default
+        return default                                   # what Enter does
+    monkeypatch.setattr(ui, "confirm", enter)
+    ran = []
+    monkeypatch.setattr(tools, "install_one", lambda tool_id, s: ran.append(tool_id) or True)
+    s = state.SetupState()
+    assert tools.offer(s) == []
+    assert seen["default"] is False and ran == []
+    assert s.tracking.install_tools_answer == "no"
+
+
+def test_yes_installs_without_asking_and_records_the_answer(monkeypatch):
+    _all_missing(monkeypatch)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
+    ran = []
+    monkeypatch.setattr(tools, "install_one", lambda tool_id, s: ran.append(tool_id) or True)
+    s = state.SetupState()
+    assert tools.offer(s, assume_yes=True) == ["claude", "agy", "openclaw"] and ran == ["claude", "agy", "openclaw"]
+    assert s.tracking.install_tools_answer == "yes"
+
+
+def test_yes_also_answers_a_non_interactive_run_that_has_no_saved_answer(monkeypatch):
+    _all_missing(monkeypatch)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: True)
+    ran = []
+    monkeypatch.setattr(tools, "install_one", lambda tool_id, s: ran.append(tool_id) or True)
+    assert tools.offer(state.SetupState(), assume_yes=True) and ran
+
+
+def test_the_setup_command_has_a_yes_flag_and_it_is_off_by_default():
+    from ai_resources import cli
+    assert cli.build_parser().parse_args(["setup"]).yes is False
+    assert cli.build_parser().parse_args(["setup", "--yes"]).yes is True
+
+
+def test_the_pipx_installer_menu_defaults_to_skip(monkeypatch):
+    from ai_resources.setup import wizard
+    picked = {}
+
+    def select(message, choices, default=0):
+        picked["default"], picked["choices"] = default, choices
+        return None
+    monkeypatch.setattr(ui, "select", select)
+    assert wizard._try_install_pipx() is False
+    chosen = [c for c in picked["choices"] if c.value == picked["default"]]
+    assert len(chosen) == 1 and "Skip" in chosen[0].title

@@ -1232,7 +1232,7 @@ def test_a_confirmed_discard_prints_the_dry_run_line_only_when_it_is_one(monkeyp
     messages2, _a = _discard_env(monkeypatch, tty=True, answer=False)
     s.openclaw.host_restart_pending = [{"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch",
                                         "change": dict(IDLE_KEY)}]
-    assert section.discard_watch_restores(s, assume_yes=False) == 0
+    assert section.discard_watch_restores(s, assume_yes=False) == 1    # kit 2.2 E3: a declined prompt is rc 1
     assert any(m.startswith("dry run:") for m in messages2) and s.openclaw.host_restart_pending
 
 
@@ -1277,3 +1277,29 @@ def test_a_healthy_watch_saves_its_finished_record(rig):
     assert r.run() == 0
     assert r.saves >= 1
     assert r.s.openclaw.config_watch["done"] is True
+
+
+# --- kit 2.2 E3: a prompt the operator declines on a terminal ends with exit 1, in both verbs ---------------------
+
+def test_declining_the_discard_prompt_exits_one_and_changes_nothing(monkeypatch):
+    messages, asked = _discard_env(monkeypatch, tty=True, answer=False)
+    s = state.SetupState()
+    entry = {"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "watch", "change": dict(IDLE_KEY)}
+    s.openclaw.host_restart_pending = [entry]
+    assert section.discard_watch_restores(s, assume_yes=False) == 1
+    assert asked and s.openclaw.host_restart_pending == [entry]
+    assert any("nothing changed" in m for m in messages)
+
+
+def test_declining_the_apply_pending_prompt_exits_one_too(monkeypatch):
+    from ai_resources.setup import ui
+    s = state.SetupState()
+    s.openclaw.host_restart_pending = [{"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "teardown",
+                                        "change": dict(IDLE_KEY)}]
+    monkeypatch.setattr(section, "_in_flight", lambda: (0, "0"))
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: False)
+    for name in ("info", "warn", "error", "ok"):
+        monkeypatch.setattr(ui, name, lambda *a, **k: None)
+    assert section.apply_pending(s, assume_yes=False) == 1

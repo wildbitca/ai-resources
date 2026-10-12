@@ -24,7 +24,7 @@ import shutil
 import stat
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterator
@@ -1133,7 +1133,16 @@ def make_plan(opts: Options, deps: Deps) -> "Plan | Result":
 def run_update(opts: Options, deps: Deps, *, plan: "Plan | None" = None, answers: dict | None = None,
                expect_revision: str | None = None) -> Result:
     """Discover, propose and apply. With a `plan` (the interactive path) no second discovery runs and
-    the overlay must still be at `expect_revision`; `answers` are the user's replies to the plan."""
+    the overlay must still be at `expect_revision`; `answers` are the user's replies to the plan.
+
+    `check` and `dry_run` are read-only, as documented: they write no log line and take no lock (so they can
+    neither be refused by a real run nor hold one off)."""
+    if opts.check or opts.dry_run:
+        ctx: dict = {}
+        result = _run_locked(opts, replace(deps, log=lambda _event: None), ctx, plan, answers, expect_revision)
+        result.providers = ctx.get("providers", [])
+        result.rendered = ctx.get("rendered", [])
+        return result
     with deps.lock() as got:
         if not got:
             return Result(EXIT_LOCKED, "locked", "another models update is running")

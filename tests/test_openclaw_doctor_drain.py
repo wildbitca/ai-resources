@@ -346,3 +346,71 @@ def test_the_cli_exposes_even_if_busy_and_defaults_it_off():
     host.add_subparser(ap.add_subparsers(dest="cmd"))
     assert ap.parse_args(["openclaw", "doctor"]).even_if_busy is False
     assert ap.parse_args(["openclaw", "doctor", "--even-if-busy"]).even_if_busy is True
+
+
+# --- kit 2.2 E4/E5: the verb needs a terminal or --yes, and refuses from inside the gateway cgroup -----------------
+
+def _gateway_cgroup(tmp_path):
+    p = tmp_path / "cgroup"
+    p.write_text("0::/user.slice/user-1000.slice/user@1000.service/app.slice/openclaw-gateway.service\n")
+    return p
+
+
+def test_doctor_launched_from_a_gateway_child_refuses_before_anything_is_stopped(tmp_path):
+    fake = Fake()
+    code, lines = fake.run(self_cgroup_path=_gateway_cgroup(tmp_path))
+    assert code == host.EXIT_REFUSED_SELF
+    assert fake.events == [], "no marker, no stop"
+    assert len([ln for ln in lines if "gateway cgroup" in ln]) == 1
+
+
+def test_a_drained_window_from_a_gateway_child_refuses_with_one_line(tmp_path):
+    fake = Fake()
+    lines: list[str] = []
+    ran: list[int] = []
+    code = host.drained_window(lambda: ran.append(1) or True, runner=fake, marker=fake.marker, sleep=fake.sleep,
+                               openclaw_bin="openclaw", out=lines.append,
+                               self_cgroup_path=_gateway_cgroup(tmp_path))
+    assert code == host.EXIT_REFUSED_SELF and ran == [] and fake.events == []
+    assert len(lines) == 1 and "T29" in lines[0]
+
+
+def test_a_window_from_outside_the_gateway_cgroup_is_unchanged(tmp_path):
+    own = tmp_path / "cgroup"
+    own.write_text("0::/user.slice/user-1000.slice/session-3.scope\n")
+    fake = Fake()
+    code, _ = fake.run(self_cgroup_path=own)
+    assert code == 0 and fake.ops()[0] == "touch"
+
+
+def _doctor_args(**kw):
+    import argparse
+    base = dict(force=False, dry_run=False, cleanup_sessions=False, even_if_busy=False, drain_timeout=90,
+                health_timeout=120, yes=False)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def test_the_verb_without_a_terminal_and_without_yes_stops_nothing(monkeypatch, capsys):
+    called: list[dict] = []
+    monkeypatch.setattr(host, "doctor", lambda **kw: called.append(kw) or 0)
+    monkeypatch.setattr(host.sys, "stdin", type("S", (), {"isatty": staticmethod(lambda: False)})())
+    assert host.cmd_doctor(_doctor_args()) == 1
+    assert called == []
+    out = capsys.readouterr().out
+    assert "--yes" in out and len(out.strip().splitlines()) == 1
+
+
+@pytest.mark.parametrize("kw,tty", [({"yes": True}, False), ({}, True), ({"dry_run": True}, False)])
+def test_the_verb_runs_with_yes_or_a_terminal_or_as_a_dry_run(monkeypatch, kw, tty):
+    called: list[dict] = []
+    monkeypatch.setattr(host, "doctor", lambda **k: called.append(k) or 0)
+    monkeypatch.setattr(host.sys, "stdin", type("S", (), {"isatty": staticmethod(lambda t=tty: t)})())
+    assert host.cmd_doctor(_doctor_args(**kw)) == 0
+    assert len(called) == 1
+
+
+def test_the_doctor_subparser_has_a_yes_flag():
+    from ai_resources import cli
+    assert cli.build_parser().parse_args(["openclaw", "doctor", "--yes"]).yes is True
+    assert cli.build_parser().parse_args(["openclaw", "doctor"]).yes is False

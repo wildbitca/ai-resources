@@ -378,3 +378,37 @@ def test_a_google_bump_without_approval_waits_and_is_recorded_as_pending(tmp_pat
     assert r.rc == models.EXIT_APPROVAL_PENDING
     assert e.state()["pending"]["google:gemini-flash"]["to"] == "gemini-3.9-flash"
     assert e.gateway_hits == []                                      # no smoke call before the human answers
+
+
+# --- kit 2.2 E2: `models check` and `models update --dry-run` are read-only: no log line, no lock -------------------
+
+class _LockProbe:
+    def __init__(self, env):
+        self.calls = 0
+        real = env.lock
+
+        def counted():
+            self.calls += 1
+            return real()
+        env.lock = counted
+
+
+@pytest.mark.parametrize("opts", [{"check": True}, {"dry_run": True}], ids=["check", "dry-run"])
+def test_a_read_only_run_writes_no_log_and_takes_no_lock(env, opts):
+    probe = _LockProbe(env)
+    env.run(classes=["sonnet"], **opts)
+    assert env.events == [], "a check or a dry run leaves the log alone"
+    assert probe.calls == 0, "and takes no lock (it cannot be refused by, or block, a real run)"
+    assert env.patches == [] or all(dry for _p, dry in env.patches)
+
+
+def test_a_real_run_still_logs_and_takes_the_lock(env):
+    probe = _LockProbe(env)
+    assert env.run(classes=["sonnet"]).outcome == "switched"
+    assert probe.calls == 1 and any(e["event"] == "plan" for e in env.events)
+
+
+def test_the_models_update_unit_treats_a_deferral_as_a_skip_not_a_failure():
+    text = (pathlib.Path(__file__).resolve().parents[1] / "templates" / "systemd"
+            / "openclaw-models-update.service.template").read_text(encoding="utf-8")
+    assert "SuccessExitStatus=75" in text

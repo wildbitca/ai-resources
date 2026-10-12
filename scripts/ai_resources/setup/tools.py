@@ -183,24 +183,28 @@ def install_one(tool_id: str, s: state.SetupState) -> bool:
     return True
 
 
-def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY) -> list[str]:
+def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, *,
+          assume_yes: bool = False) -> list[str]:
     """Offer to install missing required tools; return the ids actually installed.
 
-    Asks once per call. Under `--non-interactive`, the saved `install_tools_answer` is
-    replayed; with none saved, nothing is installed (a first unattended run must never
-    pipe a remote script into bash unasked).
+    Asks once per call, and the question defaults to No: pressing Enter runs nothing, because an
+    install pipes a remote script into bash. `assume_yes` (`ai-resources setup --yes`) is the explicit way
+    to say yes without being asked. Under `--non-interactive`, the saved `install_tools_answer` is
+    replayed; with none saved (and no `--yes`), nothing is installed.
     """
     missing = missing_tools(ids)
     if not missing:
         return []
     labels = ", ".join(TOOLS[t].label for t in missing)
 
-    if ui.is_non_interactive():
+    if assume_yes:
+        s.tracking.install_tools_answer = "yes"
+    elif ui.is_non_interactive():
         if s.tracking.install_tools_answer != "yes":
             return []
     else:
         if s.tracking.install_tools_answer is None:
-            proceed = ui.confirm(f"Install missing tools now? ({labels})", default=True)
+            proceed = ui.confirm(f"Install missing tools now? ({labels})", default=False)
             s.tracking.install_tools_answer = "yes" if proceed else "no"
         if s.tracking.install_tools_answer != "yes":
             return []

@@ -85,6 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Use saved answers without prompting (for CI)")
     p_st.add_argument("--profile", default="",
                       help="Skip prompts and use this profile")
+    p_st.add_argument("--yes", action="store_true",
+                      help="Answer yes to the offer to install missing tools (claude, agy, openclaw). "
+                           "Without it that question defaults to No and an unattended run installs nothing")
     p_st.add_argument("--dry-run", action="store_true",
                       help="Preview generated configs + test gateway without writing anything")
     p_st.add_argument("--shape", default="", choices=["", "single", "single-provider", "multi-provider"],

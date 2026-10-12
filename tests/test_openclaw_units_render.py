@@ -50,10 +50,22 @@ def test_the_gateway_unit_is_never_templated():
     assert "openclaw-gateway.service" not in host.UNIT_NAMES
 
 
+# Directives the kit's template adds on purpose and the reference host's hand-written unit does not have (kit 2.2, E2).
+# Everything else must still agree line for line.
+DELIBERATE = {"openclaw-models-update.service": ["SuccessExitStatus=75"]}
+
+
 @pytest.mark.parametrize("name", [n for n in host.UNIT_NAMES if n != "openclaw-verify.service"])
 def test_a_rendered_unit_matches_the_live_one_apart_from_the_script_location(name):
     rendered = host.render_unit(name, host.unit_markers(LIBEXEC))
-    assert _directives(rendered) == _relocate(_directives((LIVE / name).read_text(encoding="utf-8")))
+    ours = [ln for ln in _directives(rendered) if ln not in DELIBERATE.get(name, [])]
+    assert ours == _relocate(_directives((LIVE / name).read_text(encoding="utf-8")))
+
+
+@pytest.mark.parametrize("name,lines", sorted(DELIBERATE.items()))
+def test_the_deliberate_directives_are_in_the_template_and_not_in_the_reference_unit(name, lines):
+    assert all(ln in _directives(host.render_unit(name, host.unit_markers(LIBEXEC))) for ln in lines)
+    assert not any(ln in _directives((LIVE / name).read_text(encoding="utf-8")) for ln in lines)
 
 
 def test_the_verify_unit_defers_the_notice_to_the_script():
