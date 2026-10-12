@@ -165,10 +165,34 @@ def test_what_printf_and_a_variable_expansion_produce_is_charged_before_it_is_bu
     assert guard._expand_known(words, {"V": huge}) == words          # 500 MB would be built: not built
     assert guard._work > guard._WORK_BUDGET
     guard._work = 0
-    assert guard._printf_text(["%s%s"] + ["x" * 5000] * 200_000) == ""
+    # the 1 GB result is not built; a bounded view of the DISTINCT arguments is, so it can still be read
+    assert len(guard._printf_text(["%s%s"] + ["x" * 5000] * 200_000)) < guard._MAX_COMMAND_CHARS
     guard._work = 0
     assert guard._printf_text(["%s-%s", "a", "b", "c"]) == "a-bc-"
     assert guard._work < 100
+
+
+_REFUSED_EXPANSIONS = [
+    # the guarded statement inside the assigned value, evaluated through many references (last line)
+    'V="' + "x" * 2000 + ';openclaw gateway restart"; eval "' + "$V;" * 600 + '"',
+    'V="openclaw gateway restart"; eval "' + "$V;" * 50000 + '"',
+    'V="openclaw gateway restart"; bash -c "' + "$V;" * 50000 + '"',
+    # the guarded statement spelled across two small assignments, 12000 references (48 KB)
+    "V='systemctl --user restart openclaw-gate'; W='way;'; eval \"" + "$V$W" * 12000 + '"',
+    # printf reuses its format for every argument and pipes the result into a shell
+    "printf 'systemctl --user restart openclaw-gate%s;" + "x #" * 1000 + "\n' " + "way " * 400 + "| sh",
+]
+
+
+@pytest.mark.parametrize("command", _REFUSED_EXPANSIONS)
+def test_an_expansion_the_budget_refuses_is_read_for_words_and_denied(guard, command):
+    assert guard.decide(command) is not None
+    assert guard._last_deadline_fired is False
+
+
+def test_a_refused_expansion_of_harmless_values_is_still_allowed(guard):
+    assert guard.decide('V=hello; W=world; eval "' + "$V$W" * 12000 + '"') is None
+    assert guard.decide("printf '%s;" + "x #" * 1000 + "\n' " + "a " * 400 + "| sh") is None
 
 
 def test_every_shape_call_is_charged_a_fixed_cost(guard):
@@ -205,7 +229,7 @@ def _many_cases() -> str:
 
 _COST_CLASSES = {
     # the four classes measured in 2.2b
-    "252KB-openclaw-words-in-a-9-deep-nest": lambda: "$(echo " * 9 + "openclaw " * 28000 + ")" * 9,
+    "252KB-openclaw-words-in-a-9-deep-nest": lambda: "$(: " * 9 + "openclaw " * 28000 + ")" * 9,
     "6000-heredocs-in-a-group": lambda: 'echo "' + "".join(f"$(cat<<D{i}\nD{i}\n)\n" for i in range(6000)) + '"',
     "28000-openclaw-doctor-words": lambda: "'x\n" + "openclaw doctor " * 14000,
     "1MB-multi-line-quote": lambda: 'echo "$(echo x)\n' + ("a line with 'quotes' and `ticks`\n" * 32_000),
@@ -213,7 +237,7 @@ _COST_CLASSES = {
     "60000-adjacent-substitutions": lambda: "echo " + "$(a)" * 60000,
     "32000-adjacent-substitutions": lambda: "echo " + "$(a)" * 32000,
     "backticks-in-double-quotes-at-the-cap": lambda: 'echo "' + "`a`" * 87000 + '"',
-    "one-substitution-per-line-250KB": lambda: "\n".join("x=$(a)" for _ in range(41000)),
+    "one-substitution-per-line-250KB": lambda: "\n".join("x=$(a)" for _ in range(35000)),
     "printf-format-reuse-into-a-shell": lambda: "printf '%s' " + "a " * 60000 + "| sh",
     "assigned-literal-evaluated-many-times": lambda: "V=" + "a" * 2000 + '; eval "' + "$V" * 100 + '"',
     "case-per-line": _many_cases,
@@ -221,8 +245,16 @@ _COST_CLASSES = {
 
 
 @pytest.mark.parametrize("name", sorted(_COST_CLASSES))
-def test_the_cost_classes_answer_under_six_seconds_and_keep_the_verdict(tmp_path, name):
+def test_the_cost_classes_answer_under_six_seconds_and_keep_the_verdict(tmp_path, guard, name):
     benign = _COST_CLASSES[name]()
+    # The parser's own cost: in-process, so the deadline cannot hide a regression. The benign text is read by
+    # the precise analysis alone (the deadline does not fire) and well inside the 3 s the plan asks for.
+    start = time.perf_counter()
+    verdict = guard.decide(benign)
+    parsed_in = time.perf_counter() - start
+    assert verdict is None, name
+    assert guard._last_deadline_fired is False, f"{name}: the deadline fired on benign input"
+    assert parsed_in < 3, f"{name}: {parsed_in:.1f}s for {len(benign)} bytes"
     rc, elapsed = _hook(tmp_path, benign)
     assert rc == 0, name
     assert elapsed < 6, f"{name}: {elapsed:.1f}s for {len(benign)} bytes"

@@ -15,6 +15,7 @@ Rules that run through the whole module:
 """
 from __future__ import annotations
 
+import contextvars
 import copy
 import fnmatch
 import json
@@ -1310,6 +1311,10 @@ def _await_health(deps: Deps) -> bool:
     return False
 
 
+# True while the running `models` path created watchdog.off itself (so the restart may run inside it).
+_WINDOW_OWNED: contextvars.ContextVar[bool] = contextvars.ContextVar("models_window_owned", default=False)
+
+
 def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, tuple[str, str]], *,
                         resume: bool, proposals: list[Proposal] | None = None) -> Result:
     proposals = proposals or []
@@ -1318,6 +1323,7 @@ def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, 
     marker = deps.marker or openclaw_host.Marker()
     owned = not marker.exists()
     marker.touch()
+    window_token = _WINDOW_OWNED.set(owned)
     try:
         pid_before = st.get("pending_restart_pid") or deps.main_pid()
         already = resume and pid_before and deps.main_pid() != pid_before
@@ -1383,6 +1389,7 @@ def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, 
                           proposals, applied)
         return Result(EXIT_ROLLED_BACK, "rolled_back", f"{reason}; rolled back", proposals, applied)
     finally:
+        _WINDOW_OWNED.reset(window_token)
         if owned:
             marker.remove()
 
@@ -1424,8 +1431,10 @@ def default_deps() -> Deps:
 
     def restart() -> object:
         try:
+            # The caller holds watchdog.off for the whole restart-and-verify; only a window it did NOT
+            # create (an operator's) makes the restart refuse.
             return oc.restart_gateway(backend=restart_backend(selection()), ask=None, interactive=False,
-                                      restart_timeout=RESTART_TIMEOUT)
+                                      restart_timeout=RESTART_TIMEOUT, window_owned=_WINDOW_OWNED.get())
         except oc.RestartDeferred as e:
             raise RestartDeferred(e.reason) from None
 
@@ -1495,6 +1504,7 @@ def run_rollback(deps: Deps) -> Result:
         marker = deps.marker or openclaw_host.Marker()
         owned = not marker.exists()
         marker.touch()
+        window_token = _WINDOW_OWNED.set(owned)
         try:
             try:
                 deps.restart()
@@ -1503,6 +1513,7 @@ def run_rollback(deps: Deps) -> Result:
                 return Result(EXIT_DEFERRED, "deferred", f"rolled back; restart deferred: {e.reason}")
             healthy = _await_health(deps)
         finally:
+            _WINDOW_OWNED.reset(window_token)
             if owned:
                 marker.remove()
         _persist(deps, back, last_result="rolled_back" if healthy else "rollback_failed",

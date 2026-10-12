@@ -4436,7 +4436,15 @@ def cmd_offbox_identity(args: argparse.Namespace) -> int:
         return _cmd_offbox_identity(args)        # a dry run writes nothing, so it takes (and creates) no lock
     try:
         with setup_state.exclusive():
-            return _cmd_offbox_identity(args)
+            if setup_state.save_would_refuse():
+                # before any gcloud call: a configuration created now could never be recorded
+                print(setup_state.refusal_text())
+                return 1
+            try:
+                return _cmd_offbox_identity(args)
+            except setup_state.StateCorrupt:
+                print(setup_state.refusal_text())
+                return 1
     except setup_state.StateLockBusy:
         print("refusing: another offbox-identity run is in progress (the setup state is locked); "
               "wait for it to finish and run this again")
@@ -4624,7 +4632,17 @@ def cmd_dedupe_agents_md(args: argparse.Namespace) -> int:
 def cmd_apply_pending(args: argparse.Namespace) -> int:
     """`apply-pending` (and `--discard-watch-restores`): load -> modify -> save under the setup-state lock."""
     from .setup import state as setup_state
-    return setup_state.locked_run(lambda: _cmd_apply_pending(args))
+
+    def run() -> int:
+        if setup_state.save_would_refuse():
+            print(setup_state.refusal_text())
+            return 1
+        try:
+            return _cmd_apply_pending(args)
+        except setup_state.StateCorrupt:
+            print(setup_state.refusal_text())
+            return 1
+    return setup_state.locked_run(run)
 
 
 def _cmd_apply_pending(args: argparse.Namespace) -> int:

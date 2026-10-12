@@ -852,7 +852,13 @@ def start_config_watch(s: state.SetupState, run_changes: list[dict], *, config_p
                       "baseline_healthy": healthy is not False, "openclaw_version": version, "reload_mode": mode,
                       "done": False, "result": None}
     # The watch reads the state file from its very first tick: it must be on disk before the unit starts.
-    state.save(s)
+    try:
+        state.save(s)
+    except state.StateCorrupt:
+        o.config_watch = None
+        ui.warn("post-setup watch not started: the setup state file is not valid YAML, so it cannot be "
+                "recorded; run `ai-resources openclaw status` in 10 minutes")
+        return False
     # A transient unit inherits the USER MANAGER's environment, not this shell's: without its own PATH the watch
     # cannot find node and every probe fails with 127 (D1, 2026-10-10). `--setenv` sets it on the unit itself.
     rc, out = _runner()(["systemd-run", "--user", f"--unit={unit}", "--collect", "-p", "RuntimeMaxSec=1800",
@@ -860,7 +866,10 @@ def start_config_watch(s: state.SetupState, run_changes: list[dict], *, config_p
                          cli, "openclaw", "config-watch", "--run-id", run_id], env=host.systemd_env(), timeout=30)
     if rc != 0:
         o.config_watch = None
-        state.save(s)
+        try:
+            state.save(s)
+        except state.StateCorrupt:
+            pass
         ui.warn(f"post-setup watch not started: {out.strip()[-160:] or 'systemd-run failed'}; run "
                 "`ai-resources openclaw status` in 10 minutes")
         return False

@@ -1040,6 +1040,9 @@ _NEAR = 8          # how many words before the unit a verb may sit in the unit f
 _MAX_DEPTH = 40    # how many wrappers (`bash -c`, `eval`, `env -S`, `$(...)`) are followed before the fallback
 _WORK_BUDGET = 4 * _MAX_COMMAND_CHARS   # characters read over one whole command, nested strings included
 _work = 0
+_refused_found: str | None = None   # a verdict read from a bounded view when `_charge()` refused an expansion
+_VIEW_MAX_REFS = 64              # distinct pieces joined in the bounded view of a refused expansion
+_PRINTF_VIEW_CHARS = 65536       # size cap of the bounded view of a refused printf expansion
 _SHAPE_COST = 256                # charged for every shape() call and every logical line, whatever its size
 _MAX_EXEC_EXPANSIONS = 64      # `xargs`/`find -exec` command lists followed per command line
 _SEGMENT = re.compile(r"[;&|()\n]+")
@@ -1491,6 +1494,20 @@ def _charge(size: int) -> bool:
     return True
 
 
+def _note_refused(texts: list[str]) -> None:
+    """The budget refused an expansion: nothing reads the text bash would run, so a small bounded view of it
+    is read for words instead, and a hit is remembered (`shape()` returns it when the parse found nothing)."""
+    global _refused_found
+    if _refused_found:
+        return
+    for text in texts:
+        if text and len(text) <= _MAX_COMMAND_CHARS:
+            found = _text_shape(text)
+            if found:
+                _refused_found = found
+                return
+
+
 def _printf_text(args: list[str]) -> str:
     """What `printf FORMAT ARGS...` writes, for the `%s`-style conversions: enough to see a command that is
     spelled through the format. The format is reused while arguments remain, as printf does. The size of the
@@ -1501,7 +1518,15 @@ def _printf_text(args: list[str]) -> str:
     specs = sum(1 for m in _PRINTF_SPEC.finditer(fmt) if m.group(0) != "%%")
     passes = 1 if specs == 0 else -(-len(rest) // specs) or 1
     if not _charge(passes * len(fmt) + sum(len(a) for a in rest)):
-        return ""
+        # Fail toward the words: the format reused over the DISTINCT arguments (bounded), read once.
+        distinct = list(dict.fromkeys(rest))[:_VIEW_MAX_REFS]
+        view_passes = 1 if specs == 0 else -(-len(distinct) // specs) or 1
+        room = max(1, _PRINTF_VIEW_CHARS // max(1, len(fmt)))
+        if view_passes > room:
+            distinct = distinct[:room * max(specs, 1)]
+        rest, passes = distinct, 1 if specs == 0 else -(-len(distinct) // specs) or 1
+        if passes * len(fmt) + sum(len(a) for a in rest) > _MAX_COMMAND_CHARS:
+            return ""
     out: list[str] = []
     pos = 0
     for _ in range(passes):
@@ -1576,6 +1601,24 @@ def _expand_known(words: list[str], assigned: dict[str, str]) -> list[str]:
         if "$" in w:
             # the size of the expanded word is charged before it is built
             if not _charge(len(w) + longest * len(_VAR_REF.findall(w))):
+                # Fail toward the words: the word's distinct pieces (literals and assigned values), in order of
+                # first appearance, and its first references expanded, are read for words.
+                pieces: dict[str, None] = {}
+                pos = 0
+                for m in _VAR_REF.finditer(w):
+                    if m.start() > pos:
+                        pieces[w[pos:m.start()]] = None
+                    pieces[assigned.get(m.group(1) or m.group(2), m.group(0))] = None
+                    pos = m.end()
+                    if len(pieces) >= _VIEW_MAX_REFS:
+                        break
+                if pos < len(w) and len(pieces) < _VIEW_MAX_REFS:
+                    pieces[w[pos:]] = None
+                views = ["".join(pieces), " ".join(pieces)]
+                if longest * 8 <= _MAX_COMMAND_CHARS:       # the first eight references, expanded in place
+                    views.append(_VAR_REF.sub(lambda m: assigned.get(m.group(1) or m.group(2), m.group(0)),
+                                              w[:8192], count=8))
+                _note_refused(views)
                 return words
             w = _VAR_REF.sub(lambda m: assigned.get(m.group(1) or m.group(2), m.group(0)), w)
         out.append(w)
@@ -1617,15 +1660,18 @@ def shape(command: str, _depth: int = 0) -> str | None:
     if _memo is not None and _memo[0] == command:
         return _memo[1]
     result = _shape(command, 0)
+    if result is None and _refused_found:
+        result = _refused_found          # an expansion the budget refused was read as words, and matched
     _memo = (command, result)
     return result
 
 
 def _shape(command: str, _depth: int) -> str | None:
-    global _work
+    global _work, _refused_found
     _check_deadline()
     if _depth == 0:
         _work = 0
+        _refused_found = None
     _work += len(command) + _SHAPE_COST
     if len(command) > _MAX_COMMAND_CHARS:
         # Reading a huge command line by line costs seconds per hundred kilobytes and the hook has a timeout

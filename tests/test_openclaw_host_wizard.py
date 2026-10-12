@@ -2821,3 +2821,35 @@ def test_the_wizard_step_refuses_an_unusable_kit_host_env_before_gcloud(monkeypa
     o.host_offbox_identity = True
     section._configure_offbox_identity(o, dry_run=False)
     assert g.calls == [] and o.host_offbox_config_created == {}
+
+
+def test_a_corrupt_setup_state_refuses_offbox_identity_before_gcloud_creates_anything(monkeypatch, tmp_path,
+                                                                                       capsys):
+    g = FakeGcloud()
+    monkeypatch.setattr(host, "default_runner", g)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(state, "_corrupt_notice", None, raising=False)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "openclaw" / "kit-host.env")
+    path = state.state_path()
+    path.parent.mkdir(parents=True)
+    path.write_text("profile: [unclosed\n  name: {oops\n", encoding="utf-8")
+    assert host.cmd_offbox_identity(_offbox_args()) == 1
+    out = capsys.readouterr()
+    lines = [ln for ln in out.out.splitlines() if ln.strip()]
+    assert len(lines) == 1 and lines[0].startswith("refusing:") and "not valid YAML" in lines[0]
+    assert g.calls == [], "no gcloud configuration was created"
+    assert "Traceback" not in out.err
+    assert path.read_text(encoding="utf-8").startswith("profile: [unclosed")
+
+
+def test_a_corrupt_setup_state_refuses_apply_pending_with_one_line(monkeypatch, tmp_path, capsys):
+    import argparse
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(state, "_corrupt_notice", None, raising=False)
+    path = state.state_path()
+    path.parent.mkdir(parents=True)
+    path.write_text("a: [broken\n", encoding="utf-8")
+    ns = argparse.Namespace(discard_watch_restores=False, yes=True)
+    assert host.cmd_apply_pending(ns) == 1
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    assert len(lines) == 1 and lines[0].startswith("refusing:")

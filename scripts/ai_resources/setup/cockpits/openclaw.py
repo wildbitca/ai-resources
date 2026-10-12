@@ -1041,7 +1041,7 @@ def _await_idle(probe, count: int, workers: list, *, sleep, monotonic, cap: floa
 def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=None, monotonic=None,
                     interactive: bool | None = None, wait_cap: float = RESTART_WAIT_CAP,
                     wait_interval: float = RESTART_WAIT_INTERVAL, restart_timeout: int = 180,
-                    self_cgroup_path: str | None = None) -> bool:
+                    self_cgroup_path: str | None = None, window_owned: bool = False) -> bool:
     """Restart the gateway and report whether the backend came back registered.
 
     A restart kills every agent turn in flight, and the caller reaches this exactly when
@@ -1058,7 +1058,8 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
         raise RestartDeferred("cannot tell whether this process runs inside the gateway cgroup "
                               "(/proc/self/cgroup is unreadable), so the restart is not attempted; run it from "
                               "outside the gateway once the file can be read", [])
-    if openclaw_host.Marker().exists():
+    if not window_owned and openclaw_host.Marker().exists():
+        # `window_owned`: the caller (models update / rollback) created watchdog.off itself.
         # 2.2c (3c): a window the operator opened is theirs. The graceful restart and the drained window of
         # `doctor` refuse inside one; setup's and `models update`'s restart refuse the same way, with one line.
         raise RestartDeferred(f"a maintenance window is open ({openclaw_host.WATCHDOG_OFF} exists); close it, "
@@ -1100,7 +1101,7 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
     try:
         ui.info("restarting the gateway inside a maintenance window (watchdog.off is held until it is back)")
         try:
-            with openclaw_host.MarkerGuard(exclusive=True):
+            with openclaw_host.MarkerGuard(exclusive=not window_owned):
                 rc, out = _openclaw(["gateway", "restart"], timeout=restart_timeout)
                 if rc != 0:
                     ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")

@@ -423,6 +423,18 @@ def _corrupt_state(path: Path) -> bool:
     return data is not None and not isinstance(data, dict)
 
 
+def save_would_refuse() -> bool:
+    """True when `save()` would raise StateCorrupt right now (the state file is unreadable and replacing it was
+    not allowed). Writers that have side effects before their save check this first."""
+    real = os.path.realpath(state_path())
+    return _replace_corrupt_ok != real and _corrupt_state(Path(real))
+
+
+def refusal_text() -> str:
+    return (f"refusing: {state_path()} is not valid YAML (a copy was made beside it as <name>.corrupt); nothing "
+            "was changed. Fix or remove the file, or run `ai-resources setup` interactively.")
+
+
 def take_corrupt_notice() -> str | None:
     """The backup path of a corrupt state file `load()` found since the last call (None when there was none).
     `setup` prints it once; the file itself stays where it is until a save is allowed to replace it."""
