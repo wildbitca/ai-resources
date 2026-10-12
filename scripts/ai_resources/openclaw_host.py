@@ -3122,7 +3122,7 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
     cfg_file = config_path or Path(os.environ.get("OPENCLAW_CONFIG_PATH") or home / ".openclaw" / "openclaw.json")
     try:
         cfg = json.loads(Path(cfg_file).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         cfg = {}
     port = str(((cfg.get("gateway") or {}).get("port")) or 18789)
     _rc, ss = runner(["ss", "-H", "-ltn"], env=env)
@@ -4083,6 +4083,10 @@ def cmd_offbox_identity(args: argparse.Namespace) -> int:
     except setup_state.StateLockBusy:
         print("refusing: another offbox-identity run is in progress (the setup state is locked); "
               "wait for it to finish and run this again")
+        return 1
+    except setup_state.StateLockUnusable as e:
+        print(f"refusing: the setup-state lock file cannot be used ({e}); remove it or fix its permissions "
+              "and run this again")
         return 1
 
 

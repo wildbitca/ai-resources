@@ -665,3 +665,11 @@ def test_a_bucket_without_a_listing_command_does_not_repeat_not_configured_besid
     off = [ln for ln in text.splitlines() if ln.startswith("off-box")]
     assert any(ln.startswith("off-box up") for ln in off), off
     assert not [ln for ln in off if "not configured" in ln], off
+
+
+# --- pass 6: a deeply nested openclaw.json does not crash status ----------------------------------------------
+
+def test_status_survives_a_deeply_nested_openclaw_json(env):
+    (env.home / ".openclaw" / "openclaw.json").write_text('{"a":' * 100000 + "1" + "}" * 100000, encoding="utf-8")
+    report = host.collect_status(Canned(), home=env.home, host_env_path=env.hostenv, now=NOW, run_doctor=False)
+    assert isinstance(report, dict), "no RecursionError"

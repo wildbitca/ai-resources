@@ -2109,3 +2109,22 @@ def test_state_save_writes_through_a_symlinked_state_file(monkeypatch, tmp_path)
     assert path.is_symlink(), "the link is kept"
     assert "linked.example.org" in target.read_text(encoding="utf-8")
     assert oct(target.stat().st_mode & 0o777) == "0o600"
+
+
+# --- pass 6: an unusable lock file is one line, not a traceback ------------------------------------------------
+
+@pytest.mark.parametrize("make", ["dir", "dangling"])
+def test_an_unusable_state_lock_file_is_refused_in_one_line(monkeypatch, tmp_path, capsys, make):
+    import argparse
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    lock = state.state_path().with_name(state.state_path().name + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    if make == "dir":
+        lock.mkdir()
+    else:
+        lock.symlink_to(tmp_path / "nowhere" / "x")
+    kw = dict(dry_run=False, remove=False, yes=True, name="openclaw-backup", sa=host.OFFBOX_SA_DEFAULT,
+              account="me@example.org", project="")
+    assert host.cmd_offbox_identity(argparse.Namespace(**kw)) == 1
+    out = capsys.readouterr().out
+    assert "lock file cannot be used" in out and "Traceback" not in out

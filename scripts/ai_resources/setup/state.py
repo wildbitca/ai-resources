@@ -413,6 +413,10 @@ def save(state: SetupState) -> None:
         raise
 
 
+class StateLockUnusable(RuntimeError):
+    """The lock file exists but cannot be opened (a directory, no permission, a dangling link)."""
+
+
 class StateLockBusy(RuntimeError):
     """Another run holds the setup-state lock."""
 
@@ -427,7 +431,10 @@ def exclusive():
     path = state_path()
     lock = path.with_name(path.name + ".lock")
     lock.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as e:
+        raise StateLockUnusable(f"{lock}: {type(e).__name__}") from None
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
