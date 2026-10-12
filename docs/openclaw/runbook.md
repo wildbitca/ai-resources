@@ -1293,12 +1293,19 @@ stop|kill|restart|... openclaw-gateway` where a shell would run them, and only w
 a deny looks wrong:
 
 - Text that is fed to a shell (a heredoc or a pipe into `bash`, `sh`, `eval`) is read by a second, word-level view:
-  it denies when `openclaw` is before `gateway` (or the unit name appears) next to a stop/restart verb, even in a
-  comment. Another product's `docker restart gateway` is allowed there.
+  it denies a `gateway` word (or the unit name, or a name assembled from variables, an ANSI-C escape or a glob) next
+  to a stop/restart verb, even in a comment. Another product's `docker restart gateway`, `api-gateway`, words that
+  only `eval echo` or `bash -c 'echo ...'` print, and `openclaw gateway status --note restart` are allowed there.
 - If the analysis runs out of its 4 s deadline, the verdict falls to the words and fails closed: any text that names
-  OpenClaw together with `gateway`, `restart`, `stop`, `kill`, `doctor` or `--fix` is denied, and so is a plain
-  `docker restart gateway`. Rewrite the call shorter, run the sanctioned verb (`ai-resources openclaw
-  graceful-restart`, `ai-resources openclaw doctor`), or open a window with `touch ~/.openclaw/watchdog.off`.
+  OpenClaw (the command, the unit, or a glob or brace form of the unit) together with `gateway`, `restart`, `stop`,
+  `kill`, `doctor` or `--fix` is denied, and so is a plain `docker restart gateway`. Rewrite the call shorter, run
+  the sanctioned verb (`ai-resources openclaw graceful-restart`, `ai-resources openclaw doctor`), or open a window
+  with `touch ~/.openclaw/watchdog.off`. The two fallbacks (the work budget and the deadline) are the weak points of
+  the guard: they read fewer forms than the full analysis and can allow what it would deny, which is one more
+  reason to withhold the authority at systemd or polkit (T45) rather than to widen the filter.
+- A `watchdog.off` that a `models update` or `models rollback` left because it was killed carries a signature line
+  (`kit-run pid=... start=...`); once that process is gone the daily models job goes on and the next run reclaims
+  the file. An empty `watchdog.off` (what `touch` makes) is always a maintenance window.
 
 ## Get into the UI
 

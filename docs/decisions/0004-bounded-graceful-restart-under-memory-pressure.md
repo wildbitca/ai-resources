@@ -145,6 +145,26 @@ choice stays. `ai-resources openclaw doctor` now refuses a busy gateway (exit 6)
   second view was narrowed); slowest verdict 1.1 s, the deadline never fired. The residual classes are T46's, now
   with `source`/`.` and `bash <(...)`, interpreter heredocs, `read`/`mapfile` text, `$V` as the command word and
   variable copy chains named.
+- 2.2e amendment. Three weak points of 2.2d were closed and one statement corrected. (1) The second view required a
+  literal `openclaw` before `gateway`, so a name assembled from variables, ANSI-C escapes, globs or braces, and a
+  `gateway` stored before `openclaw`, was allowed (118 executed rows that 2.2c denied); it now reads the gateway
+  words wide, with `openclaw` on either side, and narrows by EXCLUDING contexts that are known to be harmless
+  (another product's CLI, a name glued to another one, words that are only printed, a subcommand that answers).
+  (2) The deadline fallback did not name OpenClaw through `openclaw-gate*`, `openclaw-{gateway,x}` or an ANSI-C
+  name; the cheap, strict and fail-closed views now share one normalisation and one token matcher. (3) A deadline
+  that fires after a deny was made no longer replaces it with the fallback's answer. Correction: the budget
+  fallback (about 2000 adjacent substitutions spend the work budget long before the deadline) is the WORD fallback
+  with continuations joined and inline substitutions read as words, not the fail-closed view; the 2.2e plan asked
+  for the wide view on top and the differential did not need it. The honest statement of the design is that the guard
+  is an accident guard whose weak points are exactly its fallbacks (the budget and the deadline): they read fewer
+  forms than the full analysis and can allow what it would deny. Who may stop or restart the unit belongs at systemd
+  and polkit, or an exec policy (pitfall T45), not in this filter. A killed `models` run no longer leaves
+  `watchdog.off` (the marker is held through `MarkerGuard`, signed with the creator's pid and start time, and a
+  marker of a dead kit run is reclaimed, never taken for an operator's window). Final numbers, over the same 100728
+  recorded rows: executed-but-allowed 16328 / 11970 / 545 / **536** (2.1.0 / 2.1.1 / 2.2d / 2.2e); executed and denied by
+  2.1.0, 2.1.1, 2.2c or 2.2d yet allowed now **0**; benign rows denied 288 / 17 / 67 / **54** of 13716; slowest verdict
+  0.8 s, the deadline never fired. On three fresh corpora (7718 executed, 1500 behind a budget-spending prefix) the
+  executed rows that 2.2c denied and 2.2d allowed went from 528 to 0.
 
 ## Alternatives Considered
 

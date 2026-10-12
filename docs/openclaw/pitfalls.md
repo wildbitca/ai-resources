@@ -1508,7 +1508,7 @@ unexpected restart, and the `source=` field of the gateway's restart line (`cli`
 reload).
 
 
-## T46 — The gateway guard is an accident guard, not a security boundary *(added 2026-10-12; documented in the unreleased 2.2 work, numbers corrected in 2.2d)*
+## T46 — The gateway guard is an accident guard, not a security boundary *(added 2026-10-12; documented in the unreleased 2.2 work, numbers corrected in 2.2d and again in 2.2e)*
 
 **Symptom.** A review finds a command that restarts or stops the gateway and that the guard hook allowed, and
 the question is whether that is a bug.
@@ -1546,29 +1546,56 @@ OpenClaw (a command word, or the unit `openclaw-gateway`) together with any of `
 `kill`, `doctor` or `--fix`, wherever they sit, after undoing line continuations; an internal error keeps the
 window. Realistic input does not reach it: the slowest verdict over the recorded corpora was 1.1 s, and the class
 that took 4.1 s in 2.2c (an open double quote over thousands of lines that hold `${...}`) is read in 1.2 to 2.1 s.
+Since 2.2e the cheap view, its strict reading and the fail-closed view are ONE token matcher over ONE normalised
+text (line continuations undone, `$'...'` strings decoded, quotes and backslashes removed), so a unit spelled with a
+glob or a brace (`openclaw-gate*`, `openclaw-{gateway,x}`) or an ANSI-C escape names OpenClaw in all three; before,
+those were denied alone and allowed once the deadline had fired. A verdict the full analysis already made is kept
+when the alarm lands after it (the fallback reads fewer forms than the analysis).
+
+**What it does when the work budget is spent (2.2e).** About 2000 adjacent substitutions (8 KB of harmless text)
+spend the work budget in a fraction of a second, long before the deadline. The rest of the command is then read by
+the word fallback, over the whole logical line: line continuations are undone and an inline substitution (`$(...)`,
+a backtick pair) is one word of its statement, an unknown one where the verb goes, so a guarded command split with
+`\` or with a substitution in an option slot is still denied. This is the word fallback and NOT the fail-closed
+view of the deadline: the 2.2e plan asked for the wide view on top, the differential did not need it (no executed
+command that an older guard denied is allowed after a budget-spending prefix), and it would deny a padded
+`openclaw gateway status`.
 
 **The second view (text that feeds a shell).** The same word view is a second opinion on text that feeds a shell (a
 heredoc or here-string next to a shell word in command position, a pipe into a shell, `eval "$(cat)"`,
-`xargs`/`parallel` starting a shell): the parser misses some of those shapes, and the words catch them. Here it is
-NARROWER than the deadline fallback (2.2d): the gateway word counts only as the OpenClaw gateway, that is `openclaw`
-(a command word: not `.openclaw`, `openclaw.json`, a path component, or another unit such as
-`openclaw-gateway-x.service`) within 160 characters before `gateway`, or the unit `openclaw-gateway[.service]`
-itself, so `docker restart gateway`, `kubectl rollout restart deploy/gateway` and `systemctl restart api-gateway`
-in a heredoc to a shell are allowed (140 such generated rows: 126 denied by 2.2c, 0 now). The price that remains:
-text that really goes to a shell and names the OpenClaw verb, even in a comment, is denied (`bash <<'EOF'`, a comment
-that says `openclaw gateway restart`, `EOF`). A shell given its own literal `-c` string, a heredoc to `cat`, and a
-commit message that mentions a shell in prose are not touched.
+`xargs`/`parallel` starting a shell): the parser misses some of those shapes, and the words catch them. Since 2.2e it
+reads the gateway words WIDE and narrows by EXCLUSION, because requiring a literal `openclaw` before `gateway`
+(2.2d) let an assembled name through (118 executed rows that 2.2c denied: `openclaw` or the unit joined from
+variables, an ANSI-C escape, a glob, `gateway` stored in a variable before `openclaw`, a unit glob handed to
+`xargs -0 ... -c '{}'`). A `gateway` word and a verb within 160 characters deny, with `openclaw` anywhere near on
+either side, unless the context is known to be harmless: a name glued to another one (`api-gateway`,
+`deploy/gateway`, `gateway-proxy`, `~/.openclaw/gateway`), a statement run by another product's CLI (`docker`,
+`podman`, `kubectl`, `helm`, `pm2`, `supervisorctl`, `nginx`, `service`, ...), `systemctl restart gateway` (a unit
+that is called `gateway`), words that are only printed (`echo`, `printf` or `:` reached through `eval`, `bash -c`,
+`find -exec`, `<(...)` or `$(: ...)`, and not piped, redirected or substituted: `echo ... | sh` and `$(echo ...)`
+stay denied), and `openclaw gateway status --note restart` (the first subcommand decides, as it does for the CLI).
+Words in two different statements pair only through a stored name (`g=gateway; ...`). The exclusion work is bounded
+(past 2048 checks every pair counts). The price that remains: text that really goes to a shell and names the
+OpenClaw verb as a bare statement, even in a comment, is denied (`bash <<'EOF'`, a comment that says `openclaw
+gateway restart`, `EOF`). A shell given its own literal `-c` string, a heredoc to `cat`, and a commit message that
+mentions a shell in prose are not touched.
 
-**Measured, at the final 2.2d tree.** Against real bash on the recorded corpora (100728 rows, 38390 executed a
-guarded command): executed but allowed 545 (2.1.0: 16328, 2.1.1: 11970), none of which an older guard denied (0 rows
-executed and denied by 2.1.0 or 2.1.1 and allowed now), and no corpus-by-class cell misses more executed commands
-than the better of the two older guards; benign rows denied 67 of 13716 (2.1.0: 288, 2.1.1: 17; 74 before the second
-view was narrowed). Ten of those 67 are on the realistic corpora (5 of the 44 hard negatives, 3 benign-extra, 2 of the
-764: a commit message and a PR body that hold the verb in backticks, which bash runs); the rest are generated rows that
-feed a shell AND name the verb. 9000 fresh samples audited against 2.2c: 0 regressions; the 994 that were denied and
-harmless were 539 shell-fed text that echoes the words, 172 aliases or traps that were never invoked, 45 invalid bash
-and 238 dialect artefacts. The deadline fired 0 times on any benign row. Precise parsing of arbitrary shell is not
-attempted, and these numbers are a measurement of the corpora, not a promise.
+**Measured, at the final 2.2e tree.** Against real bash on the recorded corpora (100728 rows, 38390 executed a
+guarded command): executed but allowed 536 (2.1.0: 16328, 2.1.1: 11970, 2.2c: 545, 2.2d: 545), none of which an
+older guard denied (0 rows executed and denied by 2.1.0, 2.1.1, 2.2c or 2.2d and allowed now; 9 rows that 2.2c
+allowed are denied), and no corpus-by-class cell misses more executed commands than the better of the two older
+guards; benign rows denied 54 of 13716 (2.1.0: 288, 2.1.1: 17, 2.2c: 74, 2.2d: 67). Slowest verdict 0.8 s, the
+deadline fired 0 times. On three freshly generated corpora run through real bash and zsh in a sandbox with stub
+binaries (10000 + 4762 + 3060 rows, 7718 executed a guarded command, 1500 of them behind a budget-spending
+prefix): executed but allowed 6501 (2.1.0), 6459 (2.1.1), 1471 (2.2c), 1762 (2.2d, before this pass), **1153** now;
+executed and denied by 2.2c and allowed: 528 before this pass (287 + 132 + 109, the assembled names, the
+continuations and the substituted verbs), **0** now; executed and denied by 2.1.x and allowed: 0 before and after.
+The 140 rows of other products' gateways in shell-fed text (`kubectl rollout restart deploy/gateway`, `docker
+restart gateway`, `systemctl restart api-gateway`, ...): 126 denied by 2.2c, 0 now; 314 such rows over the two
+fresh corpora, 7 denied (all are the deliberately mixed row that also says `openclaw is up` next to `docker restart
+gateway`). Through the real hook as a subprocess, every verdict of the fresh corpora was under 3 s (slowest 1.4 s)
+and the deadline fired on none. Precise parsing of arbitrary shell is not attempted, and these numbers are a
+measurement of the corpora, not a promise.
 
 **What it does not read (the residual classes).** These are known, recorded in ADR-0004, and not to be chased
 one by one:
@@ -1590,14 +1617,26 @@ one by one:
   text read with `read` or `mapfile` and then evaluated, `$V` as the command word, and a variable copied along a
   chain (`A=...; B=$A; eval "$B"`);
 - the 15 residual samples of the last 9000, as classes: a here-string whose word is a command substitution that prints
-  the script; `xargs -0 sh -c` reading the script from stdin; a unit glob through text fed to a shell; `export V=...;
-  eval $V` inside a trap string; a backtick with an escaped `$(` around `case`;
+  the script; `xargs -0 sh -c` reading the script from stdin; `export V=...; eval $V` inside a trap string; a backtick
+  with an escaped `$(` around `case`;
+- a unit name assembled from pieces that never spell `gateway` (`u=openclaw-gate; systemctl --user restart
+  ${u}way`) and a command word that is a substitution (`` `echo openclaw` gateway restart ``), also behind a
+  budget-spending prefix: no guard version denies them;
 - a command inside a string past the 256 KB input cap, which is denied only when it names the gateway next to a
   stop/restart verb.
 
 Closed in 2.2d and no longer residual: a backtick-wrapped verb after 2016 or more adjacent substitutions or at nesting
 depth 41 or more, and a backtick whose body carries `\"` (the word view cuts at the backtick, and the body is read as
 the command it is).
+
+Closed in 2.2e and no longer residual: in text fed to a shell, `openclaw` or the unit assembled from variables, an
+ANSI-C escape, a glob, a brace or a quote pair around a backtick, a `gateway` stored in a variable before `openclaw`
+is spelled, and a unit glob handed to `xargs -0 ... -c '{}'`; after the deadline, a unit spelled `openclaw-gate*`,
+`openclaw-{gateway,x}` or with an ANSI-C escape with the verb far away; after the work budget, a continuation or an
+inline substitution that separates the words (the 183 rows of the audit) and a substituted verb. The weak points
+that remain are the two fallbacks themselves: when the budget is spent or the deadline fires the guard reads fewer
+forms than the full analysis and can allow a form it would otherwise deny, which is why the authority is withheld at
+systemd/polkit or by an exec policy (T45) and not by reading more of the text.
 
 **A known false positive that stays.** A multi-line double-quoted string that holds a command substitution and,
 on a line of its own, the guarded words (`echo "$(date)`, a newline, `openclaw gateway restart`, a newline, `"`) is

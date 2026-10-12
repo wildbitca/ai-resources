@@ -15,7 +15,42 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   budget and the rest of the command was read by the word view, which did not join line continuations and cut at a
   backtick: a guarded command split with `\` or with an inline substitution in an option slot was allowed
   (183 of 1490 guarded rows that 2.1.x denied, measured by the independent audit). The word view now undoes
-  continuations and also reads the text with every inline substitution collapsed to one word.
+  continuations and also reads the text with every inline substitution collapsed to one word. The differential of
+  this pass found the collapse lost the "unknown verb" signal (`openclaw gateway `echo restart``): the placeholder is
+  now an expansion, only innermost substitutions are collapsed and one that names openclaw is kept (7 executed rows
+  that cd70a20 denied). The budget fallback is the word fallback, not the fail-closed view: the measurement did not
+  need the wide view on top (0 executed rows that an older guard denied are allowed after a budget-spending
+  prefix), and it would deny a padded `openclaw gateway status`.
+- **Gateway guard, second view (2.2e).** The narrowed second view (text that feeds a shell) required a literal
+  `openclaw` before `gateway`: a name assembled from variables, ANSI-C escapes, globs, braces or a quote pair
+  around a backtick, and a `gateway` stored in a variable before `openclaw`, was allowed (118 executed rows that
+  cd70a20 denied, 0 against 2.1.x). It now reads the gateway words wide, with `openclaw` on either side, and
+  EXCLUDES known harmless contexts: another product's gateway (`api-gateway`, `deploy/gateway`, `docker restart
+  gateway`, `systemctl restart gateway`), words that are only printed (`echo`, `printf` and `:` reached through
+  `eval`, `bash -c`, `find -exec`, `<(...)` or `$(: ...)`, not piped, redirected or substituted), and a subcommand
+  that answers (`openclaw gateway status --note restart`). The exclusion work is bounded and fails closed.
+- **Gateway guard, deadline fallback (2.2e).** After the deadline fired, a guarded command whose unit is spelled
+  `openclaw-gate*`, `openclaw-{gateway,x}` or an ANSI-C-encoded name, with the verb far away, was allowed. The
+  cheap, strict and fail-closed views now share one normalisation (continuations undone, `$'...'` strings
+  decoded, quotes removed) and one token matcher, unit globs and brace forms included. A deadline that fires after a
+  deny was made no longer replaces that deny with the fallback's answer.
+- **Gateway guard, measured (2.2e).** Against real bash on 100728 recorded rows (38390 executed a guarded
+  command): executed but allowed 536 (2.1.0: 16328, 2.1.1: 11970, 2.2c: 545, 2.2d: 545); 0 executed rows that
+  2.1.0, 2.1.1, 2.2c or 2.2d denied are allowed; benign rows denied 54 of 13716 (2.2d: 67). On three fresh corpora
+  through real bash and zsh (7718 executed, 1500 behind a budget-spending prefix): executed and denied by 2.2c yet
+  allowed 528 before this pass, 0 now. The slowest verdict is 0.8 s on the recorded rows and the deadline fired
+  on none.
+- **Setup state (2.2e).** A FIFO at the corrupt-state backup name (`setup-state.yaml.corrupt`) no longer hangs
+  `load()` (existing copies are opened `O_NOFOLLOW|O_NONBLOCK` and checked for type and size), and a disk that
+  fills while the copy is written removes the partial copy and says that no copy could be made instead of raising.
+- **Models run and `watchdog.off` (2.2e).** A `models update` or `models rollback` killed by SIGTERM (the unit's
+  `TimeoutStartSec`) left `watchdog.off`, which since 2.2c counts as an operator window. The marker is now held
+  through `MarkerGuard`, signed with the creator's pid and start time, and removed only while it is still the file
+  this run created. A signed marker whose process is gone is reclaimed by the models run and by the restart, and
+  the daily job does not stand down for it; an empty or foreign marker (an operator's) still does. A run killed by
+  SIGKILL still leaves its marker until the next models run reclaims it.
+- **Journal findings (2.2e).** The `host=` field of a refused TLS line starts a word: `?host=x` inside a URL and
+  `proxy-host=` no longer supply the host.
 - **Reload table pin follows OpenClaw 2026.10.2.** The rule table read from the installed 2026.10.2 dist is
   identical to the 2026.10.1 one (108 rules); only `PINNED_OPENCLAW_VERSION` and the fixture name and version moved.
 - **Gateway guard (A).** The gateway guard hook reads a command substitution (`$(...)`, backticks, `<(...)`, also inside double
