@@ -836,7 +836,16 @@ def regenerate_agents(executors: dict, mode: str = "multi-model") -> list[str]:
     except Exception:  # noqa: BLE001 — an unreadable state file must not block regeneration
         return _generate_subagent_files(executors, ak_path, mode)
     names = _generate_subagent_files(executors, ak_path, mode, s.tracking)
-    state.save(s)
+    owned = list(s.tracking.subagent_files_installed)
+
+    def record(fresh: state.SetupState) -> None:
+        # only the record of the subagent files is this function's: a setup run that saved in the meantime
+        # keeps every other field it wrote
+        fresh.tracking.subagent_files_installed = owned
+
+    if not state.update(record):
+        ui.warn("The setup state is busy (another ai-resources run holds its lock): the agent files were "
+                "regenerated but their record was not updated. Run `ai-resources generate` again later.")
     return names
 
 

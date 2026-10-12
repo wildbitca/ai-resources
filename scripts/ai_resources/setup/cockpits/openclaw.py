@@ -1076,7 +1076,11 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
     # (an exception or a SIGTERM included). A window somebody else opened is left alone.
     # The lock is the one every path that stops or restarts the unit takes (graceful restart, the drained
     # window, this): a second one refuses with one line, as a deferral, and is reported like one.
-    lock_fd = openclaw_host.acquire_restart_lock()
+    try:
+        lock_fd = openclaw_host.acquire_restart_lock()
+    except openclaw_host.RestartLockUnusable as e:
+        raise RestartDeferred(f"the restart lock file cannot be used ({e}); remove it or fix its permissions",
+                              []) from None
     if lock_fd is None:
         raise RestartDeferred("another restart or maintenance window is in progress (the restart lock is held)",
                               [])

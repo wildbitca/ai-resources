@@ -50,6 +50,13 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   never unattended); `openclaw bootstrap` asks before each change (default No) unless `--yes`, and an unattended run
   without `--yes` changes nothing.
 
+- **State writers (2.2b, section 4).** The post-setup watch and `executors` regeneration no longer save a
+  minutes-old copy of the setup state: each loads it again under the lock immediately before saving and writes only
+  its own fields (the watch's `config_watch` record and the restore entries it queued, the subagent file record), so
+  a concurrent `setup`, `apply-pending` or teardown is never overwritten, and the lock is not held while a revert
+  runs. Lock files (setup state, restart lock) are opened with `O_NOFOLLOW`; a symlinked `kit-host.env` is written at
+  its target and the link survives (a link into a missing directory is left alone with one line).
+
 ### Added
 
 - **Findings (F).** `status` and `verify` WARN when the egress proxy refused hosts with `TLS certificate unavailable`

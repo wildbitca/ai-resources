@@ -457,18 +457,23 @@ class StateLockBusy(RuntimeError):
     """Another run holds the setup-state lock."""
 
 
+_held = 0          # how many `exclusive()` blocks of THIS process are open (the lock is not re-entrant)
+
+
 @contextmanager
 def exclusive():
     """Hold an advisory lock on the setup state across load -> modify -> save.
 
     Not blocking: a second run that finds it held is refused at once (it would otherwise load a stale record and
-    overwrite what the first run writes). The lock file sits next to the state file and is never removed."""
+    overwrite what the first run writes). The lock file sits next to the state file and is never removed. It is
+    opened with O_NOFOLLOW: a symlink at that name is refused (StateLockUnusable), never followed."""
     import fcntl
+    global _held
     path = state_path()
     lock = path.with_name(path.name + ".lock")
     lock.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     except OSError as e:
         raise StateLockUnusable(f"{lock}: {type(e).__name__}") from None
     try:
@@ -476,9 +481,49 @@ def exclusive():
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise StateLockBusy(str(lock)) from None
-        yield
+        _held += 1
+        try:
+            yield
+        finally:
+            _held -= 1
     finally:
         os.close(fd)
+
+
+def update(mutator, *, wait_s: float = 10.0, poll_s: float = 0.2, sleep=None, monotonic=None) -> bool:
+    """Re-load the state under the lock, let `mutator(fresh)` change ONLY the fields its caller owns, and save.
+
+    For code that holds a state object for a long time (a watch that reverts for minutes, a regeneration): its
+    own copy is stale by the time it wants to write, and saving it would overwrite what another run wrote in
+    between. The lock is held for the load -> modify -> save only, never for the minutes before it. `mutator`
+    may return False to say there is nothing to write.
+
+    A process that already holds the lock (a setup run) just does it. Returns False when the lock could not be
+    taken within `wait_s` or cannot be used: nothing was written."""
+    import time as _time
+    sleep = sleep or _time.sleep
+    monotonic = monotonic or _time.monotonic
+
+    def apply() -> bool:
+        fresh = load()
+        if mutator(fresh) is False:
+            return True
+        save(fresh)
+        return True
+
+    if _held:
+        return apply()
+    deadline = monotonic() + wait_s
+    while True:
+        try:
+            with exclusive():
+                return apply()
+        except StateLockBusy:
+            if monotonic() >= deadline:
+                return False
+            sleep(poll_s)
+        except StateLockUnusable:
+            return False
 
 
 BUSY_LINE = ("refusing: another ai-resources run holds the setup-state lock; wait for it to finish and run this "

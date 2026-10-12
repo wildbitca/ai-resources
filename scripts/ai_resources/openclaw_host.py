@@ -199,6 +199,14 @@ def write_host_env(values: dict[str, str | None], path: Path | None = None) -> b
     for key, value in values.items():
         if value is not None:
             _check_env_pair(key, value)
+    if path.is_symlink():
+        # A dotfile manager's link: the target is written and the link survives (the same rule as a managed
+        # block). A link whose target directory does not exist is left alone, with one line.
+        target = Path(os.path.realpath(path))
+        if not target.parent.is_dir():
+            print(f"{path} is a symlink to {target}, whose directory does not exist; left alone")
+            return False
+        path = target
     try:
         original = path.read_text(encoding="utf-8")
     except OSError:
@@ -487,6 +495,10 @@ class WindowBusy(Exception):
     """A maintenance window (`watchdog.off`) is already open, or another restart path holds the lock."""
 
 
+class RestartLockUnusable(OSError):
+    """The restart lock file cannot be opened (a symlink, a directory, no permission)."""
+
+
 SELF_CGROUP_PATH = "/proc/self/cgroup"
 
 
@@ -502,14 +514,18 @@ def inside_gateway_cgroup(self_cgroup_path: Path | str | None = None) -> bool:
 def acquire_restart_lock(path: Path | None = None) -> int | None:
     """Take the ONE non-blocking exclusive lock every path that stops or restarts the gateway shares (the
     graceful restart, the drained window of `doctor` and `apply-pending`, setup's and `models update`'s
-    restart). Returns the open descriptor, or None when another path holds it.
+    restart). Returns the open descriptor, or None when another path holds it; RestartLockUnusable when the file
+    cannot be opened (it is opened with O_NOFOLLOW: a symlink at that name is refused, never followed).
 
     The file is never unlinked: removing it while it is locked lets a process that already opened the old
     inode and one that creates a new file both hold "the" lock at once."""
     import fcntl
     path = path or LOCK_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except OSError as e:
+        raise RestartLockUnusable(f"{path}: {type(e).__name__}") from None
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -656,7 +672,12 @@ def drained_window(action: Callable[[], bool], *, runner: Runner = default_runne
         return EXIT_REFUSED_SELF
 
     # One lock for every path that stops or restarts the unit: a second one refuses, with one line.
-    lock_fd = acquire_restart_lock(lock_path)
+    try:
+        lock_fd = acquire_restart_lock(lock_path)
+    except RestartLockUnusable as e:
+        out(f"refusing: the restart lock file cannot be used ({e}); remove it or fix its permissions; "
+            "nothing was stopped.")
+        return EXIT_REFUSED
     if lock_fd is None:
         out("refusing: another restart or maintenance window is in progress (the restart lock is held); "
             "nothing was stopped.")
@@ -1107,7 +1128,7 @@ def watch_config(run_id: str, *, runner: Runner = default_runner,
     from .setup.cockpits import openclaw as cockpit
 
     load = load or setup_state.load
-    save = save or setup_state.save
+    save = save or _watch_save
     apply_patch = apply_patch or cockpit.apply_patch
     notify = notify or (lambda msg: notify_owner(msg, runner))
     reload_mode = reload_mode or cockpit._live_reload_mode
@@ -1212,6 +1233,33 @@ def watch_config(run_id: str, *, runner: Runner = default_runner,
     return 0
 
 
+WATCH_SAVE_WAIT_S = 60.0       # how long the watch waits for the setup-state lock when it records its result
+
+
+def _watch_save(s) -> None:
+    """Record the watch's result without overwriting what another run wrote while the watch (or its revert)
+    was running. The state object `s` is minutes old; the lock is NOT held for those minutes. Instead the
+    state is loaded again under the lock, immediately before the save, and only what the watch owns is
+    written: its own `config_watch` record (when it is still this run's) and the restore entries it queued."""
+    from .setup import state as setup_state
+    mine = s.openclaw.config_watch
+    owned_pending = list(getattr(s, "_owned_pending", []))
+
+    def apply(fresh) -> bool:
+        cur = fresh.openclaw.config_watch
+        if not mine or not cur or cur.get("run_id") != mine.get("run_id"):
+            return False                  # cancelled, superseded or torn down meanwhile: nothing of ours to write
+        fresh.openclaw.config_watch = mine
+        known = {(e.get("op"), e.get("path"), e.get("source")) for e in fresh.openclaw.host_restart_pending}
+        for entry in owned_pending:
+            if (entry.get("op"), entry.get("path"), entry.get("source")) not in known:
+                fresh.openclaw.host_restart_pending.append(entry)
+        return True
+
+    if not setup_state.update(apply, wait_s=WATCH_SAVE_WAIT_S):
+        print("watch: the setup-state lock is busy or unusable; the result of the watch was not recorded")
+
+
 def _recorded_paths(cw: dict) -> list[str]:
     paths: list[str] = []
     for ch in cw.get("changes") or []:
@@ -1307,9 +1355,11 @@ def _revert_run(s, cw: dict, *, runner: Runner, sleep, save, apply_patch, notify
             problems.append(f"restart-required keys not reverted (drained window exit {code})")
             for ch in changes:
                 if ".".join(restore_path_of(ch)) in res_paths:
-                    s.openclaw.host_restart_pending.append(
-                        {"op": "restore", "path": ".".join(ch["path"]), "change": ch, "source": "watch",
-                         "corroborated": corroborated, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+                    entry = {"op": "restore", "path": ".".join(ch["path"]), "change": ch, "source": "watch",
+                             "corroborated": corroborated, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+                    s.openclaw.host_restart_pending.append(entry)
+                    # remembered as this code's own, so the merging save writes these and nothing else
+                    s.__dict__.setdefault("_owned_pending", []).append(entry)
     if problems:
         outcome = "revert-failed"
     elif done_hot or done_res:
@@ -3813,7 +3863,11 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
         if _lock_held_by_other(lock_path):
             return finish(EXIT_LOCKED, "locked")
     else:
-        lock_fd = acquire_restart_lock(lock_path)
+        try:
+            lock_fd = acquire_restart_lock(lock_path)
+        except RestartLockUnusable as e:
+            out(f"refusing: the restart lock file cannot be used ({e}); remove it or fix its permissions")
+            return finish(EXIT_LOCKED, "locked")
         if lock_fd is None:
             out("refusing: another restart or maintenance window holds the lock")
             return finish(EXIT_LOCKED, "locked")
