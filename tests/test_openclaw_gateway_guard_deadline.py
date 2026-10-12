@@ -1,7 +1,8 @@
-"""The gateway guard's wall-clock deadline and its cheap word view (kit 2.2c).
+"""The gateway guard's wall-clock deadline, its cheap word view and the conservative second view (kit 2.2c).
 
 The hook timeout FAILS OPEN, so the guard has to answer before it: the precise analysis runs under a deadline
-and, when the deadline fires or the analysis fails, a linear word view decides.
+and, when the deadline fires or the analysis fails, a linear word view decides. The same view also reads the
+text that feeds a shell through a heredoc, a here-string or a pipe, because the parser misses some of those.
 Real subprocesses (the hook as Claude Code runs it) are used for the wall-clock cases; nothing here touches
 systemd: `systemctl` is a stub that answers `active`.
 """
@@ -174,7 +175,8 @@ def test_every_shape_call_is_charged_a_fixed_cost(guard):
     guard._work = 0
     guard._memo = None
     guard.shape("x=$(a)")
-    assert guard._work >= 2 * guard._SHAPE_COST
+    assert guard._SHAPE_COST >= 128
+    assert guard._work >= 2 * 128           # the call and the substitution it holds
 
 
 # --- real subprocesses: the wall clock ----------------------------------------------------------------------------
@@ -239,3 +241,96 @@ def test_a_deadline_that_fires_in_the_real_hook_denies_the_gateway_words_and_all
     assert (rc, elapsed < 6) == (2, True)
     rc, elapsed = _hook(tmp_path, big + "openclaw doctor --fix\n", deadline=0.05)
     assert (rc, elapsed < 6) == (2, True)
+
+
+# --- the conservative second view ---------------------------------------------------------------------------------
+# Text that feeds a shell through a heredoc, a here-string or a pipe, and has the gateway next to a verb, is
+# denied even where the parser cannot tie the text to its shell. Minimal shapes of the commands that bash ran
+# and 2.1.0 denied while 2.2b allowed.
+
+SECOND_VIEW_DENIED = [
+    "x=$(bash <<'a.b'\nopenclaw doctor --fix\na.b); echo done",
+    "echo $(case 1 in (1) bash <<'a.b'\nsystemctl --user try-restart openclaw-gateway.service\na.b;; esac)",
+    "echo $(case 1 in 1) bash <<-\"E-F\"\n\tsystemctl --user stop openclaw-gateway.service\n\tE-F;; esac)",
+    "for i in 1; do x=$(bash <<-\"E-F\"\n\tsystemctl --user restart openclaw-gateway\n\tE-F); echo done; done",
+    "echo $(bash <<'a.b'\nbash <<'a.b'\nsystemctl --user reload-or-restart openclaw-gateway\na.b\na.b)",
+    "coproc { x=$(case a in (a) bash <<\\EOF\nopenclaw gateway stop\nEOF;; b) :;; esac); }; wait",
+    "parallel 'bash <<'\"'\"'a.b'\"'\"'\nsudo systemctl restart openclaw-gateway.service\na.b' ::: 1 2",
+    "parallel bash <<'a.b'\nopenclaw --profile p gateway restart\na.b ::: 1",
+    "eval \"$(cat <<'EOF'\nopenclaw doctor --fix\nEOF\n)\"",
+    "eval \"$(cat <<'EOF'\necho \"$(case 1 in 1) systemctl --user restart openclaw-gateway;; esac)\"\nEOF\n)\"",
+    "echo `eval \"$(cat <<'EOF'\ncat <(echo \"$(if true; then sudo -n sh -c \"systemctl --user kill openclaw-gateway\"; fi | cat)\")\nEOF\n)\"`",
+    "echo 'systemctl --user restart openclaw-gateway' | xargs -I{} sh -c '{}'",
+    "cat <<EOF | bash -s\nopenclaw gateway restart\nEOF",
+    "bash <<< 'systemctl --user stop openclaw-gateway'",
+    "source /dev/stdin <<< 'openclaw gateway restart'",
+    "echo 'systemctl --user stop openclaw-gateway' | sudo -E bash",
+    "echo \"$(printf 'systemctl --user restart openclaw-gateway')\" | eval \"$(cat)\"",
+]
+
+
+@pytest.mark.parametrize("command", SECOND_VIEW_DENIED)
+def test_text_that_feeds_a_shell_and_has_the_gateway_next_to_a_verb_is_denied(guard, command):
+    assert guard.decide(command) is not None, command
+
+
+SECOND_VIEW_ALLOWED = [
+    # a heredoc or a pipe that does not feed a shell
+    "cat <<'EOF' > notes.md\nrun `openclaw gateway restart` only through graceful-restart\nEOF",
+    "git commit -F - <<'EOF'\nfix: never run systemctl --user restart openclaw-gateway\n\nbash scripts keep working\nEOF",
+    "git commit -m \"$(cat <<'EOF'\nfeat: gateway restart guard\n\n```bash\nai-resources openclaw graceful-restart\n```\nEOF\n)\"",
+    "echo 'openclaw gateway restart is blocked' | tee notes.txt",
+    "echo 'openclaw gateway restart' | grep -c restart",
+    "grep -n 'gateway restart' docs/*.md | head",
+    # a shell given its own literal -c string does not read the pipe or the heredoc as commands
+    "bash -c 'cat' <<EOF\nopenclaw gateway restart\nEOF",
+    "echo 'gateway restart' | bash -c 'wc -c'",
+    "echo | xargs -I{} sh -c 'echo gateway restart'",
+    # a shell word that is only prose
+    "cat <<EOF\nthe `bash` command and the gateway restart note\nEOF",
+    "echo 'run bash scripts/check.sh before a gateway restart'",
+    "git commit -m 'docs: the `bash` guard and the gateway restart note' -F - <<'EOF'\nbody\nEOF",
+    "openclaw gateway status",
+    "systemctl --user status openclaw-gateway | head",
+]
+
+
+@pytest.mark.parametrize("command", SECOND_VIEW_ALLOWED)
+def test_the_second_view_leaves_realistic_text_alone(guard, command):
+    assert guard.decide(command) is None, command
+
+
+def test_a_comment_inside_a_heredoc_that_feeds_a_shell_is_the_accepted_false_positive(guard):
+    # the text really goes to a shell and names the verb: the word view cannot tell a comment from a command
+    command = "bash <<'EOF'\n# openclaw gateway restart is guarded\necho ok\nEOF"
+    assert guard.shape(command) is None
+    assert guard.decide(command) == "restart"
+
+
+def test_the_second_view_is_not_run_on_text_above_the_size_cap(guard):
+    filler = "x" * (guard._MAX_COMMAND_CHARS + 10)
+    assert guard._feeds_a_shell_text(filler + "\nbash <<EOF\nEOF") is False
+
+
+def test_the_second_view_expressions_are_bounded_on_adversarial_text(guard):
+    for text in ("gateway restart <<" + "(bash " * 40000, "gateway restart " + "(bash x" * 40000 + "<<",
+                 "gateway restart <<" + "'bash " * 40000, "gateway restart " + "| sudo env A=1 " * 20000):
+        text = text[:guard._MAX_COMMAND_CHARS]
+        start = time.perf_counter()
+        guard._feeds_a_shell_text(text)
+        assert time.perf_counter() - start < 3
+
+
+def test_main_still_honours_the_maintenance_window_and_the_inactive_unit(guard, monkeypatch, tmp_path, capsys):
+    import io
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "cat <<EOF | sh\nopenclaw gateway restart\nEOF"}})
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    assert guard.main() == 2
+    assert "T29" in capsys.readouterr().err
+    (tmp_path / "watchdog.off").write_text("", encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    assert guard.main() == 0
+    os.unlink(tmp_path / "watchdog.off")
+    monkeypatch.setattr(guard, "gateway_active", lambda: False)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    assert guard.main() == 0

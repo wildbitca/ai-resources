@@ -47,7 +47,10 @@ an hour. `ai-resources openclaw doctor` does it in the one safe order.
 Cost and the deadline: the analysis is bounded by a work budget and by a wall-clock deadline (4 s, never
 more than 8 s: the hook's own timeout FAILS OPEN, so the guard must answer before it). When the deadline fires,
 or the analysis fails with an internal error, a CHEAP VIEW decides: it reads words, not commands, and denies
-when `gateway` sits next to a stop/restart verb (or `doctor` next to `--fix`) within a short window. 
+when `gateway` sits next to a stop/restart verb (or `doctor` next to `--fix`) within a short window. The same view
+also runs, as a conservative second opinion, on text that feeds a shell through a heredoc, a here-string or a
+pipe: it may deny text that only mentions the verb there, and it never reads anything it cannot see in a
+single pass.
 
 Precision matters more than coverage. A deny aborts the WHOLE tool call, not the offending
 command (T24), and the kit's own docs are full of the literal strings above. So the command is
@@ -1102,6 +1105,46 @@ def _verb_kind(verb: str, found: str | None) -> str:
     return "restart"
 
 
+# What makes a text one that FEEDS A SHELL, read without parsing it. A shell given its own literal `-c` string
+# does not read its commands from standard input (that string is read by the parser), so it is not a consumer.
+_PATHED = r"(?:[\w./-]*/)?"
+_SHELLS_RX = r"(?:sh|bash|zsh|dash|ksh)"
+_LIT_SQ = r"'(?:[^'\\\n$`]|\\.){0,2000}'"
+_LIT_DQ = r'"(?:[^"\\\n$`]|\\.){0,2000}"'
+_LITERAL_C = r"[^;&|\n]{0,160}?[ \t]-[A-Za-z]*c[ \t]+\$?(?:" + _LIT_SQ + r"|" + _LIT_DQ + r")"
+# a runner (`xargs -I{} sh -c '{}'`) puts its input where `{}` stands: such a string is not a literal
+_LITERAL_C_RUNNER = (r"[^;&|\n]{0,160}?[ \t]-[A-Za-z]*c[ \t]+\$?(?:'(?:[^'\\\n$`{}]|\\.){0,2000}'|"
+                     r'"(?:[^"\\\n$`{}]|\\.){0,2000}")')
+_STDIN_SHELL = _PATHED + _SHELLS_RX + r"(?![\w./-])(?!" + _LITERAL_C + r")"
+_RUNNER = (r"(?:xargs|parallel)\b[^|;&\n]{0,160}?[ \t'\"/]" + _SHELLS_RX + r"(?![\w./-])(?!" + _LITERAL_C_RUNNER + r")")
+_PRELUDE = (r"(?:(?:sudo|doas|env|exec|command|nohup|setsid|time|nice|stdbuf|timeout)[ \t]+"
+            r"(?:-\S+[ \t]+|\w+=\S*[ \t]+)*)*")
+# a pipe whose consumer reads commands: a shell, `eval "$(cat)"`, `. /dev/stdin`, or a runner that starts a shell
+_PIPE_TO_SHELL = re.compile(
+    r"\|&?[ \t\n]*" + _PRELUDE + r"(?:" + _STDIN_SHELL + r"|eval(?![\w./-])[^;&|\n]{0,160}?(?:\$\(|`)|"
+    r"(?:source|\.)[ \t]+(?:/dev/stdin|/dev/fd/\d+|-)(?![\w./-])|" + _RUNNER + r")")
+_HEREDOC_CONSUMER = (r"(?:" + _STDIN_SHELL + r"|(?:eval|source)(?![\w./-])|\.(?=[ \t]+\S)|" + _RUNNER + r")")
+_SHELL_WITH_HEREDOC = re.compile(
+    r"(?:(?:^|[;&|(){\n]|\$\(|\b(?:then|do|else|elif)\b|\bxargs\b|\bparallel\b)[ \t]*" + _PRELUDE +
+    _HEREDOC_CONSUMER +
+    # after a quote or a single backtick: a shell word that is followed by a blank, not by the closing quote
+    # of a string or of an inline code span (`bash` in prose)
+    r"|(?<!`)[`'\"][ \t]*" + _PRELUDE + _PATHED + r"(?:" + _SHELLS_RX + r"|eval|source)(?![\w./-])(?=[ \t]))"
+    # ... and the heredoc operator or here-string sits in the same statement (no `;`, `&`, `|` or newline between)
+    r"(?:[^;&|\n]|\\\n){0,400}?<<")
+
+
+def _feeds_a_shell_text(text: str) -> bool:
+    """True when `text` looks like it hands text to a shell: a pipe into a shell, or a heredoc operator or
+    here-string next to a shell word that stands where a command stands."""
+    if len(text) > _MAX_COMMAND_CHARS:
+        return False         # above the cap `_shape` already read the words alone; the expressions are not run
+    low = text.lower()
+    if "|" in low and _PIPE_TO_SHELL.search(low):
+        return True
+    return "<<" in low and _SHELL_WITH_HEREDOC.search(low) is not None
+
+
 _DATA_COMMANDS = {"echo", "printf", "print", "grep", "egrep", "fgrep", "rg"}
 _TRANSPARENT = {"sudo", "env", "command", "nohup", "time", "exec", "nice", "setsid", "stdbuf"}
 
@@ -1697,7 +1740,8 @@ def decide(command: str) -> str | None:
 
     The precise analysis runs under a wall-clock deadline. When the deadline fires, or the analysis fails with
     an internal error, the cheap view decides instead (a failure must not become "allow" when the words are
-    there)."""
+    there). A text that feeds a shell through a heredoc, a here-string or a pipe is also read by the cheap view
+    when the precise analysis found nothing: the parser misses some of those, and the words are the net."""
     global _deadline_at, _last_deadline_fired, _memo
     seconds = _deadline_seconds()
     _last_deadline_fired = False
@@ -1717,6 +1761,10 @@ def decide(command: str) -> str | None:
                     timer = False
             if dangerous(command):
                 found = shape(command)       # the same command: answered from the one-entry memo
+            if found is None:
+                cheap = _cheap_view(command)
+                if cheap and _feeds_a_shell_text(command):
+                    found = cheap
         finally:
             _deadline_at = None              # the handler does nothing from here on
             if timer:
