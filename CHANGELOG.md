@@ -16,7 +16,10 @@ Notes for the next patch release. Nothing here is released; the version label is
   and an unquoted newline separates statements (P1, P8). A backslash before CRLF is no longer read as a
   continuation, and only LF breaks a line (P2). The drained-window confirms reached from the setup wizard (the
   restart-required half of a patch and the legacy revert offer) need a real terminal like `apply-pending`: a
-  piped `y` confirms nothing, the entries stay pending and one line says so (P7).
+  piped `y` confirms nothing, the entries stay pending and one line says so (P7). The MCP teardown and the
+  openrouter plugin check compare by type, so a hand edit that only changes `true` to `1` is not taken for the
+  kit's own value (P3), and teardown writes a recorded env value back only under the fixed keys the kit writes,
+  not under any `OPENCLAW_*` (an unmanaged `OPENCLAW_OFFBOX_LIST_CMD` is warned about, never restored) (P4).
 - **Hardening pass 4.** `apply-pending` (the drained gateway stop and start) without `--yes` needs a real
   terminal, like the discard verb: a piped `y` is not a confirmation, an empty or closed stdin ends in one line
   instead of a traceback, and a refused, declined or empty run no longer rewrites `setup-state.yaml` (S1, S1b).

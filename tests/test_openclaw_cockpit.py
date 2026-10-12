@@ -1288,3 +1288,17 @@ def test_a_host_without_a_selection_keeps_every_engine():
     s.cockpits["claude"] = state.CockpitState(installed=True)
     assert openclaw.selection_engines(s) is None
     assert "claude-code" in [e.id for e in openclaw.available_engines(s)]
+
+
+# --- kit 2.1.1 pass 5, P3: the openrouter plugin check compares by type ---------------------------------------------
+
+def test_the_openrouter_plugin_fragment_is_sent_when_the_live_value_only_equals_by_python():
+    from ai_resources.setup.cockpits import openclaw
+    doc = {"plugins": {"entries": {"openrouter": {"enabled": 1}}}}
+    assert openclaw._openrouter_plugin_fragment(doc, True) == {
+        "plugins": {"entries": {"openrouter": {"enabled": True}}}}
+    doc = {"plugins": {"entries": {"openrouter": {"enabled": 0}}}}
+    assert openclaw._openrouter_plugin_fragment(doc, False) == {
+        "plugins": {"entries": {"openrouter": {"enabled": False}}}}
+    same = {"plugins": {"entries": {"openrouter": {"enabled": True}}}}
+    assert openclaw._openrouter_plugin_fragment(same, True) == {}

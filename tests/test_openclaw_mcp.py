@@ -503,3 +503,25 @@ def test_a_kit_written_server_is_not_overwritten_when_the_live_value_only_equals
     gone = mcp.plan([], {"demo": live_conflated}, record)
     assert [i.action for i in gone] == ["skip"]
     assert [i.action for i in mcp.plan([], {"demo": live_same}, record)] == ["remove"]
+
+
+# --- kit 2.1.1 pass 5, P3: the teardown compares by type -------------------------------------------------------------
+
+def test_teardown_does_not_take_a_type_only_hand_edit_for_the_kits_own_value(tmp_path):
+    rec = _Recorder(tmp_path / "openclaw.json")
+    s = state.SetupState()
+    applied = {**SENTRY, "enabled": True}
+    s.openclaw.mcp_mirrored = {"sentry": {"previous": None, "applied": applied}}
+    assert mcp.teardown(s, {"sentry": {**SENTRY, "enabled": 1}}, rec)     # 1 == True in Python, not in JSON
+    assert rec.patches() == [], "a hand edit that only changed the type is left alone"
+
+
+def test_teardown_restores_when_the_previous_value_only_equals_the_live_one_by_python(tmp_path):
+    rec = _Recorder(tmp_path / "openclaw.json")
+    s = state.SetupState()
+    previous = {**SENTRY, "enabled": 1}
+    applied = {**SENTRY, "enabled": True}
+    s.openclaw.mcp_mirrored = {"sentry": {"previous": previous, "applied": applied}}
+    assert mcp.teardown(s, {"sentry": applied}, rec)
+    [(_args, patch)] = rec.patches()
+    assert patch == {"mcp": {"servers": {"sentry": previous}}}

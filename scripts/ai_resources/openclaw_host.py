@@ -143,10 +143,14 @@ def read_host_env(path: Path | None = None) -> dict[str, str]:
 
 
 _ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*\Z")   # \Z, never `$`: `$` also matches before a trailing newline
-# The keys the kit manages in kit-host.env are all in its own namespace. Teardown writes a recorded previous value
-# back only under such a key: a hand-edited state must not be able to make it write `LD_PRELOAD=` or `BASH_ENV=`
-# into a file that bash sources.
-_ENV_KIT_KEY = re.compile(r"^OPENCLAW_[A-Z0-9_]+\Z")
+# The keys the kit writes into kit-host.env: the host values of `_configure_env` and the two off-box knobs. Teardown
+# writes a recorded previous value back only under one of these: a hand-edited state must not be able to make it
+# write `LD_PRELOAD=` or `BASH_ENV=` (the file is sourced by bash), nor a knob the operator owns such as
+# `OPENCLAW_OFFBOX_LIST_CMD` (a command line).
+KIT_ENV_KEYS = frozenset({
+    "OPENCLAW_OWNER_TELEGRAM_ID", "OPENCLAW_BACKUP_DIR", "OPENCLAW_PUBLIC_DOMAIN", "OPENCLAW_POD_CIDR",
+    "OPENCLAW_NARRATION", "OPENCLAW_GUARD", "OPENCLAW_GRACEFUL_RESTART", "OPENCLAW_RESOURCE_GUARDS",
+    "OPENCLAW_OFFBOX_GCLOUD_CONFIG", "OPENCLAW_OFFBOX_IMPERSONATE_SA"})
 # No space: the file is sourced by bash, so `KEY=a /path/cmd` would run /path/cmd.
 _ENV_SAFE_VALUE = re.compile(r"^[A-Za-z0-9_@%+=:,./~-]*\Z")
 

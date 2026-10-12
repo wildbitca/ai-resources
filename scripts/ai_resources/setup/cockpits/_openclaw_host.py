@@ -1103,7 +1103,7 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
         stuck: list[str] = []
         foreign: list[str] = []
         for key, value in o.host_env_previous.items():
-            if not isinstance(key, str) or not host._ENV_KIT_KEY.match(key):
+            if not isinstance(key, str) or key not in host.KIT_ENV_KEYS:
                 foreign.append(str(key))          # not a key the kit manages: never written back
                 continue
             try:
@@ -1114,7 +1114,7 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             restorable[key] = value
         if foreign:
             ui.warn(f"{host.HOST_ENV_PATH}: the recorded previous value of {', '.join(sorted(foreign))} is not a key "
-                    "the kit manages (OPENCLAW_*); it was ignored and nothing was written for it.")
+                    "the kit writes; it was ignored and nothing was written for it.")
             for key in list(o.host_env_previous):
                 if str(key) in foreign:
                     o.host_env_previous.pop(key, None)

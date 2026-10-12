@@ -394,9 +394,9 @@ def teardown(s: state.SetupState, servers: dict, run: Runner) -> bool:
     patch: dict[str, Any] = {}
     for name, record in s.openclaw.mcp_mirrored.items():
         current = servers.get(name)
-        if current != record.get("applied"):
+        if not _host._strict_equal(current, record.get("applied")):
             ui.warn(f"OpenClaw MCP {name}: changed by hand since the kit wrote it; left as it is.")
-        elif current != record.get("previous"):
+        elif not _host._strict_equal(current, record.get("previous")):
             patch[name] = record.get("previous")
     if patch:
         rc, out = _patch(run, patch)

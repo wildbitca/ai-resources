@@ -303,7 +303,7 @@ def _openrouter_plugin_fragment(doc: dict, openrouter_enabled: bool) -> dict:
     """`plugins.entries.openrouter` + alias cleanup, shared by every engine (AC-13b)."""
     frag: dict[str, Any] = {}
     current = _get(doc, "plugins", "entries", "openrouter", "enabled")
-    if current != openrouter_enabled:
+    if not openclaw_host._strict_equal(current, openrouter_enabled):
         frag["plugins"] = {"entries": {"openrouter": {"enabled": openrouter_enabled}}}
     if not openrouter_enabled:
         models = _get(doc, "agents", "defaults", "models") or {}

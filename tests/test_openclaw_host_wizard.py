@@ -1565,24 +1565,23 @@ def test_a_rerun_after_a_failed_apply_adopts_the_configuration_and_finishes(monk
 def test_teardown_survives_a_previous_env_value_it_cannot_write_back(sim, script):
     s = _state()
     _run_wizard(s)
-    text = sim.env_file.read_text(encoding="utf-8")
-    sim.env_file.write_text(text + "OPENCLAW_PASS3_A=kit\nOPENCLAW_PASS3_B=kit\nOPENCLAW_PASS3_C=kit\n"
-                            "OPENCLAW_PASS3_D=kit\n", encoding="utf-8")
-    s.openclaw.host_env_previous.update({"OPENCLAW_PASS3_A": "x y", "OPENCLAW_PASS3_B": "$HOME",
-                                         "OPENCLAW_PASS3_C": "fine", "OPENCLAW_PASS3_D": None})
+    sim.env_file.write_text("OPENCLAW_OFFBOX_GCLOUD_CONFIG=kit\nOPENCLAW_OFFBOX_IMPERSONATE_SA=kit\n"
+                            "OPENCLAW_POD_CIDR=kit\nOPENCLAW_NARRATION=kit\n", encoding="utf-8")
+    s.openclaw.host_env_previous.update({"OPENCLAW_OFFBOX_GCLOUD_CONFIG": "x y", "OPENCLAW_OFFBOX_IMPERSONATE_SA": "$HOME",
+                                         "OPENCLAW_POD_CIDR": "fine", "OPENCLAW_NARRATION": None})
     removed = openclaw.teardown(s)
     assert removed == [], "an unfinished teardown reports nothing removed"
     assert not [p for p in sim.units.glob("openclaw-*")] if sim.units.exists() else True, \
         "the units were still undone"
     warned = " ".join(script.messages("warn"))
-    assert "OPENCLAW_PASS3_A" in warned and "OPENCLAW_PASS3_B" in warned and "$HOME" not in warned
+    assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG" in warned and "OPENCLAW_OFFBOX_IMPERSONATE_SA" in warned and "$HOME" not in warned
     env = sim.env_file.read_text(encoding="utf-8")
-    assert "OPENCLAW_PASS3_A=kit" in env and "OPENCLAW_PASS3_B=kit" in env, "left as they are"
-    assert "OPENCLAW_PASS3_C=fine" in env and "OPENCLAW_PASS3_D" not in env, "the other keys were restored"
-    assert set(s.openclaw.host_env_previous) == {"OPENCLAW_PASS3_A", "OPENCLAW_PASS3_B"}, "kept for a retry"
+    assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG=kit" in env and "OPENCLAW_OFFBOX_IMPERSONATE_SA=kit" in env, "left as they are"
+    assert "OPENCLAW_POD_CIDR=fine" in env and "OPENCLAW_NARRATION" not in env, "the other keys were restored"
+    assert set(s.openclaw.host_env_previous) == {"OPENCLAW_OFFBOX_GCLOUD_CONFIG", "OPENCLAW_OFFBOX_IMPERSONATE_SA"}, "kept for a retry"
     assert s.openclaw.host_env_created in (True, False)
     assert openclaw.teardown(s) == [], "a rerun does not crash and stays unfinished"
-    assert set(s.openclaw.host_env_previous) == {"OPENCLAW_PASS3_A", "OPENCLAW_PASS3_B"}
+    assert set(s.openclaw.host_env_previous) == {"OPENCLAW_OFFBOX_GCLOUD_CONFIG", "OPENCLAW_OFFBOX_IMPERSONATE_SA"}
 
 
 def _victim(tmp_path, name="victim.txt", text="the operator's file\n"):
@@ -1712,15 +1711,15 @@ def test_remove_still_deletes_a_well_formed_recorded_name():
 def test_teardown_survives_a_non_string_previous_env_value(sim, script):
     s = _state()
     _run_wizard(s)
-    sim.env_file.write_text(sim.env_file.read_text(encoding="utf-8") + "OPENCLAW_PASS4_A=kit\nOPENCLAW_PASS4_B=kit\n",
+    sim.env_file.write_text(sim.env_file.read_text(encoding="utf-8") + "OPENCLAW_OFFBOX_GCLOUD_CONFIG=kit\nOPENCLAW_POD_CIDR=kit\n",
                             encoding="utf-8")
-    s.openclaw.host_env_previous.update({"OPENCLAW_PASS4_A": 5, "OPENCLAW_PASS4_B": "fine"})
+    s.openclaw.host_env_previous.update({"OPENCLAW_OFFBOX_GCLOUD_CONFIG": 5, "OPENCLAW_POD_CIDR": "fine"})
     assert openclaw.teardown(s) == [], "unfinished, not a crash"
     warned = " ".join(script.messages("warn"))
-    assert "OPENCLAW_PASS4_A" in warned
+    assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG" in warned
     env = sim.env_file.read_text(encoding="utf-8")
-    assert "OPENCLAW_PASS4_A=kit" in env and "OPENCLAW_PASS4_B=fine" in env, "the other key was restored"
-    assert set(s.openclaw.host_env_previous) == {"OPENCLAW_PASS4_A"}
+    assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG=kit" in env and "OPENCLAW_POD_CIDR=fine" in env, "the other key was restored"
+    assert set(s.openclaw.host_env_previous) == {"OPENCLAW_OFFBOX_GCLOUD_CONFIG"}
 
 
 @pytest.mark.parametrize("key", ["LD_PRELOAD", "PATH", "BASH_ENV", "HOME", "OPENCLAW-X", "openclaw_lower"])
@@ -1841,3 +1840,26 @@ def test_the_verb_rerun_with_the_recorded_name_replaces_a_partial_record_with_th
     assert s.openclaw.host_offbox_config_created == {
         "name": "up-1", "account": "me@example.org", "impersonate": host.OFFBOX_SA_DEFAULT, "project": "wildbit-iac"}
     assert g.configs["up-1"]["account"] == "me@example.org"
+
+
+# --- kit 2.1.1 pass 5, P4: the teardown env allowlist is the fixed key set the kit writes -------------------------
+
+@pytest.mark.parametrize("key", ["OPENCLAW_OFFBOX_LIST_CMD", "OPENCLAW_EXTRA_PATH", "OPENCLAW_BACKUP_HOOK",
+                                 "OPENCLAW_PASS5_UNMANAGED"])
+def test_teardown_never_writes_back_an_unmanaged_openclaw_key(sim, script, key):
+    s = _state()
+    _run_wizard(s)
+    s.openclaw.host_env_previous[key] = "/usr/local/bin/some-listing"
+    openclaw.teardown(s)
+    after = sim.env_file.read_text(encoding="utf-8") if sim.env_file.exists() else ""
+    assert f"{key}=" not in after
+    assert key in " ".join(script.messages("warn"))
+    assert key not in s.openclaw.host_env_previous
+
+
+def test_every_key_the_wizard_writes_to_the_host_env_is_in_the_teardown_allowlist(sim, script):
+    s = _state()
+    _run_wizard(s)
+    written = set(host.read_host_env())
+    assert written and written <= host.KIT_ENV_KEYS, sorted(written - host.KIT_ENV_KEYS)
+    assert {"OPENCLAW_OFFBOX_GCLOUD_CONFIG", "OPENCLAW_OFFBOX_IMPERSONATE_SA"} <= host.KIT_ENV_KEYS
