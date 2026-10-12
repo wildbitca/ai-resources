@@ -4,9 +4,14 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
-## [Unreleased]
+## [2.1.1] — 2026-10-12 — the post-setup watch no longer reverts a healthy gateway, and the 2.1.0 surfaces are hardened
 
-Notes for the next patch release. Nothing here is released; the version label is the operator's decision.
+A patch release. The 2026-10-10 setup run showed the post-setup watch reverting two guard keys on a gateway that
+was healthy (its probes could not run in the transient unit); that is fixed at the root and the watch now ends
+INCONCLUSIVE, never reverting on a probe it could not run. The rest is hardening found by independent review
+rounds: the gateway guard (line continuations, multi-line quotes, heredocs, `env -S`), the off-box identity step,
+teardown, the state file and the no-op patch check. No setting changes meaning; `ai-resources setup` is not
+required, but run it to refresh hooks and skills.
 
 ### Fixed
 
