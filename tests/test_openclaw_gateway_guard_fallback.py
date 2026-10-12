@@ -120,3 +120,41 @@ def test_a_deadline_forcing_prefix_does_not_hide_a_glob_or_ansi_c_name(tmp_path,
     assert secs < 3
     rc, _ = _hook(tmp_path, "echo " + "*" * 250000 + "\nls -la", deadline=0.05)
     assert rc == 0
+
+
+# --- item 4a: a deny that was made is not discarded by a late deadline ----------------------------------------------
+
+def test_a_deadline_that_fires_after_a_deny_keeps_the_deny(guard, monkeypatch):
+    class Timers:
+        """A `signal` stand-in whose disarm call (the one in the `finally`) is where the alarm lands."""
+        SIGALRM = 14
+        ITIMER_REAL = 0
+        SIG_DFL = 0
+
+        @staticmethod
+        def signal(_n, handler):
+            return Timers.SIG_DFL
+
+        @staticmethod
+        def setitimer(_which, seconds, *_rest):
+            if seconds == 0:
+                raise guard._DeadlineExceeded()
+
+    monkeypatch.setattr(guard, "signal", Timers)
+    # the text names nothing the word views would find: only the full analysis denied it
+    monkeypatch.setattr(guard, "dangerous", lambda c, _d=0: True)
+    monkeypatch.setattr(guard, "shape", lambda c, _d=0: "stop")
+    assert guard.decide("ls -la") == "stop"
+    assert guard._last_deadline_fired is True
+
+
+def test_a_deadline_before_any_deny_is_still_decided_by_the_fallback(guard, monkeypatch):
+    monkeypatch.setenv("KIT_GUARD_DEADLINE_S", "0.05")
+
+    def spin(*_a, **_k):
+        while True:
+            guard._check_deadline()
+
+    monkeypatch.setattr(guard, "dangerous", spin)
+    assert guard.decide("openclaw gateway restart") == "restart"
+    assert guard.decide("ls -la") is None

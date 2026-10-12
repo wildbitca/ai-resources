@@ -2180,14 +2180,17 @@ def decide(command: str) -> str | None:
         _last_deadline_fired = True
     except Exception:
         failed = True
+    # A deny that was already made stands: the alarm can land after `shape()` returned and before the timer was
+    # disarmed, and the fallback (which reads fewer forms than the full analysis) must not replace it (2.2e, 4a).
+    made = found or (_memo[1] if _memo is not None and _memo[0] == command else None)
     _memo = None
     if failed:
         try:
-            found = _cheap_view(command)
+            found = made or _cheap_view(command)
             if found is None and _last_deadline_fired:
                 found = _fail_closed_view(command)      # the clock ran out: fail closed (6a)
         except Exception:
-            found = None
+            found = made
     return found
 
 
