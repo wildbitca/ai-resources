@@ -677,6 +677,7 @@ def test_a_legacy_revert_is_offered_when_the_live_true_only_equals_the_recorded_
     from ai_resources.setup import ui
     asked = []
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)    # the offer needs a terminal (P7)
     monkeypatch.setattr(ui, "warn", lambda *_a, **_k: None)
     monkeypatch.setattr(ui, "info", lambda *_a, **_k: None)
     monkeypatch.setattr(ui, "confirm", lambda msg, default=True: asked.append(msg) or False)
@@ -726,3 +727,64 @@ def test_a_change_to_a_value_that_ends_in_a_comma_bracket_is_sent():
 def test_load_json5_still_strips_trailing_commas_and_comments_outside_strings():
     assert host.load_json5('{"a": [1, 2 , // c\n ], "b": {"k": "v" /* x */ , },}') == {"a": [1, 2], "b": {"k": "v"}}
     assert host.load_json5('[1, [2,],]') == [1, [2]]
+
+
+# --- kit 2.1.1 pass 5, P7: the wizard-path drained-window confirms are terminal-gated ----------------------------------
+
+def test_a_piped_y_in_the_wizard_confirms_no_drained_window_and_leaves_the_entry_pending(sim, script, events,
+                                                                                         monkeypatch):
+    idle(monkeypatch, 0)
+    script.terminal = False
+    script.answers["Apply in a drained window"] = True            # what a piped `y` would answer
+    s = _state()
+    _run_wizard(s)
+    assert not any("Apply in a drained window" in q for q in script.asked), "no prompt on a pipe"
+    assert stops(events) == [] and not bind_written(sim)
+    assert "gateway.bind" in pending_paths(s)
+    warned = " | ".join(script.messages("warn"))
+    assert "needs a terminal" in warned and "apply-pending" in warned
+    assert any(p and "tools" in p for _a, p in sim.oc.real_patches()), "the hot half is still applied"
+
+
+def test_the_wizard_still_asks_at_a_terminal(sim, script, events, monkeypatch):
+    idle(monkeypatch, 0)
+    script.terminal = True
+    s = _state()
+    _run_wizard(s)
+    assert any("Apply in a drained window" in q for q in script.asked)
+    assert [e[0] for e in events if e[0] in ("stop", "start")] == ["stop", "start"]
+
+
+def test_an_eof_at_the_wizard_drained_window_prompt_defers_without_a_traceback(sim, script, events, monkeypatch):
+    idle(monkeypatch, 0)
+    scripted_confirm = script.confirm
+
+    def confirm(message, default=True):
+        if "Apply in a drained window" in message:
+            raise EOFError
+        return scripted_confirm(message, default)
+    monkeypatch.setattr(_ui, "confirm", confirm)
+    s = _state()
+    _run_wizard(s)                                                  # no traceback
+    assert stops(events) == [] and not bind_written(sim)
+    assert "gateway.bind" in pending_paths(s)
+
+
+def test_a_legacy_revert_is_not_offered_without_a_terminal(monkeypatch):
+    from ai_resources.setup import ui
+    asked = []
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: False)
+    monkeypatch.setattr(ui, "warn", lambda *_a, **_k: None)
+    monkeypatch.setattr(ui, "info", lambda *_a, **_k: None)
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: asked.append(msg) or True)
+    monkeypatch.setattr(section, "_in_flight", lambda: (0, "0"))
+    monkeypatch.setattr(section, "_profile_value", lambda _p, _o: "v")
+    monkeypatch.setattr(rr, "restart_paths", lambda *_a, **_k: ["x.flag"])
+    s = _state()
+    s.openclaw.host_config_changes = [{"path": ["x", "flag"], "previous": "old", "had": True}]
+    wrote = []
+    reverted = section._offer_legacy_revert(s.openclaw, {"x": {"flag": "v"}}, V, None, dry_run=False,
+                                            apply_patch=lambda *a, **k: wrote.append(a) or (True, ""))
+    assert reverted is False and asked == [] and wrote == []
+    assert len(s.openclaw.host_config_changes) == 1, "the recorded change stays"

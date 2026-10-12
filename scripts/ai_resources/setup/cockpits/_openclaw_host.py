@@ -479,8 +479,20 @@ def _handle_restart_part(o: state.OpenClawState, patch: dict, replace_paths: lis
                 "Recorded as pending; run `ai-resources openclaw apply-pending` when idle.")
         _record_pending(o, pend)
         return False
-    if not ui.confirm("Apply in a drained window? The gateway will stop and start "
-                      f"(N={n} runs in flight).", default=False):
+    if not ui.stdin_is_a_terminal():           # a piped `y` is not a confirmation (T2, same rule as apply-pending)
+        ui.warn("not applied: confirming a gateway stop and start needs a terminal. Recorded as pending; "
+                "run `ai-resources openclaw apply-pending` from one.")
+        _record_pending(o, pend)
+        return False
+    try:
+        answered = ui.confirm("Apply in a drained window? The gateway will stop and start "
+                              f"(N={n} runs in flight).", default=False)
+    except EOFError:                           # stdin gave out under the prompt: defer, no traceback
+        ui.warn("not applied: no answer could be read. Recorded as pending; "
+                "run `ai-resources openclaw apply-pending` from a terminal.")
+        _record_pending(o, pend)
+        return False
+    if not answered:
         ui.info("Recorded as pending: `ai-resources openclaw apply-pending` applies it later.")
         _record_pending(o, pend)
         return False
@@ -595,8 +607,16 @@ def _offer_legacy_revert(o: state.OpenClawState, doc: dict, version, mode, *, dr
         if n is None or n > 0:
             ui.info("Not offered now (a revert restarts the gateway in a drained window, and runs are in flight).")
             continue
-        if not ui.confirm(f"Restore {dotted} to `{ch['previous']}` in a drained window? The gateway will stop and "
-                          f"start (N={n} runs in flight).", default=False):
+        if not ui.stdin_is_a_terminal():       # a piped `y` is not a confirmation (T2)
+            ui.info("Not offered now (a revert stops and starts the gateway and needs a terminal).")
+            continue
+        try:
+            answered = ui.confirm(f"Restore {dotted} to `{ch['previous']}` in a drained window? The gateway will "
+                                  f"stop and start (N={n} runs in flight).", default=False)
+        except EOFError:
+            ui.info("Not offered now (no answer could be read).")
+            continue
+        if not answered:
             continue
         patch, rp = host.restore_patch([ch])
         wrote, _ok = _drained_apply(patch, rp, apply_patch)

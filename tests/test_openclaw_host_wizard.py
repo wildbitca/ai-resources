@@ -64,6 +64,7 @@ class ScriptedUi:
         self.validators: dict[str, object] = {}
         self.log: list[tuple[str, str]] = []
         self.non_interactive = False
+        self.terminal = True               # whether stdin is a real terminal (a piped `y` is not a confirmation)
 
     def _answer(self, message):
         self.asked.append(message)
@@ -88,6 +89,7 @@ class ScriptedUi:
         monkeypatch.setattr(ui, "select", self.select)
         monkeypatch.setattr(ui, "text", self.text)
         monkeypatch.setattr(ui, "is_non_interactive", lambda: self.non_interactive)
+        monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: self.terminal)
         for level in ("info", "ok", "warn", "error", "detail"):
             monkeypatch.setattr(ui, level, lambda msg, _l=level: self.log.append((_l, msg)))
 
