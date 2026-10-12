@@ -789,3 +789,21 @@ def test_a_legacy_revert_is_not_offered_without_a_terminal(monkeypatch):
     assert reverted is False and asked == [] and wrote == []
     assert len(s.openclaw.host_config_changes) == 1, "the recorded change stays"
 
+
+def test_a_legacy_live_value_that_only_equals_the_profile_value_by_python_is_not_offered(monkeypatch):
+    """S3d: the live `1` is not the profile's `true`, so the operator chose it and no revert is offered."""
+    from ai_resources.setup import ui
+    asked = []
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(ui, "warn", lambda *_a, **_k: None)
+    monkeypatch.setattr(ui, "info", lambda *_a, **_k: None)
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: asked.append(msg) or False)
+    monkeypatch.setattr(section, "_in_flight", lambda: (0, "0"))
+    monkeypatch.setattr(section, "_profile_value", lambda _p, _o: True)
+    monkeypatch.setattr(rr, "restart_paths", lambda *_a, **_k: ["x.flag"])
+    s = _state()
+    s.openclaw.host_config_changes = [{"path": ["x", "flag"], "previous": "old", "had": True}]
+    assert section._offer_legacy_revert(s.openclaw, {"x": {"flag": 1}}, V, None, dry_run=False,
+                                        apply_patch=lambda *_a, **_k: (True, "")) is False
+    assert asked == []

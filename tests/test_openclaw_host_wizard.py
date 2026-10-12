@@ -2041,3 +2041,53 @@ def test_a_non_string_previous_env_value_is_reported_as_not_a_string(sim, script
     assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG" in warned and "not a string" in warned
     assert "space" not in warned.split("OPENCLAW_OFFBOX_GCLOUD_CONFIG", 1)[1]
 
+
+# --- kit 2.1.1 pass 5, P9: pin the mutants that survived pass 4 ---------------------------------------------------
+
+def test_a_dangling_symlinked_hand_destination_is_never_written_through(sim, script, tmp_path):
+    """S6l, stand-alone: with the link dangling `dst.exists()` is False, so only the symlink check protects it."""
+    _backups, ts = _hand_move_fixture(sim)
+    target = tmp_path / "elsewhere" / "created-by-teardown.txt"
+    target.parent.mkdir()
+    dst = sim.home / ".local" / "bin" / host.HAND_SCRIPT_NAME
+    dst.parent.mkdir(parents=True)
+    dst.symlink_to(target)
+    assert dst.is_symlink() and not dst.exists()
+    src = ts / host.HAND_SCRIPT_NAME
+    src.write_text("payload\n", encoding="utf-8")
+    s = _moved_state(dst, src)
+    section._remove_units(s.openclaw)
+    assert not target.exists(), "nothing was written through the link"
+    assert src.read_text(encoding="utf-8") == "payload\n"
+    assert s.openclaw.host_hand_moved == {}
+
+
+@pytest.mark.parametrize("protected", ["default", "claude-ro"])
+def test_remove_never_deletes_a_protected_gcloud_configuration(protected):
+    """S6e: the two configurations the kit never touches are refused even when a hand edit records them."""
+    g = FakeGcloud(configs={"default": {}, "claude-ro": {}}, active="somewhere-else")   # not the ACTIVE refusal
+    lines: list[str] = []
+    assert host.offbox_identity_remove(g, {"name": protected}, out=lines.append) is False
+    assert protected in g.configs
+    assert not [c for c in g.calls if c[1:4] == ["config", "configurations", "delete"]]
+    assert any(protected in ln and "left as it is" in ln for ln in lines)
+
+
+def test_a_foreign_env_key_is_dropped_from_the_record_while_a_stuck_key_is_kept(sim, script):
+    """S6c: a key the kit does not manage is not retried; only a key the kit owns but cannot write back is."""
+    s = _state()
+    _run_wizard(s)
+    s.openclaw.host_env_previous.update({"LD_PRELOAD": "/home/u/evil.so", "OPENCLAW_OFFBOX_LIST_CMD": "x",
+                                         "OPENCLAW_OFFBOX_GCLOUD_CONFIG": "has space"})
+    assert openclaw.teardown(s) == []
+    assert set(s.openclaw.host_env_previous) == {"OPENCLAW_OFFBOX_GCLOUD_CONFIG"}
+
+
+def test_a_foreign_env_key_alone_does_not_hold_the_record_open(sim, script):
+    s = _state()
+    _run_wizard(s)
+    s.openclaw.host_env_previous["LD_PRELOAD"] = "/home/u/evil.so"
+    openclaw.teardown(s)
+    assert s.openclaw.host_env_previous == {} and s.openclaw.host_env_created is False
+    after = sim.env_file.read_text(encoding="utf-8") if sim.env_file.exists() else ""
+    assert "LD_PRELOAD" not in after
