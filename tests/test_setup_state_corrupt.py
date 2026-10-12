@@ -137,3 +137,95 @@ def test_a_symlinked_state_lock_says_it_is_a_symlink(monkeypatch, tmp_path):
         with state.exclusive():
             pass
     assert "is a symlink" in str(e.value)
+
+
+# --- kit 2.2d, 3b/3c: one predicate for "corrupt", and a refusal that tells the truth about its copy ---------------
+
+NOT_A_MAPPING = ["[]\n", "0\n", "false\n", "''\n", '""\n', "- a\n- b\n", "just a string\n", "42\n", "[1, 2]\n"]
+
+
+@pytest.mark.parametrize("text", NOT_A_MAPPING)
+def test_load_and_save_agree_that_a_file_that_is_not_a_mapping_is_corrupt(monkeypatch, tmp_path, text):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(state, "_corrupt_notice", None, raising=False)
+    monkeypatch.setattr(state, "_replace_corrupt_ok", None, raising=False)
+    path = state.state_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(text, encoding="utf-8")
+    assert state.save_would_refuse() is True
+    state.load()
+    backup = state.take_corrupt_notice()
+    assert backup and pathlib.Path(backup).read_text(encoding="utf-8") == text, "load copied it aside and said so"
+    with pytest.raises(state.StateCorrupt):
+        state.save(state.SetupState())
+    assert path.read_text(encoding="utf-8") == text
+
+
+@pytest.mark.parametrize("text", ["", "\n", "# only a comment\n", "{}\n", "mode: local\n", "~\n"])
+def test_an_empty_or_mapping_file_is_not_corrupt_for_load_or_save(monkeypatch, tmp_path, text):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(state, "_corrupt_notice", None, raising=False)
+    monkeypatch.setattr(state, "_replace_corrupt_ok", None, raising=False)
+    path = state.state_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(text, encoding="utf-8")
+    assert state.save_would_refuse() is False
+    state.load()
+    assert state.take_corrupt_notice() is None
+    state.save(state.SetupState())
+    assert "last_run" in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("text", ["[]\n", "0\n", "false\n", "''\n"])
+def test_an_interactive_setup_asks_before_replacing_every_file_that_save_refuses(monkeypatch, tmp_path, text):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(state, "_corrupt_notice", None, raising=False)
+    monkeypatch.setattr(state, "_replace_corrupt_ok", None, raising=False)
+    path = state.state_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(text, encoding="utf-8")
+    lines, asked, args = _run_wizard(monkeypatch, non_interactive=False, answer=False)
+    assert wizard._run(args) == 1
+    assert len(asked) == 1 and "replace the file" in asked[0]
+    assert path.read_text(encoding="utf-8") == text
+
+
+def test_the_replace_question_defaults_to_no(monkeypatch, corrupt_file):
+    lines, _asked, args = _run_wizard(monkeypatch, non_interactive=False, answer=False)
+    defaults: list[bool] = []
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: defaults.append(default) or False)
+    assert wizard._run(args) == 1
+    assert defaults == [False], "Enter must not replace a state file the operator could not read"
+
+
+def _copies(path: pathlib.Path) -> list[pathlib.Path]:
+    return sorted(p for p in path.parent.iterdir() if ".corrupt" in p.name)
+
+
+def test_every_refusing_verb_leaves_the_copy_its_sentence_promises(corrupt_file, capsys):
+    from ai_resources import openclaw_host as host
+    assert _copies(corrupt_file) == [], "the verbs below refuse before any load(): the copy is made by the refusal"
+    assert host.cmd_apply_pending(argparse.Namespace()) == 1
+    said = capsys.readouterr().out
+    [copy] = _copies(corrupt_file)
+    assert copy.read_bytes() == corrupt_file.read_bytes() == CORRUPT.encode()
+    assert copy.name in said and "a copy was made beside it as" in said
+    assert stat.S_IMODE(copy.stat().st_mode) == 0o600
+    assert host.cmd_offbox_identity(argparse.Namespace(dry_run=False)) == 1
+    again = capsys.readouterr().out
+    assert _copies(corrupt_file) == [copy], "one copy per distinct content"
+    assert copy.name in again
+    assert corrupt_file.read_text(encoding="utf-8") == CORRUPT
+
+
+def test_save_raises_with_a_copy_beside_the_file(corrupt_file):
+    with pytest.raises(state.StateCorrupt) as e:
+        state.save(state.SetupState())
+    [copy] = _copies(corrupt_file)
+    assert copy.read_bytes() == CORRUPT.encode() and copy.name in str(e.value)
+
+
+def test_a_refusal_that_could_not_copy_does_not_claim_a_copy(corrupt_file, monkeypatch):
+    monkeypatch.setattr(state, "_backup_corrupt", lambda path: None)
+    text = state.refusal_text()
+    assert "a copy was made" not in text and "no copy" in text.lower()

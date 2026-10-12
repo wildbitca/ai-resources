@@ -1321,8 +1321,7 @@ def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, 
     now = deps.now()
     st = ov.get("state") or {}
     marker = deps.marker or openclaw_host.Marker()
-    owned = not marker.exists()
-    marker.touch()
+    owned = marker.acquire()          # one exclusive create: a window somebody opened is never taken for ours
     window_token = _WINDOW_OWNED.set(owned)
     try:
         pid_before = st.get("pending_restart_pid") or deps.main_pid()
@@ -1502,8 +1501,7 @@ def run_rollback(deps: Deps) -> Result:
             return Result(EXIT_PRECHECK_FAILED, "nothing_to_roll_back", msg)
         _log(deps, "manual_rollback")
         marker = deps.marker or openclaw_host.Marker()
-        owned = not marker.exists()
-        marker.touch()
+        owned = marker.acquire()      # exclusive create; the file is removed below only when this call made it
         window_token = _WINDOW_OWNED.set(owned)
         try:
             try:

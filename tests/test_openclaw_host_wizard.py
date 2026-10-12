@@ -2853,3 +2853,41 @@ def test_a_corrupt_setup_state_refuses_apply_pending_with_one_line(monkeypatch, 
     assert host.cmd_apply_pending(ns) == 1
     lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
     assert len(lines) == 1 and lines[0].startswith("refusing:")
+
+
+# =====================================================================================================================
+# Kit 2.2d, 3a: a refused hand-unit restore keeps its record and the teardown says it is unfinished
+# =====================================================================================================================
+
+def test_a_symlinked_hand_units_directory_leaves_the_teardown_unfinished_and_a_second_one_restores(
+        sim, script, tmp_path):
+    hand = _put_hand_copy(sim)
+    hand.chmod(0o755)
+    original = hand.read_text(encoding="utf-8")
+    units = _put_hand_units(sim)
+    s = _state()
+    _run_wizard(s)
+    recorded = dict(s.openclaw.host_hand_moved)
+    shas = dict(s.openclaw.host_hand_kit_sha)
+    assert str(hand) in recorded and shas
+    backups = sim.home / ".openclaw" / "backup" / "hand-units"
+    relocated = tmp_path / "relocated-hand-units"
+    backups.rename(relocated)
+    backups.symlink_to(relocated, target_is_directory=True)
+
+    assert openclaw.teardown(s) == [], "unfinished: nothing was torn down"
+    assert s.openclaw.host_hand_moved == recorded, "the record of what was moved aside is kept"
+    assert s.openclaw.host_hand_kit_sha == shas
+    assert s.openclaw.host_units_applied is True and section.applied_any(s.openclaw)
+    assert not hand.exists(), "the operator's script is still in the (relocated) backup tree, not put back"
+    for p in units:
+        assert p.exists(), "the kit's own units stay installed"
+    assert any("is a symlink" in m for m in script.messages("warn"))
+
+    backups.unlink()                                   # the operator repairs the link
+    relocated.rename(backups)
+    assert openclaw.teardown(s) != [], "finished"
+    assert hand.read_text(encoding="utf-8") == original
+    assert s.openclaw.host_hand_moved == {}
+    for p, text in units.items():
+        assert p.read_bytes() == text

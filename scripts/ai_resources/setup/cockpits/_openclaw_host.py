@@ -1140,7 +1140,8 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
         o.host_workboard_applied = ""
 
     if o.host_units_applied or o.host_units_previous or o.host_timers_enabled or o.host_hand_moved:
-        _remove_units(o)
+        if not _remove_units(o):
+            ok = False          # a refused hand-unit restore: the record is kept and the run is unfinished
 
     if o.host_hooks_applied or o.host_legacy_hooks:
         claude_cockpit.remove_openclaw_hooks()
@@ -1311,10 +1312,15 @@ def _put_back(src: Path, dst: Path) -> None:
     os.unlink(src)
 
 
-def _remove_units(o: state.OpenClawState) -> None:
+def _remove_units(o: state.OpenClawState) -> bool:
     """Undo the units: disable exactly the timers the kit enabled (a timer that was already
     enabled stays enabled), then put every unit file back as it was: its old text, or gone if
-    the kit created it."""
+    the kit created it.
+
+    False when the hand units could not be restored because their backup tree is a symlink (2.2d, 3a): the record
+    of what was moved aside (`host_hand_moved`, `host_hand_kit_sha`, `host_hand_links`) is kept, the kit's own
+    file stays where the operator's was, `host_units_applied` stays True and the caller reports the teardown as
+    unfinished, so a second teardown after the link is repaired puts the originals back."""
     dest = host.user_unit_dir()
     runner = _runner()
     env = host.systemd_env()
@@ -1349,7 +1355,7 @@ def _remove_units(o: state.OpenClawState) -> None:
         # moved aside, so nothing is moved onto a unit path; the record stays so a fixed link can be restored.
         ui.warn(f"{linked} is a symlink, so the hand units the kit moved aside are not restored from it and "
                 "your originals stay where they are; make it a real directory (or move the files back by "
-                "hand), then run teardown again.")
+                "hand), then run teardown again. This teardown is unfinished: the record is kept.")
     for original, moved in ([] if linked is not None else list(o.host_hand_moved.items())):
         src, dst = Path(moved), Path(original)
         valid = (dst == script or (dst.name in host.HEALTH_UNITS and _inside(dst, dest))) \
@@ -1391,7 +1397,10 @@ def _remove_units(o: state.OpenClawState) -> None:
         except OSError:
             pass
     runner(["systemctl", "--user", "daemon-reload"], env=env)
+    if linked is not None:
+        return False
     o.host_units_applied = False
+    return True
 
 
 # --- status --------------------------------------------------------------------------------------------------------

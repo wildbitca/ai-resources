@@ -140,3 +140,17 @@ def test_a_control_character_inside_a_host_drops_the_host_instead_of_truncating_
 def test_a_blank_still_ends_the_host_token():
     text = TLS.format(kind="refused", host="good.example") + ""
     assert _hosts(text) == ["good.example"]
+
+
+# --- kit 2.2d, 3e: a CR or a TAB inside the token drops the host, it does not cut it to a valid prefix ----------------
+
+@pytest.mark.parametrize("raw", ["good.example\revil", "good.example\tevil", "good.example\r", "good.example\t",
+                                 "good.example\r\tevil.example", "\tgood.example"])
+def test_a_carriage_return_or_tab_inside_the_host_token_drops_the_host(raw):
+    assert _hosts(TLS.format(kind="refused", host=raw)) == []
+
+
+def test_a_host_after_a_dropped_one_on_the_next_line_is_still_read():
+    text = (TLS.format(kind="refused", host="good.example\rcut.example") + "\n"
+            + TLS.format(kind="refused", host="fine.example"))
+    assert _hosts(text) == ["fine.example"]

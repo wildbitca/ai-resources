@@ -430,9 +430,18 @@ def save_would_refuse() -> bool:
     return _replace_corrupt_ok != real and _corrupt_state(Path(real))
 
 
+def _copy_sentence() -> str:
+    """The sentence a refusal says about the copy of the unreadable file, made right now (the verbs that refuse
+    do so before any `load()`, so nobody else has copied it): exclusive and 0600, once per distinct content."""
+    backup = _backup_corrupt(state_path())
+    if backup:
+        return f"a copy was made beside it as {Path(backup).name}"
+    return "no copy could be made beside it"
+
+
 def refusal_text() -> str:
-    return (f"refusing: {state_path()} is not valid YAML (a copy was made beside it as <name>.corrupt); nothing "
-            "was changed. Fix or remove the file, or run `ai-resources setup` interactively.")
+    return (f"refusing: {state_path()} is not valid YAML ({_copy_sentence()}); nothing was changed. Fix or "
+            "remove the file, or run `ai-resources setup` interactively.")
 
 
 def take_corrupt_notice() -> str | None:
@@ -460,10 +469,14 @@ def load() -> SetupState:
     path = state_path()
     if not path.is_file() or yaml is None:
         return SetupState()
+    # One predicate for "corrupt" with `save()` (`_corrupt_state`): anything that is not a mapping, whatever its
+    # truthiness (`[]`, `0`, `false`, `''` included). Only an empty document (None) is an empty record.
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (yaml.YAMLError, UnicodeDecodeError):
-        data = None
+        data = False
+    if data is None:
+        data = {}
     if not isinstance(data, dict):
         backup = _backup_corrupt(path)
         _corrupt_notice = backup or "(no backup could be written)"
@@ -480,8 +493,8 @@ def save(state: SetupState) -> None:
     state.last_run = datetime.now(timezone.utc).isoformat()
     path = state_path()
     if _replace_corrupt_ok != os.path.realpath(path) and _corrupt_state(Path(os.path.realpath(path))):
-        raise StateCorrupt(f"{path} is not valid YAML; a copy was made beside it (<name>.corrupt). Nothing was "
-                           "written. Fix or remove the file, or run `ai-resources setup` interactively.")
+        raise StateCorrupt(f"{path} is not valid YAML; {_copy_sentence()}. Nothing was written. Fix or remove "
+                           "the file, or run `ai-resources setup` interactively.")
     # A state file that is a symlink (a dotfile manager) is replaced at its target, not turned into a plain file.
     path = Path(os.path.realpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
