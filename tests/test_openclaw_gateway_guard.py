@@ -1397,3 +1397,26 @@ def test_the_word_fallback_does_not_read_a_data_command_as_a_command(guard):
     assert guard.shape("env -S 'echo openclaw gateway restart | sh \"'") == "restart"
     assert guard.shape("env -S 'echo hi; openclaw gateway restart \"'") == "restart"
     assert guard.shape("env -S 'eval \"$(echo openclaw gateway restart)\" \"'") == "restart"
+
+
+@pytest.mark.parametrize("command,expected", [
+    ("builtin eval 'openclaw gateway restart'", "restart"),
+    ("command builtin eval 'systemctl --user stop openclaw-gateway'", "stop"),
+    ("coproc systemctl --user stop openclaw-gateway", "stop"),
+    ("coproc { openclaw gateway restart; }", "restart"),
+    ("parallel sh -c ''\\''openclaw doctor --fix'\\''' ::: 1", "doctor"),
+    ("parallel 'systemctl --user restart openclaw-gateway' ::: a", "restart"),
+])
+def test_builtin_coproc_and_the_command_line_parallel_parses_again_are_read(guard, command, expected):
+    assert guard.shape(command) == expected, command
+
+
+@pytest.mark.parametrize("command", [
+    "builtin echo openclaw gateway restart",
+    "builtin cd /tmp",
+    "coproc cat",
+    "parallel -j2 echo ::: 'openclaw gateway restart'",
+    "parallel gzip ::: *.log",
+])
+def test_builtin_coproc_and_parallel_around_harmless_commands_stay_allowed(guard, command):
+    assert guard.shape(command) is None, command

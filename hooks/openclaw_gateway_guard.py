@@ -269,8 +269,8 @@ def _heredoc_delimiters(text: str) -> list[str]:
 _MAX_COMMAND_CHARS = 262144
 _NESTED_EXPANSION = re.compile(r"\$\(|`|\$\{|\$\$['\"]")
 # Tokens that only wrap another command: look through them to the real one.
-_WRAPPERS = {"sudo", "doas", "env", "command", "nohup", "setsid", "time", "exec", "nice", "ionice", "stdbuf",
-             "unbuffer"}
+_WRAPPERS = {"sudo", "doas", "env", "command", "builtin", "nohup", "setsid", "time", "exec", "nice", "ionice",
+             "stdbuf", "unbuffer"}
 # systemctl verbs that stop or restart a unit. Everything else (status, show, is-active, list-units,
 # cat, reload, start, ...) is read-only or harmless for this guard.
 _SYSTEMCTL_STOP = {"stop", "kill"}
@@ -316,7 +316,7 @@ _NO_VALUES: tuple[frozenset, frozenset] = (frozenset(), frozenset())
 # Shell options with a value that may sit before `-c` (`bash -o pipefail -c '...'`, `bash --rcfile f -c`).
 _SHELL_SHORT_VALUE = frozenset("oO")
 _SHELL_LONG_VALUE = frozenset({"--rcfile", "--init-file"})
-_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}
+_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "coproc"}
 _SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _OPERATORS = {";", "&&", "||", "|", "&", "|&", "(", ")", "{", "}"}
 
@@ -831,6 +831,12 @@ def _exec_inner(words: list[str]) -> list[list[str]]:
                 if w.startswith(":::"):
                     rest = rest[:stop]
                     break
+        if rest and base == "parallel":
+            # GNU parallel hands the whole command line to a shell, which parses it again
+            try:
+                rest = shlex.split(" ".join(rest))
+            except ValueError:
+                pass
         if rest:
             out.append(rest)
     elif base == "find":
