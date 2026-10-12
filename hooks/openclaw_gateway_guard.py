@@ -1175,6 +1175,7 @@ _PRINTING_COMMANDS = frozenset({"echo", "printf", ":"})
 _PRINTING_PASSTHROUGH = _TRANSPARENT_WORDS = frozenset({
     "sudo", "doas", "env", "command", "builtin", "nohup", "time", "exec", "nice", "setsid", "stdbuf", "timeout",
     "eval", "then", "do", "else", "elif", "if", "while", "until", "!", "sh", "bash", "zsh", "dash", "ksh"})
+_COMPOUND_OPENERS = frozenset({"do", "then", "else", "elif"})
 _RUNS_ITS_INPUT = frozenset({"source", ".", "eval", "exec", "sh", "bash", "zsh", "dash", "ksh"})
 _NOT_A_VERB = frozenset({"status", "start", "install", "uninstall", "health", "probe", "call", "discover", "run",
                          "logs", "usage-cost"})        # `openclaw gateway <one of these>`: the first one decides
@@ -1195,8 +1196,22 @@ def _statement_head(low: str, pos: int) -> str:
 
 def _another_product(low: str, pos: int) -> bool:
     """True when the statement that holds `pos` is run by another product's command."""
-    words = [w.lstrip("($`") for w in _statement_head(low, pos).split()[:6]]
-    return any(os.path.basename(w) in _OTHER_PRODUCT_COMMANDS for w in words)
+    words = _statement_head(low, pos).split()
+    k = 0
+    while k < len(words):
+        w = words[k].lstrip("($`{")
+        if w in ("-o", "+o", "-O", "+O"):
+            k += 2                           # a shell option and its value
+        elif (not w or w.startswith(("-", "+", "<", "%")) or _ASSIGNMENT.match(w)
+              or os.path.basename(w) in _TRANSPARENT_WORDS or os.path.basename(w) in _PRINTING_COMMANDS):
+            k += 1                           # the printed text of `echo "docker ..." | sh` is read as the command
+        elif os.path.basename(w) in _OTHER_PRODUCT_COMMANDS:
+            return True
+        elif _ASSEMBLY_CHARS.intersection(w):
+            return False                     # an assembled command word (`${o}claw`): what follows is its options
+        else:                                # a plain wrapper (`ssh host docker ...`): another product further on
+            return any(os.path.basename(x.lstrip("($`{")) in _OTHER_PRODUCT_COMMANDS for x in words[k + 1:k + 6])
+    return False
 
 
 def _another_unit(low: str, gw: int) -> bool:
@@ -1241,6 +1256,8 @@ def _prints_only(low: str, a: int, b: int) -> bool:
     if k >= len(words) or os.path.basename(words[k]) not in _PRINTING_COMMANDS:
         return False
     command = os.path.basename(words[k])
+    if command == "printf" and any(w.startswith("-v") for w in words[k + 1:]):
+        return False                         # `printf -v x ...` prints nothing: it stores the text in a variable
     if k == 0 and not opener and command != ":":
         return False                         # a bare `echo ...` statement of the text is still read (T46 price)
     if command != ":":
@@ -1256,6 +1273,8 @@ def _prints_only(low: str, a: int, b: int) -> bool:
     # is no boundary (quotes are gone from the text), and `echo 'a; b' | sh` pipes what it printed. A line that
     # runs on past `_LINE_LOOKAHEAD` characters is not read to its end: it is not a printing statement.
     eol = low.find("\n", b, b + _LINE_LOOKAHEAD)
+    if opener in ("(", "{") or any(os.path.basename(w) in _COMPOUND_OPENERS for w in words[:k]):
+        eol = -1                             # a group or compound body: its closer and `| sh` may be lines later
     if eol < 0:
         if len(low) - b > _LINE_LOOKAHEAD:
             return False

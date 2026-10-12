@@ -294,3 +294,25 @@ def test_many_exclusion_checks_are_answered_in_time_and_fail_closed(guard, unit)
     assert got == "restart", "past the check budget every pair counts"
     few = (unit + " " * 200 + "\n") * 50       # the words of one repetition are not near the next one's
     assert guard._cheap_view(few, strict=True) is None
+
+
+@pytest.mark.parametrize("command", [
+    "bash <<EOF\n(echo openclaw gateway restart\n) | sh\nEOF",
+    "bash <<EOF\n{ echo openclaw gateway restart\n} | sh\nEOF",
+    "bash <<EOF\n(echo openclaw gateway restart\necho hi) | sh\nEOF",
+    "bash <<EOF\nfor i in 1; do echo openclaw gateway restart\ndone | sh\nEOF",
+    "bash <<EOF\nif true; then echo openclaw gateway restart\nfi | sh\nEOF",
+    "bash <<EOF\n(echo openclaw gateway restart\n) | bash\nEOF",
+    "bash <<EOF\ncommand printf -v x '%s' 'openclaw gateway restart'; $x\nEOF",
+    "bash <<EOF\ncommand printf -v x '%s' 'openclaw gateway restart'; eval \"$x\"\nEOF",
+    "bash <<EOF\ncommand printf -v x '%s' 'systemctl --user restart openclaw-gateway'; eval \"$x\"\nEOF",
+    "bash <<EOF\no=open; ${o}claw --profile docker gateway restart\nEOF",
+    "bash <<EOF\no=open; ${o}claw --log-level helm gateway restart\nEOF",
+    "bash <<EOF\no=open; open$c --dev docker gateway restart\nEOF",
+])
+def test_printing_and_other_product_exclusions_do_not_let_a_shell_fed_restart_through(guard, command):
+    assert guard.decide(command) == "restart", command
+
+
+def test_another_products_command_word_still_excludes(guard):
+    assert guard.decide("bash <<EOF\ndocker restart gateway\nEOF") is None
