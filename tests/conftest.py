@@ -36,6 +36,9 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # ADR-0004: the graceful restart's state, lock and snapshots live under ~/.openclaw too.
     monkeypatch.setattr(openclaw_host, "STATE_PATH", root / "openclaw" / "health-restart.state", raising=False)
     monkeypatch.setattr(openclaw_host, "LOCK_PATH", root / "openclaw" / "health-restart.lock", raising=False)
+    # Whether the test run itself sits in the gateway cgroup must not decide the outcome of a restart test:
+    # the self-cgroup refusal (T29) reads this path, and the tests that exercise it pass their own file.
+    monkeypatch.setattr(openclaw_host, "SELF_CGROUP_PATH", str(root / "openclaw" / "self-cgroup"), raising=False)
     monkeypatch.setattr(openclaw_host, "SNAPSHOT_ROOT", root / "openclaw" / "logs" / "restart-snapshots",
                         raising=False)
     # And the OpenClaw cockpit's own root. A teardown test whose config names no

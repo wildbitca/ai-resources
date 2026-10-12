@@ -463,11 +463,69 @@ class Marker:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.touch()
 
+    def acquire(self) -> bool:
+        """Create the marker with `O_CREAT|O_EXCL`: True when this call made it, False when it was there.
+
+        `exists()` followed by `touch()` lets two paths both conclude that the window is theirs; the exclusive
+        create has exactly one winner."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            return False
+        os.close(fd)
+        return True
+
     def remove(self) -> None:
         try:
             self.path.unlink()
         except FileNotFoundError:
             pass
+
+
+class WindowBusy(Exception):
+    """A maintenance window (`watchdog.off`) is already open, or another restart path holds the lock."""
+
+
+SELF_CGROUP_PATH = "/proc/self/cgroup"
+
+
+def inside_gateway_cgroup(self_cgroup_path: Path | str | None = None) -> bool:
+    """True when this process is a child of the gateway unit: stopping or restarting the unit would kill
+    the very process that has to finish the job (T29)."""
+    try:
+        return GATEWAY_UNIT in Path(self_cgroup_path or SELF_CGROUP_PATH).read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def acquire_restart_lock(path: Path | None = None) -> int | None:
+    """Take the ONE non-blocking exclusive lock every path that stops or restarts the gateway shares (the
+    graceful restart, the drained window of `doctor` and `apply-pending`, setup's and `models update`'s
+    restart). Returns the open descriptor, or None when another path holds it.
+
+    The file is never unlinked: removing it while it is locked lets a process that already opened the old
+    inode and one that creates a new file both hold "the" lock at once."""
+    import fcntl
+    path = path or LOCK_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def release_restart_lock(fd: int | None) -> None:
+    import fcntl
+    if fd is None:
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: bool = False,
@@ -571,7 +629,8 @@ def drained_window(action: Callable[[], bool], *, runner: Runner = default_runne
                    health_timeout: float = 120, health_interval: float = 5,
                    sleep: Callable[[float], None] = time.sleep, marker: Marker | None = None,
                    openclaw_bin: str | None = None, out: Callable[[str], None] = print,
-                   skip_message: str = "", self_cgroup_path: Path | str = "/proc/self/cgroup") -> int:
+                   skip_message: str = "", self_cgroup_path: Path | str = "/proc/self/cgroup",
+                   lock_path: Path | None = None) -> int:
     """The one maintenance window (T01), shared by `doctor` and the kit's restart-required config applies.
 
         touch watchdog.off  ->  stop  ->  poll until the cgroup drains  ->  action()
@@ -582,24 +641,41 @@ def drained_window(action: Callable[[], bool], *, runner: Runner = default_runne
     `require_idle` the window is refused, before anything is stopped, when the strict busy probe
     reports runs in flight or cannot tell (ADR-0001: defer, never force).
 
-    Exit codes: 0 ok; 2 refused (marker present); 3 not drained; 4 action failed; 5 gateway did
-    not come back; 6 refused (busy); 8 refused (this process is a child of the gateway: stopping the unit
-    would kill the very process that has to start it again, T29).
+    Exit codes: 0 ok; 2 refused (marker present, or the restart lock is held by another path); 3 not
+    drained; 4 action failed; 5 gateway did not come back; 6 refused (busy); 8 refused (this process is a
+    child of the gateway: stopping the unit would kill the very process that has to start it again, T29).
     """
     marker = marker or Marker()
     env = systemd_env()
     oc = openclaw_bin or resolve_openclaw_bin()
     sysctl = ["systemctl", "--user"]
 
-    try:
-        own = Path(self_cgroup_path).read_text(encoding="utf-8")
-    except OSError:
-        own = ""
-    if GATEWAY_UNIT in own:
+    if inside_gateway_cgroup(self_cgroup_path):
         out("refusing: this process runs inside the gateway cgroup; stopping the gateway would kill it (T29). "
             "Run this from outside the gateway (a terminal, not an agent session).")
         return EXIT_REFUSED_SELF
 
+    # One lock for every path that stops or restarts the unit: a second one refuses, with one line.
+    lock_fd = acquire_restart_lock(lock_path)
+    if lock_fd is None:
+        out("refusing: another restart or maintenance window is in progress (the restart lock is held); "
+            "nothing was stopped.")
+        return EXIT_REFUSED
+    try:
+        return _drained_window_locked(action, runner=runner, force=force, require_idle=require_idle,
+                                      busy_probe=busy_probe, drain_timeout=drain_timeout,
+                                      drain_interval=drain_interval, health_timeout=health_timeout,
+                                      health_interval=health_interval, sleep=sleep, marker=marker, env=env,
+                                      oc=oc, sysctl=sysctl, out=out, skip_message=skip_message)
+    finally:
+        release_restart_lock(lock_fd)
+
+
+def _drained_window_locked(action: Callable[[], bool], *, runner: Runner, force: bool, require_idle: bool,
+                           busy_probe: Callable[[], "int | None"] | None, drain_timeout: float,
+                           drain_interval: float, health_timeout: float, health_interval: float,
+                           sleep: Callable[[float], None], marker: Marker, env: dict, oc: str,
+                           sysctl: list[str], out: Callable[[str], None], skip_message: str) -> int:
     if marker.exists() and not force:
         out(f"refusing: {marker.path} exists, so another maintenance window is open. "
             "Pass --force if that window is dead.")
@@ -614,7 +690,14 @@ def drained_window(action: Callable[[], bool], *, runner: Runner = default_runne
 
     drained = action_ok = False
     code = EXIT_OK
-    marker.touch()
+    # Exclusive create: a window that appeared since the check above (the operator's) is not ours to take.
+    exclusive = getattr(marker, "acquire", None)
+    if force or exclusive is None:
+        marker.touch()
+    elif not exclusive():
+        out(f"refusing: {marker.path} appeared while the window was being opened, so another maintenance window "
+            "is open; nothing was stopped.")
+        return EXIT_REFUSED
     try:
         # TimeoutStopSec=330 on the gateway unit: allow for it.
         runner(sysctl + ["stop", GATEWAY_UNIT], env=env, timeout=400)
@@ -3502,8 +3585,10 @@ class MarkerGuard:
     installed from the main thread. SIGKILL cannot be caught: `verify` flags a stale marker (ADR-0004).
     """
 
-    def __init__(self, marker: Marker | None = None, *, signals: tuple[int, ...] | None = None):
+    def __init__(self, marker: Marker | None = None, *, signals: tuple[int, ...] | None = None,
+                 exclusive: bool = False):
         import signal
+        self.exclusive = exclusive
         self.marker = marker or Marker()
         self._signals = signals if signals is not None else (signal.SIGTERM, signal.SIGINT)
         self._previous: dict[int, object] = {}
@@ -3519,13 +3604,16 @@ class MarkerGuard:
         if threading.current_thread() is threading.main_thread():
             for sig in self._signals:
                 self._previous[sig] = signal.signal(sig, _raise)
-        # A window the operator (or a drained window) already opened is not ours to close.
-        self._owned = not self.marker.exists()
+        # The marker is created with O_EXCL: a window the operator (or another path) already opened is not ours
+        # to close, and `exclusive=True` refuses to run inside it at all.
         try:
-            self.marker.touch()
+            self._owned = self.marker.acquire()
         except BaseException:
             self._restore()
             raise
+        if self.exclusive and not self._owned:
+            self._restore()
+            raise WindowBusy(f"{self.marker.path} exists: a maintenance window is open")
         return self
 
     def _restore(self) -> None:
@@ -3715,31 +3803,19 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
         return result
 
     # 1. never from inside the gateway cgroup
-    try:
-        own = Path(self_cgroup_path).read_text(encoding="utf-8")
-    except OSError:
-        own = ""
-    if GATEWAY_UNIT in own:
+    if inside_gateway_cgroup(self_cgroup_path):
         out("refusing: this process runs inside the gateway cgroup; its own restart would kill it (T29)")
         return finish(EXIT_REFUSED_SELF, "refused-self")
 
-    # 2. one graceful restart at a time (the timer and a manual run share the lock)
-    import fcntl
+    # 2. one restart path at a time: the timer, a manual run, the drained window and setup share the lock
     lock_fd = None
     if dry_run:
         if _lock_held_by_other(lock_path):
             return finish(EXIT_LOCKED, "locked")
     else:
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-        except FileExistsError:
-            lock_fd = os.open(lock_path, os.O_RDWR, 0o600)
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            os.close(lock_fd)
-            out("refusing: another graceful restart holds the lock")
+        lock_fd = acquire_restart_lock(lock_path)
+        if lock_fd is None:
+            out("refusing: another restart or maintenance window holds the lock")
             return finish(EXIT_LOCKED, "locked")
     try:
         try:
@@ -3754,13 +3830,7 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
             out(f"graceful restart failed: {type(e).__name__}")
             return finish(EXIT_RESTART_FAILED, "failed", error=type(e).__name__)
     finally:
-        if lock_fd is not None:
-            try:
-                # The lock file is never unlinked: removing it while it is locked lets a second run that already
-                # opened the old inode and a third that creates a new file both hold "the" lock at once.
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            finally:
-                os.close(lock_fd)
+        release_restart_lock(lock_fd)       # the lock file is never unlinked (see `acquire_restart_lock`)
 
 
 def _graceful_restart_locked(result: dict, finish, *, reason: str, manual: bool, dry_run: bool,
@@ -3866,7 +3936,16 @@ def _graceful_restart_locked(result: dict, finish, *, reason: str, manual: bool,
     started = clock()
     phase_end = started + RESTART_PHASE_BUDGET_S
     health_ok = False
-    with MarkerGuard(marker):
+    try:
+        guard = MarkerGuard(marker, exclusive=True)
+        guard.__enter__()
+    except WindowBusy:
+        # an operator opened a window between the gate and here: the restart does not run inside it
+        state_set("last_restart_result", "refused-gate", state_path)
+        result["gate"] = "watchdog_off"
+        out("refusing: a maintenance window (watchdog.off) was opened while the restart was being prepared")
+        return finish(EXIT_REFUSED_GATE, "refused-gate")
+    try:
         for backoff in (0, *RESTART_RETRY_BACKOFF_S):
             if backoff:
                 # A further attempt starts only if backoff + the longest attempt still end inside the
@@ -3888,6 +3967,8 @@ def _graceful_restart_locked(result: dict, finish, *, reason: str, manual: bool,
                                     interval=5, sleep=sleep, clock=clock)
         new_pid = gateway_main_pid(runner)
         result["new_pid"] = new_pid
+    finally:
+        guard.__exit__(None, None, None)
     # watchdog.off is gone from here on, on every path above.
 
     if refused:

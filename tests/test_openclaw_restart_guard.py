@@ -396,15 +396,20 @@ def test_busy_and_non_interactive_defers_without_asking(monkeypatch):
     assert f.restarts == 0 and f.asked == []
 
 
-def test_a_probe_that_raises_never_blocks_the_restart(monkeypatch):
+def test_a_probe_that_raises_is_not_idle_and_defers_the_restart(monkeypatch):
+    """2.2b section 2b: a restart kills every run in flight, so a probe that cannot tell fails CLOSED. (Before
+    2.2b it counted as idle: the assertion that the restart ran was the 2.1 contract and was reversed on
+    purpose.)"""
     f = Flow(monkeypatch, [IDLE], answer=AssertionError("must not ask"))
 
     def broken():
         raise OSError("/proc is unreadable")
 
     monkeypatch.setattr(f, "probe", broken)
-    assert f.restart(interactive=False) is True
-    assert f.restarts == 1
+    with pytest.raises(openclaw.RestartDeferred) as e:
+        f.restart(interactive=False)
+    assert "could not tell" in e.value.reason
+    assert f.restarts == 0
 
 
 def test_interactivity_defaults_to_the_wizards_own_flags(monkeypatch):

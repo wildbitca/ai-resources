@@ -159,3 +159,13 @@ def test_the_unreleased_changelog_section_covers_every_group_and_no_version_move
                    "--yes", "models check", "TLS certificate unavailable"):
         assert needle in unreleased, needle
     assert "2.1.1" in (REPO / "scripts" / "ai_resources" / "__init__.py").read_text(encoding="utf-8")
+
+
+def test_the_changelog_says_a_refused_graceful_restart_keeps_its_lock_file():
+    """2.2b 2c/8a: a real refused restart creates the lock file and never removes it, by design."""
+    text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = text.split("## [Unreleased]")[1].split("## [2.1.1]")[0]
+    flat = " ".join(unreleased.split())
+    assert "a refused `graceful-restart` create no lock file" not in flat
+    assert "health-restart.lock" in flat and "keeps it, by design" in flat
+    assert "graceful-restart --dry-run" in flat

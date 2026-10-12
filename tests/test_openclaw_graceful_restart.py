@@ -596,3 +596,15 @@ def test_a_second_run_cannot_take_the_lock_a_first_still_holds(env):
 def test_a_successful_run_still_leaves_its_lock_file(env):
     assert env.run(stub_for(env))["result"] == "ok"
     assert env.lock.exists()
+
+
+# --- 2.2b section 2a: the marker is created exclusively --------------------------------------------------------------
+
+def test_a_window_opened_between_the_gate_and_the_guard_is_not_restarted_inside(env, monkeypatch):
+    stub = stub_for(env)
+    # take_snapshot runs after the gates and before the guard: the operator's window appears there
+    monkeypatch.setattr(host, "take_snapshot", lambda *a, **k: env.marker.touch())
+    res = env.run(stub)
+    assert res["exit_code"] == host.EXIT_REFUSED_GATE and res["result"] == "refused-gate"
+    assert stub.restarts() == [], "no restart ran inside somebody else's window"
+    assert env.marker.exists(), "and the window is left in place"

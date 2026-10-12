@@ -981,8 +981,20 @@ class RestartDeferred(Exception):
         self.reason, self.busy = reason, busy
 
 
+PROBE_UNKNOWN = -1       # the busy probe could not tell: counted as busy, never as idle
+
+
 def _gateway_busy() -> tuple[int, list]:
-    return openclaw_host.gateway_busy(out=ui.detail)
+    """(runs in flight, workers); PROBE_UNKNOWN when the probe failed. A restart kills every run in flight, so
+    a probe that cannot tell is "not idle": a note from the probe (a failed systemctl, an unreadable /proc)
+    fails CLOSED here, unlike the upgrade hint that uses the same reader and fails open."""
+    notes: list[str] = []
+    count, procs = openclaw_host.gateway_busy(out=notes.append)
+    for note in notes:
+        ui.detail(note)
+    if notes:
+        return PROBE_UNKNOWN, []
+    return count, procs
 
 
 def _gateway_main_pid() -> str:
@@ -1000,8 +1012,13 @@ def _probe_busy(probe) -> tuple[int, list]:
     try:
         return (probe or _gateway_busy)()
     except Exception as e:  # noqa: BLE001
-        ui.detail(f"restart guard: the busy probe failed ({type(e).__name__}: {e}); treating the gateway as idle")
-        return 0, []
+        ui.detail(f"restart guard: the busy probe failed ({type(e).__name__}: {e}); treating the gateway as busy")
+        return PROBE_UNKNOWN, []
+
+
+def _busy_reason(count: int) -> str:
+    return ("the busy probe could not tell whether agent turns are in flight" if count < 0
+            else f"{count} agent turn(s) in flight")
 
 
 def _await_idle(probe, count: int, workers: list, *, sleep, monotonic, cap: float, interval: float):
@@ -1012,16 +1029,17 @@ def _await_idle(probe, count: int, workers: list, *, sleep, monotonic, cap: floa
     try:
         while count:
             if monotonic() >= deadline:
-                raise RestartDeferred(f"{count} agent turn(s) still in flight after waiting {cap / 60:g} min", workers)
+                raise RestartDeferred(f"{_busy_reason(count)} after waiting {cap / 60:g} min", workers)
             sleep(interval)
             count, workers = _probe_busy(probe)
     except KeyboardInterrupt:
-        raise RestartDeferred(f"{count} agent turn(s) in flight (wait interrupted)", workers) from None
+        raise RestartDeferred(f"{_busy_reason(count)} (wait interrupted)", workers) from None
 
 
 def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=None, monotonic=None,
                     interactive: bool | None = None, wait_cap: float = RESTART_WAIT_CAP,
-                    wait_interval: float = RESTART_WAIT_INTERVAL, restart_timeout: int = 180) -> bool:
+                    wait_interval: float = RESTART_WAIT_INTERVAL, restart_timeout: int = 180,
+                    self_cgroup_path: str | None = None) -> bool:
     """Restart the gateway and report whether the backend came back registered.
 
     A restart kills every agent turn in flight, and the caller reaches this exactly when
@@ -1029,14 +1047,20 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
     prompt. Busy and interactive: ask (restart now / defer / wait). Busy and not interactive:
     defer. A deferral raises RestartDeferred; it never returns quietly.
     """
+    if openclaw_host.inside_gateway_cgroup(self_cgroup_path):
+        # T29: a restart from a child of the gateway kills this very process before it can report anything
+        raise RestartDeferred("this process runs inside the gateway cgroup, so restarting the gateway would "
+                              "kill it (T29); run the restart from outside the gateway", [])
     count, workers = _probe_busy(probe)
     if count:
-        reason = f"{count} agent turn(s) in flight"
+        reason = _busy_reason(count)
         if not (_can_ask() if interactive is None else interactive):
             raise RestartDeferred(reason, workers)
         try:
+            seen = (f"OpenClaw is running {count} agent turn(s)" if count > 0 else
+                    "The busy probe could not tell whether OpenClaw is running agent turns")
             answer = (ask or ui.select)(
-                f"OpenClaw is running {count} agent turn(s); a restart kills them:\n"
+                f"{seen}; a restart kills them:\n"
                 f"{openclaw_host.describe_busy(workers)}\nWhat now?",
                 [RESTART_NOW, RESTART_DEFER, RESTART_WAIT], default=RESTART_DEFER)
         except KeyboardInterrupt:
@@ -1050,17 +1074,26 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
     # ADR-0004 (D11): the one restart setup itself performs holds watchdog.off for its whole duration, so
     # openclaw-watchdog does not start a second restart on top of it, and it is removed on every exit path
     # (an exception or a SIGTERM included). A window somebody else opened is left alone.
-    ui.info("restarting the gateway inside a maintenance window (watchdog.off is held until it is back)")
-    with openclaw_host.MarkerGuard():
-        rc, out = _openclaw(["gateway", "restart"], timeout=restart_timeout)
-        if rc != 0:
-            ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")
-            return False
-        for _ in range(BACKEND_WAIT_TRIES):
-            if backend_registered(backend):
-                return True
-            time.sleep(BACKEND_WAIT_SECONDS)
-    return False
+    # The lock is the one every path that stops or restarts the unit takes (graceful restart, the drained
+    # window, this): a second one refuses with one line, as a deferral, and is reported like one.
+    lock_fd = openclaw_host.acquire_restart_lock()
+    if lock_fd is None:
+        raise RestartDeferred("another restart or maintenance window is in progress (the restart lock is held)",
+                              [])
+    try:
+        ui.info("restarting the gateway inside a maintenance window (watchdog.off is held until it is back)")
+        with openclaw_host.MarkerGuard():
+            rc, out = _openclaw(["gateway", "restart"], timeout=restart_timeout)
+            if rc != 0:
+                ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")
+                return False
+            for _ in range(BACKEND_WAIT_TRIES):
+                if backend_registered(backend):
+                    return True
+                time.sleep(BACKEND_WAIT_SECONDS)
+        return False
+    finally:
+        openclaw_host.release_restart_lock(lock_fd)
 
 
 def _record_deferred_restart(s: state.SetupState, deferred: RestartDeferred) -> None:

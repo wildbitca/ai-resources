@@ -22,8 +22,10 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 - **Locks and files (C).** `setup` and `apply-pending` run under the setup-state lock (a busy lock is one line);
   stale `.setup-state.yaml.*.tmp` files are removed at the next save; `kit-host.env` is written through a unique temp
   file that keeps the file mode; managed blocks in AGENTS.md-style files are written atomically through a symlink to
-  its target with an exclusive backup; `offbox-identity --dry-run` and a refused `graceful-restart` create no lock
-  file.
+  its target with an exclusive backup; `offbox-identity --dry-run`, `graceful-restart --dry-run` and a
+  `graceful-restart` refused because it runs inside the gateway cgroup create no lock file. A real `graceful-restart`
+  that a gate refuses creates `~/.openclaw/health-restart.lock` (0 bytes, mode 0600) and keeps it, by design: removing
+  a lock file while it is locked lets two holders in.
 - **Teardown and adoption (D).** Teardown removes the empty `hand-units/<stamp>` directories the kit made, adopts a
   dangling symlinked hand unit as a link and restores it as a link, never moves a symlink planted in the
   moved-aside directory onto a unit path, restores unit files through a temp file so hard links keep their bytes,
@@ -33,6 +35,12 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   lock; the models-update unit treats exit 75 as a skip; a declined prompt exits 1 in both `apply-pending` and its
   discard form; `openclaw doctor` needs a terminal or `--yes` (the kit's timers pass it) and, like the drained
   window, refuses from inside the gateway cgroup.
+
+- **Restart paths (2.2b, section 2).** The graceful restart, the drained window of `doctor` and `apply-pending`, and
+  setup's and `models update`'s gateway restart take one shared non-blocking lock (`health-restart.lock`) and
+  create `watchdog.off` with `O_EXCL`: a second path that finds the lock or a window that opened in between
+  refuses with one line and stops nothing. Setup's restart also refuses inside the gateway cgroup (T29), and a busy
+  probe that cannot tell now counts as busy (fail closed) instead of idle.
 
 ### Added
 

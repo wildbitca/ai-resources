@@ -1144,7 +1144,8 @@ unset key", which is why the env switch exists. `off` does not revert a value al
 ### What the gates are
 
 `graceful-restart` refuses, naming the gate, when: it runs inside the gateway cgroup (T29); another
-graceful restart holds `~/.openclaw/health-restart.lock`; `watchdog.off` exists; the unit is not `active`;
+restart path holds `~/.openclaw/health-restart.lock` (the lock is shared with the drained window of `doctor` and
+`apply-pending` and with setup's restart, which refuse the same way); `watchdog.off` exists; the unit is not `active`;
 the mode is not `on` (a manual run skips this and the pressure gate); the pressure is not confirmed; the
 cooldown or the daily cap says no; or it is outside the window and below the ceiling.
 
