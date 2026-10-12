@@ -1689,7 +1689,8 @@ def _pending_findings(o: state.OpenClawState) -> list:
                            "a post-setup watch finished and could not record its result: "
                            + (u.get("outcome") or "unknown") + (f" ({u['reason']})" if u.get("reason") else ""),
                            "the setup-state lock was held too long for the watch to save; check "
-                           "`ai-resources openclaw status`. The next successful setup run clears this"))
+                           "`ai-resources openclaw status`. This note is dropped when a later `ai-resources "
+                           "setup` starts its own post-setup watch"))
     w = summary.get("watch") or {}
     if w.get("reverted"):
         out.append(Finding("warn", "openclaw", "the post-setup watch reverted: " + ", ".join(w["reverted"]),

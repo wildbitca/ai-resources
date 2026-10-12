@@ -509,7 +509,7 @@ def save(state: SetupState) -> None:
             pass
         raise
     _remove_stale_temp_files(path)
-    clear_watch_marker()          # a successful save closes the gap a result marker was written for
+    _settle_watch_marker(state)   # a save that records the marker's run closes the gap it was written for
 
 
 def watch_marker_path() -> Path:
@@ -519,11 +519,12 @@ def watch_marker_path() -> Path:
 
 
 def write_watch_marker(info: dict) -> bool:
-    """Atomically write a tiny `{run_id, outcome, reason, at}` record next to the state file (0600, a temp file
-    in the same directory and `os.replace`). False when it could not be written. Cleared by the next
-    successful `save()`."""
+    """Atomically write a tiny `{run_id, outcome, reason, at}` record next to the state file: a temp file in the
+    same directory (created 0600) and `os.replace` over the marker's own name. The name is never resolved: a
+    symlink planted there is REPLACED by the marker, never written through to its target. False when it could
+    not be written. It is cleared by the save that records the same run (see `_settle_watch_marker`)."""
     import json
-    path = Path(os.path.realpath(watch_marker_path()))
+    path = watch_marker_path()
     keep = {k: str(info.get(k, ""))[:300] for k in ("run_id", "outcome", "reason")}
     keep["at"] = datetime.now(timezone.utc).isoformat()
     try:
@@ -544,15 +545,34 @@ def write_watch_marker(info: dict) -> bool:
             raise
     except OSError:
         return False
+    _remove_stale_temp_files(path)
     return True
 
 
+_MARKER_MAX_BYTES = 8192
+
+
 def read_watch_marker() -> dict | None:
-    """The marker, or None when there is none or it is not a record of strings (read only; never raises)."""
+    """The marker, or None when there is none, it is not a regular file this user owns (a symlink, a directory,
+    a file of another user), or it is not a record of strings. Read only; never raises."""
     import json
+    path = watch_marker_path()
     try:
-        data = json.loads(Path(os.path.realpath(watch_marker_path())).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            return None
+        raw = os.read(fd, _MARKER_MAX_BYTES)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
         return None
     if not isinstance(data, dict):
         return None
@@ -562,10 +582,34 @@ def read_watch_marker() -> dict | None:
 
 
 def clear_watch_marker() -> None:
+    """Remove the marker itself: a symlink at its name is unlinked, never its target (a directory is left)."""
+    path = watch_marker_path()
     try:
-        os.unlink(os.path.realpath(watch_marker_path()))
+        if stat.S_ISDIR(os.lstat(path).st_mode):
+            return
+        os.unlink(path)
     except OSError:
         pass
+
+
+def _settle_watch_marker(state: "SetupState") -> None:
+    """Called by a successful `save()`: the marker goes away only when this save RECORDS the run it describes
+    (the saved `config_watch` has the marker's run id and a result). Any other save (an executors
+    regeneration, a setup step) leaves it: it reports a revert that was never recorded, and a save that did not
+    record it must not hide it. Whatever is not a marker (a link, a directory, a file that is not a record) is
+    junk and goes at the next save."""
+    path = watch_marker_path()
+    try:
+        os.lstat(path)
+    except OSError:
+        return
+    marker = read_watch_marker()
+    if marker is None:
+        clear_watch_marker()
+        return
+    cw = getattr(getattr(state, "openclaw", None), "config_watch", None) or {}
+    if marker.get("run_id") and cw.get("run_id") == marker["run_id"] and cw.get("done") and cw.get("result"):
+        clear_watch_marker()
 
 
 STALE_TEMP_AGE_S = 3600

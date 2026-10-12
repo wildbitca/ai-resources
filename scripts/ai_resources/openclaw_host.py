@@ -3152,6 +3152,13 @@ def pending_summary(o) -> dict:
         unrecorded = setup_state.read_watch_marker()
     except Exception:  # noqa: BLE001 - a status never fails on its own bookkeeping
         unrecorded = None
+    # The marker is bound to the run it describes (2.2d, 2b): it is reported only while the state's own
+    # `config_watch` is that run and has no result recorded. A marker of another run, one without a run id, or one
+    # for a run whose result IS recorded says nothing, so a forged or stale file never prints a failure that did
+    # not happen, and it never replaces a failure the record holds (`watch`, below).
+    if unrecorded and (not unrecorded.get("run_id") or unrecorded.get("run_id") != cw.get("run_id")
+                       or cw.get("done")):
+        unrecorded = None
     if cw.get("done") and cw.get("result"):
         r = cw["result"]
         watch = {"reverted": sorted(set(r.get("hot") or []) | set(r.get("restart") or [])),
@@ -3328,7 +3335,8 @@ def pending_lines(pending: dict) -> list[str]:
     if u:
         out.append("a post-setup watch finished and could not record its result: " + (u.get("outcome") or "unknown")
                    + (f" ({u['reason']})" if u.get("reason") else "")
-                   + "; check `ai-resources openclaw status`, the next successful setup run clears this")
+                   + "; check `ai-resources openclaw status` (this note is dropped when a later `ai-resources "
+                   "setup` starts its own post-setup watch)")
     w = pending.get("watch")
     if w and w.get("reverted"):
         out.append("the post-setup watch reverted: " + ", ".join(w["reverted"]))

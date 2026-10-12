@@ -303,7 +303,15 @@ def test_a_watch_that_cannot_save_leaves_a_marker_status_and_verify_report_and_a
     assert any("a post-setup watch finished and could not record its result: reverted" in ln for ln in lines)
     findings = section._pending_findings(state.load().openclaw)
     assert any("could not record its result: reverted" in f.message for f in findings)
+    # 2.2d (6b): a save that does not record this run (an executors regeneration, a setup step) leaves it
     state.save(state.load())
+    assert state.read_watch_marker() is not None
+    assert any("could not record its result" in ln for ln in host.pending_lines(host.recorded_pending()))
+    # the save that records the same run closes it
+    recorded = state.load()
+    recorded.openclaw.config_watch = {**recorded.openclaw.config_watch, "done": True,
+                                      "result": {"outcome": "reverted", "hot": ["gateway.bind"]}}
+    state.save(recorded)
     assert state.read_watch_marker() is None
     assert not any("could not record its result" in ln for ln in host.pending_lines(host.recorded_pending()))
 
@@ -325,3 +333,131 @@ def test_a_hostile_or_broken_marker_is_ignored(xdg):
     got = state.read_watch_marker()
     assert set(got) == {"run_id", "outcome", "reason", "at"} and got["reason"] == "7"
     assert "\x1b" not in got["outcome"] and got["outcome"].startswith("reverted")
+
+
+# --- 2.2d, 2a/2b/6b: the marker is never written through or followed, and it is bound to its run ------------------
+
+def _marker_state(run_id="run-1", done=False, result=None):
+    s = state.SetupState()
+    s.openclaw.config_watch = {"run_id": run_id, "done": done, **({"result": result} if result else {})}
+    return s
+
+
+def test_a_symlink_planted_at_the_marker_name_is_replaced_not_written_through(xdg, tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious\n", encoding="utf-8")
+    path = state.watch_marker_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(victim)
+    assert state.write_watch_marker({"run_id": "run-1", "outcome": "reverted", "reason": "x"}) is True
+    assert victim.read_text(encoding="utf-8") == "precious\n", "the link's target is never written"
+    assert not path.is_symlink() and path.is_file()
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert state.read_watch_marker()["run_id"] == "run-1"
+
+
+def test_a_save_unlinks_a_planted_link_and_never_its_target(xdg, tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious\n", encoding="utf-8")
+    path = state.watch_marker_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(victim)
+    assert state.read_watch_marker() is None, "a link is not a marker"
+    state.save(state.SetupState())
+    assert not path.is_symlink() and not path.exists(), "the link itself is gone"
+    assert victim.read_text(encoding="utf-8") == "precious\n", "its target is untouched"
+
+
+def test_clearing_a_link_or_a_directory_never_touches_what_it_points_at(xdg, tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious\n", encoding="utf-8")
+    path = state.watch_marker_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(victim)
+    state.clear_watch_marker()
+    assert victim.read_text(encoding="utf-8") == "precious\n" and not path.is_symlink()
+    path.mkdir()
+    (path / "keep").write_text("x", encoding="utf-8")
+    state.clear_watch_marker()
+    assert (path / "keep").exists(), "a directory is left alone"
+    assert state.read_watch_marker() is None
+    assert state.write_watch_marker({"run_id": "r"}) is False, "a directory cannot be replaced: reported, not raised"
+
+
+def test_a_marker_that_is_not_a_regular_file_is_not_read(xdg, tmp_path):
+    real = tmp_path / "real-marker.json"
+    real.write_text('{"run_id": "run-1", "outcome": "reverted"}', encoding="utf-8")
+    path = state.watch_marker_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(real)
+    assert state.read_watch_marker() is None
+    path.unlink()
+    path.write_text('{"run_id": "run-1", "outcome": "reverted"}', encoding="utf-8")
+    assert state.read_watch_marker()["outcome"] == "reverted"
+    # a file somebody else owns is not ours to believe
+    import os as _os
+    real_uid = _os.getuid()
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setattr(state.os, "getuid", lambda: real_uid + 1)
+        assert state.read_watch_marker() is None
+    finally:
+        monkey.undo()
+
+
+def _write_marker(run_id="run-1", outcome="reverted", reason=""):
+    assert state.write_watch_marker({"run_id": run_id, "outcome": outcome, "reason": reason})
+
+
+def test_a_marker_of_another_run_or_without_a_run_id_says_nothing(xdg):
+    s = _marker_state("run-2")
+    state.save(s)
+    _write_marker("run-1")
+    assert host.pending_summary(state.load().openclaw) == {}
+    assert not host.pending_lines(host.recorded_pending())
+    _write_marker("")
+    assert host.pending_summary(state.load().openclaw) == {}
+    _write_marker("run-2")
+    assert host.pending_summary(state.load().openclaw)["watch_unrecorded"]["outcome"] == "reverted"
+
+
+def test_a_marker_never_hides_a_recorded_failure_and_is_not_shown_beside_a_recorded_result(xdg):
+    result = {"outcome": "reverted", "hot": [], "restart": [], "problems": ["could not restore gateway.bind"]}
+    state.save(_marker_state("run-1", done=True, result=result))
+    _write_marker("run-1", outcome="healthy")                       # a forged marker that says everything is fine
+    summary = host.pending_summary(state.load().openclaw)
+    assert summary.get("watch_unrecorded") is None
+    assert summary["watch"]["problems"] == ["could not restore gateway.bind"]
+    lines = host.pending_lines(summary)
+    assert any("could not finish its revert" in ln for ln in lines)
+    assert not any("could not record its result" in ln for ln in lines)
+
+
+def test_only_the_save_that_records_the_run_clears_the_marker(xdg):
+    state.save(_marker_state("run-1"))
+    _write_marker("run-1")
+    state.save(state.load())                                          # an unrelated save: the marker stays
+    assert state.read_watch_marker() is not None
+    other = state.load()
+    other.openclaw.config_watch = {"run_id": "run-2", "done": True, "result": {"outcome": "healthy"}}
+    state.save(other)                                                 # another run's result: the marker stays
+    assert state.read_watch_marker() is not None
+    same_not_done = state.load()
+    same_not_done.openclaw.config_watch = {"run_id": "run-1", "done": False}
+    state.save(same_not_done)                                         # same run, nothing recorded yet
+    assert state.read_watch_marker() is not None
+    done = state.load()
+    done.openclaw.config_watch = {"run_id": "run-1", "done": True, "result": {"outcome": "reverted"}}
+    state.save(done)
+    assert state.read_watch_marker() is None
+
+
+def test_the_marker_text_does_not_promise_that_any_setup_run_clears_it(xdg):
+    from ai_resources.setup.cockpits import _openclaw_host as section
+    state.save(_marker_state("run-1"))
+    _write_marker("run-1", reason="lock busy")
+    line = [ln for ln in host.pending_lines(host.recorded_pending()) if "could not record its result" in ln][0]
+    assert "next successful setup run clears" not in line and "later `ai-resources setup`" in line
+    finding = [f for f in section._pending_findings(state.load().openclaw)
+               if "could not record its result" in f.message][0]
+    assert "next successful setup run clears" not in finding.remedy and "later `ai-resources setup`" in finding.remedy
