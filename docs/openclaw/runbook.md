@@ -1247,6 +1247,22 @@ restart-required, and OpenClaw forces the restart (SIGUSR2) after about 5 minute
 in-flight runs. So apply it with `openclaw config patch --stdin --dry-run` first, then for real, leave the restart
 pending, and restart yourself in the window with `ai-resources openclaw graceful-restart`.
 
+## An OpenClaw-native session can still restart the gateway (T45)
+
+The guard hook (T01, T29) is a Claude Code `PreToolUse` hook: it only sees what Claude Code runs. An agent session that
+OpenClaw runs itself uses OpenClaw's own `exec` tool, which that hook never sees, and on 2026.10.1 its default policy
+is `security: full`, `ask: off`. Look before you decide (read-only, nothing is written):
+
+```bash
+openclaw exec-policy show                # the requested and the effective policy, per agent
+openclaw exec-policy show --agent <id> --verbose
+```
+
+The choices (pitfall T45 lists them) are `tools.exec.mode` / `security` / `ask` per agent, `tools.deny: ["exec"]`
+for an agent with no shell, or a plugin `before_tool_call` handler that blocks the gateway shapes. Each changes how an
+agent behaves, so it is an operator decision and the kit does not change any of them. Whatever you choose, restart
+with `ai-resources openclaw graceful-restart` and apply a restart-required key in the window, not from a session.
+
 ## Get into the UI
 
 In a browser, on the tailnet: **https://iai.wildbit.dev** plus the gateway password.

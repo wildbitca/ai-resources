@@ -1470,6 +1470,36 @@ the window with `ai-resources openclaw graceful-restart` instead of letting Open
 2.2 candidate.
 
 
+## T45 — The gateway guard hook does not cover an OpenClaw-native exec session *(added 2026-10-12; documented in the unreleased 2.2 work, operator decision pending)*
+
+**Symptom.** `openclaw gateway restart` ran with `source=cli` at 2026-10-11 20:32 although the kit's guard hook was
+installed. The restart cut the runs in flight (T29, T40).
+
+**Cause.** The guard is a Claude Code `PreToolUse` hook on the Bash tool: it sees only commands that Claude Code
+itself is about to run. A session that OpenClaw runs natively (its own `exec` tool, any agent) never goes through that
+hook. On 2026.10.1 the effective exec policy of such a session is the OpenClaw default: `security: full`, `ask: off`
+for every agent on the reference host (read with `openclaw approvals get` or `openclaw exec-policy show`), so
+nothing prompts and nothing is filtered. `tools.profile: coding` includes `exec`.
+
+**Options on 2026.10.1 (none is applied by the kit).**
+1. `tools.exec.mode` / `security` / `ask`, globally or under `agents.entries.<id>.tools.exec`: `allowlist` with
+   `ask: on-miss` makes every unlisted command wait for a human. It is blanket: it changes how autonomous the agents
+   are, so it is not a fill-only profile key.
+2. `tools.deny: ["exec"]` for an agent that needs no shell at all.
+3. A plugin `before_tool_call` handler with `matcher: ["exec"]` that returns `block: true` with a reason when the
+   command is a gateway stop/restart or `doctor --fix`. It is the only option that targets just this shape; the kit's
+   own plugin could carry the same recogniser as the hook. It needs a runtime check of how the claude-cli backend
+   relays native Bash to that hook, which cannot be done without touching the live host, so it is not shipped.
+
+**Decision.** Which of these to apply, per agent, is an operator decision (autonomy against safety). Until then the
+only protection for a native session is the sanctioned verb (`ai-resources openclaw graceful-restart`) and the
+`watchdog.off` maintenance window.
+
+**How to catch it.** `journalctl --user -u openclaw-gateway | grep -i 'received SIGTERM\|restart'` around an
+unexpected restart, and the `source=` field of the gateway's restart line (`cli` means a command, not a config
+reload).
+
+
 ---
 
 # SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT (implemented in 1.9.0)

@@ -95,3 +95,23 @@ def test_the_egress_proxy_refusal_is_documented_as_bypass_hosts_not_the_allowlis
     for text in (m.group(0), para.group(0)):
         assert not re.search(r"\.gke\.goog|\bgke-[a-z0-9-]+|\.internal\b|\b\d{1,3}(?:\.\d{1,3}){3}\b", text), \
             "a host-specific name leaked into the new documentation"
+
+
+def test_the_native_exec_gap_is_documented_with_the_operator_decision():
+    """2.2 B1: the Claude Code hook does not cover an OpenClaw-native exec session; the finding, the options and
+    the decision that is the operator's are written down, and the docs claim no control the kit does not ship."""
+    pit = (REPO / "docs" / "openclaw" / "pitfalls.md").read_text(encoding="utf-8")
+    m = re.search(r"^## T45 — .*?(?=^## |^# SECTION|^---$)", pit, re.M | re.S)
+    assert m, "T45 is missing"
+    run = (REPO / "docs" / "openclaw" / "runbook.md").read_text(encoding="utf-8")
+    para = re.search(r"^## An OpenClaw-native session can still restart the gateway \(T45\).*?(?=^## )", run,
+                     re.M | re.S)
+    assert para, "the runbook paragraph is missing"
+    for text in (m.group(0), para.group(0)):
+        for needle in ("PreToolUse", "tools.exec", "before_tool_call", "exec-policy show", "operator decision",
+                       "graceful-restart"):
+            assert needle in text, needle
+    # nothing here may read as a control the kit applies
+    assert "the kit does not change" in para.group(0)
+    for text in (m.group(0), para.group(0)):
+        assert not re.search(r"\.gke\.goog|\bgke-[a-z0-9-]+|\.internal\b|\b\d{1,3}(?:\.\d{1,3}){3}\b", text)
