@@ -17,7 +17,7 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   quotes, in `${...}` and in an unquoted heredoc body) as the command it runs, `env -S` strings by env's own split
   rules (a backslash-underscore separates, a backslash-c ends, `${VAR}` fails closed when the gateway words are
   there), `$'...'` strings, redirections (even inside a word), a brace in an argument and a `#` inside a word the
-  way bash does, and follows nesting to eight wrappers with a cost bound. A brace or glob in the verb slot, a unit
+  way bash does, and follows nesting with a cost bound (eight levels in this pass, forty since 2.2b). A brace or glob in the verb slot, a unit
   glob and a case variant through the CLI are denied; `echo "<<EOF"` no longer starts a heredoc skip. Against
   real-bash corpora the executed-but-allowed count fell from 1850 to 185 and no class is worse than 2.1.0 or
   2.1.1 (numbers in the handoff). The 256 KB input cap is kept and tested at 1 MB.
@@ -43,11 +43,12 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   `eval`, or `echo`/`printf` piped into one) is command text; `xargs`, `find -exec` and `parallel` commands, an
   `alias` value, `trap 'CMD' SIG` and `V='...'; eval "$V"` are read; `openclaw --profile p doctor --fix` is
   denied; `builtin`, `coproc` and `$"..."` are read; deep benign nesting is followed (40 levels) instead of being
-  read for words, and the word fallback needs the verb within a few words of `gateway`. The cost is linear (an
-  `openclaw` word looks at a bounded window; heredoc delimiters are looked up, not compared with every line): the
-  252 KB / 28000-word, 56 KB / thousands-of-heredocs and 1 MB cases each run in under 3 s. Real-bash differential
-  against 2.1.0 and 2.1.1: 0 regressions, executed-but-allowed 415 (2.1.1: 6241), 0 benign denials on 1083 realistic
-  commands (numbers in the handoff).
+  read for words, and the word fallback needs the verb within a few words of `gateway`. Corrected in 2.2c: the cost
+  is bounded per shape (an `openclaw` word looks at a bounded window; heredoc delimiters are looked up), not linear
+  in general, and the "0 regressions" of this entry was measured on its own corpora only. The next independent round
+  found, at 999890f, 45 executed rows that 2.1.0 denied and that 2.2b allowed (10 against 2.1.1), and inputs the
+  guard took 14 s (60000 adjacent `$(a)`) and 36 s (backticks in double quotes at 262 KB) to read, past the hook's
+  10 s timeout, which fails open. The 2.2c entries below carry the final numbers.
 - **Restart paths (2.2b, section 2).** The graceful restart, the drained window of `doctor` and `apply-pending`, and
   setup's and `models update`'s gateway restart take one shared non-blocking lock (`health-restart.lock`) and
   create `watchdog.off` with `O_EXCL`: a second path that finds the lock or a window that opened in between
@@ -87,6 +88,30 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   command line GNU `parallel` parses again, and T46 / ADR-0004 list the residual classes (a verb built at run
   time, output produced at run time and then run, `${ cmd; }`, aliases from an earlier call, `xargs`/`parallel`
   fed commands as data) and say the authority to stop the unit belongs at systemd and polkit.
+
+- **Gateway guard (2.2c, sections 1 and 2).** The guard is a best-effort accident guard that answers inside the
+  hook's timeout: the precise analysis runs under a wall-clock deadline (4 s, never above 8 s; a signal timer and a
+  clock check in the loops), and when the deadline fires, or the analysis fails with an internal error, a strictly
+  linear word view decides: the gateway next to a stop/restart verb, or `doctor` next to `--fix`, within 160
+  characters (quotes and backslashes removed first). Cost is charged per `shape()` call and per logical line, a
+  masked substitution is one character, and what `printf` or a variable expansion would produce is charged before it
+  is built. The same word view also reads text that feeds a shell through a heredoc, a here-string or a pipe (a
+  shell, `eval "$(cat)"`, `. /dev/stdin`, `xargs`/`parallel` starting a shell) when the precise analysis found
+  nothing: a shell given its own literal `-c` string, prose backticks and fenced code are not consumers. The precise
+  reader also follows an assignment after `then`/`do`, the command line `parallel` hands to a shell, and a heredoc
+  whose delimiter line never comes. Precise parsing of arbitrary shell is not attempted. Measured against real bash
+  (recorded stub-binary runs, 100728 rows of which 38390 executed a guarded command; 2.1.0 / 2.1.1 / now):
+  executed-but-allowed 16328 / 11970 / **545**; executed and denied by 2.1.0 or 2.1.1 yet allowed now **0**;
+  benign rows denied 288 / 17 / **74** of 13716 (10 of them on the realistic corpora: 5 of the 44 hard negatives, 3
+  of the 776 generated commands, 2 of the 764; each really feeds a shell or runs the verb); slowest verdict 1.0 s
+  with the deadline never firing; the measured cost classes run in under 1.1 s.
+- **Setup and restart paths (2.2c, section 3).** `status`/`verify` say that any process writing to the unit's journal
+  can cause an egress refusal and to bypass a host only if it is recognised and the skipped proxy is understood
+  (T44); `setup --dry-run` offers and runs no installer and `--dry-run --yes` says it installs nothing; setup's and
+  `models update`'s restart refuse while `watchdog.off` exists; a state file that is not valid YAML is copied aside
+  once (0600) and never replaced by an empty record by an unattended writer; an unreadable `/proc/self/cgroup` is
+  "cannot tell" and every restart path refuses (a missing file still means outside); `bootstrap()`'s library
+  default confirm is No.
 
 ### Added
 

@@ -1519,8 +1519,10 @@ accident, with a message that names the sanctioned verb. It is not a security bo
 command built at run time, text it never sees, a session that does not go through Claude Code's Bash tool (T45)
 or one the operator drives from a terminal are all outside what text can decide. Each new reading rule also costs
 precision, and a wrong deny aborts the whole tool call (T24). **Who may stop or restart the unit is decided where
-the stop is executed, at systemd and polkit, not by a filter on command text**: if an agent must never be able to
-do it, withhold the authority there (and keep the sanctioned verbs, which run outside the gateway, working).
+the stop is executed, at systemd and polkit (or an exec policy: T45), not by a filter on command text**: if an
+agent must never be able to do it, withhold the authority there (and keep the sanctioned verbs, which run outside
+the gateway, working). The native-exec options and the operator decision are in T45; this card is only about the
+hook.
 
 **What it reads (2.2b).** Command substitutions (`$(...)`, backticks, `<(...)`, also inside double quotes and in an
 unquoted heredoc body, with a `case` pattern's `)` not ending them), `env -S` by env's own split rules, `$'...'` and
@@ -1529,18 +1531,34 @@ shell is command text: a heredoc or here-string whose consumer is `sh`/`bash`/`z
 and what `echo` or `printf` writes into one (`bash <<EOF`, `cat <<EOF | sh`, `bash <<< '...'`, `echo '...' | sh`).
 The commands that other commands run are read when they are literal: `xargs CMD`, `find -exec CMD`, `parallel
 CMD`, the value of an `alias`, `trap 'CMD' SIG`, and a literal assigned earlier in the same text and then evaluated
-(`V='...'; eval "$V"`). For text it cannot tokenise, or nests past the limit, it denies only when a stop or restart
-verb sits within a few words of the gateway words.
+(`V='...'; eval "$V"`, also after `then`/`do`). For text it cannot tokenise, or nests past the limit, it denies only
+when a stop or restart verb sits within a few words of the gateway words.
+
+**What it does when it runs out of time (2.2c).** The hook's own timeout fails open, so the analysis runs under a
+wall-clock deadline (4 s, never above 8 s) and a work budget. When the deadline fires, or the analysis fails with an
+internal error, a word view decides instead: it lower-cases the text, removes quotes and backslashes, and denies
+when `gateway` sits within 160 characters of `restart`, `stop`, `kill`, `try-restart` or `reload-or-restart`, or
+`doctor` within that distance of `--fix`. It parses nothing, so its cost is one pass. The same view is a second
+opinion on text that feeds a shell (a heredoc or here-string next to a shell word in command position, a pipe into
+a shell, `eval "$(cat)"`, `xargs`/`parallel` starting a shell): the parser misses some of those shapes, and the
+words catch them. That second opinion has a price: text that really goes to a shell and names the verb, even in a
+comment, is denied (`bash <<'EOF'`, a comment that says `openclaw gateway restart`, `EOF`). A shell given its own
+literal `-c` string, a heredoc to `cat`, and a commit message that mentions a shell in prose are not touched.
+Measured against real bash on the recorded corpora (100728 rows, 38390 executed a guarded command): executed but
+allowed 545 (2.1.0: 16328, 2.1.1: 11970), none of which an older guard denied; benign rows denied 74 of 13716
+(2.1.0: 288, 2.1.1: 17), all of which feed a shell or run the verb; the slowest verdict took 1.0 s. Precise parsing
+of arbitrary shell is not attempted, and these numbers are a measurement of the corpora, not a promise.
 
 **What it does not read (the residual classes).** These are known, recorded in ADR-0004, and not to be chased
 one by one:
 
-- a verb built at run time: `openclaw gateway $VERB`, `v=restart; openclaw gateway $v`, and an expansion such as
-  `${V:-stop}` in the verb slot on the main path;
+- a verb built at run time: `openclaw gateway $VERB`, `v=restart; openclaw gateway $v`, an expansion such as
+  `${V:-stop}` or `${X}restart` in the verb slot, `$(echo stop)`, and `IFS`/`set --` tricks (the largest class in
+  the final differential: about 330 of the 545 rows it still misses);
 - text produced at run time and then run: `eval "$(cat f)"`, `eval "$(echo ...)"`, `. <(echo '...')`, `source f`, a
-  script written and then run, `cat f | sh`, `curl ... | sh`;
-- bash 5.3 `${ cmd; }` substitutions and an array subscript or arithmetic expression that runs a substitution
-  (`[[ -v 'a[$(cmd)]' ]]`);
+  script written and then run, `cat f | sh`, `curl ... | sh` (19 rows of `trap` and `source` with run-time text);
+- bash 5.3 `${ cmd; }` substitutions (39 rows) and an array subscript or arithmetic expression that runs a
+  substitution (`[[ -v 'a[$(cmd)]' ]]`: 92 rows);
 - aliases and functions defined in an earlier call or an rc file, and zsh-only forms (`=cmd`, glob qualifiers,
   `${(e)...}`, anonymous functions);
 - wrappers that take the command from data: `xargs` or `parallel` fed commands on stdin or after `:::`,

@@ -119,6 +119,17 @@ choice stays. `ai-resources openclaw doctor` now refuses a busy gateway (exit 6)
   stays advisory: it keeps an agent from stopping or restarting the gateway BY ACCIDENT. The authority to stop or
   restart the unit at all belongs at systemd and polkit, where the stop is executed, not in a filter on text.
   `echo "$(date)\nopenclaw gateway restart\n"` stays denied by design (pitfall T46).
+- 2.2c amendment. The 2.2b claims "the cost is linear" and "0 regressions" were wrong as stated (the verification
+  round found inputs above the hook's 10 s timeout, which fails open, and executed commands that 2.1.0 denied).
+  The structural answer is a wall-clock deadline (4 s, never above 8 s) with a word view as the fallback: when the
+  precise analysis runs out of time or fails, the gateway words within a short window of a stop/restart verb (or
+  `doctor` next to `--fix`) are denied, and text that feeds a shell through a heredoc, here-string or pipe gets the
+  same word view as a second opinion. The guard is a best-effort accident guard: precise parsing of arbitrary shell
+  is not attempted, and per-shape cost caps are not the answer (they reopened the cost class three times).
+  Measured against real bash on recorded corpora (2.1.0 / 2.1.1 / 2.2c): executed-but-allowed 16328 / 11970 / 545 of
+  38390, regressions against either older guard 0, benign rows denied 288 / 17 / 74 of 13716. The residual classes
+  are the ones in pitfall T46 (a verb built at run time is the largest). The authority to stop or restart the unit
+  belongs at systemd and polkit or an exec policy (pitfall T45), not in this filter.
 
 ## Alternatives Considered
 
