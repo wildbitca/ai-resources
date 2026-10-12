@@ -839,3 +839,32 @@ def test_an_arithmetic_shift_is_not_a_heredoc_and_hides_nothing(guard):
     assert guard.shape(": $(( 1 << 2 ))\nopenclaw gateway restart") == "restart"
     assert guard.shape(": $(( 1 << 2 ))\r\nopenclaw doctor --fix") == "doctor"
     assert guard.shape("echo $((1<<3))\nsystemctl --user stop openclaw-gateway") == "stop"
+
+
+# --- pass 6, V1: a heredoc inside a quoted command substitution is data (the git commit idiom) -------------------
+
+@pytest.mark.parametrize("body", [
+    "openclaw doctor --fix is what the runbook says",
+    "  openclaw gateway restart",
+    "systemctl --user restart openclaw-gateway\\nand then",
+])
+def test_a_commit_message_heredoc_whose_body_mentions_a_guarded_command_is_allowed(guard, body):
+    cmd = f"git commit -m \"$(cat <<'EOF'\nfix: handle the case\n\n{body}\nEOF\n)\""
+    assert guard.shape(cmd) is None
+    cmd2 = f"gh pr create --title t --body \"$(cat <<'EOF'\n{body}\nEOF\n)\""
+    assert guard.shape(cmd2) is None
+
+
+def test_a_command_after_the_commit_message_heredoc_is_still_read(guard):
+    cmd = "git commit -m \"$(cat <<'EOF'\nmsg\nEOF\n)\"\nopenclaw gateway restart"
+    assert guard.shape(cmd) == "restart"
+    cmd = "git commit -m \"$(cat <<'EOF'\nmsg\nEOF\n)\" && openclaw doctor --fix"
+    assert guard.shape(cmd) == "doctor"
+
+
+def test_a_huge_multiline_quoted_command_stays_inside_the_hook_timeout(guard):
+    import time
+    big = "echo \"$(echo x)\n" + ("line of text with 'quotes' \n" * 9000)   # just under the cap
+    t = time.time()
+    guard.shape(big)
+    assert time.time() - t < 5

@@ -205,7 +205,10 @@ def _logical_lines(command: str) -> list[tuple[str, list[str]]]:
             continue
         buf += line
         out.append((buf, parts))
-        pending.extend(_heredoc_delimiters(buf))
+        # A heredoc opened INSIDE a joined group (`"$(cat <<'EOF'` ... `EOF` ... `)"`) has its body and its
+        # delimiter among the group's own physical lines already: waiting for another delimiter would skip
+        # the commands that follow the group.
+        pending.extend(d for d in _heredoc_delimiters(buf) if all(pl.strip() != d for pl in parts))
         buf, parts, prev = "", [], " "
     if parts:                                # the command ends inside a continuation or an open quote
         out.append((buf, parts))
@@ -493,11 +496,17 @@ def _env_split_shape(split: str, rest: list[str], depth: int) -> str | None:
 def _line_statements(lines: list[str]) -> list[list[str]]:
     """The statements of each physical line on its own; a line that does not tokenise is skipped."""
     out: list[list[str]] = []
+    pending: list[str] = []                  # heredoc delimiters whose body is being skipped
     for line in lines:
+        if pending:
+            if line.strip() == pending[0]:
+                pending.pop(0)
+            continue                         # text fed to a command is not a command
         try:
             out += _statements(line)
         except ValueError:
-            continue
+            pass
+        pending.extend(_heredoc_delimiters(line))
     return out
 
 
