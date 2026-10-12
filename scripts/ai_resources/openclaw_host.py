@@ -3242,6 +3242,40 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
     return report
 
 
+JOURNAL_FINDING_MAX_HOSTS = 5
+_CLOSE_FAILED_SUFFIXES = ("restart_close_failed", "stop_close_failed")
+
+
+def journal_findings(runner: Runner, stability: dict | None) -> list[tuple[str, str, str]]:
+    """(level, message, remedy) findings read from the last 24 h of the gateway journal. Read-only and
+    bounded; silent (an empty list) when the journal cannot be read. Used by `status` and `verify`."""
+    signals = openclaw_pressure.read_journal_signals(runner)
+    if not signals.get("available"):
+        return []
+    out: list[tuple[str, str, str]] = []
+    hosts = signals["tls_hosts"]
+    if hosts:
+        shown = hosts[:JOURNAL_FINDING_MAX_HOSTS]
+        more = f" (+{len(hosts) - len(shown)} more)" if len(hosts) > len(shown) else ""
+        out.append(("warn",
+                    f"the secret egress proxy refused {len(hosts)} host(s) in the last "
+                    f"{openclaw_pressure.JOURNAL_SIGNAL_HOURS} h with `TLS certificate unavailable`: "
+                    f"{', '.join(shown)}{more}",
+                    "this is not the traffic allowlist: add the exact host to secrets.egressProxy.bypassHosts "
+                    "(a restart-required key: apply it in a window, see pitfall T44 and the runbook)"))
+    stab = stability or {}
+    reason = str(stab.get("reason") or "")
+    age = stab.get("age_hours")
+    recent = isinstance(age, (int, float)) and age <= openclaw_pressure.JOURNAL_SIGNAL_HOURS
+    if (stab.get("present") and recent and reason.endswith(_CLOSE_FAILED_SUFFIXES) and signals["completions"] > 0):
+        out.append(("warn",
+                    f"a `{reason}` stability bundle from {age:.0f} h ago, and "
+                    f"{signals['completions']} subagent completion line(s) deferred or lost in the journal",
+                    "a restart or stop with work in flight loses subagent results: see T39 and T41; restart "
+                    "with `ai-resources openclaw graceful-restart` and re-run what was lost"))
+    return out
+
+
 def _render_stability(s: dict) -> str:
     if not s.get("present"):
         return "stability   no bundles"
@@ -4366,9 +4400,16 @@ def cmd_agent_new(args: argparse.Namespace) -> int:
     return 1 if str(res["registered"]).startswith("failed") else 0
 
 
-def cmd_status(args: argparse.Namespace) -> int:
-    print(render_status(collect_status(run_doctor=not getattr(args, "no_doctor", False),
-                                       selection=recorded_selection())))
+def cmd_status(args: argparse.Namespace, runner: Runner | None = None) -> int:
+    kw = {"runner": runner} if runner is not None else {}
+    report = collect_status(run_doctor=not getattr(args, "no_doctor", False),
+                            selection=recorded_selection(), **kw)
+    print(render_status(report))
+    # Journal findings (egress TLS refusals, a failed close that lost completions): outside the sections too.
+    # Only for a real report, so a stubbed status never reads the host journal.
+    if report.get("unit"):
+        for level, message, remedy in journal_findings(runner or default_runner, report.get("stability")):
+            print(f"{level.upper()}  {message}\n      -> {remedy}")
     # Outside the ten sections on purpose: it is not host state but a gap setup named and left.
     try:
         from .setup import state

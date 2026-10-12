@@ -468,3 +468,43 @@ def test_the_thresholds_come_from_the_host_env(box):
     _uploader_state(25)
     [f] = _offbox_findings(_run(HostRunner()))
     assert f.level == "error"
+
+
+# --- kit 2.2 F1-F3: the journal findings are part of verify, read-only and silent when the journal is gone ---------------
+
+class JournalHost(HostRunner):
+    def __init__(self, journal="", journal_rc=0, **kw):
+        super().__init__(**kw)
+        self.journal, self.journal_rc = journal, journal_rc
+
+    def __call__(self, argv, **kw):
+        if list(argv)[:1] == ["journalctl"]:
+            self.calls.append(list(argv))
+            return self.journal_rc, self.journal
+        return super().__call__(argv, **kw)
+
+
+_TLS = ("2026-10-11T19:38:10+00:00 box node[1]: [secrets/egress-proxy] secret egress TLS certificate unavailable; "
+        "check OpenSSL and the system clock, then retry kind=refused host={host} substituted=false")
+
+
+def test_verify_warns_about_refused_egress_hosts_once(box):
+    text = "\n".join(_TLS.format(host=h) for h in ("api1.example.test", "api2.example.test", "api1.example.test"))
+    found = _run(JournalHost(journal=text))
+    tls = [f for f in found if "TLS certificate unavailable" in f.message]
+    assert len(tls) == 1 and tls[0].level == "warn"
+    assert "api1.example.test" in tls[0].message and "api2.example.test" in tls[0].message
+    assert "T44" in tls[0].remedy
+
+
+def test_verify_is_silent_when_the_journal_cannot_be_read(box):
+    found = _run(JournalHost(journal="boom", journal_rc=1))
+    assert not [f for f in found if "TLS certificate" in f.message or "completion" in f.message]
+    assert not [f for f in found if f.level == "error"]
+
+
+def test_verify_never_asks_journalctl_for_more_than_a_day_or_many_lines(box):
+    runner = JournalHost()
+    _run(runner)
+    asked = [c for c in runner.calls if c[:1] == ["journalctl"]]
+    assert len(asked) == 1 and "24 hours ago" in asked[0] and "-n" in asked[0]

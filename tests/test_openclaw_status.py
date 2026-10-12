@@ -673,3 +673,88 @@ def test_status_survives_a_deeply_nested_openclaw_json(env):
     (env.home / ".openclaw" / "openclaw.json").write_text('{"a":' * 100000 + "1" + "}" * 100000, encoding="utf-8")
     report = host.collect_status(Canned(), home=env.home, host_env_path=env.hostenv, now=NOW, run_doctor=False)
     assert isinstance(report, dict), "no RecursionError"
+
+
+# --- kit 2.2 F1-F3: journal findings (egress TLS refusals, a failed close with lost completions) ----------------------
+
+TLS_LINE = ("2026-10-11T19:38:10+00:00 box node[1]: 2026-10-11T19:38:10.955+00:00 [secrets/egress-proxy] secret "
+            "egress TLS certificate unavailable; check OpenSSL and the system clock, then retry kind=refused "
+            "host={host} substituted=false reason=certificate")
+DEFERRED_LINE = ("2026-10-11T20:30:18+00:00 box node[1]: 2026-10-11T20:30:18.385+00:00 [agents/subagent-registry] "
+                 "subagent completion deferred during gateway restart source=subagent-wait runId=r-{n}")
+
+
+class JournalRunner:
+    def __init__(self, text="", rc=0, boom=False):
+        self.text, self.rc, self.boom, self.calls = text, rc, boom, []
+
+    def __call__(self, argv, **kw):
+        self.calls.append((list(argv), kw))
+        if self.boom:
+            raise OSError("no journalctl")
+        return self.rc, self.text
+
+
+def _stab(reason="gateway.restart_close_failed", age_hours=1.0):
+    return {"present": True, "reason": reason, "age_hours": age_hours, "generated_at": NOW - age_hours * 3600,
+            "stalled": {}, "tools": {}}
+
+
+def test_egress_tls_refusals_are_one_warn_that_lists_at_most_five_hosts_and_points_to_t44():
+    hosts = [f"api{i}.example.test" for i in range(1, 8)]
+    text = "\n".join(TLS_LINE.format(host=h) for h in hosts + hosts[:2])         # repeats count once
+    found = host.journal_findings(JournalRunner(text), None)
+    [(level, message, remedy)] = [f for f in found if "TLS certificate unavailable" in f[1]]
+    assert level == "warn"
+    assert all(h in message for h in hosts[:5]) and hosts[5] not in message and "+2 more" in message
+    assert "T44" in remedy and "bypassHosts" in remedy and "restart-required" in remedy
+
+
+def test_a_failed_close_with_deferred_completions_warns_and_points_to_t39_and_t41():
+    text = "\n".join(DEFERRED_LINE.format(n=i) for i in range(3))
+    found = host.journal_findings(JournalRunner(text), _stab())
+    [(level, message, remedy)] = found
+    assert level == "warn" and "restart_close_failed" in message and "3" in message and "completion" in message
+    assert "T39" in remedy and "T41" in remedy
+    assert [f for f in host.journal_findings(JournalRunner(text), _stab("gateway.stop_close_failed"))]
+
+
+@pytest.mark.parametrize("stab,text", [
+    (None, DEFERRED_LINE.format(n=1)),                                       # completions but no failed close
+    (_stab("gateway.stop_shutdown_timeout"), DEFERRED_LINE.format(n=1)),     # another reason
+    (_stab(age_hours=30), DEFERRED_LINE.format(n=1)),                        # not recent
+    (_stab(), "an unrelated line"),                                          # a failed close, no completions
+    (_stab(), ""),
+])
+def test_no_finding_without_both_signals(stab, text):
+    assert host.journal_findings(JournalRunner(text), stab) == []
+
+
+@pytest.mark.parametrize("runner", [JournalRunner(rc=1, text="x"), JournalRunner(boom=True), JournalRunner(rc=124)],
+                         ids=["rc-1", "oserror", "timeout"])
+def test_an_unavailable_journal_is_silent(runner):
+    assert host.journal_findings(runner, _stab()) == []
+
+
+def test_the_journal_read_is_bounded_in_time_and_lines():
+    runner = JournalRunner("")
+    host.journal_findings(runner, None)
+    [(argv, kw)] = runner.calls
+    assert argv[:4] == ["journalctl", "--user", "-u", "openclaw-gateway"]
+    assert "--since" in argv and argv[argv.index("--since") + 1] == "24 hours ago"
+    assert "-n" in argv and int(argv[argv.index("-n") + 1]) <= 20000
+    assert 0 < kw["timeout"] <= 30
+
+
+def test_status_prints_the_journal_findings_after_the_report(env, capsys):
+    import argparse
+    text = TLS_LINE.format(host="api1.example.test")
+
+    class Both(Canned):
+        def __call__(self, argv, **kw):
+            if list(argv)[:1] == ["journalctl"]:
+                return 0, text
+            return super().__call__(argv, **kw)
+    assert host.cmd_status(argparse.Namespace(no_doctor=True), runner=Both(doctor=doctor_text("doctor_noise_only.txt"))) == 0
+    out = capsys.readouterr().out
+    assert "api1.example.test" in out and "T44" in out

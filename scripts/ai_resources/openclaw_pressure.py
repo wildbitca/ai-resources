@@ -397,5 +397,45 @@ def read_report(since: str, runner: Runner, unit: str = UNIT) -> dict:
     return {"available": True, **parse_recovery_report(out)}
 
 
+# --- journal signals for status and verify (kit 2.2, F1-F3) -----------------------------------------------------
+
+JOURNAL_SIGNAL_HOURS = 24
+JOURNAL_SIGNAL_LINES = 20000       # the journal read is bounded in lines ...
+JOURNAL_SIGNAL_TIMEOUT_S = 20      # ... and in time
+_TLS_UNAVAILABLE = "TLS certificate unavailable"
+_TLS_HOST = re.compile(r"\bhost=([^\s;,]+)")
+_COMPLETION = re.compile(r"subagent completion (deferred|lost|dropped|undelivered|abandoned)\b", re.IGNORECASE)
+
+
+def parse_journal_signals(text: str) -> dict:
+    """Out of a bounded gateway journal excerpt: the hosts the egress proxy refused for `TLS certificate
+    unavailable` (unique, in order of first sight) and how many subagent completions were deferred or lost.
+    Structural markers only; never session text."""
+    hosts: list[str] = []
+    completions = 0
+    for line in text.splitlines():
+        if _TLS_UNAVAILABLE in line and "kind=refused" in line:
+            m = _TLS_HOST.search(line)
+            if m and m.group(1) not in hosts:
+                hosts.append(m.group(1))
+        elif _COMPLETION.search(line):
+            completions += 1
+    return {"tls_hosts": hosts, "completions": completions}
+
+
+def read_journal_signals(runner: Runner, unit: str = UNIT) -> dict:
+    """`journalctl --user -u <unit> --since "24 hours ago" -n <cap>` (read-only, bounded) parsed by
+    `parse_journal_signals`. `available` is False when the journal cannot be read, so nothing is claimed."""
+    try:
+        rc, out = runner(["journalctl", "--user", "-u", unit.removesuffix(".service"), "--since",
+                          f"{JOURNAL_SIGNAL_HOURS} hours ago", "--no-pager", "-o", "short-iso",
+                          "-n", str(JOURNAL_SIGNAL_LINES)], timeout=JOURNAL_SIGNAL_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 - an unavailable journal is silence, never an error
+        return {"available": False, "tls_hosts": [], "completions": 0}
+    if rc != 0:
+        return {"available": False, "tls_hosts": [], "completions": 0}
+    return {"available": True, **parse_journal_signals(out)}
+
+
 def utc_iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -1428,6 +1428,8 @@ def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> l
                   "re-runs it and rewrites the state file")
         out.append(Finding(level, who, message, remedy))
     out += _stability_findings(report.get("stability") or {})
+    out += [Finding(level, who, message, remedy)
+            for level, message, remedy in host.journal_findings(watch, report.get("stability"))]
     out += _pending_findings(s.openclaw)
     out += _resource_findings(s.openclaw, watch, report)
     out += _watchdog_unit_findings()
