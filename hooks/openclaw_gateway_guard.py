@@ -14,17 +14,24 @@ Denies three families of Bash command, and only while the gateway is live and un
 
 The recogniser is token based: options may sit between the words (`openclaw gateway --json
 restart`, `systemctl --user --no-block restart ...`) and the command may be wrapped in `sudo`,
-`env`, `timeout`, `nohup`, `setsid`, `bash -c`, `sh -c` or `eval`. `env -S '<string>'` (and `-S<s>`, `--split-string`) runs its string as a
-command, so the string is re-tokenised and checked again (bounded depth); a string that cannot be tokenised,
-or nests past the depth limit, is denied only when a stop/restart verb sits next to the gateway. Read-only verbs (`status`,
-`show`, `is-active`, `list-units`, `logs`, `cat`, ...) are never matched.
+`env`, `timeout`, `nohup`, `setsid`, `bash -c`, `sh -c` or `eval`. `env -S '<string>'` (and `-S<s>`, `--split-string`)
+runs its string as a command: the string is split by env's own rules (a backslash-underscore separates, a backslash-c ends it, `#` starts
+a comment, `${VAR}` is unknown) and read again. A command substitution (`$(...)`, backticks, `<(...)`, also inside
+double quotes and in the body of a heredoc whose delimiter is unquoted) runs its text as a command, so its body is
+read again too; `$'...'` strings, redirections (`2>&1`, `>f`, `<<EOF`, even inside a word), a brace in an
+argument and a `#` inside a word are read the way bash reads them. Nesting is followed to `_MAX_DEPTH` with a
+cost bound; a string that cannot be tokenised, or nests past the limit, is read as words and denied only when a
+stop/restart verb (or a brace, glob or expansion in the verb slot) sits after the gateway. Read-only verbs
+(`status`, `show`, `is-active`, `list-units`, `logs`, `cat`, ...) are never matched.
 
 A shell line continuation (a backslash before the newline, outside single quotes) and a quoted string that
 spans lines are joined before the command is tokenised, so a verb or a unit moved to the next line is still seen.
 Only LF breaks a line (a backslash before CRLF escapes the CR), and an unquoted newline separates statements.
 The line scanner cannot follow a quote nested in `$(...)`, a backtick or `${...}`, so a joined group that holds
 one is read twice, joined and line by line, and denied when either view matches (a join it got wrong cannot hide
-the next command).
+the next command). It is an accident guard, not a security boundary (pitfall T46): it cannot see a command
+built at run time (`$V`, `eval "$(cat f)"`), a script file, or a session that does not go through Claude Code's
+Bash tool.
 
 Why: `openclaw doctor --fix` stops the gateway and re-inspects the stopped unit. If a child
 (claude, engram, npx) is still alive it aborts with "ownership or manager identity changed" and
@@ -39,6 +46,7 @@ that denies on its own failure is worse than no guard.
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -54,12 +62,140 @@ _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # must start with a letter or `_`: `1 << 2` is arithmetic (`$(( 1 << 2 ))`), not a heredoc, and reading it as one
 # would swallow the following lines as a body and hide the commands there.
 _HEREDOC = re.compile(
-    r"(?<!<)<<(?!<)-?[ \t]*((?:'[^'\n]*'|\"[^\"\n]*\"|\\[A-Za-z_]\w*)|[A-Za-z_][\w.-]*)")
+    r"(?<!<)<<(?!<)-?[ \t]*"
+    r"((?:(?:'[^'\n]*'|\"[^\"\n]*\"|\\[^\s])|[A-Za-z_])"            # a quoted or escaped chunk, or a letter
+    r"(?:'[^'\n]*'|\"[^\"\n]*\"|\\[^\s]|[^\s;&|()<>'\"\\`])*)")   # then any mix of those and word characters
+
+
+_MAX_SCAN_DEPTH = 24
+
+
+def _unescape_backticks(raw: str) -> str:
+    """The command a backtick substitution runs: inside backticks a backslash escapes only a backslash, a
+    dollar sign and the backtick itself."""
+    return re.sub(r"\\([\\$`])", r"\1", raw)
+
+
+def _scan(text: str, literal_quotes: bool = False
+          ) -> tuple[list[str], list[tuple[str, bool]], bool, list[tuple[int, int]]]:
+    """Walk `text` as the shell reads it and return (substitutions, heredocs, too_deep, spans).
+
+    `substitutions` are the bodies of the OUTERMOST `$(...)`, `<(...)`, `>(...)` and backtick substitutions the
+    shell would run, wherever they sit except inside single quotes (double quotes do not stop them: `echo
+    "$(cmd)"` runs `cmd`). `heredocs` are the (delimiter, expands) pairs of every heredoc operator that is a
+    real operator: not one inside a quoted string (`echo "<<EOF"`), and `expands` is True for an unquoted
+    delimiter, whose body the shell expands. `too_deep` is set when substitutions nest past
+    `_MAX_SCAN_DEPTH`; the caller reads the text with the fallback then.
+
+    `spans` are the (start, end) offsets of those substitutions in `text`, delimiters included.
+
+    `literal_quotes` reads a heredoc BODY: quotes and comments are plain characters there and only a backslash,
+    `$(` and a backtick are special."""
+    subs: list[str] = []
+    spans: list[tuple[int, int]] = []
+    docs: list[tuple[str, bool]] = []
+    deep = [False]
+    n = len(text)
+
+    def walk(i: int, ctx: str, depth: int, record: bool) -> tuple[int, bool]:
+        """Read from `i` in context `ctx` ("cmd", "sub" inside `$(`, or "dq") up to its terminator. Returns
+        (index after the terminator, whether a terminator was found)."""
+        parens, prev = 0, " "
+        pending: list[str] = []              # heredoc delimiters whose body starts at the next newline
+        while i < n:
+            c = text[i]
+            if c == "\\":
+                i, prev = i + 2, "x"
+                continue
+            if c == "\n" and pending and not literal_quotes and ctx != "dq":
+                i += 1
+                while pending and i < n:
+                    j = text.find("\n", i)
+                    line = text[i:n if j < 0 else j]
+                    i = n if j < 0 else j + 1
+                    if _closes(line, pending[0]):
+                        pending.pop(0)
+                prev = " "
+                continue
+            if ctx == "dq":
+                if c == '"':
+                    return i + 1, True
+            elif not literal_quotes:
+                if c == "'":
+                    j = text.find("'", i + 1)
+                    i, prev = (n if j < 0 else j + 1), "'"
+                    continue
+                if c == '"':
+                    i, _ = walk(i + 1, "dq", depth, record)
+                    prev = '"'
+                    continue
+                if c == "#" and (prev.isspace() or prev in ";&|()<>"):
+                    j = text.find("\n", i)
+                    i = n if j < 0 else j
+                    continue
+                if c == "$" and text.startswith("$'", i):       # ANSI-C string: a backslash escapes there
+                    i += 2
+                    while i < n and text[i] != "'":
+                        i += 2 if text[i] == "\\" else 1
+                    i, prev = i + 1, "'"
+                    continue
+                if c == "<":
+                    m = _HEREDOC.match(text, i)
+                    if m:
+                        word = m.group(1)
+                        delim = re.sub(r"['\"\\]", "", word)
+                        docs.append((delim, not re.search(r"['\"\\]", word)))
+                        pending.append(delim)
+                        i, prev = m.end(), "x"
+                        continue
+            if c == "$" and text.startswith("$$", i):
+                i, prev = i + 2, "x"                             # `$$` is the PID: a quote after it is a quote
+                continue
+            if c == "`":
+                j = i + 1
+                while j < n and text[j] != "`":
+                    j += 2 if text[j] == "\\" else 1
+                if record:
+                    subs.append(_unescape_backticks(text[i + 1:min(j, n)]))
+                    spans.append((i, min(j + 1, n)))
+                i, prev = j + 1, "x"
+                continue
+            opener = 0
+            if c == "$" and text.startswith("$(", i):
+                opener = 2
+            elif c in "<>" and ctx != "dq" and not literal_quotes and text.startswith("(", i + 1):
+                opener = 2                                       # process substitution runs its command
+            if opener:
+                if depth >= _MAX_SCAN_DEPTH:
+                    deep[0] = True
+                    return n, False
+                end, closed = walk(i + opener, "sub", depth + 1, False)
+                if record:
+                    subs.append(text[i + opener:end - 1 if closed else end])
+                    spans.append((i, end))
+                i, prev = end, "x"
+                continue
+            if ctx == "sub":
+                if c == "(":
+                    parens += 1
+                elif c == ")":
+                    if parens == 0:
+                        return i + 1, True
+                    parens -= 1
+            prev = c
+            i += 1
+        return n, False
+
+    walk(0, "cmd", 0, True)
+    return subs, docs, deep[0], spans
 
 
 def _heredoc_delimiters(text: str) -> list[str]:
-    """The delimiter of every heredoc opened on this logical line, with quotes and backslashes removed."""
-    return [re.sub(r"['\"\\]", "", m.group(1)) for m in _HEREDOC.finditer(text)]
+    """The delimiter of every heredoc opened on this logical line, with quotes and backslashes removed. An
+    operator inside a quoted string is not a heredoc."""
+    return [d for d, _ in _scan(text)[1]]
+
+
 # Constructs inside a double-quoted string that the line scanner reads as flat text although the shell runs
 # a nested parse there (`$(...)`, backticks, `${...}`), and `$$` before a quote. A joined group that holds one
 # is also read line by line (see `shape`), so a quote the scanner thinks is still open cannot hide a command.
@@ -176,23 +312,41 @@ def _scan_piece(piece: str, quote: str | None, prev: str) -> tuple[str | None, s
     return quote, prev, False
 
 
-def _logical_lines(command: str) -> list[tuple[str, list[str]]]:
+def _closes(line: str, delimiter: str) -> bool:
+    """True when `line` may be the line that ends a heredoc body. A trailing backslash may join the line with
+    the next one (`E\\` then an empty line is `E`), so it is not held against the delimiter: reading the
+    body as closed a line too early only makes the guard read more, never less."""
+    text = line.strip()
+    return text == delimiter or (text.endswith("\\") and text[:-1].strip() == delimiter)
+
+
+def _logical_lines_and_bodies(command: str) -> tuple[list[tuple[str, list[str]]], list[str]]:
     """The command as the shell reads it, as (logical line, its physical lines) pairs: heredoc bodies removed
     (text fed to a command is not a command), `\\<newline>` removed outside single quotes, and a line that
     opens a quote joined with the lines up to its close (the newline kept inside the string).
 
     The body of a heredoc is raw text: its delimiter is matched on the physical line, so a body line that
-    ends in a backslash cannot swallow the delimiter and hide what follows it."""
+    ends in a backslash cannot swallow the delimiter and hide what follows it.
+
+    The second value holds the bodies of the heredocs whose delimiter is NOT quoted: the shell expands
+    `$(...)` and backticks there, so a command substitution in such a body runs."""
     out: list[tuple[str, list[str]]] = []
-    pending: list[str] = []
+    bodies: list[str] = []
+    pending: list[tuple[str, bool]] = []
+    body: list[str] = []
     buf = ""
     parts: list[str] = []
     quote: str | None = None
     prev = " "
     for line in command.split("\n"):   # only LF breaks a line: `\r`, \v, \f ... are ordinary
         if pending:
-            if line.strip() == pending[0]:
+            if _closes(line, pending[0][0]):
+                if pending[0][1]:
+                    bodies.append("\n".join(body))
                 pending.pop(0)
+                body = []
+            else:
+                body.append(line)
             continue
         parts.append(line)
         quote, prev, cont = _scan_piece(line, quote, prev)
@@ -208,18 +362,192 @@ def _logical_lines(command: str) -> list[tuple[str, list[str]]]:
         # A heredoc opened INSIDE a joined group (`"$(cat <<'EOF'` ... `EOF` ... `)"`) has its body and its
         # delimiter among the group's own physical lines already: waiting for another delimiter would skip
         # the commands that follow the group.
-        pending.extend(d for d in _heredoc_delimiters(buf) if all(pl.strip() != d for pl in parts))
+        pending.extend((d, e) for d, e in _scan(buf)[1] if all(not _closes(pl, d) for pl in parts))
         buf, parts, prev = "", [], " "
     if parts:                                # the command ends inside a continuation or an open quote
         out.append((buf, parts))
-    return out
+    return out, bodies
+
+
+def _logical_lines(command: str) -> list[tuple[str, list[str]]]:
+    return _logical_lines_and_bodies(command)[0]
+
+
+_ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
+                "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+
+
+def _decode_ansi_c(body: str) -> str:
+    """The text of a `$'...'` string after the shell decoded its backslash escapes."""
+    out: list[str] = []
+    i, n = 0, len(body)
+    while i < n:
+        ch = body[i]
+        if ch != "\\" or i + 1 >= n:
+            out.append(ch)
+            i += 1
+            continue
+        d = body[i + 1]
+        if d in _ANSI_SIMPLE:
+            out.append(_ANSI_SIMPLE[d])
+            i += 2
+        elif d in "01234567":
+            m = re.match(r"[0-7]{1,3}", body[i + 1:])
+            out.append(chr(int(m.group(0), 8) & 0xFF))
+            i += 1 + len(m.group(0))
+        elif d in "xuU":
+            m = re.match(r"[0-9A-Fa-f]{1,%d}" % {"x": 2, "u": 4, "U": 8}[d], body[i + 2:])
+            if m:
+                code = int(m.group(0), 16)
+                out.append(chr(code) if code < 0x110000 else "")
+                i += 2 + len(m.group(0))
+            else:
+                out.append("\\" + d)
+                i += 2
+        elif d == "c" and i + 2 < n:
+            out.append(chr(ord(body[i + 2]) & 0x1F))
+            i += 3
+        else:
+            out.append("\\" + d)           # not an escape bash knows: the backslash stays
+            i += 2
+    return "".join(out)
+
+
+def _plain_ansi_c(text: str) -> str:
+    """`text` as the tokeniser (which is not a shell) must read it: every `$'...'` string (outside other
+    quotes) rewritten as the single-quoted string it stands for, a backslash-newline outside single quotes
+    removed, and a backslash before `$` or a backtick inside double quotes dropped (shlex keeps it)."""
+    if "$'" not in text and "\\" not in text:
+        return text
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            if text.startswith("\\\n", i):
+                i += 2                          # a continuation: the shell removes both characters
+            else:
+                out.append(text[i:i + 2])
+                i += 2
+        elif ch == "'":
+            j = text.find("'", i + 1)
+            j = n if j < 0 else j + 1
+            out.append(text[i:j])
+            i = j
+        elif ch == '"':
+            out.append('"')
+            j = i + 1
+            while j < n and text[j] != '"':
+                if text[j] == "\\" and j + 1 < n:
+                    pair = text[j + 1]
+                    if pair == "\n":
+                        pass                    # removed inside double quotes as well
+                    elif pair in "$`":
+                        out.append(pair)        # the backslash only protects the character
+                    else:
+                        out.append(text[j:j + 2])
+                    j += 2
+                else:
+                    out.append(text[j])
+                    j += 1
+            if j < n:
+                out.append('"')
+            i = j + 1
+        elif ch == "$" and text.startswith("$$", i):
+            out.append("$$")
+            i += 2
+        elif ch == "$" and text.startswith("$'", i):
+            j = i + 2
+            while j < n and text[j] != "'":
+                j += 2 if text[j] == "\\" else 1
+            decoded = _decode_ansi_c(text[i + 2:j])
+            out.append("'" + decoded.replace("'", "'\\''") + "'")
+            i = j + 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+_REDIRECTION = re.compile(r"&>>?|<<<|<<-?|<>|>>|>\||>&|<&|<|>")
+_FD_WORD = re.compile(r"[0-9]+(?=[<>])")
+
+
+def _mask_substitutions(text: str) -> str:
+    """`text` with every command substitution replaced by a plain word: its body is read on its own (see
+    `shape`), and a quote inside it must not keep the tokeniser from reading the statements around it."""
+    spans = _scan(text)[3]
+    if not spans:
+        return text
+    out, last = [], 0
+    for start, end in spans:
+        out.append(text[last:start])
+        out.append("__SUBSTITUTION__")
+        last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
+def _strip_redirections(text: str) -> str:
+    """`text` without its redirections (`> f`, `2>&1`, `<<EOF`, `&>f`): bash takes them out of the command
+    wherever they sit, even inside a word (`systemctl --us>er stop x` is `systemctl --us stop x`), and their
+    target is a file name, not an argument."""
+    out: list[str] = []
+    i, n = 0, len(text)
+
+    def word_end(j: int) -> int:
+        while j < n and text[j] not in " \t\n;&|()<>":
+            if text[j] == "\\":
+                j += 2
+            elif text[j] in "'\"":
+                k = text.find(text[j], j + 1)
+                j = n if k < 0 else k + 1
+            else:
+                j += 1
+        return min(j, n)
+
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if ch in "'\"":
+            j = text.find(ch, i + 1) if ch == "'" else i + 1
+            if ch == '"':
+                while j < n and text[j] != '"':
+                    j += 2 if text[j] == "\\" else 1
+            j = n if j < 0 else min(j + 1, n)
+            out.append(text[i:j])
+            i = j
+            continue
+        start = i
+        if ch.isdigit() and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            fd = _FD_WORD.match(text, i)
+            if fd:
+                i = fd.end()
+        if i < n and (text[i] in "<>" or text.startswith("&>", i)):
+            op = _REDIRECTION.match(text, i)
+            if op:
+                i = op.end()
+                while i < n and text[i] in " \t":
+                    i += 1
+                i = word_end(i)
+                out.append(" ")
+                continue
+        i = start
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _unquoted_newline_segments(text: str) -> list[str]:
     """`text` cut at every newline the tokeniser reads as a command separator: one outside quotes and outside
-    a comment. It follows shlex's own reading (a `#` outside quotes starts a comment up to the newline), so the
-    segments agree with the tokens; an unbalanced quote leaves the rest of the text in one segment."""
+    a comment, and with the comments removed. A comment starts at a `#` at the start of a word (`echo# a` and
+    `${#X}` hold no comment) and runs up to its newline; an unbalanced quote leaves the rest of the text in
+    one segment."""
     segments: list[str] = []
+    piece: list[str] = []
     start, i, n = 0, 0, len(text)
     while i < n:
         ch = text[i]
@@ -235,32 +563,47 @@ def _unquoted_newline_segments(text: str) -> list[str]:
             while i < n and text[i] != '"':
                 i += 2 if text[i] == "\\" else 1
             i += 1
-        elif ch == "#":
+        elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|()<>"):
+            piece.append(text[start:i])
             j = text.find("\n", i)
             if j < 0:
+                start = i = n
                 break
-            i = j
+            start = i = j
         elif ch == "\n":
-            segments.append(text[start:i])
+            piece.append(text[start:i])
+            segments.append("".join(piece))
+            piece = []
             start = i = i + 1
         else:
             i += 1
-    segments.append(text[start:])
+    piece.append(text[start:])
+    segments.append("".join(piece))
     return segments
+
+
+def _brace_is_reserved(words: list[str]) -> bool:
+    """True when a `{` or `}` after `words` is the reserved word (a group or a function body) and not an
+    argument: only keywords, `time` and `!` precede it, optionally `function NAME`."""
+    rest = [w for w in words if w not in _KEYWORDS and w != "time"]
+    return not rest or (rest[0] == "function" and len(rest) <= 2)
 
 
 def _statements(line: str) -> list[list[str]]:
     """The simple commands of `line`. An unquoted newline separates statements like `;` does, and a comment
     ends at its newline, so the line after a comment is never read as the comment's arguments."""
     stmts: list[list[str]] = [[]]
-    for segment in _unquoted_newline_segments(line):
+    for segment in _unquoted_newline_segments(_plain_ansi_c(_mask_substitutions(line))):
+        segment = _strip_redirections(segment)
         lex = shlex.shlex(segment, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
-        lex.commenters = "#"
+        lex.commenters = ""                 # comments were removed above: a mid-word `#` is an ordinary character
         tokens = list(lex)  # ValueError on unbalanced quotes: the caller fails open
         stmts.append([])
         for tok in tokens:
-            if tok and set(tok) <= set(";&|(){}"):
+            if tok in ("{", "}") and not _brace_is_reserved(stmts[-1]):
+                stmts[-1].append(tok)       # a brace is a reserved word at the start of a command only
+            elif tok and set(tok) <= set(";&|(){}"):
                 stmts.append([])
             else:
                 stmts[-1].append(tok)
@@ -372,8 +715,50 @@ def _systemctl_verb(words: list[str]) -> tuple[str | None, list[str]]:
     return words[i], words[i + 1:]
 
 
+_BRACE = re.compile(r"\{([^{}]*,[^{}]*)\}")
+_GLOB_CHARS = re.compile(r"[*?\[]")
+
+
+def _expansions(word: str, limit: int = 64) -> list[str]:
+    """The words bash makes of `word` by brace expansion (`re{start,}` -> `restart`, `re`), bounded."""
+    out = [word]
+    for _ in range(8):
+        nxt: list[str] = []
+        changed = False
+        for w in out:
+            m = _BRACE.search(w)
+            if not m:
+                nxt.append(w)
+                continue
+            changed = True
+            nxt += [w[:m.start()] + alt + w[m.end():] for alt in m.group(1).split(",")]
+        out = nxt[:limit]
+        if not changed:
+            break
+    return out
+
+
 def _is_gateway_unit(operand: str) -> bool:
-    return operand in (UNIT, UNIT[: -len(".service")])
+    """True for the unit name, with a brace expansion or a unit glob (systemctl matches `openclaw-gate*`
+    against unit names itself) that reaches it. Unit names are case-sensitive in systemd: kept exact."""
+    names = (UNIT, UNIT[: -len(".service")])
+    for cand in _expansions(operand):
+        if cand in names:
+            return True
+        if _GLOB_CHARS.search(cand) and any(fnmatch.fnmatchcase(n, cand) for n in names):
+            return True
+    return False
+
+
+def _verb_candidates(word: str) -> list[str]:
+    """What a verb-slot word can stand for: the word itself, its brace expansions, and the stop/restart verbs
+    a glob in it would match (a glob only expands to a name that exists, so this over-blocks on purpose)."""
+    out: list[str] = []
+    for cand in _expansions(word):
+        out.append(cand)
+        if _GLOB_CHARS.search(cand):
+            out += [v for v in sorted(_SYSTEMCTL_STOP | _SYSTEMCTL_RESTART) if fnmatch.fnmatchcase(v, cand)]
+    return out
 
 
 def _systemctl_action(words: list[str]) -> str | None:
@@ -383,11 +768,13 @@ def _systemctl_action(words: list[str]) -> str | None:
     verb, operands = _systemctl_verb(words)
     if verb is None or not any(_is_gateway_unit(o) for o in operands):
         return None
-    if verb in _SYSTEMCTL_STOP:
-        return "stop"
-    if verb in _SYSTEMCTL_RESTART:
-        return "restart"
-    return None
+    found = None
+    for cand in _verb_candidates(verb):
+        if cand in _SYSTEMCTL_RESTART:
+            return "restart"
+        if cand in _SYSTEMCTL_STOP:
+            found = "stop"
+    return found
 
 
 def _gateway_action(words: list[str]) -> str | None:
@@ -398,7 +785,7 @@ def _gateway_action(words: list[str]) -> str | None:
     # the `gateway` word sits after at most a few global options (`--profile x`, `--log-level y`)
     idx, n = None, 0
     while n < len(rest) and n < 6:
-        if rest[n] == "gateway":
+        if rest[n].lower() == "gateway":
             idx = n
             break
         n += _option_width(rest[n], frozenset(), _OPENCLAW_GLOBAL_LONG_VALUE) if rest[n].startswith("-") else 1
@@ -410,9 +797,15 @@ def _gateway_action(words: list[str]) -> str | None:
         w = rest[n]
         if w.startswith("-"):
             n += _option_width(w, frozenset(), _GATEWAY_LONG_VALUE)
-        elif w in _GATEWAY_VERBS:
-            verb = w
+        elif w.lower() in _GATEWAY_VERBS:
+            verb = w.lower()
             break
+        elif _BRACE.search(w) or _GLOB_CHARS.search(w):
+            # `{restart,status}` and `rest*` can stand for a verb: the first one that does is the verb
+            hit = [c.lower() for c in _verb_candidates(w) if c.lower() in ("stop", "restart")]
+            if hit:
+                return "restart" if "restart" in hit else "stop"
+            n += 1
         else:
             n += 1
     return verb if verb in ("stop", "restart") else None
@@ -442,52 +835,134 @@ def _inner_command(words: list[str]) -> str | None:
 
 _STOP_WORDS = {"stop", "kill"}
 _RESTART_WORDS = {"restart", "try-restart", "reload-or-restart", "try-reload-or-restart", "condrestart"}
-_NEAR = 8          # how many words after the gateway word a verb still counts as "next to" it
+_NEAR = 8          # how many words before the unit a verb may sit in the unit form of the fallback
+_MAX_DEPTH = 8     # how many wrappers (`bash -c`, `eval`, `env -S`, `$(...)`) are followed before the fallback
+_WORK_BUDGET = 4 * _MAX_COMMAND_CHARS   # characters read over one whole command, nested strings included
+_work = 0
+_SEGMENT = re.compile(r"[;&|()\n]+")
+_UNKNOWN_VERB = re.compile(r"[$`*?\[{~]")
 
 
 def _verb_next_to_gateway(text: str) -> str | None:
     """"stop" or "restart" when `text` (a string that could not be tokenised, or nests too deep to follow)
-    has a stop/restart verb right after the gateway: `openclaw [opts] gateway [opts] <verb>` or
-    `<verb> [opts] openclaw-gateway[.service]`. The two words alone (`echo openclaw gateway`) are not enough
-    (L4): the fallback denies only where a restart or stop is actually being asked for."""
+    has a stop/restart verb after the gateway: `openclaw [opts] gateway [opts] <verb>` (any number of words
+    later, up to a known subcommand) or `<verb> [opts] openclaw-gateway[.service]`. The two words alone
+    (`echo openclaw gateway`) are not enough (L4): the fallback denies only where a restart or stop is
+    actually being asked for. An expansion, a glob or a brace where the verb goes hides it: fail closed."""
     # Quotes and backslashes are dropped first so a verb split by shell quoting joins up (`re''start`,
-    # `res\tart` -> `restart`); `$` and backticks stay in the words so an expansion can be seen.
-    words = [w for w in re.split(r"[\s();&|]+", re.sub(r"['\"\\]", "", text.lower())) if w]
+    # `res\tart` -> `restart`); `$` and backticks stay in the words so an expansion can be seen. Case is
+    # folded: the CLI is the one path that could still reach the unit through a case variant.
     found: str | None = None
-    for i, w in enumerate(words):
-        if os.path.basename(w) == "openclaw" and "gateway" in words[i + 1:i + 1 + _NEAR]:
-            g = i + 1 + words[i + 1:i + 1 + _NEAR].index("gateway")
-            after = words[g + 1:g + 1 + _NEAR]
-        elif w in (UNIT, UNIT[: -len(".service")]):
-            after = words[max(0, i - _NEAR):i]
-        else:
-            continue
-        # An expansion where the verb goes (`gateway $V`, `gateway $(...)`) hides the verb: fail closed.
-        slot = [v for v in (after if w == "openclaw" or os.path.basename(w) == "openclaw"
-                            else after[::-1]) if not v.startswith("-")][:1]
-        if slot and ("$" in slot[0] or "`" in slot[0]):
-            return "restart"
-        for v in after:
-            if v in _STOP_WORDS:
-                found = found or "stop"
-            elif v in _RESTART_WORDS:
-                return "restart"
+    for seg in _SEGMENT.split(re.sub(r"['\"\\]", "", text.lower())):
+        words = seg.split()
+        for i, w in enumerate(words):
+            if os.path.basename(w) == "openclaw" and "gateway" in words[i + 1:]:
+                after = words[words.index("gateway", i + 1) + 1:]
+                first_positional = next((v for v in after if not v.startswith("-")), None)
+                if first_positional is not None and _UNKNOWN_VERB.search(first_positional):
+                    return "restart"
+                for v in after:
+                    if v in _STOP_WORDS:
+                        found = found or "stop"
+                    elif v in _RESTART_WORDS:
+                        return "restart"
+                    elif v in _GATEWAY_VERBS:
+                        break                        # `status ... restart`: the subcommand is `status`
+            elif w in (UNIT, UNIT[: -len(".service")]):
+                before = words[max(0, i - 2 * _NEAR):i]
+                first_positional = next((v for v in reversed(before) if not v.startswith("-")), None)
+                if first_positional is not None and _UNKNOWN_VERB.search(first_positional):
+                    return "restart"
+                for v in before:
+                    if v in _STOP_WORDS:
+                        found = found or "stop"
+                    elif v in _RESTART_WORDS:
+                        return "restart"
     return found
+
+
+def _text_shape(text: str) -> str | None:
+    """The fallback for text the recogniser cannot (or may not) follow any further: "restart", "stop" or
+    "doctor" when the words are there, None when they are not. It reads words, not commands."""
+    found = _verb_next_to_gateway(text)
+    if found == "restart":
+        return found
+    for seg in _SEGMENT.split(re.sub(r"['\"\\]", "", text.lower())):
+        words = seg.split()
+        for i, w in enumerate(words):
+            if os.path.basename(w) == "openclaw" and "doctor" in words[i + 1:i + 3] and "--fix" in words[i + 1:]:
+                return found or "doctor"
+    return found
+
+
+_ENV_ESCAPES = {"n": "\n", "t": "\t", "v": "\v", "f": "\f", "r": "\r"}
+
+
+def _env_split_words(s: str) -> list[str] | None:
+    """The words `env -S` makes of `s`, by env's own rules (not the shell's): `\\_` separates words (a space
+    inside double quotes), `\\c` ends the string, `#` at the start of a word starts a comment, quotes group,
+    and `\\n \\t \\v \\f \\r` are control characters. None when the string cannot be split without
+    guessing: an unterminated quote, or a `${VAR}` that env expands from its own environment."""
+    words: list[str] = []
+    cur: str | None = None
+    q: str | None = None
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "\\":
+            if i + 1 >= n:
+                break
+            d = s[i + 1]
+            if d == "c":
+                break
+            if q == "'":
+                if d in "\\'":
+                    cur = (cur or "") + d
+                else:
+                    cur = (cur or "") + ch + d
+            elif d == "\n":
+                pass                                    # a backslash-newline is removed
+            elif d == "_" and q is None:
+                if cur is not None:
+                    words.append(cur)
+                    cur = None
+            else:
+                cur = (cur or "") + (" " if d == "_" else _ENV_ESCAPES.get(d, d))
+            i += 2
+            continue
+        if q is None and ch in " \t\n\v\f\r":
+            if cur is not None:
+                words.append(cur)
+                cur = None
+        elif q is None and ch == "#" and cur is None:
+            break
+        elif ch == "$" and q != "'" and s.startswith("${", i):
+            return None
+        elif ch in "'\"" and q in (None, ch):
+            q = None if q else ch
+            cur = cur or ""
+        else:
+            cur = (cur or "") + ch
+        i += 1
+    if q is not None:
+        return None
+    if cur is not None:
+        words.append(cur)
+    return words
 
 
 def _env_split_shape(split: str, rest: list[str], depth: int) -> str | None:
     """Re-enter the recogniser on an `env -S` string followed by the words after env's options.
 
-    A string that cannot be tokenised, or nests too deep, is denied only when a stop/restart verb sits next to
-    the gateway (see `_verb_next_to_gateway`) and allowed otherwise."""
+    A string that cannot be split, or nests too deep, is denied only when the gateway words are there with a
+    stop/restart verb (see `_text_shape`) and allowed otherwise."""
     # The words after env's options are the tail of the command `env -S` runs: the fallback sees them too.
     whole = " ".join([split, *rest])
-    if depth > 2:
-        return _verb_next_to_gateway(whole)
-    try:
-        words = shlex.split(split)
-    except ValueError:
-        return _verb_next_to_gateway(whole)
+    if depth > _MAX_DEPTH:
+        return _text_shape(whole)
+    words = _env_split_words(split)
+    if words is None:
+        return _text_shape(whole)
     if not words:
         return None
     return shape(" ".join(shlex.quote(w) for w in [*words, *rest]), depth + 1)
@@ -499,7 +974,7 @@ def _line_statements(lines: list[str]) -> list[list[str]]:
     pending: list[str] = []                  # heredoc delimiters whose body is being skipped
     for line in lines:
         if pending:
-            if line.strip() == pending[0]:
+            if _closes(line, pending[0]):
                 pending.pop(0)
             continue                         # text fed to a command is not a command
         try:
@@ -519,10 +994,26 @@ def _read_statements(logical: str, physical: list[str]) -> list[list[str]]:
         return _line_statements(physical)
 
 
+_memo: tuple[str, str | None] | None = None
+
+
 def shape(command: str, _depth: int = 0) -> str | None:
     """"doctor", "stop" or "restart" when the command RUNS a guarded shape, else None."""
-    if _depth > 3:
-        return None
+    global _memo
+    if _depth:
+        return _shape(command, _depth)
+    if _memo is not None and _memo[0] == command:
+        return _memo[1]
+    result = _shape(command, 0)
+    _memo = (command, result)
+    return result
+
+
+def _shape(command: str, _depth: int) -> str | None:
+    global _work
+    if _depth == 0:
+        _work = 0
+    _work += len(command)
     if len(command) > _MAX_COMMAND_CHARS:
         # Reading a huge command line by line costs seconds per hundred kilobytes and the hook has a timeout
         # that lets the command through. Above the cap nothing is parsed: it is denied when it names the
@@ -533,12 +1024,33 @@ def shape(command: str, _depth: int = 0) -> str | None:
         if "doctor" in low and "--fix" in low:
             return "doctor"
         return None
-    for logical, physical in _logical_lines(command):
+    if _depth > _MAX_DEPTH or _work > _WORK_BUDGET:
+        # Past the nesting limit (or the cost bound over the whole command) the text is read for words: the
+        # gateway next to a verb, or `doctor --fix`, is denied and anything else is allowed.
+        return _text_shape(command)
+    lines, bodies = _logical_lines_and_bodies(command)
+    for body in bodies:
+        # An unquoted heredoc delimiter: the shell expands `$(...)` and backticks in the body.
+        for sub in _scan(body, literal_quotes=True)[0]:
+            inner = shape(sub, _depth + 1)
+            if inner:
+                return inner
+    for logical, physical in lines:
         statements = _read_statements(logical, physical)
+        subs, _docs, too_deep, _spans = _scan(logical)
+        if too_deep:
+            found = _text_shape(logical)
+            if found:
+                return found
         if len(physical) > 1 and _NESTED_EXPANSION.search(logical):
             # The scanner cannot follow a quote nested in an expansion, so the join may be imaginary: read
             # the physical lines one by one as well (the 2.1.0 reading) and deny if either view matches.
             statements += _line_statements(physical)
+        for sub in subs:
+            # `"$(cmd)"`, `` `cmd` ``, `<(cmd)`: the shell runs the text inside as a command.
+            inner = shape(sub, _depth + 1)
+            if inner:
+                return inner
         for stmt in statements:
             splits: list[str] = []
             words = _command_words(stmt, splits)
@@ -587,7 +1099,7 @@ def main() -> int:
         command = str((data.get("tool_input") or {}).get("command", ""))
         if not command or not dangerous(command):
             return 0
-        found = shape(command)
+        found = shape(command)       # the same command: answered from the one-entry memo, not read twice
         if os.path.exists(WATCHDOG_OFF) or not gateway_active():
             return 0
     except Exception:
