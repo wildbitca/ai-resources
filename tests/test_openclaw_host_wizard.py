@@ -2335,3 +2335,127 @@ def test_the_backup_of_an_old_kit_section_is_created_exclusively(monkeypatch, tm
     assert len(backups) == 2, backups
     other = next(tmp_path / n for n in backups if (tmp_path / n) != squatter)
     assert other.read_text(encoding="utf-8") == "old kit text without markers\n"
+
+
+# =====================================================================================================================
+# Kit 2.2, group D: teardown, adoption, restart-pending bookkeeping
+# =====================================================================================================================
+
+def test_teardown_removes_the_moved_aside_directory_the_kit_created_when_it_is_empty(sim, script):
+    _put_hand_copy(sim)
+    units = _put_hand_units(sim)
+    s = _state()
+    _run_wizard(s)
+    backups = sim.home / ".openclaw" / "backup" / "hand-units"
+    assert [p.name for p in backups.iterdir()], "adoption made a time-stamped directory"
+    openclaw.teardown(s)
+    assert list(backups.iterdir()) == [], "everything went back, so the empty stamp directory went too"
+    assert all(p.exists() for p in units)
+
+
+def test_a_moved_aside_directory_that_still_holds_a_file_is_kept(sim, script):
+    _put_hand_copy(sim)
+    units = _put_hand_units(sim)
+    s = _state()
+    _run_wizard(s)
+    next(iter(units)).write_text("# edited after adoption\n", encoding="utf-8")
+    openclaw.teardown(s)
+    backups = sim.home / ".openclaw" / "backup" / "hand-units"
+    assert [p.name for d in backups.iterdir() for p in d.iterdir()], "the original that was not restored stays"
+
+
+def test_a_dangling_symlinked_hand_unit_is_adopted_as_a_link_and_restored_as_a_link(sim, script, tmp_path):
+    import os
+    _put_hand_copy(sim)
+    sim.units.mkdir(parents=True, exist_ok=True)
+    link = sim.units / "openclaw-health-restart.service"
+    link.symlink_to(tmp_path / "dotfiles" / "not-there.service")    # the dotfiles repo is not checked out
+    s = _state()
+    _run_wizard(s)
+    moved = pathlib.Path(s.openclaw.host_hand_moved[str(link)])
+    assert moved.is_symlink() and os.readlink(moved) == str(tmp_path / "dotfiles" / "not-there.service")
+    assert not link.is_symlink() and link.is_file(), "the kit's unit sits there now"
+    warned = [m for m in script.messages("warn") if "dangling" in m]
+    assert len(warned) == 1 and link.name in warned[0], "warned once, by name"
+    openclaw.teardown(s)
+    assert link.is_symlink() and os.readlink(link) == str(tmp_path / "dotfiles" / "not-there.service")
+    assert s.openclaw.host_hand_moved == {}
+
+
+def test_a_symlink_planted_in_the_moved_aside_directory_is_not_moved_onto_a_unit_path(sim, script, tmp_path):
+    import os
+    _backups, ts = _hand_move_fixture(sim)
+    victim = _victim(tmp_path)
+    sim.units.mkdir(parents=True, exist_ok=True)
+    dst = sim.units / "openclaw-health-restart.timer"
+    src = ts / "openclaw-health-restart.timer"
+    src.symlink_to(victim)                                        # planted: the kit never moved a link here
+    s = _moved_state(dst, src)
+    section._remove_units(s.openclaw)
+    assert not os.path.lexists(dst), "nothing was moved onto the unit path"
+    assert src.is_symlink() and victim.read_text(encoding="utf-8") == "the operator's file\n"
+    assert s.openclaw.host_hand_moved == {}
+    assert any(str(dst) in m for m in script.messages("warn"))
+
+
+def test_a_hard_linked_unit_file_is_restored_through_a_temp_file(sim, script, tmp_path):
+    import os
+    _put_hand_copy(sim)
+    s = _state()
+    _run_wizard(s)
+    unit = sim.units / "openclaw-backup-daily.timer"
+    assert unit.is_file()
+    other_link = tmp_path / "another-name-for-the-same-inode"
+    os.link(unit, other_link)
+    kit_text = other_link.read_text(encoding="utf-8")
+    s.openclaw.host_units_previous[unit.name] = "# the text before the kit\n"
+    section._remove_units(s.openclaw)
+    assert unit.read_text(encoding="utf-8") == "# the text before the kit\n"
+    assert other_link.read_text(encoding="utf-8") == kit_text, "the other link keeps the bytes it had"
+
+
+def test_the_entries_a_drained_window_applied_leave_the_pending_list(monkeypatch):
+    s = _state()
+    o = s.openclaw
+    o.host_restart_pending = [
+        {"op": "profile", "path": "gateway.reload.mode", "action": "filled", "source": "setup", "at": "t"},
+        {"op": "profile", "path": "agents.defaults.timeoutSeconds", "action": "filled", "source": "setup", "at": "t"},
+    ]
+    monkeypatch.setattr(section, "_in_flight", lambda: (0, "0"))
+    monkeypatch.setattr(section, "_drained_apply", lambda patch, rp, apply_patch: (True, True))
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    monkeypatch.setattr(ui, "warn", lambda *_a, **_k: None)
+    monkeypatch.setattr(ui, "info", lambda *_a, **_k: None)
+    patch = {"gateway": {"reload": {"mode": "hybrid"}}}
+    changes = [{"path": ["gateway", "reload", "mode"], "action": "filled"}]
+    assert section._handle_restart_part(o, patch, [], changes, source="setup",
+                                        apply_patch=lambda *a, **k: (True, "")) is True
+    assert [e["path"] for e in o.host_restart_pending] == ["agents.defaults.timeoutSeconds"], \
+        "only what this run applied is cleared; the other key is still owed"
+
+
+@pytest.mark.parametrize("value", [1.5, False, 0, [], {}, [1, "a"], {"a": [1]}, 2 ** 70])
+def test_every_json_type_that_is_not_a_string_is_reported_as_not_a_string(sim, script, value):
+    s = _state()
+    _run_wizard(s)
+    s.openclaw.host_env_previous["OPENCLAW_OFFBOX_GCLOUD_CONFIG"] = value
+    assert openclaw.teardown(s) == []
+    warned = " ".join(script.messages("warn"))
+    assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG" in warned and "not a string" in warned
+
+
+def test_an_unfinished_teardown_names_its_reason_once_and_not_on_every_run(sim, script):
+    s = _state()
+    _run_wizard(s)
+    s.openclaw.host_env_previous["OPENCLAW_OFFBOX_GCLOUD_CONFIG"] = ["a"]
+    assert openclaw.teardown(s) == []
+    first = [m for m in script.messages("warn") if "OPENCLAW_OFFBOX_GCLOUD_CONFIG" in m]
+    assert len(first) == 1
+    seen = len(script.messages("warn"))
+    assert openclaw.teardown(s) == []
+    second = [m for m in script.messages("warn")[seen:] if "OPENCLAW_OFFBOX_GCLOUD_CONFIG" in m]
+    assert second == [], "the same reason is not repeated on the next run"
+    s.openclaw.host_env_previous["OPENCLAW_OFFBOX_GCLOUD_CONFIG"] = "ok-now"
+    assert openclaw.teardown(s) != [], "once the reason is gone the teardown finishes"

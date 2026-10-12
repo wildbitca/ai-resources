@@ -165,6 +165,30 @@ def _check_env_pair(key: str, value: str) -> None:
         raise ValueError(f"unsafe characters in the value of {key}: {value!r}")
 
 
+def write_file_atomically(path: Path, text: str, *, mode: int | None = None) -> None:
+    """Write `text` to a unique temp file beside `path` and move it over `path`.
+
+    The old inode is never written to, so another hard link to it keeps the bytes it had, and a planted
+    `.<name>.tmp` is never followed. `mode` defaults to the mode `path` has now, else 0644."""
+    if mode is None:
+        try:
+            mode = stat.S_IMODE(os.stat(path).st_mode)
+        except OSError:
+            mode = 0o644
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def write_host_env(values: dict[str, str | None], path: Path | None = None) -> bool:
     """Set (or, for None, remove) the given keys, keeping every other line as it is.
 
@@ -327,7 +351,7 @@ def hand_copy_files(dest: Path | None = None, home: Path | None = None,
     home = home or Path.home()
     found: list[Path] = []
     script = home / ".local" / "bin" / HAND_SCRIPT_NAME
-    if script.is_file():
+    if script.is_file() or script.is_symlink():           # a dangling link is still the operator's file
         found.append(script)
     rendered = rendered if rendered is not None else render_units()
     for name in HEALTH_UNITS:
@@ -335,6 +359,8 @@ def hand_copy_files(dest: Path | None = None, home: Path | None = None,
         try:
             text = target.read_text(encoding="utf-8")
         except OSError:
+            if target.is_symlink():                      # dangling: moved aside as a link, never written over
+                found.append(target)
             continue
         if text != rendered.get(name):
             found.append(target)
@@ -393,9 +419,7 @@ def install_units(dest: Path | None = None, *, markers: dict[str, str] | None = 
     if changed:
         dest.mkdir(parents=True, exist_ok=True)
         for name in changed:
-            tmp = dest / f".{name}.tmp"
-            tmp.write_text(rendered[name], encoding="utf-8")
-            os.replace(tmp, dest / name)
+            write_file_atomically(dest / name, rendered[name])
         rc, _out = runner(["systemctl", "--user", "daemon-reload"], env=systemd_env())
         result["reloaded"] = rc == 0
     if enable:

@@ -237,6 +237,13 @@ class OpenClawState:
     # original path -> sha256 of the kit's file the kit wrote at that path after the hand copy was moved
     # aside, so teardown replaces exactly that file and never one the operator changed since.
     host_hand_kit_sha: dict[str, str] = field(default_factory=dict)
+    # original path -> the link target of a hand file that was a SYMLINK when the kit moved it aside. Teardown
+    # puts back a moved-aside link only when it still has that target: a link planted in the backup directory is
+    # never moved onto a unit path.
+    host_hand_links: dict[str, str] = field(default_factory=dict)
+    # Reasons an earlier teardown already reported as unfinished (teardown names each reason once, not on every
+    # run); cleared when a teardown finishes.
+    host_teardown_reported: list[str] = field(default_factory=list)
     # Hand-installed legacy team-hook registrations the kit replaced: [{"event", "entry"}], put back
     # by teardown.
     host_legacy_hooks: list[Any] = field(default_factory=list)

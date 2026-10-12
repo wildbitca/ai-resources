@@ -378,6 +378,7 @@ def _configure_units(o: state.OpenClawState, *, dry_run: bool) -> None:
     hand = host.hand_copy_files(dest)
     if not changed and not disabled and not hand:
         return
+    dangling = [p for p in hand if p.is_symlink() and not p.exists()]
     summary = (f"{len(changed)} unit file(s) to write in {dest}"
                + (f", {len(disabled)} timer(s) to enable" if disabled else ""))
     if hand:
@@ -400,6 +401,9 @@ def _configure_units(o: state.OpenClawState, *, dry_run: bool) -> None:
     for name in dict.fromkeys([*changed, *plan["changed"]]):
         if name in changed or name not in hand_in_dest:
             o.host_units_previous.setdefault(name, _unit_text(name, dest))
+    if dangling:
+        ui.warn("a hand-installed file is a dangling symlink (" + ", ".join(p.name for p in dangling)
+                + "): it is moved aside as a link and put back as a link by teardown")
     result = host.install_units(dest, enable=True, runner=_runner(), adopt_hand_copy=True)
     o.host_units_applied = True
     for moved in result["adopted"]:
@@ -407,6 +411,8 @@ def _configure_units(o: state.OpenClawState, *, dry_run: bool) -> None:
         name = Path(moved).name
         original = (Path.home() / ".local" / "bin" / name) if name.endswith(".sh") else dest / name
         o.host_hand_moved[str(original)] = moved
+        if Path(moved).is_symlink():       # the operator's file was a link: remember where it pointed
+            o.host_hand_links[str(original)] = os.readlink(moved)
         if original.is_file():          # the kit's own file now sits where the hand copy was
             o.host_hand_kit_sha[str(original)] = _sha256_file(original)
     # Only the timers that were NOT enabled before are the kit's to disable again.
@@ -507,6 +513,12 @@ def _handle_restart_part(o: state.OpenClawState, patch: dict, replace_paths: lis
     written, window_ok = _drained_apply(patch, replace_paths, apply_patch)
     if not written:
         _record_pending(o, pend)
+    else:
+        # The keys this run just applied are no longer owed: an entry an earlier run recorded for them must not
+        # stay listed until `apply-pending` clears it.
+        applied = set(paths)
+        o.host_restart_pending = [e for e in o.host_restart_pending
+                                  if not (isinstance(e, dict) and e.get("path") in applied)]
     return written
 
 
@@ -1050,6 +1062,14 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
     """Remove exactly what configure() recorded and restore what it replaced. True when finished."""
     o = s.openclaw
     ok = True
+    # An unfinished teardown names each reason ONCE: a retry that meets the same reason does not repeat the line.
+    reported = {str(r) for r in (o.host_teardown_reported or [])}
+    current: set[str] = set()
+
+    def fresh(reasons: list[str]) -> list[str]:
+        current.update(reasons)
+        return [r for r in reasons if r not in reported]
+
     if o.config_watch:
         stop_config_watch(forget=True, o=o)     # before restoring: a revert must not race the restore
 
@@ -1073,7 +1093,8 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             # Keep the record and report the teardown as unfinished: the cockpit teardown then keeps
             # the OpenClaw state, so a later teardown retries the removal. The off-box env knobs are
             # still restored below with the rest of host_env_previous; the retry needs only the record.
-            ui.warn(f"The gcloud configuration {record.get('name')!r} was left as it is.")
+            if fresh([f"offbox:{record.get('name')}"]):
+                ui.warn(f"The gcloud configuration {record.get('name')!r} was left as it is.")
             ok = False
 
     if o.bindings_applied:
@@ -1136,11 +1157,13 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             host.write_host_env(restorable)
             for key in restorable:
                 o.host_env_previous.pop(key, None)
-        if nonstring:
-            ui.warn(f"{host.HOST_ENV_PATH}: the recorded previous value of {', '.join(sorted(nonstring))} is not a "
+        new_nonstring = [k for k in sorted(nonstring) if f"env-not-string:{k}" in fresh([f"env-not-string:{k}"])]
+        if new_nonstring:
+            ui.warn(f"{host.HOST_ENV_PATH}: the recorded previous value of {', '.join(new_nonstring)} is not a "
                     "string; it was left as it is. Set it by hand; a later teardown retries.")
-        if stuck:
-            ui.warn(f"{host.HOST_ENV_PATH}: the previous value of {', '.join(sorted(stuck))} cannot be written "
+        new_stuck = [k for k in sorted(stuck) if f"env-stuck:{k}" in fresh([f"env-stuck:{k}"])]
+        if new_stuck:
+            ui.warn(f"{host.HOST_ENV_PATH}: the previous value of {', '.join(new_stuck)} cannot be written "
                     "back safely (a value with a space, `$` or quotes); it was left as it is. Set it by hand; "
                     "a later teardown retries.")
         if stuck or nonstring:
@@ -1149,6 +1172,7 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             if o.host_env_created and not host.read_host_env():
                 host.HOST_ENV_PATH.unlink(missing_ok=True)
             o.host_env_previous, o.host_env_created = {}, False
+    o.host_teardown_reported = sorted(current) if not ok else []
     return ok
 
 
@@ -1245,7 +1269,8 @@ def _remove_units(o: state.OpenClawState) -> None:
         if previous is None:
             (dest / name).unlink(missing_ok=True)
         else:
-            (dest / name).write_text(previous, encoding="utf-8")
+            # temp file + replace: a file with other hard links keeps the bytes it had under those names
+            host.write_file_atomically(dest / name, previous)
     home = Path.home()
     script = home / ".local" / "bin" / host.HAND_SCRIPT_NAME
     backups = home / ".openclaw" / "backup" / "hand-units"
@@ -1254,15 +1279,23 @@ def _remove_units(o: state.OpenClawState) -> None:
         valid = (dst == script or (dst.name in host.HEALTH_UNITS and _inside(dst, dest))) \
             and ".." not in src.parts and src.name == dst.name and src.parent.parent == backups \
             and not dst.is_symlink()
+        if valid and src.is_symlink():
+            # A link in the backup directory is the operator's only when the kit moved that very link there (it
+            # recorded the target). Anything else may have been planted: it is never moved onto a unit path.
+            try:
+                valid = o.host_hand_links.get(original) == os.readlink(src)
+            except OSError:
+                valid = False
         if not valid:
             _not_managed(f"{original}")
             o.host_hand_moved.pop(original, None)
             o.host_hand_kit_sha.pop(original, None)
+            o.host_hand_links.pop(original, None)
             continue
-        if (src.exists() or src.is_symlink()) and not dst.exists():
+        if (os.path.lexists(src)) and not os.path.lexists(dst):
             dst.parent.mkdir(parents=True, exist_ok=True)
             host.shutil.move(str(src), str(dst))
-        elif src.exists() and dst.is_file() and src.read_bytes() != dst.read_bytes():
+        elif os.path.lexists(src) and dst.is_file() and (src.is_symlink() or src.read_bytes() != dst.read_bytes()):
             # The kit's copy sits where the operator's was: put the original back, but only over a file that
             # is still exactly what the kit wrote (G4). Anything else is the operator's edit.
             recorded = o.host_hand_kit_sha.get(original)
@@ -1270,12 +1303,18 @@ def _remove_units(o: state.OpenClawState) -> None:
                 rendered = host.render_units().get(dst.name)
                 recorded = hashlib.sha256(rendered.encode("utf-8")).hexdigest() if rendered is not None else None
             if recorded is not None and _sha256_file(dst) == recorded:
+                dst.unlink()
                 host.shutil.move(str(src), str(dst))
             else:
                 ui.warn(f"{dst} changed after the kit adopted your hand-installed copy; it was left as it is. "
                         f"Your original is at {src}.")
         o.host_hand_moved.pop(original, None)
         o.host_hand_kit_sha.pop(original, None)
+        o.host_hand_links.pop(original, None)
+        try:
+            src.parent.rmdir()             # the time-stamped directory the kit made, only when nothing is left
+        except OSError:
+            pass
     runner(["systemctl", "--user", "daemon-reload"], env=env)
     o.host_units_applied = False
 
