@@ -11,6 +11,44 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Fixed
 
+- **Gateway guard, last pass (2.2f).** The verification round of 2.2e found four weak points in the second view
+  (text that feeds a shell) and the benign cost of the 2.2e widening; this pass closes them and stops. (1) A shell,
+  `eval`, `source`, `exec` or a `read`/`mapfile` whose text is run later, reading a process substitution on stdin
+  (`sh < <(echo ...)`, `read -r c < <(...); eval "$c"`, `exec 3< <(...); sh <&3`, `sh 0< <(...)`, `bash -s < <(...)`,
+  `exec bash < <(...)`) was read as printed-only text; the strict view now looks through the redirect (and an fd
+  number) to the command that owns it, and such a text feeds the second view. `cat < <(...)` and `diff <(...)
+  <(...)` stay printed. (2) The other-product allow list read an option's VALUE (`sudo -u docker`, `env -u docker`,
+  `env -C /opt/docker`) as the command word and a substitution that is an argument of another product's command
+  (`docker ps $(${OC:-openclaw} gateway restart)`, backticks, `<(...)`) as part of that command; wrappers are now
+  looked through with their options and values (the view is lower-cased: `-C` is folded), a substitution that is
+  still open is a statement of its own, a plain wrapper that names a product as a user, host or path
+  (`su docker -c ...`, `flock /var/lock/docker ...`) no longer exempts a built command, and the value of a gateway
+  option (`gateway --password status restart`) is not a subcommand that answers the verb. (3) In shell-fed text a
+  bare `gateway` + verb in one statement (`npm run gateway:restart`, `git log --grep='gateway restart'`, `fly apps
+  restart gateway`) needed no second signal that it is OpenClaw: it now needs an `openclaw` word or the unit (as
+  before), a word built at run time in front of the two words or in a neighbouring statement, an assembled
+  `openclaw`, or an assembled name glued to `gateway`; a comment line that does not name openclaw is not a
+  statement; `--grep=gateway` is an option value, not a stored name; an `openclaw` word earlier in the same
+  statement counts however far it is (a 900-character option value). The tools that merely carry text (`git`, `grep`,
+  `npm`, `gh`, `fly`, ...) were NOT added to the exclusion list: the second signal makes it unnecessary and a list
+  entry would open `git -c alias.x='!...'`. (4) `watchdog.off`: `reclaim_stale` compares the modification time as
+  well as device and inode before it unlinks; a SIGTERM between the exclusive create and `acquire()` returning no
+  longer leaves a marker nobody owns (the signals are held until the identity is recorded); `Marker.remove()`
+  deletes only a file whose identity this run recorded and says so when it leaves one; the models script reads the
+  marker through `head` under `timeout`, so a FIFO swapped in after the file check cannot block it.
+- **Gateway guard, measured (2.2f).** Freshly generated corpora, run through real bash and zsh in a sandbox with
+  stub `openclaw`/`systemctl`/`sudo` binaries and no network: 12029 adversarial rows (4028 + 3361 generic with
+  budget-spending and deadline-forcing prefixes, 3024 of the item 1 and 2 forms in seven feeds, 1616 exclusion
+  attacks: wrappers, substitutions, printed-text dress-ups, option values, comments), of which 6410 executed a
+  guarded command. Executed but allowed: 2.1.0 5805, 2.1.1 5796, cd70a20 1552, f1a26f8 2737, this tree 1208;
+  executed and denied by 2.1.0, 2.1.1, cd70a20 or f1a26f8 yet allowed by this tree: **0** (425 before this pass, all
+  in text that feeds a shell); no corpus-by-class cell misses more than the better published guard. Benign rows
+  (900 and 700 generated, 1700 recorded by earlier passes: other products' gateways, commit and PR heredocs, doc
+  greps, CI snippets) denied: 2.1.0 1, 2.1.1 1, cd70a20 778, f1a26f8 59, f2622f1 474, **this tree 25** (12, 8, 5;
+  the remaining ones are named in T46). Every verdict was under 2 s under load and the deadline fired on none; with
+  the deadline forced at the start of the analysis the fallback misses 37 of 6410 executed rows (cd70a20 315, f1a26f8
+  238) and none that either denied.
+
 - **Gateway guard, budget fallback (2.2e).** A prefix of about 8 KB of harmless substitutions spends the work
   budget and the rest of the command was read by the word view, which did not join line continuations and cut at a
   backtick: a guarded command split with `\` or with an inline substitution in an option slot was allowed

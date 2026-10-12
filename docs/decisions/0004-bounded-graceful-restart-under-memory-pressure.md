@@ -165,6 +165,25 @@ choice stays. `ai-resources openclaw doctor` now refuses a busy gateway (exit 6)
   2.1.0, 2.1.1, 2.2c or 2.2d yet allowed now **0**; benign rows denied 288 / 17 / 67 / **54** of 13716; slowest verdict
   0.8 s, the deadline never fired. On three fresh corpora (7718 executed, 1500 behind a budget-spending prefix) the
   executed rows that 2.2c denied and 2.2d allowed went from 528 to 0.
+- 2.2f amendment (the last guard pass). Three statements of 2.2e were wrong or incomplete. (1) The strict second view
+  read the redirect of `sh < <(echo ...)` as the command that owns the process substitution, so a shell, `eval`,
+  `source`, `exec` or a `read`/`mapfile` whose text is run later reading standard input from one was taken for
+  printed text; it now looks through the redirect to its owner. (2) The exclusion list of other products' commands
+  read an option's value as the command word and a substitution inside another product's arguments as part of that
+  command, so `sudo -u docker ${OC:-openclaw} gateway restart` was allowed; options are looked through with their
+  values, and a built word after a product's name in a plain wrapper keeps the denial. (3) The wide reading denied
+  the bare gateway words of other tools (`npm run gateway:restart`, `git log --grep='gateway restart'`); a bare
+  `gateway` + verb in one statement now needs a second signal that it is OpenClaw (an `openclaw` word or the unit,
+  a word built at run time, an assembled name), and a comment line that does not name openclaw is not a statement.
+  The exclusion lists are an allow list, so no tool was added to them. The marker races found by the audit are
+  closed (a stale marker overwritten in place keeps its window, a SIGTERM during the create leaves no owner-less
+  marker, `remove` never deletes a file whose identity was not recorded, and the models script cannot block on a
+  FIFO). Measured on freshly generated corpora through real bash and zsh (12029 adversarial rows, 6410 executed;
+  2600 benign rows generated and 1700 recorded): executed-but-allowed 5805 / 5796 / 1552 / 2737 / **1208**
+  (2.1.0 / 2.1.1 / 2.2c / 2.2d / 2.2f); executed and denied by any of the four yet allowed **0** (425 before the pass);
+  benign rows denied 1 / 1 / 778 / 59 / **25** (474 before the pass); slowest verdict 1.99 s under load, the deadline
+  fired on none. The guard stays an accident guard, and the pass is the last on the text: who may stop or restart the
+  unit belongs at systemd and polkit, or an exec policy (pitfall T45), not in this filter.
 
 ## Alternatives Considered
 

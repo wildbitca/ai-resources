@@ -1508,7 +1508,7 @@ unexpected restart, and the `source=` field of the gateway's restart line (`cli`
 reload).
 
 
-## T46 — The gateway guard is an accident guard, not a security boundary *(added 2026-10-12; documented in the unreleased 2.2 work, numbers corrected in 2.2d and again in 2.2e)*
+## T46 — The gateway guard is an accident guard, not a security boundary *(added 2026-10-12; documented in the unreleased 2.2 work, numbers corrected in 2.2d, 2.2e and 2.2f)*
 
 **Symptom.** A review finds a command that restarts or stops the gateway and that the guard hook allowed, and
 the question is whether that is a bug.
@@ -1576,9 +1576,27 @@ that is called `gateway`), words that are only printed (`echo`, `printf` or `:` 
 stay denied), and `openclaw gateway status --note restart` (the first subcommand decides, as it does for the CLI).
 Words in two different statements pair only through a stored name (`g=gateway; ...`). The exclusion work is bounded
 (past 2048 checks every pair counts). The price that remains: text that really goes to a shell and names the
-OpenClaw verb as a bare statement, even in a comment, is denied (`bash <<'EOF'`, a comment that says `openclaw
-gateway restart`, `EOF`). A shell given its own literal `-c` string, a heredoc to `cat`, and a commit message that
-mentions a shell in prose are not touched.
+OpenClaw verb as a bare statement, even in a comment that says `openclaw gateway restart`, is denied (`bash
+<<'EOF'`, the comment, `EOF`). A shell given its own literal `-c` string, a heredoc to `cat`, and a commit message
+that mentions a shell in prose are not touched.
+
+**What 2.2f changed in that reading (the last pass).** The widening of 2.2e denied the bare words of other tools
+(133 of 4816 benign shapes in the verifier's corpus, against 71 for 2.2d) and the exclusions it added were an allow
+list that an assembled name could ride on. (a) A bare `gateway` + verb in one statement is OpenClaw only with a SECOND SIGNAL:
+an `openclaw` word or the unit (as before), a word built at run time (an expansion, a glob, a brace expansion) in
+front of the two words or in a neighbouring statement, an assembled `openclaw` (`openclaw-$g`, `openclaw-%s`), or
+an assembled name glued to `gateway`. `npm run gateway:restart`, `git log --grep='gateway restart'`, `fly apps
+restart gateway`, `gh issue list --search 'gateway restart'` and a comment line that does not name openclaw have none
+and are allowed. The tools that merely carry such text were deliberately NOT added to the exclusion list: with the
+second signal they do not need it, and an entry such as `git` would open `git -c alias.x='!...' x`. (b) An option's
+VALUE is not the command word: `sudo -u docker`, `doas -u`, `env -u docker` and `env -C /opt/docker` are looked
+through with their values (the view is lower-cased, so `-C` is folded), a substitution (`$(...)`, backticks,
+`<(...)`) that is an argument of another product's command is a statement of its own, and a plain wrapper that
+carries the product's name as a user, host or path (`su docker -c ${OC} ...`, `flock /var/lock/docker ${OC} ...`,
+`docker () { ...; }`) does not exempt a built command. (c) A shell, `eval`, `source`, `exec` or a `read`/`mapfile`
+whose text is run later, reading a process substitution on stdin, is command text (`sh < <(echo ...)`, `exec 3<
+<(...); sh <&3`, `read -r c < <(...); eval "$c"`): the strict view looks through the redirect to its owner.
+(d) The value of a gateway option is not a subcommand (`gateway --password status restart` is a restart).
 
 **Measured, at the final 2.2e tree.** Against real bash on the recorded corpora (100728 rows, 38390 executed a
 guarded command): executed but allowed 536 (2.1.0: 16328, 2.1.1: 11970, 2.2c: 545, 2.2d: 545), none of which an
@@ -1589,13 +1607,36 @@ deadline fired 0 times. On three freshly generated corpora run through real bash
 binaries (10000 + 4762 + 3060 rows, 7718 executed a guarded command, 1500 of them behind a budget-spending
 prefix): executed but allowed 6501 (2.1.0), 6459 (2.1.1), 1471 (2.2c), 1762 (2.2d, before this pass), **1153** now;
 executed and denied by 2.2c and allowed: 528 before this pass (287 + 132 + 109, the assembled names, the
-continuations and the substituted verbs), **0** now; executed and denied by 2.1.x and allowed: 0 before and after.
+continuations and the substituted verbs), **0** at the 2.2e tree; executed and denied by 2.1.x and allowed: 0 before and after.
 The 140 rows of other products' gateways in shell-fed text (`kubectl rollout restart deploy/gateway`, `docker
 restart gateway`, `systemctl restart api-gateway`, ...): 126 denied by 2.2c, 0 now; 314 such rows over the two
 fresh corpora, 7 denied (all are the deliberately mixed row that also says `openclaw is up` next to `docker restart
 gateway`). Through the real hook as a subprocess, every verdict of the fresh corpora was under 3 s (slowest 1.4 s)
 and the deadline fired on none. Precise parsing of arbitrary shell is not attempted, and these numbers are a
 measurement of the corpora, not a promise.
+
+**Measured, at the final 2.2f tree.** The recorded corpora of earlier passes were not re-run; this pass generated
+its own, ran every row through real bash and zsh in a sandbox (stub `openclaw`, `systemctl` and `sudo`, no network)
+and compared the verdicts of 2.1.0, 2.1.1, cd70a20 (2.2c), f1a26f8 (2.2d), the tree before this pass (f2622f1) and
+this tree. 12029 adversarial rows (generic nesting with budget-spending and deadline-forcing prefixes: 4028 + 3361;
+the forms of this pass in seven feeds: 3024; exclusion attacks, namely wrappers that carry a product's name as a
+user, host or path, substitutions inside another product's arguments, printed-text dress-ups, option values and
+comments: 1616), 6410 of which executed a guarded command. Executed but allowed: 5805 (2.1.0), 5796 (2.1.1), 1552
+(2.2c), 2737 (2.2d), **1208** now. Executed and denied by 2.1.0, 2.1.1, 2.2c or 2.2d yet allowed: **0** now, 425
+before this pass (165 + 260, all in text that feeds a shell: the stdin process substitutions and the assembled names
+behind another product's option value or argument). No corpus-by-class cell misses more executed rows than the
+better of the two published guards. Benign rows (generated: 900 of other products' gateways, commit and PR heredocs
+and CI snippets, and 700 more with another seed; recorded by earlier passes: 1700) denied: 2.1.0 1, 2.1.1 1, 2.2c
+778, 2.2d 59, before this pass 474, **25 now** (12, 8 and 5 over the three sets; 2.2d: 35, 8, 16). They are of two
+shapes. Seventeen are a text that says `gateway` and a stop/restart verb in a bare statement or a commit message,
+followed within 160 characters (a window pair, as in 2.2d) by a statement that names `openclaw` or the unit
+(`echo 'gateway stop hook added'`, then `bash <<EOF`, `openclaw gateway status`, `EOF`); the other eight are the
+price this card already names (`echo "openclaw gateway restart"` inside text fed to a shell, a comment that says it,
+and a commit message whose backticks really run it). Every verdict through
+the hook's own entry point took under 2 s (1.99 s under a host load of 10), the deadline fired on none, and with the
+deadline forced at the start of the precise analysis the fallback allowed 37 of the 6410 executed rows (2.2c 315,
+2.2d 238), none that either denied. The residual classes below are unchanged except for what is marked closed. It
+is an accident guard: these are measurements of generated corpora, not a promise.
 
 **What it does not read (the residual classes).** These are known, recorded in ADR-0004, and not to be chased
 one by one:
@@ -1614,8 +1655,12 @@ one by one:
   (`python -c`, `node -e`, `perl -e`, `awk 'BEGIN{system(...)}'`);
 - text produced at run time and then run, in the forms the audit found: `source <(...)`, `. <(...)` and `bash
   <(...)`, an interpreter reading its program from a heredoc (`python3 - <<'EOF'` calling `os.system`), run-time
-  text read with `read` or `mapfile` and then evaluated, `$V` as the command word, and a variable copied along a
-  chain (`A=...; B=$A; eval "$B"`);
+  text read with `read` or `mapfile` from a FILE or a command (`read -r c < f; eval "$c"`; from a process
+  substitution on stdin or a here-string it is read since 2.2f), `$V` as the command word, and a variable copied
+  along a chain (`A=...; B=$A; eval "$B"`);
+- a command built at run time that is NOT fed to a shell: `sudo -u docker ${OC:-openclaw} gateway restart` or
+  `${OC:-openclaw} gateway restart` on the main path (the precise analysis does not know the command word; the
+  second view reads such text only when it feeds a shell), and `sh -c "$(echo openclaw gateway restart)"`;
 - the 15 residual samples of the last 9000, as classes: a here-string whose word is a command substitution that prints
   the script; `xargs -0 sh -c` reading the script from stdin; `export V=...; eval $V` inside a trap string; a backtick
   with an escaped `$(` around `case`;
@@ -1628,6 +1673,13 @@ one by one:
 Closed in 2.2d and no longer residual: a backtick-wrapped verb after 2016 or more adjacent substitutions or at nesting
 depth 41 or more, and a backtick whose body carries `\"` (the word view cuts at the backtick, and the body is read as
 the command it is).
+
+Closed in 2.2f and no longer residual: a shell reading a process substitution on stdin (`sh < <(echo ...)`, `sh
+0< <(...)`, `bash -s < <(...)`, `exec bash < <(...)`, `exec 3< <(...); sh <&3`, `read ... < <(...); eval`), another
+product's option value or argument carrying an assembled OpenClaw name in shell-fed text (`sudo -u docker`, `env -u
+docker`, `env -C /opt/docker`, `docker ps $(...)`, `nginx -t $(...)`), the value of a gateway option read as the
+subcommand, and the benign denials of the bare gateway words of other tools. The stdin forms are NOT on the residual
+list because item 1 of 2.2f closed them.
 
 Closed in 2.2e and no longer residual: in text fed to a shell, `openclaw` or the unit assembled from variables, an
 ANSI-C escape, a glob, a brace or a quote pair around a backtick, a `gateway` stored in a variable before `openclaw`
