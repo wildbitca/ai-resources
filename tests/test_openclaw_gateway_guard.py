@@ -799,3 +799,43 @@ def test_a_carriage_return_or_other_line_separator_is_not_a_line_break(guard):
     assert guard.shape("o\\\x0bpenclaw gateway restart") is None
     assert guard.shape("echo a\\\x0c\nopenclaw gateway restart") == "restart"
     assert guard.shape("echo 'a\x85b\nopenclaw gateway restart'") is None
+
+
+# --- pass 6, M1: heredoc delimiters bash accepts that the guard did not recognise --------------------------------
+
+@pytest.mark.parametrize("delim", [r"\EOF", "'E-F'", '"a.b"', "E.F"])
+def test_an_unusual_heredoc_delimiter_still_closes_the_body_so_the_next_line_is_read(guard, delim):
+    word = delim.replace("'", "").replace('"', "").replace("\\", "")
+    # body with a stray apostrophe, then the delimiter, then a real guarded command
+    cmd = f"cat <<{delim}\nit's a body\n{word}\nopenclaw gateway restart"
+    assert guard.shape(cmd) == "restart"
+
+
+def test_a_heredoc_body_that_mentions_the_words_is_still_not_a_command(guard):
+    assert guard.shape("cat <<'E-F'\nopenclaw gateway restart\nE-F\nls") is None
+    assert guard.shape("cat <<\\EOF\nopenclaw doctor --fix\nEOF\nls") is None
+
+
+def test_a_here_string_is_not_a_heredoc(guard):
+    assert guard.shape("cat <<<word\nopenclaw gateway restart") == "restart"
+
+
+# --- pass 6, L3: a huge command is not parsed, it is denied only when it names a guarded shape -------------------
+
+def test_a_huge_command_costs_nothing_and_is_denied_only_when_it_names_the_gateway_and_a_verb(guard):
+    import time
+    big = "echo \"" + ("x " * 200_000) + "\n"
+    t = time.time()
+    assert guard.shape(big) is None
+    assert time.time() - t < 2
+    assert guard.shape(big + "\nopenclaw gateway restart") == "restart"
+    assert guard.shape(big + "\nopenclaw doctor --fix") == "doctor"
+    small = "echo hi\nopenclaw gateway status"
+    assert guard.shape(small) is None
+
+
+def test_an_arithmetic_shift_is_not_a_heredoc_and_hides_nothing(guard):
+    # `1 << 2` inside `$(( ))`: the old identifier-only delimiter did not take `2`; neither may the broadened one
+    assert guard.shape(": $(( 1 << 2 ))\nopenclaw gateway restart") == "restart"
+    assert guard.shape(": $(( 1 << 2 ))\r\nopenclaw doctor --fix") == "doctor"
+    assert guard.shape("echo $((1<<3))\nsystemctl --user stop openclaw-gateway") == "stop"

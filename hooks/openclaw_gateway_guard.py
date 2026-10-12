@@ -49,10 +49,21 @@ import sys
 UNIT = "openclaw-gateway.service"
 WATCHDOG_OFF = os.path.expanduser("~/.openclaw/watchdog.off")
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+# A heredoc operator (`<<` or `<<-`, never the here-string `<<<`) and its delimiter word. Bash takes any word
+# there, quoted or backslash-escaped (`<<\EOF`, `<<'E-F'`, `<<"a.b"`) or bare (`<<EOF`, `<<E.F`). A bare word
+# must start with a letter or `_`: `1 << 2` is arithmetic (`$(( 1 << 2 ))`), not a heredoc, and reading it as one
+# would swallow the following lines as a body and hide the commands there.
+_HEREDOC = re.compile(
+    r"(?<!<)<<(?!<)-?[ \t]*((?:'[^'\n]*'|\"[^\"\n]*\"|\\[A-Za-z_]\w*)|[A-Za-z_][\w.-]*)")
+
+
+def _heredoc_delimiters(text: str) -> list[str]:
+    """The delimiter of every heredoc opened on this logical line, with quotes and backslashes removed."""
+    return [re.sub(r"['\"\\]", "", m.group(1)) for m in _HEREDOC.finditer(text)]
 # Constructs inside a double-quoted string that the line scanner reads as flat text although the shell runs
 # a nested parse there (`$(...)`, backticks, `${...}`), and `$$` before a quote. A joined group that holds one
 # is also read line by line (see `shape`), so a quote the scanner thinks is still open cannot hide a command.
+_MAX_COMMAND_CHARS = 262144
 _NESTED_EXPANSION = re.compile(r"\$\(|`|\$\{|\$\$['\"]")
 # Tokens that only wrap another command: look through them to the real one.
 _WRAPPERS = {"sudo", "doas", "env", "command", "nohup", "setsid", "time", "exec", "nice", "ionice", "stdbuf",
@@ -194,7 +205,7 @@ def _logical_lines(command: str) -> list[tuple[str, list[str]]]:
             continue
         buf += line
         out.append((buf, parts))
-        pending.extend(m.group(2) for m in _HEREDOC.finditer(buf))
+        pending.extend(_heredoc_delimiters(buf))
         buf, parts, prev = "", [], " "
     if parts:                                # the command ends inside a continuation or an open quote
         out.append((buf, parts))
@@ -502,6 +513,16 @@ def _read_statements(logical: str, physical: list[str]) -> list[list[str]]:
 def shape(command: str, _depth: int = 0) -> str | None:
     """"doctor", "stop" or "restart" when the command RUNS a guarded shape, else None."""
     if _depth > 3:
+        return None
+    if len(command) > _MAX_COMMAND_CHARS:
+        # Reading a huge command line by line costs seconds per hundred kilobytes and the hook has a timeout
+        # that lets the command through. Above the cap nothing is parsed: it is denied when it names the
+        # gateway next to a stop/restart verb, or `doctor` next to `--fix`, and allowed otherwise.
+        low = command.lower()
+        if "gateway" in low and re.search(r"restart|stop|kill", low):
+            return "restart"
+        if "doctor" in low and "--fix" in low:
+            return "doctor"
         return None
     for logical, physical in _logical_lines(command):
         statements = _read_statements(logical, physical)
