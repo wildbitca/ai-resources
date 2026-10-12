@@ -24,6 +24,12 @@ cost bound; a string that cannot be tokenised, or nests past the limit, is read 
 stop/restart verb (or a brace, glob or expansion in the verb slot) sits after the gateway. Read-only verbs
 (`status`, `show`, `is-active`, `list-units`, `logs`, `cat`, ...) are never matched.
 
+Text that is fed to a shell is command text too: a heredoc or here-string whose consumer is `sh`, `bash`,
+`zsh`, `dash`, `ksh`, `eval` or `source /dev/stdin`, and what `echo`/`printf` or a heredoc pipe into one. The
+commands that other commands run (`xargs CMD`, `find -exec CMD`, `parallel CMD`), the value of an `alias`,
+`trap 'CMD' SIG` and a literal assigned earlier in the same text and then evaluated (`V=...; eval "$V"`) are
+read as commands, and a `case` pattern's `)` does not end a `$(...)`.
+
 A shell line continuation (a backslash before the newline, outside single quotes) and a quoted string that
 spans lines are joined before the command is tokenised, so a verb or a unit moved to the next line is still seen.
 Only LF breaks a line (a backslash before CRLF escapes the CR), and an unquoted newline separates statements.
@@ -53,6 +59,7 @@ import re
 import shlex
 import subprocess
 import sys
+from collections import deque
 
 UNIT = "openclaw-gateway.service"
 WATCHDOG_OFF = os.path.expanduser("~/.openclaw/watchdog.off")
@@ -67,7 +74,7 @@ _HEREDOC = re.compile(
     r"(?:'[^'\n]*'|\"[^\"\n]*\"|\\[^\s]|[^\s;&|()<>'\"\\`])*)")   # then any mix of those and word characters
 
 
-_MAX_SCAN_DEPTH = 24
+_MAX_SCAN_DEPTH = 48
 
 
 def _unescape_backticks(raw: str) -> str:
@@ -76,9 +83,30 @@ def _unescape_backticks(raw: str) -> str:
     return re.sub(r"\\([\\$`])", r"\1", raw)
 
 
+_CASE_WORD = re.compile(r"(case|esac|in)(?=[\s;&|()<>]|$)")
+_AFTER_KEYWORD = frozenset({"then", "do", "else", "elif", "if", "while", "until", "!", "time"})
+
+
+def _command_position(text: str, i: int, lo: int) -> bool:
+    """True when the word at `i` starts a command: it follows a separator, a keyword that is followed by a
+    command, or the start of the group that begins at `lo`."""
+    j = i - 1
+    while j >= lo and text[j] in " \t":
+        j -= 1
+    if j < lo:
+        return True
+    if text[j] in ";&|(){\n":
+        return True
+    k = j
+    while k >= lo and (text[k].isalpha() or text[k] == "!"):
+        k -= 1
+    return text[k + 1:j + 1] in _AFTER_KEYWORD
+
+
 def _scan(text: str, literal_quotes: bool = False
-          ) -> tuple[list[str], list[tuple[str, bool]], bool, list[tuple[int, int]]]:
-    """Walk `text` as the shell reads it and return (substitutions, heredocs, too_deep, spans).
+          ) -> tuple[list[str], list[tuple[str, bool, int, int]], bool, list[tuple[int, int]],
+                     list[tuple[int, int]]]:
+    """Walk `text` as the shell reads it and return (substitutions, heredocs, too_deep, spans, herestrings).
 
     `substitutions` are the bodies of the OUTERMOST `$(...)`, `<(...)`, `>(...)` and backtick substitutions the
     shell would run, wherever they sit except inside single quotes (double quotes do not stop them: `echo
@@ -87,13 +115,19 @@ def _scan(text: str, literal_quotes: bool = False
     delimiter, whose body the shell expands. `too_deep` is set when substitutions nest past
     `_MAX_SCAN_DEPTH`; the caller reads the text with the fallback then.
 
-    `spans` are the (start, end) offsets of those substitutions in `text`, delimiters included.
+    `spans` are the (start, end) offsets of those substitutions in `text`, delimiters included. A heredoc
+    entry also carries the (start, end) offsets of its operator and delimiter word, and `herestrings` holds the
+    (start, end) offsets of each `<<<` operator.
+
+    A `)` that ends a `case` pattern inside a substitution does not end the substitution: `case`, `in`, the
+    pattern terminator, `;;` and `esac` are followed there.
 
     `literal_quotes` reads a heredoc BODY: quotes and comments are plain characters there and only a backslash,
     `$(` and a backtick are special."""
     subs: list[str] = []
     spans: list[tuple[int, int]] = []
-    docs: list[tuple[str, bool]] = []
+    docs: list[tuple[str, bool, int, int]] = []
+    herestrings: list[tuple[int, int]] = []
     deep = [False]
     n = len(text)
 
@@ -101,7 +135,10 @@ def _scan(text: str, literal_quotes: bool = False
         """Read from `i` in context `ctx` ("cmd", "sub" inside `$(`, or "dq") up to its terminator. Returns
         (index after the terminator, whether a terminator was found)."""
         parens, prev = 0, " "
-        pending: list[str] = []              # heredoc delimiters whose body starts at the next newline
+        start = i
+        cases: list[str] = []                # one state per open `case`: head, pat (pattern), body
+        pat_paren = False                    # a `(`-led pattern is open: its `)` ends the pattern
+        pending: deque[str] = deque()        # heredoc delimiters whose body starts at the next newline
         while i < n:
             c = text[i]
             if c == "\\":
@@ -114,7 +151,7 @@ def _scan(text: str, literal_quotes: bool = False
                     line = text[i:n if j < 0 else j]
                     i = n if j < 0 else j + 1
                     if _closes(line, pending[0]):
-                        pending.pop(0)
+                        pending.popleft()
                 prev = " "
                 continue
             if ctx == "dq":
@@ -144,9 +181,13 @@ def _scan(text: str, literal_quotes: bool = False
                     if m:
                         word = m.group(1)
                         delim = re.sub(r"['\"\\]", "", word)
-                        docs.append((delim, not re.search(r"['\"\\]", word)))
+                        docs.append((delim, not re.search(r"['\"\\]", word), m.start(), m.end()))
                         pending.append(delim)
                         i, prev = m.end(), "x"
+                        continue
+                    if text.startswith("<<<", i):
+                        herestrings.append((i, i + 3))
+                        i, prev = i + 3, "x"
                         continue
             if c == "$" and text.startswith("$$", i):
                 i, prev = i + 2, "x"                             # `$$` is the PID: a quote after it is a quote
@@ -176,24 +217,50 @@ def _scan(text: str, literal_quotes: bool = False
                 i, prev = end, "x"
                 continue
             if ctx == "sub":
+                if c in "cei" and (prev.isspace() or prev in ";&|()"):
+                    m = _CASE_WORD.match(text, i)
+                    if m:
+                        word = m.group(1)
+                        if word == "case" and _command_position(text, i, start):
+                            cases.append("head")
+                        elif word == "in" and cases and cases[-1] == "head":
+                            cases[-1] = "pat"
+                        elif word == "esac" and cases and cases[-1] != "head" and \
+                                _command_position(text, i, start):
+                            cases.pop()
+                        i, prev = i + len(word), "x"
+                        continue
+                if c == ";" and cases and cases[-1] == "body" and text.startswith((";;", ";&"), i):
+                    cases[-1] = "pat"
+                    i, prev = i + 2, ";"
+                    continue
                 if c == "(":
+                    if parens == 0 and cases and cases[-1] == "pat":
+                        pat_paren = True
                     parens += 1
                 elif c == ")":
                     if parens == 0:
+                        if cases and cases[-1] == "pat":
+                            cases[-1] = "body"       # the `)` that ends a case pattern
+                            i, prev = i + 1, ")"
+                            continue
                         return i + 1, True
                     parens -= 1
+                    if parens == 0 and pat_paren:
+                        pat_paren = False
+                        cases[-1] = "body"
             prev = c
             i += 1
         return n, False
 
     walk(0, "cmd", 0, True)
-    return subs, docs, deep[0], spans
+    return subs, docs, deep[0], spans, herestrings
 
 
 def _heredoc_delimiters(text: str) -> list[str]:
     """The delimiter of every heredoc opened on this logical line, with quotes and backslashes removed. An
     operator inside a quoted string is not a heredoc."""
-    return [d for d, _ in _scan(text)[1]]
+    return [d[0] for d in _scan(text)[1]]
 
 
 # Constructs inside a double-quoted string that the line scanner reads as flat text although the shell runs
@@ -250,7 +317,7 @@ _NO_VALUES: tuple[frozenset, frozenset] = (frozenset(), frozenset())
 _SHELL_SHORT_VALUE = frozenset("oO")
 _SHELL_LONG_VALUE = frozenset({"--rcfile", "--init-file"})
 _KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}
-_SHELLS = {"bash", "sh", "zsh", "dash"}
+_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _OPERATORS = {";", "&&", "||", "|", "&", "|&", "(", ")", "{", "}"}
 
 REASON = (
@@ -330,23 +397,32 @@ def _logical_lines_and_bodies(command: str) -> tuple[list[tuple[str, list[str]]]
 
     The second value holds the bodies of the heredocs whose delimiter is NOT quoted: the shell expands
     `$(...)` and backticks there, so a command substitution in such a body runs."""
+    out, bodies, _docs = _logical_lines_docs(command)
+    return out, bodies
+
+
+def _logical_lines_docs(command: str
+                        ) -> tuple[list[tuple[str, list[str]]], list[str], dict[int, list[list]]]:
+    """`_logical_lines_and_bodies` plus, per logical line index, its heredocs as `[delimiter, expands, start,
+    end, body lines or None]` (offsets of the operator and delimiter word in the logical line; the body is None
+    when the group holds its own closing line, and is then read where the group is read again)."""
     out: list[tuple[str, list[str]]] = []
     bodies: list[str] = []
-    pending: list[tuple[str, bool]] = []
-    body: list[str] = []
+    line_docs: dict[int, list[list]] = {}
+    pending: deque[list] = deque()
     buf = ""
     parts: list[str] = []
     quote: str | None = None
     prev = " "
     for line in command.split("\n"):   # only LF breaks a line: `\r`, \v, \f ... are ordinary
         if pending:
-            if _closes(line, pending[0][0]):
-                if pending[0][1]:
-                    bodies.append("\n".join(body))
-                pending.pop(0)
-                body = []
+            ent = pending[0]
+            if _closes(line, ent[0]):
+                if ent[1]:
+                    bodies.append("\n".join(ent[4]))
+                pending.popleft()
             else:
-                body.append(line)
+                ent[4].append(line)
             continue
         parts.append(line)
         quote, prev, cont = _scan_piece(line, quote, prev)
@@ -361,12 +437,27 @@ def _logical_lines_and_bodies(command: str) -> tuple[list[tuple[str, list[str]]]
         out.append((buf, parts))
         # A heredoc opened INSIDE a joined group (`"$(cat <<'EOF'` ... `EOF` ... `)"`) has its body and its
         # delimiter among the group's own physical lines already: waiting for another delimiter would skip
-        # the commands that follow the group.
-        pending.extend((d, e) for d, e in _scan(buf)[1] if all(not _closes(pl, d) for pl in parts))
+        # the commands that follow the group. The set of those lines is built once: a delimiter is looked up,
+        # never compared with every line (zsh allows any number of heredocs on one line).
+        docs = _scan(buf)[1]
+        if docs:
+            closers: set[str] = set()
+            for pl in parts:
+                text = pl.strip()
+                closers.add(text)
+                if text.endswith("\\"):
+                    closers.add(text[:-1].strip())
+            entries: list[list] = []
+            for d, expands, s, e in docs:
+                ent = [d, expands, s, e, None if d in closers else []]
+                if ent[4] is not None:
+                    pending.append(ent)
+                entries.append(ent)
+            line_docs[len(out) - 1] = entries
         buf, parts, prev = "", [], " "
     if parts:                                # the command ends inside a continuation or an open quote
         out.append((buf, parts))
-    return out, bodies
+    return out, bodies, line_docs
 
 
 def _logical_lines(command: str) -> list[tuple[str, list[str]]]:
@@ -417,7 +508,7 @@ def _plain_ansi_c(text: str) -> str:
     """`text` as the tokeniser (which is not a shell) must read it: every `$'...'` string (outside other
     quotes) rewritten as the single-quoted string it stands for, a backslash-newline outside single quotes
     removed, and a backslash before `$` or a backtick inside double quotes dropped (shlex keeps it)."""
-    if "$'" not in text and "\\" not in text:
+    if "$'" not in text and '$"' not in text and "\\" not in text:
         return text
     out: list[str] = []
     i, n = 0, len(text)
@@ -456,6 +547,8 @@ def _plain_ansi_c(text: str) -> str:
         elif ch == "$" and text.startswith("$$", i):
             out.append("$$")
             i += 2
+        elif ch == "$" and text.startswith('$"', i):
+            i += 1                              # a locale string `$"..."` is the double-quoted string itself
         elif ch == "$" and text.startswith("$'", i):
             j = i + 2
             while j < n and text[j] != "'":
@@ -592,7 +685,15 @@ def _brace_is_reserved(words: list[str]) -> bool:
 def _statements(line: str) -> list[list[str]]:
     """The simple commands of `line`. An unquoted newline separates statements like `;` does, and a comment
     ends at its newline, so the line after a comment is never read as the comment's arguments."""
+    return [stmt for stmt, _piped in _statements_piped(line)]
+
+
+def _statements_piped(line: str) -> list[tuple[list[str], bool]]:
+    """`_statements` with, for each statement, whether it reads the output of the statement before it (a `|`
+    or `|&` is the last separator between them; a newline after a pipe continues the pipeline)."""
     stmts: list[list[str]] = [[]]
+    piped: list[bool] = [False]
+    sep: str | None = None
     for segment in _unquoted_newline_segments(_plain_ansi_c(_mask_substitutions(line))):
         segment = _strip_redirections(segment)
         lex = shlex.shlex(segment, posix=True, punctuation_chars=True)
@@ -600,14 +701,23 @@ def _statements(line: str) -> list[list[str]]:
         lex.commenters = ""                 # comments were removed above: a mid-word `#` is an ordinary character
         tokens = list(lex)  # ValueError on unbalanced quotes: the caller fails open
         stmts.append([])
+        piped.append(False)
+        if sep is None:
+            sep = "\n"
         for tok in tokens:
             if tok in ("{", "}") and not _brace_is_reserved(stmts[-1]):
                 stmts[-1].append(tok)       # a brace is a reserved word at the start of a command only
             elif tok and set(tok) <= set(";&|(){}"):
                 stmts.append([])
+                piped.append(False)
+                if not (sep in ("|", "|&") and tok in ("(", "{")):
+                    sep = tok
             else:
+                if not stmts[-1]:
+                    piped[-1] = sep in ("|", "|&")
+                    sep = None
                 stmts[-1].append(tok)
-    return [s for s in stmts if s]
+    return [(s, p) for s, p in zip(stmts, piped) if s]
 
 
 def _option_width(tok: str, short_value, long_value) -> int:
@@ -693,9 +803,55 @@ def _command_words(stmt: list[str], splits: list[str] | None = None) -> list[str
     return stmt[i:]
 
 
+_XARGS_SHORT_VALUE = frozenset("aEdILnPs")
+_XARGS_LONG_VALUE = frozenset({"--arg-file", "--delimiter", "--eof", "--max-args", "--max-procs", "--max-chars",
+                               "--max-lines", "--process-slot-var"})
+_PARALLEL_SHORT_VALUE = frozenset("jnNSaduLPsIrC")
+_FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
+
+
+def _exec_inner(words: list[str]) -> list[list[str]]:
+    """The commands that `xargs [opts] CMD ...`, `find ... -exec CMD ... ;` and `parallel [opts] CMD ::: ...`
+    run: their words, so the recogniser reads them like any other statement."""
+    if not words:
+        return []
+    base = os.path.basename(words[0])
+    out: list[list[str]] = []
+    if base in ("xargs", "parallel"):
+        short = _XARGS_SHORT_VALUE if base == "xargs" else _PARALLEL_SHORT_VALUE
+        long = _XARGS_LONG_VALUE if base == "xargs" else frozenset()
+        i = 1
+        while i < len(words) and words[i].startswith("-") and words[i] != "--":
+            i += _option_width(words[i], short, long)
+        if i < len(words) and words[i] == "--":
+            i += 1
+        rest = words[i:]
+        if base == "parallel":
+            for stop, w in enumerate(rest):
+                if w.startswith(":::"):
+                    rest = rest[:stop]
+                    break
+        if rest:
+            out.append(rest)
+    elif base == "find":
+        for i, w in enumerate(words):
+            if w in _FIND_EXEC and i + 1 < len(words):
+                out.append(words[i + 1:])
+    return out
+
+
 def _is_doctor_fix(words: list[str]) -> bool:
-    return (bool(words) and os.path.basename(words[0]) == "openclaw"
-            and "doctor" in words[1:3] and "--fix" in words[1:])
+    """`openclaw [global options] doctor ... --fix`: the global options (`--profile p`, `--log-level l`,
+    `--container c`, flags) are skipped the way the gateway verbs skip them."""
+    if not words or os.path.basename(words[0]) != "openclaw" or "--fix" not in words[1:]:
+        return False
+    if "doctor" in words[1:3]:
+        return True
+    rest = words[1:1 + 8]
+    n = 0
+    while n < len(rest) and rest[n].startswith("-"):
+        n += _option_width(rest[n], frozenset(), _OPENCLAW_GLOBAL_LONG_VALUE)
+    return n < len(rest) and rest[n] == "doctor"
 
 
 def _systemctl_verb(words: list[str]) -> tuple[str | None, list[str]]:
@@ -836,32 +992,106 @@ def _inner_command(words: list[str]) -> str | None:
 _STOP_WORDS = {"stop", "kill"}
 _RESTART_WORDS = {"restart", "try-restart", "reload-or-restart", "try-reload-or-restart", "condrestart"}
 _NEAR = 8          # how many words before the unit a verb may sit in the unit form of the fallback
-_MAX_DEPTH = 8     # how many wrappers (`bash -c`, `eval`, `env -S`, `$(...)`) are followed before the fallback
+_MAX_DEPTH = 40    # how many wrappers (`bash -c`, `eval`, `env -S`, `$(...)`) are followed before the fallback
 _WORK_BUDGET = 4 * _MAX_COMMAND_CHARS   # characters read over one whole command, nested strings included
 _work = 0
+_MAX_EXEC_EXPANSIONS = 64      # `xargs`/`find -exec` command lists followed per command line
 _SEGMENT = re.compile(r"[;&|()\n]+")
 _UNKNOWN_VERB = re.compile(r"[$`*?\[{~]")
 
 
+_DATA_COMMANDS = {"echo", "printf", "print", "grep", "egrep", "fgrep", "rg"}
+_TRANSPARENT = {"sudo", "env", "command", "nohup", "time", "exec", "nice", "setsid", "stdbuf"}
+
+
+_DURATION = re.compile(r"\d+(\.\d+)?[smhd]?$")
+
+
+def _plain(w: str) -> str:
+    """A word of the quote-stripped fallback text, without a leftover `$` of a `$'...'` string."""
+    return w.lstrip("$")
+
+
+def _is_data_command(words: list[str]) -> bool:
+    """True when the statement's command (after assignments, wrappers and their options) only prints or
+    searches its arguments: `echo openclaw gateway restart` runs nothing. A shell's `-c` string and an `eval`
+    argument are the command they hold."""
+    for k, w in enumerate(words):
+        w = _plain(w)
+        if w.startswith("-") or _ASSIGNMENT.match(w) or _DURATION.match(w) or w in _TRANSPARENT or \
+                os.path.basename(w) in _TRANSPARENT or w == "timeout":
+            continue
+        base = os.path.basename(w)
+        if base == "eval":
+            return _is_data_command(words[k + 1:])
+        if base in _SHELLS:
+            for j in range(k + 1, len(words)):
+                if re.fullmatch(r"-[a-z]*c[a-z]*", words[j]):
+                    return _is_data_command(words[j + 1:])      # the string after -c is the command
+            for j in range(k + 1, len(words)):
+                if words[j].startswith("<<<"):                  # `sh <<<'text'`: the text is the command
+                    return _is_data_command(([words[j][3:]] if words[j][3:] else []) + words[j + 1:])
+            return False
+        return base in _DATA_COMMANDS
+    return False
+
+
+def _feeds_a_shell(words: list[str]) -> bool:
+    """True for a statement that runs text it is given: `eval`, `source`, or a shell without a `-c` string.
+    A shell fed a here-string reads the text after `<<<` as its commands (a data command there is harmless)."""
+    for k, w in enumerate(words):
+        w = _plain(w)
+        if w.startswith("-") or _ASSIGNMENT.match(w) or os.path.basename(w) in _TRANSPARENT:
+            continue
+        base = os.path.basename(w)
+        if base in ("eval", "source", "."):
+            return True
+        if base in _SHELLS:
+            rest = words[k + 1:]
+            if any(re.fullmatch(r"-[a-z]*c[a-z]*", r) for r in rest):
+                return False
+            hs = next((j for j, r in enumerate(rest) if r.startswith("<<<")), None)
+            if hs is not None:
+                return not _is_data_command(([rest[hs][3:]] if rest[hs][3:] else []) + rest[hs + 1:])
+            return True
+        return False
+    return False
+
+
 def _verb_next_to_gateway(text: str) -> str | None:
     """"stop" or "restart" when `text` (a string that could not be tokenised, or nests too deep to follow)
-    has a stop/restart verb after the gateway: `openclaw [opts] gateway [opts] <verb>` (any number of words
-    later, up to a known subcommand) or `<verb> [opts] openclaw-gateway[.service]`. The two words alone
-    (`echo openclaw gateway`) are not enough (L4): the fallback denies only where a restart or stop is
-    actually being asked for. An expansion, a glob or a brace where the verb goes hides it: fail closed."""
+    has a stop/restart verb after the gateway: `openclaw [opts] gateway [opts] <verb>` or `<verb> [opts]
+    openclaw-gateway[.service]`. The words alone (`echo openclaw gateway`, or a sentence that has `openclaw`,
+    `gateway` and `restart` far apart) are not enough (L4): the fallback denies only where a restart or stop is
+    actually being asked for, that is when the verb is within `_NEAR` positional words of `gateway` (options
+    and their values do not count) and `gateway` within `_NEAR` words of `openclaw`. An expansion, a glob or a
+    brace where the verb goes hides it: fail closed. Every scan is a window, so the cost is linear."""
     # Quotes and backslashes are dropped first so a verb split by shell quoting joins up (`re''start`,
     # `res\tart` -> `restart`); `$` and backticks stay in the words so an expansion can be seen. Case is
     # folded: the CLI is the one path that could still reach the unit through a case variant.
     found: str | None = None
-    for seg in _SEGMENT.split(re.sub(r"['\"\\]", "", text.lower())):
+    segments = _SEGMENT.split(re.sub(r"['\"\\]", "", text.lower()))
+    skip_data = not any(_feeds_a_shell(seg.split()) for seg in segments)
+    for seg in segments:
         words = seg.split()
+        count = len(words)
+        if skip_data and _is_data_command(words):
+            continue
         for i, w in enumerate(words):
-            if os.path.basename(w) == "openclaw" and "gateway" in words[i + 1:]:
-                after = words[words.index("gateway", i + 1) + 1:]
-                first_positional = next((v for v in after if not v.startswith("-")), None)
-                if first_positional is not None and _UNKNOWN_VERB.search(first_positional):
-                    return "restart"
-                for v in after:
+            if os.path.basename(w) == "openclaw":
+                g = next((j for j in range(i + 1, min(count, i + 1 + _NEAR)) if words[j] == "gateway"), None)
+                if g is None:
+                    continue
+                seen, j = 0, g + 1
+                while j < count and seen < _NEAR:
+                    v = words[j]
+                    if v.startswith("-"):
+                        j += _option_width(v, frozenset(), _GATEWAY_LONG_VALUE)
+                        continue
+                    if seen == 0 and _UNKNOWN_VERB.search(v):
+                        return "restart"
+                    seen += 1
+                    j += 1
                     if v in _STOP_WORDS:
                         found = found or "stop"
                     elif v in _RESTART_WORDS:
@@ -884,13 +1114,20 @@ def _verb_next_to_gateway(text: str) -> str | None:
 def _text_shape(text: str) -> str | None:
     """The fallback for text the recogniser cannot (or may not) follow any further: "restart", "stop" or
     "doctor" when the words are there, None when they are not. It reads words, not commands."""
+    global _work
+    _work += len(text)                       # the fallback is charged against the same bound
     found = _verb_next_to_gateway(text)
     if found == "restart":
         return found
-    for seg in _SEGMENT.split(re.sub(r"['\"\\]", "", text.lower())):
+    segments = _SEGMENT.split(re.sub(r"['\"\\]", "", text.lower()))
+    skip_data = not any(_feeds_a_shell(seg.split()) for seg in segments)
+    for seg in segments:
         words = seg.split()
+        if "doctor" not in words or "--fix" not in words or (skip_data and _is_data_command(words)):
+            continue
+        last_fix = max(j for j, w in enumerate(words) if w == "--fix")
         for i, w in enumerate(words):
-            if os.path.basename(w) == "openclaw" and "doctor" in words[i + 1:i + 3] and "--fix" in words[i + 1:]:
+            if os.path.basename(w) == "openclaw" and last_fix > i and "doctor" in words[i + 1:i + 7]:
                 return found or "doctor"
     return found
 
@@ -971,11 +1208,11 @@ def _env_split_shape(split: str, rest: list[str], depth: int) -> str | None:
 def _line_statements(lines: list[str]) -> list[list[str]]:
     """The statements of each physical line on its own; a line that does not tokenise is skipped."""
     out: list[list[str]] = []
-    pending: list[str] = []                  # heredoc delimiters whose body is being skipped
+    pending: deque[str] = deque()            # heredoc delimiters whose body is being skipped
     for line in lines:
         if pending:
             if _closes(line, pending[0]):
-                pending.pop(0)
+                pending.popleft()
             continue                         # text fed to a command is not a command
         try:
             out += _statements(line)
@@ -985,13 +1222,185 @@ def _line_statements(lines: list[str]) -> list[list[str]]:
     return out
 
 
-def _read_statements(logical: str, physical: list[str]) -> list[list[str]]:
-    """The statements of a logical line. When the joined text does not tokenise (a stray apostrophe), the
-    physical lines are read one by one, so one stray quote cannot hide the commands on the next lines."""
+_SHELL_WORD = re.compile(r"(?<![\w./-])(?:sh|bash|zsh|dash|ksh)(?![\w.-])")
+_TEXT_PRODUCERS = {"echo", "printf", "print"}
+_PRINTF_SPEC = re.compile(r"%[-+ #0-9.*]*[a-zA-Z%]")
+_MARK = "__KITGUARD_%s%d__"
+_MARK_WORD = re.compile(r"__KITGUARD_(HD|HS)(\d+)__$")
+_STDIN_SOURCES = {"/dev/stdin", "/dev/fd/0", "-"}
+
+
+def _redirect_word_end(text: str, j: int) -> int:
+    """The end offset of the word that follows a redirection operator at `j` (quotes kept whole)."""
+    n = len(text)
+    while j < n and text[j] not in " \t\n;&|()<>":
+        if text[j] == "\\":
+            j += 2
+        elif text[j] in "'\"":
+            k = text.find(text[j], j + 1)
+            j = n if k < 0 else k + 1
+        else:
+            j += 1
+    return min(j, n)
+
+
+def _mark_redirections(logical: str, entries: list[list], herestrings: list[tuple[int, int]]
+                       ) -> tuple[str, dict[str, str]]:
+    """`logical` with every real heredoc operator and here-string replaced by a marker word, and the text each
+    marker stands for: the heredoc body (None bodies are skipped) or the here-string word, unquoted. The
+    marker keeps the redirection attached to the statement it belongs to."""
+    edits: list[tuple[int, int, str]] = []
+    texts: dict[str, str] = {}
+    for k, (_delim, _expands, start, end, body) in enumerate(entries):
+        if body is None:
+            continue
+        while start > 0 and logical[start - 1].isdigit() and (start == 1 or logical[start - 2] in " \t\n;&|()"):
+            start -= 1                                   # `3<<EOF`: the fd number belongs to the operator
+        mark = _MARK % ("HD", k)
+        edits.append((start, end, f" {mark} "))
+        texts[mark] = "\n".join(body)
+    for k, (start, op_end) in enumerate(herestrings):
+        j = op_end
+        while j < len(logical) and logical[j] in " \t":
+            j += 1
+        end = _redirect_word_end(logical, j)
+        raw = logical[j:end]
+        try:
+            value = " ".join(shlex.split(_plain_ansi_c(raw)))
+        except ValueError:
+            value = raw
+        mark = _MARK % ("HS", k)
+        edits.append((start, end, f" {mark} "))
+        texts[mark] = value
+    if not edits:
+        return logical, texts
+    edits.sort()
+    out: list[str] = []
+    last = 0
+    for start, end, repl in edits:
+        if start < last:
+            continue
+        out.append(logical[last:start])
+        out.append(repl)
+        last = end
+    out.append(logical[last:])
+    return "".join(out), texts
+
+
+def _reads_script_from_stdin(words: list[str]) -> bool:
+    """True for `bash`, `sh -x`, `sudo zsh -s -- a`: a shell that is given no `-c` string and no script file
+    reads its commands from standard input."""
+    n = 1
+    s_flag = False
+    while n < len(words):
+        w = words[n]
+        if w == "--":
+            n += 1
+            break
+        if w == "-":
+            return True
+        if not w.startswith(("-", "+")):
+            return s_flag
+        if re.fullmatch(r"-[A-Za-z]+", w):
+            if "c" in w:
+                return False
+            if "s" in w:
+                s_flag = True
+        n += _option_width(w.replace("+", "-", 1) if w.startswith("+") else w,
+                           _SHELL_SHORT_VALUE, _SHELL_LONG_VALUE)
+    return n >= len(words) or s_flag
+
+
+def _printf_text(args: list[str]) -> str:
+    """What `printf FORMAT ARGS...` writes, for the `%s`-style conversions: enough to see a command that is
+    spelled through the format. The format is reused while arguments remain, as printf does."""
+    if not args:
+        return ""
+    fmt, rest = args[0], list(args[1:])
+    out: list[str] = []
+    for _ in range(len(rest) + 1):
+        def conv(m: re.Match) -> str:
+            if m.group(0) == "%%":
+                return "%"
+            return rest.pop(0) if rest else ""
+        out.append(_PRINTF_SPEC.sub(conv, fmt))
+        if not rest or not _PRINTF_SPEC.search(fmt):
+            break
+    return "".join(out).replace("\\n", "\n")
+
+
+def _stdin_command_text(index: int, stmts: list[tuple[list[str], bool]], marks: dict[str, str]) -> list[str]:
+    """The texts a shell at `stmts[index]` would read as commands: its own heredocs and here-strings, and what
+    the statements piped into it write (their heredocs, here-strings, and the arguments of `echo`/`printf`)."""
+    texts: list[str] = []
+    j, hops = index, 0
+    while True:
+        words = stmts[j][0]
+        texts += [marks[w] for w in words if w in marks]
+        if j != index:
+            clean = _command_words([w for w in words if w not in marks])
+            if clean and os.path.basename(clean[0]) in _TEXT_PRODUCERS:
+                args = clean[1:]
+                while args and re.fullmatch(r"-[neE]+", args[0]):
+                    args = args[1:]                      # echo's own options, not text
+                texts.append(" ".join(args))
+                texts += args
+                if os.path.basename(clean[0]) == "printf":
+                    texts.append(_printf_text(args))
+        if j == 0 or not stmts[j][1] or hops >= 8:
+            break
+        j -= 1
+        hops += 1
+    return [t for t in texts if t]
+
+
+_VAR_REF = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+_ASSIGNERS = {"export", "declare", "typeset", "readonly", "local"}
+
+
+def _note_assignments(words: list[str], assigned: dict[str, str]) -> None:
+    """Remember `NAME=literal` statements (also after `export`/`declare`) so a later `eval "$NAME"` can be read."""
+    if not words:
+        return
+    rest = words
+    if os.path.basename(words[0]) in _ASSIGNERS:
+        rest = [w for w in words[1:] if not w.startswith("-")]
+    if rest and all(_ASSIGNMENT.match(w) for w in rest):
+        for w in rest:
+            name, _, value = w.partition("=")
+            assigned[name] = value
+
+
+def _expand_known(words: list[str], assigned: dict[str, str]) -> list[str]:
+    """`words` with `$NAME` / `${NAME}` replaced by a literal assigned earlier in the same text."""
+    if not assigned:
+        return words
+    return [_VAR_REF.sub(lambda m: assigned.get(m.group(1) or m.group(2), m.group(0)), w) if "$" in w else w
+            for w in words]
+
+
+def _trap_text(words: list[str]) -> str | None:
+    """The command text of `trap [--] 'text' SIGNAL...` (run by the shell when the signal comes)."""
+    if not words or os.path.basename(words[0]) != "trap":
+        return None
+    rest = words[1:]
+    while rest and rest[0].startswith("-") and rest[0] not in ("-",):
+        if rest.pop(0) == "--":
+            break
+    if len(rest) >= 2 and rest[0] not in ("-", ""):
+        return rest[0]
+    return None
+
+
+def _read_statements(logical: str, physical: list[str], marked: str | None = None
+                     ) -> tuple[list[tuple[list[str], bool]], bool]:
+    """The (statement, piped-in) pairs of a logical line, and whether `marked` was the text read. When the joined
+    text does not tokenise (a stray apostrophe), the physical lines are read one by one, so one stray quote
+    cannot hide the commands on the next lines (their pipes and heredoc markers are then unknown)."""
     try:
-        return _statements(logical)
+        return _statements_piped(marked if marked is not None else logical), marked is not None
     except ValueError:
-        return _line_statements(physical)
+        return [(s, False) for s in _line_statements(physical)], False
 
 
 _memo: tuple[str, str | None] | None = None
@@ -1028,16 +1437,28 @@ def _shape(command: str, _depth: int) -> str | None:
         # Past the nesting limit (or the cost bound over the whole command) the text is read for words: the
         # gateway next to a verb, or `doctor --fix`, is denied and anything else is allowed.
         return _text_shape(command)
-    lines, bodies = _logical_lines_and_bodies(command)
+    lines, bodies, line_docs = _logical_lines_docs(command)
     for body in bodies:
         # An unquoted heredoc delimiter: the shell expands `$(...)` and backticks in the body.
         for sub in _scan(body, literal_quotes=True)[0]:
             inner = shape(sub, _depth + 1)
             if inner:
                 return inner
-    for logical, physical in lines:
-        statements = _read_statements(logical, physical)
-        subs, _docs, too_deep, _spans = _scan(logical)
+    assigned: dict[str, str] = {}
+    expanded = 0
+    for li, (logical, physical) in enumerate(lines):
+        subs, _docs, too_deep, _spans, herestrings = _scan(logical)
+        entries = line_docs.get(li, [])
+        marked, marks = (_mark_redirections(logical, entries, herestrings)
+                         if entries or herestrings else (logical, {}))
+        statements, used_marks = _read_statements(logical, physical, marked if marks else None)
+        if marks and not used_marks and _SHELL_WORD.search(logical):
+            # The line does not tokenise, so a heredoc or here-string cannot be tied to its command: with a
+            # shell word on the line every such text is read as commands (fail closed).
+            for text in marks.values():
+                inner = shape(text, _depth + 1)
+                if inner:
+                    return inner
         if too_deep:
             found = _text_shape(logical)
             if found:
@@ -1045,13 +1466,14 @@ def _shape(command: str, _depth: int) -> str | None:
         if len(physical) > 1 and _NESTED_EXPANSION.search(logical):
             # The scanner cannot follow a quote nested in an expansion, so the join may be imaginary: read
             # the physical lines one by one as well (the 2.1.0 reading) and deny if either view matches.
-            statements += _line_statements(physical)
+            statements = statements + [(s, False) for s in _line_statements(physical)]
         for sub in subs:
             # `"$(cmd)"`, `` `cmd` ``, `<(cmd)`: the shell runs the text inside as a command.
             inner = shape(sub, _depth + 1)
             if inner:
                 return inner
-        for stmt in statements:
+        for index, (raw_stmt, _piped) in enumerate(statements):
+            stmt = [w for w in raw_stmt if w not in marks] if marks else raw_stmt
             splits: list[str] = []
             words = _command_words(stmt, splits)
             for split in splits:
@@ -1063,8 +1485,44 @@ def _shape(command: str, _depth: int) -> str | None:
             action = _systemctl_action(words) or _gateway_action(words)
             if action:
                 return action
-            # `bash -c "openclaw doctor --fix"`, `eval "..."`: the string IS a command.
-            inner_cmd = _inner_command(words)
+            _note_assignments(stmt, assigned)
+            if not words:
+                continue
+            base = os.path.basename(words[0])
+            if expanded < _MAX_EXEC_EXPANSIONS:
+                # `xargs sh -c '...'`, `find -exec bash -c '...' {} +`, `parallel cmd ::: x`: the words are a command
+                for extra in _exec_inner(words):
+                    expanded += 1
+                    statements.append((extra, False))
+            if base == "alias":
+                # the value of an alias is command text that runs when the alias is used
+                for w in words[1:]:
+                    name, eq, value = w.partition("=")
+                    if eq and value:
+                        inner = shape(value, _depth + 1)
+                        if inner:
+                            return inner
+            # A heredoc, a here-string or a pipe that feeds a shell is command text: `bash <<EOF`,
+            # `cat <<EOF | sh`, `echo '...' | bash`, `bash <<< '...'`.
+            if used_marks or index > 0:
+                feeds_shell = ((base in _SHELLS or base == "ksh") and _reads_script_from_stdin(words)) or \
+                    base == "eval" or (base in ("source", ".") and any(w in _STDIN_SOURCES or
+                                                                     w.startswith("/dev/fd/") for w in words[1:]))
+                if feeds_shell:
+                    for text in _stdin_command_text(index, statements, marks if used_marks else {}):
+                        inner = shape(text, _depth + 1)
+                        if inner:
+                            return inner
+            # `trap 'cmd' EXIT`: the string runs when the signal comes.
+            trapped = _trap_text(words)
+            if trapped:
+                inner = shape(trapped, _depth + 1)
+                if inner:
+                    return inner
+            # `bash -c "openclaw doctor --fix"`, `eval "..."`: the string IS a command, and `V=...; eval "$V"`
+            # runs the literal assigned earlier in the same text.
+            inner_cmd = _inner_command(_expand_known(words, assigned) if base == "eval" or base in _SHELLS
+                                       else words)
             if inner_cmd:
                 inner = shape(inner_cmd, _depth + 1)
                 if inner:

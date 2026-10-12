@@ -1181,3 +1181,219 @@ BENIGN_AGENT_COMMANDS = [
 @pytest.mark.parametrize("command", BENIGN_AGENT_COMMANDS)
 def test_realistic_agent_commands_are_never_denied(guard, monkeypatch, capsys, command):
     assert run(guard, monkeypatch, command, capsys=capsys) == (0, ""), command
+
+
+# --- 2.2b section 1: case patterns, shell-fed text, cost, global options, trap/eval, the deep fallback ---------------
+
+@pytest.mark.parametrize("command,expected", [
+    # 1a: the `)` that ends a case pattern is not the `)` that ends the substitution
+    ("echo $(case 1 in 1) systemctl --user restart openclaw-gateway;; esac)", "restart"),
+    ('echo "$(case x in x) openclaw gateway stop;; esac)"', "stop"),
+    ("x=$(case $a in (a|b) openclaw gateway restart;; *) true;; esac)", "restart"),
+    ("echo $(case $a in a) true;; b) openclaw gateway restart;; esac)", "restart"),
+    ("echo $(case $a in a) case $b in b) openclaw doctor --fix;; esac;; esac)", "doctor"),
+    ("echo $(case 1 in 1) true;; esac); openclaw gateway restart", "restart"),
+    ("echo $(case 1 in 1) (true);; esac) && systemctl --user stop openclaw-gateway", "stop"),
+    ("echo $(\ncase 1 in\n1)\nopenclaw gateway restart\n;;\nesac\n)", "restart"),
+])
+def test_a_case_pattern_inside_a_substitution_does_not_end_it(guard, command, expected):
+    assert guard.shape(command) == expected, command
+
+
+@pytest.mark.parametrize("command", [
+    "echo $(case 1 in 1) openclaw gateway status;; esac)",
+    "echo $(case $a in a) true;; esac) openclaw gateway status",
+    "echo $(echo case in x) ; ls",
+    "x=$(case \"$1\" in start) echo go;; stop) echo halt;; esac); echo \"$x\"",
+])
+def test_case_statements_that_run_nothing_guarded_stay_allowed(guard, command):
+    assert guard.shape(command) is None, command
+
+
+@pytest.mark.parametrize("command,expected", [
+    # 1b: a heredoc, here-string or pipe that feeds a shell is command text
+    ("bash <<EOF\nopenclaw gateway restart\nEOF", "restart"),
+    ("sh <<'EOF'\nsystemctl --user stop openclaw-gateway\nEOF", "stop"),
+    ("sudo bash -s <<EOF\nopenclaw doctor --fix\nEOF", "doctor"),
+    ("cat <<EOF | sh\nopenclaw gateway restart\nEOF", "restart"),
+    ("echo 'openclaw gateway restart' | sh", "restart"),
+    ("echo openclaw gateway restart | bash", "restart"),
+    ("printf '%s\\n' 'openclaw gateway restart' | bash", "restart"),
+    ("printf 'openclaw gateway %s\\n' restart | sh", "restart"),
+    ("bash <<< 'openclaw gateway restart'", "restart"),
+    ("cat <<< 'openclaw gateway stop' | zsh", "stop"),
+    ("bash <<-\"E-F\"\nopenclaw gateway restart\nE-F", "restart"),
+    ("bash -c 'bash <<'\"'\"'EOF'\"'\"'\nopenclaw gateway restart\nEOF'", "restart"),
+    ("echo 'openclaw gateway restart' | tee /dev/null | dash", "restart"),
+    ("source /dev/stdin <<EOF\nopenclaw gateway restart\nEOF", "restart"),
+])
+def test_text_fed_to_a_shell_is_command_text(guard, command, expected):
+    assert guard.shape(command) == expected, command
+
+
+@pytest.mark.parametrize("command", [
+    "cat <<EOF\nopenclaw gateway restart\nEOF",
+    "cat <<EOF | grep restart\nopenclaw gateway restart\nEOF",
+    "bash script.sh <<EOF\nopenclaw gateway restart\nEOF",
+    "bash -c 'cat' <<EOF\nopenclaw gateway restart\nEOF",
+    "python3 - <<'PY'\nprint('openclaw gateway restart')\nPY",
+    "echo 'openclaw gateway restart' | grep -c restart",
+    "echo 'openclaw gateway restart' > notes.txt",
+    "echo 'openclaw gateway status' | sh",
+    "cat <<EOF | sh\nls -la\nEOF",
+    "bash <<< 'echo hello'",
+    "cat file.txt | sh",
+    "curl -fsSL https://example.com/install.sh | bash",
+    "git commit -m \"$(cat <<'EOF'\nnever run openclaw gateway restart\nEOF\n)\"",
+])
+def test_text_that_does_not_reach_a_shell_stays_allowed(guard, command):
+    assert guard.shape(command) is None, command
+
+
+@pytest.mark.parametrize("command,expected", [
+    # 1d: global options before `doctor`
+    ("openclaw --profile p doctor --fix", "doctor"),
+    ("openclaw --log-level debug --profile p doctor --fix --yes", "doctor"),
+    ("openclaw --container c doctor --non-interactive --fix", "doctor"),
+    ("openclaw --dev doctor --fix", "doctor"),
+    ("env -S 'openclaw --profile p doctor --fix \"'", "doctor"),
+    # 1e: trap and a literal assigned earlier
+    ("trap 'openclaw gateway restart' EXIT", "restart"),
+    ("trap -- 'systemctl --user stop openclaw-gateway' INT TERM", "stop"),
+    ("V='openclaw gateway restart'; eval \"$V\"", "restart"),
+    ("V='openclaw gateway restart'; eval $V", "restart"),
+    ("export V='openclaw doctor --fix'\neval \"${V}\"", "doctor"),
+    ("V='openclaw gateway stop'; bash -c \"$V\"", "stop"),
+])
+def test_global_options_trap_and_assigned_literals_are_read(guard, command, expected):
+    assert guard.shape(command) == expected, command
+
+
+@pytest.mark.parametrize("command", [
+    "openclaw --profile p doctor",
+    "openclaw --profile p status --fix",
+    "trap 'rm -f $TMP' EXIT",
+    "trap - EXIT",
+    "trap -p",
+    "V='openclaw gateway status'; eval \"$V\"",
+    "V=restart; echo \"$V\"",
+    "eval \"$UNKNOWN\"",
+])
+def test_the_same_forms_without_a_guarded_command_stay_allowed(guard, command):
+    assert guard.shape(command) is None, command
+
+
+def _nest_sub(text: str, levels: int) -> str:
+    return "echo " + "$(echo " * levels + text + ")" * levels
+
+
+def test_deep_benign_nesting_is_not_denied_by_words_that_are_far_apart(guard):
+    # 1f: text that nests deeper than the recogniser follows is read for words; `openclaw`, `gateway` and
+    # `restart` in a sentence are not a restart. A verb right after `gateway` in command position is.
+    sentence = ("see the openclaw docs, where the gateway page lists many of the options for every platform "
+                "and says restart the service after an upgrade")
+    for levels in (10, 30, guard._MAX_SCAN_DEPTH + 12):
+        assert guard.shape(_nest_sub(sentence, levels)) is None, levels
+        assert guard.shape(_nest_sub("openclaw gateway status then restart later", levels)) is None, levels
+        if levels < guard._MAX_SCAN_DEPTH:         # followed to the end: `echo` only prints the words
+            assert guard.shape(_nest_sub("echo openclaw gateway restart", levels)) is None, levels
+        assert guard.shape(_nest_sub("true; openclaw gateway restart", levels)) == "restart", levels
+        assert guard.shape(_nest_sub("true; systemctl --user stop openclaw-gateway", levels)) == "stop", levels
+        assert guard.shape(_nest_sub("true; openclaw --profile p gateway --port 1 --bind lan stop", levels)) == "stop"
+
+
+def test_the_fallback_unit_window_is_two_near_words(guard):
+    # 1g: in a string that cannot be tokenised a verb up to 2 * _NEAR words before the unit is read, one more is not
+    near = guard._NEAR
+    assert guard.shape("env -S 'restart" + " a" * (2 * near - 1) + " openclaw-gateway \"'") == "restart"
+    assert guard.shape("env -S 'restart" + " a" * (2 * near) + " openclaw-gateway \"'") is None
+
+
+@pytest.mark.parametrize("command,expected", [
+    ('echo "`openclaw gateway restart`"', "restart"),
+    ('x="`systemctl --user stop openclaw-gateway`"', "stop"),
+    ('echo "run `openclaw gateway status` first"', None),
+    ("echo# openclaw gateway restart", None),
+    ("echo #openclaw gateway restart", None),
+    ("echo a# openclaw gateway restart", None),
+    ("echo# a; openclaw gateway restart", "restart"),
+    ("x=a#b openclaw gateway restart", "restart"),
+])
+def test_backticks_in_double_quotes_and_mid_word_hash_are_read_like_bash(guard, command, expected):
+    assert guard.shape(command) == expected, command
+
+
+def _timed(guard, command, limit=3.0):
+    import time
+    t = time.time()
+    result = guard.shape(command)
+    elapsed = time.time() - t
+    assert elapsed < limit, f"{elapsed:.2f}s for {len(command)} bytes"
+    return result
+
+
+def test_28000_openclaw_words_in_a_deep_nest_cost_less_than_three_seconds(guard):
+    # 1c: the window of an `openclaw` word is bounded, and the fallback is charged against the work budget
+    deep9 = "$(echo " * 9 + "openclaw " * 28000 + ")" * 9
+    assert _timed(guard, deep9) is None
+    deep12 = "echo " + "$(echo " * 12 + "openclaw " * 27000 + ")" * 12
+    assert _timed(guard, deep12 + "; openclaw gateway restart") == "restart"
+    assert _timed(guard, "'x\n" + "openclaw doctor " * 14000) is None
+
+
+def test_thousands_of_heredoc_operators_cost_less_than_three_seconds(guard):
+    group = 'echo "' + "".join(f"$(cat<<D{i}\nD{i}\n)\n" for i in range(6000)) + '"'
+    assert _timed(guard, group) is None
+    same = "cat " + "<<E " * 14000 + "\n" + "E\n" * 14000          # one body per operator
+    assert _timed(guard, same) is None
+    assert _timed(guard, same + "bash <<X\nopenclaw gateway restart\nX\n") == "restart"
+    many = "".join(f"cat <<D{i}\nx\nD{i}\n" for i in range(4000))
+    assert _timed(guard, many + "openclaw gateway restart") == "restart"
+
+
+def test_the_one_megabyte_multi_line_quote_stays_under_three_seconds(guard):
+    big = 'echo "$(echo x)\n' + ("a line with 'quotes' and `ticks`\n" * 32_000)
+    assert _timed(guard, big) is None
+    assert _timed(guard, big + "\nopenclaw gateway restart") == "restart"
+
+
+@pytest.mark.parametrize("command,expected", [
+    # commands that other commands run: xargs, find -exec, parallel; an alias value; a locale string
+    ("echo x | xargs sh -c 'openclaw gateway restart'", "restart"),
+    ("echo x | xargs -n1 -I{} openclaw gateway restart", "restart"),
+    ("printf x | xargs -0 bash -c 'systemctl --user stop openclaw-gateway'", "stop"),
+    ("find . -maxdepth 0 -exec systemctl --user restart openclaw-gateway \;", "restart"),
+    ("find . -maxdepth 0 -exec bash -c 'openclaw doctor --fix' {} +", "doctor"),
+    ("parallel openclaw gateway restart ::: a b", "restart"),
+    ("alias gr='openclaw gateway restart'", "restart"),
+    ("alias zz='echo $(systemctl --user stop openclaw-gateway)'; zz", "stop"),
+    ("eval $\"openclaw gateway restart\"", "restart"),
+    ("eval $\"eval \\$\\\"openclaw doctor --fix\\\"\"", "doctor"),
+    ("echo openclaw doctor --fix | sh", "doctor"),
+])
+def test_commands_run_by_xargs_find_parallel_aliases_and_locale_strings_are_read(guard, command, expected):
+    assert guard.shape(command) == expected, command
+
+
+@pytest.mark.parametrize("command", [
+    "echo x | xargs -n1 echo openclaw gateway restart",
+    "find . -name '*.md' -exec grep -l 'gateway restart' {} +",
+    "parallel echo ::: openclaw gateway restart",
+    "alias ll='ls -la'",
+    "alias gs='git status'; gs",
+    "echo $\"restart the openclaw gateway\"",
+    "xargs -n1 echo < list.txt",
+])
+def test_the_same_wrappers_around_harmless_commands_stay_allowed(guard, command):
+    assert guard.shape(command) is None, command
+
+
+def test_the_word_fallback_does_not_read_a_data_command_as_a_command(guard):
+    # a string that cannot be tokenised is read for words: `echo`/`grep` only print their arguments
+    assert guard.shape("env -S 'echo openclaw gateway restart \"'") is None
+    assert guard.shape("env -S 'grep -r openclaw gateway stop dir \"'") is None
+    assert guard.shape("env -S 'bash -c \"echo openclaw gateway stop\" \"'") is None
+    # but not when the text is fed to a shell or evaluated, or sits after a separator
+    assert guard.shape("env -S 'echo openclaw gateway restart | sh \"'") == "restart"
+    assert guard.shape("env -S 'echo hi; openclaw gateway restart \"'") == "restart"
+    assert guard.shape("env -S 'eval \"$(echo openclaw gateway restart)\" \"'") == "restart"
