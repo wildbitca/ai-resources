@@ -130,13 +130,16 @@ choice stays. `ai-resources openclaw doctor` now refuses a busy gateway (exit 6)
   38390, regressions against either older guard 0, benign rows denied 288 / 17 / 74 of 13716. The residual classes
   are the ones in pitfall T46 (a verb built at run time is the largest). The authority to stop or restart the unit
   belongs at systemd and polkit or an exec policy (pitfall T45), not in this filter.
-- 2.2d amendment. Two statements of 2.2c were wrong or incomplete. (1) The word view glued a backtick to the word
+- 2.2d amendment. Three statements of 2.2c were wrong or incomplete. (1) The word view glued a backtick to the word
   beside it, so a verb wrapped in backticks was not read once the work budget was spent (2016 or more adjacent
   substitutions) or the nesting limit was passed (41 levels); it now cuts words at a backtick. (2) The second view
   (text that feeds a shell) read the bare word `gateway`; it now needs the OpenClaw gateway words, `openclaw` before
   `gateway` or the unit `openclaw-gateway[.service]`, so another product's gateway is not denied. The deadline
   fallback keeps the wide rule on purpose (fail toward the words): when it fires, a benign text that names a gateway
-  and a verb is denied. Final numbers,
+  and a verb is denied. (3) A fired deadline left a guarded command whose words sat more than 160 characters apart
+  allowed; it now also denies a text that names OpenClaw (command word or unit) with any of `gateway`, `restart`,
+  `stop`, `kill`, `doctor` or `--fix`, wherever they sit. The slow class that took 4.1 s (an open double quote over
+  thousands of lines holding expansions) is read once, charged against the budget, in 1.2 to 2.1 s. Final numbers,
   2.1.0 / 2.1.1 / 2.2d over the same 100728 recorded rows: executed-but-allowed 16328 / 11970 / **545**; executed
   and denied by 2.1.0 or 2.1.1 yet allowed now **0**; benign rows denied 288 / 17 / **67** of 13716 (74 before the
   second view was narrowed); slowest verdict 1.1 s, the deadline never fired. The residual classes are T46's, now

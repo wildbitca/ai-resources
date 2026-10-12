@@ -27,6 +27,12 @@ def _missing(name: str) -> detection.Detected:
 
 
 @pytest.fixture(autouse=True)
+def _a_terminal(monkeypatch):
+    """The interactive path of `tools.offer` needs a real terminal (2.2d, 6d); pytest's stdin is not one."""
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_subprocess(monkeypatch):
     """Guard rail: fail loudly if a test forgets to mock the installer command."""
     def _boom(*a, **k):

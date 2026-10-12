@@ -311,3 +311,135 @@ def test_the_cheap_view_reads_the_head_and_the_tail_above_its_cap(guard, monkeyp
     assert guard._cheap_view(head) == "restart"
     assert guard._cheap_view(tail) == "restart"
     assert guard._cheap_view(GW + " " + "x" * 900) == "restart"      # under the cap nothing is cut
+
+
+# --- 2.2d, 6a: the deadline fails closed, and the slow class is read in time -----------------------------------------
+
+@pytest.mark.parametrize("text,expected", [
+    ("openclaw gateway --token " + "x" * 400 + " restart", "restart"),
+    ("openclaw " + "x" * 400 + " gateway", "restart"),
+    ("res\\\ntart; openclaw status", "restart"),
+    ("/usr/local/bin/openclaw " + "x " * 300 + "stop", "stop"),
+    ("openclaw " + "y " * 300 + "doctor", "doctor"),
+    ("openclaw " + "y " * 300 + "--fix", "doctor"),
+    ("systemctl --user " + "x " * 200 + "stop openclaw-gateway", "restart"),
+    ("openclaw status", None),
+    ("openclaw status --json | jq .", None),
+    ("docker " + "x " * 300 + "restart gateway", None),
+    ("cat ~/.openclaw/openclaw.json; echo restart gateway", None),
+    ("cd ~/src/openclaw/x && npm run stop", None),
+    ("ls -la", None),
+])
+def test_the_fail_closed_view_names_openclaw_and_a_guarded_word_wherever_they_sit(guard, text, expected):
+    assert guard._fail_closed_view(text) == expected
+
+
+def _spin(guard):
+    def spin(*_a, **_k):
+        while True:
+            guard._check_deadline()
+    return spin
+
+
+def test_a_fired_deadline_denies_openclaw_and_a_guarded_word_beyond_the_window(guard, monkeypatch):
+    monkeypatch.setenv("KIT_GUARD_DEADLINE_S", "0.05")
+    monkeypatch.setattr(guard, "dangerous", _spin(guard))
+    far = "openclaw gateway --token " + "x" * 400 + " restart"
+    assert guard._cheap_view(far) is None, "the 160-character window does not see it"
+    assert guard.decide(far) == "restart"
+    assert guard._last_deadline_fired is True
+    assert guard.decide("docker restart " + "x " * 300 + "gateway") is None      # far apart, no OpenClaw word
+    assert guard.decide("docker restart gateway") == "restart", "the wide word rule of the deadline fallback"
+    assert guard.decide("ls -la") is None
+
+
+def test_an_internal_error_keeps_the_cheap_view_only(guard, monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(guard, "dangerous", boom)
+    assert guard.decide("openclaw gateway --token " + "x" * 400 + " restart") is None
+    assert guard._last_deadline_fired is False
+    assert guard.decide("openclaw gateway restart") == "restart"
+
+
+@pytest.mark.parametrize("deadline", ["0.01", "0.05"])
+def test_the_real_hook_fails_closed_when_its_deadline_fires(tmp_path, deadline):
+    pad = "echo " + "$(a)" * 30000 + "\n"
+    far = "openclaw gateway --token " + "x" * 400 + " restart"
+    rc, elapsed = _hook(tmp_path, pad + far, deadline=deadline)
+    assert (rc, elapsed < 6) == (2, True)
+    rc, elapsed = _hook(tmp_path, pad + "docker restart " + "x " * 300 + "gateway", deadline=deadline)
+    assert (rc, elapsed < 6) == (0, True)
+    rc, elapsed = _hook(tmp_path, pad + "ls -la", deadline=deadline)
+    assert (rc, elapsed < 6) == (0, True)
+
+
+def _open_quote_class(line, cap=255_000):
+    """An open double quote, then thousands of lines that hold an expansion: the shape the 2.2c auditor found
+    at 4.1 s (the deadline fired and the 160-character window decided)."""
+    head = 'echo "'
+    return head + "\n".join([line] * ((cap - len(head)) // (len(line) + 1)))
+
+
+_OPEN_QUOTE_LINES = ["${A}", "x ${A} y", "some ${VAR:-default} text ${OTHER} here", "x $(a) y", "x `a` y"]
+
+
+@pytest.mark.parametrize("line", _OPEN_QUOTE_LINES)
+def test_an_open_quote_over_many_expansion_lines_is_read_in_time_and_keeps_its_verdict(tmp_path, guard, line):
+    benign = _open_quote_class(line)
+    start = time.perf_counter()
+    assert guard.decide(benign) is None
+    parsed_in = time.perf_counter() - start
+    assert guard._last_deadline_fired is False, "the deadline must not fire on realistic input"
+    assert parsed_in < 3, f"{line!r}: {parsed_in:.1f}s for {len(benign)} bytes"
+    rc, elapsed = _hook(tmp_path, benign)
+    assert (rc, elapsed < 3) == (0, True), f"{line!r}: {elapsed:.1f}s"
+    rc, elapsed = _hook(tmp_path, benign + "\n" + GW)
+    assert (rc, elapsed < 3) == (2, True), f"{line!r} + verb: {elapsed:.1f}s"
+    rc, _elapsed = _hook(tmp_path, benign + "\n" + SC)
+    assert rc == 2
+
+
+def test_the_physical_lines_of_a_failed_join_are_read_once(guard, monkeypatch):
+    calls = []
+    real = guard._line_statements
+    monkeypatch.setattr(guard, "_line_statements", lambda lines: calls.append(len(lines)) or real(lines))
+    assert guard.decide('echo "\n' + "x ${A} y\n" * 200) is None
+    assert len(calls) == 1, "an unbalanced join was read line by line twice"
+    calls.clear()
+    # a balanced join that holds a nested expansion is still read the second way, once
+    assert guard.decide('echo "a ${A}\nb $(echo "c")\nd"') is None
+    assert len(calls) == 1
+
+
+def test_the_second_reading_of_the_physical_lines_is_charged_and_capped(guard):
+    guard._work = 0
+    out = guard._line_statements(["echo a"] * 10)
+    assert len(out) == 10 and guard._work >= 10 * len("echo a")
+    guard._work = guard._WORK_BUDGET
+    assert guard._line_statements(["echo a"] * 50) == [], "the budget is spent: no line is read"
+    assert guard._work > guard._WORK_BUDGET
+
+
+def test_a_spent_budget_in_the_line_reading_falls_back_to_the_words_of_the_whole_line(guard):
+    # an unbalanced join is read line by line; when that reading spends the budget the lines left are not read, and
+    # the whole logical line is read for words instead: a verb on the last line is still found
+    command = 'echo "\n' + "x ${A} y\n" * 4000 + GW
+    guard._work = guard._WORK_BUDGET - 100_000        # a nested call: the budget of the whole command is shared
+    guard._memo = None
+    assert guard.shape(command, 1) == "restart"
+    guard._work = 0
+    assert guard.shape(command, 1) == "restart", "and with the budget intact the lines are simply read"
+    guard._work = guard._WORK_BUDGET - 100_000
+    assert guard.shape('echo "\n' + "x ${A} y\n" * 4000 + "ls", 1) is None
+
+
+def test_a_text_without_a_substitution_is_not_scanned_for_one(guard, monkeypatch):
+    scans = []
+    real = guard._scan
+    monkeypatch.setattr(guard, "_scan", lambda *a, **k: scans.append(1) or real(*a, **k))
+    assert guard._mask_substitutions("echo a b; ls -la") == "echo a b; ls -la"
+    assert scans == [], "a substitution opens with $( ` <( or >( : without one there is nothing to scan"
+    assert guard._mask_substitutions("cat <(ls) >(wc)") == "cat _ _"
+    assert scans

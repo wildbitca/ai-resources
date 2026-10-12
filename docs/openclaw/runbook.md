@@ -1295,10 +1295,10 @@ a deny looks wrong:
 - Text that is fed to a shell (a heredoc or a pipe into `bash`, `sh`, `eval`) is read by a second, word-level view:
   it denies when `openclaw` is before `gateway` (or the unit name appears) next to a stop/restart verb, even in a
   comment. Another product's `docker restart gateway` is allowed there.
-- If the analysis runs out of its 4 s deadline, the verdict falls to the words: `gateway` within 160 characters of
-  a stop/restart verb is denied, and so is a plain `docker restart gateway`. Rewrite the call shorter, run the
-  sanctioned verb (`ai-resources openclaw graceful-restart`, `ai-resources openclaw doctor`), or open a window with
-  `touch ~/.openclaw/watchdog.off`.
+- If the analysis runs out of its 4 s deadline, the verdict falls to the words and fails closed: any text that names
+  OpenClaw together with `gateway`, `restart`, `stop`, `kill`, `doctor` or `--fix` is denied, and so is a plain
+  `docker restart gateway`. Rewrite the call shorter, run the sanctioned verb (`ai-resources openclaw
+  graceful-restart`, `ai-resources openclaw doctor`), or open a window with `touch ~/.openclaw/watchdog.off`.
 
 ## Get into the UI
 

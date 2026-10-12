@@ -1540,7 +1540,12 @@ internal error, a word view decides instead: it lower-cases the text, removes qu
 when ANY word `gateway` sits within 160 characters of `restart`, `stop`, `kill`, `try-restart` or
 `reload-or-restart`, or `doctor` within that distance of `--fix`. It parses nothing, so its cost is one pass, and it
 fails toward the words on purpose: **a benign text that names a gateway and a verb (`docker restart gateway`) is
-denied when the deadline fires.** Realistic input does not reach it: the slowest verdict over the recorded corpora was 1.1 s.
+denied when the deadline fires.** The 2.2c audit also showed that the 160-character window can let a guarded command
+through when the precise analysis was abandoned, so (2.2d) a fired DEADLINE additionally denies a text that names
+OpenClaw (a command word, or the unit `openclaw-gateway`) together with any of `gateway`, `restart`, `stop`,
+`kill`, `doctor` or `--fix`, wherever they sit, after undoing line continuations; an internal error keeps the
+window. Realistic input does not reach it: the slowest verdict over the recorded corpora was 1.1 s, and the class
+that took 4.1 s in 2.2c (an open double quote over thousands of lines that hold `${...}`) is read in 1.2 to 2.1 s.
 
 **The second view (text that feeds a shell).** The same word view is a second opinion on text that feeds a shell (a
 heredoc or here-string next to a shell word in command position, a pipe into a shell, `eval "$(cat)"`,
@@ -1560,7 +1565,9 @@ executed and denied by 2.1.0 or 2.1.1 and allowed now), and no corpus-by-class c
 than the better of the two older guards; benign rows denied 67 of 13716 (2.1.0: 288, 2.1.1: 17; 74 before the second
 view was narrowed). Ten of those 67 are on the realistic corpora (5 of the 44 hard negatives, 3 benign-extra, 2 of the
 764: a commit message and a PR body that hold the verb in backticks, which bash runs); the rest are generated rows that
-feed a shell AND name the verb. The deadline fired 0 times on any benign row. Precise parsing of arbitrary shell is not
+feed a shell AND name the verb. 9000 fresh samples audited against 2.2c: 0 regressions; the 994 that were denied and
+harmless were 539 shell-fed text that echoes the words, 172 aliases or traps that were never invoked, 45 invalid bash
+and 238 dialect artefacts. The deadline fired 0 times on any benign row. Precise parsing of arbitrary shell is not
 attempted, and these numbers are a measurement of the corpora, not a promise.
 
 **What it does not read (the residual classes).** These are known, recorded in ADR-0004, and not to be chased
@@ -1582,6 +1589,9 @@ one by one:
   <(...)`, an interpreter reading its program from a heredoc (`python3 - <<'EOF'` calling `os.system`), run-time
   text read with `read` or `mapfile` and then evaluated, `$V` as the command word, and a variable copied along a
   chain (`A=...; B=$A; eval "$B"`);
+- the 15 residual samples of the last 9000, as classes: a here-string whose word is a command substitution that prints
+  the script; `xargs -0 sh -c` reading the script from stdin; a unit glob through text fed to a shell; `export V=...;
+  eval $V` inside a trap string; a backtick with an escaped `$(` around `case`;
 - a command inside a string past the 256 KB input cap, which is denied only when it names the gateway next to a
   stop/restart verb.
 

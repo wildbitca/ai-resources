@@ -135,6 +135,13 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   now; the realistic corpora went from 74 to 67 benign rows denied of 13716, with no executed command newly
   allowed). The deadline fallback keeps the wide rule on purpose and says so: when the deadline fires, a benign
   text that names a gateway and a verb is denied.
+- **Gateway guard (2.2d, section 6a).** A fired deadline fails closed beyond the 160-character window: a text that
+  names OpenClaw (as a command word, or the unit `openclaw-gateway`) together with any of `gateway`, `restart`,
+  `stop`, `kill`, `doctor` or `--fix`, anywhere in it and after undoing line continuations, is denied. The class the
+  2.2c audit measured at 4.1 s (an open double quote over thousands of lines holding `${...}`, `$(...)` or
+  backticks, near the 256 KB cap) is read once instead of twice and is charged against the work budget: 1.2 to 2.1
+  s through the whole hook on this host, the deadline does not fire, and a guarded statement appended to it is
+  denied.
 - **Watch-result marker (2.2d, sections 2 and 6b).** `setup-state.watch-result.json` is written with a temp file
   and `os.replace` over its own name and read only as a regular file of this user: a symlink planted there is
   replaced or unlinked, never followed (the next save no longer deletes or overwrites the link's target). `status`
@@ -148,6 +155,9 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   any non-mapping are corrupt, so an interactive setup asks before replacing every file `save()` refuses. `models
   update` and `models rollback` take the maintenance window with one exclusive create and never remove a
   `watchdog.off` they did not create. A CR or a TAB inside a journal `host=` token drops the host.
+- **Installer consent (2.2d, section 6d).** `tools.offer` asks only on a real terminal: a line piped into stdin is
+  not consent, and without a terminal and without `--yes` it says so and installs nothing.
+
 ### Added
 
 - **Findings (F).** `status` and `verify` WARN when the egress proxy refused hosts with `TLS certificate unavailable`

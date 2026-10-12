@@ -49,11 +49,13 @@ more than 8 s: the hook's own timeout FAILS OPEN, so the guard must answer befor
 or the analysis fails with an internal error, a CHEAP VIEW decides: it reads words, not commands, and denies
 when `gateway` sits next to a stop/restart verb (or `doctor` next to `--fix`) within a short window: ANY word
 `gateway` there, so a benign text that names a gateway and a verb is denied when the deadline fires (fail toward
-the words). The same view also runs, as a conservative second opinion, on text that feeds a shell through a
-heredoc, a here-string or a pipe, and there it is narrower: it needs the OpenClaw gateway words (`openclaw` before
-`gateway`, or the unit `openclaw-gateway[.service]`), not the bare word, so `docker restart gateway` or `kubectl
-rollout restart deploy/gateway` are allowed. It may still deny text that only mentions the verb there, and it
-never reads anything it cannot see in a single pass.
+the words). When the DEADLINE fired the verdict is also fail-closed beyond the window: a text that names
+OpenClaw (as a command word, or the unit `openclaw-gateway`) together with any of `gateway`, `restart`, `stop`,
+`kill`, `doctor` or `--fix`, wherever they sit, is denied. The cheap view also runs, as a conservative second
+opinion, on text that feeds a shell through a heredoc, a here-string or a pipe, and there it is narrower: it
+needs the OpenClaw gateway words (`openclaw` before `gateway`, or the unit `openclaw-gateway[.service]`), not
+the bare word, so `docker restart gateway` or `kubectl rollout restart deploy/gateway` are allowed. It may still
+deny text that only mentions the verb there, and it never reads anything it cannot see in a single pass.
 
 Precision matters more than coverage. A deny aborts the WHOLE tool call, not the offending
 command (T24), and the kit's own docs are full of the literal strings above. So the command is
@@ -592,6 +594,8 @@ _FD_WORD = re.compile(r"[0-9]+(?=[<>])")
 def _mask_substitutions(text: str) -> str:
     """`text` with every command substitution replaced by a plain word: its body is read on its own (see
     `shape`), and a quote inside it must not keep the tokeniser from reading the statements around it."""
+    if "$(" not in text and "`" not in text and "<(" not in text and ">(" not in text:
+        return text                    # a substitution opens with one of these four and nothing else
     spans = _scan(text)[3]
     if not spans:
         return text
@@ -1161,6 +1165,37 @@ def _verb_kind(verb: str, found: str | None) -> str:
     return "restart"
 
 
+# The deadline FAILS CLOSED (kit 2.2d, 6a). When the clock runs out the precise reading never finished, and the
+# cheap view's 160-character window can miss a guarded command that sits further apart than that (an option value
+# of 300 characters, a continuation line). So once the deadline has fired, a text that names OpenClaw as a command
+# word, or the unit `openclaw-gateway`, together with any word that could be the verb or the subject
+# (`gateway`, `restart`, `stop`, `kill`, `doctor`, `--fix`) anywhere in it is denied. It reads words, once, and is
+# wide on purpose: a benign text that mentions `openclaw` and `stop` is denied when the deadline fires, and the
+# precise reading is fast enough that realistic input never reaches this.
+_OC_COMMAND_WORD = re.compile(r"(?<![a-z0-9_.-])openclaw(?:\.mjs)?(?![a-z0-9_/-])(?!\.[a-z0-9])")
+_FAIL_CLOSED_WORD = re.compile(
+    r"(?P<restart>(?<![a-z0-9])(?:try-restart|reload-or-restart|try-reload-or-restart|condrestart|restart)"
+    r"(?![a-z0-9])|gateway)|(?P<stop>(?<![a-z0-9])(?:stop|kill)(?![a-z0-9]))|"
+    r"(?P<doctor>(?<![a-z0-9])doctor(?![a-z0-9])|--fix(?![a-z0-9]))")
+
+
+def _fail_closed_view(text: str) -> str | None:
+    """"restart", "stop" or "doctor" when `text` names OpenClaw (a command word, or the unit) and any guarded
+    word, wherever they sit; None otherwise. Line continuations (a backslash before a newline) are undone first, so
+    a word split over two lines is whole again, then quotes and backslashes are removed as the cheap view does.
+    One pass; a text above the cap is read as its head and its tail."""
+    if len(text) > _CHEAP_CAP:
+        text = text[:_CHEAP_CAP // 2] + "\n" + text[-_CHEAP_CAP // 2:]
+    low = _CHEAP_QUOTES.sub("", text.lower().replace("\\\n", ""))
+    if "openclaw-gateway" not in low and not _OC_COMMAND_WORD.search(low):
+        return None
+    kinds = {m.lastgroup for m in _FAIL_CLOSED_WORD.finditer(low)}
+    for kind in ("restart", "stop", "doctor"):
+        if kind in kinds:
+            return kind
+    return None
+
+
 # What makes a text one that FEEDS A SHELL, read without parsing it. A shell given its own literal `-c` string
 # does not read its commands from standard input (that string is read by the parser), so it is not a consumer.
 _PATHED = r"(?:[\w./-]*/)?"
@@ -1259,7 +1294,14 @@ def _feeds_a_shell(words: list[str]) -> bool:
     return False
 
 
-def _verb_next_to_gateway(text: str) -> str | None:
+def _word_segments(text: str) -> tuple[list[str], bool]:
+    """The statements of `text` for the word view (quotes and backslashes removed, cut at `;&|()` backticks and
+    newlines) and whether none of them feeds a shell (then a data command's words are skipped)."""
+    segments = _SEGMENT.split(re.sub(r"['\"\\]", "", text.lower()))
+    return segments, not any(_feeds_a_shell(seg.split()) for seg in segments)
+
+
+def _verb_next_to_gateway(text: str, prepared: tuple[list[str], bool] | None = None) -> str | None:
     """"stop" or "restart" when `text` (a string that could not be tokenised, or nests too deep to follow)
     has a stop/restart verb after the gateway: `openclaw [opts] gateway [opts] <verb>` or `<verb> [opts]
     openclaw-gateway[.service]`. The words alone (`echo openclaw gateway`, or a sentence that has `openclaw`,
@@ -1274,8 +1316,7 @@ def _verb_next_to_gateway(text: str) -> str | None:
     # `res\tart` -> `restart`); `$` and backticks stay in the words so an expansion can be seen. Case is
     # folded: the CLI is the one path that could still reach the unit through a case variant.
     found: str | None = None
-    segments = _SEGMENT.split(re.sub(r"['\"\\]", "", text.lower()))
-    skip_data = not any(_feeds_a_shell(seg.split()) for seg in segments)
+    segments, skip_data = prepared if prepared is not None else _word_segments(text)
     for seg in segments:
         words = seg.split()
         count = len(words)
@@ -1320,11 +1361,11 @@ def _text_shape(text: str) -> str | None:
     "doctor" when the words are there, None when they are not. It reads words, not commands."""
     global _work
     _work += len(text)                       # the fallback is charged against the same bound
-    found = _verb_next_to_gateway(text)
+    prepared = _word_segments(text)          # read once, by both passes below
+    found = _verb_next_to_gateway(text, prepared)
     if found == "restart":
         return found
-    segments = _SEGMENT.split(re.sub(r"['\"\\]", "", text.lower()))
-    skip_data = not any(_feeds_a_shell(seg.split()) for seg in segments)
+    segments, skip_data = prepared
     for seg in segments:
         words = seg.split()
         if "doctor" not in words or "--fix" not in words or (skip_data and _is_data_command(words)):
@@ -1410,7 +1451,12 @@ def _env_split_shape(split: str, rest: list[str], depth: int) -> str | None:
 
 
 def _line_statements(lines: list[str]) -> list[list[str]]:
-    """The statements of each physical line on its own; a line that does not tokenise is skipped."""
+    """The statements of each physical line on its own; a line that does not tokenise is skipped.
+
+    This is a second reading of text the caller has read already, so it is charged against the work budget (each
+    line's length) and stops when the budget is spent: the caller then reads the whole logical line for words
+    (kit 2.2d, 6a)."""
+    global _work
     out: list[list[str]] = []
     pending: deque[str] = deque()            # heredoc delimiters whose body is being skipped
     for line in lines:
@@ -1418,11 +1464,15 @@ def _line_statements(lines: list[str]) -> list[list[str]]:
             if _closes(line, pending[0]):
                 pending.popleft()
             continue                         # text fed to a command is not a command
+        _work += len(line) + 1
+        if _work > _WORK_BUDGET:
+            break
         try:
             out += _statements(line)
         except ValueError:
             pass
-        pending.extend(_heredoc_delimiters(line))
+        if "<<" in line:                     # a heredoc opens with `<<` and nothing else
+            pending.extend(_heredoc_delimiters(line))
     return out
 
 
@@ -1671,14 +1721,15 @@ def _trap_text(words: list[str]) -> str | None:
 
 
 def _read_statements(logical: str, physical: list[str], marked: str | None = None
-                     ) -> tuple[list[tuple[list[str], bool]], bool]:
-    """The (statement, piped-in) pairs of a logical line, and whether `marked` was the text read. When the joined
-    text does not tokenise (a stray apostrophe), the physical lines are read one by one, so one stray quote
-    cannot hide the commands on the next lines (their pipes and heredoc markers are then unknown)."""
+                     ) -> tuple[list[tuple[list[str], bool]], bool, bool]:
+    """The (statement, piped-in) pairs of a logical line, whether `marked` was the text read, and whether the
+    physical lines were read one by one. When the joined text does not tokenise (a stray apostrophe), they are,
+    so one stray quote cannot hide the commands on the next lines (their pipes and heredoc markers are then
+    unknown)."""
     try:
-        return _statements_piped(marked if marked is not None else logical), marked is not None
+        return _statements_piped(marked if marked is not None else logical), marked is not None, False
     except ValueError:
-        return [(s, False) for s in _line_statements(physical)], False
+        return [(s, False) for s in _line_statements(physical)], False, True
 
 
 _memo: tuple[str, str | None] | None = None
@@ -1738,7 +1789,7 @@ def _shape(command: str, _depth: int) -> str | None:
         entries = line_docs.get(li, [])
         marked, marks = (_mark_redirections(logical, entries, herestrings)
                          if entries or herestrings else (logical, {}))
-        statements, used_marks = _read_statements(logical, physical, marked if marks else None)
+        statements, used_marks, lines_read = _read_statements(logical, physical, marked if marks else None)
         if marks and not used_marks and _SHELL_WORD.search(logical):
             # The line does not tokenise, so a heredoc or here-string cannot be tied to its command: with a
             # shell word on the line every such text is read as commands (fail closed).
@@ -1750,19 +1801,29 @@ def _shape(command: str, _depth: int) -> str | None:
             found = _text_shape(logical)
             if found:
                 return found
-        if len(physical) > 1 and _NESTED_EXPANSION.search(logical):
+        if len(physical) > 1 and _NESTED_EXPANSION.search(logical) and not lines_read:
             # The scanner cannot follow a quote nested in an expansion, so the join may be imaginary: read
-            # the physical lines one by one as well (the 2.1.0 reading) and deny if either view matches.
+            # the physical lines one by one as well (the 2.1.0 reading) and deny if either view matches. Not
+            # again when the failed join was just read that way (6a: that was a second identical pass).
             statements = statements + [(s, False) for s in _line_statements(physical)]
+        words_read = False
+        if _work > _WORK_BUDGET:
+            # the line reads above spent the budget: the whole logical line is read for words once
+            words_read = True
+            found = _text_shape(logical)
+            if found:
+                return found
         for sub in subs:
             # `"$(cmd)"`, `` `cmd` ``, `<(cmd)`: the shell runs the text inside as a command.
             if _work > _WORK_BUDGET:
                 # The budget is spent: ONE linear word pass over the whole logical line (the substitutions already
                 # parsed and the REMAINDER of the line, which holds the ones not parsed), not one parse per
-                # substitution. A hit is the verdict; the loop is left only after that pass found nothing.
-                found = _text_shape(logical)
-                if found:
-                    return found
+                # substitution, and not a second time when the line was read above. A hit is the verdict; the
+                # loop is left only after that pass found nothing.
+                if not words_read:
+                    found = _text_shape(logical)
+                    if found:
+                        return found
                 break
             inner = shape(sub, _depth + 1)
             if inner:
@@ -1893,6 +1954,8 @@ def decide(command: str) -> str | None:
     if failed:
         try:
             found = _cheap_view(command)
+            if found is None and _last_deadline_fired:
+                found = _fail_closed_view(command)      # the clock ran out: fail closed (6a)
         except Exception:
             found = None
     return found

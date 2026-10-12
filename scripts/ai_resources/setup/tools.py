@@ -193,6 +193,9 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
     (`install_tools_answer`) is ignored and cleared: a "yes" given once must not authorise a later run, and a
     "no" must not stop the question being asked again.
 
+    Without a terminal (stdin is a pipe) and without `--yes` nothing is asked and nothing is installed: a line
+    piped in is not consent (kit 2.2d, 6d).
+
     A dry run offers nothing and installs nothing, with or without `--yes`: it says what it would have asked.
     """
     s.tracking.install_tools_answer = None           # migration: nothing is replayed, nothing is persisted
@@ -208,6 +211,12 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
 
     if not assume_yes:
         if ui.is_non_interactive():
+            return []
+        if not ui.stdin_is_a_terminal():
+            # A piped `y` is not a confirmation (T2, as `bootstrap` and `apply-pending` already require): without a
+            # terminal the plain `input()` prompt would take the first line of whatever was piped in.
+            ui.info(f"Not installing {labels}: no terminal to ask on. Run `ai-resources setup` from a terminal, "
+                    "or pass --yes to say yes for this run.")
             return []
         # Asked once per run: a second call on the same state object reuses the answer given a moment ago.
         proceed = getattr(s, "_install_answer_this_run", None)

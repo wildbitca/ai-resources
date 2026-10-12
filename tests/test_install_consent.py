@@ -30,6 +30,12 @@ from ai_resources.setup.cockpits import _openclaw_voice as voice  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _a_terminal(monkeypatch):
+    """The interactive path of `tools.offer` needs a real terminal (2.2d, 6d); pytest's stdin is not one."""
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_subprocess(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("a real subprocess.run was invoked")
@@ -252,3 +258,41 @@ def test_the_bootstrap_verb_has_a_yes_flag_and_it_is_off_by_default():
     host.add_subparser(ap.add_subparsers(dest="cmd"))
     assert ap.parse_args(["openclaw", "bootstrap"]).yes is False
     assert ap.parse_args(["openclaw", "bootstrap", "--yes"]).yes is True
+
+
+# --- 2.2d, 6d: a piped `y` is not consent -----------------------------------------------------------------------------
+
+def test_a_piped_yes_does_not_install_when_there_is_no_terminal_and_no_yes_flag(monkeypatch):
+    import io
+    _all_missing(monkeypatch)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: False)
+    monkeypatch.setattr("sys.stdin", io.StringIO("y\ny\ny\n"))
+    monkeypatch.setattr(ui, "_HAS_QUESTIONARY", False, raising=False)
+    ran = []
+    monkeypatch.setattr(tools, "install_one", lambda t, s: ran.append(t) or True)
+    notes: list[str] = []
+    monkeypatch.setattr(ui, "info", lambda m, *a, **k: notes.append(str(m)))
+    s = state.SetupState()
+    assert tools.offer(s) == [] and ran == []
+    assert any("no terminal" in n and "--yes" in n for n in notes)
+    assert sys_stdin_unread(), "the piped text was never read as an answer"
+
+
+def sys_stdin_unread() -> bool:
+    import sys
+    return sys.stdin.tell() == 0
+
+
+def test_the_yes_flag_still_installs_without_a_terminal_and_a_terminal_still_asks(monkeypatch):
+    _all_missing(monkeypatch)
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    ran = []
+    monkeypatch.setattr(tools, "install_one", lambda t, s: ran.append(t) or True)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: False)
+    assert tools.offer(state.SetupState(), assume_yes=True) == ["claude", "agy", "openclaw"]
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    asked: list[str] = []
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: asked.append(msg) or False)
+    ran.clear()
+    assert tools.offer(state.SetupState()) == [] and ran == [] and len(asked) == 1
