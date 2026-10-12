@@ -2843,7 +2843,7 @@ _STEP_FUNCS = {"node": _step_node, "openclaw": _step_openclaw, "single-copy": _s
 
 def bootstrap(runner: Runner = default_runner, *, dry_run: bool = False, only: str | None = None,
               upgrade: bool = False, memory_high: str = "12G", backup_dir: str | None = None,
-              confirm: Callable[[str, str], bool] = lambda step, what: True,
+              confirm: Callable[[str, str], bool] = lambda step, what: False,
               home: Path | None = None, host_env_path: Path | None = None,
               sleep: Callable[[float], None] = time.sleep, health_wait: float = 60,
               unit_dir: Path | None = None, skip: tuple[str, ...] = (),
@@ -2851,8 +2851,8 @@ def bootstrap(runner: Runner = default_runner, *, dry_run: bool = False, only: s
     """Eight idempotent steps in a fixed order; each checks first and reports satisfied or changed.
 
     `dry_run` runs the checks and prints what it WOULD do; nothing is touched. `only` runs one
-    step. `confirm(step, description)` is asked before every change (the wizard passes a real
-    prompt, the headless command passes yes only with `--yes`). Never writes openclaw.json, never restarts the
+    step. `confirm(step, description)` is asked before every change; the default is No (the wizard passes a
+    real prompt, the headless command passes yes only with `--yes`). Never writes openclaw.json, never restarts the
     gateway; the steps that change the gateway's unit or install a new version say a restart
     is needed and stop.
     """

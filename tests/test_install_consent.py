@@ -130,6 +130,23 @@ def test_the_wizard_passes_the_yes_flag_to_the_tools_offer(monkeypatch):
     assert seen == [False, True]
 
 
+def test_the_yes_flag_of_the_cli_reaches_the_tools_offer(monkeypatch):
+    """2.2c 4a: `ai-resources setup --yes` -> `wizard.run` -> `_ASSUME_YES` -> `tools.offer(assume_yes=...)`."""
+    from ai_resources import cli
+    seen: list[bool] = []
+    monkeypatch.setattr(tools, "offer", lambda s, *a, assume_yes=False, **k: seen.append(assume_yes) or [])
+    monkeypatch.setattr(detection, "detect_all_cockpits",
+                        lambda: {"claude": detection.Detected("Claude Code", True, "1", "/x")})
+    monkeypatch.setattr(ui, "section", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "detected_table", lambda rows: None)
+    monkeypatch.setattr(ui, "console", lambda: type("C", (), {"print": staticmethod(lambda *a, **k: None)})())
+    monkeypatch.setattr(wizard, "_run", lambda args: wizard._step2_cockpits(state.SetupState()))
+    for argv in (["setup"], ["setup", "--yes"], ["setup"]):
+        args = cli.build_parser().parse_args(argv)
+        assert args.func(args) == 0
+    assert seen == [False, True, False]
+
+
 # --- 3b: the other installer prompts ----------------------------------------------------------------------------
 
 def test_the_litellm_pipx_prompt_defaults_to_skip_and_never_installs_unattended(monkeypatch):
@@ -210,6 +227,24 @@ def test_bootstrap_confirms_each_change_with_default_no_unless_yes(monkeypatch):
     monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
     assert captured["confirm"]("units", "install the units") is False        # Enter
     assert asked == [("install the units?", False)]
+
+
+def test_the_bootstrap_library_default_confirm_is_no(monkeypatch, tmp_path):
+    """2.2c 4a: a caller that passes no `confirm` gets No for every change, not Yes."""
+    import inspect
+    default = inspect.signature(host.bootstrap).parameters["confirm"].default
+    assert default("units", "install the units") is False
+    asked: list[str] = []
+
+    class Runner:
+        def __call__(self, argv, **kw):
+            asked.append(" ".join(argv))
+            return 0, ""
+    # one step, dry: nothing is changed without a confirm, and nothing asks the operator
+    results, _ctx = host.bootstrap(Runner(), dry_run=True, only="node", home=tmp_path, backup_dir=str(tmp_path),
+                                   host_env_path=tmp_path / "kit-host.env", unit_dir=tmp_path / "units",
+                                   sleep=lambda s: None, out=lambda m: None)
+    assert all(r.status != "changed" for r in results)
 
 
 def test_the_bootstrap_verb_has_a_yes_flag_and_it_is_off_by_default():

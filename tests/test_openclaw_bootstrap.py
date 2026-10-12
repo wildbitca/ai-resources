@@ -154,6 +154,7 @@ def run(sim, **kw):
     kw.setdefault("host_env_path", sim.host_env)
     kw.setdefault("unit_dir", sim.units)
     kw.setdefault("sleep", lambda _s: None)
+    kw.setdefault("confirm", lambda step, what: True)      # the library default is No (2.2c); these runs say yes
     results, ctx = host.bootstrap(sim, out=lines.append, **kw)
     return {r.step: r for r in results}, ctx, lines
 
@@ -369,7 +370,8 @@ def test_if_the_regenerated_unit_still_is_not_brews_node_it_fails_naming_t07(sim
         return orig(argv, **kw)
     lines = []
     results, _ = host.bootstrap(stubborn, only="gateway-unit", home=sim.home, backup_dir=str(sim.backup),
-                                host_env_path=sim.host_env, unit_dir=sim.units, out=lines.append)
+                                host_env_path=sim.host_env, unit_dir=sim.units, out=lines.append,
+                                confirm=lambda step, what: True)
     assert results[0].status == "failed" and "T07" in results[0].detail
 
 

@@ -1098,7 +1098,7 @@ def test_past_the_cap_the_text_is_denied_only_when_it_names_the_gateway_and_a_ve
 
 def test_nesting_with_many_branches_stays_inside_the_cost_bound(guard):
     import time
-    inner = "\n".join(["echo $(date)"] * 400 + ["openclaw gateway restart"])
+    inner = "\n".join(["ls $(date)"] * 400 + ["openclaw gateway restart"])
     cmd = _wrap(inner, 9)
     t = time.time()
     assert guard.shape(cmd) == "restart"
@@ -1106,10 +1106,10 @@ def test_nesting_with_many_branches_stays_inside_the_cost_bound(guard):
 
 
 def test_a_deep_substitution_nest_does_not_raise(guard):
-    deep = "echo " + "$(" * 3000 + "x" + ")" * 3000
+    deep = "ls " + "$(" * 3000 + "x" + ")" * 3000
     assert guard.shape(deep) is None
     assert guard.shape(deep + "; openclaw gateway restart") == "restart"
-    assert guard.shape("echo " + "$(" * 3000 + "openclaw gateway restart" + ")" * 3000) == "restart"
+    assert guard.shape("ls " + "$(" * 3000 + "openclaw gateway restart" + ")" * 3000) == "restart"
 
 
 # --- A6: the input cap keeps the hook inside its timeout --------------------------------------------------------------
@@ -1289,7 +1289,7 @@ def test_the_same_forms_without_a_guarded_command_stay_allowed(guard, command):
 
 
 def _nest_sub(text: str, levels: int) -> str:
-    return "echo " + "$(echo " * levels + text + ")" * levels
+    return "cat " + "$(cat " * levels + text + ")" * levels
 
 
 def test_deep_benign_nesting_is_not_denied_by_words_that_are_far_apart(guard):
@@ -1339,9 +1339,10 @@ def _timed(guard, command, limit=3.0):
 
 def test_28000_openclaw_words_in_a_deep_nest_cost_less_than_three_seconds(guard):
     # 1c: the window of an `openclaw` word is bounded, and the fallback is charged against the work budget
-    deep9 = "$(echo " * 9 + "openclaw " * 28000 + ")" * 9
+    # (`cat`, not `echo`: a data command is skipped by the fallback and the window code would never run)
+    deep9 = "$(cat " * 9 + "openclaw " * 28000 + ")" * 9
     assert _timed(guard, deep9) is None
-    deep12 = "echo " + "$(echo " * 12 + "openclaw " * 27000 + ")" * 12
+    deep12 = "cat " + "$(cat " * 12 + "openclaw " * 27000 + ")" * 12
     assert _timed(guard, deep12 + "; openclaw gateway restart") == "restart"
     assert _timed(guard, "'x\n" + "openclaw doctor " * 14000) is None
 
@@ -1367,7 +1368,7 @@ def test_the_one_megabyte_multi_line_quote_stays_under_three_seconds(guard):
     ("echo x | xargs sh -c 'openclaw gateway restart'", "restart"),
     ("echo x | xargs -n1 -I{} openclaw gateway restart", "restart"),
     ("printf x | xargs -0 bash -c 'systemctl --user stop openclaw-gateway'", "stop"),
-    ("find . -maxdepth 0 -exec systemctl --user restart openclaw-gateway \;", "restart"),
+    ("find . -maxdepth 0 -exec systemctl --user restart openclaw-gateway \\;", "restart"),
     ("find . -maxdepth 0 -exec bash -c 'openclaw doctor --fix' {} +", "doctor"),
     ("parallel openclaw gateway restart ::: a b", "restart"),
     ("alias gr='openclaw gateway restart'", "restart"),
@@ -1425,3 +1426,32 @@ def test_builtin_coproc_and_the_command_line_parallel_parses_again_are_read(guar
 ])
 def test_builtin_coproc_and_parallel_around_harmless_commands_stay_allowed(guard, command):
     assert guard.shape(command) is None, command
+
+
+# --- 2.2c, 4a: pins for mutants the 2.2b round left alive ---------------------------------------------------------
+
+@pytest.mark.parametrize("command,expected", [
+    # a `#` inside a word is not a comment: the substitution after it still runs (the walker, not the tokeniser)
+    ("cat a#b $(openclaw gateway restart)", "restart"),
+    ("cat a#b `openclaw gateway restart`", "restart"),
+    ("cat ${#X} $(openclaw doctor --fix)", "doctor"),
+    ("cat x=a#b \"$(systemctl --user stop openclaw-gateway)\"", "stop"),
+    ("cat a#b $(openclaw gateway status)", None),
+    # a real comment hides what follows it
+    ("cat x # $(openclaw gateway restart)", None),
+    ("cat x;# $(openclaw gateway restart)", None),
+])
+def test_a_hash_inside_a_word_does_not_start_a_comment_for_the_substitution_walker(guard, command, expected):
+    assert guard.shape(command) == expected, command
+
+
+@pytest.mark.parametrize("command,expected", [
+    # the line cannot be tokenised (a quote the tokeniser reads differently): with a shell word on it the
+    # heredoc or here-string text is read as commands (fail closed); without one it is data
+    ("bash <<EOF `echo '` ${X:-'}\nopenclaw gateway restart\nEOF", "restart"),
+    ("echo `echo '`; bash <<EOF && echo $$'\nopenclaw doctor --fix\nEOF", "doctor"),
+    ("cat <<EOF `echo '` ${X:-'}\nopenclaw gateway restart\nEOF", None),
+    ("echo `echo '`; cat <<EOF && echo $$'\nopenclaw doctor --fix\nEOF", None),
+])
+def test_an_untokenisable_line_with_a_shell_word_reads_its_heredoc_as_commands(guard, command, expected):
+    assert guard.shape(command) == expected, command

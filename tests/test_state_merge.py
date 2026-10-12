@@ -251,3 +251,24 @@ def test_a_managed_block_backup_keeps_the_mode_of_the_file(tmp_path, mode, umask
         os.umask(old)
     assert oct(backup.stat().st_mode & 0o777) == oct(mode & ~umask)
     assert backup.stat().st_mode & 0o077 == mode & ~umask & 0o077, "never more open than the original"
+
+
+# --- 2.2c, 4a: the watch's merge-save does not queue an entry twice ------------------------------------------------
+
+def test_a_restore_entry_another_run_already_queued_is_not_added_twice(xdg):
+    entry = {"op": "profile", "path": "gateway.bind", "action": "filled", "source": "setup", "at": "t"}
+    record = {"run_id": "run-1", "done": False}
+    on_disk = state.SetupState()
+    on_disk.openclaw.config_watch = dict(record)
+    on_disk.openclaw.host_restart_pending = [dict(entry)]
+    state.save(on_disk)
+
+    mine = state.SetupState()
+    mine.openclaw.config_watch = {**record, "done": True, "result": {"outcome": "reverted"}}
+    mine._owned_pending = [dict(entry), {**entry, "path": "agents.defaults.timeoutSeconds"}]
+    host._watch_save(mine)
+
+    final = state.load().openclaw
+    assert sorted(e["path"] for e in final.host_restart_pending) == ["agents.defaults.timeoutSeconds",
+                                                                    "gateway.bind"]
+    assert final.config_watch["done"] is True
