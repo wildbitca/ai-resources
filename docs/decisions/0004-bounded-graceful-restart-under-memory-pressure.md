@@ -101,6 +101,12 @@ choice stays. `ai-resources openclaw doctor` now refuses a busy gateway (exit 6)
   variable in the verb slot at the top level are NOT denied, by design: the verb cannot be known without running
   the shell. The fail-closed rule (a stop or restart verb, or an expansion where the verb goes, next to the
   gateway words) applies only inside the `env -S` fallback, where the string is otherwise unparseable.
+- 2.2 amendment, residual gaps of the guard (it is an accident guard, not a security boundary: pitfall T46). It
+  reads command substitutions, `env -S` split rules, `$'...'` strings, redirections and nesting to eight wrappers.
+  It still cannot see: a verb built at run time, `eval` of file contents, an alias defined in the same call, `xargs`
+  and similar wrappers that take the command from their arguments, a script run after being written, or a session
+  that does not use Claude Code's Bash tool (T45, an operator decision). Input above 256 KB is denied only when it
+  names the gateway next to a stop/restart verb; the check reads nothing more.
 
 ## Alternatives Considered
 

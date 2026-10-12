@@ -1336,6 +1336,9 @@ timeout; then the unit is killed with everything in its cgroup.
 
 **How to catch it.** `ai-resources openclaw status` (stability line), then the newest
 `~/.openclaw/logs/stability/openclaw-stability-*.json`. Read the sentinel only with `sqlite3 -readonly`.
+Since 2.2, `ai-resources openclaw status` and `ai-resources verify` also WARN when a `gateway.restart_close_failed`
+or `gateway.stop_close_failed` bundle from the last 24 h coincides with `subagent completion deferred` (or lost)
+lines in the journal: that is a stop or restart that cut work in flight (T39, T41).
 
 ---
 
@@ -1465,9 +1468,11 @@ outage. Separately, the fix key is restart-required: OpenClaw defers the restart
 Do not touch `allowedHosts`. Apply it with `openclaw config patch` (`--dry-run` first), leave it pending, and restart in
 the window with `ai-resources openclaw graceful-restart` instead of letting OpenClaw force the restart.
 
-**How to catch it.** `journalctl --user -u openclaw-gateway | grep 'secrets/egress-proxy'`, and a recent
-`gateway.restart_close_failed` event with missing subagent completions. A `status`/`verify` finding for both is a
-2.2 candidate.
+**How to catch it.** `ai-resources openclaw status` and `ai-resources verify` WARN (since 2.2) when the egress proxy
+refused hosts with `TLS certificate unavailable` in the last 24 h: the finding lists at most five host names and points
+here. By hand: `journalctl --user -u openclaw-gateway | grep 'secrets/egress-proxy'`, and a recent
+`gateway.restart_close_failed` event with missing subagent completions (the second finding, T39/T41). Both findings
+read the journal only (bounded in time and lines) and say nothing when the journal cannot be read; neither repairs.
 
 
 ## T45 — The gateway guard hook does not cover an OpenClaw-native exec session *(added 2026-10-12; documented in the unreleased 2.2 work, operator decision pending)*
@@ -1498,6 +1503,31 @@ only protection for a native session is the sanctioned verb (`ai-resources openc
 **How to catch it.** `journalctl --user -u openclaw-gateway | grep -i 'received SIGTERM\|restart'` around an
 unexpected restart, and the `source=` field of the gateway's restart line (`cli` means a command, not a config
 reload).
+
+
+## T46 — The gateway guard is an accident guard, not a security boundary *(added 2026-10-12; documented in the unreleased 2.2 work)*
+
+**Symptom.** A review finds a command that restarts or stops the gateway and that the guard hook allowed, and
+the question is whether that is a bug.
+
+**Cause.** The hook reads the command text Claude Code is about to run and denies the guarded shapes (a stop,
+a restart, `doctor --fix`) where a shell would run them. It is meant to stop an agent from doing it by
+accident, with a message that names the sanctioned verb. It is not a security boundary, and it cannot be: a
+command built at run time (`$VERB`, `eval "$(cat file)"`, a script written and then run), an alias defined in
+the same call, a wrapper it does not know (`xargs`, `parallel`, `find -exec`), a session that does not go through
+Claude Code's Bash tool (T45) or one the operator drives from a terminal are all outside what text can decide. Each
+new reading rule also costs precision, and a wrong deny aborts the whole tool call (T24).
+
+**What it does now (2.2).** It reads command substitutions (`$(...)`, backticks, `<(...)`, also inside double quotes
+and in an unquoted heredoc body), `env -S` by env's own split rules, `$'...'` strings, redirections and nesting up
+to eight wrappers, with a cost bound; past that, and for text it cannot tokenise, it denies only when a stop or
+restart verb sits after the gateway words. The residual gaps above are recorded in ADR-0004.
+
+**What to do instead of widening it.** Use the sanctioned verbs (`ai-resources openclaw graceful-restart`,
+`ai-resources openclaw doctor`) and the `watchdog.off` window, and decide the policy of a native session (T45).
+
+**How to catch it.** There is nothing to catch: the guard is advisory. The gateway journal shows
+what actually restarted (`journalctl --user -u openclaw-gateway`), and `source=cli` marks a command.
 
 
 ---

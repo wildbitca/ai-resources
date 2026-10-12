@@ -4,6 +4,50 @@ All notable changes to **ai-resources** are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **Release versions match Git tags** `vMAJOR.MINOR.PATCH`.
 
+## [Unreleased]
+
+Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the operator's decision at release time;
+`__version__`, the Formula and `plugin.json` still say 2.1.1.
+
+### Fixed
+
+- **Gateway guard (A).** The gateway guard hook reads a command substitution (`$(...)`, backticks, `<(...)`, also inside double
+  quotes, in `${...}` and in an unquoted heredoc body) as the command it runs, `env -S` strings by env's own split
+  rules (a backslash-underscore separates, a backslash-c ends, `${VAR}` fails closed when the gateway words are
+  there), `$'...'` strings, redirections (even inside a word), a brace in an argument and a `#` inside a word the
+  way bash does, and follows nesting to eight wrappers with a cost bound. A brace or glob in the verb slot, a unit
+  glob and a case variant through the CLI are denied; `echo "<<EOF"` no longer starts a heredoc skip. Against
+  real-bash corpora the executed-but-allowed count fell from 1850 to 185 and no class is worse than 2.1.0 or
+  2.1.1 (numbers in the handoff). The 256 KB input cap is kept and tested at 1 MB.
+- **Locks and files (C).** `setup` and `apply-pending` run under the setup-state lock (a busy lock is one line);
+  stale `.setup-state.yaml.*.tmp` files are removed at the next save; `kit-host.env` is written through a unique temp
+  file that keeps the file mode; managed blocks in AGENTS.md-style files are written atomically through a symlink to
+  its target with an exclusive backup; `offbox-identity --dry-run` and a refused `graceful-restart` create no lock
+  file.
+- **Teardown and adoption (D).** Teardown removes the empty `hand-units/<stamp>` directories the kit made, adopts a
+  dangling symlinked hand unit as a link and restores it as a link, never moves a symlink planted in the
+  moved-aside directory onto a unit path, restores unit files through a temp file so hard links keep their bytes,
+  drops the restart-pending entries a drained window just applied, and names an unfinished reason once.
+- **Verbs and prompts (E).** The offer to install missing tools defaults to No and `setup --yes` is the explicit yes;
+  the pipx installer menu defaults to Skip; `models check` and `models update --dry-run` write no log and take no
+  lock; the models-update unit treats exit 75 as a skip; a declined prompt exits 1 in both `apply-pending` and its
+  discard form; `openclaw doctor` needs a terminal or `--yes` (the kit's timers pass it) and, like the drained
+  window, refuses from inside the gateway cgroup.
+
+### Added
+
+- **Findings (F).** `status` and `verify` WARN when the egress proxy refused hosts with `TLS certificate unavailable`
+  in the last 24 h (at most five hosts, pointer to T44) and when a recent `gateway.restart_close_failed` or
+  `gateway.stop_close_failed` bundle coincides with deferred or lost subagent completions (T39/T41). Bounded, read-only,
+  silent when the journal is unavailable.
+
+### Documentation
+
+- **T45 (B).** The guard hook does not cover an OpenClaw-native exec session: the finding, the options
+  (`tools.exec`, `tools.deny`, a `before_tool_call` handler) and the operator decision are written down. The kit
+  applies none of them.
+- **T46 (G).** The guard is an accident guard, not a security boundary; the residual gaps are in ADR-0004.
+
 ## [2.1.1] — 2026-10-12 — the post-setup watch no longer reverts a healthy gateway, and the 2.1.0 surfaces are hardened
 
 A patch release. The 2026-10-10 setup run showed the post-setup watch reverting two guard keys on a gateway that

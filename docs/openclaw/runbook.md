@@ -57,7 +57,7 @@ first question on a later run and confirm the offer to undo the earlier one) rem
 the timers it enabled, puts back a hand-installed hook it replaced, and does not restore a credential
 value because it never stored one. `--dry-run` previews all of it and writes nothing.
 
-The kit has no `--yes` flag. `ai-resources setup --non-interactive` reuses the saved answers and
+`ai-resources setup --yes` answers only the offer to install missing tools (below, "Exit codes of the confirming verbs"); it confirms nothing that touches the running gateway. `ai-resources setup --non-interactive` reuses the saved answers and
 prompts for nothing: it re-applies only the local pieces already agreed (`kit-host.env`, hooks,
 `AGENTS.md`) and refreshes the kit block in every agent workspace and skips every confirm that would touch the running gateway.
 
@@ -1085,6 +1085,16 @@ manually.") **after the stop and before the start**, and the gateway stays dead.
 was an explicit stop, `Restart=always` does not cover it. Note the `stop` itself can take
 ~5 min because of `TimeoutStopSec=330`.
 
+Two things changed in 2.2. `ai-resources openclaw doctor` stops the gateway, so it needs a terminal or
+`ai-resources openclaw doctor --yes` (a pipe or a cron job asks nothing; the kit's own timers pass `--yes`), and it
+refuses with one line when it is launched from a gateway child session (T29), like `graceful-restart` and the
+drained window of `apply-pending`.
+
+**Exit codes of the confirming verbs.** A prompt the operator declines on a terminal ends with exit 1 in both
+`apply-pending` and `apply-pending --discard-watch-restores`; exit 0 means it was done or there was nothing to do.
+`ai-resources setup --yes` is the explicit yes to the offer to install missing tools (`claude`, `agy`, `openclaw`
+through their own installers); without it that question defaults to No and an unattended run installs nothing.
+
 ## Resource safety: prevention first, a graceful restart as the valve
 
 **[kit]** Since the resource-safe gateway work ([ADR-0004](../decisions/0004-bounded-graceful-restart-under-memory-pressure.md)),
@@ -1247,6 +1257,10 @@ restart-required, and OpenClaw forces the restart (SIGUSR2) after about 5 minute
 in-flight runs. So apply it with `openclaw config patch --stdin --dry-run` first, then for real, leave the restart
 pending, and restart yourself in the window with `ai-resources openclaw graceful-restart`.
 
+Since 2.2, `ai-resources openclaw status` and `ai-resources verify` WARN when the proxy refused hosts with that line
+in the last 24 hours (the hosts, at most five, and a pointer to T44). They read the journal, never repair, and say
+nothing when the journal cannot be read.
+
 ## An OpenClaw-native session can still restart the gateway (T45)
 
 The guard hook (T01, T29) is a Claude Code `PreToolUse` hook: it only sees what Claude Code runs. An agent session that
@@ -1336,6 +1350,8 @@ ai-resources models exclude 'claude-opus-5-5'        # never apply ids matching 
 ai-resources models rollback                # inverse patch, restart, health check
 ```
 
+- `check` and `update --dry-run` are read-only: they write no line to `models-update.log` and take no lock. A real
+  run keeps both. The unit treats exit 75 (deferred, the gateway is busy) as a skip, not a failed unit.
 - **Pause:** `touch ~/.openclaw/watchdog.off` (the wrapper stands down) or
   `systemctl --user disable --now openclaw-models-update.timer`.
 - **Manual rollback:** `ai-resources models rollback`. If the CLI itself is broken, take the copy of

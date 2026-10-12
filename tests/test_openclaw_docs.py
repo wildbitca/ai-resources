@@ -43,10 +43,19 @@ def test_the_docs_do_not_send_anyone_to_the_kit_scripts_in_local_bin():
                 assert "→" in line or "historical" in line.lower() or "originally" in line.lower(), (doc.name, line[:80])
 
 
-def test_the_docs_say_the_restore_is_unrehearsed_and_the_kit_has_no_yes_flag():
+def test_the_docs_say_the_restore_is_unrehearsed_and_name_yes_only_where_the_flag_exists():
+    # Kit 2.2 added `setup --yes` (the tool-install offer only) and `openclaw doctor --yes`; before it the docs
+    # said the kit had no --yes flag at all. It may still be named only for the verbs that have it, and a setup
+    # `--yes` is never described as confirming anything that touches the gateway.
     text = "\n".join(d.read_text(encoding="utf-8") for d in DOCS)
     assert "never been rehearsed" in text
-    assert not re.search(r"(?<!no )(?<!no `)--yes", text), "the kit has no --yes flag: only --non-interactive"
+    allowed = ("openclaw doctor", "setup --yes", "apply-pending", "offbox-identity", "answers only the offer",
+               "timers pass")
+    for doc in DOCS:
+        for line in doc.read_text(encoding="utf-8").splitlines():
+            if re.search(r"(?<!no )(?<!no `)--yes", line):
+                assert any(a in line for a in allowed), (doc.name, line[:100])
+    assert "answers only the offer to install missing tools" in text
 
 
 def test_the_block_drift_identity_and_model_form_pitfalls_are_recorded():
@@ -115,3 +124,38 @@ def test_the_native_exec_gap_is_documented_with_the_operator_decision():
     assert "the kit does not change" in para.group(0)
     for text in (m.group(0), para.group(0)):
         assert not re.search(r"\.gke\.goog|\bgke-[a-z0-9-]+|\.internal\b|\b\d{1,3}(?:\.\d{1,3}){3}\b", text)
+
+
+def test_the_guard_is_documented_as_an_accident_guard_not_a_security_boundary():
+    """2.2 G1: T46 says what the guard is, what it cannot see, and the findings F1/F2 are cross-linked."""
+    pit = (REPO / "docs" / "openclaw" / "pitfalls.md").read_text(encoding="utf-8")
+    m = re.search(r"^## T46 — .*?(?=^## |^# SECTION|^---$)", pit, re.M | re.S)
+    assert m, "T46 is missing"
+    for needle in ("not a security boundary", "accident", "xargs", "alias", "eval", "T45"):
+        assert needle in m.group(0), needle
+    t44 = re.search(r"^## T44 — .*?(?=^## |^# SECTION|^---$)", pit, re.M | re.S).group(0)
+    assert "2.2 candidate" not in t44, "the T44 finding is implemented now"
+    assert "ai-resources verify" in t44 and "ai-resources openclaw status" in t44
+    run = (REPO / "docs" / "openclaw" / "runbook.md").read_text(encoding="utf-8")
+    para = re.search(r"^## An egress-proxy .*?(?=^## )", run, re.M | re.S).group(0)
+    assert "ai-resources verify" in para and "status" in para
+    t39 = re.search(r"^## T39 — .*?(?=^## |^# SECTION|^---$)", pit, re.M | re.S).group(0)
+    assert "restart_close_failed" in t39 and "verify" in t39
+
+
+def test_the_runbook_names_the_new_flags_and_the_exit_code_convention():
+    run = (REPO / "docs" / "openclaw" / "runbook.md").read_text(encoding="utf-8")
+    assert "ai-resources openclaw doctor --yes" in run
+    assert "ai-resources setup --yes" in run
+    assert re.search(r"declin\w+ .{0,60}exit(s)? (code )?1", run)
+
+
+def test_the_unreleased_changelog_section_covers_every_group_and_no_version_moved():
+    text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    head = text.split("## [2.1.1]")[0]
+    assert "## [Unreleased]" in head
+    unreleased = head.split("## [Unreleased]")[1]
+    for needle in ("gateway guard", "command substitution", "T45", "T46", "setup-state lock", "hand-units",
+                   "--yes", "models check", "TLS certificate unavailable"):
+        assert needle in unreleased, needle
+    assert "2.1.1" in (REPO / "scripts" / "ai_resources" / "__init__.py").read_text(encoding="utf-8")
