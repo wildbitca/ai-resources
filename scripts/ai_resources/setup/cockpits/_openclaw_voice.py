@@ -244,6 +244,12 @@ def ensure_binaries(s: state.SetupState) -> bool:
     if not brew:
         ui.error(f"Voice notes need {', '.join(missing)}; install them (Homebrew not found).")
         return False
+    # Its own consent, default No, and never unattended (kit 2.2b, 3b): answering "local engine" is not a
+    # yes to a package-manager install.
+    if ui.is_non_interactive() or not ui.confirm(
+            f"Install {', '.join(missing)} with Homebrew (`brew install {' '.join(missing)}`)?", default=False):
+        ui.warn(f"Voice notes need {', '.join(missing)}; not installed. Run: brew install {' '.join(missing)}")
+        return False
     ui.info(f"Installing {', '.join(missing)} with Homebrew…")
     try:
         r = subprocess.run([brew, "install", *missing], capture_output=True, text=True, timeout=1800)

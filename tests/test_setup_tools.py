@@ -67,7 +67,8 @@ def test_non_interactive_with_no_saved_answer_installs_nothing(monkeypatch):
     assert s.tracking.tools_installed_by_us == []
 
 
-def test_non_interactive_with_a_saved_yes_installs_the_missing_tools_and_tracks_them(monkeypatch, tmp_path):
+def test_non_interactive_with_a_saved_yes_no_longer_installs_anything(monkeypatch, tmp_path):
+    """2.2b 3a: a saved yes (an old state file) is never replayed; before 2.2b this test asserted the replay."""
     monkeypatch.setattr(detection, "detect_claude_code", lambda: _missing("Claude Code"))
     monkeypatch.setattr(detection, "detect_agy", lambda: _missing("agy"))
     monkeypatch.setattr(detection, "detect_openclaw", lambda: _missing("OpenClaw"))
@@ -85,8 +86,11 @@ def test_non_interactive_with_a_saved_yes_installs_the_missing_tools_and_tracks_
     s = state.SetupState()
     s.tracking.install_tools_answer = "yes"
     installed = tools.offer(s)
-    assert set(installed) == {"claude", "agy", "openclaw"}
-    assert set(s.tracking.tools_installed_by_us) == {"claude", "agy", "openclaw"}
+    assert installed == [] and calls == []
+    assert s.tracking.tools_installed_by_us == []
+    assert s.tracking.install_tools_answer is None, "the stale answer is cleared, not carried forward"
+    # `--yes` is the only unattended yes, and it runs the installers through bash -c
+    assert set(tools.offer(s, assume_yes=True)) == {"claude", "agy", "openclaw"}
     assert len(calls) == 3
     for cmd in calls:
         assert cmd[0] == "bash" and cmd[1] == "-c"
@@ -111,7 +115,7 @@ def test_interactive_run_asks_once_and_does_not_reinstall_agy(monkeypatch, tmp_p
     assert installed == ["agy"]
     assert len(asked) == 1
     assert "agy" in asked[0].lower()
-    assert s.tracking.install_tools_answer == "yes"
+    assert s.tracking.install_tools_answer is None, "2.2b 8b: the answer belongs to this run and is not stored"
 
 
 def test_a_declined_offer_installs_nothing_and_is_not_asked_again(monkeypatch):
@@ -124,7 +128,7 @@ def test_a_declined_offer_installs_nothing_and_is_not_asked_again(monkeypatch):
     s = state.SetupState()
     installed = tools.offer(s)
     assert installed == []
-    assert s.tracking.install_tools_answer == "no"
+    assert s.tracking.install_tools_answer is None, "2.2b 8b: a refusal is not stored either"
 
     # A second call in the same run must not prompt again.
     calls = []
@@ -303,7 +307,7 @@ def test_pressing_enter_at_the_install_prompt_installs_nothing(monkeypatch):
     s = state.SetupState()
     assert tools.offer(s) == []
     assert seen["default"] is False and ran == []
-    assert s.tracking.install_tools_answer == "no"
+    assert s.tracking.install_tools_answer is None
 
 
 def test_yes_installs_without_asking_and_does_not_persist_the_answer(monkeypatch):

@@ -5,8 +5,8 @@ installs and logs into themselves. This module only offers to run each one's off
 installer when it is missing, tracks exactly what it changed (the binary and any rc-file
 PATH lines the installer appended), and never reinstalls something already present.
 
-Piped curl runs remote code, so every install is gated on explicit consent (or a saved
-`yes` answer replayed under `--non-interactive`) and every test in this module mocks
+Piped curl runs remote code, so every install is gated on explicit consent given in THIS run (an
+interactive yes, or `setup --yes`); nothing is stored or replayed. Every test in this module mocks
 `subprocess.run` — a real `curl | bash` must never execute from the test suite.
 """
 from __future__ import annotations
@@ -187,28 +187,27 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
           assume_yes: bool = False) -> list[str]:
     """Offer to install missing required tools; return the ids actually installed.
 
-    Asks once per call, and the question defaults to No: pressing Enter runs nothing, because an
-    install pipes a remote script into bash. `assume_yes` (`ai-resources setup --yes`) is the explicit way
-    to say yes without being asked. Under `--non-interactive`, the saved `install_tools_answer` is
-    replayed; with none saved (and no `--yes`), nothing is installed.
+    Consent is per run and is never stored. The question defaults to No (Enter runs nothing: an install pipes
+    a remote script into bash); `assume_yes` (`ai-resources setup --yes`) says yes for this run only; an
+    unattended (`--non-interactive`) run without `--yes` installs nothing. An answer saved by an older kit
+    (`install_tools_answer`) is ignored and cleared: a "yes" given once must not authorise a later run, and a
+    "no" must not stop the question being asked again.
     """
+    s.tracking.install_tools_answer = None           # migration: nothing is replayed, nothing is persisted
     missing = missing_tools(ids)
     if not missing:
         return []
     labels = ", ".join(TOOLS[t].label for t in missing)
 
-    # `--yes` applies to this run only; it is never stored, so a later unattended run without
-    # `--yes` cannot replay it.
-    if assume_yes:
-        pass
-    elif ui.is_non_interactive():
-        if s.tracking.install_tools_answer != "yes":
+    if not assume_yes:
+        if ui.is_non_interactive():
             return []
-    else:
-        if s.tracking.install_tools_answer is None:
-            proceed = ui.confirm(f"Install missing tools now? ({labels})", default=False)
-            s.tracking.install_tools_answer = "yes" if proceed else "no"
-        if s.tracking.install_tools_answer != "yes":
+        # Asked once per run: a second call on the same state object reuses the answer given a moment ago.
+        proceed = getattr(s, "_install_answer_this_run", None)
+        if proceed is None:
+            proceed = bool(ui.confirm(f"Install missing tools now? ({labels})", default=False))
+            s._install_answer_this_run = proceed          # an instance attribute: never serialised
+        if not proceed:
             return []
 
     installed: list[str] = []

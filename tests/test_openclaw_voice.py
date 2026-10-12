@@ -437,6 +437,10 @@ def brew(monkeypatch):
         b = _Brew(present, **kw)
         monkeypatch.setattr(voice.transcriber, "find_binary", b.which)
         monkeypatch.setattr(voice.subprocess, "run", b.run)
+        # 2.2b 3b: the formula install has its own confirm (default No); these tests are about what happens
+        # after a yes, and test_install_consent.py covers the No paths.
+        monkeypatch.setattr(voice.ui, "is_non_interactive", lambda: False)
+        monkeypatch.setattr(voice.ui, "confirm", lambda *_a, **_k: True)
         return b
     return make
 

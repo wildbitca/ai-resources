@@ -42,6 +42,14 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   refuses with one line and stops nothing. Setup's restart also refuses inside the gateway cgroup (T29), and a busy
   probe that cannot tell now counts as busy (fail closed) instead of idle.
 
+- **Install consent (2.2b, section 3).** Consent to an installer is per run and is never stored: an
+  `install_tools_answer` saved by an older kit is ignored and cleared on load, the question is asked again on every
+  interactive run (default No, also after an earlier "no"), `setup --yes` is the only unattended yes and persists
+  nothing. The LiteLLM pipx and venv installs and the image pull now default to No and never run under
+  `--non-interactive`; the voice local engine's `brew install whisper-cpp ffmpeg` has its own confirm (default No,
+  never unattended); `openclaw bootstrap` asks before each change (default No) unless `--yes`, and an unattended run
+  without `--yes` changes nothing.
+
 ### Added
 
 - **Findings (F).** `status` and `verify` WARN when the egress proxy refused hosts with `TLS certificate unavailable`

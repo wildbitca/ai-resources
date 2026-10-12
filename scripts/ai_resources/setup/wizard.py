@@ -697,7 +697,7 @@ def _step3_docker(s: state.SetupState) -> int:
     # Save state NOW so pull_image() can read s.litellm.local.runtime
     state.save(s)
 
-    if ui.confirm(f"Pull {image} now?  (~400MB, takes 30-90s)", default=True):
+    if ui.confirm(f"Pull {image} now?  (~400MB, takes 30-90s)", default=False):
         with ui.spinner(f"Pulling {image}"):
             ok, msg = litellm.pull_image(image)
         if not ok:
@@ -773,8 +773,11 @@ def _step3_pipx(s: state.SetupState) -> int:
                 return 1
             ui.ok("LiteLLM updated")
     else:
+        # Installs code from PyPI: Enter skips, and an unattended run never does it (kit 2.2b, 3b).
         if not ui.confirm(f"Install LiteLLM via `pipx install '{litellm.DEFAULT_LITELLM_PIP_SPEC}' --python {py.binary_path}`?",
-                          default=True):
+                          default=False):
+            ui.detail("LiteLLM was not installed. Run `ai-resources setup` from a terminal and answer yes, or "
+                      f"install it yourself: pipx install '{litellm.DEFAULT_LITELLM_PIP_SPEC}'")
             return 1
         with ui.spinner("Installing LiteLLM (this may take 1-3 minutes)"):
             ok, msg = litellm.install_litellm_pipx(python_path=py.binary_path)
@@ -830,7 +833,8 @@ def _step3_pipvenv(s: state.SetupState) -> int:
         return 0
 
     if not ui.confirm("Create venv at ~/.config/ai-resources/venv and pip install LiteLLM?",
-                      default=True):
+                      default=False):
+        ui.detail("LiteLLM was not installed. Run `ai-resources setup` from a terminal and answer yes.")
         return 1
     with ui.spinner("Creating venv + installing LiteLLM (this may take 1-3 minutes)"):
         ok, msg = litellm.install_litellm_venv(python_path=py.binary_path)

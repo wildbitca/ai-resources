@@ -2738,7 +2738,7 @@ def bootstrap(runner: Runner = default_runner, *, dry_run: bool = False, only: s
 
     `dry_run` runs the checks and prints what it WOULD do; nothing is touched. `only` runs one
     step. `confirm(step, description)` is asked before every change (the wizard passes a real
-    prompt; the headless command passes yes). Never writes openclaw.json, never restarts the
+    prompt, the headless command passes yes only with `--yes`). Never writes openclaw.json, never restarts the
     gateway; the steps that change the gateway's unit or install a new version say a restart
     is needed and stop.
     """
@@ -4507,10 +4507,28 @@ def cmd_status(args: argparse.Namespace, runner: Runner | None = None) -> int:
     return 0  # status never repairs and never fails the shell: it reports
 
 
+def _bootstrap_confirm(assume_yes: bool) -> Callable[[str, str], bool]:
+    """The per-step confirm of the `bootstrap` verb: Yes only with `--yes`; otherwise each change is asked on a
+    terminal with the default No, and an unattended run changes nothing (kit 2.2b, 3b)."""
+    if assume_yes:
+        return lambda step, what: True
+
+    def ask(step: str, what: str) -> bool:
+        from .setup import ui
+        if ui.is_non_interactive() or not ui.stdin_is_a_terminal():
+            return False
+        try:
+            return bool(ui.confirm(f"{what}?", default=False))
+        except EOFError:
+            return False
+    return ask
+
+
 def cmd_bootstrap(args: argparse.Namespace) -> int:
     try:
         results, _ctx = bootstrap(dry_run=args.dry_run, only=args.only or None, upgrade=args.upgrade,
-                                  memory_high=args.memory_high)
+                                  memory_high=args.memory_high,
+                                  confirm=_bootstrap_confirm(getattr(args, "yes", False)))
     except ValueError as e:
         print(f"error: {e}")
         return 2
@@ -4625,6 +4643,9 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_bs.add_argument("--only", default="", choices=["", *BOOTSTRAP_STEPS], help="Run a single step")
     p_bs.add_argument("--upgrade", action="store_true", help="Reinstall the latest openclaw even if one is present")
     p_bs.add_argument("--memory-high", default="12G", help="MemoryHigh for the gateway unit (default 12G)")
+    p_bs.add_argument("--yes", action="store_true",
+                      help="Make every change without asking (otherwise each one asks on a terminal, default No, "
+                           "and an unattended run changes nothing)")
     p_bs.set_defaults(func=cmd_bootstrap)
 
     p_new = verbs.add_parser("agent-new", help="Give an OpenClaw agent a workspace with the right AGENTS.md")

@@ -143,8 +143,8 @@ class InstallTracking:
     # ~/.zprofile, ~/.profile), minus any that duplicated a pre-existing line. Only
     # these exact lines are ever removed on teardown.
     rc_lines_added: dict[str, list[str]] = field(default_factory=dict)
-    # "yes" | "no" | None (never asked). Replayed under --non-interactive so a second
-    # unattended run doesn't re-prompt for something already answered once.
+    # Retired in kit 2.2b: install consent is per run and is never stored or replayed (an old "yes" must not
+    # authorise a later run). The key is still read and written (always None) so an old file loads.
     install_tools_answer: str | None = None
 
 
@@ -384,7 +384,9 @@ def load() -> SetupState:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError:
         return SetupState()
-    return _from_dict(SetupState, data)
+    loaded = _from_dict(SetupState, data)
+    loaded.tracking.install_tools_answer = None      # 2.2b: a saved install answer is never replayed
+    return loaded
 
 
 def save(state: SetupState) -> None:

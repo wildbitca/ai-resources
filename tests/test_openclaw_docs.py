@@ -50,7 +50,7 @@ def test_the_docs_say_the_restore_is_unrehearsed_and_name_yes_only_where_the_fla
     text = "\n".join(d.read_text(encoding="utf-8") for d in DOCS)
     assert "never been rehearsed" in text
     allowed = ("openclaw doctor", "setup --yes", "apply-pending", "offbox-identity", "answers only the offer",
-               "timers pass")
+               "timers pass", "openclaw bootstrap --yes")      # bootstrap gained --yes in 2.2b (section 3b)
     for doc in DOCS:
         for line in doc.read_text(encoding="utf-8").splitlines():
             if re.search(r"(?<!no )(?<!no `)--yes", line):

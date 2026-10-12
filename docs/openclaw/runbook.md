@@ -232,7 +232,9 @@ Node and the gateway uses absolute brew paths.
 ### B1.2 OpenClaw via brew's npm, allowing install scripts `[idem]`
 
 **[kit]** `ai-resources openclaw bootstrap` does this (and B1.1, B1.3, linger and the backup
-directories) idempotently. It installs the **latest** openclaw, not a pin, and records
+directories) idempotently; each change asks first on a terminal (default No),
+`ai-resources openclaw bootstrap --yes` makes them without asking, and an unattended run without it changes
+nothing. It installs the **latest** openclaw, not a pin, and records
 `OPENCLAW_INSTALLED_VERSION` and `OPENCLAW_PREVIOUS_VERSION` in `~/.openclaw/kit-host.env`; the manual
 recipe below pins `2026.9.4`, the reference state.
 
