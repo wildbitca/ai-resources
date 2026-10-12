@@ -44,6 +44,11 @@ Why: `openclaw doctor --fix` stops the gateway and re-inspects the stopped unit.
 leaves the gateway DOWN, with the watchdog free to fight the stop. On 2026-09-18 that cost half
 an hour. `ai-resources openclaw doctor` does it in the one safe order.
 
+Cost and the deadline: the analysis is bounded by a work budget and by a wall-clock deadline (4 s, never
+more than 8 s: the hook's own timeout FAILS OPEN, so the guard must answer before it). When the deadline fires,
+or the analysis fails with an internal error, a CHEAP VIEW decides: it reads words, not commands, and denies
+when `gateway` sits next to a stop/restart verb (or `doctor` next to `--fix`) within a short window. 
+
 Precision matters more than coverage. A deny aborts the WHOLE tool call, not the offending
 command (T24), and the kit's own docs are full of the literal strings above. So the command is
 tokenised as a shell would and only a command in COMMAND POSITION is considered: a `grep`, an
@@ -57,8 +62,11 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
+import threading
+import time
 from collections import deque
 
 UNIT = "openclaw-gateway.service"
@@ -129,6 +137,7 @@ def _scan(text: str, literal_quotes: bool = False
     docs: list[tuple[str, bool, int, int]] = []
     herestrings: list[tuple[int, int]] = []
     deep = [False]
+    ticks = [0]
     n = len(text)
 
     def walk(i: int, ctx: str, depth: int, record: bool) -> tuple[int, bool]:
@@ -140,6 +149,9 @@ def _scan(text: str, literal_quotes: bool = False
         pat_paren = False                    # a `(`-led pattern is open: its `)` ends the pattern
         pending: deque[str] = deque()        # heredoc delimiters whose body starts at the next newline
         while i < n:
+            ticks[0] += 1
+            if not ticks[0] & 0x3FFF:
+                _check_deadline()
             c = text[i]
             if c == "\\":
                 i, prev = i + 2, "x"
@@ -575,7 +587,7 @@ def _mask_substitutions(text: str) -> str:
     out, last = [], 0
     for start, end in spans:
         out.append(text[last:start])
-        out.append("__SUBSTITUTION__")
+        out.append("_")
         last = end
     out.append(text[last:])
     return "".join(out)
@@ -1001,9 +1013,93 @@ _NEAR = 8          # how many words before the unit a verb may sit in the unit f
 _MAX_DEPTH = 40    # how many wrappers (`bash -c`, `eval`, `env -S`, `$(...)`) are followed before the fallback
 _WORK_BUDGET = 4 * _MAX_COMMAND_CHARS   # characters read over one whole command, nested strings included
 _work = 0
+_SHAPE_COST = 256                # charged for every shape() call and every logical line, whatever its size
 _MAX_EXEC_EXPANSIONS = 64      # `xargs`/`find -exec` command lists followed per command line
 _SEGMENT = re.compile(r"[;&|()\n]+")
 _UNKNOWN_VERB = re.compile(r"[$`*?\[{~]")
+
+
+class _DeadlineExceeded(BaseException):
+    """The wall-clock deadline of the analysis expired. A BaseException so that no `except Exception` inside the
+    parser can swallow it."""
+
+
+_DEADLINE_DEFAULT_S = 4.0
+_DEADLINE_MAX_S = 8.0                    # the hook's own timeout fails open: never wait for it
+_deadline_at: float | None = None        # time.monotonic() value at which the precise analysis is abandoned
+_last_deadline_fired = False
+
+
+def _check_deadline() -> None:
+    """Raise when the deadline has passed. The signal handler does the same where signals work; this check is
+    for threads and platforms without SIGALRM, and costs one clock read where it is called."""
+    if _deadline_at is not None and time.monotonic() > _deadline_at:
+        raise _DeadlineExceeded()
+
+
+def _on_alarm(_signum, _frame) -> None:
+    if _deadline_at is not None:
+        raise _DeadlineExceeded()
+
+
+def _deadline_seconds() -> float:
+    """4 s by default; `KIT_GUARD_DEADLINE_S` overrides it (tests), never above 8 s and never below 10 ms."""
+    try:
+        value = float(os.environ.get("KIT_GUARD_DEADLINE_S", ""))
+    except ValueError:
+        return _DEADLINE_DEFAULT_S
+    if value != value:                   # NaN
+        return _DEADLINE_DEFAULT_S
+    return min(max(value, 0.01), _DEADLINE_MAX_S)
+
+
+_CHEAP_CAP = 8 * 1024 * 1024             # characters the cheap view reads (the head and the tail when larger)
+_CHEAP_WINDOW = 160                      # characters between the gateway word and its verb
+_CHEAP_TOKEN = re.compile(r"(?P<gw>gateway)|(?P<verb>(?<![a-z0-9])(?:try-restart|reload-or-restart|"
+                          r"try-reload-or-restart|condrestart|restart|stop|kill)(?![a-z0-9]))|"
+                          r"(?P<doc>(?<![a-z0-9])doctor(?![a-z0-9]))|(?P<fix>--fix(?![a-z0-9]))")
+_CHEAP_QUOTES = re.compile(r"['\"\\]")
+
+
+def _cheap_view(text: str) -> str | None:
+    """The word-level view that decides when the precise analysis cannot (the deadline expired, or it failed):
+    "restart", "stop" or "doctor" when `gateway` and a stop/restart verb sit within `_CHEAP_WINDOW` characters of
+    each other, or `doctor` and `--fix` do; None otherwise. One regular-expression pass over the lower-cased
+    text with its quotes and backslashes removed (`re''start`): no tokenising, no recursion, no nested loops."""
+    if len(text) > _CHEAP_CAP:
+        text = text[:_CHEAP_CAP // 2] + "\n" + text[-_CHEAP_CAP // 2:]
+    low = _CHEAP_QUOTES.sub("", text.lower())
+    last_gw = last_verb = last_doc = last_fix = -_CHEAP_WINDOW * 4
+    found: str | None = None
+    verb_text = ""
+    for m in _CHEAP_TOKEN.finditer(low):
+        pos = m.start()
+        kind = m.lastgroup
+        if kind == "gw":
+            last_gw = pos
+            if pos - last_verb <= _CHEAP_WINDOW:
+                found = _verb_kind(verb_text, found)
+        elif kind == "verb":
+            last_verb, verb_text = pos, m.group(0)
+            if pos - last_gw <= _CHEAP_WINDOW:
+                found = _verb_kind(verb_text, found)
+        elif kind == "doc":
+            last_doc = pos
+            if pos - last_fix <= _CHEAP_WINDOW and found is None:
+                found = "doctor"
+        else:
+            last_fix = pos
+            if pos - last_doc <= _CHEAP_WINDOW and found is None:
+                found = "doctor"
+        if found == "restart":
+            return found
+    return found
+
+
+def _verb_kind(verb: str, found: str | None) -> str:
+    if verb in ("stop", "kill"):
+        return found if found == "restart" else "stop"
+    return "restart"
 
 
 _DATA_COMMANDS = {"echo", "printf", "print", "grep", "egrep", "fgrep", "rg"}
@@ -1317,20 +1413,41 @@ def _reads_script_from_stdin(words: list[str]) -> bool:
     return n >= len(words) or s_flag
 
 
+def _charge(size: int) -> bool:
+    """Charge `size` characters about to be produced against the work budget. False when the budget would be
+    exceeded: the caller then does not build the text (the fallback reads the words instead)."""
+    global _work
+    if _work + size > _WORK_BUDGET:
+        _work = _WORK_BUDGET + 1
+        return False
+    _work += size
+    return True
+
+
 def _printf_text(args: list[str]) -> str:
     """What `printf FORMAT ARGS...` writes, for the `%s`-style conversions: enough to see a command that is
-    spelled through the format. The format is reused while arguments remain, as printf does."""
+    spelled through the format. The format is reused while arguments remain, as printf does. The size of the
+    result is charged before it is built; past the budget nothing is built."""
     if not args:
         return ""
-    fmt, rest = args[0], list(args[1:])
+    fmt, rest = args[0], args[1:]
+    specs = sum(1 for m in _PRINTF_SPEC.finditer(fmt) if m.group(0) != "%%")
+    passes = 1 if specs == 0 else -(-len(rest) // specs) or 1
+    if not _charge(passes * len(fmt) + sum(len(a) for a in rest)):
+        return ""
     out: list[str] = []
-    for _ in range(len(rest) + 1):
+    pos = 0
+    for _ in range(passes):
         def conv(m: re.Match) -> str:
+            nonlocal pos
             if m.group(0) == "%%":
                 return "%"
-            return rest.pop(0) if rest else ""
+            if pos < len(rest):
+                pos += 1
+                return rest[pos - 1]
+            return ""
         out.append(_PRINTF_SPEC.sub(conv, fmt))
-        if not rest or not _PRINTF_SPEC.search(fmt):
+        if pos >= len(rest) or not _PRINTF_SPEC.search(fmt):
             break
     return "".join(out).replace("\\n", "\n")
 
@@ -1381,8 +1498,16 @@ def _expand_known(words: list[str], assigned: dict[str, str]) -> list[str]:
     """`words` with `$NAME` / `${NAME}` replaced by a literal assigned earlier in the same text."""
     if not assigned:
         return words
-    return [_VAR_REF.sub(lambda m: assigned.get(m.group(1) or m.group(2), m.group(0)), w) if "$" in w else w
-            for w in words]
+    longest = max(len(v) for v in assigned.values())
+    out: list[str] = []
+    for w in words:
+        if "$" in w:
+            # the size of the expanded word is charged before it is built
+            if not _charge(len(w) + longest * len(_VAR_REF.findall(w))):
+                return words
+            w = _VAR_REF.sub(lambda m: assigned.get(m.group(1) or m.group(2), m.group(0)), w)
+        out.append(w)
+    return out
 
 
 def _trap_text(words: list[str]) -> str | None:
@@ -1426,9 +1551,10 @@ def shape(command: str, _depth: int = 0) -> str | None:
 
 def _shape(command: str, _depth: int) -> str | None:
     global _work
+    _check_deadline()
     if _depth == 0:
         _work = 0
-    _work += len(command)
+    _work += len(command) + _SHAPE_COST
     if len(command) > _MAX_COMMAND_CHARS:
         # Reading a huge command line by line costs seconds per hundred kilobytes and the hook has a timeout
         # that lets the command through. Above the cap nothing is parsed: it is denied when it names the
@@ -1453,6 +1579,11 @@ def _shape(command: str, _depth: int) -> str | None:
     assigned: dict[str, str] = {}
     expanded = 0
     for li, (logical, physical) in enumerate(lines):
+        _check_deadline()
+        _work += len(logical) + _SHAPE_COST
+        if _work > _WORK_BUDGET:
+            # the budget is spent (a very long script, thousands of substitutions): the rest is read for words
+            return _text_shape(command)
         subs, _docs, too_deep, _spans, herestrings = _scan(logical)
         entries = line_docs.get(li, [])
         marked, marks = (_mark_redirections(logical, entries, herestrings)
@@ -1475,10 +1606,16 @@ def _shape(command: str, _depth: int) -> str | None:
             statements = statements + [(s, False) for s in _line_statements(physical)]
         for sub in subs:
             # `"$(cmd)"`, `` `cmd` ``, `<(cmd)`: the shell runs the text inside as a command.
+            if _work > _WORK_BUDGET:
+                found = _text_shape(logical)       # one pass over the line, not one parse per substitution
+                if found:
+                    return found
+                break
             inner = shape(sub, _depth + 1)
             if inner:
                 return inner
         for index, (raw_stmt, _piped) in enumerate(statements):
+            _check_deadline()
             stmt = [w for w in raw_stmt if w not in marks] if marks else raw_stmt
             splits: list[str] = []
             words = _command_words(stmt, splits)
@@ -1555,15 +1692,61 @@ def gateway_active() -> bool:
     return r.returncode == 0 and r.stdout.strip() == "active"
 
 
+def decide(command: str) -> str | None:
+    """"doctor", "stop" or "restart" when `command` must be denied, else None.
+
+    The precise analysis runs under a wall-clock deadline. When the deadline fires, or the analysis fails with
+    an internal error, the cheap view decides instead (a failure must not become "allow" when the words are
+    there)."""
+    global _deadline_at, _last_deadline_fired, _memo
+    seconds = _deadline_seconds()
+    _last_deadline_fired = False
+    failed = False
+    found: str | None = None
+    old_handler = None
+    timer = False
+    try:
+        try:
+            _deadline_at = time.monotonic() + seconds
+            if threading.current_thread() is threading.main_thread() and hasattr(signal, "setitimer"):
+                try:
+                    old_handler = signal.signal(signal.SIGALRM, _on_alarm)
+                    signal.setitimer(signal.ITIMER_REAL, seconds)
+                    timer = True
+                except (ValueError, OSError):
+                    timer = False
+            if dangerous(command):
+                found = shape(command)       # the same command: answered from the one-entry memo
+        finally:
+            _deadline_at = None              # the handler does nothing from here on
+            if timer:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.signal(signal.SIGALRM, old_handler if old_handler is not None else signal.SIG_DFL)
+    except _DeadlineExceeded:
+        failed = True
+        _last_deadline_fired = True
+    except Exception:
+        failed = True
+    _memo = None
+    if failed:
+        try:
+            found = _cheap_view(command)
+        except Exception:
+            found = None
+    return found
+
+
 def main() -> int:
     try:
         data = json.load(sys.stdin)
         if not isinstance(data, dict) or data.get("tool_name") != "Bash":
             return 0
         command = str((data.get("tool_input") or {}).get("command", ""))
-        if not command or not dangerous(command):
+        if not command:
             return 0
-        found = shape(command)       # the same command: answered from the one-entry memo, not read twice
+        found = decide(command)
+        if not found:
+            return 0
         if os.path.exists(WATCHDOG_OFF) or not gateway_active():
             return 0
     except Exception:

@@ -149,8 +149,10 @@ def test_an_unbalanced_quote_fails_open_instead_of_guessing(guard, monkeypatch, 
 
 
 def test_an_internal_exception_exits_zero(guard, monkeypatch, capsys):
+    # 2.2c: an exception is decided by the cheap word view, so it only fails open for text that has no
+    # gateway verb or `doctor --fix` in it (the words that do are denied: see test_..._deadline.py)
     monkeypatch.setattr(guard, "dangerous", lambda *_a: (_ for _ in ()).throw(RuntimeError("bug")))
-    assert run(guard, monkeypatch, "openclaw doctor --fix", capsys=capsys) == (0, "")
+    assert run(guard, monkeypatch, "git status --short", capsys=capsys) == (0, "")
 
 
 def test_the_hook_source_is_english_and_has_no_host_literals():
@@ -590,7 +592,10 @@ def test_an_internal_error_still_fails_open(guard, monkeypatch, capsys):
         raise RuntimeError("x")
 
     monkeypatch.setattr(guard, "shape", boom)
-    assert run(guard, monkeypatch, "env -S 'openclaw gateway restart'", capsys=capsys) == (0, "")
+    assert run(guard, monkeypatch, "env -S 'openclaw gateway status'", capsys=capsys) == (0, "")
+    # 2.2c: the gateway words are still denied by the cheap view when the precise analysis fails
+    code, err = run(guard, monkeypatch, "env -S 'openclaw gateway restart'", capsys=capsys)
+    assert code == 2 and "T29" in err
 
 
 # --- kit 2.1.1 pass 4, S2: shell line continuation ------------------------------------------------------------------
