@@ -62,6 +62,12 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   from outside. The original is put back with one `os.replace` (a temp file beside the destination across file
   systems), so the destination is never missing while it is restored.
 
+- **Journal findings (2.2b, section 6).** A journal line is untrusted text. The `host=` token the egress-proxy
+  finding names must be a lowercase RFC 1123 host name (labels of 1-63 characters, at most 253 in all; punycode is
+  fine) or it is dropped, so `status` and `verify` never print advice naming a host that failed that check; ANSI
+  sequences, control and bidi characters are stripped from what is printed; and the journal read has a byte cap
+  (8 MiB, the process is stopped there) next to its line and time bounds.
+
 ### Added
 
 - **Findings (F).** `status` and `verify` WARN when the egress proxy refused hosts with `TLS certificate unavailable`

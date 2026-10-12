@@ -402,8 +402,29 @@ def read_report(since: str, runner: Runner, unit: str = UNIT) -> dict:
 JOURNAL_SIGNAL_HOURS = 24
 JOURNAL_SIGNAL_LINES = 20000       # the journal read is bounded in lines ...
 JOURNAL_SIGNAL_TIMEOUT_S = 20      # ... and in time
+JOURNAL_SIGNAL_BYTES = 8 * 1024 * 1024   # ... and in bytes: a journal line is untrusted and can be huge
 _TLS_UNAVAILABLE = "TLS certificate unavailable"
 _TLS_HOST = re.compile(r"\bhost=([^\s;,]+)")
+_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]")
+
+
+def valid_hostname(token: str) -> bool:
+    """RFC 1123: dot-separated labels of lowercase ASCII letters, digits and hyphens (punycode `xn--` labels
+    included), each 1-63 characters and not starting or ending with a hyphen, at most 253 characters in all.
+    Anything else (a port, an IP literal, upper case, a control or bidi character) is not a host name here.
+    Bounded work: the length is checked before the labels are."""
+    if not token or len(token) > 253 or not token.isascii():
+        return False
+    return all(_HOST_LABEL.fullmatch(label) for label in token.split("."))
+
+
+def printable(text: object) -> str:
+    """`text` with ANSI escape sequences, control characters and bidi/format characters removed: what is read from
+    a journal or a bundle is never printed raw."""
+    import unicodedata
+    clean = _ANSI.sub("", str(text))
+    return "".join(ch for ch in clean if ch in "\n\t " or not unicodedata.category(ch).startswith("C"))
 _COMPLETION = re.compile(r"subagent completion (deferred|lost|dropped|undelivered|abandoned)\b", re.IGNORECASE)
 # the gateway journals every stability bundle it writes: `wrote stability bundle: .../...-<reason>.json`
 _BUNDLE = re.compile(r"wrote stability bundle: \S*?gateway\.(restart_close_failed|stop_close_failed)\.json")
@@ -421,7 +442,7 @@ def parse_journal_signals(text: str) -> dict:
             close_failed += 1
         if _TLS_UNAVAILABLE in line and "kind=refused" in line:
             m = _TLS_HOST.search(line)
-            if m and m.group(1) not in hosts:
+            if m and valid_hostname(m.group(1)) and m.group(1) not in hosts:
                 hosts.append(m.group(1))
         elif _COMPLETION.search(line):
             completions += 1
@@ -431,15 +452,20 @@ def parse_journal_signals(text: str) -> dict:
 def read_journal_signals(runner: Runner, unit: str = UNIT) -> dict:
     """`journalctl --user -u <unit> --since "24 hours ago" -n <cap>` (read-only, bounded) parsed by
     `parse_journal_signals`. `available` is False when the journal cannot be read, so nothing is claimed."""
+    argv = ["journalctl", "--user", "-u", unit.removesuffix(".service"), "--since",
+            f"{JOURNAL_SIGNAL_HOURS} hours ago", "--no-pager", "-o", "short-iso",
+            "-n", str(JOURNAL_SIGNAL_LINES)]
     try:
-        rc, out = runner(["journalctl", "--user", "-u", unit.removesuffix(".service"), "--since",
-                          f"{JOURNAL_SIGNAL_HOURS} hours ago", "--no-pager", "-o", "short-iso",
-                          "-n", str(JOURNAL_SIGNAL_LINES)], timeout=JOURNAL_SIGNAL_TIMEOUT_S)
+        # `max_bytes` tells the default runner to stop reading there; whatever any runner hands back is cut too.
+        try:
+            rc, out = runner(argv, timeout=JOURNAL_SIGNAL_TIMEOUT_S, max_bytes=JOURNAL_SIGNAL_BYTES)
+        except TypeError:            # a runner that does not know `max_bytes`: the text is cut below instead
+            rc, out = runner(argv, timeout=JOURNAL_SIGNAL_TIMEOUT_S)
     except Exception:  # noqa: BLE001 - an unavailable journal is silence, never an error
         return {"available": False, "tls_hosts": [], "completions": 0, "close_failed": 0}
     if rc != 0:
         return {"available": False, "tls_hosts": [], "completions": 0, "close_failed": 0}
-    return {"available": True, **parse_journal_signals(out)}
+    return {"available": True, **parse_journal_signals((out or "")[:JOURNAL_SIGNAL_BYTES])}
 
 
 def utc_iso(epoch: float) -> str:

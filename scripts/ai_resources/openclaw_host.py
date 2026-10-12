@@ -48,13 +48,54 @@ WATCHDOG_OFF = Path.home() / ".openclaw" / "watchdog.off"
 GATEWAY_UNIT = "openclaw-gateway.service"
 
 
+def _run_capped(argv: list[str], *, env: dict | None, timeout: float | None, cwd: str | None,
+                max_bytes: int) -> tuple[int, str]:
+    """Run `argv` and keep at most `max_bytes` of its output: the process is killed once the cap is reached, so a
+    huge output is never held in memory. The (successful) exit code is reported as 0 in that case."""
+    import threading
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, env=env, cwd=cwd or str(Path.home()))
+    except FileNotFoundError:
+        return 127, f"{argv[0]} not found"
+    except OSError as e:
+        return 1, str(e)
+    buf = bytearray()
+    capped = threading.Event()
+
+    def reader() -> None:
+        assert proc.stdout is not None
+        while len(buf) < max_bytes:
+            chunk = proc.stdout.read(min(65536, max_bytes - len(buf)))
+            if not chunk:
+                return
+            buf.extend(chunk)
+        capped.set()
+        proc.kill()
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        proc.kill()
+        t.join(5)
+        proc.wait()
+        return 124, f"timed out after {timeout:g}s"
+    rc = proc.wait()
+    return (0 if capped.is_set() else rc), bytes(buf).decode("utf-8", errors="replace").strip()
+
+
 def default_runner(argv: list[str], *, env: dict | None = None, timeout: float | None = 120,
-                   input: str | None = None, cwd: str | None = None) -> tuple[int, str]:
+                   input: str | None = None, cwd: str | None = None,
+                   max_bytes: int | None = None) -> tuple[int, str]:
     """Run `argv`; (return code, combined output).
 
     127 is a missing binary and 124 a timeout (the coreutils `timeout` convention); any other
     OSError is 1. Every caller before the 124 split tested `rc == 0` only, so it is additive.
+    `max_bytes` keeps only that much output and stops the process there (for a read of untrusted text).
     """
+    if max_bytes is not None and input is None:
+        return _run_capped(argv, env=env, timeout=timeout, cwd=cwd, max_bytes=max_bytes)
     try:
         r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, input=input,
                            env=env, cwd=cwd or str(Path.home()))
@@ -3393,11 +3434,11 @@ def journal_findings(runner: Runner, stability: dict | None) -> list[tuple[str, 
         out.append(("warn",
                     f"the secret egress proxy refused {len(hosts)} host(s) in the last "
                     f"{openclaw_pressure.JOURNAL_SIGNAL_HOURS} h with `TLS certificate unavailable`: "
-                    f"{', '.join(shown)}{more}",
+                    f"{', '.join(openclaw_pressure.printable(h) for h in shown)}{more}",
                     "this is not the traffic allowlist: add the exact host to secrets.egressProxy.bypassHosts "
                     "(a restart-required key: apply it in a window, see pitfall T44 and the runbook)"))
     stab = stability or {}
-    reason = str(stab.get("reason") or "")
+    reason = openclaw_pressure.printable(stab.get("reason") or "")
     age = stab.get("age_hours")
     recent = isinstance(age, (int, float)) and age <= openclaw_pressure.JOURNAL_SIGNAL_HOURS
     newest_failed = bool(stab.get("present") and recent and reason.endswith(_CLOSE_FAILED_SUFFIXES))
