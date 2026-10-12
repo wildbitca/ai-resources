@@ -1183,6 +1183,7 @@ _STATEMENT_END = re.compile(r"[;&|\n)}]")
 _WORD_BEFORE = re.compile(r"[^\s;&|<>]*$")
 _ASSEMBLY_CHARS = frozenset("$`*?[{}()\\")
 _STRICT_PAIR_BUDGET = 2048               # exclusion checks per reading; past it every pair counts (fail closed)
+_LINE_LOOKAHEAD = 4096                   # characters of a line read after the words of a printing statement
 
 
 def _statement_head(low: str, pos: int) -> str:
@@ -1252,13 +1253,18 @@ def _prints_only(low: str, a: int, b: int) -> bool:
     if _STATEMENT_BREAK.search(low, a, b) is not None:
         return False
     # The statement is read to the end of its LINE, not to the first `;`: a quoted `;` inside the printed text
-    # is no boundary (quotes are gone from the text), and `echo 'a; b' | sh` pipes what it printed.
-    eol = low.find("\n", b)
-    body = low[start:eol if eol >= 0 else len(low)]
+    # is no boundary (quotes are gone from the text), and `echo 'a; b' | sh` pipes what it printed. A line that
+    # runs on past `_LINE_LOOKAHEAD` characters is not read to its end: it is not a printing statement.
+    eol = low.find("\n", b, b + _LINE_LOOKAHEAD)
+    if eol < 0:
+        if len(low) - b > _LINE_LOOKAHEAD:
+            return False
+        eol = len(low)
+    body = low[start:eol]
     return not any(c in body for c in ("|", ">", "`", "$("))
 
 
-def _gateway_answered(low: str, gw: int, verb: int, raw: str) -> bool:
+def _gateway_answered(low: str, gw: int, verb: int, raw: str, plain: dict[str, bool]) -> bool:
     """True when another subcommand stands between `gateway` and the verb: `openclaw gateway status --note
     restart` is `status`. The subcommand must also stand as a whole word in the text as it was written (`raw`,
     lower-cased): a `status` that only exists once quotes, escapes or an ANSI-C string are resolved (`$'sta'tus`
@@ -1269,18 +1275,22 @@ def _gateway_answered(low: str, gw: int, verb: int, raw: str) -> bool:
     if _STATEMENT_END.search(between) is not None or "(" in between:
         return False
     for w in between.split():
-        if w in _NOT_A_VERB and re.search(r"(?<![\w$'\"\\.-])" + re.escape(w) + r"(?![\w'\"\\-])", raw):
-            return True
+        if w in _NOT_A_VERB:
+            if w not in plain:               # one scan of the text per word and reading, not one per pair
+                plain[w] = re.search(r"(?<![\w$'\"\\.-])" + re.escape(w) + r"(?![\w'\"\\-])", raw) is not None
+            if plain[w]:
+                return True
     return False
 
 
-def _strict_pair(low: str, raw: str, gw: int, near: bool, unit: bool, verb: int, spent: int) -> bool:
+def _strict_pair(low: str, raw: str, plain: dict[str, bool], gw: int, near: bool, unit: bool, verb: int,
+                 spent: int) -> bool:
     """True when the gateway word (or the unit) at `gw` and the verb at `verb`, within the window, are read as the
     OpenClaw gateway being stopped or restarted (see the block comment above)."""
     if spent >= _STRICT_PAIR_BUDGET:
         return True
     a, b = (gw, verb) if gw < verb else (verb, gw)
-    if _prints_only(low, a, b) or (not unit and _gateway_answered(low, gw, verb, raw)):
+    if _prints_only(low, a, b) or (not unit and _gateway_answered(low, gw, verb, raw, plain)):
         return False
     if near:
         return True
@@ -1305,6 +1315,7 @@ def _cheap_view(text: str, strict: bool = False) -> str | None:
     decoded = _decode_text(text)
     low = _words_of(decoded)
     raw = decoded.lower()                    # quotes kept (for `_gateway_answered`)
+    plain: dict[str, bool] = {}              # subcommand word -> it stands as a whole word in `raw`
     far = -_CHEAP_WINDOW * 4
     last_verb = last_doc = last_fix = last_oc = far
     gws = [[far, False, False], [far, False, False]]   # [position, OpenClaw word next to it, is the unit]: the
@@ -1327,7 +1338,7 @@ def _cheap_view(text: str, strict: bool = False) -> str | None:
                         slot[1] = True
                         if abs(slot[0] - last_verb) <= _CHEAP_WINDOW:
                             spent += 1
-                            if _strict_pair(low, raw, slot[0], True, slot[2], last_verb, spent):
+                            if _strict_pair(low, raw, plain, slot[0], True, slot[2], last_verb, spent):
                                 found = _verb_kind(verb_text, found)
             continue
         if kind in ("gw", "unit"):
@@ -1337,14 +1348,14 @@ def _cheap_view(text: str, strict: bool = False) -> str | None:
                 gws[1] = [pos, near, False]
             if pos - last_verb <= _CHEAP_WINDOW:
                 spent += 1
-                if not strict or _strict_pair(low, raw, pos, near, kind == "unit", last_verb, spent):
+                if not strict or _strict_pair(low, raw, plain, pos, near, kind == "unit", last_verb, spent):
                     found = _verb_kind(verb_text, found)
         elif kind == "verb":
             last_verb, verb_text = pos, m.group(0)
             for slot in gws:
                 if pos - slot[0] <= _CHEAP_WINDOW:
                     spent += 1
-                    if not strict or _strict_pair(low, raw, slot[0], slot[1], slot[2], pos, spent):
+                    if not strict or _strict_pair(low, raw, plain, slot[0], slot[1], slot[2], pos, spent):
                         found = _verb_kind(verb_text, found)
         elif kind == "doc":
             last_doc = pos

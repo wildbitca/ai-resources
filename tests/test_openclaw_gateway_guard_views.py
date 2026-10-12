@@ -268,3 +268,29 @@ def test_a_subcommand_spelled_through_an_outer_ansi_c_string_is_plain_once_it_is
     assert guard._cheap_view(command, strict=True) is None
     assert guard.decide(command) is None
     assert guard.decide("eval $'sh <<<\\'openclaw gateway restart --note s\\x74atus\\''") == "restart"
+
+
+# --- the exclusion work is bounded -----------------------------------------------------------------------------------
+
+def test_a_printing_statement_that_runs_on_past_the_lookahead_is_not_printing(guard):
+    long_line = "eval echo openclaw gateway restart " + "x " * 4000 + "| sh"
+    assert guard._cheap_view(long_line, strict=True) == "restart"
+    near_pipe = "eval echo openclaw gateway restart " + "x " * 100 + "| sh"
+    assert guard._cheap_view(near_pipe, strict=True) == "restart"
+    short = "eval echo openclaw gateway restart " + "x " * 100
+    assert guard._cheap_view(short, strict=True) is None
+
+
+@pytest.mark.parametrize("unit", [
+    "docker restart gateway; ",                  # harmless pairs on one line
+    "eval echo openclaw gateway restart; ",     # printing statements on one line
+    "openclaw gateway status --note restart ",  # answered pairs
+])
+def test_many_exclusion_checks_are_answered_in_time_and_fail_closed(guard, unit):
+    text = unit * (240000 // len(unit))
+    start = time.perf_counter()
+    got = guard._cheap_view(text, strict=True)
+    assert time.perf_counter() - start < 3
+    assert got == "restart", "past the check budget every pair counts"
+    few = (unit + " " * 200 + "\n") * 50       # the words of one repetition are not near the next one's
+    assert guard._cheap_view(few, strict=True) is None
