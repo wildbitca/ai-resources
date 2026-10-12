@@ -1231,6 +1231,51 @@ def _another_unit(low: str, gw: int) -> bool:
             and low[gw + 7:gw + 8] not in ("$", "`", "*", "?", "[", "{"))
 
 
+_STDIN_READERS = frozenset({"read", "mapfile", "readarray"})
+# `X < <(...)`, `X 0< <(...)`, `exec 3< <(...)`, and the here-string `read -r c <<< '...'; eval "$c"`
+_PROC_STDIN = re.compile(r"[0-9]*[ \t]*<(?:<<|[ \t]*<\()")
+_STMT_FIRST_EXPANSION = re.compile(r"(?:^|[;&|\n({]|\b(?:then|do|else|elif)\b)[ \t]*[\"']?\$")
+_STDIN_LOOKAHEAD = 4000                  # characters read after a process substitution that feeds `read`/`mapfile`
+_PROC_STDIN_CHECKS = 64                  # `< <(` operators examined per text; past it the text counts as running
+
+
+def _later_runs(low: str, at: int) -> bool:
+    """True when the text after `at` runs something that a `read` or `mapfile` may have stored: `eval`, `source`,
+    a shell, `exec`, or a statement that starts with an expansion (`$c`, `"$c"`). Beyond the lookahead: True."""
+    rest = low[at:at + _STDIN_LOOKAHEAD]
+    if len(low) - at > _STDIN_LOOKAHEAD:
+        return True
+    if _STMT_FIRST_EXPANSION.search(rest) is not None:
+        return True
+    return any(os.path.basename(t) in _RUNS_ITS_INPUT for t in re.findall(r"[^\s;&|(){}<>\"'`]+", rest))
+
+
+def _stdin_owner_runs(low: str, op: int, readers_only: bool = False) -> bool:
+    """True when the command that owns the redirection `< <(...)` at `op` runs what it reads: a shell word,
+    `eval`, `source`, `.` or `exec` (`exec 3< <(...); sh <&3`), or a `read`/`mapfile` whose stored text is run
+    later. The owner of a compound closer (`done < <(...)`, `} < <(...)`, `) < <(...)`) is any word of the 400
+    characters before it. `cat < <(...)` and `diff <(...) <(...)` only print."""
+    lo = max(0, op - 400)
+    cut = max(low.rfind(c, lo, op) for c in ";&|\n")
+    head = low[max(cut, lo - 1) + 1:op]
+    tail = head.rstrip()
+    if tail.endswith((")", "}")) or tail.split()[-1:] in (["done"], ["fi"], ["esac"]):
+        head = low[lo:op]                   # a loop or a group owns it: read what is in it
+    words = [os.path.basename(w.strip("(){}\"'`;!")) for w in head.split()]
+    if not readers_only and any(w in _RUNS_ITS_INPUT for w in words):
+        return True                          # (a shell given a here-string is read by `_SHELL_WITH_HEREDOC`)
+    return any(w in _STDIN_READERS for w in words) and _later_runs(low, op)
+
+
+def _runs_process_substitution_stdin(low: str) -> bool:
+    """True when `low` has a `< <(...)` (or a `<<<` here-string) whose owner runs what it reads (see
+    `_stdin_owner_runs`)."""
+    for n, m in enumerate(_PROC_STDIN.finditer(low)):
+        if n >= _PROC_STDIN_CHECKS or _stdin_owner_runs(low, m.start(), m.group().endswith("<<<")):
+            return True
+    return False
+
+
 def _prints_only(low: str, a: int, b: int) -> bool:
     """True when the words at `a`..`b` are the arguments of a command that only prints them (`echo`, `printf`,
     `:`) and nothing takes that output as commands: the statement is not piped on, not redirected, has no
@@ -1267,6 +1312,10 @@ def _prints_only(low: str, a: int, b: int) -> bool:
             before = low[max(0, cut - 40):cut - 1].split()
             if not before or os.path.basename(before[-1]) in _RUNS_ITS_INPUT:
                 return False                 # `source <(echo ...)`, `bash <(echo ...)`
+            # `sh < <(echo ...)`, `exec 3< <(echo ...)`: the word in front is the redirect operator, the command
+            # that owns it comes before (kit 2.2f, 1)
+            if re.fullmatch(r"[0-9]*<", before[-1]) is not None and _stdin_owner_runs(low, low.rfind("<", 0, cut - 1)):
+                return False
     if _STATEMENT_BREAK.search(low, a, b) is not None:
         return False
     # The statement is read to the end of its LINE, not to the first `;`: a quoted `;` inside the printed text
@@ -1471,6 +1520,8 @@ def _feeds_a_shell_text(text: str) -> bool:
     low = text.lower()
     if "|" in low and _PIPE_TO_SHELL.search(low):
         return True
+    if ("<(" in low or "<<<" in low) and _runs_process_substitution_stdin(low):
+        return True                          # `sh < <(echo ...)`: a shell reads the output of a command
     return "<<" in low and _SHELL_WITH_HEREDOC.search(low) is not None
 
 
