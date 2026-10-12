@@ -406,7 +406,8 @@ JOURNAL_SIGNAL_BYTES = 8 * 1024 * 1024   # ... and in bytes: a journal line is u
 _TLS_UNAVAILABLE = "TLS certificate unavailable"
 # The token ends at a blank, a newline, `;` or `,` only: a control character INSIDE it, a CR or a TAB included, makes
 # the host invalid (dropped), it does not cut the token short into a valid-looking prefix (2.2c 6e, 2.2d 3e).
-_TLS_HOST = re.compile(r"\bhost=([^ \n;,]+)")
+# The `host=` field starts a word: `?host=x` inside a URL and `proxy-host=` are other fields, not this one (2.2e, 4d).
+_TLS_HOST = re.compile(r"(?:^|\s)host=([^ \n;,]+)")
 _HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]")
 

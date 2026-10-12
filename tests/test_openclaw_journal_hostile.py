@@ -154,3 +154,20 @@ def test_a_host_after_a_dropped_one_on_the_next_line_is_still_read():
     text = (TLS.format(kind="refused", host="good.example\rcut.example") + "\n"
             + TLS.format(kind="refused", host="fine.example"))
     assert _hosts(text) == ["fine.example"]
+
+
+# --- kit 2.2e, 4d: `host=` is a field of its own, not the tail of another one ----------------------------------------
+
+@pytest.mark.parametrize("line,expected", [
+    ("secret egress TLS certificate unavailable; retry kind=refused url=https://a.example/?host=wrong.example "
+     "host=right.example substituted=false", ["right.example"]),
+    ("secret egress TLS certificate unavailable; retry kind=refused proxy-host=wrong.example host=right.example",
+     ["right.example"]),
+    ("secret egress TLS certificate unavailable; retry kind=refused proxy-host=wrong.example", []),
+    ("secret egress TLS certificate unavailable; retry kind=refused x?host=wrong.example", []),
+    ("secret egress TLS certificate unavailable; retry kind=refused host=right.example", ["right.example"]),
+    ("host=first.example secret egress TLS certificate unavailable kind=refused", ["first.example"]),
+    ("secret egress TLS certificate unavailable; retry kind=refused\thost=tab.example", ["tab.example"]),
+])
+def test_the_host_field_is_anchored_at_a_word_start(line, expected):
+    assert _hosts(line) == expected
