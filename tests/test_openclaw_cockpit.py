@@ -19,6 +19,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 from ai_resources.setup import state, ui  # noqa: E402
 from ai_resources.setup.cockpits import ALL, openclaw  # noqa: E402
 
+_REAL_LIVE_RELOAD_MODE = openclaw._live_reload_mode      # the suite-wide fixture stubs the attribute per test
+
 KIT_SKILLS = "/kit/skills"
 
 
@@ -1302,3 +1304,33 @@ def test_the_openrouter_plugin_fragment_is_sent_when_the_live_value_only_equals_
         "plugins": {"entries": {"openrouter": {"enabled": False}}}}
     same = {"plugins": {"entries": {"openrouter": {"enabled": True}}}}
     assert openclaw._openrouter_plugin_fragment(same, True) == {}
+
+
+# --- kit 2.1.1 pass 5, P6: a deep or invalid openclaw.json never crashes the readers ---------------------------------
+
+def test_load_json5_reports_a_deeply_nested_document_as_a_value_error():
+    from ai_resources import openclaw_host
+    with pytest.raises(ValueError):
+        openclaw_host.load_json5("[" * 100_000 + "]" * 100_000)
+    with pytest.raises(ValueError):
+        openclaw_host.load_json5('{"a":' * 100_000 + "1" + "}" * 100_000)
+
+
+@pytest.mark.parametrize("payload", [b"[" * 100_000 + b"]" * 100_000, b"\xff\xfe{\"a\": 1}", b"{\"a\": \"\xc3\x28\"}"],
+                         ids=["deep", "invalid-start-byte", "invalid-continuation"])
+def test_read_config_returns_empty_for_a_deep_or_invalid_utf8_file(tmp_path, payload):
+    from ai_resources.setup.cockpits import openclaw
+    p = tmp_path / "openclaw.json"
+    p.write_bytes(payload)
+    assert openclaw.read_config(p) == {}
+
+
+@pytest.mark.parametrize("payload", [b"[" * 100_000 + b"]" * 100_000, b"\xff\xfe{\"a\": 1}"],
+                         ids=["deep", "invalid-start-byte"])
+def test_the_live_config_probes_fail_the_way_they_always_did_on_an_unreadable_file(tmp_path, monkeypatch, payload):
+    from ai_resources.setup.cockpits import openclaw
+    p = tmp_path / "openclaw.json"
+    p.write_bytes(payload)
+    monkeypatch.setattr(openclaw, "config_path", lambda: p)
+    assert openclaw._patch_changes_a_leaf({"a": 1}, None) is True      # fail open: send it
+    assert _REAL_LIVE_RELOAD_MODE() == "off"                           # fail closed: it may well say `off`

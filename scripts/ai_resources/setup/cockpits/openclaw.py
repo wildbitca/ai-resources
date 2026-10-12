@@ -259,8 +259,9 @@ def config_path() -> Path:
 def read_config(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        # JSON5 the kit cannot parse: behave as if empty and let OpenClaw validate the patch.
+    except (OSError, ValueError, RecursionError):
+        # JSON5 the kit cannot parse (a syntax error, bytes that are not UTF-8, a nesting the parser cannot
+        # follow): behave as if empty and let OpenClaw validate the patch.
         return {}
 
 
@@ -457,6 +458,8 @@ def _live_reload_mode() -> str | None:
         text = config_path().read_text(encoding="utf-8")
     except OSError:
         return None
+    except ValueError:                    # not UTF-8: unreadable, so the same answer as a file that does not parse
+        return "off"
     try:
         return openclaw_reload_rules.reload_mode_of(openclaw_host.load_json5(text))
     except ValueError:

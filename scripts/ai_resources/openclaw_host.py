@@ -1508,7 +1508,10 @@ def load_json5(text: str) -> dict:
         else:
             out.append(c)
         i += 1
-    return json.loads(_drop_trailing_commas("".join(out)))
+    try:
+        return json.loads(_drop_trailing_commas("".join(out)))
+    except RecursionError:
+        raise ValueError("the document is nested too deeply") from None
 
 
 def _drop_trailing_commas(text: str) -> str:
@@ -3958,7 +3961,7 @@ def offbox_identity_plan(runner: Runner, *, name: str = OFFBOX_CONFIG_NAME, sa: 
     {"name", "account", "sa", "project", "exists", "steps": [argv...], "problems": [...]}; `steps` is empty
     when the configuration already matches (idempotent), and `problems` non-empty means nothing may be applied.
     """
-    created = created or {}
+    created = _offbox_record(created)
     problems: list[str] = offbox_identity_value_problems(name=name, sa=sa, account=account, project=project)
     if problems:
         return {"name": name, "account": account, "sa": sa, "project": project, "exists": False, "steps": [],
@@ -4065,16 +4068,39 @@ OFFBOX_INFRA_NOTE = ("Infra step, not done by the kit: the operator account need
                      "  CLOUDSDK_ACTIVE_CONFIG_NAME={name} gcloud storage ls gs://<bucket>/daily/")
 
 
+def _offbox_record(raw) -> dict:
+    """The recorded off-box configuration as a dict; a hand-edited state that holds anything else is no record."""
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
 def cmd_offbox_identity(args: argparse.Namespace) -> int:
+    """`offbox-identity`: the whole load -> modify -> save runs under the setup-state lock, so two runs cannot
+    each create a configuration and record only the last one."""
+    from .setup import state as setup_state
+    try:
+        with setup_state.exclusive():
+            return _cmd_offbox_identity(args)
+    except setup_state.StateLockBusy:
+        print("refusing: another offbox-identity run is in progress (the setup state is locked); "
+              "wait for it to finish and run this again")
+        return 1
+
+
+def _cmd_offbox_identity(args: argparse.Namespace) -> int:
     from .setup import state as setup_state
     s = setup_state.load()
     o = s.openclaw
     runner = default_runner
     if getattr(args, "remove", False):
-        record = dict(o.host_offbox_config_created)
+        record = _offbox_record(o.host_offbox_config_created)
         if not record:
             print("the kit created no gcloud configuration here; nothing to remove")
             return 0
+        wanted = getattr(args, "name", None)
+        if wanted and wanted != record.get("name"):
+            print(f"refusing: the recorded configuration is {record.get('name')}; run --remove without --name "
+                  "or with that name")
+            return 1
         if getattr(args, "dry_run", False):
             print(f"dry run -- would delete the gcloud configuration {record['name']!r} if it still matches")
             return 0
@@ -4085,13 +4111,14 @@ def cmd_offbox_identity(args: argparse.Namespace) -> int:
             print(f"removed the gcloud configuration {record['name']!r}")
             return 0
         return 1
-    bad = offbox_identity_value_problems(name=args.name, sa=args.sa, account=args.account, project=args.project)
+    name = getattr(args, "name", None) or OFFBOX_CONFIG_NAME
+    bad = offbox_identity_value_problems(name=name, sa=args.sa, account=args.account, project=args.project)
     if bad:
         for problem in bad:
             print(f"refusing: {problem}")
         return 1
-    plan = offbox_identity_plan(runner, name=args.name, sa=args.sa, account=args.account, project=args.project,
-                                created=o.host_offbox_config_created)
+    plan = offbox_identity_plan(runner, name=name, sa=args.sa, account=args.account, project=args.project,
+                                created=_offbox_record(o.host_offbox_config_created))
     for problem in plan["problems"]:
         print(f"refusing: {problem}")
     if plan["problems"]:
@@ -4111,20 +4138,21 @@ def cmd_offbox_identity(args: argparse.Namespace) -> int:
         if answer not in ("y", "yes"):
             print("nothing applied (use --yes to apply without asking)")
             return 1
-    progress: dict = dict(o.host_offbox_config_created)
+    progress: dict = _offbox_record(o.host_offbox_config_created)
     record = offbox_identity_apply(runner, plan, progress=progress) if plan["steps"] else (
-        dict(o.host_offbox_config_created) or {
+        _offbox_record(o.host_offbox_config_created) or {
             "name": plan["name"], "account": plan["account"], "impersonate": plan["sa"],
             "project": plan["project"]})
     if record is None:
-        if progress.get("name") == plan["name"] and progress != o.host_offbox_config_created:
+        if progress.get("name") == plan["name"] and progress != _offbox_record(o.host_offbox_config_created):
             # Created, then a later step failed: keep what exists so `--remove` or a rerun can deal with it.
             o.host_offbox_config_created = progress
             setup_state.save(s)
             print(f"the gcloud configuration {plan['name']!r} was created but not finished; "
                   "re-run to complete it, or use --remove")
         return 1
-    if plan["steps"] and (not plan["exists"] or o.host_offbox_config_created.get("name") == plan["name"]):
+    if plan["steps"] and (not plan["exists"]
+                          or _offbox_record(o.host_offbox_config_created).get("name") == plan["name"]):
         o.host_offbox_config_created = record
     written = _write_offbox_knobs(o, plan["name"], plan["sa"])
     setup_state.save(s)
@@ -4370,7 +4398,8 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_oi.add_argument("--dry-run", action="store_true", help="Print the exact commands; change nothing")
     p_oi.add_argument("--remove", action="store_true", help="Delete the configuration the kit created, if unchanged")
     p_oi.add_argument("--yes", action="store_true", help="Apply without asking")
-    p_oi.add_argument("--name", default=OFFBOX_CONFIG_NAME, help=f"Configuration name (default {OFFBOX_CONFIG_NAME})")
+    p_oi.add_argument("--name", default=None, help=f"Configuration name (default {OFFBOX_CONFIG_NAME}); "
+                      "--remove removes the recorded one and refuses a different name")
     p_oi.add_argument("--sa", default=OFFBOX_SA_DEFAULT, help="Service account to impersonate")
     p_oi.add_argument("--account", default="", help="Operator account (default: the active gcloud login)")
     p_oi.add_argument("--project", default="", help="core/project (default: the service account's project)")

@@ -20,6 +20,13 @@ Notes for the next patch release. Nothing here is released; the version label is
   openrouter plugin check compare by type, so a hand edit that only changes `true` to `1` is not taken for the
   kit's own value (P3), and teardown writes a recorded env value back only under the fixed keys the kit writes,
   not under any `OPENCLAW_*` (an unmanaged `OPENCLAW_OFFBOX_LIST_CMD` is warned about, never restored) (P4).
+  `setup-state.yaml` is written through a temp file and `os.replace` (still 0600), `offbox-identity` runs under a
+  non-blocking lock on the state so a second run is refused instead of leaving an orphan configuration, a
+  custom-named record no longer makes the default plan warn "not set up" and a hand-edited non-dict record does
+  not crash (P5). A deeply nested or non-UTF-8 `openclaw.json` is reported like any file the kit cannot read
+  instead of raising `RecursionError` or `UnicodeDecodeError` (P6). `offbox-identity --name X --remove` refuses when
+  X is not the recorded configuration, and a non-string previous env value is warned about as "not a string"
+  (P11).
 - **Hardening pass 4.** `apply-pending` (the drained gateway stop and start) without `--yes` needs a real
   terminal, like the discard verb: a piped `y` is not a confirmation, an empty or closed stdin ends in one line
   instead of a traceback, and a refused, declined or empty run no longer rewrites `setup-state.yaml` (S1, S1b).

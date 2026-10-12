@@ -1690,7 +1690,7 @@ def test_the_verb_run_with_another_name_is_refused_and_teardown_still_removes_th
     assert [ln for ln in out.splitlines() if ln.startswith("refusing:")] and "--remove" in out
     assert "second-cfg" not in g.configs
     assert s.openclaw.host_offbox_config_created["name"] == "first-cfg", "the first record is not replaced"
-    assert run(remove=True) == 0
+    assert run(remove=True, name=None) == 0           # `--remove` without `--name` (P11)
     assert "first-cfg" not in g.configs and s.openclaw.host_offbox_config_created == {}
 
 
@@ -1863,3 +1863,181 @@ def test_every_key_the_wizard_writes_to_the_host_env_is_in_the_teardown_allowlis
     written = set(host.read_host_env())
     assert written and written <= host.KIT_ENV_KEYS, sorted(written - host.KIT_ENV_KEYS)
     assert {"OPENCLAW_OFFBOX_GCLOUD_CONFIG", "OPENCLAW_OFFBOX_IMPERSONATE_SA"} <= host.KIT_ENV_KEYS
+
+
+# --- kit 2.1.1 pass 5, P5: the state is saved atomically and the off-box record is updated under a lock ----------
+
+def _xdg_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    return state.state_path()
+
+
+def test_state_save_goes_through_a_temp_file_in_the_same_directory_and_a_replace(monkeypatch, tmp_path):
+    import os
+    path = _xdg_state(monkeypatch, tmp_path)
+    first = state.SetupState()
+    first.openclaw.host_domain = "first.example.org"
+    state.save(first)
+    before = path.read_text(encoding="utf-8")
+    assert before and oct(path.stat().st_mode & 0o777) == "0o600"
+    path.chmod(0o644)                                          # an older run left it wider
+    seen: list[tuple] = []
+    real_replace = os.replace
+
+    def replace(src, dst, *a, **k):
+        # at this instant a concurrent reader still gets the complete previous file, never an empty one
+        seen.append((pathlib.Path(src).parent == path.parent, pathlib.Path(dst) == path,
+                     path.read_text(encoding="utf-8") == before, oct(pathlib.Path(src).stat().st_mode & 0o777)))
+        return real_replace(src, dst, *a, **k)
+    monkeypatch.setattr(state.os, "replace", replace)
+    second = state.SetupState()
+    second.openclaw.host_domain = "second.example.org"
+    state.save(second)
+    assert seen == [(True, True, True, "0o600")]
+    assert "second.example.org" in path.read_text(encoding="utf-8")
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert [p.name for p in path.parent.iterdir() if p.name.startswith(".")] == [], "no temp file is left behind"
+
+
+def test_a_failed_state_save_leaves_the_previous_file_and_no_temp_file(monkeypatch, tmp_path):
+    path = _xdg_state(monkeypatch, tmp_path)
+    state.save(state.SetupState())
+    before = path.read_bytes()
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+    monkeypatch.setattr(state.os, "replace", boom)
+    with pytest.raises(OSError):
+        state.save(state.SetupState())
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in path.parent.iterdir()) == [path.name]
+
+
+def test_two_interleaved_offbox_identity_runs_end_with_one_recorded_configuration(monkeypatch, tmp_path, capsys):
+    import argparse
+    _xdg_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    g = FakeGcloud()
+    nested: list[int] = []
+
+    def base(**kw):
+        d = dict(dry_run=False, remove=False, yes=True, name="first-cfg", sa=host.OFFBOX_SA_DEFAULT,
+                 account="me@example.org", project="")
+        d.update(kw)
+        return argparse.Namespace(**d)
+
+    def interleaving(argv, **kw):
+        # the second run starts while the first is between `create` and its state save
+        if list(argv[1:4]) == ["config", "configurations", "create"] and not nested:
+            nested.append(host.cmd_offbox_identity(base(name="second-cfg")))
+        return g(argv, **kw)
+    monkeypatch.setattr(host, "default_runner", interleaving)
+    assert host.cmd_offbox_identity(base()) == 0
+    assert nested == [1], "the interleaved run is refused"
+    assert "second-cfg" not in g.configs, "no orphan configuration"
+    recorded = state.load().openclaw.host_offbox_config_created
+    assert recorded.get("name") == "first-cfg" and "first-cfg" in g.configs
+    assert "another offbox-identity run" in capsys.readouterr().out
+
+
+def test_the_lock_is_released_after_a_run(monkeypatch, tmp_path):
+    import argparse
+    _xdg_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    monkeypatch.setattr(host, "default_runner", FakeGcloud())
+    ns = argparse.Namespace(dry_run=False, remove=False, yes=True, name="first-cfg", sa=host.OFFBOX_SA_DEFAULT,
+                            account="me@example.org", project="")
+    assert host.cmd_offbox_identity(ns) == 0
+    assert host.cmd_offbox_identity(ns) == 0, "a second run after the first one is not refused"
+
+
+def test_a_custom_named_record_does_not_make_the_default_plan_warn_every_run(monkeypatch):
+    g = FakeGcloud(configs={"default": {}, "claude-ro": {}, "up-1": {
+        "account": "me@example.org", "auth/impersonate_service_account": host.OFFBOX_SA_DEFAULT,
+        "core/project": "wildbit-iac"}})
+    warned: list[str] = []
+    monkeypatch.setattr(section, "_runner", lambda: g)
+    monkeypatch.setattr(ui, "warn", lambda m, *_a, **_k: warned.append(m))
+    monkeypatch.setattr(ui, "info", lambda *_a, **_k: None)
+    s = _state()
+    o = s.openclaw
+    o.host_offbox_identity = True
+    o.host_offbox_config_created = {"name": "up-1", "account": "me@example.org",
+                                    "impersonate": host.OFFBOX_SA_DEFAULT, "project": "wildbit-iac"}
+    section._configure_offbox_identity(o, dry_run=True)
+    assert warned == []
+    assert g.writes() == []
+
+
+@pytest.mark.parametrize("junk", [["up-1"], "up-1", 7, True])
+def test_a_hand_edited_non_dict_offbox_record_does_not_crash(monkeypatch, tmp_path, capsys, junk):
+    import argparse
+    _xdg_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    g = FakeGcloud()
+    monkeypatch.setattr(host, "default_runner", g)
+    monkeypatch.setattr(section, "_runner", lambda: g)
+    s = state.SetupState()
+    s.openclaw.host_offbox_config_created = junk
+    state.save(s)
+    ns = argparse.Namespace(dry_run=False, remove=True, yes=True, name=None, sa=host.OFFBOX_SA_DEFAULT,
+                            account="", project="")
+    assert host.cmd_offbox_identity(ns) == 0                       # nothing recorded: nothing to remove
+    assert "nothing to remove" in capsys.readouterr().out
+    plan = host.offbox_identity_plan(g, created=junk)               # `.get` on a non-dict
+    assert plan["problems"] == [] and plan["steps"]
+    s = _state()
+    s.openclaw.host = True
+    s.openclaw.host_offbox_config_created = junk
+    assert section.teardown(s, apply_patch=lambda *_a, **_k: (True, ""), oc=lambda *_a, **_k: (0, "")) in (True, False)
+
+
+# --- kit 2.1.1 pass 5, P11: --remove names the recorded configuration; the non-string wording -------------------
+
+def test_remove_with_a_different_name_is_refused_and_removes_nothing(monkeypatch, tmp_path, capsys):
+    import argparse
+    _xdg_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    g = FakeGcloud()
+    monkeypatch.setattr(host, "default_runner", g)
+
+    def run(**kw):
+        d = dict(dry_run=False, remove=False, yes=True, name=None, sa=host.OFFBOX_SA_DEFAULT,
+                 account="me@example.org", project="")
+        d.update(kw)
+        return host.cmd_offbox_identity(argparse.Namespace(**d))
+
+    assert run(name="first-cfg") == 0
+    capsys.readouterr()
+    assert run(name="other-cfg", remove=True) == 1
+    out = capsys.readouterr().out
+    assert "the recorded configuration is first-cfg" in out and "without --name" in out
+    assert "first-cfg" in g.configs, "nothing was deleted"
+    assert state.load().openclaw.host_offbox_config_created.get("name") == "first-cfg"
+    assert run(name="first-cfg", remove=True) == 0                 # the recorded name itself
+    assert "first-cfg" not in g.configs
+
+
+def test_remove_without_a_name_removes_the_recorded_configuration(monkeypatch, tmp_path):
+    import argparse
+    _xdg_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(host, "HOST_ENV_PATH", tmp_path / "kit-host.env")
+    g = FakeGcloud()
+    monkeypatch.setattr(host, "default_runner", g)
+    base = dict(dry_run=False, remove=False, yes=True, sa=host.OFFBOX_SA_DEFAULT, account="me@example.org",
+                project="")
+    assert host.cmd_offbox_identity(argparse.Namespace(name="first-cfg", **base)) == 0
+    assert host.cmd_offbox_identity(argparse.Namespace(name=None, **{**base, "remove": True})) == 0
+    assert "first-cfg" not in g.configs
+
+
+@pytest.mark.parametrize("value", [["a"], 5, {"k": "v"}, True])
+def test_a_non_string_previous_env_value_is_reported_as_not_a_string(sim, script, value):
+    s = _state()
+    _run_wizard(s)
+    s.openclaw.host_env_previous["OPENCLAW_OFFBOX_GCLOUD_CONFIG"] = value
+    assert openclaw.teardown(s) == []
+    warned = " ".join(script.messages("warn"))
+    assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG" in warned and "not a string" in warned
+    assert "space" not in warned.split("OPENCLAW_OFFBOX_GCLOUD_CONFIG", 1)[1]
+

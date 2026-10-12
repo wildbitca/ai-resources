@@ -788,3 +788,4 @@ def test_a_legacy_revert_is_not_offered_without_a_terminal(monkeypatch):
                                             apply_patch=lambda *a, **k: wrote.append(a) or (True, ""))
     assert reverted is False and asked == [] and wrote == []
     assert len(s.openclaw.host_config_changes) == 1, "the recorded change stays"
+

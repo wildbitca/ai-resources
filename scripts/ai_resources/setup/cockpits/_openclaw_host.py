@@ -294,7 +294,15 @@ def _configure_offbox_identity(o: state.OpenClawState, *, dry_run: bool) -> None
     if not o.host_offbox_identity:
         return
     runner = _runner()
-    plan = host.offbox_identity_plan(runner, created=o.host_offbox_config_created)
+    # With a record, plan for the recorded configuration (a custom name is not "not set up" next to the default).
+    record = host._offbox_record(o.host_offbox_config_created)
+    kw: dict = {}
+    if record.get("name"):
+        kw = {"name": str(record["name"]), "account": str(record.get("account") or ""),
+              "project": str(record.get("project") or "")}
+        if record.get("impersonate"):
+            kw["sa"] = str(record["impersonate"])
+    plan = host.offbox_identity_plan(runner, created=record, **kw)
     if plan["problems"]:
         ui.warn("Off-box uploader identity not set up: " + "; ".join(plan["problems"]))
         return
@@ -311,14 +319,14 @@ def _configure_offbox_identity(o: state.OpenClawState, *, dry_run: bool) -> None
         return
     if not _gate("Create the gcloud configuration for the off-box uploader?"):
         return
-    progress: dict = dict(o.host_offbox_config_created)
+    progress: dict = dict(record)
     record = host.offbox_identity_apply(runner, plan, out=ui.error, progress=progress)
     if record is None:
         if progress.get("name") == plan["name"]:
             o.host_offbox_config_created = progress     # created, then a step failed: teardown or a rerun owns it
         ui.error("Off-box uploader identity: a gcloud command failed; the uploader keeps its current identity.")
         return
-    if not plan["exists"] or o.host_offbox_config_created.get("name") == plan["name"]:
+    if not plan["exists"] or host._offbox_record(o.host_offbox_config_created).get("name") == plan["name"]:
         o.host_offbox_config_created = record
     written = host._write_offbox_knobs(o, plan["name"], plan["sa"])
     ui.ok(f"gcloud configuration {plan['name']!r} ready for the uploader"
@@ -1054,6 +1062,8 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             pass
         o.host_agents_md_written.pop(path_str, None)   # an edited file is the user's now
 
+    if o.host_offbox_config_created and not isinstance(o.host_offbox_config_created, dict):
+        o.host_offbox_config_created = {}          # a hand-edited record that is not a record: nothing to remove
     if o.host_offbox_config_created:
         record = dict(o.host_offbox_config_created)
         if host.offbox_identity_remove(_runner(), record, out=ui.warn):
@@ -1101,14 +1111,18 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
         # by name and left as it is; it must not abort the teardown after the units and hooks are already undone.
         restorable: dict[str, str | None] = {}
         stuck: list[str] = []
+        nonstring: list[str] = []
         foreign: list[str] = []
         for key, value in o.host_env_previous.items():
             if not isinstance(key, str) or key not in host.KIT_ENV_KEYS:
                 foreign.append(str(key))          # not a key the kit manages: never written back
                 continue
+            if value is not None and not isinstance(value, str):
+                nonstring.append(key)             # a list, int, dict or bool in a hand-edited state
+                continue
             try:
                 host._check_env_pair(key, value if value is not None else "")
-            except (ValueError, TypeError):       # TypeError: a non-string value in a hand-edited state
+            except ValueError:
                 stuck.append(key)
                 continue
             restorable[key] = value
@@ -1122,10 +1136,14 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
             host.write_host_env(restorable)
             for key in restorable:
                 o.host_env_previous.pop(key, None)
+        if nonstring:
+            ui.warn(f"{host.HOST_ENV_PATH}: the recorded previous value of {', '.join(sorted(nonstring))} is not a "
+                    "string; it was left as it is. Set it by hand; a later teardown retries.")
         if stuck:
             ui.warn(f"{host.HOST_ENV_PATH}: the previous value of {', '.join(sorted(stuck))} cannot be written "
                     "back safely (a value with a space, `$` or quotes); it was left as it is. Set it by hand; "
                     "a later teardown retries.")
+        if stuck or nonstring:
             ok = False
         else:
             if o.host_env_created and not host.read_host_env():

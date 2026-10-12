@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import tempfile
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -389,12 +391,49 @@ def save(state: SetupState) -> None:
         doc.pop("selection", None)
     text = yaml.safe_dump(doc, default_flow_style=False, sort_keys=False)
     # The state records what the kit replaced on the host (previous config values, unit texts),
-    # so it is owner-only: created 0600 (no window where it is world-readable) and tightened
-    # when an older run left it wider.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    os.chmod(path, 0o600)
+    # so it is owner-only. It is written to a temp file in the same directory (created 0600, so there is no
+    # window where it is world-readable) and moved over the old one with os.replace: a concurrent reader gets
+    # the previous file or the new one, never an empty or half-written file, and an interrupted save leaves
+    # the previous file as it was.
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+class StateLockBusy(RuntimeError):
+    """Another run holds the setup-state lock."""
+
+
+@contextmanager
+def exclusive():
+    """Hold an advisory lock on the setup state across load -> modify -> save.
+
+    Not blocking: a second run that finds it held is refused at once (it would otherwise load a stale record and
+    overwrite what the first run writes). The lock file sits next to the state file and is never removed."""
+    import fcntl
+    path = state_path()
+    lock = path.with_name(path.name + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise StateLockBusy(str(lock)) from None
+        yield
+    finally:
+        os.close(fd)
 
 
 def is_first_run() -> bool:

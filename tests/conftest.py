@@ -23,6 +23,9 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     except Exception:  # a test that does not import the package needs no isolation
         return
     root = tmp_path_factory.mktemp("claude-home")
+    # The setup state (and its lock file) resolve through XDG_CONFIG_HOME: a test that does not set it itself
+    # must never reach the operator's real ~/.config/ai-resources.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(root / "xdg-config"))
     monkeypatch.setattr(claude, "CONFIG_ROOT", root, raising=False)
     monkeypatch.setattr(claude, "SETTINGS_PATH", root / "settings.json", raising=False)
     # The same for ~/.openclaw: the host section writes kit-host.env and the drained doctor
