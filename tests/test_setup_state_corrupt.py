@@ -249,3 +249,110 @@ def test_the_state_lock_messages_are_exactly_the_sentences_the_operator_is_told(
         with state.exclusive():
             pass
     assert str(e2.value) == f"{lock}: IsADirectoryError"
+
+
+# --- kit 2.2e, 4b: a FIFO at a backup name, and a disk that fills while the copy is written -------------------------
+
+def _load_with_a_limit(seconds: float = 10.0):
+    """`state.load()` on a thread: a hang is a failure here, not a frozen suite."""
+    import threading
+    out: dict = {}
+
+    def run():
+        try:
+            out["state"] = state.load()
+        except BaseException as exc:          # noqa: BLE001 - reported to the test
+            out["error"] = exc
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(seconds)
+    return out, t.is_alive()
+
+
+def test_a_fifo_at_the_backup_name_does_not_hang_load(corrupt_file):
+    import os
+    fifo = corrupt_file.with_name(corrupt_file.name + ".corrupt")
+    os.mkfifo(fifo)
+    out, hung = _load_with_a_limit()
+    assert not hung, "a read-open of a FIFO with no writer blocks: existing copies are opened O_NONBLOCK"
+    assert "error" not in out and out["state"].mode == state.SetupState().mode
+    notice = state.take_corrupt_notice()
+    assert notice == str(corrupt_file.with_name(corrupt_file.name + ".corrupt-1"))
+    assert pathlib.Path(notice).read_bytes() == CORRUPT.encode()
+    assert stat.S_ISFIFO(fifo.lstat().st_mode), "the FIFO is left alone"
+
+
+def test_a_directory_or_a_device_at_the_backup_name_is_skipped(corrupt_file):
+    corrupt_file.with_name(corrupt_file.name + ".corrupt").mkdir()
+    out, hung = _load_with_a_limit()
+    assert not hung and "error" not in out
+    assert state.take_corrupt_notice().endswith(".corrupt-1")
+
+
+def test_a_copy_of_another_size_is_not_reused_and_one_of_the_same_bytes_is(corrupt_file):
+    first = corrupt_file.with_name(corrupt_file.name + ".corrupt")
+    first.write_text(CORRUPT + "more\n", encoding="utf-8")
+    state.load()
+    assert state.take_corrupt_notice().endswith(".corrupt-1")
+    state.load()
+    assert state.take_corrupt_notice().endswith(".corrupt-1"), "the same bytes are reused, not copied again"
+    assert [p.name for p in _copies(corrupt_file)] == [first.name, first.name + "-1"]
+
+
+def test_a_full_disk_while_copying_leaves_no_partial_copy_and_load_still_returns(corrupt_file, monkeypatch):
+    import errno
+    real = __import__("os").fdopen
+
+    class Full:
+        def __init__(self, fh):
+            self.fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self.fh.close()
+            return False
+
+        def write(self, data):
+            self.fh.write(data[: len(data) // 2])
+            self.fh.flush()
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+    with monkeypatch.context() as scope:
+        scope.setattr(state.os, "fdopen", lambda fd, mode="r", *a, **k: Full(real(fd, mode)))
+        out, hung = _load_with_a_limit()
+    assert not hung and "error" not in out, out.get("error")
+    assert out["state"].mode == state.SetupState().mode
+    assert state.take_corrupt_notice() == "(no backup could be written)"
+    assert _copies(corrupt_file) == [], "the half-written copy is removed"
+    assert corrupt_file.read_text(encoding="utf-8") == CORRUPT
+
+
+def test_a_refusal_after_a_full_disk_does_not_claim_a_copy(corrupt_file, monkeypatch):
+    import errno
+
+    def boom(*_a, **_k):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    real = __import__("os").fdopen
+
+    class Full:
+        def __init__(self, fh):
+            self.fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self.fh.close()
+            return False
+
+        write = boom
+
+    with monkeypatch.context() as scope:
+        scope.setattr(state.os, "fdopen", lambda fd, mode="r", *a, **k: Full(real(fd, mode)))
+        text = state.refusal_text()
+    assert "no copy could be made" in text
+    assert _copies(corrupt_file) == []

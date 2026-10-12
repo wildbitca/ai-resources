@@ -384,9 +384,38 @@ _replace_corrupt_ok: str | None = None   # the state path `allow_replacing_corru
 _corrupt_notice: str | None = None   # the backup path of the corrupt file `load()` found, until it is taken
 
 
+def _is_copy_of(target: Path, data: bytes) -> bool:
+    """True when `target` is a regular file (not a link, a FIFO, a device or a directory) holding exactly `data`.
+    It is opened `O_NOFOLLOW|O_NONBLOCK` and its type and size are read from the descriptor first, so a FIFO planted
+    at a backup name cannot block the reader (2.2e, 4b)."""
+    try:
+        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return False
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size != len(data):
+            return False
+        chunks: list[bytes] = []
+        remaining = len(data) + 1                   # one byte more than expected: a file that grew is not a copy
+        while remaining > 0:
+            chunk = os.read(fd, min(remaining, 1 << 20))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks) == data
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
 def _backup_corrupt(path: Path) -> str | None:
     """Copy the unreadable state file beside itself, once: `<name>.corrupt`, `.corrupt-1`, ... created
-    exclusively (`O_EXCL|O_NOFOLLOW`, 0600). A copy with the same bytes that is already there is reused."""
+    exclusively (`O_EXCL|O_NOFOLLOW`, 0600). A copy with the same bytes that is already there is reused. A write
+    that fails (a full disk) removes the partial copy and answers None: `load()` and the refusals say that no copy
+    could be made, they do not raise."""
     try:
         data = path.read_bytes()
     except OSError:
@@ -396,16 +425,20 @@ def _backup_corrupt(path: Path) -> str | None:
         try:
             fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except FileExistsError:
-            try:
-                if not target.is_symlink() and target.read_bytes() == data:
-                    return str(target)
-            except OSError:
-                pass
+            if _is_copy_of(target, data):
+                return str(target)
             continue
         except OSError:
             return None
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+        except OSError:
+            try:
+                os.unlink(target)
+            except OSError:
+                pass
+            return None
         return str(target)
     return None
 
