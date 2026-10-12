@@ -1250,3 +1250,30 @@ def test_a_healthy_watch_is_rendered_as_finished_healthy_and_is_never_an_error()
 def test_a_running_watch_still_says_nothing():
     o = _o(config_watch={"run_id": "r", "done": False, "changes": [], "result": None})
     assert host.pending_lines(host.pending_summary(o)) == [] and _levels(o) == []
+
+
+# --- kit 2.1.1 pass 4, S7: pins ---------------------------------------------------------------------------------------
+
+def test_closing_a_legacy_failure_with_no_entries_prints_the_no_entries_line_once(monkeypatch):
+    messages, _asked = _discard_env(monkeypatch, tty=True)
+    s = state.SetupState()
+    s.openclaw.config_watch = {"run_id": "old", "unit": "u", "done": True,
+                               "result": {"hot": [], "restart": [], "problems": ["restart-required not reverted: x"]}}
+    s.openclaw.host_restart_pending = []
+    assert section.discard_watch_restores(s, assume_yes=True) == 0
+    assert len([m for m in messages if "no `source=watch` restore entries" in m]) == 1
+    assert len([m for m in messages if "marked the 2.1.0 watch result inconclusive" in m]) == 1
+    # and the interactive path (a person answers yes) says it once as well
+    messages2, asked = _discard_env(monkeypatch, tty=True, answer=True)
+    s.openclaw.config_watch = {"run_id": "old", "unit": "u", "done": True,
+                               "result": {"hot": [], "restart": [], "problems": ["restart-required not reverted: x"]}}
+    assert section.discard_watch_restores(s, assume_yes=False) == 0
+    assert asked and len([m for m in messages2 if "no `source=watch` restore entries" in m]) == 1
+
+
+def test_a_healthy_watch_saves_its_finished_record(rig):
+    """Pass 4 handoff correction: the T4 test asserts the in-memory record; this one asserts it is SAVED."""
+    r = rig([HOT], health=[True] * 40)
+    assert r.run() == 0
+    assert r.saves >= 1
+    assert r.s.openclaw.config_watch["done"] is True

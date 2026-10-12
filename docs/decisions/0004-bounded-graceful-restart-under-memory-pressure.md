@@ -97,6 +97,10 @@ choice stays. `ai-resources openclaw doctor` now refuses a busy gateway (exit 6)
   the reaper is default-off and dry-run first.
 - Frozen notice channel: local log, the systemd failure and the gateway notice retried once it answers.
   No new direct Telegram Bot API credential path (D8).
+- The gateway guard hook is precision first (a deny aborts the whole tool call). `openclaw gateway $VERB` and a
+  variable in the verb slot at the top level are NOT denied, by design: the verb cannot be known without running
+  the shell. The fail-closed rule (a stop or restart verb, or an expansion where the verb goes, next to the
+  gateway words) applies only inside the `env -S` fallback, where the string is otherwise unparseable.
 
 ## Alternatives Considered
 
