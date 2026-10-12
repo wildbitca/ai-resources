@@ -183,3 +183,35 @@ def test_the_option_value_is_not_the_command_word(guard):
     assert guard._another_product("sudo -u docker ${oc} gateway restart", 24) is False
     assert guard._another_product("env -c /opt/docker ${oc} gateway restart", 24) is False
     assert guard._another_product("docker restart gateway", 15) is True
+
+
+# the plain wrapper that carries another product's name as a user, a host or a path
+PLAIN_WRAPPER_DRESS = [
+    "su docker -c {oc} gateway {v}",
+    "flock /var/lock/docker {oc} gateway {v}",
+    "flock -n /run/nginx.lock-docker {oc} gateway {v}",
+    "chroot /srv/nginx {oc} gateway {v}",
+    "docker () {{ {oc} gateway {v}; }}; docker",
+    "function docker {{ {oc} gateway {v}; }}; docker",
+    "nginx() {{ {oc} gateway {v}; }}; nginx",
+]
+
+
+@pytest.mark.parametrize("verb", ["restart", "stop"])
+@pytest.mark.parametrize("assembled", ASSEMBLED)
+@pytest.mark.parametrize("form", PLAIN_WRAPPER_DRESS)
+def test_a_name_that_is_a_user_a_host_or_a_path_does_not_exempt_the_command(tmp_path, form, assembled, verb):
+    assert _hook_rc(tmp_path, _fed(form.format(oc=assembled, v=verb))) == 2
+
+
+def test_a_remote_product_command_without_a_built_word_stays_allowed(tmp_path):
+    assert _hook_rc(tmp_path, _fed("ssh host docker restart gateway")) == 0
+
+
+def test_a_backtick_pair_cut_by_the_look_back_window_does_not_cut_the_head(guard):
+    # the parity of the backticks is counted from the start of the statement, not from the middle of a pair at
+    # the edge of the 400-character window
+    for pad in range(3):
+        low = "`a`" * 300 + "x" * pad + "\nbash <<< open`printf `claw gateway restart"
+        head = guard._statement_head(low, low.index("gateway"))
+        assert "open`printf" in head, pad

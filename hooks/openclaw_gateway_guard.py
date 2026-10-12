@@ -1183,6 +1183,7 @@ _STATEMENT_BREAK = re.compile(r"[;&|\n]")
 _STATEMENT_END = re.compile(r"[;&|\n)}]")
 _WORD_BEFORE = re.compile(r"[^\s;&|<>]*$")
 _ASSEMBLY_CHARS = frozenset("$`*?[{}()\\")
+_EXPANSION_CHARS = frozenset("$`*?[{")    # an expansion, a glob or a brace: a word built at run time
 _STRICT_PAIR_BUDGET = 2048               # exclusion checks per reading; past it every pair counts (fail closed)
 _LINE_LOOKAHEAD = 4096                   # characters of a line read after the words of a printing statement
 
@@ -1192,19 +1193,20 @@ def _statement_head(low: str, pos: int) -> str:
     substitution that is still open at `pos` (`$(`, `<(`, `>(`, an odd backtick) is a statement of its own: its
     head starts after its opener, so the command it stands in an argument of does not own it (kit 2.2f, 2)."""
     lo = max(0, pos - 400)
-    start = max(max(low.rfind(c, lo, pos) for c in ";&|\n"), lo - 1) + 1
+    first = max(max(low.rfind(c, lo, pos) for c in ";&|\n"), lo - 1) + 1
+    start = first
     for opener in ("$(", "<(", ">("):
         k = pos
         for _ in range(4):
-            k = low.rfind(opener, lo, k)
+            k = low.rfind(opener, first, k)
             if k < 0:
                 break
             inner = low[k + 2:pos]
             if inner.count(")") <= inner.count("("):
                 start = max(start, k + 2)
                 break
-    tick = low.rfind("`", lo, pos)
-    if tick >= 0 and low.count("`", lo, pos) % 2 == 1:
+    tick = low.rfind("`", first, pos)
+    if tick >= 0 and low.count("`", first, pos) % 2 == 1:       # counted from the statement's start, not mid-pair
         start = max(start, tick + 1)
     return low[start:pos]
 
@@ -1230,12 +1232,14 @@ def _head_command(words: list[str]) -> tuple[str, int]:
         elif w.startswith(("-", "+")):
             short, long = _FOLDED_FLAGS.get(wrapper, _NO_VALUES)
             k += _option_width(w, short, long) if w.startswith("-") else 1
-        elif not w or w.startswith(("<", "%")) or _ASSIGNMENT.match(w) or w in _KEYWORDS:
+        elif not w.strip("(){}") or w.startswith(("<", "%")) or _ASSIGNMENT.match(w) or w in _KEYWORDS:
             k += 1
         elif base in _TRANSPARENT_WORDS or base in _PRINTING_COMMANDS:
             wrapper = base                   # the printed text of `echo "docker ..." | sh` is read as the command
             k += 1
         elif base in _OTHER_PRODUCT_COMMANDS:
+            if words[k + 1:k + 2] and words[k + 1].startswith("("):
+                return "plain", k            # `docker () { ...; }` defines a function: its body is not a product
             return "other", k
         elif _ASSEMBLY_CHARS.intersection(w):
             return "assembled", k
@@ -1254,11 +1258,13 @@ def _another_product(low: str, pos: int) -> bool:
         return False                         # an assembled command word: what follows is its options
     # a plain wrapper (`ssh host docker ...`): another product further on. An option in between could carry the
     # product's name as ITS value (`runuser -u docker -- ${OC} ...`), and an assembly could be the command: deny.
-    for x in words[k + 1:k + 6]:
+    for j, x in enumerate(words[k + 1:k + 6], start=k + 2):
         if x.startswith(("-", "+")) or _ASSEMBLY_CHARS.intersection(x.lstrip("({")):
             return False
         if os.path.basename(x) in _OTHER_PRODUCT_COMMANDS:
-            return True
+            # a built word after the name could be the real command (`su docker -c ${OC} ...`, `flock
+            # /var/lock/docker ${OC} ...`): the name was a user, a host or a path
+            return not any(_EXPANSION_CHARS.intersection(y) for y in words[j:])
     return False
 
 
