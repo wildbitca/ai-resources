@@ -2459,3 +2459,108 @@ def test_an_unfinished_teardown_names_its_reason_once_and_not_on_every_run(sim, 
     assert second == [], "the same reason is not repeated on the next run"
     s.openclaw.host_env_previous["OPENCLAW_OFFBOX_GCLOUD_CONFIG"] = "ok-now"
     assert openclaw.teardown(s) != [], "once the reason is gone the teardown finishes"
+
+
+# =====================================================================================================================
+# Kit 2.2b, section 5: teardown of hand units
+# =====================================================================================================================
+
+def test_a_symlinked_stamp_directory_is_never_a_source(sim, script, tmp_path):
+    """5a: `hand-units/<stamp>` is a link to a directory outside the kit's backup tree; the recorded entry is
+    lexically inside it, so only the real path says it is not."""
+    import os
+    backups = sim.home / ".openclaw" / "backup" / "hand-units"
+    backups.mkdir(parents=True)
+    outside = tmp_path / "outside-stamp"
+    outside.mkdir()
+    planted = outside / "openclaw-health-restart.timer"
+    planted.write_text("planted by someone else\n", encoding="utf-8")
+    stamp = backups / "20260101T000000Z"
+    stamp.symlink_to(outside, target_is_directory=True)
+    sim.units.mkdir(parents=True, exist_ok=True)
+    dst = sim.units / "openclaw-health-restart.timer"
+    s = _moved_state(dst, stamp / "openclaw-health-restart.timer")
+    section._remove_units(s.openclaw)
+    assert not os.path.lexists(dst), "nothing was moved in from outside the backup tree"
+    assert planted.read_text(encoding="utf-8") == "planted by someone else\n"
+    assert s.openclaw.host_hand_moved == {}
+    assert any(str(dst) in m for m in script.messages("warn"))
+
+
+def test_the_destination_is_never_missing_while_a_hand_unit_is_put_back(sim, script, monkeypatch):
+    """5b: one `os.replace` over the kit's copy, never unlink-then-move."""
+    import hashlib
+    import os
+    import pathlib
+    _backups, ts = _hand_move_fixture(sim)
+    sim.units.mkdir(parents=True, exist_ok=True)
+    dst = sim.units / "openclaw-health-restart.timer"
+    kit_text = "# the kit's copy\n"
+    dst.write_text(kit_text, encoding="utf-8")
+    src = ts / "openclaw-health-restart.timer"
+    src.write_text("# the operator's original\n", encoding="utf-8")
+    s = _moved_state(dst, src)
+    s.openclaw.host_hand_kit_sha[str(dst)] = hashlib.sha256(kit_text.encode("utf-8")).hexdigest()
+
+    seen: list[tuple[str, bool]] = []
+    real_unlink, real_replace, real_path_unlink = os.unlink, os.replace, pathlib.Path.unlink
+
+    def spy_unlink(path, *a, **k):
+        if str(path) == str(dst):
+            seen.append(("unlink", True))
+        return real_unlink(path, *a, **k)
+
+    def spy_path_unlink(self, *a, **k):
+        if str(self) == str(dst):
+            seen.append(("unlink", True))
+        return real_path_unlink(self, *a, **k)
+
+    def spy_replace(a, b, *args, **k):
+        if str(b) == str(dst):
+            seen.append(("replace", os.path.lexists(dst)))
+        return real_replace(a, b, *args, **k)
+
+    monkeypatch.setattr(os, "unlink", spy_unlink)
+    monkeypatch.setattr(pathlib.Path, "unlink", spy_path_unlink)
+    monkeypatch.setattr(os, "replace", spy_replace)
+    section._remove_units(s.openclaw)
+    assert dst.read_text(encoding="utf-8") == "# the operator's original\n"
+    assert ("unlink", True) not in seen, "the destination was removed before the original was put back"
+    assert seen == [("replace", True)], seen
+
+
+def test_a_dangling_script_link_in_local_bin_is_adopted_and_restored_as_a_link(sim, script, tmp_path):
+    import os
+    hand = sim.home / ".local" / "bin" / "openclaw-health-restart.sh"
+    hand.parent.mkdir(parents=True)
+    hand.symlink_to(tmp_path / "dotfiles" / "not-checked-out.sh")
+    s = _state()
+    _run_wizard(s)
+    moved = pathlib.Path(s.openclaw.host_hand_moved[str(hand)])
+    assert moved.is_symlink() and os.readlink(moved) == str(tmp_path / "dotfiles" / "not-checked-out.sh")
+    assert not hand.is_symlink(), "the kit's own script sits there now"
+    openclaw.teardown(s)
+    assert hand.is_symlink() and os.readlink(hand) == str(tmp_path / "dotfiles" / "not-checked-out.sh")
+    assert s.openclaw.host_hand_moved == {}
+
+
+def test_install_units_writes_through_a_temp_file_so_a_hard_link_keeps_its_bytes(sim, tmp_path):
+    import os
+    dest = sim.units
+    dest.mkdir(parents=True, exist_ok=True)
+    first = host.install_units(dest, runner=_noop_runner, adopt_hand_copy=False)
+    name = sorted(first["changed"])[0]
+    unit = dest / name
+    other = tmp_path / "another-name"
+    os.link(unit, other)
+    kit = other.read_text(encoding="utf-8")
+    unit.write_text(kit + "# drifted\n", encoding="utf-8")           # same inode as `other`: both drifted
+    other_bytes = other.read_text(encoding="utf-8")
+    assert other_bytes.endswith("# drifted\n")
+    res = host.install_units(dest, runner=_noop_runner, adopt_hand_copy=False)
+    assert name in res["changed"] and unit.read_text(encoding="utf-8") == kit
+    assert other.read_text(encoding="utf-8") == other_bytes, "the other link keeps the bytes it had"
+
+
+def _noop_runner(argv, **kw):
+    return 0, ""

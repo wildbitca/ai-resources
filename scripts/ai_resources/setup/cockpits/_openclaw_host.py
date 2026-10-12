@@ -36,6 +36,7 @@ Rules this module keeps:
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import json
 import os
@@ -1242,6 +1243,42 @@ def _inside(path: Path, parent: Path) -> bool:
     return ".." not in path.parts and path.parent == parent and not path.is_symlink()
 
 
+def _stamp_dir_is_real(stamp: Path, backups: Path) -> bool:
+    """The time-stamped directory a hand unit was moved into is a real directory directly inside the kit's real
+    `hand-units` directory. Compared by real path: a symlinked stamp directory (or a symlinked `hand-units`)
+    plus a crafted state entry would otherwise move a file in from anywhere."""
+    if stamp.is_symlink() or not stamp.is_dir():
+        return False
+    real_stamp = Path(os.path.realpath(stamp))
+    return real_stamp.parent == Path(os.path.realpath(backups)) and real_stamp.name == stamp.name
+
+
+def _put_back(src: Path, dst: Path) -> None:
+    """Move `src` over `dst` in one step. Within a file system that is a single `os.replace`; across file systems
+    the file (or link) is copied to a temp name beside `dst` and that is replaced over it, so `dst` is never
+    missing and never half written."""
+    try:
+        os.replace(src, dst)
+        return
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.restore.tmp")
+    try:
+        if src.is_symlink():
+            os.symlink(os.readlink(src), tmp)
+        else:
+            host.shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    os.unlink(src)
+
+
 def _remove_units(o: state.OpenClawState) -> None:
     """Undo the units: disable exactly the timers the kit enabled (a timer that was already
     enabled stays enabled), then put every unit file back as it was: its old text, or gone if
@@ -1278,7 +1315,7 @@ def _remove_units(o: state.OpenClawState) -> None:
         src, dst = Path(moved), Path(original)
         valid = (dst == script or (dst.name in host.HEALTH_UNITS and _inside(dst, dest))) \
             and ".." not in src.parts and src.name == dst.name and src.parent.parent == backups \
-            and not dst.is_symlink()
+            and not dst.is_symlink() and _stamp_dir_is_real(src.parent, backups)
         if valid and src.is_symlink():
             # A link in the backup directory is the operator's only when the kit moved that very link there (it
             # recorded the target). Anything else may have been planted: it is never moved onto a unit path.
@@ -1294,7 +1331,7 @@ def _remove_units(o: state.OpenClawState) -> None:
             continue
         if (os.path.lexists(src)) and not os.path.lexists(dst):
             dst.parent.mkdir(parents=True, exist_ok=True)
-            host.shutil.move(str(src), str(dst))
+            _put_back(src, dst)
         elif os.path.lexists(src) and dst.is_file() and (src.is_symlink() or src.read_bytes() != dst.read_bytes()):
             # The kit's copy sits where the operator's was: put the original back, but only over a file that
             # is still exactly what the kit wrote (G4). Anything else is the operator's edit.
@@ -1303,8 +1340,7 @@ def _remove_units(o: state.OpenClawState) -> None:
                 rendered = host.render_units().get(dst.name)
                 recorded = hashlib.sha256(rendered.encode("utf-8")).hexdigest() if rendered is not None else None
             if recorded is not None and _sha256_file(dst) == recorded:
-                dst.unlink()
-                host.shutil.move(str(src), str(dst))
+                _put_back(src, dst)                 # one replace: the destination is never missing in between
             else:
                 ui.warn(f"{dst} changed after the kit adopted your hand-installed copy; it was left as it is. "
                         f"Your original is at {src}.")

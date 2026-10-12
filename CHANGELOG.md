@@ -57,6 +57,11 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   runs. Lock files (setup state, restart lock) are opened with `O_NOFOLLOW`; a symlinked `kit-host.env` is written at
   its target and the link survives (a link into a missing directory is left alone with one line).
 
+- **Teardown of hand units (2.2b, section 5).** The moved-aside file must resolve, by real path, inside this kit's own
+  `hand-units/<stamp>` directory: a symlinked stamp directory plus a crafted state entry no longer moves a file in
+  from outside. The original is put back with one `os.replace` (a temp file beside the destination across file
+  systems), so the destination is never missing while it is restored.
+
 ### Added
 
 - **Findings (F).** `status` and `verify` WARN when the egress proxy refused hosts with `TLS certificate unavailable`
