@@ -36,6 +36,16 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   discard form; `openclaw doctor` needs a terminal or `--yes` (the kit's timers pass it) and, like the drained
   window, refuses from inside the gateway cgroup.
 
+- **Gateway guard (2.2b, section 1).** Closes the findings of the 2.2 review: a `case` pattern's `)` no longer ends
+  a `$(...)`; text fed to a shell (a heredoc or here-string whose consumer is `sh`, `bash`, `zsh`, `dash`, `ksh`,
+  `eval`, or `echo`/`printf` piped into one) is command text; `xargs`, `find -exec` and `parallel` commands, an
+  `alias` value, `trap 'CMD' SIG` and `V='...'; eval "$V"` are read; `openclaw --profile p doctor --fix` is
+  denied; `builtin`, `coproc` and `$"..."` are read; deep benign nesting is followed (40 levels) instead of being
+  read for words, and the word fallback needs the verb within a few words of `gateway`. The cost is linear (an
+  `openclaw` word looks at a bounded window; heredoc delimiters are looked up, not compared with every line): the
+  252 KB / 28000-word, 56 KB / thousands-of-heredocs and 1 MB cases each run in under 3 s. Real-bash differential
+  against 2.1.0 and 2.1.1: 0 regressions, executed-but-allowed 415 (2.1.1: 6241), 0 benign denials on 1083 realistic
+  commands (numbers in the handoff).
 - **Restart paths (2.2b, section 2).** The graceful restart, the drained window of `doctor` and `apply-pending`, and
   setup's and `models update`'s gateway restart take one shared non-blocking lock (`health-restart.lock`) and
   create `watchdog.off` with `O_EXCL`: a second path that finds the lock or a window that opened in between
@@ -67,6 +77,14 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   fine) or it is dropped, so `status` and `verify` never print advice naming a host that failed that check; ANSI
   sequences, control and bidi characters are stripped from what is printed; and the journal read has a byte cap
   (8 MiB, the process is stopped there) next to its line and time bounds.
+
+- **Sandbox findings (2.2b, section 8).** `setup` exits 1 (and says setup is NOT complete) when the operator asked for
+  a restart-required apply and it was refused or failed, for example inside the gateway cgroup (T29); the keys stay
+  pending. Stale `.kit-host.env.*.tmp` and `.AGENTS.md.*.tmp` files a killed write left are removed at the next
+  write (regular files of the user, older than an hour). The gateway guard also reads `builtin`, `coproc` and the
+  command line GNU `parallel` parses again, and T46 / ADR-0004 list the residual classes (a verb built at run
+  time, output produced at run time and then run, `${ cmd; }`, aliases from an earlier call, `xargs`/`parallel`
+  fed commands as data) and say the authority to stop the unit belongs at systemd and polkit.
 
 ### Added
 

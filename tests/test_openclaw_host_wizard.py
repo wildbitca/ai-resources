@@ -2564,3 +2564,122 @@ def test_install_units_writes_through_a_temp_file_so_a_hard_link_keeps_its_bytes
 
 def _noop_runner(argv, **kw):
     return 0, ""
+
+
+# =====================================================================================================================
+# Kit 2.2b, section 8: a refused restart-required apply is not a finished setup; stale temp files of every writer
+# =====================================================================================================================
+
+def _confirmed_restart_part(monkeypatch):
+    monkeypatch.setattr(section, "_in_flight", lambda: (0, "0"))
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(ui, "confirm", lambda *_a, **_k: True)
+    monkeypatch.setattr(ui, "warn", lambda *_a, **_k: None)
+    monkeypatch.setattr(ui, "info", lambda *_a, **_k: None)
+
+
+def test_a_confirmed_apply_that_the_window_refuses_stays_pending_and_is_remembered(monkeypatch):
+    s = _state()
+    o = s.openclaw
+    _confirmed_restart_part(monkeypatch)
+    monkeypatch.setattr(section, "_drained_apply", lambda patch, rp, apply_patch: (False, False))
+    patch = {"gateway": {"reload": {"mode": "hybrid"}}}
+    changes = [{"path": ["gateway", "reload", "mode"], "action": "filled"}]
+    assert section._handle_restart_part(o, patch, [], changes, source="setup",
+                                        apply_patch=lambda *a, **k: (True, "")) is False
+    assert [e["path"] for e in o.host_restart_pending] == ["gateway.reload.mode"]
+    assert getattr(o, "_refused_applies", []) == ["gateway.reload.mode"]
+
+
+def _drive_apply_run(monkeypatch, tmp_path, *, drained_written):
+    """wizard.run with the apply step replaced by one that asks the operator for a restart-required apply."""
+    import argparse
+    from ai_resources.setup import state as st
+    _step10_env(monkeypatch, [])
+    monkeypatch.setattr(ui, "require_deps", lambda: None)
+    monkeypatch.setattr(ui, "banner", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(ui, "error", lambda *a, **k: errors.append(a[0]))
+    errors: list[str] = []
+    saved: list = []
+    monkeypatch.setattr(st, "load", lambda: st.SetupState())
+    monkeypatch.setattr(st, "save", lambda s: saved.append(s))
+    monkeypatch.setattr(st, "is_first_run", lambda: True)
+    for step in ("_step1_mode", "_step2_cockpits", "_step6_single_model_profile", "_step7_cockpit_config",
+                 "_step_models", "_step_summary"):
+        monkeypatch.setattr(wizard, step, lambda *a, **k: 0)
+    monkeypatch.setattr(wizard, "_print_completion", lambda s: None)
+    monkeypatch.setattr(section, "_drained_apply", lambda patch, rp, apply_patch: (drained_written, drained_written))
+    _confirmed_restart_part(monkeypatch)
+
+    def apply(s, dry_run=False):
+        wizard._APPLIED_TARGETS = []
+        section._handle_restart_part(s.openclaw, {"gateway": {"reload": {"mode": "hybrid"}}}, [],
+                                     [{"path": ["gateway", "reload", "mode"], "action": "filled"}],
+                                     source="setup", apply_patch=lambda *a, **k: (True, ""))
+        return 0
+    monkeypatch.setattr(wizard, "_step9_apply", apply)
+    rc = wizard.run(argparse.Namespace(dry_run=False, non_interactive=False, profile=""))
+    return rc, errors, saved
+
+
+def test_setup_exits_non_zero_when_a_requested_restart_required_apply_was_refused(script, monkeypatch, tmp_path):
+    rc, errors, saved = _drive_apply_run(monkeypatch, tmp_path, drained_written=False)
+    assert rc == 1
+    assert any("NOT complete" in e and "gateway.reload.mode" in e for e in errors)
+    assert [e["path"] for e in saved[-1].openclaw.host_restart_pending] == ["gateway.reload.mode"], \
+        "the entry stays pending in the saved state"
+
+
+def test_setup_exits_zero_when_the_requested_apply_was_done(script, monkeypatch, tmp_path):
+    rc, errors, saved = _drive_apply_run(monkeypatch, tmp_path, drained_written=True)
+    assert rc == 0 and not any("NOT complete" in e for e in errors)
+
+
+def _stale_temp_fixture(directory: pathlib.Path, base: str):
+    import os
+    import time
+    old = time.time() - 7200
+    stale = directory / f".{base}.old12345.tmp"
+    fresh = directory / f".{base}.new12345.tmp"
+    other = directory / ".somebody-elses-file.old12345.tmp"
+    for p in (stale, fresh, other):
+        p.write_text("x", encoding="utf-8")
+    for p in (stale, other):
+        os.utime(p, (old, old))
+    link = directory / f".{base}.link1234.tmp"
+    link.symlink_to(other)
+    os.utime(link, (old, old), follow_symlinks=False)
+    sub = directory / f".{base}.dir12345.tmp"
+    sub.mkdir()
+    os.utime(sub, (old, old))
+    return stale, fresh, other, link, sub
+
+
+def test_a_write_of_kit_host_env_removes_the_stale_temp_files_a_killed_write_left(tmp_path):
+    env_file = tmp_path / "kit-host.env"
+    stale, fresh, other, link, sub = _stale_temp_fixture(tmp_path, "kit-host.env")
+    assert host.write_host_env({"OPENCLAW_A": "1"}, env_file) is True
+    assert not stale.exists(), "older than an hour, a regular file of ours: removed"
+    assert fresh.exists(), "a younger one may be a write in flight"
+    assert other.exists() and link.is_symlink() and sub.is_dir(), "only kit-owned regular files"
+
+
+def test_a_managed_block_write_removes_the_stale_temp_files_of_agents_md(tmp_path):
+    from ai_resources.setup.cockpits import _shared
+    target = tmp_path / "AGENTS.md"
+    target.write_text("# mine\n", encoding="utf-8")
+    stale, fresh, other, link, sub = _stale_temp_fixture(tmp_path, "AGENTS.md")
+    assert _shared.write_managed_block(target, "kit text\n") is True
+    assert not stale.exists() and fresh.exists() and other.exists() and link.is_symlink() and sub.is_dir()
+
+
+def test_a_window_refused_inside_the_gateway_cgroup_says_t29_and_not_a_bare_exit_code(script, monkeypatch):
+    monkeypatch.setattr(host, "apply_drained", lambda *a, **k: (host.EXIT_REFUSED_SELF, False))
+    errors: list[str] = []
+    monkeypatch.setattr(ui, "error", lambda m, *a, **k: errors.append(m))
+    assert section._drained_apply({"a": 1}, [], lambda *a, **k: (True, "")) == (False, False)
+    assert len(errors) == 1 and "T29" in errors[0] and "apply-pending" in errors[0]
+    assert "ended with code" not in errors[0]

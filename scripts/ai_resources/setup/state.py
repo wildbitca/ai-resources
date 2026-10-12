@@ -427,6 +427,12 @@ def save(state: SetupState) -> None:
 STALE_TEMP_AGE_S = 3600
 
 
+def remove_stale_temp_files(path: Path) -> None:
+    """The cleanup `save()` runs, for any file the kit writes through `mkstemp` beside it (`kit-host.env`, an
+    `AGENTS.md`): `.<name>.*.tmp` next to `path` that a SIGKILLed write left behind."""
+    _remove_stale_temp_files(path)
+
+
 def _remove_stale_temp_files(path: Path) -> None:
     """Remove `.<state file>.*.tmp` files a SIGKILLed save left behind: regular files this user owns, untouched
     for over an hour (a younger one may be a save in flight). Never a link, never anything else, never the

@@ -463,6 +463,10 @@ def _drained_apply(patch: dict, replace_paths: list[str],
         ui.error("OpenClaw rejected the restart-required patch in a dry run; nothing was stopped.")
     elif code == host.EXIT_REFUSED:
         ui.warn("not applied: another maintenance window is open (watchdog.off exists); deferred.")
+    elif code == host.EXIT_REFUSED_SELF:
+        ui.error("not applied: this setup run is inside the gateway cgroup (an agent session), and stopping the "
+                 "gateway from there would kill it (T29). The keys stay pending; run "
+                 "`ai-resources openclaw apply-pending` from a terminal outside the gateway.")
     elif code:
         ui.error(f"the drained window ended with code {code} ({'config written; ' if written else ''}"
                  "check `ai-resources openclaw status`)")
@@ -514,6 +518,9 @@ def _handle_restart_part(o: state.OpenClawState, patch: dict, replace_paths: lis
     written, window_ok = _drained_apply(patch, replace_paths, apply_patch)
     if not written:
         _record_pending(o, pend)
+        # The operator asked for this and it did not happen (refused inside the gateway cgroup, busy, rejected,
+        # failed): the keys stay pending and the setup run exits non-zero, so a script does not read it as done.
+        o.__dict__.setdefault("_refused_applies", []).append(", ".join(paths))
     else:
         # The keys this run just applied are no longer owed: an entry an earlier run recorded for them must not
         # stay listed until `apply-pending` clears it.

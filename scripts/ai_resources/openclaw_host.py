@@ -288,6 +288,8 @@ def write_host_env(values: dict[str, str | None], path: Path | None = None) -> b
         except OSError:
             pass
         raise
+    from .setup import state as setup_state
+    setup_state.remove_stale_temp_files(path)      # a SIGKILLed earlier write leaves `.kit-host.env.*.tmp`
     return True
 
 

@@ -386,6 +386,8 @@ def _replace_atomically(target: Path, text: str) -> None:
         except OSError:
             pass
         raise
+    from .. import state as _state
+    _state.remove_stale_temp_files(target)         # a SIGKILLed earlier write leaves `.AGENTS.md.*.tmp`
 
 
 def _create_backup(target: Path, raw: str, stamp: str) -> Path:

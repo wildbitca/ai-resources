@@ -199,7 +199,13 @@ def _run(args: argparse.Namespace) -> int:
         state.save(s)
         verify_rc = _step10_verify(s, list(_APPLIED_TARGETS))
         _print_completion(s)
-    return verify_rc   # non-zero only when a selected tooling has an error-level finding
+        refused = list(getattr(s.openclaw, "_refused_applies", []))
+        if refused:
+            ui.error("setup is NOT complete: the restart-required key(s) " + "; ".join(refused) + " were requested "
+                     "but not applied. They stay pending; run `ai-resources openclaw apply-pending` from "
+                     "outside the gateway.")
+            verify_rc = verify_rc or 1
+    return verify_rc   # non-zero when a tooling has an error-level finding or a requested apply was refused
 
 
 # --- Model selection (Addendum A1: tools, then accounts, then models, then a summary) ---------
