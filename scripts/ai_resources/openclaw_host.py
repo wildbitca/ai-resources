@@ -3267,9 +3267,14 @@ def journal_findings(runner: Runner, stability: dict | None) -> list[tuple[str, 
     reason = str(stab.get("reason") or "")
     age = stab.get("age_hours")
     recent = isinstance(age, (int, float)) and age <= openclaw_pressure.JOURNAL_SIGNAL_HOURS
-    if (stab.get("present") and recent and reason.endswith(_CLOSE_FAILED_SUFFIXES) and signals["completions"] > 0):
+    newest_failed = bool(stab.get("present") and recent and reason.endswith(_CLOSE_FAILED_SUFFIXES))
+    # the newest bundle is not always the failed one: any close-failed bundle journalled in the last 24 h counts
+    n_failed = signals.get("close_failed", 0) + (0 if signals.get("close_failed") else int(newest_failed))
+    if n_failed and signals["completions"] > 0:
+        when = f"a `{reason}` stability bundle from {age:.0f} h ago" if newest_failed \
+            else f"{n_failed} close-failed stability bundle(s) in the last {openclaw_pressure.JOURNAL_SIGNAL_HOURS} h"
         out.append(("warn",
-                    f"a `{reason}` stability bundle from {age:.0f} h ago, and "
+                    f"{when}, and "
                     f"{signals['completions']} subagent completion line(s) deferred or lost in the journal",
                     "a restart or stop with work in flight loses subagent results: see T39 and T41; restart "
                     "with `ai-resources openclaw graceful-restart` and re-run what was lost"))
@@ -3721,17 +3726,15 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
     # 2. one graceful restart at a time (the timer and a manual run share the lock)
     import fcntl
     lock_fd = None
-    lock_created = False
     if dry_run:
         if _lock_held_by_other(lock_path):
             return finish(EXIT_LOCKED, "locked")
     else:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
-            lock_created = True
-        except FileExistsError:
             lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        except FileExistsError:
+            lock_fd = os.open(lock_path, os.O_RDWR, 0o600)
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -3753,9 +3756,8 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
     finally:
         if lock_fd is not None:
             try:
-                if lock_created and result.get("result") == "refused-gate":
-                    # a refusal creates nothing: the lock file this run made for itself goes with it
-                    lock_path.unlink(missing_ok=True)
+                # The lock file is never unlinked: removing it while it is locked lets a second run that already
+                # opened the old inode and a third that creates a new file both hold "the" lock at once.
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:
                 os.close(lock_fd)

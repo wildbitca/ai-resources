@@ -405,6 +405,8 @@ JOURNAL_SIGNAL_TIMEOUT_S = 20      # ... and in time
 _TLS_UNAVAILABLE = "TLS certificate unavailable"
 _TLS_HOST = re.compile(r"\bhost=([^\s;,]+)")
 _COMPLETION = re.compile(r"subagent completion (deferred|lost|dropped|undelivered|abandoned)\b", re.IGNORECASE)
+# the gateway journals every stability bundle it writes: `wrote stability bundle: .../...-<reason>.json`
+_BUNDLE = re.compile(r"wrote stability bundle: \S*?gateway\.(restart_close_failed|stop_close_failed)\.json")
 
 
 def parse_journal_signals(text: str) -> dict:
@@ -413,14 +415,17 @@ def parse_journal_signals(text: str) -> dict:
     Structural markers only; never session text."""
     hosts: list[str] = []
     completions = 0
+    close_failed = 0
     for line in text.splitlines():
+        if _BUNDLE.search(line):
+            close_failed += 1
         if _TLS_UNAVAILABLE in line and "kind=refused" in line:
             m = _TLS_HOST.search(line)
             if m and m.group(1) not in hosts:
                 hosts.append(m.group(1))
         elif _COMPLETION.search(line):
             completions += 1
-    return {"tls_hosts": hosts, "completions": completions}
+    return {"tls_hosts": hosts, "completions": completions, "close_failed": close_failed}
 
 
 def read_journal_signals(runner: Runner, unit: str = UNIT) -> dict:
@@ -431,9 +436,9 @@ def read_journal_signals(runner: Runner, unit: str = UNIT) -> dict:
                           f"{JOURNAL_SIGNAL_HOURS} hours ago", "--no-pager", "-o", "short-iso",
                           "-n", str(JOURNAL_SIGNAL_LINES)], timeout=JOURNAL_SIGNAL_TIMEOUT_S)
     except Exception:  # noqa: BLE001 - an unavailable journal is silence, never an error
-        return {"available": False, "tls_hosts": [], "completions": 0}
+        return {"available": False, "tls_hosts": [], "completions": 0, "close_failed": 0}
     if rc != 0:
-        return {"available": False, "tls_hosts": [], "completions": 0}
+        return {"available": False, "tls_hosts": [], "completions": 0, "close_failed": 0}
     return {"available": True, **parse_journal_signals(out)}
 
 

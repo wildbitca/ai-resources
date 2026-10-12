@@ -570,20 +570,27 @@ def test_the_worst_case_sum_fits_the_timer_units_timeout_start_sec():
     assert host.RESTART_PHASE_BUDGET_S >= host.RESTART_COMMAND_TIMEOUT_S + host.RESTART_COMMAND_GRACE_S
 
 
-# --- kit 2.2 C5: a refused run must not leave a lock file behind -------------------------------------------------
+# --- the lock file is never unlinked (an unlink while locked lets two restarts hold the lock) --------------------
 
-def test_a_refused_gate_does_not_create_the_lock_file(env):
+def test_a_refused_gate_never_unlinks_the_lock_file(env):
     env.marker.touch()                                  # the watchdog_off gate refuses
     res = env.run(stub_for(env))
     assert res["result"] == "refused-gate"
-    assert not env.lock.exists(), "a refusal creates nothing"
+    assert env.lock.exists(), "unlinking a lock file is what lets two holders in"
 
 
-def test_a_refused_gate_keeps_a_lock_file_that_was_already_there(env):
-    env.lock.touch()
-    env.marker.touch()
-    assert env.run(stub_for(env))["result"] == "refused-gate"
-    assert env.lock.exists(), "a file this run did not create is not this run's to remove"
+def test_a_second_run_cannot_take_the_lock_a_first_still_holds(env):
+    import fcntl
+    env.lock.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(env.lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        env.marker.touch()                              # even a refused-gate run must not unlink under a holder
+        res = env.run(stub_for(env))
+        assert res["result"] == "locked"
+        assert os.fstat(fd).st_ino == os.stat(env.lock).st_ino, "the holder's inode is still the lock path"
+    finally:
+        os.close(fd)
 
 
 def test_a_successful_run_still_leaves_its_lock_file(env):

@@ -758,3 +758,22 @@ def test_status_prints_the_journal_findings_after_the_report(env, capsys):
     assert host.cmd_status(argparse.Namespace(no_doctor=True), runner=Both(doctor=doctor_text("doctor_noise_only.txt"))) == 0
     out = capsys.readouterr().out
     assert "api1.example.test" in out and "T44" in out
+
+
+# --- pass 2.2 follow-up: an older close-failed bundle in the last 24 h is found too ---------------------------
+
+def test_a_close_failed_bundle_that_is_not_the_newest_is_still_reported():
+    from ai_resources import openclaw_pressure as pr
+    text = "\n".join([
+        "2026-10-12T01:00:00+00:00 h node[1]: [gateway] wrote stability bundle: /x/openclaw-stability-2026-10-12T01-00-00-000Z-1-gateway.restart_close_failed.json",
+        "2026-10-12T01:00:01+00:00 h node[1]: [agents/subagent-registry] subagent completion deferred during gateway restart",
+        "2026-10-12T05:00:00+00:00 h node[1]: [gateway] wrote stability bundle: /x/openclaw-stability-2026-10-12T05-00-00-000Z-1-gateway.config_reload.json",
+    ])
+    sig = pr.parse_journal_signals(text)
+    assert sig["close_failed"] == 1 and sig["completions"] == 1
+    newest_not_failed = {"present": True, "reason": "gateway.config_reload", "age_hours": 1.0}
+
+    def runner(argv, **_k):
+        return 0, text
+    found = host.journal_findings(runner, newest_not_failed)
+    assert any("close-failed stability bundle" in m for _lv, m, _r in found)
