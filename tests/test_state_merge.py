@@ -272,3 +272,56 @@ def test_a_restore_entry_another_run_already_queued_is_not_added_twice(xdg):
     assert sorted(e["path"] for e in final.host_restart_pending) == ["agents.defaults.timeoutSeconds",
                                                                     "gateway.bind"]
     assert final.config_watch["done"] is True
+
+
+# --- 2.2c, 6c: a watch that cannot record its result leaves a marker the operator is told about ---------------------
+
+def test_a_watch_that_cannot_save_leaves_a_marker_status_and_verify_report_and_a_save_clears(xdg, tmp_path,
+                                                                                            monkeypatch):
+    import fcntl
+    from ai_resources.setup.cockpits import _openclaw_host as section
+    monkeypatch.setattr(host, "WATCH_SAVE_WAIT_S", 0.3)
+    r = DiskRig(tmp_path, [HOT])
+    state.save(r.s)
+    lock = _lock_file()
+    holder = open(lock, "a+")
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        assert r.run_default() == 0
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        holder.close()
+    marker = state.read_watch_marker()
+    assert marker and marker["outcome"] == "reverted" and marker["run_id"] == r.s.openclaw.config_watch["run_id"]
+    marker_path = state.watch_marker_path()
+    assert marker_path.parent == state.state_path().parent
+    assert oct(marker_path.stat().st_mode & 0o777) == "0o600"
+    assert not [p for p in marker_path.parent.iterdir() if p.name.endswith(".tmp")], "written atomically"
+    # the record itself is still not done: that is the gap the marker reports
+    assert state.load().openclaw.config_watch.get("done") is not True
+    lines = host.pending_lines(host.recorded_pending())
+    assert any("a post-setup watch finished and could not record its result: reverted" in ln for ln in lines)
+    findings = section._pending_findings(state.load().openclaw)
+    assert any("could not record its result: reverted" in f.message for f in findings)
+    state.save(state.load())
+    assert state.read_watch_marker() is None
+    assert not any("could not record its result" in ln for ln in host.pending_lines(host.recorded_pending()))
+
+
+def test_a_watch_that_saves_leaves_no_marker(xdg, tmp_path):
+    r = DiskRig(tmp_path, [HOT])
+    state.save(r.s)
+    assert r.run_default() == 0
+    assert state.read_watch_marker() is None
+
+
+def test_a_hostile_or_broken_marker_is_ignored(xdg):
+    path = state.watch_marker_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for text in ("not json", "[1, 2]", "", "null"):
+        path.write_text(text, encoding="utf-8")
+        assert state.read_watch_marker() is None
+    path.write_text('{"outcome": "reverted\\u001b[31m", "reason": 7, "extra": "x"}', encoding="utf-8")
+    got = state.read_watch_marker()
+    assert set(got) == {"run_id", "outcome", "reason", "at"} and got["reason"] == "7"
+    assert "\x1b" not in got["outcome"] and got["outcome"].startswith("reverted")

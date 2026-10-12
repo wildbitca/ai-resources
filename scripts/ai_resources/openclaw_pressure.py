@@ -404,7 +404,9 @@ JOURNAL_SIGNAL_LINES = 20000       # the journal read is bounded in lines ...
 JOURNAL_SIGNAL_TIMEOUT_S = 20      # ... and in time
 JOURNAL_SIGNAL_BYTES = 8 * 1024 * 1024   # ... and in bytes: a journal line is untrusted and can be huge
 _TLS_UNAVAILABLE = "TLS certificate unavailable"
-_TLS_HOST = re.compile(r"\bhost=([^\s;,]+)")
+# The token ends at a blank, a newline, `;` or `,` only: a control character INSIDE it makes the host invalid
+# (dropped), it does not cut the token short into a valid-looking prefix (2.2c, 6e).
+_TLS_HOST = re.compile(r"\bhost=([^ \t\r\n;,]+)")
 _HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]")
 
@@ -437,7 +439,7 @@ def parse_journal_signals(text: str) -> dict:
     hosts: list[str] = []
     completions = 0
     close_failed = 0
-    for line in text.splitlines():
+    for line in text.split("\n"):        # not splitlines(): \x0b, \x1c-\x1e, \x85 and \u2028 would cut a hostile host
         if _BUNDLE.search(line):
             close_failed += 1
         if _TLS_UNAVAILABLE in line and "kind=refused" in line:
@@ -452,8 +454,10 @@ def parse_journal_signals(text: str) -> dict:
 def read_journal_signals(runner: Runner, unit: str = UNIT) -> dict:
     """`journalctl --user -u <unit> --since "24 hours ago" -n <cap>` (read-only, bounded) parsed by
     `parse_journal_signals`. `available` is False when the journal cannot be read, so nothing is claimed."""
+    # `--reverse`: newest line first, so the byte cap keeps the NEWEST of the last `-n` lines (a chronological
+    # read cut at the cap would report the oldest refusals and drop the ones that are still happening).
     argv = ["journalctl", "--user", "-u", unit.removesuffix(".service"), "--since",
-            f"{JOURNAL_SIGNAL_HOURS} hours ago", "--no-pager", "-o", "short-iso",
+            f"{JOURNAL_SIGNAL_HOURS} hours ago", "--no-pager", "--reverse", "-o", "short-iso",
             "-n", str(JOURNAL_SIGNAL_LINES)]
     try:
         # `max_bytes` tells the default runner to stop reading there; whatever any runner hands back is cut too.

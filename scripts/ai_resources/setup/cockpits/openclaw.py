@@ -991,7 +991,9 @@ def _gateway_busy() -> tuple[int, list]:
     notes: list[str] = []
     count, procs = openclaw_host.gateway_busy(out=notes.append)
     for note in notes:
-        ui.detail(note)
+        # the probe's own note says "treating the gateway as idle" (right for the upgrade hint, which fails
+        # open); on this strict path the answer is "cannot tell" and the restart defers
+        ui.detail(note.replace("treating the gateway as idle", "cannot tell whether agent turns are in flight"))
     if notes:
         return PROBE_UNKNOWN, []
     return count, procs

@@ -497,6 +497,63 @@ def save(state: SetupState) -> None:
             pass
         raise
     _remove_stale_temp_files(path)
+    clear_watch_marker()          # a successful save closes the gap a result marker was written for
+
+
+def watch_marker_path() -> Path:
+    """The result marker the post-setup watch leaves when it could not record its result (2.2c, 6c)."""
+    path = state_path()
+    return path.with_name(path.stem + ".watch-result.json")
+
+
+def write_watch_marker(info: dict) -> bool:
+    """Atomically write a tiny `{run_id, outcome, reason, at}` record next to the state file (0600, a temp file
+    in the same directory and `os.replace`). False when it could not be written. Cleared by the next
+    successful `save()`."""
+    import json
+    path = Path(os.path.realpath(watch_marker_path()))
+    keep = {k: str(info.get(k, ""))[:300] for k in ("run_id", "outcome", "reason")}
+    keep["at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(keep))
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        return False
+    return True
+
+
+def read_watch_marker() -> dict | None:
+    """The marker, or None when there is none or it is not a record of strings (read only; never raises)."""
+    import json
+    try:
+        data = json.loads(Path(os.path.realpath(watch_marker_path())).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    # the file is plain text next to the state: nothing but printable characters is ever shown to the operator
+    return {k: "".join(ch for ch in str(data.get(k, ""))[:300] if ch.isprintable())
+            for k in ("run_id", "outcome", "reason", "at")}
+
+
+def clear_watch_marker() -> None:
+    try:
+        os.unlink(os.path.realpath(watch_marker_path()))
+    except OSError:
+        pass
 
 
 STALE_TEMP_AGE_S = 3600
@@ -556,7 +613,8 @@ def exclusive():
     try:
         fd = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     except OSError as e:
-        raise StateLockUnusable(f"{lock}: {type(e).__name__}") from None
+        raise StateLockUnusable(f"{lock} is a symlink" if lock.is_symlink() else f"{lock}: {type(e).__name__}"
+                                ) from None
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

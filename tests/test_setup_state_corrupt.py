@@ -124,3 +124,16 @@ def test_an_interactive_setup_says_so_and_asks_before_going_on(corrupt_file, mon
     s = state.SetupState()
     state.save(s)                                         # allowed now: the operator said yes
     assert "last_run" in corrupt_file.read_text(encoding="utf-8")
+
+
+def test_a_symlinked_state_lock_says_it_is_a_symlink(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    lock = state.state_path().with_name(state.state_path().name + ".lock")
+    lock.parent.mkdir(parents=True)
+    real = tmp_path / "elsewhere"
+    real.write_text("x", encoding="utf-8")
+    lock.symlink_to(real)
+    with pytest.raises(state.StateLockUnusable) as e:
+        with state.exclusive():
+            pass
+    assert "is a symlink" in str(e.value)

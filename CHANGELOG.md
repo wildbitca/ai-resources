@@ -113,6 +113,16 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   "cannot tell" and every restart path refuses (a missing file still means outside); `bootstrap()`'s library
   default confirm is No.
 
+- **Sandbox findings (2.2c, section 6).** Teardown refuses a hand-units backup tree that is, or sits behind, a symlink
+  (one line, the originals stay where they are, the record is kept). `offbox-identity` and the setup step validate
+  the `kit-host.env` target (a directory, a device, a link into a missing directory) before any gcloud call, so
+  nothing is created and the failure is one line. A watch that could not record its result because the state lock
+  stayed held leaves `setup-state.watch-result.json` that `status` and `verify` report until the next successful
+  save. The egress-refusal journal read is `--reverse`, so the byte cap keeps the newest lines; a control
+  character inside a `host=` token drops the host instead of truncating it (the line is split on LF only); the
+  graceful-restart lock loser prints the same line as `doctor`; a symlinked lock says "is a symlink"; and the busy
+  note of the strict restart path says "cannot tell" instead of "treating the gateway as idle".
+
 ### Added
 
 - **Findings (F).** `status` and `verify` WARN when the egress proxy refused hosts with `TLS certificate unavailable`

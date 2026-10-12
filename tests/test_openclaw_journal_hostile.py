@@ -104,3 +104,39 @@ def test_the_default_runner_stops_a_process_at_the_byte_cap():
     rc, out = host.default_runner([_sys.executable, "-c", "import time; time.sleep(30)"], max_bytes=1000, timeout=1)
     assert rc == 124
     assert host.default_runner(["/no/such/binary"], max_bytes=10)[0] == 127
+
+
+# --- 2.2c, 6d / 6e ----------------------------------------------------------------------------------------------
+
+class ReversingRunner(Runner):
+    """A journalctl that honours `--reverse`: newest line first, as the real one prints it."""
+
+    def __call__(self, argv, **kw):
+        self.calls.append((list(argv), kw))
+        lines = self.text.splitlines()
+        return 0, "\n".join(reversed(lines) if "--reverse" in argv else lines)
+
+
+def test_the_byte_cap_keeps_the_newest_refusals_not_the_oldest(monkeypatch):
+    monkeypatch.setattr(pr, "JOURNAL_SIGNAL_BYTES", 3000)
+    old = [TLS.format(kind="refused", host=f"old{i}.example") for i in range(60)]
+    newest = TLS.format(kind="refused", host="newest.example")
+    runner = ReversingRunner("\n".join([*old, newest]))
+    sig = pr.read_journal_signals(runner)
+    [(argv, _kw)] = runner.calls
+    assert "--reverse" in argv and "-n" in argv
+    assert sig["tls_hosts"][0] == "newest.example", "the newest refusal is read first and survives the cap"
+    assert "old59.example" in sig["tls_hosts"] and "old0.example" not in sig["tls_hosts"]
+    [(_lv, message, _remedy)] = host.journal_findings(runner, None)
+    assert "newest.example" in message
+
+
+@pytest.mark.parametrize("raw", ["good.example\x1fevil", "good.example\x0bevil", "good.example\x85evil",
+                                 "good.example\u2028evil", "good.example\x00evil", "good.example\x1b[0m"])
+def test_a_control_character_inside_a_host_drops_the_host_instead_of_truncating_it(raw):
+    assert _hosts(TLS.format(kind="refused", host=raw)) == []
+
+
+def test_a_blank_still_ends_the_host_token():
+    text = TLS.format(kind="refused", host="good.example") + ""
+    assert _hosts(text) == ["good.example"]

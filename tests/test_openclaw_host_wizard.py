@@ -2683,3 +2683,141 @@ def test_a_window_refused_inside_the_gateway_cgroup_says_t29_and_not_a_bare_exit
     assert section._drained_apply({"a": 1}, [], lambda *a, **k: (True, "")) == (False, False)
     assert len(errors) == 1 and "T29" in errors[0] and "apply-pending" in errors[0]
     assert "ended with code" not in errors[0]
+
+
+# =====================================================================================================================
+# Kit 2.2c, 6a: a symlinked hand-units directory (or a parent of it) is never a source
+# =====================================================================================================================
+
+def _evil_stamp(tmp_path, name="openclaw-health-restart.timer"):
+    evil = tmp_path / "evil-hand-units"
+    stamp = evil / "20260101T000000Z"
+    stamp.mkdir(parents=True)
+    planted = stamp / name
+    planted.write_text("planted by someone else\n", encoding="utf-8")
+    return evil, stamp, planted
+
+
+def test_a_symlinked_hand_units_directory_is_refused_with_one_clear_line(sim, script, tmp_path):
+    import os
+    evil, stamp, planted = _evil_stamp(tmp_path)
+    backup = sim.home / ".openclaw" / "backup"
+    backup.mkdir(parents=True)
+    (backup / "hand-units").symlink_to(evil, target_is_directory=True)
+    sim.units.mkdir(parents=True, exist_ok=True)
+    dst = sim.units / "openclaw-health-restart.timer"
+    original = "# the unit the operator may have\n"
+    dst.write_text(original, encoding="utf-8")
+    s = _moved_state(dst, backup / "hand-units" / stamp.name / planted.name)
+    section._remove_units(s.openclaw)
+    assert dst.read_text(encoding="utf-8") == original, "nothing was moved onto the unit path"
+    assert planted.read_text(encoding="utf-8") == "planted by someone else\n" and planted.exists()
+    warns = [m for m in script.messages("warn") if "hand-units" in m]
+    assert len(warns) == 1 and "is a symlink" in warns[0]
+    assert "not a unit the kit manages" not in warns[0]
+    assert str(dst) in s.openclaw.host_hand_moved, "the record stays, so a fixed link can still be restored"
+
+
+def test_a_symlinked_parent_of_the_hand_units_directory_is_refused_too(sim, script, tmp_path):
+    import os
+    real = tmp_path / "real-backup"
+    (real / "hand-units" / "20260101T000000Z").mkdir(parents=True)
+    planted = real / "hand-units" / "20260101T000000Z" / "openclaw-health-restart.timer"
+    planted.write_text("planted\n", encoding="utf-8")
+    (sim.home / ".openclaw").mkdir(parents=True)
+    (sim.home / ".openclaw" / "backup").symlink_to(real, target_is_directory=True)
+    sim.units.mkdir(parents=True, exist_ok=True)
+    dst = sim.units / "openclaw-health-restart.timer"
+    s = _moved_state(dst, sim.home / ".openclaw" / "backup" / "hand-units" / "20260101T000000Z" / planted.name)
+    section._remove_units(s.openclaw)
+    assert not os.path.lexists(dst)
+    assert planted.exists()
+    warns = [m for m in script.messages("warn") if "is a symlink" in m]
+    assert len(warns) == 1 and str(sim.home / ".openclaw" / "backup") in warns[0]
+
+
+def test_a_real_hand_units_directory_is_still_restored_from(sim, script):
+    _backups, ts = _hand_move_fixture(sim)
+    dst = sim.home / ".local" / "bin" / host.HAND_SCRIPT_NAME
+    dst.parent.mkdir(parents=True)
+    src = ts / host.HAND_SCRIPT_NAME
+    src.write_text("hand\n", encoding="utf-8")
+    s = _moved_state(dst, src)
+    section._remove_units(s.openclaw)
+    assert dst.read_text(encoding="utf-8") == "hand\n"
+    assert not [m for m in script.messages("warn") if "is a symlink" in m]
+
+
+# =====================================================================================================================
+# Kit 2.2c, 6b: the kit-host.env target is validated before any gcloud call
+# =====================================================================================================================
+
+def _offbox_args(**kw):
+    import argparse
+    base = dict(dry_run=False, remove=False, yes=True, name="openclaw-backup", sa=host.OFFBOX_SA_DEFAULT,
+                account="me@example.org", project="")
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+@pytest.fixture
+def offbox_env(monkeypatch, tmp_path):
+    g = FakeGcloud()
+    monkeypatch.setattr(host, "default_runner", g)
+    saved: list[object] = []
+    monkeypatch.setattr(state, "load", lambda: state.SetupState())
+    monkeypatch.setattr(state, "save", lambda s: saved.append(s))
+    return g, saved
+
+
+@pytest.mark.parametrize("kind", ["directory", "dev-null-link", "dangling-link"])
+def test_an_unusable_kit_host_env_refuses_before_gcloud_creates_anything(offbox_env, monkeypatch, tmp_path, capsys,
+                                                                       kind):
+    g, saved = offbox_env
+    env = tmp_path / "openclaw" / "kit-host.env"
+    env.parent.mkdir()
+    if kind == "directory":
+        env.mkdir()
+    elif kind == "dev-null-link":
+        env.symlink_to("/dev/null")
+    else:
+        env.symlink_to(tmp_path / "missing-dir" / "kit-host.env")
+    monkeypatch.setattr(host, "HOST_ENV_PATH", env)
+    assert host.cmd_offbox_identity(_offbox_args()) == 1
+    out = capsys.readouterr()
+    lines = [ln for ln in out.out.splitlines() if ln.strip()]
+    assert len(lines) == 1 and lines[0].startswith("refusing:") and "nothing was created" in lines[0]
+    assert g.calls == [], "no gcloud call at all, not even a read"
+    assert saved == []
+    assert "Traceback" not in out.err
+
+
+def test_a_usable_kit_host_env_is_not_refused_and_a_missing_one_is_created(offbox_env, monkeypatch, tmp_path):
+    g, saved = offbox_env
+    env = tmp_path / "openclaw" / "kit-host.env"
+    monkeypatch.setattr(host, "HOST_ENV_PATH", env)
+    assert host.host_env_problem(env) == ""
+    assert host.cmd_offbox_identity(_offbox_args()) == 0
+    assert "OPENCLAW_OFFBOX_GCLOUD_CONFIG=openclaw-backup" in env.read_text(encoding="utf-8")
+    assert g.writes() != []
+
+
+def test_a_dry_run_is_not_refused_for_an_unusable_env_file(offbox_env, monkeypatch, tmp_path):
+    g, _saved = offbox_env
+    env = tmp_path / "kit-host.env"
+    env.mkdir()
+    monkeypatch.setattr(host, "HOST_ENV_PATH", env)
+    assert host.cmd_offbox_identity(_offbox_args(dry_run=True, yes=False)) == 0
+    assert g.writes() == []
+
+
+def test_the_wizard_step_refuses_an_unusable_kit_host_env_before_gcloud(monkeypatch, tmp_path):
+    g = FakeGcloud()
+    monkeypatch.setattr(section, "_runner", lambda: g)
+    env = tmp_path / "kit-host.env"
+    env.mkdir()
+    monkeypatch.setattr(host, "HOST_ENV_PATH", env)
+    o = _state().openclaw
+    o.host_offbox_identity = True
+    section._configure_offbox_identity(o, dry_run=False)
+    assert g.calls == [] and o.host_offbox_config_created == {}

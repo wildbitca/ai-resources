@@ -303,6 +303,11 @@ def _configure_offbox_identity(o: state.OpenClawState, *, dry_run: bool) -> None
               "project": str(record.get("project") or "")}
         if record.get("impersonate"):
             kw["sa"] = str(record["impersonate"])
+    if not dry_run:
+        env_problem = host.host_env_problem()
+        if env_problem:
+            ui.warn(f"Off-box uploader identity not set up: {env_problem}; nothing was created.")
+            return
     plan = host.offbox_identity_plan(runner, created=record, **kw)
     if plan["problems"]:
         ui.warn("Off-box uploader identity not set up: " + "; ".join(plan["problems"]))
@@ -1250,6 +1255,17 @@ def _inside(path: Path, parent: Path) -> bool:
     return ".." not in path.parts and path.parent == parent and not path.is_symlink()
 
 
+def _symlinked_component(path: Path, home: Path) -> Path | None:
+    """The first of `path` and its parents below `home` that is a symlink (the home itself may be one: a
+    mounted or relocated home is the operator's), else None."""
+    cur = path
+    while cur != home and cur != cur.parent:
+        if cur.is_symlink():
+            return cur
+        cur = cur.parent
+    return None
+
+
 def _stamp_dir_is_real(stamp: Path, backups: Path) -> bool:
     """The time-stamped directory a hand unit was moved into is a real directory directly inside the kit's real
     `hand-units` directory. Compared by real path: a symlinked stamp directory (or a symlinked `hand-units`)
@@ -1318,7 +1334,14 @@ def _remove_units(o: state.OpenClawState) -> None:
     home = Path.home()
     script = home / ".local" / "bin" / host.HAND_SCRIPT_NAME
     backups = home / ".openclaw" / "backup" / "hand-units"
-    for original, moved in list(o.host_hand_moved.items()):
+    linked = _symlinked_component(backups, home) if o.host_hand_moved else None
+    if linked is not None:
+        # 2.2c (6a): the kit's backup tree is a link somewhere else. Whatever sits behind it is not what the kit
+        # moved aside, so nothing is moved onto a unit path; the record stays so a fixed link can be restored.
+        ui.warn(f"{linked} is a symlink, so the hand units the kit moved aside are not restored from it and "
+                "your originals stay where they are; make it a real directory (or move the files back by "
+                "hand), then run teardown again.")
+    for original, moved in ([] if linked is not None else list(o.host_hand_moved.items())):
         src, dst = Path(moved), Path(original)
         valid = (dst == script or (dst.name in host.HEALTH_UNITS and _inside(dst, dest))) \
             and ".." not in src.parts and src.name == dst.name and src.parent.parent == backups \
@@ -1651,6 +1674,13 @@ def _pending_findings(o: state.OpenClawState) -> list:
                            "could not run): " + ", ".join(summary["leftover_watch"]),
                            f"`{host.PENDING_COMMAND} --discard-watch-restores` lists them (dry run); add --yes to "
                            "drop them. Do not run apply-pending to 'fix' them: it would remove working keys"))
+    u = summary.get("watch_unrecorded")
+    if u:
+        out.append(Finding("warn", "openclaw",
+                           "a post-setup watch finished and could not record its result: "
+                           + (u.get("outcome") or "unknown") + (f" ({u['reason']})" if u.get("reason") else ""),
+                           "the setup-state lock was held too long for the watch to save; check "
+                           "`ai-resources openclaw status`. The next successful setup run clears this"))
     w = summary.get("watch") or {}
     if w.get("reverted"):
         out.append(Finding("warn", "openclaw", "the post-setup watch reverted: " + ", ".join(w["reverted"]),

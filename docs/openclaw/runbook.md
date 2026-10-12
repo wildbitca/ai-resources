@@ -117,6 +117,10 @@ openclaw-config-watch-<id>`. It stands down on `watchdog.off`, and a newer setup
 `systemd-run` or a user bus setup says `post-setup watch not started`; there is no foreground fallback.
 The unit runs with `RuntimeMaxSec=1800` and `TimeoutStopSec=600`: the drained window of a revert can take up to
 ~5.5 min by itself, so the unit must outlive it and be given time to unwind on SIGTERM.
+When the setup-state lock is still held after the watch's wait (60 s) it cannot record its result: the config was
+already reverted, so it leaves a tiny marker, `setup-state.watch-result.json` next to the state file (0600, written
+atomically), and `status`/`verify` say "a post-setup watch finished and could not record its result: <outcome>".
+The next successful save of the setup state clears it.
 
 ## Verification: what setup left behind
 

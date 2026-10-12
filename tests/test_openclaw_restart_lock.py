@@ -237,3 +237,59 @@ def test_an_unknown_busy_state_is_asked_about_and_never_restarts_unattended(monk
     out = openclaw.restart_gateway(probe=lambda: (openclaw.PROBE_UNKNOWN, []), interactive=True,
                                    ask=lambda q, opts, default=None: asked.append(q) or openclaw.RESTART_NOW)
     assert out is True and "could not tell" in asked[0] and len(calls) == 1
+
+
+# --- 2.2c, 6e ----------------------------------------------------------------------------------------------------
+
+def test_the_strict_busy_reader_says_cannot_tell_not_idle_when_the_restart_then_defers(monkeypatch):
+    from ai_resources.setup import ui
+    said: list[str] = []
+    monkeypatch.setattr(ui, "detail", lambda msg, *a, **k: said.append(str(msg)))
+
+    def noisy(runner=None, **kw):
+        kw["out"]("restart guard: systemctl could not describe openclaw-gateway.service (rc 1); "
+                  "treating the gateway as idle")
+        kw["out"]("restart guard: cannot read /sys/fs/cgroup/x (Permission denied); treating the gateway as idle")
+        return 0, []
+
+    monkeypatch.setattr(host, "gateway_busy", noisy)
+    count, _workers = REAL_GATEWAY_BUSY()
+    assert count == openclaw.PROBE_UNKNOWN
+    assert len(said) == 2 and all("cannot tell whether agent turns are in flight" in m for m in said)
+    assert not any("treating the gateway as idle" in m for m in said)
+
+
+def test_a_symlinked_restart_lock_says_it_is_a_symlink(tmp_path):
+    real = tmp_path / "elsewhere"
+    real.write_text("x", encoding="utf-8")
+    link = tmp_path / "health-restart.lock"
+    link.symlink_to(real)
+    with pytest.raises(host.RestartLockUnusable) as e:
+        host.acquire_restart_lock(link)
+    assert "is a symlink" in str(e.value) and "OSError" not in str(e.value)
+    plain = tmp_path / "dir.lock"
+    plain.mkdir()
+    with pytest.raises(host.RestartLockUnusable) as e2:
+        host.acquire_restart_lock(plain)
+    assert "is a symlink" not in str(e2.value)
+
+
+def test_the_graceful_restart_lock_loser_prints_the_same_one_line_as_doctor_and_apply_pending(tmp_path):
+    fd = host.acquire_restart_lock()
+    assert fd is not None
+    try:
+        lines: list[str] = []
+        res = host.graceful_restart(reason="manual", runner=Runner(), knobs=dict(host.RESTART_KNOB_DEFAULTS),
+                                    marker=host.Marker(tmp_path / "off"), state_path=tmp_path / "state",
+                                    lock_path=host.LOCK_PATH, snapshot_root=tmp_path / "snap",
+                                    self_cgroup_path=tmp_path / "no-cgroup", openclaw_bin="openclaw",
+                                    out=lines.append)
+        assert res["exit_code"] == host.EXIT_LOCKED
+        drained: list[str] = []
+        host.drained_window(lambda: True, runner=Runner(), marker=host.Marker(tmp_path / "w.off"),
+                            sleep=lambda s: None, openclaw_bin="openclaw", out=drained.append,
+                            self_cgroup_path=tmp_path / "no-cgroup")
+    finally:
+        host.release_restart_lock(fd)
+    assert lines == drained and len(lines) == 1
+    assert "another restart or maintenance window is in progress" in lines[0] and "nothing was stopped" in lines[0]

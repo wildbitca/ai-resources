@@ -185,6 +185,36 @@ def read_host_env(path: Path | None = None) -> dict[str, str]:
     return out
 
 
+def host_env_problem(path: Path | None = None) -> str:
+    """Why `write_host_env(path)` could not write, as one clause, or "" when it can. Checked BEFORE any command
+    that creates something (2.2c, 6b): a directory or a device behind `kit-host.env` must not be found after the
+    gcloud configuration was already created."""
+    import stat as _stat
+    path = path or HOST_ENV_PATH
+    target = Path(os.path.realpath(path)) if path.is_symlink() else path
+    suffix = f" (a link to {target})" if path.is_symlink() else ""
+    try:
+        mode = os.stat(target).st_mode
+    except FileNotFoundError:
+        if path.is_symlink() and not target.parent.is_dir():
+            return f"{path} is a symlink to {target}, whose directory does not exist"
+        parent = target.parent
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        if not os.access(parent, os.W_OK | os.X_OK):
+            return f"{parent} is not writable, so {path} cannot be created"
+        return ""
+    except OSError as e:
+        return f"{path} cannot be inspected ({e.strerror or type(e).__name__})"
+    if _stat.S_ISDIR(mode):
+        return f"{path}{suffix} is a directory, not a file"
+    if not _stat.S_ISREG(mode):
+        return f"{path}{suffix} is not a regular file"
+    if not os.access(target.parent, os.W_OK | os.X_OK):
+        return f"{target.parent} is not writable, so {path} cannot be replaced"
+    return ""
+
+
 _ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*\Z")   # \Z, never `$`: `$` also matches before a trailing newline
 # The keys the kit writes into kit-host.env: the host values of `_configure_env` and the two off-box knobs. Teardown
 # writes a recorded previous value back only under one of these: a hand-edited state must not be able to make it
@@ -585,7 +615,8 @@ def acquire_restart_lock(path: Path | None = None) -> int | None:
     try:
         fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     except OSError as e:
-        raise RestartLockUnusable(f"{path}: {type(e).__name__}") from None
+        what = "is a symlink" if path.is_symlink() else type(e).__name__
+        raise RestartLockUnusable(f"{path} {what}" if what == "is a symlink" else f"{path}: {what}") from None
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -1322,6 +1353,11 @@ def _watch_save(s) -> None:
 
     if not setup_state.update(apply, wait_s=WATCH_SAVE_WAIT_S):
         print("watch: the setup-state lock is busy or unusable; the result of the watch was not recorded")
+        # 2.2c (6c): tell the operator through a tiny marker next to the state, which `status` and `verify` read
+        result = (mine or {}).get("result") or {}
+        setup_state.write_watch_marker({"run_id": (mine or {}).get("run_id", ""),
+                                        "outcome": result.get("outcome", "") or "unknown",
+                                        "reason": result.get("reason", "")})
 
 
 def _recorded_paths(cw: dict) -> list[str]:
@@ -3110,6 +3146,12 @@ def pending_summary(o) -> dict:
     leftover = sorted({str(e.get("path", "")) for e in entries if e.get("path") and is_leftover_watch_restore(e)})
     cw = getattr(o, "config_watch", None) or {}
     watch = None
+    unrecorded = None
+    try:
+        from .setup import state as setup_state
+        unrecorded = setup_state.read_watch_marker()
+    except Exception:  # noqa: BLE001 - a status never fails on its own bookkeeping
+        unrecorded = None
     if cw.get("done") and cw.get("result"):
         r = cw["result"]
         watch = {"reverted": sorted(set(r.get("hot") or []) | set(r.get("restart") or [])),
@@ -3118,9 +3160,10 @@ def pending_summary(o) -> dict:
                  "kept_confirmed": list(r.get("kept_confirmed") or [])}
     watch_worth = bool(watch and (watch["reverted"] or watch["problems"]
                                   or watch["outcome"] in ("inconclusive", "healthy")))
-    if not paths and not leftover and not watch_worth:
+    if not paths and not leftover and not watch_worth and not unrecorded:
         return {}
-    return {"paths": paths, "leftover_watch": leftover, "watch": watch if watch_worth else None}
+    return {"paths": paths, "leftover_watch": leftover, "watch": watch if watch_worth else None,
+            "watch_unrecorded": unrecorded}
 
 
 def discard_watch_restores(o, *, apply: bool, out: Callable[[str], None] = print,
@@ -3281,6 +3324,11 @@ def pending_lines(pending: dict) -> list[str]:
         out.append("restore entries queued by the 2.1.0 post-setup watch, likely false positives (it could not run "
                    "its probes): " + ", ".join(pending["leftover_watch"])
                    + f"; inspect with `{PENDING_COMMAND} --discard-watch-restores` (a dry run, nothing changes)")
+    u = pending.get("watch_unrecorded")
+    if u:
+        out.append("a post-setup watch finished and could not record its result: " + (u.get("outcome") or "unknown")
+                   + (f" ({u['reason']})" if u.get("reason") else "")
+                   + "; check `ai-resources openclaw status`, the next successful setup run clears this")
     w = pending.get("watch")
     if w and w.get("reverted"):
         out.append("the post-setup watch reverted: " + ", ".join(w["reverted"]))
@@ -3939,7 +3987,8 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
             out(f"refusing: the restart lock file cannot be used ({e}); remove it or fix its permissions")
             return finish(EXIT_LOCKED, "locked")
         if lock_fd is None:
-            out("refusing: another restart or maintenance window holds the lock")
+            out("refusing: another restart or maintenance window is in progress (the restart lock is held); "
+                "nothing was stopped.")
             return finish(EXIT_LOCKED, "locked")
     try:
         try:
@@ -4403,6 +4452,12 @@ def _cmd_offbox_identity(args: argparse.Namespace) -> int:
     s = setup_state.load()
     o = s.openclaw
     runner = default_runner
+    if not getattr(args, "dry_run", False):
+        problem = host_env_problem()
+        if problem:
+            # before any gcloud call: nothing was created, nothing is half done
+            print(f"refusing: {problem}; nothing was created. Fix it, then run this again.")
+            return 1
     if getattr(args, "remove", False):
         record = _offbox_record(o.host_offbox_config_created)
         if not record:
