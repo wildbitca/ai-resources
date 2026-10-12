@@ -531,11 +531,50 @@ EXIT_DOCTOR_FAILED = 4    # `doctor --fix` ran and did not complete
 EXIT_NOT_HEALTHY = 5      # the gateway did not answer after being started again
 
 
+KIT_MARKER_WORD = "kit-run"           # the first word of a marker a kit run wrote (an operator's is empty)
+_KIT_MARKER = re.compile(r"kit-run pid=(\d+) start=(\d+)(?: |$)")
+
+
+def process_start_ticks(pid: int) -> int | None:
+    """The start time of process `pid` (field 22 of /proc/<pid>/stat, clock ticks since boot), None when there
+    is no such process or no procfs. Together with the pid it names ONE process: a pid that was reused has
+    another start time."""
+    try:
+        text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        return int(text.rsplit(")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _kit_run_alive(pid: int, start: int) -> bool:
+    ticks = process_start_ticks(pid)
+    if ticks is not None:
+        return start == 0 or ticks == start
+    if Path("/proc/self/stat").exists():
+        return False                       # procfs is there and has no such process
+    try:
+        os.kill(pid, 0)                    # no procfs: the best that can be asked
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 class Marker:
-    """The `watchdog.off` file: while it exists the watchdog leaves the gateway alone."""
+    """The `watchdog.off` file: while it exists the watchdog leaves the gateway alone.
+
+    A marker a kit run creates with `acquire()` carries a signature line (`kit-run pid=<pid> start=<ticks>
+    at=<epoch>`): who made it, so a leftover of a run that was killed is told from a window an operator opened
+    (an empty file, or any other content). Only the operator's marker is a maintenance window; a signed marker
+    whose process is gone is stale (`stale_kit_marker`, `reclaim_stale`) and the models job does not stand down
+    for it (kit 2.2e, 4c)."""
 
     def __init__(self, path: Path | None = None):
         self.path = path or WATCHDOG_OFF
+        # (device, inode, mtime) of the file this object created: an inode number is reused at once when a file
+        # is deleted and another created, the modification time tells those two apart
+        self._created: tuple[int, int, int] | None = None
 
     def exists(self) -> bool:
         return self.path.exists()
@@ -548,16 +587,79 @@ class Marker:
         """Create the marker with `O_CREAT|O_EXCL`: True when this call made it, False when it was there.
 
         `exists()` followed by `touch()` lets two paths both conclude that the window is theirs; the exclusive
-        create has exactly one winner."""
+        create has exactly one winner. The file gets the signature line and its identity is remembered:
+        `remove()` leaves a file that is no longer this one alone."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
         except FileExistsError:
             return False
-        os.close(fd)
+        try:
+            try:
+                line = f"{KIT_MARKER_WORD} pid={os.getpid()} start={process_start_ticks(os.getpid()) or 0} " \
+                       f"at={int(time.time())}\n"
+                os.write(fd, line.encode("ascii"))
+            except OSError:
+                pass                       # an unsigned marker is an operator's: it errs toward standing down
+            try:
+                info = os.fstat(fd)        # after the write: its modification time is the one remembered
+                self._created = (info.st_dev, info.st_ino, info.st_mtime_ns)
+            except OSError:
+                self._created = None
+        finally:
+            os.close(fd)
+        return True
+
+    def _signature(self) -> tuple[tuple[int, int], int, int] | None:
+        """((device, inode), pid, start) of a regular, signed marker; None for anything else."""
+        try:
+            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        except OSError:
+            return None
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 512:
+                return None
+            head = os.read(fd, 512).decode("ascii", "replace")
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+        m = _KIT_MARKER.match(head)
+        return ((info.st_dev, info.st_ino), int(m.group(1)), int(m.group(2))) if m else None
+
+    def stale_kit_marker(self) -> bool:
+        """True when the marker is one a kit run signed and that run no longer exists."""
+        sig = self._signature()
+        return sig is not None and not _kit_run_alive(sig[1], sig[2])
+
+    def reclaim_stale(self) -> bool:
+        """Remove a stale kit marker (see `stale_kit_marker`); True when it was removed. An operator's marker,
+        a live run's marker and anything that is not a regular file are left as they are; the file is unlinked
+        only if it is still the one that was read."""
+        sig = self._signature()
+        if sig is None or _kit_run_alive(sig[1], sig[2]):
+            return False
+        try:
+            info = os.lstat(self.path)
+            if (info.st_dev, info.st_ino) != sig[0]:
+                return False
+            os.unlink(self.path)
+        except OSError:
+            return False
         return True
 
     def remove(self) -> None:
+        """Remove the marker. A marker this object created is removed only while it is still that file (same
+        device, inode and modification time): one an operator put in its place is theirs."""
+        if self._created is not None:
+            created, self._created = self._created, None
+            try:
+                info = os.lstat(self.path)
+            except OSError:
+                return
+            if (info.st_dev, info.st_ino, info.st_mtime_ns) != created:
+                return
         try:
             self.path.unlink()
         except FileNotFoundError:
@@ -3787,6 +3889,11 @@ class MarkerGuard:
             self._restore()
             raise WindowBusy(f"{self.marker.path} exists: a maintenance window is open")
         return self
+
+    @property
+    def owned(self) -> bool:
+        """True when this guard created the marker (and so removes it)."""
+        return self._owned
 
     def _restore(self) -> None:
         import signal

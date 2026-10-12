@@ -1058,7 +1058,9 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
         raise RestartDeferred("cannot tell whether this process runs inside the gateway cgroup "
                               "(/proc/self/cgroup is unreadable), so the restart is not attempted; run it from "
                               "outside the gateway once the file can be read", [])
-    if not window_owned and openclaw_host.Marker().exists():
+    window = openclaw_host.Marker()
+    if not window_owned and window.exists() and not window.reclaim_stale():
+        # (a marker that a kit run signed and that has since died is reclaimed here: it is not a window, 2.2e 4c)
         # `window_owned`: the caller (models update / rollback) created watchdog.off itself.
         # 2.2c (3c): a window the operator opened is theirs. The graceful restart and the drained window of
         # `doctor` refuse inside one; setup's and `models update`'s restart refuse the same way, with one line.

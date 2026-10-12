@@ -1315,15 +1315,33 @@ def _await_health(deps: Deps) -> bool:
 _WINDOW_OWNED: contextvars.ContextVar[bool] = contextvars.ContextVar("models_window_owned", default=False)
 
 
+@contextmanager
+def _maintenance_window(deps: "Deps") -> Iterator[bool]:
+    """watchdog.off held by this run for the restart and the health check, and for exactly that long.
+
+    The marker is created with one exclusive create and carries this run's signature; a leftover of a kit run
+    that has died is reclaimed first (it is not an operator's window). The guard removes it on a normal exit, on
+    an exception and on SIGTERM/SIGINT (`TimeoutStartSec` sends SIGTERM, which killed the run with its marker in
+    place), and only while the file is still the one this run created. A window somebody else opened is never
+    taken for ours: `_WINDOW_OWNED` is False inside it and the restart refuses (kit 2.2e, 4c)."""
+    marker = deps.marker or openclaw_host.Marker()
+    reclaim = getattr(marker, "reclaim_stale", None)
+    if reclaim is not None:
+        reclaim()
+    with openclaw_host.MarkerGuard(marker) as guard:
+        token = _WINDOW_OWNED.set(guard.owned)
+        try:
+            yield guard.owned
+        finally:
+            _WINDOW_OWNED.reset(token)
+
+
 def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, tuple[str, str]], *,
                         resume: bool, proposals: list[Proposal] | None = None) -> Result:
     proposals = proposals or []
     now = deps.now()
     st = ov.get("state") or {}
-    marker = deps.marker or openclaw_host.Marker()
-    owned = marker.acquire()          # one exclusive create: a window somebody opened is never taken for ours
-    window_token = _WINDOW_OWNED.set(owned)
-    try:
+    with _maintenance_window(deps):
         pid_before = st.get("pending_restart_pid") or deps.main_pid()
         already = resume and pid_before and deps.main_pid() != pid_before
         if not already:
@@ -1387,10 +1405,6 @@ def _restart_and_verify(opts: Options, deps: Deps, ov: dict, applied: dict[str, 
             return Result(EXIT_ROLLBACK_FAILED, "rollback_failed", f"{reason}; the gateway is not healthy after the rollback",
                           proposals, applied)
         return Result(EXIT_ROLLED_BACK, "rolled_back", f"{reason}; rolled back", proposals, applied)
-    finally:
-        _WINDOW_OWNED.reset(window_token)
-        if owned:
-            marker.remove()
 
 
 # --- real wiring -------------------------------------------------------------------------------
@@ -1500,20 +1514,13 @@ def run_rollback(deps: Deps) -> Result:
         if not ok:
             return Result(EXIT_PRECHECK_FAILED, "nothing_to_roll_back", msg)
         _log(deps, "manual_rollback")
-        marker = deps.marker or openclaw_host.Marker()
-        owned = marker.acquire()      # exclusive create; the file is removed below only when this call made it
-        window_token = _WINDOW_OWNED.set(owned)
-        try:
+        with _maintenance_window(deps):
             try:
                 deps.restart()
             except RestartDeferred as e:
                 _persist(deps, back, pending_restart=True, last_result="rolled_back")
                 return Result(EXIT_DEFERRED, "deferred", f"rolled back; restart deferred: {e.reason}")
             healthy = _await_health(deps)
-        finally:
-            _WINDOW_OWNED.reset(window_token)
-            if owned:
-                marker.remove()
         _persist(deps, back, last_result="rolled_back" if healthy else "rollback_failed",
                  last_run=deps.now().isoformat())
         if not healthy:

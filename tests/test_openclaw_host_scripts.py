@@ -1280,3 +1280,51 @@ def test_the_unattended_scripts_call_the_doctor_verb_with_yes():
             calls += re.findall(r"\$\(ai-resources openclaw doctor[^)]*\)", line)
     assert len(calls) == 2, calls
     assert all("--yes" in c for c in calls), calls
+
+
+# --- kit 2.2e, 4c: a marker left by a kit run that died is not a maintenance window ------------------------------
+
+def _signature(pid: int, start: int) -> str:
+    return f"kit-run pid={pid} start={start} at=1\n"
+
+
+def _dead_pid() -> int:
+    p = subprocess.Popen(["true"])
+    p.wait()
+    return p.pid
+
+
+def _start_ticks(pid: int) -> int:
+    return int(pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19])
+
+
+def test_models_update_goes_on_when_the_marker_was_left_by_a_dead_kit_run(host):
+    (host.home / ".openclaw" / "watchdog.off").write_text(_signature(_dead_pid(), 12345), encoding="utf-8")
+    host.set_models(0, {"rc": 0, "outcome": "no_change", "message": "", "proposals": []})
+    assert host.run("openclaw-models-update.sh").returncode == 0
+    assert _models_calls(host) == ["ai-resources models update --unattended --json"]
+
+
+def test_models_update_goes_on_when_the_pid_was_reused_by_another_process(host):
+    me = os.getpid()
+    (host.home / ".openclaw" / "watchdog.off").write_text(_signature(me, _start_ticks(me) + 7), encoding="utf-8")
+    host.set_models(0, {"rc": 0, "outcome": "no_change", "message": "", "proposals": []})
+    assert host.run("openclaw-models-update.sh").returncode == 0
+    assert _models_calls(host) != []
+
+
+def test_models_update_stands_down_for_a_live_kit_run_and_for_an_operators_marker(host):
+    me = os.getpid()
+    marker = host.home / ".openclaw" / "watchdog.off"
+    marker.write_text(_signature(me, _start_ticks(me)), encoding="utf-8")
+    assert host.run("openclaw-models-update.sh").returncode == 0 and _models_calls(host) == []
+    for operator in ("", "maintenance until 18:00\n", "kit-run pid=abc start=1\n", "  kit-run pid=1 start=1\n"):
+        marker.write_text(operator, encoding="utf-8")
+        assert host.run("openclaw-models-update.sh").returncode == 0 and _models_calls(host) == [], repr(operator)
+
+
+def test_models_update_stands_down_for_a_marker_that_is_a_link(host, tmp_path):
+    target = tmp_path / "elsewhere"
+    target.write_text(_signature(_dead_pid(), 1), encoding="utf-8")
+    (host.home / ".openclaw" / "watchdog.off").symlink_to(target)
+    assert host.run("openclaw-models-update.sh").returncode == 0 and _models_calls(host) == []

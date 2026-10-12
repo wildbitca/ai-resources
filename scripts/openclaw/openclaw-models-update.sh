@@ -20,8 +20,13 @@ mkdir -p "$OPENCLAW_LOG_DIR"
 log(){ echo "$(date '+%F %T') $*" >> "$LOG"; }
 
 if [ -e "$OPENCLAW_WATCHDOG_OFF" ]; then
-  log "watchdog.off exists: a maintenance window is open, standing down"
-  exit 0
+  if watchdog_marker_is_stale; then
+    # a kit run that was killed left its signed marker: not a window; `models update` reclaims it
+    log "watchdog.off was left by a kit run that no longer exists: not a maintenance window, going on"
+  else
+    log "watchdog.off exists: a maintenance window is open, standing down"
+    exit 0
+  fi
 fi
 
 # stdout carries the JSON report; stderr (warnings, stray log lines) goes to the log, never into the parse.
