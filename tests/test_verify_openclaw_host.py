@@ -508,3 +508,27 @@ def test_verify_never_asks_journalctl_for_more_than_a_day_or_many_lines(box):
     _run(runner)
     asked = [c for c in runner.calls if c[:1] == ["journalctl"]]
     assert len(asked) == 1 and "24 hours ago" in asked[0] and "-n" in asked[0]
+
+
+# --- the installed OpenClaw's reload rules ---------------------------------------------------------------------------
+
+def _rules_findings(found):
+    return [f for f in found if "reload rules" in f.message]
+
+
+def test_unreadable_reload_rules_are_one_warn_never_an_error(box, monkeypatch):
+    from reload_rules_fixture import make_rules_unavailable
+    make_rules_unavailable(monkeypatch, reason="no dist/config-reload-plan-*.mjs in the installed package")
+    found = _run(HostRunner())
+    [f] = _rules_findings(found)
+    assert f.level == "warn" and "restart-required" in f.message
+    assert "no dist/config-reload-plan-*.mjs" in f.message
+    assert [x for x in found if x.level == "error"] == []
+
+
+@pytest.mark.parametrize("version", ["2099.1.1", "2026.10.3", "1999.1.1", None])
+def test_any_installed_version_with_readable_rules_gives_no_rules_finding(box, monkeypatch, version):
+    from ai_resources import openclaw_reload_rules as rr
+    from reload_rules_fixture import fixture_ruleset
+    monkeypatch.setattr(rr, "current_ruleset", lambda runner, **kw: fixture_ruleset(version=version))
+    assert _rules_findings(_run(HostRunner())) == []

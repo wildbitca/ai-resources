@@ -3096,7 +3096,7 @@ DOCTOR_NOISE = (
 # insurance, not the fix for "could not run" (that was the unresolved binary, rc 127).
 DOCTOR_TIMEOUT = 600
 TIER_MAX_AGE_HOURS = {"daily": 36, "weekly": 8 * 24, "monthly": 35 * 24}
-STATUS_SECTIONS = ("unit", "boot", "listeners", "health", "timers", "backups", "off-box", "models", "identity", "stability", "doctor")
+STATUS_SECTIONS = ("unit", "boot", "openclaw", "listeners", "health", "timers", "backups", "off-box", "models", "identity", "stability", "doctor")
 
 
 def parse_doctor_entries(text: str) -> list[tuple[str, str]]:
@@ -3552,6 +3552,20 @@ def offbox_uploader_finding(u: dict) -> tuple[str, str]:
     return "ok", f"the newest off-box daily backup is {age:.0f}h old ({who})"
 
 
+def _no_cli(argv, **_kw):
+    return 127, ""
+
+
+def openclaw_rules_report() -> dict:
+    """The installed OpenClaw and where the reload rules come from. Two file reads: no CLI, no gateway.
+
+    The version is information only; nothing here compares it with a kit constant.
+    """
+    rs = openclaw_reload_rules.current_ruleset(_no_cli)
+    return {"version": rs.version, "rules_source": rs.source, "rules_count": rs.installed_count,
+            "reason": rs.reason, "stricter": list(rs.stricter)}
+
+
 def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                    host_env_path: Path | None = None, config_path: Path | None = None,
                    now: float | None = None, run_doctor: bool = True, probe_offbox: bool = True,
@@ -3574,6 +3588,7 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
     user = env.get("USER") or os.environ.get("USER", "")
     _rc, linger = runner(["loginctl", "show-user", user, "-p", "Linger", "--value"], env=env)
     report["boot"] = {"linger": linger.strip() or "unknown"}
+    report["openclaw"] = openclaw_rules_report()
 
     cfg_file = config_path or Path(os.environ.get("OPENCLAW_CONFIG_PATH") or home / ".openclaw" / "openclaw.json")
     try:
@@ -3731,11 +3746,26 @@ def _render_restart(r: dict | None) -> list[str]:
     return out
 
 
+def _render_openclaw(o: dict | None) -> list[str]:
+    if not o:
+        return []
+    version = o.get("version") or "version unknown"
+    if o.get("rules_source") != "installed":
+        return [f"openclaw    {version}; reload rules NOT readable ({o.get('reason') or 'unknown reason'}): "
+                "every config key is treated as restart-required"]
+    out = [f"openclaw    {version}; reload rules read from the installed package ({o.get('rules_count', 0)} rules)"]
+    if o.get("stricter"):
+        out.append("            kit keeps restart-required: "
+                   + ", ".join(f"{p} (installed OpenClaw says hot)" for p in o["stricter"]))
+    return out
+
+
 def render_status(report: dict) -> str:
     lines = ["OpenClaw host status", ""]
     u, b = report["unit"], report["boot"]
     lines.append(f"unit        {GATEWAY_UNIT}: {u['active']}, {u['enabled']}")
     lines.append(f"boot        linger: {b['linger']}")
+    lines += _render_openclaw(report.get("openclaw"))
     ls = report["listeners"]
     addr = ", ".join(ls["addresses"]) or "nothing listening"
     lines.append(f"listeners   port {ls['port']}: {addr}" + ("   ATTENTION: bound to all interfaces (T04)" if ls["wildcard"] else ""))

@@ -100,12 +100,12 @@ def doctor_text(name):
 
 # --- AC-12.1 ------------------------------------------------------------------------------------------------------
 
-def test_the_report_has_all_eleven_sections_from_fixture_output(env):
+def test_the_report_has_all_twelve_sections_from_fixture_output(env):
     env.backup("daily", "openclaw-1.tar.gz", 3)
     report = collect(env, Canned(doctor=doctor_text("doctor_noise_only.txt")))
-    assert list(report) == list(host.STATUS_SECTIONS) and len(report) == 11
+    assert list(report) == list(host.STATUS_SECTIONS) and len(report) == 12
     text = host.render_status(report)
-    for needle in ("unit ", "boot ", "listeners ", "health ", "timers", "backups", "off-box", "models", "identity", "stability ", "doctor "):
+    for needle in ("unit ", "boot ", "openclaw ", "listeners ", "health ", "timers", "backups", "off-box", "models", "identity", "stability ", "doctor "):
         assert needle in text
     assert text.count(".timer") == 10
     assert "main" in text and "anthropic/claude-haiku-5-5 (default)" in text  # effective model per agent
@@ -782,3 +782,59 @@ def test_a_close_failed_bundle_that_is_not_the_newest_is_still_reported():
         return 0, text
     found = host.journal_findings(runner, newest_not_failed)
     assert any("close-failed stability bundle" in m for _lv, m, _r in found)
+
+
+# --- the installed OpenClaw's reload rules: version is information, never a comparison -----------------------------------
+
+def _openclaw_line(text):
+    """The `openclaw` row and its continuation lines (indented under it)."""
+    rows = text.splitlines()
+    start = next(i for i, ln in enumerate(rows) if ln.startswith("openclaw "))
+    end = start + 1
+    while end < len(rows) and rows[end].startswith("            "):
+        end += 1
+    return rows[start:end]
+
+
+def test_status_shows_the_installed_version_and_where_the_rules_came_from(env):
+    report = collect(env, Canned())
+    assert report["openclaw"]["version"] == "2099.1.1" and report["openclaw"]["rules_source"] == "installed"
+    assert report["openclaw"]["rules_count"] == 108 and report["openclaw"]["stricter"] == []
+    lines = _openclaw_line(host.render_status(report))
+    assert len(lines) == 1
+    assert "2099.1.1" in lines[0] and "reload rules read from the installed package (108 rules)" in lines[0]
+    assert "WARN" not in lines[0] and "ERROR" not in lines[0] and "ATTENTION" not in lines[0]
+
+
+def test_status_never_runs_the_cli_for_the_rules(env, monkeypatch):
+    """The rules are two file reads: the version comes from package.json, so no `openclaw --version`."""
+    canned = Canned()
+    collect(env, canned)
+    assert not any("--version" in c for c in canned.calls)
+
+
+def test_status_names_the_reason_when_the_rules_cannot_be_read(env, monkeypatch, capsys):
+    import argparse
+    from reload_rules_fixture import make_rules_unavailable
+    make_rules_unavailable(monkeypatch, reason="no dist/config-reload-plan-*.mjs in the installed package")
+    report = collect(env, Canned())
+    lines = _openclaw_line(host.render_status(report))
+    assert len(lines) == 1
+    assert "no dist/config-reload-plan-*.mjs in the installed package" in lines[0]
+    assert "every config key is treated as restart-required" in lines[0] and "NOT readable" in lines[0]
+    monkeypatch.setattr(host, "collect_status", lambda *a, **k: report)
+    monkeypatch.setattr(host, "recorded_selection", lambda: None)
+    monkeypatch.setattr(host, "recorded_pending", lambda: {})
+    assert host.cmd_status(argparse.Namespace(no_doctor=True)) == 0
+
+
+def test_status_lists_the_prefixes_where_the_kit_is_stricter(env, monkeypatch):
+    from ai_resources import openclaw_reload_rules as rr
+    from reload_rules_fixture import DIST_TEXT, fixture_ruleset
+    moved = DIST_TEXT.replace('"mcp.apps",\n', "", 1).replace(
+        "const DEFAULT_RELOAD_POLICIES = [\n",
+        'const DEFAULT_RELOAD_POLICIES = [\n\t{\n\t\tprefixes: ["mcp.apps"],\n\t\tkind: "hot"\n\t},\n', 1)
+    monkeypatch.setattr(rr, "current_ruleset", lambda runner, **kw: fixture_ruleset(moved))
+    lines = _openclaw_line(host.render_status(collect(env, Canned())))
+    assert len(lines) == 2
+    assert "kit keeps restart-required: mcp.apps (installed OpenClaw says hot)" in lines[1]

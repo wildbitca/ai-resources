@@ -1491,6 +1491,13 @@ def verify(ctx: dict, runner: Callable[..., tuple[int, str]] | None = None) -> l
                                "`ai-resources openclaw doctor` (drain, fix, start, health)"))
         else:
             out.append(Finding("ok", who, "the gateway answers `openclaw health`"))
+    rules = report.get("openclaw") or {}
+    if rules.get("rules_source") == "unavailable":
+        out.append(Finding("warn", who,
+                           f"the installed OpenClaw's reload rules cannot be read ({rules.get('reason') or 'unknown reason'}): "
+                           "every config key is treated as restart-required and setup defers it",
+                           "`ai-resources openclaw status` names the reason; keys apply in a drained window until "
+                           "the rules are readable again"))
     for t in report["timers"]:
         if not t["enabled"]:
             out.append(Finding("warn", who, f"timer {t['name']} is not enabled",
