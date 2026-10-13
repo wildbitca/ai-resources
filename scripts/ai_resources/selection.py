@@ -12,6 +12,7 @@ from typing import Any
 SHAPES = ("single", "single-provider", "multi-provider")
 TRACKS = ("family", "fixed")
 SMOKE_PATHS = ("claude-cli", "litellm", "openrouter", "direct")
+HEADROOM_LEVELS = ("ample", "normal", "scarce")     # static pool weights 1.0 / 0.7 / 0.3 (scoring.headroom)
 
 
 @dataclass
@@ -36,12 +37,16 @@ class Selection:
     smoke_path: str = "claude-cli"
     openclaw_engine: str = ""
     allow_unverified: bool = False
+    # Per billing pool: {"level": ample|normal|scarce, "live": bool}. `live` records the operator's opt-in to
+    # that pool's live headroom reader (ADR-0006). Empty means equal weights and no live reads; it is then
+    # not written, so a state file without composed-team choices stays byte-identical.
+    headroom: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def enabled_providers(self) -> list[str]:
         return [p for p, s in self.providers.items() if s.enabled]
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "shape": self.shape,
             "providers": {p: {"enabled": s.enabled, "detected_via": list(s.detected_via),
                               "vendor_listing": s.vendor_listing} for p, s in self.providers.items()},
@@ -51,6 +56,10 @@ class Selection:
             "openclaw_engine": self.openclaw_engine,
             "allow_unverified": self.allow_unverified,
         }
+        if self.headroom:
+            out["headroom"] = {p: {"level": v["level"], "live": bool(v.get("live", False))}
+                               for p, v in self.headroom.items()}
+        return out
 
     @classmethod
     def from_dict(cls, data: Any) -> "Selection | None":
@@ -65,11 +74,16 @@ class Selection:
             k: SlotSel(ref=str(v.get("ref", "")), track=v.get("track", "family") if v.get("track") in TRACKS else "family")
             for k, v in data["slots"].items() if isinstance(v, dict)
         }
+        headroom = {
+            p: {"level": v["level"], "live": v.get("live") is True}
+            for p, v in (data.get("headroom") or {}).items()
+            if isinstance(p, str) and isinstance(v, dict) and v.get("level") in HEADROOM_LEVELS
+        } if isinstance(data.get("headroom"), dict) else {}
         return cls(shape=data.get("shape") if data.get("shape") in SHAPES else "single", providers=providers,
                    slots=slots, primary=str(data.get("primary", "")),
                    smoke_path=data.get("smoke_path") if data.get("smoke_path") in SMOKE_PATHS else "claude-cli",
                    openclaw_engine=str(data.get("openclaw_engine", "")),
-                   allow_unverified=bool(data.get("allow_unverified", False)))
+                   allow_unverified=bool(data.get("allow_unverified", False)), headroom=headroom)
 
 
 def implicit_selection() -> Selection:

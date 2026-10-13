@@ -71,3 +71,28 @@ def test_garbage_in_the_state_file_is_ignored_not_fatal():
     weird = sel.Selection.from_dict({"slots": {"google:gemini-flash": {"ref": "google/x", "track": "weird"}},
                                      "shape": "bogus", "smoke_path": "bogus"})
     assert weird.shape == "single" and weird.smoke_path == "claude-cli" and weird.slots["google:gemini-flash"].track == "family"
+
+
+# --- composed teams (ADR-0006): additive fields, an old file loads unchanged ---------------------------------
+
+def test_an_old_state_file_without_headroom_or_composed_loads_and_round_trips(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    state.state_path().write_text(_legacy_state_text(), encoding="utf-8")
+    s = state.load()
+    assert s.profile.composed is None and s.schema_version == state.SCHEMA_VERSION
+    state.save(s)
+    doc = yaml.safe_load(state.state_path().read_text(encoding="utf-8"))
+    assert "composed" not in doc["profile"] and "selection" not in doc
+
+
+def test_selection_headroom_defaults_to_empty_and_round_trips(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    plain = sel.Selection(shape="single", providers={"anthropic": sel.ProviderSel(True, [])},
+                          slots={"anthropic:sonnet": sel.SlotSel("anthropic/claude-sonnet-5-5")},
+                          primary="anthropic:sonnet")
+    assert plain.headroom == {} and "headroom" not in plain.to_dict()
+    plain.headroom = {"claude-subscription": {"level": "scarce", "live": True}}
+    s = state.SetupState()
+    s.set_selection(plain)
+    state.save(s)
+    assert state.load().get_selection().headroom == {"claude-subscription": {"level": "scarce", "live": True}}

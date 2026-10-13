@@ -100,6 +100,9 @@ class ProfileState:
     name: str = ""
     customized: bool = False
     customizations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Provenance of a team proposed by `scoring.compose` (mode, input digest, dataset version, labels, headroom
+    # per pool). None until a composed team is accepted; then it is not written (see `_to_dict`).
+    composed: Any = None
 
 
 @dataclass
@@ -320,7 +323,11 @@ class SetupState:
 
 def _to_dict(obj: Any) -> Any:
     if hasattr(obj, "__dataclass_fields__"):
-        return {k: _to_dict(v) for k, v in asdict(obj).items()}
+        doc = {k: _to_dict(v) for k, v in asdict(obj).items()}
+        if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict) \
+                and doc["profile"].get("composed") is None:
+            doc["profile"].pop("composed", None)       # additive field: absent until a composed team exists
+        return doc
     if isinstance(obj, dict):
         return {k: _to_dict(v) for k, v in obj.items()}
     if isinstance(obj, list):
