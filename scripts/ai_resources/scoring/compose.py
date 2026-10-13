@@ -500,13 +500,25 @@ def compose(inp: ComposeInput) -> Composition:
     if inp.baseline and inp.baseline_name and chosen and all(c.vendor == "anthropic" for c in chosen.values()):
         kept_pick: dict[str, Candidate] = {}
         ok = True
+        # The baseline may only replace the team when it honours the mode's shape contract (ADR-0006).
+        provider = next(iter({c.provider for c in chosen.values()})) if len({c.provider for c in chosen.values()}) == 1 \
+            else None
         for role in chosen:
             base_model = db.resolve_model(inp.baseline.get(role, ""))
             opts = [c for c in per_role[role] if c.model == base_model]
+            if inp.mode == "single-provider":
+                if provider is None:
+                    ok = False
+                    break
+                opts = [c for c in opts if c.provider == provider]
             if not opts or min(opts, key=_tie_key).score < s_star[role] - db.tolerance(role) - _EPS:
                 ok = False
                 break
             kept_pick[role] = min(opts, key=_tie_key)
+        if ok and inp.mode == "uniform" and len({c.model for c in kept_pick.values()}) != 1:
+            ok = False
+        if ok and inp.mode == "single-provider" and len({c.provider for c in kept_pick.values()}) != 1:
+            ok = False
         if ok:
             kept, chosen, div_flags = True, kept_pick, {}
 
