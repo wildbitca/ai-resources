@@ -69,6 +69,12 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   `ai-resources models scores show|check|diff|refresh` (nothing is auto-approved). Setup state gains the additive
   `selection.headroom` and `profile.composed` fields. Docs: `docs/team-composition.md`; the evaluation harness is
   Phase B and is not part of this change.
+- **Scored team composition, review closure.** A baseline is "default kept" only when it honours the mode's shape
+  (`uniform` is one model, `single-provider` one provider). One model keeps one route across the team (a profile
+  entry cannot name a route), the live headroom opt-in is offered only where a reader exists (today the Claude
+  sidecar), override rows and `models scores refresh --from` rows pass the same evidence rules as shipped rows,
+  `models scores check` validates the merged document, the weighted loss is clamped at 0, the Claude sidecar
+  reading is dated by the file's own mtime, and the DeepSeek proxy is no longer dated 2026-10-12.
 - **OpenAI known models.** `gpt-6.1-sol`, `gpt-6-sol` and `gpt-6-luna` are listed in the openai known-models list.
   The kit still has no dispatch path for them.
 

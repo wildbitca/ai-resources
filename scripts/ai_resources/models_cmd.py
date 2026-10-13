@@ -500,8 +500,10 @@ def _scores_refresh(db, as_of: str, shipped: dict, args) -> int:
             return 2
     over = _override_doc(path)
     props = _proposals(shipped, over, from_doc)
+    print("Only score rows are proposed (from --from, and overrides a newer shipped row beats); "
+          "prices are not proposed: a price changes only with a reviewed edit of the shipped dataset.")
     if not props:
-        print("No score or price proposals; nothing to do.")
+        print("No score proposals; nothing to do.")
         return 0
     print(f"{len(props)} proposal(s); nothing is applied without an answer:")
     for p in props:

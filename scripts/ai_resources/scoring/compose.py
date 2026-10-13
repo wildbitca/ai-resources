@@ -19,7 +19,9 @@ Algorithm, per role r:
                  projected pool pressure (ties: higher score, verified first, lower cost, id)
     diversity    code-reviewer and verifier prefer another vendor than the implementer's, softly, within
                  `diversity_tolerance` of S*(r)
-    report       weighted_loss = sum importance x (S* - chosen); above `loss_cap` the result is a refusal
+    report       weighted_loss = sum importance x max(0, S* - chosen); above `loss_cap` the result is a refusal
+                 (the cap cannot bind in mixed mode, where every pick is inside its band: it guards the
+                 uniform and single-provider shapes)
 
 Live headroom readings only change WHICH band member is picked; they never widen a band or admit a
 candidate. With every pool unknown the result equals a run with no readings at all.
@@ -579,7 +581,7 @@ def compose(inp: ComposeInput) -> Composition:
             extra = extra + ("default-kept",)
         assignments.append(_assignment(inp, role, pick, cand_view.get(role) or per_role[role], s_star[role], extra))
 
-    weighted_loss = round(sum(a.importance * (a.s_star - a.score) for a in assignments), 6)
+    weighted_loss = round(sum(a.importance * max(0.0, a.s_star - a.score) for a in assignments), 6)
     weighted_score = round(sum(a.importance * a.score for a in assignments), 6)
     cap = float(db.policy.get("loss_cap", math.inf))
     pools = _pool_notes(inp, [a.pool_id for a in assignments])

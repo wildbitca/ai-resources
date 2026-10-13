@@ -70,8 +70,10 @@ def read_claude_sidecar(path: str | Path | None, now_epoch: int | None = None,
                 best = (used, resets)
         if best is None:
             return _unknown(pool_id, "statusline-sidecar:no-window")
+        # The reading is as old as the file the status line last wrote, not as old as this call.
+        written = int(p.stat().st_mtime)
         return HeadroomReading(pool_id=pool_id, state=KNOWN, used_fraction=min(max(best[0] / 100.0, 0.0), 1.0),
-                               resets_at=best[1], source="statusline-sidecar", read_at=now_epoch)
+                               resets_at=best[1], source="statusline-sidecar", read_at=written)
     return _safe(pool_id, go)
 
 
