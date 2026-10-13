@@ -411,7 +411,7 @@ models:
       vertex-global: claude-haiku-5-5
       openrouter: anthropic/claude-haiku-5.5
     benchmarks:
-    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 36.36, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', cost_per_task_usd: 3.12}
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 36.36, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/recheck-2026-10-13.md:31', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', cost_per_task_usd: 3.12}
     - {board: artificial-analysis-intelligence-index, metric: index, value: 43, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:128', notes: 'general index, not coding; never used for a role row'}
     prices:
     - {in: 0.1, out: 0.5, cache_read: 0.01, price_source: '.agent-output/research-models/usage-anthropic.md:170', price_as_of: '2026-10-13', long_context_over: {tokens: 100000, in: 0.5, out: 2.5, cache_read: 0.05}}
@@ -481,7 +481,7 @@ models:
       litellm: deepseek-v4-pro
       openrouter: deepseek/deepseek-v4-pro
     benchmarks:
-    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 14.14, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:53', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', notes: "Vals snapshot 0813 of DeepSeek V4 Pro. The page gives no per-row date; only the board header 'Updated 10/13/2026'. as_of is that board date; the per-row date is not recorded, and reading the 0813 suffix as 2026-08-13 stays an inference. The kit id may point at another snapshot."}
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 14.14, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/recheck-2026-10-13.md:37', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', notes: "Vals snapshot 0813 of DeepSeek V4 Pro. The page gives no per-row date; only the board header 'Updated 10/13/2026'. as_of is that board date; the per-row date is not recorded, and reading the 0813 suffix as 2026-08-13 stays an inference. The kit id may point at another snapshot."}
     prices:
     - {in: 1.6, out: 3.2, cache_read: null, price_source: 'scripts/ai_resources/setup/providers.py (kit-recorded, resolved against the live catalogue 2026-09-16)', price_as_of: '2026-09-16'}
   openai/gpt-6-astra:

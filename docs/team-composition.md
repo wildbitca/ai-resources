@@ -57,7 +57,7 @@ reading is `unknown` or `stale` the static level is used, and the why table says
 
 | Pool | Live source (opt-in) | Notes |
 |---|---|---|
-| Claude subscription | an **existing** status-line JSON sidecar (`rate_limits.five_hour` / `seven_day`) | **Live today.** Pro and Max only; plan-wide across models; present only after the first response. The kit installs nothing and never edits your status line or `~/.claude`. Default path `~/.cache/ai-resources/claude-rate-limits.json` (override with `AI_RESOURCES_CLAUDE_SIDECAR`). |
+| Claude subscription | an **existing** status-line JSON sidecar (`rate_limits.five_hour` / `seven_day`) | **Live today.** Pro and Max only; the session and weekly windows are shared across models (Max also has a separate weekly Fable limit); present only after the first response. The kit installs nothing and never edits your status line or `~/.claude`. Default path `~/.cache/ai-resources/claude-rate-limits.json` (override with `AI_RESOURCES_CLAUDE_SIDECAR`). |
 | OpenRouter | `GET /api/v1/key` (`limit`, `limit_remaining`) | **Not live today:** the reader exists but the kit ships no fetcher, so setup does not offer the opt-in and the static level is used. A null limit would be unlimited credit: unknown. Credit counters only, not upstream throttles. |
 | Vertex | Cloud Quotas / Monitoring | **Not live today:** no fetcher is shipped, so the static level is used. Google warns the quota-page usage may be inaccurate. |
 | Anthropic API, Gemini API, OpenAI API, DeepSeek | none at setup | Response headers exist only at runtime. |

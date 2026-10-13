@@ -34,20 +34,24 @@ def test_every_tb4_proxy_carries_the_board_date_2026_10_13():
 def test_haiku_proxy_and_derived_scores_follow_the_rechecked_board():
     b = _proxy("anthropic/claude-haiku-5.5")
     assert b["value"] == 36.36 and b["cost_per_task_usd"] == 3.12
-    assert all(r["score"] == 3.6 for r in _rows("anthropic/claude-haiku-5.5"))
+    assert "35.35" not in str(b.get("notes", "")) and "3.05" not in str(b.get("notes", ""))
+    rows = _rows("anthropic/claude-haiku-5.5")
+    assert rows and all(r["score"] == 3.6 for r in rows)
 
 
 def test_sonnet_uses_the_adjusted_value_and_the_unsupported_53_variant_is_gone():
     b = _proxy("anthropic/claude-sonnet-5.5")
     assert b["value"] == 62.63 and b["raw_value"] == 64.14
     assert "53.0" not in b["notes"]
-    assert all(r["score"] == 6.3 for r in _rows("anthropic/claude-sonnet-5.5"))
+    rows = _rows("anthropic/claude-sonnet-5.5")
+    assert rows and all(r["score"] == 6.3 for r in rows)
 
 
 def test_fable_uses_the_adjusted_value_under_the_same_policy_as_opus_and_sonnet():
     b = _proxy("anthropic/claude-fable-5.1")
     assert b["value"] == 50.0 and b["raw_value"] == 58.08
-    assert all(r["score"] == 5.0 for r in _rows("anthropic/claude-fable-5.1"))
+    rows = _rows("anthropic/claude-fable-5.1")
+    assert rows and all(r["score"] == 5.0 for r in rows)
     for model in ("anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-fable-5.1"):
         assert _proxy(model)["value"] < _proxy(model)["raw_value"], model
         assert "provider-fallback" in _proxy(model)["notes"] or "provider fallback" in _proxy(model)["notes"]
