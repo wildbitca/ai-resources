@@ -41,8 +41,10 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   budget-spending and deadline-forcing prefixes, 3024 of the item 1 and 2 forms in seven feeds, 1616 exclusion
   attacks: wrappers, substitutions, printed-text dress-ups, option values, comments), of which 6410 executed a
   guarded command. Executed but allowed: 2.1.0 5805, 2.1.1 5796, cd70a20 1552, f1a26f8 2737, this tree 1208;
-  executed and denied by 2.1.0, 2.1.1, cd70a20 or f1a26f8 yet allowed by this tree: **0** (425 before this pass, all
-  in text that feeds a shell); no corpus-by-class cell misses more than the better published guard. Benign rows
+  executed and denied by 2.1.0, 2.1.1, cd70a20 or f1a26f8 yet allowed by this tree: **0** on that corpus, which held no quoted-`#`-line or
+  earlier-helper row (425 before this pass, all
+  in text that feeds a shell; the comment-line drop now follows quote state and a helper, alias, `set --` or `PATH=` of
+  the same text is a second signal; those classes are pinned in the strict suite and the corpus is to be re-run); no corpus-by-class cell misses more than the better published guard. Benign rows
   (900 and 700 generated, 1700 recorded by earlier passes: other products' gateways, commit and PR heredocs, doc
   greps, CI snippets) denied: 2.1.0 1, 2.1.1 1, cd70a20 778, f1a26f8 59, f2622f1 474, **this tree 25** (12, 8, 5;
   the remaining ones are named in T46). Every verdict was under 2 s under load and the deadline fired on none; with

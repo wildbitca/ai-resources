@@ -267,6 +267,20 @@ BUILT_COMMANDS = [
     "# only a comment\n${OC:-openclaw} gateway restart",
     "# a comment that ends in a backslash \\\n${OC:-openclaw} gateway restart",
     "echo a # b\n${OC:-openclaw} gateway stop",
+    # a `#` line that is the tail of a multi-line string is data, and the rest of the line runs
+    "echo 'x\n#' ; ${OC} gateway restart",
+    "echo \"x\n#\" ; ${OC} gateway restart",
+    "echo 'x\n#' ; /usr/local/bin/open* gateway restart",
+    "OC=openclaw\necho 'x\n#' ; $OC gateway restart",
+    "OC=openclaw\necho 'x\n#';$OC gateway restart",
+    "OC=openclaw\necho 'x\n#' ; \"$OC\" gateway stop",
+    # a helper, an alias or a PATH change of the same text, called further down than the window
+    "oc() { openclaw \"$@\"; }\n" + "echo step\n" * 40 + "oc gateway restart",
+    "oc() { openclaw \"$@\"; }\n" + "echo step\n" * 40 + "oc gateway stop",
+    "function oc { openclaw \"$@\"; }\n" + "echo step\n" * 40 + "oc gateway restart",
+    "alias oc=openclaw\n" + "echo step\n" * 40 + "oc gateway restart",
+    "PATH=/opt/shim:$PATH\n" + "echo step\n" * 40 + "oc gateway restart",
+    "set -- gateway restart\n" + "echo step\n" * 40 + "openclaw \"$@\"",
 ]
 
 
@@ -296,3 +310,13 @@ def test_a_comment_line_is_not_a_statement_and_an_option_value_is_not_a_stored_n
     assert guard._cheap_view("echo a # b\nopenclaw gateway restart", strict=True) == "restart"
     assert guard._cheap_view("git log --grep=gateway restart", strict=True) is None
     assert guard._cheap_view("g=gateway; ${X} $g restart", strict=True) == "restart"
+
+
+def test_a_hash_line_inside_an_open_quote_is_not_a_comment(guard):
+    assert guard._cheap_view("echo 'x\n#' ; ${OC} gateway restart", strict=True) == "restart"
+    assert guard._cheap_view("echo \"x\n#\" ; ${OC} gateway stop", strict=True) == "stop"
+    assert guard._cheap_view("echo $'x\n#' ; ${OC} gateway restart", strict=True) == "restart"
+    # the apostrophe of a comment, or of a trailing comment, opens nothing
+    assert guard._cheap_view("# don't restart the gateway\nls", strict=True) is None
+    assert guard._cheap_view("ls # don't\n# restart the gateway\nls", strict=True) is None
+    assert guard._cheap_view("echo \"$(cat <<'EOF'\n# restart the gateway\nEOF\n)\"", strict=True) is None

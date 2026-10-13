@@ -180,7 +180,9 @@ choice stays. `ai-resources openclaw doctor` now refuses a busy gateway (exit 6)
   marker, `remove` never deletes a file whose identity was not recorded, and the models script cannot block on a
   FIFO). Measured on freshly generated corpora through real bash and zsh (12029 adversarial rows, 6410 executed;
   2600 benign rows generated and 1700 recorded): executed-but-allowed 5805 / 5796 / 1552 / 2737 / **1208**
-  (2.1.0 / 2.1.1 / 2.2c / 2.2d / 2.2f); executed and denied by any of the four yet allowed **0** (425 before the pass);
+  (2.1.0 / 2.1.1 / 2.2c / 2.2d / 2.2f); executed and denied by any of the four yet allowed **0** on that corpus (425 before the pass; it held no quoted
+  `#` line and no earlier helper, alias, `set --` or `PATH=` row: the comment drop now follows quote state, those
+  forms count as a second signal and are pinned, and the corpus is to be re-run);
   benign rows denied 1 / 1 / 778 / 59 / **25** (474 before the pass); slowest verdict 1.99 s under load, the deadline
   fired on none. The guard stays an accident guard, and the pass is the last on the text: who may stop or restart the
   unit belongs at systemd and polkit, or an exec policy (pitfall T45), not in this filter.

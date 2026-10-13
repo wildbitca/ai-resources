@@ -1432,7 +1432,78 @@ def _gateway_answered(low: str, gw: int, verb: int, raw: str, plain: dict[str, b
 # `openclaw` (`openclaw-$g`, `openclaw-%s`), or an assembled name glued in front of `gateway` (`open``claw-gateway`).
 _ASSEMBLED_OC = re.compile(r"(?<![a-z0-9_.~/-])openclaw(?:-[$`%*?\[{]|[$`{])")
 # a comment line that names `openclaw` is kept: `# openclaw gateway restart is guarded` stays denied (the T46 price)
-_COMMENT_LINE = re.compile(r"(?mi)^[ \t]*#(?![^\n]*openclaw)[^\n]*")
+_COMMENT_LINE = re.compile(r"(?i)[ \t]*#(?![^\n]*openclaw)")
+_WORD_START_BEFORE_HASH = frozenset(" \t;&|(){}<>\n")
+
+
+def _drop_comment_lines(text: str) -> str:
+    """`text` without its comment lines (a line that starts with `#`, blanks aside, and does not name `openclaw`).
+    A `#` line is a comment only when no quote is open at its start: after `echo 'x` the line `#' ; $OC gateway
+    restart` is the tail of a string and a command (kit 2.2f). The quote state follows `'`, `"`, `$'` and the
+    backslash, and skips the trailing comment of a line (`echo a # don't`); it is one linear pass. A quote that
+    the scan misreads (a heredoc's prose apostrophe) leaves later comment lines in the text: toward deny."""
+    out: list[str] = []
+    n = len(text)
+    i = 0
+    quote = ""                               # "" | "'" | '"' | "$'"
+    stack: list[tuple[str, int]] = []        # `"$(` ... `)`: the quote state outside, the open parentheses inside
+    depth = 0
+    while i < n:
+        if not quote and (i == 0 or text[i - 1] == "\n"):
+            m = _COMMENT_LINE.match(text, i)
+            if m is not None:
+                end = text.find("\n", i)
+                i = n if end < 0 else end    # drop the line, keep its newline
+                continue
+        c = text[i]
+        out.append(c)
+        if quote == "'":
+            if c == "'":
+                quote = ""
+        elif quote == '"':
+            if c == "\\" and i + 1 < n:
+                i += 1
+                out.append(text[i])
+            elif c == "$" and text[i + 1:i + 2] == "(":
+                stack.append((quote, depth))     # a substitution in a string: quotes inside it are its own
+                quote, depth = "", 0
+                i += 1
+                out.append("(")
+            elif c == '"':
+                quote = ""
+        elif quote == "$'":
+            if c == "\\" and i + 1 < n:
+                i += 1
+                out.append(text[i])
+            elif c == "'":
+                quote = ""
+        elif c == "\\" and i + 1 < n:
+            i += 1
+            out.append(text[i])
+        elif c == "(" and stack:
+            depth += 1
+        elif c == ")" and stack:
+            if depth:
+                depth -= 1
+            else:
+                quote, depth = stack.pop()
+        elif c == "'":
+            quote = "'"
+        elif c == '"':
+            quote = '"'
+        elif c == "$" and text[i + 1:i + 2] == "'":
+            quote = "$'"
+            i += 1
+            out.append("'")
+        elif c == "#" and (i == 0 or text[i - 1] in _WORD_START_BEFORE_HASH):
+            end = text.find("\n", i)         # a trailing comment: its quotes are not the shell's
+            if end < 0:
+                break
+            out.append(text[i + 1:end])
+            i = end
+            continue
+        i += 1
+    return "".join(out)
 _SEGMENT_BREAK = re.compile(r"[;&|\n]+")
 _ASSIGNMENT_PREFIX = re.compile(r"[a-z_][a-z0-9_]*\+?=")
 
@@ -1444,8 +1515,38 @@ def _stored_name(low: str, pos: int) -> bool:
         _WORD_BEFORE.search(low, max(0, pos - 96), pos).group()) is not None
 
 
+_SET_ARGS = re.compile(r"(?<![\w-])set\s+--(?:\s|$)")
+_PATH_ASSIGNMENT = re.compile(r"(?<![\w-])path\+?=")
+_DEFINITION_BODY = 400                   # characters of a function or alias definition read for `openclaw`
+
+
+def _defined_as_openclaw(low: str, name: str, end: int) -> bool:
+    """True when, before `end`, `name` is defined as a function (`name() {`, `function name`) or an alias
+    (`alias name=`) whose body or value names `openclaw` or holds `gateway`: the helper of a script that is
+    called further down than the window (kit 2.2f)."""
+    pattern = re.compile(r"(?<![\w./$-])(?:(?:function|alias)\s+" + re.escape(name) + r"(?![\w-])|"
+                         + re.escape(name) + r"\s*\(\))")
+    for m in pattern.finditer(low, 0, end):
+        body = low[m.end():m.end() + _DEFINITION_BODY]
+        if "openclaw" in body or "gateway" in body:
+            return True
+    return False
+
+
 def _second_signal(low: str, gw: int, verb: int) -> bool:
     """True when the same-statement pair `gateway` / verb has a signal that the command is OpenClaw."""
+    head_words = _statement_head(low, max(gw, verb)).split()
+    kind, k = _head_command(head_words)
+    if kind == "plain" and k < len(head_words):
+        name = head_words[k].lstrip("({")
+        if (name and not _ASSEMBLY_CHARS.intersection(name) and "/" not in name
+                and _defined_as_openclaw(low, name, min(gw, verb))):
+            return True                      # the command word is a helper that an earlier line made of openclaw
+        if (name == "set" and _SET_ARGS.search(" ".join(head_words) + " ")
+                and "openclaw" in low[max(gw, verb):max(gw, verb) + _LINE_LOOKAHEAD]):
+            return True                      # `set -- gateway restart` ... `openclaw "$@"` far below
+    if _PATH_ASSIGNMENT.search(low, 0, min(gw, verb)) is not None:
+        return True                          # PATH was changed earlier in the text: a shim can stand for it
     prefix = _WORD_BEFORE.search(low, max(0, gw - 96), gw).group()
     if prefix and _built_word(prefix):
         return True                          # the name is being assembled in front of `gateway`
@@ -1496,7 +1597,7 @@ def _cheap_view(text: str, strict: bool = False) -> str | None:
         # a comment line is not a statement (unless it names `openclaw`: that one stays read, T46). Dropped BEFORE
         # the continuations are undone: the shell ends a comment at the newline even when the line ends in a
         # backslash, so the next line is a command (kit 2.2f, 3)
-        text = _COMMENT_LINE.sub("", text)
+        text = _drop_comment_lines(text)
     decoded = _decode_text(text)
     low = _words_of(decoded)
     raw = decoded.lower()                    # quotes kept (for `_gateway_answered`)
