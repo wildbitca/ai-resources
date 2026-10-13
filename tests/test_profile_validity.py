@@ -118,3 +118,48 @@ def test_the_matrix_does_flag_a_profile_with_foreign_refs():
 def test_the_wizards_recommended_profile_is_verified_in_every_reachable_cell(cockpit, mode, backend, engine, want):
     """TS-BC55-008: the constant and the validity test cannot diverge (the name is read, never hard-coded)."""
     check_cell(wizard.RECOMMENDED_PROFILE, cockpit, mode, backend, engine, want)
+
+
+# --- measured-best: the explicit multi-provider profile, labelled for what it is (P5) -------------------------
+
+MULTI_PROVIDER = "measured-best"
+
+
+@pytest.mark.parametrize("backend", ["litellm", "openrouter"])
+def test_measured_best_has_unverified_refs_for_the_claude_cockpit(backend):
+    """TS-BC55-005: derived from compat.plan, so the relabel cannot go stale silently."""
+    doc = profiles.load_profile(MULTI_PROVIDER)
+    act = _action(doc, "claude", "multi-model", backend, allow_unverified=False)
+    assert act.action == compat.VIA_GATEWAY and act.unverified is False
+    skipped = {note.split(":", 1)[0].split("/", 1)[0] for note in act.notes}
+    assert skipped and skipped <= {"google", "deepseek"}, act.notes
+    assert all("not verified" in note for note in act.notes)
+    served = {model_providers.identify(r).provider for r in act.model_refs}
+    assert served == {"anthropic"}
+    allowed = _action(doc, "claude", "multi-model", backend, allow_unverified=True)
+    assert allowed.unverified is True and allowed.notes == []
+
+
+def test_measured_best_description_is_not_a_recommendation_and_names_the_unverified_cells():
+    """TS-BC55-020."""
+    text = profiles.load_profile(MULTI_PROVIDER)["description"].lower()
+    assert "recommended" not in text
+    assert "unverified" in text
+    assert "without a matrix check" in text            # fact F1: setup writes these ids unchecked today
+    assert "balanced-claude-55" in text
+
+
+def test_setup_writes_measured_bests_foreign_ids_into_subagents_without_a_matrix_check_today():
+    """F1, pinned: a profile chosen in step 6 records no Selection, so the claude cockpit renders non-strict and
+    `_resolve_model` writes the google/ and deepseek/ ids verbatim. The matrix verdict above is NOT applied to
+    them (a planned per-model gate). If this test starts failing, the gate has landed: update the relabel and the docs."""
+    import re
+
+    from ai_resources import repo_root
+    from ai_resources.setup.cockpits import claude
+
+    executors = profiles.to_executors(profiles.load_profile(MULTI_PROVIDER), "litellm")
+    files = claude.render_subagent_files(executors, str(repo_root()), "multi-model")
+    model_of = {name: re.search(r"^model: (.*)$", text, re.M).group(1) for name, text in files.items()}
+    assert model_of["explore"].startswith("google/")
+    assert model_of["software-architect"].startswith("deepseek/")
