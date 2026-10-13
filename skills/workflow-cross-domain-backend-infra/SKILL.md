@@ -17,11 +17,11 @@ Task crossing app (backend) and infra — app → infra → test → review → 
 
 ## Steps
 
-| Step | Agent | Parallel group |
-|------|-------|----------------|
-| `app-step` | `implementer` | — |
-| `infra-step` | `generalPurpose` | — |
-| `test` | `tester` | — |
-| `review` | `code-reviewer` | — |
-| `verify` | `verifier` | — |
-| `document` | `doc-writer` | — |
+| Step | Agent | Backend | Parallel group |
+|------|-------|---------|----------------|
+| `app-step` | `implementer` | claude-code | — |
+| `infra-step` | `generalPurpose` | claude-code | — |
+| `test` | `tester` | claude-code | — |
+| `review` | `code-reviewer` | claude-code | — |
+| `verify` | `verifier` | claude-code | — |
+| `document` | `doc-writer` | claude-code | — |

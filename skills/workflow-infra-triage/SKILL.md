@@ -17,13 +17,13 @@ Infrastructure triage and stabilization. Diagnose broken IaC resources, fix prov
 
 ## Steps
 
-| Step | Agent | Parallel group |
-|------|-------|----------------|
-| `investigate-cluster` | `generalPurpose` | investigate |
-| `investigate-code` | `generalPurpose` | investigate |
-| `analyze` | `software-architect` | — |
-| `implement` | `implementer` | — |
-| `review` | `code-reviewer` | post-fix |
-| `monitor` | `generalPurpose` | post-fix |
-| `verify` | `verifier` | — |
-| `document` | `doc-writer` | — |
+| Step | Agent | Backend | Parallel group |
+|------|-------|---------|----------------|
+| `investigate-cluster` | `generalPurpose` | claude-code | investigate |
+| `investigate-code` | `generalPurpose` | claude-code | investigate |
+| `analyze` | `software-architect` | claude-code | — |
+| `implement` | `implementer` | claude-code | — |
+| `review` | `code-reviewer` | claude-code | post-fix |
+| `monitor` | `generalPurpose` | claude-code | post-fix |
+| `verify` | `verifier` | claude-code | — |
+| `document` | `doc-writer` | claude-code | — |

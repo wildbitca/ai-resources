@@ -17,9 +17,9 @@ Full incident lifecycle — triage (gather signals) → diagnose (root cause) �
 
 ## Steps
 
-| Step | Agent | Parallel group |
-|------|-------|----------------|
-| `triage` | `explore` | — |
-| `diagnose` | `generalPurpose` | — |
-| `fix` | `implementer` | — |
-| `document` | `doc-writer` | — |
+| Step | Agent | Backend | Parallel group |
+|------|-------|---------|----------------|
+| `triage` | `explore` | claude-code | — |
+| `diagnose` | `generalPurpose` | claude-code | — |
+| `fix` | `implementer` | claude-code | — |
+| `document` | `doc-writer` | claude-code | — |

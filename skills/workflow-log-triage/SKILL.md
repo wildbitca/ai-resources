@@ -17,7 +17,7 @@ Collect, filter, and analyze logs from any source to identify error patterns, ro
 
 ## Steps
 
-| Step | Agent | Parallel group |
-|------|-------|----------------|
-| `collect` | `explore` | — |
-| `analyze` | `generalPurpose` | — |
+| Step | Agent | Backend | Parallel group |
+|------|-------|---------|----------------|
+| `collect` | `explore` | claude-code | — |
+| `analyze` | `generalPurpose` | claude-code | — |

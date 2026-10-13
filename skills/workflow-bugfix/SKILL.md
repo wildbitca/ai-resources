@@ -17,15 +17,15 @@ Domain-agnostic bugfix workflow. research → explore → implement → test →
 
 ## Steps
 
-| Step | Agent | Parallel group |
-|------|-------|----------------|
-| `research` | `generalPurpose` | — |
-| `explore` | `generalPurpose` | — |
-| `implement` | `implementer` | — |
-| `test` | `tester` | — |
-| `security` | `security-auditor` | — |
-| `verify` | `verifier` | — |
-| `document` | `doc-writer` | — |
+| Step | Agent | Backend | Parallel group |
+|------|-------|---------|----------------|
+| `research` | `generalPurpose` | claude-code | — |
+| `explore` | `generalPurpose` | claude-code | — |
+| `implement` | `implementer` | claude-code | — |
+| `test` | `tester` | claude-code | — |
+| `security` | `security-auditor` | claude-code | — |
+| `verify` | `verifier` | claude-code | — |
+| `document` | `doc-writer` | claude-code | — |
 
 ## Deterministic alternative
 

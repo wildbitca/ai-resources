@@ -17,17 +17,17 @@ Domain-agnostic feature workflow. research → plan → architect → implement 
 
 ## Steps
 
-| Step | Agent | Parallel group |
-|------|-------|----------------|
-| `research` | `generalPurpose` | — |
-| `plan` | `planner` | — |
-| `architect` | `software-architect` | — |
-| `implement` | `implementer` | — |
-| `test` | `tester` | — |
-| `review` | `code-reviewer` | post-test |
-| `security` | `security-auditor` | post-test |
-| `verify` | `verifier` | — |
-| `document` | `doc-writer` | — |
+| Step | Agent | Backend | Parallel group |
+|------|-------|---------|----------------|
+| `research` | `generalPurpose` | claude-code | — |
+| `plan` | `planner` | claude-code | — |
+| `architect` | `software-architect` | claude-code | — |
+| `implement` | `implementer` | claude-code | — |
+| `test` | `tester` | claude-code | — |
+| `review` | `code-reviewer` | claude-code | post-test |
+| `security` | `security-auditor` | claude-code | post-test |
+| `verify` | `verifier` | claude-code | — |
+| `document` | `doc-writer` | claude-code | — |
 
 ## Deterministic alternative
 

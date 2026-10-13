@@ -17,8 +17,8 @@ Cloud resource query, management, and external API integration. Gather resource 
 
 ## Steps
 
-| Step | Agent | Parallel group |
-|------|-------|----------------|
-| `query` | `explore` | — |
-| `analyze` | `generalPurpose` | — |
-| `act` | `implementer` | — |
+| Step | Agent | Backend | Parallel group |
+|------|-------|---------|----------------|
+| `query` | `explore` | claude-code | — |
+| `analyze` | `generalPurpose` | claude-code | — |
+| `act` | `implementer` | claude-code | — |

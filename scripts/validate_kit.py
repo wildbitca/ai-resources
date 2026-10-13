@@ -29,11 +29,31 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DESCRIPTION_LIMIT = 1024  # Claude Code truncates description + when_to_use at 1536 chars
 VERIFIER_DOC_SKILL = "knowledge-audit"
 
+# Per-step backend (ADR 0005). `claude-code` is the default and today's behaviour: a kit role
+# subagent. `openclaw-agent` hands the role to another OpenClaw agent through `sessions_spawn`.
+BACKENDS = {"claude-code", "openclaw-agent"}
+DEFAULT_BACKEND = "claude-code"
+# A leading alphanumeric keeps a flag-like value out; the cap bounds the length.
+AGENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+# One writer per run: the implementer and every other write-capable role stay on claude-code.
+# Read-only roles may run on another agent; tester and doc-writer run commands or write files,
+# so they pass with a warning (the post-step check detects a violation, it cannot prevent one)
+# and are never parallel members.
+OPENCLAW_READ_ONLY_ROLES = {"planner", "explore", "software-architect", "code-reviewer",
+                            "security-auditor", "verifier"}
+OPENCLAW_WARNED_ROLES = {"tester", "doc-writer"}
+OPENCLAW_ALLOWED_ROLES = OPENCLAW_READ_ONLY_ROLES | OPENCLAW_WARNED_ROLES
+
 failures: list[str] = []
+warnings: list[str] = []
 
 
 def fail(check: str, message: str) -> None:
     failures.append(f"[{check}] {message}")
+
+
+def warn(check: str, message: str) -> None:
+    warnings.append(f"[{check}] {message}")
 
 
 def frontmatter(path: Path) -> dict:
@@ -88,6 +108,30 @@ def check_skills() -> set[str]:
     return ids
 
 
+def check_step_backend(step: dict, where: str) -> None:
+    """`backend` and `agentId` are optional; agent existence is a dispatch-time check, not this one."""
+    backend = step.get("backend", DEFAULT_BACKEND)
+    has_agent = "agentId" in step
+    if backend not in BACKENDS:
+        fail("workflows", f"{where}: unknown backend '{backend}' (allowed: {', '.join(sorted(BACKENDS))})")
+        return
+    if backend != "openclaw-agent":
+        if has_agent:
+            fail("workflows", f"{where}: agentId is only valid with backend 'openclaw-agent'")
+        return
+    agent_id = step.get("agentId")
+    if not isinstance(agent_id, str) or not AGENT_ID_RE.match(agent_id):
+        fail("workflows", f"{where}: backend 'openclaw-agent' needs an agentId matching "
+                          f"{AGENT_ID_RE.pattern} (got {agent_id!r})")
+    role = step.get("subagent_type")
+    if role in OPENCLAW_WARNED_ROLES:
+        warn("workflows", f"{where}: role '{role}' on 'openclaw-agent' runs commands or writes files; "
+                          f"the post-step check detects a violation but cannot prevent one")
+    elif role not in OPENCLAW_READ_ONLY_ROLES:
+        fail("workflows", f"{where}: role '{role}' cannot run on 'openclaw-agent' "
+                          f"(one writer per run; allowed: {', '.join(sorted(OPENCLAW_ALLOWED_ROLES))})")
+
+
 def check_workflows(skill_ids: set[str], role_names: set[str]) -> None:
     """Steps reference real roles and skills; routing targets resolve; invariants hold."""
     for wf_path in sorted((ROOT / "workflows").glob("*.workflow.yaml")):
@@ -121,6 +165,7 @@ def check_workflows(skill_ids: set[str], role_names: set[str]) -> None:
                     fail("workflows", f"{where}: verifier must not own '{VERIFIER_DOC_SKILL}'")
                 if "SDD closure" in str(step.get("prompt_template", "")):
                     fail("workflows", f"{where}: verifier must not run SDD closure — use a document step")
+            check_step_backend(step, where)
             group = (step.get("execution_hints") or {}).get("parallel_group")
             if group:
                 groups.setdefault(group, []).append(step)
@@ -129,6 +174,11 @@ def check_workflows(skill_ids: set[str], role_names: set[str]) -> None:
             if len({m.get("entry_criteria") for m in members}) > 1:
                 fail("workflows", f"{where}: steps in a parallel group need the same entry criteria")
             for member in members:
+                if (member.get("backend") == "openclaw-agent"
+                        and member.get("subagent_type") not in OPENCLAW_READ_ONLY_ROLES):
+                    fail("workflows", f"{where}:{member.get('id')}: a parallel member on 'openclaw-agent' "
+                                      f"must be one of {', '.join(sorted(OPENCLAW_READ_ONLY_ROLES))}; "
+                                      f"'{member.get('subagent_type')}' is a gate or writes files")
                 if "Update {{handoff_file}}" in str(member.get("prompt_template", "")):
                     fail("workflows", f"{where}:{member.get('id')}: parallel steps must not write the handoff")
 
@@ -339,6 +389,8 @@ def main() -> int:
     check_vendored_provenance()
     check_index(skill_ids)
 
+    for line in warnings:
+        print(f"warning: {line}", file=sys.stderr)
     if failures:
         print(f"{len(failures)} problem(s):\n", file=sys.stderr)
         for line in failures:

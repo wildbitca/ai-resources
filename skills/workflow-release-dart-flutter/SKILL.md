@@ -17,9 +17,9 @@ Pre-publish hook. Diff since latest tag → humanized release notes (CHANGELOG +
 
 ## Steps
 
-| Step | Agent | Parallel group |
-|------|-------|----------------|
-| `gather` | `generalPurpose` | — |
-| `generate` | `implementer` | — |
-| `verify` | `verifier` | — |
-| `document` | `doc-writer` | — |
+| Step | Agent | Backend | Parallel group |
+|------|-------|---------|----------------|
+| `gather` | `generalPurpose` | claude-code | — |
+| `generate` | `implementer` | claude-code | — |
+| `verify` | `verifier` | claude-code | — |
+| `document` | `doc-writer` | claude-code | — |

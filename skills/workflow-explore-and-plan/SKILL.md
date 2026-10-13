@@ -17,7 +17,7 @@ Discovery and planning only (no implementation). Works for any domain.
 
 ## Steps
 
-| Step | Agent | Parallel group |
-|------|-------|----------------|
-| `explore` | `generalPurpose` | — |
-| `plan` | `planner` | — |
+| Step | Agent | Backend | Parallel group |
+|------|-------|---------|----------------|
+| `explore` | `generalPurpose` | claude-code | — |
+| `plan` | `planner` | claude-code | — |

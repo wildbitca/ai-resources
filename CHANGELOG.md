@@ -9,6 +9,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the operator's decision at release time;
 `__version__`, the Formula and `plugin.json` still say 2.1.1.
 
+### Added
+
+- **Cross-provider role dispatch (fields and validator).** A workflow step may carry `backend: claude-code |
+  openclaw-agent` (default `claude-code`, today's behaviour) and, with `openclaw-agent`, an `agentId`. The validator
+  rejects an unknown backend, a missing or malformed `agentId` (`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`) and every
+  write-capable role on `openclaw-agent` (the implementer stays on `claude-code`: one writer per run); `tester` and
+  `doc-writer` pass with a warning and are never parallel members. The generated workflow skills gain a Backend
+  column. No `model` field and no change to `kit-plan.js` / `kit-implement.js`. Contract: `workflows/WORKFLOW_CONTRACT.md`.
+
 ### Fixed
 
 - **Gateway guard, last pass (2.2f).** The verification round of 2.2e found four weak points in the second view

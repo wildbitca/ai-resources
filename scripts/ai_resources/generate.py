@@ -226,15 +226,24 @@ WORKFLOW_SCRIPTS: dict[str, str] = {
 }
 
 
+def _step_backend_label(step: dict) -> str:
+    """`claude-code`, or `openclaw-agent (<agentId>)` for a step handed to another OpenClaw agent."""
+    backend = str(step.get("backend") or "claude-code")
+    if backend == "openclaw-agent":
+        return f"openclaw-agent (`{step.get('agentId')}`)"
+    return backend
+
+
 def _workflow_skill_md(filename: str, doc: dict) -> str:
     name = str(doc["name"])
     trigger = " ".join(str(doc.get("trigger", "")).split())
     summary = " ".join(str(doc.get("description", "")).split())
     description = f"{trigger} Runs the kit workflow '{name}': {summary}".replace('"', "'")[:1000]
-    rows = ["| Step | Agent | Parallel group |", "|------|-------|----------------|"]
+    rows = ["| Step | Agent | Backend | Parallel group |", "|------|-------|---------|----------------|"]
     for step in doc.get("steps") or []:
         group = (step.get("execution_hints") or {}).get("parallel_group") or "—"
-        rows.append(f"| `{step.get('id')}` | `{step.get('subagent_type')}` | {group} |")
+        rows.append(f"| `{step.get('id')}` | `{step.get('subagent_type')}` | "
+                    f"{_step_backend_label(step)} | {group} |")
     table = "\n".join(rows)
     script = WORKFLOW_SCRIPTS.get(name)
     deterministic = (
