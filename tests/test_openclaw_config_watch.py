@@ -1300,8 +1300,13 @@ def test_declining_the_discard_prompt_exits_one_and_changes_nothing(monkeypatch)
     assert any("nothing changed" in m for m in messages)
 
 
-def test_declining_the_apply_pending_prompt_exits_one_too(monkeypatch):
+def test_declining_the_apply_pending_prompt_exits_one_too(monkeypatch, tmp_path):
     from ai_resources.setup import ui
+    # Hermetic: the live key must exist for the restore to have something to apply, whatever the host's file says
+    # (without this the test read the operator's own openclaw.json, or an empty one when openclaw is not on PATH).
+    cfg = tmp_path / "openclaw.json"
+    cfg.write_text(json.dumps({"mcp": {"sessionIdleTtlMs": 1800000}}), encoding="utf-8")
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(cfg))
     s = state.SetupState()
     s.openclaw.host_restart_pending = [{"op": "restore", "path": "mcp.sessionIdleTtlMs", "source": "teardown",
                                         "change": dict(IDLE_KEY)}]
