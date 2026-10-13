@@ -57,7 +57,7 @@ Under a gateway, balancing moves metered money, not subscription quota. Claude s
 
 ### 8. Output limits
 
-Composition emits `ProfileState.customizations` over `balanced-claude-55`. It never emits `backend`, `agentId` or a cross-vendor fallback. Fable 5.1 is an opt-in candidate only on a declared Max or Premium seat, or API billing (decision Q16), never by default.
+Composition emits `ProfileState.customizations` over `balanced-claude-55`. It never emits `backend`, `agentId` or a cross-vendor fallback. A profile entry names a model and never a route, so the engine keeps ONE route per model across the whole team (the route covering the most roles, then verified, then the higher weighted score, then the lower cost) and reports the other routes of that model as `route-collapsed` rejections. The pool, the mark and `provenance.routes` therefore describe the route the stored overlay stands for; a route-level pick that no profile field can express is never proposed. Balancing between two routes of the same model is out of scope until a profile can express a route. Fable 5.1 is an opt-in candidate only on a declared Max or Premium seat, or API billing (decision Q16), never by default.
 
 ### 9. Harness approval rule (Phase B)
 

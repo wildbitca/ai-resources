@@ -46,6 +46,7 @@ R_NOT_ENABLED = "not-enabled"
 R_STALE = "stale"
 R_NO_SCORE = "no-score"
 R_OPT_IN = "opt-in-required"
+R_ROUTE = "route-collapsed"
 
 Gate = Callable[[str, str], GateVerdict]
 
@@ -268,6 +269,57 @@ def _role_candidates(inp: ComposeInput, role: str) -> tuple[list[Candidate], lis
     return admitted, rejected
 
 
+def _collapse_routes(inp: ComposeInput, per_role: dict[str, list[Candidate]]
+                     ) -> tuple[dict[str, list[Candidate]], list[Rejection]]:
+    """A profile entry names a model, never a route, so one model keeps ONE route across the whole team.
+
+    The route that covers the most roles wins; then verified-in-every-role, the higher importance-weighted
+    score, the lower cost, the route id. Candidates on the other routes are dropped and reported, so the pool
+    and the mark shown are the ones of the route the stored overlay stands for (ADR-0006)."""
+    db = inp.db
+    by_model: dict[str, dict[str, list[Candidate]]] = {}
+    for cands in per_role.values():
+        for c in cands:
+            by_model.setdefault(c.model, {}).setdefault(c.route, []).append(c)
+    keep: dict[str, str] = {}
+    for model, routes in by_model.items():
+        if len(routes) == 1:
+            continue
+
+        def rank(route: str, routes: dict[str, list[Candidate]] = routes) -> tuple:
+            cs = routes[route]
+            return (-len({c.role for c in cs}), 0 if all(c.verified for c in cs) else 1,
+                    -round(sum(db.importance(c.role) * c.score for c in cs), 9),
+                    sum(c.cost for c in cs), route)
+        keep[model] = min(routes, key=rank)
+    if not keep:
+        return per_role, []
+    out: dict[str, list[Candidate]] = {}
+    dropped: list[Rejection] = []
+    for role, cands in per_role.items():
+        kept = []
+        for c in cands:
+            if c.model in keep and c.route != keep[c.model]:
+                dropped.append(Rejection(role, c.model, c.route, R_ROUTE,
+                                         f"a profile entry names a model, not a route; {keep[c.model]} is the "
+                                         f"route kept for {c.model}"))
+            else:
+                kept.append(c)
+        out[role] = kept
+    return out, dropped
+
+
+def _admitted(inp: ComposeInput, roles) -> tuple[dict[str, list[Candidate]], list[Rejection]]:
+    per_role: dict[str, list[Candidate]] = {}
+    rejected: list[Rejection] = []
+    for role in roles:
+        admitted, rej = _role_candidates(inp, role)
+        per_role[role] = admitted
+        rejected += rej
+    per_role, dropped = _collapse_routes(inp, per_role)
+    return per_role, rejected + dropped
+
+
 def _s_star(cands: list[Candidate]) -> float | None:
     if not cands:
         return None
@@ -463,12 +515,7 @@ def compose(inp: ComposeInput) -> Composition:
     if not inp.enabled:
         return _refusal(inp, roles, "no provider is enabled; enable at least one provider in setup")
 
-    per_role: dict[str, list[Candidate]] = {}
-    rejected: list[Rejection] = []
-    for role in roles:
-        admitted, rej = _role_candidates(inp, role)
-        per_role[role] = admitted
-        rejected += rej
+    per_role, rejected = _admitted(inp, roles)
     s_star = {r: _s_star(per_role[r]) for r in roles}
     covered = [r for r in roles if per_role[r]]
     if not covered:
@@ -599,8 +646,10 @@ def compose(inp: ComposeInput) -> Composition:
 def optimum(inp: ComposeInput) -> float:
     """The score-only optimum: sum of importance x best admitted score over the covered roles."""
     total = 0.0
-    for role in inp.roles or inp.db.roles():
-        cands, _ = _role_candidates(inp, role)
+    roles = tuple(inp.roles or inp.db.roles())
+    per_role, _ = _admitted(inp, roles)
+    for role in roles:
+        cands = per_role.get(role) or []
         if cands:
             total += inp.db.importance(role) * max(c.score for c in cands)
     return round(total, 6)

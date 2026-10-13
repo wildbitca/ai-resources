@@ -99,6 +99,10 @@ or when headroom was unknown. Reference profiles (all-gemini, measured-best, qua
 "all OpenAI via Codex") are scored with their gate status and are never chosen automatically. `--why-json PATH`
 writes the same document as JSON (the path must be under the workspace or `~/.cache`; `/tmp` is refused).
 
+A stored profile entry names a model, never a route. A model that has candidates on several routes (for example
+`anthropic-direct` and `vertex-global`) therefore keeps one route across the whole team, and the others show up
+as `route-collapsed` rejections. The route, pool and mark shown for a role are the ones of that route.
+
 Per-token price is not cost per task: on the Vals board Sonnet 5.5 costs half of Opus 5.5 per token but more per
 test ($16.51 vs $13.20). The table shows prices; it does not turn them into a decision.
 
