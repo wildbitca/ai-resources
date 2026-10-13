@@ -57,6 +57,8 @@ Read-only enforcement is detective and best-effort. `claude-kit` and `agy-cli` r
 
 What does not exist is an OpenClaw agent on `agy-cli` that has been shown to accept role work through `sessions_spawn` with an explicit `cwd` and to signal completion. That, together with the agent being on `subagents.allowAgents`, is the external prerequisite. The mechanism is backend-agnostic; it is meant to be exercised with two ordinary OpenClaw agents first.
 
+**Composition (ADR-0006).** Scored team composition emits no `backend` or `agentId`: it writes models into `by_role` through the profile path only.
+
 ## Consequences
 
 - Existing workflows are unchanged: no `backend` means `claude-code`, and the only generated difference is the Backend column.

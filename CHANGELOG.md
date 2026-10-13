@@ -55,6 +55,21 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 - **A docs test for the profile table.** `tests/test_docs_profile_table.py` fails when a shipped profile is missing
   from `docs/multi-model.md`, when the table names one that does not exist, or when anything but the recommended
   profile is marked recommended.
+- **Scored team composition (ADR-0006, Phase A).** `scores/model-scores.yaml` is a kit-shipped, dated model scores
+  database (policy, routes, usage surfaces, billing pools, models with dated prices and role-agnostic benchmark
+  proxies, and rows keyed by role, model, route and effort), loaded and validated by the new
+  `scripts/ai_resources/scoring` package. A pure, deterministic engine proposes a team in three modes (`uniform`,
+  `single-provider`, `mixed`) with a why table (text and JSON), balancing billing pools within each role's
+  tolerance band. Opt in with the step 6 "compose" choice or `ai-resources setup --compose ...` (`--headroom`,
+  `--headroom-live`, `--why-json`, `--allow-fable`); a run without them is byte-identical. `mixed` needs
+  `--allow-unverified` and every non-Anthropic cell is marked, because no cross-provider compat cell is verified.
+  Antigravity (`agy`) is direct use only and is never composed. Live headroom reads (Claude status-line sidecar,
+  OpenRouter key, Vertex quotas) are opt-in, read-only and fall back to the static level you chose. New:
+  `ai-resources models scores show|check|diff|refresh` (nothing is auto-approved). Setup state gains the additive
+  `selection.headroom` and `profile.composed` fields. Docs: `docs/team-composition.md`; the evaluation harness is
+  Phase B and is not part of this change.
+- **OpenAI known models.** `gpt-6.1-sol`, `gpt-6-sol` and `gpt-6-luna` are listed in the openai known-models list.
+  The kit still has no dispatch path for them.
 
 ### Changed
 

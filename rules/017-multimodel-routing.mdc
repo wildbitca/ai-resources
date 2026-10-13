@@ -125,6 +125,13 @@ Subagent `model:` values come from a single-model profile chosen in setup:
 `claude-native` (Claude aliases per role) or `claude-inherit` (every role
 inherits the session model).
 
+## Composed teams
+
+- Team composition (`ai-resources setup --compose`, ADR-0006) writes through `executors.yaml` via the profile
+  path (customizations over a profile) and never bypasses `compat.py`: the matrix stays the only verification gate.
+- `agy` (Antigravity) is direct use only: it is never a composition target, an `openclaw-agent` or a dispatch
+  backend, and no flag lifts that.
+
 ## Health check
 
 Run `ai-resources doctor` to verify:

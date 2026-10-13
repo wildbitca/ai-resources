@@ -183,6 +183,16 @@ Status: the step fields, the validator and the example workflow ship; the live b
 with an explicit `cwd`, completion signalling and an agy-backed agent have not been run on a host (the ADR's
 verification tables are empty). Treat the layer as unusable until they are.
 
+## Composed teams
+
+`ai-resources setup` can propose a team from the dated scores database instead of a fixed profile: step 6 has a
+"compose" choice, and `--compose uniform|single-provider|mixed` does it without prompts. Every pick comes with a
+why table; mixed mode is offered only with `--allow-unverified` and every non-Anthropic cell is marked, because
+no cross-provider compat cell is verified. The result is stored as customizations over `balanced-claude-55` and
+never carries `backend`, `agentId` or a cross-vendor fallback. Flags: `--compose`, `--headroom pool=level,...`,
+`--headroom-live pool,...`, `--why-json PATH`, `--allow-fable`. Antigravity is direct use only and is never
+composed. Details: [team-composition.md](team-composition.md).
+
 ## Editing the mapping
 
 ```sh
