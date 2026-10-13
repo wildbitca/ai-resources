@@ -110,10 +110,9 @@ def enabled_providers(s: Any, inv: detect.EnabledSet) -> list[str]:
     if getattr(s, "mode", "") == "multi-model" and getattr(s, "backend", "") == "openrouter":
         names.append("openrouter")
     if getattr(s, "mode", "") != "multi-model" and not names:
-        # single-model: Claude Code's own login; no provider step ran.
-        names = inv.credentialed_providers()
-        if any(c.id == "claude" and c.installed for c in inv.cockpits) and "anthropic" not in names:
-            names.append("anthropic")
+        # single-model: Claude Code's own login and no provider step ran. The set is what setup declared, so it
+        # never widens to detected providers; the Claude cockpit's only verified provider is anthropic.
+        names = ["anthropic"]
     return sorted(set(names))
 
 

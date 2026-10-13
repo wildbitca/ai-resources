@@ -262,6 +262,33 @@ def test_single_model_uniform_stores_claude_aliases_that_reach_the_executors(hos
         assert ex["by_role"][role]["model"] == entry["model"]
 
 
+# --- U1: single-model never widens to detected providers -----------------------------------------------
+def test_single_model_without_declared_providers_enables_only_anthropic(host):
+    """Setup step 1 declared nothing in single-model mode: the enabled set is the Claude cockpit's own provider,
+    never every credentialed provider the probe happens to see."""
+    deps = fake_deps(host, creds=("anthropic", "google", "openai"))
+    inv = scoring_detect.inventory(deps, flow.scores_db.load())
+    assert set(inv.credentialed_providers()) >= {"anthropic", "google", "openai"}
+    s = state.SetupState(mode="single-model")
+    assert flow.enabled_providers(s, inv) == ["anthropic"]
+    comp, inp = flow.run(s, flow.Request(mode="uniform", allow_unverified=True), deps=deps)
+    assert tuple(inp.enabled) == ("anthropic",)
+    assert not comp.refused
+    assert comp.assignments and all(a.model.startswith("anthropic/") for a in comp.assignments)
+    assert set(flow.to_aliases(profiles_overlay(comp))) == {a.role for a in comp.assignments}
+
+
+def test_single_model_enabled_set_is_anthropic_even_when_claude_is_not_installed(host):
+    deps = fake_deps(host, installed=("openclaw",), creds=("google", "openai"))
+    inv = scoring_detect.inventory(deps, flow.scores_db.load())
+    assert flow.enabled_providers(state.SetupState(mode="single-model"), inv) == ["anthropic"]
+
+
+def profiles_overlay(comp):
+    from ai_resources.scoring import profile_out
+    return profile_out.to_customizations(comp)
+
+
 # --- F3: the live opt-in is offered only where a production reader exists --------------------------------
 def test_only_the_claude_sidecar_has_a_production_live_reader():
     pool = lambda pid, src: {"id": pid, "headroom_source": src}
