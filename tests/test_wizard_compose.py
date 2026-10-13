@@ -260,3 +260,33 @@ def test_single_model_uniform_stores_claude_aliases_that_reach_the_executors(hos
     ex = wizard._single_model_executors(s)
     for role, entry in s.profile.customizations.items():
         assert ex["by_role"][role]["model"] == entry["model"]
+
+
+# --- F3: the live opt-in is offered only where a production reader exists --------------------------------
+def test_only_the_claude_sidecar_has_a_production_live_reader():
+    pool = lambda pid, src: {"id": pid, "headroom_source": src}
+    assert flow.has_live_reader(pool("claude-subscription", "statusline-sidecar"))
+    assert not flow.has_live_reader(pool("openrouter", "openrouter-key"))
+    assert not flow.has_live_reader(pool("vertex-claude", "vertex-quotas"))
+    assert not flow.has_live_reader(pool("openai-api", "none"))
+    # an injected fetcher (tests, a future reviewed production fetcher) makes the same pool readable
+    assert flow.has_live_reader(pool("openrouter", "openrouter-key"), {"openrouter_fetch": lambda: {}})
+    assert flow.has_live_reader(pool("vertex-claude", "vertex-quotas"), {"vertex_fetch": lambda p, m: {}})
+
+
+def test_wizard_does_not_offer_live_reads_for_openrouter_or_vertex(tmp_path, monkeypatch):
+    monkeypatch.setattr(scoring_detect, "default_deps", lambda: fake_deps(
+        tmp_path, creds=("anthropic", "google", "openai", "vertex", "openrouter")))
+    monkeypatch.setattr(wizard, "_COMPOSE", compose_flags(allow_unverified=True))
+    monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "")
+    monkeypatch.setattr(flow, "default_sidecar_path", lambda: tmp_path / "absent-sidecar.json")
+    script = Script(**{"Choose profile": "__compose__", "Composition mode": "mixed",
+                       "How much headroom": "normal", "Read live headroom": False,
+                       "Allow Claude Fable": False, "Use this team": True})
+    script.install(monkeypatch)
+    s = multi_state(providers=("anthropic", "google", "openai", "vertex", "openrouter"))
+    assert wizard._step6_profile(s) == 0
+    headroom_pools = [q for q in script.asked if "How much headroom" in q]
+    assert any("openrouter" in q or "vertex-claude" in q for q in headroom_pools), headroom_pools
+    live = [q for q in script.asked if "Read live headroom" in q]
+    assert live and all("claude-subscription" in q for q in live), live

@@ -149,9 +149,21 @@ def askable_pools(inv: detect.EnabledSet, enabled: list[str], db: scores_db.Scor
     return out
 
 
-def has_live_reader(pool: Mapping[str, Any]) -> bool:
-    return pool.get("headroom_source") in ("statusline-sidecar", "openrouter-key", "vertex-quotas") \
-        and pool.get("id") not in headroom_sources.NO_READER_POOLS
+# The injected input each non-sidecar reader needs. No production fetcher exists for them in this kit (a
+# network reader needs its own review), so a pool is offered for a live read only when the caller supplies one.
+_FETCHER_DEP = {"openrouter-key": "openrouter_fetch", "vertex-quotas": "vertex_fetch"}
+
+
+def has_live_reader(pool: Mapping[str, Any], reader_deps: Mapping[str, Any] | None = None) -> bool:
+    """True only when a live read can actually work: the Claude status-line sidecar reader is built in;
+    OpenRouter and Vertex readers need an injected fetcher, which production code does not supply today."""
+    if pool.get("id") in headroom_sources.NO_READER_POOLS:
+        return False
+    source = pool.get("headroom_source")
+    if source == "statusline-sidecar":
+        return True
+    dep = _FETCHER_DEP.get(str(source))
+    return bool(dep and (reader_deps or {}).get(dep))
 
 
 def default_sidecar_path() -> Path:
