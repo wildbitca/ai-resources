@@ -311,13 +311,18 @@ def _collapse_routes(inp: ComposeInput, per_role: dict[str, list[Candidate]]
     return out, dropped
 
 
-def _admitted(inp: ComposeInput, roles) -> tuple[dict[str, list[Candidate]], list[Rejection]]:
+def _admitted(inp: ComposeInput, roles, collapse: bool = True
+              ) -> tuple[dict[str, list[Candidate]], list[Rejection]]:
+    """Gated candidates per role. With collapse=False the routes are left whole, so a caller that splits the
+    candidates by provider can collapse each subset itself (a global collapse would skew the split)."""
     per_role: dict[str, list[Candidate]] = {}
     rejected: list[Rejection] = []
     for role in roles:
         admitted, rej = _role_candidates(inp, role)
         per_role[role] = admitted
         rejected += rej
+    if not collapse:
+        return per_role, rejected
     per_role, dropped = _collapse_routes(inp, per_role)
     return per_role, rejected + dropped
 
@@ -517,7 +522,7 @@ def compose(inp: ComposeInput) -> Composition:
     if not inp.enabled:
         return _refusal(inp, roles, "no provider is enabled; enable at least one provider in setup")
 
-    per_role, rejected = _admitted(inp, roles)
+    per_role, rejected = _admitted(inp, roles, collapse=inp.mode != "single-provider")
     s_star = {r: _s_star(per_role[r]) for r in roles}
     covered = [r for r in roles if per_role[r]]
     if not covered:
@@ -527,7 +532,9 @@ def compose(inp: ComposeInput) -> Composition:
         groups = sorted({c.provider for r in covered for c in per_role[r]})
         best = None
         for prov in groups:
-            sub = {r: [c for c in per_role[r] if c.provider == prov] for r in roles}
+            sub_raw = {r: [c for c in per_role[r] if c.provider == prov] for r in roles}
+            # One route per model holds for the team that is emitted, so collapse inside the provider subset.
+            sub, sub_dropped = _collapse_routes(inp, sub_raw)
             sub_s = {r: _s_star(sub[r]) for r in roles}
             chosen, flags = _solve(inp, sub, sub_s, [r for r in roles if sub[r]], "mixed")
             if not chosen:
@@ -536,10 +543,11 @@ def compose(inp: ComposeInput) -> Composition:
             cost = sum(c.cost for c in chosen.values())
             key = (-round(score, 9), cost, prov)
             if best is None or key < best[0]:
-                best = (key, prov, chosen, flags, sub, sub_s)
+                best = (key, prov, chosen, flags, sub, sub_s, sub_dropped)
         if best is None:
             return _refusal(inp, roles, "no single provider can serve any role", rejected)
-        _, _, chosen, div_flags, cand_view, s_view = best
+        _, _, chosen, div_flags, cand_view, s_view, sub_dropped = best
+        rejected = rejected + sub_dropped
     else:
         cand_view, s_view = per_role, s_star
         chosen, div_flags = _solve(inp, per_role, s_star, [r for r in roles if per_role[r]], inp.mode)
@@ -554,7 +562,7 @@ def compose(inp: ComposeInput) -> Composition:
             else None
         for role in chosen:
             base_model = db.resolve_model(inp.baseline.get(role, ""))
-            opts = [c for c in per_role[role] if c.model == base_model]
+            opts = [c for c in cand_view.get(role, per_role[role]) if c.model == base_model]
             if inp.mode == "single-provider":
                 if provider is None:
                     ok = False
@@ -647,14 +655,23 @@ def compose(inp: ComposeInput) -> Composition:
 
 def optimum(inp: ComposeInput) -> float:
     """The score-only optimum: sum of importance x best admitted score over the covered roles."""
-    total = 0.0
     roles = tuple(inp.roles or inp.db.roles())
-    per_role, _ = _admitted(inp, roles)
-    for role in roles:
-        cands = per_role.get(role) or []
-        if cands:
-            total += inp.db.importance(role) * max(c.score for c in cands)
-    return round(total, 6)
+    if inp.mode == "single-provider":
+        raw, _ = _admitted(inp, roles, collapse=False)
+        subsets = [{r: [c for c in raw[r] if c.provider == prov] for r in roles}
+                   for prov in sorted({c.provider for cs in raw.values() for c in cs})]
+        views = [_collapse_routes(inp, sub)[0] for sub in subsets]
+    else:
+        views = [_admitted(inp, roles)[0]]
+    best = 0.0
+    for per_role in views:
+        total = 0.0
+        for role in roles:
+            cands = per_role.get(role) or []
+            if cands:
+                total += inp.db.importance(role) * max(c.score for c in cands)
+        best = max(best, total)
+    return round(best, 6)
 
 
 def composed_label(a: Assignment) -> str:

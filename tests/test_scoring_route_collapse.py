@@ -52,3 +52,30 @@ def test_dropped_routes_of_a_chosen_model_are_reported_as_collapsed():
     collapsed = [r for r in comp.rejected if r.kind == "route-collapsed"]
     assert collapsed
     assert all(r.route != kept.get(r.model) for r in collapsed)
+
+
+def test_single_provider_collapses_inside_the_provider_subset_not_globally():
+    """Opus is on vertex for 5 roles and anthropic for 4; Sonnet is the reverse. A global collapse keeps Opus
+    on vertex and Sonnet on anthropic, which would split the team across providers and leave no one-provider
+    team. Collapsing per provider subset keeps the loss-0 team."""
+    opus_strong = ("planner", "implementer")
+    rows = []
+    for role in ROLES:
+        o = 9.0 if role in opus_strong else 5.0
+        s = 5.0 if role in opus_strong else 9.0
+        rows.append(row(role, OPUS, o, route="vertex-global"))
+        if role != "explore":
+            rows.append(row(role, OPUS, o))                                  # anthropic-direct, 4 roles
+        rows.append(row(role, SONNET, s))                                    # anthropic-direct, 5 roles
+        if role != "planner":
+            rows.append(row(role, SONNET, s, route="vertex-global"))        # vertex-global, 4 roles
+    comp = compose(make_input(fixture_db(rows), roles=ROLES, enabled=("anthropic", "vertex"),
+                              allow_unverified=True, mode="single-provider",
+                              static_weights={"claude-subscription": 0.3, "vertex-claude": 1.0}))
+    assert not comp.refusal, comp.refusal
+    assert comp.weighted_loss == 0.0
+    assert len({a.route for a in comp.assignments}) == 1
+    routes: dict[str, set[str]] = {}
+    for a in comp.assignments:
+        routes.setdefault(a.model, set()).add(a.route)
+    assert all(len(r) == 1 for r in routes.values()), routes
