@@ -313,6 +313,11 @@ def _row_key(r: Mapping[str, Any]) -> list[tuple[str, str, str, str]]:
             for route in routes]
 
 
+def _known_roles(doc: Mapping[str, Any]) -> list[str]:
+    from ..setup import profiles
+    return list(profiles.KNOWN_ROLES)
+
+
 def merge(shipped: Mapping[str, Any], overrides: Mapping[str, Any] | None) -> tuple[dict, list[str]]:
     """Shipped document plus overrides. An override row shadows the shipped row of the same key.
 
@@ -334,6 +339,14 @@ def merge(shipped: Mapping[str, Any], overrides: Mapping[str, Any] | None) -> tu
             problems.append(f"override row {r.get('role')}/{r.get('model')} carries a `verified` key; ignored")
             continue
         new = dict(r)
+        new.setdefault("source_ref", "user override")
+        new.setdefault("label", "UNKNOWN")
+        bad = validate_row(dict(new, override=True), f"override row {r.get('role')}/{r.get('model')}",
+                           known_roles=_known_roles(shipped), models=shipped.get("models") or {},
+                           routes=shipped.get("routes") or {})
+        if bad:
+            problems.append("; ".join(bad) + "; ignored")
+            continue
         new["override"] = True
         new["override_reason"] = str(r["reason"])
         new.setdefault("source_ref", "user override")
@@ -389,6 +402,41 @@ def _find_key(obj: Any, key: str, path: str = "") -> list[str]:
         for i, v in enumerate(obj):
             hits += _find_key(v, key, f"{path}[{i}]")
     return hits
+
+
+def validate_row(r: Mapping[str, Any], where: str, *, known_roles: Iterable[str], models: Mapping[str, Any],
+                 routes: Mapping[str, Any]) -> list[str]:
+    """The evidence rules of one score row (shipped, override or refresh proposal): label vs evidence fields,
+    score range, ISO date, known role, model and route."""
+    errs: list[str] = []
+    known_roles = list(known_roles)
+    if r.get("role") not in known_roles:
+        errs.append(f"{where}: unknown role")
+    if r.get("model") not in models:
+        errs.append(f"{where}: unknown model")
+    if r.get("label") not in ROW_LABELS:
+        errs.append(f"{where}: label is required and must be one of {ROW_LABELS}")
+    if not parse_date(r.get("as_of")):
+        errs.append(f"{where}: as_of must be an ISO date")
+    if not r.get("source_ref"):
+        errs.append(f"{where}: source_ref is required")
+    score = r.get("score")
+    if score is not None and (isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= score <= 10):
+        errs.append(f"{where}: score must be in [0, 10] or null")
+    if r.get("label") == "INFERRED" and not r.get("basis"):
+        errs.append(f"{where}: an INFERRED row needs a basis")
+    if r.get("label") == "MEASURED-HERE":
+        for f in MEASURED_HERE_FIELDS:
+            if f not in r:
+                errs.append(f"{where}: MEASURED-HERE rows need {f}")
+    if r.get("label") == "UNKNOWN" and score is not None and not r.get("override"):
+        errs.append(f"{where}: an UNKNOWN row must have a null score")
+    for route in (r.get("route") if isinstance(r.get("route"), list) else [r.get("route")]):
+        if route not in routes:
+            errs.append(f"{where}: unknown route {route}")
+        elif r.get("model") in models and route not in (models[r["model"]].get("route_ids") or {}):
+            errs.append(f"{where}: model has no route_ids entry for {route}")
+    return errs
 
 
 def validate(data: Mapping[str, Any], *, known_roles: Iterable[str] | None = None,
@@ -501,32 +549,7 @@ def validate(data: Mapping[str, Any], *, known_roles: Iterable[str] | None = Non
     seen: set[tuple[str, str, str, str]] = set()
     for i, r in enumerate(data.get("rows") or ()):
         where = f"rows[{i}] ({r.get('role')}/{r.get('model')})"
-        if r.get("role") not in known_roles:
-            errs.append(f"{where}: unknown role")
-        if r.get("model") not in models:
-            errs.append(f"{where}: unknown model")
-        if r.get("label") not in ROW_LABELS:
-            errs.append(f"{where}: label is required and must be one of {ROW_LABELS}")
-        if not parse_date(r.get("as_of")):
-            errs.append(f"{where}: as_of must be an ISO date")
-        if not r.get("source_ref"):
-            errs.append(f"{where}: source_ref is required")
-        score = r.get("score")
-        if score is not None and (isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= score <= 10):
-            errs.append(f"{where}: score must be in [0, 10] or null")
-        if r.get("label") == "INFERRED" and not r.get("basis"):
-            errs.append(f"{where}: an INFERRED row needs a basis")
-        if r.get("label") == "MEASURED-HERE":
-            for f in MEASURED_HERE_FIELDS:
-                if f not in r:
-                    errs.append(f"{where}: MEASURED-HERE rows need {f}")
-        if r.get("label") == "UNKNOWN" and score is not None and not r.get("override"):
-            errs.append(f"{where}: an UNKNOWN row must have a null score")
-        for route in (r.get("route") if isinstance(r.get("route"), list) else [r.get("route")]):
-            if route not in routes:
-                errs.append(f"{where}: unknown route {route}")
-            elif r.get("model") in models and route not in (models[r["model"]].get("route_ids") or {}):
-                errs.append(f"{where}: model has no route_ids entry for {route}")
+        errs += validate_row(r, where, known_roles=known_roles, models=models, routes=routes)
         for key in _row_key(r):
             if key in seen:
                 errs.append(f"{where}: duplicate row key {key}")

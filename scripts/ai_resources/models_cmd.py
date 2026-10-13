@@ -385,6 +385,12 @@ def _scores_check(db, as_of: str, shipped: dict, args) -> int:
     from .scoring import db as scores_db
     findings = [scores_db.Finding("invalid", "shipped", e) for e in scores_db.validate(shipped)]
     findings += [scores_db.Finding("override-problem", "overrides", p) for p in db.problems]
+    # The merged document is what the engine reads: validate it too (overrides cannot hide behind the shipped file).
+    shipped_errs = set(scores_db.validate(shipped))
+    weights_override = any(p.get("weights_override_reason") for p in db.data.get("pools") or ())
+    findings += [scores_db.Finding("invalid", "merged", e)
+                 for e in scores_db.validate(db.data, check_numeric_claude_weights=not weights_override)
+                 if e not in shipped_errs]
     findings += scores_db.check(db, as_of, shipped=shipped)
     _print_findings(findings, args, "Scores database is clean.")
     return 1 if findings else 0
@@ -452,6 +458,26 @@ def _apply_proposal(doc: dict, prop: dict) -> None:
     doc["rows"] = rows
 
 
+def _invalid_proposal_rows(shipped: dict, from_doc: dict) -> list[str]:
+    """Rows of a `--from` file that break the evidence rules or lack a reason; they are never proposed."""
+    from .scoring import db as scores_db
+    out: list[str] = []
+    rows = from_doc.get("rows") if isinstance(from_doc, dict) else None
+    for i, row in enumerate(rows or []):
+        if not isinstance(row, dict):
+            out.append(f"rows[{i}] is not a mapping")
+            continue
+        where = f"rows[{i}] ({row.get('role')}/{row.get('model')})"
+        errs = scores_db.validate_row(dict(row, override=True), where, known_roles=scores_db._known_roles(shipped),
+                                      models=shipped.get("models") or {}, routes=shipped.get("routes") or {})
+        if not row.get("reason"):
+            errs.append(f"{where}: a proposal needs a reason")
+        if "verified" in row:
+            errs.append(f"{where}: a `verified` key is not allowed")
+        out += errs
+    return out
+
+
 def _scores_refresh(db, as_of: str, shipped: dict, args) -> int:
     """Proposals through an explicit answer; nothing is auto-approved and nothing is written unasked."""
     import yaml
@@ -464,6 +490,13 @@ def _scores_refresh(db, as_of: str, shipped: dict, args) -> int:
             from_doc = yaml.safe_load(open(src, encoding="utf-8").read()) or {}
         except (OSError, yaml.YAMLError) as e:
             print(f"cannot read {src}: {e}", file=sys.stderr)
+            return 2
+    if from_doc is not None:
+        bad = _invalid_proposal_rows(shipped, from_doc)
+        if bad:
+            print(f"invalid proposal row(s) in {src}; nothing was changed:", file=sys.stderr)
+            for line in bad:
+                print(f"  invalid: {line}", file=sys.stderr)
             return 2
     over = _override_doc(path)
     props = _proposals(shipped, over, from_doc)
