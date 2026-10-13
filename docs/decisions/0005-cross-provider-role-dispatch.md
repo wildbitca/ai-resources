@@ -34,7 +34,7 @@ The repo has no `specs/` tree, so there are no TS-IDs to cite. The constraints c
 |------|---------|--------|
 | implementer | `claude-code` only | the code (the single writer) |
 | planner, software-architect | either | `.agent-output/<role>/`, and the handoff when sequential |
-| explore, code-reviewer, security-auditor, verifier | either | `.agent-output/<role>/` only |
+| explore, code-reviewer, security-auditor, verifier | either | `.agent-output/<role>/`, and the handoff when sequential (parallel members write `.agent-output/<role>/` only) |
 | tester, doc-writer | either (warning on `openclaw-agent`) | `.agent-output/<role>/`, and the handoff when sequential |
 
 ### T39 compliance
@@ -43,7 +43,7 @@ Every wait or poll call lasts at most 60 s with no loop inside a call. The proce
 
 ### Security limits
 
-Read-only enforcement is detective. `claude-kit` and `agy-cli` run with `--dangerously-skip-permissions`, so a child has its agent's full permissions inside the worktree. The worktree isolates the damage, the git check fails the attempt, and the orchestrator restores only the offending paths. The child prompt carries no secrets and no code, and the `agentId` regex blocks flag-like and shell-like values.
+Read-only enforcement is detective and best-effort. `claude-kit` and `agy-cli` run with `--dangerously-skip-permissions`, so a child has its agent's full permissions as the host user. The worktree does NOT contain such a child: it can write outside the worktree (OpenClaw config, shell rc files, `~/.claude/agents`), to the shared git directory (hooks, config) and to gitignored files, and `git status --porcelain` alone sees none of this. The post-step check therefore snapshots HEAD, the git config files, the hooks directory and `git status --porcelain --ignored` before and after each child, and runs git with `core.fsmonitor` and `core.hooksPath` neutralised so the check itself cannot be an execution trigger. A changed HEAD or config hash fails the attempt. Writes outside the worktree are undetected. Until a real sandbox exists, read-only roles should be placed only on agents that do not run with skip-permissions where that matters. The child prompt carries no secrets and no code, and the `agentId` regex blocks flag-like and shell-like values.
 
 ### What exists for agy today
 

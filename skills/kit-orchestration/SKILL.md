@@ -79,9 +79,9 @@ The prompt carries no secrets, no environment dumps and no code.
 1. The sentinel (or a terminal state) is present.
 2. `.agent-output/<role>/<step-id>.md` exists and contains `## Result` and `## Routing`.
 3. For a sequential step, the handoff front matter has `step: <id>`, a valid `status` and the keys of `handoff.md.template`. For a parallel member, the handoff sha256 is the same before and after.
-4. For a read-only role, `git -C <worktree> status --porcelain` shows nothing outside `.agent-output/`.
+4. For a read-only role, compared with a snapshot taken before the child was spawned: HEAD is unchanged; the sha256 of `$(git rev-parse --git-common-dir)/config`, the worktree config and the hooks directory listing is unchanged; and `git -C <worktree> status --porcelain --ignored` shows no new path outside `.agent-output/`. Always run these git commands with `-c core.fsmonitor=false -c core.hooksPath=/dev/null` before `-C`, so a planted config cannot execute code during the check.
 
-Any failure is one failed attempt. On a failure of check 4, restore and clean only the offending paths. The check detects a violation; it cannot prevent one, because the child runs with its own agent's permissions.
+Any failure is one failed attempt. On a failure of check 4, restore and clean only the offending paths; a changed HEAD or config hash is reported to the operator and not auto-repaired. The check is best-effort: it detects a violation and cannot prevent one, because the child runs with its own agent's full permissions. It does not cover writes outside the worktree (home-directory config, shell rc files, `~/.claude/agents`), so the worktree is not a sandbox.
 
 **Retries.** At most 3 attempts per step, each a new spawn with the same `cwd`. Before a retry, rename the previous report to `<step-id>.attempt-<n>.md`. After the third failure, stop and report the last `Block_reason`.
 
