@@ -71,3 +71,10 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # And the start-time read behind `plugin_is_stale`'s time rule: a tmp plugin dir is always newer
     # than the live gateway, so an unstubbed call would make every staleness test report stale.
     monkeypatch.setattr(openclaw_cockpit, "_gateway_started_at", lambda: None)
+
+
+@pytest.fixture
+def previous_generation_pins(monkeypatch):
+    """Kit defaults pinned to the generation the recorded model fixtures were written against."""
+    from pin_generation import pin_previous_generation
+    pin_previous_generation(monkeypatch)

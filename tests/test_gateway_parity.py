@@ -18,6 +18,7 @@ import pytest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
+from ai_resources import model_pins  # noqa: E402
 from ai_resources.setup import profiles, ui  # noqa: E402
 from ai_resources.setup.cockpits import claude as claude_cockpit  # noqa: E402
 from ai_resources.setup.litellm import (  # noqa: E402
@@ -91,7 +92,7 @@ def test_passthrough_resolves_through_the_classes_block():
     assert executors["classes"], "measured-best must pin the aliases"
     doc = _render_litellm_yaml(executors, {}, "LITELLM_MASTER_KEY")
     # haiku is the case where the two spellings differ
-    assert "anthropic/claude-haiku-4-5" in doc
+    assert "anthropic/" + model_pins.DEFAULTS["haiku"] in doc
 
 
 def test_passthrough_carries_no_retired_model_ids():

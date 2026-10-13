@@ -32,8 +32,26 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   empty because the live phases have not run. `docs/multi-model.md` and `docs/orchestration.md` now say that agy is
   a chat-orchestrator engine and report-only model surface, not a kit role backend.
 
+### Changed
+
+- **Kit pins move to the Claude 5.5 family.** `model_pins.DEFAULTS` (and the anthropic adapter's copy) now name
+  `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-5-5`; fable stays `claude-fable-5-1`. The three ids were
+  confirmed by the live claude-cli catalogue (read only, 2026-10-13); the catalogue carries no price for them. The
+  shipped profiles, the LiteLLM passthrough and alias map, `KNOWN_MODELS` and the golden snapshots follow in the
+  same commit (the drift guard forces it). An unfrozen host moves to 5.5 the next time something renders,
+  including the OpenClaw `*` primary; a frozen pin wins (`ai-resources models pin <class> <id>`). Haiku 4.5 to 5.5
+  is a major bump when it comes through `models update`, but a kit default is not a proposal and needs no
+  approval; the kit approves nothing and writes no overlay. No 5.5 id has a price row, so `ai-resources audit`
+  shows no cost for them until one is added. Under OpenRouter the
+  `modelOverrides` map covers the current generation only. The Vertex list names the 5.5 opus and sonnet ids
+  without a Vertex verification.
+
 ### Fixed
 
+- **`ai-resources audit` priced a newer minor as its major.** `audit._price` matched by prefix, so
+  `claude-opus-5-5` was costed as `claude-opus-5`. A prefix now matches only a dated snapshot or a context
+  suffix (`claude-sonnet-5-20260101`, `claude-fable-5-1[1m]`); a model without its own row is unpriced rather than
+  mispriced.
 - **Gateway guard, last pass (2.2f).** The verification round of 2.2e found four weak points in the second view
   (text that feeds a shell) and the benign cost of the 2.2e widening; this pass closes them and stops. (1) A shell,
   `eval`, `source`, `exec` or a `read`/`mapfile` whose text is run later, reading a process substitution on stdin

@@ -58,11 +58,11 @@ def test_anthropic_spelling_diverges_between_backends():
     openrouter = ec._known_models_for_backend("openrouter")["anthropic"]
     litellm = ec._known_models_for_backend("litellm")["anthropic"]
 
-    assert "anthropic/claude-haiku-4.5" in openrouter
-    assert "anthropic/claude-haiku-4-5" not in openrouter
+    assert "anthropic/claude-haiku-5.5" in openrouter
+    assert "anthropic/claude-haiku-5-5" not in openrouter
 
-    assert "anthropic/claude-haiku-4-5" in litellm
-    assert "anthropic/claude-haiku-4.5" not in litellm
+    assert "anthropic/claude-haiku-5-5" in litellm
+    assert "anthropic/claude-haiku-5.5" not in litellm
 
 
 def test_moonshot_vendor_prefix_diverges_between_backends():
@@ -104,11 +104,11 @@ def test_select_under_litellm_canonicalises_a_legacy_bare_default(non_interactiv
     separately; the menu must still resolve it to today's canonical ID."""
     provider, model = ec._select_provider_and_model(
         current_provider="anthropic",
-        current_model="claude-opus-5",
+        current_model="claude-opus-5-5",
         backend="litellm",
     )
     assert provider == "anthropic"
-    assert model == "anthropic/claude-opus-5"
+    assert model == "anthropic/claude-opus-5-5"
 
 
 def test_select_never_hands_the_openrouter_spelling_to_litellm(non_interactive):
@@ -119,7 +119,7 @@ def test_select_never_hands_the_openrouter_spelling_to_litellm(non_interactive):
     wrong-backend spelling as if it had been offered and accepted."""
     with pytest.raises(SystemExit):
         ec._select_provider_and_model(
-            current_provider="anthropic", current_model="anthropic/claude-haiku-4.5",
+            current_provider="anthropic", current_model="anthropic/claude-haiku-5.5",
             backend="litellm",
         )
 

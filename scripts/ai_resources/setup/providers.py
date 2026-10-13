@@ -90,9 +90,9 @@ KNOWN_MODELS: dict[str, list[str]] = {
     # Refreshed 2026-09-16 — the wizard offers these but allows free input.
     # Direct-provider IDs are bare; only the openrouter entry is namespaced.
     "anthropic": [
-        "claude-opus-5",
-        "claude-sonnet-5",
-        "claude-haiku-4-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
         "claude-fable-5-1",
     ],
     "google": [
@@ -104,13 +104,14 @@ KNOWN_MODELS: dict[str, list[str]] = {
         "gemini-3.5-flash-lite",
     ],
     "vertex": [
-        # Verified against platform.claude.com 2026-09-16. The current generation
-        # uses a bare alias; Haiku 4.5 still carries its @date suffix.
+        # Verified against platform.claude.com 2026-09-16 for the 5 generation. The opus and sonnet 5.5
+        # ids follow the kit defaults and are NOT verified on Vertex (free input is allowed); Haiku 4.5
+        # still carries its @date suffix here.
         # Note: regional endpoints (us-east5 and friends) serve Sonnet 4.6 and
         # earlier only — the models below need the global or a multi-region
         # endpoint, which is why GOOGLE_CLOUD_LOCATION defaults to "global".
-        "claude-opus-5",
-        "claude-sonnet-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
         "claude-haiku-4-5@20251001",
         "claude-fable-5-1",
         "gemini-3.1-pro-preview",
@@ -143,9 +144,10 @@ KNOWN_MODELS: dict[str, list[str]] = {
     # "[1m]" suffix for the 1M window to be detected.
     "openrouter": [
         # $/1M in-out, resolved against the live catalogue on 2026-09-16.
-        "anthropic/claude-opus-5",        # 5 / 25
-        "anthropic/claude-sonnet-5",      # 2 / 10
-        "anthropic/claude-haiku-4.5",     # 1 / 5   — dotted, "4-5" does not exist
+        # The 5.5 ids are in the catalogue but carry no price there: no price is stated for them.
+        "anthropic/claude-opus-5.5",
+        "anthropic/claude-sonnet-5.5",
+        "anthropic/claude-haiku-5.5",     # dotted, "5-5" does not exist on OpenRouter
         "anthropic/claude-fable-5.1",     # 10 / 50
         "google/gemini-3.1-pro-preview",  # 2 / 12  — only the -preview id exists
         "google/gemini-3.7-flash",        # 0.75 / 3.75

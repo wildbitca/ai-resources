@@ -68,8 +68,8 @@ def env(tmp_path, monkeypatch):
     (home / ".openclaw").mkdir(parents=True)
     (home / ".openclaw" / "openclaw.json").write_text(json.dumps({
         "gateway": {"port": 18789},
-        "agents": {"defaults": {"model": {"primary": "anthropic/claude-haiku-4-5"}},
-                   "entries": {"main": {"model": {"primary": "anthropic/claude-sonnet-5"}}, "util": {}}}}), encoding="utf-8")
+        "agents": {"defaults": {"model": {"primary": "anthropic/claude-haiku-5-5"}},
+                   "entries": {"main": {"model": {"primary": "anthropic/claude-sonnet-5-5"}}, "util": {}}}}), encoding="utf-8")
     backups = tmp_path / "backups"
     for t in ("daily", "weekly", "monthly"):
         (backups / t).mkdir(parents=True)
@@ -108,7 +108,7 @@ def test_the_report_has_all_eleven_sections_from_fixture_output(env):
     for needle in ("unit ", "boot ", "listeners ", "health ", "timers", "backups", "off-box", "models", "identity", "stability ", "doctor "):
         assert needle in text
     assert text.count(".timer") == 10
-    assert "main" in text and "anthropic/claude-haiku-4-5 (default)" in text  # effective model per agent
+    assert "main" in text and "anthropic/claude-haiku-5-5 (default)" in text  # effective model per agent
 
 
 def _write_models(env, defaults, entries):
@@ -119,27 +119,27 @@ def _write_models(env, defaults, entries):
 
 
 def test_short_form_models_render_like_the_long_form(env):
-    long_form = {"main": {"model": {"primary": "anthropic/claude-sonnet-5"}}, "util": {}}
-    short_form = {"main": {"model": "anthropic/claude-sonnet-5"}, "util": {}}
-    _write_models(env, {"primary": "anthropic/claude-haiku-4-5"}, long_form)
+    long_form = {"main": {"model": {"primary": "anthropic/claude-sonnet-5-5"}}, "util": {}}
+    short_form = {"main": {"model": "anthropic/claude-sonnet-5-5"}, "util": {}}
+    _write_models(env, {"primary": "anthropic/claude-haiku-5-5"}, long_form)
     as_long = host.render_status(collect(env, Canned()))
-    _write_models(env, "anthropic/claude-haiku-4-5", short_form)
+    _write_models(env, "anthropic/claude-haiku-5-5", short_form)
     report = collect(env, Canned())
-    assert [m["model"] for m in report["models"]] == ["anthropic/claude-sonnet-5",
-                                                       "anthropic/claude-haiku-4-5 (default)"]
+    assert [m["model"] for m in report["models"]] == ["anthropic/claude-sonnet-5-5",
+                                                       "anthropic/claude-haiku-5-5 (default)"]
     short = [ln for ln in host.render_status(report).splitlines() if ln.startswith("  ") and not ln.startswith("   ") and "anthropic" in ln]
     assert short == [ln for ln in as_long.splitlines() if ln.startswith("  ") and not ln.startswith("   ") and "anthropic" in ln]
 
 
 def test_a_short_form_model_gets_the_remedy_line_and_a_long_form_does_not(env):
-    _write_models(env, {"primary": "anthropic/claude-haiku-4-5"},
-                  {"main": {"model": "anthropic/claude-sonnet-5"}, "app": {"model": {"primary": "x/y"}}})
+    _write_models(env, {"primary": "anthropic/claude-haiku-5-5"},
+                  {"main": {"model": "anthropic/claude-sonnet-5-5"}, "app": {"model": {"primary": "x/y"}}})
     report = collect(env, Canned())
     assert {m["agent"]: m["shorthand"] for m in report["models"]} == {"main": True, "app": False}
     text = host.render_status(report)
-    assert "openclaw config set agents.entries.main.model.primary anthropic/claude-sonnet-5" in text
+    assert "openclaw config set agents.entries.main.model.primary anthropic/claude-sonnet-5-5" in text
     assert "agents.entries.app.model.primary" not in text
-    _write_models(env, {"primary": "anthropic/claude-haiku-4-5"}, {"app": {"model": {"primary": "x/y"}}})
+    _write_models(env, {"primary": "anthropic/claude-haiku-5-5"}, {"app": {"model": {"primary": "x/y"}}})
     assert "openclaw config set" not in host.render_status(collect(env, Canned()))
 
 
@@ -514,10 +514,10 @@ def test_status_stability_reads_never_write(env):
 
 def test_status_flags_a_reference_that_lags_the_pins(env, monkeypatch):
     from ai_resources import model_pins
-    model_pins.save_overlay({"pins": {"sonnet": "claude-sonnet-5-5"}})
+    model_pins.save_overlay({"pins": {"sonnet": "claude-sonnet-5-6"}})
     report = collect(env, Canned())
     drifted = {m["agent"]: m["drift"] for m in report["models"] if m.get("drift")}
-    assert drifted == {"main": "anthropic/claude-sonnet-5-5"}
+    assert drifted == {"main": "anthropic/claude-sonnet-5-6"}
     assert "DRIFT" in host.render_status(report)
 
 

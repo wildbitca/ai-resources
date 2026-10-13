@@ -131,7 +131,7 @@ def test_the_dry_run_plan_table_names_every_detected_cockpit(monkeypatch):
     script2 = Script()
     script2.install(monkeypatch)
     wizard._print_plan_table(s)
-    assert "no model selection recorded" in script2.transcript and "will configure anthropic/claude-opus-5, anthropic/claude-sonnet-5" in script2.transcript
+    assert "no model selection recorded" in script2.transcript and "will configure anthropic/claude-opus-5-5, anthropic/claude-sonnet-5-5" in script2.transcript
 
 
 def test_the_antigravity_engine_shows_its_own_id_and_the_risk_line():

@@ -9,7 +9,7 @@
     "entries": {
       "*": {
         "model": {
-          "primary": "anthropic/claude-sonnet-5"
+          "primary": "anthropic/claude-sonnet-5-5"
         }
       },
       "main": {

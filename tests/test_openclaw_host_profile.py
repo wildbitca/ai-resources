@@ -139,7 +139,7 @@ def test_a_deliberate_model_choice_and_the_engine_owned_worker_are_left_alone(do
     patched = host_apply(doc, build(doc)["patch"])
     assert patched["agents"]["entries"]["docs"]["model"]["primary"] == "anthropic/claude-opus-5"
     assert patched["agents"]["entries"]["claude"]["model"]["primary"] == "claude-kit/claude-sonnet-5"
-    assert patched["agents"]["entries"]["app"]["model"]["primary"] == "anthropic/claude-sonnet-5"
+    assert patched["agents"]["entries"]["app"]["model"]["primary"] == "anthropic/claude-sonnet-5-5"
 
 
 # --- AC-8.4: channels safety ------------------------------------------------------------------------------------------

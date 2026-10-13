@@ -5,6 +5,8 @@ import json
 import pathlib
 from types import SimpleNamespace
 
+import pytest
+
 from ai_resources import model_pins as mp
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "models"
@@ -109,6 +111,7 @@ def test_a_preview_pin_never_outranks_a_stable_default():
     assert mp.effective_slots(sel, ov)["google:gemini-pro"] == "gemini-3.1-pro-preview"
 
 
+@pytest.mark.usefixtures("previous_generation_pins")
 def test_ref_drift_reports_a_stale_google_ref_for_its_slot():
     sel = _selection(("google:gemini-flash", "google/gemini-3.7-flash", "family"))
     slots = mp.effective_slots(sel, {})

@@ -26,7 +26,7 @@ ADAPTER = _Anthropic(
     sources=(SOURCE_CATALOG, SOURCE_STATIC),
     smoke_kinds=("claude-cli", "litellm", "openrouter", "direct"),
     runtime="claude-cli",
-    defaults={"opus": "claude-opus-5", "sonnet": "claude-sonnet-5", "haiku": "claude-haiku-4-5",
+    defaults={"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5",
               "fable": "claude-fable-5-1"},
     alias_pattern=r"^claude-(?:opus|sonnet|haiku|fable)-latest$",
     preview_pattern=r"^$",

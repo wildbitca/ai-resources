@@ -12,6 +12,7 @@ import pytest
 from ai_resources import audit, models
 from ai_resources import model_pins as mp
 from ai_resources import openclaw_host
+from pin_generation import pin_previous_generation
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "models"
 CATALOG = (FIX / "claude-cli-catalog.json").read_text()
@@ -23,6 +24,7 @@ class Env:
 
     def __init__(self, tmp_path, monkeypatch, *, priced=True, health=True, busy=0, smoke_ok=True,
                  post_smoke_ok=True, defer_restart=False, rollback_ok=True, lock=True):
+        pin_previous_generation(monkeypatch)
         if priced:   # make sonnet 5 -> 5-5 an auto bump
             prices = dict(audit.PRICES)
             prices["claude-sonnet-5-5"] = audit.PRICES["claude-sonnet-5"]

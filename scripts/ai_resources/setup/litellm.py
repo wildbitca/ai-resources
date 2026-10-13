@@ -123,9 +123,9 @@ def _run(cmd: list[str], timeout: int = 60, check: bool = False,
 # list was missed in the 2026-09-16 refresh and still pointed two generations
 # back, which silently routed the main conversation to retired models.
 _CLAUDE_PASSTHROUGH_MODELS = [
-    "claude-opus-5",
-    "claude-sonnet-5",
-    "claude-haiku-4-5",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
     "claude-fable-5-1",
 ]
 
@@ -187,8 +187,8 @@ def _upstream_params(model_name: str, provider: str, role: str) -> dict:
         }
     if vendor in _VENDOR_UPSTREAM:
         prefix, env_var = _VENDOR_UPSTREAM[vendor]
-        # Anthropic spells its own versions with dashes (claude-haiku-4-5) while
-        # the namespaced catalogue uses dots (anthropic/claude-haiku-4.5). The
+        # Anthropic spells its own versions with dashes (claude-haiku-5-5) while
+        # the namespaced catalogue uses dots (anthropic/claude-haiku-5.5). The
         # canonical ID follows the catalogue, so reaching Anthropic directly
         # needs that one substitution — without it the direct route 404s on a
         # model name that only exists on the gateway.
@@ -239,9 +239,9 @@ def _render_litellm_yaml(executors: dict, providers: dict, master_key_env: str,
     # both gateways answer Claude Code's internal aliases identically.
     classes = executors.get("classes") or {}
     _ALIAS_OF = {
-        "claude-opus-5":   "opus",
-        "claude-sonnet-5": "sonnet",
-        "claude-haiku-4-5": "haiku",
+        "claude-opus-5-5":   "opus",
+        "claude-sonnet-5-5": "sonnet",
+        "claude-haiku-5-5": "haiku",
         "claude-fable-5-1": "fable",
     }
     # `extra_claude_ids` are ids a models update moved a class to: Claude Code resolves its aliases to

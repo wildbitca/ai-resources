@@ -65,6 +65,7 @@ def test_unavailable_models_are_ignored():
     assert models.discover(runner_for(json.dumps(cat))).best["sonnet"] == "claude-sonnet-5"
 
 
+@pytest.mark.usefixtures("previous_generation_pins")
 def test_todays_prices_make_bumps_wait_for_approval(disc):
     p = by_cls(models.propose(mp.effective({}), disc, {}))
     assert p["sonnet"].decision == "needs_approval" and "price unknown" in p["sonnet"].reasons
@@ -82,11 +83,13 @@ def priced(monkeypatch):
     return prices
 
 
+@pytest.mark.usefixtures("previous_generation_pins")
 def test_equal_known_price_is_auto(disc, priced):
     p = by_cls(models.propose(mp.effective({}), disc, {}))["sonnet"]
     assert (p.kind, p.price, p.decision) == ("minor", "equal", "auto")
 
 
+@pytest.mark.usefixtures("previous_generation_pins")
 def test_price_increase_needs_approval_unless_within_budget(disc, priced):
     s = priced["claude-sonnet-5"]
     priced["claude-sonnet-5-5"] = (s[0] * 1.1, s[1] * 1.1, *s[2:])
@@ -96,6 +99,7 @@ def test_price_increase_needs_approval_unless_within_budget(disc, priced):
     assert p.decision == "auto"
 
 
+@pytest.mark.usefixtures("previous_generation_pins")
 def test_exclude_frozen_and_approve_modes(disc, priced):
     ov = {"policy": {"exclude": ["claude-opus-5-5"], "classes": {"haiku": {"mode": "frozen"},
                                                                     "sonnet": {"mode": "approve"}}}}
@@ -105,6 +109,7 @@ def test_exclude_frozen_and_approve_modes(disc, priced):
     assert p["sonnet"].decision == "needs_approval" and "mode approve" in p["sonnet"].reasons
 
 
+@pytest.mark.usefixtures("previous_generation_pins")
 def test_approval_matches_only_the_approved_id(disc):
     p = by_cls(models.propose(mp.effective({}), disc, {"approvals": {"haiku": "claude-haiku-5-5"}}))
     assert p["haiku"].decision == "approved" and p["haiku"].applicable

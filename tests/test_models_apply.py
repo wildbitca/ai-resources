@@ -209,6 +209,7 @@ def test_lock_is_exclusive(tmp_path):
         assert again is True
 
 
+@pytest.mark.usefixtures("previous_generation_pins")
 def test_failed_attempt_is_not_proposed_again_automatically():
     disc = models.Discovery(best={"sonnet": "claude-sonnet-5-5"})
     ov = {"state": {"failed": {"sonnet": "claude-sonnet-5-5"}}}

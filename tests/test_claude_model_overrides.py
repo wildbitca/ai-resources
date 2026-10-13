@@ -19,7 +19,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources.setup.cockpits import claude  # noqa: E402
 
-EXECUTORS = {"classes": {"sonnet": "anthropic/claude-sonnet-5"}}
+EXECUTORS = {"classes": {"sonnet": "anthropic/claude-sonnet-5.5"}}
 
 
 def _patch(mode: str, backend: str) -> dict:
@@ -28,13 +28,13 @@ def _patch(mode: str, backend: str) -> dict:
 
 def test_openrouter_maps_bare_anthropic_ids_to_catalogue_ids():
     overrides = _patch("multi-model", "openrouter")["modelOverrides"]
-    assert overrides["claude-sonnet-5"] == "anthropic/claude-sonnet-5"
-    assert overrides["claude-opus-5"] == "anthropic/claude-opus-5"
+    assert overrides["claude-sonnet-5-5"] == "anthropic/claude-sonnet-5.5"
+    assert overrides["claude-opus-5-5"] == "anthropic/claude-opus-5.5"
 
 
 def test_dotted_catalogue_versions_are_keyed_by_anthropics_dashed_ids():
     overrides = _patch("multi-model", "openrouter")["modelOverrides"]
-    assert overrides["claude-haiku-4-5"] == "anthropic/claude-haiku-4.5"
+    assert overrides["claude-haiku-5-5"] == "anthropic/claude-haiku-5.5"
     assert overrides["claude-fable-5-1"] == "anthropic/claude-fable-5.1"
     assert all("." not in key for key in overrides)
 
@@ -49,14 +49,14 @@ def test_removal_keeps_the_users_own_overrides(tmp_path):
     ours = claude._openrouter_model_overrides()
     settings.write_text(json.dumps({"modelOverrides": {
         **ours,
-        "claude-opus-5": "my-own-opus-deployment",
+        "claude-opus-5-5": "my-own-opus-deployment",
     }}), encoding="utf-8")
 
     removed = claude._remove_kit_model_overrides(settings)
 
     left = json.loads(settings.read_text())["modelOverrides"]
-    assert left == {"claude-opus-5": "my-own-opus-deployment"}
-    assert "claude-opus-5" not in removed and "claude-sonnet-5" in removed
+    assert left == {"claude-opus-5-5": "my-own-opus-deployment"}
+    assert "claude-opus-5-5" not in removed and "claude-sonnet-5-5" in removed
 
 
 def test_removal_drops_an_emptied_block(tmp_path):

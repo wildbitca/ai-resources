@@ -765,7 +765,7 @@ def test_switching_away_from_antigravity_restores_its_keys_unlinks_plugin_and_un
     assert restore["agents"]["entries"] is None
     assert restore["plugins"]["entries"]["ai-resources"] is None
     # The newly selected engine's own patch still applies alongside the restore.
-    assert restore["agents"]["defaults"]["model"] == {"primary": "anthropic/claude-sonnet-5"}
+    assert restore["agents"]["defaults"]["model"] == {"primary": "anthropic/claude-sonnet-5-5"}
 
     assert s.openclaw.antigravity_applied is False
     assert s.openclaw.plugin_linked is False
@@ -1269,10 +1269,10 @@ def test_antigravity_is_a_separate_choice_and_never_the_default():
 
 
 def test_a_claude_selection_offers_claude_code_with_the_selected_refs(monkeypatch):
-    s = _selection_state(("anthropic:sonnet", "anthropic/claude-sonnet-5"), ("anthropic:opus", "anthropic/claude-opus-5"))
+    s = _selection_state(("anthropic:sonnet", "anthropic/claude-sonnet-5-5"), ("anthropic:opus", "anthropic/claude-opus-5-5"))
     assert openclaw.default_engine(s) == "claude-code"
     assert openclaw.engine_models(openclaw.ENGINES["claude-code"], s.get_selection()) == (
-        "anthropic/claude-sonnet-5", "anthropic/claude-opus-5")
+        "anthropic/claude-sonnet-5-5", "anthropic/claude-opus-5-5")
 
 
 def test_no_patch_is_built_for_an_engine_the_matrix_does_not_allow(monkeypatch, tmp_path):

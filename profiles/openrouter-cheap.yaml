@@ -12,10 +12,10 @@ description: |
   Model IDs round-tripped against OpenRouter on 2026-09-16; prices are $/1M in-out.
 
 classes:
-  opus:   anthropic/claude-sonnet-5
+  opus:   anthropic/claude-sonnet-5.5
   sonnet: deepseek/deepseek-v4-pro
   haiku:  google/gemini-3.5-flash-lite
-  fable:  anthropic/claude-sonnet-5
+  fable:  anthropic/claude-sonnet-5.5
 
 defaults:
   # More retries than the balanced profile: budget endpoints are busier, and a
@@ -28,7 +28,7 @@ defaults:
 # review while the rest stay cheap.
 #
 # by_persona:
-#   code-reviewer-devops: { model: anthropic/claude-opus-5 }
+#   code-reviewer-devops: { model: anthropic/claude-opus-5.5 }
 by_persona: {}
 
 by_role:
@@ -65,10 +65,10 @@ by_role:
 
   # Not economised: a missed bug or vulnerability outweighs the saving
   code-reviewer:
-    model: anthropic/claude-sonnet-5                    # 2 / 10
+    model: anthropic/claude-sonnet-5.5                    # 2 / 10
     fallbacks: [deepseek/deepseek-v4-pro]
   security-auditor:
-    model: anthropic/claude-sonnet-5
+    model: anthropic/claude-sonnet-5.5
     fallbacks: [deepseek/deepseek-v4-pro]
 
   # Domain specialists

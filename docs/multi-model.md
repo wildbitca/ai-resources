@@ -92,8 +92,8 @@ CSS review stop costing the same:
 
 ```yaml
 by_persona:
-  code-reviewer-devops:  { provider: openrouter, model: anthropic/claude-opus-5 }
-  code-reviewer-angular: { provider: openrouter, model: anthropic/claude-sonnet-5 }
+  code-reviewer-devops:  { provider: openrouter, model: anthropic/claude-opus-5.5 }
+  code-reviewer-angular: { provider: openrouter, model: anthropic/claude-sonnet-5.5 }
 ```
 
 ## Configuration files
@@ -428,7 +428,7 @@ armed with unrestricted execution by accident.
 Switching the kit's mode carries the bot along: OpenClaw starts Claude Code with
 your user settings, so single-model keeps it on your Claude subscription and
 multi-model routes it through the gateway, subagent models included. OpenClaw
-always passes the bare Anthropic ID (`--model claude-sonnet-5`); LiteLLM
+always passes the bare Anthropic ID (`--model claude-sonnet-5-5`); LiteLLM
 registers those IDs, and under OpenRouter setup writes a `modelOverrides` map to
 the catalogue IDs (Claude Code 2.1.200 or later). Under OpenRouter you still need
 `claude /logout`, which moves the bot off the subscription too.
@@ -592,6 +592,25 @@ so a rollback stays valid.
 
 Antigravity (agy) models are report-only: edit `model_pins.AGY_STATIC` by hand.
 
+**Kit defaults move with a kit release, and an unfrozen host follows on its next render.** The kit defaults
+(`model_pins.DEFAULTS`) are the Claude 5.5 family (`claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`;
+fable stays `claude-fable-5-1`). The effective id of a slot is the highest of the kit default, the selection's
+id and the overlay pin, so a host that has not frozen a slot moves to 5.5 the next time something renders:
+the OpenClaw `*` primary (through `@MODEL_SONNET@`), the LiteLLM Claude passthrough and every shipped profile.
+A frozen pin always wins; to stay on the previous id, freeze the slot before updating the kit
+(`ai-resources models pin <class> <id>` freezes a slot at an explicit id; `ai-resources models unpin <class>`
+lets it follow again). The kit never writes your overlay on its own and never approves a price:
+
+- A kit default is not a `models update` proposal: it is read by `model_pins.effective()` and needs no approval.
+  The answer ladder (`approve`, `always`, `max_bump`, the price guardrail) governs ids NEWER than the effective
+  one. Haiku 4.5 to 5.5 would have been a **major** bump waiting for `ai-resources models approve haiku <id>`
+  through `models update`; as a kit default it is not. Any later id still goes through the ladder.
+- The catalogue lists the 5.5 ids but carries no price for them, and `audit.PRICES` has no row for them: the kit
+  never invents one. Until you add a price (`prices` in the overlay) or a row lands, `ai-resources audit`
+  reports no cost for those models (they are no longer priced as their major version).
+- Under OpenRouter, `modelOverrides` maps the current generation only; a host frozen on a previous id needs the
+  freeze removed or its own override.
+
 ## Operations
 
 ```sh
@@ -629,9 +648,9 @@ Run `claude /logout`, open a new terminal, then `ai-resources doctor`.
 
 **`[claude-code:unrecognized_model]` on every start.**
 Expected noise, not a failure. Claude Code does not recognise namespaced IDs
-such as `anthropic/claude-sonnet-5`, warns, and sends them anyway.
+such as `anthropic/claude-sonnet-5.5`, warns, and sends them anyway.
 
-**`claude --model claude-sonnet-5` fails under OpenRouter, or a bot on the
+**`claude --model claude-sonnet-5-5` fails under OpenRouter, or a bot on the
 claude-cli runtime cannot answer.**
 OpenRouter rejects bare Anthropic IDs. Setup maps them with `modelOverrides` in
 `~/.claude/settings.json`; re-run `ai-resources setup` if the map is missing, and
@@ -643,8 +662,8 @@ The profile has no `classes` block, so `/model` aliases resolve to bare Claude
 IDs the catalogue does not know. Add one, or pick a shipped openrouter profile.
 
 **A model ID is rejected.**
-OpenRouter IDs are namespaced and exact: `anthropic/claude-haiku-4.5` exists,
-`anthropic/claude-haiku-4-5` does not. Check the live catalogue rather than
+OpenRouter IDs are namespaced and exact: `anthropic/claude-haiku-5.5` exists,
+`anthropic/claude-haiku-5-5` does not. Check the live catalogue rather than
 guessing. On the LiteLLM backend, check that `litellm.yaml` lists the model and
 the provider key is in `.env`. Either way, `ai-resources executors test <name>`
 isolates it.

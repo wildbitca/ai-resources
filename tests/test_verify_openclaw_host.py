@@ -258,15 +258,15 @@ def _model_findings(box, overlay, config=None):
     import json
     from ai_resources import model_pins
     cfg = box.parent / "openclaw.json"
-    cfg.write_text(json.dumps(config or {"agents": {"defaults": {"model": {"primary": "anthropic/claude-haiku-4-5"}},
-                                                     "entries": {"main": {"model": {"primary": "anthropic/claude-sonnet-5"}}}}}),
+    cfg.write_text(json.dumps(config or {"agents": {"defaults": {"model": {"primary": "anthropic/claude-haiku-5-5"}},
+                                                     "entries": {"main": {"model": {"primary": "anthropic/claude-sonnet-5-5"}}}}}),
                    encoding="utf-8")
     model_pins.save_overlay(overlay)
     return _run(HostRunner())
 
 
 def test_drift_between_the_config_and_the_pins_is_one_warn(box):
-    found = _model_findings(box, {"pins": {"sonnet": "claude-sonnet-5-5"}})
+    found = _model_findings(box, {"pins": {"sonnet": "claude-sonnet-5-6"}})
     drift = [f for f in found if "lag the pins" in f.message]
     assert len(drift) == 1 and drift[0].level == "warn" and "main" in drift[0].message
 

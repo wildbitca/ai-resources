@@ -6,30 +6,30 @@ description: |
   typical feature-implementation runs without sacrificing code quality.
 
 defaults:
-  fallbacks: [anthropic/claude-haiku-4.5]
+  fallbacks: [anthropic/claude-haiku-5.5]
   max_retries: 1
   timeout_seconds: 600
 
 by_role:
   # Large context / web search / exploration → Gemini
-  explore:            { model: google/gemini-3.7-flash, fallbacks: [anthropic/claude-sonnet-5] }
-  generalPurpose:     { model: google/gemini-3.1-pro-preview,   fallbacks: [anthropic/claude-sonnet-5] }
-  doc-writer:         { model: google/gemini-3.7-flash, fallbacks: [anthropic/claude-sonnet-5] }
+  explore:            { model: google/gemini-3.7-flash, fallbacks: [anthropic/claude-sonnet-5.5] }
+  generalPurpose:     { model: google/gemini-3.1-pro-preview,   fallbacks: [anthropic/claude-sonnet-5.5] }
+  doc-writer:         { model: google/gemini-3.7-flash, fallbacks: [anthropic/claude-sonnet-5.5] }
 
   # Reasoning + instruction-following → Claude
-  planner:            { model: anthropic/claude-sonnet-5 }
-  software-architect: { model: anthropic/claude-opus-5,  fallbacks: [anthropic/claude-sonnet-5] }
-  implementer:        { model: anthropic/claude-sonnet-5 }
-  code-reviewer:      { model: anthropic/claude-sonnet-5 }
-  security-auditor:   { model: anthropic/claude-sonnet-5 }
+  planner:            { model: anthropic/claude-sonnet-5.5 }
+  software-architect: { model: anthropic/claude-opus-5.5,  fallbacks: [anthropic/claude-sonnet-5.5] }
+  implementer:        { model: anthropic/claude-sonnet-5.5 }
+  code-reviewer:      { model: anthropic/claude-sonnet-5.5 }
+  security-auditor:   { model: anthropic/claude-sonnet-5.5 }
 
   # Mechanical / cheap → Gemini Flash for tester, Haiku for verifier
-  tester:             { model: google/gemini-3.7-flash, fallbacks: [anthropic/claude-haiku-4.5] }
-  verifier:           { model: anthropic/claude-haiku-4.5 }
+  tester:             { model: google/gemini-3.7-flash, fallbacks: [anthropic/claude-haiku-5.5] }
+  verifier:           { model: anthropic/claude-haiku-5.5 }
 
   # Domain specialists — code-heavy work → Claude
-  package-upgrade:             { model: anthropic/claude-sonnet-5 }
-  crashlytics-fixer:           { model: anthropic/claude-sonnet-5 }
-  sentry-fixer:                { model: anthropic/claude-sonnet-5 }
-  terraform-maintainer:        { model: anthropic/claude-sonnet-5 }
-  crossplane-upjet-maintainer: { model: anthropic/claude-sonnet-5 }
+  package-upgrade:             { model: anthropic/claude-sonnet-5.5 }
+  crashlytics-fixer:           { model: anthropic/claude-sonnet-5.5 }
+  sentry-fixer:                { model: anthropic/claude-sonnet-5.5 }
+  terraform-maintainer:        { model: anthropic/claude-sonnet-5.5 }
+  crossplane-upjet-maintainer: { model: anthropic/claude-sonnet-5.5 }

@@ -57,19 +57,19 @@ by_role:
 
   # TIER 4 — Claude Sonnet (expensive, architecture)
   software-architect:
-    model: anthropic/claude-sonnet-5
-    fallbacks: [anthropic/claude-haiku-4.5]  # downgrade to haiku, NEVER upgrade
+    model: anthropic/claude-sonnet-5.5
+    fallbacks: [anthropic/claude-haiku-5.5]  # downgrade to haiku, NEVER upgrade
   implementer:
-    model: anthropic/claude-sonnet-5
-    fallbacks: [anthropic/claude-haiku-4.5]  # downgrade to haiku
+    model: anthropic/claude-sonnet-5.5
+    fallbacks: [anthropic/claude-haiku-5.5]  # downgrade to haiku
   terraform-maintainer:
-    model: anthropic/claude-sonnet-5
-    fallbacks: [anthropic/claude-haiku-4.5]  # downgrade to haiku
+    model: anthropic/claude-sonnet-5.5
+    fallbacks: [anthropic/claude-haiku-5.5]  # downgrade to haiku
   crossplane-upjet-maintainer:
-    model: anthropic/claude-sonnet-5
-    fallbacks: [anthropic/claude-haiku-4.5]  # downgrade to haiku
+    model: anthropic/claude-sonnet-5.5
+    fallbacks: [anthropic/claude-haiku-5.5]  # downgrade to haiku
 
   # TIER 5 — Haiku (cheapest claude)
   package-upgrade:
-    model: anthropic/claude-haiku-4.5
+    model: anthropic/claude-haiku-5.5
     fallbacks: []  # cheapest, no fallback

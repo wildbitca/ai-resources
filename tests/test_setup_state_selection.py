@@ -38,7 +38,7 @@ def test_the_implicit_selection_is_the_four_claude_slots_on_the_claude_cli():
     imp = sel.implicit_selection()
     assert list(imp.slots) == [f"anthropic:{c}" for c in model_pins.CLASSES]
     assert imp.primary == "anthropic:sonnet" and imp.smoke_path == "claude-cli"
-    assert imp.slots["anthropic:sonnet"].ref == "anthropic/claude-sonnet-5"
+    assert imp.slots["anthropic:sonnet"].ref == "anthropic/claude-sonnet-5-5"
 
 
 def test_a_selection_round_trips_losslessly(tmp_path, monkeypatch):
