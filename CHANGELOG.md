@@ -27,6 +27,10 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   `workflow-feature-cross-provider` skill) runs research, plan and review on other OpenClaw agents (placeholder ids
   `agy-flash` and `agy-pro`) and keeps design, implementation, tests, security, verification and documentation on
   Claude Code.
+- **ADR-0005 and doc reconciliation.** `docs/decisions/0005-cross-provider-role-dispatch.md` records the
+  mechanism, the writers matrix, the security limits and what exists for agy today; its verification tables are
+  empty because the live phases have not run. `docs/multi-model.md` and `docs/orchestration.md` now say that agy is
+  a chat-orchestrator engine and report-only model surface, not a kit role backend.
 
 ### Fixed
 

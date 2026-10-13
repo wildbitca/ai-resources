@@ -216,6 +216,12 @@ Notes:
   agy's own model ids (for example `gemini-3.8-flash-low`), which differ from the
   API ids; the kit never maps one to the other. It needs agy installed and the
   unrestricted-execution risk acknowledged, and is never the default.
+  Today agy is a chat-orchestrator engine and a report-only model surface; it is not a
+  backend for kit roles. A workflow step can name another OpenClaw agent
+  (`backend: openclaw-agent`), and an agy-backed agent would be one such agent, but
+  an OpenClaw agent on `agy-cli` that takes role work through `sessions_spawn` is an
+  external prerequisite that has not been shown to exist: see
+  [ADR-0005](decisions/0005-cross-provider-role-dispatch.md).
 - Claude Desktop is not managed by ai-resources.
 - Aider under OpenRouter uses OpenRouter's OpenAI-compatible base
   `https://openrouter.ai/api/v1` (the Anthropic-shaped `https://openrouter.ai/api`

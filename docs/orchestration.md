@@ -325,6 +325,11 @@ multi-step work, pick a `workflow-*` skill, work through the kit roles without s
 work between roles in the handoff file, and delegate code to the `claude` worker with
 `sessions_spawn agentId=claude cwd=<project> thread=true`.
 
+A workflow step can also run its role on another OpenClaw agent with `backend: openclaw-agent` and an
+`agentId`; only an OpenClaw-run orchestrator that has `sessions_spawn` can dispatch it, and anywhere else the
+step is Blocked. See [ADR-0005](decisions/0005-cross-provider-role-dispatch.md) and the "Choosing a backend"
+section of the `kit-orchestration` skill.
+
 Rules the writer keeps (decided for 1.9.7):
 
 - **Engine independent.** The block is the same under `keep`, `direct`, `claude-code` and
@@ -418,6 +423,8 @@ graph TB
 | `docs_updated` | Document step | Paths written, or `none` |
 
 Steps in a parallel group never write this file: each ends its own report with the fields it would have set, and the orchestrator joins them into the front matter once the whole group returns.
+
+A parallel group may mix backends: a member on `openclaw-agent` must be one of the six read-only roles, writes only under `.agent-output/<role>/` and is joined like any other member (see `workflows/WORKFLOW_CONTRACT.md`).
 
 **Lifecycle:** Handoff files are created when a workflow starts and **deleted** when the workflow completes successfully.
 
