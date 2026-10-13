@@ -23,8 +23,9 @@ class Env:
     """A fake host: records every effect, lets a test choose where it fails."""
 
     def __init__(self, tmp_path, monkeypatch, *, priced=True, health=True, busy=0, smoke_ok=True,
-                 post_smoke_ok=True, defer_restart=False, rollback_ok=True, lock=True):
-        pin_previous_generation(monkeypatch)
+                 post_smoke_ok=True, defer_restart=False, rollback_ok=True, lock=True, previous_generation=True):
+        if previous_generation:     # the recorded fixtures were written against the generation before 5.5
+            pin_previous_generation(monkeypatch)
         if priced:   # make sonnet 5 -> 5-5 an auto bump
             prices = dict(audit.PRICES)
             prices["claude-sonnet-5-5"] = audit.PRICES["claude-sonnet-5"]

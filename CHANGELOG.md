@@ -46,6 +46,12 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 - **Docs: the opt-in cross-family layer.** `docs/multi-model.md` describes planner, explore and reviewer steps on
   another OpenClaw agent as an opt-in workflow choice (fields exist; the live behaviour is not verified, and the
   evaluation that would decide the reviewer's model has not been run).
+- **A mixed-provider team test.** `tests/test_mixed_provider_team.py` walks a profile with roles on Google and the
+  example `openclaw-agent` workflow through the real setup planning (`plan_table`, the summary screen),
+  `models status` and `compat`, on fixtures and stubs only, and asserts that the dispatched roles are exactly the
+  roles on a provider Claude Code cannot run verified, that each dispatched agent's provider has a verified
+  OpenClaw engine cell, and that setup and `models status` name the same providers. A dispatch to an agent with no
+  engine for its provider, to a missing agent, or a Google role that is not dispatched is reported.
 - **A docs test for the profile table.** `tests/test_docs_profile_table.py` fails when a shipped profile is missing
   from `docs/multi-model.md`, when the table names one that does not exist, or when anything but the recommended
   profile is marked recommended.
@@ -60,7 +66,7 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   including the OpenClaw `*` primary; a frozen pin wins (`ai-resources models pin <class> <id>`). Haiku 4.5 to 5.5
   is a major bump when it comes through `models update`, but a kit default is not a proposal and needs no
   approval; the kit approves nothing and writes no overlay. No 5.5 id has a price row, so `ai-resources audit`
-  shows no cost for them until one is added. Under OpenRouter the
+  shows `n/a` for them until one is added. Under OpenRouter the
   `modelOverrides` map covers the current generation only. The Vertex list names the 5.5 opus and sonnet ids
   without a Vertex verification.
 - **The recommended default is `balanced-claude-55`, for a host that has not chosen a profile.** `ProfileState.name`

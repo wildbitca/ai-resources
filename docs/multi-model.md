@@ -663,7 +663,7 @@ lets it follow again). The kit never writes your overlay on its own and never ap
   through `models update`; as a kit default it is not. Any later id still goes through the ladder.
 - The catalogue lists the 5.5 ids but carries no price for them, and `audit.PRICES` has no row for them: the kit
   never invents one. Until you add a price (`prices` in the overlay) or a row lands, `ai-resources audit`
-  reports no cost for those models (they are no longer priced as their major version).
+  shows `n/a` as the cost of those models (they are no longer priced as their major version).
 - Under OpenRouter, `modelOverrides` maps the current generation only; a host frozen on a previous id needs the
   freeze removed or its own override.
 
