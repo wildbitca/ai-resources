@@ -34,7 +34,7 @@ VERIFIER_DOC_SKILL = "knowledge-audit"
 BACKENDS = {"claude-code", "openclaw-agent"}
 DEFAULT_BACKEND = "claude-code"
 # A leading alphanumeric keeps a flag-like value out; the cap bounds the length.
-AGENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+AGENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 # One writer per run: the implementer and every other write-capable role stay on claude-code.
 # Read-only roles may run on another agent; tester and doc-writer run commands or write files,
 # so they pass with a warning (the post-step check detects a violation, it cannot prevent one)
@@ -120,7 +120,7 @@ def check_step_backend(step: dict, where: str) -> None:
             fail("workflows", f"{where}: agentId is only valid with backend 'openclaw-agent'")
         return
     agent_id = step.get("agentId")
-    if not isinstance(agent_id, str) or not AGENT_ID_RE.match(agent_id):
+    if not isinstance(agent_id, str) or not AGENT_ID_RE.fullmatch(agent_id):
         fail("workflows", f"{where}: backend 'openclaw-agent' needs an agentId matching "
                           f"{AGENT_ID_RE.pattern} (got {agent_id!r})")
     role = step.get("subagent_type")

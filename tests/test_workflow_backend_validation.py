@@ -80,6 +80,12 @@ def test_non_scalar_backend_fails_without_crashing(vk):
     assert "t.workflow.yaml:s1" in failures[0]
 
 
+def test_agent_id_with_trailing_newline_fails(vk):
+    failures, _ = _run(vk, _step("explore", 'backend: openclaw-agent\nagentId: "agy-flash\\n"\n'))
+    assert len(failures) == 1
+    assert "agentId" in failures[0]
+
+
 def test_openclaw_without_agent_id_fails(vk):
     failures, _ = _run(vk, _step("planner", "backend: openclaw-agent\n"))
     assert len(failures) == 1
