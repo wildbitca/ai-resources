@@ -281,6 +281,18 @@ def _openrouter_model_overrides() -> dict[str, str]:
     }
 
 
+# Override maps written by earlier kit generations. Removal still recognises
+# them (exact key and value) so they are not left behind as user entries.
+_PREVIOUS_KIT_MODEL_OVERRIDES: tuple[dict[str, str], ...] = (
+    {
+        "claude-opus-5": "anthropic/claude-opus-5",
+        "claude-sonnet-5": "anthropic/claude-sonnet-5",
+        "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+        "claude-fable-5-1": "anthropic/claude-fable-5.1",
+    },
+)
+
+
 def _remove_kit_model_overrides(path: Path) -> list[str]:
     """Drop the `modelOverrides` entries this cockpit writes, keeping the user's own.
 
@@ -296,8 +308,8 @@ def _remove_kit_model_overrides(path: Path) -> list[str]:
     overrides = cur.get("modelOverrides")
     if not isinstance(overrides, dict):
         return []
-    ours = _openrouter_model_overrides()
-    removed = [k for k, v in overrides.items() if ours.get(k) == v]
+    maps = (_openrouter_model_overrides(), *_PREVIOUS_KIT_MODEL_OVERRIDES)
+    removed = [k for k, v in overrides.items() if any(m.get(k) == v for m in maps)]
     if not removed:
         return []
     for k in removed:

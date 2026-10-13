@@ -65,3 +65,21 @@ def test_removal_drops_an_emptied_block(tmp_path):
                         encoding="utf-8")
     claude._remove_kit_model_overrides(settings)
     assert "modelOverrides" not in json.loads(settings.read_text())
+
+
+def test_removal_recognises_previous_generation_kit_entries(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"modelOverrides": {
+        "claude-opus-5": "anthropic/claude-opus-5",
+        "claude-sonnet-5": "anthropic/claude-sonnet-5",
+        "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+        "claude-fable-5-1": "anthropic/claude-fable-5.1",
+        "claude-sonnet-5-5": "my-own-sonnet-deployment",
+    }}), encoding="utf-8")
+
+    removed = claude._remove_kit_model_overrides(settings)
+
+    left = json.loads(settings.read_text())["modelOverrides"]
+    assert left == {"claude-sonnet-5-5": "my-own-sonnet-deployment"}
+    assert sorted(removed) == ["claude-fable-5-1", "claude-haiku-4-5",
+                               "claude-opus-5", "claude-sonnet-5"]
