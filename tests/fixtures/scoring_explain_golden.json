@@ -1,0 +1,259 @@
+{
+  "allow_unverified": true,
+  "as_of": "2026-10-13",
+  "dataset_version": "2026-10-13",
+  "flags": [
+    "unverified-cells",
+    "static-weights"
+  ],
+  "footer": [
+    "weighted loss 0.25 (cap 5); dataset_version 2026-10-13; input digest 81138e2bb13e5a62; as of 2026-10-13",
+    "This team is UNVERIFIED today: the compat matrix has no verified cross-provider cell, so 2 role(s) rest on cells marked unverified (planner, tester).",
+    "Headroom unknown or stale for: claude-subscription, openai-api; static weights were used.",
+    "Composition writes no backend or agentId and no cross-vendor fallback; agy (Antigravity) is direct use only and never a target."
+  ],
+  "input_digest": "81138e2bb13e5a62",
+  "kept_default": false,
+  "loss_cap": 5.0,
+  "mode": "mixed",
+  "pools": [
+    {
+      "basis": "static",
+      "billing_class": "subscription",
+      "effective_weight": 0.3,
+      "pool": "claude-subscription",
+      "resets_at": null,
+      "source": "none",
+      "state": "unknown",
+      "static_weight": 0.3,
+      "usage": "dispatch-ok",
+      "used_fraction": null
+    },
+    {
+      "basis": "static",
+      "billing_class": "metered-api",
+      "effective_weight": 1.0,
+      "pool": "openai-api",
+      "resets_at": null,
+      "source": "none",
+      "state": "unknown",
+      "static_weight": 1.0,
+      "usage": "dispatch-ok",
+      "used_fraction": null
+    }
+  ],
+  "recommendation": "",
+  "references": [
+    {
+      "covered_roles": 3,
+      "detail": "implementer: unverified (not verified yet); planner: unverified (not verified yet); +1 more",
+      "gate": "unverified",
+      "name": "all-gemini",
+      "weighted_score": 5.0
+    },
+    {
+      "covered_roles": 3,
+      "detail": "implementer: blocked (instructions-only: The Codex cockpit is instructions only in all 21 compat cells and the kit has no codex exec dispatch path. (.agent-output/research-models/usage-openai-and-cross-benchmarks.md:155,164)); planner: blocked (instructions-only: The Codex cockpit is instructions only in all 21 compat cells and the kit has no codex exec dispatch path. (.agent-output/research-models/usage-openai-and-cross-benchmarks.md:155,164)); +1 more",
+      "gate": "blocked",
+      "name": "all-openai-via-codex",
+      "weighted_score": 15.35
+    }
+  ],
+  "refusal": "",
+  "rejected": [
+    {
+      "kind": "not-enabled",
+      "model": "google/gemini-3.8-flash",
+      "reason": "provider google is not enabled",
+      "role": "implementer",
+      "route": "google-ai-studio"
+    },
+    {
+      "kind": "usage",
+      "model": "openai/gpt-6.1-sol",
+      "reason": "instructions-only: The Codex cockpit is instructions only in all 21 compat cells and the kit has no codex exec dispatch path. (.agent-output/research-models/usage-openai-and-cross-benchmarks.md:155,164)",
+      "role": "implementer",
+      "route": "openclaw-codex-engine"
+    },
+    {
+      "kind": "not-enabled",
+      "model": "google/gemini-3.8-flash",
+      "reason": "provider google is not enabled",
+      "role": "planner",
+      "route": "google-ai-studio"
+    },
+    {
+      "kind": "usage",
+      "model": "openai/gpt-6.1-sol",
+      "reason": "instructions-only: The Codex cockpit is instructions only in all 21 compat cells and the kit has no codex exec dispatch path. (.agent-output/research-models/usage-openai-and-cross-benchmarks.md:155,164)",
+      "role": "planner",
+      "route": "openclaw-codex-engine"
+    },
+    {
+      "kind": "not-enabled",
+      "model": "google/gemini-3.8-flash",
+      "reason": "provider google is not enabled",
+      "role": "tester",
+      "route": "google-ai-studio"
+    },
+    {
+      "kind": "usage",
+      "model": "openai/gpt-6.1-sol",
+      "reason": "instructions-only: The Codex cockpit is instructions only in all 21 compat cells and the kit has no codex exec dispatch path. (.agent-output/research-models/usage-openai-and-cross-benchmarks.md:155,164)",
+      "role": "tester",
+      "route": "openclaw-codex-engine"
+    }
+  ],
+  "rows": [
+    {
+      "band": [
+        "anthropic/claude-sonnet-5.5@anthropic-direct"
+      ],
+      "chosen": {
+        "as_of": "2026-10-12",
+        "billing_class": "subscription",
+        "conditions": "",
+        "effort": "default",
+        "fallbacks": [
+          "anthropic/claude-haiku-5.5"
+        ],
+        "flags": [],
+        "gate": "verified",
+        "grade": "DECLARED",
+        "headroom": {
+          "basis": "static",
+          "effective_weight": 0.3,
+          "resets_at": null,
+          "source": "none",
+          "state": "unknown",
+          "static_weight": 0.3,
+          "used_fraction": null
+        },
+        "label": "INFERRED",
+        "model": "anthropic/claude-sonnet-5.5",
+        "pool": "claude-subscription",
+        "price": {
+          "in": 2.0,
+          "out": 10.0,
+          "tier": "standard",
+          "valid_until": null,
+          "verify": false
+        },
+        "route": "anthropic-direct",
+        "score": 6.4,
+        "source_ref": "fixture (not evidence)",
+        "usage": "dispatch-ok"
+      },
+      "importance": 1.0,
+      "note": "",
+      "role": "implementer",
+      "runner_up": "openai/gpt-6.1-sol@litellm (6)",
+      "runner_up_reason": "outside band",
+      "s_star": 6.4,
+      "tolerance": 0.3,
+      "tolerance_class": "critical"
+    },
+    {
+      "band": [
+        "anthropic/claude-sonnet-5.5@anthropic-direct",
+        "openai/gpt-6.1-sol@litellm"
+      ],
+      "chosen": {
+        "as_of": "2026-10-12",
+        "billing_class": "metered-api",
+        "conditions": "",
+        "effort": "default",
+        "fallbacks": [],
+        "flags": [
+          "unverified"
+        ],
+        "gate": "UNVERIFIED",
+        "grade": "UNVERIFIED",
+        "headroom": {
+          "basis": "static",
+          "effective_weight": 1.0,
+          "resets_at": null,
+          "source": "none",
+          "state": "unknown",
+          "static_weight": 1.0,
+          "used_fraction": null
+        },
+        "label": "INFERRED",
+        "model": "openai/gpt-6.1-sol",
+        "pool": "openai-api",
+        "price": {
+          "in": 2.0,
+          "out": 10.0,
+          "tier": "standard",
+          "valid_until": null,
+          "verify": false
+        },
+        "route": "litellm",
+        "score": 6.2,
+        "source_ref": "fixture (not evidence)",
+        "usage": "dispatch-ok"
+      },
+      "importance": 1.0,
+      "note": "",
+      "role": "planner",
+      "runner_up": "anthropic/claude-sonnet-5.5@anthropic-direct (6.4)",
+      "runner_up_reason": "pool pressure",
+      "s_star": 6.4,
+      "tolerance": 0.3,
+      "tolerance_class": "critical"
+    },
+    {
+      "band": [
+        "anthropic/claude-sonnet-5.5@anthropic-direct",
+        "openai/gpt-6.1-sol@litellm"
+      ],
+      "chosen": {
+        "as_of": "2026-10-12",
+        "billing_class": "metered-api",
+        "conditions": "",
+        "effort": "default",
+        "fallbacks": [],
+        "flags": [
+          "unverified"
+        ],
+        "gate": "UNVERIFIED",
+        "grade": "UNVERIFIED",
+        "headroom": {
+          "basis": "static",
+          "effective_weight": 1.0,
+          "resets_at": null,
+          "source": "none",
+          "state": "unknown",
+          "static_weight": 1.0,
+          "used_fraction": null
+        },
+        "label": "INFERRED",
+        "model": "openai/gpt-6.1-sol",
+        "pool": "openai-api",
+        "price": {
+          "in": 2.0,
+          "out": 10.0,
+          "tier": "standard",
+          "valid_until": null,
+          "verify": false
+        },
+        "route": "litellm",
+        "score": 6.3,
+        "source_ref": "fixture (not evidence)",
+        "usage": "dispatch-ok"
+      },
+      "importance": 0.5,
+      "note": "",
+      "role": "tester",
+      "runner_up": "anthropic/claude-sonnet-5.5@anthropic-direct (6.4)",
+      "runner_up_reason": "pool pressure",
+      "s_star": 6.4,
+      "tolerance": 0.5,
+      "tolerance_class": "standard"
+    }
+  ],
+  "shape": "multi-provider",
+  "unassigned": [],
+  "weighted_loss": 0.25,
+  "weighted_score": 15.75
+}
