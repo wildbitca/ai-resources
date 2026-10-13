@@ -104,6 +104,17 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Comma-separated cockpits to configure (fails if the matrix cannot serve the models)")
     p_st.add_argument("--allow-unverified", dest="allow_unverified", action="store_true",
                       help="Also configure compatibility cells that are not verified end to end (labelled)")
+    p_st.add_argument("--compose", default="", choices=["", "uniform", "single-provider", "mixed"],
+                      help="Propose a team from the scores database (ADR-0006): one model, one provider, or "
+                           "balanced across providers (mixed needs --allow-unverified and is always marked)")
+    p_st.add_argument("--headroom", default="",
+                      help="Per-pool static headroom for --compose, pool=ample|normal|scarce,... (1.0/0.7/0.3)")
+    p_st.add_argument("--headroom-live", dest="headroom_live", default="",
+                      help="Pools whose live headroom may be read now (opt-in, read-only), comma-separated")
+    p_st.add_argument("--why-json", dest="why_json", default="",
+                      help="Write the composition's why table as JSON to this path (workspace or ~/.cache)")
+    p_st.add_argument("--allow-fable", dest="allow_fable", action="store_true",
+                      help="Declare a Max or Premium seat, or API billing: Claude Fable 5.1 may be a candidate")
     p_st.set_defaults(func=cmd_setup)
 
     # version
