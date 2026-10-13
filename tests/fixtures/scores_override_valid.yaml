@@ -1,0 +1,20 @@
+# Test fixture (not evidence): a user override file. Values are illustrative only.
+rows:
+  - role: tester
+    model: anthropic/claude-haiku-5.5
+    route: anthropic-direct
+    effort: default
+    score: 5.0
+    label: MEASURED-HERE
+    as_of: "2026-10-20"
+    source_ref: "operator run 2026-10-20"
+    reason: "operator re-measured the tester role on the repo"
+    run_id: r-001
+    n: 3
+    harness_version: "0"
+    corpus_hash: "abc"
+    low_power: false
+pools:
+  - id: claude-subscription
+    reason: "operator measured relative burn on the seat"
+    model_weights: {claude-haiku-5.5: 1.0, claude-sonnet-5.5: 2.0, claude-opus-5.5: 6.0}

@@ -1,0 +1,681 @@
+# Kit-shipped model scores database (read-only). Schema and rules: scores/README.md and
+# docs/decisions/0006-scored-team-composition.md.
+#
+# Every score cites a file:line under .agent-output/research-models/ and carries a dated evidence label.
+# The operator's earlier example numbers are NOT seed data. Importance, tolerance and load are POLICY.
+# There is no `verified` key: verification comes only from setup/compat.py (the compat matrix).
+# User overrides live in ~/.config/ai-resources/model-scores.yaml, never in this file.
+schema_version: 1
+dataset_version: '2026-10-13'
+policy:
+  label: POLICY
+  notes: Importance, tolerance classes, load weights, diversity and loss cap are operator policy, never evidence.
+  importance:
+    planner: 1.0
+    implementer: 1.0
+    software-architect: 0.9
+    code-reviewer: 0.9
+    verifier: 0.9
+    security-auditor: 0.8
+    generalPurpose: 0.7
+    crashlytics-fixer: 0.6
+    sentry-fixer: 0.6
+    terraform-maintainer: 0.6
+    crossplane-upjet-maintainer: 0.6
+    package-upgrade: 0.5
+    tester: 0.5
+    doc-writer: 0.3
+    explore: 0.3
+  tolerance_classes:
+    critical: 0.3
+    standard: 0.5
+    low: 1.0
+  role_class:
+    planner: critical
+    implementer: critical
+    software-architect: critical
+    security-auditor: critical
+    code-reviewer: standard
+    verifier: standard
+    generalPurpose: standard
+    crashlytics-fixer: standard
+    sentry-fixer: standard
+    terraform-maintainer: standard
+    crossplane-upjet-maintainer: standard
+    tester: standard
+    package-upgrade: low
+    doc-writer: low
+    explore: low
+  load_weight:
+    implementer: 3.0
+    planner: 1.5
+    tester: 1.5
+    code-reviewer: 1.5
+    generalPurpose: 1.5
+    software-architect: 1.0
+    verifier: 1.0
+    security-auditor: 1.0
+    crashlytics-fixer: 1.0
+    sentry-fixer: 1.0
+    terraform-maintainer: 1.0
+    crossplane-upjet-maintainer: 1.0
+    explore: 1.0
+    package-upgrade: 0.5
+    doc-writer: 0.5
+  diversity_tolerance: 0.5
+  diversity_roles:
+  - code-reviewer
+  - verifier
+  loss_cap: 5.0
+  reference_tokens:
+    prompt: 60000
+    output: 6000
+    cached_fraction: 0.5
+  static_headroom:
+    ample: 1.0
+    normal: 0.7
+    scarce: 0.3
+  decisions: 'Operator decisions of 2026-10-13: reviewer and verifier are the standard class (0.5); vendor diversity is a soft preference within 0.5.'
+routes:
+  anthropic-direct:
+    provider: anthropic
+    surface: claude-code
+    notes: Anthropic models through the Claude Code cockpit (subscription login or API key).
+  vertex-global:
+    provider: vertex
+    surface: claude-code
+    notes: 5.x models are served on the global or multi-region endpoints only (usage-anthropic.md:187-189).
+  google-ai-studio:
+    provider: google
+    surface: claude-code
+  openrouter:
+    provider: openrouter
+    surface: claude-code
+    mode_key: multi-model:openrouter
+  litellm:
+    provider: vendor
+    surface: claude-code
+    mode_key: multi-model:litellm
+  openclaw-codex-engine:
+    provider: openai
+    surface: codex
+    notes: OpenClaw codex engine; the kit has no codex exec dispatch path (usage-openai-and-cross-benchmarks.md:164).
+surfaces:
+  claude-code:
+    usage: dispatch-ok
+    reason: The kit dispatches roles through Claude Code subagents.
+    source_ref: docs/decisions/0005-cross-provider-role-dispatch.md
+  agy:
+    usage: direct-only
+    reason: 'Antigravity FAQ: third-party tools (Claude Code, OpenClaw, OpenCode) that access Antigravity violate its ToS; agy -p is for direct scripting and CI.'
+    source_ref: .agent-output/research-models/usage-google.md:9,56-58
+  engine:antigravity:
+    usage: direct-only
+    reason: 'Antigravity FAQ: running agy inside third-party agents is not supported and violates its ToS; accounts get suspended.'
+    source_ref: .agent-output/research-models/usage-google.md:9,56-58
+  codex:
+    usage: instructions-only
+    reason: The Codex cockpit is instructions only in all 21 compat cells and the kit has no codex exec dispatch path.
+    source_ref: .agent-output/research-models/usage-openai-and-cross-benchmarks.md:155,164
+pools:
+- id: claude-subscription
+  billing_class: subscription
+  provider: anthropic
+  cockpit_or_engine: claude-code
+  routes:
+  - anthropic-direct
+  vendors:
+  - anthropic
+  windows:
+  - 5h
+  - weekly
+  headroom_source: statusline-sidecar
+  plan_wide: true
+  model_weights:
+    kind: qualitative
+    tiers:
+      claude-haiku-5.5: Low
+      claude-sonnet-5.5: Moderate
+      claude-opus-5.5: High
+      claude-fable-5.1: Very High
+    notes: No numeric allowance or weight is published (usage-anthropic.md:74-78).
+  headless_draws_plan: true
+  credits_cache_ttl_minutes: 5
+  hard_stop_errors: []
+  usage: dispatch-ok
+  facts:
+  - Limits are plan-wide across models and shared with chat and Cowork (usage-anthropic.md:30-32,61-62).
+  - claude -p and the Agent SDK draw the same plan limits (usage-anthropic.md:97-101).
+  - Usage credits change the prompt-cache TTL from 1 hour to 5 minutes (usage-anthropic.md:41-43).
+  - Fable 5.1 runs on usage credits on Pro and Team Standard, and claude -p bills it without asking (usage-anthropic.md:67-73).
+  label: VENDOR
+  as_of: '2026-10-13'
+  source_ref: .agent-output/research-models/usage-anthropic.md:24-87
+- id: anthropic-api
+  billing_class: metered-api
+  provider: anthropic
+  cockpit_or_engine: claude-code
+  routes:
+  - anthropic-direct
+  vendors:
+  - anthropic
+  windows:
+  - per-minute-buckets
+  - monthly-spend
+  headroom_source: none
+  model_weights:
+    kind: per-model-buckets
+    notes: Opus 5.5, Sonnet 5.5 and Haiku 5.5 have separate buckets (usage-anthropic.md:150-155).
+  headless_draws_plan: false
+  credits_cache_ttl_minutes: null
+  hard_stop_errors:
+  - code: enforced_spend_limit_reached
+    http: 429
+    retry_after: false
+    resumes: 00:00 UTC next month
+    note: CLAUDE_CODE_RETRY_WATCHDOG=1 fails fast on it.
+  usage: dispatch-ok
+  label: VENDOR
+  as_of: '2026-10-13'
+  source_ref: .agent-output/research-models/usage-anthropic.md:145-167
+- id: vertex-claude
+  billing_class: metered-api
+  provider: vertex
+  cockpit_or_engine: claude-code
+  routes:
+  - vertex-global
+  vendors:
+  - anthropic
+  - google
+  windows:
+  - per-minute-quota
+  headroom_source: vertex-quotas
+  model_weights:
+    kind: per-model-lineage-quota
+    notes: 'Global QPM: Haiku 5.5 3,000, Sonnet 5.5 2,500, Opus 5.5 2,000 (usage-anthropic.md:198-200). The quota page usage may be inaccurate (usage-google.md:135).'
+  headless_draws_plan: false
+  credits_cache_ttl_minutes: null
+  hard_stop_errors: []
+  usage: dispatch-ok
+  facts:
+  - Route vertex-global only for 5.x; pin ANTHROPIC_DEFAULT_*_MODEL because the sonnet and haiku aliases resolve to 4.5 on Vertex (usage-anthropic.md:209-211).
+  label: VENDOR
+  as_of: '2026-10-13'
+  source_ref: .agent-output/research-models/usage-anthropic.md:182-214
+- id: openrouter
+  billing_class: gateway-metered
+  provider: openrouter
+  cockpit_or_engine: claude-code
+  routes:
+  - openrouter
+  vendors: []
+  windows:
+  - credit-limit
+  headroom_source: openrouter-key
+  model_weights:
+    kind: credits
+    notes: Credit counters only, not upstream provider throttles (usage-google.md:136).
+  headless_draws_plan: false
+  credits_cache_ttl_minutes: null
+  hard_stop_errors: []
+  usage: dispatch-ok
+  label: VENDOR
+  as_of: '2026-10-13'
+  source_ref: .agent-output/research-models/usage-google.md:111-127,136
+- id: gemini-api
+  billing_class: metered-api
+  provider: google
+  cockpit_or_engine: claude-code
+  routes:
+  - google-ai-studio
+  vendors:
+  - google
+  windows:
+  - rpm
+  - tier-spend-cap
+  headroom_source: none
+  model_weights:
+    kind: unknown
+  headless_draws_plan: false
+  credits_cache_ttl_minutes: null
+  hard_stop_errors:
+  - code: RESOURCE_EXHAUSTED
+    http: 429
+    retry_after: null
+  usage: dispatch-ok
+  label: VENDOR
+  as_of: '2026-10-13'
+  source_ref: .agent-output/research-models/usage-google.md:75-79,134
+- id: openai-api
+  billing_class: metered-api
+  provider: openai
+  cockpit_or_engine: claude-code
+  routes:
+  - litellm
+  vendors:
+  - openai
+  windows:
+  - rpm
+  - monthly-spend-tier
+  headroom_source: none
+  model_weights:
+    kind: per-tier
+    notes: Tier caps are listed at usage-openai-and-cross-benchmarks.md:48-53.
+  headless_draws_plan: false
+  credits_cache_ttl_minutes: null
+  hard_stop_errors: []
+  usage: dispatch-ok
+  label: VENDOR
+  as_of: '2026-10-13'
+  source_ref: .agent-output/research-models/usage-openai-and-cross-benchmarks.md:45-55
+- id: deepseek-api
+  billing_class: metered-api
+  provider: deepseek
+  cockpit_or_engine: claude-code
+  routes:
+  - litellm
+  vendors:
+  - deepseek
+  windows: []
+  headroom_source: none
+  model_weights:
+    kind: unknown
+  headless_draws_plan: false
+  credits_cache_ttl_minutes: null
+  hard_stop_errors: []
+  usage: dispatch-ok
+  label: UNKNOWN
+  as_of: '2026-10-13'
+  source_ref: No usage research for this pool.
+- id: agy-gemini
+  billing_class: subscription
+  provider: google
+  cockpit_or_engine: agy
+  routes: []
+  vendors:
+  - google
+  windows:
+  - 5h
+  - weekly
+  headroom_source: none
+  model_weights:
+    kind: unknown
+  headless_draws_plan: null
+  credits_cache_ttl_minutes: null
+  hard_stop_errors: []
+  usage: direct-only
+  facts:
+  - Quota is opaque and /usage is interactive only (usage-google.md:133).
+  label: VENDOR
+  as_of: '2026-10-13'
+  source_ref: .agent-output/research-models/usage-google.md:42-50,133
+- id: agy-claude-gpt
+  billing_class: subscription
+  provider: google
+  cockpit_or_engine: agy
+  routes: []
+  vendors:
+  - anthropic
+  - openai
+  windows:
+  - 5h
+  - weekly
+  headroom_source: none
+  model_weights:
+    kind: unknown
+  headless_draws_plan: null
+  credits_cache_ttl_minutes: null
+  hard_stop_errors: []
+  usage: direct-only
+  facts:
+  - Claude and GPT models share one Antigravity pool, separate from Gemini (usage-google.md:39).
+  label: VENDOR
+  as_of: '2026-10-13'
+  source_ref: .agent-output/research-models/usage-google.md:39,133
+- id: codex-subscription
+  billing_class: subscription
+  provider: openai
+  cockpit_or_engine: codex
+  routes:
+  - openclaw-codex-engine
+  vendors:
+  - openai
+  windows:
+  - 5h
+  - weekly
+  headroom_source: kit-counters
+  model_weights:
+    kind: vendor-estimates-relative
+    local_messages_per_5h_plus:
+      gpt-6-astra: 5-45
+      gpt-6.1-sol: 15-160
+      gpt-6-sol: 15-150
+      gpt-6-luna: 350-3000
+    notes: VENDOR estimates, usable only as relative static weights, never as a quota (usage-openai-and-cross-benchmarks.md:20-24).
+  headless_draws_plan: UNKNOWN
+  weekly_cap: UNKNOWN
+  credits_cache_ttl_minutes: null
+  hard_stop_errors: []
+  usage: instructions-only
+  facts:
+  - Weekly caps are unpublished (usage-openai-and-cross-benchmarks.md:36).
+  - Whether ChatGPT-auth codex exec counts like interactive use is not stated (usage-openai-and-cross-benchmarks.md:42).
+  - CODEX_API_KEY is the CI path and bills API rates (pool openai-api).
+  label: VENDOR
+  as_of: '2026-10-13'
+  source_ref: .agent-output/research-models/usage-openai-and-cross-benchmarks.md:11-42
+models:
+  anthropic/claude-opus-5.5:
+    vendor: anthropic
+    status: stable
+    retires_not_before: '2027-09-01'
+    route_ids:
+      anthropic-direct: claude-opus-5-5
+      vertex-global: claude-opus-5-5
+      openrouter: anthropic/claude-opus-5.5
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 58.08, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', raw_value: 65.15, cost_per_task_usd: 13.2, notes: '65.15 raw; 58.08 when the 22 of 198 provider-fallback attempts count as failures (usage-openai-and-cross-benchmarks.md:103). The lower value is used. Anthropic''s own max-effort figure (66.4, reasoning.md:27) is vendor-run at a different effort and is not mixed in.'}
+    - {board: artificial-analysis-intelligence-index, metric: index, value: 58, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:123', notes: 'general index, not coding; never used for a role row'}
+    prices:
+    - {in: 4.0, out: 20.0, cache_read: 0.2, price_source: '.agent-output/research-models/usage-anthropic.md:169', price_as_of: '2026-10-13'}
+    hazards:
+    - {text: 'Forced tool_choice (any or a named tool) returns HTTP 400 on Opus 5.5, Sonnet 5.5 and Fable 5.1.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:25; .agent-output/research-models/coding.md:199; .agent-output/research-models/assurance.md:208'}
+    - {text: 'Non-default temperature, top_p or top_k returns HTTP 400 on Sonnet 5.5 and Haiku 5.5.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:25; .agent-output/research-models/assurance.md:208'}
+    - {text: 'Thinking cannot be disabled on Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1; effort is the dial.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-anthropic.md:83-85'}
+    - {text: 'Thinking blocks are bound to the producing model, so a cross-vendor fallback restarts reasoning.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:64'}
+  anthropic/claude-sonnet-5.5:
+    vendor: anthropic
+    status: stable
+    retires_not_before: '2027-09-01'
+    route_ids:
+      anthropic-direct: claude-sonnet-5-5
+      vertex-global: claude-sonnet-5-5
+      openrouter: anthropic/claude-sonnet-5.5
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 64.14, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', cost_per_task_usd: 16.51, notes: 'Dated 2026-10-12 value. coding.md:74 gives 53.0 for the same board at an earlier read; kept here, covered by the browser re-check before ADR-0006 is Accepted. Vendor-run 70.6 (reasoning.md:27) is at a different effort and is not mixed in.'}
+    - {board: artificial-analysis-intelligence-index, metric: index, value: 56, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:124', notes: 'general index, not coding; never used for a role row'}
+    prices:
+    - {in: 2.0, out: 10.0, cache_read: 0.1, price_source: '.agent-output/research-models/usage-anthropic.md:169', price_as_of: '2026-10-13', notes: 'A second source gave cache read 0.20; the vendor pricing page (usage-anthropic.md:169,173) gives 0.10 (0.05x of input).'}
+    hazards:
+    - {text: 'Forced tool_choice (any or a named tool) returns HTTP 400 on Opus 5.5, Sonnet 5.5 and Fable 5.1.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:25; .agent-output/research-models/coding.md:199; .agent-output/research-models/assurance.md:208'}
+    - {text: 'Non-default temperature, top_p or top_k returns HTTP 400 on Sonnet 5.5 and Haiku 5.5.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:25; .agent-output/research-models/assurance.md:208'}
+    - {text: 'Thinking cannot be disabled on Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1; effort is the dial.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-anthropic.md:83-85'}
+    - {text: 'Thinking blocks are bound to the producing model, so a cross-vendor fallback restarts reasoning.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:64'}
+  anthropic/claude-haiku-5.5:
+    vendor: anthropic
+    status: stable
+    retires_not_before: '2027-10-07'
+    route_ids:
+      anthropic-direct: claude-haiku-5-5
+      vertex-global: claude-haiku-5-5
+      openrouter: anthropic/claude-haiku-5.5
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 35.35, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', cost_per_task_usd: 3.05}
+    - {board: artificial-analysis-intelligence-index, metric: index, value: 43, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:128', notes: 'general index, not coding; never used for a role row'}
+    prices:
+    - {in: 0.1, out: 0.5, cache_read: 0.01, price_source: '.agent-output/research-models/usage-anthropic.md:170', price_as_of: '2026-10-13', long_context_over: {tokens: 100000, in: 0.5, out: 2.5, cache_read: 0.05}}
+    - {route: openrouter, in: 0.1, out: 0.5, cache_read: null, price_source: '.agent-output/research-models/usage-google.md:116,126', price_as_of: '2026-10-13', verify: true, notes: Single OpenRouter listing with no 100k tier; the Google report could not cross-check it and flags it verify.}
+    hazards:
+    - {text: 'Forced tool_choice (any or a named tool) returns HTTP 400 on Opus 5.5, Sonnet 5.5 and Fable 5.1.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:25; .agent-output/research-models/coding.md:199; .agent-output/research-models/assurance.md:208'}
+    - {text: 'Non-default temperature, top_p or top_k returns HTTP 400 on Sonnet 5.5 and Haiku 5.5.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:25; .agent-output/research-models/assurance.md:208'}
+    - {text: 'Thinking cannot be disabled on Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1; effort is the dial.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-anthropic.md:83-85'}
+    - {text: 'Thinking blocks are bound to the producing model, so a cross-vendor fallback restarts reasoning.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:64'}
+    - {text: At low or medium effort Haiku 5.5 can report work done without running a check and can stop early., label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reading-docs-personas.md:24'}
+    - {text: Haiku 5.5 carries stricter cyber safeguards; expect refusals on security-auditor work without the Cyber Verification Program., label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/assurance.md:98,102'}
+  anthropic/claude-fable-5.1:
+    vendor: anthropic
+    status: stable
+    retires_not_before: '2027-09-01'
+    candidate_policy: opt-in
+    route_ids:
+      anthropic-direct: claude-fable-5-1
+      vertex-global: claude-fable-5-1
+      openrouter: anthropic/claude-fable-5.1
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 58.08, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', cost_per_task_usd: 17.18, notes: Model entry for an opt-in candidate only (operator decision Q16).}
+    - {board: artificial-analysis-intelligence-index, metric: index, value: 53, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:126', notes: 'general index, not coding; never used for a role row'}
+    prices:
+    - {in: 10.0, out: 50.0, cache_read: 0.25, price_source: '.agent-output/research-models/usage-anthropic.md:169', price_as_of: '2026-10-13'}
+    hazards:
+    - {text: 'Forced tool_choice (any or a named tool) returns HTTP 400 on Opus 5.5, Sonnet 5.5 and Fable 5.1.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:25; .agent-output/research-models/coding.md:199; .agent-output/research-models/assurance.md:208'}
+    - {text: 'Non-default temperature, top_p or top_k returns HTTP 400 on Sonnet 5.5 and Haiku 5.5.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:25; .agent-output/research-models/assurance.md:208'}
+    - {text: 'Thinking cannot be disabled on Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1; effort is the dial.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-anthropic.md:83-85'}
+    - {text: 'Thinking blocks are bound to the producing model, so a cross-vendor fallback restarts reasoning.', label: VENDOR, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:64'}
+  google/gemini-3.8-flash:
+    vendor: google
+    status: stable
+    route_ids:
+      google-ai-studio: gemini-3.8-flash
+      openrouter: google/gemini-3.8-flash
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 19.7, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', cost_per_task_usd: 8.65, notes: 'Other reads of the same board: 13.1 and 19.1 (coding.md:74). Vals TB 2.x figures (90.8 on TB 2.1, usage-google.md:96) are a different harness and are not mixed in.'}
+    - {board: artificial-analysis-intelligence-index, metric: index, value: 41, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:130', notes: 'general index, not coding; never used for a role row'}
+    prices:
+    - {valid_until: '2026-12-31', in: 0.75, out: 3.75, cache_read: null, price_source: '.agent-output/research-models/usage-google.md:83', price_as_of: '2026-10-13'}
+    - {valid_from: '2027-01-01', in: 1.5, out: 7.5, cache_read: null, price_source: '.agent-output/research-models/usage-google.md:83,90', price_as_of: '2026-10-13', notes: 'Context-cache storage doubles the same day (usage-google.md:90).'}
+  google/gemini-3.1-pro-preview:
+    vendor: google
+    status: preview
+    route_ids:
+      google-ai-studio: gemini-3.1-pro-preview
+      vertex-global: gemini-3.1-pro-preview
+      openrouter: google/gemini-3.1-pro-preview
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: null, label: UNKNOWN, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:101,105', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', raw_value: 2.52, cost_per_task_usd: 4.11, notes: '2.52 is likely a harness mismatch (usage-openai-and-cross-benchmarks.md:105); not used as a score.'}
+    - {board: artificial-analysis-intelligence-index, metric: index, value: 30, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:132', notes: 'general index, not coding; never used for a role row'}
+    prices:
+    - {in: 2.0, out: 12.0, cache_read: null, price_source: '.agent-output/research-models/usage-google.md:88', price_as_of: '2026-10-13', long_context_over: {tokens: 200000, in: 4.0, out: 18.0, cache_read: null}}
+  google/gemini-4-argon:
+    vendor: google
+    status: preview
+    callable_by_kit: false
+    route_ids: {}
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 57.58, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:103', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', notes: 'Recorded as a proxy only: the model is not callable by the kit and its availability is not confirmed.'}
+    prices: []
+  deepseek/deepseek-v4-pro:
+    vendor: deepseek
+    status: stable
+    route_ids:
+      litellm: deepseek-v4-pro
+      openrouter: deepseek/deepseek-v4-pro
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 14.1, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', notes: Vals snapshot 0813 of DeepSeek V4 Pro; the board's update date was not recorded and the kit id may point at another snapshot.}
+    prices:
+    - {in: 1.6, out: 3.2, cache_read: null, price_source: 'scripts/ai_resources/setup/providers.py (kit-recorded, resolved against the live catalogue 2026-09-16)', price_as_of: '2026-09-16'}
+  openai/gpt-6-astra:
+    vendor: openai
+    status: stable
+    route_ids:
+      litellm: gpt-6-astra
+      openclaw-codex-engine: gpt-6-astra
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 59.6, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', cost_per_task_usd: 9.58}
+    - {board: artificial-analysis-intelligence-index, metric: index, value: 53, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:125', notes: 'general index, not coding; never used for a role row'}
+    prices:
+    - {in: 10.0, out: 50.0, cache_read: 1.0, price_source: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:66', price_as_of: '2026-10-13', long_context_over: {tokens: 272000, in_multiplier: 2.0, approximate: true}}
+  openai/gpt-6.1-sol:
+    vendor: openai
+    status: stable
+    route_ids:
+      litellm: gpt-6.1-sol
+      openclaw-codex-engine: gpt-6.1-sol
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 55.05, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', cost_per_task_usd: 1.72, notes: Best score per dollar among models above 50 percent on this board (about 32 points per dollar vs about 5 for Opus 5.5). Not dispatchable by the kit today.}
+    - {board: artificial-analysis-intelligence-index, metric: index, value: 52, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:127', notes: 'general index, not coding; never used for a role row'}
+    prices:
+    - {in: 2.0, out: 10.0, cache_read: 0.1, price_source: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:67', price_as_of: '2026-10-13', long_context_over: {tokens: 272000, in_multiplier: 2.0, approximate: true}}
+  openai/gpt-6-sol:
+    vendor: openai
+    status: stable
+    route_ids:
+      litellm: gpt-6-sol
+      openclaw-codex-engine: gpt-6-sol
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 44.44, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', cost_per_task_usd: 5.79}
+    prices:
+    - {in: 2.0, out: 10.0, cache_read: 0.2, price_source: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:68', price_as_of: '2026-10-13', long_context_over: {tokens: 272000, in_multiplier: 2.0, approximate: true}}
+  openai/gpt-6-luna:
+    vendor: openai
+    status: stable
+    route_ids:
+      litellm: gpt-6-luna
+      openclaw-codex-engine: gpt-6-luna
+    benchmarks:
+    - {board: vals-terminal-bench-4.0, metric: accuracy_percent, value: 13.64, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', method: 'mini-swe-agent, 66 tasks, avg@3; not comparable with Terminal-Bench 2.x', cost_per_task_usd: 0.35}
+    - {board: artificial-analysis-intelligence-index, metric: index, value: 38, label: MEASURED-3P, role_agnostic: true, as_of: '2026-10-13', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:131', notes: 'general index, not coding; never used for a role row'}
+    prices:
+    - {in: 0.1, out: 0.5, cache_read: 0.01, price_source: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:69', price_as_of: '2026-10-13', long_context_over: {tokens: 272000, in_multiplier: 2.0, approximate: true}}
+aliases:
+- {alias: google/gemini-3.7-flash, target: google/gemini-3.8-flash, label: UNKNOWN, as_of: '2026-10-13', source_ref: '.agent-output/research-models/reasoning.md:71; .agent-output/research-models/usage-google.md:90', notes: 'UNCONFIRMED off the Google API: 3.7 Flash is not on the API pricing page and scores 12.12 against 19.70 on TB4.0, so it is a rename suggestion, not the same model.'}
+rows:
+- {role: planner, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of planner quality.'}
+- {role: planner, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of planner quality.'}
+- {role: planner, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of planner quality.'}
+- {role: planner, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of planner quality.', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: planner, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of planner quality.'}
+- {role: planner, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of planner quality.', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: planner, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of planner quality.'}
+- {role: planner, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of planner quality.'}
+- {role: planner, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of planner quality.'}
+- {role: planner, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of planner quality.'}
+- {role: implementer, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: implementer, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: implementer, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', conditions: 'Needs effort medium or higher; see the model hazards (early stop, unverified claims of done).'}
+- {role: implementer, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: implementer, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: implementer, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: implementer, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: implementer, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: implementer, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: implementer, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: software-architect, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of software-architect quality.'}
+- {role: software-architect, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of software-architect quality.'}
+- {role: software-architect, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of software-architect quality.'}
+- {role: software-architect, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of software-architect quality.', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: software-architect, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of software-architect quality.'}
+- {role: software-architect, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of software-architect quality.', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: software-architect, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of software-architect quality.'}
+- {role: software-architect, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of software-architect quality.'}
+- {role: software-architect, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of software-architect quality.'}
+- {role: software-architect, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of software-architect quality.'}
+- {role: code-reviewer, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of code-reviewer quality.'}
+- {role: code-reviewer, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of code-reviewer quality.'}
+- {role: code-reviewer, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of code-reviewer quality.', conditions: 'Needs effort medium or higher; see the model hazards (early stop, unverified claims of done).'}
+- {role: code-reviewer, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of code-reviewer quality.', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: code-reviewer, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of code-reviewer quality.'}
+- {role: code-reviewer, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of code-reviewer quality.', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: code-reviewer, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of code-reviewer quality.'}
+- {role: code-reviewer, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of code-reviewer quality.'}
+- {role: code-reviewer, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of code-reviewer quality.'}
+- {role: code-reviewer, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of code-reviewer quality.'}
+- {role: verifier, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of verifier quality.'}
+- {role: verifier, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of verifier quality.'}
+- {role: verifier, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of verifier quality.', conditions: 'Needs effort medium or higher; see the model hazards (early stop, unverified claims of done).'}
+- {role: verifier, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of verifier quality.', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: verifier, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of verifier quality.'}
+- {role: verifier, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of verifier quality.', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: verifier, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of verifier quality.'}
+- {role: verifier, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of verifier quality.'}
+- {role: verifier, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of verifier quality.'}
+- {role: verifier, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of verifier quality.'}
+- {role: security-auditor, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of security-auditor quality.', conditions: 'Opus 5.5 may re-run flagged security requests on an older Opus, billed per producing model (usage-anthropic.md:140-143).'}
+- {role: security-auditor, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of security-auditor quality.'}
+- {role: security-auditor, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of security-auditor quality.', conditions: 'Expect refusals without the Cyber Verification Program (assurance.md:98).'}
+- {role: security-auditor, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of security-auditor quality.', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: security-auditor, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of security-auditor quality.'}
+- {role: security-auditor, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of security-auditor quality.', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: security-auditor, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of security-auditor quality.'}
+- {role: security-auditor, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of security-auditor quality.'}
+- {role: security-auditor, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of security-auditor quality.'}
+- {role: security-auditor, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'No independent benchmark exists for this role (usage-openai-and-cross-benchmarks.md:141,145-146,173). The role-agnostic Terminal-Bench 4.0 proxy / 10 is carried as a placeholder lower bound; it is not evidence of security-auditor quality.'}
+- {role: generalPurpose, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: generalPurpose, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: generalPurpose, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: generalPurpose, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: generalPurpose, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: generalPurpose, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: generalPurpose, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: generalPurpose, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: generalPurpose, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: generalPurpose, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crashlytics-fixer, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crashlytics-fixer, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crashlytics-fixer, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crashlytics-fixer, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: crashlytics-fixer, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crashlytics-fixer, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: crashlytics-fixer, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crashlytics-fixer, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crashlytics-fixer, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crashlytics-fixer, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: sentry-fixer, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: sentry-fixer, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: sentry-fixer, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: sentry-fixer, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: sentry-fixer, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: sentry-fixer, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: sentry-fixer, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: sentry-fixer, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: sentry-fixer, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: sentry-fixer, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: terraform-maintainer, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: terraform-maintainer, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: terraform-maintainer, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: terraform-maintainer, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: terraform-maintainer, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: terraform-maintainer, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: terraform-maintainer, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: terraform-maintainer, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: terraform-maintainer, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: terraform-maintainer, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crossplane-upjet-maintainer, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crossplane-upjet-maintainer, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crossplane-upjet-maintainer, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crossplane-upjet-maintainer, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: crossplane-upjet-maintainer, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crossplane-upjet-maintainer, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: crossplane-upjet-maintainer, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crossplane-upjet-maintainer, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crossplane-upjet-maintainer, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: crossplane-upjet-maintainer, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: package-upgrade, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: package-upgrade, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: package-upgrade, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: package-upgrade, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: package-upgrade, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: package-upgrade, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: package-upgrade, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: package-upgrade, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: package-upgrade, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: package-upgrade, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: tester, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: tester, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: tester, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', conditions: 'Needs effort medium or higher; see the model hazards (early stop, unverified claims of done).'}
+- {role: tester, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: tester, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: tester, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: tester, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: tester, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: tester, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: tester, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'Terminal-Bench 4.0 (Vals, updated 2026-10-12) accuracy / 10, a role-agnostic proxy; no role-specific benchmark exists (usage-openai-and-cross-benchmarks.md:83-105).'}
+- {role: doc-writer, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: doc-writer, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: doc-writer, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: doc-writer, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: doc-writer, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: doc-writer, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: doc-writer, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: doc-writer, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: doc-writer, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: doc-writer, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: explore, model: anthropic/claude-opus-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:89,103', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: explore, model: anthropic/claude-sonnet-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 6.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:90', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: explore, model: anthropic/claude-haiku-5.5, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 3.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:96', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: explore, model: anthropic/claude-fable-5.1, route: [anthropic-direct, openrouter, vertex-global], effort: default, score: 5.8, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:92', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.', conditions: 'Opt-in candidate: Max or Premium seat, or API billing (usage-anthropic.md:67-73).'}
+- {role: explore, model: google/gemini-3.8-flash, route: [google-ai-studio, openrouter], effort: default, score: 2.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:98', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: explore, model: deepseek/deepseek-v4-pro, route: [litellm, openrouter], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/reasoning.md:53', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.', notes: Vals snapshot 0813; the evidence may not match the kit's id.}
+- {role: explore, model: openai/gpt-6-astra, route: [litellm, openclaw-codex-engine], effort: default, score: 6.0, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:91', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: explore, model: openai/gpt-6.1-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 5.5, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:93,104', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: explore, model: openai/gpt-6-sol, route: [litellm, openclaw-codex-engine], effort: default, score: 4.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:94', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
+- {role: explore, model: openai/gpt-6-luna, route: [litellm, openclaw-codex-engine], effort: default, score: 1.4, label: INFERRED, as_of: '2026-10-12', source_ref: '.agent-output/research-models/usage-openai-and-cross-benchmarks.md:99', basis: 'Vendor guidance places a cheap tier here (usage-anthropic.md:79-81; reading-docs-personas.md:85) but no measurement exists; the score is the role-agnostic Terminal-Bench 4.0 proxy / 10, so the guidance is not scored.'}
