@@ -97,6 +97,10 @@ ai-resources openclaw busy            # 0 idle, 1 busy, 2 unknown
 ai-resources openclaw apply-pending   # dry run, then watchdog.off, stop, drain, patch, start, health
 ```
 
+A key stays pending after an OpenClaw upgrade only when the installed rules could not be read (`status` names
+the reason) or when the kit keeps a key restart-required that the installed OpenClaw now calls hot (`status`
+lists those prefixes under "kit keeps restart-required").
+
 It refuses while runs are in flight and asks before it stops the gateway (see `--help` for the
 non-interactive form). A hand-run `openclaw config set gateway.*` is outside this protection: OpenClaw
 forces that restart after 300 s whatever is running (T40).
@@ -240,13 +244,14 @@ directories) idempotently; each change asks first on a terminal (default No),
 `ai-resources openclaw bootstrap --yes` makes them without asking, and an unattended run without it changes
 nothing. It installs the **latest** openclaw, not a pin, and records
 `OPENCLAW_INSTALLED_VERSION` and `OPENCLAW_PREVIOUS_VERSION` in `~/.openclaw/kit-host.env`; the manual
-recipe below pins `2026.9.4`, the reference state.
+recipe below installs the latest too, so record the version it gives you. The kit follows whatever is
+installed: it reads the reload rules from the package, never from a pinned version.
 
 ```bash
 PATH=/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin \
   npm install -g --allow-scripts=openclaw,@google/genai,koffi,tree-sitter-bash,protobufjs \
-  openclaw@2026.9.4
-/home/linuxbrew/.linuxbrew/bin/openclaw --version
+  openclaw@latest
+/home/linuxbrew/.linuxbrew/bin/openclaw --version    # note the version; `ai-resources openclaw status` shows it
 ```
 
 **`--allow-scripts` is not optional.** npm 11 blocks install scripts for global installs by
@@ -1412,7 +1417,7 @@ Runtime and service:
 
 - [ ] `/home/linuxbrew/.linuxbrew/bin/node -v` → `v26.x` (≥26.1)
 - [ ] `command -v openclaw` → `/home/linuxbrew/.linuxbrew/bin/openclaw` (exactly one copy)
-- [ ] `openclaw --version` → `OpenClaw 2026.9.4`
+- [ ] `openclaw --version` → the version you installed; `ai-resources openclaw status` shows it and "reload rules read from the installed package"
 - [ ] `grep ^ExecStart ~/.config/systemd/user/openclaw-gateway.service` → brew's node and dist
 - [ ] `ls ~/.config/systemd/user/openclaw-gateway.service.d 2>/dev/null` → does not exist (no drop-ins)
 - [ ] `systemctl --user is-enabled openclaw-gateway.service` → `enabled`

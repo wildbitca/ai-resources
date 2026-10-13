@@ -25,11 +25,11 @@ sessions, T39, which made the forced restart slow). The root cause, in order:
 
 ## Decision
 
-1. **A pinned restart-required table that fails closed.** `scripts/ai_resources/openclaw_reload_rules.py`
-   mirrors OpenClaw's reload rules for one version (`PINNED_OPENCLAW_VERSION`). A different or unreadable
-   version, `gateway.reload.mode: off` and a path no rule matches are all classified restart-required. A
-   fixture copy keeps GitHub CI offline; a drift test compares the pin with the installed dist where there
-   is one. (Q1)
+1. **A restart-required table that fails closed.** `scripts/ai_resources/openclaw_reload_rules.py`
+   classifies keys from OpenClaw's reload rules. *Amended (unreleased, see "Amendment: the rules follow the
+   installed OpenClaw" below): the rules are read from the installed package, never pinned to a version.*
+   Unreadable rules, `gateway.reload.mode: off` and a path no rule matches are all classified
+   restart-required. A checked-in dist excerpt keeps GitHub CI offline. (Q1)
 2. **The gate lives at the single writer.** `apply_patch` raises `RestartRequired` before any CLI call when
    a non-dry patch carries a restart-required key and the caller did not pass `allow_restart`. Only
    `apply_drained` passes it.
@@ -72,7 +72,7 @@ sessions, T39, which made the forced restart slow). The root cause, in order:
 | Option | Why not |
 |---|---|
 | Ask the CLI which keys restart | `config patch --dry-run --json` has no such field |
-| Parse the installed dist at runtime | the dist files have hashed names and change shape between releases; a parse failure would fail open |
+| Parse the installed dist at runtime | *Rejected originally, adopted by the amendment below:* the objection was that a parse failure would fail open. The parse is now strict and a failure is fail closed, so the objection no longer holds |
 | Apply hot keys unattended and pend only the restart ones | an unattended run changing a live gateway's behaviour at all is what ADR-0001 rejects; unattended applies nothing |
 | Wait up to N minutes for a drain, then apply | a bounded wait is still a forced restart in disguise (for setup; the memory valve of [ADR-0004](0004-bounded-graceful-restart-under-memory-pressure.md) is a different, gated mechanism) |
 | Patch the host copy of the health timer in place | the kit could not test, version or restore it |
@@ -85,8 +85,9 @@ sessions, T39, which made the forced restart slow). The root cause, in order:
 - A bad config write is detected and reverted by a watch the operator can follow and cancel.
 
 ### Negative
-- Each OpenClaw upgrade makes every key restart-required until the pin is refreshed (safe but noisy:
-  unattended hosts accumulate pending keys, shown in `status`). The drift test names the files to refresh.
+- *(Superseded by the amendment below.)* The original pin made every key restart-required on each OpenClaw
+  upgrade until the pin was refreshed. Now only a format change the parser does not understand does, and
+  `status` and `verify` say so.
 - Behaviour change (called out in the release notes): hosts customised under 2.0.0 are no longer made
   canonical. This host keeps the `bind: tailnet` 2.0.0 wrote, because it now looks like an operator value
   (decision 8 offers the way back).
@@ -119,12 +120,39 @@ The 2026-10-10 run showed the watch reverting a healthy gateway because its own 
   corroboration the watch ends INCONCLUSIVE; the health timer (T41) remains the backstop for a wedged gateway.
 - **Recorded kind.** Setup records `kind` (hot|restart|none) and `openclaw_version` per change. The watch
   routes by the recorded kind when the live version is unreadable or equal; a different readable version goes
-  through the pinned table (fail closed); a record from before 2.1.1 stays fail-closed restart.
+  through the live reload rules (the amendment below; fail closed when they cannot be read); a record from
+  before 2.1.1 is classified the same way.
 - **Confirmed keys.** A key whose `config hot reload applied` line was followed by an answered probe is
   reported as `kept_confirmed` and never reverted or queued.
 - **Exit 7.** A rejected dry run of the drained window (`EXIT_APPLY_REJECTED`) never queues a restore entry.
 - **Outcomes** recorded in `config_watch.result.outcome`: healthy, reverted, inconclusive, revert-failed,
   baseline-unhealthy. Only revert-failed is an ERROR in `verify`.
+
+## Amendment (unreleased): the rules follow the installed OpenClaw
+
+Decision 1 pinned the table to one OpenClaw version and treated every other version as all-restart. The
+2026.10.3 dist table was identical to the pinned 2026.10.2 one, so the pin cost a forced "everything is
+restart-required" mode on every release and bought nothing. The kit no longer pins or compares a version.
+
+- **Source.** The rules are read from the installed package: `dist/config-reload-plan-*.mjs` next to the
+  `openclaw` the PATH resolves, a file read (no `node`, no subprocess, no gateway). The version is shown in
+  `status` as information and is compared with nothing.
+- **Strict parse.** The reader returns "unavailable" unless the three policy tables are each found once,
+  every policy object has the exact `{ prefixes: [...], kind: "..." }` shape, every prefix is a string
+  literal or the spread of `AUTH_CREDENTIAL_PATHS`, every kind is restart, hot or none, and the table is
+  plausible (at least 40 rules, `gateway` and `discovery` are restart). Anything else is a parse failure.
+- **Restart dominance.** `BASELINE_RULES` is the table the kit was written against (`BASELINE_READ_FROM`,
+  documentation only). Its restart entries always win over the installed table: a key the installed OpenClaw
+  now calls hot stays restart-required until a developer moves the baseline, and `status` lists those
+  prefixes. A key that became restart-required in the installed OpenClaw is restart at once.
+- **Fail closed.** Unreadable or unparseable rules make every key restart-required: setup completes, the keys
+  are recorded as pending exactly as before, `status` names the reason and `verify` warns (never errors).
+- **Unchanged.** The write gate in `apply_patch`, the drained window, the busy probe ("cannot tell" is busy),
+  the watch's outcome model and recorded-kind routing (the watch re-classifies with the live rules when the
+  version differs, fail closed when they cannot be read), the health timer and the ADR-0004 memory valve.
+- **Not modelled, always conservative.** `canHotReloadGatewayAuthCredentials`, the `gateway.roles` noop and
+  channel plugins' runtime prefixes make OpenClaw less restart-happy than the static table; the kit may defer
+  a key that would have applied live.
 
 ## Related
 

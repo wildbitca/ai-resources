@@ -58,6 +58,16 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Changed
 
+- **Reload rules follow the installed OpenClaw (no version pin).** The restart-required classifier reads the
+  rule table from the installed package (`dist/config-reload-plan-*.mjs`, a file read) with a strict parse
+  instead of trusting a copy pinned to one OpenClaw version, so an OpenClaw upgrade no longer makes every key
+  restart-required. The kit's own restart entries always win over the installed table, unreadable or
+  unparseable rules make every key restart-required (setup completes, `status` names the reason, `verify`
+  warns), and no code path compares the installed version with a constant. `status` gains an `openclaw` row
+  (version as information, rules source, prefixes where the kit is stricter). The watch re-classifies with the
+  live rules when the recorded version differs. The write gate, the drained window, the busy probe and the
+  memory valve are untouched. `PINNED_OPENCLAW_VERSION` is gone (`BASELINE_RULES` and `BASELINE_READ_FROM`
+  replace `RULES` and the pin); ADR-0003 is amended and the manual install recipe uses `openclaw@latest`.
 - **Kit pins move to the Claude 5.5 family.** `model_pins.DEFAULTS` (and the anthropic adapter's copy) now name
   `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-5-5`; fable stays `claude-fable-5-1`. The three ids were
   confirmed by the live claude-cli catalogue (read only, 2026-10-13); the catalogue carries no price for them. The

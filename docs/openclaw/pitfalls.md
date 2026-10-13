@@ -1357,8 +1357,9 @@ only ends with "Restart the gateway to apply.". The kit's own code never ran a r
 restarts the gateway" was true of the code and false in practice. The profile also overwrote a value the
 operator had set, which is what made the key change at all.
 
-**Fix (2.0.2, ADR-0003).** The kit pins OpenClaw's reload table for one version and treats everything else as
-restart-required (`openclaw_reload_rules.py`); `apply_patch` refuses such a key unless the caller is the drained
+**Fix (2.0.2, ADR-0003).** The kit reads OpenClaw's reload table from the installed package (strict parse, no
+version pin; the kit's own restart-required keys always win, and unreadable rules make every key
+restart-required: `openclaw_reload_rules.py`); `apply_patch` refuses such a key unless the caller is the drained
 window; setup applies it only after an explicit confirm, while no run is in flight, inside
 `watchdog.off`, stop, drain, patch, start, health; unattended runs and busy gateways record it as pending
 (`ai-resources openclaw status`, `apply-pending`); the host profile no longer overwrites a value the operator
