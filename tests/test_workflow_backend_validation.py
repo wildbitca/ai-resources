@@ -74,6 +74,12 @@ def test_unknown_backend_fails(vk):
     assert "gemini" in failures[0]
 
 
+def test_non_scalar_backend_fails_without_crashing(vk):
+    failures, _ = _run(vk, _step("planner", "backend: [a, b]\n"))
+    assert len(failures) == 1
+    assert "t.workflow.yaml:s1" in failures[0]
+
+
 def test_openclaw_without_agent_id_fails(vk):
     failures, _ = _run(vk, _step("planner", "backend: openclaw-agent\n"))
     assert len(failures) == 1

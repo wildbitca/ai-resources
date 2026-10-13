@@ -112,8 +112,8 @@ def check_step_backend(step: dict, where: str) -> None:
     """`backend` and `agentId` are optional; agent existence is a dispatch-time check, not this one."""
     backend = step.get("backend", DEFAULT_BACKEND)
     has_agent = "agentId" in step
-    if backend not in BACKENDS:
-        fail("workflows", f"{where}: unknown backend '{backend}' (allowed: {', '.join(sorted(BACKENDS))})")
+    if not isinstance(backend, str) or backend not in BACKENDS:
+        fail("workflows", f"{where}: unknown backend {backend!r} (allowed: {', '.join(sorted(BACKENDS))})")
         return
     if backend != "openclaw-agent":
         if has_agent:

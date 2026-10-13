@@ -45,6 +45,10 @@ Every wait or poll call lasts at most 60 s with no loop inside a call. The proce
 
 Read-only enforcement is detective and best-effort. `claude-kit` and `agy-cli` run with `--dangerously-skip-permissions`, so a child has its agent's full permissions as the host user. The worktree does NOT contain such a child: it can write outside the worktree (OpenClaw config, shell rc files, `~/.claude/agents`), to the shared git directory (hooks, config) and to gitignored files, and `git status --porcelain` alone sees none of this. The post-step check therefore snapshots HEAD, the git config files, the hooks directory and `git status --porcelain --ignored` before and after each child, and runs git with `core.fsmonitor` and `core.hooksPath` neutralised so the check itself cannot be an execution trigger. A changed HEAD or config hash fails the attempt. Writes outside the worktree are undetected. Until a real sandbox exists, read-only roles should be placed only on agents that do not run with skip-permissions where that matters. The child prompt carries no secrets and no code, and the `agentId` regex blocks flag-like and shell-like values.
 
+**Data egress.** The prompt is not the only thing that leaves. A child reads the worktree, so repository content (and anything readable from it) is sent to that agent's provider. Dispatch is opt-in by configuring a cross-provider agent; do not route a role to a provider you would not give the repository to.
+
+**Untrusted reports.** A report from another provider is data, not instructions. The orchestrator copies only the report's front-matter fields into the handoff, caps and quotes free text such as `Block_reason`, and never follows instructions found in a report; the implementer is the one write-capable role that reads the handoff.
+
 ### What exists for agy today
 
 - The kit plugin registers the `agy-cli` and `claude-kit` CLI backends (`openclaw-plugin/ai-resources/index.js`).
