@@ -187,3 +187,30 @@ def test_real_workflows_still_validate():
     spec.loader.exec_module(mod)
     mod.check_workflows(mod.check_skills(), mod.check_roles())
     assert mod.failures == []
+
+
+def test_example_cross_provider_workflow_has_three_openclaw_steps_and_a_mixed_group():
+    import yaml
+
+    path = REPO / "workflows" / "feature-cross-provider.workflow.yaml"
+    assert path.is_file(), "the worked example must exist"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    remote = [s for s in doc["steps"] if s.get("backend") == "openclaw-agent"]
+    assert [s["id"] for s in remote] == ["research", "plan", "review"]
+    assert {s["agentId"] for s in remote} == {"agy-flash", "agy-pro"}
+    group = {s["id"] for s in doc["steps"] if (s.get("execution_hints") or {}).get("parallel_group") == "post-test"}
+    assert group == {"review", "security"}
+    assert not any("model" in s for s in doc["steps"]), "there is no model field"
+
+    from ai_resources import generate
+
+    table = generate._workflow_skill_md(path.name, doc)
+    assert table.count("openclaw-agent (`agy-") == 3
+    assert "| `review` | `code-reviewer` | openclaw-agent (`agy-flash`) | post-test |" in table
+    assert "| `security` | `security-auditor` | claude-code | post-test |" in table
+
+
+def test_generated_example_skill_is_in_sync():
+    skill = REPO / "skills" / "workflow-feature-cross-provider"
+    assert (skill / "SKILL.md").is_file()
+    assert (skill / ".generated-workflow-skill").is_file()

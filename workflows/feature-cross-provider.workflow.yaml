@@ -1,0 +1,178 @@
+# Worked example: a feature workflow whose planning, research and review steps run on other
+# OpenClaw agents (and so on other providers), while design, implementation, tests, security,
+# verification and documentation stay on Claude Code.
+#
+# Read before using:
+#   - The models belong to the agents, not to this file. There is no `model` field: `agy-flash`
+#     and `agy-pro` are expected to be configured on gemini-flash / gemini-pro (agy labels), and
+#     the Claude Code steps take their model from the role's `by_role` executor.
+#   - `agy-flash` and `agy-pro` are PLACEHOLDER agent ids. Replace them with ids that exist on
+#     your host and are on `subagents.allowAgents` of the orchestrating agent.
+#   - An agy-backed OpenClaw agent is an external prerequisite that this kit does not provide;
+#     any OpenClaw agent works for the mechanism (docs/decisions/0005-cross-provider-role-dispatch.md).
+#   - An `openclaw-agent` step can be dispatched only by an OpenClaw-run orchestrator that has the
+#     `sessions_spawn` tool. Anywhere else the step is Blocked (there is no fallback).
+#   - Illustrative only: rules/017-multimodel-routing.mdc recommends a strong model for review.
+#
+# Flow: research (explore) → plan → architect → implement → test → (review ‖ security) → verify → document
+# handoff_file: .agent-output/handoff-<branch>.md. DELETE when DONE.
+# Domain commands: $AGENT_KIT/workflows/_domain-commands.yaml ({{domain}} section)
+name: feature-cross-provider
+description: Feature workflow with a mixed team. research and plan run on other OpenClaw agents, review runs on another agent in parallel with the Claude Code security audit.
+domain: "{{domain}}"
+trigger: User asks to implement a feature and wants part of the team to run on a different OpenClaw agent or provider (explicit request only; the plain feature workflow is the default).
+prerequisites: [ ]
+steps:
+  - id: research
+    subagent_type: explore
+    backend: openclaw-agent
+    agentId: agy-pro
+    skills:
+      - common-best-practices
+      - common-context-optimization
+    entry_criteria: User goal defined
+    exit_criteria: Research report written under .agent-output/explore/
+    handoff_to: plan
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}.
+      Read-only research: map the code, specs (specs/features/, specs/architecture/) and tests this goal touches.
+      Follow the research_guidance from $AGENT_KIT/workflows/_domain-commands.yaml for {{domain}}.
+      Write the findings (summary, file:line refs, existing patterns, open questions) to .agent-output/explore/research.md.
+      Update {{handoff_file}} (Research_ref, Spec_refs, Next=planner).
+      If blocked, set Blocked: true, Return_to_step: research, Block_reason: [reason].
+  - id: plan
+    subagent_type: planner
+    backend: openclaw-agent
+    agentId: agy-flash
+    skills:
+      - common-product-requirements
+      - common-system-design
+    entry_criteria: Research complete
+    exit_criteria: Plan with acceptance criteria written
+    handoff_to: architect
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}.
+      Read Research_ref and Spec_refs from {{handoff_file}}.
+      Write the plan to .agent-output/planner/plan.md: description, files, steps, checklist, security notes,
+      Requires_tests, Security_critical_feature. Write acceptance criteria as Given/When/Then, each with the
+      exact command that proves it.
+      Update {{handoff_file}} (Plan_ref, Requires_tests, Security_critical_feature, Next=software-architect).
+      If blocked, set Blocked: true, Return_to_step: plan, Block_reason: [reason].
+  - id: architect
+    subagent_type: software-architect
+    skills:
+      - common-architecture-diagramming
+      - common-system-design
+    entry_criteria: Plan exists
+    exit_criteria: Architecture designed and plan validated
+    handoff_to: implement
+    on_concern_return_to: plan
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and Plan_ref. Produce the design (layers, patterns, key interfaces, module structure)
+      in .agent-output/architect/design.md, then validate the plan against it.
+      Update {{handoff_file}} (Architecture_design_ref, Design_summary).
+      If APPROVED: Architect_approval: yes, Next=implementer.
+      If REJECTED: Blocked: true, Return_to_step: plan, Block_reason: [specific violations].
+  - id: implement
+    subagent_type: implementer
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Plan and architecture approved
+    exit_criteria: Code changes complete, no lint errors
+    handoff_to: test
+    on_concern_return_to: architect
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}} and Plan_ref. Verify Architect_approval: yes before implementing.
+      Implement per the plan, test-first: write or update the test for each behaviour you change, watch it fail,
+      then make it pass. Never delete, skip or weaken an existing assertion to get a green run.
+      Run the analyze commands from $AGENT_KIT/workflows/_domain-commands.yaml for {{domain}}.
+      Update {{handoff_file}} (Changes made, Next=tester).
+      If blocked, set Blocked: true, Return_to_step: architect, Block_reason: [reason].
+  - id: test
+    subagent_type: tester
+    skills:
+      - common-tdd
+    entry_criteria: Implementation complete
+    exit_criteria: Full suite and analyzers pass; plan scenarios covered
+    handoff_to: review
+    on_concern_return_to: implement
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. You are the gate, not the author. Run the full test and analyze commands from
+      $AGENT_KIT/workflows/_domain-commands.yaml ({{domain}} section), separate failures caused by this change
+      from pre-existing ones, and write the report to .agent-output/tester/.
+      MANDATORY: all commands must exit 0. If one fails because of this change, set Blocked: true,
+      Return_to_step: implement, Block_reason: [failures with details].
+      Update {{handoff_file}} (Test_report, Next=post-test group: code-reviewer + security-auditor).
+  - id: review
+    subagent_type: code-reviewer
+    backend: openclaw-agent
+    agentId: agy-flash
+    skills:
+      - common-code-review
+      - common-security-standards
+    entry_criteria: Tests pass (or Requires_tests is no)
+    exit_criteria: Code review approved or changes requested
+    handoff_to: verify
+    on_concern_return_to: implement
+    execution_hints:
+      parallel_group: post-test
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}, the diff (git diff) and Spec_refs. Check the implementation against
+      Requirements_preserved and audit the test diff: assertions deleted or weakened, tests skipped, tests that
+      cannot fail. Report only defects you can point at in the diff; an empty list is a valid result.
+      This step runs concurrently with security: do NOT edit {{handoff_file}}, and change nothing outside
+      .agent-output/code-reviewer/.
+      Write the report in .agent-output/code-reviewer/ ending with these fields:
+        Code_review_verdict: APPROVED | REQUIRES_CHANGES
+        Block_reason: [corrections] (only if REQUIRES_CHANGES)
+  - id: security
+    subagent_type: security-auditor
+    skills:
+      - common-security-audit
+      - common-security-standards
+    entry_criteria: Tests pass (or Requires_tests is no)
+    exit_criteria: No critical/high findings
+    handoff_to: verify
+    on_concern_return_to: implement
+    execution_hints:
+      parallel_group: post-test
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. This step runs concurrently with review: do NOT edit {{handoff_file}}.
+      If Security_critical_feature: no, return Security_audit: N/A without a scan.
+      Otherwise run the methodology from $AGENT_KIT/workflows/security-devsecops.workflow.yaml adapted to {{domain}}.
+      Write the report in .agent-output/security-auditor/ ending with these fields:
+        Security_audit: PASS | CONDITIONAL | FAIL | N/A
+        Block_reason: [critical vulnerabilities] (only if FAIL)
+  - id: verify
+    subagent_type: verifier
+    skills:
+      - common-protocol-enforcement
+    entry_criteria: All prior steps complete
+    exit_criteria: Every acceptance criterion met with evidence, or reported as a gap
+    handoff_to: document
+    on_concern_return_to: implement
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. Validate the acceptance criteria from Plan_ref and nothing else. Produce your own
+      evidence (commands and diff) and report each criterion as met or not. Confirm the recorded verdicts:
+      Architect_approval, Code_review_verdict, Security_audit.
+      Update {{handoff_file}} (Verification: PASS | GAPS, gap list, Next=doc-writer).
+  - id: document
+    subagent_type: doc-writer
+    skills:
+      - knowledge-audit
+    entry_criteria: Verification passed
+    exit_criteria: Docs and specs updated; SDD closure done
+    handoff_to: null
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. Update the docs and specs the change touched and run SDD closure with the
+      knowledge-audit skill. Update {{handoff_file}} (Docs_updated, Next=none).

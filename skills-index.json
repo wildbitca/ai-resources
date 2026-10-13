@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "generated_at": "2026-09-29T15:47:03.745696+00:00",
+  "generated_at": "2026-10-13T01:55:12.564193+00:00",
   "skills_root": "skills",
-  "count": 139,
+  "count": 140,
   "skills": [
     {
       "id": "changelog-best-practices",
@@ -1303,6 +1303,14 @@
       "path": "skills/workflow-explore-and-plan/SKILL.md",
       "name": "workflow-explore-and-plan",
       "description": "User wants to understand the codebase or get a plan before implementing. Runs the kit workflow 'explore-and-plan': Discovery and planning only (no implementation). Works for any domain.",
+      "triggers": [],
+      "globs": []
+    },
+    {
+      "id": "workflow-feature-cross-provider",
+      "path": "skills/workflow-feature-cross-provider/SKILL.md",
+      "name": "workflow-feature-cross-provider",
+      "description": "User asks to implement a feature and wants part of the team to run on a different OpenClaw agent or provider (explicit request only; the plain feature workflow is the default). Runs the kit workflow 'feature-cross-provider': Feature workflow with a mixed team. research and plan run on other OpenClaw agents, review runs on another agent in parallel with the Claude Code security audit.",
       "triggers": [],
       "globs": []
     },

@@ -23,6 +23,10 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   sentinel, the four-point post-step check that replaces the Claude Code hooks, at most 3 attempts with the
   `<step-id>.attempt-<n>.md` rename, the evidence to record and an illustrative mixed team. The `sessions_spawn`
   contract itself is not verified on a live host yet.
+- **Example mixed-provider workflow.** `workflows/feature-cross-provider.workflow.yaml` (and its generated
+  `workflow-feature-cross-provider` skill) runs research, plan and review on other OpenClaw agents (placeholder ids
+  `agy-flash` and `agy-pro`) and keeps design, implementation, tests, security, verification and documentation on
+  Claude Code.
 
 ### Fixed
 
