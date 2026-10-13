@@ -39,7 +39,7 @@ Tolerance classes: critical 0.3 (planner, implementer, software-architect, secur
 explore). A pick is inside `score >= S* - tolerance`, where `S*` is the best verified score.
 
 Be clear about what the seed data is: the only cross-provider measured table is Vals Terminal-Bench 4.0
-(2026-10-12), a role-agnostic proxy. Code roles use `accuracy / 10` and are labelled INFERRED. No independent
+(2026-10-13), a role-agnostic proxy. Code roles use `accuracy / 10` and are labelled INFERRED. No independent
 benchmark exists for planning, review, verification or security, so those rows are INFERRED placeholders from the
 same proxy and say so. The operator's earlier example numbers are never seed data.
 

@@ -80,6 +80,20 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Changed
 
+- **Scores DB corrections from the 2026-10-13 web re-check** (`scores/model-scores.yaml`, data only, no engine change).
+  The Vals Terminal-Bench 4.0 board header reads "Updated 10/13/2026", so every proxy and the rows derived from it
+  carry `as_of` 2026-10-13. Haiku 5.5 is 36.36 at $3.12 per task (score 3.6, was 35.35 and 3.5). Sonnet 5.5 and
+  Fable 5.1 now use the provider-fallback-adjusted value (62.63 and 50.00, scores 6.3 and 5.0, raw values kept in
+  `raw_value`), the same basis as Opus 5.5; the unsupported 53.0 variant is dropped from the Sonnet note. DeepSeek V4
+  Pro is 14.14 and its per-row date is stated as not recorded (the as_of is the board date; reading the 0813 suffix
+  as a date stays an inference). Prices: Gemini 3.8 Flash cache read 0.075 (0.15 from 2027-01-01) and Gemini 3.1 Pro
+  Preview 0.20 (0.40 above 200k). The GPT-6 long-context tier records `cache_multiplier: 2.0` and
+  `out_multiplier: 1.5`; the engine still prices only the input part of that tier (output stays unknown, flagged
+  approximate), so these two keys are recorded data, not behaviour. `gemini-3.7-flash` is labelled VENDOR (Google
+  routes it to 3.8 Flash server-side). Pool facts: Max has a separate weekly Fable limit, Codex Pro has a weekly
+  limit only, and the Antigravity shared Claude and GPT pool claim is marked UNVERIFIABLE. The golden fixture
+  `tests/fixtures/scoring_explain_golden.json` is fixture data and did not change; no engine code moved.
+
 - **Reload rules follow the installed OpenClaw (no version pin).** The restart-required classifier reads the
   rule table from the installed package (`dist/config-reload-plan-*.mjs`, a file read) with a strict parse
   instead of trusting a copy pinned to one OpenClaw version, so an OpenClaw upgrade no longer makes every key

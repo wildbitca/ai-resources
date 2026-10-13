@@ -199,7 +199,7 @@ def test_tb4_proxies_are_measured_3p_role_agnostic_and_cited():
     for model, entry in SHIPPED["models"].items():
         b = _proxy(model)
         assert b["role_agnostic"] is True
-        assert b["as_of"] == "2026-10-12" or model == "deepseek/deepseek-v4-pro"
+        assert b["as_of"] == "2026-10-13"   # the Vals board header read 10/13/2026 on the 2026-10-13 re-check
         if b["label"] == "MEASURED-3P":
             assert b["value"] is not None
             assert ("usage-openai-and-cross-benchmarks.md" in b["source_ref"]) or ("reasoning.md" in b["source_ref"])
