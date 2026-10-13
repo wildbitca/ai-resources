@@ -129,6 +129,19 @@ def test_a_key_that_became_hot_stays_restart_and_is_listed_as_stricter():
     assert RS.stricter == ()
 
 
+@pytest.mark.parametrize("new_kind", ["hot", "none"])
+@pytest.mark.parametrize("prefix", ["gateway.bind", "gateway.port"])
+def test_a_new_installed_prefix_nested_under_a_baseline_restart_catch_all_stays_restart(prefix, new_kind):
+    src = DIST_TEXT.replace("const DEFAULT_RELOAD_POLICIES = [\n",
+                            'const DEFAULT_RELOAD_POLICIES = [\n\t{\n\t\tprefixes: ["%s"],\n'
+                            '\t\tkind: "%s"\n\t},\n' % (prefix, new_kind), 1)
+    rs = fixture_ruleset(src)
+    assert rs.source == "installed"
+    assert kind(prefix, ruleset=rs) == "restart"
+    assert kind(prefix + ".x", ruleset=rs) == "restart"
+    assert prefix in rs.stricter
+
+
 def test_a_new_hot_key_is_hot_and_an_unknown_key_is_restart():
     src = DIST_TEXT.replace("const DEFAULT_RELOAD_POLICIES = [\n",
                             'const DEFAULT_RELOAD_POLICIES = [\n\t{\n\t\tprefixes: ["newFeature.knob"],\n'

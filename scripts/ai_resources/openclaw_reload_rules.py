@@ -276,16 +276,24 @@ def _merge_baseline(installed: "tuple[tuple[str, str], ...]") -> "tuple[tuple[tu
     """(effective rules, prefixes where the kit is stricter): the baseline's `restart` entries win."""
     restart_prefixes = [p for p, k in BASELINE_RULES if k == RESTART]
     rset = set(restart_prefixes)
-    out = [(p, RESTART if p in rset else k) for p, k in installed]
-    present = {p for p, _k in installed}
+    out: list[tuple[str, str]] = []
     stricter: list[str] = []
+    for p, k in installed:
+        # A hot/none installed entry the baseline resolves to restart (the exact prefix, or a new more
+        # specific one nested under a baseline restart catch-all) stays restart: the kit wins.
+        if k in (HOT, NONE) and (p in rset or _kind_of(p, BASELINE_RULES) == RESTART):
+            out.append((p, RESTART))
+            stricter.append(p)
+        else:
+            out.append((p, RESTART if p in rset else k))
+    present = {p for p, _k in installed}
     for p in dict.fromkeys(restart_prefixes):
         ik = _kind_of(p, installed)
-        if ik in (HOT, NONE):
+        if ik in (HOT, NONE) and p not in stricter:
             stricter.append(p)
         if p not in present and ik != RESTART:
             out.append((p, RESTART))
-    return tuple(out), tuple(stricter)
+    return tuple(out), tuple(dict.fromkeys(stricter))
 
 
 def ruleset_from_source(src: str, *, version: str | None, dist: str | None = None) -> RuleSet:

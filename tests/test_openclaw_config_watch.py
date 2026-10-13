@@ -804,6 +804,7 @@ def _recorded(path, kind=None, version=FIXTURE_VERSION):
 
 def test_recorded_hot_keys_stay_on_the_hot_path_when_the_version_cannot_be_read(wrig, monkeypatch):
     monkeypatch.setattr(host.openclaw_reload_rules, "installed_openclaw_version", lambda runner, **kw: None)
+    make_rules_unavailable(monkeypatch, version=None)   # live table says restart: only the recorded kind keeps them hot
     r = wrig([_recorded(["agents", "defaults", "timeoutSeconds"], "hot"),
               _recorded(["mcp", "sessionIdleTtlMs"], "hot")], pid=lambda t: "100" if t < 10 else "9")
     assert r.run() == 0
