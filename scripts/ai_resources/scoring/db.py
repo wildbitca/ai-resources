@@ -576,7 +576,7 @@ def check(db: ScoresDB, as_of: str, shipped: Mapping[str, Any] | None = None,
     for mid, m in sorted(db.models.items()):
         for p in m.get("prices") or ():
             until = parse_date(p.get("valid_until"))
-            if until is not None and today is not None and 0 <= (until - today).days <= horizon_days:
+            if until is not None and today is not None and 0 <= (until - today).days < horizon_days:
                 out.append(Finding("price-window-closing", mid,
                                    f"{p.get('in')}/{p.get('out')} ends {until.isoformat()}"
                                    f" ({(until - today).days} days)"))

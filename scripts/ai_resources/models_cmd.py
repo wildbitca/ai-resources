@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from . import model_fanout, model_pins, model_providers, models, models_interaction
 from .setup import ui
 
-VERBS = ("status", "check", "update", "approve", "revoke", "pin", "unpin", "exclude", "rollback")
+VERBS = ("status", "check", "update", "approve", "revoke", "pin", "unpin", "exclude", "rollback", "scores")
+SCORES_ACTIONS = ("show", "check", "diff", "refresh")
 
 
 def get_deps() -> models.Deps:
@@ -347,6 +348,173 @@ def cmd_rollback(args: argparse.Namespace) -> int:
     return r.rc
 
 
+# --- scores (ADR-0006): the model scores database -----------------------------------------------------------
+def _today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _print_findings(findings, args, empty: str) -> None:
+    if getattr(args, "json", False):
+        print(json.dumps([{"kind": f.kind, "subject": f.subject, "detail": f.detail} for f in findings], indent=2))
+        return
+    if not findings:
+        print(empty)
+    for f in findings:
+        print(f"  {f.kind:28} {f.subject}: {f.detail}")
+
+
+def _scores_show(db, as_of: str, shipped: dict, args) -> int:
+    print(f"Model scores: dataset_version {db.dataset_version}, schema {db.data.get('schema_version')} "
+          f"(as of {as_of})")
+    over = [r for r in db.rows if r.override]
+    print(f"Rows: {len(db.rows)} ({len(over)} from your overrides)")
+    for mid in sorted(db.models):
+        m = db.models[mid]
+        price = db.price_at(mid, as_of, 0)
+        ptxt = "no price" if price is None else f"{price.in_price}/{price.out_price}" + (" [verify]" if price.verify else "")
+        rows = [r for r in db.rows if r.model == mid and r.score is not None]
+        routes = ", ".join(f"{r}{'' if db.routable(mid, r) else ' (not routable)'}" for r in sorted(m.get("route_ids") or {}))
+        best = f"{min(r.score for r in rows):g}-{max(r.score for r in rows):g}" if rows else "no scores"
+        print(f"  {mid:36} {m.get('status', '?'):8} price {ptxt:16} scores {best:10} routes: {routes or '-'}")
+    for problem in db.problems:
+        print(f"  override problem: {problem}")
+    return 0
+
+
+def _scores_check(db, as_of: str, shipped: dict, args) -> int:
+    from .scoring import db as scores_db
+    findings = [scores_db.Finding("invalid", "shipped", e) for e in scores_db.validate(shipped)]
+    findings += [scores_db.Finding("override-problem", "overrides", p) for p in db.problems]
+    findings += scores_db.check(db, as_of, shipped=shipped)
+    _print_findings(findings, args, "Scores database is clean.")
+    return 1 if findings else 0
+
+
+def _scores_diff(db, as_of: str, shipped: dict, args) -> int:
+    from .scoring import db as scores_db
+    findings = scores_db.diff(shipped, db.data)
+    _print_findings(findings, args, "No user overrides differ from the shipped database.")
+    return 0
+
+
+def _override_doc(path) -> dict:
+    from .scoring import db as scores_db
+    return scores_db.load_overrides(path) or {}
+
+
+def _write_override(path, doc: dict) -> None:
+    """Atomic (tmp then os.replace), owner-only, like model_pins.save_overlay."""
+    import os
+    import yaml
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(yaml.safe_dump(doc, default_flow_style=False, sort_keys=False))
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def _proposals(shipped: dict, over: dict, from_doc: dict | None) -> list[dict]:
+    """What `refresh` would change: rows from an operator-supplied file, and overrides a newer shipped row beats."""
+    from .scoring import db as scores_db
+    out: list[dict] = []
+    have = {r.key: r for r in scores_db.ScoresDB({"rows": over.get("rows") or []}).rows}
+    ship = {r.key: r for r in scores_db.ScoresDB({"rows": shipped.get("rows") or []}).rows}
+    declined = {tuple(d) for d in over.get("declined") or [] if isinstance(d, list)}
+    for row in (from_doc or {}).get("rows") or []:
+        for key in scores_db._row_key(row):
+            if key in declined:
+                continue
+            cur = have.get(key)
+            if cur is not None and cur.score == row.get("score") and cur.label.value == row.get("label"):
+                continue
+            out.append({"op": "set", "key": key, "row": row,
+                        "text": f"{'/'.join(key)}: score {row.get('score')} ({row.get('label')}), "
+                                f"as_of {row.get('as_of')}; reason: {row.get('reason', '(none)')}"})
+    for key, cur in have.items():
+        old = ship.get(key)
+        if old and scores_db.parse_date(old.as_of) and scores_db.parse_date(cur.as_of) \
+                and scores_db.parse_date(old.as_of) > scores_db.parse_date(cur.as_of):
+            out.append({"op": "drop", "key": key,
+                        "text": f"{'/'.join(key)}: shipped row ({old.as_of}) is newer than your override "
+                                f"({cur.as_of}); drop the override?"})
+    return out
+
+
+def _apply_proposal(doc: dict, prop: dict) -> None:
+    from .scoring import db as scores_db
+    rows = [r for r in doc.get("rows") or [] if prop["key"] not in scores_db._row_key(r)]
+    if prop["op"] == "set":
+        new = dict(prop["row"])
+        new["route"] = prop["key"][2]
+        rows.append(new)
+    doc["rows"] = rows
+
+
+def _scores_refresh(db, as_of: str, shipped: dict, args) -> int:
+    """Proposals through an explicit answer; nothing is auto-approved and nothing is written unasked."""
+    import yaml
+    from .scoring import db as scores_db
+    path = scores_db.default_override_path()
+    from_doc = None
+    src = getattr(args, "from_file", None)
+    if src:
+        try:
+            from_doc = yaml.safe_load(open(src, encoding="utf-8").read()) or {}
+        except (OSError, yaml.YAMLError) as e:
+            print(f"cannot read {src}: {e}", file=sys.stderr)
+            return 2
+    over = _override_doc(path)
+    props = _proposals(shipped, over, from_doc)
+    if not props:
+        print("No score or price proposals; nothing to do.")
+        return 0
+    print(f"{len(props)} proposal(s); nothing is applied without an answer:")
+    for p in props:
+        print(f"  [{p['op']}] {p['text']}")
+    if not _can_prompt(args):
+        print("approval pending: run on a terminal to answer each proposal (nothing was changed)")
+        return 10
+    with models.update_lock() as got:
+        if not got:
+            print("a models run is already in progress; nothing was changed")
+            return models.EXIT_LOCKED
+        doc = _override_doc(path)
+        changed = 0
+        for p in props:
+            answer = ui.select(f"{p['text']}", [ui.Choice("approve", value="approve"),
+                                                ui.Choice("skip", value="skip"),
+                                                ui.Choice("never (do not propose this row again)", value="never")],
+                               default="skip")
+            if answer == "approve":
+                _apply_proposal(doc, p)
+                changed += 1
+            elif answer == "never":
+                doc.setdefault("declined", []).append(list(p["key"]))
+                changed += 1
+        if changed:
+            _write_override(path, doc)
+            print(f"wrote {path} ({changed} change(s)); your other overrides were kept")
+        else:
+            print("nothing was changed")
+    return 0
+
+
+def cmd_scores(args: argparse.Namespace) -> int:
+    from .scoring import db as scores_db
+    action = getattr(args, "scores_action", "show") or "show"
+    as_of = getattr(args, "as_of", "") or _today()
+    try:
+        shipped = scores_db.load_shipped()
+        db = scores_db.ScoresDB(*scores_db.merge(shipped, scores_db.load_overrides(scores_db.default_override_path())))
+    except Exception as e:  # noqa: BLE001
+        print(f"cannot load the scores database: {type(e).__name__}: {e}", file=sys.stderr)
+        return 2
+    return {"show": _scores_show, "check": _scores_check, "diff": _scores_diff,
+            "refresh": _scores_refresh}[action](db, as_of, shipped, args)
+
+
 def add_subparser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("models", help="Find, approve and apply newer models (any enabled provider) for the OpenClaw host and gateways")
     sp = p.add_subparsers(dest="action", required=True, metavar="VERB")
@@ -398,3 +566,10 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     ex.set_defaults(func=cmd_exclude)
 
     sp.add_parser("rollback", help="Undo the last switch (inverse patch, restart, health check)").set_defaults(func=cmd_rollback)
+
+    sc = sp.add_parser("scores", help="Model scores database: show, check (exit 1 when anything is listed), diff, refresh")
+    sc.add_argument("scores_action", nargs="?", default="show", choices=list(SCORES_ACTIONS))
+    sc.add_argument("--as-of", dest="as_of", default="", help="ISO date to evaluate staleness and prices at (default: today)")
+    sc.add_argument("--from", dest="from_file", default="", help="refresh: a file of operator-supplied override rows")
+    sc.add_argument("--json", action="store_true")
+    sc.set_defaults(func=cmd_scores)
