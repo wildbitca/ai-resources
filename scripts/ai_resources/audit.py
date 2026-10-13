@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -63,13 +64,19 @@ PRICES: dict[str, tuple[float, float, float, float, float]] = {
 ALIASES: dict[str, str] = dict(model_pins.effective())
 
 
+_SNAPSHOT_SUFFIX = re.compile(r"^(?:[-@]\d{8})?(?:\[[^\]]*\])?$")
+
+
 def _price(model: str) -> tuple[float, float, float, float, float] | None:
     base = model.split("[", 1)[0]  # "opus[1m]" → "opus"; context suffixes don't change price
     model = ALIASES.get(base, model)
     if model in PRICES:
         return PRICES[model]
-    # Longest prefix wins ("claude-fable-5-1[1m]" → "claude-fable-5-1", not "claude-fable-5").
-    matches = [key for key in PRICES if model.startswith(key)]
+    # Longest prefix wins ("claude-fable-5-1-20260101" → "claude-fable-5-1", not "claude-fable-5"), but only
+    # when the rest is a dated snapshot and/or a context suffix: "claude-opus-5-5" is a newer minor, not a snapshot of
+    # "claude-opus-5", so it stays unpriced until it has its own row (never priced as its major).
+    matches = [key for key in PRICES
+               if model.startswith(key) and _SNAPSHOT_SUFFIX.match(model[len(key):])]
     return PRICES[max(matches, key=len)] if matches else None
 
 
