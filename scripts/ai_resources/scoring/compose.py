@@ -514,22 +514,42 @@ def _refusal(inp: ComposeInput, roles: tuple[str, ...], why: str, rejected=(), p
 
 # --- the entry point ---------------------------------------------------------------------------
 def compose(inp: ComposeInput) -> Composition:
-    """Compose a team. Never raises on an empty or unusable input: it returns a refusal."""
+    """Compose a team. Never raises on an empty or unusable input: it returns a refusal.
+
+    Single-provider mode ranks providers by weighted score, then price, then name. A loss-cap refusal on the
+    best-ranked provider falls through to the next one; the team is refused only when every provider refuses,
+    and the refusal reported is the best-ranked provider's."""
+    skip: frozenset[str] = frozenset()
+    first: Composition | None = None
+    while True:
+        comp, prov = _compose(inp, skip)
+        if not comp.refusal:
+            return comp
+        if prov is None:                    # not a loss-cap refusal, or every provider was refused
+            return first or comp
+        first = first or comp
+        skip = skip | {prov}
+
+
+def _compose(inp: ComposeInput, skip: frozenset[str] = frozenset()) -> tuple[Composition, str | None]:
+    """One composition pass. Returns the result and the provider it settled on (single-provider mode only);
+    `skip` holds providers already refused on the loss cap."""
     db = inp.db
     roles = tuple(sorted(inp.roles or db.roles(), key=lambda r: (-db.importance(r), r)))
     if inp.mode not in MODES:
-        return _refusal(inp, roles, f"unknown mode {inp.mode!r}; use one of {', '.join(MODES)}")
+        return _refusal(inp, roles, f"unknown mode {inp.mode!r}; use one of {', '.join(MODES)}"), None
     if not inp.enabled:
-        return _refusal(inp, roles, "no provider is enabled; enable at least one provider in setup")
+        return _refusal(inp, roles, "no provider is enabled; enable at least one provider in setup"), None
 
     per_role, rejected = _admitted(inp, roles, collapse=inp.mode != "single-provider")
     s_star = {r: _s_star(per_role[r]) for r in roles}
     covered = [r for r in roles if per_role[r]]
     if not covered:
-        return _refusal(inp, roles, "no candidate passes the gates for any role", rejected)
+        return _refusal(inp, roles, "no candidate passes the gates for any role", rejected), None
 
+    settled: str | None = None
     if inp.mode == "single-provider":
-        groups = sorted({c.provider for r in covered for c in per_role[r]})
+        groups = sorted({c.provider for r in covered for c in per_role[r]} - skip)
         best = None
         for prov in groups:
             sub_raw = {r: [c for c in per_role[r] if c.provider == prov] for r in roles}
@@ -545,8 +565,8 @@ def compose(inp: ComposeInput) -> Composition:
             if best is None or key < best[0]:
                 best = (key, prov, chosen, flags, sub, sub_s, sub_dropped)
         if best is None:
-            return _refusal(inp, roles, "no single provider can serve any role", rejected)
-        _, _, chosen, div_flags, cand_view, s_view, sub_dropped = best
+            return _refusal(inp, roles, "no single provider can serve any role", rejected), None
+        _, settled, chosen, div_flags, cand_view, s_view, sub_dropped = best
         rejected = rejected + sub_dropped
     else:
         cand_view, s_view = per_role, s_star
@@ -594,7 +614,8 @@ def compose(inp: ComposeInput) -> Composition:
     cap = float(db.policy.get("loss_cap", math.inf))
     pools = _pool_notes(inp, [a.pool_id for a in assignments])
     if weighted_loss > cap + _EPS:
-        return _refusal(inp, roles, f"weighted loss {weighted_loss:.2f} exceeds the cap {cap:.2f}", rejected, pools)
+        over = _refusal(inp, roles, f"weighted loss {weighted_loss:.2f} exceeds the cap {cap:.2f}", rejected, pools)
+        return over, (settled if inp.mode == "single-provider" else None)
 
     unassigned = tuple((r, "no candidate passes the gates") for r in roles if r not in chosen)
     by_role = {a.role: ({"model": a.model, **({"fallbacks": list(a.fallbacks)} if a.fallbacks else {})})
@@ -650,7 +671,7 @@ def compose(inp: ComposeInput) -> Composition:
         why_rows=tuple(why), rejected=tuple(sorted(rejected, key=lambda x: (x.role, x.model, x.route))),
         unassigned=unassigned, flags=tuple(flags), weighted_loss=weighted_loss, weighted_score=weighted_score,
         loss_cap=cap, recommendation=recommendation, kept_default=kept, pools=pools,
-        references=_references(inp, list(roles)), input_digest=_digest(inp, roles))
+        references=_references(inp, list(roles)), input_digest=_digest(inp, roles)), None
 
 
 def optimum(inp: ComposeInput) -> float:
