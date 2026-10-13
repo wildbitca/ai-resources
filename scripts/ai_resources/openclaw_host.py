@@ -2248,7 +2248,7 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
     """The minimal patch that FILLS the keys `doc` lacks (ADR-0003: the profile never overwrites).
 
     A leaf the operator set to a different value is kept, unless `overrides["force"]` names it.
-    The one policy exception is an agent still on a haiku primary (T29), which the wildcard entry
+    The one policy exception is an agent still on a haiku primary (runbook B2.1), which the wildcard entry
     exists to fix.
 
     Returns {"patch": {...}, "changes": [{"path": [...], "previous": v, "had": bool, "action":
@@ -2310,7 +2310,7 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
         elif _override_hit(path, force_set) and not _override_hit(path, keep_set):
             action = "forced"
         elif path[:2] == ["agents", "entries"] and path[-2:] == ["model", "primary"] and _is_haiku(current):
-            action = "forced"            # T29: no orchestrator may run haiku
+            action = "forced"            # runbook B2.1: no orchestrator may run haiku
         else:
             kept.append(dotted)
             continue

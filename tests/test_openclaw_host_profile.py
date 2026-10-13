@@ -26,7 +26,7 @@ FIXTURE = REPO / "tests" / "fixtures" / "openclaw_host_config.json"
 PROFILE = REPO / "profiles" / "openclaw-host.json5"
 VALUES = {"DOMAIN": "ai.example.org", "POD_CIDR": "10.9.0.0/24", "HOME": "/home/u"}
 
-# Every documented key (T04, T05, T14, T20, T26, T28, T29, T31), as dotted paths.
+# Every documented key (T04, T05, T14, T20, T26, T28, T31; runbook B2.1), as dotted paths.
 CANONICAL = {
     "agents.defaults.heartbeat.every",
     "agents.defaults.timeoutSeconds", "mcp.sessionIdleTtlMs",      # ADR-0004 resource guards

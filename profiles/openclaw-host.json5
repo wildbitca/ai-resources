@@ -10,7 +10,7 @@
 //     value is KEPT and listed as "kept your value". `~/.openclaw/kit-host-overrides.json5` opts a
 //     key back into the profile value: {"force": ["gateway.bind"], "keep": ["tools"]} (a prefix
 //     covers everything under it, a "*" segment matches any, and a lone "*" in `force` means all).
-//     The one exception is an agent still on a haiku primary (T29), which the "*" entry fixes;
+//     The one exception is an agent still on a haiku primary (runbook B2.1, "Why sonnet and not haiku"), which the "*" entry fixes;
 //   - only the leaves that differ from the live config are sent, so a second run sends nothing;
 //   - `@DOMAIN@` and `@POD_CIDR@` are asked by the wizard and stored in ~/.openclaw/kit-host.env;
 //     no host value is ever written here;
@@ -25,8 +25,8 @@
 // Deliberately absent: `agents.defaults.model.primary`. The ENGINE section owns it (it points the
 // default agent at the chosen engine), and two sections owning one key means whichever runs last
 // wins and either teardown clobbers the other. The rule this file enforces instead is the one
-// behind it: no orchestrator entry may run haiku (T29), because a haiku orchestrator
-// confabulates topics. Haiku belongs to the utility default only.
+// behind it: no orchestrator entry may run haiku (runbook B2.1, "Why sonnet and not haiku"),
+// because a haiku orchestrator confabulates topics. Haiku belongs to the utility default only.
 //
 // Deliberately absent too: `mcp.servers`. The kit cannot invent a safe version, so a server
 // declared with `@latest` is REPORTED by the wizard, not rewritten. Pin the version by hand.
@@ -40,7 +40,7 @@
       "timeoutSeconds": 14400,
     },
     "entries": {
-      // T29: an orchestrator on haiku confabulates topics. Sonnet 5 for every entry that is not
+      // Runbook B2.1: an orchestrator on haiku confabulates topics. Sonnet 5 for every entry that is not
       // engine-owned and has no model, or a haiku one.
       "*": { "model": { "primary": "anthropic/@MODEL_SONNET@" } },
       "main": {

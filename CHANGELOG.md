@@ -32,6 +32,21 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   empty because the live phases have not run. `docs/multi-model.md` and `docs/orchestration.md` now say that agy is
   a chat-orchestrator engine and report-only model surface, not a kit role backend.
 
+- **`balanced-claude-55`, the recommended multi-model profile.** Claude only, gateway-agnostic, three tiers on the
+  5.5 family: Haiku for `explore`, `tester` and `package-upgrade`; Sonnet for code, review and verification; Opus for
+  the planner, the security auditor and the architect (fallback Sonnet). `tests/test_profile_validity.py` derives
+  from `compat.plan` that it is verified, with no note and without `--allow-unverified`, for Claude Code
+  (single-model, LiteLLM, OpenRouter), Aider (both gateways) and the OpenClaw claude-code engine, and runs the same
+  check on whatever `wizard.RECOMMENDED_PROFILE` names.
+- **A role diff when a host's saved profile is not the recommendation.** Step 6 prints one line and, interactively,
+  one question (default No) that shows the role-by-role difference; a non-interactive run prints the difference and
+  the exact command (`ai-resources setup --profile balanced-claude-55`). Nothing switches and nothing is written.
+  The table is the one `executors tune|set|apply` already used, now shared (`profiles.print_role_diff`). Step 6 also
+  says that a Claude-only host with no gateway should use the single-model `claude-native` profile.
+- **A docs test for the profile table.** `tests/test_docs_profile_table.py` fails when a shipped profile is missing
+  from `docs/multi-model.md`, when the table names one that does not exist, or when anything but the recommended
+  profile is marked recommended.
+
 ### Changed
 
 - **Kit pins move to the Claude 5.5 family.** `model_pins.DEFAULTS` (and the anthropic adapter's copy) now name
@@ -45,6 +60,20 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   shows no cost for them until one is added. Under OpenRouter the
   `modelOverrides` map covers the current generation only. The Vertex list names the 5.5 opus and sonnet ids
   without a Vertex verification.
+- **The recommended default is `balanced-claude-55`, for a host that has not chosen a profile.** `ProfileState.name`
+  used to default to `cost-optimized`, so a fresh state never reached the recommendation (the default was always
+  the stale name); it is empty now and the wizard falls back to `RECOMMENDED_PROFILE`. A saved profile (including a
+  saved `cost-optimized` or `measured-best`) is kept and is never replaced. `profiles.saved_or_recommended` is what
+  apply, the dry run and `doctor` read when the state names none.
+- **`measured-best` is the explicit multi-provider profile, not the recommendation.** Its description lists the
+  verified cells (the Anthropic refs) and the unverified ones (its google/* and deepseek/* refs for Claude Code and
+  for the OpenClaw claude-code engine) and says that setup writes those ids into the Claude subagent files without a
+  matrix check today. `by_role` is unchanged; price comments for the 5.5 ids were removed (no price exists).
+- **Docs.** `docs/multi-model.md` has the full profile table, the recommended per-role assignment with the quality of
+  its evidence, the main-conversation note (`/model haiku` is Claude Code only; OpenClaw orchestrators stay on
+  Sonnet) and the no-gateway advice. Rule 017's example uses the current schema (`<vendor>/<model>`, no
+  `provider` key). The haiku-orchestrator comments in `openclaw-host.json5` and `openclaw_host.py` cited T29 (the
+  restart window); they now point at the runbook's "Why sonnet and not haiku" (comments only).
 
 ### Fixed
 

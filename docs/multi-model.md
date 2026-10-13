@@ -114,18 +114,50 @@ service, so `ai-resources daemon` has nothing to manage and says so.
 
 ## Profiles
 
-| Profile | Backend | Description |
+| Profile | Mode | Description |
 |---|---|---|
-| `openrouter-balanced` | OpenRouter | Judgement on Claude, bulk reading on Gemini Flash. A good default. |
-| `openrouter-cheap` | OpenRouter | Budget models throughout, except review and security. |
-| `quality-first` | LiteLLM | Claude for code-critical roles, Gemini for high-volume support. |
-| `all-claude` | LiteLLM | Every role on Claude. Highest reliability, highest cost. |
-| `all-gemini` | LiteLLM | Every role on Gemini. Cheapest. |
-| `cost-optimized` | LiteLLM | Aggressively biased toward Flash and Haiku. |
-| `claude-native` | — | Single-model: each role picks a Claude alias. No gateway. |
-| `claude-inherit` | — | Single-model: every role inherits the session model. |
+| `balanced-claude-55` | multi-model, either gateway | **Recommended.** Claude only, three tiers on the 5.5 family (Haiku, Sonnet, Opus). Valid in every compatibility cell it can reach without `--allow-unverified`. Needs a LiteLLM or OpenRouter gateway. |
+| `measured-best` | multi-model, either gateway | The explicit multi-provider profile (Claude, Google, DeepSeek) from the 2026-09-16 measured runs. The Google and DeepSeek refs are unverified for Claude Code, and setup writes them without a matrix check today. |
+| `openrouter-balanced` | multi-model, either gateway | Judgement on Claude, bulk reading on Gemini Flash. Namespaced ids, written for OpenRouter. |
+| `openrouter-cheap` | multi-model, either gateway | Budget models throughout, except review and security. |
+| `quality-first` | multi-model, either gateway | Claude for code-critical roles, Gemini for high-volume support. |
+| `all-claude` | multi-model, either gateway | Every role on Claude (Sonnet for most, Opus for the architect, Haiku for tests and verification). No Gemini key required. |
+| `all-gemini` | multi-model, either gateway | Every role on Gemini. Cheapest. |
+| `cost-optimized` | multi-model, either gateway | Aggressively biased toward Flash and Haiku. |
+| `claude-native` | single-model | Each role picks a Claude alias. No gateway. The default for single-model and for a Claude-only host with no gateway. |
+| `claude-inherit` | single-model | Every role inherits the session model. |
 
 Custom: pick `custom` in the wizard to override each role individually.
+
+A host that has not chosen a profile is offered `balanced-claude-55` in multi-model mode and `claude-native` in
+single-model mode. A profile a host already saved is never replaced: the wizard shows a one-line notice and, if
+you ask, the role-by-role difference, and a non-interactive run prints the difference and the exact command
+(`ai-resources setup --profile balanced-claude-55`) without switching.
+
+### Recommended per-role assignment
+
+`balanced-claude-55`, and why. "Measured" means a run in this repository's own history; everything else is
+reasoning and third-party reports, and the 5.5 family itself has not been measured here (the catalogue lists the
+ids and no price).
+
+| Tier | Roles | Why |
+|---|---|---|
+| Haiku 5.5 | `explore`, `tester`, `package-upgrade` | Reading-heavy and mechanical: context in, summary out. The cheapest tier that supports tool use. |
+| Sonnet 5.5 | `implementer`, `code-reviewer`, `verifier`, `doc-writer`, `generalPurpose`, `crashlytics-fixer`, `sentry-fixer`, `terraform-maintainer`, `crossplane-upjet-maintainer` | Code, review and verification. The implementer on Sonnet wrote the code that passed every adversarial case in the 2026-09-16 runs (measured). Review and verification stay on Sonnet or above, as rule 017 requires. |
+| Opus 5.5 | `planner`, `security-auditor`, `software-architect` (fallback Sonnet) | Judgement: the planner sets the acceptance criteria everything else is measured against. |
+
+"Architect on Sonnet for small changes" cannot be expressed: `by_role` is static. The architect ships on Opus
+with a Sonnet fallback; override it per host with `ai-resources executors set software-architect`.
+
+**Main conversation model.** The kit does not set the main conversation model under LiteLLM or single-model, and
+sets the `classes` aliases only under OpenRouter. On Claude Code, `/model haiku` is the measured cheap
+orchestrator (a Haiku-directed run cost 77% less than an Opus-directed one and took 12 turns instead of 37).
+That is Claude Code only: OpenClaw orchestrators stay on Sonnet, because on Haiku the orchestrator announced work
+it had not done (see the OpenClaw runbook, "Why sonnet and not haiku").
+
+**Claude-only host with no gateway.** A multi-model profile, even an all-Claude one, needs a LiteLLM or OpenRouter
+gateway. With no gateway use single-model mode and `claude-native`: each role picks a Claude alias and Claude Code
+needs nothing else.
 
 ## Editing the mapping
 

@@ -14,14 +14,17 @@ This file is **shared by all CLIs** and **project-specific directories**. No loc
 
 The kit ships with several profiles in `/profiles/`:
 
-- `measured-best.yaml` — **Recommended.** The assignment that measured best across
-  three instrumented workflow runs; gateway-agnostic, so it works with either backend
+- `balanced-claude-55.yaml` — **Recommended.** Claude only, three tiers on the 5.5
+  family; valid in every compatibility cell it can reach; gateway-agnostic
+- `measured-best.yaml` — The explicit multi-provider profile: the assignment that
+  measured best across three instrumented workflow runs (Claude, Google, DeepSeek;
+  the non-Claude refs are unverified for Claude Code)
 - `cost-optimized.yaml` — Smart retry + tier-based downgrade fallbacks
 - `all-claude.yaml` — All requests use Claude (expensive)
 - `all-gemini.yaml` — All requests use Gemini (cheaper)
 - `quality-first.yaml` — Prioritize quality, higher cost
 
-## Cost-Optimized Profile (Recommended)
+## Cost-Optimized Profile
 
 **File:** `profiles/cost-optimized.yaml`
 

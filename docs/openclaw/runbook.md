@@ -340,17 +340,17 @@ rewrites legacy refs.
 
 ```bash
 # claude-cli runtime for both models in use
-openclaw config set 'agents.defaults.models["anthropic/claude-sonnet-5"].agentRuntime.id' claude-cli
-openclaw config set 'agents.defaults.models["anthropic/claude-haiku-4-5"].agentRuntime.id' claude-cli
+openclaw config set 'agents.defaults.models["anthropic/claude-sonnet-5-5"].agentRuntime.id' claude-cli
+openclaw config set 'agents.defaults.models["anthropic/claude-haiku-5-5"].agentRuntime.id' claude-cli
 
 # haiku stays as utility/default; every orchestrating agent runs sonnet
-openclaw config set agents.defaults.model.primary anthropic/claude-haiku-4-5
+openclaw config set agents.defaults.model.primary anthropic/claude-haiku-5-5
 openclaw config set agents.defaults.thinkingDefault medium
 for a in main snoutzone elinvo devops ai; do
-  openclaw config set agents.entries.$a.model.primary anthropic/claude-sonnet-5
+  openclaw config set agents.entries.$a.model.primary anthropic/claude-sonnet-5-5
 done
 openclaw config set agents.entries.main.thinkingDefault high
-openclaw config set agents.entries.claude.model.primary claude-kit/claude-sonnet-5
+openclaw config set agents.entries.claude.model.primary claude-kit/claude-sonnet-5-5
 openclaw config set agents.entries.claude.tools.exec.mode full
 ```
 
@@ -370,7 +370,7 @@ most of the consumption goes.
 
 ```bash
 openclaw config set agents.defaults.heartbeat.every 0m
-openclaw config set agents.defaults.heartbeat.model anthropic/claude-haiku-4-5
+openclaw config set agents.defaults.heartbeat.model anthropic/claude-haiku-5-5
 openclaw config set agents.entries.main.heartbeat.every 2h
 ```
 
@@ -565,7 +565,7 @@ The `claude` agent is different: **it has no topic**. It is the unrestricted wor
 
 ```bash
 openclaw agents add claude --workspace ~/Development --non-interactive
-openclaw config set agents.entries.claude.model.primary claude-kit/claude-sonnet-5
+openclaw config set agents.entries.claude.model.primary claude-kit/claude-sonnet-5-5
 openclaw config set agents.entries.claude.tools.exec.mode full
 openclaw config set agents.defaults.subagents.allowAgents '["claude"]'
 openclaw config set agents.defaults.systemAgent.agentId main
@@ -1423,9 +1423,9 @@ Runtime and service:
 Config and agents:
 
 - [ ] `openclaw config validate` → `Config valid`
-- [ ] `openclaw agents list` → 6 agents; the 5 topic ones on `anthropic/claude-sonnet-5`, `claude` on `claude-kit/claude-sonnet-5`
+- [ ] `openclaw agents list` → 6 agents; the 5 topic ones on `anthropic/claude-sonnet-5-5`, `claude` on `claude-kit/claude-sonnet-5-5`
 - [ ] `openclaw health` → `Heartbeat interval: 2h (main), disabled (rest)`
-- [ ] `pgrep -af "/.local/bin/claude"` during a turn → `--effort high --model claude-sonnet-5` (main)
+- [ ] `pgrep -af "/.local/bin/claude"` during a turn → `--effort high --model claude-sonnet-5-5` (main)
 - [ ] `ls ~/.claude/agents | wc -l` ≈ 40 and `ls ~/.claude/skills | wc -l` ≈ 137
 - [ ] `AGENTS.md` present in the 5 workspaces and **none** of them shows up in `git status`
 
