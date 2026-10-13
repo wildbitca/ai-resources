@@ -178,14 +178,25 @@ choice stays. `ai-resources openclaw doctor` now refuses a busy gateway (exit 6)
   The exclusion lists are an allow list, so no tool was added to them. The marker races found by the audit are
   closed (a stale marker overwritten in place keeps its window, a SIGTERM during the create leaves no owner-less
   marker, `remove` never deletes a file whose identity was not recorded, and the models script cannot block on a
-  FIFO). Measured on freshly generated corpora through real bash and zsh (12029 adversarial rows, 6410 executed;
-  2600 benign rows generated and 1700 recorded): executed-but-allowed 5805 / 5796 / 1552 / 2737 / **1208**
-  (2.1.0 / 2.1.1 / 2.2c / 2.2d / 2.2f); executed and denied by any of the four yet allowed **0** on that corpus (425 before the pass; it held no quoted
-  `#` line and no earlier helper, alias, `set --` or `PATH=` row: the comment drop now follows quote state, those
-  forms count as a second signal and are pinned, and the corpus is to be re-run);
-  benign rows denied 1 / 1 / 778 / 59 / **25** (474 before the pass); slowest verdict 1.99 s under load, the deadline
-  fired on none. The guard stays an accident guard, and the pass is the last on the text: who may stop or restart the
-  unit belongs at systemd and polkit, or an exec policy (pitfall T45), not in this filter.
+  FIFO). Measured by the independent Verifier at c773dc5 through real bash and zsh (stub binaries, 24047 adversarial
+  rows, 19086 executed): executed-but-allowed 14739 / 14318 / 5934 / 7506 / **4045** (2.1.0 / 2.1.1 / 2.2c / 2.2d /
+  2.2f); executed and denied by an older guard yet allowed now 1 / 0 / 30 / 0, with no class worse than either
+  published guard; benign rows denied (realistic 1008 / `PATH=` or function prelude 1203 / prose and heredoc idioms
+  680) 0 / 0 / 120 / 0 / **0**, 0 / 0 / 664 / 44 / **191**, 0 / 0 / 413 / 70 / **75**; slowest verdict 1.42 s at
+  load about 43, the deadline fired on none, and with it forced 2.2f allowed 0 of 19086 executed rows (2.2c 985,
+  2.2d 632). The Verifier signed met=false against the plan's acceptance; the operator decided to document the
+  residual classes and close. Residual, known and unfixed: (1) a stored command whose assembled OpenClaw name
+  (`${OC:-openclaw}`, `/usr/local/bin/open*`) is run later with another product's word in an option value, inside
+  text fed to a shell (30 rows against 2.2c, also allowed by 2.2d; the literal name is denied); (2) the
+  comment-line drop misreads quote state when a prose apostrophe in an earlier non-shell heredoc flips its polarity,
+  or when `#` follows `{` (`${#x}`), so a command after a quoted multi-line string can be allowed (the hook
+  docstring's "toward deny" is not true for flipped polarity; docs-only note, the code is unchanged); (3) the second
+  signal (an earlier `PATH=`, or a function whose body has `gateway`) denies other products' bare `gateway` words in
+  shell-fed text (`npm run gateway:restart`, `git log --grep='gateway restart'` after a `PATH=` line), which is the
+  benign cost above 2.2d; (4) one row against 2.1.0 only: a script text built from a multi-line quoted string and
+  then run (`source <(echo '...')`), already allowed by 2.1.1; (5) `echo $(V='...'` newline `eval "$V")` is allowed
+  by every guard, 2.1.1 included. The guard stays an accident guard, and 2.2f is the last pass on the text: who may
+  stop or restart the unit belongs at systemd and polkit, or an exec policy (pitfall T45), not in this filter.
 
 ## Alternatives Considered
 

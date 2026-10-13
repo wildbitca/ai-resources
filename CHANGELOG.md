@@ -36,20 +36,29 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   longer leaves a marker nobody owns (the signals are held until the identity is recorded); `Marker.remove()`
   deletes only a file whose identity this run recorded and says so when it leaves one; the models script reads the
   marker through `head` under `timeout`, so a FIFO swapped in after the file check cannot block it.
-- **Gateway guard, measured (2.2f).** Freshly generated corpora, run through real bash and zsh in a sandbox with
-  stub `openclaw`/`systemctl`/`sudo` binaries and no network: 12029 adversarial rows (4028 + 3361 generic with
-  budget-spending and deadline-forcing prefixes, 3024 of the item 1 and 2 forms in seven feeds, 1616 exclusion
-  attacks: wrappers, substitutions, printed-text dress-ups, option values, comments), of which 6410 executed a
-  guarded command. Executed but allowed: 2.1.0 5805, 2.1.1 5796, cd70a20 1552, f1a26f8 2737, this tree 1208;
-  executed and denied by 2.1.0, 2.1.1, cd70a20 or f1a26f8 yet allowed by this tree: **0** on that corpus, which held no quoted-`#`-line or
-  earlier-helper row (425 before this pass, all
-  in text that feeds a shell; the comment-line drop now follows quote state and a helper, alias, `set --` or `PATH=` of
-  the same text is a second signal; those classes are pinned in the strict suite and the corpus is to be re-run); no corpus-by-class cell misses more than the better published guard. Benign rows
-  (900 and 700 generated, 1700 recorded by earlier passes: other products' gateways, commit and PR heredocs, doc
-  greps, CI snippets) denied: 2.1.0 1, 2.1.1 1, cd70a20 778, f1a26f8 59, f2622f1 474, **this tree 25** (12, 8, 5;
-  the remaining ones are named in T46). Every verdict was under 2 s under load and the deadline fired on none; with
-  the deadline forced at the start of the analysis the fallback misses 37 of 6410 executed rows (cd70a20 315, f1a26f8
-  238) and none that either denied.
+- **Gateway guard, measured (2.2f).** What the independent Verifier measured at c773dc5, through real bash and zsh
+  in a sandbox with stub binaries and no network: 24047 adversarial rows, 19086 of which executed a guarded
+  command. Executed but allowed: 2.1.0 14739, 2.1.1 14318, cd70a20 5934, f1a26f8 7506, this tree 4045. Executed and
+  denied by an older guard yet allowed by this tree: 2.1.0 1, 2.1.1 0, cd70a20 30, f1a26f8 0; no class is worse
+  than either published guard (2.1.0, 2.1.1). Benign rows denied (2.1.0 / 2.1.1 / cd70a20 / f1a26f8 / this tree),
+  over three corpora: realistic (1008 rows) 0 / 0 / 120 / 0 / 0; shell text with a `PATH=` line or a function
+  prelude (1203) 0 / 0 / 664 / 44 / 191; prose and heredoc idioms (680) 0 / 0 / 413 / 70 / 75. The slowest verdict
+  was 1.42 s at a load of about 43 and the deadline fired on none; with the deadline forced, this tree allowed 0 of
+  the 19086 executed rows (cd70a20 985, f1a26f8 632).
+- **Gateway guard, residual classes (2.2f).** Known and NOT fixed; 2.2f is the last pass on the text. The Verifier
+  signed `met=false` against the plan's acceptance and the operator chose to document and close. (1) A stored
+  command whose assembled OpenClaw name (`${OC:-openclaw}`, `/usr/local/bin/open*`) is run later, with another
+  product's word in an option value, inside text fed to a shell: 30 rows against cd70a20, also allowed by f1a26f8
+  (the literal name is denied). (2) The comment-line drop misreads quote state when a prose apostrophe in an earlier
+  non-shell heredoc flips its polarity, or when `#` follows `{` (`${#x}`): a command after a quoted multi-line
+  string can be allowed. The code docstring of `_drop_comment_lines` says such a misread leaves the text "toward
+  deny"; that is not true for a flipped polarity (docs-only note; the code is unchanged). (3) The second signal (an
+  earlier `PATH=`, or a function whose body has `gateway`) denies other products' bare `gateway` words in
+  shell-fed text (`npm run gateway:restart`, `git log --grep='gateway restart'` after a `PATH=` line): benign
+  denials above f1a26f8. (4) One row against 2.1.0 only: a script text built from a multi-line quoted string and
+  then run (`source <(echo '...')`), already allowed by 2.1.1. (5) `echo $(V='...'` newline `eval "$V")` is allowed
+  by every guard, 2.1.1 included. The guard is an accident guard: restart and stop authority belongs at systemd and
+  polkit, or an exec policy (pitfall T45), not in this filter.
 
 - **Gateway guard, budget fallback (2.2e).** A prefix of about 8 KB of harmless substitutions spends the work
   budget and the rest of the command was read by the word view, which did not join line continuations and cut at a

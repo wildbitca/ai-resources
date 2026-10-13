@@ -1615,28 +1615,34 @@ gateway`). Through the real hook as a subprocess, every verdict of the fresh cor
 and the deadline fired on none. Precise parsing of arbitrary shell is not attempted, and these numbers are a
 measurement of the corpora, not a promise.
 
-**Measured, at the final 2.2f tree.** The recorded corpora of earlier passes were not re-run; this pass generated
-its own, ran every row through real bash and zsh in a sandbox (stub `openclaw`, `systemctl` and `sudo`, no network)
-and compared the verdicts of 2.1.0, 2.1.1, cd70a20 (2.2c), f1a26f8 (2.2d), the tree before this pass (f2622f1) and
-this tree. 12029 adversarial rows (generic nesting with budget-spending and deadline-forcing prefixes: 4028 + 3361;
-the forms of this pass in seven feeds: 3024; exclusion attacks, namely wrappers that carry a product's name as a
-user, host or path, substitutions inside another product's arguments, printed-text dress-ups, option values and
-comments: 1616), 6410 of which executed a guarded command. Executed but allowed: 5805 (2.1.0), 5796 (2.1.1), 1552
-(2.2c), 2737 (2.2d), **1208** now. Executed and denied by 2.1.0, 2.1.1, 2.2c or 2.2d yet allowed: **0** now, 425
-before this pass (165 + 260, all in text that feeds a shell: the stdin process substitutions and the assembled names
-behind another product's option value or argument). No corpus-by-class cell misses more executed rows than the
-better of the two published guards. Benign rows (generated: 900 of other products' gateways, commit and PR heredocs
-and CI snippets, and 700 more with another seed; recorded by earlier passes: 1700) denied: 2.1.0 1, 2.1.1 1, 2.2c
-778, 2.2d 59, before this pass 474, **25 now** (12, 8 and 5 over the three sets; 2.2d: 35, 8, 16). They are of two
-shapes. Seventeen are a text that says `gateway` and a stop/restart verb in a bare statement or a commit message,
-followed within 160 characters (a window pair, as in 2.2d) by a statement that names `openclaw` or the unit
-(`echo 'gateway stop hook added'`, then `bash <<EOF`, `openclaw gateway status`, `EOF`); the other eight are the
-price this card already names (`echo "openclaw gateway restart"` inside text fed to a shell, a comment that says it,
-and a commit message whose backticks really run it). Every verdict through
-the hook's own entry point took under 2 s (1.99 s under a host load of 10), the deadline fired on none, and with the
-deadline forced at the start of the precise analysis the fallback allowed 37 of the 6410 executed rows (2.2c 315,
-2.2d 238), none that either denied. The residual classes below are unchanged except for what is marked closed. It
-is an accident guard: these are measurements of generated corpora, not a promise.
+**Measured, at the final 2.2f tree.** The independent Verifier generated its own corpora and ran every row
+through real bash and zsh in a sandbox (stub binaries, no network) at c773dc5, comparing 2.1.0, 2.1.1, cd70a20
+(2.2c), f1a26f8 (2.2d) and this tree. 24047 adversarial rows, 19086 of which executed a guarded command. Executed
+but allowed: 14739 (2.1.0), 14318 (2.1.1), 5934 (2.2c), 7506 (2.2d), **4045** now. Executed and denied by an older
+guard yet allowed now: 2.1.0 1, 2.1.1 0, 2.2c 30, 2.2d 0. No class is worse than either published guard (2.1.0,
+2.1.1). Benign rows denied (2.1.0 / 2.1.1 / 2.2c / 2.2d / now): realistic (1008 rows) 0 / 0 / 120 / 0 / 0; shell
+text with a `PATH=` line or a function prelude (1203) 0 / 0 / 664 / 44 / **191**; prose and heredoc idioms (680)
+0 / 0 / 413 / 70 / **75**. The slowest verdict was 1.42 s at a load of about 43, the deadline fired on none, and
+with the deadline forced the fallback allowed 0 of the 19086 executed rows (2.2c 985, 2.2d 632). The recorded
+corpora of earlier passes were not re-run. The Verifier signed `met=false` against the plan's acceptance; the
+operator decided to document the residual classes below and close. It is an accident guard: these are
+measurements of generated corpora, not a promise.
+
+**Residual classes of 2.2f (known, unfixed, the last pass).**
+
+- A stored command whose assembled OpenClaw name (`${OC:-openclaw}`, `/usr/local/bin/open*`) is run later with
+  another product's word in an option value, inside text fed to a shell: 30 rows against 2.2c, also allowed by 2.2d
+  (the literal name is denied).
+- The comment-line drop misreads quote state when a prose apostrophe in an earlier non-shell heredoc flips its
+  polarity, or when `#` follows `{` (`${#x}`): a command after a quoted multi-line string can be allowed. Note: the
+  docstring of `_drop_comment_lines` in the hook says a misread leaves the text "toward deny"; that is not true for
+  flipped polarity (the code is unchanged, this note is docs only).
+- The second signal (an earlier `PATH=`, or a function definition whose body has `gateway`) denies other products'
+  bare `gateway` words in shell-fed text (`npm run gateway:restart`, `git log --grep='gateway restart'` after a
+  `PATH=` line): these are the benign denials above 2.2d (191 and 75).
+- One row against 2.1.0 only: a script text built from a multi-line quoted string and then run (`source <(echo
+  '...')`), already allowed by 2.1.1.
+- `echo $(V='...'` newline `eval "$V")` is allowed by every guard, 2.1.1 included.
 
 **What it does not read (the residual classes).** These are known, recorded in ADR-0004, and not to be chased
 one by one:
@@ -1678,7 +1684,7 @@ Closed in 2.2f and no longer residual: a shell reading a process substitution on
 0< <(...)`, `bash -s < <(...)`, `exec bash < <(...)`, `exec 3< <(...); sh <&3`, `read ... < <(...); eval`), another
 product's option value or argument carrying an assembled OpenClaw name in shell-fed text (`sudo -u docker`, `env -u
 docker`, `env -C /opt/docker`, `docker ps $(...)`, `nginx -t $(...)`), the value of a gateway option read as the
-subcommand, and the benign denials of the bare gateway words of other tools. The stdin forms are NOT on the residual
+subcommand, and most of the benign denials of the bare gateway words of other tools (residual 3 of 2.2f remains). The stdin forms are NOT on the residual
 list because item 1 of 2.2f closed them.
 
 Closed in 2.2e and no longer residual: in text fed to a shell, `openclaw` or the unit assembled from variables, an
