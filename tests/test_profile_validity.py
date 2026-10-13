@@ -10,7 +10,7 @@ import pytest
 
 from ai_resources import model_providers
 from ai_resources.selection import Selection, SlotSel
-from ai_resources.setup import compat, profiles
+from ai_resources.setup import compat, profiles, wizard
 
 PROFILE = "balanced-claude-55"
 
@@ -112,3 +112,9 @@ def test_the_matrix_does_flag_a_profile_with_foreign_refs():
     assert len(act.notes) == 1 and "gemini-3.7-flash" in act.notes[0] and "not verified" in act.notes[0]
     only_google = {"by_role": {"explore": {"model": "google/gemini-3.7-flash"}}}
     assert _action(only_google, "claude", "multi-model", "litellm").action == compat.SKIP
+
+
+@pytest.mark.parametrize("cockpit,mode,backend,engine,want", CELLS)
+def test_the_wizards_recommended_profile_is_verified_in_every_reachable_cell(cockpit, mode, backend, engine, want):
+    """TS-BC55-008: the constant and the validity test cannot diverge (the name is read, never hard-coded)."""
+    check_cell(wizard.RECOMMENDED_PROFILE, cockpit, mode, backend, engine, want)

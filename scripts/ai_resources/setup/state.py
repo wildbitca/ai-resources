@@ -95,7 +95,9 @@ class ProviderState:
 
 @dataclass
 class ProfileState:
-    name: str = "cost-optimized"
+    # Empty until a profile is chosen (step 6 or --profile). A saved name is never replaced; an empty one lets
+    # the wizard offer the recommended profile instead of a stale hard-coded default.
+    name: str = ""
     customized: bool = False
     customizations: dict[str, dict[str, Any]] = field(default_factory=dict)
 

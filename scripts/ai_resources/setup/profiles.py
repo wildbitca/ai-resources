@@ -36,6 +36,15 @@ KNOWN_ROLES = [
 ]
 
 
+# The multi-model recommendation, and what a state that never chose a profile resolves to.
+RECOMMENDED_PROFILE = "balanced-claude-55"
+
+
+def saved_or_recommended(saved: str) -> str:
+    """The profile a state runs under: the one it saved, else the recommendation (never a stale default)."""
+    return saved or RECOMMENDED_PROFILE
+
+
 def profiles_dir() -> Path:
     return repo_root() / "profiles"
 
@@ -165,6 +174,51 @@ def role_table(executors: dict[str, Any]) -> list[tuple[str, str, str]]:
         vendor = model.split("/", 1)[0] if "/" in model else cfg.get("provider", "-")
         rows.append((role, vendor, model))
     return rows
+
+
+def model_label(cfg: dict[str, Any]) -> str:
+    """Human label for a by_role entry. A canonical model already names its vendor, so it needs no separate
+    provider prefix; a legacy bare model is joined with its `provider` field so old and new shapes read alike."""
+    model = cfg.get("model", "")
+    if not model:
+        return "-"
+    if "/" in model:
+        return model
+    return f"{cfg.get('provider', '-')}/{model}"
+
+
+def role_changes(before: dict[str, Any], after: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """[(role, before label, after label)] for every known role whose by_role entry differs."""
+    return [
+        (role, model_label(before.get(role, {})), model_label(after.get(role, {})))
+        for role in KNOWN_ROLES
+        if before.get(role) != after.get(role)
+    ]
+
+
+def print_role_diff(before: dict[str, Any], after: dict[str, Any], title: str = "Changes") -> bool:
+    """Print the before/after table of the roles that differ; False (after saying so) when none does.
+
+    The one table shared by `executors tune|set|apply` and the wizard's recommendation notice."""
+    from . import ui
+    changed = role_changes(before, after)
+    if not changed:
+        ui.info("No changes.")
+        return False
+    if ui.has_rich():
+        from rich.table import Table
+        t = Table(title=title, show_header=True, header_style="bold cyan", border_style="dim")
+        t.add_column("Role", style="bold")
+        t.add_column("Before", style="dim red")
+        t.add_column("After", style="green")
+        for role, b, a in changed:
+            t.add_row(role, b, a)
+        ui.console().print(t)
+    else:
+        print(f"\n{title}:")
+        for role, b, a in changed:
+            print(f"  {role:<24} {b:<30} → {a}")
+    return True
 
 
 def merge_customizations(profile: dict[str, Any], customizations: dict[str, dict]) -> dict[str, Any]:

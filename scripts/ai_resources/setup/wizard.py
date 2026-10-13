@@ -27,9 +27,12 @@ from .. import __version__, repo_root, selection as selection_mod
 
 TOTAL_STEPS = 10
 SINGLE_MODEL_DEFAULT_PROFILE = "claude-native"
-# The assignment that measured best across three instrumented workflow runs on
-# 2026-09-16, and gateway-agnostic, so it is the recommendation for either one.
-RECOMMENDED_PROFILE = "measured-best"
+# The multi-model recommendation: Claude only, three tiers, and valid in every compatibility cell it can
+# reach without --allow-unverified (tests/test_profile_validity.py derives that from the matrix).
+# Gateway-agnostic, so it is the recommendation for either backend. `measured-best` stays available as the
+# explicit multi-provider profile (it names Google and DeepSeek models the Claude cockpit has not verified).
+# It is only the default of a host that has not chosen a profile: a saved choice is never replaced.
+RECOMMENDED_PROFILE = profiles.RECOMMENDED_PROFILE        # "balanced-claude-55"
 
 # Set when the profile was named on the command line, which is not the same as
 # a profile carried over in the saved state. A saved name that no longer fits
@@ -1096,6 +1099,25 @@ def _step5_credentials(s: state.SetupState, dry_run: bool = False) -> int:
 
 
 # --- Step 6 — Profile + per-role customization ------------------------------------
+def _note_newer_recommendation(saved: str, recommended: str, backend: str) -> None:
+    """Informational only: the saved profile is kept and nothing is written.
+
+    Interactively one question, default No, shows the role-by-role difference; a non-interactive run prints it
+    with the exact command that would switch. Neither path changes the profile."""
+    command = f"ai-resources setup --profile {recommended}"
+    ui.info(f"The recommended profile is now {recommended}; this host keeps {saved} until you choose otherwise.")
+    if not ui.is_non_interactive() and not ui.confirm(
+            f"Show how {recommended} differs from {saved}?", default=False):
+        return
+    try:
+        before = profiles.to_executors(profiles.load_profile(saved), backend)["by_role"]
+        after = profiles.to_executors(profiles.load_profile(recommended), backend)["by_role"]
+    except (FileNotFoundError, RuntimeError):
+        return
+    profiles.print_role_diff(before, after, title=f"{saved} -> {recommended}")
+    ui.info(f"To switch: {command}")
+
+
 def _step6_profile(s: state.SetupState) -> int:
     ui.section(6, TOTAL_STEPS, "Per-role model assignment")
 
@@ -1135,6 +1157,12 @@ def _step6_profile(s: state.SetupState) -> int:
         default = preferred
     else:
         default = available[0]
+
+    ui.detail("Claude only and no gateway? Use single-model mode with the claude-native profile: a multi-model "
+              "profile, even an all-Claude one, needs a LiteLLM or OpenRouter gateway.")
+    if (s.profile.name in available and s.profile.name != preferred and preferred in available
+            and not _REQUESTED_PROFILE):
+        _note_newer_recommendation(s.profile.name, preferred, s.backend)
 
     chosen = ui.select("Choose profile:", choices, default=default)
     if chosen is None:
@@ -1315,7 +1343,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
 
     # Build the final executors dict
     if s.mode == "multi-model":
-        base = profiles.load_profile(s.profile.name)
+        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name))
         if s.profile.customized and s.profile.customizations:
             customizations = {k: v for k, v in s.profile.customizations.items()
                               if k in profiles.KNOWN_ROLES}
@@ -1584,7 +1612,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
 
     # Build executors
     if s.mode == "multi-model":
-        base = profiles.load_profile(s.profile.name)
+        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name))
         if s.profile.customized and s.profile.customizations:
             customizations = {k: v for k, v in s.profile.customizations.items()
                               if k in profiles.KNOWN_ROLES}
@@ -1612,7 +1640,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
     mode = s.mode
 
     # Role table
-    ui.role_table(profiles.role_table(executors_doc), title=f"Profile: {s.profile.name}")
+    ui.role_table(profiles.role_table(executors_doc), title=f"Profile: {profiles.saved_or_recommended(s.profile.name)}")
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="ai-resources-dryrun-"))
     tmp_litellm_yaml = tmp_dir / "litellm.yaml"

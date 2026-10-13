@@ -78,15 +78,8 @@ def _vendor_of(cfg: dict) -> str:
 
 
 def _model_label(cfg: dict) -> str:
-    """Human label for a by_role entry. A canonical model already names its
-    vendor, so it needs no separate provider prefix; a legacy bare model is
-    joined with its `provider` field so old and new shapes read the same way."""
-    model = cfg.get("model", "")
-    if not model:
-        return "-"
-    if "/" in model:
-        return model
-    return f"{cfg.get('provider', '-')}/{model}"
+    """Kept for the callers and tests of this module; the label itself lives in `profiles.model_label`."""
+    return profiles.model_label(cfg)
 
 
 def _known_models_for_backend(backend: str) -> dict[str, list[str]]:
@@ -167,32 +160,8 @@ def _select_provider_and_model(current_provider: str = "", current_model: str = 
 
 
 def _diff_table(before: dict, after: dict) -> None:
-    """Print a before/after table for roles that changed."""
-    changed = [
-        (role, before.get(role, {}), after.get(role, {}))
-        for role in profiles.KNOWN_ROLES
-        if before.get(role) != after.get(role)
-    ]
-    if not changed:
-        ui.info("No changes.")
-        return
-    if ui.has_rich():
-        from rich.table import Table
-        t = Table(title="Changes", show_header=True, header_style="bold cyan", border_style="dim")
-        t.add_column("Role", style="bold")
-        t.add_column("Before", style="dim red")
-        t.add_column("After", style="green")
-        for role, b, a in changed:
-            bm = _model_label(b)
-            am = _model_label(a)
-            t.add_row(role, bm, am)
-        ui.console().print(t)
-    else:
-        print("\nChanges:")
-        for role, b, a in changed:
-            bm = _model_label(b)
-            am = _model_label(a)
-            print(f"  {role:<24} {bm:<30} → {am}")
+    """Print a before/after table for roles that changed (the table is shared with the wizard)."""
+    profiles.print_role_diff(before, after)
 
 
 # ---------------------------------------------------------------------------
