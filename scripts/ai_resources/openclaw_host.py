@@ -1532,16 +1532,18 @@ def _finish_inconclusive(s, cw: dict, reason: str, *, save, notify, out, kept: l
     return 0
 
 
-def _route_restart(changes: list[dict], patch: dict, version: "str | None", mode: "str | None") -> list[str]:
+def _route_restart(changes: list[dict], patch: dict, ruleset: "openclaw_reload_rules.RuleSet | None",
+                   mode: "str | None") -> list[str]:
     """The leaf paths of the restore patch that need the drained window.
 
     The kind recorded when the key was written is used when the live version cannot be read or is the one
     the record was made on: re-classifying in a degraded environment is what made D1 queue hot keys. A record
-    from before 2.1.1 (no kind) and a different readable version go through the pinned table, which fails
-    closed.
+    from before 2.1.1 (no kind) and a different readable version are classified with the live reload rules,
+    which fail closed when they cannot be read.
     """
     rr = openclaw_reload_rules
-    live = set(rr.restart_paths(patch, openclaw_version=version, reload_mode=mode))
+    version = ruleset.version if ruleset is not None else None
+    live = set(rr.restart_paths(patch, ruleset=ruleset, reload_mode=mode))
     by_path: dict[str, dict] = {}
     for ch in changes:
         for key in (".".join(ch["path"]), ".".join(restore_path_of(ch))):
@@ -1572,8 +1574,8 @@ def _revert_run(s, cw: dict, *, runner: Runner, sleep, save, apply_patch, notify
             s, cw, "every recorded key was hot-applied and the gateway answered afterwards, so the later failure "
                    "is not attributed to this run", save=save, notify=notify, out=out, kept=kept)
     patch, rp = restore_patch(changes, load_doc() if load_doc else None)
-    version = rr.installed_openclaw_version(lambda argv, **kw: runner([resolve_openclaw_bin(), *argv[1:]], **kw))
-    restart = _route_restart(changes, patch, version, reload_mode())
+    ruleset = rr.current_ruleset(lambda argv, **kw: runner([resolve_openclaw_bin(), *argv[1:]], **kw))
+    restart = _route_restart(changes, patch, ruleset, reload_mode())
     hot, res = rr.split_patch(patch, restart)
     hot_rp, res_rp = rr.split_replace_paths(rp, restart)
     hot_paths, res_paths = rr.leaf_paths(hot), rr.leaf_paths(res)

@@ -60,8 +60,14 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # `_openclaw` would answer no version (so every key reads restart-required) and a real probe would read the
     # live gateway. test_openclaw_restart_gate.py sets both itself.
     from ai_resources import openclaw_reload_rules
+    from reload_rules_fixture import FIXTURE_VERSION, fixture_ruleset
     monkeypatch.setattr(openclaw_reload_rules, "installed_openclaw_version",
-                        lambda runner, **kw: openclaw_reload_rules.PINNED_OPENCLAW_VERSION)
+                        lambda runner, **kw: FIXTURE_VERSION)
+    # The rules come from a checked-in dist excerpt, never from the host's OpenClaw (C5). A test that needs the
+    # "cannot read the rules" case overrides this; the version is whatever `installed_openclaw_version` says now.
+    monkeypatch.setattr(
+        openclaw_reload_rules, "current_ruleset",
+        lambda runner, **kw: fixture_ruleset(version=openclaw_reload_rules.installed_openclaw_version(runner, **kw)))
     # E3: the package.json lookup would read the operator's installed OpenClaw; a test never depends on it.
     monkeypatch.setattr(openclaw_reload_rules, "_find_package_json", lambda: None)
     from ai_resources.setup.cockpits import _openclaw_host as host_section

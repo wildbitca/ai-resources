@@ -498,7 +498,7 @@ def apply_patch(patch: dict, *, dry_run: bool = False,
         # written here. Raise before any write; the only call so far is the read-only config-file lookup (and the
         # version probe the table needs). `apply_drained` is the one caller that passes allow_restart.
         restart = openclaw_reload_rules.restart_paths(
-            patch, openclaw_version=openclaw_reload_rules.installed_openclaw_version(_version_runner, refresh=True),
+            patch, ruleset=openclaw_reload_rules.current_ruleset(_version_runner, refresh=True),
             reload_mode=reload_mode if reload_mode is not None else _live_reload_mode())
         if restart:
             raise RestartRequired(restart)
@@ -515,12 +515,13 @@ def apply_patch(patch: dict, *, dry_run: bool = False,
 def _apply_hot(patch: dict, *, dry_run: bool = False,
                replace_paths: list[str] | None = None) -> tuple[bool, str]:
     """`apply_patch` for the writers that only ever carry hot keys (engine, media): a refusal is
-    reported as not applied instead of crashing setup (e.g. OpenClaw upgraded past the pinned table)."""
+    reported as not applied instead of crashing setup (e.g. the installed OpenClaw's reload rules cannot be read)."""
     try:
         return apply_patch(patch, dry_run=dry_run, replace_paths=replace_paths)
     except RestartRequired as e:
-        msg = ("not applied: " + ", ".join(e.paths) + " need a gateway restart or cannot be classified on "
-               "this OpenClaw version (refresh openclaw_reload_rules.py); the kit never restarts a live gateway")
+        msg = ("not applied: " + ", ".join(e.paths) + " need a gateway restart, or "
+               "the installed OpenClaw's reload rules could not be read (see `ai-resources openclaw status`); the kit "
+               "never restarts a live gateway")
         ui.warn(msg)
         return False, msg
 

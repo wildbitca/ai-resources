@@ -556,9 +556,9 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
         ui.detail(f"Not sent: {note}")
     for name in host.mcp_latest_findings(doc):
         ui.warn(f"mcp.servers.{name} runs an unpinned package (@latest). The kit will not rewrite it: pin the version by hand.")
-    version = rr.installed_openclaw_version(_oc_runner(oc), refresh=True) if oc else None
+    ruleset = rr.current_ruleset(_oc_runner(oc), refresh=True) if oc else None
     mode = rr.reload_mode_of(doc)
-    reverted = _offer_legacy_revert(o, doc, version, mode, dry_run=dry_run, apply_patch=apply_patch)
+    reverted = _offer_legacy_revert(o, doc, ruleset, mode, dry_run=dry_run, apply_patch=apply_patch)
     if not built["patch"]:
         return reverted
     if built["filled"]:
@@ -572,7 +572,7 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
         # Fail closed: a rejected dry run stops here. There is no per-key fallback.
         ui.error(f"OpenClaw rejected the config patch in a dry run; nothing was applied: {out[-400:]}")
         return reverted
-    restart = rr.restart_paths(built["patch"], openclaw_version=version, reload_mode=mode)
+    restart = rr.restart_paths(built["patch"], ruleset=ruleset, reload_mode=mode)
     hot_patch, restart_patch = rr.split_patch(built["patch"], restart)
     hot_rp, restart_rp = rr.split_replace_paths(built["replace_paths"], restart)
     hot_changes, restart_changes = rr.split_changes(built["changes"], restart)
@@ -613,7 +613,7 @@ def _record_changes(o: state.OpenClawState, changes: list[dict], run_changes: li
         run_changes.extend(copy.deepcopy(c) for c in changes)
 
 
-def _offer_legacy_revert(o: state.OpenClawState, doc: dict, version, mode, *, dry_run: bool,
+def _offer_legacy_revert(o: state.OpenClawState, doc: dict, ruleset, mode, *, dry_run: bool,
                          apply_patch: Callable[..., tuple[bool, str]]) -> bool:
     """Offer to put back a restart-required value that setup 2.0.0 overwrote (default No, interactive only).
 
@@ -627,7 +627,7 @@ def _offer_legacy_revert(o: state.OpenClawState, doc: dict, version, mode, *, dr
         if "action" in ch or not ch.get("had") or ch.get("secret"):
             continue
         dotted = ".".join(ch["path"])
-        if not rr.restart_paths(_nest(ch["path"], 0), openclaw_version=version, reload_mode=mode):
+        if not rr.restart_paths(_nest(ch["path"], 0), ruleset=ruleset, reload_mode=mode):
             continue                      # a hot key left behind is harmless: nothing to offer
         live, had = host._get_path(doc, ch["path"])
         if (not had or host._strict_equal(live, ch["previous"])
@@ -890,20 +890,22 @@ def _record_kinds(run_changes: list[dict]) -> tuple["str | None", "str | None", 
     from . import openclaw as cockpit
 
     try:
-        version = rr.installed_openclaw_version(cockpit._version_runner, refresh=True)
-    except Exception:  # noqa: BLE001 - a version that cannot be read is recorded as unknown
-        version = None
+        ruleset = rr.current_ruleset(cockpit._version_runner, refresh=True)
+    except Exception:  # noqa: BLE001 - rules that cannot be read make every key restart-required
+        ruleset = None
+    version = ruleset.version if ruleset is not None else None
     try:
         mode = cockpit._live_reload_mode()
     except Exception:  # noqa: BLE001
         mode = None
     paths = [".".join(ch["path"]) for ch in run_changes]
-    kinds = rr.classify(paths, openclaw_version=version, reload_mode=mode) if paths else {}
+    kinds = rr.classify(paths, ruleset=ruleset, reload_mode=mode) if paths else {}
     records = []
     for ch, dotted in zip(run_changes, paths):
         rec = dict(ch)
         rec["kind"] = kinds.get(dotted, rr.RESTART)
         rec["openclaw_version"] = version
+        rec["rules_source"] = ruleset.source if ruleset is not None else "unavailable"
         records.append(rec)
     return version, mode, records
 
@@ -1212,8 +1214,8 @@ def _teardown_config(o: state.OpenClawState, apply_patch: Callable[..., tuple[bo
     if not patch:
         o.host_config_changes = []
         return True
-    version = rr.installed_openclaw_version(_oc_runner(oc), refresh=True)
-    restart = rr.restart_paths(patch, openclaw_version=version, reload_mode=rr.reload_mode_of(doc))
+    ruleset = rr.current_ruleset(_oc_runner(oc), refresh=True)
+    restart = rr.restart_paths(patch, ruleset=ruleset, reload_mode=rr.reload_mode_of(doc))
     hot, res = rr.split_patch(patch, restart)
     hot_rp, res_rp = rr.split_replace_paths(replace_paths, restart)
     if hot:

@@ -17,6 +17,7 @@ from test_openclaw_host_wizard import (  # noqa: F401  (fixtures are used by nam
 )
 from ai_resources import openclaw_host as host
 from ai_resources import openclaw_reload_rules as rr
+from reload_rules_fixture import FIXTURE_VERSION, fixture_ruleset, make_rules_unavailable
 from ai_resources.setup import state
 from ai_resources.setup.cockpits import _openclaw_host as section, openclaw
 
@@ -195,8 +196,18 @@ def test_reload_mode_off_makes_every_key_restart_required(monkeypatch):
 
 # --- (h) AC-5 end to end ---------------------------------------------------------------------------------------------
 
-def test_a_version_other_than_the_pin_gates_even_a_hot_only_patch(monkeypatch):
+def test_a_different_installed_version_does_not_gate_a_hot_only_patch(monkeypatch):
+    """The operator symptom: OpenClaw moved past the version the kit was written against, the rules read fine."""
     monkeypatch.setattr(rr, "installed_openclaw_version", lambda runner, **kw: "2026.12.1")
+    assert rr.BASELINE_READ_FROM != "2026.12.1"
+    calls = []
+    monkeypatch.setattr(openclaw, "_openclaw", lambda *a, **k: calls.append(a) or (0, "ok"))
+    ok, _ = openclaw.apply_patch({"tools": {"profile": "coding"}})
+    assert ok and [c for c in calls if c[0][:2] == ["config", "patch"]], "the hot key is written"
+
+
+def test_unreadable_rules_gate_even_a_hot_only_patch(monkeypatch):
+    make_rules_unavailable(monkeypatch)
     calls = []
     monkeypatch.setattr(openclaw, "_openclaw", lambda *a, **k: calls.append(a) or (0, "ok"))
     with pytest.raises(rr.RestartRequired):
@@ -204,8 +215,8 @@ def test_a_version_other_than_the_pin_gates_even_a_hot_only_patch(monkeypatch):
     assert [c for c in calls if c[0][:2] == ["config", "patch"]] == [], "nothing is written"
 
 
-def test_a_version_mismatch_defers_the_whole_host_patch_in_the_wizard(sim, script, events, monkeypatch):
-    monkeypatch.setattr(rr, "installed_openclaw_version", lambda runner, **kw: None)
+def test_unreadable_rules_defer_the_whole_host_patch_in_the_wizard(sim, script, events, monkeypatch):
+    make_rules_unavailable(monkeypatch)
     script.answers["Apply in a drained window"] = False
     s = _state()
     _run_wizard(s)
@@ -214,10 +225,11 @@ def test_a_version_mismatch_defers_the_whole_host_patch_in_the_wizard(sim, scrip
 
 
 def test_the_engine_writer_reports_a_refusal_instead_of_crashing(monkeypatch, script):
-    monkeypatch.setattr(rr, "installed_openclaw_version", lambda runner, **kw: "0.0.1")
+    make_rules_unavailable(monkeypatch)
     monkeypatch.setattr(openclaw, "_openclaw", lambda *a, **k: (0, "ok"))
     ok, msg = openclaw._apply_hot({"tools": {"media": {}}})
     assert ok is False and "not applied" in msg
+    assert "refresh openclaw_reload_rules.py" not in msg and "reload rules" in msg
     assert any("not applied" in m for m in script.messages("warn"))
 
 
@@ -272,17 +284,18 @@ def test_teardown_interactive_and_idle_restores_bind_in_a_drained_window(sim, sc
 
 # --- (l) every other writer carries hot keys only ------------------------------------------------------------------------
 
-V = rr.PINNED_OPENCLAW_VERSION
+V = FIXTURE_VERSION
+RS = fixture_ruleset()
 
 
 def _all_hot(patch):
-    return rr.restart_paths(patch, openclaw_version=V) == []
+    return rr.restart_paths(patch, ruleset=RS) == []
 
 
 @pytest.mark.parametrize("engine", ["claude-code", "codex", "gemini-cli"])
 def test_the_engine_patch_is_all_hot(engine):
     patch = openclaw.build_patch(openclaw.ENGINES[engine], "anthropic/claude-sonnet-5", {}, "/kit/skills", "/bin/engram")
-    assert _all_hot(patch), rr.restart_paths(patch, openclaw_version=V)
+    assert _all_hot(patch), rr.restart_paths(patch, ruleset=RS)
 
 
 def test_the_antigravity_patch_and_its_restore_fragment_are_all_hot():
@@ -304,7 +317,7 @@ def test_the_media_and_bindings_patches_are_all_hot():
 def test_the_host_profile_is_all_hot_except_the_bind():
     built = host.build_host_patch(host.load_host_profile(), {}, {"DOMAIN": "ai.example.org", "POD_CIDR": "10.9.0.0/24",
                                                                   "HOME": "/home/u", "TAILNET": "1"})
-    assert rr.restart_paths(built["patch"], openclaw_version=V) == ["gateway.bind"]
+    assert rr.restart_paths(built["patch"], ruleset=RS) == ["gateway.bind"]
 
 
 # --- (m) apply-pending --------------------------------------------------------------------------------------------------------
@@ -686,7 +699,7 @@ def test_a_legacy_revert_is_offered_when_the_live_true_only_equals_the_recorded_
     monkeypatch.setattr(rr, "restart_paths", lambda *_a, **_k: ["x.flag"])
     s = _state()
     s.openclaw.host_config_changes = [{"path": ["x", "flag"], "previous": 1, "had": True}]
-    reverted = section._offer_legacy_revert(s.openclaw, {"x": {"flag": True}}, V, None, dry_run=False,
+    reverted = section._offer_legacy_revert(s.openclaw, {"x": {"flag": True}}, RS, None, dry_run=False,
                                             apply_patch=lambda *_a, **_k: (True, ""))
     assert reverted is False and len(asked) == 1 and asked[0].startswith("Restore x.flag to `1`")
 
@@ -700,7 +713,7 @@ def test_a_legacy_value_the_operator_set_to_the_same_type_is_not_offered(monkeyp
     monkeypatch.setattr(rr, "restart_paths", lambda *_a, **_k: ["x.flag"])
     s = _state()
     s.openclaw.host_config_changes = [{"path": ["x", "flag"], "previous": True, "had": True}]
-    assert section._offer_legacy_revert(s.openclaw, {"x": {"flag": True}}, V, None, dry_run=False,
+    assert section._offer_legacy_revert(s.openclaw, {"x": {"flag": True}}, RS, None, dry_run=False,
                                         apply_patch=lambda *_a, **_k: (True, "")) is False
     assert asked == []
 
@@ -784,7 +797,7 @@ def test_a_legacy_revert_is_not_offered_without_a_terminal(monkeypatch):
     s = _state()
     s.openclaw.host_config_changes = [{"path": ["x", "flag"], "previous": "old", "had": True}]
     wrote = []
-    reverted = section._offer_legacy_revert(s.openclaw, {"x": {"flag": "v"}}, V, None, dry_run=False,
+    reverted = section._offer_legacy_revert(s.openclaw, {"x": {"flag": "v"}}, RS, None, dry_run=False,
                                             apply_patch=lambda *a, **k: wrote.append(a) or (True, ""))
     assert reverted is False and asked == [] and wrote == []
     assert len(s.openclaw.host_config_changes) == 1, "the recorded change stays"
@@ -804,6 +817,6 @@ def test_a_legacy_live_value_that_only_equals_the_profile_value_by_python_is_not
     monkeypatch.setattr(rr, "restart_paths", lambda *_a, **_k: ["x.flag"])
     s = _state()
     s.openclaw.host_config_changes = [{"path": ["x", "flag"], "previous": "old", "had": True}]
-    assert section._offer_legacy_revert(s.openclaw, {"x": {"flag": 1}}, V, None, dry_run=False,
+    assert section._offer_legacy_revert(s.openclaw, {"x": {"flag": 1}}, RS, None, dry_run=False,
                                         apply_patch=lambda *_a, **_k: (True, "")) is False
     assert asked == []

@@ -1,23 +1,34 @@
 """Which `openclaw.json` keys make a live OpenClaw gateway restart when they change.
 
-`openclaw config patch --dry-run --json` has no restart field, and the rule table inside the
-installed package lives in a hashed `dist/` file, so the kit pins a copy of it here (ADR-0003).
-The copy is only trusted for the OpenClaw version it was read from: any other version, an
-unknown version, `gateway.reload.mode: off`, or a path no rule matches is classified
-`restart` (fail closed). A wrong "restart" costs a deferred key; a wrong "hot" costs a forced
-restart that cuts runs in flight (T40).
+`openclaw config patch --dry-run --json` has no restart field, so the kit reads the reload-rule table
+out of the installed package (`dist/config-reload-plan-*.mjs`, a file read: no gateway, no `node`, no
+subprocess) and classifies keys from THAT table. It never compares the installed version with a
+constant: the rules follow whatever OpenClaw is installed right now (ADR-0003, amended).
 
-Refresh after an OpenClaw upgrade: update `RULES` and `PINNED_OPENCLAW_VERSION` from
-`dist/config-reload-plan-*.mjs` (CORE_RELOAD_POLICIES then DEFAULT_RELOAD_POLICIES, in source
-order) and `tests/fixtures/openclaw_reload_rules_<version>.json` with them. The drift test in
-`tests/test_openclaw_reload_rules.py` says when this is needed.
+The read is strict and fails closed. The parser returns None unless every policy object and every
+prefix has the exact shape it understands; the classifier then calls every key `restart`. The same
+goes for `gateway.reload.mode: off` and for a path no rule matches. A wrong "restart" costs a deferred
+key; a wrong "hot" costs a forced restart that cuts runs in flight (T40).
+
+`BASELINE_RULES` is the table the kit was written against (read from OpenClaw `BASELINE_READ_FROM`; it
+is documentation, compared with nothing). Its `restart` entries always win over the installed table
+("restart dominance"): a key the installed OpenClaw now calls hot stays restart-required until a
+developer moves the baseline, and `status` lists those prefixes. A key that became restart-required
+in the installed OpenClaw is restart immediately, because the installed table is what is classified.
+
+Not modelled, and always on the conservative side: `canHotReloadGatewayAuthCredentials`, the
+`gateway.roles` model-policy noop and the channel plugins' runtime `configPrefixes` all make OpenClaw
+LESS restart-happy than the static table, so the kit may defer a key that would have been applied live.
 """
 from __future__ import annotations
 
 import copy
+import re
+from dataclasses import dataclass
 from typing import Callable
 
-PINNED_OPENCLAW_VERSION = "2026.10.2"
+# The OpenClaw whose dist table `BASELINE_RULES` was copied from. Documentation only.
+BASELINE_READ_FROM = "2026.10.3"
 
 
 class RestartRequired(Exception):
@@ -30,7 +41,7 @@ class RestartRequired(Exception):
 
 # (prefix, kind) in the source order of the dist: CORE_RELOAD_POLICIES then DEFAULT_RELOAD_POLICIES.
 # kind: "restart" | "hot" | "none". Longest prefix wins (OpenClaw's compareReloadRules).
-RULES: tuple[tuple[str, str], ...] = (
+BASELINE_RULES: tuple[tuple[str, str], ...] = (
     ("gateway.remote", "none"),
     ("gateway.reload", "none"),
     ("gateway.auth.token", "restart"),
@@ -173,9 +184,9 @@ def leaf_paths(patch: dict) -> list[str]:
     return out
 
 
-def _kind_of(path: str) -> str | None:
+def _kind_of(path: str, rules: "tuple[tuple[str, str], ...]") -> str | None:
     best: tuple[tuple[int, int], str] | None = None
-    for prefix, kind in RULES:  # source order breaks ties, as OpenClaw's stable sort does
+    for prefix, kind in rules:  # source order breaks ties, as OpenClaw's stable sort does
         if _prefix_matches(prefix, path):
             spec = _specificity(prefix)
             if best is None or spec > best[0]:
@@ -183,20 +194,192 @@ def _kind_of(path: str) -> str | None:
     return best[1] if best else None
 
 
-def classify(paths: list[str], *, openclaw_version: str | None,
+_KINDS = (RESTART, HOT, NONE)
+_PREFIX_RE = re.compile(r"[A-Za-z0-9_-]+(\.([A-Za-z0-9_-]+|\*))*")
+_STR = r'"[^"\\\n]*"'
+_LIST_BODY_RE = re.compile(r"(?:\s*(?:%s|\.\.\.AUTH_CREDENTIAL_PATHS)\s*,?)*\s*" % _STR)
+_TOKEN_RE = re.compile(r'"([^"]*)"|\.\.\.AUTH_CREDENTIAL_PATHS')
+_POLICY_RE = re.compile(r'\{\s*prefixes\s*:\s*\[(.*?)\]\s*,\s*kind\s*:\s*"([^"]*)"', re.S)
+MIN_RULES = 40
+
+
+def _single_block(src: str, name: str) -> str | None:
+    found = re.findall(r"^const %s = \[(.*?)\n\];" % name, src, re.S | re.M)
+    return found[0] if len(found) == 1 else None
+
+
+def parse_reload_rules(src: str) -> "tuple[tuple[str, str], ...] | None":
+    """The (prefix, kind) table in `src` (a `config-reload-plan-*.mjs`), or None. Never raises.
+
+    None unless the three const blocks are each found exactly once, every policy object has the
+    `{ prefixes: [...], kind: "..." }` shape, every prefix is a string literal or the spread of
+    AUTH_CREDENTIAL_PATHS, every kind and prefix is well formed and the table is not implausibly
+    small. A parse the kit does not fully understand must never classify a key hot.
+    """
+    try:
+        return _parse_reload_rules(src)
+    except Exception:  # noqa: BLE001 - fail closed on anything unforeseen
+        return None
+
+
+def _parse_reload_rules(src: str) -> "tuple[tuple[str, str], ...] | None":
+    if not isinstance(src, str):
+        return None
+    m = re.findall(r"^const AUTH_CREDENTIAL_PATHS = \[(.*?)\];", src, re.S | re.M)
+    if len(m) != 1:
+        return None
+    auth_body = m[0]
+    if not re.fullmatch(r"(?:\s*%s\s*,?)*\s*" % _STR, auth_body):
+        return None
+    auth = [t for t in re.findall(r'"([^"]*)"', auth_body)]
+    rules: list[tuple[str, str]] = []
+    for name in ("CORE_RELOAD_POLICIES", "DEFAULT_RELOAD_POLICIES"):
+        block = _single_block(src, name)
+        if block is None:
+            return None
+        policies = list(_POLICY_RE.finditer(block))
+        if (not policies or len(policies) != len(re.findall(r"\bprefixes\s*:", block))
+                or len(policies) != block.count("{")):
+            return None            # a policy object the pattern skipped, or one of another shape
+        for pol in policies:
+            body, kind = pol.group(1), pol.group(2)
+            if kind not in _KINDS or not _LIST_BODY_RE.fullmatch(body):
+                return None
+            for tok in _TOKEN_RE.finditer(body):
+                prefixes = [tok.group(1)] if tok.group(1) is not None else list(auth)
+                for prefix in prefixes:
+                    if not _PREFIX_RE.fullmatch(prefix):
+                        return None
+                    rules.append((prefix, kind))
+    if len(rules) < MIN_RULES:
+        return None
+    have = set(rules)
+    if ("gateway", RESTART) not in have or ("discovery", RESTART) not in have:
+        return None
+    return tuple(rules)
+
+
+@dataclass(frozen=True)
+class RuleSet:
+    """The reload rules of the installed OpenClaw. `rules` is what `classify` uses (installed table
+    plus the baseline's restart entries); None when the installed table could not be read."""
+    version: str | None
+    source: str                                   # "installed" | "unavailable"
+    rules: "tuple[tuple[str, str], ...] | None" = None
+    reason: str = ""
+    dist: str | None = None
+    stricter: tuple[str, ...] = ()
+    installed_count: int = 0
+
+
+def _merge_baseline(installed: "tuple[tuple[str, str], ...]") -> "tuple[tuple[tuple[str, str], ...], tuple[str, ...]]":
+    """(effective rules, prefixes where the kit is stricter): the baseline's `restart` entries win."""
+    restart_prefixes = [p for p, k in BASELINE_RULES if k == RESTART]
+    rset = set(restart_prefixes)
+    out = [(p, RESTART if p in rset else k) for p, k in installed]
+    present = {p for p, _k in installed}
+    stricter: list[str] = []
+    for p in dict.fromkeys(restart_prefixes):
+        ik = _kind_of(p, installed)
+        if ik in (HOT, NONE):
+            stricter.append(p)
+        if p not in present and ik != RESTART:
+            out.append((p, RESTART))
+    return tuple(out), tuple(stricter)
+
+
+def ruleset_from_source(src: str, *, version: str | None, dist: str | None = None) -> RuleSet:
+    """A RuleSet from the text of a reload-plan dist file (unavailable when it does not parse)."""
+    installed = parse_reload_rules(src)
+    if installed is None:
+        return RuleSet(version, "unavailable", None,
+                       "the installed OpenClaw's reload table is not in a shape the kit understands", dist)
+    rules, stricter = _merge_baseline(installed)
+    return RuleSet(version, "installed", rules, "", dist, stricter, len(installed))
+
+
+def unavailable(version: str | None, reason: str) -> RuleSet:
+    return RuleSet(version, "unavailable", None, reason)
+
+
+def _locate_dist(package_json) -> "tuple[object | None, str]":
+    if package_json is None:
+        return None, "the openclaw package was not found next to the openclaw on PATH"
+    try:
+        found = sorted((package_json.parent / "dist").glob("config-reload-plan-*.mjs"))
+    except OSError as e:
+        return None, f"the package dist directory cannot be read ({e.__class__.__name__})"
+    if not found:
+        return None, "no dist/config-reload-plan-*.mjs in the installed package"
+    if len(found) > 1:
+        return None, "several dist/config-reload-plan-*.mjs files in the installed package"
+    return found[0], ""
+
+
+def locate_reload_plan_dist(package_json) -> "object | None":
+    """`<package dir>/dist/config-reload-plan-*.mjs` when there is exactly one, else None."""
+    return _locate_dist(package_json)[0]
+
+
+# dist path -> ((mtime_ns, size), parsed rules or None); an in-place upgrade changes mtime or size.
+_PARSE_CACHE: dict[str, tuple[tuple[int, int], "tuple | None"]] = {}
+
+
+def _read_installed_rules(dist) -> "tuple[tuple | None, str]":
+    try:
+        st = dist.stat()
+    except OSError as e:
+        return None, f"the reload table cannot be read ({e.__class__.__name__})"
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _PARSE_CACHE.get(str(dist))
+    if hit is not None and hit[0] == key:
+        parsed = hit[1]
+    else:
+        try:
+            src = dist.read_text(encoding="utf-8")
+        except (OSError, ValueError) as e:
+            return None, f"the reload table cannot be read ({e.__class__.__name__})"
+        parsed = parse_reload_rules(src)
+        _PARSE_CACHE[str(dist)] = (key, parsed)
+    if parsed is None:
+        return None, "the installed OpenClaw's reload table is not in a shape the kit understands"
+    return parsed, ""
+
+
+def current_ruleset(runner: Callable[..., "tuple[int, str]"], *, refresh: bool = False) -> RuleSet:
+    """The reload rules of the OpenClaw installed right now. Never raises; unreadable means
+    `source == "unavailable"` and every key is then restart-required."""
+    try:
+        version = installed_openclaw_version(runner, refresh=refresh)
+    except Exception:  # noqa: BLE001 - a version that cannot be read is information, not a failure
+        version = None
+    try:
+        dist, why = _locate_dist(_find_package_json())
+        if dist is None:
+            return unavailable(version, why)
+        installed, why = _read_installed_rules(dist)
+        if installed is None:
+            return RuleSet(version, "unavailable", None, why, str(dist))
+        rules, stricter = _merge_baseline(installed)
+        return RuleSet(version, "installed", rules, "", str(dist), stricter, len(installed))
+    except Exception as e:  # noqa: BLE001 - fail closed
+        return unavailable(version, f"the reload table cannot be read ({e.__class__.__name__})")
+
+
+def classify(paths: list[str], *, ruleset: "RuleSet | None",
              reload_mode: str | None = None) -> dict[str, str]:
     """{path: "restart" | "hot" | "none"}. Fails closed: see the module docstring."""
-    trusted = openclaw_version == PINNED_OPENCLAW_VERSION and reload_mode != "off"
+    rules = ruleset.rules if ruleset is not None and reload_mode != "off" else None
     out: dict[str, str] = {}
     for p in paths:
-        kind = _kind_of(p) if trusted else None
+        kind = _kind_of(p, rules) if rules is not None else None
         out[p] = kind or RESTART
     return out
 
 
-def restart_paths(patch: dict, *, openclaw_version: str | None,
+def restart_paths(patch: dict, *, ruleset: "RuleSet | None",
                   reload_mode: str | None = None) -> list[str]:
-    kinds = classify(leaf_paths(patch), openclaw_version=openclaw_version, reload_mode=reload_mode)
+    kinds = classify(leaf_paths(patch), ruleset=ruleset, reload_mode=reload_mode)
     return [p for p, k in kinds.items() if k == RESTART]
 
 

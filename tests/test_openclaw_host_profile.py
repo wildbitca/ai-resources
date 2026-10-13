@@ -20,6 +20,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources import openclaw_host as host  # noqa: E402
 from ai_resources.setup import profiles  # noqa: E402
+from reload_rules_fixture import fixture_ruleset  # noqa: E402
 from ai_resources.setup.cockpits import openclaw  # noqa: E402
 
 FIXTURE = REPO / "tests" / "fixtures" / "openclaw_host_config.json"
@@ -446,7 +447,7 @@ def test_profile_guard_keys_fill_an_empty_config_and_classify_hot():
     assert built["patch"]["agents"]["defaults"]["timeoutSeconds"] == 14400
     assert rr.restart_paths({"mcp": {"sessionIdleTtlMs": 1800000},
                              "agents": {"defaults": {"timeoutSeconds": 14400}}},
-                            openclaw_version=rr.PINNED_OPENCLAW_VERSION) == []
+                            ruleset=fixture_ruleset()) == []
     assert "mcp.sessionIdleTtlMs" in built["filled"] and "agents.defaults.timeoutSeconds" in built["filled"]
 
 

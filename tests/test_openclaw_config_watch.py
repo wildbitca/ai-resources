@@ -14,7 +14,7 @@ from test_openclaw_host_wizard import (  # noqa: F401  (fixtures are used by nam
     _run_wizard, _state, script, sim,
 )
 from ai_resources import openclaw_host as host
-from ai_resources import openclaw_reload_rules as _rr
+from reload_rules_fixture import FIXTURE_VERSION, make_rules_unavailable
 from ai_resources.setup import state
 from ai_resources.setup.cockpits import _openclaw_host as section, openclaw
 
@@ -63,7 +63,7 @@ class Rig:
             ok = self.health.pop(0) if self.health else False
             return (0 if ok else 1), ""
         if argv[-1:] == ["--version"]:
-            return 0, f"OpenClaw {_rr.PINNED_OPENCLAW_VERSION} (abc)"
+            return 0, f"OpenClaw {FIXTURE_VERSION} (abc)"
         raise AssertionError(f"unexpected command {argv}")
 
     def sleep(self, _s):
@@ -471,7 +471,7 @@ def _journal_line(epoch: float, message: str) -> str:
 class WRig(Rig):
     """A Rig with a virtual clock, scripted probes by time, corroboration signals and a gateway journal."""
 
-    def __init__(self, tmp_path, changes, *, probe=None, version=(0, f"OpenClaw {_rr.PINNED_OPENCLAW_VERSION} (abc)"), pid=lambda t: "100",
+    def __init__(self, tmp_path, changes, *, probe=None, version=(0, f"OpenClaw {FIXTURE_VERSION} (abc)"), pid=lambda t: "100",
                  restarts=lambda t: "0", unit_state=lambda t: "active", listening=lambda t: True,
                  journal=(), patch_ok=True, **kw):
         super().__init__(tmp_path, changes, **kw)
@@ -795,7 +795,7 @@ def test_an_uncorroborated_failure_never_reaches_the_window_and_queues_nothing(w
 
 # --- AC-D1-routing -------------------------------------------------------------------------------------------------
 
-def _recorded(path, kind=None, version=_rr.PINNED_OPENCLAW_VERSION):
+def _recorded(path, kind=None, version=FIXTURE_VERSION):
     rec = {"path": path, "previous": None, "had": False, "action": "filled", "delete": path}
     if kind:
         rec.update(kind=kind, openclaw_version=version)
@@ -812,19 +812,28 @@ def test_recorded_hot_keys_stay_on_the_hot_path_when_the_version_cannot_be_read(
     assert r.result()["outcome"] == "reverted"
 
 
-def test_a_legacy_record_with_no_version_still_routes_to_the_drained_window(wrig, monkeypatch):
-    monkeypatch.setattr(host.openclaw_reload_rules, "installed_openclaw_version", lambda runner, **kw: None)
+def test_a_legacy_record_with_unreadable_rules_still_routes_to_the_drained_window(wrig, monkeypatch):
+    make_rules_unavailable(monkeypatch, version=None)
     r = wrig([_recorded(["tools", "profile"])], pid=lambda t: "100" if t < 10 else "9")
     assert r.run() == 0
     assert ("patch", ("tools.profile",), True) in r.events, "fail closed: restart routing"
     assert [e[0] for e in r.systemctl_changes()] == ["stop", "start"]
 
 
-def test_a_different_readable_version_reclassifies_instead_of_trusting_the_record(wrig, monkeypatch):
-    monkeypatch.setattr(host.openclaw_reload_rules, "installed_openclaw_version", lambda runner, **kw: "2099.1.1")
-    r = wrig([_recorded(["tools", "profile"], "hot", _rr.PINNED_OPENCLAW_VERSION)], pid=lambda t: "100" if t < 10 else "9")
+def test_a_different_readable_version_reclassifies_with_the_live_rules(wrig, monkeypatch):
+    """Recorded hot on the previous OpenClaw; the live one (readable rules) still says hot: the hot path."""
+    monkeypatch.setattr(host.openclaw_reload_rules, "installed_openclaw_version", lambda runner, **kw: "2099.2.2")
+    r = wrig([_recorded(["tools", "profile"], "hot", "2026.10.2")], pid=lambda t: "100" if t < 10 else "9")
     assert r.run() == 0
-    assert ("patch", ("tools.profile",), True) in r.events, "the pin does not know 2099.1.1: fail closed"
+    [(patch, _d, _rp, allow)] = r.real_writes()
+    assert allow is False and r.systemctl_changes() == [], "no drained window for a key the live rules call hot"
+
+
+def test_a_different_readable_version_with_unreadable_rules_fails_closed(wrig, monkeypatch):
+    make_rules_unavailable(monkeypatch, version="2099.2.2")
+    r = wrig([_recorded(["tools", "profile"], "hot", "2026.10.2")], pid=lambda t: "100" if t < 10 else "9")
+    assert r.run() == 0
+    assert ("patch", ("tools.profile",), True) in r.events, "rules that cannot be read: restart routing"
 
 
 # --- the pure verdict ------------------------------------------------------------------------------------------------
@@ -948,11 +957,11 @@ def test_setup_starts_the_unit_with_its_own_path_and_records_version_mode_and_ki
     assert setenv == ["--setenv=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin"]
     assert argv.index(setenv[0]) < argv.index("/opt/bin/ai-resources")
     cw = s.openclaw.config_watch
-    assert cw["openclaw_version"] == _rr.PINNED_OPENCLAW_VERSION
+    assert cw["openclaw_version"] == FIXTURE_VERSION
     assert "reload_mode" in cw
     kinds = {".".join(c["path"]): c.get("kind") for c in cw["changes"]}
     assert kinds["tools.profile"] == "hot" and kinds["gateway.bind"] == "restart"
-    assert all(c.get("openclaw_version") == _rr.PINNED_OPENCLAW_VERSION for c in cw["changes"])
+    assert all(c.get("openclaw_version") == FIXTURE_VERSION for c in cw["changes"])
 
 
 # --- AC-D1-report: inconclusive and leftover entries are warnings, never errors -------------------------------------
@@ -1083,9 +1092,9 @@ def test_apply_patch_skips_a_noop_and_fires_the_first_write_hook_only_for_a_real
 
 def test_a_noop_patch_is_not_refused_when_the_key_cannot_be_classified(sim, monkeypatch):
     """The no-op check runs before the restart gate: a repeat of a patch the file already holds sends nothing, so an
-    unclassifiable OpenClaw version (fail closed) must not turn it into a RestartRequired refusal."""
+    unreadable rule table (fail closed) must not turn it into a RestartRequired refusal."""
     current = json.loads(sim.cfg.read_text())["tools"]["profile"]
-    monkeypatch.setattr(_rr, "installed_openclaw_version", lambda *a, **k: "2099.1.1")
+    make_rules_unavailable(monkeypatch)
     ok, out = openclaw.apply_patch({"tools": {"profile": current}})
     assert ok and "no changed leaf" in out and sim.oc.real_patches() == []
     with pytest.raises(openclaw.RestartRequired):

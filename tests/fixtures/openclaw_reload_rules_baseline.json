@@ -1,5 +1,5 @@
 {
- "openclaw_version": "2026.10.2",
+ "read_from": "2026.10.3",
  "rules": [
   [
    "gateway.remote",
