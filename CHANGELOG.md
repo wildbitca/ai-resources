@@ -96,6 +96,14 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Fixed
 
+- **The reload-rule parser failed open on a conditional policy and could backtrack for minutes.** The policy pattern
+  ended at the `kind` literal, so `{ prefixes: ["a"], kind: "hot", when: (c) => false }` parsed as an unconditional
+  hot policy; and the nested-quantifier list patterns took 40 s on 14 whitespace-separated literals followed by a
+  non-matching character. `parse_reload_rules` is now a linear tokeniser: each policy object must be exactly
+  `{ prefixes: [...], kind: "..." }` followed only by the data-only `actions` / `replaceChannelPlugins` fields the
+  dist carries (any other field makes the whole table unreadable, so every key is restart-required), and input over
+  256 KiB is refused.
+
 - **`ai-resources audit` priced a newer minor as its major.** `audit._price` matched by prefix, so
   `claude-opus-5-5` was costed as `claude-opus-5`. A prefix now matches only a dated snapshot or a context
   suffix (`claude-sonnet-5-20260101`, `claude-fable-5-1[1m]`); a model without its own row is unpriced rather than

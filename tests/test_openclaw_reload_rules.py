@@ -195,6 +195,75 @@ def test_a_table_the_parser_does_not_understand_is_all_restart(name):
                            ruleset=rs).values()) == {"restart"}
 
 
+def _table(core_extra: str = "", core_obj_tail: str = 'kind: "hot"') -> str:
+    """A minimal valid-shaped dist with MIN_RULES+ rules and one custom policy object."""
+    many = ", ".join('"p%d"' % i for i in range(45))
+    return ('const AUTH_CREDENTIAL_PATHS = ["a.b"];\n'
+            'const CORE_RELOAD_POLICIES = [\n\t{ prefixes: [%s], kind: "none" },\n%s\n];\n'
+            'const DEFAULT_RELOAD_POLICIES = [\n\t{ prefixes: ["gateway", "discovery"], kind: "restart" }\n];\n'
+            % (many, core_extra))
+
+
+@pytest.mark.parametrize("obj", [
+    '{ prefixes: ["a"], kind: "hot", when: (c) => false }',
+    '{ prefixes: ["a"], kind: "hot", when: false }',
+    '{ prefixes: ["a"], kind: "hot", noopIf: () => true }',
+    '{ prefixes: ["a"], kind: "hot", actions: ["x"], when: (c) => false }',
+    '{ prefixes: ["a"], kind: "hot", ...extra }',
+    '{ prefixes: ["a"], kind: "hot" + suffix }',
+    '{ prefixes: ["a"], kind: "hot", replaceChannelPlugins: false }',
+    '{ prefixes: ["a"], kind: "hot", actions: (c) => c.on ? ["x"] : [] }',
+    '{ prefixes: ["a"], kind: "hot", actions: pick() }',
+])
+def test_a_conditional_or_extended_policy_makes_the_table_unreadable(obj):
+    ok = _table('\t{ prefixes: ["a"], kind: "hot" }')
+    assert rr.parse_reload_rules(ok) is not None            # the harness itself is readable
+    src = _table("\t" + obj)
+    assert rr.parse_reload_rules(src) is None
+    rs = rr.ruleset_from_source(src, version=FIXTURE_VERSION)
+    assert rs.source == "unavailable"
+    assert rr.classify(["a", "a.b"], ruleset=rs) == {"a": "restart", "a.b": "restart"}
+
+
+def test_the_dist_fields_actions_and_replace_channel_plugins_are_still_read():
+    src = _table('\t{ prefixes: ["a"], kind: "hot", actions: ["x", "y"], replaceChannelPlugins: true }')
+    assert ("a", "hot") in rr.parse_reload_rules(src)
+
+
+def _timed(src):
+    import time
+    t0 = time.perf_counter()
+    out = rr.parse_reload_rules(src)
+    return out, time.perf_counter() - t0
+
+
+def test_whitespace_separated_literals_do_not_backtrack_catastrophically():
+    lits = " ".join('"a"' for _ in range(40))
+    for body in (lits + " !", lits + " ;"):
+        # the policy list body, and the AUTH list body
+        policy = _table('\t{ prefixes: [%s], kind: "hot" }' % body)
+        auth = policy.replace('["a.b"]', "[%s]" % body, 1)
+        for src in (policy, auth):
+            out, dt = _timed(src)
+            assert out is None and dt < 1.0, dt
+
+
+def test_a_hostile_one_megabyte_input_fails_closed_fast():
+    hostile = ["\"a\" " * 250_000, " " * 1_000_000, "{" * 1_000_000,
+               'const CORE_RELOAD_POLICIES = [\n' * 40_000,
+               _table('\t{ prefixes: [' + '"a" ' * 250_000 + '], kind: "hot" }')]
+    for src in hostile:
+        out, dt = _timed(src)
+        assert out is None and dt < 1.0, (len(src), dt)
+
+
+def test_the_size_cap_is_the_only_thing_that_rejects_a_large_valid_table():
+    src = _table("\t{ prefixes: [" + ", ".join('"q%d"' % i for i in range(5000)) + '], kind: "hot" }')
+    assert len(src) < rr.MAX_SOURCE_BYTES
+    out, dt = _timed(src)
+    assert out is not None and dt < 1.0
+
+
 def test_the_parser_never_raises_on_a_non_string():
     assert rr.parse_reload_rules(None) is None  # type: ignore[arg-type]
     assert rr.parse_reload_rules(b"bytes") is None  # type: ignore[arg-type]

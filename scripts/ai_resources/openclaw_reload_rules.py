@@ -196,25 +196,177 @@ def _kind_of(path: str, rules: "tuple[tuple[str, str], ...]") -> str | None:
 
 _KINDS = (RESTART, HOT, NONE)
 _PREFIX_RE = re.compile(r"[A-Za-z0-9_-]+(\.([A-Za-z0-9_-]+|\*))*")
-_STR = r'"[^"\\\n]*"'
-_LIST_BODY_RE = re.compile(r"(?:\s*(?:%s|\.\.\.AUTH_CREDENTIAL_PATHS)\s*,?)*\s*" % _STR)
-_TOKEN_RE = re.compile(r'"([^"]*)"|\.\.\.AUTH_CREDENTIAL_PATHS')
-_POLICY_RE = re.compile(r'\{\s*prefixes\s*:\s*\[(.*?)\]\s*,\s*kind\s*:\s*"([^"]*)"', re.S)
 MIN_RULES = 40
+# The real dist is a few KB. A bigger input is not a reload table, and the cap bounds the work.
+MAX_SOURCE_BYTES = 256 * 1024
+
+# Tokens of the linear scanner. Each is a flat pattern anchored with `.match(src, pos)`: no nested
+# quantifier and no alternation whose branches can match the same text, so the scan never backtracks.
+_WS = re.compile(r"\s*")
+_STR_TOKEN = re.compile(r'"([^"\\\n]*)"')
+_SPREAD_TOKEN = re.compile(r"\.\.\.AUTH_CREDENTIAL_PATHS(?![A-Za-z0-9_$])")
+_IDENT_TOKEN = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+_CONST_TOKEN = re.compile(r"[A-Z][A-Z0-9_]*(?![A-Za-z0-9_$])")
+_ANY_SPREAD_TOKEN = re.compile(r"\.\.\.[A-Z][A-Z0-9_]*(?![A-Za-z0-9_$])")
+_TRUE_TOKEN = re.compile(r"true(?![A-Za-z0-9_$])")
+_HEADER = r"^const %s = \["
 
 
-def _single_block(src: str, name: str) -> str | None:
-    found = re.findall(r"^const %s = \[(.*?)\n\];" % name, src, re.S | re.M)
-    return found[0] if len(found) == 1 else None
+class _Scan:
+    """A cursor over `src`. Every method returns None / False on a mismatch and never backtracks."""
+
+    def __init__(self, src: str, pos: int = 0):
+        self.src, self.pos = src, pos
+
+    def ws(self) -> None:
+        self.pos = _WS.match(self.src, self.pos).end()  # type: ignore[union-attr]
+
+    def lit(self, text: str) -> bool:
+        self.ws()
+        if self.src.startswith(text, self.pos):
+            self.pos += len(text)
+            return True
+        return False
+
+    def ident(self) -> "str | None":
+        self.ws()
+        m = _IDENT_TOKEN.match(self.src, self.pos)
+        if m is None:
+            return None
+        self.pos = m.end()
+        return m.group(0)
+
+    def string(self) -> "str | None":
+        self.ws()
+        m = _STR_TOKEN.match(self.src, self.pos)
+        if m is None:
+            return None
+        self.pos = m.end()
+        return m.group(1)
+
+    def key(self, name: str) -> bool:
+        return self.ident() == name and self.lit(":")
+
+    def at_end(self) -> bool:
+        self.ws()
+        return self.pos >= len(self.src)
+
+    def list_items(self, auth: "list[str] | None", *, any_const: bool = False) -> "list[str] | None":
+        """Items of `[ ... ]` (the `[` already consumed): string literals, and the AUTH spread when
+        `auth` is given (or the spread of any UPPER_CASE constant when `any_const`, for the inert
+        `actions` list). Items are comma separated, one trailing comma is allowed. None on any other
+        token."""
+        items: list[str] = []
+        self.ws()
+        if self.src.startswith("]", self.pos):
+            self.pos += 1
+            return items
+        while True:
+            self.ws()
+            m = _SPREAD_TOKEN.match(self.src, self.pos) if auth is not None else None
+            if m is None and any_const:
+                m = _ANY_SPREAD_TOKEN.match(self.src, self.pos)
+            if m is not None:
+                self.pos = m.end()
+                items.extend(auth or [])
+            else:
+                tok = self.string()
+                if tok is None:
+                    return None
+                items.append(tok)
+            if self.lit("]"):
+                return items
+            if not self.lit(","):
+                return None
+            if self.lit("]"):
+                return items
+
+
+def _single_block(src: str, name: str, end: str) -> "str | None":
+    heads = list(re.finditer(_HEADER % name, src, re.M))
+    if len(heads) != 1:
+        return None
+    start = heads[0].end()
+    stop = src.find(end, start)
+    return None if stop < 0 else src[start:stop]
+
+
+def _actions_value(sc: "_Scan") -> bool:
+    """The inert value of `actions:` : `[ "a", ...SOME_CONST ]` or a bare UPPER_CASE constant."""
+    sc.ws()
+    if sc.src.startswith("[", sc.pos):
+        sc.pos += 1
+        return sc.list_items(None, any_const=True) is not None
+    m = _CONST_TOKEN.match(sc.src, sc.pos)
+    if m is None:
+        return False
+    sc.pos = m.end()
+    return True
+
+
+def _parse_policies(block: str, auth: "list[str]") -> "list[tuple[str, str]] | None":
+    """The (prefix, kind) pairs of one policy array body, or None.
+
+    Each object must be exactly `{ prefixes: [...], kind: "..." }`, optionally followed by the two
+    data-only fields OpenClaw's dist carries, in this order: `actions` (a list of string literals and
+    UPPER_CASE constant spreads, or one UPPER_CASE constant) and `replaceChannelPlugins: true`. Any other field (a `when:` predicate, a function, a spread) makes
+    the whole table unreadable: an object the kit cannot fully read must never classify a key hot.
+    """
+    sc = _Scan(block)
+    out: list[tuple[str, str]] = []
+    n_objects = 0
+    while not sc.at_end():
+        if n_objects and not sc.lit(","):
+            return None
+        if sc.at_end():                       # a trailing comma after the last object
+            break
+        if not sc.lit("{") or not sc.key("prefixes") or not sc.lit("["):
+            return None
+        prefixes = sc.list_items(auth)
+        if prefixes is None or not sc.lit(",") or not sc.key("kind"):
+            return None
+        kind = sc.string()
+        if kind is None or kind not in _KINDS:
+            return None
+        if sc.lit(","):
+            if sc.lit("}"):                   # trailing comma before the closing brace
+                pass
+            else:
+                if not sc.key("actions") or not _actions_value(sc):
+                    return None
+                if sc.lit(","):
+                    if not sc.lit("}"):
+                        if not sc.key("replaceChannelPlugins"):
+                            return None
+                        sc.ws()
+                        m = _TRUE_TOKEN.match(sc.src, sc.pos)
+                        if m is None:
+                            return None
+                        sc.pos = m.end()
+                        sc.lit(",")
+                        if not sc.lit("}"):
+                            return None
+                elif not sc.lit("}"):
+                    return None
+        elif not sc.lit("}"):
+            return None
+        n_objects += 1
+        for prefix in prefixes:
+            if not _PREFIX_RE.fullmatch(prefix):
+                return None
+            out.append((prefix, kind))
+    return out if n_objects else None
 
 
 def parse_reload_rules(src: str) -> "tuple[tuple[str, str], ...] | None":
     """The (prefix, kind) table in `src` (a `config-reload-plan-*.mjs`), or None. Never raises.
 
-    None unless the three const blocks are each found exactly once, every policy object has the
-    `{ prefixes: [...], kind: "..." }` shape, every prefix is a string literal or the spread of
-    AUTH_CREDENTIAL_PATHS, every kind and prefix is well formed and the table is not implausibly
-    small. A parse the kit does not fully understand must never classify a key hot.
+    None unless the three const blocks are each found exactly once, every policy object is exactly
+    `{ prefixes: [...], kind: "..." }` (plus the data-only `actions` / `replaceChannelPlugins` fields
+    the dist carries; any other field is refused), every prefix is a string literal or the spread of
+    AUTH_CREDENTIAL_PATHS, every kind and prefix is well formed, the input is under MAX_SOURCE_BYTES
+    and the table is not implausibly small. A parse the kit does not fully understand must never
+    classify a key hot. The scan is linear in the size of `src`.
     """
     try:
         return _parse_reload_rules(src)
@@ -223,34 +375,24 @@ def parse_reload_rules(src: str) -> "tuple[tuple[str, str], ...] | None":
 
 
 def _parse_reload_rules(src: str) -> "tuple[tuple[str, str], ...] | None":
-    if not isinstance(src, str):
+    if not isinstance(src, str) or len(src) > MAX_SOURCE_BYTES:
         return None
-    m = re.findall(r"^const AUTH_CREDENTIAL_PATHS = \[(.*?)\];", src, re.S | re.M)
-    if len(m) != 1:
+    auth_body = _single_block(src, "AUTH_CREDENTIAL_PATHS", "];")
+    if auth_body is None:
         return None
-    auth_body = m[0]
-    if not re.fullmatch(r"(?:\s*%s\s*,?)*\s*" % _STR, auth_body):
+    sc = _Scan(auth_body + "]")
+    auth = sc.list_items(None)
+    if auth is None or not sc.at_end():
         return None
-    auth = [t for t in re.findall(r'"([^"]*)"', auth_body)]
     rules: list[tuple[str, str]] = []
     for name in ("CORE_RELOAD_POLICIES", "DEFAULT_RELOAD_POLICIES"):
-        block = _single_block(src, name)
+        block = _single_block(src, name, "\n];")
         if block is None:
             return None
-        policies = list(_POLICY_RE.finditer(block))
-        if (not policies or len(policies) != len(re.findall(r"\bprefixes\s*:", block))
-                or len(policies) != block.count("{")):
-            return None            # a policy object the pattern skipped, or one of another shape
-        for pol in policies:
-            body, kind = pol.group(1), pol.group(2)
-            if kind not in _KINDS or not _LIST_BODY_RE.fullmatch(body):
-                return None
-            for tok in _TOKEN_RE.finditer(body):
-                prefixes = [tok.group(1)] if tok.group(1) is not None else list(auth)
-                for prefix in prefixes:
-                    if not _PREFIX_RE.fullmatch(prefix):
-                        return None
-                    rules.append((prefix, kind))
+        parsed = _parse_policies(block, auth)
+        if parsed is None:
+            return None
+        rules.extend(parsed)
     if len(rules) < MIN_RULES:
         return None
     have = set(rules)
