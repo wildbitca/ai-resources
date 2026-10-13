@@ -1,0 +1,71 @@
+name: balanced-claude-55
+mode: multi-model
+description: |
+  Recommended. Claude only, three tiers on the 5.5 family: Haiku for reading-heavy
+  and mechanical roles, Sonnet for code, review and verification, Opus for planning,
+  architecture and security. Valid in every compatibility cell it can reach without
+  --allow-unverified (Claude Code, Aider and the OpenClaw claude-code engine; see
+  tests/test_profile_validity.py, which derives that from the matrix).
+
+  Gateway-agnostic: no `backend` key, every model is named anthropic/<model>, so
+  either gateway serves it. A Claude-only multi-model profile still needs a LiteLLM
+  or OpenRouter gateway; a host with no gateway should use the single-model
+  `claude-native` profile instead.
+
+  Evidence, and how good it is. MEASURED here: the 2026-09-16 workflow runs behind
+  `measured-best` (the implementer on Sonnet wrote the code that passed every
+  adversarial case; the reviewer and security-auditor were deliberately not
+  economised) and the Haiku-directed run that cost 77% less than an Opus
+  orchestrator and finished in 12 turns instead of 37. NOT measured here: the 5.5
+  family itself and its prices (the catalogue lists the ids and carries no price);
+  the tier choice follows the 4.5/5 measurements and rule 017 (strong models on
+  verification, review and security).
+
+  The main conversation is not set by the kit under LiteLLM or single-model. On
+  Claude Code pick it yourself with `/model haiku` (the measured cheap
+  orchestrator); OpenClaw orchestrators stay on Sonnet, as the host profile
+  requires. "Architect on Sonnet for small changes" cannot be expressed in a static
+  profile: the architect ships on Opus with a Sonnet fallback, and you can override
+  it per host with `ai-resources executors set software-architect`.
+
+# Alias -> concrete model for the MAIN conversation. Only the OpenRouter backend
+# reads this block (Claude Code resolves /model aliases to bare Claude ids, which
+# OpenRouter's namespaced catalogue does not know); LiteLLM registers the bare ids.
+classes:
+  opus:   anthropic/claude-opus-5.5
+  sonnet: anthropic/claude-sonnet-5.5
+  haiku:  anthropic/claude-haiku-5.5
+  fable:  anthropic/claude-fable-5.1
+
+defaults:
+  fallbacks: [anthropic/claude-sonnet-5.5]
+  max_retries: 2
+  timeout_seconds: 600
+
+by_role:
+  # Reading-heavy and mechanical: context in, summary out, and the cheapest tier
+  # that still supports tool use.
+  explore:            { model: anthropic/claude-haiku-5.5 }
+  tester:             { model: anthropic/claude-haiku-5.5 }
+  package-upgrade:    { model: anthropic/claude-haiku-5.5 }
+
+  # Code, review and verification. Review and verification are deliberately on
+  # Sonnet or above (rule 017: strong models where defects are caught).
+  generalPurpose:     { model: anthropic/claude-sonnet-5.5 }
+  doc-writer:         { model: anthropic/claude-sonnet-5.5 }
+  implementer:        { model: anthropic/claude-sonnet-5.5 }
+  code-reviewer:      { model: anthropic/claude-sonnet-5.5 }
+  verifier:           { model: anthropic/claude-sonnet-5.5 }
+  crashlytics-fixer:           { model: anthropic/claude-sonnet-5.5 }
+  sentry-fixer:                { model: anthropic/claude-sonnet-5.5 }
+  terraform-maintainer:        { model: anthropic/claude-sonnet-5.5 }
+  crossplane-upjet-maintainer: { model: anthropic/claude-sonnet-5.5 }
+
+  # Judgement. The planner sets the acceptance criteria everything else is
+  # measured against; the architect and the security auditor decide what is safe.
+  planner:            { model: anthropic/claude-opus-5.5 }
+  security-auditor:   { model: anthropic/claude-opus-5.5 }
+  software-architect: { model: anthropic/claude-opus-5.5, fallbacks: [anthropic/claude-sonnet-5.5] }
+
+# Per-persona overrides. Empty so personas inherit their base role.
+by_persona: {}

@@ -106,6 +106,7 @@ def test_gateway_agnostic_profiles_are_offered_under_both_backends():
     for backend in ("openrouter", "litellm"):
         offered = profiles.list_profiles(mode="multi-model", backend=backend)
         assert "measured-best" in offered, backend
+        assert "balanced-claude-55" in offered, backend
 
 
 def test_single_model_profiles_ignore_the_backend_filter():
