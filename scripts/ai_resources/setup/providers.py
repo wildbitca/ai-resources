@@ -119,6 +119,11 @@ KNOWN_MODELS: dict[str, list[str]] = {
         "gemini-3.5-flash-lite",
     ],
     "openai": [
+        # gpt-6.1-sol, gpt-6-sol and gpt-6-luna are listed as current by the OpenAI pricing and Codex docs
+        # (retrieved 2026-10-13); the kit has no dispatch path for them yet (see docs/team-composition.md).
+        "gpt-6.1-sol",
+        "gpt-6-sol",
+        "gpt-6-luna",
         "gpt-6-astra",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
