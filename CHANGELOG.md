@@ -43,6 +43,9 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   the exact command (`ai-resources setup --profile balanced-claude-55`). Nothing switches and nothing is written.
   The table is the one `executors tune|set|apply` already used, now shared (`profiles.print_role_diff`). Step 6 also
   says that a Claude-only host with no gateway should use the single-model `claude-native` profile.
+- **Docs: the opt-in cross-family layer.** `docs/multi-model.md` describes planner, explore and reviewer steps on
+  another OpenClaw agent as an opt-in workflow choice (fields exist; the live behaviour is not verified, and the
+  evaluation that would decide the reviewer's model has not been run).
 - **A docs test for the profile table.** `tests/test_docs_profile_table.py` fails when a shipped profile is missing
   from `docs/multi-model.md`, when the table names one that does not exist, or when anything but the recommended
   profile is marked recommended.

@@ -159,6 +159,30 @@ it had not done (see the OpenClaw runbook, "Why sonnet and not haiku").
 gateway. With no gateway use single-model mode and `claude-native`: each role picks a Claude alias and Claude Code
 needs nothing else.
 
+### Opt-in: cross-family planner, explore and reviewer (fields exist, live behaviour NOT VERIFIED)
+
+An optional layer for a team that wants a second model family on the roles where a different set of blind spots
+helps: `explore`, `planner` and `code-reviewer`. It is a workflow choice, not a profile: those steps carry
+`backend: openclaw-agent` and an `agentId` (ADR-0005, `workflows/feature-cross-provider.workflow.yaml`), and the
+model is whatever that OpenClaw agent runs.
+
+- The model is set per **agent**, not per step: there is no `model` field on a step. Point `agentId` at an agent
+  configured on the model you want.
+- Write-capable roles are rejected by the validator (the implementer stays on Claude Code: one writer per run);
+  `tester` and `doc-writer` pass with a warning.
+- A Gemini 3.8 Flash agent draws on a separate quota pool from the Claude one (Antigravity's Gemini pool and its
+  Claude and GPT pool are separate; see the quota section below), so it spares the Claude quota.
+- A reviewer from another model family has different blind spots. That is reasoning, not a measurement: the
+  evaluation that would decide it (recall and precision of reviewer candidates on seeded defects, from the
+  `ai-resources audit` cost breakdown) has not been run, and no `by_role` entry changes on its account.
+- agy model labels (`gemini-3.8-flash-low`, `model_pins.AGY_STATIC`) are **not** API ids and must not be mixed up
+  with the `google/gemini-*` ids of `measured-best`: the first run through an agy-backed agent, the second through
+  a gateway.
+
+Status: the step fields, the validator and the example workflow ship; the live behaviour of `sessions_spawn`
+with an explicit `cwd`, completion signalling and an agy-backed agent have not been run on a host (the ADR's
+verification tables are empty). Treat the layer as unusable until they are.
+
 ## Editing the mapping
 
 ```sh
