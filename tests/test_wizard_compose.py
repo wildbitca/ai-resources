@@ -35,6 +35,7 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setattr(wizard, "_COMPOSE", {})
     monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "")
     monkeypatch.setattr(wizard, "_DRY_RUN", False)
+    monkeypatch.setattr(flow, "default_sidecar_path", lambda: tmp_path / "absent-sidecar.json")
     return tmp_path
 
 
@@ -190,20 +191,32 @@ def test_empty_provider_set_is_a_refusal_not_a_crash(tmp_path, monkeypatch):
     assert "No team proposed" in script.transcript
 
 
-def test_why_json_rejects_tmp_and_accepts_the_workspace(host, monkeypatch):
+@pytest.fixture
+def workspace():
+    """A workspace outside tmpfs: pytest's tmp_path lives under /tmp, which --why-json refuses by design."""
+    import shutil
+    import tempfile
+    base = pathlib.Path.home() / ".cache" / "ai-resources-tests"
+    base.mkdir(parents=True, exist_ok=True)
+    ws = pathlib.Path(tempfile.mkdtemp(prefix="why-json-", dir=base))
+    yield ws
+    shutil.rmtree(ws, ignore_errors=True)
+
+
+def test_why_json_rejects_tmp_and_accepts_the_workspace(host, workspace, monkeypatch):
     script = Script()
     script.install(monkeypatch, non_interactive=True)
     monkeypatch.setattr(wizard, "_COMPOSE", compose_flags(mode="uniform", why_json="/tmp/why.json"))
     assert wizard._preflight_compose() == 2
-    monkeypatch.chdir(host)
+    monkeypatch.chdir(workspace)
     monkeypatch.setattr(wizard, "_COMPOSE", compose_flags(mode="uniform", why_json="out/why.json"))
     assert wizard._preflight_compose() == 0
     s = multi_state()
     assert wizard._step6_profile(s) == 0
     import json
-    doc = json.loads((host / "out" / "why.json").read_text())
+    doc = json.loads((workspace / "out" / "why.json").read_text())
     assert doc["mode"] == "uniform" and doc["rows"]
-    assert (host / "out" / "why.json").stat().st_mode & 0o777 == 0o600
+    assert (workspace / "out" / "why.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_unknown_pool_or_level_in_the_headroom_flag_is_rejected_before_any_write(host, monkeypatch):

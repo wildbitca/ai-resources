@@ -1191,7 +1191,7 @@ def _compose_profile(s: state.SetupState, base_name: str, mode: str | None, sing
         req.allow_fable = True
     req.headroom, req.live = levels, tuple(sorted(live))
 
-    comp, inp = flow.run(s, req, deps=deps, db=db, now_epoch=int(time.time()))
+    comp, inp = flow.run(s, req, deps=deps, db=db, now_epoch=int(time.time()), base_name=base_name)
     for pid in req.live:
         reading = inp.readings.get(pid)
         if reading is None or reading.state != "known":

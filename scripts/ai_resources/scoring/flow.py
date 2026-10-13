@@ -177,7 +177,16 @@ def today() -> str:
 
 
 def build_input(s: Any, db: scores_db.ScoresDB, inv: detect.EnabledSet, req: Request, *, as_of: str | None = None,
-                now_epoch: int | None = None, reader_deps: Mapping[str, Any] | None = None) -> ComposeInput:
+                now_epoch: int | None = None, reader_deps: Mapping[str, Any] | None = None,
+                base_name: str | None = None) -> ComposeInput:
+    """`base_name` is the profile the composed team is stored over; the default-kept check judges that one."""
+    baseline_id = BASELINE_PROFILE
+    baseline = None
+    if base_name and base_name != BASELINE_PROFILE:
+        try:
+            baseline, baseline_id = baseline_models(base_name), base_name
+        except (FileNotFoundError, RuntimeError):
+            baseline = None
     enabled = enabled_providers(s, inv)
     mode_key = compat.mode_key(getattr(s, "mode", "single-model"), getattr(s, "backend", None))
     pools = inv.pool_ids(present_only=True)
@@ -188,15 +197,17 @@ def build_input(s: Any, db: scores_db.ScoresDB, inv: detect.EnabledSet, req: Req
         allow_unverified=req.allow_unverified, accept_stale=req.accept_stale, fable_allowed=req.allow_fable,
         static_weights={p: hr.level_weight(l) for p, l in req.headroom.items()},
         readings=read_live(db, req.live, reader_deps, now_epoch), enabled_pools=tuple(pools), now_epoch=now_epoch,
-        baseline=baseline_models(), baseline_name=BASELINE_PROFILE, references=reference_profiles())
+        baseline=baseline if baseline is not None else baseline_models(), baseline_name=baseline_id, references=reference_profiles())
 
 
 def run(s: Any, req: Request, *, deps: detect.Deps | None = None, db: scores_db.ScoresDB | None = None,
         as_of: str | None = None, now_epoch: int | None = None,
-        reader_deps: Mapping[str, Any] | None = None) -> tuple[Composition, ComposeInput]:
+        reader_deps: Mapping[str, Any] | None = None,
+        base_name: str | None = None) -> tuple[Composition, ComposeInput]:
     db = db or scores_db.load()
     inv = detect.inventory(deps or detect.default_deps(), db)
-    inp = build_input(s, db, inv, req, as_of=as_of, now_epoch=now_epoch, reader_deps=reader_deps)
+    inp = build_input(s, db, inv, req, as_of=as_of, now_epoch=now_epoch, reader_deps=reader_deps,
+                      base_name=base_name)
     return compose(inp), inp
 
 

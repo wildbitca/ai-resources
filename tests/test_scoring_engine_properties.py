@@ -77,11 +77,12 @@ def test_p3_each_pick_is_in_band_or_flagged_and_loss_is_capped(seed):
     assert comp.weighted_loss <= comp.loss_cap + 1e-6
     for a in comp.assignments:
         in_band = a.score >= a.s_star - a.tolerance - 1e-9
-        assert in_band or "diversity" in a.flags or "below-band" in a.flags
+        assert in_band or "diversity" in a.flags
+        assert "below-band" not in a.flags
         if "diversity" in a.flags:
             assert a.score >= a.s_star - db.policy["diversity_tolerance"] - 1e-9
         if a.tolerance_class == "critical":
-            assert in_band or "below-band" in a.flags
+            assert in_band
 
 
 @pytest.mark.parametrize("seed", SEEDS)
