@@ -17,6 +17,12 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   write-capable role on `openclaw-agent` (the implementer stays on `claude-code`: one writer per run); `tester` and
   `doc-writer` pass with a warning and are never parallel members. The generated workflow skills gain a Backend
   column. No `model` field and no change to `kit-plan.js` / `kit-implement.js`. Contract: `workflows/WORKFLOW_CONTRACT.md`.
+- **Cross-provider role dispatch (procedure).** `skills/kit-orchestration` gains "Choosing a backend": the
+  availability rule (`sessions_spawn` in the orchestrator's own tool list, otherwise a fixed `Blocked` text and no
+  fallback), the child prompt contract, T39 polling (calls of at most 60 s, 20 minutes per attempt), the `.done`
+  sentinel, the four-point post-step check that replaces the Claude Code hooks, at most 3 attempts with the
+  `<step-id>.attempt-<n>.md` rename, the evidence to record and an illustrative mixed team. The `sessions_spawn`
+  contract itself is not verified on a live host yet.
 
 ### Fixed
 

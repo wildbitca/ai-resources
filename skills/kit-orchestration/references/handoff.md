@@ -33,6 +33,7 @@ Workflow-specific fields (`Plan_ref`, `Architect_approval`, `Test_report`, `Code
 ## Rules
 
 - **Who writes:** the step that is running. Steps in a parallel group never write it; the orchestrator joins their report fields afterwards.
+- **`openclaw-agent` children:** they follow the same rules (read the handoff on start, report on completion), but nothing enforces them: only a sequential step writes the handoff, a parallel member writes `.agent-output/<role>/` only, and the orchestrator's post-step check (skill `kit-orchestration`, "Choosing a backend") validates the front matter before advancing. Dispatch evidence goes in the notes, never in new front-matter keys.
 - **Rollback:** after each step, if `Blocked: true`, re-run `Return_to_step` (at most 3 attempts per step).
 - **Cross-domain:** set `Domain` to the target domain and reference paths only — never paste code between domains.
 - **Lifecycle:** delete the file when the workflow finishes. A handoff older than 24 hours is reported at session start as stale.

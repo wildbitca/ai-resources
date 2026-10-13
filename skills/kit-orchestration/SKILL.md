@@ -46,6 +46,59 @@ Run the steps of the workflow YAML in order. For each step:
 4. **After it returns:** read the handoff file and the return block, not the subagent's full output. If `Blocked: true`, re-run `Return_to_step` — at most 3 attempts per step, then stop and report to the user. Otherwise continue with `handoff_to`.
 5. A step whose prompt says it does not apply (e.g. `Requires_tests: no`) records that in the handoff and the workflow moves on.
 
+## Choosing a backend
+
+A step runs on `claude-code` unless its YAML says `backend: openclaw-agent` with an `agentId`. Use `openclaw-agent` when the role should run on another OpenClaw agent, and through it on another provider. Coordination stays the handoff file. The model is a property of whatever runs the role (the role's `by_role` executor, or the model configured on that agent); a step cannot pin one.
+
+**Availability.** An `openclaw-agent` step can be dispatched only by an orchestrator whose own tool list contains `sessions_spawn`, that is, an OpenClaw-run agent turn. An `openclaw` binary on PATH does not count. A Claude Code session, a kit role subagent, a plain shell and the `/kit-plan` / `/kit-implement` scripts do not have it. When it is missing, do not fall back to `claude-code` and do not spawn anything; the step result is exactly:
+
+```text
+Blocked: true
+Block_reason: openclaw-agent step <id> (agentId=<x>) needs sessions_spawn in an OpenClaw-run orchestrator; missing: sessions_spawn tool in this session
+Return_to_step: <id>
+```
+
+**Dispatch.** Whether the agent exists, runs the CLI backend you expect and is admitted by `subagents.allowAgents` is checked now, never by the validator. Spawn with `sessions_spawn agentId=<agentId> cwd=<the orchestrator's worktree>`. The `cwd` is mandatory and explicit. The parameters, the return value and the completion signal of `sessions_spawn` are recorded in ADR 0005 (`docs/decisions/0005-cross-provider-role-dispatch.md`); where that record is empty they are unverified, and the child's own startup check (below) is the only proof of the working directory.
+
+**Child prompt.** The child has no kit subagent definitions and no native skills, so the prompt carries everything:
+
+- the absolute worktree path, which must be its working directory, and the absolute handoff path;
+- `$AGENT_KIT/agents/roles/<role>.md` and, if it exists, `$AGENT_KIT/agents/personas/<role>-<domain>.md`, to be read first;
+- each skill as `$AGENT_KIT/skills/<id>/SKILL.md`;
+- the goal, the constraints and the domain commands;
+- the write scope: only `.agent-output/<role>/`, plus the handoff for a sequential step only;
+- the attempt number, the return format above verbatim (some role files have no return block of their own), and the sentinel spec below;
+- a startup self-check: run `git rev-parse --show-toplevel`, and end as `Blocked` if it differs from the given worktree.
+
+The prompt carries no secrets, no environment dumps and no code.
+
+**Waiting (T39).** Every call that waits or polls lasts at most 60 s; never put a wait loop inside one call, and never restart or stop the gateway. The budget per attempt is 20 minutes. Completion is the sentinel `.agent-output/<role>/<step-id>.done` (JSON `{step, attempt, status, finished_at}`, written by the child last), or a terminal session state when a status tool exists. A timed-out child is ended with a session tool if there is one; otherwise the attempt is recorded as lost.
+
+**Post-step check.** The Claude Code hooks (`kit_subagent_return`, `kit_handoff_guard`) do not fire for these children, so the orchestrator runs the check itself. The step is complete only if all of these hold:
+
+1. The sentinel (or a terminal state) is present.
+2. `.agent-output/<role>/<step-id>.md` exists and contains `## Result` and `## Routing`.
+3. For a sequential step, the handoff front matter has `step: <id>`, a valid `status` and the keys of `handoff.md.template`. For a parallel member, the handoff sha256 is the same before and after.
+4. For a read-only role, `git -C <worktree> status --porcelain` shows nothing outside `.agent-output/`.
+
+Any failure is one failed attempt. On a failure of check 4, restore and clean only the offending paths. The check detects a violation; it cannot prevent one, because the child runs with its own agent's permissions.
+
+**Retries.** At most 3 attempts per step, each a new spawn with the same `cwd`. Before a retry, rename the previous report to `<step-id>.attempt-<n>.md`. After the third failure, stop and report the last `Block_reason`.
+
+**Evidence.** Per dispatch, record in the report and the handoff notes (never in new front-matter keys): backend, agentId, handle or sessionKey, cwd, attempt, start and end times, the result of checks 1-4, the report path and, for a parallel member, the handoff hash before and after.
+
+**Example team.** Models are properties of the agent or role and informational here; `agy-flash` and `agy-pro` are placeholder ids for agents that must exist and be on `subagents.allowAgents`.
+
+| Role | Backend | agentId | Model configured on that agent or role |
+|------|---------|---------|-----------------------------------------|
+| planner | openclaw-agent | agy-flash | gemini-flash (agy label) |
+| explore (the "researcher") | openclaw-agent | agy-pro | gemini-pro (agy label) |
+| software-architect | claude-code | | opus via `by_role` |
+| implementer | claude-code | | sonnet via `by_role` |
+| code-reviewer | openclaw-agent | agy-flash | gemini-flash (agy label) |
+
+The example team is illustrative. `rules/017-multimodel-routing.mdc` recommends a strong model for review, so a real team would keep `code-reviewer` on a strong model. An agent backed by agy is an external prerequisite that this kit does not provide (see ADR 0005).
+
 ## Parallel groups
 
 Steps that share `execution_hints.parallel_group` run concurrently — several Agent calls in one turn — once their shared entry criteria hold.
@@ -54,7 +107,8 @@ Steps that share `execution_hints.parallel_group` run concurrently — several A
    `{"group": "post-test", "steps": ["review", "security"], "handoff_file": ".agent-output/handoff-<scope>.md"}`
    While this file exists, a hook stops subagents from writing that handoff file.
 2. Each parallel step writes its own report under `.agent-output/<role>/`, ending with the handoff fields it would have set.
-3. When every step has returned: delete `parallel-group.json`, copy each report's fields into the handoff, and if any verdict blocks (`REQUIRES_CHANGES`, `FAIL`, `block`), set `Blocked: true`, `Block_reason` from that report, and `Return_to_step` from that step's `on_concern_return_to`.
+3. A member with `backend: openclaw-agent` is spawned in the same turn as the others, polled and checked as in "Choosing a backend", and joined like any other member. Only the six read-only roles may be such members, and none of them writes the handoff.
+4. When every step has returned: delete `parallel-group.json`, copy each report's fields into the handoff, and if any verdict blocks (`REQUIRES_CHANGES`, `FAIL`, `block`), set `Blocked: true`, `Block_reason` from that report, and `Return_to_step` from that step's `on_concern_return_to`.
 
 ## Subagent return format
 
