@@ -1582,6 +1582,8 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                 ctx["openai_base"] = profiles.OPENAI_BASE[s.backend]
             if cid in routes:
                 ctx["route"] = routes[cid]
+            if _COMPOSE.get("allow_unverified"):
+                ctx["allow_unverified"] = True
             written = mod.configure(ctx)
             for w in written:
                 ui.ok(str(w))

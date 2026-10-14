@@ -408,7 +408,9 @@ def build(*, state, selection, detected: list[str], home: Path | None = None) ->
         return (yaml.safe_load(path.read_text(encoding="utf-8")) or {}) if path.is_file() else {}
 
     def render_subagents(doc: dict, _tag: str) -> dict[str, str]:
-        return claude.render_subagent_files(doc, ak_path, mode, strict)
+        return claude.render_subagent_files(doc, ak_path, mode, strict,
+                                            allow_unverified=bool(getattr(selection, "allow_unverified", False)),
+                                            backend=backend or "litellm")
 
     url = f"http://{state.litellm.local.bind_address}:{state.litellm.local.port}/health/liveliness"
     arts: list[Artifact] = [

@@ -383,6 +383,24 @@ def _resolve_model(configured: str, meta: dict, mode: str, strict: bool = False)
     return {"strong": "opus", "fast": "haiku"}.get(legacy, legacy or "inherit")
 
 
+def _gate_model(configured: str, mode: str, backend: str, allow_unverified: bool | None) -> str:
+    """Per-model unverified gate (FU-1): a non-Anthropic id the compat matrix has not verified for Claude Code
+    is not written into a subagent unless `--allow-unverified` was given; the role then inherits the session
+    model. `allow_unverified=None` disables the gate (callers that never had it keep their output)."""
+    if allow_unverified is None or allow_unverified or mode != "multi-model" or not configured:
+        return configured
+    from .. import compat
+    from ...scoring.db import VENDOR_PROVIDER
+    if "/" not in configured:
+        return configured                           # a bare Claude id or alias: the verified path
+    vendor = configured.split("/", 1)[0]
+    provider = VENDOR_PROVIDER.get(vendor, vendor)
+    if provider not in compat.PROVIDER_COLUMNS:
+        return ""
+    cell = compat.cell("claude", provider, compat.MULTI_OPENROUTER if backend == "openrouter" else compat.MULTI_LITELLM)
+    return configured if cell.verified and cell.action != compat.SKIP else ""
+
+
 def _rewrite_body(body: str, ak_path: str) -> str:
     """Rewrite Cursor-isms → Claude Code equivalents."""
     rewrites = (
@@ -418,7 +436,8 @@ def _write_subagent(name: str, desc: str, tools: str | None, model: str, body: s
 
 
 def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
-                             tracking: Any = None, strict: bool = False, sink: Any = None) -> list[str]:
+                             tracking: Any = None, strict: bool = False, sink: Any = None,
+                             allow_unverified: bool | None = None, backend: str = "litellm") -> list[str]:
     """Write one Claude Code subagent per kit role and per persona.
 
     Personas (`agents/personas/<role>-<domain>.md`) are domain overlays with no
@@ -456,7 +475,8 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         body = _rewrite_body(body, ak_path)
         role_bodies[name] = body
 
-        model = _resolve_model(str(by_role.get(name, {}).get("model", "") or ""), meta, mode, strict)
+        configured = _gate_model(str(by_role.get(name, {}).get("model", "") or ""), mode, backend, allow_unverified)
+        model = _resolve_model(configured, meta, mode, strict)
         # Append unconditionally: `_write_subagent` reports whether the file
         # changed, which is not the same as whether it should exist. Treating a
         # no-op rewrite as "not produced" made the pruning below delete every
@@ -487,7 +507,7 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
             or by_role.get(base, {}).get("model", "")
             or ""
         )
-        model = _resolve_model(configured, meta, mode, strict)
+        model = _resolve_model(_gate_model(configured, mode, backend, allow_unverified), meta, mode, strict)
         body = (role_bodies[base] + "\n\n---\n\n" + _rewrite_body(overlay, ak_path)
                 + _shared.kit_context_block(ak_path))
         write(name, str(meta.get("description", "")),
@@ -504,10 +524,12 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
     return generated
 
 
-def render_subagent_files(executors: dict, ak_path: str, mode: str, strict: bool = False) -> dict[str, str]:
+def render_subagent_files(executors: dict, ak_path: str, mode: str, strict: bool = False,
+                          allow_unverified: bool | None = None, backend: str = "litellm") -> dict[str, str]:
     """name -> file content for every subagent, without touching disk (the S12 re-render diffs it)."""
     out: dict[str, str] = {}
     _generate_subagent_files(executors, ak_path, mode, None, strict,
+                             allow_unverified=allow_unverified, backend=backend,
                              sink=lambda name, desc, tools, model, body: out.__setitem__(
                                  name, _subagent_text(name, desc, tools, model, body)))
     return out
@@ -798,7 +820,16 @@ def configure(ctx: dict) -> list[Path]:
     written.append(SETTINGS_PATH)
 
     # 2. Subagent files
-    agents = _generate_subagent_files(executors, ak_path, mode, s.tracking, strict)
+    sel = s.get_selection() if hasattr(s, "get_selection") else None
+    allow_unverified = bool(ctx.get("allow_unverified")) or bool(getattr(sel, "allow_unverified", False))
+    gated = sorted(r for r, v in (executors.get("by_role") or {}).items()
+                   if _gate_model(str((v or {}).get("model", "") or ""), mode, backend, allow_unverified)
+                   != str((v or {}).get("model", "") or ""))
+    if gated:
+        ui.warn("Claude Code: models not verified for this cockpit were not written (roles inherit the session "
+                f"model; pass --allow-unverified to write them): {', '.join(gated)}")
+    agents = _generate_subagent_files(executors, ak_path, mode, s.tracking, strict,
+                                      allow_unverified=allow_unverified, backend=backend)
     if agents:
         written.append(AGENTS_DIR)
 

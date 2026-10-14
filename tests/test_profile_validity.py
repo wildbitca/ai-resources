@@ -145,14 +145,14 @@ def test_measured_best_description_is_not_a_recommendation_and_names_the_unverif
     text = profiles.load_profile(MULTI_PROVIDER)["description"].lower()
     assert "recommended" not in text
     assert "unverified" in text
-    assert "without a matrix check" in text            # fact F1: setup writes these ids unchecked today
+    assert "per-model gate" in text and "--allow-unverified" in text   # FU-1: the gate has landed
     assert "balanced-claude-55" in text
 
 
-def test_setup_writes_measured_bests_foreign_ids_into_subagents_without_a_matrix_check_today():
-    """F1, pinned: a profile chosen in step 6 records no Selection, so the claude cockpit renders non-strict and
-    `_resolve_model` writes the google/ and deepseek/ ids verbatim. The matrix verdict above is NOT applied to
-    them (a planned per-model gate). If this test starts failing, the gate has landed: update the relabel and the docs."""
+def test_an_ungated_render_still_writes_measured_bests_foreign_ids_verbatim():
+    """F1, pinned for the ungated render (`allow_unverified=None`, the default): `_resolve_model` writes the
+    google/ and deepseek/ ids verbatim. The per-model gate (FU-1) is applied by `claude.configure` and the
+    re-render, which pass `allow_unverified`; see tests/test_claude_per_model_gate.py."""
     import re
 
     from ai_resources import repo_root

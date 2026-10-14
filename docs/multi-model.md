@@ -117,7 +117,7 @@ service, so `ai-resources daemon` has nothing to manage and says so.
 | Profile | Mode | Description |
 |---|---|---|
 | `balanced-claude-55` | multi-model, either gateway | **Recommended.** Claude only, three tiers on the 5.5 family (Haiku, Sonnet, Opus). Valid in every compatibility cell it can reach without `--allow-unverified`. Needs a LiteLLM or OpenRouter gateway. |
-| `measured-best` | multi-model, either gateway | The explicit multi-provider profile (Claude, Google, DeepSeek) from the 2026-09-16 measured runs. The Google and DeepSeek refs are unverified for Claude Code, and setup writes them without a matrix check today. |
+| `measured-best` | multi-model, either gateway | The explicit multi-provider profile (Claude, Google, DeepSeek) from the 2026-09-16 measured runs. The Google and DeepSeek refs are unverified for Claude Code, and setup does not write them into the Claude subagents (those roles inherit the session model) unless you pass `--allow-unverified`. |
 | `openrouter-balanced` | multi-model, either gateway | Judgement on Claude, bulk reading on Gemini Flash. Namespaced ids, written for OpenRouter. |
 | `openrouter-cheap` | multi-model, either gateway | Budget models throughout, except review and security. |
 | `quality-first` | multi-model, either gateway | Claude for code-critical roles, Gemini for high-volume support. |
