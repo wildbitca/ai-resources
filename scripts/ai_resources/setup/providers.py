@@ -166,6 +166,22 @@ KNOWN_MODELS: dict[str, list[str]] = {
 }
 
 
+# Ids that KNOWN_MODELS lists but that were not verified against the provider's own catalogue.
+# Setup labels them "(unverified)" instead of presenting them as verified; free input stays allowed.
+UNVERIFIED_MODELS: dict[str, frozenset[str]] = {
+    "vertex": frozenset({"claude-opus-5-5", "claude-sonnet-5-5"}),
+}
+
+
+def is_verified(provider_id: str, model: str) -> bool:
+    return model not in UNVERIFIED_MODELS.get(provider_id, frozenset())
+
+
+def model_label(provider_id: str, model: str) -> str:
+    """Display text of a known model in a picker: the id, plus a marker when it is unverified."""
+    return model if is_verified(provider_id, model) else f"{model} (unverified)"
+
+
 def get(provider_id: str) -> Provider:
     return PROVIDERS[provider_id]
 

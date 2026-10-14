@@ -1370,7 +1370,8 @@ def _step6_profile(s: state.SetupState) -> int:
         models = providers.models_for(vendor)
         model = ui.select(
             f"Model for {role}:",
-            [ui.Choice(m, value=m) for m in models] + [ui.Choice("(custom — type below)", value="__custom__")],
+            [ui.Choice(providers.model_label(vendor, m), value=m) for m in models]
+            + [ui.Choice("(custom — type below)", value="__custom__")],
         )
         if model == "__custom__":
             model = ui.text(f"Model id for {role}")
