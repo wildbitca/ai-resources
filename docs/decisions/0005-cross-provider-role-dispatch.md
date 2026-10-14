@@ -1,6 +1,6 @@
 # ADR-0005: Cross-provider role dispatch (`backend` step field)
 
-**Status**: accepted for the fields, the validator and the procedure; the live behaviour of `sessions_spawn` is unverified (see "Verification evidence")
+**Status**: accepted for the fields, the validator and the procedure; `sessions_spawn` behaviour verified on an isolated claude-cli gateway on 2026-10-14, not yet on the live gateway (see "Verification evidence")
 **Date**: 2026-10-13
 **Decision makers**: planner, implementer, operator (decisions of 2026-10-13 recorded in the plan)
 
@@ -68,24 +68,39 @@ What does not exist is an OpenClaw agent on `agy-cli` that has been shown to acc
 
 ## Verification evidence
 
-The live phases were not run when this ADR was written: nothing below is claimed beyond what is in the tables.
+Measured on 2026-10-14 (UTC) on OpenClaw 2026.10.3 against an **isolated** second gateway (`kite2e`, loopback
+19789, own state dir, own cgroup), never against the live gateway. The live gateway was only read (P0-1).
+The isolated run used three claude-cli agents: orchestrator `e2e-orch` (allowAgents `e2e-a`, `e2e-b`),
+`e2e-a` (Sonnet 5) and `e2e-b` (Haiku 4.5). Proof of an untouched live host: 86 L1 sha256 entries identical,
+live MainPID and NRestarts unchanged, no `message` call, no non-isolated cwd in any of our 14 sessions.
 
 ### Spike table (P0-1, P0-2)
 
 | Spike | Command | Observed result | Timestamp | Verdict |
 |-------|---------|-----------------|-----------|---------|
-| S4 agent backends | `openclaw agents list --json` and `openclaw config get agents.entries` | not run | | UNVERIFIED |
-| S1 `sessions_spawn` accepts `agentId` + `cwd`; return payload | | not run | | UNVERIFIED |
-| S2 child `pwd` and toplevel equal the worktree; report written | | not run | | UNVERIFIED |
-| S3 status tool / completion announcement / readable final message | | not run | | UNVERIFIED |
-| S5 a role subagent or a spawned child can itself call `sessions_spawn` | | not run | | UNVERIFIED (assumed no) |
+| S4 agent backends (live, read-only) | `openclaw agents list --json` and `openclaw config get agents.entries` | all 7 live agents (`ai`, `claude`, `devops`, `elinvo`, `main`, `security`, `snoutzone`) are claude-cli; `defaults.subagents.allowAgents` and every orchestrator admit only `claude` | 2026-10-13T23:48Z | VERIFIED. P6 is BLOCKED on the live host (fewer than two claude-cli targets admitted) |
+| S1 `sessions_spawn` accepts `agentId` + `cwd`; return payload | orchestrator `e2e-orch` asked to spawn `e2e-a` with `cwd` and `task` | accepted `agentId`, `cwd`, `task`; returned `{status: accepted, childSessionKey, runId, mode: run, expectsCompletionMessage: true, context: isolated}` | 2026-10-14T00:40Z | VERIFIED (isolated gateway) |
+| S2 child `pwd` and toplevel equal the worktree; report written | child ran `pwd` and `git rev-parse --show-toplevel`; script compared | pwd and toplevel equal the worktree, nonce matches, report and sentinel present, git state unchanged | 2026-10-14T00:39Z | VERIFIED (isolated gateway) |
+| S3 status tool / completion announcement / readable final message | `sessions --all-agents --json` before/after plus the orchestrator reply | child session present in the store; sentinel written; final message readable. A terminal state is not guaranteed: treat the sentinel as the signal | 2026-10-14T00:39Z | RECORDED with the stated limitation |
+| S5 a spawned child can itself call `sessions_spawn` | orchestrator asked a child to spawn | refused by the gateway: `{"status":"forbidden","error":"agentId is not allowed for sessions_spawn (allowed: none)"}` | 2026-10-14T00:40Z | VERIFIED NEGATIVE |
 
 ### Dispatch evidence (P6)
 
-| Probe | backend | agentId | handle | cwd vs pwd vs toplevel | nonce | attempt | start / end | checks 1-4 | report | handoff hash before / after |
-|-------|---------|---------|--------|------------------------|-------|---------|-------------|------------|--------|------------------------------|
-| sequential explore on agent A, code-reviewer on agent B | | | | | | | | | | n/a |
-| parallel A and B | | | | | | | | | | |
-| negative probe (no `sessions_spawn`) | | | | | | | | | | n/a |
+| Probe | backend | agentId | handle | cwd vs pwd vs toplevel | nonce | attempt | checks 1-4 | verdict |
+|-------|---------|---------|--------|------------------------|-------|---------|------------|---------|
+| sequential A: explore on e2e-a | openclaw-agent | e2e-a | orchestrator session `seq-a` | equal | match | 1 | ok | PASS |
+| sequential B: code-reviewer on e2e-b (Haiku 4.5) | openclaw-agent | e2e-b | orchestrator session `seq-b` | sentinel carried no pwd/toplevel | missing | 1 | 1-4 ok, report with front matter `step=p6-review status=success` | **FAIL** (sentinel fields missing; the dispatch itself worked) |
+| parallel A: explore on e2e-a | openclaw-agent | e2e-a | orchestrator session `par` | equal | match | 1 | ok | PASS |
+| parallel B: code-reviewer on e2e-b | openclaw-agent | e2e-b | orchestrator session `par` | equal | match | 1 | ok, handoff hash unchanged | PASS |
+| negative probe (no `sessions_spawn`) | claude-code | e2e-a (never spawned) | n/a | n/a | n/a | 1 | exact Blocked text | PASS |
 
-Until these tables are filled, the dispatch parameters in `skills/kit-orchestration/SKILL.md` are the documented usage (`sessions_spawn agentId=<id> cwd=<path>`, `AGENTS.md`), not a verified contract.
+Reading of the one FAIL: the same role and agent passed in the parallel run, so the sequential-B failure is the
+model not writing the sentinel fields, not a dispatch failure. It supports the existing design rule that the
+orchestrator verifies the report and the post-step checks itself and never trusts a child's own claim.
+
+### Limits of this evidence
+
+- The isolated gateway is not the live gateway: the live host still admits only `claude`, so a live P6 needs the
+  operator to add claude-cli agents to `allowAgents` (not done; operator-owned).
+- Only claude-cli children were exercised. A Gemini/Antigravity or Codex child was not, by design.
+- Five probes, one run each: this is existence evidence, not a reliability rate.
