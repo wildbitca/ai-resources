@@ -118,23 +118,35 @@ This section is Proposed and deferred. Phase 3 does not start before P3-S0, the 
 
 ## Evidence
 
-Every verification below is **UNVERIFIED**: the probes run separately on an isolated gateway under `~/.cache` with the ADR-0005 live-untouched proof (L1 hashes, MainPID/NRestarts, no `message` call). This section is updated when each result lands.
+Measured on 2026-10-14 (UTC) on OpenClaw 2026.10.3 against an **isolated** gateway (`kite2e`, loopback 19789, own
+cgroup) driven by the `bin-lanes` harness (claude-cli agents only; seal `c996908d1161510a3710e94772210e282706b2e23a39ff72475e786e51991932`),
+never against the live gateway. Each run was closed with the ADR-0005 live-untouched proof (86 L1 sha256 entries
+identical, live MainPID and NRestarts unchanged, no `message` call, no live message delivery in any probe window).
+Run directories: `20261014T210239Z` (V1, V2, V8, V9), `20261014T211507Z` (V10, V11), `20261014T220817Z` (V4),
+`20261014T221645Z` (V3 in hybrid reload mode).
 
-| V | Question | Status | Dependent step |
-|---|---|---|---|
-| V1 | Model ref form for a claude-cli OpenClaw agent | UNVERIFIED (pending) | P2-S3 (state and patch builder); stops phase 2 after P2-S4 |
-| V2 | How an OpenClaw-run orchestrator dispatches a `claude-code` step | UNVERIFIED (pending) | P2-S6 (orchestration doc); stops phase 2 after P2-S4 |
-| V3 | Hot vs restart-required for new `agents.entries.<id>`, `allowAgents`, `models.providers`, `plugins` tool entries; what `openclaw agents add` writes | UNVERIFIED (pending) | P2-S5 (setup writer); if unverified, every lane key, plugin entry and `agents add` is restart-required |
-| V4 | `openclaw agents delete <id>` prunes only that agent's workspace and state | UNVERIFIED (pending) | P2-S5/S6 (teardown, watch revert); stops phase 2 after P2-S4 |
-| V5 | `agy models` slugs for Claude Sonnet 5.5, Claude Opus 5.5, Gemini 3.8 Flash, Gemini 3.1 Pro | UNVERIFIED (pending, operator) | P3-S1; no phase 3 code starts |
-| V6 | `agy --sandbox` containment, argv, separate backend id | UNVERIFIED (pending) | P3-S1; no phase 3 code starts |
-| V7 | MCP servers an agy child receives via `bundleMcp`, per-agent scoping, browser/schedule/send_message; same record for claude-cli children | UNVERIFIED (pending) | P3-S0 (OQ-5); no phase 3 code starts |
-| V8 | Whether the orchestrator can run `ai-resources lanes ...` through OpenClaw exec given its `--disallowedTools ...,Bash,...`; which static config key shows that capability | UNVERIFIED (pending) | P2-S5b (plugin tool) and P2-S6; without exec or the plugin tool no orchestrator is lane-capable |
-| V9 | A spawn with `cwd` in a managed worktree outside the lane agent's workspace, for claude-cli (phase 2) and agy (phase 3); the workspace root that makes it work | UNVERIFIED (pending) | P2-S4/S5 (workspace_root) for claude-cli; P3-S1 for agy |
-| V10 | `openclaw worktrees create/remove` on the installed version for a repo outside OpenClaw's tree: branch naming, base-ref honoured, `remove` snapshots first, `list` shows it | UNVERIFIED (pending) | P2-S4 (`lanes prepare`); stops phase 2 after P2-S4 |
-| V11 | Whether a pinned full Claude id works in generated subagent frontmatter in single-model mode without a gateway | UNVERIFIED (pending) | P1-S1/S2 (profile uses `haiku`/`sonnet`/`opus` while UNVERIFIED) |
+| V | Question | Status | Observation | Dependent step |
+|---|---|---|---|---|
+| V1 | Model ref form for a claude-cli OpenClaw agent | VERIFIED | The runtime-pinned canonical ref, the legacy `claude-cli/` ref and the full id `anthropic/claude-sonnet-5-5` each ran the agent through claude-cli and answered | P2-S3 |
+| V2 | How an OpenClaw-run orchestrator dispatches a `claude-code` step | PARTIAL | A claude-cli orchestrator has `sessions_spawn`, `sessions_*`, `agents_list`, `exec`, `process`; dispatch by spawn works. How a `claude-code` step is expressed in an orchestrator is documentation (P2-S6) | P2-S6 |
+| V3 | Hot vs restart-required (hybrid reload mode) | PARTIAL | `agents add` of a new `agents.entries.<id>`: hot (gateway evaluates the reload, no restart). `models.providers.<id>` and `plugins.entries.<id>.enabled`: a restart was observed although the CLI printed "will apply without restarting". `allowAgents` was a no-op in the run (CLI "No change"): UNVERIFIED. With `gateway.reload.mode=off` every change prints "Restart the gateway to apply" | P2-S5: treat catalog and plugin entries as restart-required (ADR-0003 drained path); re-run `allowAgents` with a real change |
+| V4 | `openclaw agents delete <id>` prunes only that agent's workspace and state | VERIFIED with a note | The target's workspace was removed, the other agent's workspace and state were unchanged, `agents list` consistent, items went to the sandbox Trash; an empty `agents/<id>/` state directory is left behind, so teardown must tolerate it | P2-S5/S6 |
+| V5 | `agy models` slugs | UNVERIFIED (operator, phase 3) | | P3-S1 |
+| V6 | `agy --sandbox` containment, argv, separate backend id | UNVERIFIED (phase 3) | | P3-S1 |
+| V7 | MCP servers an agy child receives via `bundleMcp`; per-agent scoping | UNVERIFIED (phase 3) | | P3-S0 (OQ-5) |
+| V8 | Whether the orchestrator can run kit commands through OpenClaw exec | VERIFIED (capability) | `python3 -c print(1)` and `ai-resources version` ran through `mcp__openclaw__exec` with a nonce proof, with the orchestrator started with `--disallowedTools ...,Bash,...`. Both an agent with and one without an explicit `tools.exec.mode` could do it, so no static key separates them: exec is available to claude-cli orchestrators by default | P2-S5b not needed for claude-cli |
+| V9 | A spawn with `cwd` in a managed worktree outside the lane agent's workspace (claude-cli) | VERIFIED | The child's `pwd` and toplevel equalled the worktree under the managed worktrees root and the nonce matched | P2-S4/S5 |
+| V10 | `openclaw worktrees create/remove` | VERIFIED | Branch `openclaw/<name>`, under the managed root, listed, `remove` succeeded and the branch was kept. The first `create` after a gateway start failed once with `OpenClawStateLeaseError` and succeeded on retry about a minute later: the kit must retry | P2-S4 |
+| V11 | Pinned full Claude id in generated subagent frontmatter, no gateway | VERIFIED | `claude -p --agent` with the full id and with the alias `sonnet` both answered and used `claude-sonnet-5-5` | P1-S1/S2 (the profile may use aliases or pinned ids) |
 
-Stop rules: V1, V2, V3, V4, V9 (claude-cli) or V10 UNVERIFIED stops phase 2 after P2-S4 (no setup writer, no wizard, no orchestration doc). V8 showing exec unavailable makes P2-S5b required before P2-S6. V3 UNVERIFIED makes every lane key, plugin entry and `agents add` restart-required. V5, V6, V7 or V9 (agy) UNVERIFIED blocks all phase 3 code. Any V showing that only a hand edit would work stops the plan.
+Stop rules (unchanged): V1, V2, V3, V4, V9 (claude-cli) or V10 UNVERIFIED stops phase 2 after P2-S4. Current state:
+V2 and V3 are PARTIAL (V3 `allowAgents` needs a re-run with a real change), so the P2-S4 stop still applies until the
+architect accepts the partial evidence or the two items are closed. V5, V6, V7 gate phase 3 only.
+
+Two operational findings from the runs: (1) the shared `openclaw` package of the live host was rewritten in place
+twice and its `bin/openclaw` link was absent for a few minutes (attributed by the operator to another agent testing the
+same thing); a harness that shells out to `openclaw` must tolerate that window. (2) OpenClaw's config journal restores a
+regenerated `openclaw.json` ("clobbered") unless its fingerprint key and last-good copy are removed together.
 
 ## Alternatives Considered
 
