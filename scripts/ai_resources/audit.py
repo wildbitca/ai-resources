@@ -158,6 +158,13 @@ def _parse(jsonl_dir: Path, since: datetime | None) -> tuple[dict, list]:
     return dict(model_stats), sessions
 
 
+def _total_label(unpriced: int) -> str:
+    """Footer label of the By-model table; says so when unpriced models add nothing to the cost total."""
+    if unpriced <= 0:
+        return "TOTAL"
+    return f"TOTAL (excludes {unpriced} unpriced model(s))"
+
+
 def cmd_audit(args: argparse.Namespace) -> int:
     ui.require_deps()
     con = ui.console()
@@ -201,8 +208,11 @@ def cmd_audit(args: argparse.Namespace) -> int:
     rows = sorted(model_stats.items(), key=lambda kv: kv[1]["cost"], reverse=True)
     total_calls = total_out = total_cr = total_cw = 0
     total_cost = 0.0
+    unpriced = 0
     for model, v in rows:
         known = _price(model) is not None
+        if not known:
+            unpriced += 1
         cost_str = f"${v['cost']:.2f}" if known else "n/a"
         t.add_row(
             model,
@@ -218,6 +228,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         total_cw += v["cw"]
         total_cost += v["cost"]
 
+    t.columns[0].footer = _total_label(unpriced)
     t.columns[1].footer = f"{total_calls:,}"
     t.columns[2].footer = f"{total_out:,}"
     t.columns[3].footer = f"{total_cr/1e9:.2f}B"
