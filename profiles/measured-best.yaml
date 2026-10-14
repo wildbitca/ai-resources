@@ -24,8 +24,8 @@ description: |
   Switching gateway does not change which model any role, persona or team uses.
 
   Prices in the comments are $/1M input-output, verified against the live
-  catalogue on 2026-09-16 for the non-Claude models. The Claude 5.5 ids carry no
-  price in the catalogue, so none is stated for them.
+  catalogue on 2026-09-16 for the non-Claude models. Current prices, including
+  the Claude 5.5 ids, are in scores/model-scores.yaml (models.<id>.prices).
 
 # Alias -> concrete model for the MAIN conversation, which the kit does not
 # otherwise control. Measured note: the orchestrator is the single largest cost

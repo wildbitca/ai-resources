@@ -17,7 +17,8 @@ description: |
   adversarial case; the reviewer and security-auditor were deliberately not
   economised) and the Haiku-directed run that cost 77% less than an Opus
   orchestrator and finished in 12 turns instead of 37. NOT measured here: the 5.5
-  family itself and its prices (the catalogue lists the ids and carries no price);
+  family itself (its prices are published in scores/model-scores.yaml,
+  models.<id>.prices);
   the tier choice follows the 4.5/5 measurements and rule 017 (strong models on
   verification, review and security).
 

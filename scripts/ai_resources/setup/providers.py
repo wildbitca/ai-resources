@@ -149,7 +149,7 @@ KNOWN_MODELS: dict[str, list[str]] = {
     # "[1m]" suffix for the 1M window to be detected.
     "openrouter": [
         # $/1M in-out, resolved against the live catalogue on 2026-09-16.
-        # The 5.5 ids are in the catalogue but carry no price there: no price is stated for them.
+        # The 5.5 ids carry no price in that catalogue; their prices are in scores/model-scores.yaml.
         "anthropic/claude-opus-5.5",
         "anthropic/claude-sonnet-5.5",
         "anthropic/claude-haiku-5.5",     # dotted, "5-5" does not exist on OpenRouter
