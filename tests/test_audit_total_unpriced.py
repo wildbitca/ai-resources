@@ -32,3 +32,8 @@ def test_audit_footer_marks_one_unpriced_model(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "excludes 1 unpriced" in out
+
+
+def test_count_unpriced_counts_models_without_a_price_row():
+    assert audit._count_unpriced(["claude-sonnet-5", "mystery-model-x", "other-mystery"]) == 2
+    assert audit._count_unpriced(["claude-sonnet-5"]) == 0

@@ -365,3 +365,26 @@ def test_an_unhealthy_litellm_rolls_the_whole_update_back(tmp_path, monkeypatch,
     assert r.rc == models.EXIT_ROLLED_BACK and r.outcome == "rolled_back"
     assert run_host.snapshot() == before
     assert "google:gemini-flash" not in e.state().get("pins", {})
+
+
+def _render_models(host, selection):
+    arts = rr.build(state=host.state, selection=selection, detected=["claude"])
+    art = next(a for a in arts if a.id == "claude-subagents")
+    return {n: art._model_of(t) for n, t in art._render(host.executors, "new").items()}
+
+
+def test_setup_allow_unverified_without_models_survives_a_rerender(host):
+    # configure() with the opt-in in ctx and no --models selection records the flag in state ...
+    host.state.selection = None
+    ctx = {"state": host.state, "executors": host.executors, "allow_unverified": True}
+    try:
+        claude.configure(ctx)
+    except Exception:
+        pass        # only the recorded opt-in matters here, not the host side effects
+    assert host.state.profile.allow_unverified is True
+    # ... and a re-render without a selection keeps the unverified ids instead of gating them to inherit.
+    kept = _render_models(host, None)
+    assert any(m == f"google/{OLD}" for m in kept.values())
+    host.state.profile.allow_unverified = False
+    gated = _render_models(host, None)
+    assert kept != gated

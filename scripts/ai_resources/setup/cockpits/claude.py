@@ -821,7 +821,10 @@ def configure(ctx: dict) -> list[Path]:
 
     # 2. Subagent files
     sel = s.get_selection() if hasattr(s, "get_selection") else None
-    allow_unverified = bool(ctx.get("allow_unverified")) or bool(getattr(sel, "allow_unverified", False))
+    if ctx.get("allow_unverified") and hasattr(s, "profile"):
+        s.profile.allow_unverified = True              # persisted: re-renders must honour the same opt-in
+    allow_unverified = (bool(ctx.get("allow_unverified")) or bool(getattr(sel, "allow_unverified", False))
+                        or bool(getattr(getattr(s, "profile", None), "allow_unverified", False)))
     gated = sorted(r for r, v in (executors.get("by_role") or {}).items()
                    if _gate_model(str((v or {}).get("model", "") or ""), mode, backend, allow_unverified)
                    != str((v or {}).get("model", "") or ""))

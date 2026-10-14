@@ -401,6 +401,8 @@ def build(*, state, selection, detected: list[str], home: Path | None = None) ->
     litellm_ours = lambda ctx: mode == "multi-model" and backend == "litellm" and state.litellm.deployment == "local"   # noqa: E731
     ak_path = str(_shared.stable_kit_root(repo_root()))
     strict = selection is not None
+    allow_unverified = bool(getattr(selection, "allow_unverified", False)) \
+        or bool(getattr(getattr(state, "profile", None), "allow_unverified", False))
 
     def executors() -> dict:
         import yaml
@@ -409,7 +411,7 @@ def build(*, state, selection, detected: list[str], home: Path | None = None) ->
 
     def render_subagents(doc: dict, _tag: str) -> dict[str, str]:
         return claude.render_subagent_files(doc, ak_path, mode, strict,
-                                            allow_unverified=bool(getattr(selection, "allow_unverified", False)),
+                                            allow_unverified=allow_unverified,
                                             backend=backend or "litellm")
 
     url = f"http://{state.litellm.local.bind_address}:{state.litellm.local.port}/health/liveliness"
