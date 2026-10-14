@@ -1331,6 +1331,7 @@ def _step6_profile(s: state.SetupState) -> int:
     base = profiles.load_profile(chosen)
 
     s.profile.name = chosen
+    s.profile.composed = None          # a plain profile replaces any earlier composed team (ADR-0006)
 
     # Show proposed mapping
     executors = profiles.to_executors(base, s.backend)

@@ -317,3 +317,14 @@ def test_wizard_does_not_offer_live_reads_for_openrouter_or_vertex(tmp_path, mon
     assert any("openrouter" in q or "vertex-claude" in q for q in headroom_pools), headroom_pools
     live = [q for q in script.asked if "Read live headroom" in q]
     assert live and all("claude-subscription" in q for q in live), live
+
+
+def test_choosing_a_plain_profile_after_a_composition_clears_the_stored_provenance(host, monkeypatch):
+    # G7 (ADR-0006 follow-up): the composed record must not outlive the team it describes.
+    script = Script(**{"Choose profile": profiles.RECOMMENDED_PROFILE, "Customize any role": False})
+    script.install(monkeypatch)
+    s = multi_state()
+    s.profile.composed = {"mode": "uniform", "digest": "stale"}
+    s.profile.customizations = {"planner": {"model": "anthropic/claude-opus-5.5"}}
+    assert wizard._step6_profile(s) == 0
+    assert s.profile.composed is None and s.profile.customizations == {}
