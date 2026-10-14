@@ -22,4 +22,7 @@ ADAPTER = Adapter(
     runtime="",                      # no verified native OpenClaw runtime (S1 item 8)
     defaults={"gemini-flash": "gemini-3.8-flash", "gemini-flash-lite": "gemini-3.5-flash-lite",
               "gemini-pro": "gemini-3.1-pro-preview"},
+    # gemini-3.7-flash is not selectable in AI Studio; the Google API routes it to 3.8 Flash server-side
+    # (scores/model-scores.yaml aliases, re-check 2026-10-13). Off the Google API the redirect is unconfirmed.
+    redirects={"gemini-3.7-flash": "gemini-3.8-flash"},
 )

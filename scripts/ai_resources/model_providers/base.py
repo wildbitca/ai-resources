@@ -76,6 +76,8 @@ class Adapter:
     runtime: str = ""
     # Kit default id per family (anthropic mirrors model_pins.DEFAULTS).
     defaults: dict = field(default_factory=dict)
+    # Retired ids the vendor redirects server-side: bare id -> the id it resolves to.
+    redirects: dict = field(default_factory=dict)
     # Never applied automatically: ids matching these are reported only.
     alias_pattern: str = r".*-latest$"
     preview_pattern: str = r".*-preview(?:-.*)?$"
@@ -120,6 +122,17 @@ class Adapter:
             if ref:
                 return ModelRef(ref.provider, ref.family, ref.version, ref.channel, model_id.strip())
         return None
+
+    def redirect_of(self, model_id: str) -> str | None:
+        """The bare id a retired `model_id` resolves to server-side (any spelling), or None."""
+        if not isinstance(model_id, str) or not self.redirects:
+            return None
+        mid = model_id.strip()
+        for prefix in (self.ref_prefix, self.openrouter_ns, self.litellm_prefix):
+            if prefix and mid.startswith(prefix + "/"):
+                mid = mid.split("/", 1)[1]
+                break
+        return self.redirects.get(mid)
 
     def _spellings(self, mid: str) -> list[str]:
         out = [mid]
