@@ -72,6 +72,8 @@ class CockpitAction:
     kit_content: bool = True
     report_only: bool = False
     notes: list[str] = field(default_factory=list)
+    # Matrix note of a cell served only because --allow-unverified was given ("" otherwise).
+    unverified_note: str = ""
 
 
 def _cell(action: str, source: str, *, verified: bool = True, reason: str = "",
@@ -283,6 +285,7 @@ def plan(selection, mode: str, backend: str | None, detected: Iterable[str],
         if cid not in det:
             continue
         per_provider = []
+        unverified_notes: list[str] = []
         served: list[str] = []
         notes: list[str] = []
         for provider, ref in refs:
@@ -294,6 +297,7 @@ def plan(selection, mode: str, backend: str | None, detected: Iterable[str],
             if not c.verified:
                 if allow_unverified and act != SKIP:
                     unv = True
+                    unverified_notes.append(c.reason or UNVERIFIED)
                 else:
                     act, reason = SKIP, c.reason or UNVERIFIED
             per_provider.append((act, c.source, unv, reason, c.prerequisite))
@@ -310,6 +314,7 @@ def plan(selection, mode: str, backend: str | None, detected: Iterable[str],
             gateway=gateway if act == VIA_GATEWAY else "",
             reason=reason, unverified=unverified,
             notes=[n for n in notes if act != SKIP],
+            unverified_note="; ".join(dict.fromkeys(unverified_notes)) if unverified and act != SKIP else "",
         ))
     for cid in REPORT_ONLY:
         if cid in det:

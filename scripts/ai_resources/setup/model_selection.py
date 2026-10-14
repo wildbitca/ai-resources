@@ -306,7 +306,10 @@ def describe(a: compat.CockpitAction) -> str:
         label = f"through {a.gateway or 'a gateway'}"
         if a.unverified:
             label += " (not verified end to end)"
-        return f"{name}: will configure {', '.join(a.model_refs)} {label}"
+        line = f"{name}: will configure {', '.join(a.model_refs)} {label}"
+        if a.unverified and a.unverified_note:
+            line += f"; matrix note: {a.unverified_note}; requires --allow-unverified"
+        return line
     if a.action == compat.INSTRUCTIONS_ONLY:
         return f"{name}: instructions only; {name} keeps its own model settings"
     return f"{name}: skipped: {a.reason}"

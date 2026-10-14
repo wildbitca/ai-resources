@@ -242,3 +242,21 @@ def test_deep_merge_json_with_a_mode_creates_and_tightens(tmp_path):
     path.chmod(0o644)
     assert _shared.deep_merge_json(path, {"a": 1}, mode=0o600) is False   # nothing changed, still tightened
     assert _mode(path) == 0o600
+
+
+def test_a_via_gateway_unverified_row_prints_the_matrix_note_and_the_opt_in_requirement():
+    # G3: the summary line of an unverified gateway cell carries the matrix note, not only the label.
+    route = _route("claude", "multi-model", "litellm", _flash_selection(allow_unverified=True), ["claude"],
+                   allow_unverified=True)
+    assert route.action == compat.VIA_GATEWAY and route.unverified
+    line = ms.describe(route)
+    assert "not verified yet" in line and "--allow-unverified" in line
+
+
+def test_a_verified_via_gateway_row_has_no_unverified_note():
+    anthropic = sel.Selection(shape="single", providers={"anthropic": sel.ProviderSel()},
+                              slots={"anthropic:sonnet": sel.SlotSel("anthropic/claude-sonnet-5.5")},
+                              primary="anthropic:sonnet", smoke_path="litellm")
+    route = _route("claude", "multi-model", "litellm", anthropic, ["claude"])
+    assert route.action == compat.VIA_GATEWAY and not route.unverified
+    assert "--allow-unverified" not in ms.describe(route)
