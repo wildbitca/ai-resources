@@ -2,6 +2,7 @@
 
 **Status**: accepted for the fields, the validator and the procedure; `sessions_spawn` behaviour verified on an isolated gateway on 2026-10-14 for claude-cli children and, later the same day, for an `agy-cli` child (see "Verification evidence" and "agy-cli evidence"); not yet on the live gateway
 **Date**: 2026-10-13
+**Amended by**: [ADR-0007](0007-subscription-lanes.md) (§1 `lane` step fields; §2; §3 soft fallback for `lane` only; §4 and the writers matrix: one landing path, the kit; §6 kit commands with ledger and `--expect`; §7; "Security limits")
 **Decision makers**: planner, implementer, operator (decisions of 2026-10-13 recorded in the plan)
 
 ## Context
@@ -147,3 +148,7 @@ Findings that change how an agy-backed agent must be configured:
 - Antigravity's FAQ says third-party tools that access it violate its terms of service. The operator ordered
   this test knowingly and accepted the account risk.
 - Not signed off: only a Verifier confirms acceptance.
+
+## Amended by
+
+- [ADR-0007](0007-subscription-lanes.md): amends §1-§4, §6, §7 and "Security limits" for lane steps.

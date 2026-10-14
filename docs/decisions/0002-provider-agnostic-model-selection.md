@@ -2,6 +2,7 @@
 
 **Status**: accepted
 **Date**: 2026-10-09
+**Amended by**: [ADR-0007](0007-subscription-lanes.md) (§8: `openclaw agents add/delete` is a second validated writer; setup-owned `lanes.yaml` rendered artifact)
 **Decision makers**: planner, implementer, operator (Addendum A of plan v2)
 **Supersedes in part**: [ADR-0001](0001-model-pins-and-auto-update.md) (alternative 2, "re-render everything from the overlay", is adopted; the pins, the higher-of rule, `config patch` as the only writer and the defer-never-force restart stay)
 
@@ -92,3 +93,4 @@ OpenAI surface does not serve.
 
 - Plan v2 and Addendum A: `.agent-output/planner/models-provider-agnostic-plan-v2.md`
 - `docs/multi-model.md` (matrix, answers, exit codes), `rules/017-multimodel-routing.mdc`
+- [ADR-0007](0007-subscription-lanes.md): amends §8 (second validated writer; rendered `lanes.yaml`).

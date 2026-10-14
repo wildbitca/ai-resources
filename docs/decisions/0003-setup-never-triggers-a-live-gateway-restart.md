@@ -2,6 +2,7 @@
 
 **Status**: accepted; decision 7 superseded by [ADR-0004](0004-bounded-graceful-restart-under-memory-pressure.md) for the memory trigger (unreleased, target 2.0.2)
 **Date**: 2026-10-09
+**Amended by**: [ADR-0007](0007-subscription-lanes.md) (watch record for lane keys; set-difference teardown; classify before `agents add`; plugin backend and tool through the drained path)
 **Decision makers**: planner, implementer; open questions answered by the operator (Q1-Q9 below)
 **Builds on**: [ADR-0001](0001-model-pins-and-auto-update.md) (defer, never force; `config patch` is the only writer)
 
@@ -165,4 +166,5 @@ restart-required" mode on every release and bought nothing. The kit no longer pi
 
 ## Links
 
+- [ADR-0007](0007-subscription-lanes.md): amends this ADR for lane agents (watch record, teardown, classify-before-add, drained path).
 - [ADR-0004](0004-bounded-graceful-restart-under-memory-pressure.md): supersedes decision 7 for the memory trigger.

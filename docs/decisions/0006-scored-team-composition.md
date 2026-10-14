@@ -2,6 +2,7 @@
 
 **Status**: Accepted (2026-10-13, architect review against HEAD e0fb7bc: every decision below is implemented; the limits of the shipped data are stated in "Limits of the shipped data". This accepts the mechanism, not the shipped scores as a basis for per-role choices.)
 **Date**: 2026-10-13
+**Amended by**: [ADR-0007](0007-subscription-lanes.md) (§4 and §8 scoped to composition; "Output limits" and "Rollback" unaffected for compose; the revisit trigger "the Antigravity FAQ changes" is not met)
 **Decision makers**: planner, implementer, operator (decisions of 2026-10-13 recorded in the plan `.agent-output/planner/scored-team-composition-plan.md`, section 11)
 
 ## Context
@@ -30,7 +31,7 @@ The kit ships `scores/model-scores.yaml` read-only, versioned independently of t
 
 Separate from verification and run before it. Each cockpit, engine and pool has a `usage`: `dispatch-ok`, `direct-only` or `instructions-only`.
 
-- `agy` (CLI) and the OpenClaw antigravity engine are `direct-only`: the Antigravity FAQ says third-party tools (Claude Code, OpenClaw and OpenCode are named) that access Antigravity violate its ToS, and `agy -p` is for direct scripting and CI. Account suspension covers Antigravity, Gemini CLI and Code Assist. They are never a composition target, never proposed as an `openclaw-agent` or dispatch backend, and **no flag lifts this**, `--allow-unverified` included.
+- `agy` (CLI) and the OpenClaw antigravity engine are `direct-only`: the Antigravity FAQ says third-party tools (Claude Code, OpenClaw and OpenCode are named) that access Antigravity violate its ToS, and `agy -p` is for direct scripting and CI. Account suspension covers Antigravity, Gemini CLI and Code Assist. They are never a composition target and never proposed as an `openclaw-agent` or dispatch backend by composition. In composition, Antigravity is direct use only; no composition flag lifts that, `--allow-unverified` included. The lanes pass is governed by [ADR-0007](0007-subscription-lanes.md).
 - Codex is `instructions-only` as a cockpit (all 21 compat cells) and the kit has no `codex exec` dispatch path.
 
 The compat cell of the antigravity engine is `CONFIGURE` in code. Composition excludes it through this gate without changing compat; reconciling the cell with the FAQ is a follow-up ADR.
@@ -80,9 +81,9 @@ Checked read-only on 2026-10-13: `scripts/validate_kit.py` addresses specific pa
 This ADR ships a mechanism. The shipped scores cannot yet tell roles apart, and the engine does not show that a composed team is better than the curated baseline.
 
 - All 360 role rows in `scores/model-scores.yaml` (dataset `2026-10-13`) are `INFERRED`. Each one is the same role-agnostic proxy, Vals Terminal-Bench 4.0 accuracy / 10. A model, route and effort has the same score in all 15 roles. No independent benchmark exists for planning, review, verification or security, so those rows are placeholders taken from a terminal-coding benchmark.
-- Claude Sonnet 5.5 (6.4) has the top score in every role. On the shipped data with only verified cells (every Anthropic route, any enabled set), every role in all three modes (`uniform`, `single-provider`, `mixed`) resolves to Sonnet 5.5. The single-model `uniform` path does the same.
+- Claude Sonnet 5.5 (6.3) has the top score in every role. On the shipped data with only verified cells (every Anthropic route, any enabled set), every role in all three modes (`uniform`, `single-provider`, `mixed`) resolves to Sonnet 5.5. The single-model `uniform` path does the same.
 - The one exception is not per-role evidence. In `mixed` with `--allow-unverified`, OpenAI enabled and the LiteLLM gateway, pool balancing moves six standard-class and low-class roles (code-reviewer, verifier, crashlytics-fixer, crossplane-upjet-maintainer, terraform-maintainer, explore) to `openai/gpt-6-astra` (6.0, UNVERIFIED). That pick spreads load. It is not a judgement that astra is better at those roles. Under the OpenRouter gateway the same run stays all-Sonnet.
-- Because of this, the default-kept rule never fires on the shipped data. A composed team departs from `balanced-claude-55` and from the rule 017 recommendation on six roles. Planner, software-architect and security-auditor go from Opus 5.5 to Sonnet 5.5, because Opus's 5.8 falls outside the critical band of 6.4 - 0.3. Explore, tester and package-upgrade go from Haiku 5.5 to Sonnet 5.5. The only basis for this is the coding proxy, and the why table shows every one of these picks as `INFERRED`.
+- Because of this, the default-kept rule never fires on the shipped data. A composed team departs from `balanced-claude-55` and from the rule 017 recommendation on six roles. Planner, software-architect and security-auditor go from Opus 5.5 to Sonnet 5.5, because Opus's 5.8 falls outside the critical band of 6.3 - 0.3 = 6.0. Explore, tester and package-upgrade go from Haiku 5.5 to Sonnet 5.5. The only basis for this is the coding proxy, and the why table shows every one of these picks as `INFERRED`.
 - Real per-role differentiation needs one of two things. The first is Phase B measurement (`MEASURED-HERE` rows per role, section 9). The second is operator override rows in `$XDG_CONFIG_HOME/ai-resources/model-scores.yaml`, each with a `reason` and an `as_of`. Until one of them lands, read the composed team as "the best model on one coding benchmark, with load balancing", not as a role-aware recommendation. For the critical roles the curated baseline stays the safer default.
 - The Terminal-Bench 4.0 figures were summarised by an LLM from the Vals board and have not been re-checked in a browser (see Follow-ups). They are dataset content, versioned on their own (decision 1).
 
@@ -109,7 +110,7 @@ Accepted on 2026-10-13 because the architect review found every decision above i
 - the band rule and the `--allow-unverified` anchoring;
 - one route per model, collapsed per provider subset in single-provider;
 - only the sidecar headroom reader is live, and `has_live_reader` gates the opt-in;
-- `agy` and the antigravity engine are direct-only, and no flag lifts that;
+- `agy` and the antigravity engine are direct-only in composition, and no composition flag lifts that;
 - Fable is opt-in;
 - the soft diversity preference;
 - the loss cap with provider fall-through;
@@ -130,3 +131,7 @@ Revisit this ADR, rather than only the dataset, when any of these happens:
 - Phase B (section 9) or operator override rows, to give roles real differentiation.
 - Clear `profile.composed` when a plain profile replaces a composed team.
 - The antigravity engine compat cell vs the Antigravity FAQ; a `codex exec` dispatch path; the dispatch-side counter writer; the Vertex alias-pinning pitfall in the Vertex setup docs.
+
+## Amended by
+
+- [ADR-0007](0007-subscription-lanes.md): governs the lanes pass; §4 is scoped to composition.

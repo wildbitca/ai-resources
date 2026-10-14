@@ -2,6 +2,7 @@
 
 **Status**: accepted; superseded in part by [ADR-0002](0002-provider-agnostic-model-selection.md)
 **Date**: 2026-10-09
+**Amended by**: [ADR-0007](0007-subscription-lanes.md) (`openclaw agents add/delete` is a second validated writer, outside `config patch`)
 **Decision makers**: planner, implementer (confirmation of the write path requested from the operator)
 
 ## Context
@@ -51,4 +52,4 @@ models picked up in the background, with the gateway restarted safely and a way 
 ## Related
 
 - Feature specs: `docs/multi-model.md` (Automatic model updates), `docs/openclaw/runbook.md`
-- Other ADRs: none
+- Other ADRs: [ADR-0002](0002-provider-agnostic-model-selection.md), [ADR-0007](0007-subscription-lanes.md)
