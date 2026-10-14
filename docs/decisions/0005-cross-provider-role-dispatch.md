@@ -1,6 +1,6 @@
 # ADR-0005: Cross-provider role dispatch (`backend` step field)
 
-**Status**: accepted for the fields, the validator and the procedure; `sessions_spawn` behaviour verified on an isolated claude-cli gateway on 2026-10-14, not yet on the live gateway (see "Verification evidence")
+**Status**: accepted for the fields, the validator and the procedure; `sessions_spawn` behaviour verified on an isolated gateway on 2026-10-14 for claude-cli children and, later the same day, for an `agy-cli` child (see "Verification evidence" and "agy-cli evidence"); not yet on the live gateway
 **Date**: 2026-10-13
 **Decision makers**: planner, implementer, operator (decisions of 2026-10-13 recorded in the plan)
 
@@ -55,7 +55,7 @@ Read-only enforcement is detective and best-effort. `claude-kit` and `agy-cli` r
 - `antigravity` is an OpenClaw engine in which agy is the chat-facing orchestrator that spawns the `claude` worker on `claude-kit` (`docs/multi-model.md`).
 - agy model pins are report-only (`model_pins.AGY_STATIC`).
 
-What does not exist is an OpenClaw agent on `agy-cli` that has been shown to accept role work through `sessions_spawn` with an explicit `cwd` and to signal completion. That, together with the agent being on `subagents.allowAgents`, is the external prerequisite. The mechanism is backend-agnostic; it is meant to be exercised with two ordinary OpenClaw agents first.
+An OpenClaw agent on `agy-cli` that accepts role work through `sessions_spawn` with an explicit `cwd` and signals completion was shown on an isolated gateway on 2026-10-14 (see "agy-cli evidence"); it has not been shown on the live gateway. That, together with the agent being on `subagents.allowAgents`, is the external prerequisite. The mechanism is backend-agnostic; it is meant to be exercised with two ordinary OpenClaw agents first.
 
 **Composition (ADR-0006).** Scored team composition emits no `backend` or `agentId`: it writes models into `by_role` through the profile path only.
 
@@ -102,5 +102,48 @@ orchestrator verifies the report and the post-step checks itself and never trust
 
 - The isolated gateway is not the live gateway: the live host still admits only `claude`, so a live P6 needs the
   operator to add claude-cli agents to `allowAgents` (not done; operator-owned).
-- Only claude-cli children were exercised. A Gemini/Antigravity or Codex child was not, by design.
+- The table above exercised only claude-cli children. The `agy-cli` child is covered in the next section; a Codex child was not exercised, by design.
 - Five probes, one run each: this is existence evidence, not a reliability rate.
+
+## agy-cli evidence
+
+Measured on 2026-10-14 (UTC) against an isolated gateway (`kite2e`, loopback 19789, own cgroup), seal
+`df652532b8f59a00402d9f9751acadd3601245adeeed9acc8f5cfc47239582b8`, run `20261014T191727Z`. Orchestrator `e2e-orch`
+is claude-cli; targets `e2e-agy` and `e2e-agy-direct` use the model ref `agy-cli/gemini-3.8-flash-low`
+(Antigravity CLI 1.3.5). Each probe used a fresh sandbox clone pinned to commit `73fdb0d`. Proof of an untouched
+live host (`proof-after`, Overall PASS): 93 L1 sha256 entries identical, live MainPID 962 and NRestarts 0 unchanged,
+no `message` call (2 shim calls, both `--profile kite2e --version`), 0 live message deliveries in any probe window,
+live `oom_kill` +0 and `memory.events high` +0.
+
+| Probe | What it does | Result | Verdict |
+|-------|--------------|--------|---------|
+| direct-agy | one gateway turn to `e2e-agy-direct`, no `sessions_spawn` | `executionTrace.winnerProvider` `agy-cli`, runner `cli`; sentinel valid, nonce, cwd = toplevel = workspace, check 4 PASS | UNVERIFIED (fdscan sampled no agy pid in the window; the functional evidence is complete) |
+| seq-agy | orchestrator `sessions_spawn` of `e2e-agy`, explore step, explicit `cwd` | checks 1-4 ok, `step=agy-explore status=success`, role line ok, nonce match | PASS |
+| neg-agy | spawn of `e2e-agy-denied` (not on `allowAgents`) | refused: spawned=false, no sentinel, no session | PASS |
+
+Findings that change how an agy-backed agent must be configured:
+
+1. **Model catalog.** `sessions_spawn` resolves the target agent's model through the model catalog and does not
+   consult the CLI-backend check. A ref `agy-cli/<model>` therefore needs a `models.providers["agy-cli"].models[]`
+   entry (the schema also demands `baseUrl`, `api` and `apiKey`; a dead loopback `baseUrl` and a placeholder key
+   fail closed because agy turns take the CLI runner). Without it the spawn is refused with `Unknown model`
+   although config validation passes.
+2. **Process environment.** Under `sessions_spawn` the agy process does not necessarily have the guard shim first
+   in its own `PATH` while its shell tool does. A check that requires the shim first in the agy process `PATH`
+   gives a false HIT (run `20261014T190726Z`); the first executable `openclaw` on the walked `PATH` is the right test.
+3. **Workspace files.** OpenClaw writes bootstrap files (`IDENTITY.md`, `SOUL.md`, `USER.md`) into the agent
+   workspace before an agy turn. A clean-worktree check must tolerate untracked bootstrap files and nothing else.
+4. **Cost.** One agy step is about 50k tokens of Antigravity quota, mostly system context.
+
+### Limits of the agy-cli evidence
+
+- Isolated gateway only. The live host admits only `claude`, so using an agy-backed agent there needs the
+  operator to add the agent, its catalog entry and the `allowAgents` membership (not done; operator-owned).
+- Three probes, one run each: existence evidence, not a reliability rate. A first run on the same day was refused
+  at the catalog (finding 1) and a second was aborted by the over-strict PATH check (finding 2); both are
+  recorded by the run directories of the harness.
+- `agy` runs with `--dangerously-skip-permissions` as the host user. The harness detects but does not prevent a
+  write outside the sandbox, or a call to the live `openclaw` binary by absolute path.
+- Antigravity's FAQ says third-party tools that access it violate its terms of service. The operator ordered
+  this test knowingly and accepted the account risk.
+- Not signed off: only a Verifier confirms acceptance.
