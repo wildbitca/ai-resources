@@ -175,6 +175,13 @@ signing again.
 **Checks.** `ai-resources verify --cockpit openclaw` and `ai-resources models status` warn when `lanes.yaml` is
 missing, stale or a lane agent's model differs from its role's model; re-run `setup --lanes` to fix.
 
+**MCP scoping.** Every `kit-lane-*` agent is written with `tools.deny: ["bundle-mcp"]`, so a lane child no longer
+spawns the operator's whole `mcp.servers` set (the cause of the supabase/engram process pile-up). To give one role an
+extra server, add a `mcp:` map to the profile `lanes:` block, e.g. `mcp: {implementer: [engram]}`, and re-run
+`setup --lanes`: the named servers stay available and the other configured ones are denied by name. `verify --cockpit
+openclaw` warns on a lane agent that lost the deny; `explain` shows `[mcp: ...]` for opted-in roles. Teardown removes
+only the tokens the kit recorded. Check on a host: run one lane turn and count `pgrep -fc supabase` before and after.
+
 **Teardown.**
 
 ```bash

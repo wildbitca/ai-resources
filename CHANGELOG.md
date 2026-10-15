@@ -11,6 +11,11 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Added
 
+- **MCP scoping for `kit-lane-*` agents (ADR-0007 OQ-5).** Lane agents are written with `tools.deny: ["bundle-mcp"]`
+  by default, so a claude-cli lane child no longer loads every server in OpenClaw's `mcp.servers` (supabase/engram
+  process accumulation on the gateway). A profile `lanes.mcp: {role: [server, ...]}` opts extra servers in per role.
+  Recorded in `lanes_applied.mcp_deny_added`, removed by teardown, warned on by `verify`, shown in `explain`.
+
 - **Subscription lanes (ADR-0007), phase 2.** A separate lanes pass after the model choice places a role on Claude
   Code or on a `kit-lane-*` OpenClaw agent on the Claude CLI backend. Disabled on a fresh install; enabled with
   `ai-resources setup --lanes` (`--no-lanes`, `--lanes-dry-run`, `--lanes-orchestrator ID`), which shows the
