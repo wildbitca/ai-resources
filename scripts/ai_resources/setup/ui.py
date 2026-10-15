@@ -144,8 +144,7 @@ def banner(title: str, subtitle: str = "", version: str = "") -> None:
         body.append(f"\n{subtitle}", style="dim")
     if version:
         body.append(f"\n{version}", style="dim italic")
-    box_kw = {} if unicode_ok() else {"box": _rich_box.ASCII}
-    console().print(Panel(body, border_style="cyan", padding=(1, 2), **box_kw))
+    console().print(Panel(body, border_style="cyan", padding=(1, 2), **_box_kw()))
 
 
 def section(num: int, total: int, title: str) -> None:
@@ -170,14 +169,6 @@ def section(num: int, total: int, title: str) -> None:
     if show_rail:
         console().print(rail(num), markup=False, highlight=False)
         console().print(key_hint(), style="dim", markup=False, highlight=False)
-
-
-def step_header(number: int, total: int, title: str, model: Any = None, sub: str | None = None) -> None:
-    """A step header: `[n/total] title` (with `- sub` for a sub-step such as 6c) and, in an interactive run,
-    the progress rail and the key hints. It goes through `section`, so a patched `section` still sees it."""
-    if model is not None:
-        set_progress(number, [n for n, _l, st in model if st == "done"], [n for n, _l, st in model if st == "skipped"])
-    section(number, total, f"{title} - {sub}" if sub else title)
 
 
 def rail(current: int | None = None, model: list | None = None) -> str:
@@ -677,6 +668,13 @@ def checkbox(message: str, choices: list[Any], default: list[Any] | None = None,
     ))
 
 
+def _edit_hint() -> dict:
+    """Ctrl-B is Back while it is enabled, so it no longer moves the cursor left in a text field: say so."""
+    if _WIZARD_SCOPE and _BACK_ON:
+        return {"instruction": "(Ctrl-B goes back, so use the left arrow key to move the cursor)"}
+    return {}
+
+
 def text(message: str, default: str = "", validate: Callable[[str], bool | str] | None = None) -> str:
     if _NON_INTERACTIVE:
         return default
@@ -691,7 +689,8 @@ def text(message: str, default: str = "", validate: Callable[[str], bool | str] 
                 print(res if isinstance(res, str) else "Invalid")
                 return text(message, default, validate)
         return ans
-    return _ask(questionary.text(message, default=default, validate=validate, style=_QSTYLE))
+    return _ask(questionary.text(message, default=default, validate=validate, style=_QSTYLE,
+                                 **_edit_hint()))
 
 
 def password(message: str, validate: Callable[[str], bool | str] | None = None) -> str:
@@ -711,7 +710,7 @@ def password(message: str, validate: Callable[[str], bool | str] | None = None) 
             if _WIZARD_SCOPE:
                 raise Cancelled(_LAST_SECTION) from None
             raise
-    return _ask(questionary.password(message, validate=validate, style=_QSTYLE))
+    return _ask(questionary.password(message, validate=validate, style=_QSTYLE, **_edit_hint()))
 
 
 def confirm(message: str, default: bool = True) -> bool:

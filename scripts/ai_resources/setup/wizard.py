@@ -170,7 +170,7 @@ def _run(args: argparse.Namespace) -> int:
 
     # The questions and the apply run as one ordered list of steps (flow.Wizard): the order, the skips and
     # their wording are the ones this function had when it called the step functions one after the other.
-    ctx = types.SimpleNamespace(s=s, prev_s=prev_s, args=args, dry_run=dry_run, is_first=is_first, runner=None)
+    ctx = types.SimpleNamespace(s=s, prev_s=prev_s, args=args, dry_run=dry_run, is_first=is_first)
     runner = flow.Wizard(
         _build_steps(dry_run),
         on_skip=lambda spec, title, reason: (ui.mark_skipped(spec.number),
@@ -182,7 +182,6 @@ def _run(args: argparse.Namespace) -> int:
         scope=lambda spec, back: ui.back_scope(back),
         changes=lambda: len(ui.actions_done()),
     )
-    ctx.runner = runner
     global _RUNNER, _REVIEW_SHOWN
     _RUNNER, _REVIEW_SHOWN = runner, False
     try:
@@ -278,12 +277,12 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
           edit_label="Providers"),
         S("credentials", 5, "Credentials", lambda c: _step5_credentials(c.s, c.dry_run),
           skip=lambda c: None if multi(c) else ("Credentials", "Skipped."), edit_label="Credentials"),
-        S("models", 6, "Models", lambda c: _step_models(c.s, c.args, c.dry_run), sub="6a", back=True,
+        S("models", 6, "Models", lambda c: _step_models(c.s, c.args, c.dry_run), back=True,
           edit_label="Models"),
         S("profile", 6, "Role assignment",
-          lambda c: _step6_profile(c.s) if multi(c) else _step6_single_model_profile(c.s), sub="6b", back=True,
+          lambda c: _step6_profile(c.s) if multi(c) else _step6_single_model_profile(c.s), back=True,
           edit_label="Role assignment"),
-        S("lanes", 6, "Subscription lanes", lambda c: _step_lanes(c.s, c.args, dry_run=c.dry_run), sub="6c",
+        S("lanes", 6, "Subscription lanes", lambda c: _step_lanes(c.s, c.args, dry_run=c.dry_run),
           back=True, edit_label="Lanes"),
         S("cockpits", 7, "Cockpit configuration", lambda c: _step7_cockpit_config(c.s, dry_run=c.dry_run),
           back=True, edit_label="Cockpits"),

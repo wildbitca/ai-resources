@@ -196,3 +196,24 @@ def test_ctrl_d_in_a_text_field_with_content_is_not_swallowed():
     """Plain text and password already cancel on EOF; the binding must not break typing."""
     qmod = pytest.importorskip("questionary")
     assert _drive(lambda i, o: _BUILDERS["text"](qmod, i, o), "ab\r") == "ab"
+
+
+def test_text_and_password_prompts_say_ctrl_b_replaces_cursor_left(monkeypatch):
+    seen = []
+
+    class Q:
+        def unsafe_ask(self):
+            return "v"
+
+    fake = types.SimpleNamespace(text=lambda m, **k: seen.append(k) or Q(), password=lambda m, **k: seen.append(k) or Q())
+    monkeypatch.setattr(ui, "questionary", fake, raising=False)
+    monkeypatch.setattr(ui, "_HAS_QUESTIONARY", True)
+    monkeypatch.setattr(ui, "_NON_INTERACTIVE", False)
+    with ui.prompt_scope(wizard=True, back=True):
+        ui.text("t")
+        ui.password("p")
+    assert all("left arrow" in k["instruction"] for k in seen) and len(seen) == 2
+    seen.clear()
+    with ui.prompt_scope(wizard=True, back=False):
+        ui.text("t")
+    assert "instruction" not in seen[0]

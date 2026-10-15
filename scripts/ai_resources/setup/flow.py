@@ -49,7 +49,6 @@ class StepSpec:
     number: int
     title: str
     run: Callable[[Any], int]
-    sub: str = ""                       # "6c": a sub-step of numbered step 6
     rewindable: bool = True             # may be re-asked after Back / Edit (no installer, no apply)
     back: bool = False                  # Ctrl-B is offered at this step's prompts
     # Returns (header title, reason) when the step does not apply to this run; the runner prints both.
@@ -80,7 +79,6 @@ class Wizard:
     scope: Callable[[StepSpec, bool], ContextManager] = lambda spec, can_back: nullcontext()
     changes: Callable[[], int] = lambda: 0
     history: list[_Done] = field(default_factory=list)
-    current: str = ""
 
     # --- queries ------------------------------------------------------------------------------------------
     def index_of(self, step_id: str) -> int:
@@ -131,7 +129,6 @@ class Wizard:
                             and not prev.locked)
             before = self.snapshot()
             marker = self.changes()
-            self.current = spec.id
             self.on_enter(spec, self)
             try:
                 with self.scope(spec, spec.back):

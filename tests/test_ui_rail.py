@@ -94,13 +94,6 @@ def test_no_rail_without_a_wizard_progress(term):
     assert "Tools" not in "\n".join(con.out)
 
 
-def test_step_header_adds_the_sub_step_and_still_goes_through_section(term, monkeypatch):
-    seen = []
-    monkeypatch.setattr(ui, "section", lambda n, t, title: seen.append((n, t, title)))
-    ui.step_header(6, 10, "Models and roles", sub="6c Subscription lanes")
-    assert seen == [(6, 10, "Models and roles - 6c Subscription lanes")]
-
-
 def test_plain_fallback_without_rich(monkeypatch, capsys):
     monkeypatch.setattr(ui, "_HAS_RICH", False)
     ui.section(4, 10, "Provider backends")
