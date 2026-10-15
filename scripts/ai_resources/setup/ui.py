@@ -306,6 +306,18 @@ _SECRET_SHAPES = re.compile(
     r"\b(?:sk-[A-Za-z0-9_\-]{8,}|gh[opsur]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_\-]{20,}"
     r"|xox[baprs]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{12,}|[A-Za-z0-9_\-]{32,})\b")
 _BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=\-]{8,}")
+_PEM = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)", re.S)
+_KEYWORDS = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL)"
+_BLOCK_SCALAR = re.compile(
+    r"(?im)^([ \t]*[\w.\-]*" + _KEYWORDS + r"[\w.\-]*[ \t]*:[ \t]*)([|>][+\-0-9]*)([ \t]*)\n((?:[ \t]+[^\n]*(?:\n|\Z))+)")
+# A bare `NAME=value` line whose name says it is a password: an unquoted value may hold spaces, so it is
+# masked to the end of the line (a reference or an already masked value is kept).
+_PASSWORD_LINE = re.compile(
+    r"(?im)^([ \t]*(?:export[ \t]+)?[A-Z0-9_.\-]*(?:PASSWORD|PASSWD|PASSPHRASE)[A-Z0-9_.\-]*=)(?![\"'])([^\n]+)$")
+_USERPASS = re.compile(r"(?<![\w\-])(-u|--user|--proxy-user)((?:\s+|=)[^\s:]+:)(\S+)")
+_AUTH_HEADER = re.compile(r"(?i)\b(authorization[\"']?\s*[:=]\s*[\"']?)([^\s\"',}]+(?:[ \t]+[^\s\"',}]+)?)")
+_AUTH_SCHEMES = ("bearer", "basic", "token", "digest", "apikey", "key")
+_BASE64_PADDED = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,}={1,2}")
 
 
 def mask_secrets(text: str) -> str:
@@ -318,10 +330,32 @@ def mask_secrets(text: str) -> str:
         if _REFERENCE.fullmatch(value) or value in ("****", "null", "None", "true", "false"):
             return m.group(0)
         return f"{m.group(1)}{m.group(2)}{quote}****"
-    out = _URL_CRED.sub(lambda m: f"{m.group(1)}{m.group(2)}:****@", text)
+    def auth(m: "re.Match[str]") -> str:
+        words = m.group(2).split()
+        if _REFERENCE.fullmatch(words[0]) or words[0] == "****":
+            return m.group(0)
+        if len(words) == 2 and words[0].lower() not in _AUTH_SCHEMES:
+            return f"{m.group(1)}****{m.group(2)[len(words[0]):]}"
+        return f"{m.group(1)}****"
+
+    def password_line(m: "re.Match[str]") -> str:
+        value = m.group(2).strip()
+        if _REFERENCE.fullmatch(value) or value in ("****", "null", "None", "true", "false"):
+            return m.group(0)
+        return f"{m.group(1)}****"
+
+    out = _PEM.sub("****", text)
+    out = _BLOCK_SCALAR.sub(
+        lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}\n" + re.sub(r"(?m)^([ \t]+)[^\n]+$", r"\1****", m.group(4)),
+        out)
+    out = _PASSWORD_LINE.sub(password_line, out)
+    out = _URL_CRED.sub(lambda m: f"{m.group(1)}{m.group(2)}:****@", out)
+    out = _USERPASS.sub(lambda m: f"{m.group(1)}{m.group(2)}****", out)
+    out = _AUTH_HEADER.sub(auth, out)
     out = _SECRET_NAME.sub(pair, out)
     out = _FLAG_SECRET.sub(lambda m: m.group(0) if _REFERENCE.fullmatch(m.group(3)) else f"{m.group(1)}{m.group(2)}****", out)
     out = _BEARER.sub(lambda m: f"{m.group(1)} ****", out)
+    out = _BASE64_PADDED.sub("****", out)
     return _SECRET_SHAPES.sub("****", out)
 
 
