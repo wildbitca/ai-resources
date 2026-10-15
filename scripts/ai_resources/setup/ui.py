@@ -225,15 +225,18 @@ def progress_bar(label: str, total: int = 100):
 # questionary default of returning None, which callers read as "No" or crash on.
 # Outside the scope the wrappers behave exactly as before (None on Ctrl-C).
 _WIZARD_SCOPE = False
+_BACK_ON = False        # Ctrl-B returns to the previous step while the prompts of this step are open
 _LAST_SECTION = ""
 _DONE: list[str] = []
 
 
 @contextmanager
-def prompt_scope(wizard: bool = False):
-    global _WIZARD_SCOPE, _LAST_SECTION
-    prev, prev_sec = _WIZARD_SCOPE, _LAST_SECTION
+def prompt_scope(wizard: bool = False, back: bool = False):
+    """`wizard=True`: Ctrl-C and EOF raise Cancelled. `back=True` (wizard only): Ctrl-B raises GoBack."""
+    global _WIZARD_SCOPE, _LAST_SECTION, _BACK_ON
+    prev, prev_sec, prev_back = _WIZARD_SCOPE, _LAST_SECTION, _BACK_ON
     _WIZARD_SCOPE = wizard
+    _BACK_ON = bool(back and wizard)
     if wizard:
         _LAST_SECTION = ""
         _DONE.clear()
@@ -242,6 +245,7 @@ def prompt_scope(wizard: bool = False):
     finally:
         _WIZARD_SCOPE = prev
         _LAST_SECTION = prev_sec
+        _BACK_ON = prev_back
 
 
 def current_step() -> str:
@@ -257,13 +261,46 @@ def actions_done() -> list[str]:
     return list(_DONE)
 
 
+def back_enabled() -> bool:
+    return _BACK_ON
+
+
+def _attach_back(question: Any) -> bool:
+    """Merge one eager Ctrl-B binding into a built question's Application; it exits with BACK.
+
+    questionary's select, checkbox and confirm pass `key_bindings=` to their Application themselves, so the
+    binding is merged into `application.key_bindings` after construction (prompt_toolkit reads that attribute
+    on every key press). Returns False when the question exposes no Application (a double, or a missing lib)."""
+    app = getattr(question, "application", None)
+    if app is None:
+        return False
+    try:
+        from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+    except ImportError:
+        return False
+    kb = KeyBindings()
+
+    @kb.add("c-b", eager=True)
+    def _back(event):  # noqa: ANN001
+        event.app.exit(result=BACK)
+
+    existing = getattr(app, "key_bindings", None)
+    app.key_bindings = merge_key_bindings([existing, kb]) if existing is not None else kb
+    return True
+
+
 def _ask(question: Any) -> Any:
     if not _WIZARD_SCOPE:
         return question.ask()
+    if _BACK_ON:
+        _attach_back(question)
     try:
-        return question.unsafe_ask()
+        result = question.unsafe_ask()
     except (KeyboardInterrupt, EOFError):
         raise Cancelled(_LAST_SECTION) from None
+    if result is BACK:
+        raise GoBack()
+    return result
 
 
 def _input(prompt: str) -> str:
