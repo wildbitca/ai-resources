@@ -160,6 +160,19 @@ def lane_refs(lanes: Mapping[str, Any]) -> dict[str, list[str]]:
     return out
 
 
+def explain_lanes(lanes: Mapping[str, Any] | None) -> dict[str, str] | None:
+    """role -> text for the explain Lane column, from the state's table; None without a table (the output
+    is then byte-identical to the one printed before lanes existed)."""
+    if not isinstance(lanes, Mapping) or not (lanes.get("roles") or lanes.get("second")):
+        return None
+    out: dict[str, str] = {}
+    for role, cfg in sorted((lanes.get("roles") or {}).items()):
+        out[role] = " > ".join((cfg or {}).get("candidates") or []) or "-"
+    for role, cands in sorted((lanes.get("second") or {}).items()):
+        out[role] = f"{out.get(role, '-')} + second {' > '.join(cands or [])}"
+    return out
+
+
 def drift(lanes: Mapping[str, Any] | None, by_role: Mapping[str, Any]) -> list[dict[str, str]]:
     """The lane agents whose model differs from the model of a role that names them."""
     found: dict[str, dict[str, str]] = {}

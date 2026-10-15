@@ -59,3 +59,53 @@ def test_parallel_groups_and_handoff_reference_mention_openclaw_members():
     parallel = SKILL[SKILL.index("## Parallel groups"):SKILL.index("## Subagent return format")]
     assert "openclaw-agent" in parallel
     assert "openclaw-agent" in HANDOFF_REF
+
+
+def _lane_section() -> str:
+    return SKILL[SKILL.index("## Lane steps"):SKILL.index("## Parallel groups")]
+
+
+def test_lane_section_sits_between_backend_and_parallel_groups():
+    assert SKILL.index("## Choosing a backend") < SKILL.index("## Lane steps") < SKILL.index("## Parallel groups")
+
+
+def test_lane_precedence_table_block_and_soft_fallback():
+    section = _lane_section()
+    assert "**Precedence.**" in section
+    for needle in ("| `claude-code` | any | any | claude-code |",
+                   "lane unavailable here",
+                   "| `lane` | no entry for the role | any | claude-code (the off switch) |",
+                   "Block (configuration error)",
+                   "Block (\"kit commands cannot run here\")",
+                   "Blocked: true"):
+        assert needle in section, needle
+
+
+def test_lane_flow_expect_and_kit_commands():
+    section = _lane_section()
+    for needle in ("lanes prepare", "lanes integrate", "lanes verify", "lanes land", "openclaw worktrees create",
+                   "--expect", "<nonce>:<snapshot_digest>:<ledger_head>", "never reads a head from the ledger file",
+                   "--ff-only", "--subject <step-id>@<sha>", "Never reset anything", "sessions_spawn agentId=<lane id>"):
+        assert needle in section, needle
+    assert section.index("lanes prepare") < section.index("lanes integrate") < section.index("lanes verify") \
+        < section.index("lanes land")
+
+
+def test_lane_handoff_join_reports_mixed_group_and_cap():
+    section = _lane_section()
+    assert "never writes `{{handoff_file}}`" in section
+    assert "step-scoped report" in section and ".agent-output/<role>/<step-id>*" in section
+    assert "**Mixed-group rule.**" in section and "`claude-code` writer step together with a `lane` step" in section
+    assert "max_remote_concurrency" in section and "Caps never apply to a checker" in section
+    assert "(V2)" in section
+
+
+def test_one_writer_paragraph_is_rewritten_to_the_adr_0007_invariant():
+    who = SKILL[SKILL.index("## Who writes what"):SKILL.index("## Finishing")]
+    assert "**One writer per run.**" not in who
+    assert "**One landing path per run (ADR-0007).**" in who
+    for needle in ("`lanes land`", "at most one integrating writer", "own per-attempt worktree",
+                   "no agent merges or lands", "A run without lane writers is unchanged"):
+        assert needle in who, needle
+    parallel = SKILL[SKILL.index("## Parallel groups"):SKILL.index("## Subagent return format")]
+    assert "backend: lane" in parallel and "never mixes a `claude-code` writer" in parallel

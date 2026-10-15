@@ -874,7 +874,7 @@ def _teardown_lanes(s: state.SetupState, doc: dict) -> bool:
         return True
     def confirm(msg: str) -> bool:
         return True if ui.is_non_interactive() else bool(ui.confirm(msg, default=True))
-    return openclaw_lanes.teardown(s, doc, apply_patch=_lanes_apply, oc=_openclaw, confirm=confirm,
+    return openclaw_lanes.teardown(s, doc, config_root=CONFIG_ROOT, apply_patch=_lanes_apply, oc=_openclaw, confirm=confirm,
                                    info=ui.info, error=ui.error)
 
 

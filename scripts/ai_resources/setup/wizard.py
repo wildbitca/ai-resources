@@ -67,7 +67,7 @@ def run(args: argparse.Namespace) -> int:
     and takes no lock."""
     global _ASSUME_YES, _DRY_RUN, _COMPOSE
     _ASSUME_YES = bool(getattr(args, "yes", False))
-    _DRY_RUN = bool(getattr(args, "dry_run", False))
+    _DRY_RUN = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
     _COMPOSE = {"mode": getattr(args, "compose", "") or "", "headroom": getattr(args, "headroom", "") or "",
                 "live": getattr(args, "headroom_live", "") or "", "why_json": getattr(args, "why_json", "") or "",
                 "allow_fable": bool(getattr(args, "allow_fable", False)),
@@ -75,14 +75,14 @@ def run(args: argparse.Namespace) -> int:
     if _DRY_RUN and _ASSUME_YES:
         ui.info("DRY RUN: --yes installs nothing in a dry run; no installer is offered or run.")
     return state.locked_run(lambda: _run(args), out=lambda m: ui.error(m),
-                            enabled=not getattr(args, "dry_run", False))
+                            enabled=not _DRY_RUN)
 
 
 def _run(args: argparse.Namespace) -> int:
     ui.require_deps()
     global _APPLIED_TARGETS
     _APPLIED_TARGETS = []
-    dry_run = getattr(args, "dry_run", False)
+    dry_run = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
 
     # Both flags were declared in the CLI and never read, so they accepted input
     # and changed nothing. Non-interactive makes every prompt answer with its
@@ -1201,13 +1201,15 @@ def _compose_profile(s: state.SetupState, base_name: str, mode: str | None, sing
         if reading is None or reading.state != "known":
             ui.info(f"Live headroom for {pid} is unknown ({reading.source if reading else 'no reading'}); "
                     "the static level is used.")
-    ui.console().print(explain.render_text(comp), markup=False, highlight=False)
+    from . import lanes_render
+    lane_table = lanes_render.explain_lanes(s.profile.lanes)
+    ui.console().print(explain.render_text(comp, lane_table), markup=False, highlight=False)
     why = _COMPOSE.get("why_json")
     if why:
         if _DRY_RUN:
             ui.info("DRY RUN: --why-json is not written.")
         else:
-            flow.write_why_json(flow.validate_why_json_path(why), comp)
+            flow.write_why_json(flow.validate_why_json_path(why), comp, lane_table)
             ui.ok(f"Why table (JSON): {why}")
     if comp.refused:
         ui.error(f"No team proposed: {comp.refusal}")
@@ -1526,6 +1528,9 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     if want and unwant:
         ui.error("--lanes and --no-lanes contradict each other")
         return 2
+    if unwant and preview:
+        ui.info("Dry run: lanes stay as they are; nothing was cleared or written.")
+        return 0
     if unwant:
         if s.profile.lanes:
             ui.info("Subscription lanes: cleared (lanes.yaml and the OpenClaw lane agents are removed on apply).")

@@ -83,13 +83,13 @@ def validate_why_json_path(path: str, cwd: Path | None = None, home: Path | None
     return target
 
 
-def write_why_json(path: Path, comp: Composition) -> None:
+def write_why_json(path: Path, comp: Composition, lanes: Any = None) -> None:
     """Atomic write, owner-only."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(explain.dumps(comp))
+            fh.write(explain.dumps(comp, lanes))
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
     except BaseException:

@@ -141,9 +141,11 @@ def restore_fragment(applied: Mapping[str, Any], doc: Mapping[str, Any]) -> tupl
         patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(orch, {}) \
             .setdefault("subagents", {})["allowAgents"] = value
     catalog = _get(doc, "agents", "defaults", "models") or {}
-    for ref in applied.get("catalog_added") or []:
-        if ref in catalog:
-            patch.setdefault("agents", {}).setdefault("defaults", {}).setdefault("models", {})[ref] = None
+    removed = [ref for ref in applied.get("catalog_added") or [] if ref in catalog]
+    for ref in removed:
+        patch.setdefault("agents", {}).setdefault("defaults", {}).setdefault("models", {})[ref] = None
+    if removed and applied.get("catalog_container_absent") and set(catalog) <= set(removed):
+        patch["agents"]["defaults"]["models"] = None      # the kit created the container; nothing else is in it
     return patch, []
 
 
@@ -250,8 +252,13 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
             cat = sorted(set(applied.get("catalog_added") or [])
                          | set(((patch2.get("agents") or {}).get("defaults") or {}).get("models") or {}))
             applied["catalog_added"] = cat
+            if cat and "catalog_container_absent" not in applied:
+                # The kit created `agents.defaults.models` itself: teardown removes the empty container too.
+                applied["catalog_container_absent"] = _get(doc, "agents", "defaults", "models") is None
     applied["created_agent_ids"] = sorted(set(created))
     applied["created_workspaces"] = sorted(set(created_ws))
+    if created_ws:
+        applied["workspace_root"] = str(root)         # teardown's containment root, even after --no-lanes
     o.lanes_applied = {k: v for k, v in applied.items() if v not in ({}, [], None)}
     if changed:
         info("Subscription lanes applied: " + ", ".join(ready))
@@ -269,7 +276,27 @@ def _leaf_paths(patch: Mapping[str, Any], prefix: str = "") -> list[str]:
     return out
 
 
+def _contained(ws: str, root: Path | None) -> str | None:
+    """None when `ws` may be removed; otherwise the reason it is refused. Only a real (non-symlink)
+    `kit-lane-*` directory whose resolved path lies strictly under the resolved workspace root."""
+    p = Path(ws)
+    if not p.name.startswith(PREFIX):
+        return "not a kit-lane-* directory"
+    if root is None:
+        return "no workspace root is known"
+    if p.is_symlink():
+        return "is a symlink"
+    try:
+        rp, rr = p.resolve(), root.resolve()
+    except OSError as e:
+        return f"cannot be resolved ({e})"
+    if rp == rr or rr not in rp.parents:
+        return f"resolves outside the workspace root {rr}"
+    return None
+
+
 def teardown(s: "state.SetupState", doc: Mapping[str, Any], *,
+             config_root: Path | None = None,
              apply_patch: Callable[..., "tuple[bool, str]"],
              oc: Callable[..., "tuple[int, str]"],
              confirm: Callable[[str], bool] = lambda _m: True,
@@ -300,14 +327,30 @@ def teardown(s: "state.SetupState", doc: Mapping[str, Any], *,
             remaining_ids.append(aid)
     import shutil
     rm = remove_dir or (lambda p: shutil.rmtree(p, ignore_errors=True))
+    root: Path | None = None
+    try:
+        if applied.get("workspace_root"):
+            root = Path(str(applied["workspace_root"]))
+        elif config_root is not None:
+            root = workspace_root(s.profile.lanes if isinstance(s.profile.lanes, dict) else {}, config_root)
+    except LanesWriteError:
+        root = None
     kept_ws: list[str] = []
+    refused = False
     for ws in applied.get("created_workspaces") or []:
         if Path(ws).name in remaining_ids:
             kept_ws.append(ws)
             continue
+        why = _contained(str(ws), root)
+        if why:
+            error(f"refusing to remove workspace {ws}: {why}")
+            kept_ws.append(ws)
+            refused = True
+            continue
         rm(Path(ws))
-    if remaining_ids:
-        o.lanes_applied = {"created_agent_ids": remaining_ids, "created_workspaces": kept_ws}
+    if remaining_ids or refused:
+        o.lanes_applied = {"created_agent_ids": remaining_ids, "created_workspaces": kept_ws,
+                           **({"workspace_root": str(root)} if root is not None else {})}
         return True
     o.lanes_applied = {}
     info("Subscription lanes removed (only kit lane ids).")
