@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import platform
+import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,8 +75,27 @@ def run(args: argparse.Namespace) -> int:
                 "allow_unverified": bool(getattr(args, "allow_unverified", False))}
     if _DRY_RUN and _ASSUME_YES:
         ui.info("DRY RUN: --yes installs nothing in a dry run; no installer is offered or run.")
-    return state.locked_run(lambda: _run(args), out=lambda m: ui.error(m),
-                            enabled=not _DRY_RUN)
+    with ui.prompt_scope(wizard=True):
+        try:
+            return state.locked_run(lambda: _run(args), out=lambda m: ui.error(m),
+                                    enabled=not _DRY_RUN)
+        except (ui.Cancelled, KeyboardInterrupt) as e:
+            # The lock is already released (locked_run is a context manager). The step name and the list of
+            # real side effects are read here, inside the scope, before prompt_scope restores them.
+            return _report_cancel(e)
+
+
+def _report_cancel(e: BaseException) -> int:
+    step = getattr(e, "step", "") or ui.current_step()
+    where = f" at {step}" if step else ""
+    done = ui.actions_done()
+    print(f"\n! Setup cancelled{where}.", file=sys.stderr)
+    if done:
+        print("  Already done in this run: " + "; ".join(done) + ".", file=sys.stderr)
+    else:
+        print("  Nothing was applied.", file=sys.stderr)
+    print("  Re-run `ai-resources setup` to resume with your previous answers.", file=sys.stderr)
+    return 130
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -231,6 +251,7 @@ def _run(args: argparse.Namespace) -> int:
     verify_rc = 0
     if not dry_run:
         state.save(s)
+        ui.record_action("saved setup state")
         verify_rc = _step10_verify(s, list(_APPLIED_TARGETS))
         _print_completion(s)
         refused = list(getattr(s.openclaw, "_refused_applies", []))
@@ -335,6 +356,7 @@ def _ask_missing_keys(s: state.SetupState, accounts: dict, dry_run: bool) -> dic
             if k not in s.tracking.env_keys_added:
                 s.tracking.env_keys_added.append(k)
         ui.ok(f"Credentials written to {state.env_path()}")
+        ui.record_action("saved credentials")
         return model_selection.detect_accounts()
     return accounts
 
@@ -485,6 +507,7 @@ def _try_install_pipx() -> bool:
         ui.error(f"Install failed: {(r.stderr or r.stdout)[:200]}")
         return False
     ui.ok("pipx installed")
+    ui.record_action("installed pipx")
 
     # Run pipx ensurepath so the binary lands in PATH for future shells
     pipx_path = detection._which("pipx") or str(Path.home() / ".local" / "bin" / "pipx")
@@ -569,6 +592,7 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
         ui.detail("You can re-run setup later or remove them manually.")
         return 0
 
+    ui.record_action("ran the multi-model cleanup")
     results = litellm.execute_multi_model_teardown(prev_s)
     for aid, ok, msg in results:
         if ok:
@@ -694,6 +718,16 @@ def _step3_litellm(s: state.SetupState, dry_run: bool = False) -> int:
     return 0  # skipped
 
 
+def _validate_port(value: str) -> bool | str:
+    """Inline validation for a TCP port; an empty answer keeps the default."""
+    raw = (value or "").strip()
+    if not raw:
+        return True
+    if raw.isdigit() and 1 <= int(raw) <= 65535:
+        return True
+    return "Enter a port between 1 and 65535"
+
+
 def _ask_bind_and_port(s: state.SetupState) -> None:
     """Shared prompt for bind address + port — used by all local modes."""
     bind_choices = [
@@ -706,6 +740,7 @@ def _ask_bind_and_port(s: state.SetupState) -> None:
     )
     s.litellm.local.port = int(ui.text(
         "Port", default=str(s.litellm.local.port or 4000),
+        validate=_validate_port,
     ) or 4000)
 
 
@@ -740,6 +775,7 @@ def _step3_docker(s: state.SetupState) -> int:
 
     # Save state NOW so pull_image() can read s.litellm.local.runtime
     state.save(s)
+    ui.record_action("saved gateway state")
 
     if ui.confirm(f"Pull {image} now?  (~400MB, takes 30-90s)", default=False):
         with ui.spinner(f"Pulling {image}"):
@@ -752,6 +788,7 @@ def _step3_docker(s: state.SetupState) -> int:
             s.tracking.docker_image_pulled_by_us = True
             s.tracking.docker_image = image
         ui.ok("Image pulled")
+        ui.record_action("pulled the LiteLLM image")
     return 0
 
 
@@ -821,6 +858,7 @@ def _step3_pipx(s: state.SetupState) -> int:
                 ui.error(f"Install failed: {msg[:200]}")
                 return 1
             ui.ok("LiteLLM updated")
+            ui.record_action("reinstalled LiteLLM")
     else:
         # Installs code from PyPI: Enter skips, and an unattended run never does it (kit 2.2b, 3b).
         if _DRY_RUN:
@@ -849,6 +887,7 @@ def _step3_pipx(s: state.SetupState) -> int:
         s.tracking.litellm_installed_by_us = True
         s.tracking.litellm_install_method = "pipx"
         ui.ok(f"LiteLLM installed at {new_det.binary_path}")
+        ui.record_action("installed LiteLLM")
     return 0
 
 
@@ -884,6 +923,7 @@ def _step3_pipvenv(s: state.SetupState) -> int:
                     ui.detail(line)
                 return 1
             ui.ok("LiteLLM updated")
+            ui.record_action("reinstalled LiteLLM")
         return 0
 
     if _DRY_RUN:
@@ -910,6 +950,7 @@ def _step3_pipvenv(s: state.SetupState) -> int:
     s.tracking.litellm_installed_by_us = True
     s.tracking.litellm_install_method = "pip-venv"
     ui.ok(f"LiteLLM installed at {msg}")
+    ui.record_action("installed LiteLLM")
     return 0
 
 
@@ -934,6 +975,7 @@ def _step3_remote(s: state.SetupState, dry_run: bool = False) -> int:
     else:
         _, newly_added = credentials.update_env_tracked(
             {s.litellm.remote.master_key_env: master_key})
+        ui.record_action("saved the remote master key")
         for k in newly_added:
             if k not in s.tracking.env_keys_added:
                 s.tracking.env_keys_added.append(k)
@@ -1036,6 +1078,7 @@ def _step5_credentials(s: state.SetupState, dry_run: bool = False) -> int:
                 if k not in s.tracking.env_keys_added:
                     s.tracking.env_keys_added.append(k)
             ui.ok(f"Credentials written to {state.env_path()}")
+            ui.record_action("saved credentials")
         return 0
 
     # Master key for LiteLLM.
@@ -1107,6 +1150,7 @@ def _step5_credentials(s: state.SetupState, dry_run: bool = False) -> int:
             if k not in s.tracking.env_keys_added:
                 s.tracking.env_keys_added.append(k)
         ui.ok(f"Credentials written to {state.env_path()}")
+        ui.record_action("saved credentials")
 
     return 0
 
@@ -1607,8 +1651,10 @@ def _apply_lanes_file(s: state.SetupState, executors_doc: dict) -> dict | None:
         return None
     if res["action"] == "written":
         ui.ok(str(state.lanes_path()))
+        ui.record_action("wrote lanes.yaml")
     elif res["action"] == "removed":
         ui.ok(f"removed {state.lanes_path()}")
+        ui.record_action("removed lanes.yaml")
     return res["payload"]
 
 
@@ -1651,6 +1697,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
         # Write executors.yaml
         profiles.write_executors(executors_doc, state.executors_path())
         ui.ok(str(state.executors_path()))
+        ui.record_action("wrote executors.yaml")
 
         # lanes.yaml sits between executors.yaml and the LiteLLM configs: it is a registered artifact, so a
         # LiteLLM write that fails puts the previous lanes.yaml back from its own backup (ADR-0002 s8/s10).
@@ -1660,6 +1707,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
         if s.backend == "litellm" and s.litellm.deployment == "local":
             try:
                 paths = litellm.write_configs(executors_doc, {k: asdict(v) for k, v in s.providers.items()})
+                ui.record_action("wrote the LiteLLM config files")
                 for label, p in paths.items():
                     ui.ok(str(p))
                     if str(p) not in s.tracking.config_files_written:
@@ -1724,6 +1772,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
             written = mod.configure(ctx)
             for w in written:
                 ui.ok(str(w))
+            ui.record_action(f"configured {cid}")
         except _shared.SkipCockpit as e:
             ui.warn(f"{cid}: skipped: {e}")
         except Exception as e:
@@ -1736,6 +1785,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     # gateway steps below can fail: otherwise those files exist on disk with no tracking record,
     # and a later run would treat them as the user's and never clean them up.
     state.save(s)
+    ui.record_action("saved setup state")
 
     # Local install path: write wrapper + lifecycle, start service
     if s.mode == "multi-model" and s.backend == "litellm" and s.litellm.deployment == "local":
@@ -1754,6 +1804,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
             )
             s.tracking.wrapper_path = str(wrapper)
             ui.ok(str(wrapper))
+            ui.record_action("wrote the LiteLLM wrapper script")
 
             # 2. Install lifecycle (always — auto-start determines whether it actually starts)
             if s.litellm.local.auto_start:
@@ -1763,6 +1814,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                     s.tracking.lifecycle_installed = True
                     s.tracking.lifecycle_path_written = str(p)
                     ui.ok(f"Service installed: {p}")
+                    ui.record_action("installed the LiteLLM service")
                 except (OSError, RuntimeError) as e:
                     ui.error(f"Lifecycle install failed: {e}")
                     return 1
@@ -1773,6 +1825,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                                   stdout=open(litellm.log_dir() / "litellm.log", "ab"),
                                   stderr=open(litellm.log_dir() / "litellm.err", "ab"))
                 ui.ok("LiteLLM started in background (will not auto-restart on logout)")
+                ui.record_action("started LiteLLM in the background")
 
         elif litellm.is_container_mode(s.litellm.local.runtime):
             # Docker mode — write compose, start container. Auto-start is handled
@@ -1783,6 +1836,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                 if str(cp) not in s.tracking.config_files_written:
                     s.tracking.config_files_written.append(str(cp))
                 ui.ok(str(cp))
+                ui.record_action("wrote the compose file")
             except Exception as e:
                 ui.error(f"Compose file write failed: {e}")
                 return 1
@@ -1791,6 +1845,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                     ui.error("Container start failed")
                     ui.detail("Run `ai-resources daemon logs` to investigate")
                     return 1
+            ui.record_action("started the LiteLLM container")
             ui.ok(f"Container running with restart policy — auto-restarts when "
                   f"{s.litellm.local.runtime} comes up.")
 

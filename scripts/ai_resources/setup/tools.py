@@ -178,6 +178,7 @@ def install_one(tool_id: str, s: state.SetupState) -> bool:
     if tool_id not in s.tracking.tools_installed_by_us:
         s.tracking.tools_installed_by_us.append(tool_id)
     ui.ok(f"{spec.label} installed")
+    ui.record_action(f"installed {spec.label}")
     if spec.login_hint:
         ui.detail(spec.login_hint)
     return True

@@ -7,7 +7,7 @@ import sys
 from . import __version__
 from .generate import cmd_generate
 from . import daemon, doctor, executors_cmd, audit, models_cmd, openclaw_host, verify, lanes_cmd
-from .setup import wizard
+from .setup import flow, wizard
 
 
 _EPILOG = """Typical flows:
@@ -152,7 +152,11 @@ def main(argv: list[str] | None = None) -> int:
     if not hasattr(args, "func"):
         ap.print_help()
         return 1
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except (flow.Cancelled, KeyboardInterrupt):
+        print("\nCancelled.", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

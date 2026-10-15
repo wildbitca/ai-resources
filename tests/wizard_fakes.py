@@ -41,6 +41,12 @@ class FakeCatalog:
                                accounts=accounts_for(**{p: True for p in probe.providers}))
 
 
+ABORT = object()
+"""Script answer: the operator cancelled here (what a wrapper in the wizard scope raises on Ctrl-C or EOF)."""
+INTERRUPT = object()
+"""Script answer: a bare KeyboardInterrupt escapes the prompt (a Ctrl-C that no wrapper turned into Cancelled)."""
+
+
 class Script:
     """Answers ui prompts by a substring of the message, records everything shown."""
 
@@ -53,7 +59,12 @@ class Script:
         self.asked.append(f"{kind}: {message}")
         for key in sorted(self.answers, key=len, reverse=True):
             if key in message:
-                return self.answers[key]
+                answer = self.answers[key]
+                if answer is ABORT:
+                    raise ui.Cancelled(ui.current_step())
+                if answer is INTERRUPT:
+                    raise KeyboardInterrupt
+                return answer
         raise AssertionError(f"unscripted {kind}: {message!r}")
 
     def install(self, monkeypatch, *, non_interactive=False):
