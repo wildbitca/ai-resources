@@ -66,7 +66,7 @@ ATTRIBUTION_PATTERNS = (
 )
 
 _PROVIDER_PREFIXES = frozenset({"anthropic", "claude-cli", "claude-kit", "google", "vertex", "agy",
-                                "agy-cli", "antigravity", "openrouter"})
+                                "agy-cli", "agy-cli-lane", "antigravity", "openrouter"})
 _CLAUDE_FAMILIES = ("sonnet", "opus", "haiku", "fable")
 _GEMINI_VARIANTS = ("flash", "pro", "ultra", "nano")
 _TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")

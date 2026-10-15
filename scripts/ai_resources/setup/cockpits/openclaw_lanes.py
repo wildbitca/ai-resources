@@ -40,9 +40,30 @@ def _get(doc: Any, *keys: str) -> Any:
     return cur
 
 
+# Backends setup may write an agent for. An agy lane needs its catalog stub and the V7 deny tokens, which are
+# phase 3 (ADR-0007 §11): until `agy-cli-lane` is added here, no agy agent is ever written (fail closed).
+WRITABLE_BACKENDS = frozenset({CLAUDE_CLI})
+HELD_BACKEND_REASON = "held: backend {backend} is not writable in this version"
+
+
+def held_agents(lanes: Mapping[str, Any]) -> dict[str, str]:
+    """Kit ids in the state whose backend setup does not write yet, with the reason."""
+    out: dict[str, str] = {}
+    for aid, agent in sorted((lanes.get("agents") or {}).items()):
+        if not (isinstance(aid, str) and aid.startswith(PREFIX)):
+            continue
+        backend = (agent or {}).get("backend") if isinstance(agent, Mapping) else None
+        if backend not in WRITABLE_BACKENDS:
+            out[aid] = HELD_BACKEND_REASON.format(backend=backend or "?")
+    return out
+
+
 def kit_agent_ids(lanes: Mapping[str, Any]) -> list[str]:
-    """Only kit ids are ever written or removed: an agent not named `kit-lane-*` is never ours."""
-    return sorted(a for a in (lanes.get("agents") or {}) if isinstance(a, str) and a.startswith(PREFIX))
+    """Only kit ids are ever written or removed: an agent not named `kit-lane-*` is never ours, and an agent
+    whose backend is not writable yet is held."""
+    held = held_agents(lanes)
+    return sorted(a for a in (lanes.get("agents") or {})
+                  if isinstance(a, str) and a.startswith(PREFIX) and a not in held)
 
 
 def workspace_root(lanes: Mapping[str, Any], config_root: Path) -> Path:
@@ -239,6 +260,8 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
             return teardown_fn(s, doc, **teardown_kw)
         return False
     ids = kit_agent_ids(lanes)
+    for aid, reason in held_agents(lanes).items():
+        warn(f"lane agent {aid} not written: {reason}")
     if not ids:
         return False
     try:

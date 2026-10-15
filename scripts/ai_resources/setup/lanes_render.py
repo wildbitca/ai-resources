@@ -30,6 +30,10 @@ except ImportError:  # pragma: no cover - handled by ui.require_deps()
 CLAUDE_CODE = scoring_lanes.CLAUDE_CODE
 CLAUDE_CLI = scoring_lanes.CLAUDE_CLI
 AGENT_PREFIX = "kit-lane-"
+# ADR-0007 §11 (Antigravity lane) is Proposed-deferred: until the operator accepts it, every `agy:` candidate
+# is held (fail closed). tests/test_lanes_agy_hold.py fails when this is True while §11 is not Accepted.
+AGY_LANE_ADR_ACCEPTED = False
+HELD_AGY_REASON = "held: Antigravity lane not accepted"
 _ALIASES = ("haiku", "sonnet", "opus")
 _VENDOR = re.compile(r"^(?:anthropic|claude-cli|claude-kit)/")
 
@@ -124,11 +128,16 @@ def state_from_block(block: Mapping[str, Any] | None, *, claude_ids: Mapping[str
         raise LanesBlockError("; ".join(problems))
     ids = dict(claude_ids or model_pins.effective())
     agents: dict[str, Any] = {}
+    held: list[dict[str, str]] = []
+    current_role = [""]
 
-    def lane_ref(text: str) -> str:
+    def lane_ref(text: str) -> str | None:
         backend, model = _candidate(text)  # type: ignore[misc]
         if backend == CLAUDE_CODE:
             return CLAUDE_CODE
+        if backend != CLAUDE_CLI and not AGY_LANE_ADR_ACCEPTED:
+            held.append({"role": current_role[0], "candidate": text, "reason": HELD_AGY_REASON})
+            return None
         if backend == CLAUDE_CLI:
             bare = ids.get(model, model) if model in _ALIASES else model
             ref = model_pins.openclaw_ref(bare)
@@ -139,11 +148,17 @@ def state_from_block(block: Mapping[str, Any] | None, *, claude_ids: Mapping[str
                                 "pool": scoring_lanes.pool_of_agent(scoring_lanes.LaneAgent(aid, backend, ref))})
         return f"openclaw-agent:{aid}"
 
-    roles = {r: {"candidates": [lane_ref(c) for c in cands]}
+    def refs_of(role: str, cands: list[str]) -> list[str]:
+        current_role[0] = role
+        return [r for r in (lane_ref(c) for c in cands) if r is not None]
+
+    roles = {r: {"candidates": refs_of(r, cands)}
              for r, cands in sorted(((block or {}).get("roles") or {}).items())}
-    second = {r: [lane_ref(c) for c in cands]
-              for r, cands in sorted(((block or {}).get("second") or {}).items())}
+    second = {r: refs_of(r, cands) for r, cands in sorted(((block or {}).get("second") or {}).items())}
+    second = {r: c for r, c in second.items() if c}
     out: dict[str, Any] = {"agents": dict(sorted(agents.items())), "roles": roles, "second": second}
+    if held:
+        out["held"] = held
     # Explicit per-role opt-in for extra MCP servers (ADR-0007 OQ-5). Lane agents are MCP-scoped by default;
     # an agent serving several roles gets the union of their opt-ins.
     mcp = {r: sorted({str(n) for n in names}) for r, names in sorted(((block or {}).get("mcp") or {}).items())}
@@ -195,6 +210,9 @@ def explain_lanes(lanes: Mapping[str, Any] | None) -> dict[str, str] | None:
     for role, names in sorted((lanes.get("mcp") or {}).items()):
         if names:
             out[role] = f"{out.get(role, '-')} [mcp: {', '.join(names)}]"
+    for h in lanes.get("held") or []:
+        role = h.get("role", "")
+        out[role] = f"{out.get(role, '-')} [{h.get('candidate')} {h.get('reason')}]"
     return out
 
 

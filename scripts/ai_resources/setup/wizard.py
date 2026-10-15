@@ -1567,6 +1567,8 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     for role in roles:
         cands = (proposal["roles"].get(role) or {}).get("candidates") or proposal["second"].get(role) or []
         ui.detail(f"  {role}: {', '.join(cands)}")
+    for h in proposal.get("held") or []:
+        ui.warn(f"  {h['role']}: {h['candidate']} {h['reason']}")
     if preview or dry_run:
         ui.info("Dry run: nothing was enabled or written.")
         return 0
