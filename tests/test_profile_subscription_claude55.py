@@ -81,9 +81,13 @@ def test_every_known_role_is_present_and_defaults_have_no_fallbacks():
 
 def test_no_effort_backend_agent_or_lanes_keys():
     doc = _doc()
-    assert not ({"backend", "lanes", "agentId", "effort"} & set(doc))
+    # P2-S3: the profile may carry a `lanes:` block; it must validate and name no agent id.
+    assert not ({"backend", "agentId", "effort"} & set(doc))
     for cfg in doc["by_role"].values():
         assert not ({"backend", "lanes", "agentId", "effort"} & set(cfg))
+    from ai_resources.setup import lanes_render
+    assert lanes_render.validate_block(doc.get("lanes")) == []
+    assert "kit-lane-" not in str(doc["lanes"])
 
 
 def test_single_model_render_path_builds_every_role():

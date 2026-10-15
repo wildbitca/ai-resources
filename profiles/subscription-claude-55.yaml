@@ -54,3 +54,18 @@ by_role:
   software-architect: { model: opus, fallbacks: [sonnet] }
 
 by_persona: {}
+
+# Subscription lanes (ADR-0007): candidate lists per role, never an agent id. Dispatch resolves them
+# from the setup lanes table; the order is the tie-break, not a rank. A fresh install enables none.
+lanes:
+  roles:
+    explore:            [claude-cli:haiku, claude-code]
+    implementer:        [claude-cli:sonnet, claude-code]
+    tester:             [claude-cli:sonnet, claude-code]
+    doc-writer:         [claude-cli:sonnet, claude-code]
+    planner:            [claude-code, claude-cli:sonnet]
+    software-architect: [claude-code, claude-cli:opus]
+    verifier:           [claude-code, claude-cli:opus]
+    security-auditor:   [claude-code, claude-cli:opus]
+  second:
+    code-reviewer:      [claude-cli:sonnet]

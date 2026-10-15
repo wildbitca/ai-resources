@@ -93,6 +93,24 @@ def answer_label(overlay: dict, slot: str) -> str:
     return f"{pol.get('answer', 'ask')}{suffix}"
 
 
+def lane_warnings() -> list[str]:
+    """Lane agents whose model differs from the role model (ADR-0007). Reads the setup state and the role
+    table only; never openclaw.json. [] when lanes are not enabled or cannot be checked."""
+    try:
+        from .setup import lanes_render, state as setup_state
+        s = setup_state.load()
+        if not setup_state.lanes_enabled(s):
+            return []
+        return lanes_render.drift_warnings(s.profile.lanes, lanes_render.current_by_role(s))
+    except Exception:  # noqa: BLE001 - a warning must never fail a models command
+        return []
+
+
+def print_lane_warnings() -> None:
+    for line in lane_warnings():
+        print(f"warning: {line}")
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     ov = model_pins.load_overlay()
     deps = get_deps()
@@ -151,6 +169,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("\nAntigravity (agy) models: report only, edit model_pins.AGY_STATIC by hand")
     for m in model_pins.AGY_STATIC:
         print(f"  {m}  ({_agy_quota.pool_for_model(m) or 'unknown'} pool)")
+    print_lane_warnings()
     return 0
 
 
@@ -248,11 +267,16 @@ def cmd_update(args: argparse.Namespace) -> int:
         print("--review needs a terminal (and no --unattended)", file=sys.stderr)
         return 2
     if not dry and not getattr(args, "apply_proposals", False) and _can_prompt(args):
-        return _interactive_update(args, deps)
+        rc = _interactive_update(args, deps)
+        if not getattr(args, "json", False):
+            print_lane_warnings()
+        return rc
     r = models.run_update(_opts(args), deps)
     _print_result(r, args)
     if r.outcome == "switched" and not getattr(args, "json", False):
         print(rerender_note(r))
+    if not getattr(args, "json", False):
+        print_lane_warnings()
     return r.rc
 
 

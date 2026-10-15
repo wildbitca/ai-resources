@@ -2528,6 +2528,8 @@ AGENTS_TEMPLATES = {
     "orchestrator": "AGENTS.orchestrator.template.md",
     "umbrella": "AGENTS.workspace-umbrella.template.md",
     "repo": "AGENTS.workspace-repo.template.md",
+    # Subscription lanes (ADR-0007): one for every lane agent on any backend.
+    "lane-agent": "AGENTS.lane-agent.template.md",
 }
 # What OpenClaw injects from a workspace, none of which belongs in the project's history.
 OPENCLAW_WORKSPACE_FILES = ("AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md", "DREAMS.md",

@@ -203,6 +203,10 @@ def _run(args: argparse.Namespace) -> int:
         if rc != 0:
             return rc
 
+    rc = _step_lanes(s, args, dry_run=dry_run)
+    if rc != 0:
+        return rc
+
     rc = _step7_cockpit_config(s, dry_run=dry_run)
     if rc != 0:
         return rc
@@ -1501,6 +1505,125 @@ def _step8_lifecycle(s: state.SetupState) -> int:
     return 0
 
 
+# --- Subscription lanes: the lane step and lanes.yaml (ADR-0007) --------------------
+def _current_by_role(s: state.SetupState) -> dict:
+    from . import lanes_render
+    return lanes_render.current_by_role(s)
+
+
+def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool = False) -> int:
+    """Enable, keep or clear subscription lanes. Disabled on a fresh install and without a flag.
+
+    `--lanes` proposes the profile's table, asks for the orchestrator ids (OQ-7) and shows the Anthropic
+    acknowledgement once, every lane-eligible role preselected (OQ-1). A non-interactive `--lanes` without a
+    stored acknowledgement for those roles refuses. `--no-lanes` clears the table (the OpenClaw writer and
+    `lanes.yaml` follow on apply). `--allow-unverified` implies nothing here."""
+    from . import lanes_render
+    from ..scoring import lanes as scoring_lanes
+    want = bool(getattr(args, "lanes", False))
+    unwant = bool(getattr(args, "no_lanes", False))
+    preview = bool(getattr(args, "lanes_dry_run", False))
+    if want and unwant:
+        ui.error("--lanes and --no-lanes contradict each other")
+        return 2
+    if unwant:
+        if s.profile.lanes:
+            ui.info("Subscription lanes: cleared (lanes.yaml and the OpenClaw lane agents are removed on apply).")
+        s.profile.lanes = None
+        return 0
+    if not (want or preview):
+        return 0
+    name = profiles.saved_or_recommended(s.profile.name) if s.mode == "multi-model" else (
+        s.profile.name or SINGLE_MODEL_DEFAULT_PROFILE)
+    try:
+        doc = profiles.load_profile(name)
+    except FileNotFoundError:
+        ui.error(f"--lanes: profile {name!r} not found")
+        return 2
+    prev = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
+    orchestrators = list(getattr(args, "lanes_orchestrator", None) or prev.get("orchestrators") or [])
+    if not orchestrators and not ui.is_non_interactive():
+        raw = ui.text("Orchestrator agent id(s) that may dispatch lane agents (comma-separated)", default="")
+        orchestrators = [o.strip() for o in (raw or "").split(",") if o.strip()]
+    try:
+        proposal = lanes_render.propose(doc, _current_by_role(s), s.mode, orchestrators=orchestrators,
+                                        acks=s.profile.lane_acks)
+    except lanes_render.LanesBlockError as e:
+        ui.error(f"--lanes: {e}")
+        return 2
+    except scoring_lanes.LaneConflict as e:
+        ui.error(f"--lanes: LaneConflict: {e}")
+        return 2
+    except scoring_lanes.LaneError as e:
+        ui.error(f"--lanes: {e}")
+        return 2
+    roles = lanes_render.lane_roles(proposal)
+    ui.info("Subscription lanes proposed (candidate order is the tie-break, not a rank):")
+    for role in roles:
+        cands = (proposal["roles"].get(role) or {}).get("candidates") or proposal["second"].get(role) or []
+        ui.detail(f"  {role}: {', '.join(cands)}")
+    if preview or dry_run:
+        ui.info("Dry run: nothing was enabled or written.")
+        return 0
+    acks = dict(s.profile.lane_acks or {})
+    if not lanes_render.acked(acks, "anthropic", roles):
+        if ui.is_non_interactive():
+            ui.error("--lanes: no stored Anthropic acknowledgement lists every lane role; run `ai-resources "
+                     "setup --lanes` from a terminal to sign it")
+            return 2
+        ui.warn(lanes_render.ACK_TEXT["anthropic"])
+        ui.detail("Roles: " + ", ".join(roles))
+        if not ui.confirm("Acknowledge for these roles?", default=False):
+            ui.info("Not acknowledged; lanes stay disabled.")
+            return 0
+        acks["anthropic"] = lanes_render.make_ack("anthropic", roles, datetime.now(timezone.utc).isoformat())
+    s.profile.lane_acks = acks
+    s.profile.lanes = proposal
+    return 0
+
+
+def _lanes_backup_dir() -> Path:
+    return state.config_root() / "backups" / "lanes"
+
+
+def _apply_lanes_file(s: state.SetupState, executors_doc: dict) -> dict | None:
+    """Render (or remove) ~/.config/ai-resources/lanes.yaml for the state, in both modes, and track it.
+
+    Written iff lanes are non-empty; `--no-lanes` empties them and the file and its tracking entry go.
+    Returns the restore payload (None when nothing changed). Never opens openclaw.json."""
+    from . import lanes_render
+    try:
+        res = lanes_render.sync_file(s, by_role=executors_doc.get("by_role") or {},
+                                     backup_dir=_lanes_backup_dir())
+    except OSError as e:
+        ui.error(f"Failed to write {state.lanes_path()}: {e}")
+        return None
+    if res["action"] == "written":
+        ui.ok(str(state.lanes_path()))
+    elif res["action"] == "removed":
+        ui.ok(f"removed {state.lanes_path()}")
+    return res["payload"]
+
+
+def _restore_lanes_file(s: state.SetupState, payload: dict | None) -> None:
+    """Put lanes.yaml back from its own backup when a later artifact failed; drop a tracking entry for a
+    file that did not exist before."""
+    if not payload:
+        return
+    from . import lanes_render
+    try:
+        lanes_render.restore(payload)
+    except OSError as e:
+        ui.warn(f"could not restore {state.lanes_path()}: {e}")
+        return
+    path = str(state.lanes_path())
+    tracked = s.tracking.config_files_written
+    if not payload.get("existed") and path in tracked:
+        tracked.remove(path)
+    elif payload.get("existed") and path not in tracked:
+        tracked.append(path)
+
+
 # --- Step 9 — Apply -------------------------------------------------------------
 def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     if dry_run:
@@ -1522,6 +1645,10 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
         profiles.write_executors(executors_doc, state.executors_path())
         ui.ok(str(state.executors_path()))
 
+        # lanes.yaml sits between executors.yaml and the LiteLLM configs: it is a registered artifact, so a
+        # LiteLLM write that fails puts the previous lanes.yaml back from its own backup (ADR-0002 s8/s10).
+        lanes_payload = _apply_lanes_file(s, executors_doc)
+
         # Write LiteLLM configs (litellm.yaml + docker-compose.yaml)
         if s.backend == "litellm" and s.litellm.deployment == "local":
             try:
@@ -1532,12 +1659,14 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                         s.tracking.config_files_written.append(str(p))
             except (RuntimeError, OSError) as e:
                 ui.error(f"Failed to write LiteLLM config: {e}")
+                _restore_lanes_file(s, lanes_payload)
                 return 1
         # Always track the executors.yaml we just wrote
         if str(state.executors_path()) not in s.tracking.config_files_written:
             s.tracking.config_files_written.append(str(state.executors_path()))
     else:
         executors_doc = _single_model_executors(s)
+        _apply_lanes_file(s, executors_doc)
 
     # Gateway endpoint + credential, per backend.
     if s.mode == "multi-model" and s.backend == "openrouter":

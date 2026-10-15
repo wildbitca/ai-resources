@@ -71,6 +71,7 @@ from . import _shared
 from . import _openclaw_mcp as mcp
 from . import _openclaw_voice as voice
 from . import _openclaw_host as host_section
+from . import openclaw_lanes
 from . import _agy_quota
 from ... import model_pins, openclaw_host, openclaw_reload_rules
 
@@ -809,7 +810,12 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     host_changed = host_section.configure(s, doc, ak_path, written, dry_run=dry_run,
                                           apply_patch=apply_patch, oc=_openclaw, config_path=path,
                                           run_changes=run_changes)
-    changed = engine_changed or mcp_changed or voice_changed or workshop_changed or host_changed
+    # The engine/host patches above may have rewritten arrays the lanes writer also owns (allowAgents; a
+    # `config patch` replaces arrays), so lanes must be computed from the live config, not the snapshot.
+    if not dry_run:
+        doc = read_config(path)
+    lanes_changed = _configure_lanes(s, doc, dry_run=dry_run, run_changes=run_changes)
+    changed = engine_changed or mcp_changed or voice_changed or workshop_changed or host_changed or lanes_changed
     if not dry_run and run_changes:
         host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
     # The kit block in every agent workspace does not depend on the engine, on the host section's
@@ -823,6 +829,53 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     cs.last_configured_at = datetime.now(timezone.utc).isoformat()
     s.cockpits[ID] = cs
     return written
+
+
+def _lanes_apply(patch: dict, *, dry_run: bool = False) -> tuple[bool, str]:
+    """`apply_patch` for the lanes writer: a restart-required key is a refusal, never a crash."""
+    try:
+        return apply_patch(patch, dry_run=dry_run)
+    except RestartRequired as e:
+        return False, "needs a gateway restart: " + ", ".join(e.paths)
+
+
+def _lanes_classify(patch: dict) -> list[str]:
+    """Restart-required leaves of `patch` (ADR-0003), asked BEFORE `agents add` writes anything."""
+    ruleset = openclaw_reload_rules.current_ruleset(_version_runner, refresh=True)
+    return list(openclaw_reload_rules.restart_paths(patch, ruleset=ruleset, reload_mode=_live_reload_mode()))
+
+
+def _lanes_register(agent_id: str, workspace: Path, model: str) -> str:
+    """`openclaw agents add` through `openclaw_host.agent_new` (the second validated writer)."""
+    def runner(argv, **kw):
+        return _openclaw(list(argv[1:]), timeout=int(kw.get("timeout") or 120))
+    try:
+        res = openclaw_host.agent_new(agent_id, workspace, kind="lane-agent", model=model, runner=runner,
+                                      openclaw_bin="openclaw")
+    except (ValueError, FileNotFoundError, OSError) as e:
+        return f"failed: {e}"
+    return str(res.get("registered") or "failed: not registered")
+
+
+def _configure_lanes(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:
+    """Subscription lanes (ADR-0007): lane agents, catalog entries and scoped allowAgents. Operator-run only."""
+    if not (state.lanes_enabled(s) or s.openclaw.lanes_applied):
+        return False
+    return openclaw_lanes.configure(
+        s, doc, config_root=CONFIG_ROOT, apply_patch=_lanes_apply, register_agent=_lanes_register,
+        classify=_lanes_classify, change_records=openclaw_host.change_records, run_changes=run_changes,
+        dry_run=dry_run, info=ui.info, warn=ui.warn, error=ui.error,
+        teardown_fn=lambda st, d: _teardown_lanes(st, d))
+
+
+def _teardown_lanes(s: state.SetupState, doc: dict) -> bool:
+    """Remove only the kit lane ids (set difference on allowAgents; `agents delete` for created ids)."""
+    if not s.openclaw.lanes_applied:
+        return True
+    def confirm(msg: str) -> bool:
+        return True if ui.is_non_interactive() else bool(ui.confirm(msg, default=True))
+    return openclaw_lanes.teardown(s, doc, apply_patch=_lanes_apply, oc=_openclaw, confirm=confirm,
+                                   info=ui.info, error=ui.error)
 
 
 def plugin_runtime() -> dict:
@@ -1701,7 +1754,7 @@ def _unlink_plugin(s: state.SetupState) -> list[str]:
 def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
     if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored
-            or s.openclaw.agent_kit_blocks or host_section.applied_any(s.openclaw)):
+            or s.openclaw.agent_kit_blocks or s.openclaw.lanes_applied or host_section.applied_any(s.openclaw)):
         # A deferral leaves `applied` False (the engine patch waits for the restart), so this is
         # the path that meets it: with nothing to undo there is nothing left to demand either.
         s.openclaw.gateway_restart_pending = {}
@@ -1720,14 +1773,18 @@ def teardown(s: state.SetupState) -> list[str]:
             s.openclaw.antigravity_applied = False
         return removed
     doc = read_config(config_path())
-    # Reverse order of configure(): the host section ran last, so it is undone first.
+    # Reverse order of configure(): the lanes writer ran after the host section, so it is undone first.
+    had_lanes = bool(s.openclaw.lanes_applied)
+    lanes_ok = _teardown_lanes(s, doc) if had_lanes else True
+    if had_lanes:
+        doc = read_config(config_path())
     host_ok = host_section.teardown(s, apply_patch=apply_patch, oc=_openclaw, doc=doc) \
         if host_section.applied_any(s.openclaw) else True
     engine_ok = _teardown_engine(s) if s.openclaw.applied else True
     mcp_ok = _teardown_mcp(s) if s.openclaw.mcp_mirrored else True
     voice_ok = _teardown_voice(s) if s.openclaw.voice_applied else True
     removed: list[str] = []
-    if not (engine_ok and mcp_ok and voice_ok and host_ok):
+    if not (engine_ok and mcp_ok and voice_ok and host_ok and lanes_ok):
         return removed
     removed.append(str(config_path()))
 
@@ -1744,8 +1801,10 @@ def teardown(s: state.SetupState) -> list[str]:
     # Restart-required keys the teardown could not write without restarting a live gateway stay owed:
     # `ai-resources openclaw apply-pending` still has to find them (ADR-0003).
     pending = s.openclaw.host_restart_pending
+    left_lanes = s.openclaw.lanes_applied          # lane agents the operator declined to delete stay recorded
     s.openclaw = state.OpenClawState()
     s.openclaw.host_restart_pending = pending
+    s.openclaw.lanes_applied = left_lanes
     return removed
 
 

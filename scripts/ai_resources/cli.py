@@ -115,6 +115,15 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Write the composition's why table as JSON to this path (workspace or ~/.cache)")
     p_st.add_argument("--allow-fable", dest="allow_fable", action="store_true",
                       help="Declare a Max or Premium seat, or API billing: Claude Fable 5.1 may be a candidate")
+    p_st.add_argument("--lanes", action="store_true",
+                      help="Enable subscription lanes (ADR-0007): propose the profile's lane table, sign the "
+                           "account acknowledgement and write lanes.yaml and the OpenClaw lane agents")
+    p_st.add_argument("--no-lanes", dest="no_lanes", action="store_true",
+                      help="Clear subscription lanes: remove lanes.yaml and the lane agents the kit created")
+    p_st.add_argument("--lanes-dry-run", dest="lanes_dry_run", action="store_true",
+                      help="Show the proposed lane table and write nothing")
+    p_st.add_argument("--lanes-orchestrator", dest="lanes_orchestrator", action="append", default=[], metavar="ID",
+                      help="Agent id that receives the lane ids in subagents.allowAgents (repeatable)")
     p_st.set_defaults(func=cmd_setup)
 
     # version

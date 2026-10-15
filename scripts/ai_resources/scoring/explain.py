@@ -7,7 +7,7 @@ and when a team is unverified.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Mapping
 
 from .compose import Assignment, Composition, WhyRow
 
@@ -64,12 +64,33 @@ def footer_lines(comp: Composition) -> list[str]:
     return lines
 
 
-def render_text(comp: Composition) -> str:
+def lane_column(lanes: Any) -> dict[str, str] | None:
+    """role -> lane text for the Lane column, from a `LaneTable` or a `{role: ref}` mapping.
+
+    None (or an empty table) means no column at all: the output is then byte-identical to the one the
+    engine produced before lanes existed (the golden fixture).
+    """
+    if not lanes:
+        return None
+    roles = getattr(lanes, "roles", None)
+    if roles is not None:
+        out = {r: ln.ref for r, ln in roles.items()}
+        out.update({r: f"{out.get(r, '-')} + second {ln.ref}" for r, ln in getattr(lanes, "second", {}).items()})
+        for r, why in getattr(lanes, "blocked", {}).items():
+            out[r] = "BLOCKED"
+        return out
+    return {str(r): str(v) for r, v in dict(lanes).items()}
+
+
+def render_text(comp: Composition, lanes: Any = None) -> str:
     if comp.refused:
         return f"No team proposed: {comp.refusal}\n" + "\n".join(f"  rejected {r.role} {r.model}@{r.route}: "
                                                               f"{r.reason}" for r in comp.rejected[:12]) + "\n"
     head = ["role", "imp", "class", "band", "chosen", "score", "label", "as_of", "price in/out", "pool",
             "headroom", "gate", "usage", "runner-up / why it lost", "flags"]
+    lane_of = lane_column(lanes)
+    if lane_of is not None:
+        head.append("lane")
     rows: list[list[str]] = []
     for w in comp.why_rows:
         a = w.chosen
@@ -82,7 +103,7 @@ def render_text(comp: Composition) -> str:
             "-" if a is None else a.usage,
             (w.runner_up + (f" / {w.runner_up_reason}" if w.runner_up_reason else "")) if w.runner_up else w.note or "-",
             ",".join(a.flags) if a is not None else "",
-        ])
+        ] + ([lane_of.get(w.role, "claude-code")] if lane_of is not None else []))
     widths = [max(len(head[i]), *(len(r[i]) for r in rows)) for i in range(len(head))]
     fmt = lambda cells: "  ".join(c.ljust(widths[i]) for i, c in enumerate(cells)).rstrip()
     out = [f"Team composition: mode {comp.mode} ({comp.shape})", fmt(head), fmt(["-" * w for w in widths])]
@@ -116,10 +137,14 @@ def _assignment_json(comp: Composition, a: Assignment | None) -> dict[str, Any] 
     }
 
 
-def to_json(comp: Composition) -> dict[str, Any]:
-    """A JSON-serialisable document (deterministic: lists are in engine order, keys are sorted on dump)."""
+def to_json(comp: Composition, lanes: Any = None) -> dict[str, Any]:
+    """A JSON-serialisable document (deterministic: lists are in engine order, keys are sorted on dump).
+
+    With a lanes table every row gains `lane` and the document gains `lanes`; without one the document is
+    exactly what it was before lanes existed."""
     by_role = {w.role: w for w in comp.why_rows}
-    return {
+    lane_of = lane_column(lanes)
+    doc = {
         "mode": comp.mode, "shape": comp.shape, "dataset_version": comp.dataset_version, "as_of": comp.as_of,
         "allow_unverified": comp.allow_unverified, "input_digest": comp.input_digest,
         "recommendation": comp.recommendation, "kept_default": comp.kept_default, "refusal": comp.refusal,
@@ -142,7 +167,12 @@ def to_json(comp: Composition) -> dict[str, Any]:
         "unassigned": [{"role": r, "reason": why} for r, why in comp.unassigned],
         "footer": footer_lines(comp),
     }
+    if lane_of is not None:
+        for row in doc["rows"]:
+            row["lane"] = lane_of.get(row["role"], "claude-code")
+        doc["lanes"] = dict(sorted(lane_of.items()))
+    return doc
 
 
-def dumps(comp: Composition) -> str:
-    return json.dumps(to_json(comp), indent=2, sort_keys=True) + "\n"
+def dumps(comp: Composition, lanes: Any = None) -> str:
+    return json.dumps(to_json(comp, lanes), indent=2, sort_keys=True) + "\n"

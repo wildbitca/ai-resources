@@ -58,7 +58,35 @@ def run_all(s: state.SetupState, cockpit_ids: list[str] | None = None,
             findings.append(Finding("error", cid, f"verification of {cid} failed to run: {type(e).__name__}: {e}",
                                     "this is a bug in the kit; re-run `ai-resources verify --cockpit "
                                     f"{cid}` and report it"))
+    if wanted is None or "lanes" in wanted:
+        findings.extend(lanes_findings(s))
     return findings
+
+
+def lanes_findings(s: state.SetupState) -> list[Finding]:
+    """Subscription lanes (ADR-0007): drift warnings and the state of `lanes.yaml`. Read-only; [] without lanes.
+    Never opens openclaw.json."""
+    if not state.lanes_enabled(s):
+        return []
+    from .setup import lanes_render
+    try:
+        by_role = lanes_render.current_by_role(s)
+        want = lanes_render.expected_text(s, by_role)
+    except Exception as e:  # noqa: BLE001 - verification must never take the wizard down
+        return [Finding("warn", "lanes", f"the lanes table could not be checked: {type(e).__name__}: {e}")]
+    out = [Finding("warn", "lanes", w, "re-run `ai-resources setup --lanes`")
+           for w in lanes_render.drift_warnings(s.profile.lanes, by_role)]
+    path = state.lanes_path()
+    have = path.read_text(encoding="utf-8") if path.is_file() else None
+    if have is None:
+        out.append(Finding("warn", "lanes", f"{path} is missing although lanes are enabled",
+                           "re-run `ai-resources setup --lanes`"))
+    elif have != want:
+        out.append(Finding("warn", "lanes", f"{path} is out of date with the setup state",
+                           "re-run `ai-resources setup --lanes`"))
+    elif not out:
+        out.append(Finding("ok", "lanes", f"lanes.yaml matches the setup state ({path})"))
+    return out
 
 
 def _instruction_file(mod: Any) -> Path | None:
@@ -174,6 +202,8 @@ def print_findings(findings: list[Finding], *, show_ok: bool = True) -> None:
 def cmd_verify(args: argparse.Namespace) -> int:
     s = state.load()
     ids = list(args.cockpit) if args.cockpit else [cid for cid, cs in s.cockpits.items() if cs.configured]
+    if not args.cockpit and state.lanes_enabled(s):
+        ids.append("lanes")
     findings = run_all(s, ids)
     if args.json:
         for f in ordered(findings):

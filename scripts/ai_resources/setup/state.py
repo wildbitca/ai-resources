@@ -46,6 +46,11 @@ def compose_path() -> Path:
     return config_root() / "docker-compose.yaml"
 
 
+def lanes_path() -> Path:
+    """The rendered subscription-lanes table (ADR-0007): setup-owned, written only when lanes are non-empty."""
+    return config_root() / "lanes.yaml"
+
+
 @dataclass
 class CockpitState:
     installed: bool = False
@@ -106,6 +111,13 @@ class ProfileState:
     # The operator's explicit `--allow-unverified` opt-in, persisted so a later re-render (models update/approve)
     # keeps the unverified ids that setup wrote instead of gating them back to `inherit`.
     allow_unverified: bool = False
+    # Subscription lanes (ADR-0007, WHAT not HOW). None until the operator enables them; then
+    # {agents, roles, second, orchestrators, verify_capability, pool_caps, max_remote_concurrency,
+    # workspace_root}. Both fields are additive: absent from the file while empty, so an old file
+    # round-trips byte-identically.
+    lanes: Any = None
+    # {anthropic?: Ack, google?: Ack}, Ack = {date, text_sha256, text, roles}.
+    lane_acks: Any = None
 
 
 @dataclass
@@ -292,6 +304,11 @@ class OpenClawState:
     # nothing). Teardown deletes only a configuration recorded here that still matches.
     host_offbox_identity: bool = False
     host_offbox_config_created: dict[str, str] = field(default_factory=dict)
+    # What the lanes writer created (ADR-0007), so teardown removes exactly that and nothing else:
+    # {created_agent_ids, created_workspaces, allow_agents_added: {orchestrator: [ids]},
+    #  allow_agents_absent: [orchestrator], catalog_added: [model refs], deferred: [paths]}.
+    # Additive: absent from the file while empty.
+    lanes_applied: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -333,6 +350,13 @@ def _to_dict(obj: Any) -> Any:
         if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict) \
                 and not doc["profile"].get("allow_unverified"):
             doc["profile"].pop("allow_unverified", None)   # additive field: absent until the opt-in is recorded
+        if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict):
+            for key in ("lanes", "lane_acks"):             # additive fields: absent until lanes are enabled
+                if not doc["profile"].get(key):
+                    doc["profile"].pop(key, None)
+        if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
+                and not doc["openclaw"].get("lanes_applied"):
+            doc["openclaw"].pop("lanes_applied", None)
         return doc
     if isinstance(obj, dict):
         return {k: _to_dict(v) for k, v in obj.items()}
@@ -805,6 +829,12 @@ def locked_run(fn, *, out=print, enabled: bool = True):
         out(f"refusing: the setup-state lock file cannot be used ({e}); remove it or fix its permissions and "
             "run this again")
         return 1
+
+
+def lanes_enabled(s: "SetupState") -> bool:
+    """True when the state holds a non-empty lanes table (a fresh install never does)."""
+    lanes = getattr(getattr(s, "profile", None), "lanes", None)
+    return isinstance(lanes, dict) and bool(lanes.get("agents") or lanes.get("roles"))
 
 
 def is_first_run() -> bool:

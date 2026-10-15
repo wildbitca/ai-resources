@@ -67,7 +67,7 @@ def test_the_umbrella_and_repo_templates_warn_about_commits_differently():
 def test_the_three_files_are_three_different_files():
     """The failure being replaced was three repos sharing one identical AGENTS.md."""
     sums = {hashlib.sha256(p.read_bytes()).hexdigest() for p in TEMPLATES.values()}
-    assert len(sums) == 3
+    assert len(sums) == len(TEMPLATES)      # four since the ADR-0007 lane-agent kind
 
 
 @pytest.mark.parametrize("kind", sorted(TEMPLATES))
