@@ -13,19 +13,21 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, ContextManager, Optional
 
 
-class Cancelled(Exception):
-    """The operator cancelled (Ctrl-C / EOF) at a wizard prompt."""
+class Cancelled(BaseException):
+    """The operator cancelled (Ctrl-C / EOF) at a wizard prompt.
+
+    A BaseException, like KeyboardInterrupt, so a broad `except Exception` in a step cannot swallow it."""
 
     def __init__(self, step: str = ""):
         super().__init__(step)
         self.step = step
 
 
-class GoBack(Exception):
+class GoBack(BaseException):
     """The operator asked to return to the previous step."""
 
 
-class JumpTo(Exception):
+class JumpTo(BaseException):
     """Continue the run from the step with this id (the review's "Edit a section")."""
 
     def __init__(self, step_id: str):
@@ -90,9 +92,20 @@ class Wizard:
     def editable(self) -> list[StepSpec]:
         """Steps already asked in this run that may be asked again: rewindable, labelled, no change made."""
         out = []
-        for d in self.history:
+        for pos, d in enumerate(self.history):
             spec = self.steps[d.index]
-            if not d.skipped and not d.locked and spec.rewindable and spec.edit_label:
+            if d.skipped or d.locked or not spec.rewindable or not spec.edit_label:
+                continue
+            # A jump re-runs every later step: refuse when one of them already changed this machine.
+            blocked = False
+            for later in self.history[pos + 1:]:
+                lspec = self.steps[later.index]
+                if later.skipped or lspec.id in ("review", "apply"):
+                    continue
+                if later.locked or not lspec.rewindable:
+                    blocked = True
+                    break
+            if not blocked:
                 out.append(spec)
         return out
 
@@ -124,6 +137,10 @@ class Wizard:
                 with self.scope(spec, spec.back):
                     rc = spec.run(ctx)
             except GoBack:
+                if self.changes() > marker:
+                    # This step already saved something; restoring would drop the tracking of it.
+                    self.notify(f"! {spec.title} already saved something in this run; Back stops here.")
+                    continue                         # the same step is asked again, state kept
                 self.restore(before)               # drop whatever the aborted step had already set in memory
                 if not can_back:
                     self.notify(self._refusal(spec, prev))

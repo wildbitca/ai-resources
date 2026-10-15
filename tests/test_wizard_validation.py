@@ -1,6 +1,8 @@
 """Inline validation at the wizard prompts (plan S9): the answer is checked while typing, not after."""
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 from ai_resources.setup import state, ui, wizard
@@ -67,6 +69,7 @@ def test_the_remote_url_prompt_is_validated(monkeypatch):
     monkeypatch.setattr(ui, "text", rec.text)
     monkeypatch.setattr(ui, "password", rec.password)
     monkeypatch.setattr(ui, "console", lambda: type("C", (), {"print": lambda *a, **k: None})())
+    monkeypatch.setattr(ui, "spinner", lambda label: contextlib.nullcontext())
     monkeypatch.setattr(wizard.credentials, "update_env_tracked", lambda u: (None, []))
     monkeypatch.setattr(wizard.litellm, "validate_remote", lambda url, key: (True, "ok"))
     s = state.SetupState()

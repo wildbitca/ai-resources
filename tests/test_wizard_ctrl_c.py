@@ -14,6 +14,8 @@ import pytest
 from ai_resources.setup import credentials, detection, state, tools, ui, wizard
 from wizard_fakes import ABORT, INTERRUPT, Script
 
+_REAL_OFFER = tools.offer          # the `host` fixture replaces tools.offer with a stub
+
 _COCKPITS = {"claude": types.SimpleNamespace(installed=True, version="2.0", binary_path="/opt/claude",
                                              name="Claude Code")}
 
@@ -162,3 +164,46 @@ def test_cancel_after_the_gateway_save_lists_what_was_done(host, capsys):
     assert "Already done in this run" in err and "saved gateway state" in err
     assert "Nothing was applied" not in err
     assert state.locked_run(lambda: 0) == 0
+
+
+def test_cancel_after_the_tools_offer_installed_something_lists_it(host, capsys):
+    """The real tools.offer records its install, so the cancel message does not say 'Nothing was applied'."""
+    mp = host.monkeypatch
+    tool_id = next(iter(tools.TOOLS))
+    mp.setattr(tools, "offer", _REAL_OFFER)
+    mp.setattr(tools, "missing_tools", lambda ids=(): [tool_id])
+    mp.setattr(tools, "_run_install", lambda cmd, timeout=300: (True, ""))
+    rc, script = _drive(host, {"Install missing tools now?": True, "Choose mode": ABORT})
+    err = capsys.readouterr().err
+    assert rc == 130 and "Traceback" not in err
+    assert any(m.startswith("confirm: Install missing tools now?") for m in script.asked)
+    assert f"installed {tools.TOOLS[tool_id].label}" in err
+    assert "Nothing was applied" not in err
+
+
+def test_cancel_in_the_middle_of_step9_lists_the_files_already_written(host, capsys):
+    """Real _step9_apply: executors.yaml is written, then a Ctrl-C hits before the rest of the apply."""
+    from ai_resources import selection as sel
+    s = state.SetupState()
+    s.mode, s.backend = "multi-model", "openrouter"
+    s.last_run = "2026-01-01T00:00:00+00:00"
+    s.set_selection(sel.Selection(shape="single", providers={"anthropic": sel.ProviderSel()},
+                                  slots={"anthropic:sonnet": sel.SlotSel("anthropic/claude-sonnet-5-5")},
+                                  primary="anthropic:sonnet", smoke_path="direct"))
+    state.config_root().mkdir(parents=True, exist_ok=True)
+    state.save(s)
+    host.saves.clear()
+
+    def interrupt(*a, **k):
+        raise KeyboardInterrupt
+    host.monkeypatch.setattr(wizard, "_apply_lanes_file", interrupt)
+    from ai_resources.setup import model_selection as ms
+    rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:openrouter",
+                          "Update OPENROUTER_API_KEY": False, "How do you want to choose models": "profile",
+                          "Choose profile": lambda v: v[0], "Customize any role": False,
+                          "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
+    err = capsys.readouterr().err
+    assert rc == 130 and "Traceback" not in err
+    assert state.executors_path().exists()
+    assert "Already done in this run" in err and "wrote executors.yaml" in err
+    assert "Nothing was applied" not in err

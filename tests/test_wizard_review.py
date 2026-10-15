@@ -149,3 +149,33 @@ def test_rerunning_the_lanes_step_from_the_review_asks_the_acknowledgement_once(
     assert len(acks) == 1
     proposals = [m for m in script.shown if m.startswith("info: Subscription lanes proposed")]
     assert len(proposals) == 2                       # the lanes step really ran again
+
+
+def test_edit_credentials_reruns_step_5_and_the_row_moves_from_missing_to_set(review_env, monkeypatch):
+    _seed_openrouter()
+    saved = []
+    monkeypatch.setattr(credentials, "get_key",
+                        lambda name, *a, **k: SENTINEL if (saved and name == "OPENROUTER_API_KEY") else "")
+    # The first pass finds no key and is answered with an empty value, which step 5 refuses (rc 1); to keep
+    # the first pass alive the key is entered on the first ask and only becomes readable after the edit.
+    monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: ({}, []))
+    script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:openrouter",
+                       "OPENROUTER_API_KEY": "entered", "Show how": False, "How do you want to choose models": "profile",
+                       "Choose profile": lambda v: v[0], "Customize any role": False,
+                       "Configure detected cockpits": lambda v: list(v),
+                       "Apply this?": Seq(wizard.EDIT_SECTION, ms.APPLY), "Which section": "credentials"})
+    script.install(monkeypatch)
+    real_find = script._find
+
+    def find(message, kind):
+        if kind == "password" and "OPENROUTER_API_KEY" in message and len(
+                [m for m in script.asked if m.startswith("password:")]) >= 1:
+            saved.append(1)                       # from the second ask on the key reads back as set
+        return real_find(message, kind)
+    script._find = find
+    assert wizard.run(_args()) == 0
+    passwords = [m for m in script.asked if m.startswith("password:")]
+    assert len(passwords) == 2
+    assert len(review_env) == 2
+    assert review_env[0]["Credentials"] == "OPENROUTER_API_KEY missing"
+    assert review_env[1]["Credentials"] == "OPENROUTER_API_KEY set"

@@ -203,12 +203,12 @@ def cmd_audit(args: argparse.Namespace) -> int:
         border_style="dim",
         show_footer=True,
     )
-    t.add_column("Model", style="bold", footer="TOTAL")
-    t.add_column("API calls", justify="right")
-    t.add_column("Output tokens", justify="right")
-    t.add_column("Cache reads", justify="right", style="dim")
-    t.add_column("Cache writes", justify="right", style="dim")
-    t.add_column("Cost (est.)", justify="right", style="green")
+    t.add_column("Model", style="bold", footer="TOTAL", min_width=20)
+    t.add_column("Calls", justify="right")
+    t.add_column("Output", justify="right")
+    t.add_column("Cache R", justify="right", style="dim")
+    t.add_column("Cache W", justify="right", style="dim")
+    t.add_column("Est. cost", justify="right", style="green")
 
     rows = sorted(model_stats.items(), key=lambda kv: kv[1]["cost"], reverse=True)
     total_calls = total_out = total_cr = total_cw = 0

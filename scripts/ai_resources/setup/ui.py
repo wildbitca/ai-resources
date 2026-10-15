@@ -25,6 +25,13 @@ try:
 except ImportError:  # pragma: no cover
     _HAS_RICH = False
 
+    class Text(str):  # minimal stand-in so doubles can build a header without rich
+        def __new__(cls, value: str = "", style: str = ""):
+            return super().__new__(cls, value)
+
+        def append(self, *_a: Any, **_k: Any) -> None:
+            return None
+
 try:
     import questionary
     from questionary import Style
@@ -147,7 +154,11 @@ def section(num: int, total: int, title: str) -> None:
         console().print(f"Step {num}/{total}  {title}", style="bold cyan", markup=False, highlight=False)
         return
     rule_kw = {} if unicode_ok() else {"characters": "-"}
-    console().rule(f"[bold cyan][{num}/{total}][/] [bold]{title}[/]", style="cyan", align="left", **rule_kw)
+    # Pre-built Text: a plain str title goes through the repr highlighter, which bolds "[", digits and "/"
+    # one by one (so the header is not contiguous text and keeps bold escapes under NO_COLOR).
+    # One span, so the escape codes wrap the whole header rather than splitting it.
+    head = Text(f"[{num}/{total}] {title}", style="bold cyan")
+    console().rule(head, style="cyan", align="left", **rule_kw)
     if show_rail:
         console().print(rail(num), markup=False, highlight=False)
         console().print(key_hint(), style="dim", markup=False, highlight=False)

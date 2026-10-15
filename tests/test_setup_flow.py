@@ -173,7 +173,8 @@ def test_editable_lists_only_asked_rewindable_unlocked_labelled_steps():
         step(box, "review", effect=last, rewindable=False),
     ])
     assert w.run(None) == 0
-    assert seen["editable"] == ["mode", "models"]
+    # "mode" is not offered: a jump from it would re-run the locked "gw" step.
+    assert seen["editable"] == ["models"]
 
 
 def test_scope_receives_the_step_and_wraps_its_run():
@@ -249,3 +250,33 @@ def test_wizard_snapshot_restores_state_and_the_run_globals(monkeypatch):
     wizard._restore_run(s, snap)
     assert id(s) == ident and s.mode == "multi-model" and "x" not in s.providers
     assert wizard._REQUESTED_PROFILE == "p1" and wizard._APPLIED_TARGETS == ["claude"]
+
+
+def test_back_in_a_step_that_already_saved_something_keeps_the_state_and_asks_again():
+    box = Box()
+    seen = []
+
+    def b_effect(ctx):
+        seen.append(box.value)
+        if len(seen) == 1:
+            box.value = 7
+            box.actions += 1          # the step saved something, then the operator pressed Ctrl-B
+            raise GoBack()
+        return 0
+    w = build(box, [step(box, "a", edit_label="A"), step(box, "b", effect=b_effect, back=True)])
+    assert w.run(None) == 0
+    assert box.calls.count("a") == 1               # no rewind to "a"
+    assert seen == [0, 7]                          # the in-memory state was not restored
+    assert any("Back stops here" in n for n in box.notices)
+
+
+def test_editable_excludes_a_step_when_a_later_step_is_locked():
+    box = Box()
+
+    def change(ctx):
+        box.actions += 1
+    w = build(box, [step(box, "mode", edit_label="Mode"), step(box, "gateway", effect=change,
+                                                                 edit_label="Gateway"),
+                    step(box, "review", rewindable=False)])
+    assert w.run(None) == 0
+    assert [s.id for s in w.editable()] == []      # "mode" would re-run the locked gateway step

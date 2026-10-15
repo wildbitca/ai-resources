@@ -1132,7 +1132,7 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
                 f"{seen}; a restart kills them:\n"
                 f"{openclaw_host.describe_busy(workers)}\nWhat now?",
                 [RESTART_NOW, RESTART_DEFER, RESTART_WAIT], default=RESTART_DEFER)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, ui.Cancelled):
             answer = None
         if answer == RESTART_WAIT:
             ui.info(f"Waiting up to {wait_cap / 60:g} min for the turns to finish (Ctrl-C defers)...")
