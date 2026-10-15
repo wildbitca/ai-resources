@@ -72,3 +72,12 @@ def test_a_tool_install_runs_under_a_spinner_and_ends_with_one_ok_line(monkeypat
     monkeypatch.setattr(tools, "_run_install", lambda cmd, timeout=300: (True, ""))
     assert tools.install_one(next(iter(tools.TOOLS)), state.SetupState()) is True
     assert events == ["open", "close", "ok"]
+
+
+def test_spinner_degrades_to_one_line_on_a_console_double(monkeypatch, capsys):
+    pytest.importorskip("rich")
+    monkeypatch.setattr(ui, "_HAS_RICH", True)
+    monkeypatch.setattr(ui, "console", lambda: object())
+    with ui.spinner("Installing X") as handle:
+        assert handle is None
+    assert "Installing X" in capsys.readouterr().out

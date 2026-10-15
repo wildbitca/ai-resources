@@ -309,7 +309,9 @@ def detected_table(rows: list[tuple[str, str, str]]) -> None:
 # --- progress / spinners -------------------------------------------------------
 @contextmanager
 def spinner(label: str):
-    if not _HAS_RICH:
+    con = console() if _HAS_RICH else None
+    # A console double (tests, a captured transcript) cannot drive a live region: say it on one line instead.
+    if con is None or not isinstance(con, Console):
         print(f"  ... {label}")
         yield None
         return
