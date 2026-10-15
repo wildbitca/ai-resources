@@ -2,7 +2,7 @@
 
 A bare `pytest tests/` writes its temp tree (hundreds of MiB per run) to /tmp/pytest-of-<user>, a quota'd
 tmpfs that already broke OpenClaw once. When nothing chose a location, the run gets its own directory under
-`$XDG_CACHE_HOME/ai-resources-pytest` (or `~/.cache/ai-resources-pytest`), and stale run directories are pruned.
+`$XDG_CACHE_HOME/ai-resources-pytest-runs` (or `~/.cache/ai-resources-pytest-runs`), and stale run directories are pruned.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _SYSTEM_TMP = ("/tmp", "/var/tmp")
 def cache_root(env=None) -> Path:
     env = os.environ if env is None else env
     base = env.get("XDG_CACHE_HOME") or str(Path(env.get("HOME") or Path.home()) / ".cache")
-    return Path(base) / "ai-resources-pytest"
+    return Path(base) / "ai-resources-pytest-runs"
 
 
 def _tmpdir_is_explicit(env) -> bool:

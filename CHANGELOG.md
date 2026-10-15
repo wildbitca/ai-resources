@@ -138,7 +138,7 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 ### Fixed
 
 - **A bare `pytest tests/` no longer fills the /tmp tmpfs.** `tests/conftest.py` now sets the basetemp to a unique
-  `run-*` directory under `$XDG_CACHE_HOME/ai-resources-pytest` (or `~/.cache/ai-resources-pytest`) when no
+  `run-*` directory under `$XDG_CACHE_HOME/ai-resources-pytest-runs` (or `~/.cache/ai-resources-pytest-runs`) when no
   `--basetemp`, `PYTEST_DEBUG_TEMPROOT` or non-system `TMPDIR` is given, and prunes run directories older than 6 hours.
   An explicit `--basetemp` still wins.
 - **The reload-rule parser failed open on a conditional policy and could backtrack for minutes.** The policy pattern

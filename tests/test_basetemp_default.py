@@ -21,13 +21,13 @@ def test_default_goes_under_cache_root(tmp_path):
     config = _config()
     target = bt.apply_default(config, env)
     assert target is not None and config.option.basetemp == str(target)
-    assert target.parent == tmp_path / "cache" / "ai-resources-pytest"
+    assert target.parent == tmp_path / "cache" / "ai-resources-pytest-runs"
     assert not str(target).startswith("/tmp/pytest-of-")
 
 
 def test_home_cache_used_without_xdg(tmp_path):
     env = {"HOME": str(tmp_path / "home")}
-    assert bt.cache_root(env) == tmp_path / "home" / ".cache" / "ai-resources-pytest"
+    assert bt.cache_root(env) == tmp_path / "home" / ".cache" / "ai-resources-pytest-runs"
 
 
 def test_explicit_basetemp_wins(tmp_path):
