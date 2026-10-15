@@ -180,3 +180,31 @@ def test_the_pure_rail_text_matches_flow(monkeypatch):
                                               title=ui._LAST_SECTION)
     finally:
         ui.set_progress(0, [])
+
+
+@pytest.mark.parametrize("width", [59, 60, 79, 80])
+@pytest.mark.parametrize("ascii_only", [False, True])
+def test_real_rich_header_fits_at_the_boundary_widths(monkeypatch, width, ascii_only):
+    rich_console = pytest.importorskip("rich.console")
+    buf = io.StringIO()
+    con = rich_console.Console(file=buf, width=width, force_terminal=False, legacy_windows=False)
+    monkeypatch.setattr(ui, "console", lambda: con)
+    monkeypatch.setattr(ui, "_HAS_RICH", True)
+    monkeypatch.setattr(ui, "_NON_INTERACTIVE", False)
+    monkeypatch.setattr(ui, "unicode_ok", lambda: not ascii_only)
+    monkeypatch.setattr(ui, "terminal_width", lambda: width)
+    monkeypatch.setenv("NO_COLOR", "1")
+    ui.set_progress(4, [1, 2, 3])
+    try:
+        ui.section(4, 10, "Provider backends")
+    finally:
+        ui.set_progress(0, [])
+    out = buf.getvalue()
+    assert all(len(l) <= width for l in out.splitlines()), out
+    assert "Provider backends" in out
+    if width < 60:
+        assert "Step 4/10" in out and "Enter confirm" not in out
+    else:
+        assert "Ctrl-C cancel" in out
+    if ascii_only:
+        assert out.isascii()
