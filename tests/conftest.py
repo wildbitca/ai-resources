@@ -16,6 +16,13 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config):
+    # Before the tmpdir plugin reads the option: a bare run must not fill the /tmp tmpfs.
+    from basetemp_default import apply_default
+    apply_default(config)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     try:
