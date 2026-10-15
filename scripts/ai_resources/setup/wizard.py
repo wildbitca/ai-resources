@@ -920,7 +920,7 @@ def _step3_docker(s: state.SetupState) -> int:
         with ui.spinner(f"Pulling {image}"):
             ok, msg = litellm.pull_image(image)
         if not ok:
-            ui.error(f"Pull failed: {msg[:300]}")
+            ui.error(f"Pull failed: {ui.safe_text(msg[:300])}")
             ui.log_tail(str(msg).splitlines())
             return 1
         # Track only if image wasn't already cached locally before this run.
@@ -995,7 +995,7 @@ def _step3_pipx(s: state.SetupState) -> int:
             with ui.spinner("Reinstalling LiteLLM via pipx"):
                 ok, msg = litellm.install_litellm_pipx()
             if not ok:
-                ui.error(f"Install failed: {msg[:200]}")
+                ui.error(f"Install failed: {ui.safe_text(msg[:200])}")
                 ui.log_tail(str(msg).splitlines())
                 return 1
             ui.ok("LiteLLM updated")
@@ -1123,7 +1123,7 @@ def _step3_remote(s: state.SetupState, dry_run: bool = False) -> int:
     with ui.spinner(f"Validating {url}"):
         ok, msg = litellm.validate_remote(url, master_key)
     if not ok:
-        ui.error(f"Remote unreachable: {msg}")
+        ui.error(f"Remote unreachable: {ui.safe_text(msg)}")
         if not ui.confirm("Continue anyway?", default=False):
             return 1
     else:
@@ -2369,7 +2369,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
                         timeout=120,
                     )
                 if rc != 0:
-                    ui.error(f"Container start failed: {err[:200]}")
+                    ui.error(f"Container start failed: {ui.safe_text(err[:200])}")
                 else:
                     started_docker = True
                     with ui.spinner("Waiting for gateway health"):
@@ -2390,7 +2390,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
             if ok:
                 ui.ok("Remote endpoint reachable")
             else:
-                ui.error(f"Remote unreachable: {msg}")
+                ui.error(f"Remote unreachable: {ui.safe_text(msg)}")
 
         # ── smoke tests ───────────────────────────────────────────────────────
         if s.mode == "multi-model":

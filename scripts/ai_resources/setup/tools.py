@@ -172,7 +172,7 @@ def install_one(tool_id: str, s: state.SetupState) -> bool:
             kept = [line for lines in added.values() for line in lines]
             s.tracking.rc_lines_added[tool_id] = kept
     if not ok:
-        ui.error(f"{spec.label} install failed: {out[-300:]}")
+        ui.error(f"{spec.label} install failed: {ui.safe_text(out[-300:])}")
         return False
     s.tracking.tool_install_methods[tool_id] = spec.install_cmd
     if tool_id not in s.tracking.tools_installed_by_us:

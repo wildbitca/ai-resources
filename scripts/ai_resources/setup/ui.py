@@ -193,7 +193,32 @@ def key_hint(extra: str = "") -> str:
     return " " + sep.join(parts)
 
 
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\-_]")
+_CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def clean_text(text: Any) -> str:
+    """Make text from a subprocess, a remote or a file safe to echo: ANSI/OSC sequences and other control
+    characters are dropped (a CR or an escape can rewrite what the operator reads); tab and newline stay."""
+    return _CONTROLS.sub("", _ANSI.sub("", str(text)))
+
+
+def safe_text(text: Any) -> str:
+    """`clean_text` then `mask_secrets`: for anything that came from outside the wizard."""
+    return mask_secrets(clean_text(text))
+
+
+def _markup_safe(msg: Any) -> str:
+    """Cleaned and with rich markup escaped, so a `[/]` in output is shown, not interpreted (or raised on)."""
+    text = clean_text(msg)
+    if _HAS_RICH:
+        from rich.markup import escape
+        return escape(text)
+    return text
+
+
 def info(msg: str) -> None:
+    msg = _markup_safe(msg)
     if _HAS_RICH:
         console().print(f"  [dim cyan]ⓘ[/] {msg}")
     else:
@@ -201,6 +226,7 @@ def info(msg: str) -> None:
 
 
 def ok(msg: str) -> None:
+    msg = _markup_safe(msg)
     if _HAS_RICH:
         console().print(f"  [green]✔[/] {msg}")
     else:
@@ -208,6 +234,7 @@ def ok(msg: str) -> None:
 
 
 def warn(msg: str) -> None:
+    msg = _markup_safe(msg)
     if _HAS_RICH:
         console().print(f"  [yellow]⚠[/] {msg}")
     else:
@@ -215,6 +242,7 @@ def warn(msg: str) -> None:
 
 
 def error(msg: str) -> None:
+    msg = _markup_safe(msg)
     if _HAS_RICH:
         console().print(f"  [red]✘[/] {msg}")
     else:
@@ -222,6 +250,7 @@ def error(msg: str) -> None:
 
 
 def detail(msg: str) -> None:
+    msg = _markup_safe(msg)
     if _HAS_RICH:
         console().print(f"    [dim]{msg}[/]")
     else:
@@ -361,7 +390,7 @@ def mask_secrets(text: str) -> str:
 
 def log_tail(lines: Iterable[str], title: str = "Last output:", n: int = 20) -> None:
     """Print the last `n` lines of a failed command, dimmed, with secrets masked."""
-    tail = [mask_secrets(str(l).rstrip()) for l in list(lines)[-n:]]
+    tail = [safe_text(str(l).rstrip()) for l in list(lines)[-n:]]
     tail = [l for l in tail if l.strip()]
     if not tail:
         return
@@ -384,7 +413,7 @@ def run_with_spinner(label: str, cmd: Sequence[str], **kw: Any):
     if result.returncode == 0:
         ok(label)
     else:
-        error(f"{label} failed (exit {result.returncode}): {mask_secrets(' '.join(str(c) for c in cmd))}")
+        error(f"{label} failed (exit {result.returncode}): {safe_text(' '.join(str(c) for c in cmd))}")
         log_tail(f"{result.stdout or ''}\n{result.stderr or ''}".splitlines())
     return result
 
