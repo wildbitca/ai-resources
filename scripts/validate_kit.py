@@ -25,6 +25,10 @@ except ImportError:  # pragma: no cover - CI installs it
     raise SystemExit(1)
 
 ROOT = Path(__file__).resolve().parents[1]
+# The package is not installed when CI runs this script, so put `scripts/` on the path for the
+# policy module (pure data, no other imports).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ai_resources import roles_policy  # noqa: E402
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DESCRIPTION_LIMIT = 1024  # Claude Code truncates description + when_to_use at 1536 chars
 VERIFIER_DOC_SKILL = "knowledge-audit"
@@ -39,9 +43,8 @@ AGENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 # Read-only roles may run on another agent; tester and doc-writer run commands or write files,
 # so they pass with a warning (the post-step check detects a violation, it cannot prevent one)
 # and are never parallel members.
-OPENCLAW_READ_ONLY_ROLES = {"planner", "explore", "software-architect", "code-reviewer",
-                            "security-auditor", "verifier"}
-OPENCLAW_WARNED_ROLES = {"tester", "doc-writer"}
+OPENCLAW_READ_ONLY_ROLES = set(roles_policy.EXPLICIT_READ_ONLY_ROLES)
+OPENCLAW_WARNED_ROLES = set(roles_policy.EXPLICIT_WARNED_ROLES)
 OPENCLAW_ALLOWED_ROLES = OPENCLAW_READ_ONLY_ROLES | OPENCLAW_WARNED_ROLES
 
 failures: list[str] = []
