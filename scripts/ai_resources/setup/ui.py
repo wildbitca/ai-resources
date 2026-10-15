@@ -17,6 +17,7 @@ from .flow import BACK, Cancelled, GoBack  # noqa: F401  (re-exported)
 # --- optional deps with graceful degradation -------------------------------------
 try:
     from rich.console import Console
+    from rich import box as _rich_box
     from rich.panel import Panel
     from rich.table import Table
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
@@ -126,18 +127,25 @@ def require_deps() -> None:
 
 
 # --- styled output -------------------------------------------------------------
+def _box_kw() -> dict:
+    return {} if unicode_ok() else {"box": _rich_box.ASCII}
+
+
 def banner(title: str, subtitle: str = "", version: str = "") -> None:
     if not _HAS_RICH:
         print(f"\n=== {title} ===")
         if subtitle:
             print(subtitle)
         return
+    if not unicode_ok():
+        title, subtitle = title.replace("—", "-"), subtitle.replace("—", "-")
     body = Text(title, style="bold cyan")
     if subtitle:
         body.append(f"\n{subtitle}", style="dim")
     if version:
         body.append(f"\n{version}", style="dim italic")
-    console().print(Panel(body, border_style="cyan", padding=(1, 2)))
+    box_kw = {} if unicode_ok() else {"box": _rich_box.ASCII}
+    console().print(Panel(body, border_style="cyan", padding=(1, 2), **box_kw))
 
 
 def section(num: int, total: int, title: str) -> None:
@@ -211,16 +219,22 @@ def safe_text(text: Any) -> str:
 def _markup_safe(msg: Any) -> str:
     """Cleaned and with rich markup escaped, so a `[/]` in output is shown, not interpreted (or raised on)."""
     text = clean_text(msg)
+    if not unicode_ok():
+        text = text.replace("\u2014", "-").replace("\u2013", "-").replace("\u2026", "...")
     if _HAS_RICH:
         from rich.markup import escape
         return escape(text)
     return text
 
 
+def _glyph(fancy: str, plain: str) -> str:
+    return fancy if unicode_ok() else plain
+
+
 def info(msg: str) -> None:
     msg = _markup_safe(msg)
     if _HAS_RICH:
-        console().print(f"  [dim cyan]ⓘ[/] {msg}")
+        console().print(f"  [dim cyan]{_glyph('ⓘ', 'i')}[/] {msg}")
     else:
         print(f"  i  {msg}")
 
@@ -228,7 +242,7 @@ def info(msg: str) -> None:
 def ok(msg: str) -> None:
     msg = _markup_safe(msg)
     if _HAS_RICH:
-        console().print(f"  [green]✔[/] {msg}")
+        console().print(f"  [green]{_glyph('✔', 'OK')}[/] {msg}")
     else:
         print(f"  OK {msg}")
 
@@ -236,7 +250,7 @@ def ok(msg: str) -> None:
 def warn(msg: str) -> None:
     msg = _markup_safe(msg)
     if _HAS_RICH:
-        console().print(f"  [yellow]⚠[/] {msg}")
+        console().print(f"  [yellow]{_glyph('⚠', '!')}[/] {msg}")
     else:
         print(f"  !  {msg}", file=sys.stderr)
 
@@ -244,7 +258,7 @@ def warn(msg: str) -> None:
 def error(msg: str) -> None:
     msg = _markup_safe(msg)
     if _HAS_RICH:
-        console().print(f"  [red]✘[/] {msg}")
+        console().print(f"  [red]{_glyph('✘', 'X')}[/] {msg}")
     else:
         print(f"  X  {msg}", file=sys.stderr)
 
@@ -265,7 +279,7 @@ def role_table(rows: list[tuple[str, str, str]], title: str = "") -> None:
         for role, provider, model in rows:
             print(f"  {role:<22} {provider:<12} {model}")
         return
-    t = Table(title=title, show_header=True, header_style="bold cyan", border_style="dim")
+    t = Table(title=title, show_header=True, header_style="bold cyan", border_style="dim", **_box_kw())
     t.add_column("Role", style="bold")
     t.add_column("Provider")
     t.add_column("Model", style="dim")
@@ -283,7 +297,7 @@ def review_table(rows: list[tuple[str, str]], title: str = "") -> None:
         for section_name, answer in rows:
             print(f"  {section_name:<18} {answer}")
         return
-    t = Table(title=title or None, show_header=True, header_style="bold cyan", border_style="dim")
+    t = Table(title=title or None, show_header=True, header_style="bold cyan", border_style="dim", **_box_kw())
     t.add_column("Section", style="bold")
     t.add_column("Your answer")
     for section_name, answer in rows:
@@ -340,7 +354,8 @@ _BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=\-]{8,}")
 _PEM = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)", re.S)
 _KEYWORDS = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL)"
 _BLOCK_SCALAR = re.compile(
-    r"(?im)^([ \t]*[\w.\-]*" + _KEYWORDS + r"[\w.\-]*[ \t]*:[ \t]*)([|>][+\-0-9]*)([ \t]*)\n((?:[ \t]+[^\n]*(?:\n|\Z))+)")
+    r"(?im)^(([ \t]*)[\w.\-]*" + _KEYWORDS + r"[\w.\-]*[ \t]*:[ \t]*)([|>][+\-0-9]*)([ \t]*)\n"
+    r"((?:\2[ \t]+[^\n]*(?:\n|\Z)|[ \t]*\n)+)")
 # A bare `NAME=value` line whose name says it is a password: an unquoted value may hold spaces, so it is
 # masked to the end of the line (a reference or an already masked value is kept).
 _PASSWORD_LINE = re.compile(
@@ -348,7 +363,7 @@ _PASSWORD_LINE = re.compile(
 _USERPASS = re.compile(r"(?<![\w\-])(-u|--user|--proxy-user)((?:\s+|=)[^\s:]+:)(\S+)")
 _AUTH_HEADER = re.compile(r"(?i)\b(authorization[\"']?\s*[:=]\s*[\"']?)([^\s\"',}]+(?:[ \t]+[^\s\"',}]+)?)")
 _AUTH_SCHEMES = ("bearer", "basic", "token", "digest", "apikey", "key")
-_BASE64_PADDED = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,}={1,2}")
+_BASE64_PADDED = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,}={1,2}(?![A-Za-z0-9+/=])")
 
 
 def mask_secrets(text: str) -> str:
@@ -358,7 +373,8 @@ def mask_secrets(text: str) -> str:
     def pair(m: "re.Match[str]") -> str:
         quote = m.group(3) or ""
         value = m.group(4) if m.group(3) else m.group(6)
-        if _REFERENCE.fullmatch(value) or value in ("****", "null", "None", "true", "false"):
+        if (_REFERENCE.fullmatch(value) or value in ("****", "null", "None", "true", "false")
+                or re.fullmatch(r"[|>][+\-0-9]*", value)):
             return m.group(0)
         return f"{m.group(1)}{m.group(2)}{quote}****"
     def auth(m: "re.Match[str]") -> str:
@@ -377,7 +393,7 @@ def mask_secrets(text: str) -> str:
 
     out = _PEM.sub("****", text)
     out = _BLOCK_SCALAR.sub(
-        lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}\n" + re.sub(r"(?m)^([ \t]+)[^\n]+$", r"\1****", m.group(4)),
+        lambda m: f"{m.group(1)}{m.group(3)}{m.group(4)}\n" + re.sub(r"(?m)^([ \t]+)\S[^\n]*$", r"\1****", m.group(5)),
         out)
     out = _PASSWORD_LINE.sub(password_line, out)
     out = _URL_CRED.sub(lambda m: f"{m.group(1)}{m.group(2)}:****@", out)

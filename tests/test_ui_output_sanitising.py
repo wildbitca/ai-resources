@@ -81,3 +81,16 @@ def test_spinner_degrades_to_one_line_on_a_console_double(monkeypatch, capsys):
     with ui.spinner("Installing X") as handle:
         assert handle is None
     assert "Installing X" in capsys.readouterr().out
+
+
+def test_padded_base64_rule_keeps_name_value_assignments():
+    for s in ("PYTHONDONTWRITEBYTECODE=1", "ExecStartPreventingTimeoutSec=30", "?someLongParameterName=value"):
+        assert ui.mask_secrets(s) == s
+    assert ui.mask_secrets("blob QUJDREVGR0hJSktMTU5PUFFSU1Q= end") == "blob **** end"
+
+
+def test_block_scalar_masking_stops_at_sibling_keys():
+    text = "  api_key: |\n    abc\n\n    def\n  api_base: http://x\n  model: gpt\n"
+    out = ui.mask_secrets(text)
+    assert "api_key: |\n" in out and "abc" not in out and "def" not in out
+    assert "  api_base: http://x\n  model: gpt\n" in out

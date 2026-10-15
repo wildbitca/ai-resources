@@ -124,7 +124,7 @@ def _run(args: argparse.Namespace) -> int:
         version=f"v{__version__}",
     )
     if dry_run:
-        ui.console().print("[bold yellow]DRY RUN — no files will be written.[/bold yellow]\n")
+        ui.console().print(f"[bold yellow]DRY RUN {'—' if ui.unicode_ok() else '-'} no files will be written.[/bold yellow]\n")
 
     prev_s = state.load()  # frozen snapshot of the previous run (used for teardown)
     s = state.load()
@@ -1670,10 +1670,12 @@ def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
         name = getattr(mod, "NAME", cid)
         choices.append(ui.Choice(name, value=cid))
 
+    saved_targets = (s.profile.customizations.get("__targets__") or {}).get("selected")
+    held = [c for c in (saved_targets or []) if c in detected_ids]
     selected = ui.checkbox(
         "Configure detected cockpits:",
         choices,
-        default=detected_ids,
+        default=held or detected_ids,
     )
     s.profile.customizations.setdefault("__targets__", {})["selected"] = selected  # stash for apply step
     if "openclaw" in selected:

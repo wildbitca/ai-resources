@@ -56,3 +56,4 @@ def test_non_interactive_run_output_matches_the_golden(monkeypatch, tmp_path, ca
     assert GOLDEN.is_file(), "run once with WIZARD_GOLDEN_UPDATE=1"
     assert text == GOLDEN.read_text(encoding="utf-8")
     assert "stored" not in text
+    assert text.isascii(), "NO_COLOR/ASCII mode must not emit non-ASCII glyphs"

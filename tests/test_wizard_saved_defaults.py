@@ -43,3 +43,109 @@ def test_one_provider_and_single_defaults_come_from_the_saved_selection(monkeypa
     assert seen[-1] == ("Which provider?", "anthropic")
     wizard._pick_candidates(ms.SHAPE_SINGLE, _cands(), _saved())
     assert seen[-1][0] == "Which model?" and seen[-1][1].slot == "anthropic:opus"
+
+
+# --- every other step offers the saved answer as its default -----------------------------------------------
+import argparse  # noqa: E402
+
+from ai_resources.setup import state  # noqa: E402
+
+
+def _record(monkeypatch, picks=None, confirm=True, text=""):
+    """Replace the ui prompts with recorders; returns {message: [defaults offered]}."""
+    seen: dict[str, list] = {}
+    picks = picks or {}
+
+    def make(kind):
+        def prompt(message, choices=None, default=None, **k):
+            seen.setdefault(message, []).append(default)
+            if message in picks:
+                return picks[message]
+            return default
+        return prompt
+
+    monkeypatch.setattr(ui, "select", make("select"))
+    monkeypatch.setattr(ui, "checkbox", make("checkbox"))
+    monkeypatch.setattr(ui, "confirm", lambda message, default=True: seen.setdefault(message, []).append(default) or default)
+    monkeypatch.setattr(ui, "text", lambda message, default="", **k: seen.setdefault(message, []).append(default) or default)
+    for name in ("info", "detail", "warn", "error", "ok", "section"):
+        monkeypatch.setattr(ui, name, lambda *a, **k: None)
+    return seen
+
+
+def test_saved_mode_and_backend_are_the_default_of_the_mode_question(monkeypatch):
+    for mode, backend, expect in (("multi-model", "openrouter", "multi-model:openrouter"),
+                                  ("multi-model", "litellm", "multi-model:litellm"),
+                                  ("single-model", "litellm", "single-model")):
+        seen = _record(monkeypatch)
+        s = state.SetupState()
+        s.mode, s.backend = mode, backend
+        wizard._step1_mode(s)
+        assert seen["Choose mode:"] == [expect]
+
+
+def test_saved_gateway_bind_and_port_are_the_defaults(monkeypatch):
+    seen = _record(monkeypatch)
+    s = state.SetupState()
+    s.litellm.local.bind_address, s.litellm.local.port = "0.0.0.0", 4123
+    monkeypatch.setattr(wizard, "_validate_port", lambda v: True, raising=False)
+    wizard._ask_bind_and_port(s)
+    assert seen["Bind interface:"] == ["0.0.0.0"] and seen["Port"] == ["4123"]
+
+
+def test_saved_lifecycle_choice_is_the_autostart_default(monkeypatch):
+    for saved in (True, False):
+        seen = _record(monkeypatch)
+        s = state.SetupState()
+        s.litellm.deployment = "local"
+        s.litellm.local.runtime = "pipx"
+        s.litellm.local.auto_start = saved
+        monkeypatch.setattr(wizard.litellm, "is_container_mode", lambda r: False)
+        monkeypatch.setattr(wizard.litellm, "is_macos", lambda: False)
+        try:
+            wizard._step8_lifecycle(s)
+        except Exception:  # noqa: BLE001 - only the prompt default matters here
+            pass
+        assert seen["Auto-start LiteLLM at every login?"] == [saved]
+
+
+def test_saved_cockpit_selection_is_the_default_of_the_cockpit_checkbox(monkeypatch):
+    seen = _record(monkeypatch)
+    s = state.SetupState()
+    s.cockpits["claude"] = state.CockpitState(installed=True)
+    s.cockpits["codex"] = state.CockpitState(installed=True)
+    s.profile.customizations["__targets__"] = {"selected": ["codex"]}
+    wizard._step7_cockpit_config(s, dry_run=True)
+    assert seen["Configure detected cockpits:"] == [["codex"]]
+    seen.clear()
+    s.profile.customizations.pop("__targets__")
+    wizard._step7_cockpit_config(s, dry_run=True)
+    assert seen["Configure detected cockpits:"] == [["claude", "codex"]]
+
+
+def test_saved_profile_is_the_default_of_the_profile_question(monkeypatch):
+    seen = _record(monkeypatch)
+    avail = wizard.profiles.list_profiles(mode="multi-model", backend="litellm")
+    saved = next(n for n in avail if n != wizard.RECOMMENDED_PROFILE)
+    s = state.SetupState()
+    s.mode, s.backend = "multi-model", "litellm"
+    s.profile.name = saved
+    monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "", raising=False)
+    try:
+        wizard._step6_profile(s)
+    except Exception:  # noqa: BLE001 - only the prompt default matters here
+        pass
+    assert seen["Choose profile:"] == [saved]
+
+
+def test_saved_lane_orchestrators_are_reused_without_asking_again(monkeypatch):
+    seen = _record(monkeypatch)
+    s = state.SetupState()
+    s.mode, s.backend = "multi-model", "litellm"
+    s.profile.lanes = {"orchestrators": ["main"]}
+    args = argparse.Namespace(lanes=True, no_lanes=False, lanes_dry_run=False, lanes_orchestrator=[])
+    try:
+        wizard._step_lanes(s, args, dry_run=True)
+    except Exception:  # noqa: BLE001
+        pass
+    assert not any("Orchestrator agent id" in m for m in seen)
