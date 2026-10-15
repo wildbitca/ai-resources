@@ -175,7 +175,7 @@ def _run(args: argparse.Namespace) -> int:
         _build_steps(dry_run),
         on_skip=lambda spec, title, reason: (ui.mark_skipped(spec.number),
                                              ui.section(spec.number, TOTAL_STEPS, title), ui.info(reason)),
-        on_enter=lambda spec, w: ui.set_progress(spec.number, [n for n in range(1, spec.number)]),
+        on_enter=_enter_step,
         snapshot=lambda: _snapshot_run(s),
         restore=lambda snap: _restore_run(s, snap),
         notify=lambda m: ui.warn(m.lstrip("! ")),
@@ -206,6 +206,17 @@ def _run(args: argparse.Namespace) -> int:
                      "outside the gateway.")
             verify_rc = verify_rc or 1
     return verify_rc   # non-zero when a tooling has an error-level finding or a requested apply was refused
+
+
+def _enter_step(spec: flow.StepSpec, w: flow.Wizard) -> None:
+    """Point the progress rail at `spec`; the skipped marks come from the runner history, so a step that a
+    Back or an Edit made run again is no longer shown as skipped."""
+    by_number: dict[int, list[bool]] = {}
+    for d in w.history:
+        by_number.setdefault(w.steps[d.index].number, []).append(d.skipped)
+    # A numbered step with sub-steps (6a, 6b, 6c) is skipped only when every one of its sub-steps was.
+    skipped = {n for n, marks in by_number.items() if n < spec.number and all(marks)}
+    ui.set_progress(spec.number, [n for n in range(1, spec.number)], skipped)
 
 
 def _snapshot_run(s: state.SetupState) -> tuple:

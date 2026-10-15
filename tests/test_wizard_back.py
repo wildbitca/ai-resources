@@ -105,3 +105,21 @@ def test_a_gateway_step_is_asked_again_in_a_dry_run_only():
     for dry, expected in ((True, True), (False, False)):
         gateway = [s for s in wizard._build_steps(dry) if s.id == "gateway"][0]
         assert gateway.rewindable is expected
+
+
+def test_the_progress_rail_rebuilds_skipped_from_the_runner_history(monkeypatch):
+    """Edit-to-LiteLLM: step 3 was skipped on the OpenRouter pass; after the jump it is run, not skipped."""
+    from ai_resources.setup import flow
+    steps = wizard._build_steps(False)
+    runner = flow.Wizard(steps)
+    gateway = runner.index_of("gateway")
+    runner.history = [flow._Done(0, None, False), flow._Done(1, None, False),
+                      flow._Done(gateway, None, False, skipped=True)]
+    ui.set_progress(0, [])
+    ui.mark_skipped(3)
+    wizard._enter_step(steps[gateway + 1], runner)
+    assert ui._SKIPPED == {3}
+    runner.history = runner.history[:2]               # the jump to Mode truncated the history
+    wizard._enter_step(steps[gateway], runner)
+    assert ui._SKIPPED == set()
+    ui.set_progress(0, [])
