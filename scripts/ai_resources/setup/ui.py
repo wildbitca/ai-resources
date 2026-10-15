@@ -531,12 +531,17 @@ def back_enabled() -> bool:
     return _BACK_ON
 
 
-def _attach_back(question: Any) -> bool:
-    """Merge one eager Ctrl-B binding into a built question's Application; it exits with BACK.
+_CANCEL = object()      # the result an Application exits with when Ctrl-D asks to cancel
+
+
+def _attach_keys(question: Any, back: bool) -> bool:
+    """Merge eager Ctrl-D (and, when `back`, Ctrl-B) bindings into a built question's Application.
 
     questionary's select, checkbox and confirm pass `key_bindings=` to their Application themselves, so the
-    binding is merged into `application.key_bindings` after construction (prompt_toolkit reads that attribute
-    on every key press). Returns False when the question exposes no Application (a double, or a missing lib)."""
+    bindings are merged into `application.key_bindings` after construction (prompt_toolkit reads that
+    attribute on every key press). Ctrl-B exits with BACK. Ctrl-D exits with the cancel sentinel, except in an
+    input field that holds text, where it keeps its editing meaning (delete the character under the cursor).
+    Returns False when the question exposes no Application (a double, or a missing lib)."""
     app = getattr(question, "application", None)
     if app is None:
         return False
@@ -546,24 +551,38 @@ def _attach_back(question: Any) -> bool:
         return False
     kb = KeyBindings()
 
-    @kb.add("c-b", eager=True)
-    def _back(event):  # noqa: ANN001
-        event.app.exit(result=BACK)
+    if back:
+        @kb.add("c-b", eager=True)
+        def _back(event):  # noqa: ANN001
+            event.app.exit(result=BACK)
+
+    @kb.add("c-d", eager=True)
+    def _eof(event):  # noqa: ANN001
+        buf = getattr(event.app, "current_buffer", None)
+        if buf is not None and getattr(buf, "text", ""):
+            buf.delete(1)
+            return
+        event.app.exit(result=_CANCEL)
 
     existing = getattr(app, "key_bindings", None)
     app.key_bindings = merge_key_bindings([existing, kb]) if existing is not None else kb
     return True
 
 
+def _attach_back(question: Any) -> bool:
+    return _attach_keys(question, back=True)
+
+
 def _ask(question: Any) -> Any:
     if not _WIZARD_SCOPE:
         return question.ask()
-    if _BACK_ON:
-        _attach_back(question)
+    _attach_keys(question, back=_BACK_ON)
     try:
         result = question.unsafe_ask()
     except (KeyboardInterrupt, EOFError):
         raise Cancelled(_LAST_SECTION) from None
+    if result is _CANCEL:
+        raise Cancelled(_LAST_SECTION)
     if result is BACK:
         raise GoBack()
     return result

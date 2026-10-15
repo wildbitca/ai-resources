@@ -56,14 +56,15 @@ def test_binding_is_merged_only_when_back_is_enabled(fake_pt):
     q = _Q()
     with ui.prompt_scope(wizard=True, back=False):
         assert ui._ask(q) == "x"
-    assert q.application.key_bindings == "existing"
+    # Ctrl-D (cancel) is always bound in a wizard scope; Ctrl-B only while Back is enabled.
+    _kind, items = q.application.key_bindings
+    assert [k for k, _kw, _fn in items[1].added] == [("c-d",)]
     q = _Q()
     with ui.prompt_scope(wizard=True, back=True):
         assert ui._ask(q) == "x"
     kind, items = q.application.key_bindings
     assert kind == "merged" and items[0] == "existing"
-    (keys, kw, _fn), = items[1].added
-    assert keys == ("c-b",) and kw == {"eager": True}
+    assert [(k, kw) for k, kw, _fn in items[1].added] == [(("c-b",), {"eager": True}), (("c-d",), {"eager": True})]
 
 
 def test_the_binding_exits_the_application_with_the_back_sentinel(fake_pt):
@@ -174,3 +175,24 @@ def test_checkbox_defaults_are_checked_in_the_real_prompt(monkeypatch):
                       default=["b", "c"])
     assert out == ["b"]
     assert [(c.value, c.checked) for c in seen["choices"]] == [("a", False), ("b", True), ("c", True)]
+
+
+@pytest.mark.parametrize("kind", sorted(_BUILDERS))
+@pytest.mark.parametrize("back", [True, False])
+def test_real_ctrl_d_cancels_every_prompt(kind, back):
+    qmod = pytest.importorskip("questionary")
+    pytest.importorskip("prompt_toolkit")
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+    with create_pipe_input() as inp:
+        inp.send_text("\x04")
+        q = _BUILDERS[kind](qmod, inp, DummyOutput())
+        with ui.prompt_scope(wizard=True, back=back):
+            with pytest.raises(flow.Cancelled):
+                ui._ask(q)
+
+
+def test_ctrl_d_in_a_text_field_with_content_is_not_swallowed():
+    """Plain text and password already cancel on EOF; the binding must not break typing."""
+    qmod = pytest.importorskip("questionary")
+    assert _drive(lambda i, o: _BUILDERS["text"](qmod, i, o), "ab\r") == "ab"
