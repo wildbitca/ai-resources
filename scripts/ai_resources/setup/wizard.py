@@ -183,8 +183,13 @@ def _run(args: argparse.Namespace) -> int:
         changes=lambda: len(ui.actions_done()),
     )
     ctx.runner = runner
-    rc = runner.run(ctx)
-    ui.set_progress(0, [])
+    global _RUNNER, _REVIEW_SHOWN
+    _RUNNER, _REVIEW_SHOWN = runner, False
+    try:
+        rc = runner.run(ctx)
+    finally:
+        _RUNNER = None
+        ui.set_progress(0, [])
     if rc != 0:
         return rc
 
@@ -453,13 +458,101 @@ def _step_models(s: state.SetupState, args: argparse.Namespace, dry_run: bool = 
         return 0
 
 
-def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
-    """The summary BEFORE the write, one line per detected cockpit, then one confirmation.
+EDIT_SECTION = "edit"
+"""The review's "Edit a section..." value (model_selection.APPLY / CHANGE / CANCEL are unchanged)."""
+_RUNNER: "flow.Wizard | None" = None        # the running step list, for the review's Edit choice
+_REVIEW_SHOWN = False                        # the review printed the step 9 header; apply does not repeat it
 
-    Only a recorded selection has a summary; a host without one is configured exactly as before."""
+
+def _credential_state(s: state.SetupState) -> str:
+    """`set` or `missing` per credential this setup needs. Never a value."""
+    if s.mode != "multi-model":
+        return "native cockpit auth"
+    if s.backend == "openrouter":
+        names = ["OPENROUTER_API_KEY"]
+    else:
+        names = []
+        for pid, ps in s.providers.items():
+            if not ps.enabled or pid == "ollama":
+                continue
+            try:
+                var = "GOOGLE_CLOUD_PROJECT" if pid == "vertex" else providers.get(pid).primary_env_var
+            except KeyError:
+                continue
+            if var:
+                names.append(var)
+    if not names:
+        return "none needed"
+    return " \u00b7 ".join(f"{n} {'set' if credentials.get_key(n) else 'missing'}" for n in names)
+
+
+def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
+    """One row per section for the review screen, from the setup state."""
+    multi = s.mode == "multi-model"
+    if not multi:
+        gateway = "none (single-model)"
+    elif s.backend == "openrouter":
+        gateway = "openrouter (hosted)"
+    elif s.litellm.deployment == "remote":
+        gateway = f"litellm (remote {s.litellm.remote.url or 'url not set'})"
+    elif s.litellm.deployment == "skipped":
+        gateway = "litellm (skipped)"
+    elif litellm.is_container_mode(s.litellm.local.runtime):
+        gateway = f"litellm ({s.litellm.local.runtime})"
+    else:
+        gateway = f"litellm ({s.litellm.local.runtime or 'local'})"
+    provs = ", ".join(p for p, ps in s.providers.items() if ps.enabled) or ("none" if multi else "native auth")
+    sel = s.get_selection()
+    models = "kit profile" if sel is None else (
+        ", ".join(f"{slot}={sl.ref}" for slot, sl in sel.slots.items()) or "picked from accounts")
+    roles = (s.profile.name or "(default)") + (" (customized)" if s.profile.customized else "")
+    lanes = "on" if state.lanes_enabled(s) else "off"
+    targets = (s.profile.customizations or {}).get("__targets__", {}).get("selected") or _detected_cockpit_ids(s)
+    if multi and s.backend == "litellm" and s.litellm.deployment == "local":
+        if litellm.is_container_mode(s.litellm.local.runtime):
+            lifecycle = "container restart policy"
+        else:
+            lifecycle = "login service" if s.litellm.local.auto_start else "manual start"
+    else:
+        lifecycle = "none"
+    return [
+        ("Mode", f"{s.mode}" + (f" ({s.backend})" if multi else "")),
+        ("Gateway", gateway),
+        ("Providers", provs),
+        ("Credentials", _credential_state(s)),
+        ("Models", models),
+        ("Roles", roles),
+        ("Lanes", lanes),
+        ("Cockpits", ", ".join(targets) or "none"),
+        ("Lifecycle", lifecycle),
+    ]
+
+
+def _edit_choices(args: argparse.Namespace) -> list:
+    """The steps the review may re-open: asked in this run, rewindable, no change made on this machine."""
+    if _RUNNER is None:
+        return []
+    out = []
+    lane_flags = any(getattr(args, f, False) for f in ("lanes", "no_lanes", "lanes_dry_run"))
+    for spec in _RUNNER.editable():
+        if spec.id == "lanes" and not lane_flags:
+            continue                                   # without a lanes flag that step asks nothing
+        out.append(ui.Choice(spec.edit_label, value=spec.id))
+    return out
+
+
+def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
+    """The review BEFORE the write: one row per section, one line per detected cockpit, then one confirmation.
+
+    Only a recorded selection has a review: a host without one keeps today's silent skip, interactive or not
+    (tests/test_wizard_summary.py pins it)."""
+    global _REVIEW_SHOWN
     selection = s.get_selection()
     if selection is None:
         return 0
+    ui.section(9, TOTAL_STEPS, "Review and apply")
+    _REVIEW_SHOWN = True
+    ui.review_table(_review_rows(s), title="Your answers")
     detected = _detected_cockpit_ids(s)
     actions = model_selection.plan_table(selection, s.mode, s.backend, detected,
                                          engine=selection.openclaw_engine or None)
@@ -469,8 +562,17 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
         ui.detail(line)
     if ui.is_non_interactive():
         return 0
-    answer = ui.select("Apply this?", [model_selection.APPLY, model_selection.CHANGE, model_selection.CANCEL],
-                       default=model_selection.APPLY)
+    choices = [model_selection.APPLY, model_selection.CHANGE]
+    edit = _edit_choices(args)
+    if edit:
+        choices.append(ui.Choice("Edit a section\u2026", value=EDIT_SECTION))
+    choices.append(model_selection.CANCEL)
+    answer = ui.select("Apply this?", choices, default=model_selection.APPLY)
+    if answer == EDIT_SECTION:
+        which = ui.select("Which section do you want to change?", edit + [ui.Choice("Back to the review", value="")])
+        if which:
+            raise flow.JumpTo(which)
+        return _step_summary(s, args)
     if answer == model_selection.CHANGE:
         s.set_selection(None)
         rc = _step_models(s, args)
@@ -1699,7 +1801,8 @@ def _restore_lanes_file(s: state.SetupState, payload: dict | None) -> None:
 def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     if dry_run:
         return _step9_dry_run(s)
-    ui.section(9, TOTAL_STEPS, "Apply")
+    if not _REVIEW_SHOWN:
+        ui.section(9, TOTAL_STEPS, "Apply")
     ui.console().print()
     ui.info("Generating configuration files...")
 

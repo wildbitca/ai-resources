@@ -233,6 +233,23 @@ def role_table(rows: list[tuple[str, str, str]], title: str = "") -> None:
     console().print(t)
 
 
+def review_table(rows: list[tuple[str, str]], title: str = "") -> None:
+    """The review screen: (section, answer) rows. Values are shown as given: callers pass `set` or `missing`
+    for credentials, never the secret."""
+    if not _HAS_RICH:
+        if title:
+            print(f"\n{title}")
+        for section_name, answer in rows:
+            print(f"  {section_name:<18} {answer}")
+        return
+    t = Table(title=title or None, show_header=True, header_style="bold cyan", border_style="dim")
+    t.add_column("Section", style="bold")
+    t.add_column("Your answer")
+    for section_name, answer in rows:
+        t.add_row(section_name, answer)
+    console().print(t)
+
+
 def detected_table(rows: list[tuple[str, str, str]]) -> None:
     """rows: (status, name, version_or_path) — status is ✔/✘/?."""
     if not _HAS_RICH:
