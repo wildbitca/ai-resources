@@ -84,6 +84,12 @@ def test_a_timeout_is_a_failure(out, monkeypatch):
     ("AIzaSyA-abcdefghijklmnopqrstuvwxyz", "AIzaSyA-abcdefg"),
     ("Authorization: Bearer abcdefghijklmnop", "abcdefghijklmnop"),
     ("blob 0123456789abcdef0123456789abcdef0123", "0123456789abcdef0123456789abcdef"),
+    ("PASSWORD=$ecret99", "ecret99"),
+    ("password: <hunter2pw>", "hunter2pw"),
+    ("run --token hunter2", "hunter2"),
+    ("fetch https://user:tok3n@host/path", "tok3n"),
+    ("DATABASE_URL=postgres://u:pw1234@h/db", "pw1234"),
+    ("secret = 'a b c phrase'", "phrase"),
 ])
 def test_mask_secrets(raw, must_not_contain):
     masked = ui.mask_secrets(raw)
@@ -93,6 +99,7 @@ def test_mask_secrets(raw, must_not_contain):
 @pytest.mark.parametrize("raw", [
     "api_key: os.environ/ANTHROPIC_API_KEY", "model: claude-sonnet-5-5", "/home/user/.config/ai-resources/.env",
     "Installing pipx 1.7.1", "api_key: ${OPENAI_API_KEY}",
+    "password: $DB_PASSWORD", "token: <API_TOKEN>",
 ])
 def test_mask_secrets_keeps_references_and_ordinary_text(raw):
     assert ui.mask_secrets(raw) == raw

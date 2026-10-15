@@ -297,7 +297,11 @@ def spinner(label: str):
 
 _SECRET_NAME = re.compile(
     r"(?i)\b([A-Z0-9_.\-]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Z0-9_.\-]*)"
-    r"([\"']?\s*[=:]\s*)([\"']?)([^\s\"',}]+)")
+    r"([\"']?\s*[=:]\s*)(?:([\"'])([^\"'\n]*)|()(\$\{[^}\s]*\}|[^\s\"',}]+))")
+_FLAG_SECRET = re.compile(
+    r"(?i)(--?[a-z0-9_\-]*(?:key|token|secret|password|passwd|credential)[a-z0-9_\-]*)(\s+)(?!-)(\S+)")
+_URL_CRED = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)([^/\s:@]+):([^/\s@]+)@")
+_REFERENCE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Z_][A-Z0-9_]*|<[A-Z][A-Z0-9_\-]*>|os\.environ/[A-Za-z0-9_]+")
 _SECRET_SHAPES = re.compile(
     r"\b(?:sk-[A-Za-z0-9_\-]{8,}|gh[opsur]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_\-]{20,}"
     r"|xox[baprs]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{12,}|[A-Za-z0-9_\-]{32,})\b")
@@ -309,11 +313,14 @@ def mask_secrets(text: str) -> str:
     reference such as `os.environ/NAME` or `${NAME}` is kept), well-known token shapes, Bearer tokens and long
     opaque strings. Used on everything the wizard echoes from a subprocess or renders into a diff."""
     def pair(m: "re.Match[str]") -> str:
-        value = m.group(4)
-        if value.startswith(("os.environ/", "${", "$", "<")) or value in ("****", "null", "None", "true", "false"):
+        quote = m.group(3) or ""
+        value = m.group(4) if m.group(3) else m.group(6)
+        if _REFERENCE.fullmatch(value) or value in ("****", "null", "None", "true", "false"):
             return m.group(0)
-        return f"{m.group(1)}{m.group(2)}{m.group(3)}****"
-    out = _SECRET_NAME.sub(pair, text)
+        return f"{m.group(1)}{m.group(2)}{quote}****"
+    out = _URL_CRED.sub(lambda m: f"{m.group(1)}{m.group(2)}:****@", text)
+    out = _SECRET_NAME.sub(pair, out)
+    out = _FLAG_SECRET.sub(lambda m: m.group(0) if _REFERENCE.fullmatch(m.group(3)) else f"{m.group(1)}{m.group(2)}****", out)
     out = _BEARER.sub(lambda m: f"{m.group(1)} ****", out)
     return _SECRET_SHAPES.sub("****", out)
 
