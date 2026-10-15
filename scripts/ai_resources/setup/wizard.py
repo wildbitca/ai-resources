@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import platform
 import sys
+import types
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +15,7 @@ from . import (
     state,
     detection,
     credentials,
+    flow,
     litellm,
     profiles,
     providers,
@@ -165,86 +168,22 @@ def _run(args: argparse.Namespace) -> int:
     if rc != 0:
         return rc
 
-    # ------------------------------------------------------------------
-    # Tools first (Addendum A1): detect, and offer to install, the base tools; every later step only
-    # offers what these steps found.
-    rc = _step2_cockpits(s)
-    if rc != 0:
-        return rc
-
-    rc = _step1_mode(s)
-    if rc != 0:
-        return rc
-
-    # If the user just switched multi-model → single-model, offer to clean up
-    # everything we previously installed (tracking record drives the actions).
-    if (prev_s.mode == "multi-model"
-            and s.mode == "single-model"
-            and not is_first):
-        rc = _teardown_multi_model(prev_s, s)
-        if rc != 0:
-            return rc
-
-    if s.mode == "multi-model":
-        if s.backend == "litellm":
-            rc = _step3_litellm(s, dry_run)
-            if rc != 0:
-                return rc
-        else:
-            ui.section(3, TOTAL_STEPS, "Gateway")
-            ui.info("Skipped — OpenRouter is hosted; there is nothing to install or supervise.")
-
-        rc = _step4_providers(s)
-        if rc != 0:
-            return rc
-
-        rc = _step5_credentials(s, dry_run)
-        if rc != 0:
-            return rc
-
-        rc = _step_models(s, args, dry_run)
-        if rc != 0:
-            return rc
-
-        rc = _step6_profile(s)
-        if rc != 0:
-            return rc
-    else:
-        ui.section(3, TOTAL_STEPS, "LiteLLM gateway")
-        ui.info("Skipped (single-model mode).")
-        ui.section(4, TOTAL_STEPS, "Provider backends")
-        ui.info("Skipped (single-model uses cockpit's native auth).")
-        ui.section(5, TOTAL_STEPS, "Credentials")
-        ui.info("Skipped.")
-        rc = _step_models(s, args, dry_run)
-        if rc != 0:
-            return rc
-        rc = _step6_single_model_profile(s)
-        if rc != 0:
-            return rc
-
-    rc = _step_lanes(s, args, dry_run=dry_run)
-    if rc != 0:
-        return rc
-
-    rc = _step7_cockpit_config(s, dry_run=dry_run)
-    if rc != 0:
-        return rc
-
-    if s.mode == "multi-model" and s.backend == "litellm":
-        rc = _step8_lifecycle(s)
-        if rc != 0:
-            return rc
-    else:
-        ui.section(8, TOTAL_STEPS, "Lifecycle")
-        ui.info("Skipped (no local gateway to supervise)." if s.mode == "multi-model"
-                else "Skipped (single-model mode).")
-
-    rc = _step_summary(s, args)
-    if rc != 0:
-        return rc
-
-    rc = _step9_apply(s, dry_run=dry_run)
+    # The questions and the apply run as one ordered list of steps (flow.Wizard): the order, the skips and
+    # their wording are the ones this function had when it called the step functions one after the other.
+    ctx = types.SimpleNamespace(s=s, prev_s=prev_s, args=args, dry_run=dry_run, is_first=is_first, runner=None)
+    runner = flow.Wizard(
+        _build_steps(dry_run),
+        on_skip=lambda spec, title, reason: (ui.section(spec.number, TOTAL_STEPS, title), ui.info(reason)),
+        on_enter=lambda spec, w: ui.set_progress(spec.number, [s_.number for s_ in w.steps if s_.number < spec.number]),
+        snapshot=lambda: _snapshot_run(s),
+        restore=lambda snap: _restore_run(s, snap),
+        notify=lambda m: ui.warn(m.lstrip("! ")),
+        scope=lambda spec, back: ui.back_scope(back),
+        changes=lambda: len(ui.actions_done()),
+    )
+    ctx.runner = runner
+    rc = runner.run(ctx)
+    ui.set_progress(0, [])
     if rc != 0:
         return rc
 
@@ -261,6 +200,81 @@ def _run(args: argparse.Namespace) -> int:
                      "outside the gateway.")
             verify_rc = verify_rc or 1
     return verify_rc   # non-zero when a tooling has an error-level finding or a requested apply was refused
+
+
+def _snapshot_run(s: state.SetupState) -> tuple:
+    """What a Back rewind restores: the setup state and the run-scoped globals a step may set."""
+    return (copy.deepcopy(s.__dict__), _REQUESTED_PROFILE, list(_APPLIED_TARGETS))
+
+
+def _restore_run(s: state.SetupState, snap: tuple) -> None:
+    global _REQUESTED_PROFILE, _APPLIED_TARGETS
+    s.__dict__.clear()
+    s.__dict__.update(copy.deepcopy(snap[0]))
+    _REQUESTED_PROFILE = snap[1]
+    _APPLIED_TARGETS = list(snap[2])
+
+
+def _run_mode_step(c) -> int:
+    """Step 2 and, right after it, the cleanup offer when the operator just left multi-model."""
+    rc = _step1_mode(c.s)
+    if rc != 0:
+        return rc
+    # If the user just switched multi-model -> single-model, offer to clean up everything we previously
+    # installed (the tracking record drives the actions).
+    if c.prev_s.mode == "multi-model" and c.s.mode == "single-model" and not c.is_first:
+        return _teardown_multi_model(c.prev_s, c.s)
+    return 0
+
+
+def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
+    """The wizard's steps in order. A step function keeps printing its own header; a skipped step gets its
+    header and reason from the runner (`skip` returns the header title and the reason)."""
+    S = flow.StepSpec
+
+    def multi(c) -> bool:
+        return c.s.mode == "multi-model"
+
+    def local_gateway(c) -> bool:
+        return multi(c) and c.s.backend == "litellm"
+
+    def gateway_skip(c):
+        if not multi(c):
+            return ("LiteLLM gateway", "Skipped (single-model mode).")
+        if c.s.backend != "litellm":
+            return ("Gateway", "Skipped \u2014 OpenRouter is hosted; there is nothing to install or supervise.")
+        return None
+
+    def lifecycle_skip(c):
+        if local_gateway(c):
+            return None
+        return ("Lifecycle", "Skipped (no local gateway to supervise)." if multi(c) else "Skipped (single-model mode).")
+
+    return [
+        S("tools", 1, "Tools and cockpits", lambda c: _step2_cockpits(c.s), rewindable=False),
+        S("mode", 2, "Setup mode", _run_mode_step, edit_label="Mode"),
+        S("gateway", 3, "Gateway", lambda c: _step3_litellm(c.s, c.dry_run), rewindable=dry_run,
+          skip=gateway_skip, edit_label="Gateway"),
+        S("providers", 4, "Provider backends", lambda c: _step4_providers(c.s),
+          skip=lambda c: None if multi(c) else ("Provider backends",
+                                                "Skipped (single-model uses cockpit's native auth)."),
+          edit_label="Providers"),
+        S("credentials", 5, "Credentials", lambda c: _step5_credentials(c.s, c.dry_run),
+          skip=lambda c: None if multi(c) else ("Credentials", "Skipped."), edit_label="Credentials"),
+        S("models", 6, "Models", lambda c: _step_models(c.s, c.args, c.dry_run), sub="6a", back=True,
+          edit_label="Models"),
+        S("profile", 6, "Role assignment",
+          lambda c: _step6_profile(c.s) if multi(c) else _step6_single_model_profile(c.s), sub="6b", back=True,
+          edit_label="Role assignment"),
+        S("lanes", 6, "Subscription lanes", lambda c: _step_lanes(c.s, c.args, dry_run=c.dry_run), sub="6c",
+          back=True, edit_label="Lanes"),
+        S("cockpits", 7, "Cockpit configuration", lambda c: _step7_cockpit_config(c.s, dry_run=c.dry_run),
+          back=True, edit_label="Cockpits"),
+        S("lifecycle", 8, "Lifecycle", lambda c: _step8_lifecycle(c.s), skip=lifecycle_skip,
+          edit_label="Lifecycle"),
+        S("review", 9, "Review", lambda c: _step_summary(c.s, c.args), rewindable=False),
+        S("apply", 9, "Apply", lambda c: _step9_apply(c.s, dry_run=c.dry_run), rewindable=False),
+    ]
 
 
 # --- Model selection (Addendum A1: tools, then accounts, then models, then a summary) ---------

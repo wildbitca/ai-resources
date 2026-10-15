@@ -237,15 +237,37 @@ def prompt_scope(wizard: bool = False, back: bool = False):
     prev, prev_sec, prev_back = _WIZARD_SCOPE, _LAST_SECTION, _BACK_ON
     _WIZARD_SCOPE = wizard
     _BACK_ON = bool(back and wizard)
-    if wizard:
+    if wizard and not prev:        # a nested scope keeps the section name and the list of actions
         _LAST_SECTION = ""
         _DONE.clear()
     try:
         yield
     finally:
         _WIZARD_SCOPE = prev
-        _LAST_SECTION = prev_sec
         _BACK_ON = prev_back
+        if not prev:
+            _LAST_SECTION = prev_sec
+
+
+@contextmanager
+def back_scope(enabled: bool):
+    """Toggle Ctrl-B for the prompts of one step, inside an open wizard scope."""
+    global _BACK_ON
+    prev = _BACK_ON
+    _BACK_ON = bool(enabled and _WIZARD_SCOPE)
+    try:
+        yield
+    finally:
+        _BACK_ON = prev
+
+
+_PROGRESS: tuple[int, tuple[int, ...]] = (0, ())    # (current numbered step, numbers already done); 0 = none
+
+
+def set_progress(current: int, done: Iterable[int] = ()) -> None:
+    """Tell the step headers which numbered step is current (0 clears it: no rail is drawn)."""
+    global _PROGRESS
+    _PROGRESS = (int(current), tuple(done))
 
 
 def current_step() -> str:
