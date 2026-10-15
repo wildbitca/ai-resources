@@ -146,8 +146,9 @@ PATHS = {
 # - "lanes-with-stored-ack" asks the acknowledgement again: `_step6_single_model_profile` rebuilds
 #   `s.profile`, which drops a stored `lane_acks` before the lanes step reads it (pre-existing behaviour,
 #   pinned here, reported in the handoff).
-# - Lanes (6c) prints no header of its own today; steps 3 to 5 print a header and a "Skipped" line in
-#   single-model mode.
+# - S6 renamed the step 6 headers to sub-steps 6a Models, 6b Role assignment and 6c Subscription lanes
+#   (6a prints when it asks, 6c when a lanes flag is given); no other line changed from the S2 recording.
+# - Steps 3 to 5 print a header and a "Skipped" line in single-model mode.
 EXPECTED = {
     "corrupt-state-non-interactive": [
         'banner',
@@ -166,8 +167,9 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
+        'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
-        'section 6/10 Per-role model assignment',
+        'section 6/10 Models and roles - 6b Role assignment',
         'select: How should kit subagents pick their Claude model?',
         'section 7/10 Cockpit configuration',
         'checkbox: Configure detected cockpits:',
@@ -187,9 +189,11 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
+        'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
-        'section 6/10 Per-role model assignment',
+        'section 6/10 Models and roles - 6b Role assignment',
         'select: How should kit subagents pick their Claude model?',
+        'section 6/10 Models and roles - 6c Subscription lanes',
         'text: Orchestrator agent id(s) that may dispatch lane agents (comma-separated)',
         'section 7/10 Cockpit configuration',
         'checkbox: Configure detected cockpits:',
@@ -210,8 +214,9 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
-        'section 6/10 Per-role model assignment',
+        'section 6/10 Models and roles - 6b Role assignment',
         'select: How should kit subagents pick their Claude model?',
+        'section 6/10 Models and roles - 6c Subscription lanes',
         'error: --lanes: no stored Anthropic acknowledgement lists every lane role; run `ai-resources setup --lanes` from a terminal to sign it',
         'rc=2',
     ],
@@ -227,9 +232,11 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
+        'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
-        'section 6/10 Per-role model assignment',
+        'section 6/10 Models and roles - 6b Role assignment',
         'select: How should kit subagents pick their Claude model?',
+        'section 6/10 Models and roles - 6c Subscription lanes',
         'text: Orchestrator agent id(s) that may dispatch lane agents (comma-separated)',
         'confirm: Acknowledge for these roles?',
         'section 7/10 Cockpit configuration',
@@ -255,8 +262,9 @@ EXPECTED = {
         'checkbox: Select providers to enable:',
         'section 5/10 Credentials',
         'confirm: Update ANTHROPIC_API_KEY?',
+        'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
-        'section 6/10 Per-role model assignment',
+        'section 6/10 Models and roles - 6b Role assignment',
         'select: Choose profile:',
         'confirm: Customize any role?',
         'section 7/10 Cockpit configuration',
@@ -278,9 +286,11 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
+        'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
-        'section 6/10 Per-role model assignment',
+        'section 6/10 Models and roles - 6b Role assignment',
         'select: How should kit subagents pick their Claude model?',
+        'section 6/10 Models and roles - 6c Subscription lanes',
         'section 7/10 Cockpit configuration',
         'checkbox: Configure detected cockpits:',
         'section 8/10 Lifecycle',
@@ -300,7 +310,7 @@ EXPECTED = {
         'section 4/10 Provider backends',
         'section 5/10 Credentials',
         'confirm: Update OPENROUTER_API_KEY?',
-        'section 6/10 Per-role model assignment',
+        'section 6/10 Models and roles - 6b Role assignment',
         'select: Choose profile:',
         'confirm: Customize any role?',
         'section 7/10 Cockpit configuration',
@@ -325,8 +335,9 @@ EXPECTED = {
         'section 4/10 Provider backends',
         'section 5/10 Credentials',
         'confirm: Update OPENROUTER_API_KEY?',
+        'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
-        'section 6/10 Per-role model assignment',
+        'section 6/10 Models and roles - 6b Role assignment',
         'select: Choose profile:',
         'confirm: Customize any role?',
         'section 7/10 Cockpit configuration',
@@ -348,8 +359,9 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
+        'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
-        'section 6/10 Per-role model assignment',
+        'section 6/10 Models and roles - 6b Role assignment',
         'select: How should kit subagents pick their Claude model?',
         'section 7/10 Cockpit configuration',
         'checkbox: Configure detected cockpits:',
@@ -362,9 +374,17 @@ EXPECTED = {
 }
 
 
+import os
+import json
+
+
 @pytest.mark.parametrize("name", sorted(PATHS))
 def test_transcript(monkeypatch, tmp_path, name):
-    assert run_path(monkeypatch, tmp_path, **PATHS[name]) == EXPECTED[name]
+    got = run_path(monkeypatch, tmp_path, **PATHS[name])
+    if os.environ.get("CHAR_OUT"):
+        with open(os.environ["CHAR_OUT"], "a") as fh:
+            fh.write(json.dumps({name: got}) + "\n")
+    assert got == EXPECTED[name]
 
 
 def test_every_path_is_pinned():

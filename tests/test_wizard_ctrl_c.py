@@ -124,7 +124,7 @@ def test_cancel_at_profile_confirm(host, capsys):
                                "Update OPENROUTER_API_KEY": False, "Choose profile": "__compose__",
                                "Composition mode": "uniform",
                                "Use this team?": ABORT})
-    _assert_clean_cancel(rc, capsys, host, before, step="Per-role model assignment")
+    _assert_clean_cancel(rc, capsys, host, before, step="Models and roles - 6b Role assignment")
     assert any(m.startswith("confirm: Use this team?") for m in script.asked)
 
 
@@ -134,7 +134,7 @@ def test_cancel_at_lanes_acknowledgement(host, capsys):
                                "How should kit subagents pick": "subscription-claude-55",
                                "Acknowledge for these roles?": ABORT, "Orchestrator agent id": "main"},
                         _args(lanes=True))
-    err = _assert_clean_cancel(rc, capsys, host, before, step="Per-role model assignment")
+    err = _assert_clean_cancel(rc, capsys, host, before, step="Models and roles - 6c Subscription lanes")
     assert any(m.startswith("confirm: Acknowledge") for m in script.asked)
     assert not (state.config_root() / "backups" / "lanes").exists()
     assert "text_sha256" not in err

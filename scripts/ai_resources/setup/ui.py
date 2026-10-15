@@ -4,10 +4,13 @@ Falls back gracefully if rich/questionary aren't installed (prints plain text).
 """
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 from contextlib import contextmanager
 from typing import Any, Callable, Iterable, Sequence
 
+from . import flow
 from .flow import BACK, Cancelled, GoBack  # noqa: F401  (re-exported)
 
 # --- optional deps with graceful degradation -------------------------------------
@@ -75,6 +78,28 @@ def has_rich() -> bool:
     return _HAS_RICH
 
 
+def no_color() -> bool:
+    """NO_COLOR (https://no-color.org): set and non-empty. It wins over FORCE_COLOR; bold stays."""
+    return bool(os.environ.get("NO_COLOR"))
+
+
+def unicode_ok() -> bool:
+    """Draw with Unicode glyphs only on a UTF-8 stream and without NO_COLOR; ASCII otherwise."""
+    if no_color():
+        return False
+    enc = (getattr(sys.stdout, "encoding", "") or "").lower().replace("-", "").replace("_", "")
+    return enc.startswith("utf")
+
+
+def terminal_width() -> int:
+    if _HAS_RICH:
+        try:
+            return int(console().width)
+        except Exception:  # noqa: BLE001 - a double without a width
+            pass
+    return shutil.get_terminal_size((80, 24)).columns
+
+
 def require_deps() -> None:
     """Raise with actionable message if rich/questionary missing."""
     missing = []
@@ -113,8 +138,47 @@ def section(num: int, total: int, title: str) -> None:
     if not _HAS_RICH:
         print(f"\n[{num}/{total}] {title}\n" + "-" * 65)
         return
+    show_rail = (not _NON_INTERACTIVE) and _PROGRESS[0] > 0
+    width = terminal_width()
     console().print()
-    console().rule(f"[bold cyan][{num}/{total}][/] [bold]{title}[/]", style="cyan", align="left")
+    if show_rail and width < 60:
+        # Below 60 columns: one line, no rail.
+        console().print(f"Step {num}/{total}  {title}", style="bold cyan", markup=False, highlight=False)
+        return
+    rule_kw = {} if unicode_ok() else {"characters": "-"}
+    console().rule(f"[bold cyan][{num}/{total}][/] [bold]{title}[/]", style="cyan", align="left", **rule_kw)
+    if show_rail:
+        console().print(rail(num), markup=False, highlight=False)
+        console().print(key_hint(), style="dim", markup=False, highlight=False)
+
+
+def step_header(number: int, total: int, title: str, model: Any = None, sub: str | None = None) -> None:
+    """A step header: `[n/total] title` (with `- sub` for a sub-step such as 6c) and, in an interactive run,
+    the progress rail and the key hints. It goes through `section`, so a patched `section` still sees it."""
+    if model is not None:
+        set_progress(number, [n for n, _l, st in model if st == "done"], [n for n, _l, st in model if st == "skipped"])
+    section(number, total, f"{title} - {sub}" if sub else title)
+
+
+def rail(current: int | None = None, model: list | None = None) -> str:
+    """The progress rail for the current step as plain text (see `flow.format_rail`)."""
+    if model is None:
+        cur = current if current else _PROGRESS[0]
+        model = flow.rail_model(cur, _PROGRESS[1], _SKIPPED)
+    return flow.format_rail(model, terminal_width(), unicode_ok(), title=_LAST_SECTION)
+
+
+def key_hint(extra: str = "") -> str:
+    """One line of key hints for the step; Ctrl-B is listed only while Back is enabled."""
+    uni = unicode_ok()
+    parts = ["\u2191/\u2193 move" if uni else "Up/Down move", "Space toggle", "Enter confirm"]
+    if _BACK_ON:
+        parts.append("Ctrl-B back")
+    parts.append("Ctrl-C cancel")
+    if extra:
+        parts.append(extra)
+    sep = " \u00b7 " if uni else " . "
+    return " " + sep.join(parts)
 
 
 def info(msg: str) -> None:
@@ -262,12 +326,22 @@ def back_scope(enabled: bool):
 
 
 _PROGRESS: tuple[int, tuple[int, ...]] = (0, ())    # (current numbered step, numbers already done); 0 = none
+_SKIPPED: set[int] = set()
 
 
-def set_progress(current: int, done: Iterable[int] = ()) -> None:
+def set_progress(current: int, done: Iterable[int] = (), skipped: Iterable[int] | None = None) -> None:
     """Tell the step headers which numbered step is current (0 clears it: no rail is drawn)."""
     global _PROGRESS
     _PROGRESS = (int(current), tuple(done))
+    if current == 0:
+        _SKIPPED.clear()
+    if skipped is not None:
+        _SKIPPED.clear()
+        _SKIPPED.update(skipped)
+
+
+def mark_skipped(number: int) -> None:
+    _SKIPPED.add(int(number))
 
 
 def current_step() -> str:
@@ -334,16 +408,24 @@ def _input(prompt: str) -> str:
         raise Cancelled(_LAST_SECTION) from None
 
 
-_QSTYLE = Style([
-    ("qmark",       "fg:#5fafff bold"),
-    ("question",    "bold"),
-    ("answer",      "fg:#87ff87 bold"),
-    ("pointer",     "fg:#5fafff bold"),
-    ("highlighted", "fg:#5fafff bold"),
-    ("selected",    "fg:#87ff87"),
-    ("separator",   "fg:#666666"),
-    ("instruction", "fg:#888888 italic"),
-]) if _HAS_QUESTIONARY else None
+def qstyle_rules(plain: bool) -> list[tuple[str, str]]:
+    """The questionary style rules. With NO_COLOR there is no foreground or background colour; bold stays."""
+    if plain:
+        return [("qmark", "bold"), ("question", "bold"), ("answer", "bold"), ("pointer", "bold"),
+                ("highlighted", "bold"), ("selected", ""), ("separator", ""), ("instruction", "italic")]
+    return [
+        ("qmark",       "fg:#5fafff bold"),
+        ("question",    "bold"),
+        ("answer",      "fg:#87ff87 bold"),
+        ("pointer",     "fg:#5fafff bold"),
+        ("highlighted", "fg:#5fafff bold"),
+        ("selected",    "fg:#87ff87"),
+        ("separator",   "fg:#666666"),
+        ("instruction", "fg:#888888 italic"),
+    ]
+
+
+_QSTYLE = Style(qstyle_rules(no_color())) if _HAS_QUESTIONARY else None
 
 
 def select(message: str, choices: list[Any], default: Any | None = None,
@@ -366,9 +448,11 @@ def select(message: str, choices: list[Any], default: Any | None = None,
                 return choices[int(raw) - 1]
             except (ValueError, IndexError):
                 print("Invalid selection.")
+    default_hint = (" (" + ("\u2191/\u2193" if unicode_ok() else "Up/Down") + " move, Enter confirm"
+                    + (", Ctrl-B back" if _BACK_ON else "") + ")") if _WIZARD_SCOPE else " (use ↑/↓, Enter)"
     return _ask(questionary.select(
         message, choices=choices, default=default,
-        instruction=instruction or " (use ↑/↓, Enter)", style=_QSTYLE,
+        instruction=instruction or default_hint, style=_QSTYLE,
     ))
 
 
@@ -389,9 +473,11 @@ def checkbox(message: str, choices: list[Any], default: list[Any] | None = None,
             except (ValueError, IndexError):
                 pass
         return out
+    default_hint = (" (Space toggle, Enter confirm" + (", Ctrl-B back" if _BACK_ON else "") + ")"
+                    ) if _WIZARD_SCOPE else " (space to toggle, Enter to confirm)"
     return _ask(questionary.checkbox(
         message, choices=choices,
-        instruction=instruction or " (space to toggle, Enter to confirm)",
+        instruction=instruction or default_hint,
         style=_QSTYLE,
     ))
 

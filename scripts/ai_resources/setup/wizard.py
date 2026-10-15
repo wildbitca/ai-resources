@@ -173,8 +173,9 @@ def _run(args: argparse.Namespace) -> int:
     ctx = types.SimpleNamespace(s=s, prev_s=prev_s, args=args, dry_run=dry_run, is_first=is_first, runner=None)
     runner = flow.Wizard(
         _build_steps(dry_run),
-        on_skip=lambda spec, title, reason: (ui.section(spec.number, TOTAL_STEPS, title), ui.info(reason)),
-        on_enter=lambda spec, w: ui.set_progress(spec.number, [s_.number for s_ in w.steps if s_.number < spec.number]),
+        on_skip=lambda spec, title, reason: (ui.mark_skipped(spec.number),
+                                             ui.section(spec.number, TOTAL_STEPS, title), ui.info(reason)),
+        on_enter=lambda spec, w: ui.set_progress(spec.number, [n for n in range(1, spec.number)]),
         snapshot=lambda: _snapshot_run(s),
         restore=lambda snap: _restore_run(s, snap),
         notify=lambda m: ui.warn(m.lstrip("! ")),
@@ -407,6 +408,7 @@ def _step_models(s: state.SetupState, args: argparse.Namespace, dry_run: bool = 
         return 0                                    # set by the flags (or saved) and not being changed
     if ui.is_non_interactive():
         return 0
+    ui.section(6, TOTAL_STEPS, "Models and roles - 6a Models")
     how = ui.select("How do you want to choose models?",
                     [ui.Choice("Use a kit profile (presets for every role)", value="profile"),
                      ui.Choice("Pick models from my accounts (live lists)", value="pick")],
@@ -1324,7 +1326,7 @@ def _note_newer_recommendation(saved: str, recommended: str, backend: str) -> No
 
 
 def _step6_profile(s: state.SetupState) -> int:
-    ui.section(6, TOTAL_STEPS, "Per-role model assignment")
+    ui.section(6, TOTAL_STEPS, "Models and roles - 6b Role assignment")
 
     available = profiles.list_profiles(mode="multi-model", backend=s.backend)
     if not available:
@@ -1455,7 +1457,7 @@ def _step6_profile(s: state.SetupState) -> int:
 
 def _step6_single_model_profile(s: state.SetupState) -> int:
     """Single-model: choose how kit subagents pick a Claude model (no gateway involved)."""
-    ui.section(6, TOTAL_STEPS, "Per-role model assignment")
+    ui.section(6, TOTAL_STEPS, "Models and roles - 6b Role assignment")
     available = profiles.list_profiles(mode="single-model")
     if not available:
         ui.info("No single-model profiles found — kit subagents inherit the session model.")
@@ -1586,6 +1588,8 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     if want and unwant:
         ui.error("--lanes and --no-lanes contradict each other")
         return 2
+    if want or unwant or preview:
+        ui.section(6, TOTAL_STEPS, "Models and roles - 6c Subscription lanes")
     if unwant and preview:
         ui.info("Dry run: lanes stay as they are; nothing was cleared or written.")
         return 0
