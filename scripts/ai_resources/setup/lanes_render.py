@@ -86,6 +86,9 @@ def validate_block(block: Any) -> list[str]:
                 problems.append(f"lanes.{key}.{role}: role is not lane-eligible")
             if key == "second" and role not in roles_policy.REPORT_ROLES:
                 problems.append(f"lanes.second.{role}: only report-contract roles take a second member")
+            elif key == "second" and role in roles_policy.CHECKER_ROLES:
+                problems.append(f"lanes.second.{role}: a checker role never takes a second member "
+                                "(its report directory cannot attribute a write before verify)")
             if not isinstance(cands, list) or not cands:
                 problems.append(f"lanes.{key}.{role}: must be a non-empty list")
                 continue
@@ -265,9 +268,70 @@ def render_doc(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: str,
     roles = {r: {"candidates": list((c or {}).get("candidates") or [])}
              for r, c in sorted((lanes.get("roles") or {}).items())}
     second = {r: list(c or []) for r, c in sorted((lanes.get("second") or {}).items())}
-    payload = {"mode": mode, "agents": agents, "roles": roles, "second": second}
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return {**payload, "digest": digest}
+    payload = {"mode": mode, "agents": agents, "roles": roles, "second": second,
+               "resolved": resolve_table(lanes, by_role, mode, acks, agents)}
+    return {**payload, "digest": doc_digest(payload)}
+
+
+def doc_digest(payload: Mapping[str, Any]) -> str:
+    """The digest of a `lanes.yaml` document: every key except `digest` itself (`lanes prepare` recomputes it)."""
+    body = {k: v for k, v in payload.items() if k != "digest"}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: str,
+                  acks: Mapping[str, Any] | None, agents: Mapping[str, Any]) -> dict[str, Any]:
+    """The resolver's choice per role, computed at setup / re-render time (ADR-0007 §1, OQ-4).
+
+    `roles.<role>`: `{lane, model, reason, fallbacks: [{lane, reason}]}`; `second.<role>`: `{lane, model,
+    reason}`; `blocked.<role>`: the reason a checker has no admissible lane. `fallbacks` are the other
+    candidates the resolver admits on their own, in declared order, plus `claude-code` for non-checker roles
+    (the off switch): the only lanes `lanes prepare --lane` accepts besides the resolved one. Agy agents are
+    held while the Antigravity section is not accepted. A resolver error is recorded, never raised.
+    """
+    held_ids = {aid for aid, a in agents.items()
+                if a.get("backend") != CLAUDE_CLI and not AGY_LANE_ADR_ACCEPTED}
+    usable = {aid: dict(a) for aid, a in agents.items() if aid not in held_ids}
+
+    def keep(refs: list[str]) -> list[str]:
+        return [r for r in refs if not (r.startswith("openclaw-agent:") and r.split(":", 1)[1] not in usable)]
+
+    candidates = {r: keep(list((c or {}).get("candidates") or [])) for r, c in (lanes.get("roles") or {}).items()}
+    second = {r: keep(list(c or [])) for r, c in (lanes.get("second") or {}).items()}
+    second = {r: c for r, c in second.items() if c}
+    caps = dict(lanes.get("pool_caps") or {})
+    kw = dict(acks=dict(acks or {}), pool_caps=caps, mode=mode)
+    try:
+        table = scoring_lanes.resolve_lanes(by_role, usable, candidates, second, **kw)
+        out: dict[str, Any] = {"roles": {}, "second": {}, "blocked": dict(sorted(table.blocked.items()))}
+        for role in sorted(candidates):
+            lane = table.roles.get(role)
+            if lane is None:
+                continue
+            why = "; ".join(w.text for w in table.why if w.role == role and not w.lane.startswith("second:"))
+            fallbacks: list[dict[str, str]] = []
+            for ref in candidates[role]:
+                if ref == lane.ref:
+                    continue
+                one = scoring_lanes.resolve_lanes(by_role, usable, {role: [ref]}, {}, **kw)
+                if role in one.blocked or one.roles.get(role) is None or one.roles[role].ref != ref:
+                    continue
+                fallbacks.append({"lane": ref, "reason": "admitted candidate, declared order: use only when "
+                                                         "the resolved lane is unavailable or capped"})
+            if role not in roles_policy.CHECKER_ROLES and lane.ref != CLAUDE_CODE and not any(
+                    f["lane"] == CLAUDE_CODE for f in fallbacks):
+                fallbacks.append({"lane": CLAUDE_CODE, "reason": "the off switch"})
+            out["roles"][role] = {"lane": lane.ref, "model": table.models.get(role, ""),
+                                  "reason": why or "single candidate", "fallbacks": fallbacks}
+        for role, lane in sorted(table.second.items()):
+            why = "; ".join(w.text for w in table.why if w.role == role and w.lane.startswith("second:"))
+            out["second"][role] = {"lane": lane.ref, "reason": why or "second member"}
+    except (scoring_lanes.LaneError, scoring_lanes.LaneConflict) as exc:
+        return {"error": str(exc), "roles": {}, "second": {}, "blocked": {}}
+    held = sorted(held_ids)
+    if held:
+        out["held"] = {aid: HELD_AGY_REASON for aid in held}
+    return out
 
 
 def dumps(doc: Mapping[str, Any]) -> str:

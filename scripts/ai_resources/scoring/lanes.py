@@ -262,6 +262,8 @@ def resolve_lanes(by_role: Mapping[str, Any],
     for role in second_candidates:
         if role not in roles_policy.REPORT_ROLES:
             raise LaneError(f"role {role}: only report-contract roles take a second member")
+        if role in roles_policy.CHECKER_ROLES:
+            raise LaneError(f"role {role}: a checker role never takes a second member")
 
     why: list[Why] = []
     roles_out: dict[str, Lane] = {}

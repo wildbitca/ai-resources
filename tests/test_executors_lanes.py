@@ -179,9 +179,10 @@ def test_fanout_artifact_marks_stale_with_backup_and_restores():
 
 def test_fanout_artifact_is_not_affected_for_alias_roles_or_without_lanes():
     s = _state()
-    lanes_render.sync_file(s)
+    by_role = {"implementer": {"model": "sonnet"}}
+    lanes_render.sync_file(s, by_role=by_role)       # the `resolved:` section depends on the role table
     change = model_fanout.Change({"anthropic:sonnet": ("claude-sonnet-5-5", "claude-sonnet-5-6")})
-    assert not _artifact(s, {"implementer": {"model": "sonnet"}}).affected(change, model_fanout.Ctx())
+    assert not _artifact(s, by_role).affected(change, model_fanout.Ctx())
     bare = _state(with_lanes=False)
     boom = _artifact(bare, {})
     boom._by_role = lambda: (_ for _ in ()).throw(AssertionError("read the role table with no lanes"))

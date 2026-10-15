@@ -637,6 +637,64 @@ def _tree(ctx: Ctx) -> Path:
     return Path(top)
 
 
+def _normalise_lane(lane: str) -> str:
+    return f"openclaw-agent:{lane}" if lane.startswith("kit-lane-") else lane
+
+
+def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
+    """Bind a prepare to the lane `lanes.yaml` resolved for the role (ADR-0007 §1, B1).
+
+    None when no `lanes.yaml` exists (lanes are not enabled: `--lane` is optional). When it exists, `--lane`
+    is mandatory and must be the resolved lane or one of its recorded fallbacks; the choice and its reason
+    are written to the ledger. The file's digest must match its content (an edited table is refused).
+    """
+    from .setup import lanes_render, state as setup_state
+    path = setup_state.lanes_path()
+    if not path.is_file():
+        if a.lane:
+            _normalise_lane(a.lane)
+        return None
+    try:
+        import yaml
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, ImportError, ValueError) as exc:
+        raise LaneCmdError(f"cannot read {path}: {exc}")
+    except Exception as exc:                                 # yaml.YAMLError
+        raise LaneCmdError(f"cannot parse {path}: {exc}")
+    if not isinstance(doc, dict) or doc.get("digest") != lanes_render.doc_digest(doc):
+        raise Refused([f"{path} does not match its digest: re-run `ai-resources setup --lanes`"])
+    resolved = doc.get("resolved")
+    if not isinstance(resolved, dict) or resolved.get("error"):
+        raise Refused([f"{path} carries no usable resolved table"
+                       f"{': ' + str(resolved.get('error')) if isinstance(resolved, dict) else ''}"])
+    if not a.lane:
+        raise Refused([f"{path} exists: --lane <claude-code|openclaw-agent:<id>> is required "
+                       f"(the lane `resolved:` names for role {role})"])
+    lane = _normalise_lane(a.lane)
+    blocked = (resolved.get("blocked") or {}).get(role)
+    if blocked:
+        raise Refused([f"role {role} is blocked: {blocked}"])
+    if a.second:
+        entry = (resolved.get("second") or {}).get(role)
+        if not entry:
+            raise Refused([f"role {role} has no resolved second member"])
+        fallbacks = []
+    else:
+        entry = (resolved.get("roles") or {}).get(role)
+        if not entry:                                        # a role the table does not name runs on claude-code
+            entry = {"lane": "claude-code", "reason": "role not in the table: claude-code"}
+        fallbacks = list(entry.get("fallbacks") or [])
+    if lane == entry.get("lane"):
+        return {"lane": lane, "source": "resolved", "reason": str(entry.get("reason", "")),
+                "digest": doc["digest"]}
+    for fb in fallbacks:
+        if fb.get("lane") == lane:
+            return {"lane": lane, "source": "fallback", "reason": str(fb.get("reason", "")),
+                    "digest": doc["digest"]}
+    raise Refused([f"lane {lane} is neither the resolved lane ({entry.get('lane')}) nor a recorded fallback "
+                   f"for role {role}"])
+
+
 def cmd_prepare(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
     step, role, contract = _check_id(a.step, "step id"), a.role, a.contract
     if not rp.lane_eligible(role):
@@ -657,6 +715,7 @@ def cmd_prepare(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
         raise LaneCmdError("--attempt starts at 1")
     if a.attempt > MAX_ATTEMPTS:
         raise Refused([f"attempt {a.attempt} exceeds the limit of {MAX_ATTEMPTS} attempts (ADR-0005 section 6)"])
+    binding = _lane_binding(role, a)
     family = rp.model_family(a.model)
     ledger = Ledger(ctx)
     entries = ledger.entries()
@@ -721,6 +780,8 @@ def cmd_prepare(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
     snap = snapshot(ctx, tree)
     data: dict[str, Any] = {"model": a.model, "family": family, "contract": contract, "scope": scope,
                             "base": snap["head"], "repo": str(tree)}
+    if binding is not None:
+        data["lane"] = binding
     wt = None
     if contract in (rp.SCOPE, rp.INTEGRATING):
         wt = create_worktree(ctx, _wt_name(role, step, ctx.run, iteration, a.attempt), snap["head"])
@@ -1180,6 +1241,10 @@ def _populate(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--role", required=True)
     p.add_argument("--contract", required=True, choices=list(rp.CONTRACTS))
     p.add_argument("--model", required=True, help="The model that will actually run the step")
+    p.add_argument("--lane", default="", help="The lane the step runs on: claude-code or the lane agent id "
+                                              "(required once lanes.yaml exists; must be the resolved lane "
+                                              "or a recorded fallback)")
+    p.add_argument("--second", action="store_true", help="The step is the optional second member of its role")
     p.add_argument("--attempt", type=int, default=1)
     p.add_argument("--reenter", action="store_true", help="Re-entering the step through on_concern_return_to")
     p.add_argument("--scope", nargs="*", default=[], help="write_scope paths (scope contract)")
