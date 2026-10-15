@@ -8,6 +8,8 @@ import sys
 from contextlib import contextmanager
 from typing import Any, Callable, Iterable, Sequence
 
+from .flow import BACK, Cancelled, GoBack  # noqa: F401  (re-exported)
+
 # --- optional deps with graceful degradation -------------------------------------
 try:
     from rich.console import Console
@@ -106,6 +108,8 @@ def banner(title: str, subtitle: str = "", version: str = "") -> None:
 
 
 def section(num: int, total: int, title: str) -> None:
+    global _LAST_SECTION
+    _LAST_SECTION = title
     if not _HAS_RICH:
         print(f"\n[{num}/{total}] {title}\n" + "-" * 65)
         return
@@ -217,6 +221,60 @@ def progress_bar(label: str, total: int = 100):
 
 
 # --- prompts (questionary wrappers) --------------------------------------------
+# Inside prompt_scope(wizard=True) Ctrl-C / EOF raises Cancelled instead of the
+# questionary default of returning None, which callers read as "No" or crash on.
+# Outside the scope the wrappers behave exactly as before (None on Ctrl-C).
+_WIZARD_SCOPE = False
+_LAST_SECTION = ""
+_DONE: list[str] = []
+
+
+@contextmanager
+def prompt_scope(wizard: bool = False):
+    global _WIZARD_SCOPE, _LAST_SECTION
+    prev, prev_sec = _WIZARD_SCOPE, _LAST_SECTION
+    _WIZARD_SCOPE = wizard
+    if wizard:
+        _LAST_SECTION = ""
+        _DONE.clear()
+    try:
+        yield
+    finally:
+        _WIZARD_SCOPE = prev
+        _LAST_SECTION = prev_sec
+
+
+def current_step() -> str:
+    return _LAST_SECTION
+
+
+def record_action(msg: str) -> None:
+    """Remember a side effect already performed, so a cancel can say what was done."""
+    _DONE.append(msg)
+
+
+def actions_done() -> list[str]:
+    return list(_DONE)
+
+
+def _ask(question: Any) -> Any:
+    if not _WIZARD_SCOPE:
+        return question.ask()
+    try:
+        return question.unsafe_ask()
+    except (KeyboardInterrupt, EOFError):
+        raise Cancelled(_LAST_SECTION) from None
+
+
+def _input(prompt: str) -> str:
+    if not _WIZARD_SCOPE:
+        return input(prompt)
+    try:
+        return input(prompt)
+    except (KeyboardInterrupt, EOFError):
+        raise Cancelled(_LAST_SECTION) from None
+
+
 _QSTYLE = Style([
     ("qmark",       "fg:#5fafff bold"),
     ("question",    "bold"),
@@ -244,15 +302,15 @@ def select(message: str, choices: list[Any], default: Any | None = None,
             label = c.title if hasattr(c, "title") else str(c)
             print(f"  {i+1}) {label}")
         while True:
-            raw = input(f"{message} [1-{len(choices)}]: ").strip()
+            raw = _input(f"{message} [1-{len(choices)}]: ").strip()
             try:
                 return choices[int(raw) - 1]
             except (ValueError, IndexError):
                 print("Invalid selection.")
-    return questionary.select(
+    return _ask(questionary.select(
         message, choices=choices, default=default,
         instruction=instruction or " (use ↑/↓, Enter)", style=_QSTYLE,
-    ).ask()
+    ))
 
 
 def checkbox(message: str, choices: list[Any], default: list[Any] | None = None,
@@ -264,7 +322,7 @@ def checkbox(message: str, choices: list[Any], default: list[Any] | None = None,
         for i, c in enumerate(choices):
             label = c.title if hasattr(c, "title") else str(c)
             print(f"  {i+1}) {label}")
-        raw = input("Comma-separated (e.g. 1,3): ").strip()
+        raw = _input("Comma-separated (e.g. 1,3): ").strip()
         out = []
         for tok in raw.split(","):
             try:
@@ -272,11 +330,11 @@ def checkbox(message: str, choices: list[Any], default: list[Any] | None = None,
             except (ValueError, IndexError):
                 pass
         return out
-    return questionary.checkbox(
+    return _ask(questionary.checkbox(
         message, choices=choices,
         instruction=instruction or " (space to toggle, Enter to confirm)",
         style=_QSTYLE,
-    ).ask()
+    ))
 
 
 def text(message: str, default: str = "", validate: Callable[[str], bool | str] | None = None) -> str:
@@ -286,14 +344,14 @@ def text(message: str, default: str = "", validate: Callable[[str], bool | str] 
         prompt = f"{message}"
         if default:
             prompt += f" [{default}]"
-        ans = input(f"{prompt}: ").strip() or default
+        ans = _input(f"{prompt}: ").strip() or default
         if validate:
             res = validate(ans)
             if res is not True and res is not None:
                 print(res if isinstance(res, str) else "Invalid")
                 return text(message, default, validate)
         return ans
-    return questionary.text(message, default=default, validate=validate, style=_QSTYLE).ask()
+    return _ask(questionary.text(message, default=default, validate=validate, style=_QSTYLE))
 
 
 def password(message: str, validate: Callable[[str], bool | str] | None = None) -> str:
@@ -307,8 +365,13 @@ def password(message: str, validate: Callable[[str], bool | str] | None = None) 
         )
     if not _HAS_QUESTIONARY:
         import getpass
-        return getpass.getpass(f"{message}: ")
-    return questionary.password(message, validate=validate, style=_QSTYLE).ask()
+        try:
+            return getpass.getpass(f"{message}: ")
+        except (KeyboardInterrupt, EOFError):
+            if _WIZARD_SCOPE:
+                raise Cancelled(_LAST_SECTION) from None
+            raise
+    return _ask(questionary.password(message, validate=validate, style=_QSTYLE))
 
 
 def confirm(message: str, default: bool = True) -> bool:
@@ -316,11 +379,11 @@ def confirm(message: str, default: bool = True) -> bool:
         return default
     if not _HAS_QUESTIONARY:
         suf = "Y/n" if default else "y/N"
-        ans = input(f"{message} [{suf}]: ").strip().lower()
+        ans = _input(f"{message} [{suf}]: ").strip().lower()
         if not ans:
             return default
         return ans in ("y", "yes", "s", "si", "sí")
-    return questionary.confirm(message, default=default, style=_QSTYLE).ask()
+    return _ask(questionary.confirm(message, default=default, style=_QSTYLE))
 
 
 def Choice(title: str, value: Any = None, disabled: str | None = None,
