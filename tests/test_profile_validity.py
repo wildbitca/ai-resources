@@ -163,3 +163,27 @@ def test_an_ungated_render_still_writes_measured_bests_foreign_ids_verbatim():
     model_of = {name: re.search(r"^model: (.*)$", text, re.M).group(1) for name, text in files.items()}
     assert model_of["explore"].startswith("google/")
     assert model_of["software-architect"].startswith("deepseek/")
+
+
+# --- every shipped profile is structurally valid ---------------------------------------------------------------
+
+import pathlib as _pathlib
+
+_ALL_PROFILES = sorted(p.stem for p in (_pathlib.Path(__file__).resolve().parents[1] / "profiles").glob("*.yaml"))
+
+
+@pytest.mark.parametrize("name", _ALL_PROFILES)
+def test_every_shipped_profile_is_valid(name):
+    doc = profiles.load_profile(name)
+    assert doc.get("mode", "multi-model") in ("single-model", "multi-model"), name
+    assert doc.get("description"), name
+    by_role = doc.get("by_role") or {}
+    assert by_role and set(by_role) <= set(profiles.KNOWN_ROLES), name
+    assert all((cfg or {}).get("model") for cfg in by_role.values()), name
+
+
+def test_every_single_model_profile_uses_claude_aliases_only():
+    for name in profiles.list_profiles(mode="single-model"):
+        doc = profiles.load_profile(name)
+        refs = [c["model"] for c in doc["by_role"].values()]
+        assert set(refs) <= {"haiku", "sonnet", "opus", "inherit"}, name

@@ -1,0 +1,54 @@
+name: subscription-claude-55
+mode: single-model
+description: |
+  Curated reference for a Claude subscription without a gateway: each kit subagent uses
+  a Claude alias. Haiku for read-only exploration, Sonnet for writers, tests, review,
+  docs and the planner, Opus for the architect, the security auditor and the verifier.
+
+  Checker independence by family: the verifier and the security auditor run on Opus and
+  no writer role (implementer, tester, doc-writer, the fixers, package-upgrade,
+  generalPurpose) runs on Opus, so a checker never shares a model family with the code it
+  checks. Fallbacks are inert in single-model mode; writers and checkers declare none, so
+  the independence cannot be crossed by a fallback.
+
+  Alias drift: an alias floats to the newest model of its family, so a family upgrade can
+  change which Sonnet or Opus runs without any kit change. Independence still holds
+  (families stay distinct), but the evidence behind this table (the 2026-10 study of the
+  5.5 models) may stop describing what runs.
+
+  Security-auditor caveat (Vals CyberBench): Opus 5.5 scores 74.6 when tagged CVP and
+  55.4 untagged; Sonnet 5.5 scores 59.6. The operator account holds no CVP tag, so the
+  untagged 55.4 is the conservative reference, and on that value Sonnet 5.5 is ahead.
+  The auditor stays on Opus to keep it off the writers' family.
+
+  Evidence label: INFERRED, medium to low confidence, curated from the 2026-10 study and
+  not score-derived. The planner is a statistical tie (Vals 67.04 vs 66.97); Sonnet was
+  chosen. Compose disagrees with this table; this profile is a reference, and
+  `balanced-claude-55` remains the recommended profile.
+
+classes:
+  opus:   opus
+  sonnet: sonnet
+  haiku:  haiku
+
+defaults:
+  fallbacks: []
+
+by_role:
+  explore:            { model: haiku, fallbacks: [sonnet] }
+  tester:             { model: sonnet, fallbacks: [haiku] }
+  doc-writer:         { model: sonnet }
+  package-upgrade:    { model: sonnet }
+  generalPurpose:     { model: sonnet }
+  implementer:        { model: sonnet }
+  crashlytics-fixer:           { model: sonnet }
+  sentry-fixer:                { model: sonnet }
+  terraform-maintainer:        { model: sonnet }
+  crossplane-upjet-maintainer: { model: sonnet }
+  code-reviewer:      { model: sonnet }
+  security-auditor:   { model: opus }
+  verifier:           { model: opus }
+  planner:            { model: sonnet, fallbacks: [opus] }
+  software-architect: { model: opus, fallbacks: [sonnet] }
+
+by_persona: {}

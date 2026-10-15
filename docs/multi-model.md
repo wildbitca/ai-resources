@@ -126,6 +126,7 @@ service, so `ai-resources daemon` has nothing to manage and says so.
 | `cost-optimized` | multi-model, either gateway | Aggressively biased toward Flash and Haiku. |
 | `claude-native` | single-model | Each role picks a Claude alias. No gateway. The default for single-model and for a Claude-only host with no gateway. |
 | `claude-inherit` | single-model | Every role inherits the session model. |
+| `subscription-claude-55` | single-model, no gateway | Curated reference for a Claude subscription: Claude aliases, Sonnet for writers, Opus for the verifier and security auditor so checkers never share a family with writers. Not recommended as the default; aliases float, so the evidence may drift. |
 
 Custom: pick `custom` in the wizard to override each role individually.
 
