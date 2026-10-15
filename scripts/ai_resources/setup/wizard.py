@@ -382,14 +382,29 @@ def _ask_missing_keys(s: state.SetupState, accounts: dict, dry_run: bool) -> dic
 
 
 def _saved_defaults(cands: list, saved: Any) -> list:
-    """The candidates of `cands` that the saved selection already holds (same slot and model, else same slot)."""
+    """The candidates of `cands` that the saved selection already holds.
+
+    Per slot the exact saved model wins; only when that model is no longer listed does the first stable
+    candidate of the same slot stand in. A preview is never pre-checked."""
     slots = getattr(saved, "slots", None) or {}
-    out = []
+    by_slot: dict[str, list] = {}
     for c in cands:
-        slot = slots.get(c.slot)
-        if slot is not None and getattr(slot, "model", c.ref) in (c.ref, c.id):
-            out.append(c)
-    return out
+        by_slot.setdefault(c.slot, []).append(c)
+    out = []
+    for slot, group in by_slot.items():
+        held = slots.get(slot)
+        if held is None:
+            continue
+        ref = getattr(held, "ref", "")
+        exact = [c for c in group if c.ref == ref and c.channel == "stable"]
+        if exact:
+            out.append(exact[0])
+            continue
+        stable = [c for c in group if c.channel == "stable"]
+        if stable:
+            out.append(stable[0])
+    order = {id(c): i for i, c in enumerate(cands)}
+    return sorted(out, key=lambda c: order[id(c)])
 
 
 def _pick_candidates(shape: str, cands: dict[str, list], saved: Any = None) -> list | None:

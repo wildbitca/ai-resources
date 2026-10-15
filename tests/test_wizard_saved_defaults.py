@@ -149,3 +149,37 @@ def test_saved_lane_orchestrators_are_reused_without_asking_again(monkeypatch):
     except Exception:  # noqa: BLE001
         pass
     assert not any("Orchestrator agent id" in m for m in seen)
+
+
+# --- several candidates in one family ------------------------------------------------------------------
+def _family_cands():
+    mk = ms.Candidate
+    return {"anthropic": [mk("anthropic", "opus", "claude-opus-5"), mk("anthropic", "opus", "claude-opus-4"),
+                          mk("anthropic", "opus", "claude-opus-6-beta", channel="preview")]}
+
+
+def _saved_ref(ref):
+    return sel.Selection(shape=ms.SHAPE_SINGLE, providers={"anthropic": sel.ProviderSel()},
+                         slots={"anthropic:opus": sel.SlotSel(ref)}, primary="anthropic:opus")
+
+
+def test_only_the_exact_saved_model_of_a_family_is_pre_checked():
+    held = wizard._saved_defaults(_family_cands()["anthropic"], _saved_ref("anthropic/claude-opus-4"))
+    assert [c.id for c in held] == ["claude-opus-4"]
+
+
+def test_a_saved_model_missing_from_the_list_falls_back_to_one_stable_model_of_its_slot():
+    held = wizard._saved_defaults(_family_cands()["anthropic"], _saved_ref("anthropic/claude-opus-3"))
+    assert [c.id for c in held] == ["claude-opus-5"]
+
+
+def test_a_preview_is_never_pre_checked(monkeypatch):
+    held = wizard._saved_defaults(_family_cands()["anthropic"], _saved_ref("anthropic/claude-opus-6-beta"))
+    assert [c.id for c in held] == ["claude-opus-5"]
+
+
+def test_single_shape_defaults_to_the_saved_model_not_the_first_one(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ui, "select", lambda msg, choices, default=None, **k: seen.append(default) or default)
+    wizard._pick_candidates(ms.SHAPE_SINGLE, _family_cands(), _saved_ref("anthropic/claude-opus-4"))
+    assert seen[-1].id == "claude-opus-4"
