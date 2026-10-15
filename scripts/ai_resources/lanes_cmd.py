@@ -48,6 +48,7 @@ KIT_IDENT = ["-c", "user.name=ai-resources lanes", "-c", "user.email=lanes@ai-re
 HANDOFF_FILES = ("handoff.md", ".agent-output/handoff.md")
 HUMAN_COPY_SUFFIX = ".lane-verify.json"      # the kit's own human copy of a verify result: no authority
 EXIT_OK, EXIT_FAIL, EXIT_USAGE, EXIT_BLOCKED = 0, 1, 2, 3
+VOLATILE_ROOTS = ("/tmp", "/dev/shm", "/var/tmp")
 VERDICT_RE = re.compile(r"^[ \t>*_-]*\**Verdict\**[ \t]*:[ \t]*\**[ \t]*(PASS|FAIL|REQUIRES_CHANGES)\b", re.M)
 
 
@@ -96,6 +97,11 @@ class Ctx:
 
 def state_root() -> Path:
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    norm = os.path.normpath(os.path.abspath(base))
+    for volatile in VOLATILE_ROOTS:
+        if norm == volatile or norm.startswith(volatile + "/"):
+            raise LaneCmdError(f"the lanes state directory never lives under {volatile} "
+                               f"(tmpfs, emptied on reboot): {norm}")
     return Path(base) / "ai-resources" / "lanes"
 
 
@@ -661,6 +667,12 @@ def cmd_prepare(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
     if any(e["kind"] == "prepare" and e["step"] == step and e["iteration"] == iteration
            and e["attempt"] == a.attempt for e in entries):
         raise Refused([f"step {step} attempt {a.attempt} already prepared in iteration {iteration}"])
+    if contract == rp.INTEGRATING:
+        others = sorted({e["role"] for e in entries if e["kind"] == "prepare"
+                         and e["data"].get("contract") == rp.INTEGRATING and e["role"] != role})
+        if others:
+            raise Refused([f"this run already has an integrating writer ({', '.join(others)}): "
+                           f"one integrating writer per run, not {role}"])
     other_roles = _roles_of(entries, step) - {role}
     if other_roles:
         raise Refused([f"step {step} was already prepared as role {sorted(other_roles)}"])
@@ -941,9 +953,9 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
 
     if role == "verifier":
         subject = a.subject or ""
-        m = re.match(r"^([A-Za-z0-9][A-Za-z0-9_-]*)@([0-9a-f]{7,64})$", subject)
+        m = re.match(r"^([A-Za-z0-9][A-Za-z0-9_-]*)@([0-9a-f]{40}|[0-9a-f]{64})$", subject)
         if not m:
-            reasons.append("a verifier verify needs --subject <step-id>@<sha>")
+            reasons.append("a verifier verify needs --subject <step-id>@<full commit sha> (40 or 64 hex, no abbreviation)")
         else:
             report = a.report or f".agent-output/{role}/{step}.md"
             if not own_report.match(report) or ".." in report.split("/"):
@@ -1106,17 +1118,23 @@ def cmd_land(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
         entry = ledger.append("land", step, role=prep["role"], iteration=iteration, attempt=prep["attempt"],
                               data={"result": "LANDED", "tip": tip, "from_head": head, "head": new_head})
         removed: list[str] = []
+        warnings: list[str] = []
         try:
             fresh = ledger.entries()
             removed += _remove_recorded(ctx, ledger, fresh, step, keep_seq=None)
             for e in fresh:
                 if e["kind"] == "integrate" and e["step"] == step and e["iteration"] == iteration:
                     removed += _remove_recorded(ctx, ledger, ledger.entries(), e["data"]["from"])
-        except LaneCmdError as exc:
-            reasons = [f"cleanup: {exc}"]
+        except (LaneCmdError, OSError) as exc:
+            warnings.append(f"cleanup after land failed, a worktree may be left behind: {exc}")
+            ledger.append("cleanup-failed", step, role=prep["role"], iteration=iteration, attempt=prep["attempt"],
+                          data={"error": str(exc)})
         final = ledger.entries()[-1]
-        return EXIT_OK, _out(final, ledger, {"result": "LANDED", "tip": tip, "head": new_head,
-                                             "removed": removed, "snapshot_digest": entry["record_sha256"] or ""})
+        res = {"result": "LANDED", "tip": tip, "head": new_head, "removed": removed,
+               "snapshot_digest": entry["record_sha256"] or ""}
+        if warnings:
+            res["warnings"] = warnings
+        return EXIT_OK, _out(final, ledger, res)
 
 
 def cmd_count(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:

@@ -236,6 +236,25 @@ def test_verify_capability_is_static(entry, mode, source):
     assert cap["main"]["mode"] == mode and cap["main"]["source"] == source
 
 
+CLI = {"primary": "claude-cli/claude-sonnet-5-5"}
+
+
+@pytest.mark.parametrize("tools", [
+    {"exec": {"mode": "deny"}}, {"exec": {"mode": "off"}}, {"deny": ["exec"]},
+    {"deny": ["mcp__openclaw__exec"]}, {"deny": ["group:runtime"]},
+])
+def test_an_explicit_exec_deny_beats_the_claude_cli_isolated_evidence(tools):
+    entry = {"model": CLI, "tools": tools}
+    cap = openclaw_lanes.verify_capability({"agents": {"entries": {"main": entry}}}, ["main"])
+    assert cap["main"] == {"mode": "none", "source": "static-config", "evidence_ref": ""}
+
+
+def test_no_explicit_grant_or_deny_keeps_exec_by_isolated_evidence():
+    entry = {"model": CLI, "tools": {"deny": ["bundle-mcp"]}}
+    cap = openclaw_lanes.verify_capability({"agents": {"entries": {"main": entry}}}, ["main"])
+    assert cap["main"]["mode"] == "exec" and cap["main"]["source"] == "isolated-evidence"
+
+
 def test_setup_records_capability_and_never_spawns_or_calls_the_gateway(host):
     s = _s()
     _run(s, host)

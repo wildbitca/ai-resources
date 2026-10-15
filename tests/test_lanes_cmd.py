@@ -1182,3 +1182,38 @@ def test_a_ledger_entry_without_a_record_hash_is_refused_closed(env):
     with pytest.raises(lanes_cmd.Refused):
         lanes_cmd.Ledger(lanes_cmd.Ctx(env.runner, env.repo, RUN, env.state / "ai-resources" / "lanes")) \
             .load_record(entry)
+
+
+def test_a_second_integrating_writer_role_is_refused_in_one_run(env):
+    rc, _ = env.prepare("impl", "implementer", "integrating")
+    assert rc == 0
+    rc, out = env.prepare("impl2", "generalPurpose", "integrating")
+    assert rc == 1 and any("integrating writer" in r for r in out["reasons"]), out
+
+
+def test_an_abbreviated_subject_sha_is_refused_with_a_clear_reason(env):
+    f = Flow(env)
+    f.scope(verifier=False)
+    rc, prep = env.prepare("verify-tests", "verifier", "report", OPUS)
+    env.report("verifier", "verify-tests", "PASS")
+    rc, out = env.verify("verify-tests", prep, subject=f"tests@{f.stip[:8]}")
+    assert rc == 1 and any("full commit sha" in r for r in out["reasons"]), out
+
+
+@pytest.mark.parametrize("base", ["/tmp/x-state", "/dev/shm/s", "/tmp"])
+def test_state_root_refuses_a_volatile_xdg_state_home(monkeypatch, base):
+    monkeypatch.setenv("XDG_STATE_HOME", base)
+    with pytest.raises(lanes_cmd.LaneCmdError, match="never lives under"):
+        lanes_cmd.state_root()
+
+
+def test_a_cleanup_failure_after_land_is_reported_and_recorded(env, monkeypatch):
+    f = land_ready(env)
+
+    def boom(ctx, wid):
+        raise lanes_cmd.LaneCmdError("remove exploded")
+    monkeypatch.setattr(lanes_cmd, "remove_worktree", boom)
+    rc, out = env.land("impl", f.iprep, 1)
+    assert rc == 0 and out["result"] == "LANDED", out
+    assert any("remove exploded" in w for w in out["warnings"]), out
+    assert any(e["kind"] == "cleanup-failed" for e in env.ledger_entries(env.state))

@@ -24,6 +24,7 @@ PREFIX = "kit-lane-"
 CLAUDE_CLI = "claude-cli"
 KIT_LANES_DIR = "kit-lanes"
 _EXEC_OFF = {"", "off", "deny", "none", "disabled"}
+_EXEC_DENY_TOKENS = {"exec", "mcp__openclaw__exec", "group:runtime"}
 
 
 class LanesWriteError(RuntimeError):
@@ -66,7 +67,12 @@ def verify_capability(doc: Mapping[str, Any], orchestrators: Iterable[str]) -> d
         entry = entry if isinstance(entry, Mapping) else {}
         mode = _get(entry, "tools", "exec", "mode")
         allow = list(_get(entry, "tools", "allow") or []) + list(_get(entry, "tools", "alsoAllow") or [])
-        if any(isinstance(a, str) and "lanes" in a for a in allow):
+        deny = [d for d in (_get(entry, "tools", "deny") or []) if isinstance(d, str)]
+        exec_denied = ((isinstance(mode, str) and mode.lower() in _EXEC_OFF and mode != "")
+                       or any(d.lower() in _EXEC_DENY_TOKENS for d in deny))
+        if exec_denied:                     # an explicit deny is never overridden by the isolated evidence
+            out[orch] = {"mode": "none", "source": "static-config", "evidence_ref": ""}
+        elif any(isinstance(a, str) and "lanes" in a for a in allow):
             out[orch] = {"mode": "plugin-tool", "source": "static-config", "evidence_ref": ""}
         elif isinstance(mode, str) and mode.lower() not in _EXEC_OFF:
             out[orch] = {"mode": "exec", "source": "static-config", "evidence_ref": ""}
