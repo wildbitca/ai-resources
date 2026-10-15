@@ -55,3 +55,40 @@ def make_input(db, *, mode="mixed", enabled=("anthropic", "google", "openai"), a
     gate = gate_mod.make_gate(db, cockpit="claude", mode_key=mode_key, allow_unverified=allow_unverified)
     return ComposeInput(db=db, mode=mode, enabled=tuple(enabled), as_of=as_of, gate=gate,
                         allow_unverified=allow_unverified, roles=tuple(roles), **kw)
+
+
+# -- lanes (ADR-0007): inputs for `scoring.lanes.resolve_lanes` --------------------------------------------
+
+def lane_by_role() -> dict:
+    """The `subscription-claude-55` by_role table in alias form (single-model mode)."""
+    return {
+        "explore": {"model": "haiku", "fallbacks": ["sonnet"]},
+        "tester": {"model": "sonnet", "fallbacks": ["haiku"]},
+        "doc-writer": {"model": "sonnet"},
+        "package-upgrade": {"model": "sonnet"},
+        "generalPurpose": {"model": "sonnet"},
+        "implementer": {"model": "sonnet"},
+        "crashlytics-fixer": {"model": "sonnet"},
+        "sentry-fixer": {"model": "sonnet"},
+        "terraform-maintainer": {"model": "sonnet"},
+        "crossplane-upjet-maintainer": {"model": "sonnet"},
+        "code-reviewer": {"model": "sonnet"},
+        "security-auditor": {"model": "opus"},
+        "verifier": {"model": "opus"},
+        "planner": {"model": "sonnet", "fallbacks": ["opus"]},
+        "software-architect": {"model": "opus", "fallbacks": ["sonnet"]},
+    }
+
+
+def lane_usage_verdicts(db=None) -> dict:
+    """`gate.usage_gate` verdicts keyed by pool id, from the shipped (or a fixture) database."""
+    from ai_resources.scoring import gate as gate_mod
+    db = db or scores_db.ScoresDB(shipped_copy())
+    return {p["id"]: gate_mod.usage_gate(db, "", p["id"])
+            for p in db.pools if p["id"] in ("claude-subscription", "agy-claude-gpt", "agy-gemini")}
+
+
+ALL_ROLES = tuple(lane_by_role())
+OPEN_ACKS = {"anthropic": {"roles": list(ALL_ROLES), "text_sha256": "a" * 64},
+             "google": {"roles": list(ALL_ROLES), "text_sha256": "b" * 64}}
+OPEN_GATES = {"antigravity_flag": True, "adr_0007_agy_accepted": True}
