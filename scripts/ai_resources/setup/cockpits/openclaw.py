@@ -1938,6 +1938,10 @@ def verify(ctx: dict) -> list:
                 out.append(F("warn", ID, f"agent {aid} spells its model as a string ({raw}); the short form is legal "
                              "and the kit reads both",
                              f"openclaw config set agents.entries.{aid}.model.primary {raw}"))
+        lanes = s.profile.lanes
+        if state.lanes_enabled(s) and isinstance(lanes, dict):
+            for msg in openclaw_lanes.mcp_scope_findings(lanes, doc):
+                out.append(F("warn", ID, msg, "re-run `ai-resources setup --lanes` (never edit openclaw.json by hand)"))
         bindings = doc.get("bindings")
         if isinstance(bindings, list) and any(_is_catch_all(b) for b in bindings):
             if _is_catch_all(bindings[-1]):

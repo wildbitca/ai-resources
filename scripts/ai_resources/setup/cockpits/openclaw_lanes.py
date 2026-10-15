@@ -14,6 +14,7 @@ static config. Teardown removes only what `OpenClawState.lanes_applied` records.
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -87,8 +88,49 @@ def _catalog_entry(agent: Mapping[str, Any]) -> dict[str, Any] | None:
     return None      # an agy catalog stub is phase 3 and not written here
 
 
+BUNDLE_MCP = "bundle-mcp"
+_SAFE_RE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def safe_server_name(raw: str) -> str:
+    """OpenClaw's model-facing server name (`sanitizeServerName`): unsafe chars -> `-`, a letter first, <= 30."""
+    base = _SAFE_RE.sub("-", raw.strip()) or "mcp"
+    if not re.match(r"[A-Za-z]", base):
+        base = f"mcp-{base}"
+    return base[:30]
+
+
+def mcp_deny(agent: Mapping[str, Any], doc: Mapping[str, Any]) -> list[str]:
+    """The `tools.deny` tokens that scope a lane agent's MCP servers (docs: whole-server denials exclude the
+    server before it is spawned). Default: `bundle-mcp` (every bundled/configured server). With an explicit
+    per-role opt-in (`mcp_servers`), the configured servers outside it are denied by name instead."""
+    keep = {str(n) for n in (agent.get("mcp_servers") or []) if isinstance(n, str)}
+    if not keep:
+        return [BUNDLE_MCP]
+    configured = _get(doc, "mcp", "servers") or {}
+    names = sorted({safe_server_name(n) for n in configured if isinstance(n, str) and n not in keep})
+    return [f"{n}__*" for n in names]
+
+
+def mcp_scope_findings(lanes: Mapping[str, Any], doc: Mapping[str, Any]) -> list[str]:
+    """One message per kit lane agent present in `doc` whose `tools.deny` lacks the scoping tokens."""
+    entries = _get(doc, "agents", "entries") or {}
+    out: list[str] = []
+    for aid in kit_agent_ids(lanes):
+        entry = entries.get(aid) if isinstance(entries, Mapping) else None
+        if not isinstance(entry, Mapping):
+            continue
+        have = list(_get(entry, "tools", "deny") or [])
+        missing = [t for t in mcp_deny(lanes["agents"][aid], doc) if t not in have]
+        if missing:
+            out.append(f"lane agent {aid} is not MCP-scoped (tools.deny lacks {', '.join(missing)}): it inherits "
+                       "every configured MCP server")
+    return out
+
+
 def build_patch(lanes: Mapping[str, Any], doc: Mapping[str, Any], workspaces: Mapping[str, Path], *,
-                ids: Iterable[str] | None = None) -> dict[str, Any]:
+                ids: Iterable[str] | None = None,
+                mcp_prev: Mapping[str, Iterable[str]] | None = None) -> dict[str, Any]:
     """The fill-only lanes patch for `doc`. Empty when nothing is missing.
 
     Entries are only added for ids absent from the config; the catalog only for refs absent from
@@ -108,6 +150,17 @@ def build_patch(lanes: Mapping[str, Any], doc: Mapping[str, Any], workspaces: Ma
         ref = agents[aid].get("model", "")
         if cat is not None and ref and ref not in catalog:
             patch.setdefault("agents", {}).setdefault("defaults", {}).setdefault("models", {})[ref] = cat
+        # MCP scoping (V7): kit-owned tokens in tools.deny; operator tokens are kept, stale kit tokens dropped.
+        existing = entries.get(aid) if isinstance(entries, Mapping) else None
+        current = list(_get(existing or {}, "tools", "deny") or [])
+        desired = mcp_deny(agents[aid], doc)
+        prev = set((mcp_prev or {}).get(aid) or [])
+        stale = [t for t in current if t in prev and t not in desired]
+        missing = [t for t in desired if t not in current]
+        if stale or missing:
+            merged = [t for t in current if t not in stale] + missing
+            ent = patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})
+            ent.setdefault("tools", {})["deny"] = merged if merged or not stale else None
     for orch in sorted(set(lanes.get("orchestrators") or [])):
         entry = entries.get(orch) if isinstance(entries, Mapping) else None
         if not isinstance(entry, Mapping):
@@ -140,6 +193,15 @@ def restore_fragment(applied: Mapping[str, Any], doc: Mapping[str, Any]) -> tupl
         value: Any = kept if (kept or orch not in absent) else None
         patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(orch, {}) \
             .setdefault("subagents", {})["allowAgents"] = value
+    for aid, tokens in sorted((applied.get("mcp_deny_added") or {}).items()):
+        entry = entries.get(aid) if isinstance(entries, Mapping) else None
+        if not isinstance(entry, Mapping):
+            continue
+        live = list(_get(entry, "tools", "deny") or [])
+        kept = [x for x in live if x not in set(tokens)]
+        if kept != live:
+            patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {}) \
+                .setdefault("tools", {})["deny"] = kept or None
     catalog = _get(doc, "agents", "defaults", "models") or {}
     removed = [ref for ref in applied.get("catalog_added") or [] if ref in catalog]
     for ref in removed:
@@ -179,7 +241,8 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
         error(str(e))
         return False
     workspaces = {i: root / i for i in ids}
-    patch = build_patch(lanes, doc, workspaces)
+    mcp_prev = (o.lanes_applied or {}).get("mcp_deny_added") or {}
+    patch = build_patch(lanes, doc, workspaces, mcp_prev=mcp_prev)
     lanes["verify_capability"] = verify_capability(doc, lanes.get("orchestrators") or [])
     if dry_run:
         info("Subscription lanes (dry run): " + (", ".join(sorted(_leaf_paths(patch))) or "no change"))
@@ -226,7 +289,7 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     ents = doc2.setdefault("agents", {}).setdefault("entries", {})
     for aid in ready:
         ents.setdefault(aid, {})
-    patch2 = build_patch(lanes, doc2, workspaces, ids=ready)
+    patch2 = build_patch(lanes, doc2, workspaces, ids=ready, mcp_prev=mcp_prev)
     changed = bool(new_ids and created)
     if patch2:
         ok, out = apply_patch(patch2)
@@ -249,6 +312,19 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
                 added[orch] = sorted(set(added.get(orch, [])) | set(new))
             applied["allow_agents_added"] = added
             applied["allow_agents_absent"] = sorted(absent)
+            scoped = dict(applied.get("mcp_deny_added") or {})
+            for aid, ent in ((patch2.get("agents") or {}).get("entries") or {}).items():
+                if aid not in ready or "tools" not in ent:
+                    continue
+                live = set(_get(entries.get(aid) or {}, "tools", "deny") or [])
+                new = [t for t in (ent["tools"].get("deny") or []) if t not in live]
+                kept = [t for t in scoped.get(aid, []) if t in (ent["tools"].get("deny") or [])]
+                merged = sorted(set(kept) | set(new))
+                if merged:
+                    scoped[aid] = merged
+                else:
+                    scoped.pop(aid, None)
+            applied["mcp_deny_added"] = scoped
             cat = sorted(set(applied.get("catalog_added") or [])
                          | set(((patch2.get("agents") or {}).get("defaults") or {}).get("models") or {}))
             applied["catalog_added"] = cat

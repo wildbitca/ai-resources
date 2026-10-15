@@ -70,8 +70,8 @@ def validate_block(block: Any) -> list[str]:
         return ["lanes: must be a mapping"]
     problems: list[str] = []
     for key in block:
-        if key not in ("roles", "second"):
-            problems.append(f"lanes.{key}: unknown key (expected roles, second)")
+        if key not in ("roles", "second", "mcp"):
+            problems.append(f"lanes.{key}: unknown key (expected roles, second, mcp)")
     for key in ("roles", "second"):
         section = block.get(key) or {}
         if not isinstance(section, Mapping):
@@ -91,6 +91,17 @@ def validate_block(block: Any) -> list[str]:
                                     "(expected claude-code, claude-cli:<model> or agy:<model>)")
                 elif c.startswith(AGENT_PREFIX) or c.startswith("openclaw-agent:"):
                     problems.append(f"lanes.{key}.{role}: a profile never names an agent id ({c!r})")
+    mcp = block.get("mcp")
+    if mcp is not None:
+        if not isinstance(mcp, Mapping):
+            problems.append("lanes.mcp: must be a mapping of role -> list of MCP server names")
+        else:
+            known = set(block.get("roles") or {}) | set(block.get("second") or {})
+            for role, names in mcp.items():
+                if role not in known:
+                    problems.append(f"lanes.mcp.{role}: role is not named under lanes.roles or lanes.second")
+                if not isinstance(names, list) or not all(isinstance(n, str) and n for n in names):
+                    problems.append(f"lanes.mcp.{role}: must be a list of MCP server names")
     return problems
 
 
@@ -133,6 +144,17 @@ def state_from_block(block: Mapping[str, Any] | None, *, claude_ids: Mapping[str
     second = {r: [lane_ref(c) for c in cands]
               for r, cands in sorted(((block or {}).get("second") or {}).items())}
     out: dict[str, Any] = {"agents": dict(sorted(agents.items())), "roles": roles, "second": second}
+    # Explicit per-role opt-in for extra MCP servers (ADR-0007 OQ-5). Lane agents are MCP-scoped by default;
+    # an agent serving several roles gets the union of their opt-ins.
+    mcp = {r: sorted({str(n) for n in names}) for r, names in sorted(((block or {}).get("mcp") or {}).items())}
+    if mcp:
+        for role, names in mcp.items():
+            refs = list((roles.get(role) or {}).get("candidates") or []) + list(second.get(role) or [])
+            for ref in refs:
+                aid = ref.split(":", 1)[1] if ref.startswith("openclaw-agent:") else None
+                if aid in agents:
+                    agents[aid]["mcp_servers"] = sorted(set(agents[aid].get("mcp_servers") or []) | set(names))
+        out["mcp"] = mcp
     return out
 
 
@@ -170,6 +192,9 @@ def explain_lanes(lanes: Mapping[str, Any] | None) -> dict[str, str] | None:
         out[role] = " > ".join((cfg or {}).get("candidates") or []) or "-"
     for role, cands in sorted((lanes.get("second") or {}).items()):
         out[role] = f"{out.get(role, '-')} + second {' > '.join(cands or [])}"
+    for role, names in sorted((lanes.get("mcp") or {}).items()):
+        if names:
+            out[role] = f"{out.get(role, '-')} [mcp: {', '.join(names)}]"
     return out
 
 
