@@ -11,6 +11,21 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Added
 
+- **Resolved lane per role in `lanes.yaml` (ADR-0007 §1).** The file carries a `resolved:` section computed at setup
+  and at the `models update` re-render: per role the lane, model, reason and ordered fallbacks, plus `second` and
+  `blocked`. The digest now covers every key. SKILL.md tells the orchestrator to dispatch `resolved:`.
+- **`lanes prepare --lane` is mandatory whenever `lanes.yaml` exists.** It must be the resolved lane or a recorded
+  fallback and the choice is written to the ledger; a hand-edited table fails its digest. Existing phase-2 installs
+  and workflows that call `lanes prepare` must pass `--lane <claude-code|kit-lane-id>`; without `lanes.yaml` it is
+  optional and nothing changes.
+- **Agy lane candidates are held** while the Antigravity lane is not accepted (`AGY_LANE_ADR_ACCEPTED`): they are
+  dropped with a visible reason, and the OpenClaw writer only writes `WRITABLE_BACKENDS` (`claude-cli`).
+  `agy-cli-lane/<slug>` refs now map to a model family and pool.
+- **Hardening of the lanes commands.** A checker role never takes a `second` member; `lanes verify` needs a full
+  `--subject` sha; the lanes state directory refuses a tmpfs root (`/tmp`, `/dev/shm`, `/var/tmp`); an explicit exec
+  deny on an orchestrator records `verify_capability: none`; a second integrating writer role in one run is refused;
+  a cleanup failure after `lanes land` is reported and recorded.
+
 - **MCP scoping for `kit-lane-*` agents (ADR-0007 OQ-5).** Lane agents are written with `tools.deny: ["bundle-mcp"]`
   by default, so a claude-cli lane child is expected to stop loading every server in OpenClaw's `mcp.servers` (supabase/engram
   process accumulation on the gateway; the effect is proven only by the isolated merge gate). In opt-in mode
