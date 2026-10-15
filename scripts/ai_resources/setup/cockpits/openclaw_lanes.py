@@ -19,7 +19,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from .. import state
+from .. import state, ui
 
 PREFIX = "kit-lane-"
 CLAUDE_CLI = "claude-cli"
@@ -303,7 +303,7 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     if patch:
         ok, out = apply_patch(patch, dry_run=True)
         if not ok:
-            error(f"OpenClaw rejected the lanes patch: {out[-300:]}")
+            error(f"OpenClaw rejected the lanes patch: {ui.safe_text(out[-300:])}")
             return False
         restart = classify(patch)
         if restart:
@@ -329,7 +329,7 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
         elif status == "existing":
             ready.append(aid)
         else:
-            error(f"could not add lane agent {aid}: {status}")
+            error(f"could not add lane agent {aid}: {ui.safe_text(status)}")
             if not existed:
                 try:
                     ws.rmdir()
@@ -345,7 +345,7 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     if patch2:
         ok, out = apply_patch(patch2)
         if not ok:
-            error(f"OpenClaw rejected the lanes patch: {out[-300:]}")
+            error(f"OpenClaw rejected the lanes patch: {ui.safe_text(out[-300:])}")
         else:
             changed = True
             records = change_records(dict(doc2), patch2, None, "lanes")
@@ -439,7 +439,7 @@ def teardown(s: "state.SetupState", doc: Mapping[str, Any], *,
     if frag:
         ok, out = apply_patch(frag)
         if not ok:
-            error(f"OpenClaw lanes teardown failed: {out[-300:]}")
+            error(f"OpenClaw lanes teardown failed: {ui.safe_text(out[-300:])}")
             return False
     remaining_ids: list[str] = []
     for aid in applied.get("created_agent_ids") or []:
@@ -450,7 +450,7 @@ def teardown(s: "state.SetupState", doc: Mapping[str, Any], *,
             continue
         rc, out = oc(["agents", "delete", aid, "--force"])
         if rc != 0:
-            error(f"could not delete lane agent {aid}: {out[-200:]}")
+            error(f"could not delete lane agent {aid}: {ui.safe_text(out[-200:])}")
             remaining_ids.append(aid)
     import shutil
     rm = remove_dir or (lambda p: shutil.rmtree(p, ignore_errors=True))

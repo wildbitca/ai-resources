@@ -570,7 +570,7 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
     ok, out = apply_patch(built["patch"], dry_run=True, replace_paths=built["replace_paths"])
     if not ok:
         # Fail closed: a rejected dry run stops here. There is no per-key fallback.
-        ui.error(f"OpenClaw rejected the config patch in a dry run; nothing was applied: {out[-400:]}")
+        ui.error(f"OpenClaw rejected the config patch in a dry run; nothing was applied: {ui.safe_text(out[-400:])}")
         return reverted
     restart = rr.restart_paths(built["patch"], ruleset=ruleset, reload_mode=mode)
     hot_patch, restart_patch = rr.split_patch(built["patch"], restart)
@@ -588,7 +588,7 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
                                   "OpenClaw validated it with --dry-run."):
         ok, out = apply_patch(hot_patch, replace_paths=hot_rp)
         if not ok:
-            ui.error(f"OpenClaw rejected the config patch: {out[-400:]}")
+            ui.error(f"OpenClaw rejected the config patch: {ui.safe_text(out[-400:])}")
         else:
             _record_changes(o, hot_changes, run_changes)
             applied = True
@@ -870,7 +870,7 @@ def start_config_watch(s: state.SetupState, run_changes: list[dict], *, config_p
             state.save(s)
         except state.StateCorrupt:
             pass
-        ui.warn(f"post-setup watch not started: {out.strip()[-160:] or 'systemd-run failed'}; run "
+        ui.warn(f"post-setup watch not started: {ui.safe_text(out.strip()[-160:]) or 'systemd-run failed'}; run "
                 "`ai-resources openclaw status` in 10 minutes")
         return False
     ui.info(f"Post-setup watch started ({unit}): if `openclaw health` stops answering for 5 minutes and the "
@@ -925,7 +925,7 @@ def _configure_workboard(o: state.OpenClawState, doc: dict, *, dry_run: bool,
         return False
     rc, out = oc(["plugins", "enable", "workboard"])
     if rc != 0:
-        ui.error(f"Could not enable the workboard plugin: {out[-300:]}")
+        ui.error(f"Could not enable the workboard plugin: {ui.safe_text(out[-300:])}")
         return False
     o.host_workboard_applied = "enabled-by-kit"
     ui.ok("workboard plugin enabled")
@@ -961,7 +961,7 @@ def _configure_bindings(o: state.OpenClawState, doc: dict, path: Path, written: 
     # validates and is then ignored. The evidence is a message arriving.
     ok, out = apply_patch(patch, dry_run=True, replace_paths=["bindings"])
     if not ok:
-        ui.error(f"OpenClaw rejected the bindings patch in a dry run; nothing was applied: {out[-400:]}")
+        ui.error(f"OpenClaw rejected the bindings patch in a dry run; nothing was applied: {ui.safe_text(out[-400:])}")
         return False
     if dry_run:
         ui.detail("Dry run accepted by OpenClaw; nothing applied.")
@@ -976,7 +976,7 @@ def _configure_bindings(o: state.OpenClawState, doc: dict, path: Path, written: 
                 "apply them by hand in a drained window.")
         return False
     if not ok:
-        ui.error(f"OpenClaw rejected the bindings patch: {out[-400:]}")
+        ui.error(f"OpenClaw rejected the bindings patch: {ui.safe_text(out[-400:])}")
         return False
     if not o.bindings_applied:
         o.bindings_previous = copy.deepcopy(current)
@@ -1136,7 +1136,7 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
         if rc == 0:
             o.host_workboard_applied = ""
         else:
-            ui.error(f"Could not disable the workboard plugin: {out[-200:]}")
+            ui.error(f"Could not disable the workboard plugin: {ui.safe_text(out[-200:])}")
             ok = False
     else:
         o.host_workboard_applied = ""
@@ -1221,7 +1221,7 @@ def _teardown_config(o: state.OpenClawState, apply_patch: Callable[..., tuple[bo
     if hot:
         done, out = apply_patch(hot, replace_paths=hot_rp)
         if not done:
-            ui.error(f"OpenClaw host config teardown failed: {out[-300:]}")
+            ui.error(f"OpenClaw host config teardown failed: {ui.safe_text(out[-300:])}")
             return False
     if res:
         res_changes = [c for c in o.host_config_changes
@@ -1251,7 +1251,7 @@ def _restore_bindings(o: state.OpenClawState, doc: dict,
             ui.warn(f"bindings not restored: {e}. The array is left as it is now; restore it by hand.")
             return False
         if not done:
-            ui.error(f"OpenClaw bindings teardown failed: {out[-300:]}")
+            ui.error(f"OpenClaw bindings teardown failed: {ui.safe_text(out[-300:])}")
             return False
     o.bindings_applied, o.bindings_previous, o.bindings_written = False, None, ""
     o.host_group_ids = {}

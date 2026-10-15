@@ -1160,7 +1160,7 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
             with openclaw_host.MarkerGuard(exclusive=not window_owned):
                 rc, out = _openclaw(["gateway", "restart"], timeout=restart_timeout)
                 if rc != 0:
-                    ui.warn(f"OpenClaw: `gateway restart` failed ({out[-200:]}).")
+                    ui.warn(f"OpenClaw: `gateway restart` failed ({ui.safe_text(out[-200:])}).")
                     return False
                 for _ in range(BACKEND_WAIT_TRIES):
                     if backend_registered(backend):
@@ -1233,7 +1233,7 @@ def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
             # `configure()` run retries registration instead of silently giving up
             # forever (the guard above only skips once the key is actually present).
             ui.warn(f"OpenClaw: could not register the agy MCP bridge "
-                    f"({bridge_out[-200:]}); will retry on the next run.")
+                    f"({ui.safe_text(bridge_out[-200:])}); will retry on the next run.")
 
     plugin_dir = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
     # True also when the installed kit is merely newer than the gateway (time rule), which makes
@@ -1336,7 +1336,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
 
     ok, out = _apply_hot(patch, dry_run=dry_run, replace_paths=replace_paths)
     if not ok:
-        ui.error(f"OpenClaw rejected the config patch: {out[-400:]}")
+        ui.error(f"OpenClaw rejected the config patch: {ui.safe_text(out[-400:])}")
         return False
     if dry_run:
         return False
@@ -1426,7 +1426,7 @@ def _configure_skill_workshop(s: state.SetupState, doc: dict, path: Path, writte
     patch = {"skills": {"workshop": {"autonomous": {"mode": WORKSHOP_MODE}}}}
     ok, out = _apply_hot(patch, dry_run=dry_run)
     if not ok:
-        ui.error(f"OpenClaw rejected the Skill Workshop patch: {out[-400:]}")
+        ui.error(f"OpenClaw rejected the Skill Workshop patch: {ui.safe_text(out[-400:])}")
         return False
     if dry_run:
         return False
@@ -1493,7 +1493,7 @@ def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
                               s.openclaw.voice_correction or "llm")
     ok, out = _apply_hot({"tools": {"media": media}}, dry_run=dry_run)
     if not ok:
-        ui.error(f"OpenClaw rejected the voice-notes patch: {out[-400:]}")
+        ui.error(f"OpenClaw rejected the voice-notes patch: {ui.safe_text(out[-400:])}")
         return False
     if dry_run:
         return False
@@ -1711,7 +1711,7 @@ def _teardown_engine(s: state.SetupState) -> bool:
         args += ["--replace-path", rp]
     rc, out = _openclaw(args, stdin=json.dumps(patch))
     if rc != 0:
-        ui.error(f"OpenClaw teardown failed: {out[-400:]}")
+        ui.error(f"OpenClaw teardown failed: {ui.safe_text(out[-400:])}")
         return False
     s.openclaw.applied = False
     s.openclaw.previous = {}
@@ -1734,7 +1734,7 @@ def _teardown_voice(s: state.SetupState) -> bool:
         rc, out = _openclaw(["config", "patch", "--stdin", "--replace-path", "tools.media"],
                             stdin=json.dumps({"tools": {"media": prev}}))
     if rc != 0:
-        ui.error(f"OpenClaw voice-notes teardown failed: {out[-400:]}")
+        ui.error(f"OpenClaw voice-notes teardown failed: {ui.safe_text(out[-400:])}")
         return False
     s.openclaw.voice_applied = ""
     s.openclaw.voice_previous = None

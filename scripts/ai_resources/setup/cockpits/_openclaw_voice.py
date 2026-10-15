@@ -261,7 +261,7 @@ def ensure_binaries(s: state.SetupState) -> bool:
         if formula not in still_missing and formula not in s.openclaw.voice_formulas_installed:
             s.openclaw.voice_formulas_installed.append(formula)
     if r.returncode != 0 or still_missing:
-        ui.error(f"brew install {' '.join(missing)} failed: {(r.stdout + r.stderr)[-400:]}")
+        ui.error(f"brew install {' '.join(missing)} failed: {ui.safe_text((r.stdout + r.stderr)[-400:])}")
         return False
     return True
 
