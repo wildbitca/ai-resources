@@ -8,8 +8,10 @@ description: |
   Checker independence by family: the verifier and the security auditor run on Opus and
   no writer role (implementer, tester, doc-writer, the fixers, package-upgrade,
   generalPurpose) runs on Opus, so a checker never shares a model family with the code it
-  checks. Fallbacks are inert in single-model mode; writers and checkers declare none, so
-  the independence cannot be crossed by a fallback.
+  checks. Fallbacks are inert in single-model mode. The checkers declare none, so a
+  fallback cannot move them onto a writer's family; the writers that declare one fall back
+  only within the Sonnet and Haiku families (explore, tester), and the planner and the
+  architect, which are neither writers nor checkers, declare Opus and Sonnet fallbacks.
 
   Alias drift: an alias floats to the newest model of its family, so a family upgrade can
   change which Sonnet or Opus runs without any kit change. Independence still holds
