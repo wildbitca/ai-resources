@@ -51,3 +51,25 @@ def test_provenance_records_digest_labels_and_headroom_per_pool():
     assert prov["allow_unverified"] is True and set(prov["labels"]) == {"planner", "implementer", "tester"}
     assert all(v == "INFERRED" for v in prov["labels"].values())
     assert prov["headroom"] and all(h["basis"] == "static" for h in prov["headroom"].values())
+
+
+# -- lanes pass output (ADR-0007) ----------------------------------------------------------------------------
+
+def test_customizations_are_byte_identical_with_and_without_a_lanes_table():
+    import json
+
+    from ai_resources.scoring import lanes
+
+    comp = build(static_weights={"claude-subscription": 0.3, "openai-api": 1.0})
+    before = json.dumps(profile_out.to_customizations(comp), sort_keys=True)
+    by_role = {"implementer": {"model": "sonnet"}}
+    agent = lanes.LaneAgent("kit-lane-cli-sonnet55", "claude-cli", "anthropic/claude-sonnet-5-5")
+    table = lanes.resolve_lanes(by_role, {agent.id: agent}, {"implementer": [f"openclaw-agent:{agent.id}"]},
+                                acks={"anthropic": {"roles": ["implementer"]}})
+    out = profile_out.to_lanes(table)
+    assert json.dumps(profile_out.to_customizations(comp), sort_keys=True) == before
+    assert set(out) == {"agents", "roles", "second"}
+    assert out["roles"]["implementer"] == {"lane": f"openclaw-agent:{agent.id}"}
+    assert out["agents"][agent.id]["pool"] == "claude-subscription"
+    assert by_role == {"implementer": {"model": "sonnet"}}          # by_role never gains lane keys
+    assert "lane" not in json.dumps(by_role)
