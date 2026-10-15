@@ -615,14 +615,9 @@ def _try_install_pipx() -> bool:
         ui.detail("Install pipx manually then re-run `ai-resources setup`.")
         return False
 
-    with ui.spinner(f"Running: {' '.join(cmd)}"):
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            ui.error(f"Install failed: {e}")
-            return False
+    r = ui.run_with_spinner(f"Running: {' '.join(cmd)}", cmd, timeout=300)
     if r.returncode != 0:
-        ui.error(f"Install failed: {(r.stderr or r.stdout)[:200]}")
+        ui.error("pipx was not installed")
         return False
     ui.ok("pipx installed")
     ui.record_action("installed pipx")
@@ -846,6 +841,32 @@ def _validate_port(value: str) -> bool | str:
     return "Enter a port between 1 and 65535"
 
 
+def _validate_url(value: str) -> bool | str:
+    """Inline validation for a gateway URL: http or https with a host."""
+    from urllib.parse import urlparse
+    parsed = urlparse((value or "").strip())
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        return True
+    return "Enter an http:// or https:// URL, e.g. https://litellm.example.com"
+
+
+def _validate_model_id(value: str) -> bool | str:
+    """Inline validation for a typed model id: not empty, no spaces."""
+    raw = (value or "").strip()
+    if not raw:
+        return "Enter a model id, e.g. claude-sonnet-5-5"
+    if any(ch.isspace() for ch in raw):
+        return "A model id has no spaces"
+    return True
+
+
+def _required(what: str):
+    """A validator for a prompt that cannot be left empty (a key the setup cannot do without)."""
+    def check(value: str) -> bool | str:
+        return True if (value or "").strip() else f"{what} is required"
+    return check
+
+
 def _ask_bind_and_port(s: state.SetupState) -> None:
     """Shared prompt for bind address + port — used by all local modes."""
     bind_choices = [
@@ -900,6 +921,7 @@ def _step3_docker(s: state.SetupState) -> int:
             ok, msg = litellm.pull_image(image)
         if not ok:
             ui.error(f"Pull failed: {msg[:300]}")
+            ui.log_tail(str(msg).splitlines())
             return 1
         # Track only if image wasn't already cached locally before this run.
         if "Already exists" not in msg and "Image is up to date" not in msg:
@@ -974,6 +996,7 @@ def _step3_pipx(s: state.SetupState) -> int:
                 ok, msg = litellm.install_litellm_pipx()
             if not ok:
                 ui.error(f"Install failed: {msg[:200]}")
+                ui.log_tail(str(msg).splitlines())
                 return 1
             ui.ok("LiteLLM updated")
             ui.record_action("reinstalled LiteLLM")
@@ -991,8 +1014,7 @@ def _step3_pipx(s: state.SetupState) -> int:
             ok, msg = litellm.install_litellm_pipx(python_path=py.binary_path)
         if not ok:
             ui.error("LiteLLM install failed:")
-            for line in msg.splitlines():
-                ui.detail(line)
+            ui.log_tail(msg.splitlines())
             ui.console().print()
             ui.detail("To debug manually, run: pipx install 'litellm[proxy]' --verbose")
             return 1
@@ -1037,8 +1059,7 @@ def _step3_pipvenv(s: state.SetupState) -> int:
                 ok, msg = litellm.install_litellm_venv(python_path=py.binary_path)
             if not ok:
                 ui.error("LiteLLM reinstall failed:")
-                for line in msg.splitlines():
-                    ui.detail(line)
+                ui.log_tail(msg.splitlines())
                 return 1
             ui.ok("LiteLLM updated")
             ui.record_action("reinstalled LiteLLM")
@@ -1055,8 +1076,7 @@ def _step3_pipvenv(s: state.SetupState) -> int:
         ok, msg = litellm.install_litellm_venv(python_path=py.binary_path)
     if not ok:
         ui.error("LiteLLM install failed:")
-        for line in msg.splitlines():
-            ui.detail(line)
+        ui.log_tail(msg.splitlines())
         ui.console().print()
         ui.detail(f"To debug manually:")
         ui.detail(f"  source {litellm.venv_dir()}/bin/activate")
@@ -1077,13 +1097,15 @@ def _step3_remote(s: state.SetupState, dry_run: bool = False) -> int:
     url = ui.text(
         "Remote LiteLLM URL (e.g. https://litellm.example.com)",
         default=s.litellm.remote.url,
+        validate=_validate_url,
     )
     if not url.startswith("http"):
         ui.error("URL must start with http:// or https://")
         return 1
     s.litellm.remote.url = url.rstrip("/")
 
-    master_key = ui.password("Master key (will be stored in .env)")
+    master_key = ui.password("Master key (will be stored in .env)",
+                             validate=_required("A master key"))
     if not master_key:
         ui.error("Master key required for remote endpoint.")
         return 1
@@ -1180,7 +1202,7 @@ def _step5_credentials(s: state.SetupState, dry_run: bool = False) -> int:
                 if new_val:
                     updates[env_var] = new_val
         else:
-            new_val = ui.password(env_var)
+            new_val = ui.password(env_var, validate=_required(f"{env_var} (OpenRouter backend)"))
             if not new_val:
                 ui.error(f"{env_var} is required for the OpenRouter backend.")
                 return 1
@@ -1543,7 +1565,7 @@ def _step6_profile(s: state.SetupState) -> int:
             + [ui.Choice("(custom — type below)", value="__custom__")],
         )
         if model == "__custom__":
-            model = ui.text(f"Model id for {role}")
+            model = ui.text(f"Model id for {role}", validate=_validate_model_id)
         if not model:
             continue
         canonical = model if "/" in model else f"{vendor}/{model}"
@@ -2073,6 +2095,77 @@ def _print_plan_table(s: state.SetupState) -> None:
         ui.detail("  " + model_selection.describe(a))
 
 
+def _diff_lines(label: str, path: Path, new_text: str, old_text: str | None = None) -> list[str]:
+    """A unified diff of what a real apply would write to `path`, secrets masked. `new file` when the target is
+    missing, `unchanged` when the content is identical. Reads the target; writes nothing."""
+    import difflib
+    head = f"\u2500\u2500 {label}  ({path})"
+    new_lines = [ui.mask_secrets(l) for l in new_text.splitlines()]
+    if old_text is None:
+        try:
+            old_text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return [head, "  new file"] + [f"  + {l}" for l in new_lines]
+    old_lines = [ui.mask_secrets(l) for l in old_text.splitlines()]
+    if old_text == new_text:
+        return [head, "  unchanged"]
+    diff = list(difflib.unified_diff(old_lines, new_lines, fromfile=f"{path} (current)",
+                                     tofile=f"{path} (after apply)", lineterm="", n=2))
+    return [head] + [f"  {l}" for l in diff]
+
+
+def _dry_run_targets(s: state.SetupState, executors_doc: dict, env_patch: dict | None,
+                     existing_env: dict | None) -> list[tuple[str, Path, str, str | None]]:
+    """(label, target path, text a real apply would write, current text or None to read the target) for the
+    files a dry run can render offline."""
+    import json
+    import yaml as _yaml
+    from . import lanes_render
+    out: list[tuple[str, Path, str, str | None]] = []
+    multi = s.mode == "multi-model"
+    local_gw = multi and s.backend == "litellm" and s.litellm.deployment == "local"
+    if multi:
+        out.append(("executors.yaml", state.executors_path(),
+                    _yaml.safe_dump(executors_doc, default_flow_style=False, sort_keys=False), None))
+    if local_gw:
+        try:
+            out.append(("litellm.yaml", state.litellm_path(),
+                        litellm._render_litellm_yaml(executors_doc, dict(s.providers), "LITELLM_MASTER_KEY"),
+                        None))
+            if litellm.is_container_mode(s.litellm.local.runtime):
+                out.append(("docker-compose.yaml", state.compose_path(), litellm._render_compose_yaml(s), None))
+        except Exception as e:  # noqa: BLE001 - a render problem is reported by the section above
+            ui.warn(f"No diff for the gateway files: {e}")
+    try:
+        lanes_text = lanes_render.expected_text(s, executors_doc.get("by_role") or {})
+    except Exception as e:  # noqa: BLE001
+        ui.warn(f"No diff for lanes.yaml: {e}")
+        lanes_text = None
+    if lanes_text is not None:
+        out.append(("lanes.yaml", state.lanes_path(), lanes_text, None))
+    if env_patch is not None:
+        from .cockpits import claude as _claude_cockpit
+        merged = {**(existing_env or {}), **env_patch}
+        # Compared as the parsed `env` object, not the raw file: a settings file holds much more than `env`.
+        before = json.dumps({"env": existing_env or {}}, indent=2, sort_keys=True) \
+            if _claude_cockpit.SETTINGS_PATH.is_file() else None
+        out.append(("settings.json env", _claude_cockpit.SETTINGS_PATH,
+                    json.dumps({"env": merged}, indent=2, sort_keys=True), before))
+    return out
+
+
+def _print_dry_run_diffs(s: state.SetupState, executors_doc: dict, env_patch: dict | None,
+                         existing_env: dict | None) -> None:
+    console = ui.console()
+    console.print()
+    ui.info("What a real run would change (masked; nothing is written):")
+    for label, path, text, current in _dry_run_targets(s, executors_doc, env_patch, existing_env):
+        for line in _diff_lines(label, path, text, current):
+            console.print(line, markup=False, highlight=False)
+    console.print()
+    ui.info("DRY RUN: nothing was written")
+
+
 def _step9_dry_run(s: state.SetupState) -> int:
     """Render all configs to a temp dir, print them, start the gateway, run smoke tests, tear down."""
     import json
@@ -2129,6 +2222,8 @@ def _step9_dry_run(s: state.SetupState) -> int:
     tmp_compose_yaml = tmp_dir / "docker-compose.yaml"
     proc = None
     started_docker = False
+    env_patch_for_diff: dict | None = None
+    existing_env_for_diff: dict | None = None
 
     try:
         # ── litellm.yaml ──────────────────────────────────────────────────────
@@ -2208,6 +2303,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
                 ).get("env", {})
             except (json.JSONDecodeError, OSError):
                 pass
+        env_patch_for_diff, existing_env_for_diff = dict(env_patch), dict(existing_env)
         for k, v in env_patch.items():
             display_v = credentials.mask(v) if ("KEY" in k or "TOKEN" in k) else v
             if k not in existing_env:
@@ -2317,6 +2413,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
             )
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    _print_dry_run_diffs(s, executors_doc, env_patch_for_diff, existing_env_for_diff)
     console.print()
     ui.section(10, TOTAL_STEPS, "Verification")
     ui.info("Skipped in a dry run: verification checks what a real apply left behind, and nothing was applied.")

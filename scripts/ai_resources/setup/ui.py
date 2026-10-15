@@ -5,6 +5,7 @@ Falls back gracefully if rich/questionary aren't installed (prints plain text).
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 from contextlib import contextmanager
@@ -281,6 +282,59 @@ def spinner(label: str):
     ) as p:
         task = p.add_task(label, total=None)
         yield (p, task)
+
+
+_SECRET_NAME = re.compile(
+    r"(?i)\b([A-Z0-9_.\-]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Z0-9_.\-]*)"
+    r"([\"']?\s*[=:]\s*)([\"']?)([^\s\"',}]+)")
+_SECRET_SHAPES = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_\-]{8,}|gh[opsur]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_\-]{20,}"
+    r"|xox[baprs]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{12,}|[A-Za-z0-9_\-]{32,})\b")
+_BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=\-]{8,}")
+
+
+def mask_secrets(text: str) -> str:
+    """Replace anything that looks like a credential with `****`: `NAME=value` pairs for key-like names (a
+    reference such as `os.environ/NAME` or `${NAME}` is kept), well-known token shapes, Bearer tokens and long
+    opaque strings. Used on everything the wizard echoes from a subprocess or renders into a diff."""
+    def pair(m: "re.Match[str]") -> str:
+        value = m.group(4)
+        if value.startswith(("os.environ/", "${", "$", "<")) or value in ("****", "null", "None", "true", "false"):
+            return m.group(0)
+        return f"{m.group(1)}{m.group(2)}{m.group(3)}****"
+    out = _SECRET_NAME.sub(pair, text)
+    out = _BEARER.sub(lambda m: f"{m.group(1)} ****", out)
+    return _SECRET_SHAPES.sub("****", out)
+
+
+def log_tail(lines: Iterable[str], title: str = "Last output:", n: int = 20) -> None:
+    """Print the last `n` lines of a failed command, dimmed, with secrets masked."""
+    tail = [mask_secrets(str(l).rstrip()) for l in list(lines)[-n:]]
+    tail = [l for l in tail if l.strip()]
+    if not tail:
+        return
+    if title:
+        detail(title)
+    for line in tail:
+        detail(line)
+
+
+def run_with_spinner(label: str, cmd: Sequence[str], **kw: Any):
+    """Run `cmd` (output captured) under a spinner. The spinner is closed before anything else is printed:
+    one ok line on success; on failure the command, the exit code and the last 20 masked lines. Returns the
+    `subprocess.CompletedProcess` (returncode -1 and the error text as stderr when it could not start)."""
+    import subprocess
+    with spinner(label):
+        try:
+            result = subprocess.run(list(cmd), capture_output=True, text=True, **kw)
+        except (subprocess.TimeoutExpired, OSError) as e:
+            result = subprocess.CompletedProcess(list(cmd), -1, stdout="", stderr=str(e))
+    if result.returncode == 0:
+        ok(label)
+    else:
+        error(f"{label} failed (exit {result.returncode}): {mask_secrets(' '.join(str(c) for c in cmd))}")
+        log_tail(f"{result.stdout or ''}\n{result.stderr or ''}".splitlines())
+    return result
 
 
 @contextmanager

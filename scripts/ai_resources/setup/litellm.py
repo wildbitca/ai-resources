@@ -954,9 +954,9 @@ def smoke_test_model(model: str, gateway_url: str, master_key: str) -> tuple[boo
 # ============================================================
 # Update (re-pull pipx package or docker image)
 # ============================================================
-def _render_compose_yaml() -> str:
-    """Generate docker-compose.yaml for the LiteLLM container."""
-    s = state.load()
+def _render_compose_yaml(s: "state.SetupState | None" = None) -> str:
+    """Generate docker-compose.yaml for the LiteLLM container (from `s`, else the saved state)."""
+    s = s if s is not None else state.load()
     bind = s.litellm.local.bind_address or "127.0.0.1"
     port = s.litellm.local.port or 4000
     image = s.litellm.local.image or DEFAULT_DOCKER_IMAGE
