@@ -119,3 +119,18 @@ def test_a_second_member_is_refused_for_checker_roles():
     with pytest.raises(scoring_lanes.LaneError, match="checker"):
         scoring_lanes.resolve_lanes({"verifier": {"model": "opus"}}, {}, {}, {"verifier": ["claude-code"]})
     assert lanes_render.validate_block({"second": {"code-reviewer": ["claude-code"]}}) == []
+
+
+SKILL = Path(__file__).resolve().parents[1] / "skills" / "kit-orchestration" / "SKILL.md"
+SKILL_WORDING = (
+    "Dispatch what its `resolved:` section says for the role",
+    "only when that fallback is recorded in `resolved:` with its reason",
+    "never by reading `candidates` in order",
+    "`lanes prepare --lane <claude-code|kit-lane-id>` (mandatory whenever `lanes.yaml` exists, `claude-code` "
+    "steps included)",
+)
+
+
+@pytest.mark.parametrize("needle", SKILL_WORDING)
+def test_skill_md_pins_the_resolved_dispatch_and_the_mandatory_lane_flag(needle):
+    assert needle in SKILL.read_text(encoding="utf-8"), needle
