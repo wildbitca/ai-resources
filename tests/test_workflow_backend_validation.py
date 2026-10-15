@@ -376,6 +376,23 @@ def test_claude_code_writer_may_not_share_a_group_with_a_lane_step(vk):
     assert any("t.workflow.yaml:g:t" in f and "lane" in f for f in failures), failures
 
 
+def test_a_checker_lane_step_is_never_a_member_with_another_lane_step(vk):
+    hint = "execution_hints:\n  parallel_group: g\n"
+    steps = _lane("verifier", "v", hint) + _lane("code-reviewer", "rev", hint)
+    failures, _ = _run_doc(vk, steps)
+    assert any("g:v" in f and "attribute" in f for f in failures), failures
+    steps = _lane("verifier", "v", hint) + _lane("security-auditor", "sec", hint)
+    failures, _ = _run_doc(vk, steps)
+    assert failures, failures
+
+
+def test_a_checker_lane_step_may_share_a_group_with_claude_code_and_non_lane_steps(vk):
+    hint = "execution_hints:\n  parallel_group: g\n"
+    steps = _lane("security-auditor", "sec", hint) + _step("code-reviewer", hint, sid="rev")
+    failures, _ = _run_doc(vk, steps)
+    assert failures == [], failures
+
+
 def test_claude_code_report_role_may_share_a_group_with_a_lane_step(vk):
     hint = "execution_hints:\n  parallel_group: g\n"
     steps = _step("security-auditor", hint, sid="sec") + _lane("code-reviewer", "rev", hint)

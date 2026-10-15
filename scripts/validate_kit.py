@@ -264,6 +264,13 @@ def check_lane_workflow(rel, doc: dict, steps: list, groups: dict) -> None:
                     and role not in roles_policy.REPORT_ROLES):
                 f(f"{where}:{sid}", f"a claude-code writer step ('{role}') may not share a parallel group "
                                     f"with a 'lane' step")
+        lane_members = [m for m in members if is_lane(m)]
+        for member in lane_members:
+            if member.get("subagent_type") in roles_policy.CHECKER_ROLES and len(lane_members) > 1:
+                f(f"{where}:{member.get('id')}",
+                  f"checker lane step ('{member.get('subagent_type')}') may not share a parallel group with "
+                  f"another 'lane' step: the shared report directory cannot attribute a write before verify; "
+                  f"a checker may share a group with claude-code or non-lane steps")
         scoped = [m for m in members if is_lane(m) and has_scope(m) and isinstance(m.get("write_scope"), list)]
         for i, left in enumerate(scoped):
             for right in scoped[i + 1:]:

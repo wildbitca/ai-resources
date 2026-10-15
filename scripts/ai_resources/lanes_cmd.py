@@ -954,6 +954,9 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
             data.update(subject_step=m.group(1), subject_sha=m.group(2))
             record.update(subject_step=m.group(1), subject_sha=m.group(2))
 
+    if role in rp.CHECKER_ROLES and (in_flight - {step}):
+        # the shared report directory cannot attribute a write before verify: a checker writes alone
+        reasons.append(f"checker verified with steps in flight: {', '.join(sorted(in_flight - {step}))}")
     if data.get("verdict") in ("FAIL", "REQUIRES_CHANGES"):
         reasons.append(f"the Verifier verdict is {data['verdict']}")
     result = "PASS" if not reasons else "FAIL"

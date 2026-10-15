@@ -307,9 +307,9 @@ def test_tolerance_list_is_ignored(env):
 def test_parallel_report_steps_do_not_fail_each_others_verify(env):
     rc, a = env.prepare("review", "code-reviewer", "report", OPUS)
     first = env.head
-    rc, b = env.prepare("audit", "security-auditor", "report", OPUS)
+    rc, b = env.prepare("audit", "explore", "report", OPUS)
     env.report("code-reviewer", "review")
-    env.report("security-auditor", "audit")
+    env.report("explore", "audit")
     rc, out = env.verify("review", a, in_flight=["audit"], head=first)
     assert rc == 0, out
     rc, out = env.verify("audit", b, in_flight=["review"])
@@ -1101,3 +1101,25 @@ def test_g7_forbidden_roots_match_at_any_depth(env, rel):
 def test_g7_a_failing_verifier_verdict_exits_non_zero_and_the_result_agrees(env):
     rc, out = env.verifier("v1", "impl", head_of(env.repo), "FAIL")
     assert rc == 1 and out["verdict"] == "FAIL" and out["result"] == "FAIL", out
+
+
+def test_g1_residual_a_checker_verified_with_steps_in_flight_fails_and_cannot_land(env):
+    f = _landable_chain(env)
+    rc, p1 = env.prepare("v1", "verifier", "report", OPUS)
+    first = env.head
+    rc, p2 = env.prepare("v2", "security-auditor", "report", OPUS)
+    env.report("verifier", "v1", "FAIL")
+    env.report("security-auditor", "v2")
+    env.report("verifier", "v1", "PASS")                          # v2 forges its peer's verdict before any verify
+    rc, out = env.verify("v2", p2, in_flight=["v1"])
+    assert rc == 1 and any("checker verified with steps in flight" in r for r in out["reasons"]), out
+    rc, out = env.verify("v1", p1, in_flight=["v2"], subject=f"impl@{f.itip}")
+    assert rc == 1 and any("checker verified with steps in flight" in r for r in out["reasons"]), out
+    rc, out = env.land("impl", f.iprep, 1)
+    assert rc == 1 and out["result"] == "REFUSED", out
+
+
+def test_a_checker_verified_alone_still_passes(env):
+    f = _landable_chain(env)
+    rc, out = env.verifier("v1", "impl", f.itip, "PASS")
+    assert rc == 0, out
