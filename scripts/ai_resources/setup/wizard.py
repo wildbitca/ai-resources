@@ -905,10 +905,10 @@ def _validate_url(value: str) -> bool | str:
 
 
 def _validate_model_id(value: str) -> bool | str:
-    """Inline validation for a typed model id: not empty, no spaces."""
+    """Inline validation for a typed model id: no spaces. An empty answer is valid and skips the role."""
     raw = (value or "").strip()
     if not raw:
-        return "Enter a model id, e.g. claude-sonnet-5-5"
+        return True
     if any(ch.isspace() for ch in raw):
         return "A model id has no spaces"
     return True
@@ -1148,11 +1148,11 @@ def _step3_pipvenv(s: state.SetupState) -> int:
 
 def _step3_remote(s: state.SetupState, dry_run: bool = False) -> int:
     ui.console().print()
-    url = ui.text(
+    url = (ui.text(
         "Remote LiteLLM URL (e.g. https://litellm.example.com)",
         default=s.litellm.remote.url,
         validate=_validate_url,
-    )
+    ) or "").strip()
     if not url.startswith("http"):
         ui.error("URL must start with http:// or https://")
         return 1
@@ -1619,7 +1619,8 @@ def _step6_profile(s: state.SetupState) -> int:
             + [ui.Choice("(custom — type below)", value="__custom__")],
         )
         if model == "__custom__":
-            model = ui.text(f"Model id for {role}", validate=_validate_model_id)
+            model = (ui.text(f"Model id for {role} (leave empty to skip this role)",
+                             validate=_validate_model_id) or "").strip()
         if not model:
             continue
         canonical = model if "/" in model else f"{vendor}/{model}"

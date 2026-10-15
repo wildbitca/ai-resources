@@ -26,9 +26,25 @@ def test_url_validator(value, ok):
     assert (wizard._validate_url(value) is True) == ok
 
 
-@pytest.mark.parametrize("value,ok", [("claude-sonnet-5-5", True), ("", False), ("   ", False), ("a b", False)])
+@pytest.mark.parametrize("value,ok", [("claude-sonnet-5-5", True), ("", True), ("   ", True), ("a b", False)])
 def test_model_id_validator(value, ok):
     assert (wizard._validate_model_id(value) is True) == ok
+
+
+def test_an_empty_custom_model_id_skips_the_role(monkeypatch):
+    from ai_resources.setup import state
+    from wizard_fakes import Script, Seq
+    s = state.SetupState(mode="multi-model", backend="litellm")
+    s.providers = {"anthropic": state.ProviderState(enabled=True)}
+    script = Script(**{"Choose profile": lambda v: v[0], "Customize any role": True,
+                       "Pick a role": Seq("main", "__done__"), "Vendor for": "anthropic",
+                       "Model for": "__custom__", "Model id for": "   "})
+    script.install(monkeypatch)
+    monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "", raising=False)
+    monkeypatch.setattr(wizard, "_COMPOSE", {}, raising=False)
+    assert wizard._step6_profile(s) == 0
+    assert s.profile.customizations == {}                     # the role was skipped, nothing stored
+    assert any("Model id for" in m and "leave empty" in m for m in script.asked)
 
 
 def test_required_validator_names_the_thing():
@@ -111,4 +127,4 @@ def test_the_custom_model_prompt_is_validated(monkeypatch):
     s.providers["anthropic"] = state.ProviderState(enabled=True)
     wizard._step6_profile(s)
     (message, check), = [(m, v) for m, v in seen.items() if m.startswith("Model id for")]
-    assert check("") != True and check("claude-opus-5-5") is True      # noqa: E712
+    assert check("a b") != True and check("") is True and check("claude-opus-5-5") is True  # noqa: E712
