@@ -215,10 +215,11 @@ def test_security_auditor_conflicts_with_a_scope_writer_not_just_the_implementer
 def test_a_lane_never_moves_the_model():
     by_role = fk.lane_by_role()
     before = copy.deepcopy(by_role)
-    cands = {r: ["claude-code", ref(CLI_SONNET if by_role[r]["model"] != "opus" else CLI_OPUS)] for r in by_role
+    cands = {r: [ref(CLI_SONNET if by_role[r]["model"] != "opus" else CLI_OPUS), "claude-code"] for r in by_role
              if by_role[r]["model"] in ("sonnet", "opus")}
     table = resolve(by_role, [CLI_SONNET, CLI_OPUS], cands)
     assert by_role == before
+    assert any(ln.agentId for ln in table.roles.values()), "no role landed on a lane agent"
     for role, cfg in by_role.items():
         assert rp.model_family(table.models[role]) == rp.model_family(cfg["model"])
     assert set(table.to_lanes()) == {"agents", "roles", "second"}

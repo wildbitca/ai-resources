@@ -304,6 +304,44 @@ def test_tolerance_list_is_ignored(env):
     assert rc == 0, out
 
 
+def test_parallel_report_steps_do_not_fail_each_others_verify(env):
+    rc, a = env.prepare("review", "code-reviewer", "report", OPUS)
+    first = env.head
+    rc, b = env.prepare("audit", "security-auditor", "report", OPUS)
+    env.report("code-reviewer", "review")
+    env.report("security-auditor", "audit")
+    rc, out = env.verify("review", a, in_flight=["audit"], head=first)
+    assert rc == 0, out
+    rc, out = env.verify("audit", b, in_flight=["review"])
+    assert rc == 0, out
+
+
+def test_verify_never_writes_the_human_copy_through_a_symlink(env, tmp_path):
+    target = tmp_path / "victim.txt"
+    target.write_text("keep\n")
+    rc, prep = env.prepare("review", "code-reviewer", "report")
+    env.report("code-reviewer", "review")
+    (env.repo / ".agent-output" / "code-reviewer" / "review.lane-verify.json").symlink_to(target)
+    rc, out = env.verify("review", prep)
+    assert target.read_text() == "keep\n"
+
+
+def test_committed_pycache_outside_scope_fails_verify(env):
+    a = scope_step(env, "tests", "tester", ("tests/",))
+    wt = Path(a["worktree"])
+    env.write("src/__pycache__/x.pyc", "x\n", base=wt)
+    sh(["git", "add", "-f", "src/__pycache__/x.pyc"], wt)
+    sh(["git", "commit", "-q", "-m", "work"], wt)
+    rc, out = env.verify("tests", a)
+    assert rc == 1 and any("__pycache__" in r for r in out["reasons"]), out
+
+
+def test_writer_with_unknown_family_is_refused_for_a_checker_even_when_models_differ(env):
+    rc, _ = env.prepare("impl", "tester", "report", "inherit")
+    rc, out = env.prepare("v1", "verifier", "report", OPUS)
+    assert rc == 1, out
+
+
 # -- scope contract ----------------------------------------------------------------------------------------
 
 def scope_step(env, step="tests", role="tester", scope=("tests/",), model=SONNET, attempt=1):

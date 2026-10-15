@@ -246,8 +246,6 @@ def dirty_map(ctx: Ctx, tree: Path) -> dict[str, str]:
         xy, path = f[:2], f[3:]
         if "R" in xy or "C" in xy:
             i += 1                                        # the original path
-        if path.endswith(HUMAN_COPY_SUFFIX):
-            continue
         result[path] = f"{xy}:{_hash_path(tree / path)}"
     return result
 
@@ -284,7 +282,7 @@ def agent_outputs(tree: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     if root.is_dir():
         for p in sorted(root.rglob("*")):
-            if (p.is_file() or p.is_symlink()) and not p.name.endswith(HUMAN_COPY_SUFFIX):
+            if (p.is_file() or p.is_symlink()):
                 out[str(p.relative_to(tree))] = _hash_path(p)
     return out
 
@@ -349,11 +347,11 @@ def _scope_paths_for(contract: str, role: str, step: str, scope: list[str], path
     """Reasons a set of changed paths violates the contract. `paths` maps path -> mode info or ''."""
     reasons: list[str] = []
     for path in sorted(paths):
-        if tolerated(path):
-            continue
         if own_report.match(path):
             continue
         bad = forbidden_path(path, own_report)
+        if not bad and paths[path] == "dirty" and tolerated(path):
+            continue                                      # tolerance covers only uncommitted noise
         if bad:
             reasons.append(f"{path}: {bad}")
             continue
@@ -447,6 +445,10 @@ def _verifier_pass(ledger: Ledger, auth: list[dict], subject_step: str, tip: str
         if e["data"].get("subject_step") != subject_step or e["data"].get("subject_sha") != tip:
             continue
         if _roles_of(auth, e["step"]) != {"verifier"} or not ledger.record_ok(e):
+            continue
+        vfam = {p["data"].get("family") for p in auth if p["kind"] == "prepare" and p["step"] == e["step"]}
+        sfam = {p["data"].get("family") for p in auth if p["kind"] == "prepare" and p["step"] == subject_step}
+        if not vfam or not sfam or None in vfam or None in sfam or vfam & sfam:
             continue
         rec = ledger.load_record(e)
         if rec.get("subject_sha") == tip and rec.get("verdict") == "PASS":
@@ -590,9 +592,18 @@ def cmd_prepare(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
             if e["kind"] != "prepare" or e["role"] in rp.REPORT_ROLES:
                 continue
             wref, wfam = e["data"].get("model"), e["data"].get("family")
-            if (wfam is not None and wfam == family) or (wfam is None and wref == a.model):
+            if wfam is None or wfam == family:
                 raise Refused([f"checker {role} model {a.model!r} (family {family}) equals the family of writer "
                                f"step {e['step']} ({e['role']}, model {wref!r}, family {wfam})"])
+
+    elif role not in rp.REPORT_ROLES:
+        for e in entries:
+            if e["kind"] != "prepare" or e["role"] not in rp.CHECKER_ROLES:
+                continue
+            cfam = e["data"].get("family")
+            if family is None or cfam is None or cfam == family:
+                raise Refused([f"writer {role} model {a.model!r} (family {family}) is not independent of "
+                               f"checker step {e['step']} ({e['role']}, family {cfam}): fail closed"])
 
     tree = _tree(ctx)
     if contract in (rp.SCOPE, rp.INTEGRATING):
@@ -642,7 +653,13 @@ def _in_flight(a: argparse.Namespace) -> set[str]:
 
 
 def _forbidden_run_tree_changes(ctx: Ctx, tree: Path, before: dict, after: dict, *, allowed_refs: set[str],
-                                step: str, role: str, contract: str, own_report: re.Pattern) -> list[str]:
+                                step: str, role: str, contract: str, own_report: re.Pattern,
+                              peer_reports: list[re.Pattern] | None = None) -> list[str]:
+    peers = peer_reports or []
+
+    def own(p: str) -> bool:
+        return bool(own_report.match(p)) or any(r.match(p) for r in peers)
+
     reasons: list[str] = []
     if after["head"] != before["head"]:
         reasons.append(f"the run tree HEAD moved ({before['head'][:12]} -> {after['head'][:12]})")
@@ -661,7 +678,7 @@ def _forbidden_run_tree_changes(ctx: Ctx, tree: Path, before: dict, after: dict,
             reasons.append(f"the handoff file {h} changed")
     keys = set(before["agent_outputs"]) | set(after["agent_outputs"])
     for p in sorted(keys):
-        if before["agent_outputs"].get(p) != after["agent_outputs"].get(p) and not own_report.match(p) \
+        if before["agent_outputs"].get(p) != after["agent_outputs"].get(p) and not own(p) \
                 and p not in HANDOFF_FILES:
             reasons.append(f"{p}: another step's .agent-output file changed")
     for p in sorted(before["tripwires"]):
@@ -671,7 +688,7 @@ def _forbidden_run_tree_changes(ctx: Ctx, tree: Path, before: dict, after: dict,
     changed = {p for p in set(before["dirty"]) | set(after["dirty"])
                if before["dirty"].get(p) != after["dirty"].get(p)}
     for p in sorted(changed):
-        if tolerated(p) or own_report.match(p):
+        if tolerated(p) or own(p):
             continue
         if contract == rp.REPORT:
             reasons.append(f"{p}: a report step may write only .agent-output/{role}/{step}*")
@@ -689,6 +706,28 @@ def _state_dir_reasons(ledger: Ledger, entries: list[dict]) -> list[str]:
             if p.name not in referenced:
                 reasons.append(f"state directory: unreferenced file {p.name}")
     return reasons
+
+
+def _write_human_copy(tree: Path, role: str, step: str, text: str) -> None:
+    """Write the no-authority human copy, never through a symlink (best effort)."""
+    try:
+        cur = tree
+        for part in (".agent-output", role):
+            cur = cur / part
+            if cur.is_symlink():
+                return
+            if not cur.exists():
+                cur.mkdir()
+            elif not cur.is_dir():
+                return
+        target = cur / f"{step}{HUMAN_COPY_SUFFIX}"
+        if target.is_symlink():
+            return
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError:
+        pass
 
 
 def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
@@ -732,9 +771,12 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
     for e in entries:
         if e["step"] in in_flight and e["kind"] == "prepare" and e["data"].get("branch"):
             allowed_refs.add(f"refs/heads/{e['data']['branch']}")
+    peer_reports = [_report_re(e["role"], e["step"]) for e in entries
+                    if e["kind"] == "prepare" and e["step"] in in_flight and e["step"] != step and e["role"]]
 
     reasons += _forbidden_run_tree_changes(ctx, tree, before, after, allowed_refs=allowed_refs, step=step,
-                                           role=role, contract=contract, own_report=own_report)
+                                           role=role, contract=contract, own_report=own_report,
+                                           peer_reports=peer_reports)
 
     if contract in (rp.SCOPE, rp.INTEGRATING):
         wt = Path(wt_path)
@@ -811,13 +853,8 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
             out["ledger_head"] = e2["hash"]
             out["worktree_removed"] = wid
     # a human-readable copy with no authority
-    try:
-        human = tree / ".agent-output" / role / f"{step}.lane-verify.json"
-        human.parent.mkdir(parents=True, exist_ok=True)
-        human.write_text(json.dumps({k: v for k, v in out.items() if k not in ("nonce",)}, indent=1, sort_keys=True),
-                         encoding="utf-8")
-    except OSError:
-        pass
+    _write_human_copy(tree, role, step,
+                      json.dumps({k: v for k, v in out.items() if k not in ("nonce",)}, indent=1, sort_keys=True))
     return (EXIT_OK if result == "PASS" else EXIT_FAIL), out
 
 
