@@ -104,12 +104,40 @@ def test_change_models_goes_back_to_the_picker(monkeypatch):
     assert wizard._step_summary(_single_flash(), argparse.Namespace()) == 130 and calls == ["models"]
 
 
-def test_a_host_without_a_selection_has_no_summary_and_no_route(monkeypatch):
-    script = Script()
+def test_a_host_without_a_selection_still_asks_to_apply_interactively(monkeypatch):
+    script = Script(**{"Apply this?": lambda v: v[0]})
     script.install(monkeypatch)
     s = state.SetupState()
     s.cockpits["claude"] = state.CockpitState(installed=True)
+    assert wizard._step_summary(s, argparse.Namespace()) == 0
+    assert script.asked == ["select: Apply this?"]
+    assert not any("Summary of what will be configured" in m for m in script.shown)
+
+
+def test_a_host_without_a_selection_has_no_review_when_non_interactive(monkeypatch):
+    script = Script()
+    script.install(monkeypatch, non_interactive=True)
+    s = state.SetupState()
+    s.cockpits["claude"] = state.CockpitState(installed=True)
     assert wizard._step_summary(s, argparse.Namespace()) == 0 and script.asked == [] and script.shown == []
+
+
+def test_cancel_at_the_profile_path_review_exits_130(monkeypatch):
+    script = Script(**{"Apply this?": lambda v: v[-1]})
+    script.install(monkeypatch)
+    assert wizard._step_summary(state.SetupState(), argparse.Namespace()) == 130
+
+
+def test_change_models_passes_dry_run_and_returns_to_the_review(monkeypatch):
+    seen = []
+    answers = iter([ms.CHANGE, ms.APPLY])
+    script = Script(**{"Apply this?": lambda v: next(answers)})
+    script.install(monkeypatch)
+    monkeypatch.setattr(wizard, "_step_models", lambda s, args, dry_run=False: seen.append(dry_run) or 0)
+    s = state.SetupState()
+    assert wizard._step_summary(s, argparse.Namespace(dry_run=True)) == 0
+    assert seen == [True]
+    assert script.asked.count("select: Apply this?") == 2      # the review came back after the change
 
 
 def test_non_interactive_prints_the_plan_but_never_asks(monkeypatch):

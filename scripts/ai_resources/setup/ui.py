@@ -569,10 +569,6 @@ def _attach_keys(question: Any, back: bool) -> bool:
     return True
 
 
-def _attach_back(question: Any) -> bool:
-    return _attach_keys(question, back=True)
-
-
 def _ask(question: Any) -> Any:
     if not _WIZARD_SCOPE:
         return question.ask()

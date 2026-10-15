@@ -23,7 +23,8 @@ def _snapshot(root):
 
 def _single(**extra):
     base = {"Choose mode": "single-model", "How do you want to choose models": "profile",
-            "How should kit subagents pick": lambda v: SUB, "Configure detected cockpits": lambda v: list(v)}
+            "How should kit subagents pick": lambda v: SUB, "Configure detected cockpits": lambda v: list(v),
+            "Apply this?": lambda v: v[0]}
     base.update(extra)
     return base
 
@@ -56,7 +57,8 @@ def test_back_at_models_is_refused_after_a_credential_was_saved(monkeypatch, tmp
     script = Script(**{"Choose mode": "multi-model:openrouter", "Update OPENROUTER_API_KEY": True,
                        "OPENROUTER_API_KEY": "new-secret",
                        "How do you want to choose models": Seq(BACK, "profile"), "Choose profile": lambda v: v[0],
-                       "Customize any role": False, "Configure detected cockpits": lambda v: list(v)})
+                       "Customize any role": False, "Configure detected cockpits": lambda v: list(v),
+                       "Apply this?": lambda v: v[0]})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
     notices = [m for m in script.shown if "Back stops here" in m]
@@ -87,7 +89,7 @@ def test_non_interactive_never_raises_goback_and_never_attaches_a_binding(monkey
     state.config_root().mkdir(parents=True, exist_ok=True)
     state.save(s)
     attached = []
-    monkeypatch.setattr(ui, "_attach_back", lambda q: attached.append(q))
+    monkeypatch.setattr(ui, "_attach_keys", lambda q, back: attached.append(q))
     warned = []
     monkeypatch.setattr(ui, "warn", lambda m: warned.append(m))
     monkeypatch.setattr(ui, "console", lambda: type("C", (), {"print": lambda *a, **k: None,

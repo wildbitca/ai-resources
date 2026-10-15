@@ -112,14 +112,17 @@ LITELLM_DOCKER = {
     "Update ANTHROPIC_API_KEY": False, "Update GOOGLE": False,
     "How do you want to choose models": "profile", "Choose profile": _first, "Customize any role": False,
     "Configure detected cockpits": lambda v: list(v), "Auto-start LiteLLM": False,
+    "Apply this?": _first,
 }
 
 
 SINGLE = {"Choose mode": "single-model", "How do you want to choose models": "profile",
-          "How should kit subagents pick": _first, "Configure detected cockpits": lambda v: list(v)}
+          "How should kit subagents pick": _first, "Configure detected cockpits": lambda v: list(v),
+          "Apply this?": _first}
 OPENROUTER = {"Choose mode": "multi-model:openrouter", "Update OPENROUTER_API_KEY": False,
               "How do you want to choose models": "profile", "Choose profile": _first,
-              "Customize any role": False, "Configure detected cockpits": lambda v: list(v)}
+              "Customize any role": False, "Configure detected cockpits": lambda v: list(v),
+              "Apply this?": _first}
 SUB = "subscription-claude-55"
 LANES_ANSWERS = {**SINGLE, "Use previous answers": True, "Acknowledge for these roles?": True, "How should kit subagents pick": lambda v: SUB, "Orchestrator agent id": "main"}
 CORRUPT = "profile: [unclosed\n  name: {oops\n"
@@ -175,6 +178,8 @@ EXPECTED = {
         'checkbox: Configure detected cockpits:',
         'section 8/10 Lifecycle',
         'info: Skipped (single-model mode).',
+        'section 9/10 Review and apply',
+        'select: Apply this?',
         'apply dry_run=True',
         'rc=0',
     ],
@@ -199,6 +204,8 @@ EXPECTED = {
         'checkbox: Configure detected cockpits:',
         'section 8/10 Lifecycle',
         'info: Skipped (single-model mode).',
+        'section 9/10 Review and apply',
+        'select: Apply this?',
         'apply dry_run=True',
         'rc=0',
     ],
@@ -243,6 +250,8 @@ EXPECTED = {
         'checkbox: Configure detected cockpits:',
         'section 8/10 Lifecycle',
         'info: Skipped (single-model mode).',
+        'section 9/10 Review and apply',
+        'select: Apply this?',
         'apply dry_run=False',
         'verify',
         'rc=0',
@@ -271,6 +280,8 @@ EXPECTED = {
         'checkbox: Configure detected cockpits:',
         'section 8/10 Lifecycle (auto-start at login)',
         'info: Skipped — docker container uses `restart: always` (no LaunchAgent needed).',
+        'section 9/10 Review and apply',
+        'select: Apply this?',
         'apply dry_run=False',
         'verify',
         'rc=0',
@@ -295,6 +306,8 @@ EXPECTED = {
         'checkbox: Configure detected cockpits:',
         'section 8/10 Lifecycle',
         'info: Skipped (single-model mode).',
+        'section 9/10 Review and apply',
+        'select: Apply this?',
         'apply dry_run=False',
         'verify',
         'rc=0',
@@ -344,6 +357,8 @@ EXPECTED = {
         'checkbox: Configure detected cockpits:',
         'section 8/10 Lifecycle',
         'info: Skipped (no local gateway to supervise).',
+        'section 9/10 Review and apply',
+        'select: Apply this?',
         'apply dry_run=False',
         'verify',
         'rc=0',
@@ -367,6 +382,8 @@ EXPECTED = {
         'checkbox: Configure detected cockpits:',
         'section 8/10 Lifecycle',
         'info: Skipped (single-model mode).',
+        'section 9/10 Review and apply',
+        'select: Apply this?',
         'apply dry_run=False',
         'verify',
         'rc=0',

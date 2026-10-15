@@ -584,22 +584,24 @@ def _edit_choices(args: argparse.Namespace) -> list:
 def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
     """The review BEFORE the write: one row per section, one line per detected cockpit, then one confirmation.
 
-    Only a recorded selection has a review: a host without one keeps today's silent skip, interactive or not
-    (tests/test_wizard_summary.py pins it)."""
+    With a recorded model selection the review also lists what each cockpit will get. On the kit-profile path
+    (no selection) an interactive run still shows the rows and asks; a non-interactive run keeps its silent
+    skip, because nothing can answer the question."""
     global _REVIEW_SHOWN
     selection = s.get_selection()
-    if selection is None:
+    if selection is None and ui.is_non_interactive():
         return 0
     ui.section(9, TOTAL_STEPS, "Review and apply")
     _REVIEW_SHOWN = True
     ui.review_table(_review_rows(s), title="Your answers")
-    detected = _detected_cockpit_ids(s)
-    actions = model_selection.plan_table(selection, s.mode, s.backend, detected,
-                                         engine=selection.openclaw_engine or None)
-    ui.console().print()
-    ui.info("Summary of what will be configured")
-    for line in model_selection.render_summary(actions, selection, s.mode, s.backend):
-        ui.detail(line)
+    if selection is not None:
+        detected = _detected_cockpit_ids(s)
+        actions = model_selection.plan_table(selection, s.mode, s.backend, detected,
+                                             engine=selection.openclaw_engine or None)
+        ui.console().print()
+        ui.info("Summary of what will be configured")
+        for line in model_selection.render_summary(actions, selection, s.mode, s.backend):
+            ui.detail(line)
     if ui.is_non_interactive():
         return 0
     choices = [model_selection.APPLY, model_selection.CHANGE]
@@ -615,7 +617,8 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
         return _step_summary(s, args)
     if answer == model_selection.CHANGE:
         s.set_selection(None)
-        rc = _step_models(s, args)
+        rc = _step_models(s, args, bool(getattr(args, "dry_run", False)))
+        # Whatever was chosen (a new selection, or the kit profile again) is shown and confirmed here.
         return rc if rc != 0 else _step_summary(s, args)
     if answer != model_selection.APPLY:
         # The same block as every other cancel point: it lists all earlier real actions of this run.
