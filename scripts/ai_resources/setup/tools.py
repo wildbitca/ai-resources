@@ -163,7 +163,8 @@ def install_one(tool_id: str, s: state.SetupState) -> bool:
     """Run one tool's official installer, tracking any rc-file lines it appended."""
     spec = TOOLS[tool_id]
     before = _read_rc_files() if tool_id == "agy" else {}
-    ok, out = _run_install(spec.install_cmd)
+    with ui.spinner(f"Installing {spec.label}"):
+        ok, out = _run_install(spec.install_cmd)
     if tool_id == "agy":
         for p in _rc_paths():
             _dedupe_appended_lines(p, before.get(str(p), ""))

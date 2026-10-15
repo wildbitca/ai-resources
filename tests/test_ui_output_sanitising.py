@@ -53,3 +53,22 @@ def test_install_failure_message_is_masked(monkeypatch):
     monkeypatch.setattr(tools, "_run_install", lambda cmd, timeout=300: (False, "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123"))
     assert tools.install_one(next(iter(tools.TOOLS)), state.SetupState()) is False
     assert errors and "ghp_abcdefghij" not in errors[0]
+
+
+def test_a_tool_install_runs_under_a_spinner_and_ends_with_one_ok_line(monkeypatch):
+    from ai_resources.setup import state
+    events: list[str] = []
+
+    class Spin:
+        def __enter__(self):
+            events.append("open")
+
+        def __exit__(self, *a):
+            events.append("close")
+    monkeypatch.setattr(ui, "spinner", lambda label: Spin())
+    monkeypatch.setattr(ui, "ok", lambda m: events.append("ok"))
+    monkeypatch.setattr(ui, "detail", lambda m: None)
+    monkeypatch.setattr(ui, "record_action", lambda m: None)
+    monkeypatch.setattr(tools, "_run_install", lambda cmd, timeout=300: (True, ""))
+    assert tools.install_one(next(iter(tools.TOOLS)), state.SetupState()) is True
+    assert events == ["open", "close", "ok"]
