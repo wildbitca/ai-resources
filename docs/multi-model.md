@@ -28,6 +28,32 @@ The wizard handles cockpit detection (Claude Code, Cursor, Gemini CLI, …),
 gateway setup where there is one, credentials, profile selection, and
 per-cockpit configuration.
 
+### What the wizard looks like
+
+Each step starts with a header, a progress rail and one line of key hints:
+
+```
+─────────────── [4/10] Provider backends ───────────────
+ ✔ Tools  ✔ Mode  ✔ Gateway  ● Providers  ○ Credentials  ○ Models  ○ Cockpits  ○ Lifecycle  ○ Review  ○ Verify
+ ↑/↓ move · Space toggle · Enter confirm · Ctrl-C cancel
+```
+
+The ten steps are Tools, Mode, Gateway, Providers, Credentials, Models and roles (6a Models, 6b Role assignment,
+6c Subscription lanes), Cockpit config, Lifecycle, Review and apply, and Verification. A step that does not apply
+is shown and marked skipped. In a narrow terminal (under 60 columns) the header is one line, `Step 4/10  Provider
+backends`; with `NO_COLOR` set, or on a terminal that is not UTF-8, the rail uses `[x]`, `[>]`, `[ ]` and `[-]`.
+
+| Key | What it does |
+|---|---|
+| Up / Down, Space, Enter | Move, toggle (multi-select) and confirm |
+| Ctrl-B | Back to the previous step, in the steps that changed nothing yet (models, role assignment, lanes, cockpit selection). A step after one that installed or saved something refuses it and says so |
+| Ctrl-C or Ctrl-D | Cancel. Exit code 130; the message names the step and lists anything already done in the run |
+
+The review at step 9 shows one row per answer (credentials only as `set` or `missing`) and lets you pick
+`Edit a section...` to re-open an earlier step; the run continues from there and returns to the review. Nothing is
+written before you choose Apply. `--dry-run` ends with a masked diff per file and `DRY RUN: nothing was written`.
+Design: [ADR-0008](decisions/0008-setup-wizard-tui-on-rich-questionary.md).
+
 ## Mental model
 
 Claude Code and Aider are the cockpits the kit points at a gateway; the gateway

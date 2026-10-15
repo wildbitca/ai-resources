@@ -11,6 +11,22 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Added
 
+- **Guided setup wizard (ADR-0008).** `ai-resources setup` prints a step header with a progress rail and one line
+  of key hints (`Enter confirm`, `Ctrl-B back`, `Ctrl-C cancel`) at each step; the rail wraps between 60 and 79
+  columns and collapses to `Step n/10  title` below 60. Under `NO_COLOR` or a non-UTF-8 stream it uses ASCII glyphs
+  and no colour (bold stays). `--non-interactive` and a run without a terminal keep the plain header.
+- **Ctrl-B Back** in the steps that have made no change on this machine (models, role assignment, lanes, cockpit
+  selection). A step after one that installed or saved something refuses it with a notice.
+- **Review with "Edit a section...".** Step 9 shows one row per section (credentials only as `set` or `missing`) and
+  can re-open an earlier, rewindable step, then returns to the review. Apply, Change models and Cancel are unchanged.
+- **Inline validation** of the port (1-65535), the remote URL (http or https), a typed model id and the keys that
+  cannot be left empty.
+- **Failure log tail.** A failing installer prints its command, the exit code and the last 20 lines with secrets
+  masked, after the spinner closes.
+- **Masked dry-run diff.** `setup --dry-run` ends with a unified diff per renderable target (`executors.yaml`,
+  `litellm.yaml`, `docker-compose.yaml`, `lanes.yaml`, the Claude settings env), `new file` when a target is
+  missing, then `DRY RUN: nothing was written`.
+
 - **Resolved lane per role in `lanes.yaml` (ADR-0007 §1).** The file carries a `resolved:` section computed at setup
   and at the `models update` re-render: per role the lane, model, reason and ordered fallbacks, plus `second` and
   `blocked`. The digest now covers every key. SKILL.md tells the orchestrator to dispatch `resolved:`.
@@ -120,6 +136,10 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Changed
 
+- **Setup step headers follow the steps that run.** Step 6 is shown as 6a Models, 6b Role assignment and 6c
+  Subscription lanes (the lanes header appears only when a lanes flag is given); the review is `Review and apply`.
+  The numbering stays at 10 steps.
+
 - **One writer per run is now one landing path per run.** The kit-orchestration "Who writes what" paragraph, the
   `docs/multi-model.md` cross-provider note and the cross-provider example header state the ADR-0007 invariant: the
   kit (`lanes land`) is the only landing path, at most one integrating writer, every lane writer in its own
@@ -176,6 +196,11 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   restart window); they now point at the runbook's "Why sonnet and not haiku" (comments only).
 
 ### Fixed
+
+- **Ctrl-C and Ctrl-D at a setup prompt exit 130 and apply nothing.** Before, questionary returned `None`, which
+  the wizard read as "No", crashed on the port prompt (`int(None)`), or ended the lanes acknowledgement with exit 0.
+  The cancel message names the step and lists what was already done in the run (an install, a state save, a file
+  written) instead of claiming nothing happened. `cli.main` also turns a stray `KeyboardInterrupt` into exit 130.
 
 - **A bare `pytest tests/` no longer fills the /tmp tmpfs.** `tests/conftest.py` now sets the basetemp to a unique
   `run-*` directory under `$XDG_CACHE_HOME/ai-resources-pytest-runs` (or `~/.cache/ai-resources-pytest-runs`) when no

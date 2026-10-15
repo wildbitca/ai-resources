@@ -59,6 +59,8 @@ ai-resources doctor      # verify
 Choose **single-model** mode for the legacy single-provider behavior, or
 **multi-model** for per-role routing via LiteLLM gateway.
 
+The wizard shows a step header with a progress rail and key hints, takes Ctrl-B to go back in the steps that changed nothing yet, and ends with a review where you can pick "Edit a section..." before anything is written. Ctrl-C exits with code 130 and lists anything already done. Details: [docs/multi-model.md](docs/multi-model.md#what-the-wizard-looks-like).
+
 **Preview before committing:**
 ```sh
 ai-resources setup --dry-run   # renders configs + runs smoke tests, writes nothing
