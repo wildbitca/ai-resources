@@ -381,28 +381,48 @@ def _ask_missing_keys(s: state.SetupState, accounts: dict, dry_run: bool) -> dic
     return accounts
 
 
-def _pick_candidates(shape: str, cands: dict[str, list]) -> list | None:
-    """The questions of the chosen shape; None when the user backs out."""
+def _saved_defaults(cands: list, saved: Any) -> list:
+    """The candidates of `cands` that the saved selection already holds (same slot and model, else same slot)."""
+    slots = getattr(saved, "slots", None) or {}
+    out = []
+    for c in cands:
+        slot = slots.get(c.slot)
+        if slot is not None and getattr(slot, "model", c.ref) in (c.ref, c.id):
+            out.append(c)
+    return out
+
+
+def _pick_candidates(shape: str, cands: dict[str, list], saved: Any = None) -> list | None:
+    """The questions of the chosen shape; None when the user backs out. `saved` is the previous selection:
+    what it holds is the default of every question."""
     def choices_for(pid):
         return [ui.Choice(c.label, value=c) for c in cands[pid]]
 
+    def models_default(pid):
+        held = _saved_defaults(cands[pid], saved)
+        return held or [c for c in cands[pid][:1] if c.channel == "stable"]
+
     if shape == model_selection.SHAPE_SINGLE:
         flat = [ui.Choice(f"{pid}: {c.label}", value=c) for pid in cands for c in cands[pid]]
-        one = ui.select("Which model?", flat)
+        held = _saved_defaults([c for pid in cands for c in cands[pid]], saved)
+        one = ui.select("Which model?", flat, default=held[0] if held else None)
         return None if one is None else [one]
     if shape == model_selection.SHAPE_ONE_PROVIDER:
-        pid = ui.select("Which provider?", [ui.Choice(p, value=p) for p in cands])
+        held = _saved_defaults([c for p in cands for c in cands[p]], saved)
+        pid = ui.select("Which provider?", [ui.Choice(p, value=p) for p in cands],
+                        default=held[0].provider if held else None)
         if pid is None:
             return None
-        picked = ui.checkbox(f"Models from {pid}:", choices_for(pid), default=[c for c in cands[pid][:1] if c.channel == "stable"])
+        picked = ui.checkbox(f"Models from {pid}:", choices_for(pid), default=models_default(pid))
         return picked or None
-    chosen = ui.checkbox("Providers:", [ui.Choice(p, value=p) for p in cands], default=[])
+    held_providers = sorted({c.provider for p in cands for c in _saved_defaults(cands[p], saved)})
+    chosen = ui.checkbox("Providers:", [ui.Choice(p, value=p) for p in cands], default=held_providers)
     if not chosen or len(chosen) < 2:
         ui.error("Pick at least two providers for this shape.")
         return None
     out: list = []
     for pid in chosen:
-        picked = ui.checkbox(f"Models from {pid}:", choices_for(pid), default=[c for c in cands[pid][:1] if c.channel == "stable"])
+        picked = ui.checkbox(f"Models from {pid}:", choices_for(pid), default=models_default(pid))
         out += picked or []
     return out or None
 
@@ -417,7 +437,7 @@ def _step_models(s: state.SetupState, args: argparse.Namespace, dry_run: bool = 
     how = ui.select("How do you want to choose models?",
                     [ui.Choice("Use a kit profile (presets for every role)", value="profile"),
                      ui.Choice("Pick models from my accounts (live lists)", value="pick")],
-                    default="profile")
+                    default="pick" if s.get_selection() is not None else "profile")
     if how is None:
         return 130
     if how != "pick":
@@ -436,16 +456,21 @@ def _step_models(s: state.SetupState, args: argparse.Namespace, dry_run: bool = 
         if not cands:
             ui.warn("No provider with credentials lists any model; keeping the kit profile.")
             return 0
+        saved = s.get_selection()
+        saved_shape = getattr(saved, "shape", None)
         shape = ui.select("What do you want to use?",
-                          [ui.Choice(label, value=key) for key, label in model_selection.SHAPE_LABELS.items()])
+                          [ui.Choice(label, value=key) for key, label in model_selection.SHAPE_LABELS.items()],
+                          default=saved_shape if saved_shape in model_selection.SHAPE_LABELS else None)
         if shape is None:
             return 130
-        picks = _pick_candidates(shape, cands)
+        picks = _pick_candidates(shape, cands, saved)
         if not picks:
             continue
         primary = None
         if len(picks) > 1:
-            primary = ui.select("Primary model:", [ui.Choice(f"{c.slot} = {c.id}", value=c.slot) for c in picks])
+            saved_primary = getattr(saved, "primary", None)
+            primary = ui.select("Primary model:", [ui.Choice(f"{c.slot} = {c.id}", value=c.slot) for c in picks],
+                                default=saved_primary if saved_primary in {c.slot for c in picks} else None)
         providers_used = sorted({c.provider for c in picks})
         smoke = model_selection.choose_smoke_path(providers_used, s.backend, s.mode, accounts)
         try:

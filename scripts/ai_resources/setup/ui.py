@@ -627,8 +627,18 @@ def checkbox(message: str, choices: list[Any], default: list[Any] | None = None,
         return out
     default_hint = (" (Space toggle, Enter confirm" + (", Ctrl-B back" if _BACK_ON else "") + ")"
                     ) if _WIZARD_SCOPE else " (space to toggle, Enter to confirm)"
+    wanted = list(default or [])
+    marked: list[Any] = []
+    for c in choices:
+        value = getattr(c, "value", c)
+        if wanted and not getattr(c, "disabled", None) and any(value == w for w in wanted):
+            if isinstance(c, str):
+                c = questionary.Choice(c, value=c, checked=True)
+            else:
+                c.checked = True            # questionary reads `checked` per choice, not a default list
+        marked.append(c)
     return _ask(questionary.checkbox(
-        message, choices=choices,
+        message, choices=marked,
         instruction=instruction or default_hint,
         style=_QSTYLE,
     ))

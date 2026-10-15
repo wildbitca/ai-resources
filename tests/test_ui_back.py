@@ -156,3 +156,21 @@ def test_real_enter_still_answers():
     qmod = pytest.importorskip("questionary")
     assert _drive(lambda i, o: _BUILDERS["select"](qmod, i, o), "\r") == "a"
     assert _drive(lambda i, o: _BUILDERS["text"](qmod, i, o), "hi\r") == "hi"
+
+
+def test_checkbox_defaults_are_checked_in_the_real_prompt(monkeypatch):
+    """The default list must reach questionary as pre-checked choices (it was silently dropped)."""
+    qmod = pytest.importorskip("questionary")
+    seen = {}
+
+    class Q:
+        def ask(self):
+            return ["b"]
+    monkeypatch.setattr(ui, "_NON_INTERACTIVE", False)
+    monkeypatch.setattr(ui, "_HAS_QUESTIONARY", True)
+    monkeypatch.setattr(ui, "questionary", qmod, raising=False)
+    monkeypatch.setattr(qmod, "checkbox", lambda message, choices, **kw: seen.update(choices=choices) or Q())
+    out = ui.checkbox("pick", [ui.Choice("A", value="a"), ui.Choice("B", value="b"), ui.Choice("C", value="c")],
+                      default=["b", "c"])
+    assert out == ["b"]
+    assert [(c.value, c.checked) for c in seen["choices"]] == [("a", False), ("b", True), ("c", True)]
