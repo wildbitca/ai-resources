@@ -179,3 +179,25 @@ def test_edit_credentials_reruns_step_5_and_the_row_moves_from_missing_to_set(re
     assert len(review_env) == 2
     assert review_env[0]["Credentials"] == "OPENROUTER_API_KEY missing"
     assert review_env[1]["Credentials"] == "OPENROUTER_API_KEY set"
+
+
+def test_cancel_at_the_review_prints_the_shared_cancel_block(review_env, monkeypatch, capsys):
+    """Gap 5: same block as every other cancel, listing earlier real actions, not apply-scoped wording."""
+    _seed_openrouter()
+    monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: 0)
+    real = wizard._step_summary
+
+    def with_action(s, args):
+        ui.record_action("installed something")
+        return real(s, args)
+    monkeypatch.setattr(wizard, "_step_summary", with_action)
+    script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:openrouter",
+                       "Update OPENROUTER_API_KEY": False, "How do you want to choose models": "profile",
+                       "Choose profile": lambda v: v[0], "Customize any role": False,
+                       "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.CANCEL})
+    script.install(monkeypatch)
+    assert wizard.run(_args()) == 130
+    err = capsys.readouterr().err
+    assert "Setup cancelled at Review and apply" in err
+    assert "Already done in this run: " in err and "installed something" in err
+    assert "by the apply step" not in err

@@ -207,3 +207,30 @@ def test_cancel_in_the_middle_of_step9_lists_the_files_already_written(host, cap
     assert state.executors_path().exists()
     assert "Already done in this run" in err and "wrote executors.yaml" in err
     assert "Nothing was applied" not in err
+
+
+def test_cancel_inside_a_cockpit_configure_names_the_partial_write(host, capsys):
+    """Gap 4: Ctrl-C inside mod.configure leaves a partial write; the cancel block says so."""
+    from ai_resources import selection as sel
+    from ai_resources.setup import model_selection as ms
+    s = state.SetupState()
+    s.mode, s.backend = "multi-model", "openrouter"
+    s.last_run = "2026-01-01T00:00:00+00:00"
+    s.set_selection(sel.Selection(shape="single", providers={"anthropic": sel.ProviderSel()},
+                                  slots={"anthropic:sonnet": sel.SlotSel("anthropic/claude-sonnet-5-5")},
+                                  primary="anthropic:sonnet", smoke_path="direct"))
+    state.config_root().mkdir(parents=True, exist_ok=True)
+    state.save(s)
+    host.saves.clear()
+
+    def interrupt(ctx):
+        raise KeyboardInterrupt
+    host.monkeypatch.setattr(wizard.ALL_COCKPITS["claude"], "configure", interrupt)
+    rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:openrouter",
+                          "Update OPENROUTER_API_KEY": False, "How do you want to choose models": "profile",
+                          "Choose profile": lambda v: v[0], "Customize any role": False,
+                          "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
+    err = capsys.readouterr().err
+    assert rc == 130 and "Traceback" not in err
+    assert "may be partially written: claude" in err
+    assert "Nothing was applied" not in err

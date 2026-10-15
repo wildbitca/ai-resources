@@ -578,8 +578,8 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
         rc = _step_models(s, args)
         return rc if rc != 0 else _step_summary(s, args)
     if answer != model_selection.APPLY:
-        ui.warn("Setup cancelled; nothing was written by the apply step.")
-        return 130
+        # The same block as every other cancel point: it lists all earlier real actions of this run.
+        return _report_cancel(ui.Cancelled(ui.current_step()))
     return 0
 
 
@@ -1912,7 +1912,13 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                 ctx["route"] = routes[cid]
             if _COMPOSE.get("allow_unverified"):
                 ctx["allow_unverified"] = True
-            written = mod.configure(ctx)
+            try:
+                written = mod.configure(ctx)
+            except (KeyboardInterrupt, ui.Cancelled):
+                # A cockpit configurator writes several files in turn: an interrupt can leave some of them
+                # written, so the attempt is recorded and the cancel block names it.
+                ui.record_action(f"may be partially written: {cid}")
+                raise
             for w in written:
                 ui.ok(str(w))
             ui.record_action(f"configured {cid}")
