@@ -12,8 +12,9 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 ### Added
 
 - **MCP scoping for `kit-lane-*` agents (ADR-0007 OQ-5).** Lane agents are written with `tools.deny: ["bundle-mcp"]`
-  by default, so a claude-cli lane child no longer loads every server in OpenClaw's `mcp.servers` (supabase/engram
-  process accumulation on the gateway). A profile `lanes.mcp: {role: [server, ...]}` opts extra servers in per role.
+  by default, so a claude-cli lane child is expected to stop loading every server in OpenClaw's `mcp.servers` (supabase/engram
+  process accumulation on the gateway; the effect is proven only by the isolated merge gate). In opt-in mode
+  `bundle-mcp` is not denied, so bundle-provided servers outside `mcp.servers` stay loaded (known limit). A profile `lanes.mcp: {role: [server, ...]}` opts extra servers in per role.
   Recorded in `lanes_applied.mcp_deny_added`, removed by teardown, warned on by `verify`, shown in `explain`.
 
 - **Subscription lanes (ADR-0007), phase 2.** A separate lanes pass after the model choice places a role on Claude
