@@ -47,11 +47,16 @@ backends`; with `NO_COLOR` set, or on a terminal that is not UTF-8, the rail use
 |---|---|
 | Up / Down, Space, Enter | Move, toggle (multi-select) and confirm |
 | Ctrl-B | Back to the previous step, in the steps that changed nothing yet (models, role assignment, lanes, cockpit selection). A step after one that installed or saved something refuses it and says so |
-| Ctrl-C or Ctrl-D | Cancel. Exit code 130; the message names the step and lists anything already done in the run |
+| Ctrl-C or Ctrl-D | Cancel, in every prompt (select, multi-select, confirm, text and password; in a text field that holds text Ctrl-D deletes the character under the cursor). Exit code 130; the message names the step and lists anything already done in the run |
 
 The review at step 9 shows one row per answer (credentials only as `set` or `missing`) and lets you pick
-`Edit a section...` to re-open an earlier step; the run continues from there and returns to the review. Nothing is
-written before you choose Apply. `--dry-run` ends with a masked diff per file and `DRY RUN: nothing was written`.
+`Edit a section...` to re-open an earlier step; the run continues from there and returns to the review. It is shown
+on the "Use a kit profile" path too (a non-interactive run has nobody to ask and skips it). The kit's own
+configuration (cockpit settings, `executors.yaml`, `litellm.yaml`, `lanes.yaml`) is not written before you choose
+Apply. Some earlier steps do act on the machine when you confirm them: tool, pipx and LiteLLM installs, the
+LiteLLM image pull, provider credentials and the remote master key written to the env file, the gateway state
+save, and the multi-model cleanup when you leave that mode. A cancel lists whatever already happened.
+`--dry-run` installs and writes nothing and ends with a masked diff per file and `DRY RUN: nothing was written`.
 On a re-run every question starts from your saved answer. A Ctrl-C while a cockpit is being written is listed as
 `may be partially written: <cockpit>`; re-run setup to finish it. Output echoed from installers is stripped of
 terminal escapes and masked.

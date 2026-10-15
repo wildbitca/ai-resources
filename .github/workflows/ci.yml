@@ -14,8 +14,18 @@ permissions:
 
 jobs:
   validate:
-    name: Validate kit content
+    name: Validate kit content (${{ matrix.ui }} UI libraries)
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # What `brew install` ships (Formula/ai-resources.rb): this is what users run.
+          - ui: formula
+            pins: "rich==13.9.4 questionary==2.1.0 prompt_toolkit==3.0.48 wcwidth==0.2.13"
+          # The newest releases the wizard was also checked against.
+          - ui: latest
+            pins: "rich==15.0.0 questionary==2.1.1 prompt_toolkit==3.0.53"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -25,9 +35,10 @@ jobs:
 
       - name: Install dependencies
         # httpx too: the LiteLLM module imports it, and the gateway-rendering
-        # tests exercise that module. rich, questionary and prompt_toolkit are pinned so the
-        # real-library UI tests run instead of being skipped.
-        run: pip install pyyaml pytest httpx rich==15.0.0 questionary==2.1.1 prompt_toolkit==3.0.53
+        # tests exercise that module. rich, questionary and prompt_toolkit are pinned (the matrix
+        # runs the Formula versions and the newest ones) so the real-library UI tests run instead of
+        # being skipped.
+        run: pip install pyyaml pytest httpx ${{ matrix.pins }}
 
       - name: Validate skills, workflows, roles, scripts and references
         run: python3 scripts/validate_kit.py

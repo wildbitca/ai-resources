@@ -203,6 +203,16 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Fixed
 
+- **Setup wizard review follow-ups.** A re-run pre-checks only the exact saved model of a family (the saved
+  `ref`; previews are never pre-checked); Ctrl-D cancels select and checkbox prompts too; the review is shown on the
+  kit-profile path (not in a non-interactive run); "Change models" honours `--dry-run` and returns to the review;
+  the progress rail no longer shows a re-run step as skipped; an empty custom model id skips the role; `PASSWORD:
+  a b c` and `passphrase: ...` are masked in full while `max_tokens`, `api_key_env: NAME` and digests are kept; a
+  diff whose only change is masked says `changed (masked)`; OpenClaw configurator errors mask the command output;
+  the docs no longer say nothing is written before Apply (credentials, tool and LiteLLM installs, the image pull
+  and the gateway state happen earlier and a cancel lists them). CI tests the Formula's rich, questionary and
+  prompt_toolkit pins as well as the newest ones.
+
 - **Ctrl-C and Ctrl-D at a setup prompt exit 130 and apply nothing.** Before, questionary returned `None`, which
   the wizard read as "No", crashed on the port prompt (`int(None)`), or ended the lanes acknowledgement with exit 0.
   The cancel message names the step and lists what was already done in the run (an install, a state save, a file
