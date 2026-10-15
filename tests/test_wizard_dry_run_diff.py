@@ -94,3 +94,11 @@ def test_multiline_secrets_are_masked_in_the_diff_and_escapes_are_dropped(tmp_pa
     text = "\n".join(wizard._diff_lines("x.yaml", path, new))
     for leak in ("old-secret-line", "new-secret-line", "second-secret-line", "MIIEvQIB", "\x1b"):
         assert leak not in text
+
+
+def test_a_change_that_only_differs_in_masked_values_says_so(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text('{"env": {"ANTHROPIC_AUTH_TOKEN": "old-token-value"}}\n', encoding="utf-8")
+    lines = wizard._diff_lines("settings.json", path, '{"env": {"ANTHROPIC_AUTH_TOKEN": "new-token-value"}}\n')
+    assert lines[1] == "  changed (masked)" and len(lines) == 2
+    assert "token-value" not in "\n".join(lines)

@@ -2171,6 +2171,8 @@ def _diff_lines(label: str, path: Path, new_text: str, old_text: str | None = No
     old_lines = ui.safe_text(old_text).splitlines()
     if old_text == new_text:
         return [head, "  unchanged"]
+    if old_lines == new_lines:
+        return [head, "  changed (masked)"]            # only values that are hidden differ
     diff = list(difflib.unified_diff(old_lines, new_lines, fromfile=f"{path} (current)",
                                      tofile=f"{path} (after apply)", lineterm="", n=2))
     return [head] + [f"  {l}" for l in diff]

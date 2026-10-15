@@ -332,10 +332,10 @@ def spinner(label: str):
 
 
 _SECRET_NAME = re.compile(
-    r"(?i)\b([A-Z0-9_.\-]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Z0-9_.\-]*)"
+    r"(?i)\b([A-Z0-9_.\-]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL)[A-Z0-9_.\-]*)"
     r"([\"']?\s*[=:]\s*)(?:([\"'])([^\"'\n]*)|()(\$\{[^}\s]*\}|[^\s\"',}]+))")
 _FLAG_SECRET = re.compile(
-    r"(?i)(--?[a-z0-9_\-]*(?:key|token|secret|password|passwd|credential)[a-z0-9_\-]*)(\s+)(?!-)(\S+)")
+    r"(?i)(--?[a-z0-9_\-]*(?:key|token|secret|password|passwd|passphrase|credential)[a-z0-9_\-]*)(\s+)(?!-)(\S+)")
 _URL_CRED = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)([^/\s:@]+):([^/\s@]+)@")
 _REFERENCE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Z_][A-Z0-9_]*|<[A-Z][A-Z0-9_\-]*>|os\.environ/[A-Za-z0-9_]+")
 _SECRET_SHAPES = re.compile(
@@ -347,10 +347,31 @@ _KEYWORDS = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL)"
 _BLOCK_SCALAR = re.compile(
     r"(?im)^(([ \t]*)[\w.\-]*" + _KEYWORDS + r"[\w.\-]*[ \t]*:[ \t]*)([|>][+\-0-9]*)([ \t]*)\n"
     r"((?:\2[ \t]+[^\n]*(?:\n|\Z)|[ \t]*\n)+)")
-# A bare `NAME=value` line whose name says it is a password: an unquoted value may hold spaces, so it is
-# masked to the end of the line (a reference or an already masked value is kept).
+# A bare `NAME=value` or `NAME: value` line whose name says it is a password: an unquoted value may hold
+# spaces, so it is masked to the end of the line (a reference or an already masked value is kept).
 _PASSWORD_LINE = re.compile(
-    r"(?im)^([ \t]*(?:export[ \t]+)?[A-Z0-9_.\-]*(?:PASSWORD|PASSWD|PASSPHRASE)[A-Z0-9_.\-]*=)(?![\"'])([^\n]+)$")
+    r"(?im)^([ \t]*(?:export[ \t]+)?([A-Z0-9_.\-]*(?:PASSWORD|PASSWD|PASSPHRASE)[A-Z0-9_.\-]*)[ \t]*[=:][ \t]*)"
+    r"(?![\"'|>])([^\n]+)$")
+_SECRET_WORDS = ("key", "token", "secret", "password", "passwd", "passphrase", "credential")
+_SECRET_PLURALS = ("keys", "secrets", "credentials")
+# `api_key_env: NAME` names a variable, `token_count: 5` counts: the last word says the value is not a secret.
+_NOT_A_VALUE = frozenset({"env", "file", "path", "ref", "name", "var", "dir", "count", "limit", "len", "length",
+                          "size", "type"})
+_DIGEST = re.compile(
+    r"(?i)\b(?:sha(?:1|224|256|384|512)|md5)[:=]\s*[0-9a-f]{32,128}\b"
+    r"|\b[\w.\-]*(?:digest|checksum|hash)[\"']?\s*[:=]\s*[\"']?[0-9a-f]{32,128}\b")
+
+
+def _is_secret_name(name: str) -> bool:
+    """Whether a variable or field name says its value is a secret: one of its words is (or ends in) a secret
+    word, and its last word does not say it is a variable name, a path or a count. `max_tokens`, `tokenizer`,
+    `keyboard` and `api_key_env` are not."""
+    words = [w.lower() for w in re.split(r"[_.\-]+", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)) if w]
+    if not words or words[-1] in _NOT_A_VALUE:
+        return False
+    return any(w in _SECRET_PLURALS or w.endswith(_SECRET_WORDS) for w in words)
+
+
 _USERPASS = re.compile(r"(?<![\w\-])(-u|--user|--proxy-user)((?:\s+|=)[^\s:]+:)(\S+)")
 _AUTH_HEADER = re.compile(r"(?i)\b(authorization[\"']?\s*[:=]\s*[\"']?)([^\s\"',}]+(?:[ \t]+[^\s\"',}]+)?)")
 _AUTH_SCHEMES = ("bearer", "basic", "token", "digest", "apikey", "key")
@@ -362,6 +383,8 @@ def mask_secrets(text: str) -> str:
     reference such as `os.environ/NAME` or `${NAME}` is kept), well-known token shapes, Bearer tokens and long
     opaque strings. Used on everything the wizard echoes from a subprocess or renders into a diff."""
     def pair(m: "re.Match[str]") -> str:
+        if not _is_secret_name(m.group(1)):
+            return m.group(0)
         quote = m.group(3) or ""
         value = m.group(4) if m.group(3) else m.group(6)
         if (_REFERENCE.fullmatch(value) or value in ("****", "null", "None", "true", "false")
@@ -377,12 +400,20 @@ def mask_secrets(text: str) -> str:
         return f"{m.group(1)}****"
 
     def password_line(m: "re.Match[str]") -> str:
-        value = m.group(2).strip()
-        if _REFERENCE.fullmatch(value) or value in ("****", "null", "None", "true", "false"):
+        value = m.group(3).strip()
+        if (not _is_secret_name(m.group(2)) or _REFERENCE.fullmatch(value)
+                or value in ("****", "null", "None", "true", "false")):
             return m.group(0)
         return f"{m.group(1)}****"
 
-    out = _PEM.sub("****", text)
+    kept: list[str] = []                      # digests are not secrets: set aside, put back at the end
+
+    def keep(m: "re.Match[str]") -> str:
+        kept.append(m.group(0))
+        return f"\x00{len(kept) - 1}\x00"
+
+    out = _DIGEST.sub(keep, text)
+    out = _PEM.sub("****", out)
     out = _BLOCK_SCALAR.sub(
         lambda m: f"{m.group(1)}{m.group(3)}{m.group(4)}\n" + re.sub(r"(?m)^([ \t]+)\S[^\n]*$", r"\1****", m.group(5)),
         out)
@@ -394,7 +425,8 @@ def mask_secrets(text: str) -> str:
     out = _FLAG_SECRET.sub(lambda m: m.group(0) if _REFERENCE.fullmatch(m.group(3)) else f"{m.group(1)}{m.group(2)}****", out)
     out = _BEARER.sub(lambda m: f"{m.group(1)} ****", out)
     out = _BASE64_PADDED.sub("****", out)
-    return _SECRET_SHAPES.sub("****", out)
+    out = _SECRET_SHAPES.sub("****", out)
+    return re.sub(r"\x00(\d+)\x00", lambda m: kept[int(m.group(1))], out) if kept else out
 
 
 def log_tail(lines: Iterable[str], title: str = "Last output:", n: int = 20) -> None:

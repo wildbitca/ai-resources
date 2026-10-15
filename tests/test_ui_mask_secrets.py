@@ -62,3 +62,40 @@ def test_ordinary_text_and_references_are_kept(raw):
 def test_prose_line_keeps_its_words_after_the_value():
     out = ui.mask_secrets("set PASSWORD=x then run it again please")
     assert out.endswith("then run it again please")
+
+
+@pytest.mark.parametrize("raw,leaks", [
+    ("PASSWORD: correct horse battery staple", ["correct", "horse", "battery", "staple"]),
+    ("passphrase: correct horse battery staple", ["correct", "horse", "staple"]),
+    ("  db_passwd:   one two three", ["one", "two", "three"]),
+    ("passphrase=correct horse", ["correct", "horse"]),
+    ("export GPG_PASSPHRASE: one two", ["one", "two"]),
+    ("curl --passphrase hunter22 x", ["hunter22"]),
+])
+def test_colon_form_and_passphrase_names_are_masked(raw, leaks):
+    masked = ui.mask_secrets(raw)
+    for leak in leaks:
+        assert leak not in masked, masked
+
+
+@pytest.mark.parametrize("raw", [
+    "max_tokens: 4096",
+    "tokenizer: cl100k_base",
+    "api_key_env: OPENAI_API_KEY",
+    "api_key_env: NAME",
+    "token_count: 5",
+    "secret_key_ref: some-ref",
+    "keyboard: us",
+    "password_file: /etc/ai/pw",
+    "sha256: " + "ab12" * 16,
+    "input_digest: " + "0f" * 32,
+    "image: ghcr.io/berriai/litellm@sha256:" + "ab12" * 16,
+    "checksum=" + "ab12" * 8,
+])
+def test_names_and_digests_that_are_not_secrets_are_kept(raw):
+    assert ui.mask_secrets(raw) == raw
+
+
+def test_a_bare_long_hex_value_is_still_masked():
+    assert "ab12" * 16 not in ui.mask_secrets("value: " + "ab12" * 16)
+    assert "ab12" * 16 not in ui.mask_secrets("api_key: " + "ab12" * 16)
