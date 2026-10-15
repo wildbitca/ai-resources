@@ -52,6 +52,9 @@ backends`; with `NO_COLOR` set, or on a terminal that is not UTF-8, the rail use
 The review at step 9 shows one row per answer (credentials only as `set` or `missing`) and lets you pick
 `Edit a section...` to re-open an earlier step; the run continues from there and returns to the review. Nothing is
 written before you choose Apply. `--dry-run` ends with a masked diff per file and `DRY RUN: nothing was written`.
+On a re-run every question starts from your saved answer. A Ctrl-C while a cockpit is being written is listed as
+`may be partially written: <cockpit>`; re-run setup to finish it. Output echoed from installers is stripped of
+terminal escapes and masked.
 Design: [ADR-0008](decisions/0008-setup-wizard-tui-on-rich-questionary.md).
 
 ## Mental model

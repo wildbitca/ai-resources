@@ -20,11 +20,15 @@
 7. **Terminal behaviour.** `NO_COLOR` wins over `FORCE_COLOR` and strips colour only. Under `NO_COLOR` or a non-UTF-8 stream the glyphs are ASCII. The rail is full from 80 columns, wrapped from 60, a single `Step n/10  title` line below 60, and the plain header only in a non-interactive run. Without a TTY the wizard still fails with the existing error before any banner or rail.
 8. **Output of failures and dry runs is masked.** `ui.mask_secrets` hides key-like `NAME=value` pairs, well-known token shapes, Bearer tokens and long opaque strings. A failing command prints its last 20 lines through it; the dry run prints a unified diff per renderable target, `new file` when it is missing.
 
+9. **Echoed outside text is cleaned and masked.** Text that comes from a subprocess, a remote or a file passes `ui.clean_text` (ANSI/OSC sequences and control characters dropped, rich markup escaped by every message sink) and `ui.safe_text` (clean, then `mask_secrets`). `mask_secrets` also covers an unquoted `NAME=value with spaces` line for PASSWORD, PASSWD and PASSPHRASE names (masked to the end of the line), `Authorization:` headers, `-u user:pass`, YAML block scalars, PEM private keys and padded base64. The dry-run diff masks the whole text, not line by line.
+10. **A cancel inside a cockpit configurator is recorded.** The configurator writes several files in turn, so an interrupt is recorded as `may be partially written: <cockpit>` and the cancel block lists it. A cancel at the review prints the same block as every other cancel point.
+11. **A re-run offers every saved answer as its default.** The model picker (how, shape, provider, models, primary) and the checkboxes (a questionary checkbox reads `checked` per choice, so the default list is applied to the choices) start from the saved selection.
+
 ## Consequences
 
 - Ctrl-C at the lanes acknowledgement now exits 130 instead of 0. This is the fix, recorded under Fixed in the changelog.
 - Keys: Ctrl-B replaces cursor-left in text and password prompts of the steps that offer Back.
-- The real key path (a pipe input driving questionary) is tested only where questionary is installed; CI installs only pyyaml, pytest and httpx, so those cases skip there and doubles cover the rest.
+- The real key path (a pipe input driving questionary) is tested only where questionary is installed; CI installs only pyyaml, pytest and httpx, so those cases skip there and doubles cover the rest. A throwaway venv with the pinned questionary, prompt_toolkit and rich runs them (the 2026-10 real-library run found the checkbox default being dropped).
 - The wizard's other prompts (doctor, executors, models, cockpits) still return `None` on Ctrl-C. Moving them to the scope is a follow-up.
 
 ## Rollback

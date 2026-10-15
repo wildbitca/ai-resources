@@ -11,6 +11,12 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Added
 
+- **Wizard hardening (ADR-0008, 9-11).** A re-run starts every model question from the saved selection and
+  pre-checks the saved providers and cockpits; echoed subprocess text drops terminal escapes and markup and is masked
+  (unquoted passphrases, `Authorization:` headers, `-u user:pass`, YAML block scalars, PEM keys, padded base64); the
+  dry-run diff masks multi-line secrets; a tool installer runs under a spinner; a Ctrl-C inside a cockpit configurator
+  is listed as `may be partially written: <cockpit>`; cancelling at the review prints the shared cancel block; a
+  golden test pins the whole non-interactive output.
 - **Guided setup wizard (ADR-0008).** `ai-resources setup` prints a step header with a progress rail and one line
   of key hints (`Enter confirm`, `Ctrl-B back`, `Ctrl-C cancel`) at each step; the rail wraps between 60 and 79
   columns and collapses to `Step n/10  title` below 60. Under `NO_COLOR` or a non-UTF-8 stream it uses ASCII glyphs
