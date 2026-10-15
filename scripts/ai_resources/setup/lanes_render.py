@@ -259,17 +259,27 @@ def render_doc(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: str,
     """
     stale = {d["agent"] for d in drift(lanes, by_role)}
     agents: dict[str, Any] = {}
+    held = {aid for aid, a in (lanes.get("agents") or {}).items()
+            if (a or {}).get("backend") != CLAUDE_CLI and not AGY_LANE_ADR_ACCEPTED}
+    every: dict[str, Any] = {}
     for aid, agent in sorted((lanes.get("agents") or {}).items()):
         entry = {"backend": agent.get("backend", ""), "model": agent.get("model", ""),
                  "pool": agent.get("pool", "")}
         if aid in stale or agent.get("stale"):
             entry["stale"] = True
-        agents[aid] = entry
-    roles = {r: {"candidates": list((c or {}).get("candidates") or [])}
+        every[aid] = entry
+        if aid not in held:                # a held agy agent from a hand-edited state never reaches lanes.yaml
+            agents[aid] = entry
+    def _live(refs: Any) -> list[str]:
+        return [r for r in (refs or []) if not (isinstance(r, str) and r.startswith("openclaw-agent:")
+                                                and r.split(":", 1)[1] in held)]
+
+    roles = {r: {"candidates": _live((c or {}).get("candidates"))}
              for r, c in sorted((lanes.get("roles") or {}).items())}
-    second = {r: list(c or []) for r, c in sorted((lanes.get("second") or {}).items())}
+    second = {r: _live(c) for r, c in sorted((lanes.get("second") or {}).items())}
+    second = {r: c for r, c in second.items() if c}
     payload = {"mode": mode, "agents": agents, "roles": roles, "second": second,
-               "resolved": resolve_table(lanes, by_role, mode, acks, agents)}
+               "resolved": resolve_table(lanes, by_role, mode, acks, every)}
     return {**payload, "digest": doc_digest(payload)}
 
 
@@ -316,16 +326,20 @@ def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
                 one = scoring_lanes.resolve_lanes(by_role, usable, {role: [ref]}, {}, **kw)
                 if role in one.blocked or one.roles.get(role) is None or one.roles[role].ref != ref:
                     continue
-                fallbacks.append({"lane": ref, "reason": "admitted candidate, declared order: use only when "
-                                                         "the resolved lane is unavailable or capped"})
+                fallbacks.append({"lane": ref, "model": one.models.get(role, ""),
+                                  "reason": "admitted candidate, declared order: use only when "
+                                            "the resolved lane is unavailable or capped"})
             if role not in roles_policy.CHECKER_ROLES and lane.ref != CLAUDE_CODE and not any(
                     f["lane"] == CLAUDE_CODE for f in fallbacks):
-                fallbacks.append({"lane": CLAUDE_CODE, "reason": "the off switch"})
+                fallbacks.append({"lane": CLAUDE_CODE, "model": str((by_role.get(role) or {}).get("model") or ""),
+                                  "reason": "the off switch"})
             out["roles"][role] = {"lane": lane.ref, "model": table.models.get(role, ""),
                                   "reason": why or "single candidate", "fallbacks": fallbacks}
         for role, lane in sorted(table.second.items()):
             why = "; ".join(w.text for w in table.why if w.role == role and w.lane.startswith("second:"))
-            out["second"][role] = {"lane": lane.ref, "reason": why or "second member"}
+            sec_agent = usable.get(lane.ref.split(":", 1)[1]) if lane.ref != CLAUDE_CODE else None
+            sec_model = (sec_agent or {}).get("model") or str((by_role.get(role) or {}).get("model") or "")
+            out["second"][role] = {"lane": lane.ref, "model": str(sec_model), "reason": why or "second member"}
     except (scoring_lanes.LaneError, scoring_lanes.LaneConflict) as exc:
         return {"error": str(exc), "roles": {}, "second": {}, "blocked": {}}
     held = sorted(held_ids)

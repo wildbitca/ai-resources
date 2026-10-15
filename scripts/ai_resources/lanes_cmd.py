@@ -97,7 +97,7 @@ class Ctx:
 
 def state_root() -> Path:
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    norm = os.path.normpath(os.path.abspath(base))
+    norm = os.path.realpath(base)               # a symlink into a volatile root is refused too
     for volatile in VOLATILE_ROOTS:
         if norm == volatile or norm.startswith(volatile + "/"):
             raise LaneCmdError(f"the lanes state directory never lives under {volatile} "
@@ -641,6 +641,43 @@ def _normalise_lane(lane: str) -> str:
     return f"openclaw-agent:{lane}" if lane.startswith("kit-lane-") else lane
 
 
+def _admit_lane(doc: dict, lane: str) -> None:
+    """Re-apply the hold and the admission when binding: the digest is integrity, not authentication, so a
+    table whose digest was recomputed after adding an agent is still refused here."""
+    from .setup import lanes_render
+    from .setup.cockpits import openclaw_lanes
+    if lane == "claude-code":
+        return
+    aid = lane.split(":", 1)[1] if lane.startswith("openclaw-agent:") else ""
+    agent = (doc.get("agents") or {}).get(aid)
+    if not aid.startswith("kit-lane-") or not isinstance(agent, dict):
+        raise Refused([f"lane {lane} is not an admitted kit lane agent of the table"])
+    backend = agent.get("backend")
+    writable = backend in openclaw_lanes.WRITABLE_BACKENDS
+    if backend != "claude-cli" and not lanes_render.AGY_LANE_ADR_ACCEPTED:
+        writable = False
+    if not writable:
+        raise Refused([f"lane {lane}: agent is not admitted, backend {backend} is not writable in this version"])
+    if agent.get("stale"):
+        raise Refused([f"lane {lane}: agent is stale (model drift); re-run `ai-resources setup --lanes`"])
+
+
+def _check_model(role: str, lane: str, declared: str, resolved_model: Any) -> None:
+    """The declared --model must be the model the bound lane resolved to: same family and, when both are
+    concrete refs, the same ref (vendor prefix ignored). An alias matches by family."""
+    if not resolved_model:
+        return
+    fam_d, fam_r = rp.model_family(declared), rp.model_family(str(resolved_model))
+    strip = lambda r: re.sub(r"^(?:anthropic|claude-cli|claude-kit)/", "", str(r))      # noqa: E731
+    concrete = lambda r: rp.model_family(r) is not None and strip(r) not in ("haiku", "sonnet", "opus")  # noqa: E731
+    bad = fam_d is None or fam_d != fam_r
+    if not bad and concrete(declared) and concrete(resolved_model) and strip(declared) != strip(resolved_model):
+        bad = True
+    if bad:
+        raise Refused([f"--model {declared!r} is not the model of lane {lane} for role {role} "
+                       f"(resolved: {resolved_model})"])
+
+
 def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
     """Bind a prepare to the lane `lanes.yaml` resolved for the role (ADR-0007 §1, B1).
 
@@ -674,6 +711,7 @@ def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
     blocked = (resolved.get("blocked") or {}).get(role)
     if blocked:
         raise Refused([f"role {role} is blocked: {blocked}"])
+    _admit_lane(doc, lane)
     if a.second:
         entry = (resolved.get("second") or {}).get(role)
         if not entry:
@@ -685,10 +723,12 @@ def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
             entry = {"lane": "claude-code", "reason": "role not in the table: claude-code"}
         fallbacks = list(entry.get("fallbacks") or [])
     if lane == entry.get("lane"):
+        _check_model(role, lane, a.model, entry.get("model"))
         return {"lane": lane, "source": "resolved", "reason": str(entry.get("reason", "")),
                 "digest": doc["digest"]}
     for fb in fallbacks:
         if fb.get("lane") == lane:
+            _check_model(role, lane, a.model, fb.get("model"))
             return {"lane": lane, "source": "fallback", "reason": str(fb.get("reason", "")),
                     "digest": doc["digest"]}
     raise Refused([f"lane {lane} is neither the resolved lane ({entry.get('lane')}) nor a recorded fallback "

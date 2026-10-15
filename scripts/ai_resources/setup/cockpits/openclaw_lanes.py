@@ -14,6 +14,7 @@ static config. Teardown removes only what `OpenClawState.lanes_applied` records.
 from __future__ import annotations
 
 import copy
+import fnmatch
 import re
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -25,6 +26,13 @@ CLAUDE_CLI = "claude-cli"
 KIT_LANES_DIR = "kit-lanes"
 _EXEC_OFF = {"", "off", "deny", "none", "disabled"}
 _EXEC_DENY_TOKENS = {"exec", "mcp__openclaw__exec", "group:runtime"}
+_EXEC_NAMES = ("exec", "mcp__openclaw__exec")
+
+
+def _matches_exec(pattern: str) -> bool:
+    """A `tools.deny` / `tools.allow` entry that names exec: exact, group:runtime or a glob such as `*`."""
+    p = pattern.strip().lower()
+    return p == "group:runtime" or any(fnmatch.fnmatchcase(n, p) for n in _EXEC_NAMES)
 
 
 class LanesWriteError(RuntimeError):
@@ -79,7 +87,10 @@ def verify_capability(doc: Mapping[str, Any], orchestrators: Iterable[str]) -> d
     """Static record per orchestrator (plan R7-6): from its tool grants in the config, never a spawn.
 
     exec granted -> `exec`; the kit plugin tool granted -> `plugin-tool`; a claude-cli orchestrator without an
-    explicit grant -> `exec` by reference to the isolated V8 evidence; anything else -> `none`.
+    explicit grant -> `exec` by reference to the isolated V8 evidence; anything else -> `none`. An explicit deny
+    (`tools.exec.mode` off, a `tools.deny` entry naming exec or a glob covering it) and a non-empty `tools.allow`
+    that leaves exec out are `none`. Not decided statically: tool profiles (`tools.profile`) and plugin-provided
+    grants.
     """
     out: dict[str, dict[str, str]] = {}
     entries = _get(doc, "agents", "entries") or {}
@@ -90,11 +101,15 @@ def verify_capability(doc: Mapping[str, Any], orchestrators: Iterable[str]) -> d
         allow = list(_get(entry, "tools", "allow") or []) + list(_get(entry, "tools", "alsoAllow") or [])
         deny = [d for d in (_get(entry, "tools", "deny") or []) if isinstance(d, str)]
         exec_denied = ((isinstance(mode, str) and mode.lower() in _EXEC_OFF and mode != "")
-                       or any(d.lower() in _EXEC_DENY_TOKENS for d in deny))
+                       or any(_matches_exec(d) for d in deny))
+        allowlist = [x for x in (_get(entry, "tools", "allow") or []) if isinstance(x, str)]
+        allow_excludes_exec = bool(allowlist) and not any(_matches_exec(x) for x in allowlist)
         if exec_denied:                     # an explicit deny is never overridden by the isolated evidence
             out[orch] = {"mode": "none", "source": "static-config", "evidence_ref": ""}
         elif any(isinstance(a, str) and "lanes" in a for a in allow):
             out[orch] = {"mode": "plugin-tool", "source": "static-config", "evidence_ref": ""}
+        elif allow_excludes_exec:           # an explicit allowlist that leaves exec out is a deny, even next to a mode (fail closed)
+            out[orch] = {"mode": "none", "source": "static-config", "evidence_ref": ""}
         elif isinstance(mode, str) and mode.lower() not in _EXEC_OFF:
             out[orch] = {"mode": "exec", "source": "static-config", "evidence_ref": ""}
         elif str(_get(entry, "model", "primary") or "").startswith(("claude-cli/", "claude-kit/")):

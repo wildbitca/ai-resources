@@ -203,10 +203,10 @@ is nothing to reset.
 1. Read the paths named in the Block and the step report.
 2. Do not merge or reset by hand. Discard the failed attempt's worktree with `openclaw worktrees remove <id>`
    (`openclaw worktrees list` shows it) and start the integrating step again as a new attempt
-   (`lanes prepare --attempt <n+1>`): the integrating writer resolves the overlap in its own worktree.
+   (`lanes prepare --attempt <n+1> --lane <resolved lane>`): the integrating writer resolves the overlap in its own worktree.
 3. Run `lanes verify`, the Verifier step and `lanes land` with the `--expect` value the last command printed.
 4. If `land` says `base <sha> is not run HEAD <sha>`, the run tree moved: re-enter the step
-   (`lanes prepare --reenter`) so the integration branch is rebuilt from the current HEAD.
+   (`lanes prepare --reenter --lane <resolved lane>`) so the integration branch is rebuilt from the current HEAD.
 5. After three failed attempts the step stops; the ledger under `$XDG_STATE_HOME/ai-resources/lanes/<run-id>/` is the
    evidence.
 

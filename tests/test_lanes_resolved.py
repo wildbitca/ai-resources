@@ -84,6 +84,15 @@ def test_prepare_accepts_a_recorded_fallback_and_refuses_any_other_lane(env):
     assert rc == 0 and env.ledger_entries(env.state)[0]["data"]["lane"]["source"] == "fallback"
     rc, out = env.run("prepare", "--step", "impl2", "--role", "implementer", "--contract", "report",
                       "--model", "sonnet", "--lane", "kit-lane-cli-opus55")
+    assert rc == 1 and any("not an admitted kit lane agent" in r for r in out["reasons"]), out
+
+
+def test_an_admitted_agent_that_is_not_a_candidate_of_the_role_is_refused(env):
+    lanes = _lanes()
+    lanes["agents"]["kit-lane-cli-opus55"] = {"backend": "claude-cli", "model": "anthropic/claude-opus-5-5",
+                                              "pool": "claude-subscription"}
+    _write(lanes)
+    rc, out = _prep(env, "--lane", "kit-lane-cli-opus55", model="opus")
     assert rc == 1 and any("neither the resolved lane" in r for r in out["reasons"]), out
 
 
@@ -134,3 +143,80 @@ SKILL_WORDING = (
 @pytest.mark.parametrize("needle", SKILL_WORDING)
 def test_skill_md_pins_the_resolved_dispatch_and_the_mandatory_lane_flag(needle):
     assert needle in SKILL.read_text(encoding="utf-8"), needle
+
+
+def _prep(env, *extra, step="impl", role="implementer", model="sonnet"):
+    return env.run("prepare", "--step", step, "--role", role, "--contract", "report", "--model", model, *extra)
+
+
+def test_n1_the_declared_model_must_be_the_model_of_the_bound_lane(env):
+    _write()
+    rc, out = _prep(env, "--lane", AGENT, model="haiku")
+    assert rc == 1 and any("is not the model of lane" in r for r in out["reasons"]), out
+    rc, out = _prep(env, "--lane", "claude-code", model="haiku", step="impl2")
+    assert rc == 1, out
+    rc, out = _prep(env, "--lane", AGENT, model="anthropic/claude-sonnet-5-5", step="impl3")
+    assert rc == 0, out
+    rc, out = _prep(env, "--lane", "claude-code", model="sonnet", step="impl4")
+    assert rc == 0, out
+
+
+def test_n1_a_concrete_ref_of_another_version_is_refused(env):
+    _write()
+    rc, out = _prep(env, "--lane", AGENT, model="anthropic/claude-sonnet-5-4")
+    assert rc == 1 and any("is not the model of lane" in r for r in out["reasons"]), out
+
+
+def test_d2_n2_a_held_agy_agent_in_a_hand_edited_state_never_reaches_lanes_yaml():
+    lanes = _lanes()
+    lanes["agents"]["kit-lane-agy-evil"] = {"backend": "agy-cli", "model": "gemini-3.8-flash-low",
+                                            "pool": "agy-gemini"}
+    lanes["roles"]["implementer"]["candidates"].insert(0, "openclaw-agent:kit-lane-agy-evil")
+    doc = lanes_render.render_doc(lanes, BY_ROLE, "single-model", ANTHROPIC_ACK)
+    assert "kit-lane-agy-evil" not in doc["agents"]
+    assert "openclaw-agent:kit-lane-agy-evil" not in doc["roles"]["implementer"]["candidates"]
+    assert doc["resolved"]["held"] == {"kit-lane-agy-evil": "held: Antigravity lane not accepted"}
+
+
+def test_n2_a_recomputed_digest_with_an_agy_agent_is_still_refused(env):
+    doc = _write()
+    doc["agents"]["kit-lane-agy-evil"] = {"backend": "agy-cli", "model": "gemini-3.8-flash-low",
+                                          "pool": "agy-gemini"}
+    doc["resolved"]["roles"]["implementer"] = {"lane": "openclaw-agent:kit-lane-agy-evil",
+                                               "model": "gemini-3.8-flash-low", "reason": "x", "fallbacks": []}
+    doc["digest"] = lanes_render.doc_digest(doc)
+    state.lanes_path().write_text(lanes_render.dumps(doc))
+    rc, out = _prep(env, "--lane", "kit-lane-agy-evil", model="gemini-3.8-flash-low")
+    assert rc == 1 and any("not admitted" in r for r in out["reasons"]), out
+
+
+def test_n2_an_agent_missing_from_the_table_is_refused(env):
+    doc = _write()
+    doc["resolved"]["roles"]["implementer"]["fallbacks"].append(
+        {"lane": "openclaw-agent:kit-lane-cli-ghost", "model": "sonnet", "reason": "x"})
+    doc["digest"] = lanes_render.doc_digest(doc)
+    state.lanes_path().write_text(lanes_render.dumps(doc))
+    rc, out = _prep(env, "--lane", "kit-lane-cli-ghost")
+    assert rc == 1 and any("not an admitted kit lane agent" in r for r in out["reasons"]), out
+
+
+def test_n4_every_prepare_example_in_the_docs_passes_the_lane():
+    root = Path(__file__).resolve().parents[1]
+    for rel in ("docs/openclaw/runbook.md", "skills/kit-orchestration/SKILL.md"):
+        for n, line in enumerate((root / rel).read_text().splitlines(), 1):
+            if "lanes prepare" in line and ("--attempt" in line or "--reenter" in line or "--step" in line):
+                assert "--lane" in line, f"{rel}:{n}: {line.strip()}"
+
+
+def test_parity_agy_backends_are_writable_only_when_the_adr_is_accepted():
+    from ai_resources.setup.cockpits import openclaw_lanes
+    if not lanes_render.AGY_LANE_ADR_ACCEPTED:
+        assert not (openclaw_lanes.WRITABLE_BACKENDS & {"agy-cli", "agy-cli-lane"})
+
+
+def test_g7_a_symlink_into_tmp_is_refused(tmp_path, monkeypatch):
+    link = tmp_path / "link"
+    link.symlink_to("/tmp")
+    monkeypatch.setenv("XDG_STATE_HOME", str(link / "state"))
+    with pytest.raises(lanes_cmd.LaneCmdError, match="never lives under"):
+        lanes_cmd.state_root()

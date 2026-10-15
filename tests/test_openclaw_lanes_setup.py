@@ -367,3 +367,22 @@ def test_lanes_writer_reads_the_live_config_after_the_engine_patch(host, monkeyp
                         lambda s, doc, **k: seen.setdefault("doc", doc) and False)
     cockpit._configure({}, _s(), state.CockpitState(), False, [], host.path, stale, "", [])
     assert seen["doc"]["agents"]["entries"]["main"]["subagents"]["allowAgents"] == ["claude"]
+
+
+@pytest.mark.parametrize("tools", [
+    {"deny": ["*"]}, {"deny": ["mcp__openclaw__*"]}, {"deny": ["ex*"]},
+    {"allow": ["read", "write"]},
+    {"allow": ["read"], "exec": {"mode": "full"}},
+])
+def test_wildcard_and_allowlist_exec_denials_are_none(tools):
+    entry = {"model": CLI, "tools": tools}
+    cap = openclaw_lanes.verify_capability({"agents": {"entries": {"main": entry}}}, ["main"])
+    assert cap["main"]["mode"] == "none", cap
+
+
+def test_an_allowlist_that_names_exec_or_the_lane_tool_is_not_a_deny():
+    for tools, mode in (({"allow": ["read", "exec"]}, "exec"),
+                        ({"allow": ["read", "ai-resources.lanes"]}, "plugin-tool")):
+        cap = openclaw_lanes.verify_capability(
+            {"agents": {"entries": {"main": {"model": CLI, "tools": tools}}}}, ["main"])
+        assert cap["main"]["mode"] == mode, (tools, cap)
