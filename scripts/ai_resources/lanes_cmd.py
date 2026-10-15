@@ -662,11 +662,14 @@ def _admit_lane(doc: dict, lane: str) -> None:
         raise Refused([f"lane {lane}: agent is stale (model drift); re-run `ai-resources setup --lanes`"])
 
 
-def _check_model(role: str, lane: str, declared: str, resolved_model: Any) -> None:
+def _check_model(role: str, lane: str, declared: str, entry: dict) -> None:
     """The declared --model must be the model the bound lane resolved to: same family and, when both are
     concrete refs, the same ref (vendor prefix ignored). An alias matches by family."""
+    if "model" not in entry:
+        raise Refused([f"lanes.yaml lacks the model of {lane}: re-run `ai-resources setup --lanes`"])
+    resolved_model = entry.get("model")
     if not resolved_model:
-        return
+        return                                   # the role has no model in by_role: nothing to compare with
     fam_d, fam_r = rp.model_family(declared), rp.model_family(str(resolved_model))
     strip = lambda r: re.sub(r"^(?:anthropic|claude-cli|claude-kit)/", "", str(r))      # noqa: E731
     concrete = lambda r: rp.model_family(r) is not None and strip(r) not in ("haiku", "sonnet", "opus")  # noqa: E731
@@ -723,12 +726,12 @@ def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
             entry = {"lane": "claude-code", "reason": "role not in the table: claude-code"}
         fallbacks = list(entry.get("fallbacks") or [])
     if lane == entry.get("lane"):
-        _check_model(role, lane, a.model, entry.get("model"))
+        _check_model(role, lane, a.model, entry)
         return {"lane": lane, "source": "resolved", "reason": str(entry.get("reason", "")),
                 "digest": doc["digest"]}
     for fb in fallbacks:
         if fb.get("lane") == lane:
-            _check_model(role, lane, a.model, fb.get("model"))
+            _check_model(role, lane, a.model, fb)
             return {"lane": lane, "source": "fallback", "reason": str(fb.get("reason", "")),
                     "digest": doc["digest"]}
     raise Refused([f"lane {lane} is neither the resolved lane ({entry.get('lane')}) nor a recorded fallback "

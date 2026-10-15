@@ -26,13 +26,16 @@ CLAUDE_CLI = "claude-cli"
 KIT_LANES_DIR = "kit-lanes"
 _EXEC_OFF = {"", "off", "deny", "none", "disabled"}
 _EXEC_DENY_TOKENS = {"exec", "mcp__openclaw__exec", "group:runtime"}
-_EXEC_NAMES = ("exec", "mcp__openclaw__exec")
+# OpenClaw tool policy (docs/gateway/sandbox-vs-tool-policy-vs-elevated.md, "Tool groups"): `group:runtime`
+# expands to exec, process and code_execution; entries are `*`-globs over tool ids and group names, so
+# `group:*` and `*` cover `group:runtime`.
+_EXEC_NAMES = ("exec", "mcp__openclaw__exec", "group:runtime")
 
 
 def _matches_exec(pattern: str) -> bool:
     """A `tools.deny` / `tools.allow` entry that names exec: exact, group:runtime or a glob such as `*`."""
     p = pattern.strip().lower()
-    return p == "group:runtime" or any(fnmatch.fnmatchcase(n, p) for n in _EXEC_NAMES)
+    return any(fnmatch.fnmatchcase(n, p) for n in _EXEC_NAMES)
 
 
 class LanesWriteError(RuntimeError):
@@ -89,7 +92,8 @@ def verify_capability(doc: Mapping[str, Any], orchestrators: Iterable[str]) -> d
     exec granted -> `exec`; the kit plugin tool granted -> `plugin-tool`; a claude-cli orchestrator without an
     explicit grant -> `exec` by reference to the isolated V8 evidence; anything else -> `none`. An explicit deny
     (`tools.exec.mode` off, a `tools.deny` entry naming exec or a glob covering it) and a non-empty `tools.allow`
-    that leaves exec out are `none`. Not decided statically: tool profiles (`tools.profile`) and plugin-provided
+    that leaves exec out (counting `alsoAllow` as additive) are `none`; `group:*` and `*` globs cover
+    `group:runtime`. Not decided statically: tool profiles (`tools.profile`) and plugin-provided
     grants.
     """
     out: dict[str, dict[str, str]] = {}
@@ -102,15 +106,18 @@ def verify_capability(doc: Mapping[str, Any], orchestrators: Iterable[str]) -> d
         deny = [d for d in (_get(entry, "tools", "deny") or []) if isinstance(d, str)]
         exec_denied = ((isinstance(mode, str) and mode.lower() in _EXEC_OFF and mode != "")
                        or any(_matches_exec(d) for d in deny))
-        allowlist = [x for x in (_get(entry, "tools", "allow") or []) if isinstance(x, str)]
-        allow_excludes_exec = bool(allowlist) and not any(_matches_exec(x) for x in allowlist)
+        base_allow = [x for x in (_get(entry, "tools", "allow") or []) if isinstance(x, str)]
+        extra_allow = [x for x in (_get(entry, "tools", "alsoAllow") or []) if isinstance(x, str)]
+        # `alsoAllow` adds to the allowlist: an allowlist excludes exec only when neither list names it
+        allow_excludes_exec = bool(base_allow) and not any(_matches_exec(x) for x in base_allow + extra_allow)
+        allow_names_exec = any(_matches_exec(x) for x in base_allow + extra_allow)
         if exec_denied:                     # an explicit deny is never overridden by the isolated evidence
             out[orch] = {"mode": "none", "source": "static-config", "evidence_ref": ""}
         elif any(isinstance(a, str) and "lanes" in a for a in allow):
             out[orch] = {"mode": "plugin-tool", "source": "static-config", "evidence_ref": ""}
         elif allow_excludes_exec:           # an explicit allowlist that leaves exec out is a deny, even next to a mode (fail closed)
             out[orch] = {"mode": "none", "source": "static-config", "evidence_ref": ""}
-        elif isinstance(mode, str) and mode.lower() not in _EXEC_OFF:
+        elif (isinstance(mode, str) and mode.lower() not in _EXEC_OFF) or allow_names_exec:
             out[orch] = {"mode": "exec", "source": "static-config", "evidence_ref": ""}
         elif str(_get(entry, "model", "primary") or "").startswith(("claude-cli/", "claude-kit/")):
             out[orch] = {"mode": "exec", "source": "isolated-evidence",

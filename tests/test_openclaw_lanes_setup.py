@@ -386,3 +386,17 @@ def test_an_allowlist_that_names_exec_or_the_lane_tool_is_not_a_deny():
         cap = openclaw_lanes.verify_capability(
             {"agents": {"entries": {"main": {"model": CLI, "tools": tools}}}}, ["main"])
         assert cap["main"]["mode"] == mode, (tools, cap)
+
+
+@pytest.mark.parametrize("tools,mode", [
+    ({"allow": ["read"], "alsoAllow": ["exec"]}, "exec"),
+    ({"allow": ["group:*"]}, "exec"),
+    ({"allow": ["read"], "alsoAllow": ["group:runtime"]}, "exec"),
+    ({"deny": ["group:*"]}, "none"),
+    ({"deny": ["group:runtime"]}, "none"),
+    ({"allow": ["read"], "alsoAllow": ["web_fetch"]}, "none"),
+])
+def test_group_and_also_allow_forms(tools, mode):
+    entry = {"model": CLI, "tools": tools}
+    cap = openclaw_lanes.verify_capability({"agents": {"entries": {"main": entry}}}, ["main"])
+    assert cap["main"]["mode"] == mode, (tools, cap)

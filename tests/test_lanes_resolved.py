@@ -220,3 +220,25 @@ def test_g7_a_symlink_into_tmp_is_refused(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(link / "state"))
     with pytest.raises(lanes_cmd.LaneCmdError, match="never lives under"):
         lanes_cmd.state_root()
+
+
+@pytest.mark.parametrize("where", ["resolved", "fallback", "second"])
+def test_e1_an_entry_without_a_model_is_refused_not_skipped(env, where):
+    lanes = _lanes()
+    lanes["second"] = {"code-reviewer": [f"openclaw-agent:{AGENT}"]}
+    doc = _write(lanes)
+    res = doc["resolved"]
+    if where == "resolved":
+        res["roles"]["implementer"].pop("model")
+        args, role, extra = ("--lane", AGENT), "implementer", ()
+    elif where == "fallback":
+        res["roles"]["implementer"]["fallbacks"][0].pop("model")
+        args, role, extra = ("--lane", "claude-code"), "implementer", ()
+    else:
+        res["second"]["code-reviewer"].pop("model")
+        args, role, extra = ("--lane", AGENT), "code-reviewer", ("--second",)
+    doc["digest"] = lanes_render.doc_digest(doc)
+    state.lanes_path().write_text(lanes_render.dumps(doc))
+    rc, out = env.run("prepare", "--step", "s", "--role", role, "--contract", "report", "--model", "opus",
+                      *args, *extra)
+    assert rc == 1 and any("lanes.yaml lacks the model of" in r for r in out["reasons"]), out
