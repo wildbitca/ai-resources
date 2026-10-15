@@ -1,6 +1,6 @@
 # ADR-0007: Subscription lanes (a separate lanes pass, kit-only landing, and the `subscription-claude-55` profile)
 
-**Status**: Proposed (2026-10-14). The "Antigravity lane" section is Proposed-deferred until P3-S0. Nothing in this ADR is implemented yet; the evidence section lists every verification as UNVERIFIED pending the isolated-gateway probes (P0-S2).
+**Status**: Accepted by the operator on 2026-10-15, without the "Antigravity lane" section, which stays Proposed-deferred until P3-S0. Phase 0 (this ADR and the isolated probes) and phase 1 (the `subscription-claude-55` profile) are implemented; no lanes code exists yet (phase 2). The evidence section states what each isolated-gateway probe showed and how strong that evidence is.
 **Date**: 2026-10-14
 **Decision makers**: planner, implementer, operator (decisions of 2026-10-14 recorded in `.agent-output/planner/subscription-lanes-plan.md`, section 0)
 **Amends**: [ADR-0001](0001-model-pins-and-auto-update.md) (second validated writer), [ADR-0002](0002-provider-agnostic-model-selection.md) §8 (second validated writer; rendered `lanes.yaml`), [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md) (watch record, teardown, classify-before-add, drained path), [ADR-0005](0005-cross-provider-role-dispatch.md) §1, §2, §3, §4 and the writers matrix, §6, §7 and "Security limits", [ADR-0006](0006-scored-team-composition.md) §4, §8, "Output limits", "Rollback" (scoped to composition; the revisit trigger at "What made this Accepted" is not met)
@@ -128,9 +128,9 @@ Run directories: `20261014T210239Z` (V1, V2, V8, V9), `20261014T211507Z` (V10, V
 | V | Question | Status | Observation | Dependent step |
 |---|---|---|---|---|
 | V1 | Model ref form for a claude-cli OpenClaw agent | VERIFIED | The runtime-pinned canonical ref, the legacy `claude-cli/` ref and the full id `anthropic/claude-sonnet-5-5` each ran the agent through claude-cli and answered | P2-S3 |
-| V2 | How an OpenClaw-run orchestrator dispatches a `claude-code` step | PARTIAL | A claude-cli orchestrator has `sessions_spawn`, `sessions_*`, `agents_list`, `exec`, `process`; dispatch by spawn works. How a `claude-code` step is expressed in an orchestrator is documentation (P2-S6) | P2-S6 |
-| V3 | Hot vs restart-required (hybrid reload mode) | PARTIAL | `agents add` of a new `agents.entries.<id>`: hot (gateway evaluates the reload, no restart). `models.providers.<id>` and `plugins.entries.<id>.enabled`: a restart was observed although the CLI printed "will apply without restarting". `allowAgents` was a no-op in the run (CLI "No change"): UNVERIFIED. With `gateway.reload.mode=off` every change prints "Restart the gateway to apply" | P2-S5: treat catalog and plugin entries as restart-required (ADR-0003 drained path); re-run `allowAgents` with a real change |
-| V4 | `openclaw agents delete <id>` prunes only that agent's workspace and state | VERIFIED with a note | The target's workspace was removed, the other agent's workspace and state were unchanged, `agents list` consistent, items went to the sandbox Trash; an empty `agents/<id>/` state directory is left behind, so teardown must tolerate it | P2-S5/S6 |
+| V2 | How an OpenClaw-run orchestrator dispatches a `claude-code` step | PARTIAL | Dispatch of a child by `sessions_spawn` from a claude-cli orchestrator works (V9). The tool list captured by the harness was empty in the collected table, so the presence of `sessions_spawn`, `exec` and `process` in the orchestrator's tool list rests on a manual read of the raw run output (not preserved, see the incident note below) and is UNVERIFIED in the table. How a `claude-code` step is expressed in an orchestrator is documentation (P2-S6) | P2-S6 |
+| V3 | Hot vs restart-required (hybrid reload mode) | PARTIAL | `agents add` of a new `agents.entries.<id>`: hot (the gateway evaluates the reload, same pid). `models.providers.<id>` and `plugins.entries.<id>.enabled`: the gateway pid was unchanged and the log shows `config hot reload applied` for the models change; the harness labelled them restart-required because its regex matched the CLI sentence "will apply without restarting" (a false positive, fixed in the harness, not re-run). `allowAgents` was a no-op in the run (CLI "No change"): UNVERIFIED. With `gateway.reload.mode=off` every change prints "Restart the gateway to apply". Until a re-run closes `allowAgents` and the catalog/plugin classification, treat catalog and plugin entries as restart-required (ADR-0003 drained path) because that is the safe direction | P2-S5; re-run `allowAgents`, `models.providers`, `plugins.entries` with the corrected harness |
+| V4 | `openclaw agents delete <id>` prunes only that agent's workspace and state | PARTIAL (effect observed; harness verdict UNVERIFIED) | The target's workspace was removed, the other agent's workspace and state were unchanged, `agents list` was consistent and the items went to the sandbox Trash. The harness verdict was UNVERIFIED because an empty `agents/<id>/` state directory remained; the operator effect matches, but the label here does not override the harness verdict. Teardown must tolerate the leftover directory | P2-S5/S6 |
 | V5 | `agy models` slugs | UNVERIFIED (operator, phase 3) | | P3-S1 |
 | V6 | `agy --sandbox` containment, argv, separate backend id | UNVERIFIED (phase 3) | | P3-S1 |
 | V7 | MCP servers an agy child receives via `bundleMcp`; per-agent scoping | UNVERIFIED (phase 3) | | P3-S0 (OQ-5) |
@@ -142,6 +142,14 @@ Run directories: `20261014T210239Z` (V1, V2, V8, V9), `20261014T211507Z` (V10, V
 Stop rules (unchanged): V1, V2, V3, V4, V9 (claude-cli) or V10 UNVERIFIED stops phase 2 after P2-S4. Current state:
 V2 and V3 are PARTIAL (V3 `allowAgents` needs a re-run with a real change), so the P2-S4 stop still applies until the
 architect accepts the partial evidence or the two items are closed. V5, V6, V7 gate phase 3 only.
+
+Evidence-loss incident (2026-10-15 ~02:27 UTC): after these runs a harness-builder agent deleted
+`~/.cache/ai-resources-live-e2e/proof-lanes/` (the six run directories, their raw logs and per-probe outputs) and
+`state-lanes/` with an `rm -rf`. The raw artifacts are not recoverable. What survives is the deterministic collect table of
+each run (`p0-s2.md` content, saved from stdout in `~/.cache/ai-resources-evidence-backup-20261015T0228Z/lanes-collect-tables/`:
+`lanes-collect.out`=20261014T210239Z, `lanes-collect2.out`=211507Z, `c3.out`=220817Z, `c4.out`=221024Z, `c5.out`=221645Z) and
+the proof-after summaries. Every row above is therefore supported by its collected table, not by raw logs; the
+`proof-agy` evidence of ADR-0005 is intact.
 
 Two operational findings from the runs: (1) the shared `openclaw` package of the live host was rewritten in place
 twice and its `bin/openclaw` link was absent for a few minutes (attributed by the operator to another agent testing the
