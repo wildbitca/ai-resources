@@ -47,6 +47,20 @@ INTERRUPT = object()
 """Script answer: a bare KeyboardInterrupt escapes the prompt (a Ctrl-C that no wrapper turned into Cancelled)."""
 
 
+BACK = object()
+"""Script answer: the operator pressed Ctrl-B here (raises GoBack, as a ui wrapper does with back enabled)."""
+
+
+class Seq:
+    """Script answer that differs per ask: each ask takes the next item; the last one repeats."""
+
+    def __init__(self, *items):
+        self.items = list(items)
+
+    def next(self):
+        return self.items.pop(0) if len(self.items) > 1 else self.items[0]
+
+
 class Script:
     """Answers ui prompts by a substring of the message, records everything shown."""
 
@@ -54,12 +68,17 @@ class Script:
         self.answers = dict(answers)
         self.asked: list[str] = []
         self.shown: list[str] = []
+        self.defaults: dict[str, list] = {}      # message -> the default offered on each ask (select, checkbox)
 
     def _find(self, message, kind):
         self.asked.append(f"{kind}: {message}")
         for key in sorted(self.answers, key=len, reverse=True):
             if key in message:
                 answer = self.answers[key]
+                if isinstance(answer, Seq):
+                    answer = answer.next()
+                if answer is BACK:
+                    raise ui.GoBack()
                 if answer is ABORT:
                     raise ui.Cancelled(ui.current_step())
                 if answer is INTERRUPT:
@@ -80,6 +99,7 @@ class Script:
         monkeypatch.setattr(ui, "console", lambda: _Console(s))
 
     def _pick(self, message, choices, default, multi=False):
+        self.defaults.setdefault(message, []).append(default)
         raw = self._find(message, "checkbox" if multi else "select")
         values = [getattr(c, "value", c) for c in choices]
         if callable(raw):
@@ -118,3 +138,30 @@ def slot(slot_name):
     def answer(values):
         return next(v for v in values if getattr(v, "slot", v) == slot_name or v == slot_name)
     return answer
+
+
+def host_env(monkeypatch, tmp_path):
+    """A temp HOME/XDG and the host probes faked, so the real `wizard.run` can be driven without a terminal.
+
+    Returns the HOME path. Nothing outside tmp_path is read or written."""
+    import types
+
+    from ai_resources.setup import credentials, detection, tools
+    home = tmp_path / "home"
+    (home / "xdg").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "xdg"))
+    monkeypatch.setattr(ui, "_NON_INTERACTIVE", False)
+    monkeypatch.setattr(ui, "require_deps", lambda: None)
+    monkeypatch.setattr(ui, "banner", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(ui, "detected_table", lambda rows: None)
+    monkeypatch.setattr(detection, "detect_all_cockpits", lambda: {
+        "claude": types.SimpleNamespace(installed=True, version="2.0", binary_path="/opt/claude", name="Claude Code")})
+    monkeypatch.setattr(tools, "offer", lambda *a, **k: [])
+    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "stored-secret")
+    monkeypatch.setattr(credentials, "get_claude_code_keychain_key", lambda: None)
+    monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: 0)
+    monkeypatch.setattr(wizard, "_step10_verify", lambda s, t: 0)
+    monkeypatch.setattr(wizard, "_print_completion", lambda s: None)
+    return home
