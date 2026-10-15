@@ -1,0 +1,90 @@
+rc=0
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ │
+│ AI Resources Kit — Setup Wizard │
+│ Multi-model orchestration via LiteLLM gateway │
+│ v<VERSION> │
+│ │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ⓘ Previous config detected at <HOME>/xdg/ai-resources/setup-state.yaml
+ Last run: <TS>
+
+[1/10] Tools and cockpits ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ⓘ Scanning installed AI CLIs...
+
+ ⓘ Configuring 1 detected cockpit(s). To add another, install it via your usual method, then re-run `ai-resources setup`.
+
+[2/10] Setup mode ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ⚠ A gateway credential replaces your claude.ai subscription for Claude Code: usage is billed per token to the gateway, not to your plan.
+ Claude Code's own cost figures (/usage, statusline, --max-budget-usd) are computed at Anthropic list price and will be wrong. Set spend limits on the OpenRouter key instead.
+
+[3/10] Gateway ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ⓘ Skipped — OpenRouter is hosted; there is nothing to install or supervise.
+
+[4/10] Provider backends -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ⓘ OpenRouter reaches every provider with one key — no per-provider selection needed.
+
+[5/10] Credentials -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ⓘ Stored in <HOME>/xdg/ai-resources/.env (chmod 600)
+ ⓘ Press Enter to keep an existing value
+ OPENROUTER_API_KEY: ****** (saved)
+ Set a spend limit on this key at https://openrouter.ai/settings/keys — it is the only budget ceiling that applies in this mode.
+
+[6/10] Models and roles - 6b Role assignment ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Claude only and no gateway? Use single-model mode with the claude-native profile: a multi-model profile, even an all-Claude one, needs a LiteLLM or OpenRouter gateway.
+
+ Profile: balanced-claude-55 
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Role ┃ Provider ┃ Model ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ explore │ anthropic │ anthropic/claude-haiku-5.5 │
+│ generalPurpose │ anthropic │ anthropic/claude-sonnet-5.5 │
+│ planner │ anthropic │ anthropic/claude-opus-5.5 │
+│ software-architect │ anthropic │ anthropic/claude-opus-5.5 │
+│ implementer │ anthropic │ anthropic/claude-sonnet-5.5 │
+│ tester │ anthropic │ anthropic/claude-haiku-5.5 │
+│ code-reviewer │ anthropic │ anthropic/claude-sonnet-5.5 │
+│ security-auditor │ anthropic │ anthropic/claude-opus-5.5 │
+│ verifier │ anthropic │ anthropic/claude-sonnet-5.5 │
+│ doc-writer │ anthropic │ anthropic/claude-sonnet-5.5 │
+│ package-upgrade │ anthropic │ anthropic/claude-haiku-5.5 │
+│ crashlytics-fixer │ anthropic │ anthropic/claude-sonnet-5.5 │
+│ sentry-fixer │ anthropic │ anthropic/claude-sonnet-5.5 │
+│ terraform-maintainer │ anthropic │ anthropic/claude-sonnet-5.5 │
+│ crossplane-upjet-maintainer │ anthropic │ anthropic/claude-sonnet-5.5 │
+└─────────────────────────────┴───────────┴─────────────────────────────┘
+
+[7/10] Cockpit configuration -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+[8/10] Lifecycle -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ⓘ Skipped (no local gateway to supervise).
+
+[9/10] Review and apply ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Your answers 
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Section ┃ Your answer ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Mode │ multi-model (openrouter) │
+│ Gateway │ openrouter (hosted) │
+│ Providers │ openrouter │
+│ Credentials │ OPENROUTER_API_KEY set │
+│ Models │ anthropic:sonnet=anthropic/claude-sonnet-5-5 │
+│ Roles │ balanced-claude-55 │
+│ Lanes │ off │
+│ Cockpits │ claude │
+│ Lifecycle │ none │
+└─────────────┴──────────────────────────────────────────────┘
+
+ ⓘ Summary of what will be configured
+ Shape: One model
+ anthropic:sonnet = anthropic/claude-sonnet-5-5 [family] (primary)
+ Smoke path: direct
+ Backend: openrouter
+ Cockpits:
+ Claude Code: will configure anthropic/claude-sonnet-5-5 through OpenRouter
+ Files that will change:
+ ~/.claude/CLAUDE.md
+ ~/.claude/settings.json
+ ~/.claude/agents/*.md
+ ~/.claude/commands/*
+ Note: kit content (skills, hooks, instructions) is written for every detected cockpit; a cockpit that is not authenticated will not work until you authenticate.
