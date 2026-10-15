@@ -25,6 +25,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import subprocess
 import sys
 import time
@@ -36,7 +37,10 @@ from . import roles_policy as rp
 Runner = Callable[[list, "str | None"], "tuple[int, str, str]"]
 
 GENESIS = "0" * 64
-ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")             # step ids: no '.', so a report name is unambiguous
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+REPORT_SUFFIXES = ("md", "txt", "json", "yaml", "yml", "log", "lane-verify.json")
+UNTRACKED_XY = ("??", "!!")
 MAX_ATTEMPTS = 3
 RETRY_DELAY_S = 5.0
 GIT = ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]
@@ -111,12 +115,40 @@ def _entry_hash(entry: dict) -> str:
     return _sha(_canon({k: v for k, v in entry.items() if k != "hash"}))
 
 
+def _read_nofollow(path: Path) -> bytes:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as fh:
+        return fh.read()
+
+
+def _open_lock(path: Path):
+    return os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), "a+")
+
+
+def _refuse_links(*dirs: Path) -> None:
+    """The run directory and `records/` are never followed through a symbolic link."""
+    for d in dirs:
+        try:
+            st = os.lstat(d)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+            raise LaneCmdError(f"state path {d} is a link or not a directory: refused")
+
+
 class Ledger:
     def __init__(self, ctx: Ctx):
         self.ctx = ctx
 
     def exists(self) -> bool:
-        return self.ctx.ledger_path.is_file()
+        _refuse_links(self.ctx.run_dir, self.ctx.records_dir)
+        try:
+            st = os.lstat(self.ctx.ledger_path)
+        except FileNotFoundError:
+            return False
+        if not stat.S_ISREG(st.st_mode):
+            raise LaneCmdError(f"ledger {self.ctx.ledger_path} is a link or not a regular file: refused")
+        return True
 
     def entries(self) -> list[dict]:
         """All entries, with the chain verified. Raises Refused when it is broken."""
@@ -124,7 +156,7 @@ class Ledger:
             return []
         out: list[dict] = []
         prev = GENESIS
-        for n, line in enumerate(self.ctx.ledger_path.read_text(encoding="utf-8").splitlines()):
+        for n, line in enumerate(_read_nofollow(self.ctx.ledger_path).decode("utf-8").splitlines()):
             if not line.strip():
                 continue
             try:
@@ -142,29 +174,36 @@ class Ledger:
         return entries[-1]["hash"] if entries else GENESIS
 
     def append(self, kind: str, step: str, *, role: str = "", iteration: int = 0, attempt: int = 0,
-               nonce: str | None = None, record: dict | None = None, data: dict | None = None) -> dict:
+               record: dict | None = None, data: dict | None = None) -> dict:
+        _refuse_links(self.ctx.run_dir)
         self.ctx.run_dir.mkdir(parents=True, exist_ok=True)
-        self.ctx.records_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.ctx.run_dir / "ledger.lock", "a+") as lock:
+        _refuse_links(self.ctx.run_dir)
+        self.ctx.records_dir.mkdir(exist_ok=True)
+        _refuse_links(self.ctx.run_dir, self.ctx.records_dir)
+        with _open_lock(self.ctx.run_dir / "ledger.lock") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             entries = self.entries()
-            nonce = nonce or secrets.token_hex(16)
+            # the ledger keeps only the hash of the nonce: a child that reads it cannot present the secret
+            secret = secrets.token_hex(16)
             entry: dict[str, Any] = {
                 "seq": len(entries), "prev": self.head(entries), "kind": kind, "step": step, "role": role,
-                "iteration": iteration, "attempt": attempt, "nonce": nonce, "record": None, "record_sha256": None,
-                "data": data or {},
+                "iteration": iteration, "attempt": attempt, "nonce_sha256": _sha(secret), "record": None,
+                "record_sha256": None, "data": data or {},
             }
             if record is not None:
-                name = f"{kind}-{step}-i{iteration}-a{attempt}-{nonce[:12]}.json"
+                name = f"{kind}-{step}-i{iteration}-a{attempt}-{entry['nonce_sha256'][:12]}.json"
                 path = self.ctx.records_dir / name
                 body = json.dumps(record, sort_keys=True, indent=1)
-                with open(path, "x", encoding="utf-8") as fh:        # write-once
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)   # write-once
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
                     fh.write(body)
                 entry["record"] = name
                 entry["record_sha256"] = _sha(body)
             entry["hash"] = _entry_hash(entry)
-            with open(self.ctx.ledger_path, "a", encoding="utf-8") as fh:
+            fd = os.open(self.ctx.ledger_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644)
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry, sort_keys=True) + "\n")
+            entry["nonce"] = secret                           # returned to the caller only, never persisted
             return entry
 
     def record_ok(self, entry: dict) -> bool:
@@ -172,12 +211,12 @@ class Ledger:
             return False
         path = self.ctx.records_dir / entry["record"]
         try:
-            return _sha(path.read_bytes()) == entry.get("record_sha256")
+            return _sha(_read_nofollow(path)) == entry.get("record_sha256")
         except OSError:
             return False
 
     def load_record(self, entry: dict) -> dict:
-        return json.loads((self.ctx.records_dir / entry["record"]).read_text(encoding="utf-8"))
+        return json.loads(_read_nofollow(self.ctx.records_dir / entry["record"]).decode("utf-8"))
 
 
 def parse_expect(value: str) -> tuple[str, str, str]:
@@ -233,7 +272,7 @@ def _hash_tree(path: Path) -> str:
 
 
 def dirty_map(ctx: Ctx, tree: Path) -> dict[str, str]:
-    """path -> `<XY>:<content sha>` for every modified, staged or untracked (not ignored) path."""
+    """path -> `<XY>:<content sha>` for every modified, staged or untracked path, plus ignored forbidden-root files."""
     out = ctx.git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=tree)
     fields = out.split("\0")
     result: dict[str, str] = {}
@@ -247,6 +286,11 @@ def dirty_map(ctx: Ctx, tree: Path) -> dict[str, str]:
         if "R" in xy or "C" in xy:
             i += 1                                        # the original path
         result[path] = f"{xy}:{_hash_path(tree / path)}"
+    # ignored files are invisible to `git status`; the ones under a forbidden root are not noise
+    ign = ctx.git(["ls-files", "-z", "--others", "--ignored", "--exclude-standard"], cwd=tree)
+    for path in ign.split("\0"):
+        if path and path not in result and _forbidden_root(path) is not None:
+            result[path] = f"!!:{_hash_path(tree / path)}"
     return result
 
 
@@ -312,7 +356,9 @@ def snapshot(ctx: Ctx, tree: Path) -> dict:
 
 
 def _report_re(role: str, step: str) -> re.Pattern:
-    return re.compile(rf"^\.agent-output/{re.escape(role)}/{re.escape(step)}(?:[./].*)?$")
+    """The step's own report: `<step>.<known suffix>` or anything below `<step>/`; step ids carry no '.'."""
+    suffixes = "|".join(re.escape(x) for x in REPORT_SUFFIXES)
+    return re.compile(rf"^\.agent-output/{re.escape(role)}/{re.escape(step)}(?:\.(?:{suffixes})|/.+)$")
 
 
 def tolerated(path: str) -> bool:
@@ -326,6 +372,15 @@ def tolerated(path: str) -> bool:
     return False
 
 
+def _forbidden_root(path: str) -> str | None:
+    """The forbidden root `path` sits in, at any depth: `pkg/.claude/` is as forbidden as `.claude/`."""
+    parts = path.split("/")
+    for f in rp.LANE_WRITE_FORBIDDEN:
+        if f.rstrip("/") in parts:
+            return f
+    return None
+
+
 def forbidden_path(path: str, own_report: re.Pattern) -> str | None:
     if path in HANDOFF_FILES:
         return "the handoff file"
@@ -333,13 +388,17 @@ def forbidden_path(path: str, own_report: re.Pattern) -> str | None:
         return None
     if path.startswith(".agent-output/") or path == ".agent-output":
         return "another step's .agent-output file"
-    for f in rp.LANE_WRITE_FORBIDDEN:
-        if f.endswith("/"):
-            if path.startswith(f) or path == f[:-1]:
-                return f"forbidden path {f}"
-        elif path == f or path.startswith(f + "/"):
-            return f"forbidden path {f}"
-    return None
+    root = _forbidden_root(path)
+    return f"forbidden path {root}" if root else None
+
+
+def _in_rev(ctx: Ctx, tree: Path, rev: str, path: str) -> bool:
+    return ctx.git_rc(["cat-file", "-e", f"{rev}:{path}"], cwd=tree)[0] == 0
+
+
+def _tolerated_untracked(ctx: Ctx, tree: Path, rev: str, path: str, xy: str) -> bool:
+    """The tolerance list covers only untracked or ignored bootstrap/cache paths absent from the tracked tree."""
+    return tolerated(path) and xy in UNTRACKED_XY and not _in_rev(ctx, tree, rev, path)
 
 
 def _scope_paths_for(contract: str, role: str, step: str, scope: list[str], paths: dict[str, str],
@@ -350,7 +409,7 @@ def _scope_paths_for(contract: str, role: str, step: str, scope: list[str], path
         if own_report.match(path):
             continue
         bad = forbidden_path(path, own_report)
-        if not bad and paths[path] == "dirty" and tolerated(path):
+        if not bad and paths[path] == "untracked" and tolerated(path):
             continue                                      # tolerance covers only uncommitted noise
         if bad:
             reasons.append(f"{path}: {bad}")
@@ -423,7 +482,7 @@ def _resolve(ledger: Ledger, entries: list[dict], step: str, expect: tuple[str, 
     if prep is None:
         raise Refused(["no prepare entry for this step at or before the witnessed ledger_head: "
                        "run `lanes prepare` first"])
-    if prep["nonce"] != nonce:
+    if prep["nonce_sha256"] != _sha(nonce):
         raise Refused(["--expect nonce does not match the step's prepare entry"])
     if not ledger.record_ok(prep):
         raise Refused(["the prepare snapshot was rewritten: record sha256 differs from the ledger"])
@@ -437,12 +496,12 @@ def _roles_of(entries: list[dict], step: str) -> set[str]:
 
 
 def _verifier_pass(ledger: Ledger, auth: list[dict], subject_step: str, tip: str) -> dict | None:
-    for e in reversed(auth):
-        if e["kind"] != "verify" or e["role"] != "verifier" or e["data"].get("result") != "PASS":
-            continue
-        if e["data"].get("verdict") != "PASS":
-            continue
-        if e["data"].get("subject_step") != subject_step or e["data"].get("subject_sha") != tip:
+    # the latest Verifier verify entry about this subject commit governs: a later FAIL revokes an earlier PASS
+    latest = next((e for e in reversed(auth)
+                   if e["kind"] == "verify" and e["role"] == "verifier"
+                   and e["data"].get("subject_step") == subject_step and e["data"].get("subject_sha") == tip), None)
+    for e in ([latest] if latest else []):
+        if e["data"].get("result") != "PASS" or e["data"].get("verdict") != "PASS":
             continue
         if _roles_of(auth, e["step"]) != {"verifier"} or not ledger.record_ok(e):
             continue
@@ -456,18 +515,28 @@ def _verifier_pass(ledger: Ledger, auth: list[dict], subject_step: str, tip: str
     return None
 
 
+def _latest_verify(auth: list[dict], step: str, iteration: int | None = None,
+                   attempt: int | None = None) -> dict | None:
+    """The latest verify entry of a step: it alone governs, a later FAIL revokes an earlier PASS."""
+    return next((e for e in reversed(auth)
+                 if e["kind"] == "verify" and e["step"] == step
+                 and (iteration is None or e["iteration"] == iteration)
+                 and (attempt is None or e["attempt"] == attempt)), None)
+
+
 def _scope_pass(ledger: Ledger, auth: list[dict], step: str, tip: str) -> dict | None:
-    for e in reversed(auth):
-        if (e["kind"] == "verify" and e["step"] == step and e["data"].get("result") == "PASS"
-                and e["data"].get("tip") == tip and ledger.record_ok(e)):
-            return e
+    e = _latest_verify(auth, step)
+    if (e is not None and e["data"].get("result") == "PASS" and e["data"].get("tip") == tip
+            and ledger.record_ok(e)):
+        return e
     return None
 
 
 def _out(entry: dict | None, ledger: Ledger, extra: dict) -> dict:
     res = dict(extra)
     if entry is not None:
-        res["nonce"] = entry["nonce"]
+        if "nonce" in entry:
+            res["nonce"] = entry["nonce"]
         rec = entry.get("record_sha256")
         res["snapshot_digest"] = rec or ""
         res["ledger_head"] = entry["hash"]
@@ -539,7 +608,7 @@ def _remove_recorded(ctx: Ctx, ledger: Ledger, entries: list[dict], step: str, *
 
 
 def _check_id(value: str, what: str) -> str:
-    if not ID_RE.match(value or ""):
+    if not (RUN_ID_RE if what == "run id" else ID_RE).match(value or ""):
         raise LaneCmdError(f"invalid {what} {value!r}")
     return value
 
@@ -688,12 +757,49 @@ def _forbidden_run_tree_changes(ctx: Ctx, tree: Path, before: dict, after: dict,
     changed = {p for p in set(before["dirty"]) | set(after["dirty"])
                if before["dirty"].get(p) != after["dirty"].get(p)}
     for p in sorted(changed):
-        if tolerated(p) or own(p):
+        xy = (after["dirty"].get(p) or before["dirty"].get(p) or ":").split(":", 1)[0]
+        if own(p) or _tolerated_untracked(ctx, tree, before["head"], p, xy):
             continue
         if contract == rp.REPORT:
             reasons.append(f"{p}: a report step may write only .agent-output/{role}/{step}*")
         else:
             reasons.append(f"{p}: the run tree changed during a worktree step")
+    return reasons
+
+
+def _sealed_reports(ledger: Ledger, entries: list[dict], step: str, since_seq: int) -> dict | None:
+    """The report hashes the step's latest verify (after `since_seq`) sealed, or None when it has none."""
+    e = next((x for x in reversed(entries)
+              if x["kind"] == "verify" and x["step"] == step and x["seq"] > since_seq), None)
+    if e is None or not ledger.record_ok(e):
+        return None
+    return ledger.load_record(e).get("reports")
+
+
+def _report_integrity(ledger: Ledger, entries: list[dict], step: str, prep: dict, before: dict, after: dict,
+                      own_report: re.Pattern, peers: list[dict]) -> list[str]:
+    """Reports are write-once: a verified report never changes, and a step never changes a peer's report.
+
+    A peer's report may be created while it runs; it may not change against this step's prepare snapshot
+    nor against the hashes the peer's own verify sealed.
+    """
+    reasons: list[str] = []
+    ao_b, ao_a = before["agent_outputs"], after["agent_outputs"]
+    paths = {p for p in set(ao_b) | set(ao_a) if not p.endswith(HUMAN_COPY_SUFFIX)}
+    sealed = _sealed_reports(ledger, entries, step, prep["seq"])
+    if sealed is not None:
+        for p in sorted(x for x in paths if own_report.match(x)):
+            if sealed.get(p) != ao_a.get(p):
+                reasons.append(f"{p}: the report changed after this step's verify sealed it")
+    for peer in peers:
+        rx = _report_re(peer["role"], peer["step"])
+        sealed = _sealed_reports(ledger, entries, peer["step"], peer["seq"])
+        for p in sorted(x for x in paths if rx.match(x)):
+            if sealed is not None:
+                if sealed.get(p) != ao_a.get(p):
+                    reasons.append(f"{p}: the report of step {peer['step']} changed after its verify sealed it")
+            elif p in ao_b and ao_b[p] != ao_a.get(p):
+                reasons.append(f"{p}: the report of step {peer['step']} changed since this step's prepare")
     return reasons
 
 
@@ -723,8 +829,11 @@ def _write_human_copy(tree: Path, role: str, step: str, text: str) -> None:
         target = cur / f"{step}{HUMAN_COPY_SUFFIX}"
         if target.is_symlink():
             return
-        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o644)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            if os.fstat(fh.fileno()).st_nlink != 1:       # a hardlink would write through to another file
+                return
+            fh.truncate(0)
             fh.write(text)
     except OSError:
         pass
@@ -771,12 +880,17 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
     for e in entries:
         if e["step"] in in_flight and e["kind"] == "prepare" and e["data"].get("branch"):
             allowed_refs.add(f"refs/heads/{e['data']['branch']}")
-    peer_reports = [_report_re(e["role"], e["step"]) for e in entries
-                    if e["kind"] == "prepare" and e["step"] in in_flight and e["step"] != step and e["role"]]
+    peers: list[dict] = []
+    for pstep in sorted(in_flight - {step}):
+        pp = _latest_prepare(entries, pstep)
+        if pp is not None and pp["role"]:
+            peers.append(pp)
+    peer_reports = [_report_re(e["role"], e["step"]) for e in peers]
 
     reasons += _forbidden_run_tree_changes(ctx, tree, before, after, allowed_refs=allowed_refs, step=step,
                                            role=role, contract=contract, own_report=own_report,
                                            peer_reports=peer_reports)
+    reasons += _report_integrity(ledger, entries, step, prep, before, after, own_report, peers)
 
     if contract in (rp.SCOPE, rp.INTEGRATING):
         wt = Path(wt_path)
@@ -791,23 +905,30 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
         committed = ctx.git(["diff", "--name-only", "-z", "--no-renames", f"{base}..{tip}"], cwd=wt)
         paths = {p: "" for p in committed.split("\0") if p}
         dirty = dirty_map(ctx, wt)
-        for p in dirty:
-            paths[p] = "dirty"
+        for p, val in dirty.items():
+            if p in paths:
+                continue                                  # committed: subject to the contract, edited or not
+            xy = val.split(":", 1)[0]
+            untracked = xy in UNTRACKED_XY and not _in_rev(ctx, wt, base, p) and not _in_rev(ctx, wt, tip, p)
+            paths[p] = "untracked" if untracked else "dirty"
         reasons += _scope_paths_for(contract, role, step, scope, paths, own_report=own_report)
         for p in dirty:
-            if not tolerated(p) and not own_report.match(p):
-                reasons.append(f"{p}: uncommitted change in the worktree: commit it on the branch")
+            if paths[p] != "untracked" or not tolerated(p):
+                if not own_report.match(p):
+                    reasons.append(f"{p}: uncommitted change in the worktree: commit it on the branch")
         reasons += _check_modes(ctx, wt, base, tip, contract)
         reasons += _check_messages(ctx, wt, base, tip)
         changed_paths = paths
 
     record: dict[str, Any] = {"step": step, "role": role, "contract": contract, "iteration": iteration,
-                              "attempt": a.attempt, "tip": tip, "base": base, "changed": sorted(changed_paths)}
+                              "attempt": a.attempt, "tip": tip, "base": base, "changed": sorted(changed_paths),
+                              "reports": {p: h for p, h in sorted(after["agent_outputs"].items())
+                                          if own_report.match(p) and not p.endswith(HUMAN_COPY_SUFFIX)}}
     data: dict[str, Any] = {"contract": contract, "tip": tip}
 
     if role == "verifier":
         subject = a.subject or ""
-        m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)@([0-9a-f]{7,64})$", subject)
+        m = re.match(r"^([A-Za-z0-9][A-Za-z0-9_-]*)@([0-9a-f]{7,64})$", subject)
         if not m:
             reasons.append("a verifier verify needs --subject <step-id>@<sha>")
         else:
@@ -833,6 +954,8 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
             data.update(subject_step=m.group(1), subject_sha=m.group(2))
             record.update(subject_step=m.group(1), subject_sha=m.group(2))
 
+    if data.get("verdict") in ("FAIL", "REQUIRES_CHANGES"):
+        reasons.append(f"the Verifier verdict is {data['verdict']}")
     result = "PASS" if not reasons else "FAIL"
     data["result"] = result
     data["reasons"] = reasons
@@ -908,7 +1031,7 @@ def cmd_land(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
     expect = parse_expect(a.expect)
     ledger = Ledger(ctx)
     entries = ledger.entries()
-    with open(ctx.run_dir / "land.lock", "a+") as lock:           # lands within a run are serialised
+    with _open_lock(ctx.run_dir / "land.lock") as lock:           # lands within a run are serialised
         fcntl.flock(lock, fcntl.LOCK_EX)
         entries = ledger.entries()
         auth, prep = _resolve(ledger, entries, step, expect, iteration=a.iteration)
@@ -926,12 +1049,9 @@ def cmd_land(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
         if any(e["kind"] == "land" and e["step"] == step and e["iteration"] == iteration
                and e["data"].get("result") == "LANDED" for e in entries):
             reasons.append(f"step {step} already landed in iteration {iteration}")
-        vpass = None
-        for e in reversed(auth):
-            if (e["kind"] == "verify" and e["step"] == step and e["iteration"] == iteration
-                    and e["attempt"] == prep["attempt"] and e["data"].get("result") == "PASS" and ledger.record_ok(e)):
-                vpass = e
-                break
+        vpass = _latest_verify(auth, step, iteration, prep["attempt"])
+        if vpass is not None and not (vpass["data"].get("result") == "PASS" and ledger.record_ok(vpass)):
+            vpass = None
         if vpass is None:
             reasons.append(f"no integrating verify PASS for {step} in iteration {iteration}")
         elif vpass["data"].get("tip") != tip:

@@ -555,7 +555,7 @@ class Flow:
         assert rc == 0, self.sverify
         if verifier:
             rc, self.vverify = e.verifier("verify-tests", "tests", self.stip, verdict)
-            assert rc == 0, self.vverify
+            assert rc == (0 if verdict == "PASS" else 1), self.vverify
 
     def integrating(self, *, files=None, integrate=True, reenter=False, attempt=1):
         e = self.env
@@ -574,7 +574,7 @@ class Flow:
         assert rc == 0, self.iverify
         if verifier:
             rc, self.ivv = e.verifier(step_v, "impl", self.itip, verdict)
-            assert rc == 0, self.ivv
+            assert rc == (0 if verdict == "PASS" else 1), self.ivv
 
 
 def test_full_chain_lands_with_ff_only(env):
@@ -936,3 +936,168 @@ def test_the_run_id_and_step_ids_are_validated(env):
     assert rc == 2
     assert lanes_cmd.main(["count", "--run", "../x", "--pool", "p"], runner=env.runner) == 2
     env.capsys.readouterr()
+
+
+# -- verifier gaps G1-G7 -------------------------------------------------------------------------------------
+
+def _landable_chain(env):
+    """A verified integrating step awaiting its Verifier: returns (Flow, itip)."""
+    f = Flow(env)
+    f.scope()
+    f.integrating()
+    f.finish(verifier=False)
+    return f
+
+
+def test_g1_a_parallel_member_cannot_overwrite_a_sealed_peer_report(env):
+    f = _landable_chain(env)
+    rc, p1 = env.prepare("v1", "verifier", "report", OPUS)
+    first = env.head
+    rc, p2 = env.prepare("v2", "security-auditor", "report", OPUS)
+    env.report("verifier", "v1", "FAIL")
+    rc, out = env.verify("v1", p1, in_flight=["v2"], head=first, subject=f"impl@{f.itip}")
+    assert out["verdict"] == "FAIL"
+    env.report("security-auditor", "v2")
+    env.report("verifier", "v1", "PASS")                          # v2 forges its peer's verdict
+    rc, out = env.verify("v2", p2, in_flight=["v1"])
+    assert rc == 1 and any("v1.md" in r and "changed" in r for r in out["reasons"]), out
+    rc, out = env.land("impl", f.iprep, 1)
+    assert rc == 1 and out["result"] == "REFUSED", out
+
+
+def test_g1_a_peer_report_present_at_prepare_may_not_change(env):
+    env.report("verifier", "v1", "FAIL")
+    rc, p2 = env.prepare("v2", "security-auditor", "report", OPUS)
+    rc, p1 = env.prepare("v1", "verifier", "report", OPUS)
+    env.report("security-auditor", "v2")
+    env.report("verifier", "v1", "PASS")
+    rc, out = env.verify("v2", p2, in_flight=["v1"], head=p2["ledger_head"])
+    assert rc == 1 and any("v1.md" in r for r in out["reasons"]), out
+
+
+def test_g1_a_report_is_write_once_for_its_own_step(env):
+    rc, p = env.prepare("review", "code-reviewer", "report", OPUS)
+    env.report("code-reviewer", "review")
+    assert env.verify("review", p)[0] == 0
+    env.write(".agent-output/code-reviewer/review.md", "rewritten\n")
+    rc, out = env.verify("review", p)
+    assert rc == 1 and any("sealed" in r for r in out["reasons"]), out
+
+
+def test_g2_a_committed_tolerated_path_is_not_tolerated_by_a_dirty_edit(env):
+    a = scope_step(env, "tests", "tester", ("tests/",))
+    wt = Path(a["worktree"])
+    env.commit(wt, {"SOUL.md": "evil\n"})
+    env.write("SOUL.md", "evil again\n", base=wt)
+    rc, out = env.verify("tests", a)
+    assert rc == 1 and any("SOUL.md" in r for r in out["reasons"]), out
+
+
+def test_g2_a_committed_pycache_then_edited_still_fails(env):
+    a = scope_step(env, "tests", "tester", ("tests/",))
+    wt = Path(a["worktree"])
+    env.write("__pycache__/evil.py", "1\n", base=wt)
+    sh(["git", "add", "-f", "__pycache__/evil.py"], wt)
+    sh(["git", "commit", "-q", "-m", "work"], wt)
+    env.write("__pycache__/evil.py", "2\n", base=wt)
+    rc, out = env.verify("tests", a)
+    assert rc == 1 and any("__pycache__/evil.py" in r for r in out["reasons"]), out
+
+
+def test_g2_a_tracked_tolerated_path_edited_in_the_run_tree_fails(env):
+    env.write("SOUL.md", "a\n")
+    sh(["git", "add", "-f", "SOUL.md"], env.repo)
+    sh(["git", "commit", "-q", "-m", "soul"], env.repo)
+    rc, p = env.prepare("review", "code-reviewer", "report", OPUS)
+    env.write("SOUL.md", "b\n")
+    env.report("code-reviewer", "review")
+    rc, out = env.verify("review", p)
+    assert rc == 1, out
+
+
+def test_g3_dotted_step_ids_are_refused_and_a_step_cannot_write_a_sibling_report(env):
+    assert env.prepare("t.2", "tester", "report")[0] == 2
+    rc, p = env.prepare("t", "tester", "report")
+    env.report("tester", "t")
+    env.write(".agent-output/tester/t.2.md", "sibling\n")
+    rc, out = env.verify("t", p)
+    assert rc == 1 and any("t.2.md" in r for r in out["reasons"]), out
+
+
+def test_g4_ignored_writes_under_a_forbidden_root_fail_a_report_step(env):
+    env.write(".gitignore", "__pycache__/\n.claude/\n")
+    sh(["git", "add", ".gitignore"], env.repo)
+    sh(["git", "commit", "-q", "-m", "ignore"], env.repo)
+    rc, p = env.prepare("review", "code-reviewer", "report", OPUS)
+    env.report("code-reviewer", "review")
+    env.write(".claude/settings.local.json", "{}\n")
+    assert sh(["git", "status", "--porcelain"], env.repo).count(".claude") == 0      # invisible to git status
+    rc, out = env.verify("review", p)
+    assert rc == 1 and any(".claude/settings.local.json" in r for r in out["reasons"]), out
+
+
+def test_g5_a_later_fail_revokes_an_earlier_pass(env):
+    f = Flow(env)
+    f.scope()
+    f.integrating()
+    f.finish()
+    env.write("src/evil.txt", "late\n")                          # the run tree changes after the PASS
+    rc, out = env.verify("impl", f.iprep, in_flight=["verify-impl"])      # the Verifier ran in parallel
+    assert rc == 1 and out["result"] == "FAIL", out
+    rc, out = env.land("impl", f.iprep, 1)
+    assert rc == 1 and out["result"] == "REFUSED", out
+    assert not (env.repo / "src" / "new.py").exists()
+
+
+def test_g5_a_child_cannot_present_the_nonce_it_reads_from_the_ledger(env):
+    a = scope_step(env)
+    env.commit(Path(a["worktree"]), {"tests/test_b.py": "x\n"})
+    entry = env.ledger_entries(env.state)[0]
+    assert a["nonce"] not in json.dumps(entry)
+    forged = entry.get("nonce") or entry["nonce_sha256"]
+    rc, out = env.run("verify", "--step", "tests", "--expect",
+                      f"{forged}:{entry['record_sha256']}:{entry['hash']}")
+    assert rc == 1 and out["result"] == "REFUSED", out
+    assert len(env.ledger_entries(env.state)) == 1
+
+
+def test_g6_the_run_directory_the_ledger_and_records_are_never_followed_through_links(env, tmp_path):
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    run_dir = env.state / "ai-resources" / "lanes" / RUN
+    run_dir.parent.mkdir(parents=True)
+    run_dir.symlink_to(victim)
+    rc, out = env.prepare("r1", "explore", "report", "haiku")
+    assert rc == 2 and not list(victim.iterdir())
+    run_dir.unlink()
+    run_dir.mkdir()
+    (run_dir / "ledger.jsonl").symlink_to(victim / "ledger.jsonl")
+    rc, out = env.prepare("r1", "explore", "report", "haiku")
+    assert rc == 2 and not list(victim.iterdir())
+    (run_dir / "ledger.jsonl").unlink()
+    (run_dir / "records").symlink_to(victim)
+    rc, out = env.prepare("r1", "explore", "report", "haiku")
+    assert rc == 2 and not list(victim.iterdir())
+
+
+def test_g6_a_hardlinked_human_copy_is_not_truncated(env, tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep\n")
+    rc, prep = env.prepare("review", "code-reviewer", "report")
+    env.report("code-reviewer", "review")
+    os.link(victim, env.repo / ".agent-output" / "code-reviewer" / "review.lane-verify.json")
+    env.verify("review", prep)
+    assert victim.read_text() == "keep\n"
+
+
+@pytest.mark.parametrize("rel", ["pkg/.claude/settings.json", "pkg/.githooks/pre-commit"])
+def test_g7_forbidden_roots_match_at_any_depth(env, rel):
+    a = scope_step(env, "tests", "tester", ("tests/", "pkg/"))
+    env.commit(Path(a["worktree"]), {rel: "x\n"})
+    rc, out = env.verify("tests", a)
+    assert rc == 1 and any(rel in r for r in out["reasons"]), out
+
+
+def test_g7_a_failing_verifier_verdict_exits_non_zero_and_the_result_agrees(env):
+    rc, out = env.verifier("v1", "impl", head_of(env.repo), "FAIL")
+    assert rc == 1 and out["verdict"] == "FAIL" and out["result"] == "FAIL", out
