@@ -83,3 +83,14 @@ def test_an_unchanged_settings_env_names_no_key(tmp_path, monkeypatch):
     (label, path, text, cur), = wizard._dry_run_targets(s, {"by_role": {}}, env, dict(env))
     lines = wizard._diff_lines(label, path, text, cur)
     assert lines[1] == "  unchanged" and "AGENT_SKILLS_ROOT" not in "\n".join(lines)
+
+
+def test_multiline_secrets_are_masked_in_the_diff_and_escapes_are_dropped(tmp_path):
+    """A block scalar and a PEM key span lines: masking must see the whole text, not one line at a time."""
+    path = tmp_path / "x.yaml"
+    path.write_text("note: \x1b[31mhi\x1b[0m\napi_key: |\n  old-secret-line\n", encoding="utf-8")
+    new = ("api_key: |\n  new-secret-line\n  second-secret-line\nkey_pem: x\n"
+           "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQE\n-----END PRIVATE KEY-----\n")
+    text = "\n".join(wizard._diff_lines("x.yaml", path, new))
+    for leak in ("old-secret-line", "new-secret-line", "second-secret-line", "MIIEvQIB", "\x1b"):
+        assert leak not in text
