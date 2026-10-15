@@ -11,6 +11,11 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Added
 
+- **`subscription-claude-55` profile (single-model).** A curated reference profile for a Claude subscription without a
+  gateway: Claude aliases (`haiku`/`sonnet`/`opus`), Sonnet for writers, tests, review and the planner, Opus for the
+  architect, security auditor and verifier. Checker families never intersect writer families and the verifier differs
+  from the implementer (profile test). Documents alias drift and the CyberBench CVP caveat. `balanced-claude-55`
+  remains the recommended profile and is pinned unchanged by a sha256 test.
 - **Cross-provider role dispatch (fields and validator).** A workflow step may carry `backend: claude-code |
   openclaw-agent` (default `claude-code`, today's behaviour) and, with `openclaw-agent`, an `agentId`. The validator
   rejects an unknown backend, a missing or malformed `agentId` (`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`) and every
