@@ -216,7 +216,21 @@ class Ledger:
             return False
 
     def load_record(self, entry: dict) -> dict:
-        return json.loads(_read_nofollow(self.ctx.records_dir / entry["record"]).decode("utf-8"))
+        """The entry's record, read once and checked against the ledger's `record_sha256` (fail closed)."""
+        name = entry.get("record")
+        want = entry.get("record_sha256")
+        if not name or not want:
+            raise Refused([f"record of ledger entry {entry.get('seq')} has no sha256 in the ledger: refused"])
+        try:
+            raw = _read_nofollow(self.ctx.records_dir / name)
+        except OSError:
+            raise Refused([f"record {name} does not match its ledger hash"])
+        if _sha(raw) != want:
+            raise Refused([f"record {name} does not match its ledger hash"])
+        return json.loads(raw.decode("utf-8"))
+
+    def require_record(self, entry: dict) -> None:
+        self.load_record(entry)
 
 
 def parse_expect(value: str) -> tuple[str, str, str]:
@@ -484,8 +498,7 @@ def _resolve(ledger: Ledger, entries: list[dict], step: str, expect: tuple[str, 
                        "run `lanes prepare` first"])
     if prep["nonce_sha256"] != _sha(nonce):
         raise Refused(["--expect nonce does not match the step's prepare entry"])
-    if not ledger.record_ok(prep):
-        raise Refused(["the prepare snapshot was rewritten: record sha256 differs from the ledger"])
+    ledger.require_record(prep)
     if prep["record_sha256"] != digest:
         raise Refused(["--expect snapshot_digest does not match the snapshot"])
     return auth, prep
@@ -503,13 +516,13 @@ def _verifier_pass(ledger: Ledger, auth: list[dict], subject_step: str, tip: str
     for e in ([latest] if latest else []):
         if e["data"].get("result") != "PASS" or e["data"].get("verdict") != "PASS":
             continue
-        if _roles_of(auth, e["step"]) != {"verifier"} or not ledger.record_ok(e):
+        if _roles_of(auth, e["step"]) != {"verifier"}:
             continue
         vfam = {p["data"].get("family") for p in auth if p["kind"] == "prepare" and p["step"] == e["step"]}
         sfam = {p["data"].get("family") for p in auth if p["kind"] == "prepare" and p["step"] == subject_step}
         if not vfam or not sfam or None in vfam or None in sfam or vfam & sfam:
             continue
-        rec = ledger.load_record(e)
+        rec = ledger.load_record(e)                  # raises Refused when the record was rewritten
         if rec.get("subject_sha") == tip and rec.get("verdict") == "PASS":
             return e
     return None
@@ -526,8 +539,8 @@ def _latest_verify(auth: list[dict], step: str, iteration: int | None = None,
 
 def _scope_pass(ledger: Ledger, auth: list[dict], step: str, tip: str) -> dict | None:
     e = _latest_verify(auth, step)
-    if (e is not None and e["data"].get("result") == "PASS" and e["data"].get("tip") == tip
-            and ledger.record_ok(e)):
+    if e is not None and e["data"].get("result") == "PASS" and e["data"].get("tip") == tip:
+        ledger.require_record(e)
         return e
     return None
 
@@ -771,7 +784,7 @@ def _sealed_reports(ledger: Ledger, entries: list[dict], step: str, since_seq: i
     """The report hashes the step's latest verify (after `since_seq`) sealed, or None when it has none."""
     e = next((x for x in reversed(entries)
               if x["kind"] == "verify" and x["step"] == step and x["seq"] > since_seq), None)
-    if e is None or not ledger.record_ok(e):
+    if e is None:
         return None
     return ledger.load_record(e).get("reports")
 
@@ -1053,8 +1066,10 @@ def cmd_land(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
                and e["data"].get("result") == "LANDED" for e in entries):
             reasons.append(f"step {step} already landed in iteration {iteration}")
         vpass = _latest_verify(auth, step, iteration, prep["attempt"])
-        if vpass is not None and not (vpass["data"].get("result") == "PASS" and ledger.record_ok(vpass)):
-            vpass = None
+        if vpass is not None:
+            ledger.require_record(vpass)
+            if vpass["data"].get("result") != "PASS":
+                vpass = None
         if vpass is None:
             reasons.append(f"no integrating verify PASS for {step} in iteration {iteration}")
         elif vpass["data"].get("tip") != tip:

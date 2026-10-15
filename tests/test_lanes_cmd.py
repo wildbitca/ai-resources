@@ -757,7 +757,7 @@ def test_a_rewritten_snapshot_record_fails_the_expect_check(env):
     rec.write_text(rec.read_text().replace('"handoff"', '"handoff"  '))
     env.report("code-reviewer", "review")
     rc, out = env.verify("review", prep)
-    assert rc == 1 and any("rewritten" in r for r in out["reasons"])
+    assert rc == 1 and any("does not match its ledger hash" in r for r in out["reasons"])
 
 
 def test_a_tampered_ledger_entry_breaks_the_chain(env):
@@ -1123,3 +1123,62 @@ def test_a_checker_verified_alone_still_passes(env):
     f = _landable_chain(env)
     rc, out = env.verifier("v1", "impl", f.itip, "PASS")
     assert rc == 0, out
+
+
+def _records_dir(env):
+    return env.state / "ai-resources" / "lanes" / RUN / "records"
+
+
+def _rewrite_record(env, entry, field, value):
+    """Change a snapshot field other than `head`, keeping the file valid JSON."""
+    path = _records_dir(env) / entry["record"]
+    doc = json.loads(path.read_text())
+    doc["snapshot"][field] = value
+    path.write_text(json.dumps(doc, sort_keys=True, indent=1))
+
+
+@pytest.mark.parametrize("field,value", [("tracked", "0" * 64), ("refs", {}), ("agent_outputs", {"x": "y"})])
+def test_a_rewritten_prepare_record_is_refused_by_verify_integrate_and_land(env, field, value):
+    f = Flow(env)
+    f.scope()
+    f.integrating()
+    f.finish()
+    prep_entry = next(e for e in env.ledger_entries(env.state) if e["kind"] == "prepare" and e["step"] == "impl")
+    _rewrite_record(env, prep_entry, field, value)
+    for rc, out in (env.verify("impl", f.iprep), env.integrate("impl", "tests", f.iprep),
+                    env.land("impl", f.iprep, 1)):
+        assert rc == 1 and any("does not match its ledger hash" in r for r in out["reasons"]), out
+    assert not (env.repo / "src" / "new.py").exists()
+
+
+def test_a_rewritten_verify_record_is_refused_where_it_is_relied_on(env):
+    f = Flow(env)
+    f.scope()
+    f.integrating(integrate=False)
+    vent = next(e for e in env.ledger_entries(env.state) if e["kind"] == "verify" and e["step"] == "tests")
+    path = _records_dir(env) / vent["record"]
+    doc = json.loads(path.read_text())
+    doc["changed"] = ["tests/other.py"]
+    path.write_text(json.dumps(doc, sort_keys=True, indent=1))
+    rc, out = env.integrate("impl", "tests", f.iprep)
+    assert rc == 1 and any("does not match its ledger hash" in r for r in out["reasons"]), out
+
+
+@pytest.mark.parametrize("label", ["claude-cli/claude-sonnet-5-5", "agy-cli/claude-sonnet-5-5"])
+def test_an_untouched_record_still_passes_whatever_the_lane_label(env, label):
+    f = Flow(env, model=label)
+    f.scope()
+    f.integrating()
+    f.finish()
+    rc, out = env.land("impl", f.iprep, 1)
+    assert rc == 0 and out["result"] == "LANDED", out
+
+
+def test_a_ledger_entry_without_a_record_hash_is_refused_closed(env):
+    rc, prep = env.prepare("review", "code-reviewer", "report")
+    ledger = env.state / "ai-resources" / "lanes" / RUN / "ledger.jsonl"
+    entry = json.loads(ledger.read_text().splitlines()[0])
+    entry["record_sha256"] = None
+    with pytest.raises(lanes_cmd.Refused):
+        lanes_cmd.Ledger(lanes_cmd.Ctx(env.runner, env.repo, RUN, env.state / "ai-resources" / "lanes")) \
+            .load_record(entry)
