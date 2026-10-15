@@ -226,11 +226,21 @@ WORKFLOW_SCRIPTS: dict[str, str] = {
 }
 
 
-def _step_backend_label(step: dict) -> str:
-    """`claude-code`, or `openclaw-agent (<agentId>)` for a step handed to another OpenClaw agent."""
+def _step_backend_label(step: dict, integrating_writer: str = "implementer") -> str:
+    """`claude-code`, `openclaw-agent (<agentId>)`, or the `lane` label (never an agent id: ADR-0007)."""
     backend = str(step.get("backend") or "claude-code")
     if backend == "openclaw-agent":
         return f"openclaw-agent (`{step.get('agentId')}`)"
+    if backend == "lane":
+        label = "lane (resolved at dispatch from the setup lanes table)"
+        scope = step.get("write_scope")
+        if isinstance(scope, list) and scope:
+            label += ", write scope: " + ", ".join(str(p) for p in scope)
+        elif step.get("subagent_type") == integrating_writer:
+            label += ", integrating writer"
+        if (step.get("execution_hints") or {}).get("lane_member") == "second":
+            label += ", second member"
+        return label
     return backend
 
 
@@ -240,10 +250,11 @@ def _workflow_skill_md(filename: str, doc: dict) -> str:
     summary = " ".join(str(doc.get("description", "")).split())
     description = f"{trigger} Runs the kit workflow '{name}': {summary}".replace('"', "'")[:1000]
     rows = ["| Step | Agent | Backend | Parallel group |", "|------|-------|---------|----------------|"]
+    integrating_writer = str(doc.get("integrating_writer") or "implementer")
     for step in doc.get("steps") or []:
         group = (step.get("execution_hints") or {}).get("parallel_group") or "—"
         rows.append(f"| `{step.get('id')}` | `{step.get('subagent_type')}` | "
-                    f"{_step_backend_label(step)} | {group} |")
+                    f"{_step_backend_label(step, integrating_writer)} | {group} |")
     table = "\n".join(rows)
     script = WORKFLOW_SCRIPTS.get(name)
     deterministic = (
