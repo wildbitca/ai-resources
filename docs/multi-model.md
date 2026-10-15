@@ -169,8 +169,10 @@ model is whatever that OpenClaw agent runs.
 
 - The model is set per **agent**, not per step: there is no `model` field on a step. Point `agentId` at an agent
   configured on the model you want.
-- Write-capable roles are rejected by the validator (the implementer stays on Claude Code: one writer per run);
-  `tester` and `doc-writer` pass with a warning.
+- For explicit `openclaw-agent` steps (ADR-0005), write-capable roles are rejected by the validator and the
+  implementer stays on Claude Code; `tester` and `doc-writer` pass with a warning. For `backend: lane` steps the
+  ADR-0007 invariant applies instead: one landing path, the kit; any role may run on any lane. See
+  "Subscription lanes" below.
 - A Gemini 3.8 Flash agent draws on a separate quota pool from the Claude one (Antigravity's Gemini pool and its
   Claude and GPT pool are separate; see the quota section below), so it spares the Claude quota.
 - A reviewer from another model family has different blind spots. That is reasoning, not a measurement: the
@@ -183,6 +185,38 @@ model is whatever that OpenClaw agent runs.
 Status: the step fields, the validator and the example workflow ship; the live behaviour of `sessions_spawn`
 with an explicit `cwd`, completion signalling and an agy-backed agent have not been run on a host (the ADR's
 verification tables are empty). Treat the layer as unusable until they are.
+
+## Subscription lanes
+
+A lane is a place a role can run: Claude Code, or an OpenClaw agent (`kit-lane-*`) on the Claude CLI backend, so a
+role can use the Claude subscription login in its own process with its own worktree. Lanes are a separate pass
+after the model choice (ADR-0007): they never change which model a role uses, only where it runs. They are
+**disabled on a fresh install** and without a flag; a claude-cli lane draws on the same Claude subscription pool, so
+it buys isolation and parallelism, not quota.
+
+```sh
+ai-resources setup --lanes --lanes-orchestrator main     # propose the table, sign the acknowledgement, write
+ai-resources setup --lanes --lanes-dry-run               # show the proposed table, write nothing
+ai-resources setup --no-lanes                            # clear lanes.yaml and the lane agents the kit created
+```
+
+- **What is written.** `~/.config/ai-resources/lanes.yaml` (rendered, setup-owned, both modes; `executors.yaml` is
+  byte-identical with and without lanes), and, operator-run only, the `kit-lane-*` agents, their catalog entries
+  and their ids in `subagents.allowAgents` of the named orchestrators. Setup never spawns a session.
+- **Acknowledgement.** One per account and role list: sharing one Claude login between the orchestrator and lane
+  children is a grey zone of the Anthropic terms, and non-interactive use may be billed differently. Non-interactive
+  `--lanes` without a stored acknowledgement refuses. `--allow-unverified` implies nothing.
+- **Kit-only landing path.** `ai-resources lanes prepare | verify | integrate | land | count` is the only way a lane
+  writer's work reaches the run tree; each lane writer works in its own per-attempt worktree and no agent merges or
+  lands. The procedure is in `skills/kit-orchestration/SKILL.md` ("Lane steps").
+- **Checker independence.** The verifier and security auditor never run a model family that a writer in the run
+  uses; resolution refuses it and `lanes prepare` re-checks it at dispatch.
+- **Drift.** When a role's model changes (`models update`, an alias moving) the lane agent is marked `stale`, the
+  lanes pass refuses it, and `status`, `verify` and `models update` print a warning; re-run `setup --lanes`.
+- **Profile.** `subscription-claude-55` declares a lane table; compose never emits a lane.
+
+Operations: [openclaw runbook](openclaw/runbook.md#subscription-lanes). Team rules:
+[team-composition.md](team-composition.md#lanes-pass).
 
 ## Composed teams
 

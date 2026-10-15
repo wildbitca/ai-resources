@@ -149,6 +149,60 @@ never stop the gateway from a session it launched (check `OPENCLAW_CLI`); never 
 `~/.openclaw/openclaw.json` (`openclaw config set|patch --dry-run` first); whoever creates
 `~/.openclaw/watchdog.off` removes it; update with `openclaw update`, never `npm i -g`.
 
+## Subscription lanes
+
+Operator-run only, with an explicit confirm. Lanes are off until you enable them (ADR-0007); setup never spawns a
+session and never restarts the gateway.
+
+**Setup.**
+
+```bash
+ai-resources setup --lanes --lanes-orchestrator <agent-id> --lanes-dry-run   # table and patch, nothing written
+ai-resources setup --lanes --lanes-orchestrator <agent-id>                   # enable
+```
+
+`--lanes-orchestrator` is repeatable and names the only agents whose `subagents.allowAgents` receive the
+`kit-lane-*` ids (`agents.defaults` is never touched). Setup writes `~/.config/ai-resources/lanes.yaml`, creates the
+lane agents with `openclaw agents add` under `~/.openclaw/kit-lanes/<agent id>/` (never `/tmp`), fills catalog
+entries that are absent and records `verify_capability` per orchestrator from its static tool grants. Keys that
+need a restart are listed and deferred; the kit does not restart a live gateway.
+
+**Acknowledgement.** The first interactive `--lanes` shows the Anthropic acknowledgement once, with every
+lane-eligible role preselected, and stores `{date, text_sha256, text, roles}`. A non-interactive `--lanes` without a
+stored acknowledgement that lists every lane role refuses: run it once from a terminal. Adding a role later means
+signing again.
+
+**Checks.** `ai-resources verify --cockpit openclaw` and `ai-resources models status` warn when `lanes.yaml` is
+missing, stale or a lane agent's model differs from its role's model; re-run `setup --lanes` to fix.
+
+**Teardown.**
+
+```bash
+ai-resources setup --no-lanes
+```
+
+It clears the state and removes `lanes.yaml`, takes the `kit-lane-*` ids out of `allowAgents` by set difference (an
+id you added later stays), deletes the catalog entries the kit added (and the `models` container if the kit created
+it), and, after confirmation, runs `openclaw agents delete <id> --force` for ids the kit created. It removes only
+workspaces recorded as created, only `kit-lane-*` directories that are real (not symlinks) and lie under the
+recorded workspace root, and refuses anything else with a message. An agent that existed before setup is never
+deleted. `--no-lanes --lanes-dry-run` changes nothing. Landed commits stay; un-landed lane branches and run ledgers
+under `$XDG_STATE_HOME/ai-resources/lanes/` are left for you.
+
+**Recovering a BLOCKED integration.** `lanes integrate` blocked the step because the scope branch conflicts with the
+integration branch. The merge was aborted inside the integration worktree and the run tree is untouched, so there
+is nothing to reset.
+
+1. Read the paths named in the Block and the step report.
+2. Do not merge or reset by hand. Discard the failed attempt's worktree with `openclaw worktrees remove <id>`
+   (`openclaw worktrees list` shows it) and start the integrating step again as a new attempt
+   (`lanes prepare --attempt <n+1>`): the integrating writer resolves the overlap in its own worktree.
+3. Run `lanes verify`, the Verifier step and `lanes land` with the `--expect` value the last command printed.
+4. If `land` says `base <sha> is not run HEAD <sha>`, the run tree moved: re-enter the step
+   (`lanes prepare --reenter`) so the integration branch is rebuilt from the current HEAD.
+5. After three failed attempts the step stops; the ledger under `$XDG_STATE_HOME/ai-resources/lanes/<run-id>/` is the
+   evidence.
+
 ## Pending operator steps
 
 These need the real host and a maintenance window, so they were **not** run when 1.9.0 was built:

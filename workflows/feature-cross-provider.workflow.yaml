@@ -13,6 +13,10 @@
 #   - An `openclaw-agent` step can be dispatched only by an OpenClaw-run orchestrator that has the
 #     `sessions_spawn` tool. Anywhere else the step is Blocked (there is no fallback).
 #   - Illustrative only: rules/017-multimodel-routing.mdc recommends a strong model for review.
+#   - This example uses explicit `openclaw-agent` steps (ADR-0005): the implementer stays on Claude Code.
+#     For `backend: lane` steps, where the setup lanes table decides where a role runs and the kit
+#     (`ai-resources lanes ...`) is the only landing path, see ADR-0007 and the "Lane steps" section of
+#     skills/kit-orchestration/SKILL.md.
 #
 # Flow: research (explore) → plan → architect → implement → test → (review ‖ security) → verify → document
 # handoff_file: .agent-output/handoff-<branch>.md. DELETE when DONE.

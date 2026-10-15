@@ -125,6 +125,25 @@ Forced `tool_choice` returns HTTP 400 on Opus 5.5, Sonnet 5.5 and Fable 5.1; non
 producing model, so a cross-vendor fallback restarts reasoning. Composition therefore writes same-vendor fallbacks
 only, and never `backend` or `agentId` (ADR-0005).
 
+## Lanes pass
+
+Composition picks models; it never picks where a role runs. A separate lanes pass (ADR-0007, `scoring/lanes.py`)
+runs afterwards and places each role on Claude Code or on a `kit-lane-*` OpenClaw agent. It is off on a fresh
+install and enabled with `ai-resources setup --lanes`; the explain table gains a Lane column only when a lanes table
+exists, and is otherwise byte-identical.
+
+- **Precedence.** `claude-code` steps stay on Claude Code; `openclaw-agent` steps follow ADR-0005; a `lane` step
+  with no table entry runs on Claude Code (the off switch). The full table is in the orchestration skill.
+- **Eligibility.** A role takes a lane only when its contract (report, scope or integrating) can be enforced by the
+  kit commands from the dispatching orchestrator; an unknown role is ineligible. There is no permanent role ban on a
+  lane, and the candidate order in the table is a tie-break, not a rank.
+- **Checker independence.** The verifier and security-auditor model families must not intersect any writer's
+  (integrating writer and scope-capable roles), checked statically at resolve time (primary plus, in multi-model
+  mode, LiteLLM fallbacks) and at dispatch from the run ledger. An unknown family fails closed.
+- **Target mode.** `subscription-claude-55` is a single-model alias profile (`haiku`/`sonnet`/`opus`); lane agents
+  pin a concrete id. Version drift inside a family is not a conflict; a family or exact-ref mismatch marks the
+  agent stale. Antigravity (agy) lanes are phase 3 and not enabled.
+
 ## Phase B
 
 Live evaluation (a bounded, budgeted harness that would turn review, verification and planning rows into

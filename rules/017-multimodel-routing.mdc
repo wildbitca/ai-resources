@@ -55,6 +55,10 @@ by_role:
   ...
 ```
 
+`by_role` never carries lane keys. Subscription lanes (ADR-0007; off on a fresh install, enabled with
+`ai-resources setup --lanes`) are rendered to `~/.config/ai-resources/lanes.yaml` in both single-model and
+multi-model mode, and `executors.yaml` is byte-identical with and without them.
+
 A model is named `<vendor>/<model>` (the canonical id: the vendor is the first segment, no separate `provider`
 key). The recommended assignment is `profiles/balanced-claude-55.yaml`: Haiku for reading-heavy and mechanical
 roles, Sonnet for code, review and verification, Opus for planning, architecture and security. It is Claude

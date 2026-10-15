@@ -11,6 +11,20 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Added
 
+- **Subscription lanes (ADR-0007), phase 2.** A separate lanes pass after the model choice places a role on Claude
+  Code or on a `kit-lane-*` OpenClaw agent on the Claude CLI backend. Disabled on a fresh install; enabled with
+  `ai-resources setup --lanes` (`--no-lanes`, `--lanes-dry-run`, `--lanes-orchestrator ID`), which shows the
+  per-account acknowledgement once, writes the rendered `~/.config/ai-resources/lanes.yaml` (tracked, backed up,
+  restored on a failed later artifact; `executors.yaml` unchanged) and the OpenClaw lane agents, catalog entries and
+  scoped `allowAgents`. Teardown removes only recorded kit ids and contained `kit-lane-*` workspaces and restores
+  the config document. `explain` gains a Lane column and a `lanes` JSON key only when a table exists.
+  `status`, `verify` and `models update` warn on lane model drift.
+- **Kit-only landing path and ledger.** `ai-resources lanes prepare | verify | integrate | land | count` enforce the
+  report, scope and integrating contracts with a hash-chained run ledger under `$XDG_STATE_HOME`, `--expect` heads,
+  checker independence by model family, a commit-attribution check and `--ff-only` landing. `backend: lane` workflow
+  steps, `integrating_writer`, `write_scope`, `integrates` and `lane_member: second` are validated by
+  `validate_kit.py`. `skills/kit-orchestration` gains "Lane steps" (precedence table, flow, handoff join, mixed-group
+  rule, concurrency cap).
 - **`subscription-claude-55` profile (single-model).** A curated reference profile for a Claude subscription without a
   gateway: Claude aliases (`haiku`/`sonnet`/`opus`), Sonnet for writers, tests, review and the planner, Opus for the
   architect, security auditor and verifier. Checker families never intersect writer families and the verifier differs
@@ -84,6 +98,11 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   The kit still has no dispatch path for them.
 
 ### Changed
+
+- **One writer per run is now one landing path per run.** The kit-orchestration "Who writes what" paragraph, the
+  `docs/multi-model.md` cross-provider note and the cross-provider example header state the ADR-0007 invariant: the
+  kit (`lanes land`) is the only landing path, at most one integrating writer, every lane writer in its own
+  worktree. Runs without lane writers and explicit `openclaw-agent` steps (ADR-0005) are unchanged.
 
 - **Scores DB corrections from the 2026-10-13 web re-check** (`scores/model-scores.yaml`, data only, no engine change).
   The Vals Terminal-Bench 4.0 board header reads "Updated 10/13/2026", so every proxy and the rows derived from it
