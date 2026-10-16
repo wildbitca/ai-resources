@@ -793,6 +793,33 @@ lets it follow again). The kit never writes your overlay on its own and never ap
 - Under OpenRouter, `modelOverrides` maps the current generation only; a host frozen on a previous id needs the
   freeze removed or its own override.
 
+## Tools the setup can install
+
+Step 1 of `ai-resources setup` scans the AI CLIs and then shows a checkbox with every one the kit knows: installed
+ones are disabled, missing ones are selectable (nothing is pre-ticked, so Enter installs nothing, and none is a
+valid answer), and Windsurf is listed as `manual install` because the vendor documents no CLI installer. Each
+install shows its exact command and needs the tick in the same run; nothing is stored or replayed. After an install the
+tool's own sign-in can run on the terminal (stdio inherited, nothing captured, recorded only on exit 0); the kit never
+asks for or stores an API key. `setup --dry-run` on a terminal previews this selector and prints what it would run.
+`--yes` installs only the missing `claude`, `agy` and `openclaw`.
+
+Install and sign-in commands were checked against the vendor's documentation on 2026-10-16 (the same URL and date are
+recorded in `scripts/ai_resources/setup/tools.py`, and a test fails if one is missing):
+
+| Tool | Install | Sign-in | Documentation |
+|---|---|---|---|
+| Claude Code | `curl -fsSL https://claude.ai/install.sh \| bash` | `claude` | https://code.claude.com/docs/en/setup |
+| Antigravity CLI | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | `agy` | https://antigravity.google/cli/install.sh |
+| OpenClaw | `npm i -g openclaw` | none | https://docs.openclaw.ai/install |
+| Cursor Agent CLI | `curl https://cursor.com/install -fsS \| bash` | `agent login` | https://cursor.com/docs/cli/installation |
+| Gemini CLI | `npm install -g @google/gemini-cli` | `gemini`, then Sign in with Google | https://github.com/google-gemini/gemini-cli#readme |
+| Codex CLI | `npm install -g @openai/codex` | `codex login` | https://github.com/openai/codex#readme |
+| Aider | `pipx install aider-chat` | none: export the provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...) | https://aider.chat/docs/install.html |
+| GitHub Copilot CLI | `npm install -g @github/copilot` | `copilot`, then `/login` | https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli |
+| Continue.dev CLI | `npm i -g @continuedev/cli` | `cn login` | https://github.com/continuedev/continue/blob/main/extensions/cli/README.md |
+| OpenCode | `npm install -g opencode-ai` | `opencode auth login` | https://opencode.ai/docs/ |
+| Windsurf | manual (desktop IDE) | n/a | https://docs.windsurf.com/windsurf/getting-started |
+
 ## Operations
 
 ```sh

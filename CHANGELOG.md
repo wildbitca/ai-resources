@@ -8,6 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ### Changed
 
+- **Setup step 1 now offers every AI CLI the scan detects, not only three.** The selector listed only Claude Code,
+  Antigravity CLI and OpenClaw, so on a machine that had those the operator saw the cockpit scan with red crosses
+  (Cursor, Gemini CLI, Codex CLI, Aider, GitHub Copilot CLI, Continue.dev CLI, OpenCode, Windsurf) and nothing to
+  select. Each of those with an official installer is now a selectable row (the exact command is shown before it
+  runs; nothing is pre-ticked); Windsurf, a desktop IDE with no CLI installer, is listed as `manual install` with the
+  vendor URL and never run. Package-manager installs are used where the vendor documents them (npm, pipx); Claude
+  Code, Antigravity and Cursor keep the vendor's piped installer. Every command and its sign-in is recorded with the
+  vendor doc URL and the date it was checked (`docs/multi-model.md`, "Tools the setup can install"). The offer is now
+  asked before the "no cockpits detected" check, so a machine with no AI CLI at all can install one in step 1.
+- **`setup --dry-run` on a terminal previews the selector.** It shows the real checkbox and prints, for what you
+  tick, the exact command it would run; nothing is installed or signed in. With `--yes`, `--non-interactive` or
+  without a terminal it still only says what it would offer.
 - **Setup step 1 lets you choose which tools to install.** The single `Install missing tools now?` yes/no is replaced
   by a checkbox over every tool the kit knows (Claude Code, Antigravity CLI, OpenClaw) with what each is for.
   Installed tools are shown as installed and cannot be reinstalled, nothing is pre-ticked (an installer pipes
@@ -18,6 +30,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ### Added
 
+- `detection.detect_cursor_agent()` (Cursor's terminal agent); `detect_cursor()` also counts it, and
+  `detect_copilot()` also recognises the standalone `copilot` binary (npm `@github/copilot`), not only the older
+  `gh copilot` extension. `ToolSpec` gains `doc_url`, `doc_checked` and `manual_url`.
 - **Optional sign-in after an install.** `ToolSpec` gains `purpose` and `login_cmd` (both optional). A newly
   installed tool with a sign-in (`claude`, `agy`) is offered `Sign in now?`; the tool's own login runs only on a
   terminal, with inherited stdio (nothing captured, no credential handled by the kit), and is recorded as an action.
