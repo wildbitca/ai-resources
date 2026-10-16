@@ -1,6 +1,6 @@
 # ADR-0007: Subscription lanes (a separate lanes pass, kit-only landing, and the `subscription-claude-55` profile)
 
-**Status**: Accepted by the operator on 2026-10-15, without the "Antigravity lane" section, which stays Proposed-deferred until P3-S0. Phase 0 (this ADR and the isolated probes) and phase 1 (the `subscription-claude-55` profile) are implemented; phase 2 (the claude-cli lanes machinery, the kit commands and the setup writer) is implemented, with the isolated-gateway merge gate still to run. The evidence section states what each isolated-gateway probe showed and how strong that evidence is.
+**Status**: Accepted by the operator on 2026-10-15. The "Antigravity lane" section (11) was Proposed-deferred and was accepted by the operator on 2026-10-16; the lane it describes stays opt-in, off by default and closed until its phase 3 gates are proven. Phase 0 (this ADR and the isolated probes) and phase 1 (the `subscription-claude-55` profile) are implemented; phase 2 (the claude-cli lanes machinery, the kit commands and the setup writer) is implemented, with the isolated-gateway merge gate still to run. The evidence section states what each isolated-gateway probe showed and how strong that evidence is.
 **Date**: 2026-10-14
 **Decision makers**: planner, implementer, operator (decisions of 2026-10-14 recorded in `.agent-output/planner/subscription-lanes-plan.md`, section 0)
 **Amends**: [ADR-0001](0001-model-pins-and-auto-update.md) (second validated writer), [ADR-0002](0002-provider-agnostic-model-selection.md) §8 (second validated writer; rendered `lanes.yaml`), [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md) (watch record, teardown, classify-before-add, drained path), [ADR-0005](0005-cross-provider-role-dispatch.md) §1, §2, §3, §4 and the writers matrix, §6, §7 and "Security limits", [ADR-0006](0006-scored-team-composition.md) §4, §8, "Output limits", "Rollback" (scoped to composition; the revisit trigger at "What made this Accepted" is not met)
@@ -110,7 +110,15 @@ Operator-run only, with an explicit confirm. A lanes patch builder sits beside t
 
 ### 11. Antigravity lane
 
-**Status**: Proposed
+**Status**: Accepted
+
+Accepted by the operator (bitgandtter@wildbit.dev) on 2026-10-16, as an explicit decision in the phase 3
+implementation session. The acceptance is necessary and not sufficient: the lane stays opt-in and OFF by default,
+and gates G0-G7 still decide what is writable (G1-G5 are not proven, so nothing is). Operator decisions recorded
+with it: Google egress is accepted for explore, the code-reviewer second pass, tester, doc-writer and
+security-auditor; one acknowledgement per Google account (OQ-1); the kit-owned agy home path is
+`~/.local/share/ai-resources/agy-home/` (OQ-P3-4); no pool caps plus the circuit breaker (OQ-6); OQ-5 stays closed
+until scoped; the implementer is listed but unticked by default (P3-1).
 
 Phase 3 adds Antigravity (`agy`) as a peer lane backend (`agy-cli-lane`). It is opt-in and off on a fresh install.
 It opens only with `--lanes-antigravity`, a signed Google-account acknowledgement that lists the role, this section
@@ -157,8 +165,8 @@ checks that fail closed with a message naming the gate, not prose: admission in 
     `lanes prepare --lane` refuses it, so such a step cannot verify, integrate or land, but egress may already
     have happened if the orchestrator skipped `prepare`. A `lanes.yaml` forged before a run's first `prepare` is
     not detected; the run-pinned table hash catches any change after it.
-12. **Status.** Proposed. The operator accepted this section on 2026-10-16 (session decision; recorded in the
-    acceptance commit with the constant flip). Gates G1-G5 stay NOT PROVEN and so the lane stays closed.
+12. **Status.** Accepted by the operator on 2026-10-16 (see the status line). Gates G0-G5 stay NOT PROVEN, G6 and
+    G7 partial, and so the lane stays closed.
 
 **Amendment to sections 1 and 8 (tier rule, "best model first").** A lane never moves the model, except that a
 writer may run a same-family other version when no tier-1 candidate is admissible; the why row names it. Version

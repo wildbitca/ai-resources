@@ -34,7 +34,7 @@ AGENT_PREFIX = "kit-lane-"
 # tests/test_lanes_agy_hold.py pins this constant to the exact status line of §11 in both directions.
 # Accepted is necessary and not sufficient: the flag, a valid Google acknowledgement listing the role and the
 # phase 3 gates G0..G7 (agy_lane_gates) must all hold, each as an enforced check (`agy_role_reason`).
-AGY_LANE_ADR_ACCEPTED = False
+AGY_LANE_ADR_ACCEPTED = True       # ADR-0007 section 11 Accepted by the operator on 2026-10-16
 HELD_AGY_REASON = "held: Antigravity lane not accepted"
 HELD_FLAG_REASON = "held: --lanes-antigravity is off"
 HELD_NO_ACK_REASON = "held: no valid Google acknowledgement (missing, stale text or no account)"
