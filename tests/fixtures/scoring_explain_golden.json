@@ -114,6 +114,12 @@
         "billing_class": "subscription",
         "conditions": "",
         "effort": "default",
+        "evidence": {
+          "confidence": "low",
+          "effort": "default",
+          "label": "INFERRED",
+          "tag": "score-derived"
+        },
         "fallbacks": [
           "anthropic/claude-haiku-5.5"
         ],
@@ -163,6 +169,12 @@
         "billing_class": "metered-api",
         "conditions": "",
         "effort": "default",
+        "evidence": {
+          "confidence": "low",
+          "effort": "default",
+          "label": "INFERRED",
+          "tag": "score-derived"
+        },
         "fallbacks": [],
         "flags": [
           "unverified"
@@ -212,6 +224,12 @@
         "billing_class": "metered-api",
         "conditions": "",
         "effort": "default",
+        "evidence": {
+          "confidence": "low",
+          "effort": "default",
+          "label": "INFERRED",
+          "tag": "score-derived"
+        },
         "fallbacks": [],
         "flags": [
           "unverified"

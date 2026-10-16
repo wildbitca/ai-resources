@@ -154,11 +154,13 @@ def test_the_unreleased_changelog_section_covers_every_group_and_no_version_move
     text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
     head = text.split("## [2.1.1]")[0]
     assert "## [Unreleased]" in head
+    # Since the 2.2.0 release preparation the text that was Unreleased sits under `## [2.2.0]`; the group
+    # coverage is checked over everything newer than 2.1.1.
     unreleased = head.split("## [Unreleased]")[1]
     for needle in ("gateway guard", "command substitution", "T45", "T46", "setup-state lock", "hand-units",
                    "--yes", "models check", "TLS certificate unavailable"):
         assert needle in unreleased, needle
-    assert "2.1.1" in (REPO / "scripts" / "ai_resources" / "__init__.py").read_text(encoding="utf-8")
+    # The version files agree with the top CHANGELOG heading (tests/test_release_consistency.py).
 
 
 def test_the_changelog_says_a_refused_graceful_restart_keeps_its_lock_file():

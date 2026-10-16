@@ -24,7 +24,7 @@ Prepared locally and NOT published: no tag, no release, no Homebrew update. See
   children under the gateway unit and warns above 24 with the restart remedy. Read-only; kills nothing. The effect of
   `tools.deny: ["bundle-mcp"]` on live children is not proven.
 - **Per-role evidence and effort (FU-3, FU-4).** The composition JSON and `composed` provenance carry
-  `evidence: {tag, label, confidence, effort}` per role; a profile `evidence:` / `effort:` block is copied into
+  `evidence: {tag, label, confidence, effort}` per role; a profile `evidence:` / `role_effort:` block is copied into
   `lanes.yaml resolved.roles.<role>`. Read-only metadata: it never changes routing.
 - **`ai-resources setup --help` describes the guided flow**: the ten steps, Ctrl-B/Ctrl-C/Ctrl-D, the review's
   "Edit a section...", `--non-interactive`, `--dry-run`, the lanes flags and `NO_COLOR`.

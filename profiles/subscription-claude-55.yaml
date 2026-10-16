@@ -28,14 +28,15 @@ description: |
   chosen. Compose disagrees with this table; this profile is a reference, and
   `balanced-claude-55` remains the recommended profile.
 
-# Per-role evidence tag and effort (ADR-0007 FU-3, FU-4): read-only metadata copied into `lanes.yaml`
+# Per-role evidence tag and effort (ADR-0007 FU-3, FU-4). The map is `role_effort`, never `effort`:
+# the profile keeps no `effort` key (tests/test_profile_subscription_claude55.py): read-only metadata copied into `lanes.yaml`
 # `resolved:`. They never move a role to another model or lane.
 evidence:
   tag: study-based
   label: INFERRED
   confidence: medium-low
   source: 2026-10 study of the 5.5 models
-effort:
+role_effort:
   planner: high
   implementer: high
 

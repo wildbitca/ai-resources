@@ -147,7 +147,7 @@ exists, and is otherwise byte-identical.
 ## Per-role evidence, effort and lane headroom (2.2.0)
 
 - `--why-json` and the composed provenance carry `evidence: {tag, label, confidence, effort}` per role. `confidence` is a kit presentation mapping of the label (MEASURED-HERE high, MEASURED-3P medium, VENDOR medium-low, INFERRED low, UNKNOWN none); it is never an input of the score.
-- A profile may declare `evidence:` (tag, label, confidence, source) and an `effort:` map. They appear in `lanes.yaml resolved.roles.<role>` and never change routing.
+- A profile may declare `evidence:` (tag, label, confidence, source) and a `role_effort:` map. They appear in `lanes.yaml resolved.roles.<role>` and never change routing.
 - Lane placement uses a measured local headroom when one exists (Claude status-line sidecar via `AI_RESOURCES_CLAUDE_SIDECAR`, kit counters via `AI_RESOURCES_USAGE_COUNTERS`); otherwise the static weights. Not proven on a live host: how accurate the sidecar value is over a day.
 
 ## Phase B

@@ -18,7 +18,7 @@ def _doc(meta=True):
     d = copy.deepcopy(profiles.load_profile("subscription-claude-55"))
     if not meta:
         d.pop("evidence", None)
-        d.pop("effort", None)
+        d.pop("role_effort", None)
     return d
 
 
@@ -37,7 +37,7 @@ def test_profile_declares_study_based_evidence_and_effort():
     doc = _doc()
     assert doc["evidence"]["tag"] == "study-based"
     assert doc["evidence"]["confidence"] in ("medium-low", "low", "medium")
-    assert doc["effort"]["planner"] == "high" and doc["effort"]["implementer"] == "high"
+    assert doc["role_effort"]["planner"] == "high" and doc["role_effort"]["implementer"] == "high"
 
 
 def test_resolved_carries_evidence_and_effort_per_role():

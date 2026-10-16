@@ -554,9 +554,9 @@ def propose(profile_doc: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
 
 
 def _role_meta(profile_doc: Mapping[str, Any], roles: set[str]) -> dict[str, dict[str, Any]]:
-    """Read-only per-role metadata a profile declares: the evidence tag (`evidence:`) and `effort:`.
+    """Read-only per-role metadata a profile declares: the evidence tag (`evidence:`) and `role_effort:`.
 
-    Where the profile has an `effort:` map every lane role gets a value (unlisted roles: `default`). Neither
+    Where the profile has a `role_effort:` map every lane role gets a value (unlisted roles: `default`). Neither
     ever changes routing; both only travel into `lanes.yaml resolved:` for the operator."""
     ev = profile_doc.get("evidence")
     ev_out: dict[str, str] = {}
@@ -564,7 +564,7 @@ def _role_meta(profile_doc: Mapping[str, Any], roles: set[str]) -> dict[str, dic
         for k in ("tag", "label", "confidence", "source"):
             if isinstance(ev.get(k), str) and ev.get(k):
                 ev_out[k] = str(ev[k])
-    effort = profile_doc.get("effort")
+    effort = profile_doc.get("role_effort")
     effort = effort if isinstance(effort, Mapping) else None
     out: dict[str, dict[str, Any]] = {}
     for role in sorted(roles):
