@@ -6,10 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
-Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the operator's decision at release time;
-`__version__`, the Formula and `plugin.json` still say 2.1.1.
+## [2.2.0] — 2026-10-16 — subscription lanes, the guided setup wizard and the hardening around them
+
+Prepared locally and NOT published: no tag, no release, no Homebrew update. See
+`docs/release-2.2.0-checklist.md` for the operator commands and for what is proven and what is not.
 
 ### Added
+
+- **Codex lane backend, held (ADR-0007 FU-2).** `codex-cli` is a registered lane backend (pool `codex-subscription`,
+  profile candidate `codex:<model>`) for read-only report roles only. It is HELD like Antigravity:
+  `CODEX_LANE_ADR_ACCEPTED = False`, absent from `WRITABLE_BACKENDS`, never written to `openclaw.json`, refused at
+  `lanes prepare`. A host without a `codex` binary reports `not installed`. Not proven against a live OpenClaw.
+- **Measured headroom for lane placement (FU-5).** A fresh reading from local state (status-line sidecar, kit counters
+  file) scales a pool's weight and separates otherwise equal candidates across pools; absent or stale readings use
+  the static weights. No network, no paid API.
+- **`doctor` MCP child check (FU-1, kit side).** With lanes enabled, `ai-resources doctor` counts supabase/engram
+  children under the gateway unit and warns above 24 with the restart remedy. Read-only; kills nothing. The effect of
+  `tools.deny: ["bundle-mcp"]` on live children is not proven.
+- **Per-role evidence and effort (FU-3, FU-4).** The composition JSON and `composed` provenance carry
+  `evidence: {tag, label, confidence, effort}` per role; a profile `evidence:` / `effort:` block is copied into
+  `lanes.yaml resolved.roles.<role>`. Read-only metadata: it never changes routing.
+- **`ai-resources setup --help` describes the guided flow**: the ten steps, Ctrl-B/Ctrl-C/Ctrl-D, the review's
+  "Edit a section...", `--non-interactive`, `--dry-run`, the lanes flags and `NO_COLOR`.
+
+### Fixed
+
+- **Masking leftovers.** `my password is Tr0ub4dor&3xyz` style prose and a value alone on the line after an empty
+  `KEY=` / `KEY:` are masked; words, paths, model ids, references and values under 8 characters are kept.
+
+### Added (earlier in this release)
 
 - **Wizard hardening (ADR-0008, 9-11).** A re-run starts every model question from the saved selection and
   pre-checks the saved providers and cockpits; echoed subprocess text drops terminal escapes and markup and is masked
