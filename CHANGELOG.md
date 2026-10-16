@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Changed
+
+- **Setup step 1 lets you choose which tools to install.** The single `Install missing tools now?` yes/no is replaced
+  by a checkbox over every tool the kit knows (Claude Code, Antigravity CLI, OpenClaw) with what each is for.
+  Installed tools are shown as installed and cannot be reinstalled, the missing required ones are pre-ticked, and
+  selecting none is valid. `--yes` still installs the missing required set without asking; `--dry-run`,
+  `--non-interactive` and a run without a terminal behave as before. Because the required set is now pre-ticked,
+  pressing Enter on a terminal installs it (it used to install nothing); untick to decline.
+
+### Added
+
+- **Optional sign-in after an install.** `ToolSpec` gains `purpose` and `login_cmd` (both optional). A newly
+  installed tool with a sign-in (`claude`, `agy`) is offered `Sign in now?`; the tool's own login runs only on a
+  terminal, with inherited stdio (nothing captured, no credential handled by the kit), and is recorded as an action.
+  Without a terminal, or under `--yes`, the command is printed instead. An installed tool is signed in to only when
+  ticked under `Sign in to installed tools`.
+
 ## [2.2.0] — 2026-10-16 — subscription lanes, the guided setup wizard and the hardening around them
 
 Prepared locally and NOT published: no tag, no release, no Homebrew update. See
