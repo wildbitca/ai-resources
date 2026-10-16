@@ -94,7 +94,7 @@ def test_non_interactive_with_a_saved_yes_no_longer_installs_anything(monkeypatc
 
     calls = []
 
-    def fake_run(cmd, capture_output, text, timeout):
+    def fake_run(cmd, capture_output, text, timeout, stdin=None):
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, "installed ok", "")
 
@@ -124,7 +124,7 @@ def test_interactive_run_asks_once_and_does_not_reinstall_agy(monkeypatch, tmp_p
     monkeypatch.setattr(ui, "checkbox", lambda msg, choices, default=None, **k: (
         asked.append([getattr(c, "value", c) for c in choices]) or ["agy"]) if msg.startswith("Select") else [])
 
-    def fake_run(cmd, capture_output, text, timeout):
+    def fake_run(cmd, capture_output, text, timeout, stdin=None):
         return subprocess.CompletedProcess(cmd, 0, "", "")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -173,7 +173,7 @@ def test_agy_install_records_only_the_new_rc_lines_it_appended(monkeypatch, tmp_
     bashrc.write_text('export PATH="$HOME/.local/bin:$PATH"\n', encoding="utf-8")
     monkeypatch.setattr(tools, "_rc_paths", lambda: [bashrc])
 
-    def fake_run(cmd, capture_output, text, timeout):
+    def fake_run(cmd, capture_output, text, timeout, stdin=None):
         # Simulate the real installer: appends a duplicate PATH line plus one new line.
         with bashrc.open("a", encoding="utf-8") as fh:
             fh.write('export PATH="$HOME/.local/bin:$PATH"\n')
@@ -233,7 +233,7 @@ def test_claude_install_does_not_inspect_rc_files_at_all(monkeypatch, tmp_path):
         return real_rc_paths()
     monkeypatch.setattr(tools, "_rc_paths", counting_rc_paths)
 
-    def fake_run(cmd, capture_output, text, timeout):
+    def fake_run(cmd, capture_output, text, timeout, stdin=None):
         return subprocess.CompletedProcess(cmd, 0, "", "")
     monkeypatch.setattr(subprocess, "run", fake_run)
 

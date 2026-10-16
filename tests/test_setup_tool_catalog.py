@@ -47,12 +47,14 @@ def _detect(monkeypatch, installed=(), gemini=None):
 
 class Rig:
     def __init__(self, monkeypatch, pick=None):
+        self.titles: dict[str, str] = {}
         self.asked: list[tuple[str, list, list, dict]] = []
         self.installed: list[str] = []
         self.logins: list[str] = []
         self.notes: list[str] = []
 
         def checkbox(message, choices, default=None, **k):
+            self.titles.update({c.value: str(c.title) for c in choices})
             self.asked.append((message, [c.value for c in choices], list(default or []),
                                {c.value: c.disabled for c in choices}))
             if message.startswith(INSTALL):
@@ -88,7 +90,7 @@ def test_install_commands_are_plain_strings_without_shell_metacharacters():
         cmd = spec.install_cmd
         # the only documented metacharacter is the final pipe of a vendor's `curl ... | bash`
         body, _, sink = cmd.partition(" | ")
-        assert sink in ("", "bash", "sh", "bash -s -- --no-onboard"), f"{tid}: {cmd!r}"
+        assert sink in ("", "bash", "sh", "bash -s -- --no-onboard --no-prompt"), f"{tid}: {cmd!r}"
         assert not re.search(r"[;&`$()<>\\\n]|\|\||&&", body), f"{tid}: {cmd!r}"
         assert " | " not in body
         assert not sink or body.startswith("curl "), f"{tid}: a pipe is only for a vendor curl installer"
@@ -359,22 +361,24 @@ def test_gemini_cli_is_not_installable_anywhere_in_the_catalog():
 def test_an_existing_gemini_install_is_an_informational_row_that_points_to_agy(monkeypatch):
     _detect(monkeypatch, installed=("claude",),
             gemini=detection.Detected("Gemini CLI", True, "0.40.1", "/bin/gemini"))
-    rig = Rig(monkeypatch, pick=[])
+    rig = Rig(monkeypatch, pick=["info:gemini"])
     tools.offer(state.SetupState(), cockpits=detection.detect_all_cockpits())
-    choices = tools._selector_choices(tools._not_installed(), tools._missing_all(), tools._detect_tools(),
-                                      detection.detect_all_cockpits())
-    row = [c for c in choices if c.value == "info:gemini"]
-    assert len(row) == 1 and row[0].disabled == "installed"
-    assert "Gemini CLI" in row[0].title and "v0.40.1" in row[0].title
-    assert "retired for personal accounts; use agy" in row[0].title
-    assert rig.asked and "gemini" not in rig.asked[0][1]
+    assert rig.asked
+    shown = next(a for a in rig.asked if a[0].startswith(INSTALL))
+    assert shown[1].count("info:gemini") == 1 and shown[3]["info:gemini"] == "installed"
+    assert "gemini" not in shown[1]
+    title = rig.titles["info:gemini"]
+    assert "Gemini CLI" in title and "v0.40.1" in title
+    assert "retired for personal accounts; use agy" in title
+    assert rig.installed == []
 
 
 def test_an_absent_gemini_adds_no_row(monkeypatch):
     _detect(monkeypatch)
-    choices = tools._selector_choices(tools._not_installed(), tools._missing_all(), tools._detect_tools(),
-                                      detection.detect_all_cockpits())
-    assert not any("gemini" in str(c.value) for c in choices)
+    rig = Rig(monkeypatch, pick=[])
+    tools.offer(state.SetupState(), cockpits=detection.detect_all_cockpits())
+    assert rig.asked
+    assert not any("gemini" in str(v) for a in rig.asked for v in a[1])
 
 
 # --- audited installer commands (vendor docs read 2026-10-16; see docs/decisions/0008) -----------------------------
@@ -382,7 +386,7 @@ def test_an_absent_gemini_adds_no_row(monkeypatch):
 AUDITED = {
     "claude": "curl -fsSL https://claude.ai/install.sh | bash",
     "agy": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
-    "openclaw": "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard",
+    "openclaw": "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard --no-prompt",
     "cursor": "curl https://cursor.com/install -fsS | bash",
     "codex": "npm install -g @openai/codex",
     "aider": "curl -LsSf https://aider.chat/install.sh | sh",

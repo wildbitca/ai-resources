@@ -815,7 +815,7 @@ recorded in `scripts/ai_resources/setup/tools.py`, and a test fails if one is mi
 |---|---|---|---|
 | Claude Code | `curl -fsSL https://claude.ai/install.sh \| bash` | `claude` | https://code.claude.com/docs/en/setup |
 | Antigravity CLI | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | `agy` | https://antigravity.google/docs/getting-started?tab=cli |
-| OpenClaw | `curl -fsSL https://openclaw.ai/install.sh \| bash -s -- --no-onboard` | none | https://docs.openclaw.ai/install |
+| OpenClaw | `curl -fsSL https://openclaw.ai/install.sh \| bash -s -- --no-onboard --no-prompt` | none | https://docs.openclaw.ai/install |
 | Cursor Agent CLI | `curl https://cursor.com/install -fsS \| bash` | `agent login` | https://cursor.com/docs/cli/installation |
 | Codex CLI | `npm install -g @openai/codex` | `codex login` | https://github.com/openai/codex#readme |
 | Aider | `curl -LsSf https://aider.chat/install.sh \| sh` | none: export the provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...) | https://aider.chat/docs/install.html |

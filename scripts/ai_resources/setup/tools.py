@@ -68,8 +68,8 @@ TOOLS: dict[str, ToolSpec] = {
     "openclaw": ToolSpec(
         "openclaw", "OpenClaw",
         # The vendor's recommended installer: it provisions Node and handles npm 12 blocking lifecycle scripts, which a
-        # bare `npm i -g openclaw` does not. `--no-onboard` because the kit configures OpenClaw itself.
-        "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard",
+        # bare `npm i -g openclaw` does not. `--no-onboard` because the kit configures OpenClaw itself; `--no-prompt` because the output is captured and the script would otherwise ask on /dev/tty.
+        "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard --no-prompt",
         lambda: detection.detect_openclaw(),
         purpose="agent gateway the kit configures; no separate sign-in",
         doc_url="https://docs.openclaw.ai/install", doc_checked=_CHECKED,
@@ -248,7 +248,8 @@ def _remove_line(path: Path, line: str) -> bool:
 
 def _run_install(cmd: str, timeout: int = 300) -> tuple[bool, str]:
     try:
-        r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL)
     except (subprocess.TimeoutExpired, OSError) as e:
         return False, str(e)
     return r.returncode == 0, (r.stdout + r.stderr).strip()

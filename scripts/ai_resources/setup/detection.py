@@ -181,7 +181,7 @@ def detect_opencode() -> Detected:
 
 def detect_openclaw() -> Detected:
     # `--version` prints "OpenClaw 2026.10.4 (383c124)"; a slow start is normal.
-    return _probe("OpenClaw", "openclaw", "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard",
+    return _probe("OpenClaw", "openclaw", "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard --no-prompt",
                   timeout=30, pattern=r"(\d+\.\d+\.\d+)")
 
 
