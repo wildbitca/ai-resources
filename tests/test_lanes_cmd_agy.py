@@ -438,7 +438,11 @@ def _commands_for(env, label):
     return {k: {"rc": rc, "out": o} for k, (rc, o) in out.items()}, run
 
 
-def test_ac3_9_every_kit_command_differs_by_label_only_in_the_allowlisted_fields(env):
+def test_ac3_9_every_kit_command_differs_by_label_only_in_the_allowlisted_fields(env, monkeypatch):
+    # Pin the commit clock: otherwise the tester tip sha differs between the two labels whenever a second boundary
+    # falls between their commits, which is wall-clock noise and not a label asymmetry.
+    for var in ("GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE"):
+        monkeypatch.setenv(var, "2026-01-01T00:00:00+0000")
     results = {}
     for label in ("claude-cli", "agy-cli-lane"):
         got, run = _commands_for(env, label)
