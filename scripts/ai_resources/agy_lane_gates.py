@@ -14,9 +14,11 @@ to ADR-0007 "Evidence"; `tests/test_agy_lane_gates.py` pins that a gate cannot b
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 AGY_LANE_BACKEND = "agy-cli-lane"
+AGY_HOME_PARTS = (".local", "share", "ai-resources", "agy-home")
 PROVEN = "proven"
 PARTIAL = "partial"
 NOT_PROVEN = "not proven"
@@ -84,3 +86,9 @@ def status_table(evidence: Mapping[str, Gate] | None = None) -> dict[str, dict[s
     ev = EVIDENCE if evidence is None else evidence
     return {g.id: {"status": (ev.get(g.id) or g).status, "evidence": (ev.get(g.id) or g).evidence}
             for g in GATES}
+
+
+def agy_home_path() -> Path:
+    """The kit-owned agy home the lane would use (V12, OQ-P3-4). Only a path: nothing here creates it, and it
+    is never under /tmp, `workspace_root` or `~/.openclaw/kit-lanes/`."""
+    return Path.home().joinpath(*AGY_HOME_PARTS)

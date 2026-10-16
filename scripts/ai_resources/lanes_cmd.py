@@ -653,7 +653,7 @@ def _admit_lane(doc: dict, lane: str) -> None:
     if not aid.startswith("kit-lane-") or not isinstance(agent, dict):
         raise Refused([f"lane {lane} is not an admitted kit lane agent of the table"])
     backend = agent.get("backend")
-    writable = backend in openclaw_lanes.WRITABLE_BACKENDS
+    writable = backend in openclaw_lanes.writable_backends()
     if backend != "claude-cli" and not lanes_render.AGY_LANE_ADR_ACCEPTED:
         writable = False
     if not writable:
