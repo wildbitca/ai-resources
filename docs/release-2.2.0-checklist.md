@@ -77,8 +77,11 @@ NOT proven (needs the live host or the isolated merge gate; implemented behind s
 - that `tools.deny: ["bundle-mcp"]` stops supabase/engram accumulation on live lane children;
 - that OpenClaw accepts a `codex-cli` runtime catalog entry (the lane is held and never written);
 - the accuracy of the status-line sidecar headroom over a day of real use;
-- the claude-cli lane end to end on the live gateway (ADR-0007 merge gate); commit `14bdcfd` is not verified by
-  an independent Verifier yet;
+- the claude-cli lane end to end on the live gateway (ADR-0007 merge gate); commit `14bdcfd` was verified by an
+  independent Verifier by code reading and tests (E1-E3), not on a live host;
+- the Antigravity lane gates G0-G5 (merge gate record, V5 slugs, V6 sandbox, V7 tool/MCP surface, V9 workspace,
+  V12 agy home) are NOT proven and G6/G7 are partial, so the agy lane stays closed even though ADR-0007 section 11 is
+  accepted;
 - `ai-resources setup` on a real host after `brew upgrade` (never run by the preparation).
 
 ## 5. Rollback
