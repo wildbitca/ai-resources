@@ -72,14 +72,45 @@ def test_deterministic(tmp_path):
     assert _resolve(a).digest != _resolve({}).digest
 
 
-def test_snapshot_in_lanes_state_reaches_the_resolved_table():
-    lanes = {"agents": {"kit-lane-cli": {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5",
-                                         "pool": "claude-subscription"}},
-             "roles": {"implementer": {"candidates": ["claude-code", "openclaw-agent:kit-lane-cli"]}},
-             "second": {}, "pool_caps": {}}
+def _spy_resolve(monkeypatch):
+    """Record the `weights` every resolve_lanes call receives while delegating to the real resolver."""
+    seen: list[dict] = []
+    real = lanes_render.scoring_lanes.resolve_lanes
+
+    def spy(*a, **kw):
+        seen.append(dict(kw.get("weights") or {}))
+        return real(*a, **kw)
+
+    monkeypatch.setattr(lanes_render.scoring_lanes, "resolve_lanes", spy)
+    return seen
+
+
+def _lanes_state():
+    return {"agents": {"kit-lane-cli": {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5",
+                                        "pool": "claude-subscription"}},
+            "roles": {"implementer": {"candidates": ["claude-code", "openclaw-agent:kit-lane-cli"]}},
+            "second": {}, "pool_caps": {}}
+
+
+def test_snapshot_in_lanes_state_reaches_the_resolver(monkeypatch):
+    # render_doc passes no agy/codex gates, so only the claude pool is admissible there and a weight cannot
+    # flip a pick; the wiring is proven by what the resolver receives (the flip itself is covered above).
     ack = {"anthropic": {"roles": ["implementer"]}}
-    base = lanes_render.render_doc(lanes, {"implementer": {"model": "sonnet"}}, "single-model", ack)
-    with_w = lanes_render.render_doc({**lanes, "headroom_weights": {"claude-subscription": 0.2}},
-                                     {"implementer": {"model": "sonnet"}}, "single-model", ack)
-    assert base["resolved"]["roles"]["implementer"]["lane"] == with_w["resolved"]["roles"]["implementer"]["lane"]
+    by_role = {"implementer": {"model": "sonnet"}}
+    seen = _spy_resolve(monkeypatch)
+    lanes_render.render_doc(_lanes_state(), by_role, "single-model", ack)
+    assert seen and all(w == {} for w in seen)
+    seen.clear()
+    with_w = lanes_render.render_doc({**_lanes_state(), "headroom_weights": {"claude-subscription": 0.2}},
+                                     by_role, "single-model", ack)
+    assert seen and all(w == {"claude-subscription": 0.2} for w in seen)
     assert "error" not in with_w["resolved"]
+
+
+def test_propose_stores_the_headroom_snapshot_sorted():
+    from ai_resources.setup import profiles
+    doc = profiles.load_profile("subscription-claude-55")
+    out = lanes_render.propose(doc, doc["by_role"], "single-model",
+                               headroom={"claude-subscription": 1, "agy-claude-gpt": 0.2})
+    assert list(out["headroom_weights"].items()) == [("agy-claude-gpt", 0.2), ("claude-subscription", 1.0)]
+    assert "headroom_weights" not in lanes_render.propose(doc, doc["by_role"], "single-model")
