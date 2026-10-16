@@ -299,9 +299,10 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
     `preselect` names the ids a caller's context strictly requires; only those start ticked (default: none).
     """
     s.tracking.install_tools_answer = None           # migration: nothing is replayed, nothing is persisted
-    missing = missing_tools(ids)
-    absent = _not_installed()
-    can_sign_in = [t for t in TOOLS if t not in _missing_all() and TOOLS[t].login_cmd]
+    missing_all = _missing_all()                      # one detection pass, reused everywhere below
+    missing = [t for t in ids if t in missing_all]
+    absent = _not_installed(missing_all)
+    can_sign_in = [t for t in TOOLS if t not in missing_all and TOOLS[t].login_cmd]
     if not missing and not absent and not can_sign_in:
         return []
     if assume_yes and not missing:
@@ -311,7 +312,7 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
 
     if dry_run:
         if not assume_yes and not ui.is_non_interactive() and ui.stdin_is_a_terminal():
-            _preview_selection(absent, preselect)
+            _preview_selection(absent, preselect, missing_all)
             return []
         ui.info(f"DRY RUN: would offer {labels}; nothing is installed"
                 + (" (--yes does not install in a dry run)." if assume_yes else "."))
@@ -332,7 +333,7 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
         # Asked once per run: a second call on the same state object reuses the answer given a moment ago.
         picked = getattr(s, "_install_answer_this_run", None)
         if picked is None:
-            picked = _ask_selection(absent, preselect)
+            picked = _ask_selection(absent, preselect, missing_all)
             s._install_answer_this_run = picked           # an instance attribute: never serialised
         chosen = [t for t in TOOLS if t in picked and t in absent]
         sign_in = [t for t in TOOLS if f"login:{t}" in picked and TOOLS[t].login_cmd and t not in chosen]
@@ -350,9 +351,11 @@ def _missing_all() -> list[str]:
     return missing_tools(tuple(TOOLS))
 
 
-def _not_installed() -> list[str]:
+def _not_installed(missing_all: list[str] | None = None) -> list[str]:
     """Tools that are not installed AND have an installer the kit can run (manual-install ones are excluded)."""
-    return [t for t in _missing_all() if TOOLS[t].install_cmd]
+    if missing_all is None:
+        missing_all = _missing_all()
+    return [t for t in missing_all if TOOLS[t].install_cmd]
 
 
 def _selector_choices(absent: list[str], missing_all: list[str]) -> list:
@@ -372,11 +375,13 @@ def _selector_choices(absent: list[str], missing_all: list[str]) -> list:
     return choices
 
 
-def _ask_selection(absent: list[str] | None = None, preselect: tuple[str, ...] = ()) -> list[str]:
+def _ask_selection(absent: list[str] | None = None, preselect: tuple[str, ...] = (),
+                   missing_all: list[str] | None = None) -> list[str]:
     """One checkbox over every known tool: missing ones selectable (nothing is pre-ticked except `preselect`, so Enter
     installs nothing by default), installed ones shown as installed and disabled, manual-install ones disabled with
     the vendor URL, plus an explicit, unticked sign-in row per installed tool with a login."""
-    missing_all = _missing_all()
+    if missing_all is None:
+        missing_all = _missing_all()
     if absent is None:
         absent = [t for t in missing_all if TOOLS[t].install_cmd]
     picked = ui.checkbox("Select the tools to install (Space ticks, Enter confirms; none is fine)",
@@ -385,9 +390,9 @@ def _ask_selection(absent: list[str] | None = None, preselect: tuple[str, ...] =
     return list(picked or [])
 
 
-def _preview_selection(absent: list[str], preselect: tuple[str, ...]) -> None:
+def _preview_selection(absent: list[str], preselect: tuple[str, ...], missing_all: list[str] | None = None) -> None:
     """Dry run on a terminal: show the real selector, then say what would run. Nothing is installed or signed in."""
-    picked = _ask_selection(absent, preselect)
+    picked = _ask_selection(absent, preselect, missing_all)
     chosen = [t for t in TOOLS if t in picked and t in absent]
     for t in chosen:
         ui.info(f"DRY RUN: would install {TOOLS[t].label} with `{TOOLS[t].install_cmd}`; nothing is installed.")
