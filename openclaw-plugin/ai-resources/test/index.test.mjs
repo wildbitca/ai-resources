@@ -8,6 +8,9 @@ import plugin, {
   resolveBinaries,
   parseAgyLine,
   buildAgyBackend,
+  buildAgyLaneBackend,
+  isAbsoluteBin,
+  AGY_LANE_UNPROVEN,
   buildClaudeBackend,
   buildClaudeCommand,
   makeClaudeCommandHandler,
@@ -179,7 +182,7 @@ test("the plugin manifest's cliBackends match what register() actually registers
   const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
   const registered = [];
   const api = {
-    pluginConfig: {},
+    pluginConfig: { agyBin: "/abs/agy" },       // ADR-0007 phase 3: the lane backend needs an absolute agyBin
     registerCliBackend(def) { registered.push(def.id); },
     registerCommand() {},
   };
@@ -201,8 +204,9 @@ test("register() resolves binaries from api.pluginConfig, never from the whole a
     registerCommand() {},
   };
   plugin.register(api);
-  assert.deepEqual(backends.map((b) => b.id).sort(), ["agy-cli", "claude-kit"]);
+  assert.deepEqual(backends.map((b) => b.id).sort(), ["agy-cli", "agy-cli-lane", "claude-kit"]);
   assert.equal(backends.find((b) => b.id === "agy-cli").config.command, "/abs/agy");
+  assert.equal(backends.find((b) => b.id === "agy-cli-lane").config.command, "/abs/agy");
   assert.equal(backends.find((b) => b.id === "claude-kit").config.command, "/abs/claude");
 });
 
@@ -297,8 +301,70 @@ test("register() adds both CLI backends and the claude command", () => {
     runtime: { subagent: { async run() { return { runId: "r1" }; } } },
   };
   plugin.register(api);
-  assert.deepEqual(backends.map((b) => b.id).sort(), ["agy-cli", "claude-kit"]);
+  assert.deepEqual(backends.map((b) => b.id).sort(), ["agy-cli", "agy-cli-lane", "claude-kit"]);
   assert.equal(backends.find((b) => b.id === "agy-cli").config.command, "/abs/agy");
   assert.equal(backends.find((b) => b.id === "claude-kit").config.command, "/abs/claude");
   assert.deepEqual(commands.map((c) => c.name).sort(), ["claude", "equipo"]);
+});
+
+// --- agy-cli-lane (ADR-0007 section 11, phase 3) -----------------------------------
+
+// The classic backend, byte for byte as it was before phase 3 (a snapshot, so a lane change cannot leak in).
+const AGY_CLI_SNAPSHOT = {
+  id: "agy-cli",
+  bundleMcp: true,
+  bundleMcpMode: "gemini-system-settings",
+  nativeToolMode: "always-on",
+  config: {
+    command: "/abs/agy",
+    args: ["--dangerously-skip-permissions", "--disable-slash-commands",
+           "--output-format", "stream-json", "-p", "{prompt}"],
+    resumeArgs: ["--dangerously-skip-permissions", "--disable-slash-commands",
+                 "--conversation", "{sessionId}", "--output-format", "stream-json", "-p", "{prompt}"],
+    output: "jsonl", resumeOutput: "jsonl", input: "arg", modelArg: "--model",
+    sessionMode: "existing", sessionIdFields: ["conversation_id"], serialize: true,
+  },
+};
+
+test("buildAgyBackend deep-equals the pre-phase-3 snapshot", () => {
+  const { parseJsonlEvent, ...rest } = buildAgyBackend({ agy: "/abs/agy" });
+  assert.equal(parseJsonlEvent, parseAgyLine);
+  assert.deepEqual(rest, AGY_CLI_SNAPSHOT);
+});
+
+test("buildAgyLaneBackend has its own id, no bundled MCP and the same parser, model arg and serialisation", () => {
+  const lane = buildAgyLaneBackend({ agy: "/abs/agy" });
+  const classic = buildAgyBackend({ agy: "/abs/agy" });
+  assert.equal(lane.id, "agy-cli-lane");
+  assert.equal(lane.bundleMcp, false);
+  assert.equal(lane.bundleMcpMode, undefined);
+  assert.equal(lane.parseJsonlEvent, parseAgyLine);
+  assert.deepEqual(lane.config, classic.config);
+  assert.notEqual(lane.config, classic.config);       // a copy: editing one never edits the other
+  assert.equal(lane.config.modelArg, "--model");
+  assert.equal(lane.config.serialize, true);
+});
+
+test("the lane argv carries no sandbox, allowlist or agy-home argument: V6, V7 and V12 are not proven", () => {
+  const lane = buildAgyLaneBackend({ agy: "/abs/agy" });
+  assert.ok(lane.config.args.includes("--dangerously-skip-permissions"));
+  for (const a of lane.config.args) {
+    assert.ok(!/sandbox|allow|home/i.test(a), `unexpected argument ${a}`);
+  }
+  assert.equal(lane.config.env, undefined);
+  assert.deepEqual(Object.keys(AGY_LANE_UNPROVEN).sort(), ["agyHome", "sandbox", "toolAllowlist"]);
+});
+
+test("isAbsoluteBin accepts only absolute paths", () => {
+  assert.equal(isAbsoluteBin("/opt/agy"), true);
+  for (const bad of ["agy", "./agy", "", undefined, null]) assert.equal(isAbsoluteBin(bad), false);
+});
+
+test("a relative or missing agyBin makes the lane backend refuse to register; the classic one keeps agy", () => {
+  for (const pluginConfig of [{}, { agyBin: "agy" }, { agyBin: "./agy" }]) {
+    const backends = [];
+    plugin.register({ pluginConfig, registerCliBackend(d) { backends.push(d); }, registerCommand() {} });
+    assert.deepEqual(backends.map((b) => b.id).sort(), ["agy-cli", "claude-kit"]);
+    assert.equal(backends.find((b) => b.id === "agy-cli").config.command, pluginConfig.agyBin || "agy");
+  }
 });
