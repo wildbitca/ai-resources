@@ -91,3 +91,13 @@ def previous_generation_pins(monkeypatch):
     """Kit defaults pinned to the generation the recorded model fixtures were written against."""
     from pin_generation import pin_previous_generation
     pin_previous_generation(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def _no_host_command_snapshots(monkeypatch):
+    """`lanes` snapshots `crontab -l` and the user timer list: tests never run the host's own commands."""
+    try:
+        from ai_resources import lanes_cmd
+    except Exception:
+        return
+    monkeypatch.setattr(lanes_cmd, "SNAPSHOT_RUNNER", lambda argv: (127, "", ""), raising=False)
