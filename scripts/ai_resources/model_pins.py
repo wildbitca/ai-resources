@@ -42,6 +42,15 @@ AGY_STATIC: tuple[str, ...] = (
     "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium",
 )
 
+# Antigravity LANE slugs (ADR-0007 section 11, plan OQ-P3-6): independent of AGY_STATIC, which feeds the
+# antigravity engine (composition, direct-only). These are CANDIDATES: V5 (`agy models`, run through the
+# probe harness) has not confirmed them, so gate G1 stays "not proven" and the lane stays closed.
+AGY_LANE_MODELS: tuple[str, ...] = (
+    "claude-sonnet-5-5", "claude-opus-5-5", "gemini-3.8-flash-low", "gemini-3.8-flash-high",
+    "gemini-3.1-pro-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium",
+)
+AGY_LANE_MODELS_CONFIRMED = False       # flips only with a recorded V5 run (agy_lane_gates G1)
+
 _ID_RE = re.compile(r"^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?$")
 
 
