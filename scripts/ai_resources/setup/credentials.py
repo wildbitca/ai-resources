@@ -94,9 +94,12 @@ def remove_keys(keys: list[str]) -> tuple[Path, list[str]]:
 
 
 def mask(value: str, visible: int = 4) -> str:
+    """A display form of a secret: at most a quarter of it is shown (`visible` characters at each end, capped
+    at an eighth of the length each), nothing for a short one (a 9-character key is not 8/9 readable)."""
     if not value:
         return "(empty)"
-    if len(value) <= visible * 2:
+    visible = min(visible, len(value) // 8)
+    if visible < 1:
         return "*" * len(value)
     return f"{value[:visible]}{'•' * (len(value) - visible * 2)}{value[-visible:]}"
 

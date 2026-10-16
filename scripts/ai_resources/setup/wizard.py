@@ -898,9 +898,33 @@ def _validate_url(value: str) -> bool | str:
     """Inline validation for a gateway URL: http or https with a host."""
     from urllib.parse import urlparse
     parsed = urlparse((value or "").strip())
+    if parsed.scheme in ("http", "https") and "@" in parsed.netloc:
+        # Never echoed back: the value may be a credential. The master key is asked for separately.
+        return "Remove the credentials (user:password@) from the URL; the master key is asked for next"
     if parsed.scheme in ("http", "https") and parsed.netloc:
         return True
     return "Enter an http:// or https:// URL, e.g. https://litellm.example.com"
+
+
+def _write_smoke_log(path: Path, results: list) -> None:
+    """Append the smoke results, masked, to a file only the operator can read (0600, even when an older run
+    left it looser): a gateway error body can echo a credential."""
+    import os
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except OSError:
+            pass
+        with os.fdopen(fd, "a", encoding="utf-8") as fp:
+            fp.write(f"\n=== {datetime.now(timezone.utc).isoformat()} ===\n")
+            for label, ok, msg in results:
+                fp.write(f"[{'PASS' if ok else 'FAIL'}] {ui.safe_text(label)}\n")
+                if msg:
+                    fp.write(f"  {ui.safe_text(msg)}\n")
+    except OSError:
+        pass
 
 
 def _validate_model_id(value: str) -> bool | str:
@@ -973,8 +997,8 @@ def _step3_docker(s: state.SetupState) -> int:
         with ui.spinner(f"Pulling {image}"):
             ok, msg = litellm.pull_image(image)
         if not ok:
-            ui.error(f"Pull failed: {ui.safe_text(msg[:300])}")
-            ui.log_tail(str(msg).splitlines())
+            ui.error(f"Pull failed: {ui.safe_excerpt(msg, 300)}")
+            ui.log_tail(str(msg))
             return 1
         # Track only if image wasn't already cached locally before this run.
         if "Already exists" not in msg and "Image is up to date" not in msg:
@@ -1048,8 +1072,8 @@ def _step3_pipx(s: state.SetupState) -> int:
             with ui.spinner("Reinstalling LiteLLM via pipx"):
                 ok, msg = litellm.install_litellm_pipx()
             if not ok:
-                ui.error(f"Install failed: {ui.safe_text(msg[:200])}")
-                ui.log_tail(str(msg).splitlines())
+                ui.error(f"Install failed: {ui.safe_excerpt(msg, 200)}")
+                ui.log_tail(str(msg))
                 return 1
             ui.ok("LiteLLM updated")
             ui.record_action("reinstalled LiteLLM")
@@ -1067,7 +1091,7 @@ def _step3_pipx(s: state.SetupState) -> int:
             ok, msg = litellm.install_litellm_pipx(python_path=py.binary_path)
         if not ok:
             ui.error("LiteLLM install failed:")
-            ui.log_tail(msg.splitlines())
+            ui.log_tail(str(msg))
             ui.console().print()
             ui.detail("To debug manually, run: pipx install 'litellm[proxy]' --verbose")
             return 1
@@ -1112,7 +1136,7 @@ def _step3_pipvenv(s: state.SetupState) -> int:
                 ok, msg = litellm.install_litellm_venv(python_path=py.binary_path)
             if not ok:
                 ui.error("LiteLLM reinstall failed:")
-                ui.log_tail(msg.splitlines())
+                ui.log_tail(str(msg))
                 return 1
             ui.ok("LiteLLM updated")
             ui.record_action("reinstalled LiteLLM")
@@ -1129,7 +1153,7 @@ def _step3_pipvenv(s: state.SetupState) -> int:
         ok, msg = litellm.install_litellm_venv(python_path=py.binary_path)
     if not ok:
         ui.error("LiteLLM install failed:")
-        ui.log_tail(msg.splitlines())
+        ui.log_tail(str(msg))
         ui.console().print()
         ui.detail(f"To debug manually:")
         ui.detail(f"  source {litellm.venv_dir()}/bin/activate")
@@ -1154,6 +1178,10 @@ def _step3_remote(s: state.SetupState, dry_run: bool = False) -> int:
     ) or "").strip()
     if not url.startswith("http"):
         ui.error("URL must start with http:// or https://")
+        return 1
+    problem = _validate_url(url)
+    if problem is not True:
+        ui.error(problem)
         return 1
     s.litellm.remote.url = url.rstrip("/")
 
@@ -2074,16 +2102,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
 
         # Persist full results so users can investigate truncated errors
         smoke_log = litellm.log_dir() / "smoke.log"
-        try:
-            with smoke_log.open("a", encoding="utf-8") as fp:
-                fp.write(f"\n=== {datetime.now(timezone.utc).isoformat()} ===\n")
-                for label, ok, msg in results:
-                    status = "PASS" if ok else "FAIL"
-                    fp.write(f"[{status}] {label}\n")
-                    if msg:
-                        fp.write(f"  {msg}\n")
-        except OSError:
-            pass
+        _write_smoke_log(smoke_log, results)
 
         had_failures = False
         for label, ok, msg in results:
@@ -2093,7 +2112,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                 had_failures = True
                 ui.warn(f"{label}")
                 # Show first 300 chars across multiple lines so the cause is visible
-                for line in (msg or "(no detail)").splitlines():
+                for line in ui.safe_lines(msg or "(no detail)"):
                     ui.detail(f"  {line[:300]}")
         if had_failures:
             ui.detail(f"  Full smoke log: {smoke_log}")
@@ -2298,9 +2317,9 @@ def _step9_dry_run(s: state.SetupState) -> int:
                     executors_doc, dict(s.providers), "LITELLM_MASTER_KEY",
                 )
                 tmp_litellm_yaml.write_text(yaml_content, encoding="utf-8")
-                console.print(f"\n[bold cyan]── litellm.yaml  (would write → {state.litellm_path()})[/]")
+                console.print(f"\n[bold cyan]── litellm.yaml  (would write → {ui.markup_safe(state.litellm_path())})[/]")
                 for line in yaml_content.splitlines():
-                    console.print(f"  {line}")
+                    console.print(f"  {line}", markup=False, highlight=False)
             except Exception as e:
                 ui.warn(f"Cannot render litellm.yaml: {e}")
 
@@ -2346,14 +2365,14 @@ def _step9_dry_run(s: state.SetupState) -> int:
                 }
                 compose_content = _yaml.safe_dump(compose_body, default_flow_style=False, sort_keys=False)
                 tmp_compose_yaml.write_text(compose_content, encoding="utf-8")
-                console.print(f"\n[bold cyan]── docker-compose.yaml  (would write → {state.compose_path()})[/]")
+                console.print(f"\n[bold cyan]── docker-compose.yaml  (would write → {ui.markup_safe(state.compose_path())})[/]")
                 for line in compose_content.splitlines():
-                    console.print(f"  {line}")
+                    console.print(f"  {line}", markup=False, highlight=False)
             except Exception as e:
                 ui.warn(f"Cannot render compose YAML: {e}")
 
         # ── settings.json patch ───────────────────────────────────────────────
-        console.print(f"\n[bold cyan]── settings.json patch  (→ {_claude_cockpit.SETTINGS_PATH})[/]")
+        console.print(f"\n[bold cyan]── settings.json patch  (→ {ui.markup_safe(_claude_cockpit.SETTINGS_PATH)})[/]")
         patch = _claude_cockpit._build_settings_patch(
             executors_doc, master_key, gateway_url, ak_path, mode,
             backend=s.backend,
@@ -2369,13 +2388,14 @@ def _step9_dry_run(s: state.SetupState) -> int:
                 pass
         env_patch_for_diff, existing_env_for_diff = dict(env_patch), dict(existing_env)
         for k, v in env_patch.items():
-            display_v = credentials.mask(v) if ("KEY" in k or "TOKEN" in k) else v
+            display_v = ui.markup_safe(credentials.mask(v) if ("KEY" in k or "TOKEN" in k) else v)
+            k_shown = ui.markup_safe(k)
             if k not in existing_env:
-                console.print(f"  [green]+ {k} = {display_v}  (new)[/]")
+                console.print(f"  [green]+ {k_shown} = {display_v}  (new)[/]")
             elif existing_env[k] == v:
-                console.print(f"  [dim]= {k} = {display_v}  (unchanged)[/]")
+                console.print(f"  [dim]= {k_shown} = {display_v}  (unchanged)[/]")
             else:
-                console.print(f"  [yellow]~ {k} = {display_v}  (update)[/]")
+                console.print(f"  [yellow]~ {k_shown} = {display_v}  (update)[/]")
 
         # ── start gateway for testing ─────────────────────────────────────────
         if s.mode == "multi-model" and tmp_litellm_yaml.is_file():
@@ -2427,7 +2447,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
                         timeout=120,
                     )
                 if rc != 0:
-                    ui.error(f"Container start failed: {ui.safe_text(err[:200])}")
+                    ui.error(f"Container start failed: {ui.safe_excerpt(err, 200)}")
                 else:
                     started_docker = True
                     with ui.spinner("Waiting for gateway health"):
@@ -2460,7 +2480,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
                     ui.ok(label)
                 else:
                     ui.warn(label)
-                    for line in (msg or "(no detail)").splitlines():
+                    for line in ui.safe_lines(msg or "(no detail)"):
                         ui.detail(f"  {line[:300]}")
 
     finally:

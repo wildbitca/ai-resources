@@ -925,7 +925,7 @@ def _configure_workboard(o: state.OpenClawState, doc: dict, *, dry_run: bool,
         return False
     rc, out = oc(["plugins", "enable", "workboard"])
     if rc != 0:
-        ui.error(f"Could not enable the workboard plugin: {ui.safe_text(out[-300:])}")
+        ui.error(f"Could not enable the workboard plugin: {ui.safe_excerpt(out, 300, tail=True)}")
         return False
     o.host_workboard_applied = "enabled-by-kit"
     ui.ok("workboard plugin enabled")
@@ -1221,7 +1221,7 @@ def _teardown_config(o: state.OpenClawState, apply_patch: Callable[..., tuple[bo
     if hot:
         done, out = apply_patch(hot, replace_paths=hot_rp)
         if not done:
-            ui.error(f"OpenClaw host config teardown failed: {ui.safe_text(out[-300:])}")
+            ui.error(f"OpenClaw host config teardown failed: {ui.safe_excerpt(out, 300, tail=True)}")
             return False
     if res:
         res_changes = [c for c in o.host_config_changes
@@ -1251,7 +1251,7 @@ def _restore_bindings(o: state.OpenClawState, doc: dict,
             ui.warn(f"bindings not restored: {e}. The array is left as it is now; restore it by hand.")
             return False
         if not done:
-            ui.error(f"OpenClaw bindings teardown failed: {ui.safe_text(out[-300:])}")
+            ui.error(f"OpenClaw bindings teardown failed: {ui.safe_excerpt(out, 300, tail=True)}")
             return False
     o.bindings_applied, o.bindings_previous, o.bindings_written = False, None, ""
     o.host_group_ids = {}

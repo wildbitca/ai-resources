@@ -369,7 +369,7 @@ def remove_installed(s: state.SetupState) -> None:
                 r = subprocess.run([brew, "uninstall", formula], capture_output=True, text=True,
                                    timeout=600)
                 failed = r.returncode != 0
-                detail = (r.stdout + r.stderr).strip()[-300:]
+                detail = ui.safe_excerpt(r.stdout + r.stderr, 300, tail=True)
             except (OSError, subprocess.TimeoutExpired) as e:
                 failed, detail = True, str(e)
             if failed:

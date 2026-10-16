@@ -13,7 +13,7 @@ import json
 import urllib.error
 import urllib.request
 
-from . import litellm
+from . import litellm, ui
 
 
 def _anthropic_round_trip(model: str, gateway_url: str, api_key: str) -> tuple[bool, str]:
@@ -42,9 +42,9 @@ def _anthropic_round_trip(model: str, gateway_url: str, api_key: str) -> tuple[b
             body = json.loads(body).get("error", {}).get("message", body)
         except ValueError:
             pass
-        return False, f"HTTP {e.code}: {str(body)[:200]}"
+        return False, f"HTTP {e.code}: {ui.safe_excerpt(body, 200)}"
     except (urllib.error.URLError, OSError, ValueError) as e:
-        return False, str(e)
+        return False, ui.safe_excerpt(e, 300)
     # Report which model actually served it: a gateway silently substituting a
     # different model is the failure this test exists to catch.
     served = doc.get("model", "")

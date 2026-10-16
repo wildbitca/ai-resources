@@ -303,7 +303,7 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     if patch:
         ok, out = apply_patch(patch, dry_run=True)
         if not ok:
-            error(f"OpenClaw rejected the lanes patch: {ui.safe_text(out[-300:])}")
+            error(f"OpenClaw rejected the lanes patch: {ui.safe_excerpt(out, 300, tail=True)}")
             return False
         restart = classify(patch)
         if restart:
@@ -345,7 +345,7 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     if patch2:
         ok, out = apply_patch(patch2)
         if not ok:
-            error(f"OpenClaw rejected the lanes patch: {ui.safe_text(out[-300:])}")
+            error(f"OpenClaw rejected the lanes patch: {ui.safe_excerpt(out, 300, tail=True)}")
         else:
             changed = True
             records = change_records(dict(doc2), patch2, None, "lanes")
@@ -439,7 +439,7 @@ def teardown(s: "state.SetupState", doc: Mapping[str, Any], *,
     if frag:
         ok, out = apply_patch(frag)
         if not ok:
-            error(f"OpenClaw lanes teardown failed: {ui.safe_text(out[-300:])}")
+            error(f"OpenClaw lanes teardown failed: {ui.safe_excerpt(out, 300, tail=True)}")
             return False
     remaining_ids: list[str] = []
     for aid in applied.get("created_agent_ids") or []:

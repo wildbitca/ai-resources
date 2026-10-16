@@ -606,7 +606,7 @@ def pipx_uninstall_litellm() -> tuple[bool, str]:
     if not shutil.which("pipx"):
         return False, "pipx not on PATH"
     rc, out, err = _run(["pipx", "uninstall", "litellm"], timeout=120)
-    return rc == 0, (err or out).strip()[:300]
+    return rc == 0, ui.safe_excerpt(err or out, 300)
 
 
 def remove_venv() -> bool:
@@ -910,7 +910,7 @@ def validate_remote(url: str, master_key: str) -> tuple[bool, str]:
             timeout=5.0,
         )
         return r.status_code == 200, ("" if r.status_code == 200
-                                       else f"HTTP {r.status_code}: {r.text[:200]}")
+                                       else f"HTTP {r.status_code}: {ui.safe_excerpt(r.text, 200)}")
     except httpx.HTTPError as e:
         return False, str(e)
 
@@ -934,7 +934,7 @@ def smoke_test_model(model: str, gateway_url: str, master_key: str) -> tuple[boo
             r = httpx.post(url, headers=headers, json=payload, timeout=30.0)
             if r.status_code == 200:
                 return True, ""
-            return False, f"HTTP {r.status_code}: {r.text[:200]}"
+            return False, f"HTTP {r.status_code}: {ui.safe_excerpt(r.text, 200)}"
         except httpx.HTTPError as e:
             return False, str(e)
 
@@ -946,7 +946,7 @@ def smoke_test_model(model: str, gateway_url: str, master_key: str) -> tuple[boo
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status == 200, ""
     except urllib.error.HTTPError as e:
-        return False, f"HTTP {e.code}: {e.read().decode()[:200]}"
+        return False, f"HTTP {e.code}: {ui.safe_excerpt(e.read().decode('utf-8', 'replace'), 200)}"
     except (urllib.error.URLError, OSError) as e:
         return False, str(e)
 
