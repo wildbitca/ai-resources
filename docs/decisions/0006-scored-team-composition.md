@@ -132,6 +132,10 @@ Revisit this ADR, rather than only the dataset, when any of these happens:
 - Clear `profile.composed` when a plain profile replaces a composed team.
 - The antigravity engine compat cell vs the Antigravity FAQ; a `codex exec` dispatch path; the dispatch-side counter writer; the Vertex alias-pinning pitfall in the Vertex setup docs.
 
+## Note (2.2.0): headroom for lane placement
+
+The live headroom reader added for the lanes pass (ADR-0007 FU-5) reuses this ADR's headroom model unchanged: a known, fresh reading may only scale the static weight down by the used fraction (floor 0.05); unknown or stale keeps the static weight. It reads local state only and is never called from detection. It does not touch composition: the band and the model choice are as before.
+
 ## Amended by
 
 - [ADR-0007](0007-subscription-lanes.md): governs the lanes pass; §4 is scoped to composition.

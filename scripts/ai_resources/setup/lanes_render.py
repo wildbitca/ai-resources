@@ -34,6 +34,35 @@ AGENT_PREFIX = "kit-lane-"
 # is held (fail closed). tests/test_lanes_agy_hold.py fails when this is True while §11 is not Accepted.
 AGY_LANE_ADR_ACCEPTED = False
 HELD_AGY_REASON = "held: Antigravity lane not accepted"
+# ADR-0007 follow-up FU-2 (Codex lane): registered, opt-in and HELD the same way until the operator accepts it.
+# tests/test_lanes_codex_hold.py pins this False; the writer never writes a `codex-cli` agent either way.
+CODEX_LANE_ADR_ACCEPTED = False
+HELD_CODEX_REASON = "held: Codex lane not accepted"
+CODEX_BACKEND = scoring_lanes.CODEX_CLI
+
+
+def backend_held(backend: str) -> bool:
+    """True when candidates and agents of `backend` are held (fail closed)."""
+    if backend == CLAUDE_CLI:
+        return False
+    if backend == CODEX_BACKEND:
+        return not CODEX_LANE_ADR_ACCEPTED
+    return not AGY_LANE_ADR_ACCEPTED
+
+
+def held_reason(backend: str) -> str:
+    return HELD_CODEX_REASON if backend == CODEX_BACKEND else HELD_AGY_REASON
+
+
+def codex_status() -> dict[str, Any]:
+    """Read-only: is a `codex` binary on PATH. Never raises; a host without it reports `not installed`."""
+    import shutil
+    try:
+        path = shutil.which("codex") or ""
+    except Exception:  # noqa: BLE001
+        path = ""
+    summary = f"codex: {path} (lane held)" if path else "codex: not installed (lane held)"
+    return {"installed": bool(path), "path": path, "held": backend_held(CODEX_BACKEND), "summary": summary}
 _ALIASES = ("haiku", "sonnet", "opus")
 _VENDOR = re.compile(r"^(?:anthropic|claude-cli|claude-kit)/")
 
@@ -55,7 +84,7 @@ def _compact(model_id: str) -> str:
 def agent_id_for(backend: str, model: str) -> str:
     """`kit-lane-cli-sonnet55` for claude-cli, `kit-lane-agy-<model>` for an agy backend."""
     bare = _VENDOR.sub("", model)
-    kind = "cli" if backend == CLAUDE_CLI else "agy"
+    kind = "cli" if backend == CLAUDE_CLI else "codex" if backend == CODEX_BACKEND else "agy"
     return f"{AGENT_PREFIX}{kind}-{_compact(bare)}"
 
 
@@ -95,7 +124,10 @@ def validate_block(block: Any) -> list[str]:
             for c in cands:
                 if not isinstance(c, str) or not _candidate(c):
                     problems.append(f"lanes.{key}.{role}: bad candidate {c!r} "
-                                    "(expected claude-code, claude-cli:<model> or agy:<model>)")
+                                    "(expected claude-code, claude-cli:<model>, codex:<model> or agy:<model>)")
+                elif c.startswith("codex:") and (role not in roles_policy.REPORT_ROLES):
+                    problems.append(f"lanes.{key}.{role}: the Codex lane is read-only; role {role} "
+                                    "is not a report-contract role")
                 elif c.startswith(AGENT_PREFIX) or c.startswith("openclaw-agent:"):
                     problems.append(f"lanes.{key}.{role}: a profile never names an agent id ({c!r})")
     mcp = block.get("mcp")
@@ -115,9 +147,10 @@ def validate_block(block: Any) -> list[str]:
 def _candidate(text: str) -> tuple[str, str] | None:
     if text == CLAUDE_CODE:
         return CLAUDE_CODE, ""
-    m = re.match(r"^(claude-cli|agy):([A-Za-z0-9._/-]+)$", text)
+    m = re.match(r"^(claude-cli|codex|agy):([A-Za-z0-9._/-]+)$", text)
     if m:
-        return ("claude-cli" if m.group(1) == "claude-cli" else "agy-cli"), m.group(2)
+        kind = {"claude-cli": "claude-cli", "codex": CODEX_BACKEND}.get(m.group(1), "agy-cli")
+        return kind, m.group(2)
     return None
 
 
@@ -138,8 +171,8 @@ def state_from_block(block: Mapping[str, Any] | None, *, claude_ids: Mapping[str
         backend, model = _candidate(text)  # type: ignore[misc]
         if backend == CLAUDE_CODE:
             return CLAUDE_CODE
-        if backend != CLAUDE_CLI and not AGY_LANE_ADR_ACCEPTED:
-            held.append({"role": current_role[0], "candidate": text, "reason": HELD_AGY_REASON})
+        if backend_held(backend):
+            held.append({"role": current_role[0], "candidate": text, "reason": held_reason(backend)})
             return None
         if backend == CLAUDE_CLI:
             bare = ids.get(model, model) if model in _ALIASES else model
@@ -260,7 +293,7 @@ def render_doc(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: str,
     stale = {d["agent"] for d in drift(lanes, by_role)}
     agents: dict[str, Any] = {}
     held = {aid for aid, a in (lanes.get("agents") or {}).items()
-            if (a or {}).get("backend") != CLAUDE_CLI and not AGY_LANE_ADR_ACCEPTED}
+            if backend_held((a or {}).get("backend") or "")}
     every: dict[str, Any] = {}
     for aid, agent in sorted((lanes.get("agents") or {}).items()):
         entry = {"backend": agent.get("backend", ""), "model": agent.get("model", ""),
@@ -289,6 +322,11 @@ def doc_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _meta_of(lanes: Mapping[str, Any], role: str) -> dict[str, Any]:
+    meta = (lanes.get("role_meta") or {}).get(role) if isinstance(lanes.get("role_meta"), Mapping) else None
+    return {k: v for k, v in meta.items() if k in ("evidence", "effort")} if isinstance(meta, Mapping) else {}
+
+
 def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: str,
                   acks: Mapping[str, Any] | None, agents: Mapping[str, Any]) -> dict[str, Any]:
     """The resolver's choice per role, computed at setup / re-render time (ADR-0007 §1, OQ-4).
@@ -300,7 +338,7 @@ def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
     held while the Antigravity section is not accepted. A resolver error is recorded, never raised.
     """
     held_ids = {aid for aid, a in agents.items()
-                if a.get("backend") != CLAUDE_CLI and not AGY_LANE_ADR_ACCEPTED}
+                if backend_held(a.get("backend") or "")}
     usable = {aid: dict(a) for aid, a in agents.items() if aid not in held_ids}
 
     def keep(refs: list[str]) -> list[str]:
@@ -338,17 +376,19 @@ def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
                 fallbacks.append({"lane": CLAUDE_CODE, "model": str((by_role.get(role) or {}).get("model") or ""),
                                   "reason": "the off switch"})
             out["roles"][role] = {"lane": lane.ref, "model": table.models.get(role, ""),
-                                  "reason": why or "single candidate", "fallbacks": fallbacks}
+                                  "reason": why or "single candidate", "fallbacks": fallbacks,
+                                  **_meta_of(lanes, role)}
         for role, lane in sorted(table.second.items()):
             why = "; ".join(w.text for w in table.why if w.role == role and w.lane.startswith("second:"))
             sec_agent = usable.get(lane.ref.split(":", 1)[1]) if lane.ref != CLAUDE_CODE else None
             sec_model = (sec_agent or {}).get("model") or str((by_role.get(role) or {}).get("model") or "")
-            out["second"][role] = {"lane": lane.ref, "model": str(sec_model), "reason": why or "second member"}
+            out["second"][role] = {"lane": lane.ref, "model": str(sec_model), "reason": why or "second member",
+                                   **_meta_of(lanes, role)}
     except (scoring_lanes.LaneError, scoring_lanes.LaneConflict) as exc:
         return {"error": str(exc), "roles": {}, "second": {}, "blocked": {}}
     held = sorted(held_ids)
     if held:
-        out["held"] = {aid: HELD_AGY_REASON for aid in held}
+        out["held"] = {aid: held_reason((agents.get(aid) or {}).get("backend") or "") for aid in held}
     return out
 
 
@@ -474,6 +514,10 @@ def sync_file(s: "state.SetupState", *, by_role: Mapping[str, Any] | None = None
 # --- enabling lanes (the wizard's lane step) -------------------------------------------------------------
 
 ACK_TEXT = {
+    "openai": (
+        "The Codex lane runs Codex CLI children through your ChatGPT/Codex subscription login via OpenClaw. "
+        "Non-interactive use may be billed or limited differently from interactive use. A lane on this "
+        "account is admitted only for the read-only roles listed below. The lane is held in this version."),
     "anthropic": (
         "Subscription lanes run Claude Code CLI children through your Claude subscription login via "
         "OpenClaw. Sharing one login between the orchestrator and lane children is a grey zone of the "
@@ -501,8 +545,36 @@ def propose(profile_doc: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
                                 acks=dict(acks or {}), mode=mode)
     out = {**frag, "orchestrators": sorted({str(o) for o in orchestrators}), "verify_capability": {},
            "pool_caps": {}, "max_remote_concurrency": 2, "workspace_root": ""}
+    meta = _role_meta(profile_doc, set(frag["roles"]) | set(frag["second"]))
+    if meta:
+        out["role_meta"] = meta
     if headroom:
         out["headroom_weights"] = {str(k): float(v) for k, v in sorted(headroom.items())}
+    return out
+
+
+def _role_meta(profile_doc: Mapping[str, Any], roles: set[str]) -> dict[str, dict[str, Any]]:
+    """Read-only per-role metadata a profile declares: the evidence tag (`evidence:`) and `effort:`.
+
+    Where the profile has an `effort:` map every lane role gets a value (unlisted roles: `default`). Neither
+    ever changes routing; both only travel into `lanes.yaml resolved:` for the operator."""
+    ev = profile_doc.get("evidence")
+    ev_out: dict[str, str] = {}
+    if isinstance(ev, Mapping):
+        for k in ("tag", "label", "confidence", "source"):
+            if isinstance(ev.get(k), str) and ev.get(k):
+                ev_out[k] = str(ev[k])
+    effort = profile_doc.get("effort")
+    effort = effort if isinstance(effort, Mapping) else None
+    out: dict[str, dict[str, Any]] = {}
+    for role in sorted(roles):
+        entry: dict[str, Any] = {}
+        if ev_out:
+            entry["evidence"] = dict(ev_out)
+        if effort is not None:
+            entry["effort"] = str(effort.get(role) or "default")
+        if entry:
+            out[role] = entry
     return out
 
 

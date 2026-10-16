@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
+from . import evidence as _evidence
 from .compose import Assignment, Composition, WhyRow
 
 
@@ -134,6 +135,8 @@ def _assignment_json(comp: Composition, a: Assignment | None) -> dict[str, Any] 
         "price": {"in": a.price_in, "out": a.price_out, "verify": a.price_verify, "tier": a.price_tier,
                   "valid_until": a.price_valid_until or None},
         "flags": list(a.flags), "fallbacks": list(a.fallbacks), "conditions": a.conditions,
+        "evidence": {"tag": "score-derived", "label": a.label, "confidence": _evidence.confidence(a.label),
+                     "effort": a.effort},
     }
 
 

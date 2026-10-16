@@ -54,6 +54,11 @@ def _get(doc: Any, *keys: str) -> Any:
 # Backends setup may write an agent for. An agy lane needs its catalog stub and the V7 deny tokens, which are
 # phase 3 (ADR-0007 §11): until `agy-cli-lane` is added here, no agy agent is ever written (fail closed).
 WRITABLE_BACKENDS = frozenset({CLAUDE_CLI})
+# The agent runtime a catalog entry names per backend. `codex-cli` is the PROPOSED shape, recorded for the
+# day the Codex lane is accepted: it is not written (not in WRITABLE_BACKENDS) and is not verified against a
+# live OpenClaw (ADR-0007 FU-2, "not proven").
+CATALOG_SHAPES = {CLAUDE_CLI: {"agentRuntime": {"id": CLAUDE_CLI}},
+                  "codex-cli": {"agentRuntime": {"id": "codex-cli"}}}
 HELD_BACKEND_REASON = "held: backend {backend} is not writable in this version"
 
 

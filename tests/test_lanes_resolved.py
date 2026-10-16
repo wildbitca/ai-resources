@@ -242,3 +242,33 @@ def test_e1_an_entry_without_a_model_is_refused_not_skipped(env, where):
     rc, out = env.run("prepare", "--step", "s", "--role", role, "--contract", "report", "--model", "opus",
                       *args, *extra)
     assert rc == 1 and any("lanes.yaml lacks the model of" in r for r in out["reasons"]), out
+
+
+def test_e3_residual_admission_is_checked_against_the_files_own_agents(env):
+    """Pins the documented limit (ADR-0007): a recomputed digest that adds a claude-cli agent is PREPARED.
+
+    It is only dispatchable if that agent also exists in openclaw.json and allowAgents, which `prepare`
+    never writes; the test fails the day this changes so the ADR note is revisited."""
+    doc = _write()
+    doc["agents"]["kit-lane-cli-evil"] = {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5",
+                                          "pool": "claude-subscription"}
+    doc["resolved"]["roles"]["implementer"] = {"lane": "openclaw-agent:kit-lane-cli-evil",
+                                               "model": "anthropic/claude-sonnet-5-5", "reason": "x",
+                                               "fallbacks": []}
+    doc["digest"] = lanes_render.doc_digest(doc)
+    state.lanes_path().write_text(lanes_render.dumps(doc))
+    rc, out = _prep(env, "--lane", "kit-lane-cli-evil")
+    assert rc == 0, out
+    assert env.ledger_entries(env.state)[0]["data"]["lane"]["source"] == "resolved"
+
+
+def test_codex_agent_in_a_recomputed_table_is_refused_at_prepare(env):
+    doc = _write()
+    doc["agents"]["kit-lane-codex-evil"] = {"backend": "codex-cli", "model": "gpt-5.5-codex",
+                                            "pool": "codex-subscription"}
+    doc["resolved"]["roles"]["implementer"] = {"lane": "openclaw-agent:kit-lane-codex-evil",
+                                               "model": "gpt-5.5-codex", "reason": "x", "fallbacks": []}
+    doc["digest"] = lanes_render.doc_digest(doc)
+    state.lanes_path().write_text(lanes_render.dumps(doc))
+    rc, out = _prep(env, "--lane", "kit-lane-codex-evil", model="gpt-5.5-codex")
+    assert rc == 1 and any("not admitted" in r for r in out["reasons"]), out

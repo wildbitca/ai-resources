@@ -191,10 +191,11 @@ regenerated `openclaw.json` ("clobbered") unless its fingerprint key and last-go
 
 ## Follow-ups (not blocking)
 
-- **FU-1** lazy MCP startup for lane children.
-- **FU-2** Codex lane.
-- **FU-3** per-role evidence rows and a `dataset_version` bump.
-- **FU-4** an `effort` field.
+- **FU-1** lazy MCP startup for lane children. Kit side (2.2.0): `ai-resources doctor` sub-check 4e counts MCP server children (`supabase`, `engram`) under `openclaw-gateway.service` when lanes are enabled and warns above 24 with the operator remedy `systemctl --user restart openclaw-gateway.service`. It is read-only and never kills a process. **Not proven:** that `tools.deny: ["bundle-mcp"]` stops live children from accumulating; only the isolated merge gate can show that.
+- **FU-2** Codex lane. Registered and HELD (2.2.0): backend `codex-cli`, pool `codex-subscription`, profile candidate `codex:<model>`, read-only (report-contract) roles only, `CODEX_LANE_ADR_ACCEPTED = False` in `setup/lanes_render.py`, absent from `WRITABLE_BACKENDS`. Admission needs the flag, the section Accepted and an OpenAI acknowledgement listing the role. The catalog entry shape (`agentRuntime.id: codex-cli`) is recorded in `openclaw_lanes.CATALOG_SHAPES` but never written. A host without a `codex` binary reports `not installed` and nothing fails. **Not proven:** that OpenClaw has a `codex-cli` runtime with that id; no live run exists.
+- **FU-3** per-role evidence. Shipped as read-only metadata (2.2.0): the composition JSON and `composed` provenance carry `evidence: {tag, label, confidence, effort}` per role, and a profile `evidence:` block (tag `study-based`) is copied into `lanes.yaml resolved.roles.<role>.evidence`. No `dataset_version` bump: no score row changed.
+- **FU-4** an `effort` field. Shipped as read-only metadata (2.2.0): a profile `effort:` map (planner `high`, implementer `high`; other lane roles `default`) is copied into `resolved.roles.<role>.effort`. It never changes the model, the lane or the band.
+- **FU-5** live headroom for lane placement (OQ-4). 2.2.0: `scoring.headroom_sources.lane_weights` reads a measured value from local state only (the operator's own Claude status-line sidecar for `claude-subscription`, the kit counters file for other pools; no network, no paid API). A fresh reading scales the pool weight; absent, unreadable or stale readings fall back to the static weights. The snapshot is taken at setup (`lanes.headroom_weights`) so `lanes.yaml` stays deterministic. Candidates in the same pool still tie (no quota gain); the reading separates candidates across pools.
 
 ## Related
 

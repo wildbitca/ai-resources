@@ -30,7 +30,9 @@ CLAUDE_CODE = "claude-code"
 OPENCLAW_AGENT = "openclaw-agent"
 CLAUDE_CLI = "claude-cli"
 AGY_BACKENDS = frozenset({"agy-cli", "agy-cli-lane"})
-KNOWN_BACKENDS = frozenset({CLAUDE_CLI}) | AGY_BACKENDS
+CODEX_CLI = "codex-cli"
+CODEX_POOL = "codex-subscription"
+KNOWN_BACKENDS = frozenset({CLAUDE_CLI, CODEX_CLI}) | AGY_BACKENDS
 
 CLAUDE_POOL = "claude-subscription"
 AGY_CLAUDE_POOL = "agy-claude-gpt"
@@ -119,6 +121,8 @@ def agy_pool_for(model: str) -> str | None:
 def pool_of_agent(agent: LaneAgent) -> str:
     if agent.backend == CLAUDE_CLI:
         return CLAUDE_POOL
+    if agent.backend == CODEX_CLI:
+        return CODEX_POOL
     pool = agy_pool_for(agent.model)
     if pool is None:
         raise LaneError(f"lane agent {agent.id}: cannot map model {agent.model!r} to an agy pool")
@@ -292,6 +296,23 @@ def resolve_lanes(by_role: Mapping[str, Any],
         if agent.backend == CLAUDE_CLI:
             if not _acked(acks, "anthropic", role):
                 return False, f"no Anthropic acknowledgement lists role {role}", agent.pool, agent.model
+            allowed, reason = _verdict(usage_verdicts, agent.pool)
+            if usage_verdicts and not allowed and agent.pool in usage_verdicts:
+                return False, f"pool {agent.pool} is not dispatchable: {reason}", agent.pool, agent.model
+        elif agent.backend == CODEX_CLI:
+            missing = []
+            if role not in roles_policy.REPORT_ROLES:
+                return False, (f"{agent.id}: the Codex lane is read-only (report roles); "
+                               f"role {role} may write"), agent.pool, agent.model
+            if not gates.get("codex_flag"):
+                missing.append("--lanes-codex flag")
+            if not gates.get("adr_0007_codex_accepted"):
+                missing.append("ADR-0007 Codex section Accepted")
+            if not _acked(acks, "openai", role):
+                missing.append(f"an OpenAI acknowledgement listing {role}")
+            if missing:
+                return False, (f"{agent.pool} is held; open only with {', '.join(missing)} "
+                               f"(ADR-0007 FU-2)"), agent.pool, agent.model
             allowed, reason = _verdict(usage_verdicts, agent.pool)
             if usage_verdicts and not allowed and agent.pool in usage_verdicts:
                 return False, f"pool {agent.pool} is not dispatchable: {reason}", agent.pool, agent.model

@@ -76,3 +76,13 @@ def weakest(*labels: object) -> Label:
 # Labels a row may carry in the shipped database.
 ROW_LABELS = tuple(lb.value for lb in Label)
 MEASURED_LABELS = (Label.MEASURED_HERE.value, Label.MEASURED_3P.value)
+
+
+# How much weight a label deserves, as shown next to a role in the composition and in `lanes.yaml resolved:`.
+# A presentation mapping owned by the kit, never an input of the score or of routing.
+_CONFIDENCE = {Label.MEASURED_HERE: "high", Label.MEASURED_3P: "medium", Label.VENDOR: "medium-low",
+               Label.INFERRED: "low", Label.UNKNOWN: "none"}
+
+
+def confidence(label: object) -> str:
+    return _CONFIDENCE[normalise(label)]

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from .compose import Composition
+from .evidence import confidence
 
 
 def to_customizations(comp: Composition) -> dict[str, dict[str, Any]]:
@@ -26,6 +27,8 @@ def provenance(comp: Composition) -> dict[str, Any]:
         "dataset_version": comp.dataset_version, "as_of": comp.as_of, "allow_unverified": comp.allow_unverified,
         "kept_default": comp.kept_default, "recommendation": comp.recommendation,
         "labels": {a.role: a.label for a in comp.assignments},
+        "evidence": {a.role: {"tag": "score-derived", "label": a.label, "confidence": confidence(a.label),
+                              "effort": a.effort} for a in comp.assignments},
         "routes": {a.role: a.route for a in comp.assignments},
         "unverified_roles": sorted(a.role for a in comp.assignments if not a.verified),
         "headroom": {p.pool_id: {"state": p.state, "source": p.source, "basis": p.basis,
