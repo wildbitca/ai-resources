@@ -277,3 +277,35 @@ def test_models_update_and_status_print_the_lane_warning(monkeypatch, capsys):
     models_cmd.print_lane_warnings()
     out = capsys.readouterr().out
     assert "warning: lane agent kit-lane-cli-sonnet55 model anthropic/claude-sonnet-5-5 differs" in out
+
+
+# --- AC3.15: a phase 2 state re-renders byte-identical ----------------------------------------------------
+
+def _phase_two_state():
+    s = state.SetupState()
+    s.mode = "single-model"
+    s.profile.name = PROFILE
+    s.profile.lanes = {
+        "agents": {
+            "kit-lane-cli-sonnet55": {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5",
+                                      "pool": "claude-subscription"},
+            "kit-lane-cli-opus55": {"backend": "claude-cli", "model": "anthropic/claude-opus-5-5",
+                                    "pool": "claude-subscription"}},
+        "roles": {"implementer": {"candidates": ["openclaw-agent:kit-lane-cli-sonnet55", "claude-code"]},
+                  "tester": {"candidates": ["openclaw-agent:kit-lane-cli-sonnet55", "claude-code"]},
+                  "verifier": {"candidates": ["openclaw-agent:kit-lane-cli-opus55", "claude-code"]}},
+        "second": {"planner": ["openclaw-agent:kit-lane-cli-opus55"]},
+        "orchestrators": ["main"]}
+    s.profile.lane_acks = {"anthropic": lanes_render.make_ack(
+        "anthropic", ["implementer", "tester", "verifier", "doc-writer", "planner"], "2026-01-01T00:00:00Z")}
+    return s
+
+
+def test_a_phase_two_state_rerenders_byte_identical_to_the_post_b1_baseline():
+    # The fixture was rendered by the last phase 2 commit (a513e6b, before any phase 3 change) from this exact
+    # state, digest included. A changed value, nested field or digest drift fails this byte comparison.
+    by_role = {"implementer": {"model": "sonnet"}, "tester": {"model": "sonnet"}, "doc-writer": {"model": "sonnet"},
+               "planner": {"model": "opus"}, "verifier": {"model": "opus"}}
+    baseline = (pathlib.Path(__file__).parent / "fixtures" / "lanes_phase2" / "lanes-b1-c9.yaml").read_bytes()
+    got = lanes_render.expected_text(_phase_two_state(), by_role).encode("utf-8")
+    assert got == baseline

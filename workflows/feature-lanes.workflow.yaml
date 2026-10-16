@@ -1,0 +1,248 @@
+# Lanes example (ADR-0007 phase 3): a feature workflow whose every role runs through the lanes pass. A
+# `backend: lane` step names a role, never an agent: at dispatch the orchestrator reads the setup lanes table
+# (`~/.config/ai-resources/lanes.yaml`, its `resolved:` section), passes the lane it names to
+# `ai-resources lanes prepare --lane`, and the kit commands are the only landing path. The lane may be Claude Code,
+# a claude-cli lane agent or, once the Antigravity lane is open (`--lanes-antigravity`, a signed Google-account
+# acknowledgement and every phase 3 gate proven), an agy lane agent. The models stay the roles' own (`by_role`).
+#
+# Read before using:
+#   - There is no `model` field and no agent id: the lanes table decides where a role runs. An absent table or
+#     entry means claude-code (the off switch). Never write an agent id into this file.
+#   - The explicit `openclaw-agent` sample (ADR-0005) stays in `feature-cross-provider.workflow.yaml`; this one
+#     is the lanes example, where no step names an agent.
+#   - Shape: test-first scope writers (tester on tests/, doc-writer on docs/), each followed by its own verifier
+#     (sequential, never a parallel member), then the integrating writer (implementer), a verifier on the
+#     integration tip, review with a second member, the security audit alone, a final verifier, then
+#     `ai-resources lanes land` (the only way the run tree moves).
+#   - Reports are step-scoped (`.agent-output/<role>/<step-id>*`); a lane child never writes the handoff, the
+#     orchestrator joins the fields. Any REQUIRES_CHANGES blocks.
+#
+# handoff_file: .agent-output/handoff-<branch>.md. DELETE when DONE.
+# Domain commands: $AGENT_KIT/workflows/_domain-commands.yaml ({{domain}} section)
+name: feature-lanes
+description: Feature workflow on subscription lanes. Every role is a lane step resolved from the setup lanes table; scope writers are verified in sequence, the implementer integrates, review has a second member and the kit lands the result.
+domain: "{{domain}}"
+trigger: User asks to implement a feature and wants the team to run on subscription lanes (claude-cli lane agents, and Antigravity agents once that lane is open) under the kit's verified landing path (explicit request only; the plain feature workflow is the default).
+integrating_writer: implementer
+prerequisites: [ ]
+steps:
+  - id: research
+    subagent_type: explore
+    backend: lane
+    skills:
+      - common-best-practices
+      - common-context-optimization
+    entry_criteria: User goal defined
+    exit_criteria: Research report written under .agent-output/explore/
+    handoff_to: plan
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}.
+      Read-only research: map the code, specs (specs/features/, specs/architecture/) and tests this goal touches.
+      Follow the research_guidance from $AGENT_KIT/workflows/_domain-commands.yaml for {{domain}}.
+      Write the report to .agent-output/explore/research.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: research, Block_reason: [reason].
+  - id: plan
+    subagent_type: planner
+    backend: lane
+    skills:
+      - common-product-requirements
+      - common-system-design
+    entry_criteria: Research complete
+    exit_criteria: Plan with acceptance criteria written
+    handoff_to: architect
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Goal: {{user_goal}}.
+      Read the research report from .agent-output/explore/research.md.
+      Write the plan: description, files, steps, checklist, security notes, Requires_tests, Security_critical_feature. Write acceptance criteria as Given/When/Then, each with the exact command that proves it.
+      Write the report to .agent-output/planner/plan.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: plan, Block_reason: [reason].
+  - id: architect
+    subagent_type: software-architect
+    backend: lane
+    skills:
+      - common-architecture-diagramming
+      - common-system-design
+    entry_criteria: Plan exists
+    exit_criteria: Architecture designed and plan validated
+    handoff_to: tests
+    on_concern_return_to: plan
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read the plan from .agent-output/planner/plan.md. Produce the design (layers, patterns, key interfaces, module structure), then validate the plan against it.
+      End the report with Architect_approval: yes | no.
+      Write the report to .agent-output/software-architect/architect.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: plan, Block_reason: [reason].
+  - id: tests
+    subagent_type: tester
+    backend: lane
+    skills:
+      - common-tdd
+    entry_criteria: Architecture approved
+    exit_criteria: Failing tests for the plan's behaviour written inside the scope
+    handoff_to: verify-tests
+    write_scope:
+      - tests/
+    execution_hints:
+      parallel_group: scope-writers
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Write or update the tests for each acceptance criterion of the plan, inside your write scope only, and commit them on your branch. Run the commands from $AGENT_KIT/workflows/_domain-commands.yaml for {{domain}} that apply to tests.
+      Never delete, skip or weaken an existing assertion.
+      Write the report to .agent-output/tester/tests.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: architect, Block_reason: [reason].
+  - id: docs
+    subagent_type: doc-writer
+    backend: lane
+    skills:
+      - knowledge-audit
+    entry_criteria: Architecture approved
+    exit_criteria: Docs and specs for the change drafted inside the scope
+    handoff_to: verify-docs
+    write_scope:
+      - docs/
+    execution_hints:
+      parallel_group: scope-writers
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Draft the docs the change touches, inside your write scope only, and commit them on your branch.
+      Write the report to .agent-output/doc-writer/docs.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: architect, Block_reason: [reason].
+  - id: verify-tests
+    subagent_type: verifier
+    backend: lane
+    skills:
+      - common-protocol-enforcement
+    entry_criteria: Scope writers complete
+    exit_criteria: The tester's tip is verified against the plan
+    handoff_to: verify-docs
+    on_concern_return_to: tests
+    verifies:
+      - tests
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Verify the commit named by --subject (the tester's tip) against the plan's acceptance criteria that concern tests; produce your own evidence.
+      End the report with one line: Verdict: PASS | FAIL | REQUIRES_CHANGES.
+      Write the report to .agent-output/verifier/verify-tests.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: tests, Block_reason: [reason].
+  - id: verify-docs
+    subagent_type: verifier
+    backend: lane
+    skills:
+      - common-protocol-enforcement
+    entry_criteria: Tests verified
+    exit_criteria: The doc-writer's tip is verified against the plan
+    handoff_to: implement
+    on_concern_return_to: docs
+    verifies:
+      - docs
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Verify the commit named by --subject (the doc-writer's tip): the docs match the plan and the architecture; produce your own evidence.
+      End the report with one line: Verdict: PASS | FAIL | REQUIRES_CHANGES.
+      Write the report to .agent-output/verifier/verify-docs.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: docs, Block_reason: [reason].
+  - id: implement
+    subagent_type: implementer
+    backend: lane
+    skills:
+      - common-best-practices
+      - common-error-handling
+    entry_criteria: Scope writers verified
+    exit_criteria: Verified scopes integrated, code changes complete, no lint errors
+    handoff_to: verify-implement
+    on_concern_return_to: architect
+    integrates:
+      - tests
+      - docs
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      The kit merges the verified tests and docs branches into your worktree first. Implement per the plan so the new tests pass, test-first; never delete, skip or weaken an existing assertion. Run the analyze commands from $AGENT_KIT/workflows/_domain-commands.yaml for {{domain}} and commit on your branch.
+      Write the report to .agent-output/implementer/implement.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: architect, Block_reason: [reason].
+  - id: verify-implement
+    subagent_type: verifier
+    backend: lane
+    skills:
+      - common-protocol-enforcement
+    entry_criteria: Implementation complete
+    exit_criteria: "The integration tip is verified: acceptance criteria met with evidence"
+    handoff_to: review
+    on_concern_return_to: implement
+    verifies:
+      - implement
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Verify the integration commit named by --subject against every acceptance criterion of the plan; run the full test and analyze commands from $AGENT_KIT/workflows/_domain-commands.yaml for {{domain}} and report each criterion as met or not.
+      End the report with one line: Verdict: PASS | FAIL | REQUIRES_CHANGES.
+      Write the report to .agent-output/verifier/verify-implement.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: implement, Block_reason: [reason].
+  - id: review
+    subagent_type: code-reviewer
+    backend: lane
+    skills:
+      - common-code-review
+      - common-security-standards
+    entry_criteria: Integration verified
+    exit_criteria: Code review approved or changes requested
+    handoff_to: security
+    on_concern_return_to: implement
+    execution_hints:
+      parallel_group: review
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Review the diff of the integration tip against Requirements_preserved and audit the test diff: assertions deleted or weakened, tests skipped, tests that cannot fail. Report only defects you can point at in the diff; an empty list is a valid result.
+      End the report with Code_review_verdict: APPROVED | REQUIRES_CHANGES and Block_reason: [corrections] (only if REQUIRES_CHANGES).
+      Write the report to .agent-output/code-reviewer/review.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: implement, Block_reason: [reason].
+  - id: review-second
+    subagent_type: code-reviewer
+    backend: lane
+    skills:
+      - common-code-review
+      - common-security-standards
+    entry_criteria: Integration verified
+    exit_criteria: Second review approved or changes requested
+    handoff_to: security
+    on_concern_return_to: implement
+    execution_hints:
+      parallel_group: review
+      lane_member: second
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      You are the second, independent reviewer of the same diff; do not read the other member's report. Report only defects you can point at in the diff.
+      End the report with Code_review_verdict: APPROVED | REQUIRES_CHANGES and Block_reason: [corrections] (only if REQUIRES_CHANGES).
+      Write the report to .agent-output/code-reviewer/review-second.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: implement, Block_reason: [reason].
+  - id: security
+    subagent_type: security-auditor
+    backend: lane
+    skills:
+      - common-security-audit
+      - common-security-standards
+    entry_criteria: Reviews complete
+    exit_criteria: No critical or high findings
+    handoff_to: verify-final
+    on_concern_return_to: implement
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      If Security_critical_feature: no, return Security_audit: N/A without a scan. Otherwise run the methodology from $AGENT_KIT/workflows/security-devsecops.workflow.yaml adapted to {{domain}}. You run alone: nothing else writes while you do.
+      End the report with Security_audit: PASS | CONDITIONAL | FAIL | N/A and Block_reason: [critical vulnerabilities] (only if FAIL).
+      Write the report to .agent-output/security-auditor/security.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: implement, Block_reason: [reason].
+  - id: verify-final
+    subagent_type: verifier
+    backend: lane
+    skills:
+      - common-protocol-enforcement
+    entry_criteria: Security audit complete
+    exit_criteria: Recorded verdicts confirmed on the integration tip, ready to land
+    handoff_to: document
+    on_concern_return_to: implement
+    verifies:
+      - implement
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Confirm on the integration commit named by --subject that the recorded verdicts hold: Architect_approval, Code_review_verdict (both members), Security_audit.
+      End the report with one line: Verdict: PASS | FAIL | REQUIRES_CHANGES.
+      Write the report to .agent-output/verifier/verify-final.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: implement, Block_reason: [reason].
+  - id: document
+    subagent_type: doc-writer
+    skills:
+      - knowledge-audit
+    entry_criteria: The integration landed through `ai-resources lanes land`
+    exit_criteria: Docs and specs updated; SDD closure done
+    handoff_to: null
+    prompt_template: |
+      Workspace: {{workspace}}. Domain: {{domain}}.
+      Read {{handoff_file}}. Update the docs and specs the change touched and run SDD closure with the
+      knowledge-audit skill. Update {{handoff_file}} (Docs_updated, Next=none).

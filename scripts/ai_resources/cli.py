@@ -147,6 +147,12 @@ def build_parser() -> argparse.ArgumentParser:
                            "account acknowledgement and write lanes.yaml and the OpenClaw lane agents")
     p_st.add_argument("--no-lanes", dest="no_lanes", action="store_true",
                       help="Clear subscription lanes: remove lanes.yaml and the lane agents the kit created")
+    p_st.add_argument("--lanes-antigravity", dest="lanes_antigravity", action="store_true",
+                      help="Open the Antigravity lane (ADR-0007 section 11, off by default): sign the Google "
+                           "account acknowledgement for the roles listed; every phase 3 gate must also be proven")
+    p_st.add_argument("--no-lanes-antigravity", dest="no_lanes_antigravity", action="store_true",
+                      help="Close the Antigravity lane: agy agents leave lanes.yaml and the OpenClaw config; "
+                           "the claude-cli lanes stay")
     p_st.add_argument("--lanes-dry-run", dest="lanes_dry_run", action="store_true",
                       help="Show the proposed lane table and write nothing")
     p_st.add_argument("--lanes-orchestrator", dest="lanes_orchestrator", action="append", default=[], metavar="ID",

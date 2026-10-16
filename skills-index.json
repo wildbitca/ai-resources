@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "generated_at": "2026-10-13T01:55:12.564193+00:00",
+  "generated_at": "2026-10-16T02:49:22.809084+00:00",
   "skills_root": "skills",
-  "count": 140,
+  "count": 141,
   "skills": [
     {
       "id": "changelog-best-practices",
@@ -1319,6 +1319,14 @@
       "path": "skills/workflow-feature-implementation/SKILL.md",
       "name": "workflow-feature-implementation",
       "description": "User asks to implement a feature, new functionality, or multi-step task. Runs the kit workflow 'feature-implementation': Domain-agnostic feature workflow. research → plan → architect → implement → test → (review ‖ security) → verify.",
+      "triggers": [],
+      "globs": []
+    },
+    {
+      "id": "workflow-feature-lanes",
+      "path": "skills/workflow-feature-lanes/SKILL.md",
+      "name": "workflow-feature-lanes",
+      "description": "User asks to implement a feature and wants the team to run on subscription lanes (claude-cli lane agents, and Antigravity agents once that lane is open) under the kit's verified landing path (explicit request only; the plain feature workflow is the default). Runs the kit workflow 'feature-lanes': Feature workflow on subscription lanes. Every role is a lane step resolved from the setup lanes table; scope writers are verified in sequence, the implementer integrates, review has a second member and the kit lands the result.",
       "triggers": [],
       "globs": []
     },

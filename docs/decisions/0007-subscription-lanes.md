@@ -1,6 +1,6 @@
 # ADR-0007: Subscription lanes (a separate lanes pass, kit-only landing, and the `subscription-claude-55` profile)
 
-**Status**: Accepted by the operator on 2026-10-15, without the "Antigravity lane" section, which stays Proposed-deferred until P3-S0. Phase 0 (this ADR and the isolated probes) and phase 1 (the `subscription-claude-55` profile) are implemented; phase 2 (the claude-cli lanes machinery, the kit commands and the setup writer) is implemented, with the isolated-gateway merge gate still to run. The evidence section states what each isolated-gateway probe showed and how strong that evidence is.
+**Status**: Accepted by the operator on 2026-10-15. The "Antigravity lane" section (11) was Proposed-deferred and was accepted by the operator on 2026-10-16; the lane it describes stays opt-in, off by default and closed until its phase 3 gates are proven. Phase 0 (this ADR and the isolated probes) and phase 1 (the `subscription-claude-55` profile) are implemented; phase 2 (the claude-cli lanes machinery, the kit commands and the setup writer) is implemented, with the isolated-gateway merge gate still to run. The evidence section states what each isolated-gateway probe showed and how strong that evidence is.
 **Date**: 2026-10-14
 **Decision makers**: planner, implementer, operator (decisions of 2026-10-14 recorded in `.agent-output/planner/subscription-lanes-plan.md`, section 0)
 **Amends**: [ADR-0001](0001-model-pins-and-auto-update.md) (second validated writer), [ADR-0002](0002-provider-agnostic-model-selection.md) §8 (second validated writer; rendered `lanes.yaml`), [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md) (watch record, teardown, classify-before-add, drained path), [ADR-0005](0005-cross-provider-role-dispatch.md) §1, §2, §3, §4 and the writers matrix, §6, §7 and "Security limits", [ADR-0006](0006-scored-team-composition.md) §4, §8, "Output limits", "Rollback" (scoped to composition; the revisit trigger at "What made this Accepted" is not met)
@@ -91,7 +91,7 @@ Flow for every lane step: `prepare` (iteration counter, model and family recorde
 - **Second members.** A checker role never takes a second member (`validate_block` and `resolve_lanes` refuse it): its report directory cannot attribute a write before verify.
 - **Dynamic (dispatch time).** `lanes prepare` refuses a checker whose model family equals any writer family recorded in the run ledger, or whose family is unknown (fail closed).
 - **One normaliser (C1).** Both checks compare families through `roles_policy.model_family(ref)` (aliases `haiku`, `sonnet`, `opus`; `anthropic/...`, `claude-cli/...`, `claude-kit/...`; agy slugs); `None` for an unknown family counts as conflicting for checkers.
-- **Single-model alias target and alias drift.** `subscription-claude-55` is a single-model alias profile (`mode: single-model`, `haiku`/`sonnet`/`opus`), because no gateway resolves `anthropic/...` ids in that mode (V11 decides whether pinned ids may replace aliases). An alias floats to the newest model of its family; lane agents pin a concrete ref. Version drift inside a family is the same family: not stale, not a conflict, and the stale-agent warning reports a mismatch only when the family or the exact ref differs. A multi-model twin, if ever added, must drop the planner's Opus fallback and the architect's Sonnet fallback, because the LiteLLM per-model union would otherwise cross checker and writer models.
+- **Single-model alias target and alias drift.** `subscription-claude-55` is a single-model alias profile (`mode: single-model`, `haiku`/`sonnet`/`opus`), because no gateway resolves `anthropic/...` ids in that mode (V11 decides whether pinned ids may replace aliases). An alias floats to the newest model of its family; lane agents pin a concrete ref. Version drift inside a family is the same family: not stale and not a conflict between writer and checker; it demotes the agent to tier 2 for writers and makes it inadmissible for checkers (section 11 amendment), and the stale-agent warning reports a mismatch only when the family or the exact ref differs. A multi-model twin, if ever added, must drop the planner's Opus fallback and the architect's Sonnet fallback, because the LiteLLM per-model union would otherwise cross checker and writer models.
 - **Same-model lane as the availability fallback.** When a checker's preferred lane is unavailable, the same model on another lane is the fallback; a different model is never substituted silently. Pool caps never apply to checkers: a checker with no admissible candidate is Blocked with the reason and never waits.
 - Q3: security-auditor stays on Opus 5.5; the CyberBench caveat (74.6 tagged CVP vs 55.4 untagged; Sonnet 59.6) is recorded here and a lane never moves the model.
 
@@ -108,19 +108,71 @@ Operator-run only, with an explicit confirm. A lanes patch builder sits beside t
 
 **MCP scoping for claude-cli lanes (OQ-5, claude-cli part; the agy half of V7 stays phase 3).** Bundled `claude-cli` starts with `--strict-mcp-config`, but every server in OpenClaw's `mcp.servers` (including the ones `_openclaw_mcp` mirrors from the operator's Claude Code) is loaded per run, so each lane child spawned its own copy of every server (measured on the live gateway: ~89 supabase/engram processes at ~12.2 GB of a 12.9 GB `MemoryHigh`). The lever is OpenClaw's own per-agent tool policy: a whole-server denial in `agents.entries.<id>.tools.deny` (`bundle-mcp`, or `<server>__*`) excludes the server before it is spawned (docs `plugins/bundles.md`, `cli/mcp/registry.md`; `createMcpServerToolDenyMatcher`). Setup therefore writes `tools.deny: ["bundle-mcp"]` on every `kit-lane-*` entry by default (fill-only: operator tokens are kept, stale kit tokens are dropped, recorded in `lanes_applied.mcp_deny_added` and removed by set difference on teardown). The opt-in is the profile key `lanes.mcp: {<role>: [<server>, ...]}`: the named servers are kept and the other configured ones are denied by name. Known limit: in opt-in mode `bundle-mcp` is not denied (it would also exclude the kept servers), so bundle-provided servers that are not in `mcp.servers` stay loaded, and an empty `mcp.servers` yields no deny at all; sanitized-name collisions between a kept and a denied server are not checked. `explain` shows `[mcp: ...]` in the Lane column, and `verify --cockpit openclaw` warns on a lane agent without the tokens. Static evidence only: the effect on the live process count is a phase 2 merge-gate check (run a lane turn, count `supabase`/`engram` children). The Antigravity section is unchanged.
 
-### 11. Antigravity lane (Proposed-deferred until P3-S0)
+### 11. Antigravity lane
 
-This section is Proposed and deferred. Phase 3 does not start before P3-S0, the operator's approval after the phase 2 merge gate, V5-V7 and V9 (agy), OQ-5 and OQ-6, and the signed Google acknowledgement. Contents to be settled then:
+**Status**: Accepted
 
-1. ToS clause quoted (ADR-0006 §4, `usage-google.md`), suspension scope, unchanged FAQ, signed account acknowledgement, compose's ban kept.
-2. Process flags compared across `claude-cli`, `claude-kit`, `agy-cli`.
-3. No Claude Code hooks for any OpenClaw child; the kit commands are the control.
-4. Egress for every acknowledged role, including MCP data (V7).
-5. V6 result, or "writes outside the repo and the tripwire list are undetected".
-6. Tool surface (V7).
-7. About 50k tokens per step (ADR-0005), static headroom, optional caps.
-8. Evidence V5-V10 and isolated P6 per role shape.
-9. Status: Proposed-deferred. An agy lane needs `--lanes-antigravity`, the Google acknowledgement and this section Accepted.
+Accepted by the operator (bitgandtter@wildbit.dev) on 2026-10-16, as an explicit decision in the phase 3
+implementation session. The acceptance is necessary and not sufficient: the lane stays opt-in and OFF by default,
+and gates G0-G7 still decide what is writable (G1-G5 are not proven, so nothing is). Operator decisions recorded
+with it: Google egress is accepted for explore, the code-reviewer second pass, tester, doc-writer and
+security-auditor; one acknowledgement per Google account (OQ-1); the kit-owned agy home path is
+`~/.local/share/ai-resources/agy-home/` (OQ-P3-4); no pool caps plus the circuit breaker (OQ-6); OQ-5 stays closed
+until scoped; the implementer is listed but unticked by default (P3-1).
+
+Phase 3 adds Antigravity (`agy`) as a peer lane backend (`agy-cli-lane`). It is opt-in and off on a fresh install.
+It opens only with `--lanes-antigravity`, a signed Google-account acknowledgement that lists the role, this section
+Accepted, and every phase 3 gate G0..G7 proven (`scripts/ai_resources/agy_lane_gates.py`). The gates are enforced
+checks that fail closed with a message naming the gate, not prose: admission in setup, the OpenClaw writer and
+`lanes prepare --lane` each consult them.
+
+1. **ToS.** `docs/decisions/0006-scored-team-composition.md` section 4 quotes the clause: third-party tools,
+   OpenClaw included, are named; `agy -p` is the sanctioned way to script it; a suspension covers Antigravity,
+   Gemini CLI and Code Assist and may reach the account's other Google services. The acknowledgement names the
+   Google account. The recommendation (the operator decides) is an account not used for wildbit GCP
+   (`wildbit-iac`) or other critical work. One acknowledgement per Google account. Compose's ban is kept.
+2. **Process flags, as facts.** `claude-cli`: `--permission-mode default`, `--strict-mcp-config`, `Bash`
+   disallowed. `claude-kit` and `agy-cli`: `--dangerously-skip-permissions`. `agy-cli-lane`: the same
+   `--dangerously-skip-permissions` as `agy-cli` (a full shell), `bundleMcp: false`, an absolute `agyBin`; the
+   sandbox, tool allowlist and agy-home arguments are added only from a recorded V6, V7 or V12 run and none is.
+3. **No hooks for any OpenClaw child** (section 9): the kit commands are the symmetric control on both lanes.
+4. **Egress.** Repo content, diffs, test output and MCP results of every acknowledged role go to Google. It cannot
+   be undone.
+5. **V6 (sandbox) and V9 (agy workspace): NOT PROVEN.** Without a usable sandbox the tool exclusions bound the
+   tool surface, not what the child can do: a skip-permissions shell still reaches `openclaw message`,
+   `openclaw cron`, `crontab`, `systemd-run --user`, `curl` and engram's on-disk store. The kit detects the cron
+   store, `crontab -l`, the user timer list and unit files, and nothing else on that path. Writes outside the repo
+   and the tripwire list, and network egress from the shell, are undetected.
+6. **Tool surface (V7): NOT PROVEN.** The writer denies `bundle-mcp`, `message`, `sessions_spawn` and `cron` for
+   an agy lane agent as the minimum the plan names. The non-negotiables (anything acting after the turn,
+   messaging, `sessions_spawn` and cron tools, the browser and any web fetch or search tool, every agy-native MCP
+   server, `engram` first) stay unproven until V7 shows each excluded.
+7. **Cost and placement.** About 50k tokens per step. The `resolved:` table uses static weights (claude 1.0, agy
+   0.7): it balances by role count in sorted role order, not by quota. A quota-exhaustion circuit breaker (per pool,
+   per run, fed only by `lanes verify --spawn-error`) narrows candidates; there are no pool caps by default and
+   never on checkers.
+8. **Evidence.** V5 (slugs), V6, V7 (a-g), V9 (agy), V12 and the isolated phase 3 merge gate are NOT PROVEN.
+   They run only through the bin-agyprobe harness in an operator-announced window. The ledger fields that carry
+   them are `agy_gates` in the lane binding of a prepare entry.
+9. **Agy home.** A kit-owned home `~/.local/share/ai-resources/agy-home/` (0700) is the intended path (V12). The
+   kit never creates it during setup tests; until V12 shows a supported override the lane uses the shared
+   `~/.gemini`, and its state (conversations, memory) feeds the operator's later interactive agy sessions.
+10. **What teardown cannot undo.** Data already sent to Google; agy conversation and memory state in a shared
+    `~/.gemini`; `trustedFolders.json` entries; quota consumed; any account-level ToS consequence; files written
+    outside the repo and the tripwire list; OAuth credentials in a kit-owned agy home (removed only with an
+    explicit confirm).
+11. **Two kit-gating residuals.** A partial acknowledgement leaves the spawn itself ungated for unlisted roles: only
+    `lanes prepare --lane` refuses it, so such a step cannot verify, integrate or land, but egress may already
+    have happened if the orchestrator skipped `prepare`. A `lanes.yaml` forged before a run's first `prepare` is
+    not detected; the run-pinned table hash catches any change after it.
+12. **Status.** Accepted by the operator on 2026-10-16 (see the status line). Gates G0-G5 stay NOT PROVEN, G6 and
+    G7 partial, and so the lane stays closed.
+
+**Amendment to sections 1 and 8 (tier rule, "best model first").** A lane never moves the model, except that a
+writer may run a same-family other version when no tier-1 candidate is admissible; the why row names it. Version
+drift is not stale: it demotes the agent to tier 2 for writers and makes it inadmissible for checkers. A candidate
+listed in `lanes.pins[<role>]` ranks before the tiers for that non-checker role only; a checker takes no pin and
+no `second` member.
 
 ## Evidence
 

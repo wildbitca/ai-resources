@@ -284,10 +284,33 @@ def _hash_tree(path: Path) -> str:
     h = hashlib.sha256()
     for root, dirs, files in os.walk(path):
         dirs.sort()
+        for d in dirs:                      # a symlinked directory is not walked: its target is the content
+            p = Path(root) / d
+            if p.is_symlink():
+                h.update(str(p.relative_to(path)).encode())
+                h.update(_hash_path(p).encode())
         for f in sorted(files):
             p = Path(root) / f
             h.update(str(p.relative_to(path)).encode())
             h.update(_hash_path(p).encode())
+    return h.hexdigest()
+
+
+def _stat_tree(path: Path) -> str:
+    """A directory of binaries (`~/.local/bin/`): name, size, mtime and link target, never the content."""
+    if not path.exists() and not path.is_symlink():
+        return "absent"
+    h = hashlib.sha256()
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
+        for f in sorted(files + [d for d in dirs if (Path(root) / d).is_symlink()]):
+            p = Path(root) / f
+            try:
+                st = p.lstat()
+                target = os.readlink(p) if p.is_symlink() else ""
+            except OSError:
+                continue
+            h.update(f"{p.relative_to(path)}\0{st.st_size}\0{st.st_mtime_ns}\0{target}\n".encode())
     return h.hexdigest()
 
 
@@ -338,6 +361,53 @@ def _tripwires() -> dict[str, str]:
     for p in rp.TRIPWIRE_PATHS:
         path = Path(os.path.expanduser(p))
         out[p] = _hash_tree(path)
+    for p in rp.TRIPWIRE_STAT_PATHS:
+        out[p] = _stat_tree(Path(os.path.expanduser(p)))
+    if rp.OPENCLAW_CRON_STORE_PATH:
+        out[rp.OPENCLAW_CRON_STORE_PATH] = _hash_tree(Path(os.path.expanduser(rp.OPENCLAW_CRON_STORE_PATH)))
+    return out
+
+
+# Command snapshots (symmetric, every lane): `crontab -l` and the user timer list, taken at prepare and at
+# verify with a fixed environment and a 5 s timeout. A change fails verify; "unavailable" at both ends does not.
+SNAPSHOT_RUNNER: Callable[[list], tuple[int, str, str]] | None = None
+UNAVAILABLE = "unavailable"
+SNAPSHOT_TIMEOUT_S = 5
+SNAPSHOT_COMMANDS = {"crontab": ["crontab", "-l"],
+                     "user-timers": ["systemctl", "--user", "list-timers", "--all", "--no-legend"]}
+_UNIT_RE = re.compile(r"\b[\w@:.\\-]+\.(?:timer|service)\b")
+
+
+def _snapshot_exec(argv: list) -> tuple[int, str, str]:
+    if SNAPSHOT_RUNNER is not None:
+        return SNAPSHOT_RUNNER(argv)
+    env = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "HOME": os.environ.get("HOME", "")}
+    for key in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    try:
+        p = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=SNAPSHOT_TIMEOUT_S, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return 127, "", ""
+    return p.returncode, p.stdout, p.stderr
+
+
+def _command_snapshots() -> dict[str, str]:
+    out: dict[str, str] = {}
+    rc, text, err = _snapshot_exec(SNAPSHOT_COMMANDS["crontab"])
+    if rc == 0:
+        out["crontab"] = _sha(text)
+    elif rc == 1 and "no crontab" in (err or text).lower():
+        out["crontab"] = _sha("")                       # no crontab: empty
+    else:
+        out["crontab"] = UNAVAILABLE
+    rc, text, _ = _snapshot_exec(SNAPSHOT_COMMANDS["user-timers"])
+    if rc == 0:
+        # unit names only, sorted: the next-run column moves whenever an operator timer fires, which would fail
+        # every in-flight step; a new or removed unit is what a lane child can cause
+        out["user-timers"] = _sha("\n".join(sorted(set(_UNIT_RE.findall(text)))))
+    else:
+        out["user-timers"] = UNAVAILABLE
     return out
 
 
@@ -368,6 +438,7 @@ def snapshot(ctx: Ctx, tree: Path) -> dict:
         "agent_outputs": agent_outputs(tree),
         "handoff": {h: _hash_path(tree / h) for h in HANDOFF_FILES},
         "tripwires": _tripwires(),
+        "commands": _command_snapshots(),
     }
 
 
@@ -641,7 +712,7 @@ def _normalise_lane(lane: str) -> str:
     return f"openclaw-agent:{lane}" if lane.startswith("kit-lane-") else lane
 
 
-def _admit_lane(doc: dict, lane: str) -> None:
+def _admit_lane(doc: dict, lane: str, role: str = "") -> None:
     """Re-apply the hold and the admission when binding: the digest is integrity, not authentication, so a
     table whose digest was recomputed after adding an agent is still refused here."""
     from .setup import lanes_render
@@ -653,13 +724,28 @@ def _admit_lane(doc: dict, lane: str) -> None:
     if not aid.startswith("kit-lane-") or not isinstance(agent, dict):
         raise Refused([f"lane {lane} is not an admitted kit lane agent of the table"])
     backend = agent.get("backend")
-    writable = backend in openclaw_lanes.WRITABLE_BACKENDS
+    writable = backend in openclaw_lanes.writable_backends()
     if lanes_render.backend_held(backend or ""):
         writable = False
     if not writable:
         raise Refused([f"lane {lane}: agent is not admitted, backend {backend} is not writable in this version"])
     if agent.get("stale"):
         raise Refused([f"lane {lane}: agent is stale (model drift); re-run `ai-resources setup --lanes`"])
+    if backend != "claude-cli":
+        # An agy lane opens only with the flag, a Google acknowledgement listing the role and every phase 3 gate.
+        # The table's digest is integrity, not authentication: a forged table that lists the agent is refused here.
+        from . import agy_lane_gates
+        google = ((doc.get("acks") or {}).get("google") or {})
+        missing = []
+        if not (doc.get("gates") or {}).get("antigravity"):
+            missing.append("--lanes-antigravity is off in the table")
+        if role not in (google.get("roles") or ()):
+            missing.append(f"the Google acknowledgement does not list {role or 'the role'}")
+        why = agy_lane_gates.refusal()
+        if why:
+            missing.append(why)
+        if missing:
+            raise Refused([f"lane {lane}: Antigravity lane closed: " + "; ".join(missing)])
 
 
 def _check_model(role: str, lane: str, declared: str, entry: dict) -> None:
@@ -679,6 +765,23 @@ def _check_model(role: str, lane: str, declared: str, entry: dict) -> None:
     if bad:
         raise Refused([f"--model {declared!r} is not the model of lane {lane} for role {role} "
                        f"(resolved: {resolved_model})"])
+
+
+def _pool_of_lane(doc: dict, lane: str) -> str:
+    """The quota pool a lane draws on (claude-code draws the claude subscription)."""
+    if lane == "claude-code" or not lane.startswith("openclaw-agent:"):
+        return "claude-subscription"
+    agent = (doc.get("agents") or {}).get(lane.split(":", 1)[1]) or {}
+    return str(agent.get("pool") or "")
+
+
+def _agy_evidence(doc: dict, lane: str) -> dict:
+    """The phase 3 gate statuses recorded in the ledger when the lane is an agy lane (not proven is a fact)."""
+    agent = (doc.get("agents") or {}).get(lane.split(":", 1)[1] if lane.startswith("openclaw-agent:") else "") or {}
+    if agent.get("backend") in (None, "claude-cli"):
+        return {}
+    from . import agy_lane_gates
+    return {"agy_gates": agy_lane_gates.status_table()}
 
 
 def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
@@ -714,7 +817,7 @@ def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
     blocked = (resolved.get("blocked") or {}).get(role)
     if blocked:
         raise Refused([f"role {role} is blocked: {blocked}"])
-    _admit_lane(doc, lane)
+    _admit_lane(doc, lane, role)
     if a.second:
         entry = (resolved.get("second") or {}).get(role)
         if not entry:
@@ -725,17 +828,40 @@ def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
         if not entry:                                        # a role the table does not name runs on claude-code
             entry = {"lane": "claude-code", "reason": "role not in the table: claude-code"}
         fallbacks = list(entry.get("fallbacks") or [])
+    table_sha = _sha(path.read_bytes())
+    pool_of = lambda ref: _pool_of_lane(doc, ref)       # noqa: E731
+    base = {"digest": doc["digest"], "table_sha256": table_sha, "resolved_pool": pool_of(str(entry.get("lane")))}
     if lane == entry.get("lane"):
         _check_model(role, lane, a.model, entry)
         return {"lane": lane, "source": "resolved", "reason": str(entry.get("reason", "")),
-                "digest": doc["digest"]}
+                "pool": pool_of(lane), **base, **_agy_evidence(doc, lane)}
     for fb in fallbacks:
         if fb.get("lane") == lane:
             _check_model(role, lane, a.model, fb)
             return {"lane": lane, "source": "fallback", "reason": str(fb.get("reason", "")),
-                    "digest": doc["digest"]}
+                    "pool": pool_of(lane), **base, **_agy_evidence(doc, lane)}
     raise Refused([f"lane {lane} is neither the resolved lane ({entry.get('lane')}) nor a recorded fallback "
                    f"for role {role}"])
+
+
+def _check_breaker(role: str, binding: dict, tripped: dict, run: str) -> None:
+    """The quota circuit breaker (OQ-6): a lane on a tripped pool is refused for the rest of the run. A writer
+    moves to the next admitted candidate (the recorded fallback, reason "pool exhausted"); a checker fails with
+    the reason and never waits or moves. Symmetric on every pool."""
+    pool, resolved_pool = binding.get("pool"), binding.get("resolved_pool")
+    # `claude-code` is the orchestrator's own session, not a spawned child: the breaker never refuses it
+    if pool in tripped and binding.get("lane") != "claude-code":
+        e = tripped[pool]
+        raise Refused([f"pool {pool} is exhausted for run {run} (breaker entry {e['seq']}: "
+                       f"{e['data'].get('reason')}): lane {binding['lane']} is refused"
+                       + ("; a checker fails with the reason and never waits" if role in rp.CHECKER_ROLES else
+                          "; use the next admitted candidate")])
+    if resolved_pool in tripped and binding.get("source") == "fallback":
+        e = tripped[resolved_pool]
+        if role in rp.CHECKER_ROLES:
+            raise Refused([f"pool {resolved_pool} is exhausted for run {run} (breaker entry {e['seq']}): the "
+                           f"checker {role} fails with the reason and never waits or moves"])
+        binding["reason"] = f"pool exhausted: {resolved_pool}; " + str(binding.get("reason", ""))
 
 
 def cmd_prepare(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
@@ -762,6 +888,18 @@ def cmd_prepare(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
     family = rp.model_family(a.model)
     ledger = Ledger(ctx)
     entries = ledger.entries()
+    # Authority (C5, under C2): with --expect-head only entries at or before the head the orchestrator witnessed
+    # count; without it every entry is honoured (a forged breaker can only narrow the candidate set).
+    authority = witnessed(entries, a.expect_head) if getattr(a, "expect_head", "") else entries
+    tripped = {e["data"].get("pool"): e for e in authority if e["kind"] == "breaker"}
+    pinned = next((e["data"].get("sha256") for e in authority if e["kind"] == "table"), None)
+    if binding is not None:
+        if pinned and pinned != binding["table_sha256"]:
+            raise Refused([f"lanes.yaml changed during run {ctx.run}: re-run setup and start a new run"])
+        _check_breaker(role, binding, tripped, ctx.run)
+    if a.pool and a.pool in tripped:
+        raise Refused([f"pool {a.pool} is exhausted for run {ctx.run} (breaker entry "
+                       f"{tripped[a.pool]['seq']}): a lane on it is refused"])
 
     prev_iters = [e["iteration"] for e in entries if e["kind"] == "prepare" and e["step"] == step]
     last_iter = max(prev_iters) if prev_iters else 0
@@ -833,6 +971,10 @@ def cmd_prepare(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
     entry = ledger.append("prepare", step, role=role, iteration=iteration, attempt=a.attempt,
                           record={"snapshot": snap, "step": step, "role": role, "iteration": iteration,
                                   "attempt": a.attempt}, data=data)
+    if binding is not None and not pinned:
+        # the run-pinned table hash (5.7): the first prepare of a run records it; later prepares refuse a change
+        ledger.append("table", step, role=role, iteration=iteration, attempt=a.attempt,
+                      data={"sha256": binding["table_sha256"], "digest": binding["digest"]})
     if pool_note is not None:
         ledger.append("count", step, role=role, iteration=iteration, attempt=a.attempt,
                       data={"pool": a.pool, "checker": role in rp.CHECKER_ROLES})
@@ -882,6 +1024,17 @@ def _forbidden_run_tree_changes(ctx: Ctx, tree: Path, before: dict, after: dict,
     for p in sorted(before["tripwires"]):
         if before["tripwires"][p] != after["tripwires"].get(p):
             reasons.append(f"tripwire file {p} changed")
+    for key in sorted(before.get("commands") or {}):
+        b, a_ = (before.get("commands") or {}).get(key), (after.get("commands") or {}).get(key)
+        if b == UNAVAILABLE and a_ == UNAVAILABLE:
+            continue
+        if b != a_:
+            what = " ".join(SNAPSHOT_COMMANDS.get(key, [key]))
+            if UNAVAILABLE in (a_, b):
+                reasons.append(f"tripwire command `{what}` became unavailable or reappeared during the step "
+                               f"(fail closed)")
+            else:
+                reasons.append(f"tripwire command `{what}` output changed")
     # changed dirty paths in the run tree
     changed = {p for p in set(before["dirty"]) | set(after["dirty"])
                if before["dirty"].get(p) != after["dirty"].get(p)}
@@ -993,6 +1146,17 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
             tainted.append(e["seq"])
     reasons += _state_dir_reasons(ledger, entries)
 
+    spawn_raw: bytes | None = None
+    if getattr(a, "spawn_error", ""):
+        sp = Path(a.spawn_error).resolve()
+        roots = [Path(prep["data"]["repo"]).resolve(), ctx.run_dir.resolve()]
+        roots += [Path(e["data"]["worktree_path"]).resolve() for e in entries if e["data"].get("worktree_path")]
+        if any(sp == r or r in sp.parents for r in roots):
+            raise Refused([f"--spawn-error {sp} lies inside the run tree, the run state or a lane worktree: it "
+                           f"must be a file the orchestrator wrote outside them"])
+        if not sp.is_file():
+            raise Refused([f"--spawn-error {sp} is not a file"])
+        spawn_raw = sp.read_bytes()[:65536]
     prep_rec = ledger.load_record(prep)
     before = prep_rec["snapshot"]
     tree = Path(prep["data"]["repo"])
@@ -1045,6 +1209,9 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
             if paths[p] != "untracked" or not tolerated(p):
                 if not own_report.match(p):
                     reasons.append(f"{p}: uncommitted change in the worktree: commit it on the branch")
+        for p_, how in sorted(paths.items()):
+            if how == "" and p_.split("/")[-1] in rp.BOOTSTRAP_FILES:
+                reasons.append(f"{p_}: a bootstrap file is tolerated only untracked; a commit adding it fails")
         reasons += _check_modes(ctx, wt, base, tip, contract)
         reasons += _check_messages(ctx, wt, base, tip)
         changed_paths = paths
@@ -1099,6 +1266,16 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
     out = {"result": result, "reasons": reasons, "step": step, "role": role, "contract": contract,
            "iteration": iteration, "attempt": a.attempt, "tip": tip, "verdict": data.get("verdict"),
            "nonce": entry["nonce"], "snapshot_digest": entry["record_sha256"], "ledger_head": entry["hash"]}
+    pool = str(((prep["data"].get("lane") or {}).get("pool")) or "")
+    if spawn_raw is not None and pool:
+        # the only input is what the orchestrator witnessed; the child's report and .agent-output are never read
+        pattern = rp.classify_quota(spawn_raw.decode("utf-8", errors="replace"), pool)
+        if pattern:
+            b = ledger.append("breaker", step, role=role, iteration=iteration, attempt=a.attempt,
+                              data={"pool": pool, "step": step, "attempt": a.attempt, "reason": "quota-exhausted",
+                                    "pattern": pattern, "evidence_sha256": _sha(spawn_raw)})
+            out["breaker"] = {"pool": pool, "seq": b["seq"], "evidence_sha256": _sha(spawn_raw)}
+            out["ledger_head"] = b["hash"]
     if result == "FAIL" and contract in (rp.SCOPE, rp.INTEGRATING) and prep["data"].get("worktree_id"):
         wid = prep["data"]["worktree_id"]
         if wid not in _removed_ids(ledger.entries()):
@@ -1293,6 +1470,9 @@ def _populate(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--scope", nargs="*", default=[], help="write_scope paths (scope contract)")
     p.add_argument("--pool", default="", help="Count the dispatch against this pool")
     p.add_argument("--cap", type=int, default=None)
+    p.add_argument("--expect-head", dest="expect_head", default="",
+                   help="The ledger_head the orchestrator last witnessed: breaker and table entries after it "
+                        "carry no authority")
     p.set_defaults(lanes_func=cmd_prepare)
 
     p = sub.add_parser("verify", help="Check the step's contract after the child ran")
@@ -1304,6 +1484,9 @@ def _populate(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--in-flight", dest="in_flight", nargs="*", default=[], help="Step ids running in parallel")
     p.add_argument("--subject", default="", help="Verifier steps: <step-id>@<sha>")
     p.add_argument("--report", default="", help="Verifier steps: the step-scoped report path")
+    p.add_argument("--spawn-error", dest="spawn_error", default="",
+                   help="A file the orchestrator wrote from the sessions_spawn result it saw, outside the run "
+                        "tree and every lane worktree: a recorded quota-exhaustion text trips the pool breaker")
     p.set_defaults(lanes_func=cmd_verify)
 
     p = sub.add_parser("integrate", help="Merge a verified scope branch into the integration worktree")

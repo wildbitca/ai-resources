@@ -1,10 +1,10 @@
 {
   "id": "ai-resources",
   "name": "ai-resources",
-  "description": "ai-resources kit: agy-cli (Antigravity CLI) and claude-kit (unrestricted Claude Code) CLI backends, plus the /claude and /equipo shortcut commands.",
+  "description": "ai-resources kit: agy-cli (Antigravity CLI), agy-cli-lane (the Antigravity lane backend, ADR-0007) and claude-kit (unrestricted Claude Code) CLI backends, plus the /claude and /equipo shortcut commands.",
   "minGatewayVersion": "2026.9.4",
-  "cliBackends": ["agy-cli", "claude-kit"],
-  "setup": { "cliBackends": ["agy-cli", "claude-kit"], "requiresRuntime": false },
+  "cliBackends": ["agy-cli", "agy-cli-lane", "claude-kit"],
+  "setup": { "cliBackends": ["agy-cli", "agy-cli-lane", "claude-kit"], "requiresRuntime": false },
   "activation": { "onStartup": true },
   "configSchema": {
     "type": "object",

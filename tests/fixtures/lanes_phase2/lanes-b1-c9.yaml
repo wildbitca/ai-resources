@@ -1,0 +1,66 @@
+# Rendered by `ai-resources setup` (ADR-0007). Do not edit: setup re-renders it.
+mode: single-model
+agents:
+  kit-lane-cli-opus55:
+    backend: claude-cli
+    model: anthropic/claude-opus-5-5
+    pool: claude-subscription
+  kit-lane-cli-sonnet55:
+    backend: claude-cli
+    model: anthropic/claude-sonnet-5-5
+    pool: claude-subscription
+roles:
+  implementer:
+    candidates:
+    - openclaw-agent:kit-lane-cli-sonnet55
+    - claude-code
+  tester:
+    candidates:
+    - openclaw-agent:kit-lane-cli-sonnet55
+    - claude-code
+  verifier:
+    candidates:
+    - openclaw-agent:kit-lane-cli-opus55
+    - claude-code
+second:
+  planner:
+  - openclaw-agent:kit-lane-cli-opus55
+resolved:
+  roles:
+    implementer:
+      lane: openclaw-agent:kit-lane-cli-sonnet55
+      model: anthropic/claude-sonnet-5-5
+      reason: same pool, no quota gain; lane agent pinned anthropic/claude-sonnet-5-5;
+        alias may resolve newer
+      fallbacks:
+      - lane: claude-code
+        model: sonnet
+        reason: 'admitted candidate, declared order: use only when the resolved lane
+          is unavailable or capped'
+    tester:
+      lane: openclaw-agent:kit-lane-cli-sonnet55
+      model: anthropic/claude-sonnet-5-5
+      reason: same pool, no quota gain; lane agent pinned anthropic/claude-sonnet-5-5;
+        alias may resolve newer
+      fallbacks:
+      - lane: claude-code
+        model: sonnet
+        reason: 'admitted candidate, declared order: use only when the resolved lane
+          is unavailable or capped'
+    verifier:
+      lane: openclaw-agent:kit-lane-cli-opus55
+      model: anthropic/claude-opus-5-5
+      reason: same pool, no quota gain; lane agent pinned anthropic/claude-opus-5-5;
+        alias may resolve newer
+      fallbacks:
+      - lane: claude-code
+        model: opus
+        reason: 'admitted candidate, declared order: use only when the resolved lane
+          is unavailable or capped'
+  second:
+    planner:
+      lane: openclaw-agent:kit-lane-cli-opus55
+      model: anthropic/claude-opus-5-5
+      reason: lane agent pinned anthropic/claude-opus-5-5; alias may resolve newer
+  blocked: {}
+digest: 46e84abbd6fb9a24c0338e992be48ff4c4661e18fab1f88cd10e88143ff31c3d

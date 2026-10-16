@@ -107,6 +107,41 @@ export function buildAgyBackend(bins) {
   };
 }
 
+// --- agy-cli-lane: the Antigravity lane backend (ADR-0007 section 11) -------------------------
+//
+// A separate backend id so a lane child's flags never leak into the classic `agy-cli` backend, which stays
+// byte-identical (snapshot test). Same parser, model argument and serialisation. Differences, each as a fact:
+//   - `bundleMcp: false`: OpenClaw-bundled MCP is not injected into a lane child (V7 a is not proven; the
+//     writer additionally denies `bundle-mcp` per agent).
+//   - an absolute `agyBin` is required: with a bare name the backend refuses to register (the classic one
+//     keeps "agy"), so a lane never resolves `agy` through the walked PATH.
+//   - `--dangerously-skip-permissions` stays: no non-interactive alternative has been shown (V6 not run).
+// Not added, because no recorded run supports them: a sandbox flag (V6), a tool allowlist or exclusions (V7),
+// a print timeout, an agy-home override (V12). `AGY_LANE_UNPROVEN` lists them so the gap is visible in code.
+export const AGY_LANE_UNPROVEN = Object.freeze({
+  sandbox: "V6 not run",
+  toolAllowlist: "V7 not run",
+  agyHome: "V12 not run",
+});
+
+/** @param {string} p */
+export function isAbsoluteBin(p) {
+  return typeof p === "string" && p.startsWith("/");
+}
+
+/** @param {{agy: string}} bins */
+export function buildAgyLaneBackend(bins) {
+  const base = buildAgyBackend(bins);
+  const config = JSON.parse(JSON.stringify(base.config));
+  return {
+    id: "agy-cli-lane",
+    bundleMcp: false,
+    nativeToolMode: "always-on",
+    parseJsonlEvent: parseAgyLine,
+    config,
+  };
+}
+
 // --- claude-kit: the unrestricted Claude Code backend ------------------------------
 //
 // Deliberately does NOT set bundleMcp, so core never injects `--strict-mcp-config`,
@@ -217,10 +252,13 @@ export function makeClaudeCommandHandler(api) {
 export default {
   id: "ai-resources",
   name: "ai-resources",
-  description: "agy-cli and claude-kit CLI backends, plus the /claude and /equipo shortcut.",
+  description: "agy-cli, agy-cli-lane and claude-kit CLI backends, plus the /claude and /equipo shortcut.",
   register(api) {
     const bins = resolveBinaries((api && api.pluginConfig) || {});
     api.registerCliBackend(buildAgyBackend(bins));
+    if (isAbsoluteBin(bins.agy)) {
+      api.registerCliBackend(buildAgyLaneBackend(bins));
+    }
     api.registerCliBackend(buildClaudeBackend(bins));
     const handler = makeClaudeCommandHandler(api);
     api.registerCommand(buildClaudeCommand("claude", handler));

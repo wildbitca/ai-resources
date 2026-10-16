@@ -55,6 +55,18 @@ def test_example_team_states_models_as_agent_properties_and_rule_017():
     assert "external prerequisite" in SKILL
 
 
+def test_phase_3_points_the_lane_flow_at_both_lanes_and_names_the_lanes_example():
+    assert "claude-cli and agy" in SKILL and "agy later" not in SKILL
+    assert "workflows/feature-lanes.workflow.yaml" in SKILL
+
+
+def test_lane_section_states_the_breaker_the_head_and_the_static_weight_placement():
+    section = _lane_section()
+    for needle in ("--spawn-error", "--expect-head", "never write it from the child's report", "role count",
+                   "not by quota", "Do not use agy interactively during a lane run", "pins the file's hash"):
+        assert needle in section, needle
+
+
 def test_parallel_groups_and_handoff_reference_mention_openclaw_members():
     parallel = SKILL[SKILL.index("## Parallel groups"):SKILL.index("## Subagent return format")]
     assert "openclaw-agent" in parallel

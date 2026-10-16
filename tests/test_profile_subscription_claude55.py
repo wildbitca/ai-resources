@@ -124,3 +124,35 @@ def test_balanced_claude_55_is_unchanged():
 def test_recommended_profile_stays_balanced():
     from ai_resources.setup import wizard
     assert wizard.RECOMMENDED_PROFILE == "balanced-claude-55"
+
+
+# --- ADR-0007 phase 3: the Antigravity candidates ----------------------------------------------------------
+
+def test_the_lanes_block_validates_names_no_agent_id_and_every_agy_slug_is_a_lane_slug():
+    from ai_resources import model_pins
+    from ai_resources.setup import lanes_render
+    block = _doc()["lanes"]
+    assert lanes_render.validate_block(block) == []
+    texts = [c for key in ("roles", "second") for cands in block[key].values() for c in cands]
+    assert not [c for c in texts if c.startswith(("kit-lane-", "openclaw-agent:"))]
+    slugs = {c.split(":", 1)[1] for c in texts if c.startswith("agy:")}
+    assert slugs and slugs <= set(model_pins.AGY_LANE_MODELS)
+    assert not any(c.startswith("agy:") for r in ("explore", "planner", "software-architect")
+                   for c in block["roles"][r])
+    assert not set(block.get("second") or {}) & set(CHECKERS)
+    assert "pins" not in block                                  # the subscription profile declares no pins
+
+
+def test_the_agy_candidates_do_not_change_by_role_and_are_held_while_the_flag_or_gates_are_off():
+    from ai_resources.setup import lanes_render
+    assert {r: c["model"] for r, c in _doc()["by_role"].items()} == {r: m for r, (m, _) in EXPECTED.items()}
+    frag = lanes_render.state_from_block(_doc()["lanes"],
+                                         claude_ids={"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5",
+                                                     "opus": "claude-opus-5-5"})
+    assert all(a["backend"] == "claude-cli" for a in frag["agents"].values())
+    assert {h["role"] for h in frag["held"]} == {"implementer", "tester", "doc-writer", "verifier",
+                                                 "security-auditor", "code-reviewer"}
+    assert all(h["candidate"].startswith("agy:") for h in frag["held"])
+    assert all(h["reason"].startswith("held:") and ("--lanes-antigravity" in h["reason"]
+                                                    or "gate" in h["reason"].lower())
+               for h in frag["held"]), frag["held"]

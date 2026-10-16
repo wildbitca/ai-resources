@@ -76,6 +76,13 @@ def lanes_findings(s: state.SetupState) -> list[Finding]:
         return [Finding("warn", "lanes", f"the lanes table could not be checked: {type(e).__name__}: {e}")]
     out = [Finding("warn", "lanes", w, "re-run `ai-resources setup --lanes`")
            for w in lanes_render.drift_warnings(s.profile.lanes, by_role)]
+    lanes = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
+    if (lanes.get("gates") or {}).get("antigravity"):
+        # the operator opened the Antigravity lane: say which candidates are still held, and why
+        for h in lanes.get("held") or []:
+            out.append(Finding("warn", "lanes", f"{h.get('role')}: {h.get('candidate')} {h.get('reason')}",
+                               "tick the role in the Google acknowledgement: `ai-resources setup --lanes "
+                               "--lanes-antigravity` from a terminal"))
     path = state.lanes_path()
     have = path.read_text(encoding="utf-8") if path.is_file() else None
     if have is None:

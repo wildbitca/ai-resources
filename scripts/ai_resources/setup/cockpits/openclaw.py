@@ -861,10 +861,13 @@ def _configure_lanes(s: state.SetupState, doc: dict, *, dry_run: bool, run_chang
     """Subscription lanes (ADR-0007): lane agents, catalog entries and scoped allowAgents. Operator-run only."""
     if not (state.lanes_enabled(s) or s.openclaw.lanes_applied):
         return False
+    def confirm(msg: str) -> bool:
+        return True if ui.is_non_interactive() else bool(ui.confirm(msg, default=True))
     return openclaw_lanes.configure(
         s, doc, config_root=CONFIG_ROOT, apply_patch=_lanes_apply, register_agent=_lanes_register,
         classify=_lanes_classify, change_records=openclaw_host.change_records, run_changes=run_changes,
-        dry_run=dry_run, info=ui.info, warn=ui.warn, error=ui.error,
+        dry_run=dry_run, info=ui.info, warn=ui.warn, error=ui.error, confirm=confirm,
+        delete_agent=lambda aid: _openclaw(["agents", "delete", aid, "--force"]),
         teardown_fn=lambda st, d: _teardown_lanes(st, d))
 
 
@@ -1940,7 +1943,7 @@ def verify(ctx: dict) -> list:
                              f"openclaw config set agents.entries.{aid}.model.primary {raw}"))
         lanes = s.profile.lanes
         if state.lanes_enabled(s) and isinstance(lanes, dict):
-            for msg in openclaw_lanes.mcp_scope_findings(lanes, doc):
+            for msg in openclaw_lanes.mcp_scope_findings(lanes, doc, s.profile.lane_acks):
                 out.append(F("warn", ID, msg, "re-run `ai-resources setup --lanes` (never edit openclaw.json by hand)"))
         bindings = doc.get("bindings")
         if isinstance(bindings, list) and any(_is_catch_all(b) for b in bindings):

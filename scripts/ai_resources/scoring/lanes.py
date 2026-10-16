@@ -3,7 +3,9 @@
 Pure and deterministic: no I/O, no clock, no dataset access. The caller precomputes what it needs
 (`usage_verdicts` from `gate.usage_gate`, effective headroom `weights`) and passes it in. Compose never
 emits a lane and a lane never moves the model or the band: a candidate is admitted when it runs the
-role's own model, or when the operator pinned another model with the pin flag.
+role's own model, or when the operator pinned another model (`pins`, per role and per candidate).
+With `effective_ids` the tier rule ("best model first", ADR-0007 section 11 amendment) separates the exact
+model (tier 1) from a same-family other version (tier 2: writers only, never a checker).
 
 Rules, in order (plan section 5):
 1. eligibility from `roles_policy.LANE_ELIGIBILITY`; an unknown role resolves to claude-code;
@@ -136,6 +138,35 @@ def _same_model(role_model: str, agent_model: str) -> bool:
     return a is not None and a == b
 
 
+_ALIASES = ("haiku", "sonnet", "opus", "fable")
+_VENDOR_PREFIXES = ("anthropic/", "claude-cli/", "claude-kit/", "agy-cli-lane/", "agy-cli/", "google/", "agy/")
+
+
+def _bare(ref: str) -> str:
+    out = str(ref).strip()
+    changed = True
+    while changed:
+        changed = False
+        for pre in _VENDOR_PREFIXES:
+            if out.startswith(pre):
+                out, changed = out[len(pre):], True
+    return out
+
+
+def version_tier(role_model: str, agent_model: str, effective_ids: Mapping[str, str] | None) -> int:
+    """1 when the agent runs the exact model the role resolves to, 2 for the same family and another version.
+
+    Without `effective_ids` every same-family agent is tier 1 (phase 2 semantics). An alias the table does not
+    know compares by family only. Different families are not tiered (they need a pin).
+    """
+    if effective_ids is None or not _same_model(role_model, agent_model):
+        return 1
+    if role_model in _ALIASES and role_model not in effective_ids:
+        return 1                                             # an alias with no effective id: family only
+    want = effective_ids.get(role_model, role_model)
+    return 1 if _bare(want) == _bare(agent_model) else 2
+
+
 def _as_agent(raw: Any, key: str | None = None) -> LaneAgent:
     if isinstance(raw, LaneAgent):
         agent = raw
@@ -243,7 +274,9 @@ def resolve_lanes(by_role: Mapping[str, Any],
                   mode: str = "single-model",
                   *,
                   default_fallbacks: Sequence[str] = (),
-                  role_loads: Mapping[str, float] | None = None) -> LaneTable:
+                  role_loads: Mapping[str, float] | None = None,
+                  effective_ids: Mapping[str, str] | None = None,
+                  pins: Mapping[str, Sequence[str]] | None = None) -> LaneTable:
     if mode not in MODES:
         raise LaneError(f"unknown mode {mode!r} (expected one of {', '.join(MODES)})")
     second_candidates = second_candidates or {}
@@ -253,6 +286,7 @@ def resolve_lanes(by_role: Mapping[str, Any],
     acks = acks or {}
     pool_caps = dict(pool_caps or {})
     role_loads = role_loads or {}
+    pins = {str(r): [str(x) for x in refs] for r, refs in (pins or {}).items()}
 
     agent_map = {k: _as_agent(v, k) for k, v in sorted(agents.items())}
 
@@ -268,6 +302,13 @@ def resolve_lanes(by_role: Mapping[str, Any],
             raise LaneError(f"role {role}: only report-contract roles take a second member")
         if role in roles_policy.CHECKER_ROLES:
             raise LaneError(f"role {role}: a checker role never takes a second member")
+    for role, refs in pins.items():
+        if role in roles_policy.CHECKER_ROLES and refs:
+            raise LaneError(f"role {role}: a checker takes no operator pin (it never runs a different model)")
+        known = set(candidates.get(role, ())) | set(second_candidates.get(role, ()))
+        for ref in refs:
+            if ref not in known:
+                raise LaneError(f"role {role}: pin {ref!r} is not one of the role's candidates")
 
     why: list[Why] = []
     roles_out: dict[str, Lane] = {}
@@ -281,29 +322,48 @@ def resolve_lanes(by_role: Mapping[str, Any],
     def weight_of(pool: str) -> float:
         return float(weights.get(pool, STATIC_WEIGHTS.get(pool, headroom.DEFAULT_WEIGHT)))
 
-    def check_admission(role: str, role_model: str, ref: str) -> tuple[bool, str, str, str]:
-        """(admitted, reason, pool, model that would run)."""
+    PIN, TIER1, TIER2 = 0, 1, 2
+
+    def check_admission(role: str, role_model: str, ref: str) -> tuple[bool, str, str, str, int]:
+        """(admitted, reason, pool, model that would run, ranking class)."""
         backend, agent_id = _parse_ref(ref)
         if backend == CLAUDE_CODE:
-            return True, "", CLAUDE_POOL, role_model
+            return True, "", CLAUDE_POOL, role_model, TIER1
         agent = agent_map[agent_id]  # type: ignore[index]
-        pinned = not _same_model(role_model, agent.model)
-        if pinned and not gates.get("operator_pin"):
+        checker = role in roles_policy.CHECKER_ROLES
+        listed = ref in pins.get(role, ())
+        same_family = _same_model(role_model, agent.model)
+        pinned = not same_family
+        if pinned and not (gates.get("operator_pin") or listed):
             return False, (f"{agent.id} runs {agent.model}, not the role model {role_model}; "
-                           f"an operator pin needs the pin flag"), agent.pool, agent.model
+                           f"an operator pin needs the pin flag (or list it in lanes.pins)"), \
+                agent.pool, agent.model, TIER1
+        klass = TIER1
+        tier_note = ""
+        if same_family and effective_ids is not None and version_tier(role_model, agent.model, effective_ids) == 2:
+            if checker:
+                return False, (f"{agent.id} runs {agent.model}, another version than the role model "
+                               f"{effective_ids.get(role_model, role_model)}; a checker never takes a different "
+                               f"version"), agent.pool, agent.model, TIER2
+            klass = TIER2
+            tier_note = (f"{agent.id} runs {agent.model}; role model is "
+                         f"{effective_ids.get(role_model, role_model)}: same family, other version "
+                         f"(writer fallback, tier 2)")
+        if listed and not checker:
+            klass = PIN
         if agent.stale:
-            return False, f"{agent.id} is stale (model drift); re-run `ai-resources setup --lanes`", agent.pool, agent.model
+            return False, f"{agent.id} is stale (model drift); re-run `ai-resources setup --lanes`", agent.pool, agent.model, klass
         if agent.backend == CLAUDE_CLI:
             if not _acked(acks, "anthropic", role):
-                return False, f"no Anthropic acknowledgement lists role {role}", agent.pool, agent.model
+                return False, f"no Anthropic acknowledgement lists role {role}", agent.pool, agent.model, klass
             allowed, reason = _verdict(usage_verdicts, agent.pool)
             if usage_verdicts and not allowed and agent.pool in usage_verdicts:
-                return False, f"pool {agent.pool} is not dispatchable: {reason}", agent.pool, agent.model
+                return False, f"pool {agent.pool} is not dispatchable: {reason}", agent.pool, agent.model, klass
         elif agent.backend == CODEX_CLI:
             missing = []
             if role not in roles_policy.REPORT_ROLES:
                 return False, (f"{agent.id}: the Codex lane is read-only (report roles); "
-                               f"role {role} may write"), agent.pool, agent.model
+                               f"role {role} may write"), agent.pool, agent.model, klass
             if not gates.get("codex_flag"):
                 missing.append("--lanes-codex flag")
             if not gates.get("adr_0007_codex_accepted"):
@@ -312,10 +372,10 @@ def resolve_lanes(by_role: Mapping[str, Any],
                 missing.append(f"an OpenAI acknowledgement listing {role}")
             if missing:
                 return False, (f"{agent.pool} is held; open only with {', '.join(missing)} "
-                               f"(ADR-0007 FU-2)"), agent.pool, agent.model
+                               f"(ADR-0007 FU-2)"), agent.pool, agent.model, klass
             allowed, reason = _verdict(usage_verdicts, agent.pool)
             if usage_verdicts and not allowed and agent.pool in usage_verdicts:
-                return False, f"pool {agent.pool} is not dispatchable: {reason}", agent.pool, agent.model
+                return False, f"pool {agent.pool} is not dispatchable: {reason}", agent.pool, agent.model, klass
         else:
             allowed, reason = _verdict(usage_verdicts, agent.pool)
             cite = reason or f"direct-only in composition ({ADR_AGY})"
@@ -328,16 +388,20 @@ def resolve_lanes(by_role: Mapping[str, Any],
                 missing.append(f"a Google acknowledgement listing {role}")
             if missing:
                 return False, (f"{agent.pool} is direct-only ({cite}); open only with "
-                               f"{', '.join(missing)} ({ADR_AGY})"), agent.pool, agent.model
-        return True, "pinned: operator pin, not scored" if pinned else "", agent.pool, agent.model
+                               f"{', '.join(missing)} ({ADR_AGY})"), agent.pool, agent.model, klass
+        if pinned:
+            return True, "pinned: operator pin, not scored", agent.pool, agent.model, PIN if not checker else TIER1
+        if tier_note:
+            return True, tier_note, agent.pool, agent.model, klass
+        return True, "", agent.pool, agent.model, klass
 
     def pick(role: str, role_model: str, refs: Sequence[str], *, checker: bool):
         """Returns (ref, pool, model, notes) or (None, ..., reasons)."""
-        admitted: list[tuple[float, int, str, str, str, str, bool]] = []
+        admitted: list[tuple[float, int, str, str, str, str, int]] = []
         rejected: list[str] = []
         rl = float(role_loads.get(role, 1.0))
         for idx, ref in enumerate(refs):
-            ok, reason, pool, model = check_admission(role, role_model, ref)
+            ok, reason, pool, model, klass = check_admission(role, role_model, ref)
             if not ok:
                 rejected.append(f"{ref}: {reason}")
                 continue
@@ -347,12 +411,13 @@ def resolve_lanes(by_role: Mapping[str, Any],
                 continue
             w = weight_of(pool)
             p = headroom.pressure(load.get(pool, 0.0), rl, w)
-            is_pin = bool(reason.startswith("pinned"))
-            admitted.append((p, idx, ref, pool, model, reason, is_pin))
+            admitted.append((p, idx, ref, pool, model, reason, klass))
         if not admitted:
             return None, "", "", rejected
-        pins = [a for a in admitted if a[6]]
-        field_ = pins if pins else admitted
+        # ranking classes: operator pin (0), exact model (1), same-family other version (2); inside a class the
+        # projected pressure, then candidate order, then the ref
+        top = min(a[6] for a in admitted)
+        field_ = [a for a in admitted if a[6] == top]
         field_.sort(key=lambda a: (round(a[0], 9), a[1], a[2]))
         best = field_[0]
         notes = []
@@ -463,6 +528,9 @@ def resolve_lanes(by_role: Mapping[str, Any],
         "mode": mode,
         "default_fallbacks": list(default_fallbacks),
         "loads": {k: float(v) for k, v in sorted(role_loads.items())},
+        **({"effective_ids": {k: str(v) for k, v in sorted(effective_ids.items())}}
+           if effective_ids is not None else {}),
+        **({"pins": {r: list(v) for r, v in sorted(pins.items()) if v}} if any(pins.values()) else {}),
     })
     return LaneTable(roles=roles_out, second=second_out, agents=agent_map,
                      why=tuple(sorted(why, key=lambda w: (w.role, w.lane, w.text))), digest=digest,

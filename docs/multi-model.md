@@ -249,6 +249,48 @@ ai-resources setup --no-lanes                            # clear lanes.yaml and 
   lanes pass refuses it, and `status`, `verify` and `models update` print a warning; re-run `setup --lanes`.
 - **Profile.** `subscription-claude-55` declares a lane table; compose never emits a lane.
 
+### The Antigravity lane (ADR-0007 section 11, phase 3; closed)
+
+Antigravity (`agy`) is a peer lane backend, `agy-cli-lane`, under the same contracts, kit commands, ledger and
+gates as a claude-cli lane. It is **off on a fresh install and stays closed** until all of these hold; each one is
+an enforced check that fails closed with a message, not prose:
+
+```sh
+ai-resources setup --lanes --lanes-antigravity --lanes-orchestrator main   # sign the Google acknowledgement
+ai-resources setup --no-lanes-antigravity                                  # close it again; claude-cli lanes stay
+```
+
+- ADR-0007 section 11 is Accepted (`lanes_render.AGY_LANE_ADR_ACCEPTED`, pinned to the ADR's status line);
+- `--lanes-antigravity` is on (persisted as `lanes.gates.antigravity`);
+- a **valid Google acknowledgement** lists the role: one per Google account, the account is named, its stored hash
+  equals the current text (a text change means re-signing), the implementer is unticked by default (a default is not
+  a ban); per-account role sets: the Anthropic acknowledgement covers the roles that run on a claude-cli lane, the
+  Google one only the roles with an agy candidate;
+- every phase 3 gate G0-G7 is proven (`scripts/ai_resources/agy_lane_gates.py`). **Not proven today:** G0 (the
+  phase 2 merge gate), G1 (V5, the `agy models` slugs; `model_pins.AGY_LANE_MODELS` holds unconfirmed candidates),
+  G2 (V6, sandbox), G3 (V7, tool and MCP surface), G4 (V9, agy workspace and cwd) and G5 (V12, agy home); G6 and G7
+  are partial. They run only through the isolated probe harness in an operator-announced window.
+
+Until then no agy agent reaches state, `lanes.yaml`, `openclaw.json` or `allowAgents`, and `WRITABLE_BACKENDS` stays
+`{claude-cli}`. What is facts today, whatever the gates say:
+
+- **Process flags** across `claude-cli`, `claude-kit`, `agy-cli`, `agy-cli-lane` are recorded as facts in ADR-0007
+  section 11; an agy child runs with `--dangerously-skip-permissions` (a full shell).
+- **Egress.** Repository content, diffs, test output and MCP results of every acknowledged role go to Google.
+- **Placement is by role count, not by quota.** The `resolved:` table uses static weights (claude 1.0, agy 0.7), so
+  it balances by role count in sorted role order. A live headroom source for the agy pools does not exist.
+- **Best model first.** A candidate on the role's exact model (tier 1) beats a same-family other version (tier 2);
+  tier 2 serves a writer only when no tier-1 candidate is admissible and is never taken by a checker. A candidate
+  listed in the profile's `lanes.pins.<role>` ranks first for that non-checker role only. `effective_ids` come from
+  `model_pins.effective()` and can lag Claude Code's own alias resolution.
+- **Shared `~/.gemini` or a kit-owned agy home** (`~/.local/share/ai-resources/agy-home/`, never created by setup
+  until V12 is proven): see the runbook.
+- **Cost and breaker.** About 50k tokens per step. A per-pool circuit breaker, fed only by `lanes verify
+  --spawn-error <file>` (what the orchestrator witnessed, never the child's report), refuses further lanes on an
+  exhausted pool for the rest of the run. There are no pool caps by default, and never on checkers.
+- **Symmetric controls.** The extended tripwire list, the `crontab -l` and user-timer snapshots, bootstrap files and
+  the run-pinned `lanes.yaml` hash apply to every lane.
+
 Operations: [openclaw runbook](openclaw/runbook.md#subscription-lanes). Team rules:
 [team-composition.md](team-composition.md#lanes-pass).
 

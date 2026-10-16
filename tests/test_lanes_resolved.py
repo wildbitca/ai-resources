@@ -167,7 +167,8 @@ def test_n1_a_concrete_ref_of_another_version_is_refused(env):
     assert rc == 1 and any("is not the model of lane" in r for r in out["reasons"]), out
 
 
-def test_d2_n2_a_held_agy_agent_in_a_hand_edited_state_never_reaches_lanes_yaml():
+def test_d2_n2_a_held_agy_agent_in_a_hand_edited_state_never_reaches_lanes_yaml(monkeypatch):
+    monkeypatch.setattr(lanes_render, "AGY_LANE_ADR_ACCEPTED", False)      # the B3 contract: section 11 not accepted
     lanes = _lanes()
     lanes["agents"]["kit-lane-agy-evil"] = {"backend": "agy-cli", "model": "gemini-3.8-flash-low",
                                             "pool": "agy-gemini"}
@@ -176,6 +177,16 @@ def test_d2_n2_a_held_agy_agent_in_a_hand_edited_state_never_reaches_lanes_yaml(
     assert "kit-lane-agy-evil" not in doc["agents"]
     assert "openclaw-agent:kit-lane-agy-evil" not in doc["roles"]["implementer"]["candidates"]
     assert doc["resolved"]["held"] == {"kit-lane-agy-evil": "held: Antigravity lane not accepted"}
+
+
+def test_d2_n2_with_section_11_accepted_the_same_agent_is_held_by_the_flag(monkeypatch):
+    lanes = _lanes()
+    lanes["agents"]["kit-lane-agy-evil"] = {"backend": "agy-cli", "model": "gemini-3.8-flash-low",
+                                            "pool": "agy-gemini"}
+    lanes["roles"]["implementer"]["candidates"].insert(0, "openclaw-agent:kit-lane-agy-evil")
+    doc = lanes_render.render_doc(lanes, BY_ROLE, "single-model", ANTHROPIC_ACK)
+    assert "kit-lane-agy-evil" not in doc["agents"]
+    assert doc["resolved"]["held"] == {"kit-lane-agy-evil": "held: --lanes-antigravity is off"}
 
 
 def test_n2_a_recomputed_digest_with_an_agy_agent_is_still_refused(env):

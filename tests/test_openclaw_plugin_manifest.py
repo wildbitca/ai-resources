@@ -28,14 +28,14 @@ def _index_source() -> str:
 def test_manifest_is_valid_json_with_the_required_fields():
     manifest = _manifest()
     assert manifest["id"] == "ai-resources"
-    assert set(manifest["cliBackends"]) == {"agy-cli", "claude-kit"}
+    assert set(manifest["cliBackends"]) == {"agy-cli", "agy-cli-lane", "claude-kit"}
     assert manifest["activation"]["onStartup"] is True
     assert manifest["minGatewayVersion"]
 
 
 def test_manifest_backend_ids_match_the_ids_registered_in_index_js():
     manifest = _manifest()
-    registered = set(re.findall(r'id:\s*"([a-z0-9-]+-cli|claude-kit)"', _index_source()))
+    registered = set(re.findall(r'id:\s*"([a-z0-9-]+-cli(?:-lane)?|claude-kit)"', _index_source()))
     assert set(manifest["cliBackends"]) == registered
 
 
