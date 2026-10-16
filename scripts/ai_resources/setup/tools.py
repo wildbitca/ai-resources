@@ -67,7 +67,9 @@ TOOLS: dict[str, ToolSpec] = {
     ),
     "openclaw": ToolSpec(
         "openclaw", "OpenClaw",
-        "npm i -g openclaw",
+        # The vendor's recommended installer: it provisions Node and handles npm 12 blocking lifecycle scripts, which a
+        # bare `npm i -g openclaw` does not. `--no-onboard` because the kit configures OpenClaw itself.
+        "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard",
         lambda: detection.detect_openclaw(),
         purpose="agent gateway the kit configures; no separate sign-in",
         doc_url="https://docs.openclaw.ai/install", doc_checked=_CHECKED,
@@ -81,15 +83,6 @@ TOOLS: dict[str, ToolSpec] = {
         ("agent", "login"),
         "https://cursor.com/docs/cli/installation", _CHECKED,
     ),
-    "gemini": ToolSpec(
-        "gemini", "Gemini CLI",
-        "npm install -g @google/gemini-cli",
-        lambda: detection.detect_gemini_cli(),
-        "Run `gemini` once and choose Sign in with Google (or export GEMINI_API_KEY).",
-        "Google's terminal coding agent",
-        ("gemini",),
-        "https://github.com/google-gemini/gemini-cli#readme", _CHECKED,
-    ),
     "codex": ToolSpec(
         "codex", "Codex CLI",
         "npm install -g @openai/codex",
@@ -101,7 +94,9 @@ TOOLS: dict[str, ToolSpec] = {
     ),
     "aider": ToolSpec(
         "aider", "Aider",
-        "pipx install aider-chat",
+        # aider-chat requires Python >=3.10,<3.13, so `pipx install aider-chat` fails on a host whose default Python is
+        # newer. The vendor's one-liner installs uv and a Python 3.12 for aider when needed.
+        "curl -LsSf https://aider.chat/install.sh | sh",
         lambda: detection.detect_aider(),
         "Aider has no sign-in: export your provider key (for example OPENAI_API_KEY or ANTHROPIC_API_KEY) "
         "or put it in a .env file. The kit never asks for or stores it.",
@@ -140,11 +135,18 @@ TOOLS: dict[str, ToolSpec] = {
         "windsurf", "Windsurf",
         "",
         lambda: detection.detect_windsurf(),
-        purpose="desktop IDE; the vendor documents no CLI installer",
-        doc_url="https://docs.windsurf.com/windsurf/getting-started", doc_checked=_CHECKED,
-        manual_url="https://docs.windsurf.com/windsurf/getting-started",
+        purpose="desktop IDE (now Devin Desktop); the vendor documents no CLI installer",
+        # docs.windsurf.com/windsurf/getting-started redirects here since the rename to Devin Desktop.
+        doc_url="https://docs.devin.ai/desktop/getting-started", doc_checked=_CHECKED,
+        manual_url="https://docs.devin.ai/desktop/getting-started",
     ),
 }
+
+# Tools the vendor has retired. They are never installable; a copy that is already on the machine is shown as an
+# informational row (the outside-TOOLS path of the selector) with the replacement. Gemini CLI: Google retired it for
+# personal accounts on 2026-06-18 and replaced it with the Antigravity CLI (migration guide:
+# https://antigravity.google/docs/gcli-migration).
+RETIRED_NOTES: dict[str, str] = {"gemini": "retired for personal accounts; use agy"}
 
 # The antigravity engine (S5) is the only caller today; kept as a tuple constant rather
 # than inlined so a future engine can offer a different set without touching offer().
@@ -414,6 +416,8 @@ def _selector_choices(absent: list[str], missing_all: list[str],
     for cid, det in (cockpits or {}).items():
         if cid not in TOOLS and det.installed:
             note = f"v{det.version}" if det.version else ""
+            if cid in RETIRED_NOTES:
+                note = f"{note} ({RETIRED_NOTES[cid]})".strip()
             choices.append(ui.Choice(f"{det.name}  {note}".rstrip(), value=f"info:{cid}", disabled="installed"))
     return choices
 

@@ -138,7 +138,7 @@ def detect_codex() -> Detected:
 
 
 def detect_aider() -> Detected:
-    return _probe("Aider", "aider", "pipx install aider-chat")
+    return _probe("Aider", "aider", "curl -LsSf https://aider.chat/install.sh | sh")
 
 
 def detect_copilot() -> Detected:
@@ -153,13 +153,13 @@ def detect_copilot() -> Detected:
         if cp:
             return Detected("GitHub Copilot CLI", True, "", cp)
         return Detected("GitHub Copilot CLI", False, "", "",
-                        "brew install gh && gh extension install github/gh-copilot")
+                        "npm install -g @github/copilot")
     rc, out = _run([p, "copilot", "--version"])
     if rc != 0:
         if cp:
             return Detected("GitHub Copilot CLI", True, "", cp)
         return Detected("GitHub Copilot CLI", False, "", p,
-                        "gh extension install github/gh-copilot")
+                        "npm install -g @github/copilot")
     return Detected("GitHub Copilot CLI", True, _version_from(out), p, variant="gh-extension")
 
 
@@ -172,7 +172,7 @@ def detect_windsurf() -> Detected:
 
 
 def detect_continue() -> Detected:
-    return _probe("Continue.dev CLI", "cn", "https://docs.continue.dev/getting-started")
+    return _probe("Continue.dev CLI", "cn", "npm i -g @continuedev/cli")
 
 
 def detect_opencode() -> Detected:
@@ -181,7 +181,8 @@ def detect_opencode() -> Detected:
 
 def detect_openclaw() -> Detected:
     # `--version` prints "OpenClaw 2026.10.4 (383c124)"; a slow start is normal.
-    return _probe("OpenClaw", "openclaw", "npm i -g openclaw", timeout=30, pattern=r"(\d+\.\d+\.\d+)")
+    return _probe("OpenClaw", "openclaw", "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard",
+                  timeout=30, pattern=r"(\d+\.\d+\.\d+)")
 
 
 def detect_agy() -> Detected:

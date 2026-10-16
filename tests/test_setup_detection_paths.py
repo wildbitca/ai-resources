@@ -72,7 +72,7 @@ def test_the_fixed_homebrew_dirs_are_candidates(minimal_env, monkeypatch):
 
 def test_a_missing_tool_is_reported_missing_with_its_hint(minimal_env):
     found = detection.detect_openclaw()
-    assert not found.installed and found.binary_path == "" and found.install_hint == "npm i -g openclaw"
+    assert not found.installed and found.binary_path == "" and "openclaw.ai/install.sh" in found.install_hint
 
 
 def test_openclaw_version_line_with_a_commit_sha_is_parsed(minimal_env):

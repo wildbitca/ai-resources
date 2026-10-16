@@ -17,7 +17,7 @@ from ai_resources.setup import detection, state, tools, ui, wizard  # noqa: E402
 
 INSTALL = "Select the tools to install"
 DETECTORS = {"claude": "detect_claude_code", "agy": "detect_agy", "openclaw": "detect_openclaw",
-             "cursor": "detect_cursor_agent", "gemini": "detect_gemini_cli", "codex": "detect_codex",
+             "cursor": "detect_cursor_agent", "codex": "detect_codex",
              "aider": "detect_aider", "copilot": "detect_copilot", "continue": "detect_continue",
              "opencode": "detect_opencode", "windsurf": "detect_windsurf"}
 
@@ -34,6 +34,7 @@ def _env(monkeypatch):
 
 def _detect(monkeypatch, installed=(), versions=None):
     versions = versions or {}
+    monkeypatch.setattr(detection, "detect_gemini_cli", lambda: detection.Detected("Gemini CLI", False, "", ""))
     for tid, fn in DETECTORS.items():
         ok = tid in installed
         monkeypatch.setattr(detection, fn, lambda n=tid, o=ok, v=versions.get(tid, "1.0"): detection.Detected(
@@ -71,8 +72,8 @@ def test_the_list_merges_installed_with_version_installable_and_manual_rows(monk
     tools.offer(state.SetupState())
     rows = _by_value(rig)
     assert "v2.1.300" in rows["claude"].title and rows["claude"].disabled == "installed"
-    assert "not installed" in rows["gemini"].title and "npm install -g @google/gemini-cli" in rows["gemini"].title
-    assert not rows["gemini"].disabled
+    assert "not installed" in rows["copilot"].title and "npm install -g @github/copilot" in rows["copilot"].title
+    assert not rows["copilot"].disabled
     assert rows["windsurf"].disabled.startswith("manual install: https://")
     assert len(rig.asked) == 1
 
@@ -98,8 +99,8 @@ def test_nothing_ticked_installs_nothing_and_a_subset_installs_that_subset(monke
     _detect(monkeypatch)
     rig = Rig(monkeypatch, pick=[])
     assert tools.offer(state.SetupState()) == [] and rig.installed == []
-    rig = Rig(monkeypatch, pick=["gemini", "aider"])
-    assert tools.offer(state.SetupState()) == ["gemini", "aider"]
+    rig = Rig(monkeypatch, pick=["copilot", "aider"])
+    assert tools.offer(state.SetupState()) == ["aider", "copilot"]
 
 
 def test_the_preselect_is_the_only_thing_ticked(monkeypatch):
@@ -177,12 +178,12 @@ def test_the_selector_has_no_sign_in_group(monkeypatch):
 
 def test_sign_in_is_asked_only_for_newly_installed_tools_with_a_login_flow_and_is_preticked(monkeypatch):
     _detect(monkeypatch, installed=("codex",))
-    rig = Rig(monkeypatch, pick=["gemini", "aider"], login_pick=["gemini"])
-    assert tools.offer(state.SetupState()) == ["gemini", "aider"]
+    rig = Rig(monkeypatch, pick=["copilot", "aider"], login_pick=["copilot"])
+    assert tools.offer(state.SetupState()) == ["aider", "copilot"]
     login = [a for a in rig.asked if a[0].startswith("Sign in now")]
     assert len(login) == 1
-    assert [c.value for c in login[0][1]] == ["gemini"] and login[0][2] == ["gemini"]   # aider: none; codex: not new
-    assert rig.logins == ["gemini"]
+    assert [c.value for c in login[0][1]] == ["copilot"] and login[0][2] == ["copilot"]   # aider: none; codex: not new
+    assert rig.logins == ["copilot"]
 
 
 def test_installed_tools_get_one_dim_line_with_the_command_and_no_checkbox(monkeypatch):
@@ -198,15 +199,15 @@ def test_the_sign_in_choice_is_asked_once_per_run(monkeypatch):
     _detect(monkeypatch)
     rig = Rig(monkeypatch)
     s = state.SetupState()
-    tools._sign_in_flow(s, ["gemini"], interactive=True)
-    tools._sign_in_flow(s, ["gemini"], interactive=True)
+    tools._sign_in_flow(s, ["copilot"], interactive=True)
+    tools._sign_in_flow(s, ["copilot"], interactive=True)
     assert len([a for a in rig.asked if a[0].startswith("Sign in now")]) == 1
-    assert rig.logins == ["gemini"]
+    assert rig.logins == ["copilot"]
 
 
 def test_the_dry_run_preview_is_asked_once_per_run(monkeypatch):
     _detect(monkeypatch)
-    rig = Rig(monkeypatch, pick=["gemini"])
+    rig = Rig(monkeypatch, pick=["copilot"])
     s = state.SetupState()
     tools.offer(s, dry_run=True)
     tools.offer(s, dry_run=True)
