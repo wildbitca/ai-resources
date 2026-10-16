@@ -173,7 +173,9 @@ def test_cancel_after_the_tools_offer_installed_something_lists_it(host, capsys)
     mp = host.monkeypatch
     tool_id = next(iter(tools.TOOLS))
     mp.setattr(tools, "offer", _REAL_OFFER)
-    mp.setattr(tools, "missing_tools", lambda ids=(): [tool_id])
+    # offer() now takes ONE detection pass (versions for the single list), so the fake is that pass, not missing_tools
+    mp.setattr(tools, "_detect_tools", lambda: {t: detection.Detected(t, t != tool_id, "1", "/bin/" + t)
+                                                for t in tools.TOOLS})
     mp.setattr(tools, "_run_install", lambda cmd, timeout=300: (True, ""))
     rc, script = _drive(host, {"Select the tools to install": [tool_id], "Sign in now": [], "Choose mode": ABORT})
     err = capsys.readouterr().err

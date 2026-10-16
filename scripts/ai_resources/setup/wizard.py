@@ -795,16 +795,20 @@ def _step2_cockpits(s: state.SetupState) -> int:
     ui.info("Scanning installed AI CLIs...")
     detected = detection.detect_all_cockpits()
 
-    rows = []
-    for cid, det in detected.items():
-        status = "✔" if det.installed else "✘"
-        info = f"v{det.version}  {det.binary_path}" if det.installed else ""
-        rows.append((status, det.name, info))
-    ui.detected_table(rows)
+    def print_scan() -> None:
+        """The plain scan list. tools.offer calls it only where its selector is NOT shown: the selector is the same
+        list (installed ones with their version, installable ones tickable), so it is never printed twice."""
+        rows = []
+        for cid, det in detected.items():
+            status = "✔" if det.installed else "✘"
+            info = f"v{det.version}  {det.binary_path}" if det.installed else ""
+            rows.append((status, det.name, info))
+        ui.detected_table(rows)
 
     # Offer to install the AI CLIs that are missing, right after the scan and before the "no cockpits" check, so a
     # machine with none can still install one here. Re-detecting afterwards lets the later steps see what was installed.
-    installed_tools = tools.offer(s, assume_yes=_ASSUME_YES, dry_run=_DRY_RUN)
+    installed_tools = tools.offer(s, assume_yes=_ASSUME_YES, dry_run=_DRY_RUN,
+                                  cockpits=detected, print_scan=print_scan)
     if installed_tools:
         detected = detection.detect_all_cockpits()
 

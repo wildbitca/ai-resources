@@ -195,12 +195,12 @@ def test_dry_run_without_a_prompt_path_says_what_it_would_offer(monkeypatch, ass
 
 def test_dry_run_on_a_terminal_previews_the_selector_and_installs_nothing(monkeypatch):
     _detect(monkeypatch, installed=("claude",))
-    rig = Rig(monkeypatch, pick=["gemini", "login:claude"])
+    rig = Rig(monkeypatch, pick=["gemini"])
     s = state.SetupState()
     assert tools.offer(s, dry_run=True) == []
     assert len(rig.asked) == 1 and rig.installed == [] and rig.logins == []
     assert any("would install Gemini CLI with `npm install -g @google/gemini-cli`" in n for n in rig.notes)
-    assert any("would sign in to Claude Code" in n for n in rig.notes)
+    assert any("would then offer to sign in to Gemini CLI" in n for n in rig.notes)
     assert s.tracking.tools_installed_by_us == []
 
 

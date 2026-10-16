@@ -16,6 +16,7 @@ class Detected(NamedTuple):
     version: str
     binary_path: str
     install_hint: str = ""
+    variant: str = ""           # "gh-extension" for the legacy `gh copilot` extension; "" otherwise
 
 
 def _run(cmd: list[str], timeout: int = 5) -> tuple[int, str]:
@@ -112,7 +113,7 @@ def detect_copilot() -> Detected:
     if rc != 0:
         return Detected("GitHub Copilot CLI", False, "", p,
                         "gh extension install github/gh-copilot")
-    return Detected("GitHub Copilot CLI", True, _version_from(out), p)
+    return Detected("GitHub Copilot CLI", True, _version_from(out), p, variant="gh-extension")
 
 
 def detect_windsurf() -> Detected:

@@ -60,7 +60,10 @@ TOOLS: dict[str, ToolSpec] = {
         "Google account by hand.",
         "Antigravity CLI; orchestrator of the antigravity OpenClaw engine",
         ("agy",),
-        "https://antigravity.google/cli/install.sh", _CHECKED,
+        # Human-readable vendor page: the vendor's own /docs/cli redirects here (read-only GET on _CHECKED). The page
+        # is client-rendered, so the install command itself is verified against the install script it serves:
+        # https://antigravity.google/cli/install.sh
+        "https://antigravity.google/docs/getting-started?tab=cli", _CHECKED,
     ),
     "openclaw": ToolSpec(
         "openclaw", "OpenClaw",
@@ -279,11 +282,15 @@ def install_one(tool_id: str, s: state.SetupState) -> bool:
 
 
 def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, *,
-          assume_yes: bool = False, dry_run: bool = False, preselect: tuple[str, ...] = ()) -> list[str]:
-    """Offer to install missing required tools; return the ids actually installed.
+          assume_yes: bool = False, dry_run: bool = False, preselect: tuple[str, ...] = (),
+          cockpits: dict[str, detection.Detected] | None = None,
+          print_scan: Callable[[], None] | None = None) -> list[str]:
+    """Offer to install missing tools; return the ids actually installed.
 
-    The question is a checkbox over every tool the kit knows (installed ones are shown disabled, missing ones
-    are listed unticked, so Enter installs nothing; none is a valid answer), followed by an optional sign-in for what was just installed.
+    The question is ONE checkbox list over every tool the kit knows: installed ones are shown with their version and
+    are not selectable, missing ones are listed unticked (so Enter installs nothing; none is a valid answer), and
+    manual-install ones are informational rows with the vendor URL. Sign-in is a separate screen shown after the
+    install, only for the tools installed in this run; already installed tools just get the command printed.
     Consent is per run and is never stored. `assume_yes` (`ai-resources setup --yes`) says yes for this run only; an
     unattended (`--non-interactive`) run without `--yes` installs nothing. An answer saved by an older kit
     (`install_tools_answer`) is ignored and cleared: a "yes" given once must not authorise a later run, and a
@@ -297,58 +304,77 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
     the exact command it would have run, so the operator can try the selector safely.
 
     `preselect` names the ids a caller's context strictly requires; only those start ticked (default: none).
+    `cockpits` is the caller's own scan: entries that are not in TOOLS still appear in the list, with their version.
+    `print_scan` prints the plain detection list; it is called on every path where the selector is NOT shown (the
+    selector already carries the same information), so those outputs stay informative.
     """
     s.tracking.install_tools_answer = None           # migration: nothing is replayed, nothing is persisted
-    missing_all = _missing_all()                      # one detection pass, reused everywhere below
+    found = _detect_tools()                           # one detection pass, reused everywhere below
+    missing_all = [t for t in TOOLS if not found[t].installed]
     missing = [t for t in ids if t in missing_all]
     absent = _not_installed(missing_all)
-    can_sign_in = [t for t in TOOLS if t not in missing_all and TOOLS[t].login_cmd]
-    if not missing and not absent and not can_sign_in:
+
+    def scan() -> None:
+        if print_scan is not None:
+            print_scan()
+
+    if not missing and not absent:
+        scan()
         return []
     if assume_yes and not missing:
+        scan()
         return []
-    offered = missing or absent or can_sign_in
+    offered = missing or absent
     labels = ", ".join(TOOLS[t].label for t in offered)
 
     if dry_run:
         if not assume_yes and not ui.is_non_interactive() and ui.stdin_is_a_terminal():
-            _preview_selection(absent, preselect, missing_all)
+            _preview_selection(s, absent, preselect, missing_all, found, cockpits)
             return []
+        scan()
         ui.info(f"DRY RUN: would offer {labels}; nothing is installed"
                 + (" (--yes does not install in a dry run)." if assume_yes else "."))
         return []
 
-    sign_in: list[str] = []                           # installed tools the operator ticked for sign-in
     if assume_yes:
+        scan()
         chosen = list(missing)
     else:
         if ui.is_non_interactive():
+            scan()
             return []
         if not ui.stdin_is_a_terminal():
             # A piped `y` is not a confirmation (T2, as `bootstrap` and `apply-pending` already require): without a
             # terminal the plain `input()` prompt would take the first line of whatever was piped in.
+            scan()
             ui.info(f"Not installing {labels}: no terminal to ask on. Run `ai-resources setup` from a terminal, "
                     "or pass --yes to say yes for this run.")
             return []
         # Asked once per run: a second call on the same state object reuses the answer given a moment ago.
         picked = getattr(s, "_install_answer_this_run", None)
         if picked is None:
-            picked = _ask_selection(absent, preselect, missing_all)
+            picked = _ask_selection(absent, preselect, missing_all, found, cockpits)
             s._install_answer_this_run = picked           # an instance attribute: never serialised
         chosen = [t for t in TOOLS if t in picked and t in absent]
-        sign_in = [t for t in TOOLS if f"login:{t}" in picked and TOOLS[t].login_cmd and t not in chosen]
 
     installed: list[str] = []
     for tool_id in chosen:
         if install_one(tool_id, s):
             installed.append(tool_id)
-    _sign_in_flow(installed, sign_in, interactive=not assume_yes)
+    _sign_in_flow(s, installed, interactive=not assume_yes)
+    _print_later_sign_in([t for t in TOOLS if t not in missing_all and t not in installed], found)
     return installed
+
+
+def _detect_tools() -> dict[str, detection.Detected]:
+    """One detection result per known tool (manual-install ones included)."""
+    return {tid: spec.detect() for tid, spec in TOOLS.items()}
 
 
 def _missing_all() -> list[str]:
     """Every known tool that is not installed, manual-install ones included."""
-    return missing_tools(tuple(TOOLS))
+    found = _detect_tools()
+    return [t for t in TOOLS if not found[t].installed]
 
 
 def _not_installed(missing_all: list[str] | None = None) -> list[str]:
@@ -358,53 +384,100 @@ def _not_installed(missing_all: list[str] | None = None) -> list[str]:
     return [t for t in missing_all if TOOLS[t].install_cmd]
 
 
-def _selector_choices(absent: list[str], missing_all: list[str]) -> list:
+def _is_gh_extension(det: detection.Detected) -> bool:
+    """The legacy `gh copilot` extension, not the standalone `copilot` binary."""
+    return getattr(det, "variant", "") == "gh-extension"
+
+
+def _installed_note(det: detection.Detected) -> str:
+    version = f"v{det.version}" if det.version else ""
+    if _is_gh_extension(det):
+        return f"gh copilot extension, {version}".rstrip(", ")
+    return version
+
+
+def _selector_choices(absent: list[str], missing_all: list[str],
+                      found: dict[str, detection.Detected] | None = None,
+                      cockpits: dict[str, detection.Detected] | None = None) -> list:
+    """The single list: installed rows carry their version and are not selectable, missing installable ones are
+    selectable, manual-install ones are informational (not selectable) with the vendor URL."""
+    found = found or {}
     choices: list = []
     for tid, spec in TOOLS.items():
-        what = f" - {spec.purpose}" if spec.purpose else ""
         if tid in absent:
-            choices.append(ui.Choice(f"{spec.label}{what}", value=tid))
+            choices.append(ui.Choice(f"{spec.label}  not installed - {spec.install_cmd}", value=tid))
         elif tid in missing_all:
-            choices.append(ui.Choice(f"{spec.label}{what}", value=tid,
-                                     disabled=f"manual install: {spec.manual_url}"))
+            choices.append(ui.Choice(spec.label, value=tid, disabled=f"manual install: {spec.manual_url}"))
         else:
-            choices.append(ui.Choice(f"{spec.label} (installed){what}", value=tid, disabled="installed"))
-    for tid, spec in TOOLS.items():
-        if tid not in missing_all and spec.login_cmd:
-            choices.append(ui.Choice(f"Sign in to installed tools: {spec.label}", value=f"login:{tid}"))
+            note = _installed_note(found[tid]) if tid in found else ""
+            choices.append(ui.Choice(f"{spec.label}  {note}".rstrip(), value=tid, disabled="installed"))
+    for cid, det in (cockpits or {}).items():
+        if cid not in TOOLS and det.installed:
+            note = f"v{det.version}" if det.version else ""
+            choices.append(ui.Choice(f"{det.name}  {note}".rstrip(), value=f"info:{cid}", disabled="installed"))
     return choices
 
 
+SELECTOR_TITLE = "Select the tools to install (Space ticks, Enter confirms)"
+SELECTOR_HINT = "Enter with nothing ticked = skip, install nothing"
+
+
 def _ask_selection(absent: list[str] | None = None, preselect: tuple[str, ...] = (),
-                   missing_all: list[str] | None = None) -> list[str]:
+                   missing_all: list[str] | None = None,
+                   found: dict[str, detection.Detected] | None = None,
+                   cockpits: dict[str, detection.Detected] | None = None) -> list[str]:
     """One checkbox over every known tool: missing ones selectable (nothing is pre-ticked except `preselect`, so Enter
-    installs nothing by default), installed ones shown as installed and disabled, manual-install ones disabled with
-    the vendor URL, plus an explicit, unticked sign-in row per installed tool with a login."""
+    installs nothing by default), installed ones shown with their version and disabled, manual-install ones
+    disabled with the vendor URL. Skip is not a row: Enter with nothing ticked is the skip, and the message says so."""
+    if found is None:
+        found = _detect_tools()
     if missing_all is None:
-        missing_all = _missing_all()
+        missing_all = [t for t in TOOLS if not found[t].installed]
     if absent is None:
         absent = [t for t in missing_all if TOOLS[t].install_cmd]
-    picked = ui.checkbox("Select the tools to install (Space ticks, Enter confirms; none is fine)",
-                         _selector_choices(absent, missing_all),
+    picked = ui.checkbox(f"{SELECTOR_TITLE}\n  {SELECTOR_HINT}",
+                         _selector_choices(absent, missing_all, found, cockpits),
                          default=[t for t in preselect if t in absent])
-    return list(picked or [])
+    return [p for p in (picked or []) if p in TOOLS]
 
 
-def _preview_selection(absent: list[str], preselect: tuple[str, ...], missing_all: list[str] | None = None) -> None:
-    """Dry run on a terminal: show the real selector, then say what would run. Nothing is installed or signed in."""
-    picked = _ask_selection(absent, preselect, missing_all)
+def _preview_selection(s: state.SetupState, absent: list[str], preselect: tuple[str, ...],
+                       missing_all: list[str] | None = None, found: dict[str, detection.Detected] | None = None,
+                       cockpits: dict[str, detection.Detected] | None = None) -> None:
+    """Dry run on a terminal: show the real selector, then say what would run. Nothing is installed or signed in.
+    The answer is asked once per run (a revisit reuses it)."""
+    picked = getattr(s, "_preview_answer_this_run", None)
+    if picked is None:
+        picked = _ask_selection(absent, preselect, missing_all, found, cockpits)
+        s._preview_answer_this_run = picked               # an instance attribute: never serialised
     chosen = [t for t in TOOLS if t in picked and t in absent]
     for t in chosen:
         ui.info(f"DRY RUN: would install {TOOLS[t].label} with `{TOOLS[t].install_cmd}`; nothing is installed.")
-    for t in TOOLS:
-        if f"login:{t}" in picked and TOOLS[t].login_cmd:
-            ui.info(f"DRY RUN: would sign in to {TOOLS[t].label} with `{_login_command(TOOLS[t])}`; nothing is run.")
+        if TOOLS[t].login_cmd:
+            ui.info(f"DRY RUN: would then offer to sign in to {TOOLS[t].label} with `{_login_command(TOOLS[t])}`; "
+                    "nothing is run.")
     if not chosen:
         ui.info("DRY RUN: no tool selected; nothing is installed.")
 
 
-def _login_command(spec: ToolSpec) -> str:
+def _login_command(spec: ToolSpec, det: detection.Detected | None = None) -> str:
+    if spec.id == "copilot" and det is not None and _is_gh_extension(det):
+        return "gh auth login"            # the legacy extension signs in through gh, not through a `copilot` binary
     return " ".join(spec.login_cmd)
+
+
+def _print_later_sign_in(installed_ids: list[str], found: dict[str, detection.Detected]) -> None:
+    """One dim line naming the sign-in command of each already installed tool; nothing is run."""
+    parts = [f"{TOOLS[t].label}: `{_login_command(TOOLS[t], found.get(t))}`"
+             for t in installed_ids if TOOLS[t].login_cmd]
+    if parts:
+        ui.detail("Already installed - sign in later with: " + "; ".join(parts))
+
+
+def _proves_sign_in(spec: ToolSpec) -> bool:
+    """True when the command is a dedicated login subcommand whose exit status 0 means signed in. A bare `claude`
+    or `agy` just opens the tool: the operator signs in inside it, so exit 0 proves nothing."""
+    return "login" in spec.login_cmd
 
 
 def _run_login(tool_id: str) -> bool:
@@ -414,16 +487,30 @@ def _run_login(tool_id: str) -> bool:
     argv = list(spec.login_cmd)
     if not argv:
         return False
+    resolved = False
+    foreign = False                     # detected binary has another name and no sibling: a bare name would be a guess
     try:
         found = spec.detect()
         if found.installed and found.binary_path:
+            if tool_id == "copilot" and _is_gh_extension(found):
+                ui.info(f"{spec.label} is the `gh copilot` extension; sign in with `gh auth login`.")
+                return False
             sibling = Path(found.binary_path).parent / argv[0]    # `agent` ships beside `cursor-agent`
             if Path(found.binary_path).name == argv[0]:
                 argv[0] = found.binary_path
+                resolved = True
             elif sibling.is_file():
                 argv[0] = str(sibling)
+                resolved = True
+            else:
+                foreign = True
     except Exception:  # noqa: BLE001 - detection is best effort here; fall back to the bare name on PATH
         pass
+    if not resolved and (foreign or tool_id == "cursor"):
+        # Never resolve a bare `agent` through PATH: it may be another program. Say the command instead.
+        ui.warn(f"Could not find the `{argv[0]}` binary next to the detected {spec.label}; "
+                f"run `{_login_command(spec)}` yourself once it is on PATH.")
+        return False
     try:
         rc = subprocess.run(argv).returncode
     except KeyboardInterrupt:
@@ -436,33 +523,39 @@ def _run_login(tool_id: str) -> bool:
     if rc != 0:
         ui.warn(f"{spec.label} sign-in exited with status {rc}; run `{_login_command(spec)}` to retry.")
         return False
-    ui.record_action(f"signed in to {spec.label}")
+    if _proves_sign_in(spec):
+        ui.record_action(f"signed in to {spec.label}")
+    else:
+        # Exit 0 only means the tool was closed: the operator signs in inside it, so this is not proof of a login.
+        ui.record_action(f"started sign-in to {spec.label}")
+        ui.info(f"{spec.label} was opened; finish signing in inside the tool (the kit cannot tell whether you did).")
     return True
 
 
-def _sign_in_flow(new_tools: list[str], explicit: list[str], *, interactive: bool) -> None:
-    """Sign-in follow-up. New tools with a login flow are offered (pre-ticked); installed tools only when the
-    operator ticked them in the selector. Without a prompt (`--yes`) or a terminal the command is printed."""
+def _sign_in_flow(s: state.SetupState, new_tools: list[str], *, interactive: bool) -> None:
+    """Sign-in screen, shown after installing and only for the tools installed in this run that have a login flow
+    (pre-ticked). Without a prompt (`--yes`) or a terminal the command is printed. Asked once per run."""
     new_with_login = [t for t in new_tools if TOOLS[t].login_cmd]
-    to_run = list(explicit)
-    if new_with_login:
-        if interactive and ui.stdin_is_a_terminal():
-            picked = ui.checkbox(
-                "Sign in now? (each tool opens its own interactive sign-in)",
-                [ui.Choice(f"{TOOLS[t].label}: {_login_command(TOOLS[t])}", value=t) for t in new_with_login],
-                default=list(new_with_login))
-            to_run += [t for t in new_with_login if t in (picked or [])]
-            skipped = [t for t in new_with_login if t not in (picked or [])]
-        else:
-            skipped = new_with_login
-        for t in skipped:
-            ui.info(f"To sign in to {TOOLS[t].label} later, run: `{_login_command(TOOLS[t])}`")
-    if to_run and not (interactive and ui.stdin_is_a_terminal()):
-        for t in to_run:
-            ui.info(f"To sign in to {TOOLS[t].label}, run: `{_login_command(TOOLS[t])}`")
+    if not new_with_login:
         return
-    for t in to_run:
-        _run_login(t)
+    if not (interactive and ui.stdin_is_a_terminal()):
+        for t in new_with_login:
+            ui.info(f"To sign in to {TOOLS[t].label} later, run: `{_login_command(TOOLS[t])}`")
+        return
+    cache: dict = s.__dict__.setdefault("_sign_in_answers_this_run", {})
+    key = tuple(new_with_login)
+    if key in cache:
+        return                                              # already asked and acted on in this run
+    picked = ui.checkbox(
+        "Sign in now? (each tool opens its own interactive sign-in)",
+        [ui.Choice(f"{TOOLS[t].label}: {_login_command(TOOLS[t])}", value=t) for t in new_with_login],
+        default=list(new_with_login))
+    cache[key] = list(picked or [])
+    for t in new_with_login:
+        if t in cache[key]:
+            _run_login(t)
+        else:
+            ui.info(f"To sign in to {TOOLS[t].label} later, run: `{_login_command(TOOLS[t])}`")
 
 
 def teardown(s: state.SetupState) -> list[str]:

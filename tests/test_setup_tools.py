@@ -54,13 +54,13 @@ def test_an_already_installed_tool_is_never_offered_or_reinstalled(monkeypatch):
     seen = {}
 
     def box(msg, choices, default=None, **k):
-        seen["selectable"] = [c.value for c in choices if not c.disabled and not str(c.value).startswith("login:")]
+        seen["selectable"] = [c.value for c in choices if not c.disabled]
         return []
     monkeypatch.setattr(ui, "checkbox", box)
     s = state.SetupState()
     installed = tools.offer(s)
     assert installed == []
-    assert seen["selectable"] == []                      # nothing installed can be ticked for install
+    assert seen == {}                                    # nothing is missing, so there is nothing to tick: no selector
     assert s.tracking.tools_installed_by_us == []
 
 
@@ -338,19 +338,19 @@ def test_ticking_a_tool_installs_only_that_tool(monkeypatch):
     assert tools.offer(state.SetupState()) == ["agy"] and ran == ["agy"]
 
 
-def test_sign_in_row_is_offered_when_every_required_tool_is_installed(monkeypatch):
+def test_no_sign_in_group_is_offered_in_the_selector_when_every_tool_is_installed(monkeypatch):
     for fn, name in (("detect_claude_code", "Claude Code"), ("detect_agy", "agy"), ("detect_openclaw", "OpenClaw")):
         monkeypatch.setattr(detection, fn, lambda n=name: detection.Detected(n, True, "1", "/x/" + n))
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
     monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
-    seen = {}
+    seen = {"titles": []}
 
     def box(msg, choices, default=None, **k):
-        seen["titles"] = [c.title for c in choices]
+        seen["titles"] += [c.title for c in choices]
         return []
     monkeypatch.setattr(ui, "checkbox", box)
     assert tools.offer(state.SetupState()) == []
-    assert any(t.startswith("Sign in to installed tools") for t in seen["titles"])
+    assert not any(t.startswith("Sign in to installed tools") for t in seen["titles"])
 
 
 def test_yes_installs_without_asking_and_does_not_persist_the_answer(monkeypatch):

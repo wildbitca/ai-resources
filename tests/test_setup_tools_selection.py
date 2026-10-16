@@ -102,14 +102,12 @@ def test_sign_in_runs_only_for_newly_installed_tools_that_are_ticked(monkeypatch
     assert rig.logins == ["claude"]
 
 
-def test_an_installed_tool_is_signed_in_only_when_ticked_explicitly(monkeypatch):
+def test_an_installed_tool_is_never_signed_in_by_the_selector_and_gets_an_informational_line(monkeypatch):
     _detect(monkeypatch, claude=True)
-    rig = Rig(monkeypatch, install_pick=[])
-    tools.offer(state.SetupState())
-    assert rig.logins == []
-    rig2 = Rig(monkeypatch, install_pick=["login:claude"])
+    rig = Rig(monkeypatch, install_pick=["login:claude"])      # a stale login row value must be ignored
     assert tools.offer(state.SetupState()) == []
-    assert rig2.installed == [] and rig2.logins == ["claude"]
+    assert rig.installed == [] and rig.logins == []
+    assert any("sign in later" in n and "`claude`" in n for n in rig.notes)
 
 
 def test_the_selector_is_asked_once_per_run(monkeypatch):
