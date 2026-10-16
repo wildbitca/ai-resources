@@ -1209,7 +1209,9 @@ drained window of `apply-pending`.
 **Exit codes of the confirming verbs.** A prompt the operator declines on a terminal ends with exit 1 in both
 `apply-pending` and `apply-pending --discard-watch-restores`; exit 0 means it was done or there was nothing to do.
 `ai-resources setup --yes` is the explicit yes to the offer to install missing tools (`claude`, `agy`, `openclaw`
-through their own installers); without it the tool selector is shown on a terminal (the missing required tools are pre-ticked, none is a valid answer) and an unattended run installs nothing. `--yes` installs the missing required set, never runs a sign-in and prints the login commands instead.
+through their own installers); without it the tool selector is shown on a terminal (the missing required tools are
+pre-ticked, none is a valid answer) and an unattended run installs nothing. `setup --yes` installs the missing required
+set, never runs a sign-in and prints the login commands instead.
 
 ## Resource safety: prevention first, a graceful restart as the valve
 
