@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-10-13T01:55:12.564193+00:00",
+  "generated_at": "2026-10-16T02:45:41.272945+00:00",
   "skills_root": "skills",
   "count": 140,
   "skills": [
@@ -1310,7 +1310,7 @@
       "id": "workflow-feature-cross-provider",
       "path": "skills/workflow-feature-cross-provider/SKILL.md",
       "name": "workflow-feature-cross-provider",
-      "description": "User asks to implement a feature and wants part of the team to run on a different OpenClaw agent or provider (explicit request only; the plain feature workflow is the default). Runs the kit workflow 'feature-cross-provider': Feature workflow with a mixed team. research and plan run on other OpenClaw agents, review runs on another agent in parallel with the Claude Code security audit.",
+      "description": "User asks to implement a feature and wants the team to run on subscription lanes (claude-cli lane agents, and Antigravity agents once that lane is open) under the kit's verified landing path (explicit request only; the plain feature workflow is the default). Runs the kit workflow 'feature-cross-provider': Feature workflow on subscription lanes. Every role is a lane step resolved from the setup lanes table; scope writers are verified in sequence, the implementer integrates, review has a second member and the kit lands the result.",
       "triggers": [],
       "globs": []
     },

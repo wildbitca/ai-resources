@@ -337,9 +337,38 @@ def drift(lanes: Mapping[str, Any] | None, by_role: Mapping[str, Any]) -> list[d
     return [found[k] for k in sorted(found)]
 
 
+def version_drift(lanes: Mapping[str, Any] | None, by_role: Mapping[str, Any],
+                  ids: Mapping[str, str] | None = None) -> list[dict[str, str]]:
+    """Lane agents that are now tier 2 for a role they name: the same family, another version (ADR-0007
+    section 11 amendment). They are not stale; they are used only as a writer fallback, never for a checker."""
+    if not isinstance(lanes, Mapping):
+        return []
+    eff = dict(ids or model_pins.effective())
+    agents = lanes.get("agents") or {}
+    found: dict[str, dict[str, str]] = {}
+    for role, refs in sorted(lane_refs(lanes).items()):
+        role_model = _model_of(by_role, role)
+        if not role_model:
+            continue
+        for ref in refs:
+            aid = ref.split(":", 1)[1] if isinstance(ref, str) and ref.startswith("openclaw-agent:") else None
+            agent = agents.get(aid) if aid else None
+            if not isinstance(agent, Mapping) or aid in found:
+                continue
+            model = str(agent.get("model", ""))
+            if scoring_lanes.version_tier(role_model, model, eff) == 2:
+                found[aid] = {"agent": aid, "agent_model": scoring_lanes._bare(model), "role": role,
+                              "role_model": scoring_lanes._bare(eff.get(role_model, role_model))}
+    return [found[k] for k in sorted(found)]
+
+
 def drift_warnings(lanes: Mapping[str, Any] | None, by_role: Mapping[str, Any]) -> list[str]:
-    return [f"lane agent {d['agent']} model {d['agent_model']} differs from role model {d['role_model']} "
-            f"(role {d['role']}); re-run `ai-resources setup --lanes`" for d in drift(lanes, by_role)]
+    out = [f"lane agent {d['agent']} model {d['agent_model']} differs from role model {d['role_model']} "
+           f"(role {d['role']}); re-run `ai-resources setup --lanes`" for d in drift(lanes, by_role)]
+    out += [f"lane agent {d['agent']} runs {d['agent_model']}; role model is {d['role_model']} (role {d['role']}); "
+            f"it is used only as a writer fallback and never for a checker"
+            for d in version_drift(lanes, by_role)]
+    return out
 
 
 # --- the rendered document -------------------------------------------------------------------------------

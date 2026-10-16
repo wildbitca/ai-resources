@@ -181,3 +181,19 @@ def test_a_phase_two_state_renders_the_same_keys_without_gate_or_ack_fields():
              "second": {}}
     doc = lr.render_doc(lanes, BY_ROLE, "single-model", {"anthropic": lr.make_ack("anthropic", ["tester"], "d")})
     assert list(doc) == ["mode", "agents", "roles", "second", "resolved", "digest"]
+
+
+# --- version drift (plan 5.7) ---------------------------------------------------------------------------------
+
+def test_a_lane_agent_that_is_now_tier_two_is_named_in_the_drift_warnings():
+    lanes = {"agents": {"kit-lane-cli-sonnet46": {"backend": "claude-cli", "model": "anthropic/claude-sonnet-4-6",
+                                                  "pool": "claude-subscription"},
+                        "kit-lane-cli-sonnet55": {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5",
+                                                  "pool": "claude-subscription"}},
+             "roles": {"implementer": {"candidates": ["openclaw-agent:kit-lane-cli-sonnet46",
+                                                      "openclaw-agent:kit-lane-cli-sonnet55"]}}, "second": {}}
+    got = lr.version_drift(lanes, BY_ROLE, IDS)
+    assert [d["agent"] for d in got] == ["kit-lane-cli-sonnet46"]
+    text = lr.drift_warnings(lanes, BY_ROLE)
+    assert any("kit-lane-cli-sonnet46 runs claude-sonnet-4-6" in w and "never for a checker" in w for w in text)
+    assert not any("kit-lane-cli-sonnet55" in w for w in text)

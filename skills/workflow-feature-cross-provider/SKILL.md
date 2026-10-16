@@ -1,6 +1,6 @@
 ---
 name: workflow-feature-cross-provider
-description: "User asks to implement a feature and wants part of the team to run on a different OpenClaw agent or provider (explicit request only; the plain feature workflow is the default). Runs the kit workflow 'feature-cross-provider': Feature workflow with a mixed team. research and plan run on other OpenClaw agents, review runs on another agent in parallel with the Claude Code security audit."
+description: "User asks to implement a feature and wants the team to run on subscription lanes (claude-cli lane agents, and Antigravity agents once that lane is open) under the kit's verified landing path (explicit request only; the plain feature workflow is the default). Runs the kit workflow 'feature-cross-provider': Feature workflow on subscription lanes. Every role is a lane step resolved from the setup lanes table; scope writers are verified in sequence, the implementer integrates, review has a second member and the kit lands the result."
 argument-hint: "[goal]"
 ---
 
@@ -8,7 +8,7 @@ argument-hint: "[goal]"
 
 # Workflow: feature-cross-provider
 
-Feature workflow with a mixed team. research and plan run on other OpenClaw agents, review runs on another agent in parallel with the Claude Code security audit.
+Feature workflow on subscription lanes. Every role is a lane step resolved from the setup lanes table; scope writers are verified in sequence, the implementer integrates, review has a second member and the kit lands the result.
 
 **Goal:** $ARGUMENTS
 
@@ -19,12 +19,17 @@ Feature workflow with a mixed team. research and plan run on other OpenClaw agen
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `research` | `explore` | openclaw-agent (`agy-pro`) | — |
-| `plan` | `planner` | openclaw-agent (`agy-flash`) | — |
-| `architect` | `software-architect` | claude-code | — |
-| `implement` | `implementer` | claude-code | — |
-| `test` | `tester` | claude-code | — |
-| `review` | `code-reviewer` | openclaw-agent (`agy-flash`) | post-test |
-| `security` | `security-auditor` | claude-code | post-test |
-| `verify` | `verifier` | claude-code | — |
+| `research` | `explore` | lane (resolved at dispatch from the setup lanes table) | — |
+| `plan` | `planner` | lane (resolved at dispatch from the setup lanes table) | — |
+| `architect` | `software-architect` | lane (resolved at dispatch from the setup lanes table) | — |
+| `tests` | `tester` | lane (resolved at dispatch from the setup lanes table), write scope: tests/ | scope-writers |
+| `docs` | `doc-writer` | lane (resolved at dispatch from the setup lanes table), write scope: docs/ | scope-writers |
+| `verify-tests` | `verifier` | lane (resolved at dispatch from the setup lanes table) | — |
+| `verify-docs` | `verifier` | lane (resolved at dispatch from the setup lanes table) | — |
+| `implement` | `implementer` | lane (resolved at dispatch from the setup lanes table), integrating writer | — |
+| `verify-implement` | `verifier` | lane (resolved at dispatch from the setup lanes table) | — |
+| `review` | `code-reviewer` | lane (resolved at dispatch from the setup lanes table) | review |
+| `review-second` | `code-reviewer` | lane (resolved at dispatch from the setup lanes table), second member | review |
+| `security` | `security-auditor` | lane (resolved at dispatch from the setup lanes table) | — |
+| `verify-final` | `verifier` | lane (resolved at dispatch from the setup lanes table) | — |
 | `document` | `doc-writer` | claude-code | — |

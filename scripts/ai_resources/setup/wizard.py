@@ -1911,7 +1911,8 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         cands = (proposal["roles"].get(role) or {}).get("candidates") or proposal["second"].get(role) or []
         ui.detail(f"  {role}: {', '.join(cands)}")
     for h in proposal.get("held") or []:
-        ui.warn(f"  {h['role']}: {h['candidate']} {h['reason']}")
+        # held candidates are the default of a fresh install (the agy lane is off): shown, not warned
+        ui.detail(f"  {h['role']}: {h['candidate']} {h['reason']}")
     if preview or dry_run:
         ui.info("Dry run: nothing was enabled or written.")
         return 0
