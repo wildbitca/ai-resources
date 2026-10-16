@@ -310,7 +310,11 @@ def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
     second = {r: keep(list(c or [])) for r, c in (lanes.get("second") or {}).items()}
     second = {r: c for r, c in second.items() if c}
     caps = dict(lanes.get("pool_caps") or {})
-    kw = dict(acks=dict(acks or {}), pool_caps=caps, mode=mode)
+    # A measured headroom snapshot taken at setup (`propose(headroom=...)`); absent means static weights.
+    snap = lanes.get("headroom_weights") or {}
+    weights = {str(k): float(v) for k, v in snap.items()
+               if isinstance(v, (int, float)) and not isinstance(v, bool)} if isinstance(snap, Mapping) else {}
+    kw = dict(acks=dict(acks or {}), pool_caps=caps, mode=mode, weights=weights)
     try:
         table = scoring_lanes.resolve_lanes(by_role, usable, candidates, second, **kw)
         out: dict[str, Any] = {"roles": {}, "second": {}, "blocked": dict(sorted(table.blocked.items()))}
@@ -480,7 +484,8 @@ ACK_TEXT = {
 
 def propose(profile_doc: Mapping[str, Any], by_role: Mapping[str, Any], mode: str, *,
             orchestrators: Any = (), acks: Mapping[str, Any] | None = None,
-            claude_ids: Mapping[str, str] | None = None) -> dict[str, Any]:
+            claude_ids: Mapping[str, str] | None = None,
+            headroom: Mapping[str, float] | None = None) -> dict[str, Any]:
     """The `ProfileState.lanes` a profile proposes, checked with the pure resolver.
 
     Raises `LanesBlockError` (no or malformed block), `scoring.lanes.LaneError` or
@@ -494,8 +499,11 @@ def propose(profile_doc: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
     candidates = {r: list(c.get("candidates") or []) for r, c in frag["roles"].items()}
     scoring_lanes.resolve_lanes(by_role, frag["agents"], candidates, frag["second"],
                                 acks=dict(acks or {}), mode=mode)
-    return {**frag, "orchestrators": sorted({str(o) for o in orchestrators}), "verify_capability": {},
-            "pool_caps": {}, "max_remote_concurrency": 2, "workspace_root": ""}
+    out = {**frag, "orchestrators": sorted({str(o) for o in orchestrators}), "verify_capability": {},
+           "pool_caps": {}, "max_remote_concurrency": 2, "workspace_root": ""}
+    if headroom:
+        out["headroom_weights"] = {str(k): float(v) for k, v in sorted(headroom.items())}
+    return out
 
 
 def lane_roles(lanes: Mapping[str, Any]) -> list[str]:

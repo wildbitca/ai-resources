@@ -5,6 +5,7 @@ import argparse
 import copy
 import platform
 import sys
+import time
 import types
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -1821,8 +1822,10 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         raw = ui.text("Orchestrator agent id(s) that may dispatch lane agents (comma-separated)", default="")
         orchestrators = [o.strip() for o in (raw or "").split(",") if o.strip()]
     try:
+        from ..scoring import headroom_sources
         proposal = lanes_render.propose(doc, _current_by_role(s), s.mode, orchestrators=orchestrators,
-                                        acks=s.profile.lane_acks)
+                                        acks=s.profile.lane_acks,
+                                        headroom=headroom_sources.lane_weights(now_epoch=int(time.time())))
     except lanes_render.LanesBlockError as e:
         ui.error(f"--lanes: {e}")
         return 2
