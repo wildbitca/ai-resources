@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 
 from ai_resources.setup import credentials, detection, state, tools, ui, wizard
+
+pytestmark = pytest.mark.usefixtures("extra_tools_present")   # the selector now knows more CLIs
 from wizard_fakes import ABORT, INTERRUPT, Script
 
 _REAL_OFFER = tools.offer          # the `host` fixture replaces tools.offer with a stub

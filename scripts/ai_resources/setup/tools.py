@@ -32,8 +32,16 @@ class ToolSpec:
     login_hint: str = ""        # printed after a successful install; "" = no login needed
     purpose: str = ""           # one line shown next to the tool in the selector
     login_cmd: tuple[str, ...] = ()   # argv of the tool's own interactive sign-in; () = no sign-in flow
+    doc_url: str = ""           # the vendor's official page the install and sign-in commands were verified against
+    doc_checked: str = ""       # ISO date the commands were last checked against doc_url
+    manual_url: str = ""        # set (with an empty install_cmd) when the vendor has no CLI installer: shown, never run
 
 
+_CHECKED = "2026-10-16"
+
+# Every install and login command below was read from the vendor's own documentation on _CHECKED (doc_url).
+# Package-manager installs are preferred over `curl | bash` where the vendor documents both. A command is never
+# invented: a product without an official CLI installer is listed with `manual_url` and an empty install_cmd.
 TOOLS: dict[str, ToolSpec] = {
     "claude": ToolSpec(
         "claude", "Claude Code",
@@ -42,6 +50,7 @@ TOOLS: dict[str, ToolSpec] = {
         "`claude` login is interactive — run `claude` once and sign in by hand.",
         "Anthropic coding agent; the default cockpit and the Claude subscription lanes",
         ("claude",),
+        "https://code.claude.com/docs/en/setup", _CHECKED,
     ),
     "agy": ToolSpec(
         "agy", "Antigravity CLI (agy)",
@@ -51,12 +60,86 @@ TOOLS: dict[str, ToolSpec] = {
         "Google account by hand.",
         "Antigravity CLI; orchestrator of the antigravity OpenClaw engine",
         ("agy",),
+        "https://antigravity.google/cli/install.sh", _CHECKED,
     ),
     "openclaw": ToolSpec(
         "openclaw", "OpenClaw",
         "npm i -g openclaw",
         lambda: detection.detect_openclaw(),
         purpose="agent gateway the kit configures; no separate sign-in",
+        doc_url="https://docs.openclaw.ai/install", doc_checked=_CHECKED,
+    ),
+    "cursor": ToolSpec(
+        "cursor", "Cursor Agent CLI",
+        "curl https://cursor.com/install -fsS | bash",
+        lambda: detection.detect_cursor_agent(),
+        "Cursor sign-in opens a browser: run `agent login` (or export CURSOR_API_KEY).",
+        "Cursor's terminal coding agent",
+        ("agent", "login"),
+        "https://cursor.com/docs/cli/installation", _CHECKED,
+    ),
+    "gemini": ToolSpec(
+        "gemini", "Gemini CLI",
+        "npm install -g @google/gemini-cli",
+        lambda: detection.detect_gemini_cli(),
+        "Run `gemini` once and choose Sign in with Google (or export GEMINI_API_KEY).",
+        "Google's terminal coding agent",
+        ("gemini",),
+        "https://github.com/google-gemini/gemini-cli#readme", _CHECKED,
+    ),
+    "codex": ToolSpec(
+        "codex", "Codex CLI",
+        "npm install -g @openai/codex",
+        lambda: detection.detect_codex(),
+        "Run `codex login` and complete the browser flow (or use an API key: see the OpenAI Codex auth docs).",
+        "OpenAI's terminal coding agent",
+        ("codex", "login"),
+        "https://github.com/openai/codex#readme", _CHECKED,
+    ),
+    "aider": ToolSpec(
+        "aider", "Aider",
+        "pipx install aider-chat",
+        lambda: detection.detect_aider(),
+        "Aider has no sign-in: export your provider key (for example OPENAI_API_KEY or ANTHROPIC_API_KEY) "
+        "or put it in a .env file. The kit never asks for or stores it.",
+        "pair-programming agent that works with any provider key",
+        (),
+        "https://aider.chat/docs/install.html", _CHECKED,
+    ),
+    "copilot": ToolSpec(
+        "copilot", "GitHub Copilot CLI",
+        "npm install -g @github/copilot",
+        lambda: detection.detect_copilot(),
+        "Run `copilot` once and use the /login slash command (or export GH_TOKEN with the Copilot Requests permission).",
+        "GitHub's terminal coding agent",
+        ("copilot",),
+        "https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli", _CHECKED,
+    ),
+    "continue": ToolSpec(
+        "continue", "Continue.dev CLI",
+        "npm i -g @continuedev/cli",
+        lambda: detection.detect_continue(),
+        "Run `cn login` to authenticate with Continue.",
+        "Continue's terminal coding agent (cn)",
+        ("cn", "login"),
+        "https://github.com/continuedev/continue/blob/main/extensions/cli/README.md", _CHECKED,
+    ),
+    "opencode": ToolSpec(
+        "opencode", "OpenCode",
+        "npm install -g opencode-ai",
+        lambda: detection.detect_opencode(),
+        "Run `opencode auth login` to add a provider key (stored by OpenCode itself).",
+        "open-source terminal coding agent",
+        ("opencode", "auth", "login"),
+        "https://opencode.ai/docs/", _CHECKED,
+    ),
+    "windsurf": ToolSpec(
+        "windsurf", "Windsurf",
+        "",
+        lambda: detection.detect_windsurf(),
+        purpose="desktop IDE; the vendor documents no CLI installer",
+        doc_url="https://docs.windsurf.com/windsurf/getting-started", doc_checked=_CHECKED,
+        manual_url="https://docs.windsurf.com/windsurf/getting-started",
     ),
 }
 
@@ -169,6 +252,9 @@ def _run_install(cmd: str, timeout: int = 300) -> tuple[bool, str]:
 def install_one(tool_id: str, s: state.SetupState) -> bool:
     """Run one tool's official installer, tracking any rc-file lines it appended."""
     spec = TOOLS[tool_id]
+    if not spec.install_cmd:
+        ui.warn(f"{spec.label} has no CLI installer the kit can run; install it by hand: {spec.manual_url}")
+        return False
     before = _read_rc_files() if tool_id == "agy" else {}
     with ui.spinner(f"Installing {spec.label}"):
         ok, out = _run_install(spec.install_cmd)
@@ -193,7 +279,7 @@ def install_one(tool_id: str, s: state.SetupState) -> bool:
 
 
 def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, *,
-          assume_yes: bool = False, dry_run: bool = False) -> list[str]:
+          assume_yes: bool = False, dry_run: bool = False, preselect: tuple[str, ...] = ()) -> list[str]:
     """Offer to install missing required tools; return the ids actually installed.
 
     The question is a checkbox over every tool the kit knows (installed ones are shown disabled, missing ones
@@ -206,12 +292,16 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
     Without a terminal (stdin is a pipe) and without `--yes` nothing is asked and nothing is installed: a line
     piped in is not consent (kit 2.2d, 6d).
 
-    A dry run offers nothing and installs nothing, with or without `--yes`: it says what it would have asked.
+    A dry run installs nothing, with or without `--yes`. With `--yes`, without a terminal or unattended it says what
+    it would have asked; on a terminal without `--yes` it PREVIEWS the real selector and prints, for what was ticked,
+    the exact command it would have run, so the operator can try the selector safely.
+
+    `preselect` names the ids a caller's context strictly requires; only those start ticked (default: none).
     """
     s.tracking.install_tools_answer = None           # migration: nothing is replayed, nothing is persisted
     missing = missing_tools(ids)
     absent = _not_installed()
-    can_sign_in = [t for t in TOOLS if t not in absent and TOOLS[t].login_cmd]
+    can_sign_in = [t for t in TOOLS if t not in _missing_all() and TOOLS[t].login_cmd]
     if not missing and not absent and not can_sign_in:
         return []
     if assume_yes and not missing:
@@ -220,6 +310,9 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
     labels = ", ".join(TOOLS[t].label for t in offered)
 
     if dry_run:
+        if not assume_yes and not ui.is_non_interactive() and ui.stdin_is_a_terminal():
+            _preview_selection(absent, preselect)
+            return []
         ui.info(f"DRY RUN: would offer {labels}; nothing is installed"
                 + (" (--yes does not install in a dry run)." if assume_yes else "."))
         return []
@@ -239,9 +332,9 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
         # Asked once per run: a second call on the same state object reuses the answer given a moment ago.
         picked = getattr(s, "_install_answer_this_run", None)
         if picked is None:
-            picked = _ask_selection(missing)
+            picked = _ask_selection(absent, preselect)
             s._install_answer_this_run = picked           # an instance attribute: never serialised
-        chosen = [t for t in TOOLS if t in picked and t in _not_installed()]
+        chosen = [t for t in TOOLS if t in picked and t in absent]
         sign_in = [t for t in TOOLS if f"login:{t}" in picked and TOOLS[t].login_cmd and t not in chosen]
 
     installed: list[str] = []
@@ -252,27 +345,57 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
     return installed
 
 
-def _not_installed() -> list[str]:
+def _missing_all() -> list[str]:
+    """Every known tool that is not installed, manual-install ones included."""
     return missing_tools(tuple(TOOLS))
 
 
-def _ask_selection(missing: list[str] | None = None) -> list[str]:
-    """One checkbox over every known tool: missing ones selectable (none pre-ticked: Enter installs nothing), installed ones
-    shown as installed and disabled, plus an explicit, unticked sign-in row per installed tool with a login."""
-    absent = set(_not_installed())
+def _not_installed() -> list[str]:
+    """Tools that are not installed AND have an installer the kit can run (manual-install ones are excluded)."""
+    return [t for t in _missing_all() if TOOLS[t].install_cmd]
+
+
+def _selector_choices(absent: list[str], missing_all: list[str]) -> list:
     choices: list = []
     for tid, spec in TOOLS.items():
         what = f" - {spec.purpose}" if spec.purpose else ""
         if tid in absent:
             choices.append(ui.Choice(f"{spec.label}{what}", value=tid))
+        elif tid in missing_all:
+            choices.append(ui.Choice(f"{spec.label}{what}", value=tid,
+                                     disabled=f"manual install: {spec.manual_url}"))
         else:
             choices.append(ui.Choice(f"{spec.label} (installed){what}", value=tid, disabled="installed"))
     for tid, spec in TOOLS.items():
-        if tid not in absent and spec.login_cmd:
+        if tid not in missing_all and spec.login_cmd:
             choices.append(ui.Choice(f"Sign in to installed tools: {spec.label}", value=f"login:{tid}"))
+    return choices
+
+
+def _ask_selection(absent: list[str] | None = None, preselect: tuple[str, ...] = ()) -> list[str]:
+    """One checkbox over every known tool: missing ones selectable (nothing is pre-ticked except `preselect`, so Enter
+    installs nothing by default), installed ones shown as installed and disabled, manual-install ones disabled with
+    the vendor URL, plus an explicit, unticked sign-in row per installed tool with a login."""
+    missing_all = _missing_all()
+    if absent is None:
+        absent = [t for t in missing_all if TOOLS[t].install_cmd]
     picked = ui.checkbox("Select the tools to install (Space ticks, Enter confirms; none is fine)",
-                         choices, default=[])
+                         _selector_choices(absent, missing_all),
+                         default=[t for t in preselect if t in absent])
     return list(picked or [])
+
+
+def _preview_selection(absent: list[str], preselect: tuple[str, ...]) -> None:
+    """Dry run on a terminal: show the real selector, then say what would run. Nothing is installed or signed in."""
+    picked = _ask_selection(absent, preselect)
+    chosen = [t for t in TOOLS if t in picked and t in absent]
+    for t in chosen:
+        ui.info(f"DRY RUN: would install {TOOLS[t].label} with `{TOOLS[t].install_cmd}`; nothing is installed.")
+    for t in TOOLS:
+        if f"login:{t}" in picked and TOOLS[t].login_cmd:
+            ui.info(f"DRY RUN: would sign in to {TOOLS[t].label} with `{_login_command(TOOLS[t])}`; nothing is run.")
+    if not chosen:
+        ui.info("DRY RUN: no tool selected; nothing is installed.")
 
 
 def _login_command(spec: ToolSpec) -> str:
@@ -289,7 +412,11 @@ def _run_login(tool_id: str) -> bool:
     try:
         found = spec.detect()
         if found.installed and found.binary_path:
-            argv[0] = found.binary_path
+            sibling = Path(found.binary_path).parent / argv[0]    # `agent` ships beside `cursor-agent`
+            if Path(found.binary_path).name == argv[0]:
+                argv[0] = found.binary_path
+            elif sibling.is_file():
+                argv[0] = str(sibling)
     except Exception:  # noqa: BLE001 - detection is best effort here; fall back to the bare name on PATH
         pass
     try:

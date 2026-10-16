@@ -14,6 +14,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources.setup import detection, litellm, state, tools, ui, wizard  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("extra_tools_present")   # the selector now knows more CLIs
+
 
 @pytest.fixture(autouse=True)
 def _nothing_real(monkeypatch):

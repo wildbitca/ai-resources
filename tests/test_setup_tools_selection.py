@@ -15,6 +15,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources.setup import detection, state, tools, ui  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("extra_tools_present")   # the selector now knows more CLIs
+
 INSTALL = "Select the tools to install"
 LOGIN = "Sign in now"
 
@@ -146,8 +148,10 @@ def test_no_terminal_for_the_login_prints_the_command_instead_of_running_it(monk
 
 
 def test_dry_run_installs_and_asks_nothing(monkeypatch):
+    """Without a terminal a dry run asks nothing (with a terminal it previews the selector: see test_setup_tool_catalog)."""
     _detect(monkeypatch)
     rig = Rig(monkeypatch)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: False)
     assert tools.offer(state.SetupState(), dry_run=True) == []
     assert rig.asked == [] and rig.installed == [] and rig.logins == []
 

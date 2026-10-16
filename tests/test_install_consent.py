@@ -25,6 +25,8 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources import openclaw_host as host  # noqa: E402
+
+pytestmark = pytest.mark.usefixtures("extra_tools_present")   # the selector now knows more CLIs
 from ai_resources.setup import detection, litellm, state, tools, ui, wizard  # noqa: E402
 from ai_resources.setup.cockpits import _openclaw_voice as voice  # noqa: E402
 
@@ -105,7 +107,8 @@ def test_a_saved_no_does_not_stop_an_interactive_run_from_asking_again(monkeypat
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
     asked: list[str] = []
     monkeypatch.setattr(ui, "checkbox", lambda msg, choices, default=None, **k: (
-        asked.append(msg) or [c.value for c in choices if not c.disabled]) if msg.startswith("Select") else [])
+        asked.append(msg) or [c.value for c in choices if not c.disabled and not str(c.value).startswith("login:")])
+        if msg.startswith("Select") else [])
     ran = []
     monkeypatch.setattr(tools, "install_one", lambda t, s: ran.append(t) or True)
     s = state.SetupState()

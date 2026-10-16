@@ -802,7 +802,12 @@ def _step2_cockpits(s: state.SetupState) -> int:
         rows.append((status, det.name, info))
     ui.detected_table(rows)
 
-    # Persist detection results
+    # Offer to install the AI CLIs that are missing, right after the scan and before the "no cockpits" check, so a
+    # machine with none can still install one here. Re-detecting afterwards lets the later steps see what was installed.
+    installed_tools = tools.offer(s, assume_yes=_ASSUME_YES, dry_run=_DRY_RUN)
+    if installed_tools:
+        detected = detection.detect_all_cockpits()
+
     installed_count = 0
     for cid, det in detected.items():
         cs = s.cockpits.get(cid) or state.CockpitState()
@@ -823,18 +828,6 @@ def _step2_cockpits(s: state.SetupState) -> int:
         f"Configuring {installed_count} detected cockpit(s). "
         f"To add another, install it via your usual method, then re-run `ai-resources setup`."
     )
-
-    # Offer to install claude, agy and openclaw when missing — the antigravity OpenClaw
-    # engine (step 7) needs all three, and re-detecting here means step 7 sees them.
-    installed_tools = tools.offer(s, assume_yes=_ASSUME_YES, dry_run=_DRY_RUN)
-    if installed_tools:
-        for cid, det in detection.detect_all_cockpits().items():
-            cs = s.cockpits.get(cid) or state.CockpitState()
-            cs.installed = det.installed
-            cs.version = det.version
-            cs.binary_path = det.binary_path
-            s.cockpits[cid] = cs
-
     return 0
 
 

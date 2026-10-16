@@ -101,3 +101,19 @@ def _no_host_command_snapshots(monkeypatch):
     except Exception:
         return
     monkeypatch.setattr(lanes_cmd, "SNAPSHOT_RUNNER", lambda argv: (127, "", ""), raising=False)
+
+
+EXTRA_TOOL_DETECTORS = (("detect_cursor_agent", "Cursor Agent CLI"), ("detect_gemini_cli", "Gemini CLI"),
+                        ("detect_codex", "Codex CLI"), ("detect_aider", "Aider"),
+                        ("detect_copilot", "GitHub Copilot CLI"), ("detect_continue", "Continue.dev CLI"),
+                        ("detect_opencode", "OpenCode"), ("detect_windsurf", "Windsurf"))
+
+
+@pytest.fixture
+def extra_tools_present(monkeypatch):
+    """The tool selector knows more CLIs than claude/agy/openclaw. Tests written for those three keep the other
+    detectors off the host (no real `--version` subprocess) by reporting them installed, so they never change
+    what is selectable. Tests about the extra CLIs set their own detectors after this fixture."""
+    from ai_resources.setup import detection
+    for fn, name in EXTRA_TOOL_DETECTORS:
+        monkeypatch.setattr(detection, fn, lambda n=name: detection.Detected(n, True, "1.0", "/usr/bin/x"))

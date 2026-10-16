@@ -17,6 +17,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources.setup import detection, state, tools, ui  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("extra_tools_present")   # the selector now knows more CLIs
+
 
 def _installed(name: str, path: str = "/usr/bin/x") -> detection.Detected:
     return detection.Detected(name, True, "1.0", path)
