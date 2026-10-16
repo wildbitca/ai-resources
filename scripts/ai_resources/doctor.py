@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
+from typing import Any, Callable
 
 from . import verify
 from .setup import state, detection, credentials, litellm, providers, smoke, ui
@@ -52,6 +54,72 @@ def _check_antigravity_quota(s: state.SetupState) -> int:
         else:
             ui.detail(message)
     return issues
+
+
+# MCP children under the gateway unit (ADR-0007 OQ-5 follow-up FU-1). Read-only: nothing is ever killed.
+MCP_CHILD_WARN = 24
+_MCP_SERVERS = ("supabase", "engram")
+_MCP_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(" + "|".join(_MCP_SERVERS) + r")(?![A-Za-z0-9])")
+
+
+def count_mcp_children(control_group: str, *, cgroup_root: Path | None = None,
+                       proc_root: Path | None = None) -> dict[str, int]:
+    """Processes in the unit's cgroup tree whose command line names a known MCP server, per server."""
+    from . import openclaw_host
+    cgroup_root = cgroup_root or openclaw_host.CGROUP_ROOT
+    proc_root = proc_root or openclaw_host.PROC_ROOT
+    unit_dir = cgroup_root / control_group.lstrip("/")
+    counts: dict[str, int] = {}
+    for pid in openclaw_host._unit_pids(unit_dir, None):
+        try:
+            raw = (proc_root / str(pid) / "cmdline").read_bytes()
+        except OSError:
+            continue
+        cmd = raw.replace(b"\0", b" ").decode("utf-8", "replace")
+        if not cmd.strip().split(" ")[0] or "openclaw-gateway" in cmd.split(" ")[0]:
+            continue
+        m = _MCP_RE.search(cmd)
+        if m:
+            counts[m.group(1).lower()] = counts.get(m.group(1).lower(), 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _check_mcp_children(*, runner: "Callable[..., tuple[int, str]] | None" = None,
+                        cgroup_root: Path | None = None, proc_root: Path | None = None,
+                        threshold: int = MCP_CHILD_WARN) -> int:
+    """Doctor sub-check 4e. Returns the number of new issues (0 or 1); never raises, never kills a process.
+
+    `tools.deny: ["bundle-mcp"]` on the kit-lane agents is expected to stop new lane children from loading
+    MCP servers, but its effect on live children is NOT proven (only the isolated merge gate can show it)."""
+    from . import openclaw_host
+    run = runner or openclaw_host.default_runner
+    try:
+        rc, out = run(["systemctl", "--user", "show", openclaw_host.GATEWAY_UNIT, "-p", "ControlGroup"],
+                      timeout=10)
+        cg = ""
+        for line in (out or "").splitlines():
+            k, _, v = line.partition("=")
+            if rc == 0 and k.strip() == "ControlGroup":
+                cg = v.strip()
+        if not cg:
+            ui.detail("MCP children: gateway unit not running or systemd unavailable; skipped.")
+            return 0
+        counts = count_mcp_children(cg, cgroup_root=cgroup_root, proc_root=proc_root)
+    except Exception as e:  # noqa: BLE001 - a read-only probe never fails doctor
+        ui.detail(f"MCP children: could not be counted ({type(e).__name__}); skipped.")
+        return 0
+    total = sum(counts.values())
+    if total <= threshold:
+        ui.detail(f"MCP children under the gateway unit: {total} (warn above {threshold}).")
+        return 0
+    per = ", ".join(f"{k} {v}" for k, v in counts.items())
+    ui.warn(f"{total} MCP server child processes under {openclaw_host.GATEWAY_UNIT} ({per}); "
+            f"warn threshold {threshold}.")
+    ui.detail("Remedy (operator, when no turn is running): systemctl --user restart "
+              f"{openclaw_host.GATEWAY_UNIT}  -- doctor does not kill or restart anything.")
+    ui.detail("The kit scopes kit-lane-* agents with tools.deny bundle-mcp; its effect on already running "
+              "children is not proven (isolated merge gate only).")
+    return 1
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -245,6 +313,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # 4d. Antigravity quota: about the engine, not the plugin, so the answer above does not gate it.
     if s.openclaw.antigravity_applied:
         issues += _check_antigravity_quota(s)
+
+    # 4e. MCP server children under the gateway unit (only on a host that enabled subscription lanes).
+    if state.lanes_enabled(s):
+        issues += _check_mcp_children()
 
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")
