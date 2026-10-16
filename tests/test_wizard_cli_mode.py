@@ -174,6 +174,7 @@ def test_no_key_is_asked_in_cli_mode(monkeypatch, tmp_path):
     script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:cli",
                        "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: SUB,
+                       "Enable subscription lanes?": False,
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
     script.install(monkeypatch)
     s = state.SetupState()
@@ -301,3 +302,31 @@ def test_an_unknown_backend_is_still_refused(monkeypatch):
     monkeypatch.setattr(ui, "error", errors.append)
     assert wizard._preflight_selection(_args(backend="nope"), state.SetupState()) == 2
     assert "litellm, openrouter or cli" in errors[0]
+
+
+# --- saved claude-native profile and interactive lanes ---------------------------------------------------
+def test_picking_cli_replaces_a_saved_claude_native_profile(monkeypatch):
+    s = state.SetupState()
+    s.profile = state.ProfileState(name=wizard.SINGLE_MODEL_DEFAULT_PROFILE)
+    _ask_mode(monkeypatch, "multi-model:cli", s)
+    assert s.cli_team is True and s.profile.name == SUB
+
+
+def test_picking_cli_keeps_a_customized_profile(monkeypatch):
+    s = state.SetupState()
+    s.profile = state.ProfileState(name=wizard.SINGLE_MODEL_DEFAULT_PROFILE, customized=True)
+    _ask_mode(monkeypatch, "multi-model:cli", s)
+    assert s.profile.name == wizard.SINGLE_MODEL_DEFAULT_PROFILE
+
+
+def test_cli_mode_asks_about_lanes_interactively_and_default_off(monkeypatch):
+    s = state.SetupState()
+    s.cli_team = True
+    s.profile = state.ProfileState(name=SUB)
+    asked = []
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "section", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "confirm", lambda m, default=True: asked.append((m, default)) or False)
+    assert wizard._step_lanes(s, _args()) == 0
+    assert asked == [("Enable subscription lanes?", False)]
+    assert s.profile.lanes is None

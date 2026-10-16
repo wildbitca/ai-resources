@@ -36,6 +36,15 @@ SINGLE_MODEL_DEFAULT_PROFILE = "claude-native"
 CLI_TEAM_DEFAULT_PROFILE = "subscription-claude-55"
 
 
+def _reset_profile_for_cli(s: state.SetupState, was_cli: bool) -> None:
+    """Moving from a non-CLI mode to the CLI team: an uncustomized claude-native/empty profile is the old
+    starting point, not a choice, so it gives way to the subscription team profile."""
+    if was_cli or not getattr(s, "cli_team", False):
+        return
+    if not s.profile.customized and s.profile.name in ("", SINGLE_MODEL_DEFAULT_PROFILE):
+        s.profile = state.ProfileState(name=CLI_TEAM_DEFAULT_PROFILE)
+
+
 def _single_default_profile(s: state.SetupState) -> str:
     """The profile a single-model-shaped state starts from: the subscription team in CLI mode."""
     return CLI_TEAM_DEFAULT_PROFILE if getattr(s, "cli_team", False) else SINGLE_MODEL_DEFAULT_PROFILE
@@ -343,7 +352,9 @@ def _preflight_selection(args: argparse.Namespace, s: state.SetupState) -> int:
 
     def apply_backend() -> None:
         if backend == "cli":
+            was_cli = bool(getattr(s, "cli_team", False))
             s.mode, s.cli_team = "single-model", True
+            _reset_profile_for_cli(s, was_cli)
         elif backend:
             s.mode, s.backend, s.cli_team = "multi-model", backend, False
     try:
@@ -598,7 +609,7 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     ]
 
 
-def _edit_choices(args: argparse.Namespace) -> list:
+def _edit_choices(args: argparse.Namespace, s: "state.SetupState | None" = None) -> list:
     """The steps the review may re-open: asked in this run, rewindable, no change made on this machine."""
     if _RUNNER is None:
         return []
@@ -606,7 +617,7 @@ def _edit_choices(args: argparse.Namespace) -> list:
     lane_flags = any(getattr(args, f, False) for f in ("lanes", "no_lanes", "lanes_dry_run",
                                                        "lanes_antigravity", "no_lanes_antigravity"))
     for spec in _RUNNER.editable():
-        if spec.id == "lanes" and not lane_flags:
+        if spec.id == "lanes" and not lane_flags and not (s is not None and s.cli_team):
             continue                                   # without a lanes flag that step asks nothing
         out.append(ui.Choice(spec.edit_label, value=spec.id))
     return out
@@ -636,7 +647,7 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
     if ui.is_non_interactive():
         return 0
     choices = [model_selection.APPLY, model_selection.CHANGE]
-    edit = _edit_choices(args)
+    edit = _edit_choices(args, s)
     if edit:
         choices.append(ui.Choice("Edit a section\u2026", value=EDIT_SECTION))
     choices.append(model_selection.CANCEL)
@@ -731,11 +742,13 @@ def _step1_mode(s: state.SetupState) -> int:
         ui.warn("Setup cancelled.")
         return 130
 
+    was_cli = bool(getattr(s, "cli_team", False))
     if picked == "single-model":
         s.mode, s.cli_team = "single-model", False
     elif picked == "multi-model:cli":
         # No gateway: the mode stays single-model-shaped, the flag names the subscription team (ADR-0008).
         s.mode, s.cli_team = "single-model", True
+        _reset_profile_for_cli(s, was_cli)
         return 0
     else:
         s.mode, s.cli_team = "multi-model", False
@@ -1850,6 +1863,9 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     want = bool(getattr(args, "lanes", False)) or agy_on
     unwant = bool(getattr(args, "no_lanes", False))
     preview = bool(getattr(args, "lanes_dry_run", False))
+    if (s.cli_team and not (want or unwant or preview or agy_off) and not ui.is_non_interactive()):
+        # CLI mode offers the lanes; off by default, Antigravity stays behind --lanes-antigravity.
+        want = bool(ui.confirm("Enable subscription lanes?", default=False))
     if (want and unwant) or (agy_on and agy_off):
         ui.error("--lanes, --lanes-antigravity, --no-lanes and --no-lanes-antigravity contradict each other")
         return 2
