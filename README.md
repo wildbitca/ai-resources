@@ -32,6 +32,7 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 | Command | Purpose |
 |---------|---------|
 | `ai-resources setup` | Guided 10-step wizard (progress rail, key hints; `Ctrl-B` back, `Ctrl-C`/`Ctrl-D` cancel, review with "Edit a section..."): cockpit detection as one list (installed tools with their version, the others tickable to install, Windsurf manual; Enter with nothing ticked skips) and a sign-in screen for the newly installed ones only; `--dry-run` previews it, LiteLLM gateway, providers, profiles, per-cockpit config. `ai-resources setup --help` lists the steps and keys; `NO_COLOR` selects plain ASCII output. |
+| `ai-resources setup --backend cli` | Multi-model via your CLI subscriptions (Claude Code / Antigravity / Codex plans): no gateway, nothing billed per token, no keys asked. The same choice is the second option of the wizard's mode question. |
 | `ai-resources setup --dry-run` | Preview all generated configs as a masked unified diff and run smoke tests without writing anything to disk. |
 | `ai-resources setup --lanes` / `--no-lanes` / `--lanes-dry-run` | Enable, clear or preview subscription lanes (ADR-0007; off by default). |
 | `ai-resources setup --non-interactive` | Re-apply saved answers without prompting (useful in CI or scripted re-runs). |

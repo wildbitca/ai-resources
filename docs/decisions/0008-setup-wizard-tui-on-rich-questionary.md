@@ -48,6 +48,16 @@
 - The real key path (a pipe input driving questionary) is tested only where questionary is installed; CI installs the Formula pins and the newest releases (matrix), so those cases run there; doubles cover the rest. The 2026-10 real-library run found the checkbox default being dropped.
 - The wizard's other prompts (doctor, executors, models, cockpits) still return `None` on Ctrl-C. Moving them to the scope is a follow-up.
 
+## Addendum: mode question with a CLI-subscriptions option
+
+The mode question gains "multi-model via your CLI subscriptions" (second of four). Decision: the mode stays `single-model`
+and an additive `cli_team` flag (absent from the file while false) names the team, rather than a new `backend: cli`
+under `multi-model`. Reason: every gateway code path (steps 3, 4, 5, 8, smoke, executors rendering, doctor, rerender)
+tests `mode == "multi-model"`, so a single-model-shaped state cannot reach any of them, and an old file keeps its
+meaning with no migration. `setup --backend cli` is the flag spelling. Moving from a gateway mode runs the multi-model
+cleanup offer; moving between this mode and single-model never touches gateway artifacts. Rollback: remove the option,
+the flag and the key (an unknown `cli_team` key in a state file is ignored by older readers).
+
 ## Rollback
 
 Each change is its own commit. Reverting the runner, the header, Back, the review, the validators or the log tail and diff leaves the Ctrl-C fix in place. There is no state schema change and no migration.

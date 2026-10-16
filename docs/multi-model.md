@@ -67,6 +67,25 @@ On a re-run every question starts from your saved answer. A Ctrl-C while a cockp
 terminal escapes and masked.
 Design: [ADR-0008](decisions/0008-setup-wizard-tui-on-rich-questionary.md).
 
+### Choosing the mode
+
+Step 2 asks for the mode. There are four options:
+
+| Option | When | Gateway | Billing |
+|---|---|---|---|
+| single-model | Each cockpit talks to its own provider | none | your plan |
+| multi-model via your CLI subscriptions | A host with subscriptions only (Claude Code, Antigravity `agy`, Codex plans) | none | your plans, nothing per token |
+| multi-model via OpenRouter | Per-role routing with one key | hosted | per token, to the gateway |
+| multi-model via LiteLLM | Per-role routing, local models, per-key budgets | the kit installs one | per token, to the gateway |
+
+The CLI-subscriptions mode asks for no key, installs no gateway and shows no gateway warning (a gateway credential
+would replace the claude.ai login; this mode never sets one). Step 6 starts from `subscription-claude-55` and step 6c
+offers the subscription lanes ([below](#subscription-lanes)): Antigravity stays opt-in, off by default and gated, and
+the Codex lane stays held. `ai-resources setup --backend cli` picks it without a prompt. Stored as `mode:
+single-model` plus `cli_team: true` in `setup-state.yaml` (the key is absent otherwise, so older files are unchanged).
+Moving from a gateway mode to it offers the same cleanup as multi-model to single-model; moving between it and
+single-model leaves gateway artifacts alone.
+
 ## Mental model
 
 Claude Code and Aider are the cockpits the kit points at a gateway; the gateway
@@ -226,6 +245,9 @@ with an explicit `cwd`, completion signalling and an agy-backed agent have not b
 verification tables are empty). Treat the layer as unusable until they are.
 
 ## Subscription lanes
+
+Reachable from the "multi-model via your CLI subscriptions" mode (see [Choosing the mode](#choosing-the-mode)) as
+well as from single-model.
 
 A lane is a place a role can run: Claude Code, or an OpenClaw agent (`kit-lane-*`) on the Claude CLI backend, so a
 role can use the Claude subscription login in its own process with its own worktree. Lanes are a separate pass

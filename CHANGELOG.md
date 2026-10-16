@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Added
+
+- **Setup mode: "multi-model via your CLI subscriptions".** The mode question (step 2) now has four options: single-
+  model, multi-model via your CLI subscriptions, via OpenRouter, via LiteLLM. The new one spreads roles across the
+  subscription CLIs (Claude Code, Antigravity, Codex when allowed) with no gateway, nothing billed per token, and no
+  gateway credential replacing the claude.ai login, so the gateway warning is not shown for it. Gateway, provider and
+  credential steps are skipped (no key is asked), step 6 starts from `subscription-claude-55`, and the lanes step
+  (6c) works as before (Antigravity stays opt-in and gated, Codex stays held). Representation: `mode` stays
+  `single-model` and an additive `cli_team` flag in `setup-state.yaml` (absent while false) names the team, so an old
+  state file loads unchanged and no gateway code path can engage. `setup --backend cli` selects it non-interactively.
+  Switching from a gateway mode offers the same cleanup as multi-model to single-model; switching between CLI mode and
+  single-model touches no gateway artifact. The review shows `Mode: multi-model (CLI subscriptions)`.
+
 ### Fixed
 
 - **`setup` said OpenClaw was not installed when it was.** Detection looked only at the process PATH (and only `agy`

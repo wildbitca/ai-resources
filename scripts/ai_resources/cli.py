@@ -125,8 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_st.add_argument("--smoke-path", dest="smoke_path", default="",
                       choices=["", "claude-cli", "litellm", "openrouter", "direct"],
                       help="How `models update` probes a new model")
-    p_st.add_argument("--backend", default="", choices=["", "litellm", "openrouter"],
-                      help="Gateway for multi-model (litellm or openrouter); omitted: keep the saved mode")
+    p_st.add_argument("--backend", default="", choices=["", "litellm", "openrouter", "cli"],
+                      help="Gateway for multi-model (litellm or openrouter), or `cli` for multi-model via your CLI "
+                           "subscriptions (Claude Code / Antigravity / Codex plans: no gateway, no per-token "
+                           "billing, no keys asked); omitted: keep the saved mode")
     p_st.add_argument("--cockpits", default="",
                       help="Comma-separated cockpits to configure (fails if the matrix cannot serve the models)")
     p_st.add_argument("--allow-unverified", dest="allow_unverified", action="store_true",

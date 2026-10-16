@@ -249,6 +249,12 @@ regenerated `openclaw.json` ("clobbered") unless its fingerprint key and last-go
 - **FU-4** an `effort` field. Shipped as read-only metadata (2.2.0): a profile `role_effort:` map (planner `high`, implementer `high`; other lane roles `default`) is copied into `resolved.roles.<role>.effort`. It never changes the model, the lane or the band.
 - **FU-5** live headroom for lane placement (OQ-4). 2.2.0: `scoring.headroom_sources.lane_weights` reads a measured value from local state only (the operator's own Claude status-line sidecar for `claude-subscription`, the kit counters file for other pools; no network, no paid API). A fresh reading scales the pool weight; absent, unreadable or stale readings fall back to the static weights. The snapshot is taken at setup (`lanes.headroom_weights`) so `lanes.yaml` stays deterministic. Candidates in the same pool still tie (no quota gain); the reading separates candidates across pools.
 
+## Note: reaching the lanes from the setup mode question
+
+The setup mode question has an explicit "multi-model via your CLI subscriptions" option (ADR-0008 addendum): no
+gateway, step 6 defaults to `subscription-claude-55`, and step 6c offers the lanes. Nothing about the lanes changes:
+they stay disabled until enabled, the Antigravity lane stays opt-in and gated, the Codex lane stays held.
+
 ## Related
 
 - [ADR-0001](0001-model-pins-and-auto-update.md), [ADR-0002](0002-provider-agnostic-model-selection.md), [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md), [ADR-0005](0005-cross-provider-role-dispatch.md), [ADR-0006](0006-scored-team-composition.md)

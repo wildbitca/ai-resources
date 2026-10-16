@@ -133,7 +133,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ui.section(1, 6, "Configuration state")
     if state.state_path().is_file():
         ui.ok(f"setup-state.yaml present at {state.state_path()}")
-        ui.detail(f"Mode: {s.mode}")
+        ui.detail(f"Mode: {s.mode}" + (" (CLI subscriptions)" if getattr(s, "cli_team", False) else ""))
     else:
         ui.error("setup-state.yaml missing — run `ai-resources setup`")
         issues += 1

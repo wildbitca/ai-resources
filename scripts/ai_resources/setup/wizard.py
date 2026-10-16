@@ -32,6 +32,13 @@ from .. import __version__, repo_root, roles_policy, selection as selection_mod
 
 TOTAL_STEPS = 10
 SINGLE_MODEL_DEFAULT_PROFILE = "claude-native"
+# The default for "multi-model via your CLI subscriptions" (ADR-0008): the subscription team, no gateway.
+CLI_TEAM_DEFAULT_PROFILE = "subscription-claude-55"
+
+
+def _single_default_profile(s: state.SetupState) -> str:
+    """The profile a single-model-shaped state starts from: the subscription team in CLI mode."""
+    return CLI_TEAM_DEFAULT_PROFILE if getattr(s, "cli_team", False) else SINGLE_MODEL_DEFAULT_PROFILE
 # The multi-model recommendation: Claude only, three tiers, and valid in every compatibility cell it can
 # reach without --allow-unverified (tests/test_profile_validity.py derives that from the matrix).
 # Gateway-agnostic, so it is the recommendation for either backend. `measured-best` stays available as the
@@ -325,10 +332,20 @@ def _preflight_selection(args: argparse.Namespace, s: state.SetupState) -> int:
     if not wanted:
         return 0
     backend = getattr(args, "backend", "") or None
-    if backend and backend not in ("litellm", "openrouter"):
-        ui.error(f"--backend must be litellm or openrouter, not {backend!r}")
+    if backend and backend not in ("litellm", "openrouter", "cli"):
+        ui.error(f"--backend must be litellm, openrouter or cli, not {backend!r}")
         return 2
-    mode, eff_backend = ("multi-model", backend) if backend else (s.mode, s.backend)
+    # `cli` is no gateway: single-model shaped (nothing gateway-side can engage), flagged as the CLI team.
+    if backend == "cli":
+        mode, eff_backend = "single-model", s.backend
+    else:
+        mode, eff_backend = ("multi-model", backend) if backend else (s.mode, s.backend)
+
+    def apply_backend() -> None:
+        if backend == "cli":
+            s.mode, s.cli_team = "single-model", True
+        elif backend:
+            s.mode, s.backend, s.cli_team = "multi-model", backend, False
     try:
         accounts = model_selection.detect_accounts()
         cands = model_selection.candidates(accounts, _discover_for_wizard)
@@ -346,8 +363,7 @@ def _preflight_selection(args: argparse.Namespace, s: state.SetupState) -> int:
         ui.error(f"--cockpits: unknown cockpit(s) {', '.join(unknown)}")
         return 2
     if selection is None and not requested:
-        if backend:
-            s.mode, s.backend = "multi-model", backend
+        apply_backend()
         return 0
     actions = model_selection.plan_table(selection, mode, eff_backend, requested or detected,
                                          allow_unverified=bool(getattr(args, "allow_unverified", False)))
@@ -358,8 +374,7 @@ def _preflight_selection(args: argparse.Namespace, s: state.SetupState) -> int:
         for a in bad:
             ui.error(f"--cockpits {a.cockpit}: {a.reason} (set --backend or --allow-unverified where the matrix allows it)")
         return 2
-    if backend:
-        s.mode, s.backend = "multi-model", backend
+    apply_backend()
     if selection is not None:
         s.set_selection(selection)
     if requested:
@@ -540,7 +555,10 @@ def _credential_state(s: state.SetupState) -> str:
 def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     """One row per section for the review screen, from the setup state."""
     multi = s.mode == "multi-model"
-    if not multi:
+    cli_team = not multi and getattr(s, "cli_team", False)
+    if cli_team:
+        gateway = "none (CLI subscriptions)"
+    elif not multi:
         gateway = "none (single-model)"
     elif s.backend == "openrouter":
         gateway = "openrouter (hosted)"
@@ -567,7 +585,8 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     else:
         lifecycle = "none"
     return [
-        ("Mode", f"{s.mode}" + (f" ({s.backend})" if multi else "")),
+        ("Mode", "multi-model (CLI subscriptions)" if cli_team
+         else f"{s.mode}" + (f" ({s.backend})" if multi else "")),
         ("Gateway", gateway),
         ("Providers", provs),
         ("Credentials", _credential_state(s)),
@@ -696,23 +715,30 @@ def _step1_mode(s: state.SetupState) -> int:
     choices = [
         ui.Choice("single-model — Each cockpit talks to its own provider; Claude subagents pick "
                   "Claude models by role", value="single-model", description=" "),
+        ui.Choice("multi-model via your CLI subscriptions — Claude Code / Antigravity / Codex plans, no "
+                  "gateway, nothing billed per token (the choice for a host with subscriptions only)",
+                  value="multi-model:cli", description=" "),
         ui.Choice("multi-model via OpenRouter — Per-role routing, one key, nothing to install",
                   value="multi-model:openrouter", description=" "),
         ui.Choice("multi-model via LiteLLM — Per-role routing through a gateway this kit installs "
                   "and supervises (adds local models and per-key budgets)",
                   value="multi-model:litellm", description=" "),
     ]
-    default = ("single-model" if s.mode == "single-model"
-               else f"multi-model:{getattr(s, 'backend', 'litellm')}")
+    default = (("multi-model:cli" if getattr(s, "cli_team", False) else "single-model")
+               if s.mode == "single-model" else f"multi-model:{getattr(s, 'backend', 'litellm')}")
     picked = ui.select("Choose mode:", choices, default=default)
     if picked is None:
         ui.warn("Setup cancelled.")
         return 130
 
     if picked == "single-model":
-        s.mode = "single-model"
+        s.mode, s.cli_team = "single-model", False
+    elif picked == "multi-model:cli":
+        # No gateway: the mode stays single-model-shaped, the flag names the subscription team (ADR-0008).
+        s.mode, s.cli_team = "single-model", True
+        return 0
     else:
-        s.mode = "multi-model"
+        s.mode, s.cli_team = "multi-model", False
         s.backend = picked.split(":", 1)[1]
 
     if s.mode == "multi-model":
@@ -738,11 +764,12 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
     a clean slate.
     """
     ui.console().print()
+    target = "CLI subscriptions mode" if s.cli_team else "single-model"
     if hasattr(ui.console(), "rule"):
-        ui.console().rule("[bold yellow]Switching to single-model — cleanup[/]",
+        ui.console().rule(f"[bold yellow]Switching to {target} — cleanup[/]",
                           style="yellow", align="left")
     else:
-        ui.info("Switching to single-model — cleanup")
+        ui.info(f"Switching to {target} — cleanup")
 
     actions = litellm.plan_multi_model_teardown(prev_s)
     if not actions:
@@ -750,7 +777,7 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
         return 0
 
     ui.info("The previous setup installed the following artifacts. "
-            "Switching to single-model will undo them:")
+            f"Switching to {target} will undo them:")
     for _aid, desc in actions:
         ui.detail(f"  • {desc}")
     ui.console().print()
@@ -780,6 +807,8 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
     s.litellm = state.LiteLLMState()
     s.providers = {}
     s.profile = state.ProfileState(name=SINGLE_MODEL_DEFAULT_PROFILE, customized=False)
+    if s.cli_team:
+        s.profile.name = CLI_TEAM_DEFAULT_PROFILE
     s.tracking = state.InstallTracking(
         tools_installed_by_us=list(s.tracking.tools_installed_by_us),
         tool_install_methods=dict(s.tracking.tool_install_methods),
@@ -1678,7 +1707,7 @@ def _step6_single_model_profile(s: state.SetupState) -> int:
     if s.profile.name in available:
         default = s.profile.name
     else:
-        default = SINGLE_MODEL_DEFAULT_PROFILE if SINGLE_MODEL_DEFAULT_PROFILE in available else available[0]
+        default = _single_default_profile(s) if _single_default_profile(s) in available else available[0]
     chosen = ui.select("How should kit subagents pick their Claude model?", choices, default=default)
     if chosen is None:
         return 130
@@ -1699,7 +1728,7 @@ def _single_model_executors(s: state.SetupState) -> dict:
     """Executors for single-model mode: the chosen single-model profile, else the default one."""
     available = profiles.list_profiles(mode="single-model")
     base_name = s.profile.name if s.profile.name in available else (
-        SINGLE_MODEL_DEFAULT_PROFILE if SINGLE_MODEL_DEFAULT_PROFILE in available else "")
+        _single_default_profile(s) if _single_default_profile(s) in available else "")
     if not base_name:
         return {"by_role": {}}
     base = profiles.load_profile(base_name)
@@ -1843,7 +1872,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     if not (want or preview):
         return 0
     name = profiles.saved_or_recommended(s.profile.name) if s.mode == "multi-model" else (
-        s.profile.name or SINGLE_MODEL_DEFAULT_PROFILE)
+        s.profile.name or _single_default_profile(s))
     try:
         doc = profiles.load_profile(name)
     except FileNotFoundError:
