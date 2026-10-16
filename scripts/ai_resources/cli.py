@@ -45,6 +45,30 @@ Environment:
 """
 
 
+_SETUP_EPILOG = """\
+The wizard walks through 10 steps, each with a header, a progress rail and one line of key hints:
+  1 Tools and cockpits    2 Setup mode        3 LiteLLM gateway   4 Provider backends  5 Credentials
+  6 Models and roles (6a Models, 6b Role assignment, 6c Subscription lanes)
+  7 Cockpit configuration 8 Lifecycle         9 Review and apply  10 Verification
+
+Keys:
+  Enter   confirm the highlighted answer
+  Ctrl-B  go back one step (only in steps that have changed nothing on this machine yet)
+  Ctrl-C  cancel; Ctrl-D also cancels. Nothing past the last confirmed step is applied.
+Review (step 9) lists one row per section (credentials show only `set` or `missing`) and has
+"Edit a section..." to re-open an earlier step, then returns to the review. Apply, Change models and
+Cancel are unchanged.
+
+Unattended and preview runs:
+  --non-interactive   use saved answers, never prompt (a prompt with no default aborts)
+  --dry-run           render the targets and print a masked unified diff; nothing is written
+Subscription lanes (ADR-0007, off by default): --lanes enables, --no-lanes clears, --lanes-dry-run
+shows the proposed table and writes nothing, --lanes-orchestrator ID names the dispatching agent.
+
+Output: NO_COLOR (set and non-empty) or a non-UTF-8 stream selects ASCII glyphs and no colour.
+"""
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     return wizard.run(args)
 
@@ -80,6 +104,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_st = sub.add_parser(
         "setup",
         help="Interactive setup wizard: cockpits, LiteLLM, providers, profiles",
+        description="Guided setup wizard: cockpits, LiteLLM, providers, profiles, models and lanes.",
+        epilog=_SETUP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_st.add_argument("--non-interactive", action="store_true",
                       help="Use saved answers without prompting (for CI)")
