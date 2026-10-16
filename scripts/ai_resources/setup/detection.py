@@ -20,8 +20,14 @@ class Detected(NamedTuple):
 
 
 def _run(cmd: list[str], timeout: int = 5) -> tuple[int, str]:
+    env = None
+    if cmd and os.path.isabs(cmd[0]):
+        # An npm-installed CLI starts with `#!/usr/bin/env node`; `node` lives beside it, but a service unit's
+        # minimal PATH does not list that directory, so the probe would fail on a tool that is installed.
+        env = dict(os.environ)
+        env["PATH"] = os.pathsep.join([os.path.dirname(cmd[0]), env.get("PATH", "")]).rstrip(os.pathsep)
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
         return r.returncode, (r.stdout + r.stderr).strip()
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return -1, ""
@@ -36,138 +42,36 @@ def _version_from(output: str, pattern: str = r"(\d+\.\d+(?:\.\d+)?)") -> str:
     return m.group(1) if m else ""
 
 
-# --- cockpits ------------------------------------------------------------------
-def detect_claude_code() -> Detected:
-    p = _which("claude")
-    if not p:
-        return Detected("Claude Code", False, "", "",
-                        "https://docs.anthropic.com/claude/docs/claude-code (downloads page)")
-    rc, out = _run(["claude", "--version"])
-    return Detected("Claude Code", rc == 0, _version_from(out), p)
-
-
-def detect_cursor_agent() -> Detected:
-    """Cursor's terminal agent (`cursor-agent`, also linked as `agent`); the installer drops it in ~/.local/bin."""
-    p = _which_extra("cursor-agent")
-    if not p:
-        return Detected("Cursor Agent CLI", False, "", "", "curl https://cursor.com/install -fsS | bash")
-    rc, out = _run([p, "--version"])
-    return Detected("Cursor Agent CLI", rc == 0, _version_from(out), p)
-
-
-def detect_cursor() -> Detected:
-    # Cursor is a GUI app on macOS; check for its install path. The terminal agent counts as Cursor too.
-    agent = detect_cursor_agent()
-    if agent.installed:
-        return Detected("Cursor", True, agent.version, agent.binary_path)
-    p = _which("cursor")
-    macapp = Path("/Applications/Cursor.app")
-    if not p and macapp.exists():
-        return Detected("Cursor", True, "", str(macapp))
-    if not p:
-        return Detected("Cursor", False, "", "",
-                        "https://cursor.sh (download installer)")
-    rc, out = _run(["cursor", "--version"])
-    return Detected("Cursor", rc == 0, _version_from(out), p)
-
-
-def detect_gemini_cli() -> Detected:
-    p = _which("gemini")
-    if not p:
-        return Detected("Gemini CLI", False, "", "",
-                        "npm i -g @google/gemini-cli")
-    rc, out = _run(["gemini", "--version"])
-    return Detected("Gemini CLI", rc == 0, _version_from(out), p)
-
-
-def detect_codex() -> Detected:
-    p = _which("codex")
-    if not p:
-        return Detected("Codex CLI", False, "", "",
-                        "npm i -g @openai/codex")
-    rc, out = _run(["codex", "--version"])
-    return Detected("Codex CLI", rc == 0, _version_from(out), p)
-
-
-def detect_aider() -> Detected:
-    p = _which("aider")
-    if not p:
-        return Detected("Aider", False, "", "",
-                        "pipx install aider-chat")
-    rc, out = _run(["aider", "--version"])
-    return Detected("Aider", rc == 0, _version_from(out), p)
-
-
-def detect_copilot() -> Detected:
-    # GitHub Copilot CLI: the standalone `copilot` binary (npm @github/copilot) or the older `gh copilot` extension
-    cp = _which("copilot")
-    if cp:
-        rc, out = _run(["copilot", "--version"])
-        if rc == 0:
-            return Detected("GitHub Copilot CLI", True, _version_from(out), cp)
-    p = _which("gh")
-    if not p:
-        return Detected("GitHub Copilot CLI", False, "", "",
-                        "brew install gh && gh extension install github/gh-copilot")
-    rc, out = _run(["gh", "copilot", "--version"])
-    if rc != 0:
-        return Detected("GitHub Copilot CLI", False, "", p,
-                        "gh extension install github/gh-copilot")
-    return Detected("GitHub Copilot CLI", True, _version_from(out), p, variant="gh-extension")
-
-
-def detect_windsurf() -> Detected:
-    macapp = Path("/Applications/Windsurf.app")
-    if macapp.exists():
-        return Detected("Windsurf", True, "", str(macapp))
-    return Detected("Windsurf", False, "", "",
-                    "https://codeium.com/windsurf (download installer)")
-
-
-def detect_continue() -> Detected:
-    p = _which("cn")
-    if p:
-        rc, out = _run(["cn", "--version"])
-        return Detected("Continue.dev CLI", True, _version_from(out), p)
-    return Detected("Continue.dev CLI", False, "", "",
-                    "https://docs.continue.dev/getting-started")
-
-
-def detect_opencode() -> Detected:
-    p = _which("opencode")
-    if not p:
-        return Detected("OpenCode", False, "", "",
-                        "npm i -g opencode-ai")
-    rc, out = _run(["opencode", "--version"])
-    return Detected("OpenCode", rc == 0, _version_from(out), p)
-
-
-def detect_openclaw() -> Detected:
-    p = _which("openclaw")
-    if not p:
-        return Detected("OpenClaw", False, "", "", "npm i -g openclaw")
-    # `--version` prints "OpenClaw 2026.9.4 (sha)"; a slow start is normal.
-    rc, out = _run(["openclaw", "--version"], timeout=30)
-    return Detected("OpenClaw", rc == 0, _version_from(out, r"(\d+\.\d+\.\d+)"), p)
+_SYSTEM_BIN_DIRS: tuple[Path, ...] = (Path("/home/linuxbrew/.linuxbrew/bin"), Path("/opt/homebrew/bin"),
+                                      Path("/usr/local/bin"))
 
 
 def _extra_bin_dirs() -> list[Path]:
-    """Directories a login shell would have on PATH but a systemd/launchd unit might not.
+    """Directories a login shell would have on PATH but a systemd/launchd unit or a minimal PATH might not.
 
-    `~/.local/bin` is where the official installers for claude and agy default to, and
-    fnm (a common Node version manager) keeps the active Node's bin dir under
-    ~/.local/share/fnm/node-versions/<ver>/installation/bin, neither of which a
-    non-login service unit necessarily inherits.
+    Homebrew (Linuxbrew, Apple Silicon, Intel, `$HOMEBREW_PREFIX`), `~/.local/bin` (the official claude, agy and
+    cursor installers), the npm/pnpm/bun/cargo global bins, and the active fnm Node's bin dir
+    (~/.local/share/fnm/node-versions/<ver>/installation/bin).
     """
     home = Path.home()
-    dirs = [home / ".local" / "bin"]
+    dirs: list[Path] = []
+    prefix = os.environ.get("HOMEBREW_PREFIX", "").strip()
+    if prefix:
+        dirs.append(Path(prefix) / "bin")
+    dirs += [*_SYSTEM_BIN_DIRS, home / ".local" / "bin"]
+    npm_prefix = (os.environ.get("NPM_CONFIG_PREFIX") or os.environ.get("npm_config_prefix") or "").strip()
+    if npm_prefix:
+        dirs.append(Path(npm_prefix) / "bin")
+    dirs += [home / ".npm-global" / "bin", home / ".local" / "share" / "pnpm", home / ".cargo" / "bin",
+             home / ".bun" / "bin"]
     fnm_root = home / ".local" / "share" / "fnm" / "node-versions"
     if fnm_root.is_dir():
         for version_dir in sorted(fnm_root.iterdir(), reverse=True):
             bin_dir = version_dir / "installation" / "bin"
             if bin_dir.is_dir():
                 dirs.append(bin_dir)
-    return dirs
+    seen: set[Path] = set()
+    return [d for d in dirs if not (d in seen or seen.add(d))]
 
 
 def _which_extra(binary: str) -> str:
@@ -185,14 +89,104 @@ def _which_extra(binary: str) -> str:
     return ""
 
 
+def _probe(label: str, binary: str, hint: str, *, timeout: int = 5, pattern: str | None = None) -> Detected:
+    """Resolve `binary` (PATH, then the extra dirs) and ask it for its version by absolute path.
+
+    A binary that exists but does not answer `--version` (non-zero exit, timeout, a shebang interpreter off PATH) is
+    still INSTALLED, with an unknown version: the tool is there, only the probe failed.
+    """
+    p = _which_extra(binary)
+    if not p:
+        return Detected(label, False, "", "", hint)
+    rc, out = _run([p, "--version"], timeout=timeout)
+    return Detected(label, True, _version_from(out, pattern) if pattern else _version_from(out), p)
+
+
+# --- cockpits ------------------------------------------------------------------
+def detect_claude_code() -> Detected:
+    return _probe("Claude Code", "claude", "https://docs.anthropic.com/claude/docs/claude-code (downloads page)")
+
+
+def detect_cursor_agent() -> Detected:
+    """Cursor's terminal agent (`cursor-agent`, also linked as `agent`); the installer drops it in ~/.local/bin."""
+    return _probe("Cursor Agent CLI", "cursor-agent", "curl https://cursor.com/install -fsS | bash")
+
+
+def detect_cursor() -> Detected:
+    # Cursor is a GUI app on macOS; check for its install path. The terminal agent counts as Cursor too.
+    agent = detect_cursor_agent()
+    if agent.installed:
+        return Detected("Cursor", True, agent.version, agent.binary_path)
+    p = _which_extra("cursor")
+    macapp = Path("/Applications/Cursor.app")
+    if not p and macapp.exists():
+        return Detected("Cursor", True, "", str(macapp))
+    if not p:
+        return Detected("Cursor", False, "", "", "https://cursor.sh (download installer)")
+    rc, out = _run([p, "--version"])
+    return Detected("Cursor", True, _version_from(out), p)
+
+
+def detect_gemini_cli() -> Detected:
+    """Gemini CLI is RETIRED for personal accounts (2026-06-18; replaced by agy). Detected only so an existing
+    install can be shown as an informational row; it is never offered for installation."""
+    return _probe("Gemini CLI", "gemini", "retired for personal accounts: use the Antigravity CLI (agy)")
+
+
+def detect_codex() -> Detected:
+    return _probe("Codex CLI", "codex", "npm i -g @openai/codex")
+
+
+def detect_aider() -> Detected:
+    return _probe("Aider", "aider", "pipx install aider-chat")
+
+
+def detect_copilot() -> Detected:
+    # GitHub Copilot CLI: the standalone `copilot` binary (npm @github/copilot) or the older `gh copilot` extension
+    cp = _which_extra("copilot")
+    if cp:
+        rc, out = _run([cp, "--version"])
+        if rc == 0:
+            return Detected("GitHub Copilot CLI", True, _version_from(out), cp)
+    p = _which_extra("gh")
+    if not p:
+        if cp:
+            return Detected("GitHub Copilot CLI", True, "", cp)
+        return Detected("GitHub Copilot CLI", False, "", "",
+                        "brew install gh && gh extension install github/gh-copilot")
+    rc, out = _run([p, "copilot", "--version"])
+    if rc != 0:
+        if cp:
+            return Detected("GitHub Copilot CLI", True, "", cp)
+        return Detected("GitHub Copilot CLI", False, "", p,
+                        "gh extension install github/gh-copilot")
+    return Detected("GitHub Copilot CLI", True, _version_from(out), p, variant="gh-extension")
+
+
+def detect_windsurf() -> Detected:
+    macapp = Path("/Applications/Windsurf.app")
+    if macapp.exists():
+        return Detected("Windsurf", True, "", str(macapp))
+    return Detected("Windsurf", False, "", "",
+                    "https://codeium.com/windsurf (download installer)")
+
+
+def detect_continue() -> Detected:
+    return _probe("Continue.dev CLI", "cn", "https://docs.continue.dev/getting-started")
+
+
+def detect_opencode() -> Detected:
+    return _probe("OpenCode", "opencode", "npm i -g opencode-ai")
+
+
+def detect_openclaw() -> Detected:
+    # `--version` prints "OpenClaw 2026.10.4 (383c124)"; a slow start is normal.
+    return _probe("OpenClaw", "openclaw", "npm i -g openclaw", timeout=30, pattern=r"(\d+\.\d+\.\d+)")
+
+
 def detect_agy() -> Detected:
     """Detect the Antigravity CLI (agy), the antigravity OpenClaw engine's orchestrator."""
-    p = _which_extra("agy")
-    if not p:
-        return Detected("Antigravity CLI (agy)", False, "", "",
-                        "curl -fsSL https://antigravity.google/cli/install.sh | bash")
-    rc, out = _run([p, "--version"])
-    return Detected("Antigravity CLI (agy)", rc == 0, _version_from(out), p)
+    return _probe("Antigravity CLI (agy)", "agy", "curl -fsSL https://antigravity.google/cli/install.sh | bash")
 
 
 def detect_all_cockpits() -> dict[str, Detected]:

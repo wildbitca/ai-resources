@@ -338,6 +338,6 @@ def test_cursor_agent_and_the_copilot_binary_are_detected_without_a_real_probe(m
     monkeypatch.setattr(detection, "_run", lambda cmd, timeout=5: (0, "2026.10.14"))
     assert detection.detect_cursor_agent().installed is True
     assert detection.detect_cursor().installed is True            # the agent counts as the Cursor cockpit
-    monkeypatch.setattr(detection, "_which", lambda b: "/usr/bin/copilot" if b == "copilot" else "")
+    monkeypatch.setattr(detection, "_which_extra", lambda b: "/usr/bin/copilot" if b == "copilot" else "")
     found = detection.detect_copilot()
     assert found.installed and found.binary_path == "/usr/bin/copilot"

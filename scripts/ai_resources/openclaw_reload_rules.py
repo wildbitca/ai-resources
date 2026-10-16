@@ -613,9 +613,9 @@ def locate_package_json() -> "Path | None":
     gateway is under memory pressure, and a None version makes every key restart-required (E3).
     """
     import os
-    import shutil
     from pathlib import Path
-    found = shutil.which("openclaw")
+    from .setup import detection
+    found = detection._which_extra("openclaw")      # PATH first, then Homebrew / npm-global / fnm bins
     if not found:
         return None
     pj = Path(os.path.realpath(found)).parent / "package.json"
