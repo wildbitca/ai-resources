@@ -53,12 +53,12 @@ The review at step 9 shows one row per answer (credentials only as `set` or `mis
 `Edit a section...` to re-open an earlier step; the run continues from there and returns to the review. It is shown
 on the "Use a kit profile" path too (a non-interactive run has nobody to ask and skips it). The kit's own
 configuration (cockpit settings, `executors.yaml`, `litellm.yaml`, `lanes.yaml`) is not written before you choose
-Apply. Step 1 shows a checkbox of every tool the kit knows (`claude`, `agy`, `openclaw`): installed ones are shown
-as installed, the missing ones are listed unticked (Enter installs nothing), you tick the ones you want or none, and only the ticked
-ones are installed. For each newly installed tool that has a sign-in (`claude`, `agy`) you are then asked whether to
-sign in now; the tool's own interactive login runs on your terminal (the kit never sees or stores a credential), and
-without a terminal or with `--yes` the command is printed for you to run later. An already installed tool is signed
-in to only if you tick its `Sign in to installed tools` row. Some earlier steps do act on the machine when you confirm them: tool, pipx and LiteLLM installs, the
+Apply. Step 1 shows ONE list of every tool the kit knows: installed ones with their version (not selectable), the
+missing ones unticked (Enter with nothing ticked skips and installs nothing), and manual-install ones as information.
+Only the ticked ones are installed. For each tool installed in that run that has a sign-in you are then asked
+(a separate, pre-ticked `Sign in now?`) whether to sign in; the tool's own interactive login runs on your terminal
+(the kit never sees or stores a credential), and without a terminal or with `--yes` the command is printed for you
+to run later. Tools that were already installed only get a dim line with the command to run later. Some earlier steps do act on the machine when you confirm them: tool, pipx and LiteLLM installs, the
 LiteLLM image pull, provider credentials and the remote master key written to the env file, the gateway state
 save, and the multi-model cleanup when you leave that mode. A cancel lists whatever already happened.
 `--dry-run` installs and writes nothing and ends with a masked diff per file and `DRY RUN: nothing was written`.
@@ -795,12 +795,17 @@ lets it follow again). The kit never writes your overlay on its own and never ap
 
 ## Tools the setup can install
 
-Step 1 of `ai-resources setup` scans the AI CLIs and then shows a checkbox with every one the kit knows: installed
-ones are disabled, missing ones are selectable (nothing is pre-ticked, so Enter installs nothing, and none is a
-valid answer), and Windsurf is listed as `manual install` because the vendor documents no CLI installer. Each
-install shows its exact command and needs the tick in the same run; nothing is stored or replayed. After an install the
-tool's own sign-in can run on the terminal (stdio inherited, nothing captured, recorded only on exit 0); the kit never
-asks for or stores an API key. `setup --dry-run` on a terminal previews this selector and prints what it would run.
+Step 1 of `ai-resources setup` scans the AI CLIs and shows them as one list (the scan and the selector are the same
+list): installed ones carry their version and cannot be ticked, missing ones show their exact install command and are
+selectable (nothing is pre-ticked; Enter with nothing ticked skips and installs nothing), and Windsurf is listed as
+`manual install: <url>` because the vendor documents no CLI installer. Install needs the tick in the same run; nothing
+is stored or replayed. The plain scan list is printed only where no list can be shown (`--yes`, `--non-interactive`,
+no terminal, a dry run without a terminal). After an install, a separate `Sign in now?` screen covers only the tools
+installed in this run (stdio inherited, nothing captured). A login subcommand (`codex login`) is recorded as signed
+in on exit 0; a bare `claude` or `agy` is recorded as "started sign-in" because the operator finishes inside the
+tool. The legacy `gh copilot` extension is shown as `gh copilot extension` and signs in through `gh auth login`; the
+Cursor login runs only the `agent` binary beside the detected `cursor-agent`. The kit never asks for or stores an
+API key. `setup --dry-run` on a terminal previews this list and prints what it would run.
 `--yes` installs only the missing `claude`, `agy` and `openclaw`.
 
 Install and sign-in commands were checked against the vendor's documentation on 2026-10-16 (the same URL and date are
@@ -809,7 +814,7 @@ recorded in `scripts/ai_resources/setup/tools.py`, and a test fails if one is mi
 | Tool | Install | Sign-in | Documentation |
 |---|---|---|---|
 | Claude Code | `curl -fsSL https://claude.ai/install.sh \| bash` | `claude` | https://code.claude.com/docs/en/setup |
-| Antigravity CLI | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | `agy` | https://antigravity.google/cli/install.sh |
+| Antigravity CLI | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | `agy` | https://antigravity.google/docs/getting-started?tab=cli |
 | OpenClaw | `npm i -g openclaw` | none | https://docs.openclaw.ai/install |
 | Cursor Agent CLI | `curl https://cursor.com/install -fsS \| bash` | `agent login` | https://cursor.com/docs/cli/installation |
 | Gemini CLI | `npm install -g @google/gemini-cli` | `gemini`, then Sign in with Google | https://github.com/google-gemini/gemini-cli#readme |

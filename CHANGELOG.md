@@ -8,6 +8,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ### Changed
 
+- **Setup step 1 shows one list instead of a scan followed by a selector.** Installed tools appear with their version
+  and cannot be ticked, the ones the kit can install are tickable (each shows its exact command), and Windsurf is an
+  informational `manual install: <url>` row. Enter with nothing ticked skips and installs nothing (the prompt says so).
+  The plain scan list is still printed where no selector is shown (`--yes`, `--non-interactive`, no terminal, dry run
+  without a terminal). Sign-in left the selector: a separate pre-ticked `Sign in now?` screen follows the install and
+  covers only the tools installed in that run; already installed tools get one dim line with the command to run later.
+  The `Sign in to installed tools` rows are gone.
+- **Sign-in follow-up hardening.** The Cursor login never resolves a bare `agent` through PATH (the sibling of the
+  detected `cursor-agent` is used, or the command is printed); a bare `claude`/`agy` is recorded as "started sign-in"
+  (exit 0 does not prove a login); the legacy `gh copilot` extension is shown distinctly and never runs bare
+  `copilot`; the dry-run preview and the sign-in answers are asked once per run; the `agy` doc URL is the vendor's
+  human-readable page.
+
 - **Setup step 1 now offers every AI CLI the scan detects, not only three.** The selector listed only Claude Code,
   Antigravity CLI and OpenClaw, so on a machine that had those the operator saw the cockpit scan with red crosses
   (Cursor, Gemini CLI, Codex CLI, Aider, GitHub Copilot CLI, Continue.dev CLI, OpenCode, Windsurf) and nothing to
@@ -23,8 +36,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 - **Setup step 1 lets you choose which tools to install.** The single `Install missing tools now?` yes/no is replaced
   by a checkbox over every tool the kit knows (Claude Code, Antigravity CLI, OpenClaw) with what each is for.
   Installed tools are shown as installed and cannot be reinstalled, nothing is pre-ticked (an installer pipes
-  a remote script into a shell, so Enter installs nothing), installed tools with a sign-in get an explicit
-  `Sign in to installed tools` row, and selecting none is valid. `--yes` still installs the missing required set without asking; `--dry-run`,
+  a remote script into a shell, so Enter installs nothing), and selecting none is valid. `--yes` still installs the missing required set without asking; `--dry-run`,
   `--non-interactive` and a run without a terminal behave as before. Consent is unchanged: pressing Enter
   installs nothing; you must tick what you want.
 
@@ -36,8 +48,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 - **Optional sign-in after an install.** `ToolSpec` gains `purpose` and `login_cmd` (both optional). A newly
   installed tool with a sign-in (`claude`, `agy`) is offered `Sign in now?`; the tool's own login runs only on a
   terminal, with inherited stdio (nothing captured, no credential handled by the kit), and is recorded as an action.
-  Without a terminal, or under `--yes`, the command is printed instead. An installed tool is signed in to only when
-  ticked under `Sign in to installed tools`.
+  Without a terminal, or under `--yes`, the command is printed instead. An already installed tool is not offered a
+  sign-in; its command is printed as a dim line.
 
 ## [2.2.0] — 2026-10-16 — subscription lanes, the guided setup wizard and the hardening around them
 
