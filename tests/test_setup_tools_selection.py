@@ -65,13 +65,13 @@ def test_a_subset_installs_exactly_that_subset(monkeypatch):
     assert rig.installed == ["agy"]
 
 
-def test_every_known_tool_is_listed_and_the_missing_required_ones_are_preticked(monkeypatch):
+def test_every_known_tool_is_listed_and_nothing_is_preticked(monkeypatch):
     _detect(monkeypatch, claude=True)
     rig = Rig(monkeypatch, install_pick=[])
     tools.offer(state.SetupState())
     msg, values, default = rig.asked[0]
     assert set(tools.TOOLS) <= set(values)
-    assert default == ["agy", "openclaw"]
+    assert not default, "nothing is pre-ticked: Enter must not run a remote installer"
 
 
 def test_selecting_none_installs_nothing_and_asks_no_sign_in(monkeypatch):

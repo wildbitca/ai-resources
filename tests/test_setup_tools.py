@@ -47,9 +47,18 @@ def test_an_already_installed_tool_is_never_offered_or_reinstalled(monkeypatch):
     monkeypatch.setattr(detection, "detect_openclaw", lambda: _installed("OpenClaw"))
     assert tools.missing_tools() == []
 
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    seen = {}
+
+    def box(msg, choices, default=None, **k):
+        seen["selectable"] = [c.value for c in choices if not c.disabled and not str(c.value).startswith("login:")]
+        return []
+    monkeypatch.setattr(ui, "checkbox", box)
     s = state.SetupState()
     installed = tools.offer(s)
     assert installed == []
+    assert seen["selectable"] == []                      # nothing installed can be ticked for install
     assert s.tracking.tools_installed_by_us == []
 
 
@@ -306,15 +315,40 @@ def test_pressing_enter_at_the_install_prompt_installs_nothing(monkeypatch):
     seen = {}
 
     def enter(msg, choices, default=None, **k):
-        seen["default"] = False
-        return []                                        # nothing ticked: the safe answer
+        seen["default"] = default
+        return list(default or [])                       # what Enter does: accept the pre-ticked rows
     monkeypatch.setattr(ui, "checkbox", enter)
     ran = []
     monkeypatch.setattr(tools, "install_one", lambda tool_id, s: ran.append(tool_id) or True)
     s = state.SetupState()
     assert tools.offer(s) == []
-    assert seen["default"] is False and ran == []
+    assert seen["default"] == [] and ran == []        # nothing is pre-ticked, so Enter installs nothing
     assert s.tracking.install_tools_answer is None
+
+
+def test_ticking_a_tool_installs_only_that_tool(monkeypatch):
+    _all_missing(monkeypatch)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(ui, "checkbox", lambda msg, choices, default=None, **k: ["agy"])
+    ran = []
+    monkeypatch.setattr(tools, "install_one", lambda tool_id, s: ran.append(tool_id) or True)
+    monkeypatch.setattr(tools, "_sign_in_flow", lambda *a, **k: None)
+    assert tools.offer(state.SetupState()) == ["agy"] and ran == ["agy"]
+
+
+def test_sign_in_row_is_offered_when_every_required_tool_is_installed(monkeypatch):
+    for fn, name in (("detect_claude_code", "Claude Code"), ("detect_agy", "agy"), ("detect_openclaw", "OpenClaw")):
+        monkeypatch.setattr(detection, fn, lambda n=name: detection.Detected(n, True, "1", "/x/" + n))
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    seen = {}
+
+    def box(msg, choices, default=None, **k):
+        seen["titles"] = [c.title for c in choices]
+        return []
+    monkeypatch.setattr(ui, "checkbox", box)
+    assert tools.offer(state.SetupState()) == []
+    assert any(t.startswith("Sign in to installed tools") for t in seen["titles"])
 
 
 def test_yes_installs_without_asking_and_does_not_persist_the_answer(monkeypatch):

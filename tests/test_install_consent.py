@@ -2,7 +2,7 @@
 
 Every installer prompt of the kit, with its default:
 
-  1. tools.offer            tool selector (checkbox)            curl | bash, npm        required set pre-ticked
+  1. tools.offer            tool selector (checkbox)            curl | bash, npm        nothing ticked
   2. wizard pipx menu       `How should I install pipx?`        brew/apt/dnf/pip        Skip (since 2.2)
   3. wizard LiteLLM pipx    `Install LiteLLM via pipx ...?`     pipx install            No (was Yes)
   4. wizard LiteLLM venv    `Create venv ... pip install ...?`  pip install              No (was Yes)
@@ -48,13 +48,12 @@ def _all_missing(monkeypatch):
 
 
 def _enter(monkeypatch):
-    """What pressing Enter does at every confirm: the default. The tool selector is answered with nothing ticked
-    (its Enter would take the pre-ticked required set, which the selection tests cover)."""
+    """What pressing Enter does at every prompt: accept the default (the selector's default is its pre-ticked set)."""
     asked: list[tuple[str, bool]] = []
 
     def checkbox(msg, choices, default=None, **k):
-        asked.append((msg, False))
-        return []
+        asked.append((msg, default))
+        return list(default or [])
     monkeypatch.setattr(ui, "checkbox", checkbox)
 
     def confirm(msg, default=True):
@@ -74,7 +73,7 @@ def test_enter_at_the_tools_prompt_installs_nothing_and_stores_nothing(monkeypat
     monkeypatch.setattr(tools, "install_one", lambda t, s: ran.append(t) or True)
     s = state.SetupState()
     assert tools.offer(s) == [] and ran == []
-    assert asked and asked[0][1] is False
+    assert asked and asked[0][1] == []
     assert s.tracking.install_tools_answer is None
 
 
@@ -106,7 +105,7 @@ def test_a_saved_no_does_not_stop_an_interactive_run_from_asking_again(monkeypat
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
     asked: list[str] = []
     monkeypatch.setattr(ui, "checkbox", lambda msg, choices, default=None, **k: (
-        asked.append(msg) or list(default or [])) if msg.startswith("Select") else [])
+        asked.append(msg) or [c.value for c in choices if not c.disabled]) if msg.startswith("Select") else [])
     ran = []
     monkeypatch.setattr(tools, "install_one", lambda t, s: ran.append(t) or True)
     s = state.SetupState()

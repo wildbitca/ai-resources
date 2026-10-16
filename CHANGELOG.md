@@ -10,10 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 - **Setup step 1 lets you choose which tools to install.** The single `Install missing tools now?` yes/no is replaced
   by a checkbox over every tool the kit knows (Claude Code, Antigravity CLI, OpenClaw) with what each is for.
-  Installed tools are shown as installed and cannot be reinstalled, the missing required ones are pre-ticked, and
-  selecting none is valid. `--yes` still installs the missing required set without asking; `--dry-run`,
-  `--non-interactive` and a run without a terminal behave as before. Because the required set is now pre-ticked,
-  pressing Enter on a terminal installs it (it used to install nothing); untick to decline.
+  Installed tools are shown as installed and cannot be reinstalled, nothing is pre-ticked (an installer pipes
+  a remote script into a shell, so Enter installs nothing), installed tools with a sign-in get an explicit
+  `Sign in to installed tools` row, and selecting none is valid. `--yes` still installs the missing required set without asking; `--dry-run`,
+  `--non-interactive` and a run without a terminal behave as before. Consent is unchanged: pressing Enter
+  installs nothing; you must tick what you want.
 
 ### Added
 

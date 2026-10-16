@@ -196,8 +196,8 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
           assume_yes: bool = False, dry_run: bool = False) -> list[str]:
     """Offer to install missing required tools; return the ids actually installed.
 
-    The question is a checkbox over every tool the kit knows (installed ones are shown disabled, missing required
-    ones are pre-ticked, none is a valid answer), followed by an optional sign-in for what was just installed.
+    The question is a checkbox over every tool the kit knows (installed ones are shown disabled, missing ones
+    are listed unticked, so Enter installs nothing; none is a valid answer), followed by an optional sign-in for what was just installed.
     Consent is per run and is never stored. `assume_yes` (`ai-resources setup --yes`) says yes for this run only; an
     unattended (`--non-interactive`) run without `--yes` installs nothing. An answer saved by an older kit
     (`install_tools_answer`) is ignored and cleared: a "yes" given once must not authorise a later run, and a
@@ -210,12 +210,17 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
     """
     s.tracking.install_tools_answer = None           # migration: nothing is replayed, nothing is persisted
     missing = missing_tools(ids)
-    if not missing:
+    absent = _not_installed()
+    can_sign_in = [t for t in TOOLS if t not in absent and TOOLS[t].login_cmd]
+    if not missing and not absent and not can_sign_in:
         return []
-    labels = ", ".join(TOOLS[t].label for t in missing)
+    if assume_yes and not missing:
+        return []
+    offered = missing or absent or can_sign_in
+    labels = ", ".join(TOOLS[t].label for t in offered)
 
     if dry_run:
-        ui.info(f"DRY RUN: would offer to install {labels}; nothing is installed"
+        ui.info(f"DRY RUN: would offer {labels}; nothing is installed"
                 + (" (--yes does not install in a dry run)." if assume_yes else "."))
         return []
 
@@ -251,8 +256,8 @@ def _not_installed() -> list[str]:
     return missing_tools(tuple(TOOLS))
 
 
-def _ask_selection(missing: list[str]) -> list[str]:
-    """One checkbox over every known tool: missing ones selectable (the required ones pre-ticked), installed ones
+def _ask_selection(missing: list[str] | None = None) -> list[str]:
+    """One checkbox over every known tool: missing ones selectable (none pre-ticked: Enter installs nothing), installed ones
     shown as installed and disabled, plus an explicit, unticked sign-in row per installed tool with a login."""
     absent = set(_not_installed())
     choices: list = []
@@ -266,7 +271,7 @@ def _ask_selection(missing: list[str]) -> list[str]:
         if tid not in absent and spec.login_cmd:
             choices.append(ui.Choice(f"Sign in to installed tools: {spec.label}", value=f"login:{tid}"))
     picked = ui.checkbox("Select the tools to install (Space ticks, Enter confirms; none is fine)",
-                         choices, default=list(missing))
+                         choices, default=[])
     return list(picked or [])
 
 

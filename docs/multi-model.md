@@ -54,7 +54,7 @@ The review at step 9 shows one row per answer (credentials only as `set` or `mis
 on the "Use a kit profile" path too (a non-interactive run has nobody to ask and skips it). The kit's own
 configuration (cockpit settings, `executors.yaml`, `litellm.yaml`, `lanes.yaml`) is not written before you choose
 Apply. Step 1 shows a checkbox of every tool the kit knows (`claude`, `agy`, `openclaw`): installed ones are shown
-as installed, the missing ones the setup needs are pre-ticked, you may tick any other or none, and only the ticked
+as installed, the missing ones are listed unticked (Enter installs nothing), you tick the ones you want or none, and only the ticked
 ones are installed. For each newly installed tool that has a sign-in (`claude`, `agy`) you are then asked whether to
 sign in now; the tool's own interactive login runs on your terminal (the kit never sees or stores a credential), and
 without a terminal or with `--yes` the command is printed for you to run later. An already installed tool is signed
