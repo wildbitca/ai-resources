@@ -27,7 +27,7 @@ from . import (
 from . import compat, model_selection
 from .cockpits import ALL as ALL_COCKPITS
 from .cockpits import _shared
-from .. import __version__, repo_root, selection as selection_mod
+from .. import __version__, repo_root, roles_policy, selection as selection_mod
 
 
 TOTAL_STEPS = 10
@@ -584,7 +584,8 @@ def _edit_choices(args: argparse.Namespace) -> list:
     if _RUNNER is None:
         return []
     out = []
-    lane_flags = any(getattr(args, f, False) for f in ("lanes", "no_lanes", "lanes_dry_run"))
+    lane_flags = any(getattr(args, f, False) for f in ("lanes", "no_lanes", "lanes_dry_run",
+                                                       "lanes_antigravity", "no_lanes_antigravity"))
     for spec in _RUNNER.editable():
         if spec.id == "lanes" and not lane_flags:
             continue                                   # without a lanes flag that step asks nothing
@@ -1782,22 +1783,51 @@ def _current_by_role(s: state.SetupState) -> dict:
     return lanes_render.current_by_role(s)
 
 
+def _agy_roles_of(doc: dict) -> list[str]:
+    """Roles the profile gives an agy candidate (roles and second members), sorted."""
+    block = doc.get("lanes") or {}
+    out = set()
+    for key in ("roles", "second"):
+        for role, cands in (block.get(key) or {}).items():
+            if any(isinstance(c, str) and c.startswith("agy:") for c in cands or ()):
+                out.add(role)
+    return sorted(out)
+
+
+def _drop_agy(lanes: dict) -> dict:
+    """The lanes table without the Antigravity gate and its agents (the claude-cli lanes keep running)."""
+    agy = {a for a, ag in (lanes.get("agents") or {}).items() if (ag or {}).get("backend") != "claude-cli"}
+    refs = {f"openclaw-agent:{a}" for a in agy}
+    out = {k: v for k, v in lanes.items() if k not in ("gates", "held")}
+    out["agents"] = {a: ag for a, ag in (lanes.get("agents") or {}).items() if a not in agy}
+    out["roles"] = {r: {**(c or {}), "candidates": [x for x in (c or {}).get("candidates") or [] if x not in refs]}
+                    for r, c in (lanes.get("roles") or {}).items()}
+    second = {r: [x for x in (c or []) if x not in refs] for r, c in (lanes.get("second") or {}).items()}
+    out["second"] = {r: c for r, c in second.items() if c}
+    return out
+
+
 def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool = False) -> int:
     """Enable, keep or clear subscription lanes. Disabled on a fresh install and without a flag.
 
     `--lanes` proposes the profile's table, asks for the orchestrator ids (OQ-7) and shows the Anthropic
     acknowledgement once, every lane-eligible role preselected (OQ-1). A non-interactive `--lanes` without a
-    stored acknowledgement for those roles refuses. `--no-lanes` clears the table (the OpenClaw writer and
-    `lanes.yaml` follow on apply). `--allow-unverified` implies nothing here."""
+    stored acknowledgement for those roles refuses. `--lanes-antigravity` adds the Antigravity gate: one Google
+    acknowledgement per account (text shown once, the account named, the implementer unticked by default), and a
+    non-interactive run needs a stored valid one listing at least one role. `--no-lanes-antigravity` clears the
+    gate and the agy agents and keeps the claude-cli lanes. `--no-lanes` clears the table (the OpenClaw writer
+    and `lanes.yaml` follow on apply). `--allow-unverified` implies nothing here."""
     from . import lanes_render
     from ..scoring import lanes as scoring_lanes
-    want = bool(getattr(args, "lanes", False))
+    agy_on = bool(getattr(args, "lanes_antigravity", False))
+    agy_off = bool(getattr(args, "no_lanes_antigravity", False))
+    want = bool(getattr(args, "lanes", False)) or agy_on
     unwant = bool(getattr(args, "no_lanes", False))
     preview = bool(getattr(args, "lanes_dry_run", False))
-    if want and unwant:
-        ui.error("--lanes and --no-lanes contradict each other")
+    if (want and unwant) or (agy_on and agy_off):
+        ui.error("--lanes, --lanes-antigravity, --no-lanes and --no-lanes-antigravity contradict each other")
         return 2
-    if want or unwant or preview:
+    if want or unwant or preview or agy_off:
         ui.section(6, TOTAL_STEPS, "Models and roles - 6c Subscription lanes")
     if unwant and preview:
         ui.info("Dry run: lanes stay as they are; nothing was cleared or written.")
@@ -1806,6 +1836,12 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         if s.profile.lanes:
             ui.info("Subscription lanes: cleared (lanes.yaml and the OpenClaw lane agents are removed on apply).")
         s.profile.lanes = None
+        return 0
+    if agy_off and not want:
+        if isinstance(s.profile.lanes, dict) and not preview:
+            s.profile.lanes = _drop_agy(s.profile.lanes)
+            ui.info("Antigravity lane: gate cleared (agy agents leave lanes.yaml and the OpenClaw config on "
+                    "apply; the claude-cli lanes and the Google acknowledgement record stay).")
         return 0
     if not (want or preview):
         return 0
@@ -1821,10 +1857,44 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     if not orchestrators and not ui.is_non_interactive():
         raw = ui.text("Orchestrator agent id(s) that may dispatch lane agents (comma-separated)", default="")
         orchestrators = [o.strip() for o in (raw or "").split(",") if o.strip()]
+    acks = dict(s.profile.lane_acks or {})
+    agy_roles = _agy_roles_of(doc)
+    if agy_on and not (preview or dry_run):
+        # the Google acknowledgement comes before the proposal: an agy candidate enters state only with it
+        have = lanes_render.valid_acks(acks).get("google")
+        listed = set((have or {}).get("roles") or ())
+        if ui.is_non_interactive():
+            if not have or not listed:
+                ui.error("--lanes-antigravity: no stored valid Google acknowledgement lists a role (hash of the "
+                         "current text, account named); run `ai-resources setup --lanes --lanes-antigravity` "
+                         "from a terminal to sign it")
+                return 2
+        elif have is None or (set(agy_roles) - listed and ui.confirm(
+                "Extend the Google acknowledgement to: " + ", ".join(sorted(set(agy_roles) - listed)) + "?",
+                default=False)):
+            ui.warn(lanes_render.ACK_TEXT["google"])
+            ui.detail("Roles an agy lane may run: " + ", ".join(agy_roles))
+            account = (ui.text("Google account that signs this acknowledgement (one per account)",
+                               default=str((have or {}).get("account") or "")) or "").strip()
+            if not account:
+                ui.error("--lanes-antigravity: the Google account must be named; the Antigravity lane stays closed")
+                agy_on = False
+            else:
+                choices = [ui.Choice(r, value=r) if hasattr(ui, "Choice") else r for r in agy_roles]
+                default = sorted(listed | {r for r in agy_roles if r != roles_policy.DEFAULT_INTEGRATING_WRITER})
+                picked = ui.checkbox("Roles acknowledged for this Google account (the implementer is "
+                                     "unticked by default: tick it explicitly)", choices, default=default)
+                if not picked or not ui.confirm("Acknowledge for this Google account and these roles?",
+                                                default=False):
+                    ui.info("Not acknowledged; the Antigravity lane stays closed.")
+                    agy_on = False
+                else:
+                    acks["google"] = lanes_render.make_ack("google", list(picked),
+                                                           datetime.now(timezone.utc).isoformat(), account=account)
     try:
         from ..scoring import headroom_sources
         proposal = lanes_render.propose(doc, _current_by_role(s), s.mode, orchestrators=orchestrators,
-                                        acks=s.profile.lane_acks,
+                                        acks=acks, gates={"antigravity": agy_on},
                                         headroom=headroom_sources.lane_weights(now_epoch=int(time.time())))
     except lanes_render.LanesBlockError as e:
         ui.error(f"--lanes: {e}")
@@ -1845,18 +1915,23 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     if preview or dry_run:
         ui.info("Dry run: nothing was enabled or written.")
         return 0
-    acks = dict(s.profile.lane_acks or {})
-    if not lanes_render.acked(acks, "anthropic", roles):
+    # per-account role sets: the Anthropic acknowledgement covers the roles that run on a claude-cli lane (or
+    # on none), never a role whose every candidate is an agy lane
+    agy_only = {r for r in agy_roles
+                if not any(c.startswith("claude-cli:") or c == "claude-code"
+                           for key in ("roles", "second") for c in ((doc.get("lanes") or {}).get(key) or {}).get(r, ()))}
+    anth_roles = [r for r in roles if r not in agy_only]
+    if not lanes_render.acked(acks, "anthropic", anth_roles):
         if ui.is_non_interactive():
             ui.error("--lanes: no stored Anthropic acknowledgement lists every lane role; run `ai-resources "
                      "setup --lanes` from a terminal to sign it")
             return 2
         ui.warn(lanes_render.ACK_TEXT["anthropic"])
-        ui.detail("Roles: " + ", ".join(roles))
+        ui.detail("Roles: " + ", ".join(anth_roles))
         if not ui.confirm("Acknowledge for these roles?", default=False):
             ui.info("Not acknowledged; lanes stay disabled.")
             return 0
-        acks["anthropic"] = lanes_render.make_ack("anthropic", roles, datetime.now(timezone.utc).isoformat())
+        acks["anthropic"] = lanes_render.make_ack("anthropic", anth_roles, datetime.now(timezone.utc).isoformat())
     s.profile.lane_acks = acks
     s.profile.lanes = proposal
     return 0

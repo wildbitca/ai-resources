@@ -18,7 +18,7 @@ import stat
 from pathlib import Path
 from typing import Any, Mapping
 
-from .. import model_pins, roles_policy
+from .. import agy_lane_gates, model_pins, roles_policy
 from ..scoring import lanes as scoring_lanes
 from . import state
 
@@ -30,12 +30,18 @@ except ImportError:  # pragma: no cover - handled by ui.require_deps()
 CLAUDE_CODE = scoring_lanes.CLAUDE_CODE
 CLAUDE_CLI = scoring_lanes.CLAUDE_CLI
 AGENT_PREFIX = "kit-lane-"
-# ADR-0007 §11 (Antigravity lane) is Proposed-deferred: until the operator accepts it, every `agy:` candidate
-# is held (fail closed). tests/test_lanes_agy_hold.py fails when this is True while §11 is not Accepted.
+# ADR-0007 §11 (Antigravity lane): while it is not Accepted, every `agy:` candidate is held (fail closed).
+# tests/test_lanes_agy_hold.py pins this constant to the exact status line of §11 in both directions.
+# Accepted is necessary and not sufficient: the flag, a valid Google acknowledgement listing the role and the
+# phase 3 gates G0..G7 (agy_lane_gates) must all hold, each as an enforced check (`agy_role_reason`).
 AGY_LANE_ADR_ACCEPTED = False
 HELD_AGY_REASON = "held: Antigravity lane not accepted"
+HELD_FLAG_REASON = "held: --lanes-antigravity is off"
+HELD_NO_ACK_REASON = "held: no valid Google acknowledgement (missing, stale text or no account)"
+HELD_ROLE_REASON = "held: the Google acknowledgement does not list {role}"
+AGY_BACKEND = agy_lane_gates.AGY_LANE_BACKEND
 _ALIASES = ("haiku", "sonnet", "opus")
-_VENDOR = re.compile(r"^(?:anthropic|claude-cli|claude-kit)/")
+_VENDOR = re.compile(r"^(?:anthropic|claude-cli|claude-kit|agy-cli-lane)/")
 
 
 class LanesBlockError(ValueError):
@@ -74,8 +80,8 @@ def validate_block(block: Any) -> list[str]:
         return ["lanes: must be a mapping"]
     problems: list[str] = []
     for key in block:
-        if key not in ("roles", "second", "mcp"):
-            problems.append(f"lanes.{key}: unknown key (expected roles, second, mcp)")
+        if key not in ("roles", "second", "mcp", "pins"):
+            problems.append(f"lanes.{key}: unknown key (expected roles, second, mcp, pins)")
     for key in ("roles", "second"):
         section = block.get(key) or {}
         if not isinstance(section, Mapping):
@@ -96,8 +102,26 @@ def validate_block(block: Any) -> list[str]:
                 if not isinstance(c, str) or not _candidate(c):
                     problems.append(f"lanes.{key}.{role}: bad candidate {c!r} "
                                     "(expected claude-code, claude-cli:<model> or agy:<model>)")
+                elif c.startswith("agy:") and c[4:] not in model_pins.AGY_LANE_MODELS:
+                    problems.append(f"lanes.{key}.{role}: agy slug {c[4:]!r} is not in AGY_LANE_MODELS "
+                                    f"({', '.join(model_pins.AGY_LANE_MODELS)})")
                 elif c.startswith(AGENT_PREFIX) or c.startswith("openclaw-agent:"):
                     problems.append(f"lanes.{key}.{role}: a profile never names an agent id ({c!r})")
+    pins = block.get("pins")
+    if pins is not None:
+        if not isinstance(pins, Mapping):
+            problems.append("lanes.pins: must be a mapping of role -> candidate list")
+        else:
+            for role, cands in pins.items():
+                listed = set((block.get("roles") or {}).get(role) or []) | set((block.get("second") or {}).get(role) or [])
+                if role in roles_policy.CHECKER_ROLES:
+                    problems.append(f"lanes.pins.{role}: a checker takes no operator pin")
+                if not isinstance(cands, list) or not cands:
+                    problems.append(f"lanes.pins.{role}: must be a non-empty list")
+                    continue
+                for c in cands:
+                    if c not in listed:
+                        problems.append(f"lanes.pins.{role}: {c!r} is not one of the role's candidates")
     mcp = block.get("mcp")
     if mcp is not None:
         if not isinstance(mcp, Mapping):
@@ -117,14 +141,80 @@ def _candidate(text: str) -> tuple[str, str] | None:
         return CLAUDE_CODE, ""
     m = re.match(r"^(claude-cli|agy):([A-Za-z0-9._/-]+)$", text)
     if m:
-        return ("claude-cli" if m.group(1) == "claude-cli" else "agy-cli"), m.group(2)
+        return ("claude-cli" if m.group(1) == "claude-cli" else AGY_BACKEND), m.group(2)
     return None
 
 
-def state_from_block(block: Mapping[str, Any] | None, *, claude_ids: Mapping[str, str] | None = None) -> dict[str, Any]:
+def valid_acks(acks: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The acknowledgements that still hold: the stored text hash equals the current text (a text change means
+    re-signing) and a Google ack names its account. Everything else is dropped before any resolver sees it (N8)."""
+    out: dict[str, Any] = {}
+    for provider, ack in (acks or {}).items():
+        if not isinstance(ack, Mapping) or provider not in ACK_TEXT:
+            continue
+        if ack.get("text_sha256") != hashlib.sha256(ACK_TEXT[provider].encode("utf-8")).hexdigest():
+            continue
+        if provider == "google" and not str(ack.get("account") or "").strip():
+            continue
+        out[provider] = dict(ack)
+    return out
+
+
+def agy_role_reason(role: str, gates: Mapping[str, Any] | None, acks: Mapping[str, Any] | None) -> str | None:
+    """Why an agy candidate of `role` is held, or None when it is admitted. Every condition fails closed, in
+    this order: ADR section 11 Accepted, the flag, a valid Google ack, the role listed, gates G0..G7 proven."""
+    if not AGY_LANE_ADR_ACCEPTED:
+        return HELD_AGY_REASON
+    if not bool((gates or {}).get("antigravity")):
+        return HELD_FLAG_REASON
+    google = valid_acks(acks).get("google")
+    if google is None:
+        return HELD_NO_ACK_REASON
+    if role not in (google.get("roles") or ()):
+        return HELD_ROLE_REASON.format(role=role)
+    return agy_lane_gates.refusal()
+
+
+def agy_admission(lanes: Mapping[str, Any], gates: Mapping[str, Any] | None,
+                  acks: Mapping[str, Any] | None) -> dict[str, str]:
+    """Agent id -> reason, for every non-claude-cli agent of a state `lanes` table that is not admitted.
+
+    An agent is admitted when at least one (role, candidate) naming it is admitted. Single source for state,
+    the render path and the OpenClaw writer: a state written by an older kit, or one whose ack went stale after
+    a kit upgrade, is held here again.
+    """
+    refs = lane_refs(lanes)
+    out: dict[str, str] = {}
+    for aid, agent in sorted((lanes.get("agents") or {}).items()):
+        if (agent or {}).get("backend") == CLAUDE_CLI:
+            continue
+        ref = f"openclaw-agent:{aid}"
+        roles = sorted(r for r, rs in refs.items() if ref in rs) or [""]
+        reasons = [agy_role_reason(r, gates, acks) for r in roles]
+        if all(reasons):
+            out[aid] = str(reasons[0])
+    return out
+
+
+def _agent_id_of(text: str, ids: Mapping[str, str]) -> str | None:
+    """The kit agent id a profile candidate text maps to (None for claude-code or an invalid text)."""
+    parsed = _candidate(text)
+    if parsed is None or parsed[0] == CLAUDE_CODE:
+        return None
+    backend, model = parsed
+    if backend == CLAUDE_CLI:
+        bare = ids.get(model, model) if model in _ALIASES else model
+        return agent_id_for(backend, model_pins.openclaw_ref(bare))
+    return agent_id_for(backend, f"{AGY_BACKEND}/{model}")
+
+
+def state_from_block(block: Mapping[str, Any] | None, *, claude_ids: Mapping[str, str] | None = None,
+                     gates: Mapping[str, Any] | None = None,
+                     acks: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The `ProfileState.lanes` fragment (`agents`, `roles`, `second`) a profile block proposes.
 
-    `claude_ids` maps an alias to the effective Claude id (default `model_pins.effective()`).
+    `claude_ids` maps an alias to the effective Claude id (default `model_pins.effective()`). An agy candidate
+    enters state only when `agy_role_reason` admits it; otherwise it is recorded in `held` with the reason.
     """
     problems = validate_block(block)
     if problems:
@@ -138,14 +228,16 @@ def state_from_block(block: Mapping[str, Any] | None, *, claude_ids: Mapping[str
         backend, model = _candidate(text)  # type: ignore[misc]
         if backend == CLAUDE_CODE:
             return CLAUDE_CODE
-        if backend != CLAUDE_CLI and not AGY_LANE_ADR_ACCEPTED:
-            held.append({"role": current_role[0], "candidate": text, "reason": HELD_AGY_REASON})
-            return None
+        if backend != CLAUDE_CLI:
+            why = agy_role_reason(current_role[0], gates, acks)
+            if why:
+                held.append({"role": current_role[0], "candidate": text, "reason": why})
+                return None
         if backend == CLAUDE_CLI:
             bare = ids.get(model, model) if model in _ALIASES else model
             ref = model_pins.openclaw_ref(bare)
         else:
-            ref = model
+            ref = f"{AGY_BACKEND}/{model}"
         aid = agent_id_for(backend, ref)
         agents.setdefault(aid, {"backend": backend, "model": ref,
                                 "pool": scoring_lanes.pool_of_agent(scoring_lanes.LaneAgent(aid, backend, ref))})
@@ -162,6 +254,9 @@ def state_from_block(block: Mapping[str, Any] | None, *, claude_ids: Mapping[str
     out: dict[str, Any] = {"agents": dict(sorted(agents.items())), "roles": roles, "second": second}
     if held:
         out["held"] = held
+    pins = {r: list(c) for r, c in sorted(((block or {}).get("pins") or {}).items()) if c}
+    if pins:
+        out["pins"] = pins
     # Explicit per-role opt-in for extra MCP servers (ADR-0007 OQ-5). Lane agents are MCP-scoped by default;
     # an agent serving several roles gets the union of their opt-ins.
     mcp = {r: sorted({str(n) for n in names}) for r, names in sorted(((block or {}).get("mcp") or {}).items())}
@@ -259,8 +354,7 @@ def render_doc(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: str,
     """
     stale = {d["agent"] for d in drift(lanes, by_role)}
     agents: dict[str, Any] = {}
-    held = {aid for aid, a in (lanes.get("agents") or {}).items()
-            if (a or {}).get("backend") != CLAUDE_CLI and not AGY_LANE_ADR_ACCEPTED}
+    held = set(agy_admission(lanes, lanes.get("gates"), acks))
     every: dict[str, Any] = {}
     for aid, agent in sorted((lanes.get("agents") or {}).items()):
         entry = {"backend": agent.get("backend", ""), "model": agent.get("model", ""),
@@ -278,8 +372,17 @@ def render_doc(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: str,
              for r, c in sorted((lanes.get("roles") or {}).items())}
     second = {r: _live(c) for r, c in sorted((lanes.get("second") or {}).items())}
     second = {r: c for r, c in second.items() if c}
-    payload = {"mode": mode, "agents": agents, "roles": roles, "second": second,
-               "resolved": resolve_table(lanes, by_role, mode, acks, every)}
+    payload: dict[str, Any] = {"mode": mode, "agents": agents, "roles": roles, "second": second}
+    # Gate and Google-ack fields appear only when an agy gate or a Google ack exists: a phase 2 install's
+    # lanes.yaml stays byte-identical.
+    google = (acks or {}).get("google")
+    if (lanes.get("gates") or {}).get("antigravity") or isinstance(google, Mapping):
+        payload["gates"] = {"antigravity": bool((lanes.get("gates") or {}).get("antigravity"))}
+    if isinstance(google, Mapping):
+        payload["acks"] = {"google": {"roles": sorted(google.get("roles") or ()),
+                                      "text_sha256": str(google.get("text_sha256") or ""),
+                                      "account": str(google.get("account") or "")}}
+    payload["resolved"] = resolve_table(lanes, by_role, mode, acks, every)
     return {**payload, "digest": doc_digest(payload)}
 
 
@@ -299,8 +402,9 @@ def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
     (the off switch): the only lanes `lanes prepare --lane` accepts besides the resolved one. Agy agents are
     held while the Antigravity section is not accepted. A resolver error is recorded, never raised.
     """
-    held_ids = {aid for aid, a in agents.items()
-                if a.get("backend") != CLAUDE_CLI and not AGY_LANE_ADR_ACCEPTED}
+    gates_in = lanes.get("gates") or {}
+    held_reasons = agy_admission({**dict(lanes), "agents": dict(agents)}, gates_in, acks)
+    held_ids = set(held_reasons)
     usable = {aid: dict(a) for aid, a in agents.items() if aid not in held_ids}
 
     def keep(refs: list[str]) -> list[str]:
@@ -314,7 +418,15 @@ def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
     snap = lanes.get("headroom_weights") or {}
     weights = {str(k): float(v) for k, v in snap.items()
                if isinstance(v, (int, float)) and not isinstance(v, bool)} if isinstance(snap, Mapping) else {}
-    kw = dict(acks=dict(acks or {}), pool_caps=caps, mode=mode, weights=weights)
+    ids = model_pins.effective()
+    pins: dict[str, list[str]] = {}
+    for role, texts in (lanes.get("pins") or {}).items():
+        refs = [f"openclaw-agent:{aid}" for aid in (_agent_id_of(str(x), ids) for x in texts or ()) if aid]
+        keep_refs = set(candidates.get(role, ())) | set(second.get(role, ()))
+        pins[role] = [r for r in refs if r in keep_refs and role not in roles_policy.CHECKER_ROLES]
+    gates = {"antigravity_flag": bool(gates_in.get("antigravity")), "adr_0007_agy_accepted": AGY_LANE_ADR_ACCEPTED}
+    kw = dict(acks=valid_acks(acks), pool_caps=caps, mode=mode, weights=weights, gates=gates,
+              effective_ids=ids, pins={r: v for r, v in pins.items() if v})
     try:
         table = scoring_lanes.resolve_lanes(by_role, usable, candidates, second, **kw)
         out: dict[str, Any] = {"roles": {}, "second": {}, "blocked": dict(sorted(table.blocked.items()))}
@@ -346,9 +458,8 @@ def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
             out["second"][role] = {"lane": lane.ref, "model": str(sec_model), "reason": why or "second member"}
     except (scoring_lanes.LaneError, scoring_lanes.LaneConflict) as exc:
         return {"error": str(exc), "roles": {}, "second": {}, "blocked": {}}
-    held = sorted(held_ids)
-    if held:
-        out["held"] = {aid: HELD_AGY_REASON for aid in held}
+    if held_reasons:
+        out["held"] = dict(sorted(held_reasons.items()))
     return out
 
 
@@ -478,14 +589,35 @@ ACK_TEXT = {
         "Subscription lanes run Claude Code CLI children through your Claude subscription login via "
         "OpenClaw. Sharing one login between the orchestrator and lane children is a grey zone of the "
         "Anthropic terms, and non-interactive (-p / SDK) use may be billed differently from interactive use. "
-        "A lane on this account is admitted only for the roles listed below."),
+        "A lane on this account is admitted only for the roles listed below. The spawn itself is not "
+        "gated per role by the kit: an agent admitted for one listed role can be spawned by an orchestrator for "
+        "any task, and only `lanes prepare --lane` refuses a role the acknowledgement does not list, so a step "
+        "that skipped `prepare` has already sent its repository content to Anthropic."),
+    "google": (
+        "The Antigravity lane runs `agy -p` children through OpenClaw on the Google account named below. Google's "
+        "terms name third-party tools, OpenClaw included, and a suspension covers Antigravity, Gemini CLI and "
+        "Code Assist and may reach the account's other Google services; use an account that is not used for "
+        "wildbit GCP or other critical work if your subscription allows it. Repository content, diffs, test "
+        "output and MCP results of every listed role go to Google and cannot be recalled. An agy child runs with "
+        "--dangerously-skip-permissions, a full shell. Without a usable sandbox the tool exclusions bound the "
+        "tool surface, not what the child can do: the shell still reaches `openclaw message`, `openclaw cron`, "
+        "`crontab`, `systemd-run --user`, `curl` and engram's on-disk store; the kit detects only the cron "
+        "store, `crontab -l`, the user timer list and unit files. If the kit's agy home override is the HOME "
+        "variable, the child also loses its git identity, `PATH` shims and `~/.ssh`; without an override the "
+        "shared `~/.gemini` state feeds your later interactive agy sessions. Placement uses static weights "
+        "(claude 1.0, agy 0.7): it balances by role count in sorted role order, not by quota. The spawn itself is "
+        "not gated per role by the kit: an agent admitted for one listed role can be spawned for any "
+        "task, and only `lanes prepare --lane` refuses a role not listed, so a step that skipped `prepare` has "
+        "already sent its repository content to Google. Do not use agy interactively during a lane run. A lane "
+        "on this account is admitted only for the roles listed below."),
 }
 
 
 def propose(profile_doc: Mapping[str, Any], by_role: Mapping[str, Any], mode: str, *,
             orchestrators: Any = (), acks: Mapping[str, Any] | None = None,
             claude_ids: Mapping[str, str] | None = None,
-            headroom: Mapping[str, float] | None = None) -> dict[str, Any]:
+            headroom: Mapping[str, float] | None = None,
+            gates: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The `ProfileState.lanes` a profile proposes, checked with the pure resolver.
 
     Raises `LanesBlockError` (no or malformed block), `scoring.lanes.LaneError` or
@@ -495,12 +627,23 @@ def propose(profile_doc: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
     block = profile_doc.get("lanes")
     if not block:
         raise LanesBlockError("the profile declares no lanes")
-    frag = state_from_block(block, claude_ids=claude_ids)
+    frag = state_from_block(block, claude_ids=claude_ids, gates=gates, acks=acks)
     candidates = {r: list(c.get("candidates") or []) for r, c in frag["roles"].items()}
+    ids = dict(claude_ids or model_pins.effective())
+    pins: dict[str, list[str]] = {}
+    for role, texts in (frag.get("pins") or {}).items():
+        refs = [f"openclaw-agent:{aid}" for aid in (_agent_id_of(str(x), ids) for x in texts) if aid]
+        keep_refs = set(candidates.get(role, ())) | set((frag["second"].get(role) or ()))
+        pins[role] = [r for r in refs if r in keep_refs]
+    flag = bool((gates or {}).get("antigravity"))
     scoring_lanes.resolve_lanes(by_role, frag["agents"], candidates, frag["second"],
-                                acks=dict(acks or {}), mode=mode)
+                                acks=valid_acks(acks), mode=mode, effective_ids=ids,
+                                gates={"antigravity_flag": flag, "adr_0007_agy_accepted": AGY_LANE_ADR_ACCEPTED},
+                                pins={r: v for r, v in pins.items() if v})
     out = {**frag, "orchestrators": sorted({str(o) for o in orchestrators}), "verify_capability": {},
            "pool_caps": {}, "max_remote_concurrency": 2, "workspace_root": ""}
+    if flag:
+        out["gates"] = {"antigravity": True}
     if headroom:
         out["headroom_weights"] = {str(k): float(v) for k, v in sorted(headroom.items())}
     return out
@@ -511,15 +654,16 @@ def lane_roles(lanes: Mapping[str, Any]) -> list[str]:
     return sorted(lane_refs(lanes))
 
 
-def make_ack(account: str, roles: list[str], now: str) -> dict[str, Any]:
-    text = ACK_TEXT[account]
-    return {"date": now, "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "text": text,
-            "roles": sorted(roles)}
+def make_ack(provider: str, roles: list[str], now: str, *, account: str = "") -> dict[str, Any]:
+    """`account` is the Google account the operator names (one acknowledgement per account, OQ-1)."""
+    text = ACK_TEXT[provider]
+    out = {"date": now, "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "text": text,
+           "roles": sorted(roles)}
+    if provider == "google":
+        out["account"] = account.strip()
+    return out
 
 
 def acked(acks: Mapping[str, Any] | None, account: str, roles: list[str]) -> bool:
-    ack = (acks or {}).get(account)
-    if not isinstance(ack, Mapping):
-        return False
-    return set(roles) <= set(ack.get("roles") or ()) and \
-        ack.get("text_sha256") == hashlib.sha256(ACK_TEXT[account].encode("utf-8")).hexdigest()
+    ack = valid_acks(acks).get(account)
+    return ack is not None and set(roles) <= set(ack.get("roles") or ())
