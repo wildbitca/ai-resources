@@ -146,6 +146,8 @@ def model_family(ref: object) -> str | None:
     if tokens[0] == "claude":
         found = [t for t in tokens[1:] if t in _CLAUDE_FAMILIES]
         return found[0] if len(set(found)) == 1 else None
+    if tokens[:2] == ["gpt", "oss"]:
+        return "gpt-oss"                  # Antigravity's open-weight model: its own family, never a Claude one
     if tokens[0] == "gemini":
         variants = [t for t in tokens[1:] if t in _GEMINI_VARIANTS]
         return f"gemini-{variants[0]}" if variants else None

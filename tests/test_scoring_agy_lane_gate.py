@@ -6,10 +6,13 @@ confirmed them (agy_lane_gates G1), so these tests exercise the rule, not the ev
 from __future__ import annotations
 
 import copy
+import dataclasses
 
 import pytest
 
+import lane_symmetry as sym
 import scoring_fakes as fk
+from ai_resources import agy_lane_gates as gates_mod
 from ai_resources import roles_policy as rp
 from ai_resources.scoring import lanes as L
 
@@ -186,11 +189,35 @@ def test_second_for_a_checker_is_refused():
                     effective_ids=EFFECTIVE)
 
 
-def test_a_gpt_oss_slug_is_refused_for_checkers_and_a_writer_needs_a_pin():
-    assert rp.model_family("agy-cli-lane/gpt-oss-120b-medium") is None       # unknown family: fail closed
-    with pytest.raises(L.LaneError):
-        L._as_agent({"id": "kit-lane-agy-gpt", "backend": "agy-cli-lane",
-                     "model": "agy-cli-lane/gpt-oss-120b-medium"}, "kit-lane-agy-gpt")
+AGY_GPT_OSS = L.LaneAgent("kit-lane-agy-gptoss", "agy-cli-lane", "agy-cli-lane/gpt-oss-120b-medium",
+                          "agy-claude-gpt")
+
+
+def test_a_gpt_oss_agent_maps_to_the_claude_gpt_pool_with_its_own_family():
+    assert rp.model_family("agy-cli-lane/gpt-oss-120b-medium") == "gpt-oss"
+    assert L.agy_pool_for("agy-cli-lane/gpt-oss-120b-medium") == "agy-claude-gpt"
+    agent = L._as_agent({"id": AGY_GPT_OSS.id, "backend": "agy-cli-lane", "model": AGY_GPT_OSS.model}, AGY_GPT_OSS.id)
+    assert agent.pool == "agy-claude-gpt"
+
+
+def test_a_gpt_oss_slug_is_refused_for_checkers():
+    for role in ("verifier", "security-auditor"):
+        t = resolve({role: {"model": "opus"}}, [AGY_GPT_OSS], {role: [ref(AGY_GPT_OSS)]}, effective_ids=EFFECTIVE)
+        assert role in t.blocked and role not in t.roles
+        # a checker never takes a pin, so listing the slug is itself an error
+        with pytest.raises(L.LaneError):
+            resolve({role: {"model": "opus"}}, [AGY_GPT_OSS], {role: [ref(AGY_GPT_OSS)]},
+                    pins={role: [ref(AGY_GPT_OSS)]}, effective_ids=EFFECTIVE)
+
+
+def test_a_gpt_oss_slug_is_allowed_for_a_writer_only_when_listed_in_pins():
+    by_role = {"implementer": {"model": "sonnet"}}
+    cands = {"implementer": [ref(AGY_GPT_OSS)]}
+    unpinned = resolve(by_role, [AGY_GPT_OSS], cands, effective_ids=EFFECTIVE)
+    assert unpinned.roles["implementer"].ref == "claude-code"
+    pinned = resolve(by_role, [AGY_GPT_OSS], cands, pins={"implementer": [ref(AGY_GPT_OSS)]},
+                     effective_ids=EFFECTIVE)
+    assert pinned.roles["implementer"].ref == ref(AGY_GPT_OSS)
 
 
 # --- determinism, digest, symmetry ------------------------------------------------------------------------
@@ -219,3 +246,71 @@ def test_symmetry_the_same_fixture_on_either_label_gives_the_same_verdicts():
                     t.blocked, {r: m for r, m in t.models.items()}))
     assert out[0][0] == out[1][0] and out[0][1] == out[1][1]
     assert {r: m.split("/")[-1] for r, m in out[0][2].items()} == {r: m.split("/")[-1] for r, m in out[1][2].items()}
+
+
+# --- AC3.9: the whole outputs differ only in the nine allowlisted asymmetries --------------------------------
+
+ROLES9 = ["implementer", "tester", "doc-writer", "verifier"]
+BY_ROLE9 = {"implementer": {"model": "sonnet"}, "tester": {"model": "sonnet"}, "doc-writer": {"model": "sonnet"},
+            "verifier": {"model": "opus"}}
+
+
+def _label_agents(label):
+    if label == "claude-cli":
+        return CLI_SONNET, CLI_OPUS
+    return AGY_SONNET, AGY_OPUS
+
+
+def _surfaces(label, monkeypatch):
+    """resolve, the Lane column of explain, validate and the setup writer's lanes.yaml for one label."""
+    from ai_resources.scoring import explain
+    from ai_resources.setup import lanes_render
+    monkeypatch.setattr(lanes_render, "AGY_LANE_ADR_ACCEPTED", True)
+    monkeypatch.setattr(gates_mod, "EVIDENCE", {g.id: dataclasses.replace(g, status=gates_mod.PROVEN, evidence="fx")
+                                                for g in gates_mod.GATES})
+    sonnet, opus = _label_agents(label)
+    cands = {r: [ref(opus if r == "verifier" else sonnet)] for r in ROLES9}
+    t = resolve(BY_ROLE9, [sonnet, opus], cands, effective_ids=EFFECTIVE)
+    why = [dataclasses.asdict(w) for w in t.why]
+    resolved = {"table": t.to_lanes(), "why": why, "blocked": dict(t.blocked), "models": dict(t.models),
+                "explain": explain.lane_column(t)}
+    # validate: the profile block as written for each label
+    prefix = "claude-cli:sonnet" if label == "claude-cli" else "agy:claude-sonnet-4-6"
+    block = {"roles": {"implementer": [prefix, "claude-code"]}}
+    validated = lanes_render.validate_block(block)
+    # the setup writer's lanes.yaml (render_doc), with the account gate each label needs
+    lanes = {"agents": {sonnet.id: {"backend": sonnet.backend, "model": sonnet.model, "pool": sonnet.pool},
+                        opus.id: {"backend": opus.backend, "model": opus.model, "pool": opus.pool}},
+             "roles": {r: {"candidates": [ref(opus if r == "verifier" else sonnet)]} for r in ROLES9},
+             "second": {}, "orchestrators": [], "verify_capability": {}, "pool_caps": {},
+             "max_remote_concurrency": 2, "workspace_root": ""}
+    acks = {"anthropic": lanes_render.make_ack("anthropic", ROLES9, "2026-10-16")}
+    if label == "agy-cli-lane":
+        lanes["gates"] = {"antigravity": True}
+        acks["google"] = lanes_render.make_ack("google", ROLES9, "2026-10-16", account="op@example.test")
+    doc = lanes_render.render_doc(lanes, BY_ROLE9, "single-model", acks)
+    return {"resolve": resolved, "validate": validated, "setup_writer": doc}
+
+
+def test_the_nine_allowed_asymmetries_are_the_named_constant_and_a_new_difference_is_caught():
+    assert len(sym.ALLOWED_ASYMMETRIES) == 9
+    assert sym.unexplained({"a": {"pool": "x"}}, {"a": {"pool": "y"}}) == set()          # allowed
+    assert sym.unexplained({"a": {"new_field": "x"}}, {"a": {"new_field": "y"}}) == {"a.new_field"}
+    assert sym.unexplained({"a": [1]}, {"a": [1, 2]}) == {"a[]"}
+
+
+def test_ac3_9_resolve_validate_explain_and_the_setup_writer_differ_only_in_the_allowlisted_fields(monkeypatch):
+    cli = sym.normalize(_surfaces("claude-cli", monkeypatch), drop=frozenset({"digest"}))
+    agy = sym.normalize(_surfaces("agy-cli-lane", monkeypatch), drop=frozenset({"digest"}))
+    assert sym.unexplained(cli, agy) == set()
+    assert cli["resolve"]["table"]["roles"] == agy["resolve"]["table"]["roles"]
+    assert cli["resolve"]["blocked"] == agy["resolve"]["blocked"] == {}
+    # the digest covers the allowed fields (backend, model, pool), so it differs by label by construction
+    assert _surfaces("claude-cli", monkeypatch)["setup_writer"]["digest"] != \
+        _surfaces("agy-cli-lane", monkeypatch)["setup_writer"]["digest"]
+
+
+def test_validate_kit_has_no_agy_specific_rule():
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[1] / "scripts" / "validate_kit.py").read_text(encoding="utf-8")
+    assert "agy" not in text.lower()

@@ -143,13 +143,16 @@ def test_the_lanes_block_validates_names_no_agent_id_and_every_agy_slug_is_a_lan
     assert "pins" not in block                                  # the subscription profile declares no pins
 
 
-def test_the_agy_candidates_do_not_change_by_role_and_are_held_while_the_adr_section_is_not_accepted():
+def test_the_agy_candidates_do_not_change_by_role_and_are_held_while_the_flag_or_gates_are_off():
     from ai_resources.setup import lanes_render
     assert {r: c["model"] for r, c in _doc()["by_role"].items()} == {r: m for r, (m, _) in EXPECTED.items()}
     frag = lanes_render.state_from_block(_doc()["lanes"],
                                          claude_ids={"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5",
                                                      "opus": "claude-opus-5-5"})
-    if not lanes_render.AGY_LANE_ADR_ACCEPTED:
-        assert all(a["backend"] == "claude-cli" for a in frag["agents"].values())
-        assert {h["role"] for h in frag["held"]} == {"implementer", "tester", "doc-writer", "verifier",
-                                                     "security-auditor", "code-reviewer"}
+    assert all(a["backend"] == "claude-cli" for a in frag["agents"].values())
+    assert {h["role"] for h in frag["held"]} == {"implementer", "tester", "doc-writer", "verifier",
+                                                 "security-auditor", "code-reviewer"}
+    assert all(h["candidate"].startswith("agy:") for h in frag["held"])
+    assert all(h["reason"].startswith("held:") and ("--lanes-antigravity" in h["reason"]
+                                                    or "gate" in h["reason"].lower())
+               for h in frag["held"]), frag["held"]

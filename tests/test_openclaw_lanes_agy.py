@@ -14,6 +14,7 @@ import stat
 
 import pytest
 
+import lane_symmetry as sym
 from ai_resources import agy_lane_gates as gates_mod, openclaw_host
 from ai_resources.setup import lanes_render
 from ai_resources.setup.cockpits import openclaw as cockpit, openclaw_lanes
@@ -118,7 +119,10 @@ def test_the_dry_run_writes_nothing_and_does_not_print_the_key(opened, host, cap
     before = host.path.read_text()
     assert _run(_state(), host, dry_run=True) is False
     assert host.path.read_text() == before
-    assert "kit-lane-agy-placeholder" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "kit-lane-agy-placeholder" not in out
+    # the one validated, restart-classified patch covers the admitted agy agent and the catalog stub
+    assert AID in out and "agy-cli-lane" in out
 
 
 def test_a_second_run_is_idempotent(opened, host):
@@ -270,3 +274,43 @@ def test_ensure_and_remove_the_agy_home_inside_a_tmp_path(tmp_path):
     assert not home.exists()
     assert openclaw_lanes.remove_agy_home({"path": str(tmp_path / "elsewhere"), "created": True},
                                           confirm=lambda m: True) is False        # not the kit-owned name
+
+
+# --- AC3.9: the same keys except the allowlist ---------------------------------------------------------------
+
+def _symmetric_lanes(label):
+    lanes = copy.deepcopy(LANES)
+    if label == "claude-cli":
+        return lanes
+    renamed = {"kit-lane-cli-sonnet55": ("kit-lane-agy-sonnet55", "agy-cli-lane/claude-sonnet-5-5"),
+               "kit-lane-cli-opus55": ("kit-lane-agy-opus55", "agy-cli-lane/claude-opus-5-5")}
+    lanes["agents"] = {new: {"backend": "agy-cli-lane", "model": model, "pool": "agy-claude-gpt"}
+                       for _, (new, model) in renamed.items()}
+    for role in lanes["roles"].values():
+        role["candidates"] = [f"openclaw-agent:{renamed[c.split(':', 1)[1]][0]}" if c.startswith("openclaw-agent:")
+                              else c for c in role["candidates"]]
+    lanes["gates"] = {"antigravity": True}
+    return lanes
+
+
+def test_the_writer_gives_the_same_config_for_either_label_except_the_allowlist(opened, host):
+    _with_plugin(host)
+    initial = host.path.read_text()
+    docs = {}
+    for label in ("claude-cli", "agy-cli-lane"):
+        host.path.write_text(initial)
+        s = _s(_symmetric_lanes(label))
+        if label == "agy-cli-lane":
+            s.profile.lane_acks = {"google": lanes_render.make_ack("google", ["implementer", "verifier"],
+                                                                   "2026-10-16", account="op@example.test")}
+        assert _run(s, host) is True, label
+        doc = host.doc()
+        doc["_applied"] = {k: v for k, v in s.openclaw.lanes_applied.items()
+                           if k in ("created_agent_ids", "tool_deny_added", "mcp_deny_added")}
+        docs[label] = sym.normalize(doc)
+    assert any(k.startswith("kit-lane-KIND-") for k in docs["agy-cli-lane"]["agents"]["entries"])
+    assert sym.unexplained(docs["claude-cli"], docs["agy-cli-lane"]) == set(), sym.diff_paths(
+        docs["claude-cli"], docs["agy-cli-lane"])
+    # the allowed differences exist: the catalog stub and the extra tool denials (asymmetries 4 and 7)
+    differing = sym.diff_paths(docs["claude-cli"], docs["agy-cli-lane"])
+    assert "models" in differing and any("tools.deny" in p for p in differing)

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+import lane_symmetry as sym
 from ai_resources import agy_lane_gates as gates_mod, lanes_cmd, roles_policy as rp
 from ai_resources.setup import lanes_render, state
 from test_lanes_cmd import RUN, env, sh  # noqa: F401
@@ -404,3 +405,44 @@ def test_a_breaker_after_the_expect_head_is_ignored_and_without_it_is_honoured(e
 def test_the_shipped_pattern_table_is_empty_until_a_probe_run_records_a_text():
     assert all(not v for v in rp.QUOTA_PATTERNS.values())
     assert rp.classify_quota(QUOTA, "agy-claude-gpt") is None
+
+
+# --- AC3.9: every kit command differs by label only in the allowlisted fields ----------------------------------
+
+# Per-run values: random or derived from the run id and the clock. They carry no label-specific meaning.
+VOLATILE = frozenset({"nonce", "snapshot_digest", "ledger_head", "prev", "hash", "ts", "time", "record", "digest"})
+
+
+def _cmd(env, run, *argv):
+    rc = lanes_cmd.main([*argv, "--run", run, "--repo", str(env.repo)], runner=env.runner)
+    return rc, json.loads(env.capsys.readouterr().out.strip().splitlines()[-1])
+
+
+def _commands_for(env, label):
+    run = "sym-" + label.split("-")[0]
+    write_table(label)
+    out = {}
+    out["prepare_tester"] = prep(env, label, "tests", "tester", "scope", scope=("tests/",), run=run)
+    rc, p = out["prepare_tester"]
+    assert rc == 0, p
+    wt = Path(p["worktree"])
+    env.commit(wt, {"tests/test_b.py": "def test_b(): pass\n"})
+    env.report("tester", "tests", base=wt)
+    out["verify_tester"] = _cmd(env, run, "verify", "--step", "tests", "--expect",
+                                f"{p['nonce']}:{p['snapshot_digest']}:{p['ledger_head']}")
+    rc, v = out["prepare_verifier"] = prep(env, label, "check", "verifier", "report", run=run, expect_head=None)
+    assert rc == 0, v
+    env.report("verifier", "check", "PASS")
+    out["count"] = _cmd(env, run, "count", "--pool", "claude-subscription" if label == "claude-cli"
+                        else "agy-claude-gpt")
+    return {k: {"rc": rc, "out": o} for k, (rc, o) in out.items()}, run
+
+
+def test_ac3_9_every_kit_command_differs_by_label_only_in_the_allowlisted_fields(env):
+    results = {}
+    for label in ("claude-cli", "agy-cli-lane"):
+        got, run = _commands_for(env, label)
+        results[label] = sym.normalize(got, drop=VOLATILE, replace={run: "RUN", f"sym-{label.split('-')[0]}": "RUN"})
+    cli, agy = results["claude-cli"], results["agy-cli-lane"]
+    assert {k: v["rc"] for k, v in cli.items()} == {k: v["rc"] for k, v in agy.items()}
+    assert sym.unexplained(cli, agy) == set(), sorted(sym.diff_paths(cli, agy))

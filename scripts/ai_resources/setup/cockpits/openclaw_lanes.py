@@ -509,7 +509,7 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
         return pruned
     workspaces = {i: root / i for i in ids}
     mcp_prev = (o.lanes_applied or {}).get("mcp_deny_added") or {}
-    patch = build_patch(lanes, doc, workspaces, mcp_prev=mcp_prev)
+    patch = build_patch(lanes, doc, workspaces, ids=ids, mcp_prev=mcp_prev)
     lanes["verify_capability"] = verify_capability(doc, lanes.get("orchestrators") or [])
     if dry_run:
         info("Subscription lanes (dry run): " + (", ".join(sorted(_leaf_paths(patch))) or "no change"))
