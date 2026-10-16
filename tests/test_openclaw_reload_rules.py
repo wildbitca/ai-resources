@@ -453,6 +453,9 @@ def test_locate_package_json_resolves_the_symlinked_entry_point(tmp_path, monkey
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "openclaw").symlink_to(pkg / "openclaw.mjs")
+    # The lookup also checks Homebrew/npm-global dirs; the host's own install must not answer "not found" here.
+    from ai_resources.setup import detection
+    monkeypatch.setattr(detection, "_extra_bin_dirs", lambda: [])
     monkeypatch.setattr(shutil, "which", lambda n, *a, **k: str(bin_dir / n))
     found = rr.locate_package_json()
     assert found is not None and found.name == "package.json" and found.parent.samefile(pkg)
