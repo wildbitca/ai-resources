@@ -123,7 +123,9 @@ def shown(monkeypatch):
 ])
 def test_f1_log_tail_masks_the_whole_text_before_splitting(shown, text):
     ui.log_tail(text)
-    assert S not in "\n".join(shown), shown
+    joined = "\n".join(shown)
+    assert S not in joined, shown
+    assert "****" in joined, shown
 
 
 @pytest.mark.parametrize("text", [
@@ -134,6 +136,7 @@ def test_f1_log_tail_masks_the_whole_text_before_splitting(shown, text):
 def test_f1_log_tail_given_pre_split_lines_still_masks_multiline_secrets(shown, text):
     ui.log_tail(text.splitlines())
     assert S not in "\n".join(shown), shown
+    assert "****" in "\n".join(shown), shown
 
 
 @pytest.mark.parametrize("text", [
@@ -177,11 +180,14 @@ def test_f2_excerpt_is_bounded_and_marks_the_cut():
 
 def test_f2_tools_install_failure_masks_before_cutting(monkeypatch, shown):
     from ai_resources.setup import tools
-    out = "y" * 290 + "OPENAI_API_KEY=%s" % S
+    # the old `out[-300:]` started inside the name: `...KEY=<secret>` and no pattern recognised the fragment
+    out = "OPENAI_API_KEY=%s" % S + "z" * 290
+    assert out[-300:].startswith(S[-1:]) or "OPENAI_API_KEY" not in out[-300:]
     monkeypatch.setattr(tools, "_run_install", lambda cmd, timeout=300: (False, out))
-    s = state.SetupState() if hasattr(state, "SetupState") else None
-    tools.install_one("agy", s)
+    tool_id = next(t for t in tools.TOOLS if t != "agy")     # `agy` reads and rewrites the real rc files
+    tools.install_one(tool_id, state.SetupState())
     assert S not in "\n".join(shown), shown
+    assert any("install failed" in e for e in shown), shown
 
 
 # --- F3: ReDoS --------------------------------------------------------------------------------
@@ -331,12 +337,14 @@ def test_f6_section_title_plain_print(monkeypatch, capsys):
     assert "\x1b" not in capsys.readouterr().out
 
 
-def test_f6_dry_run_yaml_is_printed_without_markup():
-    import inspect
-    src = inspect.getsource(wizard._step9_dry_run)
-    for m in re.finditer(r"console\.print\(f?\"  \{line\}\"[^)]*\)", src):
-        assert "markup=False" in m.group(0), m.group(0)
-    assert src.count("markup=False") >= 2
+def test_f6_yaml_is_printed_without_markup():
+    buf = io.StringIO()
+    from rich.console import Console
+    con = Console(file=buf, force_terminal=True, width=200)
+    wizard._print_yaml(con, "a: '[/]'\nb: '[link=https://evil]x[/link]'")
+    out = buf.getvalue()
+    assert "\x1b]8" not in out
+    assert "[/]" in out and "[link=https://evil]x[/link]" in out
 
 
 # --- F7: bidi and format characters ---------------------------------------------------------------
@@ -462,3 +470,57 @@ def test_already_masked_values_are_kept_and_a_planted_bullet_is_not_a_bypass():
     assert ui.mask_secrets("OPENROUTER_API_KEY: ******  (saved)").startswith("OPENROUTER_API_KEY: ******")
     assert credentials.mask("sk-" + "a" * 40) in ui.mask_secrets("K_KEY: " + credentials.mask("sk-" + "a" * 40))
     assert S not in ui.mask_secrets("API_KEY=•" + S)
+
+
+def test_f1_smoke_failure_details_are_masked_as_a_whole(shown):
+    results = [("Model round-trip", False, "x\napi_key: |\n  %s" % S), ("ok one", True, "")]
+    assert wizard._report_smoke_results(results) is True
+    out = "\n".join(shown)
+    assert S not in out and "Model round-trip" in out and "api_key" in out, shown
+
+
+def _pipx_env(monkeypatch, shown):
+    from ai_resources.setup import detection
+    monkeypatch.setattr(wizard, "_DRY_RUN", False)
+    monkeypatch.setattr(detection, "detect_pipx",
+                        lambda: types.SimpleNamespace(installed=True, version="1", binary_path="/x"))
+    monkeypatch.setattr(detection, "find_compatible_python",
+                        lambda: types.SimpleNamespace(installed=True, version="3.12", binary_path="/py"))
+    monkeypatch.setattr(detection, "detect_litellm_binary",
+                        lambda: types.SimpleNamespace(installed=False, version="", binary_path=""))
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(ui, "spinner", _noop_spinner)
+    monkeypatch.setattr(ui, "record_action", lambda m: None)
+    monkeypatch.setattr(ui, "console", lambda: types.SimpleNamespace(print=lambda *a, **k: None))
+
+
+def test_wizard_pipx_install_failure_masks_multiline(monkeypatch, shown):
+    _pipx_env(monkeypatch, shown)
+    msg = "-----BEGIN PRIVATE KEY-----\nMIIEv%s\n-----END PRIVATE KEY-----\napi_key: |\n  %s" % (S, S)
+    monkeypatch.setattr(litellm, "install_litellm_pipx", lambda python_path=None: (False, msg))
+    assert wizard._step3_pipx(_state()) == 1
+    assert S not in "\n".join(shown), shown
+
+
+def test_wizard_pipvenv_install_failure_masks_multiline(monkeypatch, shown, tmp_path):
+    _pipx_env(monkeypatch, shown)
+    monkeypatch.setattr(litellm, "venv_dir", lambda: tmp_path / "venv")
+    msg = "api_key: |\n  %s\nmaster_key:\n  %s" % (S, S)
+    monkeypatch.setattr(litellm, "install_litellm_venv", lambda python_path=None: (False, msg))
+    wizard._step3_pipvenv(_state())
+    assert S not in "\n".join(shown), shown
+
+
+def test_wizard_authored_messages_keep_paths_keys_and_shas(rich_ui):
+    ui.info("Pending restart-required keys: gateway.port, gateway.bind")
+    ui.info("/home/u/.cache/run-20261016T010348-12345-abcdef/x " + "a1" * 20)
+    out = rich_ui.getvalue()
+    assert "gateway.port" in out and "run-20261016T010348-12345-abcdef" in out and "a1" * 20 in out
+
+
+def test_f3_non_secret_pair_chains_are_linear():
+    for raw in ("a=" * 50_000, "a:" * 50_000):
+        t0 = time.perf_counter()
+        ui.mask_secrets(raw)
+        assert time.perf_counter() - t0 < 0.5
+    assert S not in ui.mask_secrets("a=API_KEY=%s" % S)

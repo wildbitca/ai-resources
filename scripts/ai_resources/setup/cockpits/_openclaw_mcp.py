@@ -373,7 +373,7 @@ def apply(items: list[Item], s: state.SetupState, run: Runner, *, dry_run: bool 
     if servers:
         rc, out = _patch(run, servers, dry_run=dry_run)
         if rc != 0:
-            ui.error(f"OpenClaw rejected the MCP servers patch: {ui.safe_text(out[-400:])}")
+            ui.error(f"OpenClaw rejected the MCP servers patch: {ui.safe_excerpt(out, 400, tail=True)}")
             return False
     if dry_run:
         return True
@@ -401,7 +401,7 @@ def teardown(s: state.SetupState, servers: dict, run: Runner) -> bool:
     if patch:
         rc, out = _patch(run, patch)
         if rc != 0:
-            ui.error(f"OpenClaw MCP servers teardown failed: {ui.safe_text(out[-400:])}")
+            ui.error(f"OpenClaw MCP servers teardown failed: {ui.safe_excerpt(out, 400, tail=True)}")
             return False
     s.openclaw.mcp_mirrored = {}
     return True

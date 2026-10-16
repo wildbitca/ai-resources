@@ -1904,6 +1904,26 @@ def _restore_lanes_file(s: state.SetupState, payload: dict | None) -> None:
 
 
 # --- Step 9 — Apply -------------------------------------------------------------
+def _print_yaml(console, content: str) -> None:
+    """Print rendered YAML verbatim: `[/]` or `[link=...]` in it is text, never markup."""
+    for line in content.splitlines():
+        console.print(f"  {line}", markup=False, highlight=False)
+
+
+def _report_smoke_results(results) -> bool:
+    """Show smoke results; a failure's detail is masked as a whole text, then split. True when any failed."""
+    had_failures = False
+    for label, ok, msg in results:
+        if ok:
+            ui.ok(label)
+        else:
+            had_failures = True
+            ui.warn(f"{label}")
+            for line in ui.safe_lines(msg or "(no detail)"):
+                ui.detail(f"  {line[:300]}")
+    return had_failures
+
+
 def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     if dry_run:
         return _step9_dry_run(s)
@@ -2104,16 +2124,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
         smoke_log = litellm.log_dir() / "smoke.log"
         _write_smoke_log(smoke_log, results)
 
-        had_failures = False
-        for label, ok, msg in results:
-            if ok:
-                ui.ok(label)
-            else:
-                had_failures = True
-                ui.warn(f"{label}")
-                # Show first 300 chars across multiple lines so the cause is visible
-                for line in ui.safe_lines(msg or "(no detail)"):
-                    ui.detail(f"  {line[:300]}")
+        had_failures = _report_smoke_results(results)
         if had_failures:
             ui.detail(f"  Full smoke log: {smoke_log}")
 
@@ -2318,8 +2329,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
                 )
                 tmp_litellm_yaml.write_text(yaml_content, encoding="utf-8")
                 console.print(f"\n[bold cyan]── litellm.yaml  (would write → {ui.markup_safe(state.litellm_path())})[/]")
-                for line in yaml_content.splitlines():
-                    console.print(f"  {line}", markup=False, highlight=False)
+                _print_yaml(console, yaml_content)
             except Exception as e:
                 ui.warn(f"Cannot render litellm.yaml: {e}")
 
@@ -2366,8 +2376,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
                 compose_content = _yaml.safe_dump(compose_body, default_flow_style=False, sort_keys=False)
                 tmp_compose_yaml.write_text(compose_content, encoding="utf-8")
                 console.print(f"\n[bold cyan]── docker-compose.yaml  (would write → {ui.markup_safe(state.compose_path())})[/]")
-                for line in compose_content.splitlines():
-                    console.print(f"  {line}", markup=False, highlight=False)
+                _print_yaml(console, compose_content)
             except Exception as e:
                 ui.warn(f"Cannot render compose YAML: {e}")
 
@@ -2475,13 +2484,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
             console.print()
             ui.info("Running smoke tests…")
             results = smoke.run_all(executors_doc, gateway_url, master_key, s.backend)
-            for label, ok, msg in results:
-                if ok:
-                    ui.ok(label)
-                else:
-                    ui.warn(label)
-                    for line in ui.safe_lines(msg or "(no detail)"):
-                        ui.detail(f"  {line[:300]}")
+            _report_smoke_results(results)
 
     finally:
         if proc is not None:

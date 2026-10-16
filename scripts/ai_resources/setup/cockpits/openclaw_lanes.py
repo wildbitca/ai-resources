@@ -450,7 +450,7 @@ def teardown(s: "state.SetupState", doc: Mapping[str, Any], *,
             continue
         rc, out = oc(["agents", "delete", aid, "--force"])
         if rc != 0:
-            error(f"could not delete lane agent {aid}: {ui.safe_text(out[-200:])}")
+            error(f"could not delete lane agent {aid}: {ui.safe_excerpt(out, 200, tail=True)}")
             remaining_ids.append(aid)
     import shutil
     rm = remove_dir or (lambda p: shutil.rmtree(p, ignore_errors=True))

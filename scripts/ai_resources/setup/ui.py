@@ -442,6 +442,9 @@ _CONFUSABLES = str.maketrans({
 })
 
 
+_DOTTED_NAMES = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+(?:,\s*[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)*,?")
+
+
 def _is_secret_name(name: str, value: "str | None" = None, weak: bool = True) -> bool:
     """Whether a variable or field name says its value is a secret: one of its words is a secret word (allowing
     a plural or a trailing digit). A last word such as `env`, `path` or `count` exempts the name only when the
@@ -452,6 +455,9 @@ def _is_secret_name(name: str, value: "str | None" = None, weak: bool = True) ->
         return False
     if words[-1] in _NOT_A_VALUE and (value is None or _NAME_SHAPED.fullmatch(value.strip().strip("\"'"))):
         return False
+    if (words[-1] in ("keys", "tokens", "secrets") and value is not None
+            and _DOTTED_NAMES.fullmatch(value.strip().strip("\"'"))):
+        return False                          # `keys: gateway.port, gateway.bind` lists config keys
     if len(words) > 1 and words[-1] == "tokens" and words[-2] in _BUDGET_WORDS:
         return False
     if any(_SECRET_WORD.fullmatch(w) for w in words):
@@ -604,6 +610,19 @@ def _mask_url(m: "re.Match[str]") -> str:
     return f"{scheme}****@{host}"
 
 
+def _skip_plain(m: "re.Match[str]", resume: int) -> int:
+    """Where to resume after a pair that is not a secret. A value may hold a nested pair (`a=API_KEY=x`), but
+    resuming right after the name rescans the rest of the value for every `a=` (quadratic on `a=a=a=...`):
+    jump to just before the first keyword-like text in the value, or past the value when it has none."""
+    value = m.group(5) if m.group(5) is not None else m.group(4)
+    if not value or m.group(3):
+        return resume if m.group(3) else m.end()
+    k = _KW_ANY.search(value)
+    if k is None:
+        return m.end()
+    return max(resume, m.end(2) + k.start() - 128)
+
+
 def _mask_pairs(text: str) -> str:
     out: list[str] = []
     last = pos = 0
@@ -613,7 +632,7 @@ def _mask_pairs(text: str) -> str:
             break
         name, resume = m.group(1), m.end(2)
         if not _KW_ANY.search(name[-128:]):
-            pos = resume
+            pos = _skip_plain(m, resume)
             continue
         quote = m.group(3) or ""
         value = m.group(4) if quote else m.group(5)
@@ -623,7 +642,7 @@ def _mask_pairs(text: str) -> str:
             while value and value[-1] in ",}]" and not _is_reference(value):
                 tail, value = value[-1] + tail, value[:-1]
         if not value or not _is_secret_name(name[-128:], value):
-            pos = resume
+            pos = _skip_plain(m, resume)
             continue
         if _is_reference(value) or _BLOCK_HEADER.fullmatch(value):
             pos = m.end()
@@ -650,7 +669,24 @@ def _shape(m: "re.Match[str]") -> str:
     s = m.group(0)
     if len(s) >= 32 and (_ENV_NAME.fullmatch(s) or _slug(s)):
         return s
+    if len(s) >= 32 and _is_path_segment_or_sha(m):
+        return s
     return "****"
+
+
+_GIT_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def _is_path_segment_or_sha(m: "re.Match[str]") -> bool:
+    """A 40-hex commit id, or one directory name inside a file path (`/home/u/.cache/run-2026...-abc/x`): long
+    and opaque, but a location, not a credential. A single path segment is exempt only when it is a
+    hyphenated or underscored name between two slashes."""
+    s, text = m.group(0), m.string
+    if _GIT_SHA.fullmatch(s):
+        return True
+    a, b = m.start(), m.end()
+    return (a > 0 and text[a - 1] == "/" and b < len(text) and text[b] == "/"
+            and bool(re.search(r"[_\-]", s)) and bool(re.search(r"[A-Za-z]", s)))
 
 
 def _slug(s: str) -> bool:

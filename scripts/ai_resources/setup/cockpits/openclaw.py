@@ -1160,7 +1160,7 @@ def restart_gateway(backend: str = "agy-cli", *, probe=None, ask=None, sleep=Non
             with openclaw_host.MarkerGuard(exclusive=not window_owned):
                 rc, out = _openclaw(["gateway", "restart"], timeout=restart_timeout)
                 if rc != 0:
-                    ui.warn(f"OpenClaw: `gateway restart` failed ({ui.safe_text(out[-200:])}).")
+                    ui.warn(f"OpenClaw: `gateway restart` failed ({ui.safe_excerpt(out, 200, tail=True)}).")
                     return False
                 for _ in range(BACKEND_WAIT_TRIES):
                     if backend_registered(backend):
@@ -1336,7 +1336,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
 
     ok, out = _apply_hot(patch, dry_run=dry_run, replace_paths=replace_paths)
     if not ok:
-        ui.error(f"OpenClaw rejected the config patch: {ui.safe_text(out[-400:])}")
+        ui.error(f"OpenClaw rejected the config patch: {ui.safe_excerpt(out, 400, tail=True)}")
         return False
     if dry_run:
         return False
@@ -1426,7 +1426,7 @@ def _configure_skill_workshop(s: state.SetupState, doc: dict, path: Path, writte
     patch = {"skills": {"workshop": {"autonomous": {"mode": WORKSHOP_MODE}}}}
     ok, out = _apply_hot(patch, dry_run=dry_run)
     if not ok:
-        ui.error(f"OpenClaw rejected the Skill Workshop patch: {ui.safe_text(out[-400:])}")
+        ui.error(f"OpenClaw rejected the Skill Workshop patch: {ui.safe_excerpt(out, 400, tail=True)}")
         return False
     if dry_run:
         return False
@@ -1493,7 +1493,7 @@ def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
                               s.openclaw.voice_correction or "llm")
     ok, out = _apply_hot({"tools": {"media": media}}, dry_run=dry_run)
     if not ok:
-        ui.error(f"OpenClaw rejected the voice-notes patch: {ui.safe_text(out[-400:])}")
+        ui.error(f"OpenClaw rejected the voice-notes patch: {ui.safe_excerpt(out, 400, tail=True)}")
         return False
     if dry_run:
         return False
@@ -1711,7 +1711,7 @@ def _teardown_engine(s: state.SetupState) -> bool:
         args += ["--replace-path", rp]
     rc, out = _openclaw(args, stdin=json.dumps(patch))
     if rc != 0:
-        ui.error(f"OpenClaw teardown failed: {ui.safe_text(out[-400:])}")
+        ui.error(f"OpenClaw teardown failed: {ui.safe_excerpt(out, 400, tail=True)}")
         return False
     s.openclaw.applied = False
     s.openclaw.previous = {}
@@ -1734,7 +1734,7 @@ def _teardown_voice(s: state.SetupState) -> bool:
         rc, out = _openclaw(["config", "patch", "--stdin", "--replace-path", "tools.media"],
                             stdin=json.dumps({"tools": {"media": prev}}))
     if rc != 0:
-        ui.error(f"OpenClaw voice-notes teardown failed: {ui.safe_text(out[-400:])}")
+        ui.error(f"OpenClaw voice-notes teardown failed: {ui.safe_excerpt(out, 400, tail=True)}")
         return False
     s.openclaw.voice_applied = ""
     s.openclaw.voice_previous = None

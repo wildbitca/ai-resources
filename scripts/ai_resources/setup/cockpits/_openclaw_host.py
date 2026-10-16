@@ -570,7 +570,7 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
     ok, out = apply_patch(built["patch"], dry_run=True, replace_paths=built["replace_paths"])
     if not ok:
         # Fail closed: a rejected dry run stops here. There is no per-key fallback.
-        ui.error(f"OpenClaw rejected the config patch in a dry run; nothing was applied: {ui.safe_text(out[-400:])}")
+        ui.error(f"OpenClaw rejected the config patch in a dry run; nothing was applied: {ui.safe_excerpt(out, 400, tail=True)}")
         return reverted
     restart = rr.restart_paths(built["patch"], ruleset=ruleset, reload_mode=mode)
     hot_patch, restart_patch = rr.split_patch(built["patch"], restart)
@@ -588,7 +588,7 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
                                   "OpenClaw validated it with --dry-run."):
         ok, out = apply_patch(hot_patch, replace_paths=hot_rp)
         if not ok:
-            ui.error(f"OpenClaw rejected the config patch: {ui.safe_text(out[-400:])}")
+            ui.error(f"OpenClaw rejected the config patch: {ui.safe_excerpt(out, 400, tail=True)}")
         else:
             _record_changes(o, hot_changes, run_changes)
             applied = True
@@ -961,7 +961,7 @@ def _configure_bindings(o: state.OpenClawState, doc: dict, path: Path, written: 
     # validates and is then ignored. The evidence is a message arriving.
     ok, out = apply_patch(patch, dry_run=True, replace_paths=["bindings"])
     if not ok:
-        ui.error(f"OpenClaw rejected the bindings patch in a dry run; nothing was applied: {ui.safe_text(out[-400:])}")
+        ui.error(f"OpenClaw rejected the bindings patch in a dry run; nothing was applied: {ui.safe_excerpt(out, 400, tail=True)}")
         return False
     if dry_run:
         ui.detail("Dry run accepted by OpenClaw; nothing applied.")
@@ -976,7 +976,7 @@ def _configure_bindings(o: state.OpenClawState, doc: dict, path: Path, written: 
                 "apply them by hand in a drained window.")
         return False
     if not ok:
-        ui.error(f"OpenClaw rejected the bindings patch: {ui.safe_text(out[-400:])}")
+        ui.error(f"OpenClaw rejected the bindings patch: {ui.safe_excerpt(out, 400, tail=True)}")
         return False
     if not o.bindings_applied:
         o.bindings_previous = copy.deepcopy(current)
@@ -1136,7 +1136,7 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
         if rc == 0:
             o.host_workboard_applied = ""
         else:
-            ui.error(f"Could not disable the workboard plugin: {ui.safe_text(out[-200:])}")
+            ui.error(f"Could not disable the workboard plugin: {ui.safe_excerpt(out, 200, tail=True)}")
             ok = False
     else:
         o.host_workboard_applied = ""
