@@ -45,8 +45,20 @@ def detect_claude_code() -> Detected:
     return Detected("Claude Code", rc == 0, _version_from(out), p)
 
 
+def detect_cursor_agent() -> Detected:
+    """Cursor's terminal agent (`cursor-agent`, also linked as `agent`); the installer drops it in ~/.local/bin."""
+    p = _which_extra("cursor-agent")
+    if not p:
+        return Detected("Cursor Agent CLI", False, "", "", "curl https://cursor.com/install -fsS | bash")
+    rc, out = _run([p, "--version"])
+    return Detected("Cursor Agent CLI", rc == 0, _version_from(out), p)
+
+
 def detect_cursor() -> Detected:
-    # Cursor is a GUI app on macOS; check for its install path
+    # Cursor is a GUI app on macOS; check for its install path. The terminal agent counts as Cursor too.
+    agent = detect_cursor_agent()
+    if agent.installed:
+        return Detected("Cursor", True, agent.version, agent.binary_path)
     p = _which("cursor")
     macapp = Path("/Applications/Cursor.app")
     if not p and macapp.exists():
@@ -86,7 +98,12 @@ def detect_aider() -> Detected:
 
 
 def detect_copilot() -> Detected:
-    # GitHub Copilot CLI
+    # GitHub Copilot CLI: the standalone `copilot` binary (npm @github/copilot) or the older `gh copilot` extension
+    cp = _which("copilot")
+    if cp:
+        rc, out = _run(["copilot", "--version"])
+        if rc == 0:
+            return Detected("GitHub Copilot CLI", True, _version_from(out), cp)
     p = _which("gh")
     if not p:
         return Detected("GitHub Copilot CLI", False, "", "",
