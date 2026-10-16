@@ -24,7 +24,7 @@ ai-resources setup       # interactive wizard — step 1 picks the backend
 ai-resources doctor      # verify everything works
 ```
 
-The wizard handles cockpit detection (Claude Code, Cursor, Gemini CLI, …),
+The wizard handles cockpit detection (Claude Code, Cursor, Antigravity CLI, …),
 gateway setup where there is one, credentials, profile selection, and
 per-cockpit configuration.
 
@@ -78,7 +78,7 @@ subagent changes.
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  Cockpit (Claude Code / Cursor / Gemini CLI …)   │
+│  Cockpit (Claude Code / Cursor / agy …)   │
 │  ANTHROPIC_BASE_URL=<gateway>                    │
 └───────────────────────┬──────────────────────────┘
                         │
@@ -815,15 +815,19 @@ recorded in `scripts/ai_resources/setup/tools.py`, and a test fails if one is mi
 |---|---|---|---|
 | Claude Code | `curl -fsSL https://claude.ai/install.sh \| bash` | `claude` | https://code.claude.com/docs/en/setup |
 | Antigravity CLI | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | `agy` | https://antigravity.google/docs/getting-started?tab=cli |
-| OpenClaw | `npm i -g openclaw` | none | https://docs.openclaw.ai/install |
+| OpenClaw | `curl -fsSL https://openclaw.ai/install.sh \| bash -s -- --no-onboard` | none | https://docs.openclaw.ai/install |
 | Cursor Agent CLI | `curl https://cursor.com/install -fsS \| bash` | `agent login` | https://cursor.com/docs/cli/installation |
-| Gemini CLI | `npm install -g @google/gemini-cli` | `gemini`, then Sign in with Google | https://github.com/google-gemini/gemini-cli#readme |
 | Codex CLI | `npm install -g @openai/codex` | `codex login` | https://github.com/openai/codex#readme |
-| Aider | `pipx install aider-chat` | none: export the provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...) | https://aider.chat/docs/install.html |
+| Aider | `curl -LsSf https://aider.chat/install.sh \| sh` | none: export the provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...) | https://aider.chat/docs/install.html |
 | GitHub Copilot CLI | `npm install -g @github/copilot` | `copilot`, then `/login` | https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli |
 | Continue.dev CLI | `npm i -g @continuedev/cli` | `cn login` | https://github.com/continuedev/continue/blob/main/extensions/cli/README.md |
 | OpenCode | `npm install -g opencode-ai` | `opencode auth login` | https://opencode.ai/docs/ |
-| Windsurf | manual (desktop IDE) | n/a | https://docs.windsurf.com/windsurf/getting-started |
+| Windsurf (now Devin Desktop) | manual (desktop IDE) | n/a | https://docs.devin.ai/desktop/getting-started |
+
+**Gemini CLI is not installable.** Google retired it for personal accounts on 2026-06-18 and replaced it with the
+Antigravity CLI (`agy`; migration guide https://antigravity.google/docs/cli/gcli-migration). A copy that is already
+installed appears in the list as an informational row (`Gemini CLI vX (retired for personal accounts; use agy)`) and is
+never offered for installation. The per-installer audit evidence is in ADR-0008, item 14.
 
 ## Operations
 

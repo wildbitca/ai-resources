@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Fixed
+
+- **`setup` said OpenClaw was not installed when it was.** Detection looked only at the process PATH (and only `agy`
+  also checked `~/.local/bin` and fnm), so a run from a service unit or a minimal PATH missed Homebrew, npm-global,
+  pnpm, bun, cargo and fnm bins. Every detector (claude, openclaw, cursor, codex, aider, copilot/`gh`, continue,
+  opencode, agy) now uses one lookup, probes `--version` by absolute path with the binary's directory on PATH (an npm
+  shebang `env node` works), and a binary that exists but fails or times out is reported "installed, version unknown"
+  instead of "not installed". OpenClaw's reload-rules package lookup uses the same resolution.
+- **Gemini CLI is no longer installable.** Google retired it for personal accounts on 2026-06-18 (replaced by the
+  Antigravity CLI, `agy`). It left the tool catalog and every install offer; an existing copy is only an
+  informational row ("retired for personal accounts; use agy").
+- **Installers audited against the vendor's current docs (2026-10-16, ADR-0008 item 14).** OpenClaw now installs with
+  the vendor's installer script (`npm i -g openclaw` needs `--allow-scripts` on newer npm); Aider uses the vendor's
+  one-liner because `pipx install aider-chat` fails on Python 3.13+; the Windsurf docs moved to Devin Desktop; not-
+  installed hints no longer point at the archived `gh-copilot` extension or the 404 Continue page.
+
 ### Changed
 
 - **Setup step 1 shows one list instead of a scan followed by a selector.** Installed tools appear with their version

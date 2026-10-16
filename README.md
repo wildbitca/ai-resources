@@ -1,6 +1,6 @@
 # ai-resources
 
-Resource kit for AI coding agents: skills, workflows, orchestration rules, agent roles, and the **`ai-resources`** CLI. Works with **Cursor, Claude Code, Gemini CLI, Codex, GitHub Copilot, Windsurf, Continue.dev, Aider, and OpenCode**.
+Resource kit for AI coding agents: skills, workflows, orchestration rules, agent roles, and the **`ai-resources`** CLI. Works with **Cursor, Claude Code, Antigravity CLI (agy), Codex, GitHub Copilot, Windsurf, Continue.dev, Aider, and OpenCode**.
 
 **v1.1 highlights:**
 - **`--dry-run` for setup** — preview all generated configs and run live gateway smoke tests without writing anything to disk.
