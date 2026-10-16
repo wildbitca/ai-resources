@@ -695,6 +695,52 @@ def _slug(s: str) -> bool:
     return len(parts) >= 4 and sum(1 for p in parts if re.fullmatch(r"[a-z]{2,}", p)) * 10 >= len(parts) * 6
 
 
+# `my password is X`, `the API key = X`: prose, not a pair. Only a value that looks like a credential is masked.
+_PROSE_SECRET = re.compile(
+    r"(?i)(?<![\w\-])((?:password|passphrase|secret|token|api[ _\-]?key)[ \t]+(?:is|=)[ \t]+[\"']?)"
+    r"([^\s\"',;]{8,256})")
+_MODEL_ID = re.compile(r"[a-z][a-z0-9]*(?:[\-_.:/][a-z0-9]+)+")
+_EMPTY_KEY = re.compile(r"^[ \t]*(?:export[ \t]+)?[\"']?([A-Za-z0-9_.\-]{1,128})[\"']?[ \t]*[=:][ \t]*$")
+
+
+def _looks_like_credential(value: str) -> bool:
+    """At least 8 characters from at least two character classes, and not a word, a path, a model id, an
+    environment name or a reference (those are what a sentence about a password usually names)."""
+    v = value.strip().strip("\"'").rstrip(".,:;!?)")
+    if len(v) < 8 or "****" in v or _is_reference(v) or v.startswith(("/", "~", ".", "$", "<")):
+        return False
+    if "/" in v or _MODEL_ID.fullmatch(v) or _ENV_NAME.fullmatch(v) or _NAME_SHAPED.fullmatch(v):
+        return False
+    classes = sum(bool(re.search(p, v)) for p in ("[a-z]", "[A-Z]", "[0-9]", r"[^A-Za-z0-9]"))
+    return classes >= 2
+
+
+def _mask_prose(text: str) -> str:
+    return _PROSE_SECRET.sub(lambda m: m.group(1) + "****" if _looks_like_credential(m.group(2)) else m.group(0),
+                             text)
+
+
+def _mask_value_after_empty_key(text: str) -> str:
+    """`KEY=` or `KEY:` with nothing after it, then the value alone on the next non-empty line."""
+    if "=" not in text and ":" not in text:
+        return text
+    lines = text.split("\n")
+    changed = False
+    for i in range(len(lines) - 1):
+        m = _EMPTY_KEY.match(lines[i])
+        if m is None or not _KW_ANY.search(m.group(1)) or not _is_secret_name(m.group(1), None, weak=False):
+            continue
+        nxt = lines[i + 1]
+        body = nxt.strip()
+        if not body or len(body.split()) != 1 or body.startswith(("#", "- ")) or _KEY_LINE.match(body):
+            continue
+        if re.match(r"[A-Za-z0-9_.\-]+[ \t]*=", body) or not _looks_like_credential(body):
+            continue
+        lines[i + 1] = nxt[:len(nxt) - len(nxt.lstrip(" \t"))] + "****"
+        changed = True
+    return "\n".join(lines) if changed else text
+
+
 def mask_secrets(text: str) -> str:
     """Replace anything that looks like a credential with `****`: `NAME=value` pairs for key-like names (a
     reference such as `os.environ/NAME` or `${NAME}` is kept), well-known token shapes, Bearer tokens and long
@@ -742,6 +788,8 @@ def mask_secrets(text: str) -> str:
     out = _USERPASS.sub(lambda m: f"{m.group(1)}{m.group(2)}****", out)
     out = _AUTH_HEADER.sub(auth, out)
     out = _mask_pairs(out)
+    out = _mask_value_after_empty_key(out)
+    out = _mask_prose(out)
     out = _scan(_FLAG_SECRET, out, flag, resume=2)
     if _DB_CLIENT.search(out):
         out = "\n".join(_MYSQL_P.sub("-p****", l) if _DB_CLIENT.search(l) else l for l in out.split("\n"))
