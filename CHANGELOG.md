@@ -11,6 +11,16 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
 
 ### Added
 
+- **Antigravity lane (ADR-0007 section 11, phase 3; disabled on a fresh install and closed today).** `agy` becomes a
+  peer lane backend (`agy-cli-lane`) opened only by `--lanes-antigravity` (`--no-lanes-antigravity` closes it), a
+  signed Google-account acknowledgement that lists the role (one per account, the account named, per-account role
+  sets, the implementer unticked by default), ADR-0007 section 11 Accepted and every phase 3 gate G0-G7 proven
+  (`agy_lane_gates`, enforced in setup admission, the OpenClaw writer and `lanes prepare --lane`; each fails closed
+  with a message). Operator-owned ToS risk. V5 (slugs), V6 (sandbox), V7 (tool surface), V9 (agy workspace) and V12
+  (agy home) are NOT PROVEN, so no agy agent is written. Also: the `agy-cli-lane` plugin backend (registered only
+  with an absolute `agyBin`; `agy-cli` unchanged), the writer's catalog stub, tool denials, revocation prune and
+  kit-owned agy home path, `lanes.pins`, profile agy candidates, `lanes verify --spawn-error` and `lanes prepare
+  --expect-head`, and the lane-based `feature-cross-provider` example workflow.
 - **Wizard hardening (ADR-0008, 9-11).** A re-run starts every model question from the saved selection and
   pre-checks the saved providers and cockpits; echoed subprocess text drops terminal escapes and markup and is masked
   (unquoted passphrases, `Authorization:` headers, `-u user:pass`, YAML block scalars, PEM keys, padded base64); the
@@ -141,6 +151,18 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   The kit still has no dispatch path for them.
 
 ### Changed
+
+- **Best model first, on both lanes.** With the setup render path's `effective_ids`, a lane agent on the role's exact
+  model outranks a same-family other version; the other version serves writers only as a fallback and is refused for
+  a checker (a checker whose only candidate is a drifted claude-cli agent is Blocked). A profile `lanes.pins` entry
+  ranks first for that non-checker role only. ADR-0007 sections 1 and 8 are amended.
+- **Extended tripwires on every lane.** `~/.claude/CLAUDE.md`, `agents/`, `skills/`, `~/.agents/`, `~/.gitconfig`,
+  `~/.config/git/`, `~/.ssh/`, `~/.config/systemd/user/` and (by metadata) `~/.local/bin/`; `crontab -l` and the user
+  timer unit list are snapshotted at prepare and verify; a commit adding `SOUL.md`, `IDENTITY.md` or `USER.md` fails.
+- **Run-pinned `lanes.yaml` hash and quota circuit breaker.** The first `lanes prepare` of a run records the table
+  hash and later prepares refuse a changed table; `verify --spawn-error` can trip a pool for the rest of the run.
+- **Held-candidate display.** `setup --lanes` lists held candidates at detail level instead of as warnings.
+- **Anthropic acknowledgement text** gains the partial-acknowledgement residual: re-sign once.
 
 - **Setup step headers follow the steps that run.** Step 6 is shown as 6a Models, 6b Role assignment and 6c
   Subscription lanes (the lanes header appears only when a lanes flag is given); the review is `Review and apply`.

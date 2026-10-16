@@ -210,6 +210,50 @@ is nothing to reset.
 5. After three failed attempts the step stops; the ledger under `$XDG_STATE_HOME/ai-resources/lanes/<run-id>/` is the
    evidence.
 
+### The Antigravity lane (ADR-0007 section 11)
+
+Closed by default and closed today: gates G1-G5 (V5 slugs, V6 sandbox, V7 tool surface, V9 agy workspace, V12 agy
+home) are NOT PROVEN, so `ai-resources setup --lanes --lanes-antigravity` holds every agy candidate with a message
+naming the gates. Nothing here is run by setup: no `agy` call, no spawn, no write under `~/.gemini`.
+
+**Prerequisites (operator-owned).** agy installed and logged in; `plugins.entries.ai-resources.config.agyBin` an
+absolute path (a relative or missing path holds the agy agents with "run setup in a drained window"); the
+`agy-cli-lane` backend is registered by the plugin only with an absolute `agyBin`, which is a plugin change that
+reaches a gateway on a reload (a drained window); the probe window (V5, V6, V7, V9, V12) announced and run through
+`~/.cache/ai-resources-live-e2e/bin-agyprobe` with its own agy login.
+
+**The acknowledgement.** Interactive only. The Google text is shown once with an account prompt (one
+acknowledgement per Google account; prefer an account that is not used for `wildbit-iac` or other critical work if
+the subscription allows it) and a role list with the implementer unticked. A non-interactive `--lanes-antigravity`
+needs a stored valid acknowledgement listing at least one role (exit 2 otherwise); roles it does not list are held
+with "the Google acknowledgement does not list <role>", which is not a setup error. A changed text drops the
+acknowledgement: re-sign.
+
+**Do not use agy interactively during a lane run.** The shared `~/.gemini` state and `~/.local/bin/` are tripwires on
+every lane; interactive agy use (or an updater rewriting the binary) fails every in-flight step, naming the path.
+
+**Agy home.** The kit-owned home is `~/.local/share/ai-resources/agy-home/` (0700) and is created only when V12 is
+proven, with its own interactive login. Teardown removes it only after an explicit confirm and never copies it into
+evidence backups. Without it the shared `~/.gemini` is used and its conversation and memory state feeds your later
+interactive agy sessions.
+
+**Closing it.** `ai-resources setup --no-lanes-antigravity` clears the gate and the agy agents; claude-cli lanes
+keep running and the Google acknowledgement stays as a record. A revoked flag, ack or acknowledgement text prunes
+recorded agy agents in teardown's order: first, unconditionally, their ids leave every `allowAgents`, their deny
+tokens leave `tools.deny` and their model leaves `models.providers.agy-cli-lane`; only then, after confirmation,
+`openclaw agents delete` and the workspace removal. A declined delete leaves an entry no orchestrator may spawn
+(`status` calls it "revoked, entry kept by operator choice").
+
+**A held agent or a tripped breaker.** A held candidate lists its reason in `setup --lanes-dry-run` and in `verify`
+(warn level once the gate is on). A tripped pool is refused for the rest of the run (`lanes prepare` names the
+breaker entry); start a new run after the quota resets. The breaker's patterns are empty until a probe run records
+the real error text.
+
+**What teardown cannot undo.** Data already sent to Google; agy conversation and memory state in a shared
+`~/.gemini`; `trustedFolders.json` entries; quota consumed; any account-level ToS consequence; files a skip-permissions
+shell wrote outside the repo and the tripwire list; OAuth credentials in a kit-owned agy home unless you confirm
+their removal.
+
 ## Pending operator steps
 
 These need the real host and a maintenance window, so they were **not** run when 1.9.0 was built:

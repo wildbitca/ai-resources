@@ -133,8 +133,9 @@ inherits the session model).
 
 - Team composition (`ai-resources setup --compose`, ADR-0006) writes through `executors.yaml` via the profile
   path (customizations over a profile) and never bypasses `compat.py`: the matrix stays the only verification gate.
-- `agy` (Antigravity) is direct use only: it is never a composition target, an `openclaw-agent` or a dispatch
-  backend, and no flag lifts that.
+- In composition, `agy` (Antigravity) is direct use only, never an `openclaw-agent` or a dispatch backend, and no
+  composition flag lifts that. The lanes pass is governed by ADR-0007 (`--lanes-antigravity` + a signed
+  Google-account acknowledgement listing the role; never `--allow-unverified`).
 
 ## Health check
 
