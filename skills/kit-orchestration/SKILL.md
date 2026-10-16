@@ -87,16 +87,19 @@ Any failure is one failed attempt. On a failure of check 4, restore and clean on
 
 **Evidence.** Per dispatch, record in the report and the handoff notes (never in new front-matter keys): backend, agentId, handle or sessionKey, cwd, attempt, start and end times, the result of checks 1-4, the report path and, for a parallel member, the handoff hash before and after.
 
-**Example team.** Models are properties of the agent or role and informational here. The worked example of a mixed team is the `lane` workflow `workflows/feature-cross-provider.workflow.yaml` (ADR-0007): its steps name roles, never agents, and the team is whatever the setup lanes table (`~/.config/ai-resources/lanes.yaml`, the `resolved:` section) renders for them, so there are no placeholder agent ids to replace. For an explicit `openclaw-agent` step (a deliberate choice of one agent on one host), the agent must exist and be on `subagents.allowAgents`:
+**Example team.** Models are properties of the agent or role and informational here; `agy-flash` and `agy-pro` are placeholder ids for agents that must exist and be on `subagents.allowAgents`.
 
 | Role | Backend | agentId | Model configured on that agent or role |
 |------|---------|---------|-----------------------------------------|
-| explore (the "researcher") | openclaw-agent | `<agent id>` | whatever the agent is configured with |
+| planner | openclaw-agent | agy-flash | gemini-flash (agy label) |
+| explore (the "researcher") | openclaw-agent | agy-pro | gemini-pro (agy label) |
 | software-architect | claude-code | | opus via `by_role` |
 | implementer | claude-code | | sonnet via `by_role` |
-| code-reviewer | lane | | resolved from the lanes table (see "Lane steps") |
+| code-reviewer | openclaw-agent | agy-flash | gemini-flash (agy label) |
 
-The example is illustrative. `rules/017-multimodel-routing.mdc` recommends a strong model for review, so a real team would keep `code-reviewer` on a strong model. An agent backed by agy is an external prerequisite that this kit does not provide (see ADR 0005); an agy lane agent (`kit-lane-agy-*`) is written by `ai-resources setup --lanes --lanes-antigravity` only when ADR-0007 section 11 and every phase 3 gate allow it.
+The example team is illustrative. `rules/017-multimodel-routing.mdc` recommends a strong model for review, so a real team would keep `code-reviewer` on a strong model. An agent backed by agy is an external prerequisite that this kit does not provide (see ADR 0005).
+
+The all-lane example, where no step names an agent and the team is whatever the setup lanes table renders, is `workflows/feature-lanes.workflow.yaml` (ADR-0007).
 
 ## Lane steps
 

@@ -201,46 +201,25 @@ def test_real_workflows_still_validate():
     assert mod.failures == []
 
 
-def test_example_cross_provider_workflow_is_a_lane_workflow_with_a_verified_landing_chain():
-    """ADR-0007 phase 3: the explicit `openclaw-agent` sample is dropped (OQ-P3-7); every step is a `lane` step
-    except the closing document step, scope writers are verified in sequence and a checker never shares a group
-    with another lane step."""
+def test_example_cross_provider_workflow_has_three_openclaw_steps_and_a_mixed_group():
     import yaml
 
     path = REPO / "workflows" / "feature-cross-provider.workflow.yaml"
     assert path.is_file(), "the worked example must exist"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    steps = {s["id"]: s for s in doc["steps"]}
-    assert not [s for s in doc["steps"] if s.get("backend") == "openclaw-agent"]
-    assert not any("agentId" in s for s in doc["steps"]), "a lane step never names an agent"
+    remote = [s for s in doc["steps"] if s.get("backend") == "openclaw-agent"]
+    assert [s["id"] for s in remote] == ["research", "plan", "review"]
+    assert {s["agentId"] for s in remote} == {"agy-flash", "agy-pro"}
+    group = {s["id"] for s in doc["steps"] if (s.get("execution_hints") or {}).get("parallel_group") == "post-test"}
+    assert group == {"review", "security"}
     assert not any("model" in s for s in doc["steps"]), "there is no model field"
-    assert doc["integrating_writer"] == "implementer"
-    assert steps["implement"]["integrates"] == ["tests", "docs"]
-    assert steps["tests"]["write_scope"] == ["tests/"] and steps["docs"]["write_scope"] == ["docs/"]
-    assert steps["verify-tests"]["verifies"] == ["tests"] and steps["verify-docs"]["verifies"] == ["docs"]
-    order = [s["id"] for s in doc["steps"]]
-    assert order.index("verify-tests") < order.index("verify-docs") < order.index("implement")   # sequential
-    groups: dict = {}
-    for s in doc["steps"]:
-        g = (s.get("execution_hints") or {}).get("parallel_group")
-        if g:
-            groups.setdefault(g, set()).add(s["id"])
-    assert groups == {"scope-writers": {"tests", "docs"}, "review": {"review", "review-second"}}
-    assert steps["review-second"]["execution_hints"]["lane_member"] == "second"
-    assert "security" not in {i for g in groups.values() for i in g}          # the audit runs alone
-    for sid in ("verify-tests", "verify-docs", "verify-implement", "verify-final", "security"):
-        assert not (steps[sid].get("execution_hints") or {}).get("parallel_group")
-        assert steps[sid]["backend"] == "lane"
-    assert "Update {{handoff_file}}" not in "".join(str(s.get("prompt_template", "")) for s in doc["steps"]
-                                                    if s.get("backend") == "lane")
 
     from ai_resources import generate
 
     table = generate._workflow_skill_md(path.name, doc)
-    assert table.count("lane (resolved at dispatch from the setup lanes table)") == len(
-        [s for s in doc["steps"] if s.get("backend") == "lane"])
-    assert "| `implement` | `implementer` | lane (resolved at dispatch from the setup lanes table), integrating writer |" in table
-    assert "openclaw-agent (`agy-" not in table
+    assert table.count("openclaw-agent (`agy-") == 3
+    assert "| `review` | `code-reviewer` | openclaw-agent (`agy-flash`) | post-test |" in table
+    assert "| `security` | `security-auditor` | claude-code | post-test |" in table
 
 
 def test_generated_example_skill_is_in_sync():

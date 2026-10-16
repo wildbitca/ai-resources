@@ -50,13 +50,14 @@ def test_post_step_check_lists_four_checks():
 
 
 def test_example_team_states_models_as_agent_properties_and_rule_017():
-    # ADR-0007 phase 3: the `agy-flash`/`agy-pro` placeholder ids are gone; the worked example is the lane
-    # workflow, whose team is rendered from the setup lanes table.
-    assert "agy-flash" not in SKILL and "agy-pro" not in SKILL
-    assert "workflows/feature-cross-provider.workflow.yaml" in SKILL
+    assert "agy-flash" in SKILL and "agy-pro" in SKILL
     assert "rules/017-multimodel-routing.mdc" in SKILL
     assert "external prerequisite" in SKILL
+
+
+def test_phase_3_points_the_lane_flow_at_both_lanes_and_names_the_lanes_example():
     assert "claude-cli and agy" in SKILL and "agy later" not in SKILL
+    assert "workflows/feature-lanes.workflow.yaml" in SKILL
 
 
 def test_lane_section_states_the_breaker_the_head_and_the_static_weight_placement():

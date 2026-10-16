@@ -20,7 +20,8 @@ Work after 2.1.1, on `main`, not released. The label (2.1.2 or 2.2.0) is the ope
   (agy home) are NOT PROVEN, so no agy agent is written. Also: the `agy-cli-lane` plugin backend (registered only
   with an absolute `agyBin`; `agy-cli` unchanged), the writer's catalog stub, tool denials, revocation prune and
   kit-owned agy home path, `lanes.pins`, profile agy candidates, `lanes verify --spawn-error` and `lanes prepare
-  --expect-head`, and the lane-based `feature-cross-provider` example workflow.
+  --expect-head`, and the all-lane `feature-lanes` example workflow (the explicit `openclaw-agent` sample stays in
+  `feature-cross-provider`).
 - **Wizard hardening (ADR-0008, 9-11).** A re-run starts every model question from the saved selection and
   pre-checks the saved providers and cockpits; echoed subprocess text drops terminal escapes and markup and is masked
   (unquoted passphrases, `Authorization:` headers, `-u user:pass`, YAML block scalars, PEM keys, padded base64); the
