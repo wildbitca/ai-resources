@@ -99,3 +99,27 @@ def test_names_and_digests_that_are_not_secrets_are_kept(raw):
 def test_a_bare_long_hex_value_is_still_masked():
     assert "ab12" * 16 not in ui.mask_secrets("value: " + "ab12" * 16)
     assert "ab12" * 16 not in ui.mask_secrets("api_key: " + "ab12" * 16)
+
+
+@pytest.mark.parametrize("raw,leak", [
+    ("HF_TOKENS: s3cr3tvalue", "s3cr3tvalue"),
+    ("auth_tokens = xyz123", "xyz123"),
+    ("passwords: hunter2", "hunter2"),
+    ("DB_PASSWORDS=a,b", "a,b"),
+    ("PASSWORD1=hunter2", "hunter2"),
+    ("DB_PASSWORD2: correct", "correct"),
+    ("GH_TOKEN1=abcdefgh12345678", "abcdefgh12345678"),
+    ("bot_tokens: abcdefxyz123", "abcdefxyz123"),
+    ("apiKeyRef: realsecretvalue123", "realsecretvalue123"),
+    ("key_path: s3cr3tvalue", "s3cr3tvalue"),
+    ("client_secret_name: hunter2", "hunter2"),
+    ("export SECRET_TYPE=topsecretvalue", "topsecretvalue"),
+    ("password_hash: " + "ab12" * 16, "ab12" * 16),
+])
+def test_plural_digit_suffixed_and_ref_named_secrets_are_masked(raw, leak):
+    assert leak not in ui.mask_secrets(raw)
+
+
+def test_budget_tokens_stay_visible():
+    assert ui.mask_secrets("max_tokens: 4096") == "max_tokens: 4096"
+    assert ui.mask_secrets("completion_tokens=512") == "completion_tokens=512"

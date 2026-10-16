@@ -1220,7 +1220,7 @@ def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
         if rc_link == 0:
             s.openclaw.plugin_linked = True
         else:
-            ui.warn(f"OpenClaw: could not link the ai-resources plugin ({out_link[-200:]})")
+            ui.warn(f"OpenClaw: could not link the ai-resources plugin ({ui.safe_text(out_link[-200:])})")
 
     if "agy_mcp_bridge_preexisted" not in (s.openclaw.previous or {}):
         bridge_path = str(Path(ak_path) / "openclaw-plugin" / "ai-resources" / "bridge.py")
@@ -1354,7 +1354,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
         if s.openclaw.plugin_linked:
             rc_unlink, out_unlink = _openclaw(["plugins", "uninstall", PLUGIN_ID])
             if rc_unlink != 0:
-                ui.warn(f"OpenClaw: could not unlink the ai-resources plugin ({out_unlink[-200:]})")
+                ui.warn(f"OpenClaw: could not unlink the ai-resources plugin ({ui.safe_text(out_unlink[-200:])})")
             s.openclaw.plugin_linked = False
         if not (s.openclaw.previous or {}).get("agy_mcp_bridge_preexisted", True):
             unregister_agy_mcp_bridge()

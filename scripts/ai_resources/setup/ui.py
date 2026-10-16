@@ -352,24 +352,32 @@ _BLOCK_SCALAR = re.compile(
 _PASSWORD_LINE = re.compile(
     r"(?im)^([ \t]*(?:export[ \t]+)?([A-Z0-9_.\-]*(?:PASSWORD|PASSWD|PASSPHRASE)[A-Z0-9_.\-]*)[ \t]*[=:][ \t]*)"
     r"(?![\"'|>])([^\n]+)$")
-_SECRET_WORDS = ("key", "token", "secret", "password", "passwd", "passphrase", "credential")
-_SECRET_PLURALS = ("keys", "secrets", "credentials")
+_SECRET_WORD = re.compile(r".*(?:key|token|secret|password|passwd|passphrase|credential)s?\d*")
 # `api_key_env: NAME` names a variable, `token_count: 5` counts: the last word says the value is not a secret.
 _NOT_A_VALUE = frozenset({"env", "file", "path", "ref", "name", "var", "dir", "count", "limit", "len", "length",
                           "size", "type"})
+# ... but only when the value is shaped like one: a variable name, a number or a path.
+_NAME_SHAPED = re.compile(r"[A-Z_][A-Z0-9_]*|\d+|[~./][\w./~\-]*|[a-z]+(?:[_\-][a-z]+)+")
+# `max_tokens: 4096` sizes a budget: `tokens` after one of these words is not a credential.
+_BUDGET_WORDS = frozenset({"max", "min", "num", "total", "prompt", "completion", "input", "output", "context"})
 _DIGEST = re.compile(
     r"(?i)\b(?:sha(?:1|224|256|384|512)|md5)[:=]\s*[0-9a-f]{32,128}\b"
     r"|\b[\w.\-]*(?:digest|checksum|hash)[\"']?\s*[:=]\s*[\"']?[0-9a-f]{32,128}\b")
+_SECRET_NAMED_DIGEST = re.compile(r"(?i)^[\w.\-]*(?:password|passwd|passphrase|secret|token|credential)")
 
 
-def _is_secret_name(name: str) -> bool:
-    """Whether a variable or field name says its value is a secret: one of its words is (or ends in) a secret
-    word, and its last word does not say it is a variable name, a path or a count. `max_tokens`, `tokenizer`,
-    `keyboard` and `api_key_env` are not."""
+def _is_secret_name(name: str, value: "str | None" = None) -> bool:
+    """Whether a variable or field name says its value is a secret: one of its words is a secret word (allowing
+    a plural or a trailing digit). A last word such as `env`, `path` or `count` exempts the name only when the
+    value is name-shaped (an identifier, a number or a path). `max_tokens`, `tokenizer`, `keyboard` are not."""
     words = [w.lower() for w in re.split(r"[_.\-]+", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)) if w]
-    if not words or words[-1] in _NOT_A_VALUE:
+    if not words:
         return False
-    return any(w in _SECRET_PLURALS or w.endswith(_SECRET_WORDS) for w in words)
+    if words[-1] in _NOT_A_VALUE and (value is None or _NAME_SHAPED.fullmatch(value.strip().strip("\"'"))):
+        return False
+    if len(words) > 1 and words[-1] == "tokens" and words[-2] in _BUDGET_WORDS:
+        return False
+    return any(_SECRET_WORD.fullmatch(w) for w in words)
 
 
 _USERPASS = re.compile(r"(?<![\w\-])(-u|--user|--proxy-user)((?:\s+|=)[^\s:]+:)(\S+)")
@@ -383,10 +391,10 @@ def mask_secrets(text: str) -> str:
     reference such as `os.environ/NAME` or `${NAME}` is kept), well-known token shapes, Bearer tokens and long
     opaque strings. Used on everything the wizard echoes from a subprocess or renders into a diff."""
     def pair(m: "re.Match[str]") -> str:
-        if not _is_secret_name(m.group(1)):
-            return m.group(0)
         quote = m.group(3) or ""
         value = m.group(4) if m.group(3) else m.group(6)
+        if not _is_secret_name(m.group(1), value):
+            return m.group(0)
         if (_REFERENCE.fullmatch(value) or value in ("****", "null", "None", "true", "false")
                 or re.fullmatch(r"[|>][+\-0-9]*", value)):
             return m.group(0)
@@ -401,7 +409,7 @@ def mask_secrets(text: str) -> str:
 
     def password_line(m: "re.Match[str]") -> str:
         value = m.group(3).strip()
-        if (not _is_secret_name(m.group(2)) or _REFERENCE.fullmatch(value)
+        if (not _is_secret_name(m.group(2), value) or _REFERENCE.fullmatch(value)
                 or value in ("****", "null", "None", "true", "false")):
             return m.group(0)
         return f"{m.group(1)}****"
@@ -409,6 +417,8 @@ def mask_secrets(text: str) -> str:
     kept: list[str] = []                      # digests are not secrets: set aside, put back at the end
 
     def keep(m: "re.Match[str]") -> str:
+        if _SECRET_NAMED_DIGEST.match(m.group(0)):
+            return m.group(0)                 # `password_hash: <hex>` is a stored credential: left to the maskers
         kept.append(m.group(0))
         return f"\x00{len(kept) - 1}\x00"
 

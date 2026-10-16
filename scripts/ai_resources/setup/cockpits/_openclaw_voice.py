@@ -373,7 +373,7 @@ def remove_installed(s: state.SetupState) -> None:
             except (OSError, subprocess.TimeoutExpired) as e:
                 failed, detail = True, str(e)
             if failed:
-                ui.warn(f"brew uninstall {formula} failed (another formula may need it): {detail}")
+                ui.warn(f"brew uninstall {formula} failed (another formula may need it): {ui.safe_text(detail)}")
             else:
                 ui.ok(f"Uninstalled {formula}")
     s.openclaw.voice_formulas_installed = []

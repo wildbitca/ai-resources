@@ -195,7 +195,8 @@ def test_real_ctrl_d_cancels_every_prompt(kind, back):
 def test_ctrl_d_in_a_text_field_with_content_is_not_swallowed():
     """Plain text and password already cancel on EOF; the binding must not break typing."""
     qmod = pytest.importorskip("questionary")
-    assert _drive(lambda i, o: _BUILDERS["text"](qmod, i, o), "ab\r") == "ab"
+    # Cursor left of "b", then Ctrl-D: deletes "b" (no cancel), Enter answers "a".
+    assert _drive(lambda i, o: _BUILDERS["text"](qmod, i, o), "ab\x1b[D\x04\r") == "a"
 
 
 def test_text_and_password_prompts_say_ctrl_b_replaces_cursor_left(monkeypatch):
