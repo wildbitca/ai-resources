@@ -30,6 +30,8 @@ class ToolSpec:
     install_cmd: str            # run via `bash -c`; shown to the user before it runs
     detect: Callable[[], detection.Detected]
     login_hint: str = ""        # printed after a successful install; "" = no login needed
+    purpose: str = ""           # one line shown next to the tool in the selector
+    login_cmd: tuple[str, ...] = ()   # argv of the tool's own interactive sign-in; () = no sign-in flow
 
 
 TOOLS: dict[str, ToolSpec] = {
@@ -38,6 +40,8 @@ TOOLS: dict[str, ToolSpec] = {
         "curl -fsSL https://claude.ai/install.sh | bash",
         lambda: detection.detect_claude_code(),
         "`claude` login is interactive — run `claude` once and sign in by hand.",
+        "Anthropic coding agent; the default cockpit and the Claude subscription lanes",
+        ("claude",),
     ),
     "agy": ToolSpec(
         "agy", "Antigravity CLI (agy)",
@@ -45,11 +49,14 @@ TOOLS: dict[str, ToolSpec] = {
         lambda: detection.detect_agy(),
         "`agy` login is interactive — run `agy` once and sign in with your personal "
         "Google account by hand.",
+        "Antigravity CLI; orchestrator of the antigravity OpenClaw engine",
+        ("agy",),
     ),
     "openclaw": ToolSpec(
         "openclaw", "OpenClaw",
         "npm i -g openclaw",
         lambda: detection.detect_openclaw(),
+        purpose="agent gateway the kit configures; no separate sign-in",
     ),
 }
 
@@ -189,8 +196,9 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
           assume_yes: bool = False, dry_run: bool = False) -> list[str]:
     """Offer to install missing required tools; return the ids actually installed.
 
-    Consent is per run and is never stored. The question defaults to No (Enter runs nothing: an install pipes
-    a remote script into bash); `assume_yes` (`ai-resources setup --yes`) says yes for this run only; an
+    The question is a checkbox over every tool the kit knows (installed ones are shown disabled, missing required
+    ones are pre-ticked, none is a valid answer), followed by an optional sign-in for what was just installed.
+    Consent is per run and is never stored. `assume_yes` (`ai-resources setup --yes`) says yes for this run only; an
     unattended (`--non-interactive`) run without `--yes` installs nothing. An answer saved by an older kit
     (`install_tools_answer`) is ignored and cleared: a "yes" given once must not authorise a later run, and a
     "no" must not stop the question being asked again.
@@ -211,7 +219,10 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
                 + (" (--yes does not install in a dry run)." if assume_yes else "."))
         return []
 
-    if not assume_yes:
+    sign_in: list[str] = []                           # installed tools the operator ticked for sign-in
+    if assume_yes:
+        chosen = list(missing)
+    else:
         if ui.is_non_interactive():
             return []
         if not ui.stdin_is_a_terminal():
@@ -221,18 +232,100 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
                     "or pass --yes to say yes for this run.")
             return []
         # Asked once per run: a second call on the same state object reuses the answer given a moment ago.
-        proceed = getattr(s, "_install_answer_this_run", None)
-        if proceed is None:
-            proceed = bool(ui.confirm(f"Install missing tools now? ({labels})", default=False))
-            s._install_answer_this_run = proceed          # an instance attribute: never serialised
-        if not proceed:
-            return []
+        picked = getattr(s, "_install_answer_this_run", None)
+        if picked is None:
+            picked = _ask_selection(missing)
+            s._install_answer_this_run = picked           # an instance attribute: never serialised
+        chosen = [t for t in TOOLS if t in picked and t in _not_installed()]
+        sign_in = [t for t in TOOLS if f"login:{t}" in picked and TOOLS[t].login_cmd and t not in chosen]
 
     installed: list[str] = []
-    for tool_id in missing:
+    for tool_id in chosen:
         if install_one(tool_id, s):
             installed.append(tool_id)
+    _sign_in_flow(installed, sign_in, interactive=not assume_yes)
     return installed
+
+
+def _not_installed() -> list[str]:
+    return missing_tools(tuple(TOOLS))
+
+
+def _ask_selection(missing: list[str]) -> list[str]:
+    """One checkbox over every known tool: missing ones selectable (the required ones pre-ticked), installed ones
+    shown as installed and disabled, plus an explicit, unticked sign-in row per installed tool with a login."""
+    absent = set(_not_installed())
+    choices: list = []
+    for tid, spec in TOOLS.items():
+        what = f" - {spec.purpose}" if spec.purpose else ""
+        if tid in absent:
+            choices.append(ui.Choice(f"{spec.label}{what}", value=tid))
+        else:
+            choices.append(ui.Choice(f"{spec.label} (installed){what}", value=tid, disabled="installed"))
+    for tid, spec in TOOLS.items():
+        if tid not in absent and spec.login_cmd:
+            choices.append(ui.Choice(f"Sign in to installed tools: {spec.label}", value=f"login:{tid}"))
+    picked = ui.checkbox("Select the tools to install (Space ticks, Enter confirms; none is fine)",
+                         choices, default=list(missing))
+    return list(picked or [])
+
+
+def _login_command(spec: ToolSpec) -> str:
+    return " ".join(spec.login_cmd)
+
+
+def _run_login(tool_id: str) -> bool:
+    """Run the tool's own sign-in on the operator's terminal. Stdio is inherited, never captured, and the kit
+    passes no credential and reads none: the tool talks to the operator and keeps its own credential store."""
+    spec = TOOLS[tool_id]
+    argv = list(spec.login_cmd)
+    if not argv:
+        return False
+    try:
+        found = spec.detect()
+        if found.installed and found.binary_path:
+            argv[0] = found.binary_path
+    except Exception:  # noqa: BLE001 - detection is best effort here; fall back to the bare name on PATH
+        pass
+    try:
+        rc = subprocess.run(argv).returncode
+    except KeyboardInterrupt:
+        ui.warn(f"{spec.label} sign-in interrupted; run `{_login_command(spec)}` later.")
+        return False
+    except OSError as e:
+        ui.warn(f"{spec.label} sign-in could not start ({ui.safe_excerpt(str(e), 200)}); "
+                f"run `{_login_command(spec)}` yourself.")
+        return False
+    if rc != 0:
+        ui.warn(f"{spec.label} sign-in exited with status {rc}; run `{_login_command(spec)}` to retry.")
+        return False
+    ui.record_action(f"signed in to {spec.label}")
+    return True
+
+
+def _sign_in_flow(new_tools: list[str], explicit: list[str], *, interactive: bool) -> None:
+    """Sign-in follow-up. New tools with a login flow are offered (pre-ticked); installed tools only when the
+    operator ticked them in the selector. Without a prompt (`--yes`) or a terminal the command is printed."""
+    new_with_login = [t for t in new_tools if TOOLS[t].login_cmd]
+    to_run = list(explicit)
+    if new_with_login:
+        if interactive and ui.stdin_is_a_terminal():
+            picked = ui.checkbox(
+                "Sign in now? (each tool opens its own interactive sign-in)",
+                [ui.Choice(f"{TOOLS[t].label}: {_login_command(TOOLS[t])}", value=t) for t in new_with_login],
+                default=list(new_with_login))
+            to_run += [t for t in new_with_login if t in (picked or [])]
+            skipped = [t for t in new_with_login if t not in (picked or [])]
+        else:
+            skipped = new_with_login
+        for t in skipped:
+            ui.info(f"To sign in to {TOOLS[t].label} later, run: `{_login_command(TOOLS[t])}`")
+    if to_run and not (interactive and ui.stdin_is_a_terminal()):
+        for t in to_run:
+            ui.info(f"To sign in to {TOOLS[t].label}, run: `{_login_command(TOOLS[t])}`")
+        return
+    for t in to_run:
+        _run_login(t)
 
 
 def teardown(s: state.SetupState) -> list[str]:

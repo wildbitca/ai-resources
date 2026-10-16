@@ -110,7 +110,8 @@ def test_interactive_run_asks_once_and_does_not_reinstall_agy(monkeypatch, tmp_p
     monkeypatch.setattr(tools, "_rc_paths", lambda: [tmp_path / "bashrc"])
 
     asked = []
-    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: (asked.append(msg), True)[1])
+    monkeypatch.setattr(ui, "checkbox", lambda msg, choices, default=None, **k: (
+        asked.append([getattr(c, "value", c) for c in choices]) or ["agy"]) if msg.startswith("Select") else [])
 
     def fake_run(cmd, capture_output, text, timeout):
         return subprocess.CompletedProcess(cmd, 0, "", "")
@@ -120,7 +121,7 @@ def test_interactive_run_asks_once_and_does_not_reinstall_agy(monkeypatch, tmp_p
     installed = tools.offer(s)
     assert installed == ["agy"]
     assert len(asked) == 1
-    assert "agy" in asked[0].lower()
+    assert "agy" in asked[0]
     assert s.tracking.install_tools_answer is None, "2.2b 8b: the answer belongs to this run and is not stored"
 
 
@@ -129,7 +130,7 @@ def test_a_declined_offer_installs_nothing_and_is_not_asked_again(monkeypatch):
     monkeypatch.setattr(detection, "detect_agy", lambda: _installed("agy"))
     monkeypatch.setattr(detection, "detect_openclaw", lambda: _installed("OpenClaw"))
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(ui, "confirm", lambda *a, **k: False)
+    monkeypatch.setattr(ui, "checkbox", lambda *a, **k: [])
 
     s = state.SetupState()
     installed = tools.offer(s)
@@ -138,7 +139,7 @@ def test_a_declined_offer_installs_nothing_and_is_not_asked_again(monkeypatch):
 
     # A second call in the same run must not prompt again.
     calls = []
-    monkeypatch.setattr(ui, "confirm", lambda *a, **k: calls.append(1) or True)
+    monkeypatch.setattr(ui, "checkbox", lambda *a, **k: calls.append(1) or [])
     tools.offer(s)
     assert calls == []
 
@@ -304,10 +305,10 @@ def test_pressing_enter_at_the_install_prompt_installs_nothing(monkeypatch):
     _all_missing(monkeypatch)
     seen = {}
 
-    def enter(msg, default=True):
-        seen["default"] = default
-        return default                                   # what Enter does
-    monkeypatch.setattr(ui, "confirm", enter)
+    def enter(msg, choices, default=None, **k):
+        seen["default"] = False
+        return []                                        # nothing ticked: the safe answer
+    monkeypatch.setattr(ui, "checkbox", enter)
     ran = []
     monkeypatch.setattr(tools, "install_one", lambda tool_id, s: ran.append(tool_id) or True)
     s = state.SetupState()
@@ -318,7 +319,7 @@ def test_pressing_enter_at_the_install_prompt_installs_nothing(monkeypatch):
 
 def test_yes_installs_without_asking_and_does_not_persist_the_answer(monkeypatch):
     _all_missing(monkeypatch)
-    monkeypatch.setattr(ui, "confirm", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
+    monkeypatch.setattr(ui, "checkbox", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
     ran = []
     monkeypatch.setattr(tools, "install_one", lambda tool_id, s: ran.append(tool_id) or True)
     s = state.SetupState()

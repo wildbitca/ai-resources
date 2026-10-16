@@ -2,7 +2,7 @@
 
 Every installer prompt of the kit, with its default:
 
-  1. tools.offer            `Install missing tools now?`        curl | bash, npm        No (was No since 2.2)
+  1. tools.offer            tool selector (checkbox)            curl | bash, npm        required set pre-ticked
   2. wizard pipx menu       `How should I install pipx?`        brew/apt/dnf/pip        Skip (since 2.2)
   3. wizard LiteLLM pipx    `Install LiteLLM via pipx ...?`     pipx install            No (was Yes)
   4. wizard LiteLLM venv    `Create venv ... pip install ...?`  pip install              No (was Yes)
@@ -48,8 +48,14 @@ def _all_missing(monkeypatch):
 
 
 def _enter(monkeypatch):
-    """What pressing Enter does at every prompt: the default."""
+    """What pressing Enter does at every confirm: the default. The tool selector is answered with nothing ticked
+    (its Enter would take the pre-ticked required set, which the selection tests cover)."""
     asked: list[tuple[str, bool]] = []
+
+    def checkbox(msg, choices, default=None, **k):
+        asked.append((msg, False))
+        return []
+    monkeypatch.setattr(ui, "checkbox", checkbox)
 
     def confirm(msg, default=True):
         asked.append((msg, default))
@@ -99,7 +105,8 @@ def test_a_saved_no_does_not_stop_an_interactive_run_from_asking_again(monkeypat
     _all_missing(monkeypatch)
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
     asked: list[str] = []
-    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: asked.append(msg) or True)
+    monkeypatch.setattr(ui, "checkbox", lambda msg, choices, default=None, **k: (
+        asked.append(msg) or list(default or [])) if msg.startswith("Select") else [])
     ran = []
     monkeypatch.setattr(tools, "install_one", lambda t, s: ran.append(t) or True)
     s = state.SetupState()
@@ -111,7 +118,7 @@ def test_a_saved_no_does_not_stop_an_interactive_run_from_asking_again(monkeypat
 def test_non_interactive_installs_nothing_and_yes_installs_and_persists_nothing(monkeypatch):
     _all_missing(monkeypatch)
     monkeypatch.setattr(ui, "is_non_interactive", lambda: True)
-    monkeypatch.setattr(ui, "confirm", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
+    monkeypatch.setattr(ui, "checkbox", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
     ran = []
     monkeypatch.setattr(tools, "install_one", lambda t, s: ran.append(t) or True)
     s = state.SetupState()
@@ -293,6 +300,6 @@ def test_the_yes_flag_still_installs_without_a_terminal_and_a_terminal_still_ask
     assert tools.offer(state.SetupState(), assume_yes=True) == ["claude", "agy", "openclaw"]
     monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
     asked: list[str] = []
-    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: asked.append(msg) or False)
+    monkeypatch.setattr(ui, "checkbox", lambda msg, choices, default=None, **k: asked.append(msg) or [])
     ran.clear()
     assert tools.offer(state.SetupState()) == [] and ran == [] and len(asked) == 1
