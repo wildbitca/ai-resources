@@ -125,6 +125,9 @@ OPENROUTER = {"Choose mode": "multi-model:openrouter", "Update OPENROUTER_API_KE
               "Apply this?": _first}
 SUB = "subscription-claude-55"
 LANES_ANSWERS = {**SINGLE, "Use previous answers": True, "Acknowledge for these roles?": True, "How should kit subagents pick": lambda v: SUB, "Orchestrator agent id": "main"}
+CLI_TEAM = {"Choose mode": "multi-model:cli", "Model preset": "balanced", "Use this?": True,
+            "Enable subscription lanes?": False, "Configure detected cockpits": lambda v: list(v),
+            "Apply this?": _first}
 CORRUPT = "profile: [unclosed\n  name: {oops\n"
 
 PATHS = {
@@ -141,8 +144,40 @@ PATHS = {
     "lanes-dry-run": dict(args=_args(lanes_dry_run=True), answers=LANES_ANSWERS),
     "no-lanes": dict(args=_args(no_lanes=True), answers=SINGLE),
     "non-tty-guard": dict(args=_args(), answers={}, tty=False),
+    # S1 of the setup simplification (ADR-0009): the subscription path as it is today (six questions), `--backend cli`
+    # (V1: the mode question is still asked, with cli preselected) and `--yes` (the tool offer is faked in this module).
+    "cli-team-subscription": dict(args=_args(), answers=CLI_TEAM),
+    "backend-cli-flag": dict(args=_args(backend="cli"), answers=CLI_TEAM),
+    "yes-flag": dict(args=_args(yes=True), answers=CLI_TEAM),
     "corrupt-state-non-interactive": dict(args=_args(non_interactive=True), seed=lambda: CORRUPT),
 }
+
+
+_CLI_TEAM_TRANSCRIPT = [
+    'banner',
+    'section 1/10 Tools and cockpits',
+    'section 2/10 Setup mode',
+    'select: Choose mode:',
+    'section 3/10 LiteLLM gateway',
+    'info: Skipped (single-model mode).',
+    'section 4/10 Provider backends',
+    "info: Skipped (single-model uses cockpit's native auth).",
+    'section 5/10 Credentials',
+    'info: Skipped.',
+    'section 6/10 Models and roles - Preset',
+    'select: Model preset:',
+    'confirm: Use this?',
+    'confirm: Enable subscription lanes?',
+    'section 7/10 Cockpit configuration',
+    'checkbox: Configure detected cockpits:',
+    'section 8/10 Lifecycle',
+    'info: Skipped (single-model mode).',
+    'section 9/10 Review and apply',
+    'select: Apply this?',
+    'apply dry_run=False',
+    'verify',
+    'rc=0',
+]
 
 
 # Recorded on main before the step runner was introduced. Notes:
@@ -154,6 +189,12 @@ PATHS = {
 # - The preset question opens step 6 (answered Custom here, so the earlier questions follow unchanged).
 # - Steps 3 to 5 print a header and a "Skipped" line in single-model mode.
 EXPECTED = {
+    # S1 (ADR-0009): the subscription path asks six questions today (mode, preset, "Use this?", lanes, cockpits,
+    # apply). `--backend cli` still asks the mode question (V1) and `--yes` changes nothing here (installs are
+    # faked in this module).
+    "cli-team-subscription": _CLI_TEAM_TRANSCRIPT,
+    "backend-cli-flag": _CLI_TEAM_TRANSCRIPT,
+    "yes-flag": _CLI_TEAM_TRANSCRIPT,
     "corrupt-state-non-interactive": [
         'banner',
         'error: The setup state file <TMP>/home/xdg/ai-resources/setup-state.yaml is not valid YAML; its content was copied to <TMP>/home/xdg/ai-resources/setup-state.yaml.corrupt. Setup would start from empty answers and replace the file.',

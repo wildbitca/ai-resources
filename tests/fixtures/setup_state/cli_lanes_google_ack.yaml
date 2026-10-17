@@ -1,0 +1,307 @@
+schema_version: '1.0'
+last_run: '2026-10-01T00:00:00+00:00'
+mode: single-model
+backend: litellm
+cli_team: true
+cockpits:
+  claude:
+    installed: true
+    version: '1.0'
+    binary_path: /opt/claude
+    config_root: ''
+    configured: false
+    last_configured_at: ''
+litellm:
+  deployment: ''
+  local:
+    runtime: pip-venv
+    binary_path: ''
+    venv_path: ''
+    python_path: ''
+    image: ghcr.io/berriai/litellm:main-stable
+    bind_address: 127.0.0.1
+    port: 4000
+    auto_start: true
+    lifecycle_path: ''
+    log_dir: ''
+  remote:
+    url: ''
+    master_key_env: LITELLM_MASTER_KEY
+  health_check_at: ''
+providers: {}
+profile:
+  name: subscription-performance
+  customized: false
+  customizations: {}
+  lanes:
+    agents:
+      kit-lane-cli-opus55:
+        backend: claude-cli
+        model: anthropic/claude-opus-5-5
+        pool: claude-subscription
+      kit-lane-cli-sonnet55:
+        backend: claude-cli
+        model: anthropic/claude-sonnet-5-5
+        pool: claude-subscription
+    roles:
+      doc-writer:
+        candidates:
+        - openclaw-agent:kit-lane-cli-sonnet55
+        - claude-code
+      explore:
+        candidates:
+        - openclaw-agent:kit-lane-cli-sonnet55
+        - claude-code
+      implementer:
+        candidates:
+        - openclaw-agent:kit-lane-cli-sonnet55
+        - claude-code
+      planner:
+        candidates:
+        - claude-code
+        - openclaw-agent:kit-lane-cli-opus55
+      security-auditor:
+        candidates:
+        - claude-code
+        - openclaw-agent:kit-lane-cli-opus55
+      software-architect:
+        candidates:
+        - claude-code
+        - openclaw-agent:kit-lane-cli-opus55
+      tester:
+        candidates:
+        - openclaw-agent:kit-lane-cli-sonnet55
+        - claude-code
+      verifier:
+        candidates:
+        - claude-code
+        - openclaw-agent:kit-lane-cli-opus55
+    second:
+      code-reviewer:
+      - openclaw-agent:kit-lane-cli-sonnet55
+    held:
+    - role: doc-writer
+      candidate: agy:claude-sonnet-5-5
+      reason: 'held: --lanes-antigravity is off'
+    - role: implementer
+      candidate: agy:claude-sonnet-5-5
+      reason: 'held: --lanes-antigravity is off'
+    - role: security-auditor
+      candidate: agy:claude-opus-5-5
+      reason: 'held: --lanes-antigravity is off'
+    - role: tester
+      candidate: agy:claude-sonnet-5-5
+      reason: 'held: --lanes-antigravity is off'
+    - role: verifier
+      candidate: agy:claude-opus-5-5
+      reason: 'held: --lanes-antigravity is off'
+    - role: code-reviewer
+      candidate: agy:gemini-3.8-flash-high
+      reason: 'held: --lanes-antigravity is off'
+    - role: code-reviewer
+      candidate: agy:claude-sonnet-5-5
+      reason: 'held: --lanes-antigravity is off'
+    pins:
+      code-reviewer:
+      - agy:gemini-3.8-flash-high
+    orchestrators:
+    - main
+    verify_capability: {}
+    pool_caps: {}
+    max_remote_concurrency: 2
+    workspace_root: ''
+    role_meta:
+      code-reviewer:
+        evidence:
+          tag: study-based
+          label: INFERRED
+          confidence: medium-low
+          source: 2026-10 study of the 5.5 models
+        effort: default
+      doc-writer:
+        evidence:
+          tag: study-based
+          label: INFERRED
+          confidence: medium-low
+          source: 2026-10 study of the 5.5 models
+        effort: default
+      explore:
+        evidence:
+          tag: study-based
+          label: INFERRED
+          confidence: medium-low
+          source: 2026-10 study of the 5.5 models
+        effort: default
+      implementer:
+        evidence:
+          tag: study-based
+          label: INFERRED
+          confidence: medium-low
+          source: 2026-10 study of the 5.5 models
+        effort: high
+      planner:
+        evidence:
+          tag: study-based
+          label: INFERRED
+          confidence: medium-low
+          source: 2026-10 study of the 5.5 models
+        effort: high
+      security-auditor:
+        evidence:
+          tag: study-based
+          label: INFERRED
+          confidence: medium-low
+          source: 2026-10 study of the 5.5 models
+        effort: default
+      software-architect:
+        evidence:
+          tag: study-based
+          label: INFERRED
+          confidence: medium-low
+          source: 2026-10 study of the 5.5 models
+        effort: default
+      tester:
+        evidence:
+          tag: study-based
+          label: INFERRED
+          confidence: medium-low
+          source: 2026-10 study of the 5.5 models
+        effort: default
+      verifier:
+        evidence:
+          tag: study-based
+          label: INFERRED
+          confidence: medium-low
+          source: 2026-10 study of the 5.5 models
+        effort: default
+  lane_acks:
+    anthropic:
+      date: '2026-10-01'
+      text_sha256: 2f1e68694c1609d51595f2f492dee95ef124c22e3dcdbf09772c28a84ecffe07
+      text: 'Subscription lanes run Claude Code CLI children through your Claude subscription
+        login via OpenClaw. Sharing one login between the orchestrator and lane children
+        is a grey zone of the Anthropic terms, and non-interactive (-p / SDK) use
+        may be billed differently from interactive use. A lane on this account is
+        admitted only for the roles listed below. The spawn itself is not gated per
+        role by the kit: an agent admitted for one listed role can be spawned by an
+        orchestrator for any task, and only `lanes prepare --lane` refuses a role
+        the acknowledgement does not list, so a step that skipped `prepare` has already
+        sent its repository content to Anthropic.'
+      roles:
+      - code-reviewer
+      - doc-writer
+      - explore
+      - implementer
+      - planner
+      - security-auditor
+      - software-architect
+      - tester
+      - verifier
+    google:
+      date: '2026-10-01'
+      text_sha256: 46cd7319fe9c39500b7c9d059bd0bde0ed5af7e6773cc65778a584b3a6541e5e
+      text: 'The Antigravity lane runs `agy -p` children through OpenClaw on the Google
+        account named below. Google''s terms name third-party tools, OpenClaw included,
+        and a suspension covers Antigravity, Gemini CLI and Code Assist and may reach
+        the account''s other Google services; use an account that is not used for
+        wildbit GCP or other critical work if your subscription allows it. Repository
+        content, diffs, test output and MCP results of every listed role go to Google
+        and cannot be recalled. An agy child runs with --dangerously-skip-permissions,
+        a full shell. Without a usable sandbox the tool exclusions bound the tool
+        surface, not what the child can do: the shell still reaches `openclaw message`,
+        `openclaw cron`, `crontab`, `systemd-run --user`, `curl` and engram''s on-disk
+        store; the kit detects only the cron store, `crontab -l`, the user timer list
+        and unit files. If the kit''s agy home override is the HOME variable, the
+        child also loses its git identity, `PATH` shims and `~/.ssh`; without an override
+        the shared `~/.gemini` state feeds your later interactive agy sessions. Placement
+        uses static weights (claude 1.0, agy 0.7): it balances by role count in sorted
+        role order, not by quota. The spawn itself is not gated per role by the kit:
+        an agent admitted for one listed role can be spawned for any task, and only
+        `lanes prepare --lane` refuses a role not listed, so a step that skipped `prepare`
+        has already sent its repository content to Google. Do not use agy interactively
+        during a lane run. A lane on this account is admitted only for the roles listed
+        below.'
+      roles:
+      - code-reviewer
+      account: operator@example.test
+smoke_tests:
+  last_run: ''
+  status: unknown
+tracking:
+  litellm_installed_by_us: false
+  litellm_install_method: ''
+  docker_image_pulled_by_us: false
+  docker_image: ''
+  lifecycle_installed: false
+  lifecycle_path_written: ''
+  wrapper_path: ''
+  config_files_written: []
+  env_keys_added: []
+  cockpit_env_keys_added: {}
+  workflow_scripts_installed: []
+  subagent_files_installed: []
+  tools_installed_by_us: []
+  tool_install_methods: {}
+  rc_lines_added: {}
+  install_tools_answer: null
+openclaw:
+  engine: ''
+  model: ''
+  applied: false
+  config_path: ''
+  previous: {}
+  voice: ''
+  voice_language: ''
+  voice_correction: ''
+  voice_applied: ''
+  voice_previous: null
+  voice_formulas_installed: []
+  voice_models_downloaded: []
+  voice_glossary_created: {}
+  mcp: ''
+  mcp_skipped: []
+  mcp_mirrored: {}
+  orchestrator_model: gemini-3.8-flash-low
+  worker_model: claude-sonnet-5-5
+  plugin_linked: false
+  risk_acknowledged: false
+  antigravity_applied: false
+  host: false
+  host_narration: ''
+  host_guard: false
+  host_units: false
+  host_config: false
+  host_workboard: true
+  host_agents_md: false
+  host_check: false
+  host_graceful_restart: ''
+  host_resource_guards: ''
+  host_domain: ''
+  host_pod_cidr: ''
+  host_operator_id: ''
+  host_backup_dir: ''
+  stale_plugin_check: linked
+  host_hooks_applied: false
+  host_units_previous: {}
+  host_units_applied: false
+  host_timers_enabled: []
+  host_hand_moved: {}
+  host_hand_kit_sha: {}
+  host_hand_links: {}
+  host_teardown_reported: []
+  host_legacy_hooks: []
+  host_config_changes: []
+  host_workboard_applied: ''
+  host_agents_md_written: {}
+  agent_kit_blocks: {}
+  host_group_ids: {}
+  bindings_applied: false
+  bindings_previous: null
+  bindings_written: ''
+  host_env_previous: {}
+  host_env_created: false
+  gateway_restart_pending: {}
+  host_restart_pending: []
+  config_watch: null
+  host_offbox_identity: false
+  host_offbox_config_created: {}

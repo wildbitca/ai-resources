@@ -1,0 +1,118 @@
+schema_version: '1.0'
+last_run: '2026-10-01T00:00:00+00:00'
+mode: single-model
+backend: litellm
+cli_team: true
+cockpits:
+  claude:
+    installed: true
+    version: '1.0'
+    binary_path: /opt/claude
+    config_root: ''
+    configured: false
+    last_configured_at: ''
+litellm:
+  deployment: ''
+  local:
+    runtime: pip-venv
+    binary_path: ''
+    venv_path: ''
+    python_path: ''
+    image: ghcr.io/berriai/litellm:main-stable
+    bind_address: 127.0.0.1
+    port: 4000
+    auto_start: true
+    lifecycle_path: ''
+    log_dir: ''
+  remote:
+    url: ''
+    master_key_env: LITELLM_MASTER_KEY
+  health_check_at: ''
+providers: {}
+profile:
+  name: subscription-claude-55
+  customized: true
+  customizations:
+    planner:
+      model: anthropic/claude-opus-4-8
+smoke_tests:
+  last_run: ''
+  status: unknown
+tracking:
+  litellm_installed_by_us: false
+  litellm_install_method: ''
+  docker_image_pulled_by_us: false
+  docker_image: ''
+  lifecycle_installed: false
+  lifecycle_path_written: ''
+  wrapper_path: ''
+  config_files_written: []
+  env_keys_added: []
+  cockpit_env_keys_added: {}
+  workflow_scripts_installed: []
+  subagent_files_installed: []
+  tools_installed_by_us: []
+  tool_install_methods: {}
+  rc_lines_added: {}
+  install_tools_answer: null
+openclaw:
+  engine: ''
+  model: ''
+  applied: false
+  config_path: ''
+  previous: {}
+  voice: ''
+  voice_language: ''
+  voice_correction: ''
+  voice_applied: ''
+  voice_previous: null
+  voice_formulas_installed: []
+  voice_models_downloaded: []
+  voice_glossary_created: {}
+  mcp: ''
+  mcp_skipped: []
+  mcp_mirrored: {}
+  orchestrator_model: gemini-3.8-flash-low
+  worker_model: claude-sonnet-5-5
+  plugin_linked: false
+  risk_acknowledged: false
+  antigravity_applied: false
+  host: false
+  host_narration: ''
+  host_guard: false
+  host_units: false
+  host_config: false
+  host_workboard: true
+  host_agents_md: false
+  host_check: false
+  host_graceful_restart: ''
+  host_resource_guards: ''
+  host_domain: ''
+  host_pod_cidr: ''
+  host_operator_id: ''
+  host_backup_dir: ''
+  stale_plugin_check: linked
+  host_hooks_applied: false
+  host_units_previous: {}
+  host_units_applied: false
+  host_timers_enabled: []
+  host_hand_moved: {}
+  host_hand_kit_sha: {}
+  host_hand_links: {}
+  host_teardown_reported: []
+  host_legacy_hooks: []
+  host_config_changes: []
+  host_workboard_applied: ''
+  host_agents_md_written: {}
+  agent_kit_blocks: {}
+  host_group_ids: {}
+  bindings_applied: false
+  bindings_previous: null
+  bindings_written: ''
+  host_env_previous: {}
+  host_env_created: false
+  gateway_restart_pending: {}
+  host_restart_pending: []
+  config_watch: null
+  host_offbox_identity: false
+  host_offbox_config_created: {}
