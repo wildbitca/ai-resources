@@ -1,0 +1,72 @@
+name: subscription-performance
+mode: single-model
+description: |
+  Performance preset for a Claude subscription without a gateway: the strongest tier
+  where defects are caught or decisions are made. Opus for the planner, the architect,
+  the code reviewer, the security auditor and the verifier; Sonnet for every writer,
+  tester, doc writer, fixer and the read-only explorer.
+
+  Checker independence by family: the verifier and the security auditor run on Opus and
+  no writer role (implementer, tester, doc-writer, the fixers, package-upgrade,
+  generalPurpose) runs on Opus. The checkers declare no fallback, so a fallback cannot
+  move them onto a writer's family. Fallbacks are inert in single-model mode.
+
+  Versus subscription-claude-55: the planner and the code reviewer move from Sonnet to
+  Opus and the explorer from Haiku to Sonnet. This spends more of the plan's Opus quota.
+  Alias drift applies (an alias floats to the newest model of its family).
+
+  Evidence label: INFERRED, medium to low confidence, curated from the 2026-10 study
+  (study-planning, study-review-security) and not score-derived. The security-auditor
+  caveat of subscription-claude-55 applies unchanged (CyberBench Opus 5.5 74.6 CVP-tagged,
+  55.4 untagged; Sonnet 5.5 59.6): the auditor stays on Opus to stay off the writers' family.
+
+evidence:
+  tag: study-based
+  label: INFERRED
+  confidence: medium-low
+  source: 2026-10 study of the 5.5 models
+role_effort:
+  planner: high
+  implementer: high
+
+classes:
+  opus:   opus
+  sonnet: sonnet
+  haiku:  haiku
+
+defaults:
+  fallbacks: []
+
+by_role:
+  explore:                      { model: sonnet, fallbacks: [haiku] }
+  tester:                       { model: sonnet }
+  doc-writer:                   { model: sonnet }
+  package-upgrade:              { model: sonnet }
+  generalPurpose:               { model: sonnet }
+  implementer:                  { model: sonnet }
+  crashlytics-fixer:            { model: sonnet }
+  sentry-fixer:                 { model: sonnet }
+  terraform-maintainer:         { model: sonnet }
+  crossplane-upjet-maintainer:  { model: sonnet }
+  code-reviewer:                { model: opus }
+  security-auditor:             { model: opus }
+  verifier:                     { model: opus }
+  planner:                      { model: opus, fallbacks: [sonnet] }
+  software-architect:           { model: opus, fallbacks: [sonnet] }
+
+by_persona: {}
+
+# Subscription lanes (ADR-0007): candidate lists per role, never an agent id. Dispatch resolves them
+# from the setup lanes table; the order is the tie-break, not a rank. A fresh install enables none.
+lanes:
+  roles:
+    explore:            [claude-cli:sonnet, claude-code]
+    implementer:        [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
+    tester:             [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
+    doc-writer:         [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
+    planner:            [claude-code, claude-cli:opus]
+    software-architect: [claude-code, claude-cli:opus]
+    verifier:           [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
+    security-auditor:   [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
+  second:
+    code-reviewer:      ["agy:claude-sonnet-5-5", claude-cli:sonnet]

@@ -38,8 +38,8 @@ Each step starts with a header, a progress rail and one line of key hints:
  ↑/↓ move · Space toggle · Enter confirm · Ctrl-C cancel
 ```
 
-The ten steps are Tools, Mode, Gateway, Providers, Credentials, Models and roles (6a Models, 6b Role assignment,
-6c Subscription lanes), Cockpit config, Lifecycle, Review and apply, and Verification. A step that does not apply
+The ten steps are Tools, Mode, Gateway, Providers, Credentials, Models and roles (a preset question, then for
+Custom 6a Models and 6b Role assignment; 6c Subscription lanes), Cockpit config, Lifecycle, Review and apply, and Verification. A step that does not apply
 is shown and marked skipped. In a narrow terminal (under 60 columns) the header is one line, `Step 4/10  Provider
 backends`; with `NO_COLOR` set, or on a terminal that is not UTF-8, the rail uses `[x]`, `[>]`, `[ ]` and `[-]`.
 
@@ -184,9 +184,38 @@ service, so `ai-resources daemon` has nothing to manage and says so.
 | `cost-optimized` | multi-model, either gateway | Aggressively biased toward Flash and Haiku. |
 | `claude-native` | single-model | Each role picks a Claude alias. No gateway. The default for single-model and for a Claude-only host with no gateway. |
 | `claude-inherit` | single-model | Every role inherits the session model. |
+| `performance-claude-55` | multi-model, either gateway | The Performance preset for the gateway modes. Claude only, valid in every compatibility cell without `--allow-unverified`: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for every writer. Costs more than `balanced-claude-55`. |
+| `economy-claude-55` | multi-model, either gateway | The Low pricing preset for LiteLLM. Claude only and verified: Haiku for reading and mechanical roles, Sonnet for the planner, architect, code, review and verification, Opus only for security. Replaces `cost-optimized` as the preset because that profile names Google models the Claude cockpit has not verified. |
 | `subscription-claude-55` | single-model, no gateway | Curated reference for a Claude subscription: Claude aliases, Sonnet for writers, Opus for the verifier and security auditor so checkers never share a family with writers. Not recommended as the default; aliases float, so the evidence may drift. |
+| `subscription-performance` | single-model, no gateway | The Performance preset without a gateway. Claude aliases: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for writers and the explorer. Checkers stay on Opus and no writer does. Carries a lane table. |
+| `subscription-economy` | single-model, no gateway | The Low pricing preset without a gateway. Claude aliases: Haiku for exploration, docs and upgrades, Sonnet for the planner, architect, writers and reviewer, Opus only for the verifier and security auditor (independence is not traded for price). Carries a lane table. |
 
 Custom: pick `custom` in the wizard to override each role individually.
+
+### Choosing models: the preset question
+
+The first question of step 6 is one plain choice, with no provider, vendor or model in it:
+
+| Preset | What it means |
+|---|---|
+| Balanced (recommended) | Strong models where defects are caught, cheaper ones for reading and mechanical work. |
+| Performance | The strongest models on planning, review and verification. Costs more. |
+| Low pricing | The cheapest models that still keep review, verification and security strong. |
+| Custom | The earlier flow: pick a profile, pick models from your accounts, customize any role, or compose a team. |
+
+A preset resolves to a kit profile by how the host reaches its models, then the wizard shows only the role table and
+asks `Use this?` (Enter is yes; No returns to the preset question). There is no "Customize any role?" in a preset path.
+
+| Preset | CLI subscriptions | Single-model | LiteLLM | OpenRouter |
+|---|---|---|---|---|
+| Balanced | `subscription-claude-55` | `claude-native` | `balanced-claude-55` | `openrouter-balanced` |
+| Performance | `subscription-performance` | `subscription-performance` | `performance-claude-55` | `performance-claude-55` |
+| Low pricing | `subscription-economy` | `subscription-economy` | `economy-claude-55` | `openrouter-cheap` |
+
+The question is skipped, and the flags path is unchanged, with `--profile`, `--models`, `--shape`, `--providers`,
+`--compose` or `--non-interactive`. A saved choice is the default of the question and is never replaced: a saved preset
+profile defaults to its preset, and a customized profile, a composed team, a team picked from your accounts or any
+other saved profile defaults to Custom. The state file records only the profile name; it gains no field.
 
 A host that has not chosen a profile is offered `balanced-claude-55` in multi-model mode and `claude-native` in
 single-model mode. A profile a host already saved is never replaced: the wizard shows a one-line notice and, if
