@@ -208,9 +208,9 @@ asks `Use this?` (Enter is yes; No returns to the preset question). There is no 
 
 | Preset | CLI subscriptions | Single-model | LiteLLM | OpenRouter |
 |---|---|---|---|---|
-| Balanced | `subscription-claude-55` | `claude-native` | `balanced-claude-55` | `openrouter-balanced` |
+| Balanced | `subscription-claude-55` | `claude-native` | `balanced-claude-55` | `balanced-claude-55` |
 | Performance | `subscription-performance` | `subscription-performance` | `performance-claude-55` | `performance-claude-55` |
-| Low pricing | `subscription-economy` | `subscription-economy` | `economy-claude-55` | `openrouter-cheap` |
+| Low pricing | `subscription-economy` | `subscription-economy` | `economy-claude-55` | `economy-claude-55` |
 
 The question is skipped, and the flags path is unchanged, with `--profile`, `--models`, `--shape`, `--providers`,
 `--compose` or `--non-interactive`. A saved choice is the default of the question and is never replaced: a saved preset

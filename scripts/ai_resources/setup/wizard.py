@@ -73,8 +73,8 @@ PRESET_PROFILES: dict[str, dict[str, str]] = {
                "low-pricing": "subscription-economy"},
     "litellm": {"balanced": "balanced-claude-55", "performance": "performance-claude-55",
                 "low-pricing": "economy-claude-55"},
-    "openrouter": {"balanced": "openrouter-balanced", "performance": "performance-claude-55",
-                   "low-pricing": "openrouter-cheap"},
+    "openrouter": {"balanced": "balanced-claude-55", "performance": "performance-claude-55",
+                   "low-pricing": "economy-claude-55"},
 }
 # The preset chosen in THIS run ("" = none: Custom, the flags path or a non-interactive run). Not saved: the
 # state file keeps only the resulting profile name.

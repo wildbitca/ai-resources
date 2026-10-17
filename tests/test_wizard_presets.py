@@ -26,8 +26,8 @@ TABLE = {
                "low-pricing": "subscription-economy"},
     "litellm": {"balanced": "balanced-claude-55", "performance": "performance-claude-55",
                 "low-pricing": "economy-claude-55"},
-    "openrouter": {"balanced": "openrouter-balanced", "performance": "performance-claude-55",
-                   "low-pricing": "openrouter-cheap"},
+    "openrouter": {"balanced": "balanced-claude-55", "performance": "performance-claude-55",
+                   "low-pricing": "economy-claude-55"},
 }
 
 
@@ -109,6 +109,15 @@ def test_every_preset_maps_to_an_offered_profile_of_the_right_mode(key):
         assert [r for r in profiles.KNOWN_ROLES if not (doc["by_role"].get(r) or {}).get("model")] == []
         executors = profiles.to_executors(doc, backend) if backend else profiles.to_executors(doc)
         assert profiles.role_table(executors)
+
+
+GATEWAY_PRESET_PROFILES = sorted({n for k in ("litellm", "openrouter") for n in wizard.PRESET_PROFILES[k].values()})
+
+
+@pytest.mark.parametrize("name", GATEWAY_PRESET_PROFILES)
+@pytest.mark.parametrize("cockpit,mode,backend,engine,want", CELLS)
+def test_every_gateway_preset_profile_is_verified_in_every_reachable_cell(name, cockpit, mode, backend, engine, want):
+    check_cell(name, cockpit, mode, backend, engine, want)
 
 
 @pytest.mark.parametrize("name", ["performance-claude-55", "economy-claude-55"])
