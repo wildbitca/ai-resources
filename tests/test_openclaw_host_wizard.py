@@ -951,7 +951,7 @@ def _drive_run(monkeypatch, tmp_path, *, apply_rc, targets, findings):
     monkeypatch.setattr(st, "is_first_run", lambda: True)
     # "every step but 9 and 10": the model-selection steps added by plan v2 are stubbed like the others.
     for step in ("_step1_mode", "_step2_cockpits", "_step6_single_model_profile", "_step7_cockpit_config",
-                 "_step_models", "_step_summary"):
+                 "_step_models", "_step_preset", "_step_summary"):
         monkeypatch.setattr(wizard, step, lambda *a, **k: 0)
 
     def apply(s, dry_run=False):
@@ -2608,7 +2608,7 @@ def _drive_apply_run(monkeypatch, tmp_path, *, drained_written):
     monkeypatch.setattr(st, "save", lambda s: saved.append(s))
     monkeypatch.setattr(st, "is_first_run", lambda: True)
     for step in ("_step1_mode", "_step2_cockpits", "_step6_single_model_profile", "_step7_cockpit_config",
-                 "_step_models", "_step_summary"):
+                 "_step_models", "_step_preset", "_step_summary"):
         monkeypatch.setattr(wizard, step, lambda *a, **k: 0)
     monkeypatch.setattr(wizard, "_print_completion", lambda s: None)
     monkeypatch.setattr(section, "_drained_apply", lambda patch, rp, apply_patch: (drained_written, drained_written))

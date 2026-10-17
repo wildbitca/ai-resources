@@ -140,7 +140,7 @@ def test_gateway_provider_credential_and_lifecycle_steps_are_skipped():
     c = types.SimpleNamespace(s=s)
     for step_id in ("gateway", "providers", "credentials", "lifecycle"):
         assert _spec(step_id).skip(c) is not None, step_id
-    assert _spec("profile").skip is None and _spec("lanes").skip is None
+    assert _spec("profile").skip(c) is None and _spec("lanes").skip is None   # no preset answered here
 
 
 def test_the_profile_step_defaults_to_the_subscription_team(monkeypatch):
@@ -172,7 +172,7 @@ def test_a_plain_single_model_state_still_defaults_to_claude_native(monkeypatch)
 def test_no_key_is_asked_in_cli_mode(monkeypatch, tmp_path):
     host_env(monkeypatch, tmp_path)
     script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:cli",
-                       "How do you want to choose models": "profile",
+                       "Model preset": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: SUB,
                        "Enable subscription lanes?": False,
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})

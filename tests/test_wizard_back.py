@@ -22,7 +22,7 @@ def _snapshot(root):
 
 
 def _single(**extra):
-    base = {"Choose mode": "single-model", "How do you want to choose models": "profile",
+    base = {"Choose mode": "single-model", "Model preset": "custom", "How do you want to choose models": "profile",
             "How should kit subagents pick": lambda v: SUB, "Configure detected cockpits": lambda v: list(v),
             "Apply this?": lambda v: v[0]}
     base.update(extra)
@@ -31,7 +31,7 @@ def _single(**extra):
 
 def test_back_is_offered_only_in_the_steps_without_side_effects():
     steps = {s.id: s for s in wizard._build_steps(False)}
-    assert [i for i, s in steps.items() if s.back] == ["models", "profile", "lanes", "cockpits"]
+    assert [i for i, s in steps.items() if s.back] == ["preset", "models", "profile", "lanes", "cockpits"]
     assert not steps["gateway"].rewindable and wizard._build_steps(True)[2].rewindable
     for sid in ("tools", "review", "apply"):
         assert not steps[sid].rewindable
@@ -56,14 +56,15 @@ def test_back_at_models_is_refused_after_a_credential_was_saved(monkeypatch, tmp
     monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: (state.env_path(), list(updates)))
     script = Script(**{"Choose mode": "multi-model:openrouter", "Update OPENROUTER_API_KEY": True,
                        "OPENROUTER_API_KEY": "new-secret",
-                       "How do you want to choose models": Seq(BACK, "profile"), "Choose profile": lambda v: v[0],
+                       "Model preset": Seq(BACK, "custom"), "How do you want to choose models": "profile",
+                       "Choose profile": lambda v: v[0],
                        "Customize any role": False, "Configure detected cockpits": lambda v: list(v),
                        "Apply this?": lambda v: v[0]})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
     notices = [m for m in script.shown if "Back stops here" in m]
     assert len(notices) == 1 and "Credentials already changed this machine" in notices[0]
-    assert [m for m in script.asked if "How do you want to choose models" in m].__len__() == 2
+    assert [m for m in script.asked if "Model preset" in m].__len__() == 2      # the first question of step 6
     assert [m for m in script.asked if m.startswith("password")].__len__() == 1      # credentials not re-asked
 
 

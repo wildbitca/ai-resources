@@ -94,6 +94,7 @@ def test_lanes_dry_run_makes_the_whole_run_a_dry_run(monkeypatch, flags):
     monkeypatch.setattr(wizard, "_preflight_compose", lambda: 0)
     monkeypatch.setattr(wizard, "_step2_cockpits", lambda s: 0)
     monkeypatch.setattr(wizard, "_step1_mode", lambda s: 0)
+    monkeypatch.setattr(wizard, "_step_preset", lambda s, a: 0)
     monkeypatch.setattr(wizard, "_step_models", lambda s, a, d=False: 0)
     monkeypatch.setattr(wizard, "_step6_single_model_profile", lambda s: 0)
     monkeypatch.setattr(wizard, "_step_lanes", lambda s, a, dry_run=False: seen.setdefault("lanes", dry_run) and 0)

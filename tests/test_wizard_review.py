@@ -66,7 +66,7 @@ def test_the_review_keeps_the_three_labels_and_adds_edit_after_a_full_pass(revie
         seen["values"] = list(values)
         return ms.APPLY
     script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:openrouter",
-                       "Update OPENROUTER_API_KEY": False, "How do you want to choose models": "profile",
+                       "Update OPENROUTER_API_KEY": False, "Model preset": "custom", "How do you want to choose models": "profile",
                        "Choose profile": lambda v: v[0], "Customize any role": False,
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": apply_pick})
     script.install(monkeypatch)
@@ -87,13 +87,13 @@ def test_edit_a_section_reruns_from_that_step_and_returns_to_the_review(review_e
         offered["ids"] = list(values)
         return "profile"
     script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:openrouter",
-                       "Update OPENROUTER_API_KEY": False, "How do you want to choose models": "profile",
+                       "Update OPENROUTER_API_KEY": False, "Model preset": "custom", "How do you want to choose models": "profile",
                        "Show how": False, "Choose profile": Seq(lambda v: v[0], lambda v: v[1]), "Customize any role": False,
                        "Configure detected cockpits": lambda v: list(v),
                        "Apply this?": Seq(wizard.EDIT_SECTION, ms.APPLY), "Which section": which})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
-    assert set(offered["ids"]) - {""} == {"mode", "providers", "credentials", "models", "profile", "cockpits"}
+    assert set(offered["ids"]) - {""} == {"mode", "providers", "credentials", "preset", "profile", "cockpits"}
     asked = script.asked
     assert len([m for m in asked if m.startswith("select: How do you want to choose models")]) == 1
     assert len([m for m in asked if m.startswith("confirm: Update OPENROUTER_API_KEY")]) == 1
@@ -106,7 +106,7 @@ def test_cancel_at_the_review_is_130_and_the_apply_never_runs(review_env, monkey
     applied = []
     monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: applied.append(1) or 0)
     script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:openrouter",
-                       "Update OPENROUTER_API_KEY": False, "How do you want to choose models": "profile",
+                       "Update OPENROUTER_API_KEY": False, "Model preset": "custom", "How do you want to choose models": "profile",
                        "Choose profile": lambda v: v[0], "Customize any role": False,
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.CANCEL})
     script.install(monkeypatch)
@@ -139,7 +139,7 @@ def test_rerunning_the_lanes_step_from_the_review_asks_the_acknowledgement_once(
     state.config_root().mkdir(parents=True, exist_ok=True)
     state.save(s)
     script = Script(**{"Use previous answers": True, "Choose mode": "single-model",
-                       "How do you want to choose models": "profile",
+                       "Model preset": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: SUB, "Orchestrator agent id": "main",
                        "Acknowledge for these roles?": True, "Configure detected cockpits": lambda v: list(v),
                        "Apply this?": Seq(wizard.EDIT_SECTION, ms.APPLY), "Which section": "lanes"})
@@ -160,7 +160,7 @@ def test_edit_credentials_reruns_step_5_and_the_row_moves_from_missing_to_set(re
     # the first pass alive the key is entered on the first ask and only becomes readable after the edit.
     monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: ({}, []))
     script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:openrouter",
-                       "OPENROUTER_API_KEY": "entered", "Show how": False, "How do you want to choose models": "profile",
+                       "OPENROUTER_API_KEY": "entered", "Show how": False, "Model preset": "custom", "How do you want to choose models": "profile",
                        "Choose profile": lambda v: v[0], "Customize any role": False,
                        "Configure detected cockpits": lambda v: list(v),
                        "Apply this?": Seq(wizard.EDIT_SECTION, ms.APPLY), "Which section": "credentials"})
@@ -192,7 +192,7 @@ def test_cancel_at_the_review_prints_the_shared_cancel_block(review_env, monkeyp
         return real(s, args)
     monkeypatch.setattr(wizard, "_step_summary", with_action)
     script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:openrouter",
-                       "Update OPENROUTER_API_KEY": False, "How do you want to choose models": "profile",
+                       "Update OPENROUTER_API_KEY": False, "Model preset": "custom", "How do you want to choose models": "profile",
                        "Choose profile": lambda v: v[0], "Customize any role": False,
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.CANCEL})
     script.install(monkeypatch)

@@ -110,17 +110,17 @@ LITELLM_DOCKER = {
     "Choose mode": "multi-model:litellm", "Where is your gateway": "local-docker", "Bind interface": "127.0.0.1",
     "Port": "4000", "Container image": "", "Pull ": False, "Select providers": lambda v: ["anthropic"],
     "Update ANTHROPIC_API_KEY": False, "Update GOOGLE": False,
-    "How do you want to choose models": "profile", "Choose profile": _first, "Customize any role": False,
+    "Model preset": "custom", "How do you want to choose models": "profile", "Choose profile": _first, "Customize any role": False,
     "Configure detected cockpits": lambda v: list(v), "Auto-start LiteLLM": False,
     "Apply this?": _first,
 }
 
 
-SINGLE = {"Choose mode": "single-model", "How do you want to choose models": "profile",
+SINGLE = {"Choose mode": "single-model", "Model preset": "custom", "How do you want to choose models": "profile",
           "How should kit subagents pick": _first, "Configure detected cockpits": lambda v: list(v),
           "Apply this?": _first}
 OPENROUTER = {"Choose mode": "multi-model:openrouter", "Update OPENROUTER_API_KEY": False,
-              "How do you want to choose models": "profile", "Choose profile": _first,
+              "Model preset": "custom", "How do you want to choose models": "profile", "Choose profile": _first,
               "Customize any role": False, "Configure detected cockpits": lambda v: list(v),
               "Apply this?": _first}
 SUB = "subscription-claude-55"
@@ -151,6 +151,7 @@ PATHS = {
 #   pinned here, reported in the handoff).
 # - S6 renamed the step 6 headers to sub-steps 6a Models, 6b Role assignment and 6c Subscription lanes
 #   (6a prints when it asks, 6c when a lanes flag is given); no other line changed from the S2 recording.
+# - The preset question opens step 6 (answered Custom here, so the earlier questions follow unchanged).
 # - Steps 3 to 5 print a header and a "Skipped" line in single-model mode.
 EXPECTED = {
     "corrupt-state-non-interactive": [
@@ -170,6 +171,8 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
+        'section 6/10 Models and roles - Preset',
+        'select: Model preset:',
         'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
         'section 6/10 Models and roles - 6b Role assignment',
@@ -194,6 +197,8 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
+        'section 6/10 Models and roles - Preset',
+        'select: Model preset:',
         'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
         'section 6/10 Models and roles - 6b Role assignment',
@@ -239,6 +244,8 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
+        'section 6/10 Models and roles - Preset',
+        'select: Model preset:',
         'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
         'section 6/10 Models and roles - 6b Role assignment',
@@ -271,6 +278,8 @@ EXPECTED = {
         'checkbox: Select providers to enable:',
         'section 5/10 Credentials',
         'confirm: Update ANTHROPIC_API_KEY?',
+        'section 6/10 Models and roles - Preset',
+        'select: Model preset:',
         'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
         'section 6/10 Models and roles - 6b Role assignment',
@@ -297,6 +306,8 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
+        'section 6/10 Models and roles - Preset',
+        'select: Model preset:',
         'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
         'section 6/10 Models and roles - 6b Role assignment',
@@ -348,6 +359,8 @@ EXPECTED = {
         'section 4/10 Provider backends',
         'section 5/10 Credentials',
         'confirm: Update OPENROUTER_API_KEY?',
+        'section 6/10 Models and roles - Preset',
+        'select: Model preset:',
         'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
         'section 6/10 Models and roles - 6b Role assignment',
@@ -374,6 +387,8 @@ EXPECTED = {
         "info: Skipped (single-model uses cockpit's native auth).",
         'section 5/10 Credentials',
         'info: Skipped.',
+        'section 6/10 Models and roles - Preset',
+        'select: Model preset:',
         'section 6/10 Models and roles - 6a Models',
         'select: How do you want to choose models?',
         'section 6/10 Models and roles - 6b Role assignment',

@@ -48,7 +48,8 @@ Environment:
 _SETUP_EPILOG = """\
 The wizard walks through 10 steps, each with a header, a progress rail and one line of key hints:
   1 Tools and cockpits    2 Setup mode        3 LiteLLM gateway   4 Provider backends  5 Credentials
-  6 Models and roles (6a Models, 6b Role assignment, 6c Subscription lanes)
+  6 Models and roles (a preset question first: Balanced, Performance, Low pricing or Custom; Custom
+    keeps 6a Models, 6b Role assignment; then 6c Subscription lanes)
   7 Cockpit configuration 8 Lifecycle         9 Review and apply  10 Verification
 
 Keys:

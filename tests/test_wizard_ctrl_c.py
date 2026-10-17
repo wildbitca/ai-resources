@@ -124,7 +124,7 @@ def test_cancel_at_profile_confirm(host, capsys):
     mp.setattr(profile_out, "to_customizations", lambda comp: {})
     mp.setattr(explain, "render_text", lambda comp, lanes: "")
     before = _snapshot(host.home)
-    rc, script = _drive(host, {"Choose mode": "multi-model:openrouter", "How do you want to choose models": "profile",
+    rc, script = _drive(host, {"Choose mode": "multi-model:openrouter", "Model preset": "custom", "How do you want to choose models": "profile",
                                "Update OPENROUTER_API_KEY": False, "Choose profile": "__compose__",
                                "Composition mode": "uniform",
                                "Use this team?": ABORT})
@@ -134,7 +134,7 @@ def test_cancel_at_profile_confirm(host, capsys):
 
 def test_cancel_at_lanes_acknowledgement(host, capsys):
     before = _snapshot(host.home)
-    rc, script = _drive(host, {"Choose mode": "single-model", "How do you want to choose models": "profile",
+    rc, script = _drive(host, {"Choose mode": "single-model", "Model preset": "custom", "How do you want to choose models": "profile",
                                "How should kit subagents pick": "subscription-claude-55",
                                "Acknowledge for these roles?": ABORT, "Orchestrator agent id": "main"},
                         _args(lanes=True))
@@ -203,7 +203,7 @@ def test_cancel_in_the_middle_of_step9_lists_the_files_already_written(host, cap
     host.monkeypatch.setattr(wizard, "_apply_lanes_file", interrupt)
     from ai_resources.setup import model_selection as ms
     rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:openrouter",
-                          "Update OPENROUTER_API_KEY": False, "How do you want to choose models": "profile",
+                          "Update OPENROUTER_API_KEY": False, "Model preset": "custom", "How do you want to choose models": "profile",
                           "Choose profile": lambda v: v[0], "Customize any role": False,
                           "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
     err = capsys.readouterr().err
@@ -231,7 +231,7 @@ def test_cancel_inside_a_cockpit_configure_names_the_partial_write(host, capsys)
         raise KeyboardInterrupt
     host.monkeypatch.setattr(wizard.ALL_COCKPITS["claude"], "configure", interrupt)
     rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:openrouter",
-                          "Update OPENROUTER_API_KEY": False, "How do you want to choose models": "profile",
+                          "Update OPENROUTER_API_KEY": False, "Model preset": "custom", "How do you want to choose models": "profile",
                           "Choose profile": lambda v: v[0], "Customize any role": False,
                           "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
     err = capsys.readouterr().err

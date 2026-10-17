@@ -55,6 +55,31 @@ def _single_default_profile(s: state.SetupState) -> str:
 # It is only the default of a host that has not chosen a profile: a saved choice is never replaced.
 RECOMMENDED_PROFILE = profiles.RECOMMENDED_PROFILE        # "balanced-claude-55"
 
+# The step 6 preset question (ADR-0008 addendum): three curated presets plus Custom. A preset resolves to a kit
+# profile by how the host reaches its models, so the question never names a vendor or a model. The three
+# profiles of a row differ, so a saved profile maps back to exactly one preset. Gateway rows use Claude-only
+# profiles that are valid in every compatibility cell without --allow-unverified; "single" and "cli" share the
+# two subscription-* alias profiles because both need no gateway.
+PRESET_CHOICES = (
+    ("balanced", "Balanced (recommended)", "strong models where defects are caught, cheaper ones for the rest"),
+    ("performance", "Performance", "the strongest models on planning, review and verification; costs more"),
+    ("low-pricing", "Low pricing", "the cheapest models that still keep review, verification and security strong"),
+    ("custom", "Custom", "choose a profile, pick models from your accounts, or set each role yourself"),
+)
+PRESET_PROFILES: dict[str, dict[str, str]] = {
+    "cli": {"balanced": CLI_TEAM_DEFAULT_PROFILE, "performance": "subscription-performance",
+            "low-pricing": "subscription-economy"},
+    "single": {"balanced": SINGLE_MODEL_DEFAULT_PROFILE, "performance": "subscription-performance",
+               "low-pricing": "subscription-economy"},
+    "litellm": {"balanced": "balanced-claude-55", "performance": "performance-claude-55",
+                "low-pricing": "economy-claude-55"},
+    "openrouter": {"balanced": "openrouter-balanced", "performance": "performance-claude-55",
+                   "low-pricing": "openrouter-cheap"},
+}
+# The preset chosen in THIS run ("" = none: Custom, the flags path or a non-interactive run). Not saved: the
+# state file keeps only the resulting profile name.
+_PRESET = ""
+
 # Set when the profile was named on the command line, which is not the same as
 # a profile carried over in the saved state. A saved name that no longer fits
 # the resolved mode or backend must degrade quietly — that is what keeps step 6
@@ -120,8 +145,9 @@ def _report_cancel(e: BaseException) -> int:
 
 def _run(args: argparse.Namespace) -> int:
     ui.require_deps()
-    global _APPLIED_TARGETS
+    global _APPLIED_TARGETS, _PRESET
     _APPLIED_TARGETS = []
+    _PRESET = ""
     dry_run = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
 
     # Both flags were declared in the CLI and never read, so they accepted input
@@ -190,8 +216,7 @@ def _run(args: argparse.Namespace) -> int:
     ctx = types.SimpleNamespace(s=s, prev_s=prev_s, args=args, dry_run=dry_run, is_first=is_first)
     runner = flow.Wizard(
         _build_steps(dry_run),
-        on_skip=lambda spec, title, reason: (ui.mark_skipped(spec.number),
-                                             ui.section(spec.number, TOTAL_STEPS, title), ui.info(reason)),
+        on_skip=_report_skip,
         on_enter=_enter_step,
         snapshot=lambda: _snapshot_run(s),
         restore=lambda snap: _restore_run(s, snap),
@@ -237,15 +262,16 @@ def _enter_step(spec: flow.StepSpec, w: flow.Wizard) -> None:
 
 def _snapshot_run(s: state.SetupState) -> tuple:
     """What a Back rewind restores: the setup state and the run-scoped globals a step may set."""
-    return (copy.deepcopy(s.__dict__), _REQUESTED_PROFILE, list(_APPLIED_TARGETS))
+    return (copy.deepcopy(s.__dict__), _REQUESTED_PROFILE, list(_APPLIED_TARGETS), _PRESET)
 
 
 def _restore_run(s: state.SetupState, snap: tuple) -> None:
-    global _REQUESTED_PROFILE, _APPLIED_TARGETS
+    global _REQUESTED_PROFILE, _APPLIED_TARGETS, _PRESET
     s.__dict__.clear()
     s.__dict__.update(copy.deepcopy(snap[0]))
     _REQUESTED_PROFILE = snap[1]
     _APPLIED_TARGETS = list(snap[2])
+    _PRESET = snap[3] if len(snap) > 3 else ""
 
 
 def _run_mode_step(c) -> int:
@@ -258,6 +284,15 @@ def _run_mode_step(c) -> int:
     if c.prev_s.mode == "multi-model" and c.s.mode == "single-model" and not c.is_first:
         return _teardown_multi_model(c.prev_s, c.s)
     return 0
+
+
+def _report_skip(spec: flow.StepSpec, title: str, reason: str) -> None:
+    """A skipped step prints its header and reason; a step a preset made redundant (empty reason) prints nothing."""
+    if not reason:
+        return
+    ui.mark_skipped(spec.number)
+    ui.section(spec.number, TOTAL_STEPS, title)
+    ui.info(reason)
 
 
 def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
@@ -283,6 +318,10 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
             return None
         return ("Lifecycle", "Skipped (no local gateway to supervise)." if multi(c) else "Skipped (single-model mode).")
 
+    def preset_done(c):
+        """6a and 6b are answered by the preset: skipped without a line of output."""
+        return ("Models and roles", "") if _PRESET else None
+
     return [
         S("tools", 1, "Tools and cockpits", lambda c: _step2_cockpits(c.s), rewindable=False),
         S("mode", 2, "Setup mode", _run_mode_step, edit_label="Mode"),
@@ -294,11 +333,12 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
           edit_label="Providers"),
         S("credentials", 5, "Credentials", lambda c: _step5_credentials(c.s, c.dry_run),
           skip=lambda c: None if multi(c) else ("Credentials", "Skipped."), edit_label="Credentials"),
+        S("preset", 6, "Model preset", lambda c: _step_preset(c.s, c.args), back=True, edit_label="Models"),
         S("models", 6, "Models", lambda c: _step_models(c.s, c.args, c.dry_run), back=True,
-          edit_label="Models"),
+          skip=preset_done, edit_label="Models"),
         S("profile", 6, "Role assignment",
           lambda c: _step6_profile(c.s) if multi(c) else _step6_single_model_profile(c.s), back=True,
-          edit_label="Role assignment"),
+          skip=preset_done, edit_label="Role assignment"),
         S("lanes", 6, "Subscription lanes", lambda c: _step_lanes(c.s, c.args, dry_run=c.dry_run),
           back=True, edit_label="Lanes"),
         S("cockpits", 7, "Cockpit configuration", lambda c: _step7_cockpit_config(c.s, dry_run=c.dry_run),
@@ -479,6 +519,82 @@ def _pick_candidates(shape: str, cands: dict[str, list], saved: Any = None) -> l
     return out or None
 
 
+def _preset_key(s: state.SetupState) -> str:
+    """The row of PRESET_PROFILES that applies: how this host reaches its models."""
+    if s.mode != "multi-model":
+        return "cli" if getattr(s, "cli_team", False) else "single"
+    return "openrouter" if s.backend == "openrouter" else "litellm"
+
+
+def preset_profile(s: state.SetupState, preset: str) -> str:
+    """The kit profile a preset resolves to for this state's mode and backend."""
+    return PRESET_PROFILES[_preset_key(s)][preset]
+
+
+def _preset_default(s: state.SetupState) -> str:
+    """What a saved state means for the question: its preset when the saved profile is one of the presets'
+    profiles, Custom for anything else (a customized, composed or account-picked team, another profile), and
+    Balanced for a host that has chosen nothing. A saved choice is never replaced by the default."""
+    if s.get_selection() is not None or s.profile.customized or s.profile.composed:
+        return "custom"
+    if not s.profile.name:
+        return "balanced"
+    for preset, name in PRESET_PROFILES[_preset_key(s)].items():
+        if name == s.profile.name:
+            return preset
+    return "custom"
+
+
+def _preset_bypassed(args: argparse.Namespace) -> bool:
+    """The flags path (and an unattended run) never gets the question: --profile, --models, --shape,
+    --providers and --compose already decide, and non-interactive answers from the saved state."""
+    return bool(ui.is_non_interactive() or _REQUESTED_PROFILE or _COMPOSE.get("mode")
+                or any(getattr(args, a, "") for a in ("profile", "models", "shape", "providers", "compose")))
+
+
+def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
+    """6a: one plain question (Balanced, Performance, Low pricing or Custom), then the role table and one
+    confirmation. A preset sets the kit profile and no provider, vendor or model is asked; Custom leaves the
+    earlier steps (6a models, 6b roles) to run unchanged."""
+    global _PRESET
+    _PRESET = ""
+    if _preset_bypassed(args):
+        return 0
+    ui.section(6, TOTAL_STEPS, "Models and roles - Preset")
+    mode = "multi-model" if s.mode == "multi-model" else "single-model"
+    backend = s.backend if mode == "multi-model" else None
+    available = profiles.list_profiles(mode=mode, backend=backend)
+    choices = [ui.Choice(f"{label} - {line}", value=key) for key, label, line in PRESET_CHOICES]
+    while True:
+        preset = ui.select("Model preset:", choices, default=_preset_default(s))
+        if preset is None:
+            return 130
+        if preset == "custom":
+            return 0
+        name = preset_profile(s, preset)
+        if name not in available:
+            ui.error(f"The {preset} preset needs the profile {name}, which is not available for this setup.")
+            continue
+        base = profiles.load_profile(name)
+        if mode == "multi-model":
+            rows = profiles.role_table(profiles.to_executors(base, backend))
+        else:
+            rows = profiles.role_table(profiles.to_executors(base))
+        label = next(lbl for key, lbl, _ in PRESET_CHOICES if key == preset)
+        ui.console().print()
+        ui.role_table(rows, title=f"{label.replace(' (recommended)', '')}: {name}")
+        if not ui.confirm("Use this?", default=True):
+            continue
+        targets = (s.profile.customizations or {}).get("__targets__")
+        s.set_selection(None)
+        s.profile.name = name
+        s.profile.composed = None
+        s.profile.customized = False
+        s.profile.customizations = {"__targets__": targets} if targets else {}
+        _PRESET = preset
+        return 0
+
+
 def _step_models(s: state.SetupState, args: argparse.Namespace, dry_run: bool = False) -> int:
     """Pick models from the accounts the earlier steps found (interactive), or keep what the flags set."""
     if s.get_selection() is not None and (getattr(args, "models", "") or ui.is_non_interactive()):
@@ -616,7 +732,11 @@ def _edit_choices(args: argparse.Namespace, s: "state.SetupState | None" = None)
     out = []
     lane_flags = any(getattr(args, f, False) for f in ("lanes", "no_lanes", "lanes_dry_run",
                                                        "lanes_antigravity", "no_lanes_antigravity"))
-    for spec in _RUNNER.editable():
+    editable = _RUNNER.editable()
+    has_preset = any(spec.id == "preset" for spec in editable)
+    for spec in editable:
+        if spec.id == "models" and has_preset:
+            continue                                   # one "Models" entry: the preset question comes first
         if spec.id == "lanes" and not lane_flags and not (s is not None and s.cli_team):
             continue                                   # without a lanes flag that step asks nothing
         out.append(ui.Choice(spec.edit_label, value=spec.id))
