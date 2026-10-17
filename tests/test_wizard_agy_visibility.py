@@ -120,6 +120,7 @@ def test_an_installed_agy_changes_nothing_in_the_selection_or_the_plan_table(hos
     s2, _, _ = custom_run(monkeypatch, host, False)
     assert s1.get_selection().to_dict() == s2.get_selection().to_dict()
     sel = s1.get_selection()
+    agy(monkeypatch, True)
     t1 = ms.plan_table(sel, "multi-model", "litellm", ["claude"], allow_unverified=True)
     agy(monkeypatch, False)
     t2 = ms.plan_table(sel, "multi-model", "litellm", ["claude"], allow_unverified=True)
