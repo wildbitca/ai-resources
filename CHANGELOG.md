@@ -19,6 +19,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   Switching from a gateway mode offers the same cleanup as multi-model to single-model; switching between CLI mode and
   single-model touches no gateway artifact. The review shows `Mode: multi-model (CLI subscriptions)`.
 
+- **Setup step 6 starts with one preset question.** It offers Balanced (recommended), Performance, Low pricing or
+  Custom and never asks for a provider, vendor or model. A preset resolves to a kit profile by mode and backend (CLI
+  subscriptions, single-model, LiteLLM, OpenRouter; the table is in `docs/multi-model.md`), shows only the role table
+  and asks `Use this?`; No returns to the question. Custom is the earlier flow (profile list, models from your
+  accounts, per-role customization, compose). Four new curated profiles back the presets: `subscription-performance`
+  and `subscription-economy` (Claude aliases, no gateway, checker independence by family kept) and
+  `performance-claude-55` and `economy-claude-55` (Claude only, valid in every compatibility cell without
+  `--allow-unverified`). `--profile`, `--models`, `--shape`, `--providers`, `--compose` and `--non-interactive` skip
+  the question; a saved choice is the default and is never replaced. The state file format is unchanged.
+
 ### Fixed
 
 - **`setup` said OpenClaw was not installed when it was.** Detection looked only at the process PATH (and only `agy`

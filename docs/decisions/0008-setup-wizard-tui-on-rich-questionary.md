@@ -58,6 +58,29 @@ meaning with no migration. `setup --backend cli` is the flag spelling. Moving fr
 cleanup offer; moving between this mode and single-model never touches gateway artifacts. Rollback: remove the option,
 the flag and the key (an unknown `cli_team` key in a state file is ignored by older readers).
 
+## Addendum: one preset question opens step 6
+
+Step 6 asked how to choose models, then a provider, a shape, models and a primary, then a profile list of about eight
+names and "Customize any role?". That is too much for the common case. It now opens with one question: Balanced
+(recommended), Performance, Low pricing or Custom. Decisions:
+
+- A preset is a kit profile chosen by mode and backend (`wizard.PRESET_PROFILES`); it never asks for a vendor or a
+  model. The three profiles of a row differ, so a saved profile maps back to one preset. Only the profile name is
+  stored: the state file has no new field, so old files load unchanged and a downgrade ignores nothing.
+- Custom keeps the previous questions untouched. The preset is a new step `preset` before `models` and `profile`; when
+  a preset answered, those two are skipped without output (empty skip reason), so Back lands on the preset question.
+- Gateway rows use Claude-only profiles valid in every compatibility cell without `--allow-unverified`. The mapped
+  `quality-first` and `cost-optimized` name Google models that the Claude cockpit has not verified, so
+  `performance-claude-55` and `economy-claude-55` were added instead. OpenRouter keeps `openrouter-balanced` and
+  `openrouter-cheap` and reuses `performance-claude-55` (namespaced ids, gateway-agnostic) for Performance.
+- The no-gateway rows share `subscription-performance` and `subscription-economy`, both built on aliases with the
+  verifier and security auditor on Opus and no writer on Opus. They carry a lane table, used only when lanes are on.
+- The flags path (`--profile`, `--models`, `--shape`, `--providers`, `--compose`, `--non-interactive`) bypasses the
+  question. A saved customized, composed or account-picked team defaults the question to Custom.
+- The review's "Edit a section" offers one "Models" entry, which re-opens the preset question.
+
+Rollback: remove the `preset` step and the four profiles; no state migration.
+
 ## Rollback
 
 Each change is its own commit. Reverting the runner, the header, Back, the review, the validators or the log tail and diff leaves the Ctrl-C fix in place. There is no state schema change and no migration.
