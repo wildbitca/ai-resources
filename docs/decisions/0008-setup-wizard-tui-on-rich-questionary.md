@@ -71,8 +71,11 @@ names and "Customize any role?". That is too much for the common case. It now op
   a preset answered, those two are skipped without output (empty skip reason), so Back lands on the preset question.
 - Gateway rows use Claude-only profiles valid in every compatibility cell without `--allow-unverified`. The mapped
   `quality-first` and `cost-optimized` name Google models that the Claude cockpit has not verified, so
-  `performance-claude-55` and `economy-claude-55` were added instead. OpenRouter keeps `openrouter-balanced` and
-  `openrouter-cheap` and reuses `performance-claude-55` (namespaced ids, gateway-agnostic) for Performance.
+  `performance-claude-55` and `economy-claude-55` were added instead. OpenRouter uses the same three Claude-only
+  profiles (namespaced ids, no `backend` key, valid under either gateway): `openrouter-balanced` and `openrouter-cheap`
+  name Google models, which would break the Claude-only promise of Balanced and the verified-cell rule. They stay
+  available under Custom. `economy-claude-55` keeps the verifier on Opus, so a checker never shares a model family
+  with the writers.
 - The no-gateway rows share `subscription-performance` and `subscription-economy`, both built on aliases with the
   verifier and security auditor on Opus and no writer on Opus. They carry a lane table, used only when lanes are on.
 - The flags path (`--profile`, `--models`, `--shape`, `--providers`, `--compose`, `--non-interactive`) bypasses the

@@ -140,11 +140,14 @@ def test_the_new_gateway_profiles_are_claude_only_agnostic_and_keep_checkers_off
         assert name in profiles.list_profiles(mode="multi-model", backend=backend)
 
 
-@pytest.mark.parametrize("name", ["subscription-performance", "subscription-economy"])
-def test_the_new_subscription_profiles_keep_checkers_independent_of_writers(name):
+@pytest.mark.parametrize("name", ["subscription-performance", "subscription-economy", "economy-claude-55",
+                                  "performance-claude-55"])
+def test_the_new_profiles_keep_checkers_independent_of_writers(name):
     import re
     doc = profiles.load_profile(name)
-    assert doc["mode"] == "single-model" and set(doc["by_role"]) == set(profiles.KNOWN_ROLES)
+    assert set(doc["by_role"]) == set(profiles.KNOWN_ROLES)
+    if name.startswith("subscription"):
+        assert doc["mode"] == "single-model"
 
     def family(ref):
         return re.search(r"(haiku|sonnet|opus)", ref).group(1)
@@ -157,6 +160,8 @@ def test_the_new_subscription_profiles_keep_checkers_independent_of_writers(name
         assert not by_role[r].get("fallbacks")
         assert "haiku" not in by_role[r]["model"]
     assert family(by_role["verifier"]["model"]) != family(by_role["implementer"]["model"])
+    if not name.startswith("subscription"):
+        return
     # aliases only, including fallbacks and classes
     refs = [c["model"] for c in by_role.values()] + [f for c in by_role.values() for f in c.get("fallbacks") or []]
     assert set(refs + list(doc["classes"].values())) <= {"haiku", "sonnet", "opus"}
