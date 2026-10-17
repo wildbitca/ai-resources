@@ -40,6 +40,8 @@ def run_path(monkeypatch, tmp_path, args, answers=None, seed=None, tty=True):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "xdg"))
     monkeypatch.setattr(ui, "_NON_INTERACTIVE", False)
+    # a run that answers the preset question leaves the module global set: restore it after the test
+    monkeypatch.setattr(wizard, "_PRESET", wizard._PRESET)
     monkeypatch.setattr(ui, "require_deps", lambda: None)
     monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: tty)
     monkeypatch.setattr(ui, "detected_table", lambda rows: None)
