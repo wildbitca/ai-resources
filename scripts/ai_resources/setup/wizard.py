@@ -2017,6 +2017,51 @@ def _drop_agy(lanes: dict) -> dict:
     return out
 
 
+def agy_terms_check(s: state.SetupState, roles: list[str], interactive: bool = True, *,
+                   flag: str = "--lanes-antigravity") -> tuple[bool, dict, int]:
+    """The Antigravity (Google) terms check, ADR-0007 section 11: the one place the Google acknowledgement is shown
+    and stored. Returns `(accepted, acks, rc)`; `s` is never modified, the caller stores `acks` when it accepts.
+
+    An acknowledgement stored for the current text that lists a role (and covers `roles`, or whose extension the
+    operator confirms) is kept without asking again. Otherwise the text is shown once, verbatim, the Google account
+    is named and the roles it may run are ticked (the implementer is unticked by default: ticking it is explicit).
+    A decline, an empty account or no role picked is `(False, acks, 0)` and stores nothing; Ctrl-B and Ctrl-C raise
+    `GoBack` / `Cancelled` before anything is stored. Without a prompt (`interactive` False) a missing, stale or
+    empty acknowledgement is `(False, acks, 2)` with the same message the flag has always printed."""
+    from . import lanes_render
+    acks = dict(s.profile.lane_acks or {})
+    have = lanes_render.valid_acks(acks).get("google")
+    listed = set((have or {}).get("roles") or ())
+    if not interactive:
+        if not have or not listed:
+            ui.error(f"{flag}: no stored valid Google acknowledgement lists a role (hash of the "
+                     "current text, account named); run `ai-resources setup --lanes --lanes-antigravity` "
+                     "from a terminal to sign it")
+            return False, acks, 2
+        return True, acks, 0
+    if not (have is None or (set(roles) - listed and ui.confirm(
+            "Extend the Google acknowledgement to: " + ", ".join(sorted(set(roles) - listed)) + "?",
+            default=False))):
+        return True, acks, 0
+    ui.warn(lanes_render.ACK_TEXT["google"])
+    ui.detail("Roles an agy lane may run: " + ", ".join(roles))
+    account = (ui.text("Google account that signs this acknowledgement (one per account)",
+                       default=str((have or {}).get("account") or "")) or "").strip()
+    if not account:
+        ui.error(f"{flag}: the Google account must be named; the Antigravity lane stays closed")
+        return False, acks, 0
+    choices = [ui.Choice(r, value=r) if hasattr(ui, "Choice") else r for r in roles]
+    default = sorted(listed | {r for r in roles if r != roles_policy.DEFAULT_INTEGRATING_WRITER})
+    picked = ui.checkbox("Roles acknowledged for this Google account (the implementer is "
+                         "unticked by default: tick it explicitly)", choices, default=default)
+    if not picked or not ui.confirm("Acknowledge for this Google account and these roles?", default=False):
+        ui.info("Not acknowledged; the Antigravity lane stays closed.")
+        return False, acks, 0
+    acks["google"] = lanes_render.make_ack("google", list(picked), datetime.now(timezone.utc).isoformat(),
+                                           account=account)
+    return True, acks, 0
+
+
 def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool = False) -> int:
     """Enable, keep or clear subscription lanes. Disabled on a fresh install and without a flag.
 
@@ -2074,36 +2119,10 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     agy_roles = _agy_roles_of(doc)
     if agy_on and not (preview or dry_run):
         # the Google acknowledgement comes before the proposal: an agy candidate enters state only with it
-        have = lanes_render.valid_acks(acks).get("google")
-        listed = set((have or {}).get("roles") or ())
-        if ui.is_non_interactive():
-            if not have or not listed:
-                ui.error("--lanes-antigravity: no stored valid Google acknowledgement lists a role (hash of the "
-                         "current text, account named); run `ai-resources setup --lanes --lanes-antigravity` "
-                         "from a terminal to sign it")
-                return 2
-        elif have is None or (set(agy_roles) - listed and ui.confirm(
-                "Extend the Google acknowledgement to: " + ", ".join(sorted(set(agy_roles) - listed)) + "?",
-                default=False)):
-            ui.warn(lanes_render.ACK_TEXT["google"])
-            ui.detail("Roles an agy lane may run: " + ", ".join(agy_roles))
-            account = (ui.text("Google account that signs this acknowledgement (one per account)",
-                               default=str((have or {}).get("account") or "")) or "").strip()
-            if not account:
-                ui.error("--lanes-antigravity: the Google account must be named; the Antigravity lane stays closed")
-                agy_on = False
-            else:
-                choices = [ui.Choice(r, value=r) if hasattr(ui, "Choice") else r for r in agy_roles]
-                default = sorted(listed | {r for r in agy_roles if r != roles_policy.DEFAULT_INTEGRATING_WRITER})
-                picked = ui.checkbox("Roles acknowledged for this Google account (the implementer is "
-                                     "unticked by default: tick it explicitly)", choices, default=default)
-                if not picked or not ui.confirm("Acknowledge for this Google account and these roles?",
-                                                default=False):
-                    ui.info("Not acknowledged; the Antigravity lane stays closed.")
-                    agy_on = False
-                else:
-                    acks["google"] = lanes_render.make_ack("google", list(picked),
-                                                           datetime.now(timezone.utc).isoformat(), account=account)
+        agy_on, acks, rc = agy_terms_check(s, agy_roles, interactive=not ui.is_non_interactive(),
+                                           flag="--lanes-antigravity")
+        if rc:
+            return rc
     try:
         from ..scoring import headroom_sources
         proposal = lanes_render.propose(doc, _current_by_role(s), s.mode, orchestrators=orchestrators,
