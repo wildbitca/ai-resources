@@ -66,6 +66,47 @@ class Candidate:
         return f"{self.id}{note}{src}"
 
 
+# --- Antigravity (agy): a lane group, never an API provider -------------------------------------------------
+# agy is a subscription CLI with its own login. Its models are not Candidates (no provider, no slot, no
+# credential, no compat cell): they are shown so the operator sees where Gemini participates, and they are used
+# only through the subscription lanes (setup step 6c, ADR-0007 section 11), which stay off by default.
+
+AGY_GROUP_TITLE = "Antigravity (agy, subscription)"
+AGY_LANES_OFF_TITLE = "Antigravity lane - off until you enable it in step 6c"
+
+
+@dataclass(frozen=True)
+class AgyRow:
+    slug: str
+
+    @property
+    def label(self) -> str:
+        tag = "lane, opt-in" if model_pins.AGY_LANE_MODELS_CONFIRMED else "unconfirmed slug; lane, opt-in"
+        return f"{self.slug} [{tag}]"
+
+
+def agy_group_rows() -> list[AgyRow]:
+    return [AgyRow(slug) for slug in model_pins.AGY_LANE_MODELS]
+
+
+def agy_why_lines(installed: bool, lanes_on: bool) -> list[str]:
+    """One line on why Gemini is absent from the choices (none when the Antigravity lane is on)."""
+    if not installed:
+        return ["Antigravity (agy) not installed: Gemini models are available through it; install it in step 1."]
+    if not lanes_on:
+        return ["Antigravity lanes are off: enable them in step 6c to use the Antigravity models "
+                "(Gemini among them)."]
+    return []
+
+
+def agy_group_lines() -> list[str]:
+    """The informational Custom-list group: no credential, no selection, lane use only."""
+    lines = [f"{AGY_GROUP_TITLE} - lane models, not an API provider (login is agy's own; no key is asked):"]
+    lines += [f"  {r.label}" for r in agy_group_rows()]
+    lines.append("These are used only through the subscription lanes: enable Antigravity lanes in step 6c.")
+    return lines
+
+
 # --- accounts and candidates -------------------------------------------------------------------
 
 def detect_accounts(deps: model_accounts.Deps | None = None) -> dict[str, model_accounts.Account]:

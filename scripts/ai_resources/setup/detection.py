@@ -190,6 +190,12 @@ def detect_agy() -> Detected:
     return _probe("Antigravity CLI (agy)", "agy", "curl -fsSL https://antigravity.google/cli/install.sh | bash")
 
 
+def agy_installed() -> bool:
+    """True when the `agy` binary exists. A lookup only: unlike `detect_agy` it never runs the binary, so the
+    wizard can decide what to show about Antigravity without spawning it."""
+    return bool(_which_extra("agy"))
+
+
 def detect_all_cockpits() -> dict[str, Detected]:
     return {
         "claude":   detect_claude_code(),

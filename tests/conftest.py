@@ -117,3 +117,15 @@ def extra_tools_present(monkeypatch):
     from ai_resources.setup import detection
     for fn, name in EXTRA_TOOL_DETECTORS:
         monkeypatch.setattr(detection, fn, lambda n=name: detection.Detected(n, True, "1.0", "/usr/bin/x"))
+
+
+@pytest.fixture(autouse=True)
+def _agy_not_installed_by_default(monkeypatch):
+    """Whether the host has `agy` must not decide a wizard test: the Antigravity visibility rows (Custom list and
+    preset tables) read `detection.agy_installed`, which looks the binary up and never runs it. A test that
+    needs the installed case sets it itself."""
+    try:
+        from ai_resources.setup import detection
+    except Exception:
+        return
+    monkeypatch.setattr(detection, "agy_installed", lambda: False, raising=False)

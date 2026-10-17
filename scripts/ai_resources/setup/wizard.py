@@ -27,7 +27,7 @@ from . import (
 from . import compat, model_selection
 from .cockpits import ALL as ALL_COCKPITS
 from .cockpits import _shared
-from .. import __version__, repo_root, roles_policy, selection as selection_mod
+from .. import __version__, model_pins, repo_root, roles_policy, selection as selection_mod
 
 
 TOTAL_STEPS = 10
@@ -519,6 +519,55 @@ def _pick_candidates(shape: str, cands: dict[str, list], saved: Any = None) -> l
     return out or None
 
 
+def _agy_lanes_on(s: state.SetupState) -> bool:
+    """True when the saved lanes table holds an Antigravity lane agent (a fresh install never does)."""
+    from .. import agy_lane_gates
+    agents = (getattr(s.profile, "lanes", None) or {}).get("agents") or {}
+    return any((a or {}).get("backend") == agy_lane_gates.AGY_LANE_BACKEND for a in agents.values())
+
+
+def _agy_preset_rows(doc: dict) -> list[tuple[str, str, str]]:
+    """(role, provider, model) rows for the Antigravity candidates a profile's lanes block proposes, in the block's
+    order. Display only: nothing here reaches the state, `lanes.yaml` or the OpenClaw config."""
+    block = doc.get("lanes") or {}
+    rows: list[tuple[str, str, str]] = []
+    for key, suffix in (("roles", ""), ("second", " (second opinion)")):
+        for role, cands in (block.get(key) or {}).items():
+            for c in cands or ():
+                if isinstance(c, str) and c.startswith("agy:"):
+                    row = model_selection.AgyRow(c[4:])
+                    tag = "" if model_pins.AGY_LANE_MODELS_CONFIRMED else " [unconfirmed slug]"
+                    held = (" - writer stays on Claude Code" if role == roles_policy.DEFAULT_INTEGRATING_WRITER
+                            else "")
+                    rows.append((f"{role}{suffix}", "Antigravity", f"{row.slug}{tag} - lane off{held}"))
+    return rows
+
+
+def _show_agy_in_preset(s: state.SetupState, doc: dict) -> None:
+    """CLI subscriptions mode only: where Antigravity (Gemini among it) takes part in this preset, marked off
+    until step 6c, or one line saying why it is absent."""
+    if _preset_key(s) != "cli":
+        return
+    installed = detection.agy_installed()
+    if installed:
+        rows = _agy_preset_rows(doc)
+        if rows:
+            ui.role_table(rows, title=model_selection.AGY_LANES_OFF_TITLE)
+    for line in model_selection.agy_why_lines(installed, _agy_lanes_on(s)):
+        ui.info(line)
+
+
+def _show_agy_in_custom(s: state.SetupState) -> None:
+    """The Custom model list: the Antigravity group as informational rows (installed) or the one-line reason
+    Gemini is absent. Not a candidate: picking happens in step 6c."""
+    installed = detection.agy_installed()
+    if installed:
+        for line in model_selection.agy_group_lines():
+            ui.detail(line)
+    for line in model_selection.agy_why_lines(installed, _agy_lanes_on(s)):
+        ui.info(line)
+
+
 def _preset_key(s: state.SetupState) -> str:
     """The row of PRESET_PROFILES that applies: how this host reaches its models."""
     if s.mode != "multi-model":
@@ -583,6 +632,7 @@ def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
         label = next(lbl for key, lbl, _ in PRESET_CHOICES if key == preset)
         ui.console().print()
         ui.role_table(rows, title=f"{label.replace(' (recommended)', '')}: {name}")
+        _show_agy_in_preset(s, base)
         if not ui.confirm("Use this?", default=True):
             continue
         targets = (s.profile.customizations or {}).get("__targets__")
@@ -610,6 +660,7 @@ def _step_models(s: state.SetupState, args: argparse.Namespace, dry_run: bool = 
         return 130
     if how != "pick":
         return 0
+    _show_agy_in_custom(s)
     ui.info("Looking at your accounts (names only; no key is shown)...")
     accounts = model_selection.detect_accounts()
     accounts = _ask_missing_keys(s, accounts, dry_run)
