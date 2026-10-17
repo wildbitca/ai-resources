@@ -168,6 +168,13 @@ checks that fail closed with a message naming the gate, not prose: admission in 
 12. **Status.** Accepted by the operator on 2026-10-16 (see the status line). Gates G0-G5 stay NOT PROVEN, G6 and
     G7 partial, and so the lane stays closed.
 
+**Note (setup visibility of the Antigravity models).** The wizard shows the lane models so the operator can see where
+Gemini participates: as an informational group in the Custom list and as an "off until step 6c" table under the
+CLI-mode presets (ADR-0008 addendum). This is display only and changes none of this section's decisions: the lane stays
+opt-in and off, the gates G0-G7 decide what is writable, the implementer stays on Claude Code, and the slugs stay
+unconfirmed candidates (G1). `subscription-performance` and `subscription-economy` add a pinned Gemini second member to
+the code-reviewer, a role whose Google egress this section already accepts; it is held like every agy candidate.
+
 **Amendment to sections 1 and 8 (tier rule, "best model first").** A lane never moves the model, except that a
 writer may run a same-family other version when no tier-1 candidate is admissible; the why row names it. Version
 drift is not stale: it demotes the agent to tier 2 for writers and makes it inadmissible for checkers. A candidate

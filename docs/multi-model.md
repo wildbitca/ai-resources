@@ -86,6 +86,17 @@ single-model` plus `cli_team: true` in `setup-state.yaml` (the key is absent oth
 Moving from a gateway mode to it offers the same cleanup as multi-model to single-model; moving between it and
 single-model leaves gateway artifacts alone.
 
+### Where Gemini shows in step 6
+
+Gemini models come through Antigravity (`agy`), a subscription CLI with its own login, so they are not in the "pick
+models from my accounts" list, which is built from API credentials. With `agy` installed, the Custom list prints an
+"Antigravity (agy, subscription)" group of informational rows (`lane, opt-in`, plus `unconfirmed slug` until a V5 run
+confirms the slugs); it asks for no key and cannot be picked as an API model. In CLI-subscriptions mode the preset role
+table is followed by a table "Antigravity lane - off until you enable it in step 6c" with the Antigravity candidates
+of the profile's lanes block (Performance and Low pricing add Gemini as the code-review second opinion). Without
+`agy`, setup says so in one line. Enabling the lane stays in step 6c (Google acknowledgement, gates G0-G7); nothing
+is written to agy.
+
 ## Mental model
 
 Claude Code and Aider are the cockpits the kit points at a gateway; the gateway

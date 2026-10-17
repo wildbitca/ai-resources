@@ -8,6 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ### Added
 
+- **Setup shows where Gemini (Antigravity) takes part.** The Custom "pick models from my accounts" list never showed
+  Gemini because Antigravity (`agy`) is a subscription CLI, not an API account. With `agy` installed it now prints an
+  "Antigravity (agy, subscription)" group of informational rows labelled `lane, opt-in` and `unconfirmed slug` (no key
+  is asked, nothing there is an API provider or a selection slot), and in CLI-subscriptions mode each preset role table is
+  followed by an "Antigravity lane - off until you enable it in step 6c" table. Without `agy` one line says why Gemini is
+  absent. `subscription-performance` and `subscription-economy` add a pinned Gemini second opinion on the code-reviewer.
+  The lane stays opt-in, off by default and closed behind gates G0-G7; no write goes to agy. Picking an Antigravity model
+  in Custom is not supported: use step 6c.
+
 - **Setup mode: "multi-model via your CLI subscriptions".** The mode question (step 2) now has four options: single-
   model, multi-model via your CLI subscriptions, via OpenRouter, via LiteLLM. The new one spreads roles across the
   subscription CLIs (Claude Code, Antigravity, Codex when allowed) with no gateway, nothing billed per token, and no

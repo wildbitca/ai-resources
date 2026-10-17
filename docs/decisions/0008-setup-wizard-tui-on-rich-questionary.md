@@ -84,6 +84,35 @@ names and "Customize any role?". That is too much for the common case. It now op
 
 Rollback: remove the `preset` step and the four profiles; no state migration.
 
+## Addendum: where Gemini (Antigravity) shows in step 6
+
+Gemini models were absent from step 6 for a structural reason: the Custom "pick models from my accounts" list is built
+from API credentials (`model_accounts.detect`), and Antigravity (`agy`) is a subscription CLI with its own login, not an
+account. Decisions:
+
+- **Custom list.** When `agy` is installed (`detection.agy_installed`, a binary lookup that never runs `agy`), the list
+  prints an "Antigravity (agy, subscription)" group with the `model_pins.AGY_LANE_MODELS` slugs, each labelled
+  `lane, opt-in` and, while `AGY_LANE_MODELS_CONFIRMED` is False, `unconfirmed slug`. The rows are **informational**:
+  there is no `Candidate`, no provider, no slot, no credential prompt and no compatibility cell, so `Selection`,
+  `plan_table`, the smoke-path choice and the gateway paths are untouched by construction. Routing a Custom pick
+  through the lane mechanism (`lanes.yaml`, resolved lanes) was not done: it needs the Google acknowledgement and the
+  gates of ADR-0007 section 11, which live in step 6c. The group says so: enable Antigravity lanes in step 6c.
+- **Presets.** In CLI-subscriptions mode only, and only with `agy` installed, the preset role table is followed by a
+  second table titled "Antigravity lane - off until you enable it in step 6c": the Antigravity candidates of the
+  profile's `lanes` block, one row each, with the unconfirmed-slug mark. Display only; nothing reaches the state. The
+  question keeps its four choices. Gateway and single-model rows show nothing.
+- **Why Gemini is absent.** One line: "Antigravity (agy) not installed: Gemini models are available through it; install
+  it in step 1", or, when installed with no Antigravity lane in the saved table, "Antigravity lanes are off".
+- **Profiles.** `subscription-performance` and `subscription-economy` gain a Gemini second opinion on the
+  code-reviewer (`agy:gemini-3.8-flash-high`, first in `lanes.second`, listed in `lanes.pins` because Gemini is not the
+  role's family). Review is the one role ADR-0007 section 11 accepts for Google egress where the study evidence does not
+  contradict a Gemini member and the profile already had an agy member. Explore (Gemini 3.8 Flash ranks second in the
+  study) keeps no agy candidate (a standing profile rule), the tester is not given Gemini (Terminal-Bench 19.7), and no
+  checker or writer takes Gemini. Unchanged: off by default, fail closed, `writable_backends()` unchanged, no write
+  ever goes to agy.
+
+Rollback: remove `_show_agy_*` calls in `wizard.py`, the `agy_installed` lookup and the two profile blocks.
+
 ## Rollback
 
 Each change is its own commit. Reverting the runner, the header, Back, the review, the validators or the log tail and diff leaves the Ctrl-C fix in place. There is no state schema change and no migration.
