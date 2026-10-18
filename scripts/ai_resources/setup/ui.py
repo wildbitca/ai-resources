@@ -314,6 +314,23 @@ def role_table(rows: list[tuple[str, str, str]], title: str = "") -> None:
     console().print(t)
 
 
+def team_table(rows: list[tuple[str, str, str]], title: str = "") -> None:
+    """The team screen: (tool, roles in this team, in team) rows. A tool with no roles yet is information, not a choice."""
+    rows = [tuple(safe_text(c) for c in r) for r in rows]
+    if not _HAS_RICH:
+        print(f"\n{safe_text(title)}")
+        for tool, roles, status in rows:
+            print(f"  {tool:<14} {roles}  [{status}]")
+        return
+    t = Table(title=_markup_safe(title), show_header=True, header_style="bold cyan", border_style="dim", **_box_kw())
+    t.add_column("Tool", style="bold")
+    t.add_column("Roles in this team")
+    t.add_column("In team", style="dim")
+    for tool, roles, status in rows:
+        t.add_row(_markup_safe(tool), _markup_safe(roles), _markup_safe(status))
+    console().print(t)
+
+
 def review_table(rows: list[tuple[str, str]], title: str = "") -> None:
     """The review screen: (section, answer) rows. Values are shown as given: callers pass `set` or `missing`
     for credentials, never the secret."""

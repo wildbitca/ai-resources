@@ -1,8 +1,8 @@
-"""The step 6 preset question: Balanced, Performance, Low pricing or Custom (ADR-0008 addendum).
+"""The "Your team" screen: Balanced, Performance, Low cost or Custom (ADR-0008 addendum, amended by ADR-0009).
 
-One plain question comes first. A preset resolves to a kit profile by mode and backend and never asks for a
-provider, a vendor or a model. Custom is the earlier flow, unchanged. Everything here is offline: the ui is
-the scripted fake of `wizard_fakes`."""
+One plain question comes first and choosing is the confirmation (no "Use this?"). A starting team resolves to a kit
+profile by mode and backend and never asks for a provider, a vendor or a model. Custom is the earlier flow,
+unchanged. Everything here is offline: the ui is the scripted fake of `wizard_fakes`."""
 from __future__ import annotations
 
 import argparse
@@ -14,8 +14,8 @@ from ai_resources.setup import compat, profiles, state, ui, wizard
 from test_profile_validity import CELLS, check_cell, profile_refs
 from wizard_fakes import BACK, Script, Seq
 
-ASK = "Model preset:"
-CONFIRM = "Use this?"
+ASK = "Starting team:"
+CONFIRM = "Use this?"                      # no longer asked: kept to prove it never is
 KEYS = ("balanced", "performance", "low-pricing")
 
 # mode key -> (state setter, expected profile per preset)
@@ -60,7 +60,7 @@ def clean_globals(monkeypatch):
 def drive(monkeypatch, s, answer, a=None, confirm=True, non_interactive=False):
     shown = []
     monkeypatch.setattr(ui, "role_table", lambda rows, title="": shown.append((title, rows)))
-    script = Script(**{ASK: answer, CONFIRM: confirm})
+    script = Script(**{ASK: answer})
     script.install(monkeypatch, non_interactive=non_interactive)
     rc = wizard._step_preset(s, a or args())
     return rc, script, shown
@@ -76,11 +76,10 @@ def test_the_question_has_exactly_four_choices_in_order_with_plain_labels(monkey
         return "balanced"
     monkeypatch.setattr(ui, "select", lambda m, choices, default=None, **k: (
         seen.update(titles=[c.title for c in choices]) or grab([c.value for c in choices])))
-    monkeypatch.setattr(ui, "confirm", lambda m, default=True: True)
     wizard._step_preset(make_state("litellm"), args())
     assert seen["values"] == ["balanced", "performance", "low-pricing", "custom"]
     heads = [t.split(" - ")[0] for t in seen["titles"]]
-    assert heads == ["Balanced (recommended)", "Performance", "Low pricing", "Custom"]
+    assert heads == ["Balanced (recommended)", "Performance", "Low cost", "Custom"]
     for title in seen["titles"]:
         assert " - " in title and "\n" not in title and len(title) < 140
         assert not any(w in title.lower() for w in ("claude", "gemini", "openai", "anthropic"))
@@ -192,11 +191,11 @@ def test_performance_costs_more_than_balanced_and_economy_less_on_the_subscripti
 
 @pytest.mark.parametrize("key", sorted(TABLE))
 @pytest.mark.parametrize("preset", KEYS)
-def test_a_preset_asks_only_the_preset_and_the_confirmation(monkeypatch, key, preset):
+def test_a_preset_asks_only_the_starting_team(monkeypatch, key, preset):
     s = make_state(key)
     rc, script, shown = drive(monkeypatch, s, preset)
     assert rc == 0
-    assert script.asked == [f"select: {ASK}", f"confirm: {CONFIRM}"]
+    assert script.asked == [f"select: {ASK}"]
     assert s.profile.name == TABLE[key][preset]
     assert s.profile.customized is False and s.profile.composed is None
     assert s.get_selection() is None
@@ -224,31 +223,35 @@ def test_a_preset_replaces_a_stale_account_selection_and_keeps_the_cockpit_targe
     assert s.profile.customized is False and s.profile.name == "balanced-claude-55"
 
 
-def test_use_this_no_returns_to_the_preset_question(monkeypatch):
+def test_choosing_a_starting_team_is_the_confirmation(monkeypatch):
+    """ADR-0009: no "Use this?" - the choice is the confirmation, the tables are shown with it."""
     s = make_state("litellm")
-    script = Script(**{ASK: Seq("performance", "low-pricing"), CONFIRM: Seq(False, True)})
+    script = Script(**{ASK: "performance"})
     script.install(monkeypatch)
     assert wizard._step_preset(s, args()) == 0
-    assert script.asked == [f"select: {ASK}", f"confirm: {CONFIRM}", f"select: {ASK}", f"confirm: {CONFIRM}"]
-    assert s.profile.name == "economy-claude-55" and wizard._PRESET == "low-pricing"
+    assert script.asked == [f"select: {ASK}"] and not any(CONFIRM in m for m in script.asked)
+    assert s.profile.name == "performance-claude-55" and wizard._PRESET == "performance"
 
 
-def test_use_this_no_then_custom_reaches_the_old_flow(monkeypatch):
-    s = make_state("litellm")
-    script = Script(**{ASK: Seq("performance", "custom"), CONFIRM: False})
+def test_the_cli_team_shows_the_team_table_with_the_role_table(monkeypatch):
+    from ai_resources.setup import detection
+    monkeypatch.setattr(detection, "agy_installed", lambda: False)
+    tables = []
+    monkeypatch.setattr(ui, "team_table", lambda rows, title="": tables.append((title, rows)))
+    s = make_state("cli")
+    drive(monkeypatch, s, "balanced")
+    assert len(tables) == 1 and tables[0][1][0][0] == "Claude Code"
+    tables.clear()
+    drive(monkeypatch, make_state("litellm"), "balanced")
+    assert tables == []                      # the gateway rows keep the plain role table
+
+
+def test_ctrl_b_goes_back_and_ctrl_c_cancels(monkeypatch):
+    script = Script(**{ASK: BACK})
     script.install(monkeypatch)
-    assert wizard._step_preset(s, args()) == 0
-    assert wizard._PRESET == ""
-    assert s.profile.name == ""           # nothing is decided by the preset question
-
-
-def test_ctrl_b_at_either_prompt_goes_back_and_ctrl_c_cancels(monkeypatch):
-    for answers in ({ASK: BACK, CONFIRM: True}, {ASK: "balanced", CONFIRM: BACK}):
-        script = Script(**answers)
-        script.install(monkeypatch)
-        with pytest.raises(ui.GoBack):
-            wizard._step_preset(make_state("single"), args())
-    script = Script(**{ASK: None, CONFIRM: True})
+    with pytest.raises(ui.GoBack):
+        wizard._step_preset(make_state("single"), args())
+    script = Script(**{ASK: None})
     script.install(monkeypatch)
     assert wizard._step_preset(make_state("single"), args()) == 130
 
@@ -326,6 +329,34 @@ def test_a_saved_customized_profile_survives_choosing_custom(monkeypatch):
     drive(monkeypatch, s, "custom")
     assert s.profile.name == "quality-first" and s.profile.customized is True
     assert s.profile.customizations == {"planner": {"model": "anthropic/claude-opus-5.5"}}
+
+
+def _saved_team(key="cli"):
+    s = make_state(key)
+    s.profile = state.ProfileState(
+        name="subscription-claude-55", customized=True, composed={"mode": "uniform"},
+        customizations={"planner": {"model": "opus"}, "__targets__": {"selected": ["claude"]}},
+        lanes={"agents": {}, "roles": {}}, lane_acks={"anthropic": {"roles": ["tester"]}})
+    return s
+
+
+def test_the_custom_path_keeps_a_saved_team_its_lanes_and_acks_when_the_profile_is_unchanged(monkeypatch):
+    """AC10 (ADR-0009): Custom is preselected for a saved customized or composed team and Apply leaves it as it was
+    (the single-model profile step used to rebuild the profile and drop all of it)."""
+    s = _saved_team()
+    before = state._to_dict(s)["profile"]
+    Script(**{"How should kit subagents pick": lambda v: "subscription-claude-55"}).install(monkeypatch)
+    assert wizard._step6_single_model_profile(s) == 0
+    assert state._to_dict(s)["profile"] == before
+
+
+def test_choosing_another_profile_starts_clean_but_keeps_the_acks_and_the_ticked_tools(monkeypatch):
+    s = _saved_team()
+    Script(**{"How should kit subagents pick": lambda v: "claude-native"}).install(monkeypatch)
+    assert wizard._step6_single_model_profile(s) == 0
+    assert s.profile.name == "claude-native" and s.profile.customized is False and s.profile.composed is None
+    assert s.profile.lanes is None and s.profile.lane_acks == {"anthropic": {"roles": ["tester"]}}
+    assert s.profile.customizations == {"__targets__": {"selected": ["claude"]}}
 
 
 # --- the flags path bypasses the question -------------------------------------------------------------------
@@ -407,14 +438,14 @@ def test_a_full_run_with_a_preset_asks_none_of_the_old_step_6_questions(monkeypa
     host_env(monkeypatch, tmp_path)
     monkeypatch.setattr(ui, "section", lambda *a, **k: None)
     monkeypatch.setattr(ui, "role_table", lambda *a, **k: None)
-    script = Script(**{"Choose mode": "multi-model:cli", ASK: "performance", CONFIRM: True,
+    script = Script(**{"Choose mode": "multi-model:cli", ASK: "performance",
                        "Enable subscription lanes": False, "Configure detected cockpits": lambda v: list(v),
                        "Apply this?": lambda v: v[0]})
     script.install(monkeypatch)
     assert wizard.run(_run_args()) == 0
     asked = " | ".join(script.asked)
     assert not any(q in asked for q in OLD_STEP_6), asked
-    assert [m for m in script.asked if "Model preset" in m or "Use this?" in m] == [f"select: {ASK}", f"confirm: {CONFIRM}"]
+    assert [m for m in script.asked if "Starting team" in m or "Use this?" in m] == [f"select: {ASK}"]
     saved = state.load()
     assert saved.profile.name == "subscription-performance" and saved.cli_team is True
 
@@ -439,5 +470,5 @@ def test_a_full_run_with_the_profile_flag_never_asks_the_preset(monkeypatch, tmp
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": lambda v: v[0]})
     script.install(monkeypatch)
     assert wizard.run(_run_args(profile="claude-inherit")) == 0
-    assert not any("Model preset" in m for m in script.asked)
+    assert not any("Starting team" in m for m in script.asked)
     assert state.load().profile.name == "claude-inherit"

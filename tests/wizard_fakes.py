@@ -81,9 +81,12 @@ class Script:
             self.answers["Pick how they work"] = how
             if gateway:
                 self.answers["Which gateway"] = gateway
+        if "Model preset" in self.answers:           # the old name of the "Starting team:" question (ADR-0009)
+            self.answers["Starting team"] = self.answers.pop("Model preset")
         self.asked: list[str] = []
         self.shown: list[str] = []
         self.defaults: dict[str, list] = {}      # message -> the default offered on each ask (select, checkbox)
+        self.titles: list[str] = []              # the title of every choice of every select / checkbox
 
     def _find(self, message, kind):
         self.asked.append(f"{kind}: {message}")
@@ -115,6 +118,7 @@ class Script:
 
     def _pick(self, message, choices, default, multi=False):
         self.defaults.setdefault(message, []).append(default)
+        self.titles.extend(str(getattr(c, "title", c)) for c in choices)
         raw = self._find(message, "checkbox" if multi else "select")
         values = [getattr(c, "value", c) for c in choices]
         if callable(raw):

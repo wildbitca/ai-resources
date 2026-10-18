@@ -155,7 +155,7 @@ def test_cli_mode_with_agy_adds_a_marked_agy_table_after_the_role_table(monkeypa
     assert OFF in title and rows
     flat = " ".join(" ".join(r) for r in rows)
     assert "unconfirmed slug" in flat and "antigravity" in flat.lower()
-    assert script.asked == [f"select: {ASK}", f"confirm: {CONFIRM}"]
+    assert script.asked == [f"select: {ASK}"]
     writer = [r for r in rows if r[0].startswith(roles_policy.DEFAULT_INTEGRATING_WRITER)]
     assert writer and all("writer stays on Claude Code" in r[2] for r in writer)
     # the rows are exactly the agy candidates of the profile's lanes block

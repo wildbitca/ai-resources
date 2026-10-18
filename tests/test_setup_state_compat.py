@@ -18,17 +18,10 @@ from ai_resources.setup import credentials, detection, state, tools, ui, wizard
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "setup_state"
 NAMES = sorted(p.stem for p in FIX.glob("*.yaml"))
-# What a non-interactive run changes in a saved state TODAY, pinned so the simplification cannot make it worse
-# (and so a later fix shows up here). `_step6_single_model_profile` rebuilds `profile` on a single-model-shaped
-# state, which drops a customized or composed team and the lanes with their acknowledgements; the OpenClaw
-# prompt normalises the model ref and fills `voice_correction`. Every other key of every fixture is unchanged.
-_DROPS_THE_TEAM = ("profile.customized", "profile.composed", "profile.customizations", "profile.lanes",
-                   "profile.lane_acks")
+# What a non-interactive run changes in a saved state: the OpenClaw prompt normalises the model ref and fills
+# `voice_correction`. Every other key of every fixture is unchanged (S7 of ADR-0009 fixed the single-model profile
+# step, which used to rebuild `profile` and drop a customized or composed team and the lanes with their acks).
 KNOWN_TODAY = {
-    "cli_lanes_anthropic_ack": _DROPS_THE_TEAM,
-    "cli_lanes_google_ack": _DROPS_THE_TEAM,
-    "cli_team_customized": _DROPS_THE_TEAM,
-    "composed_team": _DROPS_THE_TEAM,
     "openclaw_host_voice": ("openclaw.model", "openclaw.voice_correction"),
 }
 _LAST_RUN = re.compile(r"^last_run: .*$", re.M)

@@ -72,7 +72,7 @@ RECOMMENDED_PROFILE = profiles.RECOMMENDED_PROFILE        # "balanced-claude-55"
 PRESET_CHOICES = (
     ("balanced", "Balanced (recommended)", "strong models where defects are caught, cheaper ones for the rest"),
     ("performance", "Performance", "the strongest models on planning, review and verification; costs more"),
-    ("low-pricing", "Low pricing", "the cheapest models that still keep review, verification and security strong"),
+    ("low-pricing", "Low cost", "the cheapest models that still keep review, verification and security strong"),
     ("custom", "Custom", "choose a profile, pick models from your accounts, or set each role yourself"),
 )
 PRESET_PROFILES: dict[str, dict[str, str]] = {
@@ -348,7 +348,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
           edit_label="Providers"),
         S("credentials", 5, "Credentials", lambda c: _step5_credentials(c.s, c.dry_run),
           skip=lambda c: None if multi(c) else ("Credentials", ""), edit_label="Credentials"),
-        S("preset", 6, "Model preset", lambda c: _step_preset(c.s, c.args), back=True, edit_label="Models"),
+        S("preset", 6, "Your team", lambda c: _step_preset(c.s, c.args), back=True, edit_label="Models"),
         S("models", 6, "Models", lambda c: _step_models(c.s, c.args, c.dry_run), back=True,
           skip=preset_done, edit_label="Models"),
         S("profile", 6, "Role assignment",
@@ -616,28 +616,48 @@ def _preset_bypassed(args: argparse.Namespace) -> bool:
                 or any(getattr(args, a, "") for a in ("profile", "models", "shape", "providers", "compose")))
 
 
+def _team_rows(s: state.SetupState, base: dict, rows: list) -> list[tuple[str, str, str]]:
+    """The team table of screen 3: which tool takes which roles in the starting team. Claude Code takes the roles the
+    profile gives it; Codex has no roles yet (held, ADR-0007 FU-2), so its row is information and never a choice.
+    Other tools have no role profile and are not listed."""
+    from . import lanes_render
+    members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
+    roles = ", ".join(r for r, _p, _m in rows) or "none"
+    out: list[tuple[str, str, str]] = [("Claude Code", roles, "in team")]
+    if "codex" in members or (s.cockpits.get("codex") and s.cockpits["codex"].installed):
+        if not lanes_render.CODEX_LANE_ADR_ACCEPTED:
+            out.append(("Codex CLI", "no roles yet (held, ADR-0007 FU-2)", "-"))
+    return out
+
+
+def _show_team_table(s: state.SetupState, base: dict, rows: list) -> None:
+    ui.team_table(_team_rows(s, base, rows), title="Who does what")
+    ui.detail("Writing code always stays with Claude Code (safety rule).")
+
+
 def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
-    """6a: one plain question (Balanced, Performance, Low pricing or Custom), then the role table and one
-    confirmation. A preset sets the kit profile and no provider, vendor or model is asked; Custom leaves the
-    earlier steps (6a models, 6b roles) to run unchanged."""
+    """Screen 3, "Your team": ONE question (Balanced, Performance, Low cost or Custom). Choosing a starting team is the
+    confirmation: the role table and the team table are shown with it and nothing is asked again (ADR-0009). A starting
+    team sets the kit profile and no provider, vendor or model is asked; Custom leaves the earlier steps (6a models,
+    6b roles) to run unchanged."""
     global _PRESET
     _PRESET = ""
     if _preset_bypassed(args):
         return 0
-    ui.section(6, TOTAL_STEPS, "Models and roles - Preset")
+    ui.section(3, SCREENS, "Your team")
     mode = "multi-model" if s.mode == "multi-model" else "single-model"
     backend = s.backend if mode == "multi-model" else None
     available = profiles.list_profiles(mode=mode, backend=backend)
     choices = [ui.Choice(f"{label} - {line}", value=key) for key, label, line in PRESET_CHOICES]
     while True:
-        preset = ui.select("Model preset:", choices, default=_preset_default(s))
+        preset = ui.select("Starting team:", choices, default=_preset_default(s))
         if preset is None:
             return 130
         if preset == "custom":
             return 0
         name = preset_profile(s, preset)
         if name not in available:
-            ui.error(f"The {preset} preset needs the profile {name}, which is not available for this setup.")
+            ui.error(f"The {preset} starting team needs the profile {name}, which is not available for this setup.")
             continue
         base = profiles.load_profile(name)
         if mode == "multi-model":
@@ -645,17 +665,17 @@ def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
         else:
             rows = profiles.role_table(profiles.to_executors(base))
         label = next(lbl for key, lbl, _ in PRESET_CHOICES if key == preset)
-        ui.console().print()
-        ui.role_table(rows, title=f"{label.replace(' (recommended)', '')}: {name}")
-        _show_agy_in_preset(s, base)
-        if not ui.confirm("Use this?", default=True):
-            continue
         targets = (s.profile.customizations or {}).get("__targets__")
         s.set_selection(None)
         s.profile.name = name
         s.profile.composed = None
         s.profile.customized = False
         s.profile.customizations = {"__targets__": targets} if targets else {}
+        ui.console().print()
+        ui.role_table(rows, title=f"{label.replace(' (recommended)', '')}: {name}")
+        _show_agy_in_preset(s, base)
+        if _preset_key(s) == "cli":
+            _show_team_table(s, base, rows)
         _PRESET = preset
         return 0
 
@@ -1963,7 +1983,12 @@ def _step6_single_model_profile(s: state.SetupState) -> int:
     chosen = ui.select("How should kit subagents pick their Claude model?", choices, default=default)
     if chosen is None:
         return 130
-    s.profile = _carry_targets(s.profile, state.ProfileState(name=chosen, customized=False))
+    if chosen != s.profile.name:
+        # A different profile starts clean; the acknowledgements belong to the accounts, not to a profile, and the
+        # tools ticked on the first screen travel along. Keeping the same profile keeps the saved team with it
+        # (customizations, composed team, lanes), which a re-run used to drop (ADR-0009).
+        s.profile = _carry_targets(s.profile, state.ProfileState(name=chosen, customized=False,
+                                                                 lane_acks=s.profile.lane_acks))
     if _COMPOSE.get("mode"):
         if _COMPOSE["mode"] != "uniform":
             ui.error("single-model mode offers --compose uniform only (one Claude model for every role); "
