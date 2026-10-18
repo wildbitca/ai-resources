@@ -75,7 +75,7 @@ def _record(monkeypatch, picks=None, confirm=True, text=""):
 
 def test_saved_mode_and_backend_are_the_default_of_the_mode_question(monkeypatch):
     """The saved mode and gateway start selected on screen 2 ("How should they work?", then "Which gateway?")."""
-    for mode, backend, how, gateway in (("multi-model", "openrouter", "advanced", "openrouter"),
+    for mode, backend, how, gateway in (("multi-model", "openrouter", "advanced", None),   # one gateway left: auto-picked, not asked (ADR-0010)
                                         ("multi-model", "litellm", "advanced", "litellm"),
                                         ("single-model", "litellm", "alone", None)):
         seen = _record(monkeypatch)

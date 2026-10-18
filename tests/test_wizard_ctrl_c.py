@@ -67,6 +67,16 @@ def _drive(host, answers, args=None):
     return wizard.run(args or _args()), script
 
 
+def _seed_saved_litellm(host):
+    """LiteLLM is no longer offered to new setups (ADR-0010): a run that reaches the gateway steps needs a saved
+    litellm state. The file is written directly so the counted `state.save` stays untouched."""
+    import yaml
+    s = state.SetupState(mode="multi-model", backend="litellm")
+    s.last_run = "2026-01-01T00:00:00+00:00"
+    state.state_path().parent.mkdir(parents=True, exist_ok=True)
+    state.state_path().write_text(yaml.safe_dump(state._to_dict(s)), encoding="utf-8")
+
+
 def _assert_clean_cancel(rc, capsys, host, before, step=None):
     assert rc == 130
     err = capsys.readouterr().err
@@ -94,19 +104,21 @@ def test_cancel_at_resume_confirm(host, capsys):
 
 
 def test_cancel_at_port_text(host, capsys):
+    _seed_saved_litellm(host)
     host.monkeypatch.setattr(detection, "detect_container_runtime",
                              lambda: ("docker", types.SimpleNamespace(installed=True, version="1", binary_path="/d")))
     host.monkeypatch.setattr(detection, "detect_compose", lambda cli: True)
     before = _snapshot(host.home)
-    rc, script = _drive(host, {"Choose mode": "multi-model:litellm", "Where is your gateway": "local-docker",
+    rc, script = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:litellm", "Where is your gateway": "local-docker",
                                "Bind interface": "127.0.0.1", "Port": ABORT})
     _assert_clean_cancel(rc, capsys, host, before, step="Gateway (LiteLLM)")
     assert any(m.startswith("text: Port") for m in script.asked)
 
 
 def test_cancel_at_providers_checkbox(host, capsys):
+    _seed_saved_litellm(host)
     before = _snapshot(host.home)
-    rc, _ = _drive(host, {"Choose mode": "multi-model:litellm", "Where is your gateway": "skipped",
+    rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:litellm", "Where is your gateway": "skipped",
                           "Select providers": ABORT})
     _assert_clean_cancel(rc, capsys, host, before, step="Providers")
 
@@ -146,18 +158,20 @@ def test_cancel_at_lanes_acknowledgement(host, capsys):
 
 
 def test_bare_keyboard_interrupt_names_the_step(host, capsys):
+    _seed_saved_litellm(host)
     """prompt_scope restores the section on exit, so the name must be read before the scope ends."""
     before = _snapshot(host.home)
-    rc, _ = _drive(host, {"Choose mode": "multi-model:litellm", "Where is your gateway": "skipped",
+    rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:litellm", "Where is your gateway": "skipped",
                           "Select providers": INTERRUPT})
     _assert_clean_cancel(rc, capsys, host, before, step="Providers")
 
 
 def test_cancel_after_the_gateway_save_lists_what_was_done(host, capsys):
+    _seed_saved_litellm(host)
     host.monkeypatch.setattr(detection, "detect_container_runtime",
                              lambda: ("docker", types.SimpleNamespace(installed=True, version="1", binary_path="/d")))
     host.monkeypatch.setattr(detection, "detect_compose", lambda cli: True)
-    rc, _ = _drive(host, {"Choose mode": "multi-model:litellm", "Where is your gateway": "local-docker",
+    rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:litellm", "Where is your gateway": "local-docker",
                           "Bind interface": "127.0.0.1", "Port": "4000", "Container image": "",
                           "Pull": ABORT})
     err = capsys.readouterr().err

@@ -42,8 +42,9 @@ def test_the_question_lists_three_ways_with_the_team_first(monkeypatch):
 
 
 def test_advanced_asks_which_gateway(monkeypatch):
+    """ADR-0010: the question is asked only when a saved litellm gateway exists (it is then offered beside OpenRouter)."""
     seen = {}
-    s = state.SetupState()
+    s = state.SetupState(mode="multi-model", backend="litellm")
     script = Script(**{"Pick how they work": "advanced",
                        "Which gateway": lambda values: seen.setdefault("v", list(values)) and "openrouter"})
     script.install(monkeypatch)
@@ -68,7 +69,7 @@ def test_the_team_option_is_worded_for_subscriptions_without_a_gateway(monkeypat
     for needle in ("As a team", "subscriptions", "no API keys", "each role"):
         assert needle in text, needle
     assert "Each on its own" in labels["alone"] and "own sign-in" in labels["alone"]
-    assert "Advanced" in labels["advanced"] and "gateway" in labels["advanced"] and "API keys" in labels["advanced"]
+    assert "Advanced" in labels["advanced"] and "gateway" in labels["advanced"] and "API key" in labels["advanced"]
     for label in labels.values():
         assert "cockpit" not in label.lower() and "single-model" not in label
 
@@ -85,6 +86,8 @@ def test_choosing_cli_sets_the_state_and_shows_no_gateway_warning(monkeypatch):
                                           ("multi-model:litellm", "litellm")])
 def test_every_other_choice_clears_the_cli_flag(monkeypatch, pick, backend):
     s = state.SetupState()
+    if backend == "litellm":           # LiteLLM is offered only to a saved litellm setup (ADR-0010)
+        s.mode, s.backend = "multi-model", "litellm"
     s.cli_team = True
     _ask_mode(monkeypatch, pick, s)
     assert s.cli_team is False
@@ -93,7 +96,7 @@ def test_every_other_choice_clears_the_cli_flag(monkeypatch, pick, backend):
 
 
 def test_gateway_choices_keep_the_warning(monkeypatch):
-    s = state.SetupState()
+    s = state.SetupState(mode="multi-model", backend="litellm")
     script = _ask_mode(monkeypatch, "multi-model:litellm", s)
     assert any("gateway credential" in m for m in script.shown)
 
@@ -109,7 +112,8 @@ def test_a_saved_gateway_or_single_state_keeps_its_default(monkeypatch):
     s = state.SetupState(mode="multi-model", backend="openrouter")
     script = _ask_mode(monkeypatch, "multi-model:openrouter", s)
     assert script.defaults[wizard.HOW_PROMPT] == ["advanced"]
-    assert script.defaults["Which gateway?"] == ["openrouter"]
+    assert "Which gateway?" not in script.defaults       # one gateway is left: auto-picked (ADR-0010)
+    assert s.backend == "openrouter"
     s2 = state.SetupState()
     script2 = _ask_mode(monkeypatch, "single-model", s2)
     assert script2.defaults[wizard.HOW_PROMPT] == ["alone"]
@@ -428,6 +432,8 @@ def test_a_run_with_backend_cli_never_prompts_the_mode_and_records_the_cli_team(
     ("multi-model:litellm", ("multi-model", False, "litellm"))])
 def test_each_legacy_answer_replayed_through_screen_two_saves_the_same_state(monkeypatch, legacy, expect):
     s = state.SetupState()
+    if legacy == "multi-model:litellm":    # LiteLLM is offered only to a saved litellm setup (ADR-0010)
+        s.mode, s.backend = "multi-model", "litellm"
     _ask_mode(monkeypatch, legacy, s)
     assert (s.mode, s.cli_team, s.backend) == expect
 

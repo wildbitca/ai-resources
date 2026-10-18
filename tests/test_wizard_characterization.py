@@ -133,7 +133,9 @@ CLI_TEAM = {"Choose mode": "multi-model:cli", "Model preset": "balanced", "Use t
 CORRUPT = "profile: [unclosed\n  name: {oops\n"
 
 PATHS = {
-    "litellm-docker": dict(args=_args(), answers=LITELLM_DOCKER),
+    # ADR-0010: LiteLLM is offered only to a saved litellm setup, so this legacy path starts from one.
+    "litellm-docker": dict(args=_args(), answers={**LITELLM_DOCKER, "Use previous answers": True},
+                           seed=_saved("multi-model", "litellm")),
     "openrouter": dict(args=_args(), answers=OPENROUTER),
     "single-model": dict(args=_args(), answers=SINGLE),
     "non-interactive-saved-state": dict(args=_args(non_interactive=True),
@@ -261,6 +263,7 @@ EXPECTED = {
     ],
     "litellm-docker": [
         'banner',
+        'confirm: Use previous answers as defaults?',
         'section 1/4 Your tools',
         'section 2/4 How should they work?',
         'select: Pick how they work together:',
@@ -314,7 +317,6 @@ EXPECTED = {
         'section 1/4 Your tools',
         'section 2/4 How should they work?',
         'select: Pick how they work together:',
-        'select: Which gateway?',
         'section 2/4 Gateway',
         'info: Skipped — OpenRouter is hosted; there is nothing to install or supervise.',
         'section 2/4 Providers',
@@ -338,7 +340,6 @@ EXPECTED = {
         'section 1/4 Your tools',
         'section 2/4 How should they work?',
         'select: Pick how they work together:',
-        'select: Which gateway?',
         'section 2/4 Gateway',
         'info: Skipped — OpenRouter is hosted; there is nothing to install or supervise.',
         'section 2/4 Providers',

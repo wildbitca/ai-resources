@@ -14,7 +14,7 @@ default path, use six words:
 | Team | Which tool does which role. |
 | Starting team | Balanced, Performance, Low cost or Custom: a ready-made team you can start from. |
 | Subscription | A plan you already pay for (Claude, Google, OpenAI). "As a team" runs on subscriptions and asks for no API key. |
-| Gateway | Advanced only: LiteLLM or OpenRouter with API keys and budgets. |
+| Gateway | Advanced only: OpenRouter with an API key and budgets. LiteLLM is no longer offered to new setups (ADR-0010); a saved LiteLLM setup keeps loading and running, with one notice line. |
 
 Plain phrases stand in for the internal names: "How should they work?" is the *mode*, "Parallel runs" are the
 *subscription lanes*, "Terms check" is the *acknowledgement* (the stored text is unchanged), "Start at login" is the

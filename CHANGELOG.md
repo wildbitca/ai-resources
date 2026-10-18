@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Changed (LiteLLM leaves the new-setup gateway choice; ADR-0010)
+
+- **Advanced offers OpenRouter only.** Readiness of Balanced with Gemini on LiteLLM was scored 4/10, so a fresh setup
+  no longer sees LiteLLM and is not asked "Which gateway?". A saved LiteLLM setup keeps loading and running, is offered
+  as `LiteLLM (saved; no longer offered for new setups)`, and prints one notice line; `--backend litellm` is still
+  accepted with the same notice. The state schema, LiteLLM rendering, service and daemon are unchanged
+  ([ADR-0010](docs/decisions/0010-setup-five-phases-channels-team.md), amending ADR-0008).
+
 ### Changed (setup asks three things: tools, how, team; ADR-0009)
 
 - **Every coding CLI is a tool, and the default path is four screens.** `ai-resources setup` now asks *Your tools*,

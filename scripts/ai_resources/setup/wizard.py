@@ -1000,12 +1000,16 @@ def _gateway_credential_warning(s: state.SetupState) -> None:
 HOW_CHOICES = (
     ("team", "As a team", "each role goes to the tool you choose, on your subscriptions, no API keys"),
     ("alone", "Each on its own", "every tool keeps its own sign-in and settings"),
-    ("advanced", "Advanced", "gateway (LiteLLM or OpenRouter) with API keys and budgets"),
+    ("advanced", "Advanced", "gateway (OpenRouter) with an API key and budgets"),
 )
+# ADR-0010 (N1): LiteLLM is no longer offered to new setups. A saved litellm gateway still loads and runs.
 GATEWAY_CHOICES = (
-    ("litellm", "LiteLLM", "a gateway this kit installs and supervises (local models and per-key budgets)"),
     ("openrouter", "OpenRouter", "hosted: one key, nothing to install"),
 )
+LEGACY_GATEWAY_CHOICE = ("litellm", "LiteLLM (saved; no longer offered for new setups)",
+                         "the gateway this kit installed and supervises for you")
+LITELLM_LEGACY_NOTICE = ("LiteLLM is no longer offered for new setups; your saved gateway keeps working. "
+                         "Choose OpenRouter to switch.")
 HOW_PROMPT = "Pick how they work together:"
 
 
@@ -1029,6 +1033,8 @@ def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None, *
     if backend:
         # `--backend` already decided the mode (the preflight applied it to the state): no question (ADR-0009).
         ui.info(f"Mode set by --backend {backend}; the mode question is skipped.")
+        if backend == "litellm":
+            ui.info(LITELLM_LEGACY_NOTICE)
         if s.mode == "multi-model":
             _gateway_credential_warning(s)
         return 0
@@ -1055,12 +1061,20 @@ def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None, *
         s.mode, s.cli_team = "single-model", True
         _reset_profile_for_cli(s, was_cli)
         return 0
-    gateway = ui.select("Which gateway?", [ui.Choice(f"{label} - {line}", value=key, description=" ")
-                                           for key, label, line in GATEWAY_CHOICES],
-                        default=s.backend if s.backend in ("litellm", "openrouter") else "litellm")
-    if gateway is None:
-        ui.warn("Setup cancelled.")
-        return 130
+    saved_litellm = s.mode == "multi-model" and s.backend == "litellm"
+    offered = ((LEGACY_GATEWAY_CHOICE,) if saved_litellm else ()) + GATEWAY_CHOICES
+    if saved_litellm:
+        ui.info(LITELLM_LEGACY_NOTICE)
+    if len(offered) == 1:
+        gateway = offered[0][0]
+        ui.info(f"Gateway: {offered[0][1]}.")
+    else:
+        gateway = ui.select("Which gateway?", [ui.Choice(f"{label} - {line}", value=key, description=" ")
+                                               for key, label, line in offered],
+                            default="litellm" if saved_litellm else "openrouter")
+        if gateway is None:
+            ui.warn("Setup cancelled.")
+            return 130
     s.mode, s.cli_team, s.backend = "multi-model", False, gateway
     _gateway_credential_warning(s)
     return 0
