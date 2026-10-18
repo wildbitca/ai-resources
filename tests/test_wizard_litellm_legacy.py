@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import pathlib
+import shutil
 
 from ai_resources.setup import state, wizard
-from wizard_fakes import Script
+from ai_resources.setup import litellm, profiles
+from wizard_fakes import BACK, Script, Seq, host_env
 
 NOTICE = ("LiteLLM is no longer offered for new setups; your saved gateway keeps working. "
           "Choose OpenRouter to switch.")
@@ -82,3 +85,75 @@ def test_single_model_state_with_default_litellm_backend_prints_no_notice(monkey
         script.install(monkeypatch)
         assert wizard._step1_mode(s) == 0
         assert not any(NOTICE in m for m in script.shown)
+
+
+FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "setup_state" / "multi_litellm.yaml"
+
+
+def _saved_team(values):
+    """Keep the saved team: the choice that names the fixture's profile, else the first offered."""
+    return next((v for v in values if "balanced-claude-55" in str(v)), values[0])
+
+
+_ANSWERS = {"Use previous": True, "Where is your gateway": "skipped", "Select providers": ["anthropic"],
+            "Update ANTHROPIC": False, "Starting team": _saved_team, "Apply this?": lambda values: values[0],
+            "Pick how they work": "advanced", "Which gateway": "litellm"}
+
+
+def _review_then_apply():
+    """The review answers Change how once (screen 2 again), then Apply."""
+    seq = Seq(wizard.CHANGE_HOW, "apply")
+
+    def answer(values):
+        want = seq.next()
+        return wizard.CHANGE_HOW if want == wizard.CHANGE_HOW else values[0]
+    return answer
+
+
+def _renders(s):
+    """What step 9 renders from a state: the executors document and the litellm.yaml text."""
+    base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name))
+    doc = profiles.to_executors(base, s.backend)
+    text = litellm._render_litellm_yaml(doc, {k: v.__dict__ for k, v in s.providers.items()}, "LITELLM_MASTER_KEY")
+    return doc, text
+
+
+def _run_saved_litellm(monkeypatch, tmp_path, args, answers):
+    """Drive the real wizard.run over the saved multi_litellm state; step 9 records the state it would render."""
+    home = host_env(monkeypatch, tmp_path)
+    cfg = home / "xdg" / "ai-resources"
+    cfg.mkdir(parents=True, exist_ok=True)
+    shutil.copy(FIXTURE, state.state_path())
+    want = _renders(state.load())          # the pre-change outputs: rendered from the saved state as loaded
+    seen = {}
+    monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
+    script = Script(**answers)
+    script.install(monkeypatch)
+    assert wizard.run(args) == 0
+    return seen["s"], want, script
+
+
+def test_dry_run_yes_from_saved_litellm_renders_the_same_and_notices_once(monkeypatch, tmp_path):
+    """AC-S5b: saved litellm, --dry-run --yes: same litellm.yaml and executors.yaml, exactly one notice."""
+    s, want, script = _run_saved_litellm(monkeypatch, tmp_path, _args(dry_run=True, yes=True),
+                                         _ANSWERS)
+    assert (s.mode, s.backend) == ("multi-model", "litellm")
+    assert _renders(s) == want
+    assert sum(NOTICE in m for m in script.shown) == 1
+
+
+def test_backend_litellm_flag_from_saved_litellm_notices_once(monkeypatch, tmp_path):
+    answers = {k: v for k, v in _ANSWERS.items() if k not in ("Pick how they work", "Which gateway")}
+    s, want, script = _run_saved_litellm(monkeypatch, tmp_path, _args(dry_run=True, yes=True, backend="litellm"),
+                                         answers)
+    assert _renders(s) == want
+    assert sum(NOTICE in m for m in script.shown) == 1
+
+
+def test_reentering_screen_2_from_the_review_notices_once_per_visit(monkeypatch, tmp_path):
+    """Change how (a re-entry of screen 2) shows the notice once per visit: twice over two visits, never more."""
+    s, want, script = _run_saved_litellm(
+        monkeypatch, tmp_path, _args(dry_run=True, yes=True),
+        {**_ANSWERS, "Apply this?": _review_then_apply()})
+    assert _renders(s) == want
+    assert sum(NOTICE in m for m in script.shown) == 2
