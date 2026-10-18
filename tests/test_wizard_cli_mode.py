@@ -357,3 +357,48 @@ def test_cli_mode_asks_about_lanes_interactively_and_default_off(monkeypatch):
     assert wizard._step_lanes(s, _args()) == 0
     assert asked == [("Enable subscription lanes?", False)]
     assert s.profile.lanes is None
+
+
+# --- ADR-0009: --backend decides the mode, so the mode question is not asked -------------------------------
+@pytest.mark.parametrize("backend", ["cli", "litellm", "openrouter"])
+def test_the_backend_flag_skips_the_mode_question(monkeypatch, backend):
+    s = state.SetupState()
+    if backend == "cli":
+        s.mode, s.cli_team = "single-model", True
+    else:
+        s.mode, s.backend = "multi-model", backend
+    script = Script()                              # nothing is scripted: any prompt would raise
+    script.install(monkeypatch)
+    assert wizard._step1_mode(s, _args(backend=backend)) == 0
+    assert script.asked == []
+    assert any(f"--backend {backend}" in m for m in script.shown)
+
+
+def test_the_backend_flag_keeps_the_gateway_warning(monkeypatch):
+    s = state.SetupState(mode="multi-model", backend="openrouter")
+    script = Script()
+    script.install(monkeypatch)
+    wizard._step1_mode(s, _args(backend="openrouter"))
+    assert any("gateway credential" in m for m in script.shown)
+    assert any("OpenRouter key" in m for m in script.shown)
+    quiet = Script()
+    quiet.install(monkeypatch)
+    wizard._step1_mode(state.SetupState(), _args(backend="cli"))
+    assert not any("gateway credential" in m for m in quiet.shown)
+
+
+def test_a_run_with_backend_cli_never_prompts_the_mode_and_records_the_cli_team(monkeypatch, tmp_path):
+    host_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(wizard, "_PRESET", wizard._PRESET)
+    script = Script(**{"Model preset": "custom", "How do you want to choose models": "profile",
+                       "How should kit subagents pick": lambda v: SUB, "Enable subscription lanes?": False,
+                       "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
+    script.install(monkeypatch)
+    monkeypatch.setattr(ui, "review_table", lambda rows, title="": None)
+    monkeypatch.setattr(wizard.model_selection, "detect_accounts", lambda: {})
+    monkeypatch.setattr(wizard.model_selection, "candidates", lambda a, f: [])
+    seen = {}
+    monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
+    assert wizard.run(_args(backend="cli")) == 0
+    assert not any("Choose mode" in m or "How should they work" in m for m in script.asked)
+    assert (seen["s"].mode, seen["s"].cli_team) == ("single-model", True)

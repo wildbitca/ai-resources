@@ -114,8 +114,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_st.add_argument("--profile", default="",
                       help="Skip prompts and use this profile")
     p_st.add_argument("--yes", action="store_true",
-                      help="Answer yes to the offer to install missing tools (claude, agy, openclaw). "
-                           "Without it that question defaults to No and an unattended run installs nothing")
+                      help="Say yes, for this run only, to installing the missing ones of Claude Code, Antigravity (agy) "
+                           "and OpenClaw; no other tool is installed by --yes. Without it nothing is installed "
+                           "unattended, and the tool list on a terminal offers every missing tool")
     p_st.add_argument("--dry-run", action="store_true",
                       help="Preview generated configs + test gateway without writing anything")
     p_st.add_argument("--shape", default="", choices=["", "single", "single-provider", "multi-provider"],
@@ -129,7 +130,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_st.add_argument("--backend", default="", choices=["", "litellm", "openrouter", "cli"],
                       help="Gateway for multi-model (litellm or openrouter), or `cli` for multi-model via your CLI "
                            "subscriptions (Claude Code / Antigravity / Codex plans: no gateway, no per-token "
-                           "billing, no keys asked); omitted: keep the saved mode")
+                           "billing, no keys asked); omitted: keep the saved mode. "
+                           "Given, the mode question is not asked")
     p_st.add_argument("--cockpits", default="",
                       help="Comma-separated cockpits to configure (fails if the matrix cannot serve the models)")
     p_st.add_argument("--allow-unverified", dest="allow_unverified", action="store_true",

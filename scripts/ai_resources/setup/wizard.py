@@ -276,7 +276,7 @@ def _restore_run(s: state.SetupState, snap: tuple) -> None:
 
 def _run_mode_step(c) -> int:
     """Step 2 and, right after it, the cleanup offer when the operator just left multi-model."""
-    rc = _step1_mode(c.s)
+    rc = _step1_mode(c.s, getattr(c, "args", None))
     if rc != 0:
         return rc
     # If the user just switched multi-model -> single-model, offer to clean up everything we previously
@@ -886,7 +886,25 @@ def _try_install_pipx() -> bool:
     return True
 
 
-def _step1_mode(s: state.SetupState) -> int:
+def _gateway_credential_warning(s: state.SetupState) -> None:
+    """Stated up front because it is irreversible in practice and surprises people: a gateway credential
+    replaces the claude.ai login, so the subscription stops applying and every token is billed to the gateway."""
+    ui.warn("A gateway credential replaces your claude.ai subscription for Claude Code: "
+            "usage is billed per token to the gateway, not to your plan.")
+    if s.backend == "openrouter":
+        ui.detail("Claude Code's own cost figures (/usage, statusline, --max-budget-usd) are "
+                  "computed at Anthropic list price and will be wrong. Set spend limits on the "
+                  "OpenRouter key instead.")
+
+
+def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None) -> int:
+    backend = getattr(args, "backend", "") if args is not None else ""
+    if backend:
+        # `--backend` already decided the mode (the preflight applied it to the state): no question (ADR-0009).
+        ui.info(f"Mode set by --backend {backend}; the mode question is skipped.")
+        if s.mode == "multi-model":
+            _gateway_credential_warning(s)
+        return 0
     ui.section(2, TOTAL_STEPS, "Setup mode")
     chosen = s.get_selection()
     if chosen is not None and s.mode == "single-model":
@@ -927,15 +945,7 @@ def _step1_mode(s: state.SetupState) -> int:
         s.backend = picked.split(":", 1)[1]
 
     if s.mode == "multi-model":
-        # Stated up front because it is irreversible in practice and surprises
-        # people: a gateway credential replaces the claude.ai login, so the
-        # subscription stops applying and every token is billed to the gateway.
-        ui.warn("A gateway credential replaces your claude.ai subscription for Claude Code: "
-                "usage is billed per token to the gateway, not to your plan.")
-        if s.backend == "openrouter":
-            ui.detail("Claude Code's own cost figures (/usage, statusline, --max-budget-usd) are "
-                      "computed at Anthropic list price and will be wrong. Set spend limits on the "
-                      "OpenRouter key instead.")
+        _gateway_credential_warning(s)
     return 0
 
 

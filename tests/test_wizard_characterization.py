@@ -184,10 +184,12 @@ _CLI_TEAM_TRANSCRIPT = [
 # - Steps 3, 4, 5 and 8 print nothing when the path has no gateway (ADR-0009 S3); a gateway path still says why.
 EXPECTED = {
     # S1 (ADR-0009): the subscription path asks six questions today (mode, preset, "Use this?", lanes, cockpits,
-    # apply). `--backend cli` still asks the mode question (V1) and `--yes` changes nothing here (installs are
+    # apply). `--backend cli` used to ask the mode question (V1, fixed by S4) and `--yes` changes nothing here (installs are
     # faked in this module).
     "cli-team-subscription": _CLI_TEAM_TRANSCRIPT,
-    "backend-cli-flag": _CLI_TEAM_TRANSCRIPT,
+    # `--backend cli` decided the mode: the mode screen is not shown (V1 fixed, ADR-0009 S4).
+    "backend-cli-flag": [line for line in _CLI_TEAM_TRANSCRIPT
+                         if line not in ('section 2/10 Setup mode', 'select: Choose mode:')],
     "yes-flag": _CLI_TEAM_TRANSCRIPT,
     "corrupt-state-non-interactive": [
         'banner',

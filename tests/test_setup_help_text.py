@@ -22,3 +22,11 @@ def test_setup_help_mentions_the_guided_flow(capsys):
     for step in ("Tools", "Mode", "Gateway", "Providers", "Credentials", "Models", "Cockpits",
                  "Lifecycle", "Review", "Verification"):
         assert step.lower() in out.lower()
+
+
+def test_setup_help_documents_the_scope_of_yes_and_backend(capsys):
+    _help()
+    flat = " ".join(capsys.readouterr().out.split())
+    assert "Claude Code, Antigravity (agy) and OpenClaw" in flat
+    assert "no other tool is installed by --yes" in flat
+    assert "the mode question is not asked" in flat
