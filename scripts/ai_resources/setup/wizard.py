@@ -828,7 +828,8 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
                 rows.append(("Start at login", "container restart policy"))
             else:
                 rows.append(("Start at login", "login service" if s.litellm.local.auto_start else "manual start"))
-    if state.lanes_enabled(s):
+    lane_agents = ((s.profile.lanes or {}).get("agents") or {}) if isinstance(s.profile.lanes, dict) else {}
+    if any((a or {}).get("backend") == "claude-cli" for a in lane_agents.values()):
         rows.append(("Parallel runs", "on"))
     written = "executors.yaml, tool config files" + (", lanes.yaml" if state.lanes_enabled(s) else "")
     rows.append(("Will write", written))
@@ -2694,7 +2695,7 @@ def _print_plan_table(s: state.SetupState) -> None:
     selection = s.get_selection()
     actions = model_selection.plan_table(selection, s.mode, s.backend, _detected_cockpit_ids(s),
                                          engine=(selection.openclaw_engine or None) if selection else None)
-    ui.info("Cockpit plan" + ("" if selection is not None else " (no model selection recorded: the kit defaults)"))
+    ui.info("Tool plan" + ("" if selection is not None else " (no model selection recorded: the kit defaults)"))
     for a in actions:
         ui.detail("  " + model_selection.describe(a))
 
@@ -2787,7 +2788,8 @@ def _step9_dry_run(s: state.SetupState) -> int:
     _section(9, "Apply (DRY RUN)")
     console.print()
     console.print("[bold yellow]DRY RUN — configs shown below will NOT be written.[/]")
-    console.print("[bold yellow]Gateway will be started temporarily for smoke tests, then stopped.[/]")
+    if s.mode == "multi-model":
+        console.print("[bold yellow]Gateway will be started temporarily for smoke tests, then stopped.[/]")
     console.print()
     _print_plan_table(s)
 

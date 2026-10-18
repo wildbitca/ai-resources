@@ -68,6 +68,15 @@ def _team_state(*members):
     return s
 
 
+def test_the_parallel_runs_row_appears_only_with_a_claude_lane():
+    """Ticking Antigravity records its own lane table; that is not the Claude parallel runs and must not read as such."""
+    s = _team_state()
+    s.profile.lanes = {"agents": {"kit-lane-agy-x": {"backend": "agy-cli-lane"}}, "roles": {}}
+    assert "Parallel runs" not in dict(wizard._review_rows(s))
+    s.profile.lanes["agents"]["kit-lane-cli-x"] = {"backend": "claude-cli"}
+    assert dict(wizard._review_rows(s))["Parallel runs"] == "on"
+
+
 def test_the_review_names_the_tools_and_the_team():
     rows = dict(wizard._review_rows(_team_state("claude", "codex")))
     assert rows["Tools"] == "Claude Code, Codex CLI" and rows["Team"].startswith("Balanced: ")
