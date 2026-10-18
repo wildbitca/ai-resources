@@ -399,23 +399,12 @@ def test_the_state_file_format_gains_no_field(monkeypatch):
 
 # --- the edit list offers one "Models" entry --------------------------------------------------------------
 
-def test_the_review_edit_list_has_one_models_entry(monkeypatch):
-    from ai_resources.setup import flow
+def test_the_team_screen_comes_before_models_and_roles_and_allows_back():
+    """Review > Change team jumps to the `preset` step ("Your team"); Custom then runs 6a and 6b after it."""
     steps = wizard._build_steps(False)
     ids = [sp.id for sp in steps]
     assert ids.index("preset") < ids.index("models") < ids.index("profile") < ids.index("lanes")
-    assert steps[ids.index("preset")].back is True
-    runner = flow.Wizard(steps)
-    for i, sp in enumerate(steps):
-        runner.history.append(flow._Done(i, object(), False, skipped=sp.id in ("models", "profile")))
-    monkeypatch.setattr(wizard, "_RUNNER", runner)
-    labels = [c.title for c in wizard._edit_choices(args(), make_state("litellm"))]
-    assert labels.count("Models") == 1
-    runner.history = [d for d in runner.history]
-    for d in runner.history:
-        d.skipped = False
-    labels = [c.title for c in wizard._edit_choices(args(), make_state("litellm"))]
-    assert labels.count("Models") == 1 and "Role assignment" in labels
+    assert steps[ids.index("preset")].back is True and steps[ids.index("preset")].title == "Your team"
 
 
 # --- the whole wizard, through wizard.run --------------------------------------------------------------------

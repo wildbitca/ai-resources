@@ -251,19 +251,17 @@ def test_lanes_use_the_subscription_profile_in_cli_mode(monkeypatch):
 
 
 # --- review --------------------------------------------------------------------------------------------
-def test_review_names_the_cli_mode_and_no_gateway():
+def test_review_names_the_team_and_has_no_gateway_rows():
     s = state.SetupState()
     s.cli_team = True
     rows = dict(wizard._review_rows(s))
-    assert rows["Mode"] == "multi-model (CLI subscriptions)"
-    assert rows["Gateway"] == "none (CLI subscriptions)"
-    assert rows["Credentials"] == "native cockpit auth"
-    assert rows["Lifecycle"] == "none"
+    assert rows["How"] == "As a team, on your subscriptions (no gateway)"
+    assert not {"Gateway", "Providers", "API keys", "Start at login"} & set(rows)
 
 
 def test_review_of_plain_single_model_is_unchanged():
     rows = dict(wizard._review_rows(state.SetupState()))
-    assert rows["Mode"] == "single-model" and rows["Gateway"] == "none (single-model)"
+    assert rows["How"] == "Each on its own (no gateway)" and "Gateway" not in rows
 
 
 # --- teardown -------------------------------------------------------------------------------------------
@@ -364,7 +362,7 @@ def test_picking_cli_keeps_a_customized_profile(monkeypatch):
     assert s.profile.name == wizard.SINGLE_MODEL_DEFAULT_PROFILE
 
 
-def test_cli_mode_asks_about_lanes_interactively_and_default_off(monkeypatch):
+def test_cli_mode_does_not_ask_about_parallel_runs_on_the_default_path(monkeypatch):
     s = state.SetupState()
     s.cli_team = True
     s.profile = state.ProfileState(name=SUB)
@@ -373,7 +371,7 @@ def test_cli_mode_asks_about_lanes_interactively_and_default_off(monkeypatch):
     monkeypatch.setattr(ui, "section", lambda *a, **k: None)
     monkeypatch.setattr(ui, "confirm", lambda m, default=True: asked.append((m, default)) or False)
     assert wizard._step_lanes(s, _args()) == 0
-    assert asked == [("Enable subscription lanes?", False)]
+    assert asked == []                       # Review > More options > Parallel runs is where they are asked for
     assert s.profile.lanes is None
 
 

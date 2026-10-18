@@ -105,6 +105,10 @@ _COMPOSE: dict[str, Any] = {}
 # the selection from the state would judge toolings the operator never picked, and that noise is
 # what teaches people to skip the step.
 _APPLIED_TARGETS: list[str] = []
+# Set by Review > More options (ADR-0009): the operator asked for the Claude parallel runs / the OpenClaw questions in
+# THIS run. Neither is asked on the default path.
+_PARALLEL_RUNS = False
+_OPEN_OPENCLAW = False
 
 
 def _reject_unavailable_requested_profile(available: list[str], context: str) -> int | None:
@@ -154,9 +158,10 @@ def _report_cancel(e: BaseException) -> int:
 
 def _run(args: argparse.Namespace) -> int:
     ui.require_deps()
-    global _APPLIED_TARGETS, _PRESET
+    global _APPLIED_TARGETS, _PRESET, _PARALLEL_RUNS, _OPEN_OPENCLAW
     _APPLIED_TARGETS = []
     _PRESET = ""
+    _PARALLEL_RUNS = _OPEN_OPENCLAW = False
     dry_run = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
 
     # Both flags were declared in the CLI and never read, so they accepted input
@@ -271,16 +276,19 @@ def _enter_step(spec: flow.StepSpec, w: flow.Wizard) -> None:
 
 def _snapshot_run(s: state.SetupState) -> tuple:
     """What a Back rewind restores: the setup state and the run-scoped globals a step may set."""
-    return (copy.deepcopy(s.__dict__), _REQUESTED_PROFILE, list(_APPLIED_TARGETS), _PRESET)
+    return (copy.deepcopy(s.__dict__), _REQUESTED_PROFILE, list(_APPLIED_TARGETS), _PRESET, _PARALLEL_RUNS,
+            _OPEN_OPENCLAW)
 
 
 def _restore_run(s: state.SetupState, snap: tuple) -> None:
-    global _REQUESTED_PROFILE, _APPLIED_TARGETS, _PRESET
+    global _REQUESTED_PROFILE, _APPLIED_TARGETS, _PRESET, _PARALLEL_RUNS, _OPEN_OPENCLAW
     s.__dict__.clear()
     s.__dict__.update(copy.deepcopy(snap[0]))
     _REQUESTED_PROFILE = snap[1]
     _APPLIED_TARGETS = list(snap[2])
     _PRESET = snap[3] if len(snap) > 3 else ""
+    _PARALLEL_RUNS = snap[4] if len(snap) > 4 else False
+    _OPEN_OPENCLAW = snap[5] if len(snap) > 5 else False
 
 
 def _run_mode_step(c) -> int:
@@ -336,7 +344,9 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
     def tool_config_done(c):
         """Step 7 only asks the questions a ticked tool has (OpenClaw): without one it is skipped without output."""
         selected = (c.s.profile.customizations.get("__targets__") or {}).get("selected") or []
-        return None if "openclaw" in selected else ("Tool configuration", "")
+        if "openclaw" in selected and (_OPEN_OPENCLAW or not c.s.openclaw.engine):
+            return None
+        return ("Tool configuration", "")
 
     return [
         S("tools", 1, "Your tools", lambda c: _step2_cockpits(c.s), rewindable=False),
@@ -733,9 +743,7 @@ def _step_models(s: state.SetupState, args: argparse.Namespace, dry_run: bool = 
         return 0
 
 
-EDIT_SECTION = "edit"
-"""The review's "Edit a section..." value (model_selection.APPLY / CHANGE / CANCEL are unchanged)."""
-_RUNNER: "flow.Wizard | None" = None        # the running step list, for the review's Edit choice
+_RUNNER: "flow.Wizard | None" = None        # the running step list (kept for tests that stub it)
 _REVIEW_SHOWN = False                        # the review printed the step 9 header; apply does not repeat it
 
 
@@ -761,81 +769,110 @@ def _credential_state(s: state.SetupState) -> str:
     return " \u00b7 ".join(f"{n} {'set' if credentials.get_key(n) else 'missing'}" for n in names)
 
 
+def _team_label(s: state.SetupState) -> str:
+    """The starting team's name for the review: a preset's label when the saved profile is one of the presets', else
+    the profile name, marked when it is customized, composed or picked from accounts."""
+    name = s.profile.name or "(default)"
+    if s.get_selection() is not None:
+        return "Custom: models picked from your accounts"
+    if s.profile.customized or s.profile.composed:
+        return f"Custom: {name} (customized)"
+    for key, label, _line in PRESET_CHOICES:
+        if PRESET_PROFILES[_preset_key(s)].get(key) == name and key != "custom":
+            return f"{label.replace(' (recommended)', '')}: {name}"
+    return f"Custom: {name}"
+
+
+def _tools_text(s: state.SetupState) -> str:
+    targets = (s.profile.customizations or {}).get("__targets__", {}).get("selected") or _detected_cockpit_ids(s)
+    names = [tools.TOOLS[c].label if c in tools.TOOLS else c for c in targets]
+    return ", ".join(names) or "none"
+
+
 def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
-    """One row per section for the review screen, from the setup state."""
+    """The review screen's rows from the setup state: How, Team, Tools and what will be written. The gateway rows
+    (Gateway, Providers, API keys, Start at login) appear only on the gateway path."""
     multi = s.mode == "multi-model"
     cli_team = not multi and getattr(s, "cli_team", False)
     if cli_team:
-        gateway = "none (CLI subscriptions)"
+        how = "As a team, on your subscriptions (no gateway)"
     elif not multi:
-        gateway = "none (single-model)"
-    elif s.backend == "openrouter":
-        gateway = "openrouter (hosted)"
-    elif s.litellm.deployment == "remote":
-        gateway = f"litellm (remote {s.litellm.remote.url or 'url not set'})"
-    elif s.litellm.deployment == "skipped":
-        gateway = "litellm (skipped)"
-    elif litellm.is_container_mode(s.litellm.local.runtime):
-        gateway = f"litellm ({s.litellm.local.runtime})"
+        how = "Each on its own (no gateway)"
     else:
-        gateway = f"litellm ({s.litellm.local.runtime or 'local'})"
-    provs = ", ".join(p for p, ps in s.providers.items() if ps.enabled) or ("none" if multi else "native auth")
+        how = f"Advanced: {s.backend} gateway"
     sel = s.get_selection()
-    models = "kit profile" if sel is None else (
-        ", ".join(f"{slot}={sl.ref}" for slot, sl in sel.slots.items()) or "picked from accounts")
-    roles = (s.profile.name or "(default)") + (" (customized)" if s.profile.customized else "")
-    lanes = "on" if state.lanes_enabled(s) else "off"
-    targets = (s.profile.customizations or {}).get("__targets__", {}).get("selected") or _detected_cockpit_ids(s)
-    if multi and s.backend == "litellm" and s.litellm.deployment == "local":
-        if litellm.is_container_mode(s.litellm.local.runtime):
-            lifecycle = "container restart policy"
+    members = (s.profile.customizations or {}).get("__targets__", {}).get("selected") or []
+    team = _team_label(s)
+    if sel is not None:
+        team += " (" + ", ".join(f"{slot}={sl.ref}" for slot, sl in sel.slots.items()) + ")"
+    if "agy" in members and ("google" in (s.profile.lane_acks or {}) or _agy_lanes_on(s)):
+        team += (" + Antigravity (reviews and checks only; writing stays on Claude Code)" if _agy_lanes_on(s)
+                 else " + Antigravity (terms accepted; held until its gates are proven)")
+    rows = [("How", how), ("Team", team), ("Tools", _tools_text(s))]
+    if multi:
+        if s.backend == "openrouter":
+            gateway = "openrouter (hosted)"
+        elif s.litellm.deployment == "remote":
+            gateway = f"litellm (remote {s.litellm.remote.url or 'url not set'})"
+        elif s.litellm.deployment == "skipped":
+            gateway = "litellm (skipped)"
+        elif litellm.is_container_mode(s.litellm.local.runtime):
+            gateway = f"litellm ({s.litellm.local.runtime})"
         else:
-            lifecycle = "login service" if s.litellm.local.auto_start else "manual start"
-    else:
-        lifecycle = "none"
-    return [
-        ("Mode", "multi-model (CLI subscriptions)" if cli_team
-         else f"{s.mode}" + (f" ({s.backend})" if multi else "")),
-        ("Gateway", gateway),
-        ("Providers", provs),
-        ("Credentials", _credential_state(s)),
-        ("Models", models),
-        ("Roles", roles),
-        ("Lanes", lanes),
-        ("Cockpits", ", ".join(targets) or "none"),
-        ("Lifecycle", lifecycle),
-    ]
+            gateway = f"litellm ({s.litellm.local.runtime or 'local'})"
+        rows.append(("Gateway", gateway))
+        rows.append(("Providers", ", ".join(p for p, ps in s.providers.items() if ps.enabled) or "none"))
+        rows.append(("API keys", _credential_state(s)))
+        if s.backend == "litellm" and s.litellm.deployment == "local":
+            if litellm.is_container_mode(s.litellm.local.runtime):
+                rows.append(("Start at login", "container restart policy"))
+            else:
+                rows.append(("Start at login", "login service" if s.litellm.local.auto_start else "manual start"))
+    if state.lanes_enabled(s):
+        rows.append(("Parallel runs", "on"))
+    written = "executors.yaml, tool config files" + (", lanes.yaml" if state.lanes_enabled(s) else "")
+    rows.append(("Will write", written))
+    return rows
 
 
-def _edit_choices(args: argparse.Namespace, s: "state.SetupState | None" = None) -> list:
-    """The steps the review may re-open: asked in this run, rewindable, no change made on this machine."""
-    if _RUNNER is None:
-        return []
+CHANGE_TOOLS, CHANGE_HOW, CHANGE_TEAM, MORE_OPTIONS = "change-tools", "change-how", "change-team", "more-options"
+"""The review's choices besides Apply and Cancel (their titles are what the operator reads)."""
+
+
+def _more_options(s: state.SetupState) -> list:
+    """The entries of Review > More options that apply to this run; each opens the existing step and comes back to
+    the review. Nothing here is asked on the default path."""
+    members = (s.profile.customizations or {}).get("__targets__", {}).get("selected") or []
     out = []
-    lane_flags = any(getattr(args, f, False) for f in ("lanes", "no_lanes", "lanes_dry_run",
-                                                       "lanes_antigravity", "no_lanes_antigravity"))
-    editable = _RUNNER.editable()
-    has_preset = any(spec.id == "preset" for spec in editable)
-    for spec in editable:
-        if spec.id == "models" and has_preset:
-            continue                                   # one "Models" entry: the preset question comes first
-        if spec.id == "lanes" and not lane_flags and not (s is not None and s.cli_team):
-            continue                                   # without a lanes flag that step asks nothing
-        out.append(ui.Choice(spec.edit_label, value=spec.id))
+    if getattr(s, "cli_team", False):
+        out.append(ui.Choice("Parallel runs - Claude Code on your subscription (off by default)", value="parallel"))
+    if s.mode == "multi-model":
+        out.append(ui.Choice("Gateway and API keys", value="gateway"))
+        if s.backend == "litellm" and s.litellm.deployment == "local":
+            out.append(ui.Choice("Start at login", value="lifecycle"))
+    if "openclaw" in members:
+        out.append(ui.Choice("OpenClaw - engine, host and voice", value="openclaw"))
     return out
 
 
-def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
-    """The review BEFORE the write: one row per section, one line per detected cockpit, then one confirmation.
+def _forget_tool_answers(s: state.SetupState) -> None:
+    """Change tools asks the list again: the answers cached for this run are dropped."""
+    for attr in ("_install_answer_this_run", "_preview_answer_this_run", "_tool_members_this_run",
+                 "_sign_in_answers_this_run"):
+        s.__dict__.pop(attr, None)
 
-    With a recorded model selection the review also lists what each cockpit will get. On the kit-profile path
-    (no selection) an interactive run still shows the rows and asks; a non-interactive run keeps its silent
-    skip, because nothing can answer the question."""
-    global _REVIEW_SHOWN
+
+def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
+    """Screen 4, "Review", BEFORE the write: the answers by name, then Apply, Change tools, Change how, Change team,
+    More options or Cancel. A Change jumps back to that screen with the current answers as defaults and returns here.
+
+    With a recorded model selection the review also lists what each tool will get. A non-interactive run keeps its
+    silent skip on the kit-profile path, because nothing can answer the question."""
+    global _REVIEW_SHOWN, _PARALLEL_RUNS, _OPEN_OPENCLAW
     selection = s.get_selection()
     if selection is None and ui.is_non_interactive():
         return 0
-    ui.section(9, TOTAL_STEPS, "Review and apply")
+    ui.section(4, SCREENS, "Review")
     _REVIEW_SHOWN = True
     ui.review_table(_review_rows(s), title="Your answers")
     if selection is not None:
@@ -848,22 +885,37 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
             ui.detail(line)
     if ui.is_non_interactive():
         return 0
-    choices = [model_selection.APPLY, model_selection.CHANGE]
-    edit = _edit_choices(args, s)
-    if edit:
-        choices.append(ui.Choice("Edit a section\u2026", value=EDIT_SECTION))
+    choices = [model_selection.APPLY, ui.Choice("Change tools", value=CHANGE_TOOLS),
+               ui.Choice("Change how", value=CHANGE_HOW), ui.Choice("Change team", value=CHANGE_TEAM)]
+    more = _more_options(s)
+    if more:
+        choices.append(ui.Choice("More options...", value=MORE_OPTIONS))
     choices.append(model_selection.CANCEL)
     answer = ui.select("Apply this?", choices, default=model_selection.APPLY)
-    if answer == EDIT_SECTION:
-        which = ui.select("Which section do you want to change?", edit + [ui.Choice("Back to the review", value="")])
-        if which:
-            raise flow.JumpTo(which)
-        return _step_summary(s, args)
-    if answer == model_selection.CHANGE:
-        s.set_selection(None)
+    if answer == CHANGE_TOOLS:
+        _forget_tool_answers(s)
+        raise flow.JumpTo("tools")
+    if answer == CHANGE_HOW:
+        raise flow.JumpTo("mode")
+    if answer == CHANGE_TEAM:
+        if selection is None:
+            raise flow.JumpTo("preset")
+        s.set_selection(None)                  # a team picked from accounts: pick again, then show the review again
         rc = _step_models(s, args, bool(getattr(args, "dry_run", False)))
-        # Whatever was chosen (a new selection, or the kit profile again) is shown and confirmed here.
         return rc if rc != 0 else _step_summary(s, args)
+    if answer == MORE_OPTIONS:
+        which = ui.select("More options", more + [ui.Choice("Back to the review", value="")])
+        if which == "parallel":
+            _PARALLEL_RUNS = True
+            raise flow.JumpTo("lanes")
+        if which == "gateway":
+            raise flow.JumpTo("gateway")
+        if which == "lifecycle":
+            raise flow.JumpTo("lifecycle")
+        if which == "openclaw":
+            _OPEN_OPENCLAW = True
+            raise flow.JumpTo("cockpits")
+        return _step_summary(s, args)
     if answer != model_selection.APPLY:
         # The same block as every other cancel point: it lists all earlier real actions of this run.
         return _report_cancel(ui.Cancelled(ui.current_step()))
@@ -2189,9 +2241,10 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         want = True
     elif agy_team:
         ui.info("DRY RUN: the Antigravity terms check is not shown in a dry run; nothing is enabled.")
-    if (s.cli_team and not (want or unwant or preview or agy_off) and not ui.is_non_interactive()):
-        # CLI mode offers the lanes; off by default, Antigravity stays behind --lanes-antigravity.
-        want = bool(ui.confirm("Enable subscription lanes?", default=False))
+    if (s.cli_team and _PARALLEL_RUNS and not (want or unwant or preview or agy_off)
+            and not ui.is_non_interactive()):
+        # Review > More options > Parallel runs: the operator asked for the Claude parallel runs in this run.
+        want = True
     if (want and unwant) or (agy_on and agy_off):
         ui.error("--lanes, --lanes-antigravity, --no-lanes and --no-lanes-antigravity contradict each other")
         return 2

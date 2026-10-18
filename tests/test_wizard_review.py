@@ -1,4 +1,5 @@
-"""The review screen and its "Edit a section..." choice (plan S8)."""
+"""Screen 4, the review: the answers by name and Apply / Change tools / Change how / Change team / More options /
+Cancel (ADR-0009; it replaced "Edit a section..." and "Change models")."""
 from __future__ import annotations
 
 import argparse
@@ -43,22 +44,40 @@ def test_rows_come_from_the_state_and_never_show_a_secret(monkeypatch):
     s = state.SetupState()
     s.mode, s.backend = "multi-model", "openrouter"
     rows = dict(wizard._review_rows(s))
-    assert rows["Mode"] == "multi-model (openrouter)" and rows["Gateway"] == "openrouter (hosted)"
-    assert rows["Credentials"] == "OPENROUTER_API_KEY set"
+    assert rows["How"] == "Advanced: openrouter gateway" and rows["Gateway"] == "openrouter (hosted)"
+    assert rows["API keys"] == "OPENROUTER_API_KEY set"
     assert SENTINEL not in " ".join(f"{k} {v}" for k, v in rows.items())
-    assert set(rows) == {"Mode", "Gateway", "Providers", "Credentials", "Models", "Roles", "Lanes", "Cockpits",
-                         "Lifecycle"}
+    assert set(rows) == {"How", "Team", "Tools", "Gateway", "Providers", "API keys", "Will write"}
     monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
-    assert dict(wizard._review_rows(s))["Credentials"] == "OPENROUTER_API_KEY missing"
+    assert dict(wizard._review_rows(s))["API keys"] == "OPENROUTER_API_KEY missing"
 
 
-def test_single_model_credentials_are_native_auth():
+def test_a_path_without_a_gateway_has_no_gateway_rows():
     s = state.SetupState()
     s.mode = "single-model"
-    assert dict(wizard._review_rows(s))["Credentials"] == "native cockpit auth"
+    rows = dict(wizard._review_rows(s))
+    assert set(rows) == {"How", "Team", "Tools", "Will write"} and rows["How"] == "Each on its own (no gateway)"
+    assert dict(wizard._review_rows(_team_state()))["How"] == "As a team, on your subscriptions (no gateway)"
 
 
-def test_the_review_keeps_the_three_labels_and_adds_edit_after_a_full_pass(review_env, monkeypatch):
+def _team_state(*members):
+    s = state.SetupState()
+    s.mode, s.cli_team = "single-model", True
+    s.profile.name = SUB
+    s.profile.customizations = {"__targets__": {"selected": list(members or ("claude", "agy"))}}
+    return s
+
+
+def test_the_review_names_the_tools_and_the_team():
+    rows = dict(wizard._review_rows(_team_state("claude", "codex")))
+    assert rows["Tools"] == "Claude Code, Codex CLI" and rows["Team"].startswith("Balanced: ")
+    assert rows["Will write"] == "executors.yaml, tool config files"
+    custom = _team_state()
+    custom.profile.customized = True
+    assert dict(wizard._review_rows(custom))["Team"] == f"Custom: {SUB} (customized)"
+
+
+def test_the_review_offers_the_three_changes_and_more_options_after_a_full_pass(review_env, monkeypatch):
     _seed_openrouter()
     seen = {}
 
@@ -72,34 +91,30 @@ def test_the_review_keeps_the_three_labels_and_adds_edit_after_a_full_pass(revie
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
     values = seen["values"]
-    assert values[0] == ms.APPLY and values[1] == ms.CHANGE and values[-1] == ms.CANCEL
-    assert wizard.EDIT_SECTION in values
-    assert len(review_env) == 1 and review_env[0]["Mode"] == "multi-model (openrouter)"
+    assert values == [ms.APPLY, wizard.CHANGE_TOOLS, wizard.CHANGE_HOW, wizard.CHANGE_TEAM, wizard.MORE_OPTIONS,
+                      ms.CANCEL]
+    assert len(review_env) == 1 and review_env[0]["How"] == "Advanced: openrouter gateway"
 
 
-def test_edit_a_section_reruns_from_that_step_and_returns_to_the_review(review_env, monkeypatch):
+def test_change_team_with_a_picked_team_asks_the_picker_again_and_returns_to_the_review(review_env, monkeypatch):
     _seed_openrouter()
-    offered = {}
     available = profiles.list_profiles(mode="multi-model", backend="openrouter")
     assert len(available) >= 2
-
-    def which(values):
-        offered["ids"] = list(values)
-        return "profile"
     script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:openrouter",
                        "Update OPENROUTER_API_KEY": False, "Model preset": "custom", "How do you want to choose models": "profile",
                        "Show how": False, "Choose profile": Seq(lambda v: v[0], lambda v: v[1]), "Customize any role": False,
                        "Configure detected cockpits": lambda v: list(v),
-                       "Apply this?": Seq(wizard.EDIT_SECTION, ms.APPLY), "Which section": which})
+                       "Apply this?": Seq(wizard.CHANGE_TEAM, ms.APPLY)})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
-    # no OpenClaw ticked: the step-7 questions were skipped, so there is nothing to edit there
-    assert set(offered["ids"]) - {""} == {"mode", "providers", "credentials", "preset", "profile"}
     asked = script.asked
-    assert len([m for m in asked if m.startswith("select: How do you want to choose models")]) == 1
+    # Change team re-opens "Your team" (Custom, then the models question and the profile list); the gateway key
+    # question belongs to an earlier screen and is not asked again
+    assert len([m for m in asked if m.startswith("select: How do you want to choose models")]) == 2
     assert len([m for m in asked if m.startswith("confirm: Update OPENROUTER_API_KEY")]) == 1
-    assert len([m for m in asked if m.startswith("select: Choose profile")]) == 2
-    assert len(review_env) == 2 and review_env[0]["Roles"] != review_env[1]["Roles"]
+    # this host recorded a team picked from its accounts, so Change team asks that picker again (not the profile list)
+    assert len([m for m in asked if m.startswith("select: Choose profile")]) == 1
+    assert len(review_env) == 2 and review_env[0]["Team"] != review_env[1]["Team"]
 
 
 def test_cancel_at_the_review_is_130_and_the_apply_never_runs(review_env, monkeypatch):
@@ -129,7 +144,7 @@ def test_unattended_prints_the_rows_and_offers_no_edit(review_env, monkeypatch):
     assert script.asked == [] and len(review_env) == 1
 
 
-def test_rerunning_the_lanes_step_from_the_review_asks_the_acknowledgement_once(review_env, monkeypatch):
+def test_parallel_runs_from_more_options_ask_the_acknowledgement_once(review_env, monkeypatch):
     s = state.SetupState()
     s.mode = "single-model"
     s.last_run = "2026-01-01T00:00:00+00:00"
@@ -139,11 +154,11 @@ def test_rerunning_the_lanes_step_from_the_review_asks_the_acknowledgement_once(
                                   primary="anthropic:sonnet", smoke_path="claude-cli"))
     state.config_root().mkdir(parents=True, exist_ok=True)
     state.save(s)
-    script = Script(**{"Use previous answers": True, "Choose mode": "single-model",
+    script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:cli",
                        "Model preset": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: SUB, "Orchestrator agent id": "main",
                        "Acknowledge for these roles?": True, "Configure detected cockpits": lambda v: list(v),
-                       "Apply this?": Seq(wizard.EDIT_SECTION, ms.APPLY), "Which section": "lanes"})
+                       "Apply this?": Seq(wizard.MORE_OPTIONS, ms.APPLY), "More options": "parallel"})
     script.install(monkeypatch)
     assert wizard.run(_args(lanes=True)) == 0
     acks = [m for m in script.asked if "Acknowledge for these roles?" in m]
@@ -152,7 +167,7 @@ def test_rerunning_the_lanes_step_from_the_review_asks_the_acknowledgement_once(
     assert len(proposals) == 2                       # the lanes step really ran again
 
 
-def test_edit_credentials_reruns_step_5_and_the_row_moves_from_missing_to_set(review_env, monkeypatch):
+def test_gateway_and_api_keys_rerun_step_5_and_the_row_moves_from_missing_to_set(review_env, monkeypatch):
     _seed_openrouter()
     saved = []
     monkeypatch.setattr(credentials, "get_key",
@@ -164,7 +179,7 @@ def test_edit_credentials_reruns_step_5_and_the_row_moves_from_missing_to_set(re
                        "OPENROUTER_API_KEY": "entered", "Show how": False, "Model preset": "custom", "How do you want to choose models": "profile",
                        "Choose profile": lambda v: v[0], "Customize any role": False,
                        "Configure detected cockpits": lambda v: list(v),
-                       "Apply this?": Seq(wizard.EDIT_SECTION, ms.APPLY), "Which section": "credentials"})
+                       "Apply this?": Seq(wizard.MORE_OPTIONS, ms.APPLY), "More options": "gateway"})
     script.install(monkeypatch)
     real_find = script._find
 
@@ -178,8 +193,8 @@ def test_edit_credentials_reruns_step_5_and_the_row_moves_from_missing_to_set(re
     passwords = [m for m in script.asked if m.startswith("password:")]
     assert len(passwords) == 2
     assert len(review_env) == 2
-    assert review_env[0]["Credentials"] == "OPENROUTER_API_KEY missing"
-    assert review_env[1]["Credentials"] == "OPENROUTER_API_KEY set"
+    assert review_env[0]["API keys"] == "OPENROUTER_API_KEY missing"
+    assert review_env[1]["API keys"] == "OPENROUTER_API_KEY set"
 
 
 def test_cancel_at_the_review_prints_the_shared_cancel_block(review_env, monkeypatch, capsys):
@@ -199,6 +214,6 @@ def test_cancel_at_the_review_prints_the_shared_cancel_block(review_env, monkeyp
     script.install(monkeypatch)
     assert wizard.run(_args()) == 130
     err = capsys.readouterr().err
-    assert "Setup cancelled at Review and apply" in err
+    assert "Setup cancelled at Review" in err
     assert "Already done in this run: " in err and "installed something" in err
     assert "by the apply step" not in err

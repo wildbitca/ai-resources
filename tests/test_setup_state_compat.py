@@ -18,12 +18,11 @@ from ai_resources.setup import credentials, detection, state, tools, ui, wizard
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "setup_state"
 NAMES = sorted(p.stem for p in FIX.glob("*.yaml"))
-# What a non-interactive run changes in a saved state: the OpenClaw prompt normalises the model ref and fills
-# `voice_correction`. Every other key of every fixture is unchanged (S7 of ADR-0009 fixed the single-model profile
-# step, which used to rebuild `profile` and drop a customized or composed team and the lanes with their acks).
-KNOWN_TODAY = {
-    "openclaw_host_voice": ("openclaw.model", "openclaw.voice_correction"),
-}
+# Nothing: a non-interactive run leaves every key of every fixture as it was (AC1). Two things used to drift and
+# were fixed by ADR-0009: the single-model profile step rebuilt `profile` (dropping a customized or composed team
+# and the lanes with their acknowledgements), and the OpenClaw prompt normalised `openclaw.model` and filled
+# `voice_correction` on every run (it is now asked on the first configure only).
+KNOWN_TODAY: dict[str, tuple[str, ...]] = {}
 _LAST_RUN = re.compile(r"^last_run: .*$", re.M)
 
 

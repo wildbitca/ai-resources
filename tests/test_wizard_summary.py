@@ -97,9 +97,9 @@ def test_cancel_returns_before_the_apply_step_and_changes_no_file(monkeypatch, t
     assert applied == [] and _tree_digest(tmp_path) == before
 
 
-def test_change_models_goes_back_to_the_picker(monkeypatch):
+def test_change_team_with_a_picked_selection_goes_back_to_the_picker(monkeypatch):
     calls = []
-    script = Script(**{"Apply this?": ms.CHANGE})
+    script = Script(**{"Apply this?": wizard.CHANGE_TEAM})
     script.install(monkeypatch)
     monkeypatch.setattr(wizard, "_step_models", lambda s, a, dry=False: calls.append("models") or 130)
     assert wizard._step_summary(_single_flash(), argparse.Namespace()) == 130 and calls == ["models"]
@@ -129,13 +129,13 @@ def test_cancel_at_the_profile_path_review_exits_130(monkeypatch):
     assert wizard._step_summary(state.SetupState(), argparse.Namespace()) == 130
 
 
-def test_change_models_passes_dry_run_and_returns_to_the_review(monkeypatch):
+def test_change_team_passes_dry_run_and_returns_to_the_review(monkeypatch):
     seen = []
-    answers = iter([ms.CHANGE, ms.APPLY])
+    answers = iter([wizard.CHANGE_TEAM, ms.APPLY])
     script = Script(**{"Apply this?": lambda v: next(answers)})
     script.install(monkeypatch)
     monkeypatch.setattr(wizard, "_step_models", lambda s, args, dry_run=False: seen.append(dry_run) or 0)
-    s = state.SetupState()
+    s = _single_flash()                         # a team picked from accounts: Change team asks the picker again
     assert wizard._step_summary(s, argparse.Namespace(dry_run=True)) == 0
     assert seen == [True]
     assert script.asked.count("select: Apply this?") == 2      # the review came back after the change
