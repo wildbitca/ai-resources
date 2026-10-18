@@ -1,9 +1,9 @@
-"""Where Gemini shows up in setup: the Custom model list and the preset role tables (ADR-0007 section 11).
+"""Where Gemini shows up in setup: the Custom model list and the team table (ADR-0007 section 11, ADR-0009).
 
-Antigravity (agy) is a subscription CLI, not an API account. Its models are shown as a lane group that is
-informational in the Custom list and as extra rows in the CLI-mode preset tables; none of it is a Candidate, a
-Selection slot or a credential prompt, the lane stays off by default and agy never writes. Everything is offline:
-agy detection is faked and agy is never run."""
+Antigravity (agy) is a subscription CLI, not an API account. Its models are shown as a group that is informational in
+the Custom list and as the Antigravity row of the team table in "As a team"; none of it is a Candidate, a Selection
+slot or a credential prompt, it is off until ticked on "Your tools" and agy never writes. Everything is offline: agy
+detection is faked and agy is never run."""
 from __future__ import annotations
 
 import argparse
@@ -18,7 +18,7 @@ from test_wizard_model_selection import args as sel_args, host, _state  # noqa: 
 from wizard_fakes import Script, one
 
 GROUP = "Antigravity (agy, subscription)"
-OFF = "Antigravity lane - off until you enable it in step 6c"
+OFF = "Antigravity - off until you tick it on Your tools"
 
 
 @pytest.fixture(autouse=True)
@@ -76,9 +76,9 @@ def wizard_accounts():
 
 def test_why_lines_name_the_absence_and_the_off_lane():
     absent = ms.agy_why_lines(installed=False, lanes_on=False)
-    assert len(absent) == 1 and "Antigravity (agy) not installed" in absent[0] and "step 1" in absent[0]
+    assert len(absent) == 1 and "Antigravity (agy) not installed" in absent[0] and "Your tools" in absent[0]
     off = ms.agy_why_lines(installed=True, lanes_on=False)
-    assert len(off) == 1 and "Antigravity lanes are off" in off[0] and "step 6c" in off[0]
+    assert len(off) == 1 and "Antigravity is not used" in off[0] and "tick it on Your tools" in off[0]
     assert ms.agy_why_lines(installed=True, lanes_on=True) == []
 
 
@@ -98,7 +98,7 @@ def test_custom_shows_the_agy_group_only_when_installed(host, monkeypatch):
     s, rc, script = custom_run(monkeypatch, host, True)
     text = "\n".join(script.shown)
     assert rc == 0 and GROUP in text and "gemini-3.8-flash-high" in text
-    assert "unconfirmed slug" in text and "lane, opt-in" in text and "step 6c" in text
+    assert "unconfirmed slug" in text and "lane, opt-in" in text and "Your tools" in text
     s, rc, script = custom_run(monkeypatch, host, False)
     text = "\n".join(script.shown)
     assert GROUP not in text and "gemini-3.8-flash-high" not in text
@@ -130,68 +130,83 @@ def test_an_installed_agy_changes_nothing_in_the_selection_or_the_plan_table(hos
 
 # --- the presets ------------------------------------------------------------------------------------------
 
-def run_preset(monkeypatch, key, preset, installed, lanes=None):
+def run_preset(monkeypatch, key, preset, installed, ticked=False, lanes=None):
     agy(monkeypatch, installed)
-    shown = []
+    shown, teams = [], []
     monkeypatch.setattr(ui, "role_table", lambda rows, title="": shown.append((title, rows)))
+    monkeypatch.setattr(ui, "team_table", lambda rows, title="": teams.append((title, rows)))
     s = make_state(key)
+    if ticked:
+        s.profile.customizations = {"__targets__": {"selected": ["claude", "agy"]}}
     if lanes is not None:
         s.profile.lanes = lanes
-    script = Script(**{ASK: preset, CONFIRM: True})
+    script = Script(**{ASK: preset})
     script.install(monkeypatch)
     assert wizard._step_preset(s, preset_args()) == 0
-    return s, shown, script
+    return s, shown, teams, script
 
 
-def agy_tables(shown):
-    return [(t, rows) for t, rows in shown if OFF in t]
+def agy_row(teams):
+    rows = [r for _title, rs in teams for r in rs if r[0] == "Antigravity"]
+    return rows[0] if rows else None
 
 
 @pytest.mark.parametrize("preset", KEYS)
-def test_cli_mode_with_agy_adds_a_marked_agy_table_after_the_role_table(monkeypatch, preset):
-    s, shown, script = run_preset(monkeypatch, "cli", preset, True)
-    assert len(shown) == 2 and OFF not in shown[0][0]
-    title, rows = shown[1]
-    assert OFF in title and rows
-    flat = " ".join(" ".join(r) for r in rows)
-    assert "unconfirmed slug" in flat and "antigravity" in flat.lower()
+def test_as_a_team_with_agy_ticked_adds_an_antigravity_row_with_unconfirmed_slugs(monkeypatch, preset):
+    s, shown, teams, script = run_preset(monkeypatch, "cli", preset, True, ticked=True)
+    assert len(shown) == 1 and len(teams) == 1
+    tool, roles, status = agy_row(teams)
+    assert status.startswith("in team") and "terms check next" in status
+    assert "sends repo content to Google" in roles and "[unconfirmed slug]" in roles
     assert script.asked == [f"select: {ASK}"]
-    writer = [r for r in rows if r[0].startswith(roles_policy.DEFAULT_INTEGRATING_WRITER)]
-    assert writer and all("writer stays on Claude Code" in r[2] for r in writer)
-    # the rows are exactly the agy candidates of the profile's lanes block
+    assert roles_policy.DEFAULT_INTEGRATING_WRITER not in roles          # writing stays on Claude Code
+    # the entries are exactly the agy candidates of the profile's lanes block, minus the writer role
     doc = profiles.load_profile(wizard.preset_profile(s, preset))
-    want = {c.split(":", 1)[1] for key in ("roles", "second") for cs in doc["lanes"][key].values()
-            for c in cs if c.startswith("agy:")}
-    assert {r[2].split(" ")[0] for r in rows} == want
+    want = {c.split(":", 1)[1] for key in ("roles", "second") for role, cs in doc["lanes"][key].items()
+            for c in cs if c.startswith("agy:") and role != roles_policy.DEFAULT_INTEGRATING_WRITER}
+    assert {e.split(": ")[1].split(" ")[0].rstrip(".") for e in roles.split(" - sends")[0].split("; ")} == want
 
 
 @pytest.mark.parametrize("preset", ("performance", "low-pricing"))
-def test_performance_and_low_pricing_show_gemini_as_the_code_review_second_opinion(monkeypatch, preset):
-    _, shown, _ = run_preset(monkeypatch, "cli", preset, True)
-    rows = agy_tables(shown)[0][1]
-    gem = [r for r in rows if "gemini" in r[2]]
-    assert gem and all(r[0].startswith("code-reviewer") and "second" in r[0] for r in gem)
+def test_performance_and_low_cost_show_gemini_as_the_code_review_second_opinion(monkeypatch, preset):
+    _, _, teams, _ = run_preset(monkeypatch, "cli", preset, True, ticked=True)
+    entries = [e for e in agy_row(teams)[1].split(" - sends")[0].split("; ") if "gemini" in e]
+    assert entries and all(e.startswith("code-reviewer (second opinion)") for e in entries)
 
 
 @pytest.mark.parametrize("key", ["single", "litellm", "openrouter"])
 @pytest.mark.parametrize("preset", KEYS)
 def test_other_modes_never_show_agy_rows(monkeypatch, key, preset):
-    _, shown, script = run_preset(monkeypatch, key, preset, True)
-    assert len(shown) == 1 and not agy_tables(shown)
+    _, shown, teams, script = run_preset(monkeypatch, key, preset, True, ticked=True)
+    assert len(shown) == 1 and teams == []
     assert "Antigravity" not in "\n".join(script.shown)
 
 
 @pytest.mark.parametrize("preset", KEYS)
-def test_cli_mode_without_agy_shows_no_rows_and_one_line_saying_why(monkeypatch, preset):
-    _, shown, script = run_preset(monkeypatch, "cli", preset, False)
-    assert len(shown) == 1
+def test_as_a_team_without_agy_shows_no_row_and_one_line_saying_why(monkeypatch, preset):
+    _, shown, teams, script = run_preset(monkeypatch, "cli", preset, False)
+    assert len(shown) == 1 and agy_row(teams) is None
     lines = [m for m in script.shown if "Antigravity (agy) not installed" in m]
-    assert len(lines) == 1 and "Gemini" in lines[0] and "step 1" in lines[0]
+    assert len(lines) == 1 and "Gemini" in lines[0] and "Your tools" in lines[0]
 
 
-def test_cli_mode_with_agy_and_lanes_off_says_so_once(monkeypatch):
-    _, shown, script = run_preset(monkeypatch, "cli", "performance", True)
-    assert len([m for m in script.shown if "Antigravity lanes are off" in m]) == 1
+def test_as_a_team_with_agy_installed_but_not_ticked_says_it_is_off_once(monkeypatch):
+    _, shown, teams, script = run_preset(monkeypatch, "cli", "performance", True)
+    tool, roles, status = agy_row(teams)
+    assert status == "off" and "not ticked" in roles and "gemini" not in roles
+    assert len([r for _t, rs in teams for r in rs if r[0] == "Antigravity"]) == 1
+
+
+def test_the_codex_row_has_no_roles_and_no_tick(monkeypatch):
+    agy(monkeypatch, True)
+    teams = []
+    monkeypatch.setattr(ui, "team_table", lambda rows, title="": teams.append(rows))
+    s = make_state("cli")
+    s.cockpits["codex"] = state.CockpitState(installed=True)
+    Script(**{ASK: "balanced"}).install(monkeypatch)
+    wizard._step_preset(s, preset_args())
+    row = next(r for r in teams[0] if r[0] == "Codex CLI")
+    assert row[2] == "-" and "no roles yet" in row[1] and lanes_render.CODEX_LANE_ADR_ACCEPTED is False
 
 
 def test_the_question_stays_four_choices_with_agy_installed(monkeypatch):
@@ -225,7 +240,7 @@ def test_the_gemini_second_opinion_is_declared_valid_pinned_and_held_while_the_g
 
 
 def test_a_fresh_install_keeps_lanes_off_and_agy_not_writable(monkeypatch):
-    s, shown, _ = run_preset(monkeypatch, "cli", "performance", True)
+    s, shown, _, _ = run_preset(monkeypatch, "cli", "performance", True)
     assert not state.lanes_enabled(s)
     from ai_resources.setup.cockpits import openclaw_lanes
     assert agy_lane_gates.AGY_LANE_BACKEND not in openclaw_lanes.writable_backends()

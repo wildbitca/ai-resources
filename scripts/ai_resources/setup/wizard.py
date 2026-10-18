@@ -541,35 +541,21 @@ def _agy_lanes_on(s: state.SetupState) -> bool:
     return any((a or {}).get("backend") == agy_lane_gates.AGY_LANE_BACKEND for a in agents.values())
 
 
-def _agy_preset_rows(doc: dict) -> list[tuple[str, str, str]]:
-    """(role, provider, model) rows for the Antigravity candidates a profile's lanes block proposes, in the block's
-    order. Display only: nothing here reaches the state, `lanes.yaml` or the OpenClaw config."""
+def _agy_team_roles(doc: dict) -> list[str]:
+    """What Antigravity would take in this starting team, from the candidates the profile's lanes block names: one
+    entry per role (`second` ones marked), each with its model slug, labelled while the slug is unconfirmed. The
+    writer role is never listed (writing stays on Claude Code). Display only: nothing here reaches the state."""
     block = doc.get("lanes") or {}
-    rows: list[tuple[str, str, str]] = []
+    out: list[str] = []
     for key, suffix in (("roles", ""), ("second", " (second opinion)")):
         for role, cands in (block.get(key) or {}).items():
+            if role == roles_policy.DEFAULT_INTEGRATING_WRITER:
+                continue
             for c in cands or ():
                 if isinstance(c, str) and c.startswith("agy:"):
-                    row = model_selection.AgyRow(c[4:])
                     tag = "" if model_pins.AGY_LANE_MODELS_CONFIRMED else " [unconfirmed slug]"
-                    held = (" - writer stays on Claude Code" if role == roles_policy.DEFAULT_INTEGRATING_WRITER
-                            else "")
-                    rows.append((f"{role}{suffix}", "Antigravity", f"{row.slug}{tag} - lane off{held}"))
-    return rows
-
-
-def _show_agy_in_preset(s: state.SetupState, doc: dict) -> None:
-    """CLI subscriptions mode only: where Antigravity (Gemini among it) takes part in this preset, marked off
-    until step 6c, or one line saying why it is absent."""
-    if _preset_key(s) != "cli":
-        return
-    installed = detection.agy_installed()
-    if installed:
-        rows = _agy_preset_rows(doc)
-        if rows:
-            ui.role_table(rows, title=model_selection.AGY_LANES_OFF_TITLE)
-    for line in model_selection.agy_why_lines(installed, _agy_lanes_on(s)):
-        ui.info(line)
+                    out.append(f"{role}{suffix}: {model_selection.AgyRow(c[4:]).slug}{tag}")
+    return out
 
 
 def _show_agy_in_custom(s: state.SetupState) -> None:
@@ -618,12 +604,20 @@ def _preset_bypassed(args: argparse.Namespace) -> bool:
 
 def _team_rows(s: state.SetupState, base: dict, rows: list) -> list[tuple[str, str, str]]:
     """The team table of screen 3: which tool takes which roles in the starting team. Claude Code takes the roles the
-    profile gives it; Codex has no roles yet (held, ADR-0007 FU-2), so its row is information and never a choice.
+    profile gives it; Antigravity shows its roles only when it is ticked (its candidates come from the profile's
+    lanes block, labelled while the slug is unconfirmed); Codex has no roles yet (held, ADR-0007 FU-2), so its row is information and never a choice.
     Other tools have no role profile and are not listed."""
     from . import lanes_render
     members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
     roles = ", ".join(r for r, _p, _m in rows) or "none"
     out: list[tuple[str, str, str]] = [("Claude Code", roles, "in team")]
+    if _preset_key(s) == "cli" and detection.agy_installed():
+        if "agy" in members:
+            listed = "; ".join(_agy_team_roles(base)) or "no role in this starting team"
+            out.append(("Antigravity", f"{listed} - sends repo content to Google; terms check next",
+                        "in team, terms check next"))
+        else:
+            out.append(("Antigravity", "not ticked on Your tools: no roles", "off"))
     if "codex" in members or (s.cockpits.get("codex") and s.cockpits["codex"].installed):
         if not lanes_render.CODEX_LANE_ADR_ACCEPTED:
             out.append(("Codex CLI", "no roles yet (held, ADR-0007 FU-2)", "-"))
@@ -632,6 +626,9 @@ def _team_rows(s: state.SetupState, base: dict, rows: list) -> list[tuple[str, s
 
 def _show_team_table(s: state.SetupState, base: dict, rows: list) -> None:
     ui.team_table(_team_rows(s, base, rows), title="Who does what")
+    if _preset_key(s) == "cli" and not detection.agy_installed():
+        for line in model_selection.agy_why_lines(False, False):
+            ui.info(line)
     ui.detail("Writing code always stays with Claude Code (safety rule).")
 
 
@@ -673,7 +670,6 @@ def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
         s.profile.customizations = {"__targets__": targets} if targets else {}
         ui.console().print()
         ui.role_table(rows, title=f"{label.replace(' (recommended)', '')}: {name}")
-        _show_agy_in_preset(s, base)
         if _preset_key(s) == "cli":
             _show_team_table(s, base, rows)
         _PRESET = preset
@@ -2135,6 +2131,28 @@ def agy_terms_check(s: state.SetupState, roles: list[str], interactive: bool = T
     return True, acks, 0
 
 
+def _members_of(s: state.SetupState) -> list[str]:
+    """The tools ticked on the first screen (the stash apply reads)."""
+    return list((s.profile.customizations or {}).get("__targets__", {}).get("selected") or [])
+
+
+def _untick(s: state.SetupState, tool: str) -> None:
+    sel = (s.profile.customizations or {}).get("__targets__")
+    if isinstance(sel, dict) and tool in (sel.get("selected") or []):
+        sel["selected"] = [t for t in sel["selected"] if t != tool]
+
+
+def _without_claude_cli(doc: dict) -> dict:
+    """The profile with its `claude-cli:` lane candidates removed (claude-code and agy candidates stay): what
+    ticking Antigravity alone proposes, so it does not switch the Claude parallel runs on (ADR-0009)."""
+    out = copy.deepcopy(doc)
+    block = out.get("lanes") or {}
+    for key in ("roles", "second", "pins"):
+        for role, cands in list((block.get(key) or {}).items()):
+            block[key][role] = [c for c in (cands or ()) if not (isinstance(c, str) and c.startswith("claude-cli:"))]
+    return out
+
+
 def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool = False) -> int:
     """Enable, keep or clear subscription lanes. Disabled on a fresh install and without a flag.
 
@@ -2144,7 +2162,13 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     acknowledgement per account (text shown once, the account named, the implementer unticked by default), and a
     non-interactive run needs a stored valid one listing at least one role. `--no-lanes-antigravity` clears the
     gate and the agy agents and keeps the claude-cli lanes. `--no-lanes` clears the table (the OpenClaw writer
-    and `lanes.yaml` follow on apply). `--allow-unverified` implies nothing here."""
+    and `lanes.yaml` follow on apply). `--allow-unverified` implies nothing here.
+
+    Ticking Antigravity on the first screen is the interactive opt-in (ADR-0009): the same terms check opens here
+    (`agy_terms_check`), accept stores the Google acknowledgement and the Antigravity gate exactly as
+    `--lanes-antigravity` does, and a decline, an empty account or Ctrl-B unticks the tool and writes nothing.
+    Unticking an Antigravity that was on closes the gate like `--no-lanes-antigravity`. Without the interactive list
+    (unattended, `--yes`, no terminal) only the flags decide, as before."""
     from . import lanes_render
     from ..scoring import lanes as scoring_lanes
     agy_on = bool(getattr(args, "lanes_antigravity", False))
@@ -2152,13 +2176,28 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     want = bool(getattr(args, "lanes", False)) or agy_on
     unwant = bool(getattr(args, "no_lanes", False))
     preview = bool(getattr(args, "lanes_dry_run", False))
+    listed = getattr(s, "_tool_members_this_run", None) is not None and not ui.is_non_interactive()
+    agy_team = listed and s.cli_team and "agy" in _members_of(s) and not (agy_off or unwant)
+    if listed and "agy" not in _members_of(s) and _agy_lanes_on(s) and not (agy_on or unwant):
+        agy_off = True                      # unticked on "Your tools": Antigravity is not used any more
+    team_only = False
+    if agy_team and not (preview or dry_run):
+        prev_lanes = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
+        claude_lanes = any((a or {}).get("backend") == "claude-cli" for a in (prev_lanes.get("agents") or {}).values())
+        agy_on = True
+        team_only = not (want or claude_lanes)
+        want = True
+    elif agy_team:
+        ui.info("DRY RUN: the Antigravity terms check is not shown in a dry run; nothing is enabled.")
     if (s.cli_team and not (want or unwant or preview or agy_off) and not ui.is_non_interactive()):
         # CLI mode offers the lanes; off by default, Antigravity stays behind --lanes-antigravity.
         want = bool(ui.confirm("Enable subscription lanes?", default=False))
     if (want and unwant) or (agy_on and agy_off):
         ui.error("--lanes, --lanes-antigravity, --no-lanes and --no-lanes-antigravity contradict each other")
         return 2
-    if want or unwant or preview or agy_off:
+    if team_only:
+        ui.section(3, SCREENS, "Antigravity terms check")
+    elif want or unwant or preview or agy_off:
         ui.section(6, TOTAL_STEPS, "Models and roles - 6c Subscription lanes")
     if unwant and preview:
         ui.info("Dry run: lanes stay as they are; nothing was cleared or written.")
@@ -2185,17 +2224,37 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         return 2
     prev = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
     orchestrators = list(getattr(args, "lanes_orchestrator", None) or prev.get("orchestrators") or [])
-    if not orchestrators and not ui.is_non_interactive():
-        raw = ui.text("Orchestrator agent id(s) that may dispatch lane agents (comma-separated)", default="")
-        orchestrators = [o.strip() for o in (raw or "").split(",") if o.strip()]
+
+    def ask_orchestrators() -> list[str]:
+        if not orchestrators and not ui.is_non_interactive():
+            raw = ui.text("Orchestrator agent id(s) that may dispatch lane agents (comma-separated)", default="")
+            return [o.strip() for o in (raw or "").split(",") if o.strip()]
+        return orchestrators
+
+    if not team_only:
+        orchestrators = ask_orchestrators()
     acks = dict(s.profile.lane_acks or {})
     agy_roles = _agy_roles_of(doc)
+    # the team screen never offers the writer role to Antigravity (writing stays on Claude Code)
+    check_roles = [r for r in agy_roles if r != roles_policy.DEFAULT_INTEGRATING_WRITER] if team_only else agy_roles
+    if team_only and not check_roles:
+        # ticked, but this team gives Antigravity no role: nothing to ask and nothing to store
+        _untick(s, "agy")
+        ui.info("Antigravity takes no role in this team, so it stays off; pick another starting team to use it.")
+        return 0
     if agy_on and not (preview or dry_run):
         # the Google acknowledgement comes before the proposal: an agy candidate enters state only with it
-        agy_on, acks, rc = agy_terms_check(s, agy_roles, interactive=not ui.is_non_interactive(),
+        agy_on, acks, rc = agy_terms_check(s, check_roles, interactive=not ui.is_non_interactive(),
                                            flag="--lanes-antigravity")
         if rc:
             return rc
+        if team_only:
+            if not agy_on:
+                _untick(s, "agy")
+                ui.info("Antigravity stays off; nothing was stored.")
+                return 0
+            orchestrators = ask_orchestrators()
+            doc = _without_claude_cli(doc)
     try:
         from ..scoring import headroom_sources
         proposal = lanes_render.propose(doc, _current_by_role(s), s.mode, orchestrators=orchestrators,
@@ -2211,8 +2270,12 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         ui.error(f"--lanes: {e}")
         return 2
     roles = lanes_render.lane_roles(proposal)
-    ui.info("Subscription lanes proposed (candidate order is the tie-break, not a rank):")
-    for role in roles:
+    if team_only:
+        ui.info("Antigravity: terms accepted for " + (", ".join(sorted((acks.get("google") or {}).get("roles") or ()))
+                                                      or "no role") + ".")
+    else:
+        ui.info("Subscription lanes proposed (candidate order is the tie-break, not a rank):")
+    for role in ([] if team_only else roles):
         cands = (proposal["roles"].get(role) or {}).get("candidates") or proposal["second"].get(role) or []
         ui.detail(f"  {role}: {', '.join(cands)}")
     for h in proposal.get("held") or []:
@@ -2227,7 +2290,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
                 if not any(c.startswith("claude-cli:") or c == "claude-code"
                            for key in ("roles", "second") for c in ((doc.get("lanes") or {}).get(key) or {}).get(r, ()))}
     anth_roles = [r for r in roles if r not in agy_only]
-    if not lanes_render.acked(acks, "anthropic", anth_roles):
+    if not team_only and not lanes_render.acked(acks, "anthropic", anth_roles):
         if ui.is_non_interactive():
             ui.error("--lanes: no stored Anthropic acknowledgement lists every lane role; run `ai-resources "
                      "setup --lanes` from a terminal to sign it")
