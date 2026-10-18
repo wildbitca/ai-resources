@@ -902,7 +902,7 @@ def test_step10_prints_its_header_and_one_line_per_finding_and_returns_zero_on_a
     calls, sections = _step10_env(monkeypatch, [Finding("ok", "claude", "block present"),
                                                 Finding("ok", "openclaw", "gateway up")])
     assert wizard._step10_verify(_state(), ["claude", "openclaw"]) == 0
-    assert sections == [(10, 10, "Verification")] and calls == [["claude", "openclaw"]]
+    assert sections == [(wizard._screen_of(10), wizard.SCREENS, "Verification")] and calls == [["claude", "openclaw"]]
     assert script.messages("ok")[:2] == ["claude: block present", "openclaw: gateway up"]
     assert script.messages("ok")[-1].startswith("All 2 selected toolings reached the expected state")
 

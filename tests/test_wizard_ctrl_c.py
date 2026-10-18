@@ -100,7 +100,7 @@ def test_cancel_at_port_text(host, capsys):
     before = _snapshot(host.home)
     rc, script = _drive(host, {"Choose mode": "multi-model:litellm", "Where is your gateway": "local-docker",
                                "Bind interface": "127.0.0.1", "Port": ABORT})
-    _assert_clean_cancel(rc, capsys, host, before, step="LiteLLM gateway")
+    _assert_clean_cancel(rc, capsys, host, before, step="Gateway (LiteLLM)")
     assert any(m.startswith("text: Port") for m in script.asked)
 
 
@@ -108,7 +108,7 @@ def test_cancel_at_providers_checkbox(host, capsys):
     before = _snapshot(host.home)
     rc, _ = _drive(host, {"Choose mode": "multi-model:litellm", "Where is your gateway": "skipped",
                           "Select providers": ABORT})
-    _assert_clean_cancel(rc, capsys, host, before, step="Provider backends")
+    _assert_clean_cancel(rc, capsys, host, before, step="Providers")
 
 
 def test_cancel_at_profile_confirm(host, capsys):
@@ -128,7 +128,7 @@ def test_cancel_at_profile_confirm(host, capsys):
                                "Update OPENROUTER_API_KEY": False, "Choose profile": "__compose__",
                                "Composition mode": "uniform",
                                "Use this team?": ABORT})
-    _assert_clean_cancel(rc, capsys, host, before, step="Models and roles - 6b Role assignment")
+    _assert_clean_cancel(rc, capsys, host, before, step="Your team - roles")
     assert any(m.startswith("confirm: Use this team?") for m in script.asked)
 
 
@@ -138,7 +138,7 @@ def test_cancel_at_lanes_acknowledgement(host, capsys):
                                "How should kit subagents pick": "subscription-claude-55",
                                "Acknowledge for these roles?": ABORT, "Orchestrator agent id": "main"},
                         _args(lanes=True))
-    err = _assert_clean_cancel(rc, capsys, host, before, step="Models and roles - 6c Subscription lanes")
+    err = _assert_clean_cancel(rc, capsys, host, before, step="Your team - parallel runs")
     assert any(m.startswith("confirm: Acknowledge") for m in script.asked)
     assert not (state.config_root() / "backups" / "lanes").exists()
     assert "text_sha256" not in err
@@ -150,7 +150,7 @@ def test_bare_keyboard_interrupt_names_the_step(host, capsys):
     before = _snapshot(host.home)
     rc, _ = _drive(host, {"Choose mode": "multi-model:litellm", "Where is your gateway": "skipped",
                           "Select providers": INTERRUPT})
-    _assert_clean_cancel(rc, capsys, host, before, step="Provider backends")
+    _assert_clean_cancel(rc, capsys, host, before, step="Providers")
 
 
 def test_cancel_after_the_gateway_save_lists_what_was_done(host, capsys):

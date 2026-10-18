@@ -16,11 +16,11 @@ def _help() -> str:
 def test_setup_help_mentions_the_guided_flow(capsys):
     _help()
     out = capsys.readouterr().out
-    for needle in ("10 steps", "Ctrl-B", "Ctrl-C", "Ctrl-D", "Edit a section", "--non-interactive",
+    for needle in ("10 internal steps", "Ctrl-B", "Ctrl-C", "Ctrl-D", "More options", "--non-interactive",
                    "--dry-run", "--lanes", "--no-lanes", "--lanes-dry-run", "NO_COLOR"):
         assert needle in out, f"setup --help does not mention {needle!r}"
-    for step in ("Tools", "Mode", "Gateway", "Providers", "Credentials", "Models", "Cockpits",
-                 "Lifecycle", "Review", "Verification"):
+    for step in ("Your tools", "How should they work?", "Your team", "Review", "Change tools", "Change how",
+                 "Change team", "Parallel runs", "Low cost"):
         assert step.lower() in out.lower()
 
 

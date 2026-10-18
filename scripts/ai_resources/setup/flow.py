@@ -38,9 +38,9 @@ class JumpTo(BaseException):
 BACK = object()
 """Result a prompt exits with when Ctrl-B is pressed (ui converts it to GoBack)."""
 
-STEP_LABELS = ("Tools", "Mode", "Gateway", "Providers", "Credentials", "Models", "Cockpits", "Lifecycle",
+STEP_LABELS = ("Tools", "How", "Gateway", "Providers", "API keys", "Team", "Tool setup", "Start at login",
                "Review", "Verify")
-"""One short rail label per numbered step (1..10); 6a, 6b and 6c share "Models"."""
+"""One short rail label per numbered step (1..10); 6a, 6b and 6c share "Team"."""
 
 
 @dataclass

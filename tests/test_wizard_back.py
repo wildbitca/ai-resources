@@ -63,7 +63,7 @@ def test_back_at_models_is_refused_after_a_credential_was_saved(monkeypatch, tmp
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
     notices = [m for m in script.shown if "Back stops here" in m]
-    assert len(notices) == 1 and "Credentials already changed this machine" in notices[0]
+    assert len(notices) == 1 and "API keys already changed this machine" in notices[0]
     assert [m for m in script.asked if "Starting team" in m].__len__() == 2      # the first question of step 6
     assert [m for m in script.asked if m.startswith("password")].__len__() == 1      # credentials not re-asked
 

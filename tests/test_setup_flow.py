@@ -200,7 +200,7 @@ def test_scope_receives_the_step_and_wraps_its_run():
 def test_rail_model_statuses():
     m = flow.rail_model(4, skipped={3})
     assert [s for _n, _l, s in m] == ["done", "done", "skipped", "current"] + ["pending"] * 6
-    assert [l for _n, l, _s in m][:5] == ["Tools", "Mode", "Gateway", "Providers", "Credentials"]
+    assert [l for _n, l, _s in m][:5] == ["Tools", "How", "Gateway", "Providers", "API keys"]
     assert flow.rail_model(1)[0][2] == "current"
     assert len(flow.rail_model(10)) == 10
 

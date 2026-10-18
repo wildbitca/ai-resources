@@ -1,4 +1,4 @@
-"""Interactive setup wizard — 9-step flow for ai-resources kit configuration."""
+"""Interactive setup wizard — four screens (tools, how, team, review) over ten internal steps (ADR-0009)."""
 from __future__ import annotations
 
 import argparse
@@ -177,7 +177,7 @@ def _run(args: argparse.Namespace) -> int:
         return 1
     ui.banner(
         "AI Resources Kit — Setup Wizard",
-        subtitle="Multi-model orchestration via LiteLLM gateway",
+        subtitle=BANNER_SUBTITLE,
         version=f"v{__version__}",
     )
     if dry_run:
@@ -308,7 +308,7 @@ def _report_skip(spec: flow.StepSpec, title: str, reason: str) -> None:
     if not reason:
         return
     ui.mark_skipped(spec.number)
-    ui.section(spec.number, TOTAL_STEPS, title)
+    _section(spec.number, title)
     ui.info(reason)
 
 
@@ -335,7 +335,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
     def lifecycle_skip(c):
         if local_gateway(c):
             return None
-        return ("Lifecycle", "Skipped (no local gateway to supervise)." if multi(c) else "")
+        return ("Start at login", "Skipped (no local gateway to supervise)." if multi(c) else "")
 
     def preset_done(c):
         """6a and 6b are answered by the preset: skipped without a line of output."""
@@ -353,23 +353,23 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         S("mode", 2, "How should they work?", _run_mode_step, edit_label="How"),
         S("gateway", 3, "Gateway", lambda c: _step3_litellm(c.s, c.dry_run), rewindable=dry_run,
           skip=gateway_skip, edit_label="Gateway"),
-        S("providers", 4, "Provider backends", lambda c: _step4_providers(c.s),
-          skip=lambda c: None if multi(c) else ("Provider backends", ""),
+        S("providers", 4, "Providers", lambda c: _step4_providers(c.s),
+          skip=lambda c: None if multi(c) else ("Providers", ""),
           edit_label="Providers"),
-        S("credentials", 5, "Credentials", lambda c: _step5_credentials(c.s, c.dry_run),
-          skip=lambda c: None if multi(c) else ("Credentials", ""), edit_label="Credentials"),
+        S("credentials", 5, "API keys", lambda c: _step5_credentials(c.s, c.dry_run),
+          skip=lambda c: None if multi(c) else ("API keys", ""), edit_label="API keys"),
         S("preset", 6, "Your team", lambda c: _step_preset(c.s, c.args), back=True, edit_label="Models"),
-        S("models", 6, "Models", lambda c: _step_models(c.s, c.args, c.dry_run), back=True,
+        S("models", 6, "Your team - models", lambda c: _step_models(c.s, c.args, c.dry_run), back=True,
           skip=preset_done, edit_label="Models"),
-        S("profile", 6, "Role assignment",
+        S("profile", 6, "Your team - roles",
           lambda c: _step6_profile(c.s) if multi(c) else _step6_single_model_profile(c.s), back=True,
           skip=preset_done, edit_label="Role assignment"),
-        S("lanes", 6, "Subscription lanes", lambda c: _step_lanes(c.s, c.args, dry_run=c.dry_run),
-          back=True, edit_label="Lanes"),
+        S("lanes", 6, "Parallel runs", lambda c: _step_lanes(c.s, c.args, dry_run=c.dry_run),
+          back=True, edit_label="Parallel runs"),
         S("cockpits", 7, "Tool configuration", lambda c: _step7_cockpit_config(c.s, dry_run=c.dry_run),
           back=True, skip=tool_config_done, edit_label="OpenClaw"),
-        S("lifecycle", 8, "Lifecycle", lambda c: _step8_lifecycle(c.s), skip=lifecycle_skip,
-          edit_label="Lifecycle"),
+        S("lifecycle", 8, "Start at login", lambda c: _step8_lifecycle(c.s), skip=lifecycle_skip,
+          edit_label="Start at login"),
         S("review", 9, "Review", lambda c: _step_summary(c.s, c.args), rewindable=False),
         S("apply", 9, "Apply", lambda c: _step9_apply(c.s, dry_run=c.dry_run), rewindable=False),
     ]
@@ -651,7 +651,7 @@ def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
     _PRESET = ""
     if _preset_bypassed(args):
         return 0
-    ui.section(3, SCREENS, "Your team")
+    _section(6, "Your team")
     mode = "multi-model" if s.mode == "multi-model" else "single-model"
     backend = s.backend if mode == "multi-model" else None
     available = profiles.list_profiles(mode=mode, backend=backend)
@@ -692,7 +692,7 @@ def _step_models(s: state.SetupState, args: argparse.Namespace, dry_run: bool = 
         return 0                                    # set by the flags (or saved) and not being changed
     if ui.is_non_interactive():
         return 0
-    ui.section(6, TOTAL_STEPS, "Models and roles - 6a Models")
+    _section(6, "Your team - models")
     how = ui.select("How do you want to choose models?",
                     [ui.Choice("Use a kit profile (presets for every role)", value="profile"),
                      ui.Choice("Pick models from my accounts (live lists)", value="pick")],
@@ -872,7 +872,7 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
     selection = s.get_selection()
     if selection is None and ui.is_non_interactive():
         return 0
-    ui.section(4, SCREENS, "Review")
+    _section(9, "Review")
     _REVIEW_SHOWN = True
     ui.review_table(_review_rows(s), title="Your answers")
     if selection is not None:
@@ -1014,7 +1014,7 @@ def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None, *
         if s.mode == "multi-model":
             _gateway_credential_warning(s)
         return 0
-    ui.section(2, SCREENS, "How should they work?")
+    _section(2, "How should they work?")
     chosen = s.get_selection()
     if chosen is not None and s.mode == "single-model":
         # A single-model selection is already recorded: the choice is made and the summary says which
@@ -1058,7 +1058,7 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
     a clean slate.
     """
     ui.console().print()
-    target = "CLI subscriptions mode" if s.cli_team else "single-model"
+    target = "'As a team'" if s.cli_team else "'Each on its own'"
     if hasattr(ui.console(), "rule"):
         ui.console().rule(f"[bold yellow]Switching to {target} — cleanup[/]",
                           style="yellow", align="left")
@@ -1116,6 +1116,18 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
 SCREENS = 4
 """The operator sees four screens (Your tools, How should they work?, Your team, Review) over the ten internal
 steps; the rail and `TOTAL_STEPS` stay (ADR-0009)."""
+SCREEN_OF = {1: 1, 2: 2, 3: 2, 4: 2, 5: 2, 6: 3, 7: 3, 8: 4, 9: 4, 10: 4}
+"""Which screen each internal step belongs to: the gateway steps (3, 4, 5) belong to "How should they work?"."""
+BANNER_SUBTITLE = "Set up your AI coding tools"
+
+
+def _screen_of(step: int) -> int:
+    return SCREEN_OF.get(step, SCREENS)
+
+
+def _section(step: int, title: str) -> None:
+    """A step header numbered by screen (`[2/4]`); the rail under it still counts the ten steps."""
+    ui.section(_screen_of(step), SCREENS, title)
 HIDDEN_TOOLS = ("gemini",)
 """Retired tools: never listed by the wizard (an old state that holds one still loads)."""
 
@@ -1133,7 +1145,7 @@ def _default_members(s: state.SetupState, detected: dict) -> list[str]:
 
 
 def _step2_cockpits(s: state.SetupState) -> int:
-    ui.section(1, SCREENS, "Your tools")
+    _section(1, "Your tools")
     ui.info("Scanning installed AI CLIs...")
     detected = detection.detect_all_cockpits()
 
@@ -1185,7 +1197,7 @@ def _step2_cockpits(s: state.SetupState) -> int:
 
 # --- Step 3 — LiteLLM gateway ----------------------------------------------------
 def _step3_litellm(s: state.SetupState, dry_run: bool = False) -> int:
-    ui.section(3, TOTAL_STEPS, "LiteLLM gateway")
+    _section(3, "Gateway (LiteLLM)")
 
     # Detect what's available so we can flag disabled options
     docker_runtime, docker_det = detection.detect_container_runtime()
@@ -1561,7 +1573,7 @@ def _step3_remote(s: state.SetupState, dry_run: bool = False) -> int:
 
 # --- Step 4 — Providers ----------------------------------------------------------
 def _step4_providers(s: state.SetupState) -> int:
-    ui.section(4, TOTAL_STEPS, "Provider backends")
+    _section(4, "Providers")
 
     if s.backend == "openrouter":
         # One upstream key fans out to the whole catalogue, so there is nothing
@@ -1614,7 +1626,7 @@ def _step4_providers(s: state.SetupState) -> int:
 
 # --- Step 5 — Credentials --------------------------------------------------------
 def _step5_credentials(s: state.SetupState, dry_run: bool = False) -> int:
-    ui.section(5, TOTAL_STEPS, "Credentials")
+    _section(5, "API keys")
     ui.info(f"Stored in {state.env_path()} (chmod 600)")
     ui.info("Press Enter to keep an existing value")
 
@@ -1878,7 +1890,7 @@ def _note_newer_recommendation(saved: str, recommended: str, backend: str) -> No
 
 
 def _step6_profile(s: state.SetupState) -> int:
-    ui.section(6, TOTAL_STEPS, "Models and roles - 6b Role assignment")
+    _section(6, "Your team - roles")
 
     available = profiles.list_profiles(mode="multi-model", backend=s.backend)
     if not available:
@@ -1919,8 +1931,8 @@ def _step6_profile(s: state.SetupState) -> int:
     else:
         default = available[0]
 
-    ui.detail("Claude only and no gateway? Use single-model mode with the claude-native profile: a multi-model "
-              "profile, even an all-Claude one, needs a LiteLLM or OpenRouter gateway.")
+    ui.detail("No gateway? A gateway profile needs LiteLLM or OpenRouter; without one, go back and choose "
+              "'As a team' or 'Each on its own'.")
     if (s.profile.name in available and s.profile.name != preferred and preferred in available
             and not _REQUESTED_PROFILE):
         _note_newer_recommendation(s.profile.name, preferred, s.backend)
@@ -2011,7 +2023,7 @@ def _step6_profile(s: state.SetupState) -> int:
 
 def _step6_single_model_profile(s: state.SetupState) -> int:
     """Single-model: choose how kit subagents pick a Claude model (no gateway involved)."""
-    ui.section(6, TOTAL_STEPS, "Models and roles - 6b Role assignment")
+    _section(6, "Your team - roles")
     available = profiles.list_profiles(mode="single-model")
     if not available:
         ui.info("No single-model profiles found — kit subagents inherit the session model.")
@@ -2068,7 +2080,7 @@ def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
     """The tools were ticked on screen 1; this step only asks the questions a tool has of its own (OpenClaw)."""
     selected = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
     if "openclaw" in selected:
-        ui.section(3, SCREENS, "OpenClaw")
+        _section(7, "OpenClaw")
         from .cockpits import openclaw as _openclaw_cockpit
         _openclaw_cockpit.prompt(s, dry_run=dry_run)
     return 0
@@ -2076,7 +2088,7 @@ def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
 
 # --- Step 8 — Lifecycle ---------------------------------------------------------
 def _step8_lifecycle(s: state.SetupState) -> int:
-    ui.section(8, TOTAL_STEPS, "Lifecycle (auto-start at login)")
+    _section(8, "Start at login")
 
     if s.litellm.deployment != "local":
         ui.info("Skipped (gateway is not local).")
@@ -2249,9 +2261,9 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         ui.error("--lanes, --lanes-antigravity, --no-lanes and --no-lanes-antigravity contradict each other")
         return 2
     if team_only:
-        ui.section(3, SCREENS, "Antigravity terms check")
+        _section(6, "Antigravity terms check")
     elif want or unwant or preview or agy_off:
-        ui.section(6, TOTAL_STEPS, "Models and roles - 6c Subscription lanes")
+        _section(6, "Your team - parallel runs")
     if unwant and preview:
         ui.info("Dry run: lanes stay as they are; nothing was cleared or written.")
         return 0
@@ -2428,7 +2440,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     if dry_run:
         return _step9_dry_run(s)
     if not _REVIEW_SHOWN:
-        ui.section(9, TOTAL_STEPS, "Apply")
+        _section(9, "Apply")
     ui.console().print()
     ui.info("Generating configuration files...")
 
@@ -2661,7 +2673,7 @@ def _step10_verify(s: state.SetupState, targets: list[str]) -> int:
     """Read-only check of every tooling step 9 applied. 1 iff a finding is an error, never for a warn."""
     from .. import verify
 
-    ui.section(10, TOTAL_STEPS, "Verification")
+    _section(10, "Verification")
     if not targets:
         ui.info("Nothing was applied, so there is nothing to verify.")
         return 0
@@ -2772,7 +2784,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
     from .cockpits import claude as _claude_cockpit
 
     console = ui.console()
-    ui.section(9, TOTAL_STEPS, "Apply (DRY RUN)")
+    _section(9, "Apply (DRY RUN)")
     console.print()
     console.print("[bold yellow]DRY RUN — configs shown below will NOT be written.[/]")
     console.print("[bold yellow]Gateway will be started temporarily for smoke tests, then stopped.[/]")
@@ -3002,7 +3014,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
 
     _print_dry_run_diffs(s, executors_doc, env_patch_for_diff, existing_env_for_diff)
     console.print()
-    ui.section(10, TOTAL_STEPS, "Verification")
+    _section(10, "Verification")
     ui.info("Skipped in a dry run: verification checks what a real apply left behind, and nothing was applied.")
     console.print()
     ui.info("Dry run complete — no permanent changes made.")
@@ -3011,6 +3023,17 @@ def _step9_dry_run(s: state.SetupState) -> int:
 
 
 # --- Completion banner -----------------------------------------------------------
+def _try_lines() -> str:
+    """One line per tool the run configured (or the tools that were installed), each with the command that opens it."""
+    ids = [c for c in _APPLIED_TARGETS if c in tools.TOOLS] or [c for c in ("claude",) if c in tools.TOOLS]
+    lines = []
+    for cid in ids:
+        spec = tools.TOOLS[cid]
+        binary = spec.login_cmd[0] if spec.login_cmd else cid
+        lines.append(f"  {binary:<28} open {spec.label}\n")
+    return "".join(lines)
+
+
 def _print_completion(s: state.SetupState) -> None:
     # Multi-model + Claude Code OAuth session = gateway auth failures.
     # Surface this warning before the banner so users see it.
@@ -3038,12 +3061,12 @@ def _print_completion(s: state.SetupState) -> None:
                     ui.detail("  3. ai-resources doctor")
 
     gateway_line = ("" if s.mode == "multi-model" and s.backend == "openrouter"
-                    else "  ai-resources daemon logs     LiteLLM logs\n")
+                    else "  ai-resources daemon logs     LiteLLM logs\n") if s.mode == "multi-model" else ""
     ui.console().print()
     ui.banner(
         "✓ Setup complete",
         subtitle="Try:\n"
-                 "  claude                       open Claude Code as cockpit\n"
+                 f"{_try_lines()}"
                  "  ai-resources doctor          full health check\n"
                  "  ai-resources executors       show role → model map\n"
                  f"{gateway_line}"

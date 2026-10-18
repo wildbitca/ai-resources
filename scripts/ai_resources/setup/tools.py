@@ -48,7 +48,7 @@ TOOLS: dict[str, ToolSpec] = {
         "curl -fsSL https://claude.ai/install.sh | bash",
         lambda: detection.detect_claude_code(),
         "`claude` login is interactive — run `claude` once and sign in by hand.",
-        "Anthropic coding agent; the default cockpit and the Claude subscription lanes",
+        "Anthropic's terminal coding agent",
         ("claude",),
         "https://code.claude.com/docs/en/setup", _CHECKED,
     ),
@@ -58,7 +58,7 @@ TOOLS: dict[str, ToolSpec] = {
         lambda: detection.detect_agy(),
         "`agy` login is interactive — run `agy` once and sign in with your personal "
         "Google account by hand.",
-        "Antigravity CLI; orchestrator of the antigravity OpenClaw engine",
+        "Google's terminal coding agent (sends repo content to Google)",
         ("agy",),
         # Human-readable vendor page: the vendor's own /docs/cli redirects here (read-only GET on _CHECKED). The page
         # is client-rendered, so the install command itself is verified against the install script it serves:

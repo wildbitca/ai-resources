@@ -46,24 +46,26 @@ Environment:
 
 
 _SETUP_EPILOG = """\
-The wizard walks through 10 steps, each with a header, a progress rail and one line of key hints:
-  1 Tools and cockpits    2 Setup mode        3 LiteLLM gateway   4 Provider backends  5 Credentials
-  6 Models and roles (a preset question first: Balanced, Performance, Low pricing or Custom; Custom
-    keeps 6a Models, 6b Role assignment; then 6c Subscription lanes)
-  7 Cockpit configuration 8 Lifecycle         9 Review and apply  10 Verification
+The wizard asks three things in four screens, over 10 internal steps (a header, a progress rail and one line of
+key hints each):
+  1 Your tools (every coding CLI is a tool: tick the ones to use, tick a missing one to install it)
+  2 How should they work? (as a team on your subscriptions, each on its own, or Advanced: a gateway)
+  3 Your team (a starting team - Balanced, Performance, Low cost or Custom - and who does what)
+  4 Review (Apply, Change tools, Change how, Change team, More options, Cancel), then Apply and Verification
+Steps 3 to 5 and 8 of the rail (gateway, providers, API keys, start at login) only run on the Advanced path.
 
 Keys:
   Enter   confirm the highlighted answer
   Ctrl-B  go back one step (only in steps that have changed nothing on this machine yet)
   Ctrl-C  cancel; Ctrl-D also cancels. Nothing past the last confirmed step is applied.
-Review (step 9) lists one row per section (credentials show only `set` or `missing`) and has
-"Edit a section..." to re-open an earlier step, then returns to the review. Apply, Change models and
-Cancel are unchanged.
+Review lists the answers by name (How, Team, Tools; API keys show only `set` or `missing`). A Change jumps
+back to that screen and returns to the review; More options holds parallel runs, gateway and API keys, start at
+login and the OpenClaw questions.
 
 Unattended and preview runs:
   --non-interactive   use saved answers, never prompt (a prompt with no default aborts)
   --dry-run           render the targets and print a masked unified diff; nothing is written
-Subscription lanes (ADR-0007, off by default): --lanes enables, --no-lanes clears, --lanes-dry-run
+Parallel runs (subscription lanes, ADR-0007, off by default): --lanes enables, --no-lanes clears, --lanes-dry-run
 shows the proposed table and writes nothing, --lanes-orchestrator ID names the dispatching agent.
 
 Output: NO_COLOR (set and non-empty) or a non-UTF-8 stream selects ASCII glyphs and no colour.
@@ -104,8 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     # setup (the new wizard)
     p_st = sub.add_parser(
         "setup",
-        help="Interactive setup wizard: cockpits, LiteLLM, providers, profiles",
-        description="Guided setup wizard: cockpits, LiteLLM, providers, profiles, models and lanes.",
+        help="Interactive setup wizard: tools, how they work together, team",
+        description="Guided setup wizard: your tools, how they should work, your team, then a review.",
         epilog=_SETUP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

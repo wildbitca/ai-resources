@@ -92,6 +92,6 @@ def test_dry_run_announces_that_verification_is_skipped_and_probes_nothing(dry_r
         wizard._step9_dry_run(s)
     except _StoppedAfterPatch:
         pytest.skip("the preview stops before its tail in this harness")
-    assert (10, wizard.TOTAL_STEPS, "Verification") in sections
+    assert (wizard._screen_of(10), wizard.SCREENS, "Verification") in sections
     assert any("verification" in m.lower() and "dry run" in m.lower() for m in lines)
     assert calls == []

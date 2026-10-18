@@ -356,7 +356,7 @@ def test_step_6_hints_single_model_for_a_claude_only_host_with_no_gateway(monkey
     """D7."""
     ui_stub = _Step6(monkeypatch)
     wizard._step6_profile(_multi("litellm"))
-    assert "claude-native" in ui_stub.text and "no gateway" in ui_stub.text.lower()
+    assert "Each on its own" in ui_stub.text and "no gateway" in ui_stub.text.lower()
 
 
 def test_leaving_multi_model_resets_the_profile_to_the_single_model_default():
