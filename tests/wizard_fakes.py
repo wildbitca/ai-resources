@@ -61,11 +61,26 @@ class Seq:
         return self.items.pop(0) if len(self.items) > 1 else self.items[0]
 
 
+LEGACY_MODE = {"single-model": ("alone", None), "multi-model:cli": ("team", None),
+               "multi-model:openrouter": ("advanced", "openrouter"), "multi-model:litellm": ("advanced", "litellm")}
+"""The four answers of the old "Choose mode:" question, as the two questions of screen 2 (ADR-0009)."""
+HOW_PROMPT = "Pick how they work together:"
+
+
 class Script:
-    """Answers ui prompts by a substring of the message, records everything shown."""
+    """Answers ui prompts by a substring of the message, records everything shown.
+
+    A script written for the old four-way "Choose mode" question keeps working: that answer is replayed through
+    screen 2 ("How should they work?", then "Which gateway?" for Advanced) and the state it writes is the same."""
 
     def __init__(self, **answers):
         self.answers = dict(answers)
+        for key in [k for k in self.answers if k.startswith("Choose mode")]:
+            legacy = self.answers.pop(key)
+            how, gateway = LEGACY_MODE.get(legacy, (legacy, None)) if isinstance(legacy, str) else (legacy, None)
+            self.answers["Pick how they work"] = how
+            if gateway:
+                self.answers["Which gateway"] = gateway
         self.asked: list[str] = []
         self.shown: list[str] = []
         self.defaults: dict[str, list] = {}      # message -> the default offered on each ask (select, checkbox)

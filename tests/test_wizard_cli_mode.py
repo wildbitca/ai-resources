@@ -12,7 +12,7 @@ import yaml
 
 from ai_resources import cli
 from ai_resources.setup import model_selection as ms, state, ui, wizard
-from wizard_fakes import Script, host_env
+from wizard_fakes import BACK, Script, Seq, host_env
 
 SUB = "subscription-claude-55"
 
@@ -32,28 +32,45 @@ def _ask_mode(monkeypatch, answer, s):
     return script
 
 
-def test_the_mode_question_lists_four_options_with_the_cli_one_second(monkeypatch):
+def test_the_question_lists_three_ways_with_the_team_first(monkeypatch):
     seen = {}
     s = state.SetupState()
-    script = Script(**{"Choose mode": lambda values: seen.setdefault("v", list(values)) and "single-model"})
+    script = Script(**{"Pick how they work": lambda values: seen.setdefault("v", list(values)) and "alone"})
     script.install(monkeypatch)
     wizard._step1_mode(s)
-    assert seen["v"] == ["single-model", "multi-model:cli", "multi-model:openrouter", "multi-model:litellm"]
+    assert seen["v"] == ["team", "alone", "advanced"]
 
 
-def test_the_cli_option_is_worded_for_subscriptions_without_a_gateway(monkeypatch):
+def test_advanced_asks_which_gateway(monkeypatch):
+    seen = {}
+    s = state.SetupState()
+    script = Script(**{"Pick how they work": "advanced",
+                       "Which gateway": lambda values: seen.setdefault("v", list(values)) and "openrouter"})
+    script.install(monkeypatch)
+    wizard._step1_mode(s)
+    assert seen["v"] == ["litellm", "openrouter"] and (s.mode, s.backend, s.cli_team) == (
+        "multi-model", "openrouter", False)
+    assert [m for m in script.asked if m.startswith("select")] == [
+        "select: Pick how they work together:", "select: Which gateway?"]
+
+
+def test_the_team_option_is_worded_for_subscriptions_without_a_gateway(monkeypatch):
     labels = {}
 
     def pick(message, choices, default=None, **k):
         labels.update({c.value: c.title if hasattr(c, "title") else str(c) for c in choices})
-        return "single-model"
+        return "alone"
 
     monkeypatch.setattr(ui, "select", pick)
     monkeypatch.setattr(ui, "section", lambda *a, **k: None)
     wizard._step1_mode(state.SetupState())
-    text = labels["multi-model:cli"]
-    for needle in ("CLI subscriptions", "Claude Code", "Antigravity", "Codex", "no gateway", "per token"):
+    text = labels["team"]
+    for needle in ("As a team", "subscriptions", "no API keys", "each role"):
         assert needle in text, needle
+    assert "Each on its own" in labels["alone"] and "own sign-in" in labels["alone"]
+    assert "Advanced" in labels["advanced"] and "gateway" in labels["advanced"] and "API keys" in labels["advanced"]
+    for label in labels.values():
+        assert "cockpit" not in label.lower() and "single-model" not in label
 
 
 def test_choosing_cli_sets_the_state_and_shows_no_gateway_warning(monkeypatch):
@@ -85,16 +102,17 @@ def test_a_saved_cli_state_is_the_default_of_the_question(monkeypatch):
     s = state.SetupState()
     s.cli_team = True
     script = _ask_mode(monkeypatch, "multi-model:cli", s)
-    assert script.defaults["Choose mode:"] == ["multi-model:cli"]
+    assert script.defaults[wizard.HOW_PROMPT] == ["team"]
 
 
 def test_a_saved_gateway_or_single_state_keeps_its_default(monkeypatch):
     s = state.SetupState(mode="multi-model", backend="openrouter")
     script = _ask_mode(monkeypatch, "multi-model:openrouter", s)
-    assert script.defaults["Choose mode:"] == ["multi-model:openrouter"]
+    assert script.defaults[wizard.HOW_PROMPT] == ["advanced"]
+    assert script.defaults["Which gateway?"] == ["openrouter"]
     s2 = state.SetupState()
     script2 = _ask_mode(monkeypatch, "single-model", s2)
-    assert script2.defaults["Choose mode:"] == ["single-model"]
+    assert script2.defaults[wizard.HOW_PROMPT] == ["alone"]
 
 
 # --- saved state -------------------------------------------------------------------------------------
@@ -401,4 +419,51 @@ def test_a_run_with_backend_cli_never_prompts_the_mode_and_records_the_cli_team(
     monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
     assert wizard.run(_args(backend="cli")) == 0
     assert not any("Choose mode" in m or "How should they work" in m for m in script.asked)
+    assert (seen["s"].mode, seen["s"].cli_team) == ("single-model", True)
+
+
+# --- ADR-0009 S6: screen 2, "How should they work?" ------------------------------------------------------------
+@pytest.mark.parametrize("legacy,expect", [
+    ("single-model", ("single-model", False, "litellm")),
+    ("multi-model:cli", ("single-model", True, "litellm")),
+    ("multi-model:openrouter", ("multi-model", False, "openrouter")),
+    ("multi-model:litellm", ("multi-model", False, "litellm"))])
+def test_each_legacy_answer_replayed_through_screen_two_saves_the_same_state(monkeypatch, legacy, expect):
+    s = state.SetupState()
+    _ask_mode(monkeypatch, legacy, s)
+    assert (s.mode, s.cli_team, s.backend) == expect
+
+
+def test_the_default_is_team_with_two_tools_each_alone_with_one_and_a_saved_answer_wins(monkeypatch):
+    def default_for(s, **kw):
+        script = Script(**{"Pick how they work": "alone"})
+        script.install(monkeypatch)
+        wizard._step1_mode(s, **kw)
+        return script.defaults[wizard.HOW_PROMPT][-1]
+
+    def with_tools(*ids):
+        s = state.SetupState()
+        s.profile.customizations = {"__targets__": {"selected": list(ids)}}
+        return s
+    assert default_for(with_tools("claude", "codex")) == "team"
+    assert default_for(with_tools("claude")) == "alone"
+    assert default_for(with_tools("claude", "codex"), is_first=False) == "alone"      # a saved answer is kept
+    s = with_tools("claude", "codex")
+    s.cli_team = True
+    assert default_for(s, is_first=False) == "team"
+    assert default_for(state.SetupState(mode="multi-model", backend="litellm"), is_first=False) == "advanced"
+
+
+def test_back_at_screen_two_asks_it_again_and_leaks_nothing(monkeypatch, tmp_path):
+    host_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(wizard, "_PRESET", wizard._PRESET)
+    script = Script(**{"Pick how they work": Seq(BACK, "team"), "Model preset": "custom",
+                       "How do you want to choose models": "profile", "How should kit subagents pick": lambda v: SUB,
+                       "Enable subscription lanes?": False, "Apply this?": ms.APPLY})
+    script.install(monkeypatch)
+    monkeypatch.setattr(ui, "review_table", lambda rows, title="": None)
+    seen = {}
+    monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
+    assert wizard.run(_args()) == 0
+    assert len([m for m in script.asked if m.startswith("select: Pick how they work")]) == 2
     assert (seen["s"].mode, seen["s"].cli_team) == ("single-model", True)

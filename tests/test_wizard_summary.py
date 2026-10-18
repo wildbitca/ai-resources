@@ -62,7 +62,8 @@ def test_no_backend_question_is_asked_for_a_single_model_without_a_gateway_cockp
     assert wizard._step_summary(s, args) == 0
     assert s.mode == "single-model"
     asked = " | ".join(script.asked).lower()
-    assert not any(w in asked for w in ("choose mode:", "setup mode", "gateway", "backend", "litellm", "openrouter"))
+    assert not any(w in asked for w in ("choose mode:", "setup mode", "how they work", "gateway", "backend",
+                                         "litellm", "openrouter"))
     assert "Backend: none (single-model)" in script.transcript
 
 
@@ -72,7 +73,7 @@ def test_the_mode_question_is_still_asked_when_no_selection_is_recorded(monkeypa
     s = state.SetupState()
     s.mode = "single-model"
     assert wizard._step1_mode(s) == 0
-    assert any("Choose mode:" in q for q in script.asked)
+    assert any(wizard.HOW_PROMPT in q for q in script.asked)
 
 
 def _tree_digest(root: Path) -> str:

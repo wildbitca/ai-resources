@@ -14,7 +14,7 @@ rc=0
 
  i 1 tool(s) in use. To add another, install it by your usual method, then re-run `ai-resources setup`.
 
-[2/10] Setup mode ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+[2/4] How should they work? --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ! A gateway credential replaces your claude.ai subscription for Claude Code: usage is billed per token to the gateway, not to your plan.
  Claude Code's own cost figures (/usage, statusline, --max-budget-usd) are computed at Anthropic list price and will be wrong. Set spend limits on the OpenRouter key instead.
 

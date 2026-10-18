@@ -285,7 +285,7 @@ def _restore_run(s: state.SetupState, snap: tuple) -> None:
 
 def _run_mode_step(c) -> int:
     """Step 2 and, right after it, the cleanup offer when the operator just left multi-model."""
-    rc = _step1_mode(c.s, getattr(c, "args", None))
+    rc = _step1_mode(c.s, getattr(c, "args", None), is_first=getattr(c, "is_first", True))
     if rc != 0:
         return rc
     # If the user just switched multi-model -> single-model, offer to clean up everything we previously
@@ -340,7 +340,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
 
     return [
         S("tools", 1, "Your tools", lambda c: _step2_cockpits(c.s), rewindable=False),
-        S("mode", 2, "Setup mode", _run_mode_step, edit_label="Mode"),
+        S("mode", 2, "How should they work?", _run_mode_step, edit_label="How"),
         S("gateway", 3, "Gateway", lambda c: _step3_litellm(c.s, c.dry_run), rewindable=dry_run,
           skip=gateway_skip, edit_label="Gateway"),
         S("providers", 4, "Provider backends", lambda c: _step4_providers(c.s),
@@ -911,7 +911,34 @@ def _gateway_credential_warning(s: state.SetupState) -> None:
                   "OpenRouter key instead.")
 
 
-def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None) -> int:
+HOW_CHOICES = (
+    ("team", "As a team", "each role goes to the tool you choose, on your subscriptions, no API keys"),
+    ("alone", "Each on its own", "every tool keeps its own sign-in and settings"),
+    ("advanced", "Advanced", "gateway (LiteLLM or OpenRouter) with API keys and budgets"),
+)
+GATEWAY_CHOICES = (
+    ("litellm", "LiteLLM", "a gateway this kit installs and supervises (local models and per-key budgets)"),
+    ("openrouter", "OpenRouter", "hosted: one key, nothing to install"),
+)
+HOW_PROMPT = "Pick how they work together:"
+
+
+def _how_default(s: state.SetupState, is_first: bool = True) -> str:
+    """What a saved state means for the question, else team when two or more tools are ticked, else each alone."""
+    if s.mode == "multi-model":
+        return "advanced"
+    if getattr(s, "cli_team", False):
+        return "team"
+    if not is_first:
+        return "alone"
+    members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
+    return "team" if len(members) >= 2 else "alone"
+
+
+def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None, *, is_first: bool = True) -> int:
+    """Screen 2: how the tools work together. The answer is the same state as the four-way mode question wrote
+    (ADR-0009): As a team is `single-model` + `cli_team`, Each on its own is `single-model`, Advanced asks which
+    gateway and is `multi-model`."""
     backend = getattr(args, "backend", "") if args is not None else ""
     if backend:
         # `--backend` already decided the mode (the preflight applied it to the state): no question (ADR-0009).
@@ -919,47 +946,37 @@ def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None) -
         if s.mode == "multi-model":
             _gateway_credential_warning(s)
         return 0
-    ui.section(2, TOTAL_STEPS, "Setup mode")
+    ui.section(2, SCREENS, "How should they work?")
     chosen = s.get_selection()
     if chosen is not None and s.mode == "single-model":
-        # A single-model selection is already recorded: the mode is decided and the summary says which
-        # cockpits it leaves out. Pass --backend to move to a gateway; no mode/backend question is asked.
+        # A single-model selection is already recorded: the choice is made and the summary says which
+        # tools it leaves out. Pass --backend to move to a gateway; no question is asked.
         ui.info("Single-model selection recorded; no gateway or backend is asked for "
                 "(pass --backend to use one).")
         return 0
-    choices = [
-        ui.Choice("single-model — Each cockpit talks to its own provider; Claude subagents pick "
-                  "Claude models by role", value="single-model", description=" "),
-        ui.Choice("multi-model via your CLI subscriptions — Claude Code / Antigravity / Codex plans, no "
-                  "gateway, nothing billed per token (the choice for a host with subscriptions only)",
-                  value="multi-model:cli", description=" "),
-        ui.Choice("multi-model via OpenRouter — Per-role routing, one key, nothing to install",
-                  value="multi-model:openrouter", description=" "),
-        ui.Choice("multi-model via LiteLLM — Per-role routing through a gateway this kit installs "
-                  "and supervises (adds local models and per-key budgets)",
-                  value="multi-model:litellm", description=" "),
-    ]
-    default = (("multi-model:cli" if getattr(s, "cli_team", False) else "single-model")
-               if s.mode == "single-model" else f"multi-model:{getattr(s, 'backend', 'litellm')}")
-    picked = ui.select("Choose mode:", choices, default=default)
+    choices = [ui.Choice(f"{label} - {line}", value=key, description=" ") for key, label, line in HOW_CHOICES]
+    picked = ui.select(HOW_PROMPT, choices, default=_how_default(s, is_first))
     if picked is None:
         ui.warn("Setup cancelled.")
         return 130
 
     was_cli = bool(getattr(s, "cli_team", False))
-    if picked == "single-model":
+    if picked == "alone":
         s.mode, s.cli_team = "single-model", False
-    elif picked == "multi-model:cli":
-        # No gateway: the mode stays single-model-shaped, the flag names the subscription team (ADR-0008).
+        return 0
+    if picked == "team":
+        # No gateway: the mode stays single-model-shaped, the flag names the team (ADR-0008 addendum).
         s.mode, s.cli_team = "single-model", True
         _reset_profile_for_cli(s, was_cli)
         return 0
-    else:
-        s.mode, s.cli_team = "multi-model", False
-        s.backend = picked.split(":", 1)[1]
-
-    if s.mode == "multi-model":
-        _gateway_credential_warning(s)
+    gateway = ui.select("Which gateway?", [ui.Choice(f"{label} - {line}", value=key, description=" ")
+                                           for key, label, line in GATEWAY_CHOICES],
+                        default=s.backend if s.backend in ("litellm", "openrouter") else "litellm")
+    if gateway is None:
+        ui.warn("Setup cancelled.")
+        return 130
+    s.mode, s.cli_team, s.backend = "multi-model", False, gateway
+    _gateway_credential_warning(s)
     return 0
 
 

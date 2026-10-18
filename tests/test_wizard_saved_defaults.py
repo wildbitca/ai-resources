@@ -74,14 +74,16 @@ def _record(monkeypatch, picks=None, confirm=True, text=""):
 
 
 def test_saved_mode_and_backend_are_the_default_of_the_mode_question(monkeypatch):
-    for mode, backend, expect in (("multi-model", "openrouter", "multi-model:openrouter"),
-                                  ("multi-model", "litellm", "multi-model:litellm"),
-                                  ("single-model", "litellm", "single-model")):
+    """The saved mode and gateway start selected on screen 2 ("How should they work?", then "Which gateway?")."""
+    for mode, backend, how, gateway in (("multi-model", "openrouter", "advanced", "openrouter"),
+                                        ("multi-model", "litellm", "advanced", "litellm"),
+                                        ("single-model", "litellm", "alone", None)):
         seen = _record(monkeypatch)
         s = state.SetupState()
         s.mode, s.backend = mode, backend
-        wizard._step1_mode(s)
-        assert seen["Choose mode:"] == [expect]
+        wizard._step1_mode(s, is_first=False)
+        assert seen[wizard.HOW_PROMPT] == [how]
+        assert seen.get("Which gateway?") == ([gateway] if gateway else None)
 
 
 def test_saved_gateway_bind_and_port_are_the_defaults(monkeypatch):
