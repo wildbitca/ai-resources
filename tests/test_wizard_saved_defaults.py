@@ -109,18 +109,16 @@ def test_saved_lifecycle_choice_is_the_autostart_default(monkeypatch):
         assert seen["Auto-start LiteLLM at every login?"] == [saved]
 
 
-def test_saved_cockpit_selection_is_the_default_of_the_cockpit_checkbox(monkeypatch):
-    seen = _record(monkeypatch)
+def test_saved_tool_selection_is_the_default_of_the_tools_list():
+    """The tools ticked in an earlier run (or named with --cockpits) start ticked on "Your tools" (ADR-0009: the
+    step 7 checkbox became the first screen's list)."""
+    import types
+    detected = {cid: types.SimpleNamespace(installed=True) for cid in ("claude", "codex")}
     s = state.SetupState()
-    s.cockpits["claude"] = state.CockpitState(installed=True)
-    s.cockpits["codex"] = state.CockpitState(installed=True)
     s.profile.customizations["__targets__"] = {"selected": ["codex"]}
-    wizard._step7_cockpit_config(s, dry_run=True)
-    assert seen["Configure detected cockpits:"] == [["codex"]]
-    seen.clear()
+    assert wizard._default_members(s, detected) == ["codex"]
     s.profile.customizations.pop("__targets__")
-    wizard._step7_cockpit_config(s, dry_run=True)
-    assert seen["Configure detected cockpits:"] == [["claude", "codex"]]
+    assert wizard._default_members(s, detected) == ["claude", "codex"]
 
 
 def test_saved_profile_is_the_default_of_the_profile_question(monkeypatch):

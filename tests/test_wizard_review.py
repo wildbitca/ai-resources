@@ -93,7 +93,8 @@ def test_edit_a_section_reruns_from_that_step_and_returns_to_the_review(review_e
                        "Apply this?": Seq(wizard.EDIT_SECTION, ms.APPLY), "Which section": which})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
-    assert set(offered["ids"]) - {""} == {"mode", "providers", "credentials", "preset", "profile", "cockpits"}
+    # no OpenClaw ticked: the step-7 questions were skipped, so there is nothing to edit there
+    assert set(offered["ids"]) - {""} == {"mode", "providers", "credentials", "preset", "profile"}
     asked = script.asked
     assert len([m for m in asked if m.startswith("select: How do you want to choose models")]) == 1
     assert len([m for m in asked if m.startswith("confirm: Update OPENROUTER_API_KEY")]) == 1

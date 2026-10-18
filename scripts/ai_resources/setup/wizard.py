@@ -36,13 +36,22 @@ SINGLE_MODEL_DEFAULT_PROFILE = "claude-native"
 CLI_TEAM_DEFAULT_PROFILE = "subscription-claude-55"
 
 
+def _carry_targets(old: "state.ProfileState", new: "state.ProfileState") -> "state.ProfileState":
+    """The tools ticked on the first screen travel in `profile.customizations['__targets__']` until apply: a profile
+    that is rebuilt after that screen must take them along."""
+    targets = (old.customizations or {}).get("__targets__")
+    if targets:
+        new.customizations = {**(new.customizations or {}), "__targets__": targets}
+    return new
+
+
 def _reset_profile_for_cli(s: state.SetupState, was_cli: bool) -> None:
     """Moving from a non-CLI mode to the CLI team: an uncustomized claude-native/empty profile is the old
     starting point, not a choice, so it gives way to the subscription team profile."""
     if was_cli or not getattr(s, "cli_team", False):
         return
     if not s.profile.customized and s.profile.name in ("", SINGLE_MODEL_DEFAULT_PROFILE):
-        s.profile = state.ProfileState(name=CLI_TEAM_DEFAULT_PROFILE)
+        s.profile = _carry_targets(s.profile, state.ProfileState(name=CLI_TEAM_DEFAULT_PROFILE))
 
 
 def _single_default_profile(s: state.SetupState) -> str:
@@ -324,8 +333,13 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         """6a and 6b are answered by the preset: skipped without a line of output."""
         return ("Models and roles", "") if _PRESET else None
 
+    def tool_config_done(c):
+        """Step 7 only asks the questions a ticked tool has (OpenClaw): without one it is skipped without output."""
+        selected = (c.s.profile.customizations.get("__targets__") or {}).get("selected") or []
+        return None if "openclaw" in selected else ("Tool configuration", "")
+
     return [
-        S("tools", 1, "Tools and cockpits", lambda c: _step2_cockpits(c.s), rewindable=False),
+        S("tools", 1, "Your tools", lambda c: _step2_cockpits(c.s), rewindable=False),
         S("mode", 2, "Setup mode", _run_mode_step, edit_label="Mode"),
         S("gateway", 3, "Gateway", lambda c: _step3_litellm(c.s, c.dry_run), rewindable=dry_run,
           skip=gateway_skip, edit_label="Gateway"),
@@ -342,8 +356,8 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
           skip=preset_done, edit_label="Role assignment"),
         S("lanes", 6, "Subscription lanes", lambda c: _step_lanes(c.s, c.args, dry_run=c.dry_run),
           back=True, edit_label="Lanes"),
-        S("cockpits", 7, "Cockpit configuration", lambda c: _step7_cockpit_config(c.s, dry_run=c.dry_run),
-          back=True, edit_label="Cockpits"),
+        S("cockpits", 7, "Tool configuration", lambda c: _step7_cockpit_config(c.s, dry_run=c.dry_run),
+          back=True, skip=tool_config_done, edit_label="OpenClaw"),
         S("lifecycle", 8, "Lifecycle", lambda c: _step8_lifecycle(c.s), skip=lifecycle_skip,
           edit_label="Lifecycle"),
         S("review", 9, "Review", lambda c: _step_summary(c.s, c.args), rewindable=False),
@@ -1001,7 +1015,7 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
     s.backend = "litellm"
     s.litellm = state.LiteLLMState()
     s.providers = {}
-    s.profile = state.ProfileState(name=SINGLE_MODEL_DEFAULT_PROFILE, customized=False)
+    s.profile = _carry_targets(s.profile, state.ProfileState(name=SINGLE_MODEL_DEFAULT_PROFILE, customized=False))
     if s.cli_team:
         s.profile.name = CLI_TEAM_DEFAULT_PROFILE
     s.tracking = state.InstallTracking(
@@ -1013,9 +1027,28 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
     return 0
 
 
-# --- Step 2 — Cockpit detection --------------------------------------------------
+# --- Screen 1 "Your tools" (step 1) --------------------------------------------------
+SCREENS = 4
+"""The operator sees four screens (Your tools, How should they work?, Your team, Review) over the ten internal
+steps; the rail and `TOTAL_STEPS` stay (ADR-0009)."""
+HIDDEN_TOOLS = ("gemini",)
+"""Retired tools: never listed by the wizard (an old state that holds one still loads)."""
+
+
+def _default_members(s: state.SetupState, detected: dict) -> list[str]:
+    """The tools ticked when the screen opens (and the team of a run that cannot ask): the saved or requested
+    selection that is still installed, else every installed tool. Antigravity is the exception: it starts
+    ticked only when the saved lanes already hold it (a fresh install never opts in on its own)."""
+    installed = [cid for cid, det in detected.items() if det.installed]
+    saved = (s.profile.customizations.get("__targets__") or {}).get("selected")
+    held = [c for c in (saved or []) if c in installed]
+    if held:
+        return held
+    return [cid for cid in installed if cid not in HIDDEN_TOOLS and (cid != "agy" or _agy_lanes_on(s))]
+
+
 def _step2_cockpits(s: state.SetupState) -> int:
-    ui.section(1, TOTAL_STEPS, "Tools and cockpits")
+    ui.section(1, SCREENS, "Your tools")
     ui.info("Scanning installed AI CLIs...")
     detected = detection.detect_all_cockpits()
 
@@ -1024,15 +1057,19 @@ def _step2_cockpits(s: state.SetupState) -> int:
         list (installed ones with their version, installable ones tickable), so it is never printed twice."""
         rows = []
         for cid, det in detected.items():
+            if cid in HIDDEN_TOOLS and not det.installed:
+                continue
             status = "✔" if det.installed else "✘"
             info = f"v{det.version}  {det.binary_path}" if det.installed else ""
             rows.append((status, det.name, info))
         ui.detected_table(rows)
 
-    # Offer to install the AI CLIs that are missing, right after the scan and before the "no cockpits" check, so a
-    # machine with none can still install one here. Re-detecting afterwards lets the later steps see what was installed.
-    installed_tools = tools.offer(s, assume_yes=_ASSUME_YES, dry_run=_DRY_RUN,
-                                  cockpits=detected, print_scan=print_scan)
+    # The one list: tick the tools to use, tick a missing one to install it. It runs right after the scan and before
+    # the "no tools" check, so a machine with none can still install one here. Re-detecting afterwards lets the later
+    # steps see what was installed.
+    installed_tools = tools.offer(s, assume_yes=_ASSUME_YES, dry_run=_DRY_RUN, cockpits=detected,
+                                  print_scan=print_scan, members=True,
+                                  members_default=tuple(_default_members(s, detected)))
     if installed_tools:
         detected = detection.detect_all_cockpits()
 
@@ -1048,14 +1085,16 @@ def _step2_cockpits(s: state.SetupState) -> int:
 
     if installed_count == 0:
         ui.console().print()
-        ui.warn("No cockpits detected. Install at least one (e.g. Claude Code) and re-run setup.")
+        ui.warn("No tools detected. Install at least one (e.g. Claude Code) and re-run setup.")
         return 1
 
+    picked = getattr(s, "_tool_members_this_run", None)
+    members = [c for c in (picked if picked is not None else _default_members(s, detected))
+               if c in detected and detected[c].installed]
+    s.profile.customizations.setdefault("__targets__", {})["selected"] = members  # stash for apply step
     ui.console().print()
-    ui.info(
-        f"Configuring {installed_count} detected cockpit(s). "
-        f"To add another, install it via your usual method, then re-run `ai-resources setup`."
-    )
+    ui.info(f"{len(members)} tool(s) in use. To add another, install it by your usual method, then re-run "
+            "`ai-resources setup`.")
     return 0
 
 
@@ -1835,7 +1874,7 @@ def _step6_profile(s: state.SetupState) -> int:
 
     if not ui.confirm("Customize any role?", default=False):
         s.profile.customized = False
-        s.profile.customizations = {}
+        s.profile.customizations = _carry_targets(s.profile, state.ProfileState()).customizations
         # Stash full executors in state.profile.customizations as overrides
         return 0
 
@@ -1878,7 +1917,8 @@ def _step6_profile(s: state.SetupState) -> int:
 
     s.profile.customizations = customizations
     # Show updated table
-    merged = profiles.merge_customizations(base, customizations)
+    merged = profiles.merge_customizations(base, {k: v for k, v in customizations.items()
+                                                  if k in profiles.KNOWN_ROLES})
     executors = profiles.to_executors(merged, s.backend)
     ui.role_table(profiles.role_table(executors), title="Final mapping")
     return 0
@@ -1906,7 +1946,7 @@ def _step6_single_model_profile(s: state.SetupState) -> int:
     chosen = ui.select("How should kit subagents pick their Claude model?", choices, default=default)
     if chosen is None:
         return 130
-    s.profile = state.ProfileState(name=chosen, customized=False)
+    s.profile = _carry_targets(s.profile, state.ProfileState(name=chosen, customized=False))
     if _COMPOSE.get("mode"):
         if _COMPOSE["mode"] != "uniform":
             ui.error("single-model mode offers --compose uniform only (one Claude model for every role); "
@@ -1933,32 +1973,12 @@ def _single_model_executors(s: state.SetupState) -> dict:
     return profiles.to_executors(base)
 
 
-# --- Step 7 — Cockpit configuration ----------------------------------------------
+# --- Step 7 — per-tool configuration questions -----------------------------------------
 def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
-    ui.section(7, TOTAL_STEPS, "Cockpit configuration")
-
-    detected_ids = [cid for cid, cs in s.cockpits.items() if cs.installed]
-    if not detected_ids:
-        ui.warn("No cockpits detected — nothing to configure.")
-        return 0
-
-    choices = []
-    for cid in detected_ids:
-        mod = ALL_COCKPITS.get(cid)
-        if not mod:
-            continue
-        name = getattr(mod, "NAME", cid)
-        choices.append(ui.Choice(name, value=cid))
-
-    saved_targets = (s.profile.customizations.get("__targets__") or {}).get("selected")
-    held = [c for c in (saved_targets or []) if c in detected_ids]
-    selected = ui.checkbox(
-        "Configure detected cockpits:",
-        choices,
-        default=held or detected_ids,
-    )
-    s.profile.customizations.setdefault("__targets__", {})["selected"] = selected  # stash for apply step
+    """The tools were ticked on screen 1; this step only asks the questions a tool has of its own (OpenClaw)."""
+    selected = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
     if "openclaw" in selected:
+        ui.section(3, SCREENS, "OpenClaw")
         from .cockpits import openclaw as _openclaw_cockpit
         _openclaw_cockpit.prompt(s, dry_run=dry_run)
     return 0

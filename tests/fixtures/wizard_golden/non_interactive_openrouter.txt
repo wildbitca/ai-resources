@@ -9,10 +9,10 @@ rc=0
  i Previous config detected at <HOME>/xdg/ai-resources/setup-state.yaml
  Last run: <TS>
 
-[1/10] Tools and cockpits ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+[1/4] Your tools -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  i Scanning installed AI CLIs...
 
- i Configuring 1 detected cockpit(s). To add another, install it via your usual method, then re-run `ai-resources setup`.
+ i 1 tool(s) in use. To add another, install it by your usual method, then re-run `ai-resources setup`.
 
 [2/10] Setup mode ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ! A gateway credential replaces your claude.ai subscription for Claude Code: usage is billed per token to the gateway, not to your plan.
@@ -53,8 +53,6 @@ rc=0
 | terraform-maintainer | anthropic | anthropic/claude-sonnet-5.5 |
 | crossplane-upjet-maintainer | anthropic | anthropic/claude-sonnet-5.5 |
 +-----------------------------------------------------------------------+
-
-[7/10] Cockpit configuration -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 [8/10] Lifecycle -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  i Skipped (no local gateway to supervise).

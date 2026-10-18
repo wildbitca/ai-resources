@@ -880,11 +880,12 @@ def test_step7_cockpit_config_prompts_openclaw_in_both_modes(monkeypatch):
 
     prompted = []
     monkeypatch.setattr(openclaw, "prompt", lambda s, **_k: prompted.append(s.mode))
-    monkeypatch.setattr(ui, "checkbox", lambda *_a, **_k: ["openclaw"])
+    monkeypatch.setattr(ui, "section", lambda *_a, **_k: None)
 
     for mode in ("single-model", "multi-model"):
         s = _state("openclaw")
         s.mode = mode
+        s.profile.customizations["__targets__"] = {"selected": ["openclaw"]}   # ticked on the first screen
         wizard._step7_cockpit_config(s)
 
     assert prompted == ["single-model", "multi-model"]

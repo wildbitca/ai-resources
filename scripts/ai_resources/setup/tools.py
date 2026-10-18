@@ -287,7 +287,8 @@ def install_one(tool_id: str, s: state.SetupState) -> bool:
 def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, *,
           assume_yes: bool = False, dry_run: bool = False, preselect: tuple[str, ...] = (),
           cockpits: dict[str, detection.Detected] | None = None,
-          print_scan: Callable[[], None] | None = None) -> list[str]:
+          print_scan: Callable[[], None] | None = None,
+          members: bool = False, members_default: tuple[str, ...] = ()) -> list[str]:
     """Offer to install missing tools; return the ids actually installed.
 
     The question is ONE checkbox list over every tool the kit knows: installed ones are shown with their version and
@@ -310,12 +311,22 @@ def offer(s: state.SetupState, ids: tuple[str, ...] = REQUIRED_FOR_ANTIGRAVITY, 
     `cockpits` is the caller's own scan: entries that are not in TOOLS still appear in the list, with their version.
     `print_scan` prints the plain detection list; it is called on every path where the selector is NOT shown (the
     selector already carries the same information), so those outputs stay informative.
+
+    `members` (the setup wizard's "Your tools" screen, ADR-0009): on a terminal, without `--yes`, the ONE list is also
+    where the operator ticks the tools the kit should use. Installed tools are tickable too (`members_default` starts
+    ticked), missing ones are ticked to install, and the list is shown even when nothing is missing. The ids ticked
+    and installed are left in `s._tool_members_this_run` (an instance attribute, never serialised); unticking an
+    installed tool never uninstalls it. Every other path (`--yes`, unattended, no terminal) behaves exactly as without
+    `members` and leaves the attribute None: the caller derives the team from its own defaults.
     """
     s.tracking.install_tools_answer = None           # migration: nothing is replayed, nothing is persisted
+    s._tool_members_this_run = None
     found = _detect_tools()                           # one detection pass, reused everywhere below
     missing_all = [t for t in TOOLS if not found[t].installed]
     missing = [t for t in ids if t in missing_all]
     absent = _not_installed(missing_all)
+    if members and not assume_yes and not ui.is_non_interactive() and ui.stdin_is_a_terminal():
+        return _offer_members(s, found, missing_all, absent, preselect, members_default, dry_run)
 
     def scan() -> None:
         if print_scan is not None:
@@ -463,6 +474,81 @@ def _preview_selection(s: state.SetupState, absent: list[str], preselect: tuple[
                     "nothing is run.")
     if not chosen:
         ui.info("DRY RUN: no tool selected; nothing is installed.")
+
+
+# --- the "Your tools" list (ADR-0009): one list, one order, installed tools tickable as team members -----------------
+
+RECOMMENDED_TO_START = "claude"
+"""The tool that carries the "recommended to start" label. A label in the same list, not a position or a pre-tick."""
+MEMBERS_TITLE = ("Tick the tools the kit should use. Ticking a missing tool installs it; unticking never "
+                 "uninstalls.")
+MEMBERS_HINT = "Installed is not signed in: sign-in is not checked. Enter with the defaults installs nothing."
+NOTES = {
+    "claude": "recommended to start",
+    "agy": "sends repo content to Google; terms check next",
+}
+
+
+def member_order(found: dict[str, detection.Detected]) -> list[str]:
+    """Every known tool in the one order of the list: installed first, then alphabetical by name. The order never
+    depends on the TOOLS dict, and no tool has a special position."""
+    return sorted(TOOLS, key=lambda t: (not found[t].installed, TOOLS[t].label.lower()))
+
+
+def _member_choices(found: dict[str, detection.Detected]) -> list:
+    choices: list = []
+    for tid in member_order(found):
+        spec, det = TOOLS[tid], found[tid]
+        tail = f"  {NOTES[tid]}" if tid in NOTES else ""
+        if det.installed:
+            version = _installed_note(det)
+            choices.append(ui.Choice(f"{spec.label}  installed {version}".rstrip() + tail, value=tid))
+        elif spec.install_cmd:
+            choices.append(ui.Choice(f"{spec.label}  not installed  {spec.install_cmd}{tail}", value=tid))
+        else:
+            choices.append(ui.Choice(f"{spec.label}  manual install", value=tid,
+                                     disabled=f"manual install: {spec.manual_url}"))
+    return choices
+
+
+def _ask_members(found: dict[str, detection.Detected], preselect: tuple[str, ...],
+                 members_default: tuple[str, ...]) -> list[str]:
+    """The checkbox of the "Your tools" screen: installed rows start ticked per `members_default`, missing ones per
+    `preselect`; Antigravity is never ticked unless the caller names it."""
+    default = [t for t in TOOLS if (t in members_default and found[t].installed)
+               or (t in preselect and not found[t].installed and TOOLS[t].install_cmd)]
+    picked = ui.checkbox(f"{MEMBERS_TITLE}\n  {MEMBERS_HINT}", _member_choices(found), default=default)
+    return [p for p in (picked or []) if p in TOOLS]
+
+
+def _offer_members(s: state.SetupState, found: dict[str, detection.Detected], missing_all: list[str],
+                   absent: list[str], preselect: tuple[str, ...], members_default: tuple[str, ...],
+                   dry_run: bool) -> list[str]:
+    """The list on a terminal: ticked missing tools are installed (dry run: only previewed), the ticked ones that are
+    installed afterwards become the members. Asked once per run."""
+    attr = "_preview_answer_this_run" if dry_run else "_install_answer_this_run"
+    picked = getattr(s, attr, None)
+    if picked is None:
+        picked = _ask_members(found, preselect, members_default)
+        setattr(s, attr, picked)                          # an instance attribute: never serialised
+    chosen = [t for t in TOOLS if t in picked and t in absent]
+    installed: list[str] = []
+    if dry_run:
+        for t in chosen:
+            ui.info(f"DRY RUN: would install {TOOLS[t].label} with `{TOOLS[t].install_cmd}`; nothing is installed.")
+            if TOOLS[t].login_cmd:
+                ui.info(f"DRY RUN: would then offer to sign in to {TOOLS[t].label} with "
+                        f"`{_login_command(TOOLS[t])}`; nothing is run.")
+        if not chosen:
+            ui.info("DRY RUN: no tool selected to install; nothing is installed.")
+    else:
+        for tool_id in chosen:
+            if install_one(tool_id, s):
+                installed.append(tool_id)
+        _sign_in_flow(s, installed, interactive=True)
+        _print_later_sign_in([t for t in TOOLS if t not in missing_all and t not in installed], found)
+    s._tool_members_this_run = [t for t in TOOLS if t in picked and (found[t].installed or t in installed)]
+    return installed
 
 
 def _login_command(spec: ToolSpec, det: detection.Detected | None = None) -> str:

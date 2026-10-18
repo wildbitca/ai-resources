@@ -170,7 +170,7 @@ def section(num: int, total: int, title: str) -> None:
     head = Text(f"[{num}/{total}] {title}", style="bold cyan")
     console().rule(head, style="cyan", align="left", **rule_kw)
     if show_rail:
-        console().print(rail(num), markup=False, highlight=False)
+        console().print(rail(), markup=False, highlight=False)
         console().print(key_hint(), style="dim", markup=False, highlight=False)
 
 

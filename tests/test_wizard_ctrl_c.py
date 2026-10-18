@@ -177,10 +177,10 @@ def test_cancel_after_the_tools_offer_installed_something_lists_it(host, capsys)
     mp.setattr(tools, "_detect_tools", lambda: {t: detection.Detected(t, t != tool_id, "1", "/bin/" + t)
                                                 for t in tools.TOOLS})
     mp.setattr(tools, "_run_install", lambda cmd, timeout=300: (True, ""))
-    rc, script = _drive(host, {"Select the tools to install": [tool_id], "Sign in now": [], "Choose mode": ABORT})
+    rc, script = _drive(host, {"Tick the tools the kit should use": [tool_id], "Sign in now": [], "Choose mode": ABORT})
     err = capsys.readouterr().err
     assert rc == 130 and "Traceback" not in err
-    assert any(m.startswith("checkbox: Select the tools to install") for m in script.asked)
+    assert any(m.startswith("checkbox: Tick the tools the kit should use") for m in script.asked)
     assert f"installed {tools.TOOLS[tool_id].label}" in err
     assert "Nothing was applied" not in err
 
