@@ -177,16 +177,80 @@ def test_openclaw_is_asked_on_the_first_configure_only(monkeypatch):
     assert _spec("cockpits").skip(c) is None                      # More options > OpenClaw opens them again
 
 
-def test_a_configured_openclaw_keeps_every_saved_answer_without_a_question(monkeypatch, tmp_path):
-    host_env(monkeypatch, tmp_path)
-    asked = []
-    monkeypatch.setattr(openclaw_cockpit, "prompt", lambda s, **k: asked.append("prompt"))
+def test_a_configured_openclaw_is_skipped_silently_and_more_options_opens_it(monkeypatch):
     s = _team("claude", "openclaw")
-    s.openclaw.engine, s.openclaw.host, s.openclaw.voice = "claude-code", True, "local"
-    before = state._to_dict(s)["openclaw"]
+    s.openclaw.engine = "claude-code"
     c = types.SimpleNamespace(s=s)
     assert _spec("cockpits").skip(c) is not None
-    assert state._to_dict(s)["openclaw"] == before and asked == []
     monkeypatch.setattr(wizard, "_OPEN_OPENCLAW", True)
     assert _spec("cockpits").skip(c) is None
-    assert wizard._step7_cockpit_config(s) == 0 and asked == ["prompt"]
+
+
+def _drive_run(monkeypatch, tmp_path, review_answers, more=""):
+    """wizard.run on the subscription path with a seeded OpenClaw block; returns (script, prompts, applied state)."""
+    host_env(monkeypatch, tmp_path)
+    from ai_resources.setup import detection
+    det = lambda n: types.SimpleNamespace(installed=True, version="1", binary_path="/opt/" + n, name=n)
+    monkeypatch.setattr(detection, "detect_all_cockpits", lambda: {"claude": det("claude"), "openclaw": det("openclaw")})
+    monkeypatch.setattr(wizard, "_PRESET", wizard._PRESET)
+    prompts = []
+    monkeypatch.setattr(openclaw_cockpit, "prompt", lambda s, **k: prompts.append("prompt"))
+    seen = {}
+    monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
+    script = Script(**{"Use previous answers": True, "Model preset": "custom",
+                       "How do you want to choose models": "profile",
+                       "How should kit subagents pick": lambda v: SUB, "Enable subscription lanes?": False,
+                       "Configure detected cockpits": lambda v: list(v), "Apply this?": Seq(*review_answers),
+                       "More options": more})
+    script.install(monkeypatch)
+    monkeypatch.setattr(wizard.model_selection, "detect_accounts", lambda: {})
+    monkeypatch.setattr(wizard.model_selection, "candidates", lambda a, f: [])
+    s = state.SetupState()
+    s.mode, s.cli_team, s.backend = "single-model", True, "litellm"
+    s.profile.name = SUB
+    s.profile.customizations = {"__targets__": {"selected": ["claude", "openclaw"]}}
+    s.openclaw.engine, s.openclaw.host, s.openclaw.voice = "claude-code", True, "local"
+    s.last_run = "2026-01-01T00:00:00+00:00"
+    state.config_root().mkdir(parents=True, exist_ok=True)
+    state.save(s)
+    before = state._to_dict(state.load())["openclaw"]
+    assert wizard.run(_args(backend="cli")) == 0
+    return script, prompts, seen["s"], before
+
+
+def test_a_configured_openclaw_keeps_every_saved_answer_through_a_whole_run(monkeypatch, tmp_path):
+    script, prompts, applied, before = _drive_run(monkeypatch, tmp_path, [ms.APPLY])
+    assert prompts == []
+    assert state._to_dict(applied)["openclaw"] == before
+
+
+def test_more_options_openclaw_asks_the_openclaw_questions_once(monkeypatch, tmp_path):
+    script, prompts, applied, before = _drive_run(monkeypatch, tmp_path, [wizard.MORE_OPTIONS, ms.APPLY],
+                                                  more="openclaw")
+    assert prompts == ["prompt"]
+    assert [m for m in script.asked if "Apply this?" in m].__len__() == 2
+
+
+# --- Antigravity is never ticked on its own --------------------------------------------------------------------
+def test_agy_saved_in_targets_with_the_lanes_cleared_is_not_pre_ticked():
+    s = _team("claude", "agy")
+    s.profile.lanes = None
+    det = {c: types.SimpleNamespace(installed=True) for c in ("claude", "agy")}
+    assert wizard._default_members(s, det) == ["claude"]
+
+
+# --- a Change / More options jump that would re-run a locked step is refused -------------------------------------
+def test_a_jump_across_a_locked_step_is_refused_and_the_review_is_asked_again(monkeypatch):
+    s = _team("claude", "openclaw")
+    seen, script = _review(monkeypatch, s, [wizard.CHANGE_HOW, ms.APPLY])
+    notes = []
+    monkeypatch.setattr(ui, "warn", lambda m, *a, **k: notes.append(m))
+    steps = wizard._build_steps(False)
+    runner = flow.Wizard(steps=steps, on_skip=lambda *a: None, on_enter=lambda *a: None, snapshot=lambda: None,
+                         restore=lambda snap: None, notify=lambda m: None, scope=lambda spec, back: __import__("contextlib").nullcontext(),
+                         changes=lambda: 0)
+    runner.history = [flow._Done(runner.index_of("gateway"), None, True)]
+    monkeypatch.setattr(wizard, "_RUNNER", runner)
+    assert wizard._step_summary(s, _args()) == 0
+    assert any("cannot be asked again" in n for n in notes)
+    assert len(seen["values"]) == 2

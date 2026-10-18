@@ -863,6 +863,10 @@ def _forget_tool_answers(s: state.SetupState) -> None:
         s.__dict__.pop(attr, None)
 
 
+_REENTRANT = ("gateway", "providers", "credentials", "lifecycle")
+"""Steps More options > Gateway / Start at login re-run by design: they are idempotent, so they never refuse."""
+
+
 def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
     """Screen 4, "Review", BEFORE the write: the answers by name, then Apply, Change tools, Change how, Change team,
     More options or Cancel. A Change jumps back to that screen with the current answers as defaults and returns here.
@@ -893,6 +897,20 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
         choices.append(ui.Choice("More options...", value=MORE_OPTIONS))
     choices.append(model_selection.CANCEL)
     answer = ui.select("Apply this?", choices, default=model_selection.APPLY)
+    which = ""
+    if answer == MORE_OPTIONS:
+        which = ui.select("More options", more + [ui.Choice("Back to the review", value="")])
+        if not which:
+            return _step_summary(s, args)
+    target = {CHANGE_TOOLS: "tools", CHANGE_HOW: "mode"}.get(answer) or {
+        "parallel": "lanes", "gateway": "gateway", "lifecycle": "lifecycle", "openclaw": "cockpits"}.get(which)
+    if answer == CHANGE_TEAM and selection is None:
+        target = "preset"
+    if target and _RUNNER is not None:
+        refusal = _RUNNER.jump_refusal(target, reentrant=_REENTRANT if which in ("gateway", "lifecycle") else ())
+        if refusal:
+            ui.warn(refusal.lstrip("! "))
+            return _step_summary(s, args)
     if answer == CHANGE_TOOLS:
         _forget_tool_answers(s)
         raise flow.JumpTo("tools")
@@ -905,7 +923,6 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
         rc = _step_models(s, args, bool(getattr(args, "dry_run", False)))
         return rc if rc != 0 else _step_summary(s, args)
     if answer == MORE_OPTIONS:
-        which = ui.select("More options", more + [ui.Choice("Back to the review", value="")])
         if which == "parallel":
             _PARALLEL_RUNS = True
             raise flow.JumpTo("lanes")
@@ -1139,7 +1156,7 @@ def _default_members(s: state.SetupState, detected: dict) -> list[str]:
     ticked only when the saved lanes already hold it (a fresh install never opts in on its own)."""
     installed = [cid for cid, det in detected.items() if det.installed]
     saved = (s.profile.customizations.get("__targets__") or {}).get("selected")
-    held = [c for c in (saved or []) if c in installed]
+    held = [c for c in (saved or []) if c in installed and (c != "agy" or _agy_lanes_on(s))]
     if held:
         return held
     return [cid for cid in installed if cid not in HIDDEN_TOOLS and (cid != "agy" or _agy_lanes_on(s))]

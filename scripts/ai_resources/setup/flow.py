@@ -107,6 +107,21 @@ class Wizard:
                 out.append(spec)
         return out
 
+    def jump_refusal(self, step_id: str, reentrant: tuple = ()) -> Optional[str]:
+        """Why a jump to `step_id` is refused, or None. A jump re-runs that step and every later one: refuse
+        when one of them, already run in this run, changed this machine or cannot be asked again. `reentrant`
+        names the steps built to be run again (More options > Gateway re-asks the gateway and its keys); they
+        never refuse a jump, any other step does."""
+        target = self.index_of(step_id)
+        for d in self.history:
+            spec = self.steps[d.index]
+            if d.index < target or d.skipped or spec.id in ("review", "apply") or spec.id in reentrant:
+                continue
+            if d.locked or not spec.rewindable:
+                return (f"! {spec.title} already changed this machine in this run; it cannot be asked again. "
+                        "Re-run setup to change it.")
+        return None
+
     def _previous(self) -> Optional[_Done]:
         for d in reversed(self.history):
             if not d.skipped:
