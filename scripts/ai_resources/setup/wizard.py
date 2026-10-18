@@ -307,8 +307,10 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         return multi(c) and c.s.backend == "litellm"
 
     def gateway_skip(c):
+        """Steps 3, 4, 5 and 8 belong to the gateway path: on any other path they are skipped without a line of
+        output (ADR-0009). A gateway path that skips one of them still says why."""
         if not multi(c):
-            return ("LiteLLM gateway", "Skipped (single-model mode).")
+            return ("Gateway", "")
         if c.s.backend != "litellm":
             return ("Gateway", "Skipped \u2014 OpenRouter is hosted; there is nothing to install or supervise.")
         return None
@@ -316,7 +318,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
     def lifecycle_skip(c):
         if local_gateway(c):
             return None
-        return ("Lifecycle", "Skipped (no local gateway to supervise)." if multi(c) else "Skipped (single-model mode).")
+        return ("Lifecycle", "Skipped (no local gateway to supervise)." if multi(c) else "")
 
     def preset_done(c):
         """6a and 6b are answered by the preset: skipped without a line of output."""
@@ -328,11 +330,10 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         S("gateway", 3, "Gateway", lambda c: _step3_litellm(c.s, c.dry_run), rewindable=dry_run,
           skip=gateway_skip, edit_label="Gateway"),
         S("providers", 4, "Provider backends", lambda c: _step4_providers(c.s),
-          skip=lambda c: None if multi(c) else ("Provider backends",
-                                                "Skipped (single-model uses cockpit's native auth)."),
+          skip=lambda c: None if multi(c) else ("Provider backends", ""),
           edit_label="Providers"),
         S("credentials", 5, "Credentials", lambda c: _step5_credentials(c.s, c.dry_run),
-          skip=lambda c: None if multi(c) else ("Credentials", "Skipped."), edit_label="Credentials"),
+          skip=lambda c: None if multi(c) else ("Credentials", ""), edit_label="Credentials"),
         S("preset", 6, "Model preset", lambda c: _step_preset(c.s, c.args), back=True, edit_label="Models"),
         S("models", 6, "Models", lambda c: _step_models(c.s, c.args, c.dry_run), back=True,
           skip=preset_done, edit_label="Models"),

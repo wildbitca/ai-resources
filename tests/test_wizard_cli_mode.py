@@ -143,6 +143,33 @@ def test_gateway_provider_credential_and_lifecycle_steps_are_skipped():
     assert _spec("profile").skip(c) is None and _spec("lanes").skip is None   # no preset answered here
 
 
+def test_non_gateway_paths_skip_the_gateway_steps_without_a_word(monkeypatch):
+    """ADR-0009: steps 3, 4, 5 and 8 print nothing on a path with no gateway; the ten steps stay."""
+    import types
+    from ai_resources.setup import flow
+    assert wizard.TOTAL_STEPS == 10 and len(flow.STEP_LABELS) == 10
+    for cli_team in (False, True):
+        s = state.SetupState()
+        s.cli_team = cli_team
+        c = types.SimpleNamespace(s=s)
+        for step_id in ("gateway", "providers", "credentials", "lifecycle"):
+            assert _spec(step_id).skip(c)[1] == "", (cli_team, step_id)
+    shown = []
+    monkeypatch.setattr(ui, "section", lambda *a: shown.append(a))
+    monkeypatch.setattr(ui, "info", shown.append)
+    wizard._report_skip(_spec("gateway"), *_spec("gateway").skip(types.SimpleNamespace(s=state.SetupState())))
+    assert shown == []
+
+
+def test_a_gateway_path_that_skips_a_step_still_says_why():
+    import types
+    s = state.SetupState(mode="multi-model", backend="openrouter")
+    c = types.SimpleNamespace(s=s)
+    assert "OpenRouter is hosted" in _spec("gateway").skip(c)[1]
+    assert "no local gateway" in _spec("lifecycle").skip(c)[1]
+    assert _spec("providers").skip(c) is None and _spec("credentials").skip(c) is None
+
+
 def test_the_profile_step_defaults_to_the_subscription_team(monkeypatch):
     s = state.SetupState()
     s.cli_team = True
