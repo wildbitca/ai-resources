@@ -16,7 +16,7 @@
 3. **A step registry, not a rewrite.** `setup/flow.py` is stdlib only. `wizard._run` keeps its preamble (dependency check, non-TTY guard before any banner, banner, corrupt-state handling, resume question, preflights) and then runs `flow.Wizard` over a list of `StepSpec` that call the existing step functions in the existing order, with the existing skip wording.
 4. **Back is step-level and refuses to cross a change.** Ctrl-B is offered only in steps without side effects (models, role assignment, lanes, cockpit selection). The binding is merged into the built question's `application.key_bindings` (select and checkbox reject a `key_bindings=` kwarg) and exits with a `BACK` sentinel that the wrapper turns into `GoBack`. The runner restores the in-memory state snapshot taken before the aborted step and re-asks the previous step with its answers as defaults, but only when that step is rewindable and recorded no action. Otherwise it prints a notice and asks the same step again. Tool installs, the gateway install and the mid-flow state save, apply and verify are never rewound; the gateway is rewindable in `--dry-run` only.
 5. **The review is the way to change an earlier answer.** Step 9 shows one row per section from the setup state, with credentials only as `set` or `missing`, and its select gains `Edit a section...` next to Apply, Change models and Cancel. Picking a section raises `JumpTo`; the run continues linearly from that step with the current answers as defaults and returns to the review. The review is shown on the kit-profile path too (a host with no recorded model selection gets the answer rows and the Apply question, without the per-cockpit plan); a non-interactive run keeps its silent skip because nothing can answer. Review writes nothing of the kit's configuration, but earlier steps already installed tools, saved credentials or the gateway state when confirmed; the cancel block lists them.
-6. **Numbering stays at 10.** Models, roles and lanes are sub-steps 6a, 6b and 6c, so the existing assertions on `TOTAL_STEPS` and `(10, 10, "Verification")` stay valid.
+6. **Numbering stays at 10.** Models, roles and lanes are sub-steps 6a, 6b and 6c, so the existing assertions on `TOTAL_STEPS` and `(10, 10, "Verification")` stay valid. **Amended by [ADR-0009](0009-setup-tools-how-team.md) (display only):** the headers count four screens (`[2/4]`); `TOTAL_STEPS`, the ten internal steps and the rail data are unchanged.
 7. **Terminal behaviour.** `NO_COLOR` wins over `FORCE_COLOR` and strips colour only. Under `NO_COLOR` or a non-UTF-8 stream the glyphs are ASCII. The rail is full from 80 columns, wrapped from 60, a single `Step n/10  title` line below 60, and the plain header only in a non-interactive run. Without a TTY the wizard still fails with the existing error before any banner or rail.
 8. **Output of failures and dry runs is masked.** `ui.mask_secrets` hides key-like `NAME=value` pairs, well-known token shapes, Bearer tokens and long opaque strings. A failing command prints its last 20 lines through it; the dry run prints a unified diff per renderable target, `new file` when it is missing.
 
@@ -81,6 +81,7 @@ names and "Customize any role?". That is too much for the common case. It now op
 - The flags path (`--profile`, `--models`, `--shape`, `--providers`, `--compose`, `--non-interactive`) bypasses the
   question. A saved customized, composed or account-picked team defaults the question to Custom.
 - The review's "Edit a section" offers one "Models" entry, which re-opens the preset question.
+- **Amended by [ADR-0009](0009-setup-tools-how-team.md):** the question is now "Starting team:" ("Low pricing" became "Low cost", same profiles), choosing it is the confirmation ("Use this?" is gone), and the review's "Edit a section" became Change tools / Change how / Change team / More options.
 
 Rollback: remove the `preset` step and the four profiles; no state migration.
 
@@ -90,6 +91,7 @@ Gemini models were absent from step 6 for a structural reason: the Custom "pick 
 from API credentials (`model_accounts.detect`), and Antigravity (`agy`) is a subscription CLI with its own login, not an
 account. Decisions:
 
+- **Amended by [ADR-0009](0009-setup-tools-how-team.md):** "off until you enable it in step 6c" described a switch that did not exist; Antigravity is now ticked on "Your tools", its row in the team table says "terms check next", and the "lane off" table is gone.
 - **Custom list.** When `agy` is installed (`detection.agy_installed`, a binary lookup that never runs `agy`), the list
   prints an "Antigravity (agy, subscription)" group with the `model_pins.AGY_LANE_MODELS` slugs, each labelled
   `lane, opt-in` and, while `AGY_LANE_MODELS_CONFIRMED` is False, `unconfirmed slug`. The rows are **informational**:

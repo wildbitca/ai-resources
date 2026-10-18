@@ -1,5 +1,30 @@
 # Multi-Model Routing — User Guide
 
+## Words the setup uses
+
+`ai-resources setup` asks three things: **which tools do you use**, **how should they work**, and **who does what**.
+Every AI coding CLI (Antigravity, Aider, Claude Code, Codex, Continue, Copilot, Cursor, OpenClaw, OpenCode, Windsurf)
+is a **tool**; Claude Code is one of them, listed like the others. The rest of this guide, and the setup screens on the
+default path, use six words:
+
+| Word | Meaning |
+|---|---|
+| Tool | Any AI coding CLI the kit can see. Installed ones are found for you; tick a missing one to install it. |
+| Role | A job in the team: explorer, planner, architect, implementer, reviewer, security, verifier, tester, docs. |
+| Team | Which tool does which role. |
+| Starting team | Balanced, Performance, Low cost or Custom: a ready-made team you can start from. |
+| Subscription | A plan you already pay for (Claude, Google, OpenAI). "As a team" runs on subscriptions and asks for no API key. |
+| Gateway | Advanced only: LiteLLM or OpenRouter with API keys and budgets. |
+
+Plain phrases stand in for the internal names: "How should they work?" is the *mode*, "Parallel runs" are the
+*subscription lanes*, "Terms check" is the *acknowledgement* (the stored text is unchanged), "Start at login" is the
+*lifecycle*, "API keys" are the *credentials*. The old words stay where they are exact: state keys (`mode`, `backend`,
+`cli_team`, `profile`, `lanes`, `lane_acks`, `cockpits`), CLI flags, file names (`executors.yaml`, `lanes.yaml`), the
+ADRs, `doctor` and `verify` output, and the internal sections of this guide below. Design:
+[ADR-0009](decisions/0009-setup-tools-how-team.md).
+
+---
+
 Multi-model routing lets each kit subagent run on a different LLM. Two backends
 serve it, and the wizard asks which one you want:
 
@@ -20,82 +45,112 @@ itself.
 ## Quick start
 
 ```sh
-ai-resources setup       # interactive wizard — step 1 picks the backend
+ai-resources setup       # interactive wizard — four screens
 ai-resources doctor      # verify everything works
 ```
 
-The wizard handles cockpit detection (Claude Code, Cursor, Antigravity CLI, …),
-gateway setup where there is one, credentials, profile selection, and
-per-cockpit configuration.
+The wizard finds the tools you have (Claude Code, Cursor, Antigravity CLI, …) and lets you tick more to install, asks
+how they should work (as a team on your subscriptions, each on its own, or Advanced with a gateway), gives each role
+to a tool through a starting team, and shows a review before it writes anything.
 
 ### What the wizard looks like
 
-Each step starts with a header, a progress rail and one line of key hints:
+Four screens, over ten internal steps. Each step starts with a header, a progress rail and one line of key hints; the
+header counts screens (`[2/4]`), the rail counts the ten steps:
 
 ```
-─────────────── [4/10] Provider backends ───────────────
- ✔ Tools  ✔ Mode  ✔ Gateway  ● Providers  ○ Credentials  ○ Models  ○ Cockpits  ○ Lifecycle  ○ Review  ○ Verify
+[2/4] How should they work? ----------------------------------------------------------------
+ ✔ Tools  ● Mode  ○ Gateway  ○ Providers  ○ Credentials  ○ Models  ○ Cockpits  ○ Lifecycle  ○ Review  ○ Verify
  ↑/↓ move · Space toggle · Enter confirm · Ctrl-C cancel
 ```
 
-The ten steps are Tools, Mode, Gateway, Providers, Credentials, Models and roles (a preset question, then for
-Custom 6a Models and 6b Role assignment; 6c Subscription lanes), Cockpit config, Lifecycle, Review and apply, and Verification. A step that does not apply
-is shown and marked skipped. In a narrow terminal (under 60 columns) the header is one line, `Step 4/10  Provider
-backends`; with `NO_COLOR` set, or on a terminal that is not UTF-8, the rail uses `[x]`, `[>]`, `[ ]` and `[-]`.
+**Screen 1, Your tools.** One list for every tool, one order (installed first, then alphabetical). Tick the tools the
+kit should use; ticking a missing one installs it, unticking never uninstalls. Claude Code is in the same list with a
+"recommended to start" label, no special position and no special tick. Antigravity is never ticked on its own: its row
+says it sends repo content to Google and that a terms check comes next. Installed is not signed in: sign-in is not
+checked.
+
+```
+? Tick the tools the kit should use. Ticking a missing tool installs it; unticking never uninstalls.
+    [ ] Antigravity CLI (agy)  installed v1.4  sends repo content to Google; terms check next
+    [x] Claude Code  installed v2.1.300  recommended to start
+    [x] Codex CLI  installed v0.163
+    [ ] Aider  not installed  curl -LsSf https://aider.chat/install.sh | sh
+    [-] Windsurf  manual install   (manual install: https://docs.devin.ai/desktop/getting-started)
+```
+
+**Screen 2, How should they work?** *As a team* (each role goes to the tool you choose, on your subscriptions, no API
+keys), *Each on its own* (every tool keeps its own sign-in and settings) or *Advanced* (a gateway, LiteLLM or
+OpenRouter, with API keys and budgets; one follow-up asks which). The default is *As a team* when two or more tools are
+ticked, and a saved answer is never replaced. `--backend` decides it and the screen is not shown.
+
+**Screen 3, Your team.** One question, *Starting team*: Balanced (recommended), Performance, Low cost or Custom.
+Choosing it is the confirmation; the role table and a team table (which tool takes which roles) are shown with it.
+Writing code always stays with Claude Code. Antigravity shows roles only when it is ticked, Codex shows "no roles yet"
+and is never a choice. Custom opens the model and role questions of earlier kits unchanged. If Antigravity is ticked, a
+terms check follows (see [the Antigravity lane](#the-antigravity-lane-adr-0007-section-11-phase-3-closed)).
+
+**Screen 4, Review.** The answers by name (How, Team, Tools, Will write) and the choices *Apply*, *Change tools*,
+*Change how*, *Change team*, *More options...* and *Cancel*. A *Change* jumps back to that screen with your answers as
+defaults and returns here. *More options...* holds what the default path does not ask: Parallel runs (Claude Code on
+your subscription, off by default), Gateway and API keys and Start at login (only with a gateway), and OpenClaw
+(engine, host, voice; asked on the first configure only). Nothing of the kit's configuration is written before Apply.
+
+A step that does not apply is skipped without output on the default path; a gateway path still says why. In a narrow
+terminal (under 60 columns) the header is one line, `Step 4/10  Provider backends`; with `NO_COLOR` set, or on a
+terminal that is not UTF-8, the rail uses `[x]`, `[>]`, `[ ]` and `[-]`.
 
 | Key | What it does |
 |---|---|
 | Up / Down, Space, Enter | Move, toggle (multi-select) and confirm |
-| Ctrl-B | Back to the previous step, in the steps that changed nothing yet (models, role assignment, lanes, cockpit selection). A step after one that installed or saved something refuses it and says so |
+| Ctrl-B | Back to the previous step, in the steps that changed nothing yet (team, models, role assignment, parallel runs, OpenClaw questions). A step after one that installed or saved something refuses it and says so |
 | Ctrl-C or Ctrl-D | Cancel, in every prompt (select, multi-select, confirm, text and password; in a text field that holds text Ctrl-D deletes the character under the cursor). Exit code 130; the message names the step and lists anything already done in the run |
 
-The review at step 9 shows one row per answer (credentials only as `set` or `missing`) and lets you pick
-`Edit a section...` to re-open an earlier step; the run continues from there and returns to the review. It is shown
-on the "Use a kit profile" path too (a non-interactive run has nobody to ask and skips it). The kit's own
-configuration (cockpit settings, `executors.yaml`, `litellm.yaml`, `lanes.yaml`) is not written before you choose
-Apply. Step 1 shows ONE list of every tool the kit knows: installed ones with their version (not selectable), the
-missing ones unticked (Enter with nothing ticked skips and installs nothing), and manual-install ones as information.
-Only the ticked ones are installed. For each tool installed in that run that has a sign-in you are then asked
-(a separate, pre-ticked `Sign in now?`) whether to sign in; the tool's own interactive login runs on your terminal
-(the kit never sees or stores a credential), and without a terminal or with `--yes` the command is printed for you
-to run later. Tools that were already installed only get a dim line with the command to run later. Some earlier steps do act on the machine when you confirm them: tool, pipx and LiteLLM installs, the
-LiteLLM image pull, provider credentials and the remote master key written to the env file, the gateway state
-save, and the multi-model cleanup when you leave that mode. A cancel lists whatever already happened.
-`--dry-run` installs and writes nothing and ends with a masked diff per file and `DRY RUN: nothing was written`.
-On a re-run every question starts from your saved answer. A Ctrl-C while a cockpit is being written is listed as
-`may be partially written: <cockpit>`; re-run setup to finish it. Output echoed from installers is stripped of
-terminal escapes and masked.
-Design: [ADR-0008](decisions/0008-setup-wizard-tui-on-rich-questionary.md).
+The review shows credentials only as `set` or `missing` (on a gateway path) and is shown on the "Use a kit profile" path
+too (a non-interactive run has nobody to ask and skips it). Installing a missing tool happens on screen 1, so Back
+cannot rewind past it. For each tool installed in that run that has a sign-in you are then asked (a separate,
+pre-ticked `Sign in now?`) whether to sign in; the tool's own interactive login runs on your terminal (the kit never
+sees or stores a credential), and without a terminal or with `--yes` the command is printed for you to run later.
+`--yes` installs only the missing ones of Claude Code, Antigravity and OpenClaw. Some earlier steps do act on the
+machine when you confirm them: tool, pipx and LiteLLM installs, the LiteLLM image pull, provider credentials and the
+remote master key written to the env file, the gateway state save, and the multi-model cleanup when you leave that
+mode. A cancel lists whatever already happened. `--dry-run` installs and writes nothing and ends with a masked diff
+per file and `DRY RUN: nothing was written`. On a re-run every question starts from your saved answer. A Ctrl-C while
+a tool is being written is listed as `may be partially written: <tool>`; re-run setup to finish it. Output echoed from
+installers is stripped of terminal escapes and masked.
+Design: [ADR-0008](decisions/0008-setup-wizard-tui-on-rich-questionary.md), amended by
+[ADR-0009](decisions/0009-setup-tools-how-team.md).
 
 ### Choosing the mode
 
-Step 2 asks for the mode. There are four options:
+Screen 2 ("How should they work?") writes the same state the old four-way mode question wrote:
 
-| Option | When | Gateway | Billing |
+| Answer | Gateway | Billing | State |
 |---|---|---|---|
-| single-model | Each cockpit talks to its own provider | none | your plan |
-| multi-model via your CLI subscriptions | A host with subscriptions only (Claude Code, Antigravity `agy`, Codex plans) | none | your plans, nothing per token |
-| multi-model via OpenRouter | Per-role routing with one key | hosted | per token, to the gateway |
-| multi-model via LiteLLM | Per-role routing, local models, per-key budgets | the kit installs one | per token, to the gateway |
+| As a team | none | your plans, nothing per token (Claude Code, Antigravity `agy`, Codex plans) | `mode: single-model`, `cli_team: true` |
+| Each on its own | none | your plan | `mode: single-model` |
+| Advanced > OpenRouter | hosted | per token, to the gateway | `mode: multi-model`, `backend: openrouter` |
+| Advanced > LiteLLM | the kit installs one | per token, to the gateway | `mode: multi-model`, `backend: litellm` |
 
-The CLI-subscriptions mode asks for no key, installs no gateway and shows no gateway warning (a gateway credential
-would replace the claude.ai login; this mode never sets one). Step 6 starts from `subscription-claude-55` and step 6c
-offers the subscription lanes ([below](#subscription-lanes)): Antigravity stays opt-in, off by default and gated, and
-the Codex lane stays held. `ai-resources setup --backend cli` picks it without a prompt. Stored as `mode:
-single-model` plus `cli_team: true` in `setup-state.yaml` (the key is absent otherwise, so older files are unchanged).
-Moving from a gateway mode to it offers the same cleanup as multi-model to single-model; moving between it and
-single-model leaves gateway artifacts alone.
+*Each on its own* means every tool works on its own sign-in with no cross-tool team; it does not mean one tool does
+every role. *As a team* asks for no key, installs no gateway and shows no gateway warning (a gateway credential would
+replace the claude.ai login; this answer never sets one). Your team starts from `subscription-claude-55`, and the
+subscription lanes ([below](#subscription-lanes)) are reached from Review > More options > Parallel runs: Antigravity
+stays opt-in and gated, and the Codex lane stays held. `ai-resources setup --backend cli` picks it without a prompt, and
+`--backend litellm` / `--backend openrouter` do the same for a gateway (the screen is not shown). The `cli_team` key is
+absent otherwise, so older files are unchanged. Moving from a gateway to a no-gateway answer offers the cleanup of what
+the kit installed; moving between the two no-gateway answers leaves gateway artifacts alone.
 
-### Where Gemini shows in step 6
+### Where Gemini shows
 
 Gemini models come through Antigravity (`agy`), a subscription CLI with its own login, so they are not in the "pick
 models from my accounts" list, which is built from API credentials. With `agy` installed, the Custom list prints an
 "Antigravity (agy, subscription)" group of informational rows (`lane, opt-in`, plus `unconfirmed slug` until a V5 run
-confirms the slugs); it asks for no key and cannot be picked as an API model. In CLI-subscriptions mode the preset role
-table is followed by a table "Antigravity lane - off until you enable it in step 6c" with the Antigravity candidates
-of the profile's lanes block (Performance and Low pricing add Gemini as the code-review second opinion). Without
-`agy`, setup says so in one line. Enabling the lane stays in step 6c (Google acknowledgement, gates G0-G7); nothing
-is written to agy.
+confirms the slugs); it asks for no key and cannot be picked as an API model. On "Your team", the team table has an
+Antigravity row: untick = "off", ticked = the roles it would take (Performance and Low cost add Gemini as the
+code-review second opinion), each slug labelled `[unconfirmed slug]` while unconfirmed, and "sends repo content to
+Google; terms check next". Without `agy`, setup says so in one line. The terms check (Google acknowledgement, gates
+G0-G7) is the same one `--lanes-antigravity` opens; nothing is written to agy.
 
 ## Mental model
 
@@ -195,33 +250,34 @@ service, so `ai-resources daemon` has nothing to manage and says so.
 | `cost-optimized` | multi-model, either gateway | Aggressively biased toward Flash and Haiku. |
 | `claude-native` | single-model | Each role picks a Claude alias. No gateway. The default for single-model and for a Claude-only host with no gateway. |
 | `claude-inherit` | single-model | Every role inherits the session model. |
-| `performance-claude-55` | multi-model, either gateway | The Performance preset for the gateway modes. Claude only, valid in every compatibility cell without `--allow-unverified`: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for every writer. Costs more than `balanced-claude-55`. |
-| `economy-claude-55` | multi-model, either gateway | The Low pricing preset for LiteLLM. Claude only and verified: Haiku for reading and mechanical roles, Sonnet for the planner, architect, code, review and verification, Opus only for security. Replaces `cost-optimized` as the preset because that profile names Google models the Claude cockpit has not verified. |
+| `performance-claude-55` | multi-model, either gateway | The Performance starting team for the gateway modes. Claude only, valid in every compatibility cell without `--allow-unverified`: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for every writer. Costs more than `balanced-claude-55`. |
+| `economy-claude-55` | multi-model, either gateway | The Low cost starting team for LiteLLM. Claude only and verified: Haiku for reading and mechanical roles, Sonnet for the planner, architect, code, review and verification, Opus only for security. Replaces `cost-optimized` as the preset because that profile names Google models the Claude cockpit has not verified. |
 | `subscription-claude-55` | single-model, no gateway | Curated reference for a Claude subscription: Claude aliases, Sonnet for writers, Opus for the verifier and security auditor so checkers never share a family with writers. Not recommended as the default; aliases float, so the evidence may drift. |
-| `subscription-performance` | single-model, no gateway | The Performance preset without a gateway. Claude aliases: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for writers and the explorer. Checkers stay on Opus and no writer does. Carries a lane table. |
-| `subscription-economy` | single-model, no gateway | The Low pricing preset without a gateway. Claude aliases: Haiku for exploration, docs and upgrades, Sonnet for the planner, architect, writers and reviewer, Opus only for the verifier and security auditor (independence is not traded for price). Carries a lane table. |
+| `subscription-performance` | single-model, no gateway | The Performance starting team without a gateway. Claude aliases: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for writers and the explorer. Checkers stay on Opus and no writer does. Carries a lane table. |
+| `subscription-economy` | single-model, no gateway | The Low cost starting team without a gateway. Claude aliases: Haiku for exploration, docs and upgrades, Sonnet for the planner, architect, writers and reviewer, Opus only for the verifier and security auditor (independence is not traded for price). Carries a lane table. |
 
 Custom: pick `custom` in the wizard to override each role individually.
 
-### Choosing models: the preset question
+### Choosing models: the starting team
 
-The first question of step 6 is one plain choice, with no provider, vendor or model in it:
+The question of "Your team" (step 6) is one plain choice, with no provider, vendor or model in it:
 
-| Preset | What it means |
+| Starting team | What it means |
 |---|---|
 | Balanced (recommended) | Strong models where defects are caught, cheaper ones for reading and mechanical work. |
 | Performance | The strongest models on planning, review and verification. Costs more. |
-| Low pricing | The cheapest models that still keep review, verification and security strong. |
+| Low cost | The cheapest models that still keep review, verification and security strong. |
 | Custom | The earlier flow: pick a profile, pick models from your accounts, customize any role, or compose a team. |
 
-A preset resolves to a kit profile by how the host reaches its models, then the wizard shows only the role table and
-asks `Use this?` (Enter is yes; No returns to the preset question). There is no "Customize any role?" in a preset path.
+A starting team resolves to a kit profile by how the host reaches its models, then the wizard shows the role table
+(and, as a team, who does what) with the choice: choosing it is the confirmation, nothing is asked again. There is no
+"Customize any role?" on this path.
 
-| Preset | CLI subscriptions | Single-model | LiteLLM | OpenRouter |
+| Starting team | As a team | Each on its own | Advanced: LiteLLM | Advanced: OpenRouter |
 |---|---|---|---|---|
 | Balanced | `subscription-claude-55` | `claude-native` | `balanced-claude-55` | `balanced-claude-55` |
 | Performance | `subscription-performance` | `subscription-performance` | `performance-claude-55` | `performance-claude-55` |
-| Low pricing | `subscription-economy` | `subscription-economy` | `economy-claude-55` | `economy-claude-55` |
+| Low cost | `subscription-economy` | `subscription-economy` | `economy-claude-55` | `economy-claude-55` |
 
 The question is skipped, and the flags path is unchanged, with `--profile`, `--models`, `--shape`, `--providers`,
 `--compose` or `--non-interactive`. A saved choice is the default of the question and is never replaced: a saved preset
@@ -286,8 +342,10 @@ verification tables are empty). Treat the layer as unusable until they are.
 
 ## Subscription lanes
 
-Reachable from the "multi-model via your CLI subscriptions" mode (see [Choosing the mode](#choosing-the-mode)) as
-well as from single-model.
+Reachable from "As a team" (see [Choosing the mode](#choosing-the-mode)) as well as from "Each on its own". In the
+wizard they are called **parallel runs**: not asked on the default path, they are Review > More options > Parallel
+runs (off by default). Ticking Antigravity on "Your tools" is the interactive opt-in for its lane and does not switch
+the Claude parallel runs on.
 
 A lane is a place a role can run: Claude Code, or an OpenClaw agent (`kit-lane-*`) on the Claude CLI backend, so a
 role can use the Claude subscription login in its own process with its own worktree. Lanes are a separate pass
@@ -326,6 +384,15 @@ an enforced check that fails closed with a message, not prose:
 ai-resources setup --lanes --lanes-antigravity --lanes-orchestrator main   # sign the Google acknowledgement
 ai-resources setup --no-lanes-antigravity                                  # close it again; claude-cli lanes stay
 ```
+
+Interactively there is a second way in (ADR-0009): **tick Antigravity on "Your tools"**. The tool is never ticked on
+its own, even when installed. Ticking it opens the same Google terms check after "Your team" (the text of
+`lanes_render.ACK_TEXT['google']` verbatim, the account named, the roles ticked with the implementer unticked) and an
+accept stores the same `lane_acks['google']` and the Antigravity gate as the flag. A decline, an empty account, Ctrl-B
+or Ctrl-C unticks the tool and stores nothing; unticking a tool that was on closes the gate again (like
+`--no-lanes-antigravity`). It does not turn the Claude parallel runs on. Unattended runs, `--yes` and the flags behave
+as before: `--non-interactive --lanes-antigravity` without a valid stored acknowledgement still exits 2. The gates
+below still decide whether anything is admitted.
 
 - ADR-0007 section 11 is Accepted (`lanes_render.AGY_LANE_ADR_ACCEPTED`, pinned to the ADR's status line);
 - `--lanes-antigravity` is on (persisted as `lanes.gates.antigravity`);

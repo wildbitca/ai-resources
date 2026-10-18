@@ -6,6 +6,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Changed (setup asks three things: tools, how, team; ADR-0009)
+
+- **Every coding CLI is a tool, and the default path is four screens.** `ai-resources setup` now asks *Your tools*,
+  *How should they work?*, *Your team* and *Review* (ten internal steps and the progress rail stay; the headers count
+  screens). The six words it uses are tool, role, team, starting team, subscription and gateway; the glossary is at the
+  top of `docs/multi-model.md`. State keys, flags and files keep their names; an old state file keeps its meaning and
+  the schema does not change ([ADR-0009](docs/decisions/0009-setup-tools-how-team.md), amending ADR-0008 decision 6
+  in display only, its preset addendum, and ADR-0007 section 11 on where the Google terms check can open).
+- **Your tools** is one list for every tool, one order (installed first, then alphabetical), and it also holds the
+  tools the kit should use: installed tools are tickable, a missing one is ticked to install, unticking never
+  uninstalls. Claude Code carries a "recommended to start" label in the same list, no special position or tick. The
+  second "Configure detected cockpits" checkbox of step 7 is gone; step 7 only asks the OpenClaw questions, and only on
+  the first configure. Gemini CLI (retired) is no longer listed; an old state entry still loads.
+- **How should they work?** replaces the four-way mode question with *As a team*, *Each on its own* and *Advanced*
+  (which asks LiteLLM or OpenRouter). Each of the four old answers writes the same state as before. `--backend` now
+  skips the question, as the README and the guide always said.
+- **Your team** merges the preset question, the role table and "Use this?": choosing a starting team (Balanced,
+  Performance, **Low cost**, Custom; "Low pricing" was renamed, same profiles) is the confirmation. As a team it also
+  shows who does what (Claude Code, Antigravity when ticked, Codex "no roles yet"); writing code stays with Claude
+  Code. A re-run no longer drops a saved customized or composed team, the lanes or the acknowledgements when the
+  profile is unchanged (the single-model profile step used to rebuild the profile).
+- **Silent skips.** The gateway steps (3, 4, 5, 8) print nothing on a path with no gateway; gateway paths still say
+  why a step was skipped.
+- **Review** offers Apply, Change tools, Change how, Change team, More options and Cancel (replacing "Edit a
+  section..." and "Change models"). The Claude parallel runs (lanes, off by default) and their terms check, Gateway and
+  API keys, Start at login and the OpenClaw questions are entries of *More options*; OpenClaw's questions are asked on
+  the first configure only and a saved configuration re-applies silently. `--lanes`, `--no-lanes`, `--lanes-dry-run`
+  and `--lanes-orchestrator` are unchanged.
+- **Antigravity is a tool like any other, and ticking it is the opt-in.** It is never ticked on its own, even when
+  installed (its row says it sends repo content to Google and a terms check comes next). Ticking it opens the Google
+  terms check (`ACK_TEXT['google']` verbatim) after *Your team*; accept stores the same acknowledgement as
+  `--lanes-antigravity`, decline, an empty account, Ctrl-B and Ctrl-C untick it and store nothing, and unticking a tool
+  that was on closes the gate. The gates G0-G7 are still not proven, so nothing is admitted; `agy` never writes, the
+  implementer stays on Claude Code, and the Codex row is never a choice. The check is also a plain function
+  (`wizard.agy_terms_check`) shared with the flag. Unattended runs, `--yes` and the flags behave as before.
+- Neutral wording on the default path (no cockpit, lane, preset, backend or engine), the banner and the completion
+  "Try" lines name every configured tool, and `--yes`/`--backend` are documented in `setup --help` (`--yes` installs
+  only the missing ones of Claude Code, Antigravity and OpenClaw).
+
 ### Added
 
 - **Setup shows where Gemini (Antigravity) takes part.** The Custom "pick models from my accounts" list never showed

@@ -32,6 +32,32 @@ An audit of the prompt call sites found: six always-asked questions on the subsc
 10. **`--yes` scope is documented, not changed.** `--yes` installs only the missing members of Claude Code, Antigravity and OpenClaw; the interactive list still offers every missing tool. Gemini CLI (retired) is hidden from the wizard and still read from old state.
 11. **Installs stay on the first screen.** ADR-0008 decisions 4 and 12 are unchanged: Back cannot rewind past an install.
 
+## Implementation notes
+
+Where the implementation made a choice the decision left open (each is covered by a test):
+
+- **Where the terms check opens.** On the "As a team" path only, interactive runs only, right after "Your team" (it is
+  the lanes step). `--dry-run` says it is not shown and stores nothing. Ticking Antigravity on "Each on its own" or on a
+  gateway path has no lane to open and asks nothing.
+- **What ticking stores.** The Google acknowledgement and the Antigravity part of the lane table (the gate flag and
+  the held or admitted agy agents). It does not switch the Claude parallel runs on and asks no Anthropic terms check
+  (OD-3): that table is proposed from the profile without its `claude-cli` candidates, unless the Claude parallel runs
+  were already on. Unticking an Antigravity that was on closes the gate like `--no-lanes-antigravity`; the
+  acknowledgement record stays.
+- **A team that gives Antigravity no role** (for example `claude-native`) unticks it with one line; the implementer
+  role is never offered to it on this screen.
+- **Screens and steps.** The gateway steps (3, 4, 5) are shown as part of screen 2 and "Start at login" as part of
+  screen 4; the rail keeps its ten labels (`Tools, How, Gateway, Providers, API keys, Team, Tool setup, Start at
+  login, Review, Verify`).
+- **A saved choice is never replaced.** The default of "How should they work?" is the saved answer, else "As a team"
+  with two or more tools ticked, else "Each on its own". Keeping the same profile in Custom keeps the saved
+  customizations, composed team, lanes and acknowledgements (the single-model profile step used to drop them).
+- **OpenClaw** asks its questions on the first configure (no engine in the state) and from Review > More options >
+  OpenClaw; a saved configuration re-applies silently, so an unattended run leaves `openclaw.*` unchanged.
+- **Not done:** the optional S12 (installs at Apply) and S13 (one tool catalog); "Doctor preferences" under More
+  options (the wizard has no such step); the team table does not redraw while the starting team is being chosen (it is
+  shown after the choice).
+
 ## Consequences
 
 - The default subscription path is four screens (five with the Antigravity terms check), and a run no longer prints skip blocks or asks about the same decision twice. The real gain is no duplicated decisions and no jargon, not just fewer prompts.

@@ -31,8 +31,9 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 
 | Command | Purpose |
 |---------|---------|
-| `ai-resources setup` | Guided 10-step wizard (progress rail, key hints; `Ctrl-B` back, `Ctrl-C`/`Ctrl-D` cancel, review with "Edit a section..."): cockpit detection as one list (installed tools with their version, the others tickable to install, Windsurf manual; Enter with nothing ticked skips) and a sign-in screen for the newly installed ones only; `--dry-run` previews it, LiteLLM gateway, providers, one model-preset question (Balanced, Performance, Low pricing or Custom) instead of vendor and model questions, per-cockpit config. `ai-resources setup --help` lists the steps and keys; `NO_COLOR` selects plain ASCII output. |
-| `ai-resources setup --backend cli` | Multi-model via your CLI subscriptions (Claude Code / Antigravity / Codex plans): no gateway, nothing billed per token, no keys asked. The same choice is the second option of the wizard's mode question. |
+| `ai-resources setup` | Guided setup in four screens: **Your tools** (every coding CLI is a tool; installed ones are found for you, tick a missing one to install it), **How should they work?** (as a team on your subscriptions, each on its own, or Advanced with a LiteLLM or OpenRouter gateway), **Your team** (a starting team: Balanced, Performance, Low cost or Custom, with who does what) and **Review** (Apply, Change tools, Change how, Change team, More options). Ten internal steps sit behind them with a progress rail; `Ctrl-B` goes back where nothing changed yet, `Ctrl-C`/`Ctrl-D` cancel. `--dry-run` previews; `NO_COLOR` selects plain ASCII output. `ai-resources setup --help` lists the keys. |
+| `ai-resources setup --backend cli` | Multi-model via your CLI subscriptions (Claude Code / Antigravity / Codex plans): no gateway, nothing billed per token, no keys asked. It decides the mode, so the "How should they work?" screen is not shown (`--backend litellm` and `--backend openrouter` do the same for a gateway). |
+| `ai-resources setup --yes` | Say yes, for this run only, to installing the missing ones of Claude Code, Antigravity (`agy`) and OpenClaw. No other tool is installed by `--yes`; the tool list on a terminal offers every missing tool. |
 | `ai-resources setup --dry-run` | Preview all generated configs as a masked unified diff and run smoke tests without writing anything to disk. |
 | `ai-resources setup --lanes` / `--no-lanes` / `--lanes-dry-run` | Enable, clear or preview subscription lanes (ADR-0007; off by default). |
 | `ai-resources setup --non-interactive` | Re-apply saved answers without prompting (useful in CI or scripted re-runs). |
@@ -58,10 +59,12 @@ ai-resources setup       # wizard walks you through everything
 ai-resources doctor      # verify
 ```
 
-Choose **single-model** mode for the legacy single-provider behavior, or
-**multi-model** for per-role routing via LiteLLM gateway.
+The wizard asks three things, in plain words: **which tools** you use (every AI coding CLI is a tool, Claude Code
+included), **how they should work** (as a team on your subscriptions, each on its own, or Advanced: a LiteLLM or
+OpenRouter gateway with API keys) and **who does what** (a starting team that gives each role to a tool). See the
+[glossary](docs/multi-model.md#words-the-setup-uses) for the six words it uses.
 
-The wizard shows a step header with a progress rail and key hints, takes Ctrl-B to go back in the steps that changed nothing yet, and ends with a review where you can pick "Edit a section..." before the kit's configuration is written (earlier steps may already have installed tools or saved credentials; a cancel lists them). Ctrl-C and Ctrl-D exit with code 130 and list anything already done. Details: [docs/multi-model.md](docs/multi-model.md#what-the-wizard-looks-like).
+The wizard shows a step header with a progress rail and key hints, takes Ctrl-B to go back in the steps that changed nothing yet, and ends with a review (Apply, Change tools, Change how, Change team, More options) before the kit's configuration is written (earlier steps may already have installed tools or saved credentials; a cancel lists them). Ctrl-C and Ctrl-D exit with code 130 and list anything already done. Details: [docs/multi-model.md](docs/multi-model.md#what-the-wizard-looks-like).
 
 **Preview before committing:**
 ```sh
@@ -110,7 +113,7 @@ ai-resources/
 │       ├── executors_cmd.py # Role → model map management
 │       ├── audit.py         # Cost report
 │       └── setup/           # Interactive wizard
-│           ├── wizard.py    # Main wizard loop (9 steps)
+│           ├── wizard.py    # Main wizard loop (4 screens over 10 steps)
 │           ├── state.py     # SetupState + InstallTracking (audit trail for teardown)
 │           ├── credentials.py
 │           ├── litellm.py   # litellm.yaml / docker-compose.yaml generation
@@ -287,7 +290,7 @@ For the full orchestration guide with detailed workflow diagrams, see **[docs/or
 
 ### OpenClaw chat bot (optional)
 
-If OpenClaw is installed, setup step 7 offers to point its default
+If OpenClaw is installed and ticked on "Your tools", setup asks (on the first configure, and again from Review > More options > OpenClaw) to point its default
 agent at one of the kit's engines — including `antigravity`: the Antigravity CLI (agy) as
 a chat-facing orchestrator over Telegram, delegating code and team work to an
 **unrestricted** Claude Code worker agent (`--dangerously-skip-permissions`). Voice notes

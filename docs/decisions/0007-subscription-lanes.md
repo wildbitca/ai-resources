@@ -120,8 +120,16 @@ security-auditor; one acknowledgement per Google account (OQ-1); the kit-owned a
 `~/.local/share/ai-resources/agy-home/` (OQ-P3-4); no pool caps plus the circuit breaker (OQ-6); OQ-5 stays closed
 until scoped; the implementer is listed but unticked by default (P3-1).
 
+**Amended by [ADR-0009](0009-setup-tools-how-team.md) (2026-10-17, operator decision).** Ticking Antigravity in the
+setup tool list is a second way to give the opt-in, interactively: the same Google terms check opens (this section's
+text verbatim, through `agy_terms_check`), accept stores the same `lane_acks['google']` as the flag, and a decline,
+an empty account, Ctrl-B or Ctrl-C unticks the tool and stores nothing. It is never ticked on its own. Nothing else
+in this section moves: off by default, fail closed, the writer on Claude Code, gates G0-G7 still decide admission
+(NOT PROVEN today), the Codex lane held, and the flag path (`--lanes-antigravity`, non-interactive exit 2 without a
+valid stored acknowledgement) unchanged. The sentence below still describes what opens the lane.
+
 Phase 3 adds Antigravity (`agy`) as a peer lane backend (`agy-cli-lane`). It is opt-in and off on a fresh install.
-It opens only with `--lanes-antigravity`, a signed Google-account acknowledgement that lists the role, this section
+It opens only with `--lanes-antigravity` (or the interactive tick above), a signed Google-account acknowledgement that lists the role, this section
 Accepted, and every phase 3 gate G0..G7 proven (`scripts/ai_resources/agy_lane_gates.py`). The gates are enforced
 checks that fail closed with a message naming the gate, not prose: admission in setup, the OpenClaw writer and
 `lanes prepare --lane` each consult them.
@@ -257,6 +265,9 @@ regenerated `openclaw.json` ("clobbered") unless its fingerprint key and last-go
 - **FU-5** live headroom for lane placement (OQ-4). 2.2.0: `scoring.headroom_sources.lane_weights` reads a measured value from local state only (the operator's own Claude status-line sidecar for `claude-subscription`, the kit counters file for other pools; no network, no paid API). A fresh reading scales the pool weight; absent, unreadable or stale readings fall back to the static weights. The snapshot is taken at setup (`lanes.headroom_weights`) so `lanes.yaml` stays deterministic. Candidates in the same pool still tie (no quota gain); the reading separates candidates across pools.
 
 ## Note: reaching the lanes from the setup mode question
+
+(Amended by ADR-0009: the mode question is now "How should they work?" with "As a team"; the lanes are reached from
+Review > More options > Parallel runs, and Antigravity from the tool list.)
 
 The setup mode question has an explicit "multi-model via your CLI subscriptions" option (ADR-0008 addendum): no
 gateway, step 6 defaults to `subscription-claude-55`, and step 6c offers the lanes. Nothing about the lanes changes:
