@@ -35,6 +35,11 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(root / "xdg-config"))
     monkeypatch.setattr(claude, "CONFIG_ROOT", root, raising=False)
     monkeypatch.setattr(claude, "SETTINGS_PATH", root / "settings.json", raising=False)
+    # CLAUDE_MD_PATH, AGENTS_DIR and WORKFLOWS_DIR are also computed from the real HOME at import time, so a test that
+    # called `claude.configure()` rewrote the operator's real ~/.claude/CLAUDE.md managed block on every full run.
+    monkeypatch.setattr(claude, "CLAUDE_MD_PATH", root / "CLAUDE.md", raising=False)
+    monkeypatch.setattr(claude, "AGENTS_DIR", root / "agents", raising=False)
+    monkeypatch.setattr(claude, "WORKFLOWS_DIR", root / "workflows", raising=False)
     # The same for ~/.openclaw: the host section writes kit-host.env and the drained doctor
     # creates watchdog.off, and both paths are resolved from the real HOME at import time.
     from ai_resources import openclaw_host
