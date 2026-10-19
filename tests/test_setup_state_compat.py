@@ -30,7 +30,7 @@ def test_the_fixture_matrix_is_complete():
     assert NAMES == sorted([
         "account_picked_selection", "cli_lanes_anthropic_ack", "cli_lanes_google_ack", "cli_team_balanced",
         "cli_team_customized", "composed_team", "gemini_cockpit", "multi_litellm", "multi_openrouter",
-        "openclaw_host_voice", "single_claude_native"])
+        "openclaw-pre-image", "openclaw_host_voice", "single_claude_native"])
 
 
 @pytest.fixture

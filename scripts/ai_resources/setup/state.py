@@ -168,6 +168,13 @@ class InstallTracking:
     install_tools_answer: str | None = None
 
 
+IMAGE_STATE_DEFAULTS: dict[str, Any] = {
+    "image_mode": "", "image_model": "", "image_account": "", "image_previous": None, "image_previous_absent": False,
+    "image_applied": False, "image_auth_profile_created": "", "image_deny_added": False,
+    "image_deny_key_absent": False,
+}
+
+
 @dataclass
 class OpenClawState:
     """Which engine the kit pointed OpenClaw's default agent at, and what it replaced."""
@@ -200,6 +207,20 @@ class OpenClawState:
     # The default glossary the kit created (path -> sha256 of what it wrote); teardown removes it only
     # while it is still byte-identical, because the operator is told to edit it.
     voice_glossary_created: dict[str, str] = field(default_factory=dict)
+    # Image generation (ADR-0011). All optional, none secret-bearing: names and model refs only. `image_mode` is the last
+    # answer ("" never answered; else keep | disable | a route id of _openclaw_image.CATALOG). `image_account` is a
+    # profile id or an env var NAME, never a value. `image_previous` is agents.defaults.mediaModels.image before the kit's
+    # first write (`image_previous_absent`: the key did not exist). `image_deny_added` is True only after the kit's own
+    # `image_generate` token landed in the global tools.deny; `image_deny_key_absent` that the key did not exist before.
+    image_mode: str = ""
+    image_model: str = ""
+    image_account: str = ""
+    image_previous: Any = None
+    image_previous_absent: bool = False
+    image_applied: bool = False
+    image_auth_profile_created: str = ""
+    image_deny_added: bool = False
+    image_deny_key_absent: bool = False
     # MCP servers mirrored from Claude Code. `mcp` is the last answer (mirror | keep);
     # `mcp_skipped` the servers the user unticked. `mcp_mirrored` holds each server the kit
     # manages: {name: {"previous": definition before the kit (None: absent), "applied": ...}}.
@@ -374,6 +395,11 @@ def _to_dict(obj: Any) -> Any:
             # persist it, whatever the in-memory lists hold.
             for key in ("channels_wanted", "channels_seen"):
                 doc["openclaw"].pop(key, None)
+            # Image fields are additive: absent while they hold their defaults, so a state saved before this change
+            # round-trips byte for byte.
+            for key, default in IMAGE_STATE_DEFAULTS.items():
+                if doc["openclaw"].get(key) == default:
+                    doc["openclaw"].pop(key, None)
         return doc
     if isinstance(obj, dict):
         return {k: _to_dict(v) for k, v in obj.items()}
