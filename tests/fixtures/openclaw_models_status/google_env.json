@@ -1,0 +1,24 @@
+{
+  "auth": {
+    "providers": [
+      {
+        "provider": "google",
+        "effective": {
+          "kind": "env",
+          "detail": "FAKEKEY-DO-NOT-LEAK"
+        },
+        "profiles": {
+          "count": 0,
+          "oauth": 0,
+          "token": 0,
+          "apiKey": 0,
+          "labels": []
+        },
+        "env": {
+          "value": "FAKEKEY-DO-NOT-LEAK",
+          "source": "env: GEMINI_API_KEY"
+        }
+      }
+    ]
+  }
+}

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any, Collection, Mapping, NamedTuple, Sequence
 
 TIMEOUT_MS = 180000                               # docs/tools/image-generation.md:269-277
 MEDIA_PATH = "agents.defaults.mediaModels.image"
@@ -180,3 +180,52 @@ def restore_patch(previous: Any, absent: bool) -> tuple[dict, list[str]]:
     if absent or previous is None:
         return {"agents": {"defaults": {"mediaModels": {"image": None}}}}, []
     return {"agents": {"defaults": {"mediaModels": {"image": previous}}}}, list(REPLACE_PATHS)
+
+
+# --- read-only account detection (plan I6) --------------------------------------------------------------------------------
+
+OPENCLAW_PROFILE, OPENCLAW_ENV, KIT_ENV_ONLY, MISSING, PROVIDER_CONFIG_NEEDED = (
+    "openclaw-profile", "openclaw-env", "kit-env-only", "missing", "provider-config-needed")
+
+
+class AccountView(NamedTuple):
+    """Whether the gateway can already authenticate a route. Names only: never a value, never a mask of one."""
+    gateway_sees_it: bool
+    source_label: str                         # one of the five labels above
+    name: str                                 # profile prefix or env var NAME(S)
+    fix: str = ""                             # the command the operator runs, never run by the kit here
+
+
+def sign_in_command(route: Route) -> str:
+    """The OpenClaw command that signs `route` in, with the provider id only. "" when no id is established."""
+    if "oauth" in route.auth and route.login_provider and "api-key" not in route.auth:
+        return f"openclaw models auth login --provider {route.login_provider}"
+    if route.key_provider:
+        return f"openclaw models auth paste-api-key --provider {route.key_provider}"
+    if route.login_provider:
+        return f"openclaw models auth login --provider {route.login_provider}"
+    return ""
+
+
+def provider_account(route: Route, accounts: Mapping[str, Mapping[str, Any]] | None,
+                     kit_env_names: Collection[str] = ()) -> AccountView:
+    """`accounts` is `model_accounts.allowlist_status(<openclaw models status --json>)` (provider id -> {kind, profiles,
+    source}): the allowlist already dropped every key field. `kit_env_names` are the NAMES present in the kit's own
+    `.env`. The gateway does not read that file (docs/help/environment.md), so a key only there is `kit-env-only`."""
+    if route.kind != "route":
+        return AccountView(False, MISSING, "")
+    if not route.selectable_without_provider_config:
+        return AccountView(False, PROVIDER_CONFIG_NEEDED, route.requires)
+    env_names = " or ".join(route.env)
+    known = (accounts or {}).get(route.provider) or {}
+    kind = known.get("kind") or ""
+    count = known.get("profiles") if isinstance(known.get("profiles"), int) else 0
+    if kind == "env":
+        return AccountView(True, OPENCLAW_ENV, env_names)
+    if kind == "profiles" or count > 0 or (kind and kind != "none"):
+        prefix = route.profile_prefixes[0] + "*" if route.profile_prefixes else route.provider
+        return AccountView(True, OPENCLAW_PROFILE, prefix)
+    kit_names = [n for n in route.env if n in set(kit_env_names)]
+    if kit_names:
+        return AccountView(False, KIT_ENV_ONLY, " or ".join(kit_names), sign_in_command(route))
+    return AccountView(False, MISSING, env_names or route.provider, sign_in_command(route))

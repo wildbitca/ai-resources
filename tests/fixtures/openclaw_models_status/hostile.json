@@ -1,0 +1,21 @@
+{
+  "auth": {
+    "providers": [
+      {
+        "provider": "fal",
+        "apiKey": "FAKEKEY-DO-NOT-LEAK",
+        "effective": {
+          "kind": "env",
+          "detail": "FAKEKEY-DO-NOT-LEAK"
+        },
+        "env": {
+          "value": "FAKEKEY-DO-NOT-LEAK",
+          "source": "env: FAL_KEY"
+        },
+        "profiles": {
+          "count": 0
+        }
+      }
+    ]
+  }
+}

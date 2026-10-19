@@ -130,3 +130,71 @@ def test_restore_patch_uses_null_for_an_absent_key_and_a_replace_path_for_a_valu
     assert patch["agents"]["defaults"]["mediaModels"]["image"] == prev and paths == img.REPLACE_PATHS
     patch, paths = img.restore_patch("openai/gpt-image-2", False)
     assert patch["agents"]["defaults"]["mediaModels"]["image"] == "openai/gpt-image-2"
+
+
+# --- read-only account detection (plan I6, AC-5) --------------------------------------------------------------------------
+
+import pathlib
+
+from ai_resources import model_accounts as ma
+
+STATUS = pathlib.Path(__file__).parent / "fixtures" / "openclaw_models_status"
+SENTINEL = "FAKEKEY-DO-NOT-LEAK"
+
+
+def accounts_from(name):
+    return ma.allowlist_status(json.loads((STATUS / name).read_text()))
+
+
+def test_account_a_gemini_key_only_in_the_kit_env_is_kit_env_only_and_names_the_fix_without_reading_a_value():
+    view = img.provider_account(img.ROUTES["google-key"], accounts_from("empty.json"), {"GEMINI_API_KEY"})
+    assert view.source_label == "kit-env-only" and view.gateway_sees_it is False
+    assert view.name == "GEMINI_API_KEY"
+    assert view.fix == "openclaw models auth paste-api-key --provider google"
+
+
+def test_account_the_gateway_env_and_profiles_count_as_seen():
+    env = img.provider_account(img.ROUTES["google-key"], accounts_from("google_env.json"))
+    assert (env.gateway_sees_it, env.source_label) == (True, "openclaw-env") and "GEMINI_API_KEY" in env.name
+    prof = img.provider_account(img.ROUTES["openrouter"], accounts_from("openrouter_profile.json"))
+    assert (prof.gateway_sees_it, prof.source_label, prof.name) == (True, "openclaw-profile", "openrouter:*")
+    openai = accounts_from("openai_profile.json")
+    for rid in ("openai-key", "openai-codex"):
+        assert img.provider_account(img.ROUTES[rid], openai).source_label == "openclaw-profile"
+
+
+def test_account_missing_names_the_env_vars_and_the_sign_in_command():
+    view = img.provider_account(img.ROUTES["fal"], accounts_from("empty.json"))
+    assert (view.gateway_sees_it, view.source_label, view.name) == (False, "missing", "FAL_KEY")
+    assert view.fix == "openclaw models auth paste-api-key --provider fal"
+    assert img.provider_account(img.ROUTES["fal"], None).source_label == "missing"
+
+
+def test_account_comfyui_needs_provider_config_and_foundry_has_no_established_command():
+    view = img.provider_account(img.ROUTES["comfyui"], accounts_from("openai_profile.json"))
+    assert view.source_label == "provider-config-needed" and "workflow" in view.name
+    assert img.sign_in_command(img.ROUTES["microsoft-foundry"]) == ""
+    assert img.provider_account(img.ROUTES["microsoft-foundry"], None).fix == ""
+
+
+def test_sign_in_commands_carry_the_provider_id_only():
+    assert img.sign_in_command(img.ROUTES["openai-codex"]) == "openclaw models auth login --provider openai"
+    assert img.sign_in_command(img.ROUTES["openai-key"]) == "openclaw models auth paste-api-key --provider openai"
+    assert img.sign_in_command(img.ROUTES["minimax"]) == "openclaw models auth paste-api-key --provider minimax"
+    for r in img.CATALOG:
+        cmd = img.sign_in_command(r)
+        assert "=" not in cmd and "sk-" not in cmd and not any(name in cmd for name in r.env)
+
+
+def test_account_never_reads_or_returns_a_secret_value():
+    hostile = accounts_from("hostile.json")
+    assert SENTINEL not in json.dumps(hostile)
+    view = img.provider_account(img.ROUTES["fal"], hostile)
+    assert SENTINEL not in repr(view) and view.source_label == "openclaw-env"
+    for fixture in STATUS.glob("*.json"):
+        for r in img.CATALOG:
+            assert SENTINEL not in repr(img.provider_account(r, accounts_from(fixture.name), {"FAL_KEY"}))
+
+
+def test_account_keep_and_disable_have_no_account():
+    assert img.provider_account(img.KEEP, None).source_label == "missing"
