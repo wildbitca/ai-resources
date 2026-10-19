@@ -277,3 +277,10 @@ they stay disabled until enabled, the Antigravity lane stays opt-in and gated, t
 
 - [ADR-0001](0001-model-pins-and-auto-update.md), [ADR-0002](0002-provider-agnostic-model-selection.md), [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md), [ADR-0005](0005-cross-provider-role-dispatch.md), [ADR-0006](0006-scored-team-composition.md)
 - Plan: `.agent-output/planner/subscription-lanes-plan.md`
+
+## Amendment (ADR-0010, proposed)
+
+- Section 8: every shipped profile keeps its checkers off every writer family, including through fallbacks and `defaults.fallbacks` (the gateway fallback rule); the shrink-only test `tests/test_profile_checker_independence.py` lists what is still open.
+- Section 11: the acknowledged Google role list gains the planner and software-architect seconds (the text hash of `ACK_TEXT` does not change); presets carry no agy writer candidates; `EVIDENCE` is merged from a validated, committed record (`agy_gate_evidence.py`) that ships in no release and flips no gate by hand.
+
+Approvers: operator; software-architect and security-auditor sign-offs PENDING. See [ADR-0010](0010-setup-five-phases-channels-team.md).

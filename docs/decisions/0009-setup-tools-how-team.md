@@ -73,3 +73,10 @@ Each step is one commit and one `git revert`. There is no state migration, so ol
 
 - [ADR-0007](0007-subscription-lanes.md), [ADR-0008](0008-setup-wizard-tui-on-rich-questionary.md)
 - Plan: `.agent-output/planner/setup-simplification-plan.md`
+
+## Amendment (ADR-0010, proposed)
+
+- Section 2: the setup runs in five phases (Tools, Cockpit, Team, Audio, More) over the unchanged internal step ids.
+- Section 8: Gemini cells read held or on; a saved Antigravity tick is restored only with a valid stored Google acknowledgement.
+
+Approver: operator. See [ADR-0010](0010-setup-five-phases-channels-team.md).

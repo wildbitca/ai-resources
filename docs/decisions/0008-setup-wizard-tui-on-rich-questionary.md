@@ -118,3 +118,7 @@ Rollback: remove `_show_agy_*` calls in `wizard.py`, the `agy_installed` lookup 
 ## Rollback
 
 Each change is its own commit. Reverting the runner, the header, Back, the review, the validators or the log tail and diff leaves the Ctrl-C fix in place. There is no state schema change and no migration.
+
+## Amendment (ADR-0010, proposed)
+
+Gateway choice: LiteLLM is load-only (score 4/10 for Balanced with Gemini). New setups offer OpenRouter only; saved LiteLLM setups keep loading with one notice. Approver: operator. Implemented in plan step S5. See [ADR-0010](0010-setup-five-phases-channels-team.md).

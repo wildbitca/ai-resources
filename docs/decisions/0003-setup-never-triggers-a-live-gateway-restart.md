@@ -168,3 +168,7 @@ restart-required" mode on every release and bought nothing. The kit no longer pi
 
 - [ADR-0007](0007-subscription-lanes.md): amends this ADR for lane agents (watch record, teardown, classify-before-add, drained path).
 - [ADR-0004](0004-bounded-graceful-restart-under-memory-pressure.md): supersedes decision 7 for the memory trigger.
+
+## Amendment (ADR-0010, proposed)
+
+Carve-out: a confirmed channel disable (`openclaw channels remove --channel C --account A`) may ask the Gateway to stop that account and restart its listener. It never restarts the Gateway itself, and the other restart rules are unchanged. Approvers: operator (approved, N5); security-auditor sign-off PENDING. See [ADR-0010](0010-setup-five-phases-channels-team.md).
