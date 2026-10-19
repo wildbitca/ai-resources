@@ -539,9 +539,12 @@ DENY_REMOVAL_NOT_HOT = ("The image_generate entry setup added to tools.deny was 
                         "restart to reload tools.deny. Remove it by hand (`openclaw config get tools.deny`) or re-run "
                         "teardown after enabling hot reload.")
 (DENY_APPLIED, DENY_REMOVED, DENY_COVERED, DENY_ALREADY, DENY_GONE, DENY_NONE, DENY_DRY_RUN, DENY_SHAPE, DENY_UNREADABLE,
- DENY_REJECTED, DENY_RACE, DENY_NOT_HOT_STATUS, DENY_FAILED) = (
+ DENY_REJECTED, DENY_RACE, DENY_NOT_HOT_STATUS, DENY_FAILED, DENY_NOT_CONFIRMED, DENY_OPERATOR_REMOVED) = (
     "applied", "removed", "covered", "already-applied", "gone", "none", "dry-run", "bad-shape", "unreadable",
-    "rejected", "race", "not-hot", "failed")
+    "rejected", "race", "not-hot", "failed", "not-confirmed", "operator-removed")
+DENY_NEEDS_TERMINAL = ("Image generation was NOT disabled: setup writes the global tools.deny only in an interactive run "
+                       "on a terminal (not with --yes or without a TTY). Run `openclaw config get tools.deny` and add "
+                       "`image_generate` by hand, or re-run setup interactively.")
 
 
 @dataclass(frozen=True)
@@ -617,11 +620,25 @@ def _deny_write(live: Any, new: list | None, *, dry_run: bool, adding: bool) -> 
     return DenyResult(DENY_APPLIED if adding else DENY_REMOVED, "", before, after)
 
 
-def _apply_image_deny(s: state.SetupState, *, dry_run: bool = False) -> DenyResult:
+def _confirm_image_deny() -> bool:
+    """The gate in front of a global `tools.deny` ADD (review M2): only an interactive run on a terminal, and only after a
+    default-No confirm. `--yes`, a non-interactive run and a missing TTY never write it; a saved `disable` answer is
+    re-applied under the same rule."""
+    if ui.is_non_interactive() or not ui.stdin_is_a_terminal():
+        ui.warn(DENY_NEEDS_TERMINAL)
+        return False
+    return host_section._gate("Add image_generate to OpenClaw's global tools.deny? This turns the tool off for ALL agents "
+                              "(live effect on running sessions: NOT PROVEN).",
+                              "Setup removes only this entry on teardown; your own entries are kept.")
+
+
+def _apply_image_deny(s: state.SetupState, *, dry_run: bool = False, gate: Any = None) -> DenyResult:
     """Deny `image_generate` in the global `tools.deny` without losing an operator entry (ADR-0011).
 
     Order: fresh read, shape check, build the whole list (the live one plus the token), single-token delta, dry-run patch,
-    stop under `--dry-run`, re-read and abort on a change, hot only (never deferred), live patch, and only then state."""
+    stop under `--dry-run`, `gate` (the interactive confirm; None means no gate), re-read and abort on a change, hot only
+    (never deferred), live patch, and only then state. When state says the kit added the token but the live list no longer
+    holds it, the operator took it out: that is their choice, so the flags are cleared and the token is not added back."""
     tool = openclaw_tool_policy.IMAGE_TOOL
     readable, live = _live_tools_deny()
     if not readable:
@@ -632,12 +649,19 @@ def _apply_image_deny(s: state.SetupState, *, dry_run: bool = False) -> DenyResu
     except ValueError:
         ui.warn("OpenClaw: tools.deny is not a list of strings; image generation was NOT disabled and nothing was written.")
         return DenyResult(DENY_SHAPE, "not a list of strings")
+    if s.openclaw.image_deny_added and tool not in (live or []):
+        if not dry_run:
+            s.openclaw.image_deny_added = False
+            s.openclaw.image_deny_key_absent = False
+        return DenyResult(DENY_OPERATOR_REMOVED, "", tuple(live or ()), tuple(live or ()))
     new = openclaw_tool_policy.deny_add(live, tool)
     if new is openclaw_tool_policy.NO_CHANGE:
         entry = openclaw_tool_policy.covering_token(live, tool) or tool
         if entry == tool and s.openclaw.image_deny_added:
             return DenyResult(DENY_ALREADY, entry, tuple(live or ()), tuple(live or ()))
         return DenyResult(DENY_COVERED, entry, tuple(live or ()), tuple(live or ()))
+    if not dry_run and gate is not None and not gate():
+        return DenyResult(DENY_NOT_CONFIRMED, "", tuple(live or ()), tuple(live or ()))
     result = _deny_write(live, new, dry_run=dry_run, adding=True)
     if result.status == DENY_APPLIED:
         s.openclaw.image_deny_added = True
@@ -676,7 +700,10 @@ def _remove_image_deny(s: state.SetupState, *, dry_run: bool = False) -> DenyRes
 
 def _report_deny(res: DenyResult, *, dry_run: bool) -> None:
     """One honest line (or three) per deny outcome. Tool names only."""
-    if res.status == DENY_COVERED:
+    if res.status == DENY_OPERATOR_REMOVED:
+        ui.info("The image_generate entry setup added is no longer in your tools.deny: treated as your choice, nothing "
+                "added back and setup stops tracking it.")
+    elif res.status == DENY_COVERED:
         ui.info(f"image_generate is already denied by your tools.deny entry {res.detail!r} (not changed)")
     elif res.status == DENY_ALREADY:
         ui.info("image_generate deny was already added by setup; nothing to change")
@@ -711,19 +738,60 @@ def _image_auth_run(argv: list[str]) -> int:
         return 1
 
 
+def _auth_profile_ids() -> set[str] | None:
+    """The profile ids in `openclaw models auth list --json` (ids only, never a field that could hold a credential), or
+    None when the command exits non-zero. A zero exit with nothing parseable is the empty set."""
+    rc, out = _openclaw(["models", "auth", "list", "--json"], timeout=60)
+    if rc != 0:
+        return None
+    ids: set[str] = set()
+    starts = [i for i in (out.find("{"), out.find("[")) if i >= 0]
+    if not starts:
+        return ids
+    try:
+        raw = json.loads(out[min(starts):])
+    except (ValueError, TypeError):
+        return ids
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if isinstance(node.get("id"), str) and isinstance(node.get("provider"), str):
+                ids.add(node["id"])
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+    walk(raw)
+    return ids
+
+
 def _image_sign_in(s: state.SetupState, route: Any, *, dry_run: bool) -> bool:
-    """Hand the sign-in to OpenClaw (plan I9). True when the config patch may go on."""
+    """Hand the sign-in to OpenClaw (plan I9). True when the config patch may go on.
+
+    Review M1: the profile ids are listed before and after the sign-in and `image_auth_profile_created` is recorded only
+    for an id that is new, so teardown never offers to sign out a profile setup did not create. When the listing before
+    the sign-in exits non-zero, no sign-in runs: the command is printed instead."""
     accounts, names = _image_accounts()
     view = image.provider_account(route, accounts, names)
     method = s.openclaw.image_account if s.openclaw.image_account in route.auth else ""
     interactive = (not dry_run) and not ui.is_non_interactive() and ui.stdin_is_a_terminal()
+    before: set[str] | None = set()
+    if interactive and route.kind == "route" and not view.gateway_sees_it:
+        before = _auth_profile_ids()
+        if before is None:
+            ui.warn("OpenClaw: `models auth list` failed, so setup cannot tell what a sign-in would add and runs none. "
+                    "Sign in yourself: " + (image.sign_in_command(route, method) or "see docs/tools/image-generation.md"))
+            return True
     res = image.ensure_account(route, view, method=method, run=_image_auth_run, interactive=interactive,
                                confirm=ui.confirm, dry_run=dry_run, say=ui.info)
     if res.status == image.FAILED:
         ui.warn(f"OpenClaw sign-in failed (exit {res.exit_code}); the image model was not changed.")
         return False
     if res.status == image.SIGNED_IN and res.profile_id:
-        s.openclaw.image_auth_profile_created = res.profile_id
+        after = _auth_profile_ids()
+        if after is not None and res.profile_id in after and res.profile_id not in (before or set()):
+            s.openclaw.image_auth_profile_created = res.profile_id
     return True
 
 
@@ -741,7 +809,7 @@ def _configure_image(s: state.SetupState, doc: dict, path: Path, written: list[P
         ui.warn(f"OpenClaw: unknown image answer {mode!r}; image generation left unchanged.")
         return False
     if mode == image.DISABLE_ID:
-        res = _apply_image_deny(s, dry_run=dry_run)
+        res = _apply_image_deny(s, dry_run=dry_run, gate=_confirm_image_deny)
         _report_deny(res, dry_run=dry_run)
         return res.changed
     route = image.effective_route(image.ROUTES[mode], doc)
@@ -753,7 +821,10 @@ def _configure_image(s: state.SetupState, doc: dict, path: Path, written: list[P
     assert patch is not None
     current = image.live_image_value(doc)
     ref = patch["agents"]["defaults"]["mediaModels"]["image"]["primary"]
-    kit_owns = bool(o.image_applied and image.kit_shaped(current))
+    # The live value is the kit's own only when it is kit-shaped AND names the ref the kit wrote (review L2); a value the
+    # operator set by hand in the same shape is theirs.
+    kit_owns = bool(o.image_applied and image.kit_shaped(current)
+                    and image.ref_of(current) == (o.image_applied_ref or o.image_model))
     if current is not None and not kit_owns and image.ref_of(current) != ref:
         if not dry_run and not _confirm_replace_image(current, ref):
             return False
@@ -778,7 +849,8 @@ def _configure_image(s: state.SetupState, doc: dict, path: Path, written: list[P
         if o.image_deny_added:
             ui.warn("The image_generate entry setup added to tools.deny is still present: image generation stays OFF.")
         return False
-    first = not o.image_applied
+    # Previous is the value before the kit's first write; a live value that is not the kit's own is the operator's new one.
+    first = not o.image_applied or not kit_owns
     ok, out = _apply_hot(patch, replace_paths=image.REPLACE_PATHS)
     if not ok:
         ui.error(f"OpenClaw rejected the image-generation patch: {ui.safe_excerpt(out, 400, tail=True)}")
@@ -790,6 +862,7 @@ def _configure_image(s: state.SetupState, doc: dict, path: Path, written: list[P
         o.image_previous_absent = current is None
     o.image_applied = True
     o.image_model = ref
+    o.image_applied_ref = ref
     o.config_path = str(path)
     if path not in written:
         written.append(path)
@@ -815,7 +888,8 @@ def _teardown_image(s: state.SetupState) -> bool:
     o = s.openclaw
     if o.image_applied:
         current = image.live_image_value(read_config(config_path()))
-        if current is not None and not image.kit_shaped(current):
+        written_ref = o.image_applied_ref or o.image_model
+        if not (image.kit_shaped(current) and image.ref_of(current) == written_ref):
             ui.warn("OpenClaw: the image model was changed after setup applied it; teardown left it as it is.")
         else:
             patch, paths = image.restore_patch(o.image_previous, o.image_previous_absent)
@@ -829,7 +903,7 @@ def _teardown_image(s: state.SetupState) -> bool:
                 return False
             ui.ok("OpenClaw image generation restored")
         o.image_applied = False
-        o.image_previous, o.image_previous_absent, o.image_model = None, False, ""
+        o.image_previous, o.image_previous_absent, o.image_model, o.image_applied_ref = None, False, "", ""
     profile = o.image_auth_profile_created
     if profile:
         argv = ["openclaw", "models", "auth", "logout", profile]
@@ -2234,10 +2308,13 @@ def teardown(s: state.SetupState) -> list[str]:
     # `ai-resources openclaw apply-pending` still has to find them (ADR-0003).
     pending = s.openclaw.host_restart_pending
     left_lanes = s.openclaw.lanes_applied          # lane agents the operator declined to delete stay recorded
-    left_image = {k: getattr(s.openclaw, k) for k in state.IMAGE_STATE_DEFAULTS      # what a retry still owes
-                  if k in ("image_applied", "image_previous", "image_previous_absent", "image_model",
-                           "image_deny_added", "image_deny_key_absent") and
-                  (s.openclaw.image_applied or k.startswith("image_deny"))}
+    # What a retry still owes. The sign-out offer (`image_auth_profile_created`) rides with a model restore that failed:
+    # `_teardown_image` returns before the offer then, and a later teardown must still make it.
+    left_image = {k: getattr(s.openclaw, k) for k in state.IMAGE_STATE_DEFAULTS
+                  if k in ("image_applied", "image_previous", "image_previous_absent", "image_model", "image_applied_ref",
+                           "image_deny_added", "image_deny_key_absent", "image_auth_profile_created") and
+                  (s.openclaw.image_applied or k.startswith("image_deny")
+                   or (k == "image_auth_profile_created" and s.openclaw.image_auth_profile_created))}
     s.openclaw = state.OpenClawState()
     s.openclaw.host_restart_pending = pending
     s.openclaw.lanes_applied = left_lanes

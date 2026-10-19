@@ -9,14 +9,15 @@ from ai_resources.setup import state
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "setup_state"
 IMAGE_FIELDS = ("image_mode", "image_model", "image_account", "image_previous", "image_previous_absent",
-                "image_applied", "image_auth_profile_created", "image_deny_added", "image_deny_key_absent")
+                "image_applied", "image_auth_profile_created", "image_deny_added", "image_deny_key_absent",
+                "image_applied_ref")
 
 
-def test_the_nine_fields_exist_with_their_defaults():
+def test_the_ten_fields_exist_with_their_defaults():
     o = state.OpenClawState()
     assert (o.image_mode, o.image_model, o.image_account, o.image_previous, o.image_previous_absent,
-            o.image_applied, o.image_auth_profile_created, o.image_deny_added, o.image_deny_key_absent) == (
-        "", "", "", None, False, False, "", False, False)
+            o.image_applied, o.image_auth_profile_created, o.image_deny_added, o.image_deny_key_absent,
+            o.image_applied_ref) == ("", "", "", None, False, False, "", False, False, "")
     assert set(IMAGE_FIELDS) == set(state.IMAGE_STATE_DEFAULTS)
 
 

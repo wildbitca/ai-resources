@@ -12,6 +12,7 @@ from ai_resources.setup.cockpits import _openclaw_image as img
 from ai_resources.setup.cockpits import openclaw
 from openclaw_image_fakes import FakeOC
 
+REAL_IMAGE_ACCOUNTS = openclaw._image_accounts            # captured before conftest stubs it for every test
 REF = "openrouter/google/gemini-3.1-flash-image-preview"
 MEDIA = ("agents", "defaults", "mediaModels", "image")
 
@@ -63,6 +64,14 @@ def deny_of(fake):
     return (fake.doc().get("tools") or {}).get("deny", "<absent>")
 
 
+@pytest.fixture
+def tty_yes(rig, monkeypatch):
+    """An interactive run on a terminal where the operator says yes."""
+    monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: True)
+    rig.answer = True
+    return rig
+
+
 # --- keep / disable / cockpit gate -------------------------------------------------------------------------------------
 
 def test_keep_and_a_never_answered_state_do_no_io(rig):
@@ -81,16 +90,17 @@ def test_cockpit_only_the_openclaw_configurator_calls_the_image_writer():
     assert "image_mode" not in inspect.getsource(wizard._step9_apply)
 
 
-def test_disable_applies_only_the_deny_and_never_patches_the_media_model(rig):
+def test_disable_applies_only_the_deny_and_never_patches_the_media_model(rig, tty_yes):
     rig.write({"tools": {"deny": ["bundle-mcp"]}})
     s = S(mode="disable", model="", image_applied=True)
     changed, _w = run(s, rig)
     assert changed and deny_of(rig) == ["bundle-mcp", "image_generate"]
     assert all("mediaModels" not in json.dumps(p) for _a, p in rig.patches())
     assert s.openclaw.image_applied is True, "a kit-applied model is left as it is"
+    assert len(rig.confirms) == 1 and rig.confirms[0][1] is False, "the deny add has its own default-No confirm"
 
 
-def test_disable_with_a_covering_operator_entry_writes_nothing_and_says_so(rig):
+def test_disable_with_a_covering_operator_entry_writes_nothing_and_says_so(rig, tty_yes):
     rig.write({"tools": {"deny": ["group:media"]}})
     changed, _w = run(S(mode="disable"), rig)
     assert not changed and rig.patches() == []
@@ -279,18 +289,29 @@ MISSING = {}                                                # no provider has a 
 
 
 class Auth:
-    """Records `openclaw models auth ...` runs; stands in for `_image_auth_run`."""
-    def __init__(self, rc=0):
+    """Records `openclaw models auth ...` runs; stands in for `_image_auth_run`. A successful `paste-api-key` adds the
+    profile `<provider>:manual` to the fake profile list (`profiles`), like OpenClaw does."""
+    def __init__(self, rc=0, profiles=None):
         self.rc, self.argvs = rc, []
+        self.profiles = profiles if profiles is not None else []
 
     def __call__(self, argv):
         self.argvs.append(list(argv))
+        if self.rc == 0 and "paste-api-key" in argv:
+            self.profiles.append(argv[argv.index("--provider") + 1] + ":manual")
         return self.rc
+
+
+def auth_list(profiles):
+    def fn(_args, _stdin):
+        return 0, json.dumps({"profiles": [{"id": i, "provider": i.split(":")[0]} for i in profiles]})
+    return fn
 
 
 @pytest.fixture
 def signin(rig, monkeypatch):
     auth = Auth()
+    rig.extra[("models", "auth", "list")] = auth_list(auth.profiles)
     monkeypatch.setattr(openclaw, "_image_auth_run", auth)
     monkeypatch.setattr(openclaw, "_image_accounts", lambda: (MISSING, []))
     monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: True)
@@ -500,12 +521,14 @@ def test_teardown_a_second_teardown_is_a_no_op(rig):
     assert openclaw._teardown_image(s) is True and len(rig.calls) == n
 
 
-def test_the_openclaw_teardown_undoes_the_model_then_the_deny_in_that_order(rig):
+def test_the_openclaw_teardown_undoes_the_model_then_the_deny_in_that_order(rig, monkeypatch):
     rig.write({"tools": {"deny": ["bundle-mcp", "image_generate"]}})
     s = S(image_deny_added=True)
     run(s, rig)                                                  # route applied; the kit deny comes out
     assert deny_of(rig) == ["bundle-mcp"]
     s2 = S(mode="disable", image_deny_added=False)
+    monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: True)       # the deny add needs a terminal and a yes
+    rig.answer = True
     run(s2, rig)
     assert s2.openclaw.image_deny_added is True
     s2.openclaw.image_applied, s2.openclaw.image_previous_absent, s2.openclaw.image_model = True, True, REF
@@ -514,3 +537,237 @@ def test_the_openclaw_teardown_undoes_the_model_then_the_deny_in_that_order(rig)
     assert s2.openclaw.image_applied is False and s2.openclaw.image_deny_added is False
     kinds = ["media" if "mediaModels" in json.dumps(p) else "deny" for _a, p in rig.live_patches()[-2:]]
     assert kinds == ["media", "deny"]
+
+
+# --- review M1: only a profile id that is NEW is recorded; no sign-in when the listing fails --------------------------------
+
+FAL = dict(mode="fal", model="fal/krea/v2/medium/text-to-image")
+
+
+def test_m1_a_profile_id_that_existed_before_the_sign_in_is_never_recorded(signin):
+    signin.auth.profiles.append("fal:manual")                    # already there; the paste-api-key re-uses it
+    s = S(**FAL)
+    assert run(s, signin)[0] is True
+    assert len(signin.auth.argvs) == 1 and s.openclaw.image_auth_profile_created == ""
+    signin.confirms.clear()
+    openclaw._teardown_image(s)
+    assert signin.confirms == [], "setup did not create the profile, so teardown never offers to sign it out"
+
+
+def test_m1_a_new_profile_id_is_recorded_and_the_offer_is_made_at_teardown(signin):
+    s = S(**FAL)
+    run(s, signin)
+    assert s.openclaw.image_auth_profile_created == "fal:manual"
+    signin.confirms.clear()
+    openclaw._teardown_image(s)
+    assert len(signin.confirms) == 1 and "fal:manual" in signin.confirms[0][0]
+
+
+def test_m1_when_the_listing_before_the_sign_in_exits_non_zero_no_sign_in_runs(signin):
+    signin.extra[("models", "auth", "list")] = lambda a, s: (1, "boom")
+    s = S(**FAL)
+    changed, _w = run(s, signin)
+    assert signin.auth.argvs == [] and signin.confirms == [] and s.openclaw.image_auth_profile_created == ""
+    assert any("openclaw models auth paste-api-key --provider fal" in m for m in signin.messages["warn"])
+    assert changed is True, "the model write is not held hostage to the listing"
+
+
+def test_m1_when_the_listing_after_the_sign_in_fails_nothing_is_recorded(signin):
+    calls = {"n": 0}
+
+    def listing(_a, _s):
+        calls["n"] += 1
+        return (0, json.dumps({"profiles": []})) if calls["n"] == 1 else (1, "boom")
+    signin.extra[("models", "auth", "list")] = listing
+    s = S(**FAL)
+    run(s, signin)
+    assert len(signin.auth.argvs) == 1 and s.openclaw.image_auth_profile_created == ""
+
+
+def test_m1_no_listing_and_no_sign_in_on_a_dry_run_or_a_non_interactive_run(signin, monkeypatch):
+    run(S(**FAL), signin, dry_run=True)
+    monkeypatch.setattr(openclaw.ui, "is_non_interactive", lambda: True)
+    run(S(**FAL), signin)
+    assert signin.auth.argvs == []
+    assert not [a for a in signin.argvs() if a[:3] == ["models", "auth", "list"]]
+
+
+# --- review M2: the global tools.deny add needs an interactive terminal and a yes ----------------------------------------
+
+def _disable_writes_nothing(rig, s=None):
+    s = s or S(mode="disable", model="")
+    rig.write({"tools": {"deny": ["bundle-mcp"]}})
+    before = rig.cfg.read_bytes()
+    changed, _w = run(s, rig)
+    assert changed is False and rig.patches() == [] and rig.cfg.read_bytes() == before
+    assert s.openclaw.image_deny_added is False
+    return s
+
+
+def test_m2_non_interactive_and_yes_never_write_the_deny(rig, monkeypatch):
+    monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(openclaw.ui, "is_non_interactive", lambda: True)
+    rig.answer = True
+    _disable_writes_nothing(rig)
+    assert rig.confirms == [] and any("NOT disabled" in m for m in rig.messages["warn"])
+
+
+def test_m2_without_a_tty_the_deny_is_not_written_even_if_a_confirm_would_say_yes(rig, monkeypatch):
+    monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: False)
+    rig.answer = True
+    _disable_writes_nothing(rig)
+    assert rig.confirms == [] and any("NOT disabled" in m for m in rig.messages["warn"])
+
+
+def test_m2_a_declined_confirm_writes_nothing(rig, monkeypatch):
+    monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: True)
+    rig.answer = False
+    _disable_writes_nothing(rig)
+    assert len(rig.confirms) == 1 and rig.confirms[0][1] is False
+
+
+def test_m2_a_saved_disable_is_reapplied_only_interactively_with_its_confirm(rig, monkeypatch):
+    rig.write({"tools": {"deny": ["bundle-mcp"]}})
+    s = S(mode="disable", model="")                              # the saved answer from an earlier run
+    monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: True)
+    rig.answer = True
+    assert run(s, rig)[0] is True and deny_of(rig) == ["bundle-mcp", "image_generate"]
+    assert len(rig.confirms) == 1 and rig.confirms[0][1] is False
+
+
+def test_m2_a_covering_entry_or_a_dry_run_asks_nothing(rig, tty_yes):
+    rig.write({"tools": {"deny": ["group:media"]}})
+    run(S(mode="disable", model=""), rig)
+    run(S(mode="disable", model=""), rig, dry_run=True)
+    assert rig.confirms == [] and rig.patches(dry=False) == []
+
+
+def test_m2_the_token_the_operator_took_out_is_not_added_back_and_tracking_stops(rig, tty_yes):
+    rig.write({"tools": {"deny": ["bundle-mcp"]}})
+    s = S(mode="disable", model="", image_deny_added=True, image_deny_key_absent=True)
+    changed, _w = run(s, rig)
+    assert changed is False and rig.patches() == [] and deny_of(rig) == ["bundle-mcp"]
+    assert s.openclaw.image_deny_added is False and s.openclaw.image_deny_key_absent is False
+    assert rig.confirms == [] and any("your choice" in m for m in rig.messages["info"])
+
+
+def test_m2_the_operators_removal_is_honoured_even_with_a_covering_entry_and_a_dry_run_keeps_state(rig, tty_yes):
+    rig.write({"tools": {"deny": ["group:media"]}})
+    s = S(mode="disable", model="", image_deny_added=True)
+    run(s, rig, dry_run=True)
+    assert s.openclaw.image_deny_added is True, "a dry run changes no state"
+    run(s, rig)
+    assert s.openclaw.image_deny_added is False and rig.patches(dry=False) == [] and deny_of(rig) == ["group:media"]
+
+
+# --- review L2: the live value is the kit's own only if it names the ref the kit wrote -----------------------------------
+
+def test_l2_a_kit_shaped_value_with_another_ref_is_the_operators_and_asks_default_no(rig):
+    rig.write({"agents": {"defaults": {"mediaModels": {"image": {"primary": "fal/fal-ai/flux/dev", "timeoutMs": 180000}}}}})
+    s = S(image_applied=True, image_applied_ref=REF)
+    assert run(s, rig)[0] is False and rig.live_patches() == []
+    assert len(rig.confirms) == 1 and rig.confirms[0][1] is False
+
+
+def test_l2_the_kits_own_ref_is_replaced_without_a_confirm_and_an_old_state_falls_back_to_image_model(rig):
+    rig.write({"agents": {"defaults": {"mediaModels": {"image": {"primary": REF, "timeoutMs": 180000}}}}})
+    new = "openrouter/other/model"
+    assert run(S(model=new, image_applied=True, image_applied_ref=REF), rig)[0] is True
+    assert rig.confirms == []
+    rig.write({"agents": {"defaults": {"mediaModels": {"image": {"primary": REF, "timeoutMs": 180000}}}}})
+    assert run(S(model=REF, image_applied=True), rig)[0] is True and rig.confirms == []     # no applied ref saved
+
+
+def test_l2_after_a_confirmed_replacement_of_the_operators_value_teardown_restores_that_value(rig):
+    rig.write({"agents": {"defaults": {"mediaModels": {"image": {"primary": REF, "timeoutMs": 180000}}}}})
+    mine = {"primary": "fal/fal-ai/flux/dev", "timeoutMs": 180000}
+    rig.write({"agents": {"defaults": {"mediaModels": {"image": mine}}}})
+    rig.answer = True
+    s = S(image_applied=True, image_applied_ref=REF, image_previous=None, image_previous_absent=True)
+    assert run(s, rig)[0] is True
+    assert s.openclaw.image_previous == mine and s.openclaw.image_previous_absent is False
+
+
+@pytest.mark.parametrize("live", [{"primary": "fal/fal-ai/flux/dev", "timeoutMs": 180000}, "fal/fal-ai/flux/dev", None])
+def test_l2_teardown_leaves_a_value_that_is_not_the_kits_written_ref_untouched(rig, live):
+    doc = {"agents": {"defaults": {"mediaModels": {"image": live}}}} if live is not None else {}
+    rig.write(doc)
+    s = S(image_applied=True, image_applied_ref=REF, image_previous={"primary": "old/x"}, image_previous_absent=False)
+    assert openclaw._teardown_image(s) is True
+    assert rig.live_patches() == [] and rig.doc() == doc
+    assert s.openclaw.image_applied is False and s.openclaw.image_applied_ref == ""
+    assert any("changed after setup applied it" in m for m in rig.messages["warn"])
+
+
+# --- review L3: a failed model restore keeps the sign-out offer for a later teardown -----------------------------------------
+
+def test_l3_a_rejected_model_restore_keeps_the_profile_and_a_later_teardown_still_offers_the_sign_out(signin):
+    s = S(**FAL)
+    run(s, signin)
+    assert s.openclaw.image_auth_profile_created == "fal:manual"
+    signin.reject_live = True
+    openclaw.teardown(s)
+    assert s.openclaw.image_applied is True and s.openclaw.image_auth_profile_created == "fal:manual"
+    signin.reject_live = False
+    signin.auth.argvs.clear()
+    signin.confirms.clear()
+    openclaw.teardown(s)
+    assert signin.auth.argvs == [["openclaw", "models", "auth", "logout", "fal:manual"]]
+    assert s.openclaw.image_auth_profile_created == "" and s.openclaw.image_applied is False
+
+
+def test_l3_a_restart_needed_restore_keeps_the_profile_too(signin, monkeypatch):
+    s = S(**FAL)
+    run(s, signin)
+    monkeypatch.setattr(openclaw, "_live_reload_mode", lambda: "off")
+    openclaw.teardown(s)
+    assert s.openclaw.image_applied is True and s.openclaw.image_auth_profile_created == "fal:manual"
+
+
+# --- review L4: the dry run names the command Apply runs -----------------------------------------------------------------------
+
+def test_l4_dry_run_lines_name_the_oauth_login_for_minimax_oauth_and_the_key_command_otherwise():
+    def lines(**kw):
+        return "\n".join(img.dry_run_lines(S(mode="minimax", model="minimax/image-01", **kw), {}))
+    oauth = lines(image_account="oauth")
+    assert "openclaw models auth login --provider minimax-portal" in oauth and "paste-api-key" not in oauth
+    key = lines(image_account="api-key")
+    assert "openclaw models auth paste-api-key --provider minimax" in key and "login" not in key
+    assert "paste-api-key --provider minimax" in lines()                       # no saved method: the default Apply uses
+
+
+def test_l4_the_dry_run_command_equals_the_command_apply_runs(signin):
+    s = S(mode="minimax", model="minimax/image-01", image_account="oauth")
+    shown = img.dry_run_lines(s, {})
+    run(s, signin)
+    ran = " ".join(signin.auth.argvs[0])
+    assert any(ran in line for line in shown)
+
+
+# --- review L5: only the NAMES of the kit .env are kept, never a value -----------------------------------------------------------
+
+LEAK = "sk-LEAK-0123456789-SHOULD-NEVER-APPEAR"
+
+
+def test_l5_no_kit_env_value_or_credential_field_survives_in_any_state_or_output(rig, monkeypatch):
+    status = {"auth": {"providers": [{"provider": "fal", "effective": {"kind": "none", "apiKey": LEAK},
+                                      "profiles": {"count": 0, "token": LEAK}, "env": {"source": "", "value": LEAK}}]},
+              "apiKey": LEAK}
+    listing = {"profiles": [{"id": "openrouter:default", "provider": "openrouter", "token": LEAK, "key": LEAK}]}
+    rig.extra[("models", "status")] = lambda a, s: (0, json.dumps(status))
+    rig.extra[("models", "auth", "list")] = lambda a, s: (0, json.dumps(listing))
+    monkeypatch.setattr(kit_credentials, "load_env", lambda: {"FAL_KEY": LEAK, "EMPTY_ONE": "", "OPENAI_API_KEY": LEAK})
+    accounts, names = REAL_IMAGE_ACCOUNTS()
+    assert names == ["FAL_KEY", "OPENAI_API_KEY"], "names only, sorted, empty values dropped"
+    ctx = img.make_ctx({}, accounts, names, deny_hot=True)
+    blob = json.dumps(accounts) + json.dumps(names) + json.dumps(ctx, default=str)
+    for rid, route in img.ROUTES.items():
+        if route.kind != "route":
+            continue
+        s = S(mode=rid, model=route.models[0] if route.models else "", image_account=route.auth[0] if route.auth else "")
+        rows = img.review_rows(s, ctx)
+        blob += json.dumps(rows) + json.dumps(img.dry_run_lines(s, ctx)) + json.dumps(state._to_dict(s))
+    setattr(s, img.CTX_ATTR, ctx)
+    blob += json.dumps(state._to_dict(s))
+    assert LEAK not in blob and "apiKey" not in blob and "token" not in blob
+    assert "FAL_KEY" in blob, "the variable NAME is what Review may show"

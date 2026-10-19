@@ -171,7 +171,7 @@ class InstallTracking:
 IMAGE_STATE_DEFAULTS: dict[str, Any] = {
     "image_mode": "", "image_model": "", "image_account": "", "image_previous": None, "image_previous_absent": False,
     "image_applied": False, "image_auth_profile_created": "", "image_deny_added": False,
-    "image_deny_key_absent": False,
+    "image_deny_key_absent": False, "image_applied_ref": "",
 }
 
 
@@ -221,6 +221,9 @@ class OpenClawState:
     image_auth_profile_created: str = ""
     image_deny_added: bool = False
     image_deny_key_absent: bool = False
+    # The model ref the kit last wrote to mediaModels.image (`image_model` is also the next answer, so it can differ at
+    # Apply). The kit treats the live value as its own only when it is kit-shaped AND names this ref (review L2).
+    image_applied_ref: str = ""
     # MCP servers mirrored from Claude Code. `mcp` is the last answer (mirror | keep);
     # `mcp_skipped` the servers the user unticked. `mcp_mirrored` holds each server the kit
     # manages: {name: {"previous": definition before the kit (None: absent), "applied": ...}}.

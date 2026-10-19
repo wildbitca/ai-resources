@@ -199,8 +199,13 @@ class AccountView(NamedTuple):
     fix: str = ""                             # the command the operator runs, never run by the kit here
 
 
-def sign_in_command(route: Route) -> str:
-    """The OpenClaw command that signs `route` in, with the provider id only. "" when no id is established."""
+def sign_in_command(route: Route, method: str = "") -> str:
+    """The OpenClaw command that signs `route` in, with the provider id only. "" when no id is established. For a route
+    with two methods (MiniMax) `method` picks one, the same way Apply does (`sign_in_for`); without it the key path."""
+    if method and len(route.auth) > 1:
+        argv, _profile = sign_in_for(route, method)
+        if argv:
+            return " ".join(argv)
     if "oauth" in route.auth and route.login_provider and "api-key" not in route.auth:
         return f"openclaw models auth login --provider {route.login_provider}"
     if route.key_provider:
@@ -554,7 +559,8 @@ def dry_run_lines(s: state.SetupState, ctx: Mapping[str, Any] | None = None) -> 
     route = ROUTES.get(mode)
     lines = [f"image generation: would set {MEDIA_PATH} to {s.openclaw.image_model or '(model not set)'}"]
     if route is not None and route.kind == "route":
-        cmd = sign_in_command(route)
+        saved = s.openclaw.image_account
+        cmd = sign_in_command(route, saved if saved in route.auth else "")      # the command Apply runs, not the default
         view = provider_account(route, (ctx or {}).get("accounts"), (ctx or {}).get("kit_env") or ())
         if cmd and not view.gateway_sees_it:
             lines.append(f"would run: {cmd}  (only after your confirm, on your terminal)")
