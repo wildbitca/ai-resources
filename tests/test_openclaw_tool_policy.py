@@ -42,6 +42,25 @@ def test_cover_does_not_trust_other_spellings(entry):
     assert tp.covering_token([entry], T) is None
 
 
+@pytest.mark.parametrize("entry", ["  image_generate", "image_generate  ", "\timage_generate\n", "  IMAGE_GENERATE ",
+                                   " group:media ", "\u00a0image_generate\u00a0", "\ufeffimage_generate", " * ", " image* "])
+def test_cover_matches_openclaws_trim_and_lowercase_normalisation(entry):
+    assert tp.covering_token([entry], T) == entry
+
+
+@pytest.mark.parametrize("entry", ["\x85image_generate", "image_generate\x1c", "\x1fimage_generate", "image_generate\u200b",
+                                   "image generate", "image-generate", "image_generate\x00", "image\u200b_generate",
+                                   "\uff49mage_generate", "\u0456mage_generate", "image_g\u0435nerate", " group:*", "group: media",
+                                   "image_generate,", "image_generate*x", "x*image_generate*", "image_generat\u00e9"])
+def test_cover_does_not_trust_look_alikes_or_whitespace_openclaw_does_not_trim(entry):
+    assert tp.covering_token([entry], T) is None
+
+
+def test_normalize_entry_is_trim_and_lowercase_only():
+    assert tp.normalize_entry("  Image_GENERATE\n") == "image_generate"
+    assert tp.normalize_entry("\x85a\x1c") == "\x85a\x1c"
+
+
 def test_cover_returns_the_first_covering_entry_and_ignores_non_strings():
     assert tp.covering_token(["x", 3, "group:media", "image_generate"], T) == "group:media"
     assert tp.covering_token(None, T) is None and tp.covering_token([], T) is None
