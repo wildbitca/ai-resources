@@ -2257,10 +2257,11 @@ def expand_wildcards(profile: dict, doc: dict) -> dict:
     return tree
 
 
+# `assert_channels_safe` is pinned byte for byte by tests/test_openclaw_channels_exec.py (ADR-0010), so its docstring is
+# not reworded; its sibling `assert_tools_deny_safe` (below) guards the global `tools.deny` (ADR-0011).
 def assert_channels_safe(patch: dict, replace_paths: list[str] | None = None) -> None:
-    """The channels invariant this module must never break: no allowlist, no topic binding, no
-    replace-path anywhere on `channels`. Only `channels.telegram.streaming.*` may be sent.
-    Its sibling `assert_tools_deny_safe` guards the global `tools.deny` (ADR-0011)."""
+    """The one invariant this module must never break: no allowlist, no topic binding, no
+    replace-path anywhere on `channels`. Only `channels.telegram.streaming.*` may be sent."""
     for rp in replace_paths or []:
         if rp == "channels" or rp.startswith("channels.") or rp.startswith("channels["):
             raise ValueError(f"refusing a --replace-path on the channels namespace: {rp}")
