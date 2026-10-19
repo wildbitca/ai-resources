@@ -311,7 +311,7 @@ class OpenClawState:
     lanes_applied: dict[str, Any] = field(default_factory=dict)
     # Channel intent (ADR-0010 N5, plan S11): `channels_seen` are the "<channel>:<account>" keys that were enabled
     # when setup last listed them; `channels_wanted` the ones the operator left ticked. A key seen and not wanted is
-    # a planned DISABLE. Additive: absent from the file while empty; no schema bump.
+    # a planned DISABLE. Never written to the file (`_to_dict` always strips both); no schema bump.
     channels_wanted: list[str] = field(default_factory=list)
     channels_seen: list[str] = field(default_factory=list)
 
@@ -370,9 +370,10 @@ def _to_dict(obj: Any) -> Any:
                 and not doc["openclaw"].get("lanes_applied"):
             doc["openclaw"].pop("lanes_applied", None)
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict):
-            for key in ("channels_wanted", "channels_seen"):    # additive fields: absent until a channel is listed
-                if not doc["openclaw"].get(key):
-                    doc["openclaw"].pop(key, None)
+            # Channel intent lives for one run only (ADR-0010 C6): never serialized, so no save, mid-run or final, can
+            # persist it, whatever the in-memory lists hold.
+            for key in ("channels_wanted", "channels_seen"):
+                doc["openclaw"].pop(key, None)
         return doc
     if isinstance(obj, dict):
         return {k: _to_dict(v) for k, v in obj.items()}

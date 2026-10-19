@@ -169,7 +169,18 @@ def test_old_states_load_with_empty_channel_fields_and_unknown_keys_are_ignored(
     assert "channels_wanted" not in state._to_dict(s)["openclaw"]          # additive: absent while empty
     s.openclaw.channels_wanted, s.openclaw.channels_seen = ["telegram:default"], ["telegram:default"]
     doc = state._to_dict(s)
-    assert doc["openclaw"]["channels_wanted"] == ["telegram:default"] and doc["schema_version"] == "1.0"
-    # a reader that does not know the fields (the pre-change _from_dict) keeps only the names it has
-    known = {k: v for k, v in doc["openclaw"].items() if k not in ("channels_wanted", "channels_seen")}
-    assert state._from_dict(state.OpenClawState, known).channels_wanted == []
+    # The intent is never serialized, even while set (a mid-run save must not persist it).
+    assert "channels_wanted" not in doc["openclaw"] and "channels_seen" not in doc["openclaw"]
+    assert doc["schema_version"] == "1.0"
+    assert state._from_dict(state.OpenClawState, doc["openclaw"]).channels_wanted == []
+
+
+def test_a_save_never_persists_the_channel_intent(tmp_path, monkeypatch):
+    """Advisory: the mid-run save in openclaw_host must not write channels_wanted or channels_seen."""
+    monkeypatch.setattr(state, "state_path", lambda: tmp_path / "state.yaml")
+    s = state.SetupState()
+    s.openclaw.channels_wanted, s.openclaw.channels_seen = ["telegram:default"], ["telegram:default", "slack:default"]
+    state.save(s)
+    text = (tmp_path / "state.yaml").read_text()
+    assert "channels_wanted" not in text and "channels_seen" not in text and "slack:default" not in text
+    assert s.openclaw.channels_wanted == ["telegram:default"]          # the in-memory intent is untouched
