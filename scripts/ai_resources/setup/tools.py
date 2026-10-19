@@ -545,8 +545,12 @@ def _offer_members(s: state.SetupState, found: dict[str, detection.Detected], mi
         for tool_id in chosen:
             if install_one(tool_id, s):
                 installed.append(tool_id)
-        _sign_in_flow(s, installed, interactive=True)
-        _print_later_sign_in([t for t in TOOLS if t not in missing_all and t not in installed], found)
+        ticked_installed = [t for t in TOOLS if t in picked and t not in missing_all]
+        _sign_in_flow(s, installed, interactive=True, installed_tools=ticked_installed)
+        shown_above = {t for t in ticked_installed if TOOLS[t].login_cmd and t not in NEVER_RUN_LOGIN
+                       and _proves_sign_in(TOOLS[t])}
+        _print_later_sign_in([t for t in TOOLS if t not in missing_all and t not in installed
+                              and t not in shown_above], found)
     s._tool_members_this_run = [t for t in TOOLS if t in picked and (found[t].installed or t in installed)]
     return installed
 
@@ -565,6 +569,10 @@ def _print_later_sign_in(installed_ids: list[str], found: dict[str, detection.De
         ui.detail("Already installed - sign in later with: " + "; ".join(parts))
 
 
+NEVER_RUN_LOGIN = frozenset({"agy"})
+"""Tools whose sign-in the kit only names: it never starts them (ADR-0010 S14; ADR-0007 keeps agy operator-run)."""
+
+
 def _proves_sign_in(spec: ToolSpec) -> bool:
     """True when the command is a dedicated login subcommand whose exit status 0 means signed in. A bare `claude`
     or `agy` just opens the tool: the operator signs in inside it, so exit 0 proves nothing."""
@@ -577,6 +585,9 @@ def _run_login(tool_id: str) -> bool:
     spec = TOOLS[tool_id]
     argv = list(spec.login_cmd)
     if not argv:
+        return False
+    if tool_id in NEVER_RUN_LOGIN:
+        ui.info(f"Sign in to {spec.label} yourself: run `{_login_command(spec)}`; the kit does not start it.")
         return False
     resolved = False
     foreign = False                     # detected binary has another name and no sibling: a bare name would be a guess
@@ -623,26 +634,35 @@ def _run_login(tool_id: str) -> bool:
     return True
 
 
-def _sign_in_flow(s: state.SetupState, new_tools: list[str], *, interactive: bool) -> None:
-    """Sign-in screen, shown after installing and only for the tools installed in this run that have a login flow
-    (pre-ticked). Without a prompt (`--yes`) or a terminal the command is printed. Asked once per run."""
-    new_with_login = [t for t in new_tools if TOOLS[t].login_cmd]
-    if not new_with_login:
-        return
+def _sign_in_flow(s: state.SetupState, new_tools: list[str], *, interactive: bool,
+                  installed_tools: list[str] | tuple[str, ...] = ()) -> None:
+    """Sign-in screen, shown after installing for the tools installed in this run that have a login flow (pre-ticked)
+    and for the ticked, already installed tools that have a dedicated login subcommand (listed unticked: Enter signs
+    in to none). A tool in `NEVER_RUN_LOGIN` is only named. Without a prompt (`--yes`) or a terminal the command is
+    printed. Asked once per run."""
+    new_with_login = [t for t in new_tools if TOOLS[t].login_cmd and t not in NEVER_RUN_LOGIN]
+    old_with_login = [t for t in installed_tools if t not in new_with_login and TOOLS[t].login_cmd
+                      and t not in NEVER_RUN_LOGIN and _proves_sign_in(TOOLS[t])]
+    named_only = [t for t in new_tools if t in NEVER_RUN_LOGIN and TOOLS[t].login_cmd]
     if not (interactive and ui.stdin_is_a_terminal()):
-        for t in new_with_login:
+        for t in new_with_login + named_only:
             ui.info(f"To sign in to {TOOLS[t].label} later, run: `{_login_command(TOOLS[t])}`")
         return
+    for t in named_only:
+        ui.info(f"To sign in to {TOOLS[t].label}, run: `{_login_command(TOOLS[t])}` (the kit does not start it).")
+    offered = new_with_login + old_with_login
+    if not offered:
+        return
     cache: dict = s.__dict__.setdefault("_sign_in_answers_this_run", {})
-    key = tuple(new_with_login)
+    key = tuple(offered)
     if key in cache:
         return                                              # already asked and acted on in this run
     picked = ui.checkbox(
         "Sign in now? (each tool opens its own interactive sign-in)",
-        [ui.Choice(f"{TOOLS[t].label}: {_login_command(TOOLS[t])}", value=t) for t in new_with_login],
+        [ui.Choice(f"{TOOLS[t].label}: {_login_command(TOOLS[t])}", value=t) for t in offered],
         default=list(new_with_login))
     cache[key] = list(picked or [])
-    for t in new_with_login:
+    for t in offered:
         if t in cache[key]:
             _run_login(t)
         else:

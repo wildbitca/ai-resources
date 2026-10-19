@@ -98,8 +98,10 @@ def test_sign_in_runs_only_for_newly_installed_tools_that_are_ticked(monkeypatch
     tools.offer(state.SetupState())
     login_asks = [a for a in rig.asked if a[0].startswith(LOGIN)]
     assert len(login_asks) == 1
-    assert [v for v in login_asks[0][1] if not v.startswith("login:")] == ["claude", "agy"]
+    # ADR-0010 S14: the kit never starts agy, so Antigravity is named in a line and is not a sign-in row
+    assert [v for v in login_asks[0][1] if not v.startswith("login:")] == ["claude"]
     assert rig.logins == ["claude"]
+    assert any("`agy`" in n for n in rig.notes)
 
 
 def test_an_installed_tool_is_never_signed_in_by_the_selector_and_gets_an_informational_line(monkeypatch):

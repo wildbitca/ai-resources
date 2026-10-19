@@ -69,7 +69,11 @@ def _offer(monkeypatch, installed, *, pick=None, default=(), **kw):
 
 def test_one_list_is_shown_even_when_nothing_is_missing(monkeypatch):
     rig, s, got = _offer(monkeypatch, installed=tuple(DETECTORS), default=("claude", "codex"))
-    assert len(rig.asked) == 1 and got == []
+    # one members list; the only other prompt is the sign-in list for the ticked, installed tool with a login
+    # command (ADR-0010 S14), which starts unticked
+    members = [a for a in rig.asked if a[0].startswith(tools.MEMBERS_TITLE)]
+    assert len(members) == 1 and got == []
+    assert [a[0].split("?")[0] for a in rig.asked[1:]] == ["Sign in now"] and rig.asked[1][2] == []
     assert s._tool_members_this_run == ["claude", "codex"]
 
 
