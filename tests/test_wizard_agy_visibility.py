@@ -133,7 +133,7 @@ def test_an_installed_agy_changes_nothing_in_the_selection_or_the_plan_table(hos
 def run_preset(monkeypatch, key, preset, installed, ticked=False, lanes=None):
     agy(monkeypatch, installed)
     shown, teams = [], []
-    monkeypatch.setattr(ui, "role_table", lambda rows, title="": shown.append((title, rows)))
+    monkeypatch.setattr(ui, "role_lane_table", lambda rows, title="": shown.append((title, rows)))
     monkeypatch.setattr(ui, "team_table", lambda rows, title="": teams.append((title, rows)))
     s = make_state(key)
     if ticked:
@@ -179,7 +179,10 @@ def test_performance_and_low_cost_show_gemini_as_the_code_review_second_opinion(
 def test_other_modes_never_show_agy_rows(monkeypatch, key, preset):
     _, shown, teams, script = run_preset(monkeypatch, key, preset, True, ticked=True)
     assert len(shown) == 1 and teams == []
-    assert "Antigravity" not in "\n".join(script.shown)
+    # ADR-0010 S10: the single row says once why Gemini is not active, and that line names Antigravity as the way to it;
+    # no Antigravity row, role or terms text is shown on these rows.
+    rest = [m for m in script.shown if "Gemini not active:" not in m]
+    assert "Antigravity" not in "\n".join(rest)
 
 
 @pytest.mark.parametrize("preset", KEYS)

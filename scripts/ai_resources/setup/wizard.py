@@ -603,26 +603,12 @@ def _pick_candidates(shape: str, cands: dict[str, list], saved: Any = None) -> l
 
 def _agy_lanes_on(s: state.SetupState) -> bool:
     """True when the saved lanes table holds an Antigravity lane agent (a fresh install never does)."""
-    from .. import agy_lane_gates
-    agents = (getattr(s.profile, "lanes", None) or {}).get("agents") or {}
-    return any((a or {}).get("backend") == agy_lane_gates.AGY_LANE_BACKEND for a in agents.values())
+    return team_view.agy_lanes_on(getattr(s.profile, "lanes", None))
 
 
 def _agy_team_roles(doc: dict) -> list[str]:
-    """What Antigravity would take in this starting team, from the candidates the profile's lanes block names: one
-    entry per role (`second` ones marked), each with its model slug, labelled while the slug is unconfirmed. The
-    writer role is never listed (writing stays on Claude Code). Display only: nothing here reaches the state."""
-    block = doc.get("lanes") or {}
-    out: list[str] = []
-    for key, suffix in (("roles", ""), ("second", " (second opinion)")):
-        for role, cands in (block.get(key) or {}).items():
-            if role == roles_policy.DEFAULT_INTEGRATING_WRITER:
-                continue
-            for c in cands or ():
-                if isinstance(c, str) and c.startswith("agy:"):
-                    tag = "" if model_pins.agy_slug_confirmed(c[4:]) else " [unconfirmed slug]"
-                    out.append(f"{role}{suffix}: {model_selection.AgyRow(c[4:]).slug}{tag}")
-    return out
+    """What Antigravity would take in this starting team (display only); see `team_view.agy_team_roles`."""
+    return team_view.agy_team_roles(doc)
 
 
 def _show_agy_in_custom(s: state.SetupState) -> None:
@@ -673,25 +659,13 @@ def _preset_bypassed(args: argparse.Namespace) -> bool:
 
 
 def _team_rows(s: state.SetupState, base: dict, rows: list) -> list[tuple[str, str, str]]:
-    """The team table of screen 3: which tool takes which roles in the starting team. Claude Code takes the roles the
-    profile gives it; Antigravity shows its roles only when it is ticked (its candidates come from the profile's
-    lanes block, labelled while the slug is unconfirmed); Codex has no roles yet (held, ADR-0007 FU-2), so its row is information and never a choice.
-    Other tools have no role profile and are not listed."""
+    """The team table of screen 3 (see `team_view.tool_rows`)."""
     from . import lanes_render
     members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
-    roles = ", ".join(r for r, _p, _m in rows) or "none"
-    out: list[tuple[str, str, str]] = [("Claude Code", roles, "in team")]
-    if _preset_key(s) == "cli" and detection.agy_installed():
-        if "agy" in members:
-            listed = "; ".join(_agy_team_roles(base)) or "no role in this starting team"
-            out.append(("Antigravity", f"{listed} - sends repo content to Google; terms check next",
-                        "in team, terms check next"))
-        else:
-            out.append(("Antigravity", "not ticked on Your tools: no roles", "off"))
-    if "codex" in members or (s.cockpits.get("codex") and s.cockpits["codex"].installed):
-        if not lanes_render.CODEX_LANE_ADR_ACCEPTED:
-            out.append(("Codex CLI", "no roles yet (held, ADR-0007 FU-2)", "-"))
-    return out
+    return team_view.tool_rows(
+        members, base, rows, cli_row=_preset_key(s) == "cli", agy_installed=detection.agy_installed(),
+        codex_selected="codex" in members or bool(s.cockpits.get("codex") and s.cockpits["codex"].installed),
+        codex_held=not lanes_render.CODEX_LANE_ADR_ACCEPTED)
 
 
 def _show_team_table(s: state.SetupState, base: dict, rows: list) -> None:
@@ -714,6 +688,28 @@ def _show_legacy_difference(s: state.SetupState, new_name: str, mode: str, backe
         return
     after = {role: {"model": model} for role, _vendor, model in rows}
     profiles.print_role_diff(before, after, title=f"{old} -> {new_name}")
+
+
+def _team_view_args(s: state.SetupState) -> dict:
+    """What the team view needs to know about the host: its row, the ticked tools, the valid acknowledgements and the
+    OpenRouter opt-in."""
+    from . import lanes_render
+    members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
+    return {"row": _preset_key(s), "ticked": "agy" in members,
+            "acks": lanes_render.valid_acks(s.profile.lane_acks),
+            "allow_unverified": bool(s.profile.allow_unverified or _COMPOSE.get("allow_unverified")),
+            "cell_verified": compat.claude_google_openrouter_verified()}
+
+
+def _show_team(s: state.SetupState, base: dict, rows: list, *, title: str) -> None:
+    """The role table with its real provider and lane, the one held/degrade/next-action line set, and on the CLI row
+    the table of tools (ADR-0010 S10)."""
+    kwargs = _team_view_args(s)
+    ui.role_lane_table(team_view.role_lane_rows(rows, base, **kwargs), title=title)
+    for line in team_view.provider_mix(base, rows, **kwargs).lines:
+        ui.info(line)
+    if kwargs["row"] == "cli":
+        _show_team_table(s, base, rows)
 
 
 def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
@@ -754,9 +750,7 @@ def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
         s.profile.customized = False
         s.profile.customizations = {"__targets__": targets} if targets else {}
         ui.console().print()
-        ui.role_table(rows, title=f"{label.replace(' (recommended)', '')}: {name}")
-        if _preset_key(s) == "cli":
-            _show_team_table(s, base, rows)
+        _show_team(s, base, rows, title=f"{label.replace(' (recommended)', '')}: {name}")
         _PRESET = preset
         return 0
 
@@ -976,8 +970,8 @@ def _openrouter_gemini_optin(s: state.SetupState) -> None:
     if key in _GEMINI_ASKED:                     # asked once per team in this run, not again on a return to Review
         return
     _GEMINI_ASKED.add(key)
-    named = ", ".join(roles)
-    held = (f"Gemini held on OpenRouter: Claude Code x Google not verified; {named} use the session model")
+    rows = [(r, "google", "") for r in roles]
+    held = team_view.provider_mix({}, rows, row="openrouter").lines[0]
     if ui.is_non_interactive() or _ASSUME_YES:
         # `--yes` answers the install offer only; this opt-in is never answered for the operator.
         if not s.profile.allow_unverified:
@@ -1303,16 +1297,26 @@ HIDDEN_TOOLS = ("gemini",)
 """Retired tools: never listed by the wizard (an old state that holds one still loads)."""
 
 
+def _agy_tick_restorable(s: state.SetupState) -> bool:
+    """A saved Antigravity tick is restored only when a valid stored Google acknowledgement exists (the text hash of
+    today's text, the account named). A new user, or a saved tick with no valid acknowledgement, starts unticked, so
+    the terms check is never skipped by a leftover choice (ADR-0010 S10)."""
+    from . import lanes_render
+    return "google" in lanes_render.valid_acks(s.profile.lane_acks)
+
+
 def _default_members(s: state.SetupState, detected: dict) -> list[str]:
     """The tools ticked when the screen opens (and the team of a run that cannot ask): the saved or requested
-    selection that is still installed, else every installed tool. Antigravity is the exception: it starts
-    ticked only when the saved lanes already hold it (a fresh install never opts in on its own)."""
+    selection that is still installed, else every installed tool. Antigravity is the exception: it starts ticked only
+    when it was saved ticked (or the saved lanes hold it) AND a valid Google acknowledgement is stored; a fresh install
+    never opts in on its own."""
     installed = [cid for cid, det in detected.items() if det.installed]
     saved = (s.profile.customizations.get("__targets__") or {}).get("selected")
-    held = [c for c in (saved or []) if c in installed and (c != "agy" or _agy_lanes_on(s))]
+    restorable = _agy_tick_restorable(s)
+    held = [c for c in (saved or []) if c in installed and (c != "agy" or restorable)]
     if held:
         return held
-    return [cid for cid in installed if cid not in HIDDEN_TOOLS and (cid != "agy" or _agy_lanes_on(s))]
+    return [cid for cid in installed if cid not in HIDDEN_TOOLS and (cid != "agy" or (_agy_lanes_on(s) and restorable))]
 
 
 def _step2_cockpits(s: state.SetupState) -> int:

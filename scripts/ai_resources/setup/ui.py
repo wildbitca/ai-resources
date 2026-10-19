@@ -314,6 +314,25 @@ def role_table(rows: list[tuple[str, str, str]], title: str = "") -> None:
     console().print(t)
 
 
+def role_lane_table(rows: list[tuple[str, str, str, str]], title: str = "") -> None:
+    """The team screen's role table: role, real provider, model and lane. Every cell is escaped, so model or lane text
+    that looks like Rich markup is shown as it is."""
+    rows = [tuple(safe_text(c) for c in r) for r in rows]
+    if not _HAS_RICH:
+        print(f"\n{safe_text(title)}")
+        for role, provider, model, lane in rows:
+            print(f"  {role:<28} {provider:<10} {model:<28} {lane}")
+        return
+    t = Table(title=_markup_safe(title), show_header=True, header_style="bold cyan", border_style="dim", **_box_kw())
+    t.add_column("Role", style="bold")
+    t.add_column("Provider")
+    t.add_column("Model", style="dim")
+    t.add_column("Lane")
+    for r, p, m, lane in rows:
+        t.add_row(_markup_safe(r), _markup_safe(p), _markup_safe(m), _markup_safe(lane))
+    console().print(t)
+
+
 def team_table(rows: list[tuple[str, str, str]], title: str = "") -> None:
     """The team screen: (tool, roles in this team, in team) rows. A tool with no roles yet is information, not a choice."""
     rows = [tuple(safe_text(c) for c in r) for r in rows]

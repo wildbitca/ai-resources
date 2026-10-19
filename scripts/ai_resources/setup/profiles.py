@@ -181,6 +181,23 @@ def write_executors(executors: dict[str, Any], path: Path) -> None:
     )
 
 
+_CLAUDE_ALIASES = frozenset({"haiku", "sonnet", "opus", "fable", "opusplan"})
+
+
+def vendor_of(model: str, provider: str = "") -> str:
+    """The real provider of a model ref: the namespace of a canonical id, `anthropic` for a Claude alias or id,
+    `google` for a Gemini slug; `session` for `inherit`; else the legacy `provider` field or `-`."""
+    if "/" in model:
+        return model.split("/", 1)[0]
+    if model in _CLAUDE_ALIASES or model.startswith("claude-"):
+        return "anthropic"
+    if model.startswith("gemini-"):
+        return "google"
+    if model == "inherit":
+        return "session"
+    return provider or "-"
+
+
 def role_table(executors: dict[str, Any]) -> list[tuple[str, str, str]]:
     """Return [(role, provider, model)] for display."""
     rows = []
@@ -190,7 +207,7 @@ def role_table(executors: dict[str, Any]) -> list[tuple[str, str, str]]:
         # Derived, not stored: the vendor is the first segment of the canonical
         # ID, so there is one source of truth. The old `provider` field was
         # still displayed and edited after it stopped deciding anything.
-        vendor = model.split("/", 1)[0] if "/" in model else cfg.get("provider", "-")
+        vendor = vendor_of(model, cfg.get("provider", "")) if model != "-" else cfg.get("provider", "-")
         rows.append((role, vendor, model))
     return rows
 

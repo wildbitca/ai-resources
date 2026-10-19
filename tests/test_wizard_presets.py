@@ -55,11 +55,15 @@ def clean_globals(monkeypatch):
     monkeypatch.setattr(wizard, "_PRESET", "")
     monkeypatch.setattr(ui, "section", lambda *a, **k: None)
     monkeypatch.setattr(ui, "role_table", lambda rows, title="": None)
+    monkeypatch.setattr(ui, "role_lane_table", lambda rows, title="": None)
 
 
 def drive(monkeypatch, s, answer, a=None, confirm=True, non_interactive=False):
     shown = []
-    monkeypatch.setattr(ui, "role_table", lambda rows, title="": shown.append((title, rows)))
+    # ADR-0010 S10: the team screen shows role_lane_table (role, real provider, model, lane); the first rows are the
+    # profile's own roles, the CLI row appends its Antigravity members after them.
+    monkeypatch.setattr(ui, "role_lane_table", lambda rows, title="": shown.append(
+        (title, [tuple(r)[:3] for r in rows if " (" not in r[0]])))
     script = Script(**{ASK: answer})
     script.install(monkeypatch, non_interactive=non_interactive)
     rc = wizard._step_preset(s, a or args())
@@ -213,6 +217,7 @@ def test_the_role_table_is_the_profiles_own_mapping(monkeypatch):
     s = make_state("litellm")
     _, _, shown = drive(monkeypatch, s, "performance")
     want = profiles.role_table(profiles.to_executors(profiles.load_profile("performance-claude-55"), "litellm"))
+    assert {vendor for _r, vendor, _m in want} == {"anthropic"}          # the real provider, never "-"
     assert shown[0][1] == want
 
 
