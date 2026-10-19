@@ -409,3 +409,25 @@ def test_the_intent_is_consumed_at_apply_and_never_saved():
     assert src.count("s.openclaw.channels_seen, s.openclaw.channels_wanted = [], []") >= 2
     assert src.index("_apply_channel_changes(s)\n    s.openclaw.channels_seen") < src.index(
         'state.save(s)\n    ui.record_action("saved setup state")')
+
+
+@pytest.mark.parametrize("text,secret", [
+    ('{"password": "hunter2"}', "hunter2"),
+    ("{'password':'hunter2'}", "hunter2"),
+    ('{"botToken": "abc def"}', "abc def"),
+    ("accessToken=s3cr3tvalue", "s3cr3tvalue"),
+    ("SLACK_BOT_TOKEN=xyz123", "xyz123"),
+    ("client_secret: topsecretvalue", "topsecretvalue"),
+    ("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+    ('"authorization": "Bearer abcdef123"', "abcdef123"),
+    ("Authorization: Bearer abcdef123", "abcdef123"),
+    ("sent header Bearer abcdef123 to host", "abcdef123"),
+    ("api_key = 'my key value'", "my key value"),
+])
+def test_redact_hides_the_value_after_a_quoted_or_suffixed_secret_key(text, secret):
+    blob = " ".join(oc.redact(text))
+    assert secret not in blob and "[redacted]" in blob
+
+
+def test_redact_keeps_ordinary_lines():
+    assert oc.redact("channel telegram:default removed") == ["channel telegram:default removed"]

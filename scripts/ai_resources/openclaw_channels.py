@@ -36,7 +36,14 @@ OUTPUT_WIDTH = 200
 ENV_KEEP = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
             "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")
 _SECRET_NAME = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential|auth)", re.I)
+_VALUE = r"""(?:"[^"]*"|'[^']*'|\S+)"""
 _SECRET_TEXT = (
+    # `Authorization: Basic abc`, `"authorization": "Bearer abc"`: the scheme word and the credential after it
+    re.compile(r"(?i)authorization[\"']?\s*[=:]\s*(?:(?:basic|bearer|token|digest)\s+)?" + _VALUE),
+    re.compile(r"(?i)\b(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{4,}"),
+    # a secret-named key, bare or quoted, with a prefix or suffix (`accessToken=v`, `"password": "v"`, `client_secret: v`)
+    re.compile(r"(?i)[\w.-]*(?:token|secret|passw(?:or)?d|passwd|api[_-]?key|credential|private[_-]?key)[\w.-]*[\"']?\s*[=:]\s*"
+               + _VALUE),
     re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{20,}"),                       # a Telegram bot token
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),                     # a Slack token
     re.compile(r"(?i)\b(?:bearer|token|secret|password|api[_-]?key)\b\s*[=:]?\s*\S+"),
