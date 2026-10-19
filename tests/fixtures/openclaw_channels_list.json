@@ -1,0 +1,231 @@
+{
+  "chat": {
+    "telegram": {
+      "accounts": [
+        "default"
+      ],
+      "label": "Telegram",
+      "docsPath": "/channels/telegram",
+      "installed": true,
+      "origin": "configured"
+    },
+    "slack": {
+      "accounts": [
+        "default"
+      ],
+      "label": "Slack",
+      "docsPath": "/channels/slack",
+      "installed": true,
+      "origin": "configured"
+    },
+    "feishu": {
+      "accounts": [],
+      "label": "Feishu",
+      "docsPath": "/channels/feishu",
+      "installed": false,
+      "origin": "installable"
+    },
+    "wecom": {
+      "accounts": [],
+      "label": "WeCom",
+      "docsPath": "/channels/wecom",
+      "installed": false,
+      "origin": "installable"
+    },
+    "googlechat": {
+      "accounts": [],
+      "label": "Google Chat",
+      "docsPath": "/channels/googlechat",
+      "installed": false,
+      "origin": "installable"
+    },
+    "nostr": {
+      "accounts": [],
+      "label": "Nostr",
+      "docsPath": "/channels/nostr",
+      "installed": false,
+      "origin": "installable"
+    },
+    "buzz": {
+      "accounts": [],
+      "label": "Buzz",
+      "docsPath": "/channels/buzz",
+      "installed": false,
+      "origin": "installable"
+    },
+    "msteams": {
+      "accounts": [],
+      "label": "Microsoft Teams",
+      "docsPath": "/channels/msteams",
+      "installed": false,
+      "origin": "installable"
+    },
+    "mattermost": {
+      "accounts": [],
+      "label": "Mattermost",
+      "docsPath": "/channels/mattermost",
+      "installed": false,
+      "origin": "installable"
+    },
+    "nextcloud-talk": {
+      "accounts": [],
+      "label": "Nextcloud Talk",
+      "docsPath": "/channels/nextcloud-talk",
+      "installed": false,
+      "origin": "installable"
+    },
+    "matrix": {
+      "accounts": [],
+      "label": "Matrix",
+      "docsPath": "/channels/matrix",
+      "installed": false,
+      "origin": "installable"
+    },
+    "raft": {
+      "accounts": [],
+      "label": "Raft",
+      "docsPath": "/channels/raft",
+      "installed": false,
+      "origin": "installable"
+    },
+    "a2a": {
+      "accounts": [],
+      "label": "A2A",
+      "docsPath": "/channels/a2a",
+      "installed": true,
+      "origin": "available"
+    },
+    "line": {
+      "accounts": [],
+      "label": "LINE",
+      "docsPath": "/channels/line",
+      "installed": false,
+      "origin": "installable"
+    },
+    "openclaw-weixin": {
+      "accounts": [],
+      "label": "Weixin",
+      "docsPath": "/channels/wechat",
+      "installed": false,
+      "origin": "installable"
+    },
+    "zalo": {
+      "accounts": [],
+      "label": "Zalo",
+      "docsPath": "/channels/zalo",
+      "installed": false,
+      "origin": "installable"
+    },
+    "openclaw-zaloclawbot": {
+      "accounts": [],
+      "label": "Zalo ClawBot",
+      "docsPath": "/channels/zaloclawbot",
+      "installed": false,
+      "origin": "installable"
+    },
+    "clickclack": {
+      "accounts": [],
+      "label": "ClickClack",
+      "docsPath": "/channels/clickclack",
+      "installed": false,
+      "origin": "installable"
+    },
+    "yuanbao": {
+      "accounts": [],
+      "label": "Yuanbao",
+      "docsPath": "/channels/yuanbao",
+      "installed": false,
+      "origin": "installable"
+    },
+    "zalouser": {
+      "accounts": [],
+      "label": "Zalo Personal",
+      "docsPath": "/channels/zalouser",
+      "installed": false,
+      "origin": "installable"
+    },
+    "sms": {
+      "accounts": [],
+      "label": "SMS",
+      "docsPath": "/channels/sms",
+      "installed": false,
+      "origin": "installable"
+    },
+    "agentmail": {
+      "accounts": [],
+      "label": "AgentMail",
+      "installed": false,
+      "origin": "installable"
+    },
+    "synology-chat": {
+      "accounts": [],
+      "label": "Synology Chat",
+      "docsPath": "/channels/synology-chat",
+      "installed": false,
+      "origin": "installable"
+    },
+    "tlon": {
+      "accounts": [],
+      "label": "Tlon",
+      "docsPath": "/channels/tlon",
+      "installed": false,
+      "origin": "installable"
+    },
+    "discord": {
+      "accounts": [],
+      "label": "Discord",
+      "docsPath": "/channels/discord",
+      "installed": false,
+      "origin": "installable"
+    },
+    "imessage": {
+      "accounts": [],
+      "label": "iMessage",
+      "docsPath": "/channels/imessage",
+      "installed": false,
+      "origin": "installable"
+    },
+    "irc": {
+      "accounts": [],
+      "label": "IRC",
+      "docsPath": "/channels/irc",
+      "installed": false,
+      "origin": "installable"
+    },
+    "qqbot": {
+      "accounts": [],
+      "label": "QQ Bot",
+      "docsPath": "/channels/qqbot",
+      "installed": false,
+      "origin": "installable"
+    },
+    "reef": {
+      "accounts": [],
+      "label": "Reef",
+      "docsPath": "/channels/reef",
+      "installed": true,
+      "origin": "available"
+    },
+    "signal": {
+      "accounts": [],
+      "label": "Signal",
+      "docsPath": "/channels/signal",
+      "installed": false,
+      "origin": "installable"
+    },
+    "twitch": {
+      "accounts": [],
+      "label": "Twitch",
+      "docsPath": "/channels/twitch",
+      "installed": false,
+      "origin": "installable"
+    },
+    "whatsapp": {
+      "accounts": [],
+      "label": "WhatsApp",
+      "docsPath": "/channels/whatsapp",
+      "installed": false,
+      "origin": "installable"
+    }
+  }
+}
