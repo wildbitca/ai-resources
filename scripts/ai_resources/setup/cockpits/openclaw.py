@@ -342,6 +342,12 @@ def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_c
                 "models": {model: {"agentRuntime": {"id": engine.runtime}}},
             }},
         }
+        entries = _get(doc, "agents", "entries") or {}
+        for name, cfg in entries.items():
+            if str(name).startswith("kit-lane-"):
+                continue
+            if isinstance(cfg, dict) and "model" in cfg:
+                patch["agents"].setdefault("entries", {})[name] = {"model": {"primary": model}}
         # Runtimes are attached per model ref; a ref the kit pinned to another runtime
         # earlier would keep that pin if the user later picked it by hand.
         for ref, cfg in (_get(doc, "agents", "defaults", "models") or {}).items():
@@ -409,13 +415,21 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
 
     # subagents.allowAgents must include "claude": on every agent already declared in
     # the live config, and on the defaults so a future agent inherits it too.
+    # Also propagate `primary_ref` to any existing non-claude, non-lane agent entry that
+    # carries an explicit `model` key so the chosen engine + model applies completely.
     entries = _get(doc, "agents", "entries") or {}
     for name, cfg in entries.items():
-        if name == "claude":
+        if name == "claude" or str(name).startswith("kit-lane-"):
             continue
-        existing_allow = _get(cfg if isinstance(cfg, dict) else {}, "subagents", "allowAgents") or []
+        cfg_dict = cfg if isinstance(cfg, dict) else {}
+        existing_allow = _get(cfg_dict, "subagents", "allowAgents") or []
+        ent_patch: dict[str, Any] = {}
         if "claude" not in existing_allow:
-            patch["agents"]["entries"][name] = {"subagents": {"allowAgents": [*existing_allow, "claude"]}}
+            ent_patch["subagents"] = {"allowAgents": [*existing_allow, "claude"]}
+        if "model" in cfg_dict:
+            ent_patch["model"] = {"primary": primary_ref}
+        if ent_patch:
+            patch["agents"]["entries"][name] = ent_patch
     default_allow = _get(doc, "agents", "defaults", "subagents", "allowAgents") or []
     if "claude" not in default_allow:
         patch["agents"]["defaults"]["subagents"] = {"allowAgents": [*default_allow, "claude"]}
@@ -1169,9 +1183,7 @@ def _prompt_engine_choice(s: state.SetupState, *, dry_run: bool = False) -> None
         # A vendor-prefixed value saved by an earlier run would build a three-segment
         # ref, which OpenClaw cannot resolve; keep only the model id.
         saved_worker = (s.openclaw.worker_model or default_worker_model()).split("/")[-1]
-        s.openclaw.worker_model = ui.text(
-            "Model for the unrestricted claude worker agent:", default=saved_worker,
-        ) or saved_worker
+        s.openclaw.worker_model = saved_worker
 
 
 def _prompt_engine_model(s: state.SetupState, *, dry_run: bool = False) -> None:

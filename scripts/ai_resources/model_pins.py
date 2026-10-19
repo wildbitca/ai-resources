@@ -38,7 +38,7 @@ DEFAULTS: dict[str, str] = {
 # Antigravity (agy) model ids. `agy models` is not trusted for unattended upgrades, so this list is
 # edited by hand; the first entry is the default. Moved verbatim from ENGINES["antigravity"].
 AGY_STATIC: tuple[str, ...] = (
-    "gemini-3.8-flash-low", "gemini-3.8-flash-medium", "gemini-3.8-flash-high",
+    "gemini-3.8-flash-low", "gemini-3.8-flash-high",
     "gemini-4-argon-low", "gemini-4-argon-medium", "gemini-4-argon-high",
     "gemini-3.1-pro-low",
     "claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-high",

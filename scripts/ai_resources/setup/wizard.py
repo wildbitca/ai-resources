@@ -2596,7 +2596,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
                 _untick(s, "agy")
                 ui.info("Antigravity stays off; nothing was stored.")
                 return 0
-            orchestrators = ask_orchestrators()
+            orchestrators = orchestrators or ["claude", "main"]
             doc = _without_claude_cli(doc)
     try:
         from ..scoring import headroom_sources
