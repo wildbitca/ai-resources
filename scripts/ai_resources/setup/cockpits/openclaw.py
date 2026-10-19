@@ -674,6 +674,109 @@ def _remove_image_deny(s: state.SetupState, *, dry_run: bool = False) -> DenyRes
     return result
 
 
+def _report_deny(res: DenyResult, *, dry_run: bool) -> None:
+    """One honest line (or three) per deny outcome. Tool names only."""
+    if res.status == DENY_COVERED:
+        ui.info(f"image_generate is already denied by your tools.deny entry {res.detail!r} (not changed)")
+    elif res.status == DENY_ALREADY:
+        ui.info("image_generate deny was already added by setup; nothing to change")
+    elif res.status == DENY_DRY_RUN:
+        ui.info("tools.deny before: " + (", ".join(res.before) or "(absent)"))
+        ui.info("tools.deny after:  " + (", ".join(res.after or ()) or "(absent)") + "  (dry run; nothing written)")
+
+
+def _confirm_replace_image(current: Any, new_ref: str) -> bool:
+    """An operator-set `mediaModels.image` is never replaced without an interactive default-No confirm."""
+    shown = image.ref_of(current) or "a custom value"
+    if ui.is_non_interactive():
+        ui.warn(f"OpenClaw already has an image model ({shown}); kept (a non-interactive run never replaces it).")
+        return False
+    return host_section._gate(f"Replace your OpenClaw image model {shown} with {new_ref}?",
+                              "Setup puts your value back on teardown.")
+
+
+def _image_sign_in(s: state.SetupState, route: Any, *, dry_run: bool) -> bool:
+    """Hand the sign-in to OpenClaw (plan I9). True when the config patch may go on."""
+    return True
+
+
+def _configure_image(s: state.SetupState, doc: dict, path: Path, written: list[Path], *, dry_run: bool) -> bool:
+    """The image answer, one Apply, same gates (ADR-0011 decision 14). True when openclaw.json changed.
+
+    keep: no I/O. disable: the deny writer only (a kit-applied model is left as it is). A route: the model first, and only
+    when that write landed live, the kit's own deny token second; a failed or pending model write leaves image generation
+    OFF, never on an unintended route."""
+    o = s.openclaw
+    mode = o.image_mode or image.KEEP_ID
+    if mode == image.KEEP_ID:
+        return False
+    if mode not in image.ROUTES:
+        ui.warn(f"OpenClaw: unknown image answer {mode!r}; image generation left unchanged.")
+        return False
+    if mode == image.DISABLE_ID:
+        res = _apply_image_deny(s, dry_run=dry_run)
+        _report_deny(res, dry_run=dry_run)
+        return res.changed
+    route = image.effective_route(image.ROUTES[mode], doc)
+    try:
+        patch = image.build_patch(mode, o.image_model, route=route)
+    except ValueError as e:
+        ui.warn(f"OpenClaw: image generation left unchanged ({e}).")
+        return False
+    assert patch is not None
+    current = image.live_image_value(doc)
+    ref = patch["agents"]["defaults"]["mediaModels"]["image"]["primary"]
+    kit_owns = bool(o.image_applied and image.kit_shaped(current))
+    if current is not None and not kit_owns and image.ref_of(current) != ref:
+        if not dry_run and not _confirm_replace_image(current, ref):
+            return False
+        if dry_run:
+            ui.info(f"OpenClaw already has an image model ({image.ref_of(current) or 'a custom value'}); "
+                    "an interactive Apply asks before replacing it.")
+    ok, out = apply_patch(patch, dry_run=True, replace_paths=image.REPLACE_PATHS)
+    if not ok:
+        ui.error(f"OpenClaw rejected the image-generation patch: {ui.safe_excerpt(out, 400, tail=True)}")
+        return False
+    if dry_run:
+        ui.info(f"image model after: {ref}  (dry run; nothing written)")
+        _image_sign_in(s, route, dry_run=True)
+        if o.image_deny_added:
+            _report_deny(_remove_image_deny(s, dry_run=True), dry_run=True)
+        return False
+    if not _image_sign_in(s, route, dry_run=False):
+        return False
+    if _lanes_classify(patch):
+        ui.warn("OpenClaw: the image model needs a gateway restart to apply, so setup did not write it. Re-run setup "
+                "after enabling hot reload (`gateway.reload.mode`); the kit never restarts a live gateway.")
+        if o.image_deny_added:
+            ui.warn("The image_generate entry setup added to tools.deny is still present: image generation stays OFF.")
+        return False
+    first = not o.image_applied
+    ok, out = _apply_hot(patch, replace_paths=image.REPLACE_PATHS)
+    if not ok:
+        ui.error(f"OpenClaw rejected the image-generation patch: {ui.safe_excerpt(out, 400, tail=True)}")
+        if o.image_deny_added:
+            ui.warn("The image_generate entry setup added to tools.deny is still present: image generation stays OFF.")
+        return False
+    if first:                     # the value before the kit's first write, kept for teardown (None and absent are not the same)
+        o.image_previous = current
+        o.image_previous_absent = current is None
+    o.image_applied = True
+    o.image_model = ref
+    o.config_path = str(path)
+    if path not in written:
+        written.append(path)
+    ui.ok(f"OpenClaw image generation -> {ref}")
+    covering = image.live_covering_entry(read_config(path))
+    if covering and covering != openclaw_tool_policy.IMAGE_TOOL:
+        ui.warn(f"Your tools.deny entry {covering!r} still blocks image_generate; setup does not remove it.")
+    if o.image_deny_added:
+        _report_deny(_remove_image_deny(s), dry_run=False)
+        if o.image_deny_added:
+            ui.warn("The image_generate entry setup added to tools.deny is still present.")
+    return True
+
+
 def _antigravity_restore_fragment(prev: dict) -> tuple[dict, list[str]]:
     """Patch fragment + `--replace-path`s that undo everything only the antigravity
     engine's `_build_antigravity_patch` touches.
@@ -1017,6 +1120,8 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     engine_changed = _configure_engine(ctx, doc, path, ak_path, written)
     mcp_changed = _configure_mcp(s, doc, path, written, dry_run=dry_run)
     voice_changed = _configure_voice(s, doc, path, ak_path, written, dry_run=dry_run)
+    # Image generation (ADR-0011): the config is re-read first, the engine/voice patches above may have changed it.
+    image_changed = _configure_image(s, doc if dry_run else read_config(path), path, written, dry_run=dry_run)
     workshop_changed = _configure_skill_workshop(s, doc, path, written, dry_run=dry_run)
     # Above the early return below on purpose: the host section's local work (kit-host.env, hooks,
     # AGENTS.md) does not depend on openclaw.json having changed, and it renders its own dry run.
@@ -1028,7 +1133,8 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     if not dry_run:
         doc = read_config(path)
     lanes_changed = _configure_lanes(s, doc, dry_run=dry_run, run_changes=run_changes)
-    changed = engine_changed or mcp_changed or voice_changed or workshop_changed or host_changed or lanes_changed
+    changed = (engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
+               or lanes_changed)
     if not dry_run and run_changes:
         host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
     # The kit block in every agent workspace does not depend on the engine, on the host section's

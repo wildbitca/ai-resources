@@ -283,6 +283,13 @@ def ref_of(value: Any) -> str:
     return ""
 
 
+def kit_shaped(value: Any) -> bool:
+    """True for exactly the value `build_patch` writes: {primary, timeoutMs: 180000}. After the kit has applied a model, a
+    live value of this shape is the kit's own (replaced without a second confirm); anything else was set by the operator."""
+    return (isinstance(value, dict) and set(value) == {"primary", "timeoutMs"} and isinstance(value["primary"], str)
+            and value["timeoutMs"] == TIMEOUT_MS)
+
+
 def live_covering_entry(doc: Mapping[str, Any] | None) -> str | None:
     deny = _get(doc or {}, "tools", "deny")
     if isinstance(deny, list) and all(isinstance(x, str) for x in deny):
