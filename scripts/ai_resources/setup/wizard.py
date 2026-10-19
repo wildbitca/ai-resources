@@ -270,6 +270,7 @@ def _run(args: argparse.Namespace) -> int:
     if not dry_run:
         # An old profile name is saved under its new one (ADR-0010 N4); every other name is saved as it is.
         s.profile.name = profile_names.canonical(s.profile.name)
+        s.openclaw.channels_seen, s.openclaw.channels_wanted = [], []        # never saved (C6)
         state.save(s)
         ui.record_action("saved setup state")
         verify_rc = _step10_verify(s, list(_APPLIED_TARGETS))
@@ -2699,6 +2700,37 @@ def _routed_executors(s: state.SetupState, executors_doc: dict) -> dict:
     return routed
 
 
+def _apply_channel_changes(s: state.SetupState, *, dry_run: bool = False) -> None:
+    """Run the planned channel DISABLES, one at a time, each through `openclaw_channels.execute`, which re-checks every
+    guard itself (a terminal, not a dry run, not `--yes`, the OpenClaw cockpit, hot reload rules, a fresh listing, the
+    operator's default-No confirm and Telegram's second one). An enable is never run; Review already printed it."""
+    from .. import openclaw_channels as channels
+    from .. import openclaw_host, openclaw_reload_rules
+    from .cockpits import _openclaw_channels
+    inventory = getattr(s, _openclaw_channels.INVENTORY_ATTR, None)
+    if not inventory:
+        return
+    plan = [c for c in channels.plan_changes(s.openclaw.channels_seen, s.openclaw.channels_wanted, inventory)
+            if isinstance(c, channels.ChannelChange)]
+    if not plan:
+        return
+    runner = openclaw_host.default_runner
+    ruleset = None if dry_run else openclaw_reload_rules.current_ruleset(runner)
+    cockpit = "openclaw" if "openclaw" in _APPLIED_TARGETS or (dry_run and "openclaw" in _members_of(s)) else ""
+    interactive = ui.stdin_is_a_terminal() and not ui.is_non_interactive()
+    ui.console().print()
+    ui.info("Channel accounts")
+    for change in plan:
+        out = channels.execute(change, runner=runner, confirm=ui.confirm, tty=interactive, dry_run=dry_run,
+                               yes=_ASSUME_YES, cockpit=cockpit, inventory=inventory, reload_rules=ruleset)
+        show = ui.ok if out.status == channels.DONE else ui.warn if out.status in (channels.REFUSED, channels.FAILED) \
+            else ui.info
+        for line in out.lines:
+            show(line)
+        if out.ran:
+            ui.record_action(f"turned off the channel account {change.key}")
+
+
 def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     if dry_run:
         return _step9_dry_run(s)
@@ -2805,6 +2837,11 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
             ui.warn(f"{cid}: skipped: {e}")
         except Exception as e:
             ui.error(f"{cid}: {e}")
+
+    # Channel accounts the operator unticked are turned off here, after the config patch and the lane writes of the
+    # cockpits above and never in parallel with them (ADR-0010 N5). The intent is consumed: it is never saved (C6).
+    _apply_channel_changes(s)
+    s.openclaw.channels_seen, s.openclaw.channels_wanted = [], []
 
     # Cleanup: remove __targets__ stash
     s.profile.customizations.pop("__targets__", None)
@@ -3054,6 +3091,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
         console.print("[bold yellow]Gateway will be started temporarily for smoke tests, then stopped.[/]")
     console.print()
     _print_plan_table(s)
+    _apply_channel_changes(s, dry_run=True)
 
     # Build executors
     if s.mode == "multi-model":

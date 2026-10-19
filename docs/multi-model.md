@@ -733,7 +733,8 @@ with no saved answer changes nothing.
 
 The kit never writes `openclaw.json` itself: every change goes through
 `openclaw config patch`, which validates it. `channels` (Telegram allowlists,
-topic-to-agent bindings) is never part of any patch the kit builds. The values a
+topic-to-agent bindings) is never part of any patch the kit builds; a channel account is turned off only by running
+`openclaw channels remove` after a per-change confirm (ADR-0010). The values a
 patch replaces are saved in `setup-state.yaml` and restored exactly on teardown,
 including the antigravity-only keys (`tools.media`, the openrouter/llama-cpp
 plugin entries, per-agent `subagents.allowAgents`, the `claude` agent entry) and

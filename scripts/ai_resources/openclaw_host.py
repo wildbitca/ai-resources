@@ -2424,7 +2424,9 @@ def restore_patch(changes: list[dict], doc: dict | None = None) -> tuple[dict, l
 #
 # The setup writes ONLY the root `bindings` array. It never writes `channels.telegram.*`
 # (`assert_channels_safe` is unchanged): when a routed group is missing from
-# `channels.telegram.groups` the setup reports it, with the command for the operator to run (T35).
+# `channels.telegram.groups` the setup reports it, with the command for the operator to run (T35). The one thing it
+# does about channels is not a patch: it may turn an account OFF by running `openclaw channels remove` after a
+# per-change confirm (openclaw_channels.execute, ADR-0010); it never patches `channels.*`.
 
 _GROUP_ID = re.compile(r"^-[0-9]+$")
 
@@ -2652,7 +2654,8 @@ def agent_new(agent_id: str, workspace: Path | str, *, kind: str | None = None, 
     Registers the agent through OpenClaw's own `agents add` (which also creates its agentDir and
     session store, and is a validated writer), never through openclaw.json. Refuses to overwrite an
     existing AGENTS.md without `force`. The Telegram topic binding is not done here: it lives in
-    `channels`, which the kit never edits.
+    `channels`, which the kit never patches (a channel account is turned off only by `openclaw channels remove`
+    after a per-change confirm, ADR-0010).
     """
     if not _AGENT_ID.match(agent_id):
         raise ValueError("the agent id must be lowercase letters, digits and dashes, starting with a letter")

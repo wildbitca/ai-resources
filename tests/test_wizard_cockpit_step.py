@@ -92,7 +92,8 @@ def test_engine_and_channel_questions_come_first_and_only_list_runs(monkeypatch)
     rows = wizard._review_rows(s)
     text = "\n".join(f"{a} {b}" for a, b in rows)
     assert "openclaw channels remove --channel slack --account default" in text
-    assert "undo: openclaw channels add --channel slack --account default  (run it yourself)" in text
+    # security condition (ADR-0010 S12): the undo says that re-adding needs the credentials
+    assert "undo: re-add with credentials: openclaw channels add --channel slack --account default  (run it yourself)" in text
     assert runner.argvs == [["openclaw", "channels", "list", "--all", "--json"]]      # Review ran nothing
 
 

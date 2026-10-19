@@ -941,8 +941,8 @@ def _configure_bindings(o: state.OpenClawState, doc: dict, path: Path, written: 
                         dry_run: bool, apply_patch: Callable[..., tuple[bool, str]]) -> bool:
     """Bind each answered agent to its Telegram group in the root `bindings` array. True when it changed.
 
-    Writes ONLY `bindings` (`channels.telegram.*` is the operator's: `assert_channels_safe` is
-    unchanged). The array is rebuilt from the live one and sent whole with `--replace-path bindings`.
+    Writes ONLY `bindings` (`channels.telegram.*` is the operator's and the kit never patches `channels.*`:
+    `assert_channels_safe` is unchanged; ADR-0010). The array is rebuilt from the live one and sent whole with `--replace-path bindings`.
     """
     wanted = {a: c for a, c in o.host_group_ids.items() if a in _routed_agents(doc) and c}
     if not wanted:
@@ -995,7 +995,7 @@ def _report_allowlist_gaps(doc: dict, wanted: dict[str, str]) -> None:
         agents = ", ".join(a for a, c in wanted.items() if c == chat)
         ui.warn(f"Telegram group {chat} ({agents}) is routed but is NOT in channels.telegram.groups, and "
                 "groupPolicy is \"allowlist\": Telegram will DROP every message from it with no log line "
-                "(T35). The kit never writes channels; run this yourself:\n    "
+                "(T35). The kit never patches channels.*; run this yourself:\n    "
                 + host.allowlist_fix_command(chat))
 
 

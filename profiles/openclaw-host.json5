@@ -20,7 +20,8 @@
 //   - plugin entries are only touched when the plugin is already configured;
 //   - `channels` is off limits except `channels.telegram.streaming`: the Telegram allowlist is
 //     the only gate in front of the unrestricted claude-kit backend, so no allowlist and no topic
-//     binding may ever appear in a patch built from this file (asserted by the tests).
+//     binding may ever appear in a patch built from this file (asserted by the tests). A channel account is turned
+//     off only by running `openclaw channels remove` after a per-change confirm, never by a patch (ADR-0010).
 //
 // Deliberately absent: `agents.defaults.model.primary`. The ENGINE section owns it (it points the
 // default agent at the chosen engine), and two sections owning one key means whichever runs last

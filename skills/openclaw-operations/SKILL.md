@@ -63,7 +63,7 @@ Prefer `status` and `bootstrap --dry-run` first: they report and change nothing.
    (T24), so if a file "is missing" after a deny it was never written: repeat the corrected call.
 4. **Never write `~/.openclaw/openclaw.json` by hand.** Use `openclaw config set|patch`
    (`config patch --stdin --dry-run` first), or `ai-resources setup`, which sends the canonical
-   block as one validated patch. It never touches `channels.*` except `channels.telegram.streaming`.
+   block as one validated patch. It never patches `channels.*` except `channels.telegram.streaming` (accounts go off only via `openclaw channels remove`, ADR-0010).
 5. **Secrets stay out of files the kit writes.** The config uses a SecretRef for the GitHub token
    (`GH_TOKEN`); `setup-state.yaml` records no credential value; set credentials with
    `openclaw configure`.

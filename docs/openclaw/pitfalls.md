@@ -1189,8 +1189,9 @@ importantly, no `peer` — it carries no chat id and must never be mistaken for 
 id (pre-filled from the live `bindings`, empty leaves it alone) and maintains **only** the root
 `bindings` array: it upserts the entries it owns (matched on `agentId` plus `match.peer.id`), keeps
 every other entry and the operator's `comment`s verbatim, re-appends main's catch-all last and sends the
-array with `--replace-path bindings`. It never writes `channels.telegram.*` (trap 3 stays the operator's
-step): when a routed group is missing from `channels.telegram.groups` under `groupPolicy: "allowlist"`
+array with `--replace-path bindings`. It never patches `channels.*` (trap 3 stays the operator's step; the only
+channel action the kit takes is turning an account off with `openclaw channels remove` after a per-change confirm,
+ADR-0010): when a routed group is missing from `channels.telegram.groups` under `groupPolicy: "allowlist"`
 it prints the id and the exact command, e.g.
 
 ```
@@ -1824,8 +1825,9 @@ question. Tests: `tests/test_openclaw_host_profile.py` (and the wizard suite).
 
 It pins the keys in the original card with the reason next to each. The wizard shows the patch, then
 validates it with `openclaw config patch --stdin --dry-run`, and applies only after its own confirm;
-a rejected dry run stops there. `channels.*` is never touched except `channels.telegram.streaming.*`,
-enforced in code (`assert_channels_safe`). The GitHub token is a SecretRef to `GH_TOKEN`, sent only
+a rejected dry run stops there. `channels.*` is never patched except `channels.telegram.streaming.*`,
+enforced in code (`assert_channels_safe`); a channel account is turned off only by running `openclaw channels remove`
+after a per-change confirm (ADR-0010). The GitHub token is a SecretRef to `GH_TOKEN`, sent only
 when that variable resolves. Host values (domain, ingress CIDR) are asked, not edited by hand. A key
 whose plugin is not configured, or whose value needs a marker not provided, is skipped with a note.
 

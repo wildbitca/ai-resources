@@ -1,4 +1,4 @@
-"""OpenClaw channel intent for `ai-resources setup` (UI only; ADR-0010 N5, plan S11).
+"""OpenClaw channel intent for `ai-resources setup` (UI only; ADR-0010 N5, plan S11; applied by S12).
 
 The operator is shown the channel accounts OpenClaw lists (read-only: `openclaw channels list --all --json`) and
 unticks the ones that should be off. Nothing runs here and nothing is written to OpenClaw: the answer is recorded
@@ -27,20 +27,20 @@ def prompt(s: state.SetupState, *, runner: Callable[..., "tuple[int, str]"] | No
     """Ask which listed channel accounts stay on. Unattended runs ask nothing and plan nothing."""
     if ui.is_non_interactive():
         return
-    inventory = channels.list_channels(runner or _runner())
-    if inventory is None:
-        ui.detail("Could not read the OpenClaw channel list; channels stay as they are.")
-        s.__dict__.pop(INVENTORY_ATTR, None)
-        return
-    if not inventory:
-        return
     o = s.openclaw
+    inventory = channels.list_channels(runner or _runner())
+    if not inventory:
+        # Unreadable, or nothing listed: whatever an earlier read of this run left behind is stale and goes
+        # (architect C6/security: a re-list that comes back empty must not leave a plan standing).
+        s.__dict__.pop(INVENTORY_ATTR, None)
+        o.channels_seen, o.channels_wanted = [], []
+        if inventory is None:
+            ui.detail("Could not read the OpenClaw channel list; channels stay as they are.")
+        return
     on = [a.key for a in inventory if a.enabled]
-    saved_seen = set(o.channels_seen)
-    # Start from the current truth: what is enabled stays ticked unless the operator unticked it in an earlier run
-    # while it was still enabled and it is still listed as seen.
-    default = [k for k in on if k not in saved_seen or k in o.channels_wanted]
-    default += [k for k in o.channels_wanted if k not in on and k in {a.key for a in inventory}]
+    # No saved disable intent (C6): the default is the current truth. Everything that is on right now starts ticked;
+    # an earlier run's unticking is never remembered, so a disable has to be chosen again, in this run.
+    default = list(on)
     choices = [ui.Choice(_title(a), value=a.key) for a in inventory]
     picked = ui.checkbox(
         "Which channel accounts should stay on? (unticking one asks to turn it off at Apply, after its own confirm)",
@@ -68,5 +68,5 @@ def review_lines(s: state.SetupState) -> list[str]:
             out.append(f"Turn on yourself: {item.text}")
         else:
             out.append(f"Turn off at Apply (after its own confirm): {item.command}")
-            out.append(f"  undo: {item.undo_command}  {UNDO_NOTE}")
+            out.append(f"  undo: re-add with credentials: {item.undo_command}  {UNDO_NOTE}")
     return out

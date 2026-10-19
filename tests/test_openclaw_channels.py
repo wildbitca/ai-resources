@@ -36,6 +36,22 @@ def test_list_runs_only_the_read_form():
     assert run.calls[0][0] == ["openclaw", "channels", "list", "--all", "--json"]
 
 
+def test_the_listing_has_the_executors_limits(monkeypatch):
+    """Security condition: the same 60 s timeout, byte cap and scrubbed environment as the executor."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:SECRETSECRETSECRETSECRETSECRET")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+    monkeypatch.setenv("OPENCLAW_PROFILE", "main")
+    monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "t0p")
+    run = runner_of(0, GOOD)
+    oc.list_channels(run)
+    kw = run.calls[0][1]
+    assert kw["timeout"] == 60 == oc.TIMEOUT_S and kw["max_bytes"] == oc.MAX_BYTES
+    env = kw["env"]
+    assert "PATH" in env and env["OPENCLAW_PROFILE"] == "main"
+    assert not {"TELEGRAM_BOT_TOKEN", "OPENAI_API_KEY", "OPENCLAW_GATEWAY_TOKEN"} & set(env)
+    assert oc.list_channels(runner_of(0, GOOD + " " * (oc.MAX_BYTES + 1))) is None          # an oversize answer is refused
+
+
 def test_unknown_shape_missing_binary_timeout_bad_json_give_none():
     assert oc.list_channels(runner_of(0, UNKNOWN)) is None
     assert oc.list_channels(runner_of(127, "openclaw not found")) is None
@@ -51,13 +67,16 @@ def test_unknown_shape_missing_binary_timeout_bad_json_give_none():
 def test_unsafe_ids_are_refused():
     bad = '{"chat": {"slack": {"accounts": ["a; rm -rf ~"]}}}'
     assert oc.parse_inventory(bad) is None
+    # fullmatch, not `$`: a trailing newline would have passed the old pattern
+    assert oc.parse_inventory('{"chat": {"slack": {"accounts": ["ops\\n"]}}}') is None
+    assert not oc.valid_id("ops\n") and oc.valid_id("ops") and not oc.valid_id("") and not oc.valid_id(None)
     assert oc.parse_inventory('{"chat": {"slack": {"accounts": [{"id": "x", "enabled": "no"}]}}}') is None
 
 
 INV = [
     oc.ChannelAccount("telegram", "default"),
     oc.ChannelAccount("slack", "default"),
-    oc.ChannelAccount("slack", "ops", agent="ops-agent"),
+    oc.ChannelAccount("slack", "ops"),
     oc.ChannelAccount("matrix", "off", enabled=False),
 ]
 KEYS = [a.key for a in INV] + ["ghost:x"]
@@ -101,11 +120,13 @@ def test_unticking_slack_plans_one_remove_and_names_the_undo():
     assert ch.undo_command == "openclaw channels add --channel slack --account default"
 
 
-def test_agent_flag_only_with_an_explicit_owner():
-    plan = oc.plan_changes(["slack:ops"], [], INV)
-    assert plan[0].argv[-2:] == ("--agent", "ops-agent")
-    plan = oc.plan_changes(["slack:default"], [], INV)
-    assert "--agent" not in plan[0].argv
+def test_no_agent_flag_ever_even_when_the_inventory_names_an_owner():
+    """Security condition (ADR-0010 S12): the `--agent` field is gone. An owner in the listing is ignored."""
+    inv = oc.parse_inventory('{"chat": {"slack": {"accounts": [{"id": "ops", "enabled": true, "agent": "ops-agent"}]}}}')
+    assert inv == [oc.ChannelAccount("slack", "ops")]
+    plan = oc.plan_changes(["slack:ops"], [], inv)
+    assert plan[0].argv == ("openclaw", "channels", "remove", "--channel", "slack", "--account", "ops")
+    assert all("--agent" not in c.argv for c in oc.plan_changes(KEYS, [], INV) if isinstance(c, oc.ChannelChange))
 
 
 def test_ticked_disabled_channel_is_print_only():
