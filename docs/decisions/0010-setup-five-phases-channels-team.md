@@ -156,8 +156,8 @@ Q-1 (recommended: a declared in-profile exemption the wizard warns about). Decis
 ## N5: channels (PD-2)
 
 The ADR-0001 d3 and ADR-0003 amendments are approved by the operator. The kit executes DISABLE only:
-`["openclaw","channels","remove","--channel",C,"--account",A]`, plus `["--agent",G]` only when the inventory names an
-explicit owner. Enable is always printed for the operator (undo line, and a ticked disabled channel), never executed.
+`["openclaw","channels","remove","--channel",C,"--account",A]` and nothing else: no owner or routing field is ever added
+to the argv. Enable is always printed for the operator (undo line, and a ticked disabled channel), never executed.
 No `--delete`, no credential flag. `assert_channels_safe` stays byte-identical with its body hash pinned.
 Preconditions: TTY; not `--dry-run`; not `--yes`; OpenClaw cockpit; readable inventory; reload rules classify
 `channels.<C>` as hot; per-change default-No confirm; an extra Telegram confirm; scrubbed env; 60 s timeout; redacted,
@@ -236,7 +236,7 @@ re-review.** The implementer wrote the conditions here; it did not sign for eith
   is not already captured.
 - Names are validated with `fullmatch`, never with `$`.
 - The inventory read has the executor's cap (`max_bytes`), scrubbed environment and 60 s timeout.
-- The `--agent` field is removed from the argv.
+- The argv carries no owner or routing field: it is exactly the four-flag form above.
 - `execute()` itself checks every guard (TTY, not `--dry-run`, not `--yes`, the cockpit is OpenClaw, reload rules
   readable and hot); the wizard does not rely on a caller having checked.
 - No secret appears in a log or a print (tested). The extra Telegram confirm defaults to No and is never auto-answered.
@@ -246,11 +246,11 @@ re-review.** The implementer wrote the conditions here; it did not sign for eith
 
 | Reviewer | Scope | Verdict |
 |---|---|---|
-| software-architect | this ADR; pre-checks S1 agy translation, S4a single-row lanes, S6 test ban, S7 manifest and packaging, S11 writes, S13 flow | APPROVE WITH CONDITIONS (2026-10-19); conditions applied, awaiting re-review |
-| security-auditor | this ADR, channel restatements; S7 and S12 | APPROVE WITH CONDITIONS (2026-10-19); conditions applied, awaiting re-review |
+| software-architect | this ADR; pre-checks S1 agy translation, S4a single-row lanes, S6 test ban, S7 manifest and packaging, S11 writes, S13 flow | APPROVE WITH CONDITIONS (2026-10-19); conditions R1-R4, N1, L1-L3 applied; architect and security-auditor re-review pending |
+| security-auditor | this ADR, channel restatements; S7 and S12 | APPROVE WITH CONDITIONS (2026-10-19); conditions R1-R4, N1, L1-L3 applied; architect and security-auditor re-review pending |
 
 The implementing session cannot spawn a reviewer, so it records the verdicts it was given and the conditions it
-applied; it does not sign. This ADR stays Proposed until both reviewers re-review the implemented result.
+applied; it does not sign. Conditions R1-R4, N1, L1-L3 applied; architect and security-auditor re-review pending. This ADR stays Proposed until both reviewers re-review the implemented result.
 
 ## Implementation status
 
