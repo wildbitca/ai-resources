@@ -226,3 +226,102 @@ def test_cancel_at_the_review_prints_the_shared_cancel_block(review_env, monkeyp
     assert "Setup cancelled at Review" in err
     assert "Already done in this run: " in err and "installed something" in err
     assert "by the apply step" not in err
+
+
+# --- image generation rows (ADR-0011, plan I10) -------------------------------------------------------------------------
+
+import json
+import pathlib
+
+from ai_resources.setup.cockpits import _openclaw_image as _image
+
+_STATUS = pathlib.Path(__file__).parent / "fixtures" / "openclaw_models_status"
+
+
+def _image_state(mode, *, openclaw=True, model="", **kw):
+    s = state.SetupState()
+    s.mode = "single-model"
+    s.profile.customizations["__targets__"] = {"selected": ["claude"] + (["openclaw"] if openclaw else [])}
+    s.openclaw.image_mode, s.openclaw.image_model = mode, model
+    for k, v in kw.items():
+        setattr(s.openclaw, k, v)
+    return s
+
+
+def _ctx(doc=None, accounts=None, names=(), hot=True):
+    return _image.make_ctx(doc or {}, accounts or {}, names, deny_hot=hot)
+
+
+def _image_text(s):
+    return "\n".join(f"{a} {b}" for a, b in wizard._review_rows(s) if a.startswith("Image") or (a == "" and b))
+
+
+def test_image_no_row_when_openclaw_is_not_a_tool():
+    s = _image_state("disable", openclaw=False)
+    assert not [a for a, _b in wizard._review_rows(s) if a.startswith("Image")]
+
+
+def test_image_keep_names_the_existing_sign_ins_and_never_says_recommended():
+    from ai_resources import model_accounts as ma
+    accounts = ma.allowlist_status(json.loads((_STATUS / "openrouter_profile.json").read_text()))
+    accounts["openrouter"]["ids"] = ["openrouter:default"]
+    s = _image_state("keep")
+    setattr(s, _image.CTX_ATTR, _ctx(accounts=accounts))
+    rows = dict(wizard._review_rows(s))
+    assert rows["Image generation"].startswith("not configured by setup")
+    assert "openrouter:default" in rows["Image generation"] and "recommend" not in _image_text(s).lower()
+
+
+def test_image_a_never_answered_state_reads_as_keep_without_io():
+    rows = dict(wizard._review_rows(_image_state("")))
+    assert rows["Image generation"].startswith("not configured by setup")
+
+
+def test_image_a_route_shows_provider_account_billing_proof_and_undo():
+    s = _image_state("openai-key", model="openai/gpt-image-2")
+    setattr(s, _image.CTX_ATTR, _ctx(names=("OPENAI_API_KEY",)))
+    rows = dict(wizard._review_rows(s))
+    assert rows["Image generation"] == "OpenAI -> openai/gpt-image-2"
+    assert "only in the kit .env" in rows["Image account"] and "OPENAI_API_KEY" in rows["Image account"]
+    assert rows["Image billing"] == "pay per use" and "docs only, not tested on this host" in rows["Image proof"]
+    assert rows["Image undo"] == "teardown restores the previous value"
+
+
+def test_image_a_route_with_a_kit_deny_says_it_removes_it_after_the_model():
+    s = _image_state("fal", model="fal/krea/v2/medium/text-to-image", image_deny_added=True)
+    assert "removes the image_generate entry setup added (after the model is set)" in _image_text(s)
+
+
+def test_image_a_route_under_an_operator_deny_entry_says_it_stays():
+    s = _image_state("fal", model="fal/krea/v2/medium/text-to-image")
+    setattr(s, _image.CTX_ATTR, _ctx({"tools": {"deny": ["group:media"]}}))
+    assert "stays denied by operator entry group:media; setup does not remove it" in _image_text(s)
+
+
+def test_image_disable_says_all_agents_and_not_proven():
+    s = _image_state("disable")
+    text = _image_text(s)
+    assert "affects all agents" in text and "live effect on running sessions: NOT PROVEN" in text
+    assert "operator entries kept" in text
+
+
+def test_image_disable_under_a_covering_entry_says_already_denied():
+    s = _image_state("disable")
+    setattr(s, _image.CTX_ATTR, _ctx({"tools": {"deny": ["bundle-mcp", "*"]}}))
+    assert "already denied by operator entry * (not changed)" in _image_text(s)
+
+
+def test_image_deny_and_restart_prints_the_loud_not_disabled_line():
+    s = _image_state("disable")
+    setattr(s, _image.CTX_ATTR, _ctx(hot=False))
+    text = _image_text(s)
+    assert "will NOT be disabled" in text and "openclaw config get tools.deny" in text
+
+
+def test_image_review_never_shows_a_secret_for_any_route_or_disable(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-SECRET")
+    for mode in _image.route_ids():
+        s = _image_state(mode, model=(_image.ROUTES[mode].models or ("x/y",))[0].replace("<deployment>", "d"))
+        setattr(s, _image.CTX_ATTR, _ctx(names=("OPENAI_API_KEY", "FAL_KEY")))
+        text = _image_text(s) + json.dumps(state._to_dict(s))
+        assert "sk-test-SECRET" not in text and "SECRET" not in text, mode

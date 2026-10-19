@@ -213,14 +213,14 @@ def test_keep_names_existing_sign_ins_without_calling_it_advice(monkeypatch, no_
     assert "leaves image generation as it is" in text and "openrouter" in text and "recommend" not in text.lower()
 
 
-def test_the_only_subprocess_the_prompt_makes_is_the_models_status_read(monkeypatch):
+def test_the_only_subprocesses_the_prompt_makes_are_the_two_read_only_models_reads(monkeypatch):
     from ai_resources.setup import credentials
     calls = []
     monkeypatch.setattr(cockpit, "_image_accounts", REAL_IMAGE_ACCOUNTS)
     monkeypatch.setattr(cockpit, "_openclaw", lambda args, stdin=None, timeout=120: calls.append(list(args)) or (0, "{}"))
     monkeypatch.setattr(credentials, "load_env", lambda: {"FAL_KEY": "value-never-returned", "EMPTY": ""})
     accounts, names = cockpit._image_accounts()
-    assert calls == [["models", "status", "--json"]] and accounts == {}
+    assert calls == [["models", "status", "--json"], ["models", "auth", "list", "--json"]] and accounts == {}
     assert names == ["FAL_KEY"] and "value-never-returned" not in repr((accounts, names))
 
 
@@ -234,3 +234,16 @@ def test_image_accounts_survive_a_failing_or_hostile_status_read(monkeypatch):
     monkeypatch.setattr(cockpit, "_openclaw", lambda *a, **k: (0, hostile))
     accounts, _names = cockpit._image_accounts()
     assert "FAKEKEY-DO-NOT-LEAK" not in json.dumps(accounts)
+
+
+def test_auth_list_ids_are_merged_as_names_and_nothing_else(monkeypatch):
+    from ai_resources.setup import credentials
+    monkeypatch.setattr(cockpit, "_image_accounts", REAL_IMAGE_ACCOUNTS)
+    monkeypatch.setattr(credentials, "load_env", lambda: {})
+    listing = json.dumps({"profiles": [{"provider": "openrouter", "id": "openrouter:default", "key": "FAKEKEY-DO-NOT-LEAK"}]})
+
+    def fake(args, stdin=None, timeout=120):
+        return (0, listing) if args[:3] == ["models", "auth", "list"] else (0, "{}")
+    monkeypatch.setattr(cockpit, "_openclaw", fake)
+    accounts, _names = cockpit._image_accounts()
+    assert accounts == {"openrouter": {"ids": ["openrouter:default"]}}

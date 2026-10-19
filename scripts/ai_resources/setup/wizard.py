@@ -906,6 +906,9 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     from .cockpits import _openclaw_channels
     for i, line in enumerate(_openclaw_channels.review_lines(s)):
         rows.append(("OpenClaw channels" if i == 0 else "", line))
+    if "openclaw" in members:                       # image generation (ADR-0011): no row for any other tool, no I/O here
+        from .cockpits import _openclaw_image as _image
+        rows += _image.review_rows(s, getattr(s, _image.CTX_ATTR, None))
     written = "executors.yaml, tool config files" + (", lanes.yaml" if state.lanes_enabled(s) else "")
     rows.append(("Will write", written))
     return rows
@@ -2751,6 +2754,22 @@ def _apply_channel_changes(s: state.SetupState, *, dry_run: bool = False) -> Non
             ui.record_action(f"turned off the channel account {change.key}")
 
 
+def _apply_image_dry_run(s: state.SetupState) -> None:
+    """The image answer under `--dry-run`: what it would do, in words, then each `config patch --dry-run` verdict. The
+    runner sees only read-only reads and dry-run patches; nothing is written and nothing signs in (ADR-0011)."""
+    if "openclaw" not in _members_of(s):
+        return
+    from .cockpits import _openclaw_image as _image
+    from .cockpits import openclaw as _openclaw_cockpit
+    ctx = getattr(s, _image.CTX_ATTR, None)
+    lines = _image.dry_run_lines(s, ctx)
+    ui.console().print()
+    ui.info("Image generation")
+    for line in lines:
+        ui.info(line)
+    _openclaw_cockpit.dry_run_image(s)
+
+
 def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     if dry_run:
         return _step9_dry_run(s)
@@ -3112,6 +3131,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
     console.print()
     _print_plan_table(s)
     _apply_channel_changes(s, dry_run=True)
+    _apply_image_dry_run(s)
 
     # Build executors
     if s.mode == "multi-model":

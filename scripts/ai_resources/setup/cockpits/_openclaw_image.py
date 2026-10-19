@@ -466,3 +466,98 @@ def ensure_account(route: Route, view: AccountView, *, method: str = "", run, in
         say(f"OpenClaw sign-in exited with code {rc}; the image model was not changed.")
         return SignInResult(FAILED, command, "", rc)
     return SignInResult(SIGNED_IN, command, profile_id)
+
+
+# --- Review rows and the dry-run preview (plan I10): names and refs only, no I/O -------------------------------------------
+
+CTX_ATTR = "_image_ctx"
+"""Instance attribute on the setup state (never serialised): what the image question learned in this run."""
+NOT_PROVEN = "live effect on running sessions: NOT PROVEN"
+
+
+def make_ctx(doc: Mapping[str, Any] | None, accounts: Mapping[str, Mapping[str, Any]] | None,
+             kit_env_names: Collection[str], *, deny_hot: bool) -> dict:
+    """The facts Review needs, taken once while the question ran. Names only: a covering deny entry, the live model ref,
+    the auth profile ids and whether `tools.deny` would apply live."""
+    ids: list[str] = []
+    for info in (accounts or {}).values():
+        if isinstance(info, Mapping):
+            ids += [i for i in info.get("ids") or [] if isinstance(i, str)]
+    return {"covering": live_covering_entry(doc), "live_ref": ref_of(live_image_value(doc)),
+            "profile_ids": sorted(set(ids)), "accounts": dict(accounts or {}), "kit_env": sorted(kit_env_names),
+            "deny_hot": bool(deny_hot)}
+
+
+def _safe(text: str) -> str:
+    return ui.safe_text(text)
+
+
+def review_rows(s: state.SetupState, ctx: Mapping[str, Any] | None = None,
+                doc: Mapping[str, Any] | None = None) -> list[tuple[str, str]]:
+    """The Review rows for the image answer. Empty is never returned for an OpenClaw run: even `keep` is a row, worded as
+    what setup does NOT do, never as advice. The caller adds none of these when OpenClaw is not a selected tool."""
+    ctx = ctx or {}
+    o = s.openclaw
+    mode = o.image_mode or KEEP_ID
+    covering = ctx.get("covering")
+    rows: list[tuple[str, str]] = []
+    if mode == KEEP_ID:
+        ids = ctx.get("profile_ids") or []
+        seen = f" ({', '.join(ids)})" if ids else ""
+        rows.append(("Image generation", _safe("not configured by setup (OpenClaw auto-detects from existing sign-ins"
+                                                f"{seen})")))
+        if o.image_deny_added:
+            rows.append(("", "setup's earlier image_generate entry in tools.deny stays until teardown"))
+        return rows
+    if mode == DISABLE_ID:
+        if covering:
+            text = f"already denied by operator entry {covering} (not changed)"
+        elif ctx.get("deny_hot", True) is False:
+            text = openclaw_deny_not_hot_text()
+        else:
+            text = ("disabled (tools.deny adds image_generate; operator entries kept; affects all agents; "
+                    + NOT_PROVEN + ")")
+        rows.append(("Image generation", _safe(text)))
+        return rows
+    route = effective_route(ROUTES.get(mode, KEEP), doc)
+    if route.kind != "route":
+        return [("Image generation", _safe(f"unknown answer {mode}; left unchanged"))]
+    ref = o.image_model or "(model not set)"
+    rows.append(("Image generation", _safe(f"{route.label} -> {ref}")))
+    view = provider_account(route, ctx.get("accounts"), ctx.get("kit_env") or ())
+    account = {OPENCLAW_PROFILE: "OpenClaw sign-in", OPENCLAW_ENV: "OpenClaw environment",
+               KIT_ENV_ONLY: "only in the kit .env (the gateway does not read it)", MISSING: "no sign-in yet",
+               PROVIDER_CONFIG_NEEDED: "needs provider config"}[view.source_label]
+    rows.append(("Image account", _safe(f"{account}: {view.name}" if view.name else account)))
+    rows.append(("Image billing", _safe(route.billing_label)))
+    rows.append(("Image proof", _safe(route.proof_label)))
+    rows.append(("Image undo", "teardown restores the previous value"))
+    if covering and covering != "image_generate":
+        rows.append(("", _safe(f"stays denied by operator entry {covering}; setup does not remove it")))
+    elif o.image_deny_added:
+        rows.append(("", "removes the image_generate entry setup added (after the model is set)"))
+    return rows
+
+
+def openclaw_deny_not_hot_text() -> str:
+    return ("Image generation will NOT be disabled: OpenClaw would need a restart to reload tools.deny. Run "
+            "`openclaw config get tools.deny` and add `image_generate` by hand, or re-run setup after enabling hot reload.")
+
+
+def dry_run_lines(s: state.SetupState, ctx: Mapping[str, Any] | None = None) -> list[str]:
+    """What a real Apply would do for the image answer, in words (tool names and model refs only)."""
+    mode = s.openclaw.image_mode or KEEP_ID
+    if mode == KEEP_ID:
+        return ["image generation: keep (no change)"]
+    if mode == DISABLE_ID:
+        return ["image generation: would add image_generate to tools.deny (operator entries kept, affects all agents)"]
+    route = ROUTES.get(mode)
+    lines = [f"image generation: would set {MEDIA_PATH} to {s.openclaw.image_model or '(model not set)'}"]
+    if route is not None and route.kind == "route":
+        cmd = sign_in_command(route)
+        view = provider_account(route, (ctx or {}).get("accounts"), (ctx or {}).get("kit_env") or ())
+        if cmd and not view.gateway_sees_it:
+            lines.append(f"would run: {cmd}  (only after your confirm, on your terminal)")
+    if s.openclaw.image_deny_added:
+        lines.append("would remove the image_generate entry setup added to tools.deny (after the model is set)")
+    return [_safe(line) for line in lines]

@@ -681,8 +681,9 @@ def _report_deny(res: DenyResult, *, dry_run: bool) -> None:
     elif res.status == DENY_ALREADY:
         ui.info("image_generate deny was already added by setup; nothing to change")
     elif res.status == DENY_DRY_RUN:
-        ui.info("tools.deny before: " + (", ".join(res.before) or "(absent)"))
-        ui.info("tools.deny after:  " + (", ".join(res.after or ()) or "(absent)") + "  (dry run; nothing written)")
+        ui.info("tools.deny before: " + (ui.safe_text(", ".join(res.before)) or "(absent)"))
+        ui.info("tools.deny after:  " + (ui.safe_text(", ".join(res.after or ())) or "(absent)")
+                + "  (dry run; nothing written)")
 
 
 def _confirm_replace_image(current: Any, new_ref: str) -> bool:
@@ -919,7 +920,8 @@ def prompt_cockpit(s: state.SetupState, *, dry_run: bool = False) -> None:
 
 def _image_accounts() -> tuple[dict, list[str]]:
     """What the image question shows about sign-ins: OpenClaw's own view (`models status --json`, allow-listed to provider,
-    kind, profile count: no key field is ever read) and the NAMES present in the kit's .env. Both fail soft to empty."""
+    kind, profile count: no key field is ever read), the auth profile ids (`models auth list --json`, `id` and `provider`
+    only) merged in as `ids`, and the NAMES present in the kit's .env. Everything fails soft to empty."""
     from ... import model_accounts
     from .. import credentials
     accounts: dict = {}
@@ -929,6 +931,23 @@ def _image_accounts() -> tuple[dict, list[str]]:
             accounts = model_accounts.allowlist_status(json.loads(out[out.index("{"):out.rindex("}") + 1]))
         except ValueError:
             accounts = {}
+    rc, out = _openclaw(["models", "auth", "list", "--json"], timeout=60)
+    starts = [i for i in (out.find("{"), out.find("[")) if i >= 0]
+    if rc == 0 and starts:
+        try:
+            raw = json.loads(out[min(starts):])
+        except (ValueError, TypeError):
+            raw = None
+        def walk(node: Any) -> None:
+            if isinstance(node, dict):
+                if isinstance(node.get("provider"), str) and isinstance(node.get("id"), str):
+                    accounts.setdefault(node["provider"], {}).setdefault("ids", []).append(node["id"])
+                for v in node.values():
+                    walk(v)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v)
+        walk(raw)
     try:
         names = sorted(k for k, v in (credentials.load_env() or {}).items() if v)
     except Exception:  # noqa: BLE001 - a display aid: an unreadable env file shows no names
@@ -936,13 +955,29 @@ def _image_accounts() -> tuple[dict, list[str]]:
     return accounts, names
 
 
+def _deny_is_hot() -> bool:
+    """Whether a `tools.deny` write would apply live (the kit classifier; unreadable rules and reload mode off say no)."""
+    return not _lanes_classify({"tools": {"deny": ["x"]}})
+
+
 def prompt_image(s: state.SetupState, *, dry_run: bool = False) -> None:
     """Phase 2.1: the image-generation question (ADR-0011). Writes nothing. A non-interactive run asks nothing, runs no
-    subprocess and leaves the saved answer (or none, which resolves to `keep`) as it is."""
+    subprocess and leaves the saved answer (or none, which resolves to `keep`) as it is. What it learned (sign-in names,
+    an operator deny entry, whether tools.deny is hot) is kept on the in-memory state for Review: Review does no I/O."""
     if ui.is_non_interactive():
         return
     accounts, names = _image_accounts()
-    image.prompt(s, accounts, read_config(config_path()), names)
+    doc = read_config(config_path())
+    image.prompt(s, accounts, doc, names)
+    setattr(s, image.CTX_ATTR, image.make_ctx(doc, accounts, names, deny_hot=_deny_is_hot()))
+
+
+def dry_run_image(s: state.SetupState) -> None:
+    """`--dry-run`: the image answer's `config patch --dry-run` verdicts. Writes nothing."""
+    if (s.openclaw.image_mode or image.KEEP_ID) == image.KEEP_ID and not s.openclaw.image_deny_added:
+        return
+    path = config_path()
+    _configure_image(s, read_config(path), path, [], dry_run=True)
 
 
 def prompt_model(s: state.SetupState, *, dry_run: bool = False) -> None:

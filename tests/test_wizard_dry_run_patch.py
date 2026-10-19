@@ -95,3 +95,78 @@ def test_dry_run_announces_that_verification_is_skipped_and_probes_nothing(dry_r
     assert (wizard._screen_of(10), wizard.SCREENS, "Verification") in sections
     assert any("verification" in m.lower() and "dry run" in m.lower() for m in lines)
     assert calls == []
+
+
+# --- image generation under --dry-run (ADR-0011, plan I10, AC-9, AC-16) -------------------------------------------------------
+
+import hashlib
+import json as _json
+
+from openclaw_image_fakes import FakeOC
+from ai_resources.setup.cockpits import openclaw as _oc_cockpit
+from ai_resources.setup.cockpits import _openclaw_image as _img
+
+
+def _image_dry_run(monkeypatch, tmp_path, mode, model="", doc=None, **kw):
+    cfg = tmp_path / "openclaw.json"
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(cfg))
+    fake = FakeOC(cfg, doc if doc is not None else {"tools": {"deny": ["bundle-mcp"]}})
+    monkeypatch.setattr(_oc_cockpit, "_openclaw", fake)
+    monkeypatch.setattr(_oc_cockpit, "_before_first_write", None)
+    s = state.SetupState()
+    s.mode = "single-model"
+    s.profile.customizations["__targets__"] = {"selected": ["claude", "openclaw"]}
+    s.openclaw.image_mode, s.openclaw.image_model = mode, model
+    for k, v in kw.items():
+        setattr(s.openclaw, k, v)
+    shown = []
+    for level in ("info", "warn", "error", "ok", "detail"):
+        monkeypatch.setattr(ui, level, lambda m, *a, _l=level, **k: shown.append(f"{_l}: {m}"))
+    monkeypatch.setattr(ui, "console", lambda: _FakeConsole())
+    before = hashlib.sha256(cfg.read_bytes()).hexdigest()
+    wizard._apply_image_dry_run(s)
+    assert hashlib.sha256(cfg.read_bytes()).hexdigest() == before, "a dry run must not write the config"
+    return fake, "\n".join(shown), s
+
+
+def test_image_dry_run_disable_shows_the_merged_list_and_sends_only_dry_run_patches(monkeypatch, tmp_path):
+    fake, text, s = _image_dry_run(monkeypatch, tmp_path, "disable")
+    assert "tools.deny before: bundle-mcp" in text and "tools.deny after:  bundle-mcp, image_generate" in text
+    assert "nothing written" in text
+    assert fake.live_patches() == [] and fake.patches(dry=True)
+    assert all(a[:2] == ["config", "patch"] and "--dry-run" in a for a in fake.argvs())
+    assert s.openclaw.image_deny_added is False
+
+
+def test_image_dry_run_route_shows_the_ref_and_the_sign_in_command_without_running_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(_oc_cockpit, "_image_accounts", lambda: ({}, []))
+    fake, text, s = _image_dry_run(monkeypatch, tmp_path, "fal", "fal/krea/v2/medium/text-to-image", doc={})
+    assert "agents.defaults.mediaModels.image to fal/krea/v2/medium/text-to-image" in text
+    assert "would run: openclaw models auth paste-api-key --provider fal" in text
+    assert fake.live_patches() == [] and s.openclaw.image_applied is False
+    assert all("--dry-run" in a for a in fake.argvs())
+
+
+def test_image_dry_run_keep_prints_one_line_and_runs_nothing(monkeypatch, tmp_path):
+    fake, text, _s = _image_dry_run(monkeypatch, tmp_path, "keep")
+    assert "image generation: keep (no change)" in text and fake.calls == []
+
+
+def test_image_dry_run_with_a_seeded_secret_shows_no_secret_for_any_route(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-SECRET")
+    monkeypatch.setattr(_oc_cockpit, "_image_accounts", lambda: ({}, ["OPENAI_API_KEY"]))
+    for mode in ("disable", "openai-key", "fal", "openrouter"):
+        model = (_img.ROUTES[mode].models or ("",))[0]
+        fake, text, _s = _image_dry_run(monkeypatch, tmp_path / mode if False else tmp_path, mode, model)
+        blob = text + _json.dumps(fake.calls)
+        assert "sk-test-SECRET" not in blob and "SECRET" not in blob, mode
+
+
+def test_image_dry_run_not_for_a_claude_only_run(monkeypatch, tmp_path):
+    s = state.SetupState()
+    s.mode = "single-model"
+    s.profile.customizations["__targets__"] = {"selected": ["claude"]}
+    s.openclaw.image_mode = "disable"
+    monkeypatch.setattr(_oc_cockpit, "_openclaw", lambda *a, **k: pytest.fail("openclaw was called"))
+    monkeypatch.setattr(ui, "console", lambda: _FakeConsole())
+    wizard._apply_image_dry_run(s)
