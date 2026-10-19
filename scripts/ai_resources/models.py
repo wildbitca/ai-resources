@@ -557,6 +557,8 @@ def build_forward_patch(doc: dict, changes: dict[str, str]) -> dict:
                 _nest(inverse, ("agents", "defaults", "models", new), None)
     openclaw_host.assert_channels_safe(patch, [])
     openclaw_host.assert_channels_safe(inverse, [])
+    openclaw_host.assert_tools_deny_safe(patch, [])
+    openclaw_host.assert_tools_deny_safe(inverse, [])
     return {"patch": patch, "inverse": inverse, "replace_paths": [], "touched": touched}
 
 

@@ -2258,8 +2258,9 @@ def expand_wildcards(profile: dict, doc: dict) -> dict:
 
 
 def assert_channels_safe(patch: dict, replace_paths: list[str] | None = None) -> None:
-    """The one invariant this module must never break: no allowlist, no topic binding, no
-    replace-path anywhere on `channels`. Only `channels.telegram.streaming.*` may be sent."""
+    """The channels invariant this module must never break: no allowlist, no topic binding, no
+    replace-path anywhere on `channels`. Only `channels.telegram.streaming.*` may be sent.
+    Its sibling `assert_tools_deny_safe` guards the global `tools.deny` (ADR-0011)."""
     for rp in replace_paths or []:
         if rp == "channels" or rp.startswith("channels.") or rp.startswith("channels["):
             raise ValueError(f"refusing a --replace-path on the channels namespace: {rp}")
@@ -2270,6 +2271,37 @@ def assert_channels_safe(patch: dict, replace_paths: list[str] | None = None) ->
         and isinstance(channels["telegram"], dict) and set(channels["telegram"]) == {"streaming"}
     if not allowed:
         raise ValueError("a host patch may only touch channels.telegram.streaming")
+
+
+_TOOLS_SIBLINGS = ("allow", "alsoAllow", "profile", "byProvider")
+
+
+def assert_tools_deny_safe(patch: dict, replace_paths: list[str] | None = None) -> None:
+    """The global `tools.deny` invariant (ADR-0011). Shape only: the writer alone has the live list. It fires only when
+    the patch carries top-level `tools.deny`; lanes (`agents.entries.<id>.tools.deny`), the host profile and voice
+    (`tools.media`) never trigger it. A group token or `*` in the list is NOT rejected: operator entries are re-sent as
+    they are.
+
+    The value is null or a list of strings; a list comes with `tools.deny` in `replace_paths` (arrays replace, so
+    without it the patch could not carry the whole list); the same patch carries no `tools.allow`, `tools.alsoAllow`,
+    `tools.profile`, `tools.byProvider` and no `agents` key; and no replace path is `tools` or under `tools.allow`."""
+    tools = patch.get("tools") if isinstance(patch, dict) else None
+    if not isinstance(tools, dict) or "deny" not in tools:
+        return
+    paths = list(replace_paths or [])
+    value = tools["deny"]
+    if value is not None and not (isinstance(value, list) and all(isinstance(x, str) for x in value)):
+        raise ValueError("refusing a tools.deny patch whose value is not a list of strings or null")
+    if isinstance(value, list) and "tools.deny" not in paths:
+        raise ValueError("a tools.deny list must be sent with --replace-path tools.deny (arrays replace)")
+    extra = [k for k in _TOOLS_SIBLINGS if k in tools]
+    if extra:
+        raise ValueError("a tools.deny patch may not also carry tools." + ", tools.".join(extra))
+    if "agents" in patch:
+        raise ValueError("a tools.deny patch may not also carry an agents key")
+    for rp in paths:
+        if rp == "tools" or rp == "tools.allow" or rp.startswith("tools.allow.") or rp.startswith("tools["):
+            raise ValueError(f"refusing a --replace-path that reaches the tool allow-list: {rp}")
 
 
 _SECRET_KEY = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential)", re.IGNORECASE)
@@ -2387,6 +2419,7 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
         if _is_atomic(wanted) and had and isinstance(current, dict):
             replace_paths.append(dotted)
     assert_channels_safe(patch, replace_paths)
+    assert_tools_deny_safe(patch, replace_paths)
     return {"patch": patch, "changes": changes, "replace_paths": replace_paths, "skipped": skipped,
             "kept": kept,
             "filled": [".".join(c["path"]) for c in changes if c["action"] == "filled"],
@@ -2469,6 +2502,7 @@ def restore_patch(changes: list[dict], doc: dict | None = None) -> tuple[dict, l
         if ch["had"] and isinstance(ch["previous"], dict):
             replace_paths.append(".".join(path))
     assert_channels_safe(patch, replace_paths)
+    assert_tools_deny_safe(patch, replace_paths)
     return patch, replace_paths
 
 

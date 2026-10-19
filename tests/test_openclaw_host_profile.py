@@ -480,3 +480,79 @@ def test_resource_guards_off_fills_neither_key(monkeypatch):
 
 def test_resource_guards_env_is_an_allowed_host_env_key():
     host._check_env_pair("OPENCLAW_RESOURCE_GUARDS", "off")
+
+
+# --- ADR-0011: the global tools.deny guard on the single writer ---------------------------------------------------------
+
+DENY_OK = {"tools": {"deny": ["bundle-mcp", "group:media", "*", "image_generate"]}}
+
+
+def test_a_tools_deny_list_with_its_replace_path_passes_including_operator_group_tokens():
+    host.assert_tools_deny_safe(DENY_OK, ["tools.deny"])
+    host.assert_tools_deny_safe({"tools": {"deny": None}}, [])
+    host.assert_tools_deny_safe({"tools": {"deny": []}}, ["tools.deny"])
+
+
+@pytest.mark.parametrize("patch,paths", [
+    ({"tools": {"deny": "image_generate"}}, ["tools.deny"]),
+    ({"tools": {"deny": ["a", 1]}}, ["tools.deny"]),
+    ({"tools": {"deny": {"a": 1}}}, ["tools.deny"]),
+    ({"tools": {"deny": ["image_generate"]}}, []),                                   # no replace path: would merge wrongly
+    ({"tools": {"deny": ["image_generate"]}}, ["tools"]),
+    ({"tools": {"deny": ["image_generate"]}}, ["tools.deny", "tools.allow"]),
+    ({"tools": {"deny": ["image_generate"]}}, ["tools.deny", "tools.allow.x"]),
+    ({"tools": {"deny": ["image_generate"], "allow": ["exec"]}}, ["tools.deny"]),
+    ({"tools": {"deny": ["image_generate"], "alsoAllow": ["exec"]}}, ["tools.deny"]),
+    ({"tools": {"deny": ["image_generate"], "profile": "full"}}, ["tools.deny"]),
+    ({"tools": {"deny": ["image_generate"], "byProvider": {}}}, ["tools.deny"]),
+    ({"tools": {"deny": ["image_generate"]}, "agents": {"defaults": {}}}, ["tools.deny"]),
+    ({"tools": {"deny": ["image_generate"]}, "agents": {"entries": {"x": {}}}}, ["tools.deny"]),
+])
+def test_an_unsafe_tools_deny_patch_is_refused_before_any_subprocess(patch, paths):
+    with pytest.raises(ValueError):
+        host.assert_tools_deny_safe(patch, paths)
+
+
+@pytest.mark.parametrize("patch,paths", [
+    ({"agents": {"entries": {"lane": {"tools": {"deny": ["bundle-mcp", "message"]}}}}}, ["agents.entries.lane.tools.deny"]),
+    ({"tools": {"profile": "coding", "alsoAllow": ["x"]}}, []),
+    ({"tools": {"media": {"audio": {}}}}, ["tools.media"]),
+    ({"tools": {"allow": ["exec"]}}, ["tools.allow"]),
+    ({"gateway": {"tools": {"deny": ["x"]}}}, []),
+    ({}, []),
+])
+def test_lanes_host_profile_voice_and_other_patches_never_trigger_the_guard(patch, paths):
+    host.assert_tools_deny_safe(patch, paths)
+
+
+def test_the_host_profile_never_carries_tools_deny():
+    profile = host.load_host_profile()
+    text = repr(profile)
+    assert "deny" not in (profile.get("tools") or {}) if isinstance(profile, dict) else "tools.deny" not in text
+    built = host.build_host_patch(profile, {}, {"DOMAIN": "ai.example.org", "POD_CIDR": "10.9.0.0/24",
+                                                "HOME": "/home/u", "TAILNET": "1"})
+    assert "deny" not in (built["patch"].get("tools") or {})
+    raw = (pathlib.Path(__file__).resolve().parents[1] / "profiles" / "openclaw-host.json5").read_text()
+    body = [ln for ln in raw.splitlines() if not ln.strip().startswith("//")]
+    assert not any("deny" in ln and "tools" in ln for ln in body)
+
+
+def test_every_config_patch_writer_calls_the_guard_next_to_the_channels_guard():
+    """All validated writers that send `config patch` (plan I0 list): openclaw_host (two), models, the cockpit
+    writer and the MCP mirror."""
+    root = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "ai_resources"
+    expected = {"openclaw_host.py": 2, "models.py": 2, "setup/cockpits/openclaw.py": 1, "setup/cockpits/_openclaw_mcp.py": 1}
+    for rel, n in expected.items():
+        text = (root / rel).read_text()
+        assert text.count("assert_tools_deny_safe(") >= n, rel
+
+
+def test_the_cockpit_writer_refuses_an_unsafe_deny_patch_before_calling_openclaw(monkeypatch):
+    from ai_resources.setup.cockpits import openclaw as cockpit
+    called = []
+    monkeypatch.setattr(cockpit, "_openclaw", lambda *a, **k: called.append(a) or (0, ""))
+    with pytest.raises(ValueError):
+        cockpit.apply_patch({"tools": {"deny": ["image_generate"]}}, replace_paths=[])
+    with pytest.raises(ValueError):
+        cockpit.apply_patch({"tools": {"deny": ["x"]}, "agents": {}}, replace_paths=["tools.deny"], dry_run=True)
+    assert called == []

@@ -488,6 +488,8 @@ def apply_patch(patch: dict, *, dry_run: bool = False,
     # The Telegram allowlist is the only gate in front of the unrestricted claude-kit backend:
     # no patch may carry an allowlist or a topic binding, and no --replace-path may name channels.
     openclaw_host.assert_channels_safe(patch, replace_paths)
+    # The global tools.deny has its own shape guard (ADR-0011); lanes, voice and host patches never trigger it.
+    openclaw_host.assert_tools_deny_safe(patch, replace_paths)
     if not dry_run and not _patch_changes_a_leaf(patch, replace_paths):
         # Nothing to write: no `config patch`, and no first-write hook either, so a run that changes nothing
         # never cancels the post-setup watch of the run before it (G1). The only call made on the way is the

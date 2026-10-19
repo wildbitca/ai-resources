@@ -22,6 +22,8 @@
 //     the only gate in front of the unrestricted claude-kit backend, so no allowlist and no topic
 //     binding may ever appear in a patch built from this file (asserted by the tests). A channel account is turned
 //     off only by running `openclaw channels remove` after a per-change confirm, never by a patch (ADR-0010).
+//   - the global tool deny list is never part of this profile (ADR-0011): setup's image question owns the one
+//     token it may add there, with its own guard and reversal.
 //
 // Deliberately absent: `agents.defaults.model.primary`. The ENGINE section owns it (it points the
 // default agent at the chosen engine), and two sections owning one key means whichever runs last

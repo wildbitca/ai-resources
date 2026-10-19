@@ -351,6 +351,10 @@ def run_with_retry(run: Runner, args: list[str], stdin: str | None = None,
 
 
 def _patch(run: Runner, servers: dict, *, dry_run: bool = False) -> tuple[int, str]:
+    from ... import openclaw_host
+    patch = {"mcp": {"servers": servers}}
+    replace = [f"mcp.servers.{n}" for n, v in servers.items() if v is not None]
+    openclaw_host.assert_tools_deny_safe(patch, replace)
     args = ["config", "patch", "--stdin"]
     for name, value in servers.items():
         if value is not None:
