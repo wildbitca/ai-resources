@@ -321,7 +321,7 @@ LiteLLM is not offered (ADR-0010 N1 removed it from new-setup choices); to use i
 environment and auth store), so a key kept only there is shown as `kit-env-only`. When the gateway has no sign-in for the
 route and you are on a terminal, Apply offers (default No) to run `openclaw models auth login --provider <id>` or
 `openclaw models auth paste-api-key --provider <id>` with your terminal attached; OpenClaw asks for the credential, setup
-sees nothing and stores only the profile id (`<provider>:manual` for a pasted key). Under `--dry-run`, `--yes` or without a
+sees nothing and stores only the profile id (`<provider>:manual` for a pasted key). Under `--dry-run`, `setup --yes` or without a
 terminal setup prints the command and runs nothing. Check with `openclaw models auth list`.
 
 **`disable`, in detail.** `config patch` replaces arrays, so setup reads the live `tools.deny`, appends `image_generate` and

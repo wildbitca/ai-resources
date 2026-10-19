@@ -99,6 +99,7 @@ def test_each_openclaw_question_is_asked_by_exactly_one_step(monkeypatch):
     monkeypatch.setattr(cockpit, "read_config", lambda p: {})
     from ai_resources.setup.cockpits import _openclaw_channels
     monkeypatch.setattr(_openclaw_channels, "prompt", lambda s, **k: None)
+    monkeypatch.setattr(cockpit.image, "prompt", lambda s, *a, **k: None)   # the image route has its own tests
     Script().install(monkeypatch)
     s = state.SetupState()
     s.cockpits["openclaw"] = state.CockpitState(installed=True)
@@ -117,6 +118,7 @@ def test_more_options_openclaw_asks_everything_again_through_the_whole_prompt(mo
     monkeypatch.setattr(cockpit, "prompt", lambda s, **k: calls.append("prompt"))
     from ai_resources.setup.cockpits import _openclaw_channels
     monkeypatch.setattr(_openclaw_channels, "prompt", lambda s, **k: calls.append("channels"))
+    monkeypatch.setattr(cockpit.image, "prompt", lambda s, *a, **k: None)   # the image route has its own tests
     monkeypatch.setattr(wizard, "_OPEN_OPENCLAW", True)
     Script().install(monkeypatch)
     s = _s("openclaw", engine="claude-code", phase2=True)

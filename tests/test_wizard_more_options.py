@@ -201,7 +201,7 @@ def _drive_run(monkeypatch, tmp_path, review_answers, more=""):
                        "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: SUB, "Enable subscription lanes?": False,
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": Seq(*review_answers),
-                       "More options": more})
+                       "Which image generation setup": "keep", "More options": more})
     script.install(monkeypatch)
     monkeypatch.setattr(wizard.model_selection, "detect_accounts", lambda: {})
     monkeypatch.setattr(wizard.model_selection, "candidates", lambda a, f: [])
