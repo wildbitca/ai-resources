@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import pathlib
 import types
 
 import pytest
+import yaml
 
 from ai_resources.setup import credentials, detection, profile_names, profiles, state, tools, ui, wizard
 
@@ -18,19 +20,52 @@ LEGACY = pathlib.Path(__file__).parent / "fixtures" / "setup_state" / "legacy_na
 
 
 def _team(doc: dict) -> dict:
-    """What runs: every key except the display name."""
-    return {k: v for k, v in doc.items() if k != "name"}
+    """What runs: every key except the display name and the prose (which names the renamed presets)."""
+    return {k: v for k, v in doc.items() if k not in ("name", "description")}
+
+
+SNAPSHOTS = pathlib.Path(__file__).parent / "fixtures" / "profile_snapshots"
+
+
+def _frozen(old: str) -> dict:
+    """The pre-rename preset, frozen from commit a256c9d: the old name no longer has a file of its own, so
+    comparing `load_profile(old)` with `load_profile(new)` would read one file twice and could never fail."""
+    return yaml.safe_load((SNAPSHOTS / f"{old}.yaml").read_text(encoding="utf-8"))
+
+
+def _after_adr_0010_fixes(doc: dict) -> dict:
+    """The only content changes ADR-0010 allows between a frozen preset and its renamed file: no agy writer
+    candidate on a preset (the `agy:claude-sonnet-5-5` entries), and no `fallbacks` on the Opus gateway roles.
+    Anything else that differs is a regression of the alias."""
+    doc = copy.deepcopy(doc)
+    for cands_by_role in ((doc.get("lanes") or {}).get("roles") or {}, ):
+        for role, cands in list(cands_by_role.items()):
+            cands_by_role[role] = [c for c in cands if c != "agy:claude-sonnet-5-5"]
+    for role, spec in (doc.get("by_role") or {}).items():
+        if isinstance(spec, dict) and spec.get("model") == "anthropic/claude-opus-5.5":
+            spec.pop("fallbacks", None)
+    return doc
+
+
+def test_subscription_claude_55_is_not_an_alias_because_balanced_diverged():
+    """ADR-0010 S6 gave balanced Gemini candidates; a host saved under the old name keeps its own file."""
+    assert "subscription-claude-55" not in profile_names.ALIASES
+    assert profile_names.LEGACY_PRESET["subscription-claude-55"] == "balanced"
+    assert _team(profiles.load_profile("subscription-claude-55")) == _team(_frozen("subscription-claude-55"))
 
 
 @pytest.mark.parametrize("old,new", sorted(profile_names.ALIASES.items()))
 def test_an_old_name_and_its_new_name_resolve_to_the_same_runtime_team(old, new):
-    """AC-S4a. The gates are closed in the shipped tree, so the lanes block is read as declared."""
+    """AC-S4a. The gates are closed in the shipped tree, so the lanes block is read as declared. The old side is the
+    frozen pre-rename file, not a second read of the new one."""
     from ai_resources import agy_lane_gates
     assert not agy_lane_gates.all_proven()
     mode = "multi-model" if new.startswith("gateway/") else "single-model"
-    assert _team(profiles.load_profile(old)) == _team(profiles.load_profile(new, mode))
-    assert profiles.to_executors(profiles.load_profile(old))["by_role"] == \
-        profiles.to_executors(profiles.load_profile(new, mode))["by_role"]
+    frozen = _after_adr_0010_fixes(_frozen(old))
+    now = profiles.load_profile(old)
+    assert _team(frozen) == _team(now)
+    assert _team(frozen) == _team(profiles.load_profile(new, mode))
+    assert profiles.to_executors(frozen)["by_role"] == profiles.to_executors(now)["by_role"]
 
 
 def test_a_bare_preset_id_without_a_mode_raises_the_named_error():
@@ -216,8 +251,7 @@ def test_preset_files_sit_in_the_canonical_layout_without_a_version_suffix():
     for path in [root / f"{p}.yaml" for p in profile_names.PRESET_IDS] + sorted((root / "gateway").glob("*.yaml")):
         assert not any(ch.isdigit() for ch in path.stem), path.name
         assert yaml_name(path) in (path.stem, f"gateway/{path.stem}")
-    for old in ("subscription-claude-55", "subscription-performance", "subscription-economy",
-                "performance-claude-55", "economy-claude-55"):
+    for old in profile_names.ALIASES:
         assert not (root / f"{old}.yaml").exists()
 
 

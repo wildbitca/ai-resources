@@ -48,13 +48,15 @@ def _family(ref: str) -> str:
 
 
 def _doc() -> dict:
-    return profiles.load_profile(NAME)
+    # The preset these tests pin is Balanced (ADR-0010 S6); the old name is a legacy file of its own now.
+    return profiles.load_profile("balanced", "single-model")
 
 
 def test_declares_single_model_and_is_listed_only_there():
     assert _doc()["mode"] == "single-model"
-    # ADR-0010 N4: the old name is an alias, so the list shows the new one (balanced) and hides the old.
-    assert NAME not in profiles.list_profiles(mode="single-model")
+    # The old name is a legacy profile (not an alias) that keeps its pre-S6 file; it is single-model only.
+    assert NAME in profiles.list_profiles(mode="single-model")
+    assert NAME not in profiles.list_profiles(mode="multi-model")
     assert "balanced" in profiles.list_profiles(mode="single-model")
     assert "balanced" not in profiles.list_profiles(mode="multi-model")
 

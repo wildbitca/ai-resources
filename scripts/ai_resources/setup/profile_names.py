@@ -21,7 +21,6 @@ GATEWAY_DIR = "gateway"
 # Old name -> new name, accepted forever. An alias is admitted only when tests/test_profile_names.py proves that the
 # old and the new name resolve to the same runtime team with the lane gates closed.
 ALIASES: dict[str, str] = {
-    "subscription-claude-55": "balanced",
     "subscription-performance": "performance",
     "subscription-economy": "low-cost",
     "performance-claude-55": "gateway/performance",
@@ -31,6 +30,9 @@ ALIASES: dict[str, str] = {
 # Old name -> preset id, used for the preset question's default only. These profiles differ in content from the new
 # preset, so their own file keeps loading and a non-interactive rerun never changes a saved team silently.
 LEGACY_PRESET: dict[str, str] = {
+    # Its team diverged from `balanced` (Gemini over agy on four roles, ADR-0010 S6), so it is not an alias: the
+    # pre-rename file is kept and a host saved under this name keeps its Claude-only team.
+    "subscription-claude-55": "balanced",
     "claude-native": "balanced",
     "balanced-claude-55": "balanced",
     "openrouter-balanced": "balanced",

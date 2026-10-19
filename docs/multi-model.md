@@ -250,6 +250,7 @@ service, so `ai-resources daemon` has nothing to manage and says so.
 | `all-gemini` | multi-model, either gateway | Every role on Gemini. Cheapest. |
 | `cost-optimized` | multi-model, either gateway | Aggressively biased toward Flash and Haiku. |
 | `claude-native` | single-model | Each role picks a Claude alias. No gateway. The default for single-model and for a Claude-only host with no gateway. |
+| `subscription-claude-55` | single-model | Legacy: the Claude-only Balanced as it shipped before ADR-0010 S6 (no Gemini candidates). Kept so a host saved under this name keeps its team; new setups use `balanced`. |
 | `claude-inherit` | single-model | Every role inherits the session model. |
 | `gateway/performance` | multi-model, either gateway | The Performance starting team for the gateway modes. Claude only, valid in every compatibility cell without `--allow-unverified`: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for every writer. Costs more than `balanced-claude-55`. |
 | `gateway/low-cost` | multi-model, either gateway | The Low cost starting team for LiteLLM. Claude only and verified: Haiku for reading and mechanical roles, Sonnet for the planner, architect, code, review and verification, Opus only for security. Replaces `cost-optimized` as the preset because that profile names Google models the Claude cockpit has not verified. |
@@ -281,9 +282,9 @@ A starting team resolves to a kit profile by how the host reaches its models, th
 | Low cost | `low-cost` | `low-cost` | `gateway/low-cost` | `gateway/low-cost` |
 
 Preset ids are the same on every row (ADR-0010). The old names keep loading forever and resolve to the same team:
-`subscription-claude-55` is `balanced`, `subscription-performance` is `performance`, `subscription-economy` is
+`subscription-performance` is `performance`, `subscription-economy` is
 `low-cost`, `performance-claude-55` is `gateway/performance` and `economy-claude-55` is `gateway/low-cost`. A saved
-state under an old name is saved under the new one on the next real run, with one line saying so. `claude-native`,
+state under an old name is saved under the new one on the next real run, with one line saying so. `subscription-claude-55`, `claude-native`,
 `balanced-claude-55` and `openrouter-balanced` are not aliases: their content differs, so they keep their own file and
 the question only opens on Balanced for them.
 

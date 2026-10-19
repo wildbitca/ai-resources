@@ -1,0 +1,47 @@
+name: economy-claude-55
+mode: multi-model
+description: |
+  Low pricing preset. Claude only, the cheapest tier that keeps defects caught:
+  Haiku for reading-heavy and mechanical roles (explore, tester, doc-writer,
+  package-upgrade), Sonnet for the planner, the architect, code, review and
+  verification, Opus only for the security auditor. No fallback moves a role to a
+  more expensive tier, and none moves a checker to Haiku (rule 017).
+
+  Valid in every compatibility cell it can reach without --allow-unverified (see
+  tests/test_profile_validity.py). Gateway-agnostic: no `backend` key and every model
+  is named anthropic/<model>. This replaces cost-optimized as the low pricing preset
+  for LiteLLM because cost-optimized names Google models that the Claude cockpit has
+  not verified.
+
+  Evidence: INFERRED from the 2026-10 study (study-support-roles); the 5.5 family is
+  not measured in this repository.
+
+classes:
+  opus:   anthropic/claude-opus-5.5
+  sonnet: anthropic/claude-sonnet-5.5
+  haiku:  anthropic/claude-haiku-5.5
+  fable:  anthropic/claude-fable-5.1
+
+defaults:
+  fallbacks: []
+  max_retries: 2
+  timeout_seconds: 600
+
+by_role:
+  explore:                      { model: anthropic/claude-haiku-5.5 }
+  tester:                       { model: anthropic/claude-haiku-5.5 }
+  doc-writer:                   { model: anthropic/claude-haiku-5.5 }
+  package-upgrade:              { model: anthropic/claude-haiku-5.5 }
+  generalPurpose:               { model: anthropic/claude-sonnet-5.5 }
+  implementer:                  { model: anthropic/claude-sonnet-5.5 }
+  crashlytics-fixer:            { model: anthropic/claude-sonnet-5.5 }
+  sentry-fixer:                 { model: anthropic/claude-sonnet-5.5 }
+  terraform-maintainer:         { model: anthropic/claude-sonnet-5.5 }
+  crossplane-upjet-maintainer:  { model: anthropic/claude-sonnet-5.5 }
+  code-reviewer:                { model: anthropic/claude-sonnet-5.5 }
+  verifier:                     { model: anthropic/claude-opus-5.5 }
+  planner:                      { model: anthropic/claude-sonnet-5.5 }
+  software-architect:           { model: anthropic/claude-sonnet-5.5 }
+  security-auditor:             { model: anthropic/claude-opus-5.5 }
+
+by_persona: {}

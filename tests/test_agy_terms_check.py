@@ -195,3 +195,41 @@ def test_the_function_does_not_touch_the_state_it_is_given(monkeypatch):
     before = state._to_dict(s)
     wizard.agy_terms_check(s, ROLES, interactive=True)
     assert state._to_dict(s) == before
+
+
+# --- ADR-0010 (c): an acknowledgement stored before planner / software-architect were lane roles does not cover them
+
+NEW_ROLES = ["code-reviewer", "explore", "implementer", "planner", "software-architect", "tester"]
+
+
+def test_an_older_ack_is_asked_again_for_planner_and_architect_with_default_no(monkeypatch):
+    have = _google(["code-reviewer", "explore"])
+    u = Ui(monkeypatch)
+    calls = []
+
+    def conf(msg, default=True):
+        calls.append((msg, default))
+        return False
+    monkeypatch.setattr(ui, "confirm", conf)
+    accepted, acks, rc = wizard.agy_terms_check(_s(have), NEW_ROLES, interactive=True)
+    extend = "Extend the Google acknowledgement to: implementer, planner, software-architect, tester?"
+    assert calls == [(extend, False)]
+    assert (accepted, rc) == (True, 0) and acks["google"] == have["google"]
+    assert u.warned == [] and u.boxes == []
+
+
+def test_non_interactive_never_accepts_the_extension_and_keeps_the_stored_ack(monkeypatch):
+    have = _google(["code-reviewer", "explore"])
+    u = Ui(monkeypatch)
+    accepted, acks, rc = wizard.agy_terms_check(_s(have), NEW_ROLES, interactive=False)
+    assert (accepted, rc) == (True, 0) and acks["google"] == have["google"]
+    assert u.asks == [] and u.warned == [] and u.boxes == []
+
+
+def test_the_checklist_pre_ticks_planner_architect_and_explore_but_not_the_implementer(monkeypatch):
+    for have in (None, _google(["code-reviewer", "explore"])):
+        u = Ui(monkeypatch)
+        wizard.agy_terms_check(_s(have), NEW_ROLES, interactive=True)
+        _, offered, default = u.boxes[0]
+        assert {"planner", "software-architect", "explore"} <= set(default)
+        assert roles_policy.DEFAULT_INTEGRATING_WRITER not in default and "implementer" in offered
