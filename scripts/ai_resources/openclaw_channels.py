@@ -40,6 +40,12 @@ ENV_KEEP = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "XDG_CO
 _SECRET_NAME = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential|auth)", re.I)
 _VALUE = r"""(?:"[^"]*"|'[^']*'|\S+)"""
 _SECRET_TEXT = (
+    # a Cookie / Set-Cookie header or key: everything after it on the line (values are `;`-separated pairs)
+    re.compile(r"(?i)\b(?:set-)?cookie[\"']?\s*[=:]\s*.*"),
+    # credentials inside a URL: `scheme://user:pw@host`, `scheme://token@host`
+    re.compile(r"(?i)(?<=://)[^\s/@]+@"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{8,}"),                            # a bare provider key (sk-..., sk-ant-..., sk-proj-...)
+    re.compile(r"(?i)\bauth(?:[_-]\w+)?[\"']?\s*[=:]\s*" + _VALUE),     # auth=v, auth_token: v
     # `Authorization: Basic abc`, `"authorization": "Bearer abc"`: the scheme word and the credential after it
     re.compile(r"(?i)authorization[\"']?\s*[=:]\s*(?:(?:basic|bearer|token|digest)\s+)?" + _VALUE),
     re.compile(r"(?i)\b(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{4,}"),

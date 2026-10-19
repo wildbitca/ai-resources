@@ -472,3 +472,30 @@ def test_redact_of_a_huge_single_word_is_fast_and_bounded():
     start = time.monotonic()
     out = oc.redact("x" * oc.MAX_BYTES)
     assert time.monotonic() - start < 5 and len(out) == 1 and len(out[0]) <= oc.OUTPUT_WIDTH
+
+
+@pytest.mark.parametrize("line,hidden", [
+    ("Cookie: session=abc123; theme=dark", ["abc123", "dark"]),
+    ("Set-Cookie: sid=zzz999; Path=/; HttpOnly", ["zzz999"]),
+    ('"cookie": "sid=qqq111"', ["qqq111"]),
+    ("fetch https://admin:hunter2@example.com/path failed", ["hunter2", "admin"]),
+    ("fetch postgres://svc:pw-0@db:5432/x failed", ["pw-0"]),
+    ("clone https://ghp_tokenvalue@github.com/o/r", ["ghp_tokenvalue"]),
+    ("using key sk-ant-api03-abcdefghij", ["abcdefghij"]),
+    ("OPENAI sk-proj-AAAA1111bbbb", ["AAAA1111bbbb"]),
+    ("connect auth=opensesame now", ["opensesame"]),
+    ("auth_token: xyz-secret-1", ["xyz-secret-1"]),
+])
+def test_redact_masks_cookies_url_credentials_bare_keys_and_auth(line, hidden):
+    out = "\n".join(oc.redact(line))
+    assert "[redacted]" in out
+    for word in hidden:
+        assert word not in out, (line, out)
+
+
+@pytest.mark.parametrize("line", [
+    "author: Ada Lovelace", "https://example.com/path?x=1", "cookie jar is empty today", "ask-me-anything skill",
+    "slack / default: enabled", "mailto:ada@example.com",
+])
+def test_redact_keeps_lines_without_those_secrets(line):
+    assert oc.redact(line) == [line]
