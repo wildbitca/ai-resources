@@ -39,16 +39,6 @@ LEGACY_PRESET: dict[str, str] = {
 # The internal preset key that was renamed: `low-pricing` is still accepted wherever a key is read.
 PRESET_KEY_ALIASES: dict[str, str] = {"low-pricing": "low-cost"}
 
-# Until a preset file moves to its canonical place (plan S4b), its canonical id points at the file that exists.
-_PHYSICAL: dict[str, str] = {
-    "balanced": "subscription-claude-55",
-    "performance": "subscription-performance",
-    "low-cost": "subscription-economy",
-    "gateway/performance": "performance-claude-55",
-    "gateway/low-cost": "economy-claude-55",
-}
-
-
 class ProfileModeRequired(ValueError):
     """A bare preset id was loaded without saying whether the host has a gateway."""
 
@@ -88,5 +78,4 @@ def resolve(name: str, mode: str | None, root: Path) -> Path:
                 f"(mode='multi-model' or 'single-model') to load it")
         if mode == "multi-model":
             target = f"{GATEWAY_DIR}/{target}"
-    stem = _PHYSICAL.get(target, target)
-    return root / f"{stem}.yaml"
+    return root / f"{target}.yaml"

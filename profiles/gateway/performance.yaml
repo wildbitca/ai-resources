@@ -1,4 +1,4 @@
-name: performance-claude-55
+name: gateway/performance
 mode: multi-model
 description: |
   Performance preset. Claude only, the strongest tier where defects are caught or

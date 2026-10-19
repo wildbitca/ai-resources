@@ -1,4 +1,4 @@
-name: economy-claude-55
+name: gateway/low-cost
 mode: multi-model
 description: |
   Low pricing preset. Claude only, the cheapest tier that keeps defects caught:

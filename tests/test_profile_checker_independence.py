@@ -147,7 +147,7 @@ def test_agy_slug_trap():
 
 def test_overlap_in_a_copy_of_subscription_claude55_is_found():
     """AC-S1b: verifier = sonnet next to a Sonnet implementer fails."""
-    doc = _load(REPO / "profiles" / "subscription-claude-55.yaml")
+    doc = _load(REPO / "profiles" / "balanced.yaml")
     assert violations(doc) == []
     bad = copy.deepcopy(doc)
     bad["by_role"]["verifier"]["model"] = "sonnet"

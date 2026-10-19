@@ -169,12 +169,15 @@ def test_an_ungated_render_still_writes_measured_bests_foreign_ids_verbatim():
 
 import pathlib as _pathlib
 
-_ALL_PROFILES = sorted(p.stem for p in (_pathlib.Path(__file__).resolve().parents[1] / "profiles").glob("*.yaml"))
+_PROFILES_DIR = _pathlib.Path(__file__).resolve().parents[1] / "profiles"
+# ADR-0010 S4b: the gateway presets live under profiles/gateway/, so the scan is recursive.
+_ALL_PROFILES = sorted(str(p.relative_to(_PROFILES_DIR).with_suffix("")) for p in _PROFILES_DIR.rglob("*.yaml"))
 
 
 @pytest.mark.parametrize("name", _ALL_PROFILES)
 def test_every_shipped_profile_is_valid(name):
-    doc = profiles.load_profile(name)
+    from ai_resources.setup import profile_names
+    doc = profiles.load_profile(name, "single-model" if name in profile_names.PRESET_IDS else None)
     assert doc.get("mode", "multi-model") in ("single-model", "multi-model"), name
     assert doc.get("description"), name
     by_role = doc.get("by_role") or {}

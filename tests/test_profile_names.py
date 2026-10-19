@@ -204,3 +204,22 @@ def test_a_real_run_saves_the_new_name_for_an_alias_only(home):
 
 def test_the_flag_path_accepts_an_old_profile_name_through_the_listing():
     assert profile_names.canonical("economy-claude-55") in profiles.list_profiles(mode="multi-model")
+
+
+def test_preset_files_sit_in_the_canonical_layout_without_a_version_suffix():
+    """AC-S4f: profiles/<id>.yaml for the no-gateway rows, profiles/gateway/<id>.yaml for a gateway."""
+    root = REPO / "profiles"
+    for preset in profile_names.PRESET_IDS:
+        assert (root / f"{preset}.yaml").is_file(), preset
+    for preset in ("performance", "low-cost"):
+        assert (root / "gateway" / f"{preset}.yaml").is_file(), preset
+    for path in [root / f"{p}.yaml" for p in profile_names.PRESET_IDS] + sorted((root / "gateway").glob("*.yaml")):
+        assert not any(ch.isdigit() for ch in path.stem), path.name
+        assert yaml_name(path) in (path.stem, f"gateway/{path.stem}")
+    for old in ("subscription-claude-55", "subscription-performance", "subscription-economy",
+                "performance-claude-55", "economy-claude-55"):
+        assert not (root / f"{old}.yaml").exists()
+
+
+def yaml_name(path: pathlib.Path) -> str:
+    return path.read_text(encoding="utf-8").splitlines()[0].removeprefix("name:").strip()

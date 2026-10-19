@@ -11,26 +11,32 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 DOC = REPO / "docs" / "multi-model.md"
 
 
+def _shipped() -> set[str]:
+    """Profile names as the docs and the wizard write them: gateway profiles carry their `gateway/` prefix."""
+    root = REPO / "profiles"
+    return {str(p.relative_to(root).with_suffix("")) for p in root.rglob("*.yaml")}
+
+
 def table_rows() -> dict[str, str]:
     """profile name -> its row, from the table under `## Profiles`."""
     text = DOC.read_text(encoding="utf-8")
     section = text.split("\n## Profiles\n", 1)[1].split("\n## ", 1)[0]
     rows = {}
     for line in section.splitlines():
-        m = re.match(r"^\| `([a-z0-9-]+)` \|", line)
+        m = re.match(r"^\| `([a-z0-9/-]+)` \|", line)
         if m:
             rows[m.group(1)] = line
     return rows
 
 
 def test_every_shipped_profile_is_in_the_docs_table():
-    shipped = {p.stem for p in (REPO / "profiles").glob("*.yaml")}
+    shipped = _shipped()
     rows = table_rows()
     assert shipped - set(rows) == set(), f"profiles missing from docs/multi-model.md: {sorted(shipped - set(rows))}"
 
 
 def test_the_docs_table_names_no_profile_that_does_not_exist():
-    shipped = {p.stem for p in (REPO / "profiles").glob("*.yaml")}
+    shipped = _shipped()
     assert set(table_rows()) - shipped == set()
 
 

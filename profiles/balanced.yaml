@@ -1,4 +1,4 @@
-name: subscription-claude-55
+name: balanced
 mode: single-model
 description: |
   Curated reference for a Claude subscription without a gateway: each kit subagent uses

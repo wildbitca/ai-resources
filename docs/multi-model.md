@@ -134,7 +134,7 @@ Screen 2 ("How should they work?") writes the same state the old four-way mode q
 
 *Each on its own* means every tool works on its own sign-in with no cross-tool team; it does not mean one tool does
 every role. *As a team* asks for no key, installs no gateway and shows no gateway warning (a gateway credential would
-replace the claude.ai login; this answer never sets one). Your team starts from `subscription-claude-55`, and the
+replace the claude.ai login; this answer never sets one). Your team starts from `balanced`, and the
 subscription lanes ([below](#subscription-lanes)) are reached from Review > More options > Parallel runs: Antigravity
 stays opt-in and gated, and the Codex lane stays held. `ai-resources setup --backend cli` picks it without a prompt, and
 `--backend litellm` / `--backend openrouter` do the same for a gateway (the screen is not shown). The `cli_team` key is
@@ -250,11 +250,11 @@ service, so `ai-resources daemon` has nothing to manage and says so.
 | `cost-optimized` | multi-model, either gateway | Aggressively biased toward Flash and Haiku. |
 | `claude-native` | single-model | Each role picks a Claude alias. No gateway. The default for single-model and for a Claude-only host with no gateway. |
 | `claude-inherit` | single-model | Every role inherits the session model. |
-| `performance-claude-55` | multi-model, either gateway | The Performance starting team for the gateway modes. Claude only, valid in every compatibility cell without `--allow-unverified`: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for every writer. Costs more than `balanced-claude-55`. |
-| `economy-claude-55` | multi-model, either gateway | The Low cost starting team for LiteLLM. Claude only and verified: Haiku for reading and mechanical roles, Sonnet for the planner, architect, code, review and verification, Opus only for security. Replaces `cost-optimized` as the preset because that profile names Google models the Claude cockpit has not verified. |
-| `subscription-claude-55` | single-model, no gateway | Curated reference for a Claude subscription: Claude aliases, Sonnet for writers, Opus for the verifier and security auditor so checkers never share a family with writers. Not recommended as the default; aliases float, so the evidence may drift. |
-| `subscription-performance` | single-model, no gateway | The Performance starting team without a gateway. Claude aliases: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for writers and the explorer. Checkers stay on Opus and no writer does. Carries a lane table. |
-| `subscription-economy` | single-model, no gateway | The Low cost starting team without a gateway. Claude aliases: Haiku for exploration, docs and upgrades, Sonnet for the planner, architect, writers and reviewer, Opus only for the verifier and security auditor (independence is not traded for price). Carries a lane table. |
+| `gateway/performance` | multi-model, either gateway | The Performance starting team for the gateway modes. Claude only, valid in every compatibility cell without `--allow-unverified`: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for every writer. Costs more than `balanced-claude-55`. |
+| `gateway/low-cost` | multi-model, either gateway | The Low cost starting team for LiteLLM. Claude only and verified: Haiku for reading and mechanical roles, Sonnet for the planner, architect, code, review and verification, Opus only for security. Replaces `cost-optimized` as the preset because that profile names Google models the Claude cockpit has not verified. |
+| `balanced` | single-model, no gateway | Curated reference for a Claude subscription: Claude aliases, Sonnet for writers, Opus for the verifier and security auditor so checkers never share a family with writers. Not recommended as the default; aliases float, so the evidence may drift. |
+| `performance` | single-model, no gateway | The Performance starting team without a gateway. Claude aliases: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for writers and the explorer. Checkers stay on Opus and no writer does. Carries a lane table. |
+| `low-cost` | single-model, no gateway | The Low cost starting team without a gateway. Claude aliases: Haiku for exploration, docs and upgrades, Sonnet for the planner, architect, writers and reviewer, Opus only for the verifier and security auditor (independence is not traded for price). Carries a lane table. |
 
 Custom: pick `custom` in the wizard to override each role individually.
 
@@ -275,10 +275,16 @@ A starting team resolves to a kit profile by how the host reaches its models, th
 
 | Starting team | As a team | Each on its own | Advanced: LiteLLM | Advanced: OpenRouter |
 |---|---|---|---|---|
-| Balanced | `subscription-claude-55` | `claude-native` | `balanced-claude-55` | `balanced-claude-55` |
-| Performance | `subscription-performance` | `subscription-performance` | `performance-claude-55` | `performance-claude-55` |
-| Low cost | `subscription-economy` | `subscription-economy` | `economy-claude-55` | `economy-claude-55` |
+| Balanced | `balanced` | `balanced` | `balanced-claude-55` | `balanced-claude-55` |
+| Performance | `performance` | `performance` | `gateway/performance` | `gateway/performance` |
+| Low cost | `low-cost` | `low-cost` | `gateway/low-cost` | `gateway/low-cost` |
 
+Preset ids are the same on every row (ADR-0010). The old names keep loading forever and resolve to the same team:
+`subscription-claude-55` is `balanced`, `subscription-performance` is `performance`, `subscription-economy` is
+`low-cost`, `performance-claude-55` is `gateway/performance` and `economy-claude-55` is `gateway/low-cost`. A saved
+state under an old name is saved under the new one on the next real run, with one line saying so. `claude-native`,
+`balanced-claude-55` and `openrouter-balanced` are not aliases: their content differs, so they keep their own file and
+the question only opens on Balanced for them.
 The question is skipped, and the flags path is unchanged, with `--profile`, `--models`, `--shape`, `--providers`,
 `--compose` or `--non-interactive`. A saved choice is the default of the question and is never replaced: a saved preset
 profile defaults to its preset, and a customized profile, a composed team, a team picked from your accounts or any
@@ -372,7 +378,7 @@ ai-resources setup --no-lanes                            # clear lanes.yaml and 
   uses; resolution refuses it and `lanes prepare` re-checks it at dispatch.
 - **Drift.** When a role's model changes (`models update`, an alias moving) the lane agent is marked `stale`, the
   lanes pass refuses it, and `status`, `verify` and `models update` print a warning; re-run `setup --lanes`.
-- **Profile.** `subscription-claude-55` declares a lane table; compose never emits a lane.
+- **Profile.** `balanced` (formerly `subscription-claude-55`) declares a lane table; compose never emits a lane.
 
 ### The Antigravity lane (ADR-0007 section 11, phase 3; closed)
 

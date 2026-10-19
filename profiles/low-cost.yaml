@@ -1,0 +1,75 @@
+name: low-cost
+mode: single-model
+description: |
+  Low pricing preset for a Claude subscription without a gateway: the cheapest tier
+  that still keeps defects caught. Haiku for read-only exploration, docs and mechanical
+  upgrades; Sonnet for the planner, the architect, writers, tests and the code reviewer;
+  Opus only for the two checkers.
+
+  Checker independence by family is not traded for price: the verifier and the security
+  auditor stay on Opus and no writer role runs on Opus, so the saving comes from the
+  planner and architect moving to Sonnet and from docs and upgrades moving to Haiku, not
+  from weakening verification, review or security (rule 017). The checkers declare no
+  fallback. Fallbacks are inert in single-model mode.
+
+  Versus balanced: the architect moves from Opus to Sonnet and doc-writer
+  and package-upgrade from Sonnet to Haiku. Alias drift applies.
+
+  Evidence label: INFERRED, medium to low confidence, curated from the 2026-10 study
+  (study-support-roles, study-subscriptions) and not score-derived.
+
+evidence:
+  tag: study-based
+  label: INFERRED
+  confidence: medium-low
+  source: 2026-10 study of the 5.5 models
+role_effort:
+  planner: high
+  implementer: high
+
+classes:
+  opus:   opus
+  sonnet: sonnet
+  haiku:  haiku
+
+defaults:
+  fallbacks: []
+
+by_role:
+  explore:                      { model: haiku }
+  tester:                       { model: sonnet, fallbacks: [haiku] }
+  doc-writer:                   { model: haiku }
+  package-upgrade:              { model: haiku }
+  generalPurpose:               { model: sonnet }
+  implementer:                  { model: sonnet }
+  crashlytics-fixer:            { model: sonnet }
+  sentry-fixer:                 { model: sonnet }
+  terraform-maintainer:         { model: sonnet }
+  crossplane-upjet-maintainer:  { model: sonnet }
+  code-reviewer:                { model: sonnet }
+  security-auditor:             { model: opus }
+  verifier:                     { model: opus }
+  planner:                      { model: sonnet }
+  software-architect:           { model: sonnet }
+
+by_persona: {}
+
+# Subscription lanes (ADR-0007): candidate lists per role, never an agent id. Dispatch resolves them
+# from the setup lanes table; the order is the tie-break, not a rank. A fresh install enables none.
+lanes:
+  roles:
+    explore:            [claude-cli:haiku, claude-code]
+    implementer:        [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
+    tester:             [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
+    doc-writer:         [claude-cli:haiku, claude-code]
+    planner:            [claude-code, claude-cli:sonnet]
+    software-architect: [claude-code, claude-cli:sonnet]
+    verifier:           [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
+    security-auditor:   [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
+  second:
+    # Gemini is the different-family second opinion on the review (ADR-0007 section 11 accepts Google egress for
+    # the code-reviewer second pass). It is pinned because it is not the role's family; the pin and the candidate
+    # stay held until --lanes-antigravity, a Google acknowledgement and the gates G0-G7 are all proven.
+    code-reviewer:      ["agy:gemini-3.8-flash-high", "agy:claude-sonnet-5-5", claude-cli:sonnet]
+  pins:
+    code-reviewer:      ["agy:gemini-3.8-flash-high"]

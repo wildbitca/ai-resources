@@ -12,7 +12,7 @@ import re
 from ai_resources import model_pins as mp
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-SCANNED = sorted(str(p.relative_to(REPO)) for p in (REPO / "profiles").glob("*.yaml")) + [
+SCANNED = sorted(str(p.relative_to(REPO)) for p in (REPO / "profiles").rglob("*.yaml")) + [
     "profiles/openclaw-host.json5",
     "scripts/ai_resources/setup/litellm.py",
     "scripts/ai_resources/setup/providers.py",
