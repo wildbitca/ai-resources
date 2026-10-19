@@ -6,6 +6,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Added (OpenClaw image generation in setup; ADR-0011, proposed)
+
+- **One image question, no recommendation.** With OpenClaw as a tool, phase 2 asks about image generation: `keep` (default,
+  writes nothing), `disable`, or any documented route, each with a billing label and a proof label. Choosing a route writes
+  only `agents.defaults.mediaModels.image` after a dry run, and offers (default No) to sign in through
+  `openclaw models auth ...` on your own terminal; the kit never holds an image key.
+- **`disable` is a scoped, reversible `tools.deny` entry.** Setup merges the single token `image_generate` into the global
+  `tools.deny` without touching your entries (full list, `--replace-path`, dry run, re-read before the write, hot only, never
+  deferred), tracks it in state and removes only that token on teardown. A new shape guard, `assert_tools_deny_safe`, sits on
+  the single writer next to `assert_channels_safe`. Effect on running sessions is NOT PROVEN. ADR-0011 is Proposed: the
+  architect and security-auditor reviews run after the commits by operator waiver.
+- New state fields `image_*` (optional; saved states load unchanged), Review rows, `--dry-run` lines, a `verify` line and the
+  runbook section "Image generation".
+
+### Fixed (low-severity advisories from the ADR-0010 re-review)
+
+- Evidence-record hook: `git am` is read as a patch command; cp, mv, rsync, ln, install, tar/unzip extraction, `sed -i`, tee
+  and `dd of=` that land in `scripts/ai_resources/data/` are denied without the file name; `git commit -a`, `git add
+  -A/-u/.`, `git reset --hard`, `git stash pop/apply`, `git pull` and `git merge` are denied only while the record is
+  modified or untracked. The control stays operator review.
+- Channel disable: a capped output re-reads the channel list before reporting failed or turned off. `redact()` also masks
+  Cookie/Set-Cookie values, URL credentials, bare `sk-` keys and `auth=`, and no longer backtracks on a huge single word. The
+  capped runner closes the child's stdout pipe when it abandons the reader.
+
 ### Changed (setup in five phases, OpenClaw questions by phase, channel intent; ADR-0010, proposed)
 
 - **Five phases.** Step headers read `[n/5]`: Tools, Cockpit, Team, Audio, More. The ten internal steps, their ids and

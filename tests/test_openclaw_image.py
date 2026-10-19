@@ -198,3 +198,18 @@ def test_account_never_reads_or_returns_a_secret_value():
 
 def test_account_keep_and_disable_have_no_account():
     assert img.provider_account(img.KEEP, None).source_label == "missing"
+
+
+# --- the runbook lists every NOT PROVEN item (AC-20, AC-D16) --------------------------------------------------------------------
+
+def test_the_runbook_lists_the_image_section_and_every_not_proven_item():
+    import pathlib
+    text = (pathlib.Path(__file__).resolve().parents[1] / "docs" / "openclaw" / "runbook.md").read_text()
+    section = text[text.index("## Image generation (ADR-0011, proposed)"):text.index("## Pending operator steps")]
+    for needle in ("live effect on running sessions: NOT PROVEN", "quota NOT PROVEN", "docs only, not tested on this host",
+                   "provider ids", "paste-api-key", "AI_RESOURCES_LIVE_FACTS", "wildcard grammar",
+                   "architect and security-auditor reviews", "group:media", "image_generate", "kit-env-only",
+                   "openclaw config get tools.deny", "openclaw models auth list", "LiteLLM"):
+        assert needle in section, needle
+    for route in img.CATALOG:
+        assert route.label in section, route.id

@@ -297,6 +297,70 @@ writers stay on `claude-cli`; and doctor prints
 shell wrote outside the repo and the tripwire list; OAuth credentials in a kit-owned agy home unless you confirm
 their removal.
 
+## Image generation (ADR-0011, proposed)
+
+`ai-resources setup` asks one question about image generation when OpenClaw is one of your tools (phase 2, once; More
+options > OpenClaw asks it again). Setup recommends **no** route. The list is: `keep` (the default; writes nothing),
+`disable`, and every route OpenClaw documents, each shown as `<provider> via <auth> - <billing label> - <proof label>`.
+
+| Answer | What setup writes | Billing label | Proof |
+|---|---|---|---|
+| `keep` | nothing (OpenClaw auto-detects any provider that has a sign-in) | writes nothing | n/a |
+| `disable` | adds the exact token `image_generate` to the global `tools.deny` | n/a | live effect on running sessions: NOT PROVEN |
+| OpenAI, ChatGPT/Codex sign-in | `agents.defaults.mediaModels.image` | subscription, account access NOT PROVEN | docs only; quota NOT PROVEN |
+| OpenAI, API key | same | pay per use (`docs/providers/openai.md:21`) | docs only, not tested on this host |
+| Google Gemini, OpenRouter, xAI, fal, DeepInfra, MiniMax, Vydra | same | billing per provider, not verified | docs only, not tested on this host |
+| Microsoft Foundry | same, with a deployment name you type | billing per Azure subscription, not verified | needs a Foundry deployment configured in OpenClaw |
+| ComfyUI | greyed out until a ComfyUI provider block exists in OpenClaw | billing NOT PROVEN | configure a ComfyUI workflow in OpenClaw first |
+
+LiteLLM is not offered (ADR-0010 N1 removed it from new-setup choices); to use it, set `litellm/gpt-image-2` yourself with
+`openclaw config set agents.defaults.mediaModels.image` after a dry run. Antigravity sign-in is not an image route
+(Antigravity terms).
+
+**The credential never touches the kit.** The gateway does not read `~/.config/ai-resources/.env` (OpenClaw reads its own
+environment and auth store), so a key kept only there is shown as `kit-env-only`. When the gateway has no sign-in for the
+route and you are on a terminal, Apply offers (default No) to run `openclaw models auth login --provider <id>` or
+`openclaw models auth paste-api-key --provider <id>` with your terminal attached; OpenClaw asks for the credential, setup
+sees nothing and stores only the profile id (`<provider>:manual` for a pasted key). Under `--dry-run`, `--yes` or without a
+terminal setup prints the command and runs nothing. Check with `openclaw models auth list`.
+
+**`disable`, in detail.** `config patch` replaces arrays, so setup reads the live `tools.deny`, appends `image_generate` and
+sends the whole list with `--replace-path tools.deny` after a dry run and a re-read; your entries keep their bytes and their
+order. Scope is global: it also applies to kit lane agents and to your own agents ("affects all agents"). It never writes
+`group:media` (which would also remove `view_image`, `tts`, `pdf`, `music_generate` and `video_generate`), `*`, `tools.allow`
+or any `agents.entries.*` path. An entry that already covers the tool (`image_generate` in any case, `group:media`,
+`group:openclaw`, `*`, or an `*` wildcard such as `image*`) means setup writes nothing and says which entry. A live
+`tools.deny` that is not a list of strings, an unreadable config, a rejected dry run or a list that changed during the run:
+no write. **Hot only:** when `tools.deny` is a restart key (`gateway.reload.mode: off`, or the reload rules cannot be read)
+setup does not apply it and does not defer it; it prints "Image generation was NOT disabled" and the manual command
+(`openclaw config get tools.deny`, then add `image_generate` yourself). Choosing a route later writes the model first and
+removes setup's own token second; a failed model write leaves image generation off.
+
+**Teardown** restores `mediaModels.image` (null when the key was absent, the previous value with `--replace-path`
+otherwise; a value you changed since is left alone), removes exactly the one `image_generate` token setup added (null when
+`tools.deny` did not exist before) and offers, default No, `openclaw models auth logout <profile id>` only for a profile
+setup signed in.
+
+`ai-resources verify --cockpit openclaw` reports the route and whether `image_generate` is denied by setup, by an operator
+entry or not at all. To read it by hand: `openclaw config get tools.deny --json`, `openclaw config get
+agents.defaults.mediaModels --json`.
+
+**NOT PROVEN (all of them, as of this change):**
+
+- live effect on running sessions of a hot `tools.deny` change (removes the tool from a running session, or only from the next
+  run); probe it with a session open, then `openclaw infer image generate`;
+- ChatGPT/Codex subscription access to `openai/gpt-image-2` and to GPT Image 2.5, and its quota;
+- every route's image generation on this host (docs only; none was run);
+- the provider ids passed to `models auth login` and `paste-api-key` (taken from the docs; MiniMax OAuth `minimax-portal`
+  and the profile an OAuth login creates are unverified, so no sign-out is offered for an OAuth login);
+- what `paste-api-key` writes besides the auth profile, and its behaviour with no terminal (setup never pipes a key to it);
+- that `config patch` rejects a non-string `tools.deny` element (`tests/test_openclaw_image_facts.py`, opt-in with
+  `AI_RESOURCES_LIVE_FACTS=1`, was written but not run by the implementer);
+- OpenClaw's wildcard grammar beyond what the docs state ("case-insensitive, supports `*` wildcards"); any other spelling is not
+  treated as covering, so setup appends its token (redundant but safe);
+- the architect and security-auditor reviews of ADR-0011: the series landed in one run by operator waiver and the reviews run
+  after it.
+
 ## Pending operator steps
 
 These need the real host and a maintenance window, so they were **not** run when 1.9.0 was built:

@@ -12,6 +12,8 @@ Implemented: S1 to S16 (see "Implementation status"), each as one local commit.
 [ADR-0007](0007-subscription-lanes.md) §8 and §11, [ADR-0008](0008-setup-wizard-tui-on-rich-questionary.md) (gateway
 choice) and [ADR-0009](0009-setup-tools-how-team.md) §2 and §8. The amendment text lives in each ADR under
 "Amendment (ADR-0010, proposed)" and in the table below.
+**Related**: [ADR-0011](0011-setup-writes-scoped-tools-deny.md) (the image-generation question in phase 2.1 and its scoped
+`tools.deny` write; Proposed, reviews pending).
 
 ## Context
 
