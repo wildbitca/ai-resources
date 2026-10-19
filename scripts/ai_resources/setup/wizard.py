@@ -24,7 +24,7 @@ from . import (
     tools,
     ui,
 )
-from . import compat, model_selection, profile_names
+from . import compat, model_selection, profile_names, team_view
 from .cockpits import ALL as ALL_COCKPITS
 from .cockpits import _shared
 from .. import __version__, model_pins, repo_root, roles_policy, selection as selection_mod
@@ -94,7 +94,7 @@ PRESET_PROFILES: dict[str, dict[str, str]] = {
     "single": _PresetRow({"balanced": "balanced", "performance": "performance", "low-cost": "low-cost"}),
     "litellm": _PresetRow({"balanced": "balanced-claude-55", "performance": "gateway/performance",
                            "low-cost": "gateway/low-cost"}),
-    "openrouter": _PresetRow({"balanced": "balanced-claude-55", "performance": "gateway/performance",
+    "openrouter": _PresetRow({"balanced": "gateway/balanced", "performance": "gateway/performance",
                               "low-cost": "gateway/low-cost"}),
 }
 # The preset chosen in THIS run ("" = none: Custom, the flags path or a non-interactive run). Not saved: the
@@ -120,6 +120,7 @@ _APPLIED_TARGETS: list[str] = []
 # Set by Review > More options (ADR-0009): the operator asked for the Claude parallel runs / the OpenClaw questions in
 # THIS run. Neither is asked on the default path.
 _PARALLEL_RUNS = False
+_GEMINI_ASKED: set[str] = set()     # teams for which Review already asked the OpenRouter Gemini opt-in in this run
 _OPEN_OPENCLAW = False
 _OPEN_LIFECYCLE = False
 
@@ -175,6 +176,7 @@ def _run(args: argparse.Namespace) -> int:
     _APPLIED_TARGETS = []
     _PRESET = ""
     _PARALLEL_RUNS = _OPEN_OPENCLAW = _OPEN_LIFECYCLE = False
+    _GEMINI_ASKED.clear()
     dry_run = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
 
     # Both flags were declared in the CLI and never read, so they accepted input
@@ -700,6 +702,20 @@ def _show_team_table(s: state.SetupState, base: dict, rows: list) -> None:
     ui.detail("Writing code always stays with Claude Code (safety rule).")
 
 
+def _show_legacy_difference(s: state.SetupState, new_name: str, mode: str, backend: str | None, rows: list) -> None:
+    """A host saved under a profile that predates the preset ids (claude-native, balanced-claude-55,
+    openrouter-balanced) keeps its own file until it picks the preset; picking it shows what changes (ADR-0010 N4)."""
+    old = s.profile.name
+    if not old or old == new_name or old not in profile_names.LEGACY_PRESET:
+        return
+    try:
+        before = profiles.to_executors(profiles.load_profile(old, mode), backend or "litellm")["by_role"]
+    except (FileNotFoundError, RuntimeError):
+        return
+    after = {role: {"model": model} for role, _vendor, model in rows}
+    profiles.print_role_diff(before, after, title=f"{old} -> {new_name}")
+
+
 def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
     """Screen 3, "Your team": ONE question (Balanced, Performance, Low cost or Custom). Choosing a starting team is the
     confirmation: the role table and the team table are shown with it and nothing is asked again (ADR-0009). A starting
@@ -730,6 +746,7 @@ def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
         else:
             rows = profiles.role_table(profiles.to_executors(base))
         label = next(lbl for key, lbl, _ in PRESET_CHOICES if key == preset)
+        _show_legacy_difference(s, name, mode, backend, rows)
         targets = (s.profile.customizations or {}).get("__targets__")
         s.set_selection(None)
         s.profile.name = name
@@ -930,6 +947,50 @@ _REENTRANT = ("gateway", "providers", "credentials", "lifecycle")
 """Steps More options > Gateway / Start at login re-run by design: they are idempotent, so they never refuse."""
 
 
+def _google_roles(s: state.SetupState) -> list[str]:
+    """The roles of this state's profile that run a Google model, in role order."""
+    try:
+        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name, s.backend), "multi-model")
+    except (FileNotFoundError, RuntimeError):
+        return []
+    if s.profile.customized and s.profile.customizations:
+        base = profiles.merge_customizations(
+            base, {k: v for k, v in s.profile.customizations.items() if k in profiles.KNOWN_ROLES})
+    by_role = base.get("by_role") or {}
+    return [r for r in profiles.KNOWN_ROLES if str((by_role.get(r) or {}).get("model", "")).startswith("google/")]
+
+
+def _openrouter_gemini_optin(s: state.SetupState) -> None:
+    """OpenRouter Balanced declares Gemini, which Claude Code does not verify through OpenRouter yet. The roles that
+    use it would silently run on the session model, so Review asks once (default No, never answered for the operator)
+    and records `profile.allow_unverified` on a Yes; a No names the roles instead. Skipped when the cell is verified,
+    when the flag already allows it, or when the profile has no Google role (ADR-0010 S6b, PD-5)."""
+    if s.mode != "multi-model" or s.backend != "openrouter" or compat.claude_google_openrouter_verified():
+        return
+    roles = _google_roles(s)
+    if not roles or _COMPOSE.get("allow_unverified"):
+        return
+    if "claude" not in _detected_cockpit_ids(s):
+        return
+    key = profiles.saved_or_recommended(s.profile.name, s.backend) + ("*" if s.profile.customized else "")
+    if key in _GEMINI_ASKED:                     # asked once per team in this run, not again on a return to Review
+        return
+    _GEMINI_ASKED.add(key)
+    named = ", ".join(roles)
+    held = (f"Gemini held on OpenRouter: Claude Code x Google not verified; {named} use the session model")
+    if ui.is_non_interactive() or _ASSUME_YES:
+        # `--yes` answers the install offer only; this opt-in is never answered for the operator.
+        if not s.profile.allow_unverified:
+            ui.info(held)
+        return
+    pretty = ", ".join(roles[:-1]) + " and " + roles[-1] if len(roles) > 1 else roles[0]
+    if ui.confirm(f"Use Gemini on {pretty} through OpenRouter (not yet verified with Claude Code)?", default=False):
+        s.profile.allow_unverified = True
+    else:
+        s.profile.allow_unverified = False
+        ui.info(held)
+
+
 def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
     """Screen 4, "Review", BEFORE the write: the answers by name, then Apply, Change tools, Change how, Change team,
     More options or Cancel. A Change jumps back to that screen with the current answers as defaults and returns here.
@@ -942,6 +1003,7 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
         return 0
     _section(9, "Review")
     _REVIEW_SHOWN = True
+    _openrouter_gemini_optin(s)
     ui.review_table(_review_rows(s), title="Your answers")
     if selection is not None:
         detected = _detected_cockpit_ids(s)
@@ -2018,7 +2080,7 @@ def _step6_profile(s: state.SetupState) -> int:
         except (FileNotFoundError, RuntimeError):
             desc = ""
         label = f"{name}"
-        if name == RECOMMENDED_PROFILE:
+        if name == profiles.recommended_profile(s.backend):
             label += "  (recommended)"
         if desc:
             label += f"  — {desc}"
@@ -2032,7 +2094,7 @@ def _step6_profile(s: state.SetupState) -> int:
     # A hardcoded name here crashed the wizard for anyone whose saved profile
     # belonged to the other backend.
     # Gateway-agnostic, so the same recommendation holds for either backend.
-    preferred = RECOMMENDED_PROFILE
+    preferred = profiles.recommended_profile(s.backend)
     saved = profile_names.canonical(s.profile.name)
     if saved in available:
         default = saved
@@ -2622,6 +2684,17 @@ def _report_smoke_results(results) -> bool:
     return had_failures
 
 
+def _routed_executors(s: state.SetupState, executors_doc: dict) -> dict:
+    """The legacy LiteLLM gateway reaches Google directly, so a `google/*` role without an enabled Google provider
+    runs on its declared Claude fallback, with one visible line (ADR-0010 S6c). Other rows are returned unchanged."""
+    if s.mode != "multi-model" or s.backend != "litellm":
+        return executors_doc
+    routed, lines = team_view.degrade_unrouted(executors_doc, s.providers)
+    for line in lines:
+        ui.info(line)
+    return routed
+
+
 def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     if dry_run:
         return _step9_dry_run(s)
@@ -2637,7 +2710,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
             customizations = {k: v for k, v in s.profile.customizations.items()
                               if k in profiles.KNOWN_ROLES}
             base = profiles.merge_customizations(base, customizations)
-        executors_doc = profiles.to_executors(base, s.backend)
+        executors_doc = _routed_executors(s, profiles.to_executors(base, s.backend))
 
         # Write executors.yaml
         profiles.write_executors(executors_doc, state.executors_path())
@@ -2985,7 +3058,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
             customizations = {k: v for k, v in s.profile.customizations.items()
                               if k in profiles.KNOWN_ROLES}
             base = profiles.merge_customizations(base, customizations)
-        executors_doc = profiles.to_executors(base, s.backend)
+        executors_doc = _routed_executors(s, profiles.to_executors(base, s.backend))
     else:
         executors_doc = _single_model_executors(s)
 

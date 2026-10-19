@@ -26,7 +26,7 @@ TABLE = {
     "single": {"balanced": "balanced", "performance": "performance", "low-cost": "low-cost"},
     "litellm": {"balanced": "balanced-claude-55", "performance": "gateway/performance",
                 "low-cost": "gateway/low-cost"},
-    "openrouter": {"balanced": "balanced-claude-55", "performance": "gateway/performance",
+    "openrouter": {"balanced": "gateway/balanced", "performance": "gateway/performance",
                    "low-cost": "gateway/low-cost"},
 }
 
@@ -110,7 +110,10 @@ def test_every_preset_maps_to_an_offered_profile_of_the_right_mode(key):
         assert profiles.role_table(executors)
 
 
-GATEWAY_PRESET_PROFILES = sorted({n for k in ("litellm", "openrouter") for n in wizard.PRESET_PROFILES[k].values()})
+# gateway/balanced declares Gemini, which Claude Code does not verify on OpenRouter: it has its own test below
+# (tests/test_balanced_multi_provider.py), amended from TS-BC55-008 by ADR-0010 S6.
+GATEWAY_PRESET_PROFILES = sorted({n for k in ("litellm", "openrouter") for n in wizard.PRESET_PROFILES[k].values()}
+                                 - {"gateway/balanced"})
 
 
 @pytest.mark.parametrize("name", GATEWAY_PRESET_PROFILES)

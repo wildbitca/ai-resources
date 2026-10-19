@@ -267,17 +267,19 @@ def _multi(backend: str, profile: str | None = None) -> state.SetupState:
 
 @pytest.mark.parametrize("backend", ["litellm", "openrouter"])
 def test_a_fresh_multi_model_host_defaults_to_the_recommended_profile(monkeypatch, backend):
-    """TS-BC55-010: a state that never chose a profile offers balanced-claude-55, labelled (recommended)."""
+    """TS-BC55-010, amended by ADR-0010 N4: a state that never chose a profile offers the backend's recommended
+    profile, labelled (recommended): balanced-claude-55 on LiteLLM, gateway/balanced on OpenRouter."""
+    rec = wizard.profiles.recommended_profile(backend)
     ui_stub = _Step6(monkeypatch)
     s = _multi(backend)
     assert s.profile.name == ""                                   # nothing chosen yet
     assert wizard._step6_profile(s) == 0
     ask = ui_stub.selects[0]
-    assert ask["default"] == RECOMMENDED and wizard.RECOMMENDED_PROFILE == RECOMMENDED
+    assert ask["default"] == rec and wizard.RECOMMENDED_PROFILE == RECOMMENDED
     labels = dict(zip(ask["values"], ask["labels"]))
-    assert "(recommended)" in labels[RECOMMENDED]
-    assert [v for v, lab in labels.items() if "(recommended)" in lab] == [RECOMMENDED]
-    assert s.profile.name == RECOMMENDED
+    assert "(recommended)" in labels[rec]
+    assert [v for v, lab in labels.items() if "(recommended)" in lab] == [rec]
+    assert s.profile.name == rec
 
 
 def test_a_saved_profile_stays_the_default_even_when_it_is_the_old_untouched_one(monkeypatch):

@@ -42,6 +42,11 @@ def _profile(monkeypatch):
             lanes["roles"][role] = ["claude-cli:sonnet", "agy:claude-sonnet-5-5", "claude-code"]
         lanes["roles"]["implementer"] = ["claude-cli:sonnet", "agy:claude-sonnet-5-5", "claude-code"]
         lanes["second"]["code-reviewer"] = ["agy:claude-sonnet-5-5", "claude-cli:sonnet"]
+        # ADR-0010 S6: Balanced pins its Gemini candidates; this fixture swaps them for Claude ones, so the pins go.
+        lanes.pop("pins", None)
+        for role in ("planner", "software-architect"):
+            lanes["second"].pop(role, None)
+        lanes["roles"]["explore"] = ["claude-cli:haiku", "claude-code"]
         return doc
     monkeypatch.setattr(profiles, "load_profile", load)
 

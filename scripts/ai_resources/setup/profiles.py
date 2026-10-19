@@ -42,9 +42,9 @@ RECOMMENDED_PROFILE = "balanced-claude-55"
 
 
 def recommended_profile(backend: str = "litellm") -> str:
-    """The recommendation for a gateway. A state with no profile resolves to it, so a legacy LiteLLM state behaves
-    as before (ADR-0010 N4)."""
-    return RECOMMENDED_PROFILE
+    """The recommendation for a gateway (ADR-0010 N4): OpenRouter gets the multi-provider Balanced; LiteLLM stays on
+    the Claude-only, checker-fixed one, so a legacy LiteLLM state with no profile behaves as before."""
+    return "gateway/balanced" if backend == "openrouter" else RECOMMENDED_PROFILE
 
 
 def saved_or_recommended(saved: str, backend: str = "litellm") -> str:

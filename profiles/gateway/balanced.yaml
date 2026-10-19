@@ -1,0 +1,50 @@
+name: gateway/balanced
+mode: multi-model
+description: |
+  Balanced for an OpenRouter gateway: Claude and Gemini. Judgement stays on Claude Opus with no fallback (planner,
+  architect, reviewer, verifier, security auditor); the implementer, generalPurpose and the fixers run on Sonnet; the
+  read-heavy and test and doc roles (explore, tester, doc-writer) run on Gemini Flash with a Claude fallback.
+  Derived from `openrouter-balanced` (ADR-0010 PD-1) with the checker overlap fixed: no cross-family default fallback
+  and the verifier on Opus.
+
+  Gemini is not verified with Claude Code on OpenRouter yet (setup/compat.py, "Claude Code with Google"). Without the
+  opt-in that Review asks, explore, tester and doc-writer use the session model; with it the profile's Google refs run.
+  Model IDs are namespaced and were round-tripped against OpenRouter on 2026-09-16.
+
+  The gateway has no second-member mechanism, so there are no cross-check seconds here.
+
+classes:
+  opus:   anthropic/claude-opus-5.5
+  sonnet: anthropic/claude-sonnet-5.5
+  haiku:  anthropic/claude-haiku-5.5
+  fable:  anthropic/claude-fable-5.1
+
+defaults:
+  fallbacks: []
+  max_retries: 2
+  timeout_seconds: 600
+
+by_persona: {}
+
+by_role:
+  # Reading-heavy and mechanical: Gemini first, a Claude model keyed on the Gemini model as the fallback.
+  explore:            { model: google/gemini-3.7-flash, fallbacks: [anthropic/claude-haiku-5.5] }
+  tester:             { model: google/gemini-3.7-flash, fallbacks: [anthropic/claude-sonnet-5.5] }
+  doc-writer:         { model: google/gemini-3.7-flash, fallbacks: [anthropic/claude-sonnet-5.5] }
+
+  # Writers: Sonnet with its own Sonnet-keyed fallback list, never Opus (a checker's family).
+  implementer:        { model: anthropic/claude-sonnet-5.5, fallbacks: [anthropic/claude-haiku-5.5] }
+  generalPurpose:     { model: anthropic/claude-sonnet-5.5, fallbacks: [anthropic/claude-haiku-5.5] }
+  crashlytics-fixer:           { model: anthropic/claude-sonnet-5.5, fallbacks: [anthropic/claude-haiku-5.5] }
+  sentry-fixer:                { model: anthropic/claude-sonnet-5.5, fallbacks: [anthropic/claude-haiku-5.5] }
+  terraform-maintainer:        { model: anthropic/claude-sonnet-5.5, fallbacks: [anthropic/claude-haiku-5.5] }
+  crossplane-upjet-maintainer: { model: anthropic/claude-sonnet-5.5, fallbacks: [anthropic/claude-haiku-5.5] }
+  package-upgrade:    { model: anthropic/claude-haiku-5.5 }
+
+  # Judgement and checking: Opus, no fallback (a fallback on an Opus key would reach every Opus role, the checkers
+  # included).
+  planner:            { model: anthropic/claude-opus-5.5 }
+  software-architect: { model: anthropic/claude-opus-5.5 }
+  code-reviewer:      { model: anthropic/claude-opus-5.5 }
+  security-auditor:   { model: anthropic/claude-opus-5.5 }
+  verifier:           { model: anthropic/claude-opus-5.5 }

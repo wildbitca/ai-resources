@@ -59,8 +59,8 @@ by_persona: {}
 lanes:
   roles:
     explore:            [claude-cli:haiku, claude-code]
-    implementer:        [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
-    tester:             [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
+    implementer:        [claude-cli:sonnet, claude-code]
+    tester:             [claude-cli:sonnet, claude-code]
     doc-writer:         [claude-cli:haiku, claude-code]
     planner:            [claude-code, claude-cli:sonnet]
     software-architect: [claude-code, claude-cli:sonnet]

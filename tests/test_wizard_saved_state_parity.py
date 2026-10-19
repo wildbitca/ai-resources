@@ -67,5 +67,8 @@ def test_dry_run_yes_from_the_v1_0_fixture(monkeypatch, tmp_path):
     assert state.state_path().read_bytes() == before        # dry run: the saved file is not rewritten
     got = state._to_dict(seen["s"])
     assert got["mode"] == want["mode"] and got["backend"] == want["backend"]
-    assert got["profile"]["name"] == want["profile"]["name"]
+    # ADR-0010 S6: the scripted "Starting team" answer is Balanced, which on OpenRouter is now gateway/balanced. The
+    # saved balanced-claude-55 is a legacy name (its own file keeps loading until the operator picks the preset).
+    assert want["profile"]["name"] == "balanced-claude-55"
+    assert got["profile"]["name"] == "gateway/balanced"
     assert re.fullmatch(r"\d+\.\d+", got["schema_version"]) and got["schema_version"] == want["schema_version"]

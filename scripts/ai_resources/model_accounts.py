@@ -134,6 +134,21 @@ def detect(deps: Deps) -> dict[str, Account]:
     return out
 
 
+def routed_credentialed(accounts: dict[str, Account], provider: str, backend: str) -> bool:
+    """Whether `provider`'s models can actually be reached on a gateway row (ADR-0010 S6c).
+
+    OpenRouter routes every vendor through its own key, so the OpenRouter account is the one that counts. LiteLLM
+    reaches a vendor directly (`gemini/<model>` with `GEMINI_API_KEY`), so only a key in the kit's own env file counts:
+    an OpenRouter key, or a key that only OpenClaw knows, does not reach LiteLLM's direct route."""
+    if backend == "openrouter":
+        gw = accounts.get("openrouter")
+        return bool(gw and gw.credentialed)
+    acc = accounts.get(provider)
+    if backend == "litellm":
+        return bool(acc and acc.direct_key)
+    return bool(acc and acc.credentialed)
+
+
 def disagreements(accounts: dict[str, Account]) -> list[str]:
     """Info lines for a key that lives in only one of the two stores."""
     lines = []

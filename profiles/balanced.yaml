@@ -69,19 +69,32 @@ by_persona: {}
 
 # Subscription lanes (ADR-0007): candidate lists per role, never an agent id. Dispatch resolves them
 # from the setup lanes table; the order is the tie-break, not a rank. A fresh install enables none.
+#
+# Balanced is multi-provider (ADR-0010 PD-1): Claude on every role, plus Gemini over the Antigravity lane on the report
+# roles that read a lot and where a different family helps: explore, and the second opinions of the code-reviewer, the
+# planner and the software-architect. Every Gemini candidate is pinned (it is not the role's family) and held until
+# --lanes-antigravity, a Google acknowledgement that lists the role, and the Antigravity gates G0-G7 are all proven; the
+# slugs stay unconfirmed until the operator's evidence record names them. Presets carry no agy writer: no agy candidate
+# sits on the implementer, tester, doc-writer, generalPurpose, package-upgrade or the fixers, so proving the gates never
+# moves writer work onto Antigravity. The verifier and the security-auditor take no Gemini and no second member (checker
+# rule, rule 017). The planner and architect seconds are display-only: no workflow step dispatches them yet. Each
+# second keeps its role's own Claude family as the non-Gemini member, so lane drift never fires on them.
 lanes:
-  # Antigravity candidates (ADR-0007 section 11) come last: the order is a tie-break only, never a rank, and an
-  # agy candidate is admitted only with --lanes-antigravity, a Google acknowledgement listing the role and every
-  # phase 3 gate proven. The slugs are unconfirmed candidates until V5 runs. Explore, planner and the architect
-  # have no agy candidate. The implementer's agy candidate is listed; its Google-ack box is unticked by default.
   roles:
-    explore:            [claude-cli:haiku, claude-code]
-    implementer:        [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
-    tester:             [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
-    doc-writer:         [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
+    explore:            ["agy:gemini-3.8-flash-high", claude-cli:haiku, claude-code]
+    implementer:        [claude-cli:sonnet, claude-code]
+    tester:             [claude-cli:sonnet, claude-code]
+    doc-writer:         [claude-cli:sonnet, claude-code]
     planner:            [claude-code, claude-cli:sonnet]
     software-architect: [claude-code, claude-cli:opus]
     verifier:           [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
     security-auditor:   [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
   second:
-    code-reviewer:      ["agy:claude-sonnet-5-5", claude-cli:sonnet]
+    code-reviewer:      ["agy:gemini-3.8-flash-high", claude-cli:sonnet]
+    planner:            ["agy:gemini-3.1-pro-low", claude-cli:sonnet]
+    software-architect: ["agy:gemini-3.1-pro-low", claude-cli:opus]
+  pins:
+    explore:            ["agy:gemini-3.8-flash-high"]
+    code-reviewer:      ["agy:gemini-3.8-flash-high"]
+    planner:            ["agy:gemini-3.1-pro-low"]
+    software-architect: ["agy:gemini-3.1-pro-low"]

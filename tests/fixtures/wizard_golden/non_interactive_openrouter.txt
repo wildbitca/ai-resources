@@ -37,20 +37,20 @@ rc=0
 [3/5] Your team - roles ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  No gateway? A gateway profile needs LiteLLM or OpenRouter; without one, go back and choose 'As a team' or 'Each on its own'.
 
- Profile: balanced-claude-55 
+ Profile: gateway/balanced 
 +-----------------------------------------------------------------------+
 | Role | Provider | Model |
 |-----------------------------+-----------+-----------------------------|
-| explore | anthropic | anthropic/claude-haiku-5.5 |
+| explore | google | google/gemini-3.7-flash |
 | generalPurpose | anthropic | anthropic/claude-sonnet-5.5 |
 | planner | anthropic | anthropic/claude-opus-5.5 |
 | software-architect | anthropic | anthropic/claude-opus-5.5 |
 | implementer | anthropic | anthropic/claude-sonnet-5.5 |
-| tester | anthropic | anthropic/claude-haiku-5.5 |
-| code-reviewer | anthropic | anthropic/claude-sonnet-5.5 |
+| tester | google | google/gemini-3.7-flash |
+| code-reviewer | anthropic | anthropic/claude-opus-5.5 |
 | security-auditor | anthropic | anthropic/claude-opus-5.5 |
 | verifier | anthropic | anthropic/claude-opus-5.5 |
-| doc-writer | anthropic | anthropic/claude-sonnet-5.5 |
+| doc-writer | google | google/gemini-3.7-flash |
 | package-upgrade | anthropic | anthropic/claude-haiku-5.5 |
 | crashlytics-fixer | anthropic | anthropic/claude-sonnet-5.5 |
 | sentry-fixer | anthropic | anthropic/claude-sonnet-5.5 |
@@ -65,6 +65,7 @@ rc=0
  i Skipped (no local gateway to supervise).
 
 [5/5] Review -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ i Gemini held on OpenRouter: Claude Code x Google not verified; explore, tester, doc-writer use the session model
  Your answers 
 +------------------------------------------------------------------------------------------------------+
 | Section | Your answer |

@@ -69,8 +69,8 @@ writable lane stay governed by ADR-0007. Agy Gemini goes only on roles the store
 |---|---|---|
 | explore | Claude Haiku | `lanes.roles.explore = [agy:gemini-3.8-flash-high, claude-cli:haiku, claude-code]`, pinned |
 | code-reviewer | Sonnet | `second = [agy:gemini-3.8-flash-high, claude-cli:sonnet]`, pinned |
-| planner | Sonnet | `second = [agy:gemini-3.1-pro-low, claude-cli:opus]`, pinned |
-| software-architect | Opus | `second = [agy:gemini-3.1-pro-low, claude-cli:sonnet]`, pinned |
+| planner | Sonnet | `second = [agy:gemini-3.1-pro-low, claude-cli:sonnet]`, pinned (display-only) |
+| software-architect | Opus | `second = [agy:gemini-3.1-pro-low, claude-cli:opus]`, pinned (display-only) |
 | verifier, security-auditor | Opus | none (checker rule; rule 017) |
 | implementer, tester, doc-writer, generalPurpose, package-upgrade, fixers | Claude (claude-cli) | none |
 
