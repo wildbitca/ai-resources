@@ -2645,6 +2645,10 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         acks["anthropic"] = lanes_render.make_ack("anthropic", anth_roles, datetime.now(timezone.utc).isoformat())
     s.profile.lane_acks = acks
     s.profile.lanes = proposal
+    if team_only and agy_on and _PRESET:
+        rows = profiles.role_table(profiles.to_executors(doc, s.backend if s.mode == "multi-model" else None))
+        ui.console().print()
+        _show_team(s, doc, rows, title=f"Active team: {name}")
     return 0
 
 
