@@ -804,6 +804,48 @@ def _configure_image(s: state.SetupState, doc: dict, path: Path, written: list[P
     return True
 
 
+def _teardown_image(s: state.SetupState) -> bool:
+    """Put `agents.defaults.mediaModels.image` back and offer to sign out only what setup signed in (plan I11).
+
+    Runs only when the kit applied a model. A previous value is restored whole (`--replace-path`); a key that was absent
+    before is deleted with null, never confused with a value (the voice teardown's null-without-replace-path is not
+    copied). A live value that is no longer the kit's own shape was changed by the operator since: it is left alone. The
+    same reload gate as the write applies: a restore that would need a restart keeps its fields so a later teardown can
+    retry. Returns False only when something is still owed."""
+    o = s.openclaw
+    if o.image_applied:
+        current = image.live_image_value(read_config(config_path()))
+        if current is not None and not image.kit_shaped(current):
+            ui.warn("OpenClaw: the image model was changed after setup applied it; teardown left it as it is.")
+        else:
+            patch, paths = image.restore_patch(o.image_previous, o.image_previous_absent)
+            if _lanes_classify(patch):
+                ui.warn("OpenClaw: restoring the image model needs a gateway restart, so teardown did not write it. "
+                        "Re-run teardown after enabling hot reload; the kit never restarts a live gateway.")
+                return False
+            ok, out = _apply_hot(patch, replace_paths=paths)
+            if not ok:
+                ui.error(f"OpenClaw image-model teardown failed: {ui.safe_excerpt(out, 400, tail=True)}")
+                return False
+            ui.ok("OpenClaw image generation restored")
+        o.image_applied = False
+        o.image_previous, o.image_previous_absent, o.image_model = None, False, ""
+    profile = o.image_auth_profile_created
+    if profile:
+        argv = ["openclaw", "models", "auth", "logout", profile]
+        command = " ".join(argv)
+        if (not ui.is_non_interactive() and ui.stdin_is_a_terminal()
+                and ui.confirm(f"Sign out the image provider profile {profile} that setup signed in? "
+                               "OpenClaw asks again on this terminal.", default=False)):
+            rc = _image_auth_run(argv)
+            if rc != 0:
+                ui.warn(f"OpenClaw sign-out exited with code {rc}; run it yourself if you want it gone: {command}")
+        else:
+            ui.info(f"Signed in by setup and left as it is. To sign out: {command}")
+        o.image_auth_profile_created = ""
+    return True
+
+
 def _antigravity_restore_fragment(prev: dict) -> tuple[dict, list[str]]:
     """Patch fragment + `--replace-path`s that undo everything only the antigravity
     engine's `_build_antigravity_patch` touches.
@@ -2138,7 +2180,7 @@ def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
     if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored
             or s.openclaw.agent_kit_blocks or s.openclaw.lanes_applied or host_section.applied_any(s.openclaw)
-            or s.openclaw.image_deny_added):
+            or s.openclaw.image_deny_added or s.openclaw.image_applied or s.openclaw.image_auth_profile_created):
         # A deferral leaves `applied` False (the engine patch waits for the restart), so this is
         # the path that meets it: with nothing to undo there is nothing left to demand either.
         s.openclaw.gateway_restart_pending = {}
@@ -2169,6 +2211,8 @@ def teardown(s: state.SetupState) -> list[str]:
     voice_ok = _teardown_voice(s) if s.openclaw.voice_applied else True
     # The kit's own image_generate token comes out of tools.deny. A removal that cannot be applied (not hot, a changed
     # list, a rejected patch) keeps its flags so a later teardown can retry; it does not hold the rest of the teardown.
+    if s.openclaw.image_applied or s.openclaw.image_auth_profile_created:
+        _teardown_image(s)
     if s.openclaw.image_deny_added:
         _remove_image_deny(s)
     removed: list[str] = []
@@ -2190,11 +2234,15 @@ def teardown(s: state.SetupState) -> list[str]:
     # `ai-resources openclaw apply-pending` still has to find them (ADR-0003).
     pending = s.openclaw.host_restart_pending
     left_lanes = s.openclaw.lanes_applied          # lane agents the operator declined to delete stay recorded
-    left_deny = (s.openclaw.image_deny_added, s.openclaw.image_deny_key_absent)     # a removal that could not land
+    left_image = {k: getattr(s.openclaw, k) for k in state.IMAGE_STATE_DEFAULTS      # what a retry still owes
+                  if k in ("image_applied", "image_previous", "image_previous_absent", "image_model",
+                           "image_deny_added", "image_deny_key_absent") and
+                  (s.openclaw.image_applied or k.startswith("image_deny"))}
     s.openclaw = state.OpenClawState()
     s.openclaw.host_restart_pending = pending
     s.openclaw.lanes_applied = left_lanes
-    s.openclaw.image_deny_added, s.openclaw.image_deny_key_absent = left_deny
+    for k, v in left_image.items():
+        setattr(s.openclaw, k, v)
     return removed
 
 

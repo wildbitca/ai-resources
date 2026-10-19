@@ -397,3 +397,120 @@ def test_account_the_image_modules_never_touch_the_kit_credential_store():
     assert not any("credentials" in name or "getpass" in name or "subprocess" in name for name in imported)
     called = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)} | {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
     assert not called & {"save_env", "update_env", "load_env", "password", "getpass", "environ", "getenv", "system", "Popen"}
+
+
+# --- I11 / AC-18: teardown of the model and the sign-out offer ------------------------------------------------------------------
+
+def _applied(rig, **kw):
+    s = S(**kw)
+    assert run(s, rig)[0] is True
+    return s
+
+
+def test_teardown_over_an_absent_key_sends_one_null_restore(rig):
+    s = _applied(rig)
+    n = len(rig.live_patches())
+    assert openclaw._teardown_image(s) is True
+    args, patch = rig.live_patches()[-1]
+    assert len(rig.live_patches()) == n + 1
+    assert patch == {"agents": {"defaults": {"mediaModels": {"image": None}}}} and "--replace-path" not in args
+    assert media_of(rig) is None
+    assert s.openclaw.image_applied is False and s.openclaw.image_previous_absent is False
+
+
+def test_teardown_restores_a_previous_value_whole_with_a_replace_path(rig):
+    prev = {"primary": "fal/fal-ai/flux/dev", "fallbacks": ["google/gemini-3.1-flash-image"], "timeoutMs": 5}
+    rig.write({"agents": {"defaults": {"mediaModels": {"image": prev}}}})
+    rig.answer = True
+    s = _applied(rig)
+    openclaw._teardown_image(s)
+    args, patch = rig.live_patches()[-1]
+    assert patch["agents"]["defaults"]["mediaModels"]["image"] == prev
+    assert args[-2:] == ["--replace-path", "agents.defaults.mediaModels.image"]
+    assert media_of(rig) == prev
+
+
+def test_teardown_with_image_applied_false_runs_nothing(rig):
+    s = S()
+    assert openclaw._teardown_image(s) is True and rig.calls == []
+
+
+def test_teardown_leaves_a_value_the_operator_changed_after_the_kit_applied_it(rig):
+    s = _applied(rig)
+    rig.write({"agents": {"defaults": {"mediaModels": {"image": "fal/fal-ai/flux/dev"}}}})
+    n = len(rig.live_patches())
+    assert openclaw._teardown_image(s) is True and len(rig.live_patches()) == n
+    assert media_of(rig) == "fal/fal-ai/flux/dev" and s.openclaw.image_applied is False
+
+
+def test_teardown_that_would_need_a_restart_keeps_its_fields_for_a_retry(rig, monkeypatch):
+    s = _applied(rig)
+    monkeypatch.setattr(openclaw, "_live_reload_mode", lambda: "off")
+    n = len(rig.live_patches())
+    assert openclaw._teardown_image(s) is False and len(rig.live_patches()) == n
+    assert s.openclaw.image_applied is True and s.openclaw.image_previous_absent is True
+
+
+def test_teardown_logout_only_for_a_created_profile_and_only_on_confirm(signin):
+    s = S(mode="fal", model="fal/krea/v2/medium/text-to-image")
+    run(s, signin)
+    assert s.openclaw.image_auth_profile_created == "fal:manual"
+    signin.answer = False
+    signin.auth.argvs.clear()
+    signin.confirms.clear()
+    openclaw._teardown_image(s)
+    assert signin.auth.argvs == [] and len(signin.confirms) == 1 and signin.confirms[0][1] is False
+    assert any("openclaw models auth logout fal:manual" in m for m in signin.messages["info"])
+    assert s.openclaw.image_auth_profile_created == ""
+
+
+def test_teardown_logout_runs_after_a_yes_with_the_profile_id_only(signin):
+    s = S(mode="fal", model="fal/krea/v2/medium/text-to-image")
+    run(s, signin)
+    signin.auth.argvs.clear()
+    signin.answer = True
+    openclaw._teardown_image(s)
+    assert signin.auth.argvs == [["openclaw", "models", "auth", "logout", "fal:manual"]]
+
+
+def test_teardown_no_logout_is_offered_when_setup_signed_nothing_in(signin, monkeypatch):
+    monkeypatch.setattr(openclaw, "_image_accounts",
+                        lambda: ({"openrouter": {"kind": "profiles", "profiles": 1, "source": ""}}, []))
+    s = S()
+    run(s, signin)
+    assert s.openclaw.image_auth_profile_created == ""
+    signin.confirms.clear()
+    openclaw._teardown_image(s)
+    assert signin.confirms == [] and signin.auth.argvs == []
+
+
+def test_teardown_non_interactive_never_signs_out(signin, monkeypatch):
+    s = S(mode="fal", model="fal/krea/v2/medium/text-to-image")
+    run(s, signin)
+    signin.auth.argvs.clear()
+    monkeypatch.setattr(openclaw.ui, "is_non_interactive", lambda: True)
+    openclaw._teardown_image(s)
+    assert signin.auth.argvs == []
+
+
+def test_teardown_a_second_teardown_is_a_no_op(rig):
+    s = _applied(rig)
+    openclaw._teardown_image(s)
+    n = len(rig.calls)
+    assert openclaw._teardown_image(s) is True and len(rig.calls) == n
+
+
+def test_the_openclaw_teardown_undoes_the_model_then_the_deny_in_that_order(rig):
+    rig.write({"tools": {"deny": ["bundle-mcp", "image_generate"]}})
+    s = S(image_deny_added=True)
+    run(s, rig)                                                  # route applied; the kit deny comes out
+    assert deny_of(rig) == ["bundle-mcp"]
+    s2 = S(mode="disable", image_deny_added=False)
+    run(s2, rig)
+    assert s2.openclaw.image_deny_added is True
+    s2.openclaw.image_applied, s2.openclaw.image_previous_absent, s2.openclaw.image_model = True, True, REF
+    openclaw.teardown(s2)
+    assert deny_of(rig) == ["bundle-mcp"] and media_of(rig) is None
+    assert s2.openclaw.image_applied is False and s2.openclaw.image_deny_added is False
+    kinds = ["media" if "mediaModels" in json.dumps(p) else "deny" for _a, p in rig.live_patches()[-2:]]
+    assert kinds == ["media", "deny"]

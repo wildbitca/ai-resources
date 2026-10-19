@@ -56,6 +56,15 @@ class FakeOC:
             if self.reject_live:
                 return 1, "rejected live"
             doc = self.doc()
+            replace = [args[i + 1] for i, a in enumerate(args) if a == "--replace-path"]
+            for dotted in replace:                      # --replace-path: the path becomes exactly the sent value
+                node, parent = patch, doc
+                keys = dotted.split(".")
+                for k in keys[:-1]:
+                    node = node.get(k, {}) if isinstance(node, dict) else {}
+                    parent = parent.setdefault(k, {})
+                if isinstance(node, dict) and keys[-1] in node:
+                    parent[keys[-1]] = copy.deepcopy(node[keys[-1]])
             merge(doc, patch)
             self.write(doc)
             return 0, "patched"
