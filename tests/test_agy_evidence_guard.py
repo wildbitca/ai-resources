@@ -179,3 +179,122 @@ def test_patch_word_in_a_read_only_command_is_allowed_but_real_patch_commands_st
 ])
 def test_hardening_does_not_block_ordinary_commands(command):
     assert run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(REPO)}).returncode == 0, command
+
+
+# --- low-severity advisories: git am, the data directory without a file name, sweeping git commands ----------------------
+
+def _bash(command: str, cwd=REPO) -> int:
+    return run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}).returncode
+
+
+@pytest.mark.parametrize("command", [
+    f"git am <<'EOF'\n--- a/{REC}\n+++ b/{REC}\nEOF",
+    f"git am --3way {REC}.mbox",
+    f"cp /dev/null {DATA}",
+    f"cp x.json {DATA}",
+    f"cp a b {DATA}other.json",
+    f"mv x.json {DATA}",
+    f"mv x.json {DATA} 2>/dev/null",
+    f"cp -t {DATA} x.json",
+    f"cp --target-directory {DATA} x.json",
+    f"rsync -a src/ {DATA}",
+    f"ln -sf /x/evidence.json {DATA}",
+    f"install -m 644 x.json {DATA}",
+    f"tar -xf evidence.tar -C {DATA}",
+    f"tar xzf evidence.tgz -C {DATA}",
+    f"tar --extract --file e.tar --directory {DATA}",
+    f"unzip -o e.zip -d {DATA}",
+    f"sed -i 's/a/b/' {DATA}*.json",
+    f"sed --in-place s/a/b/ {DATA}other.json",
+    f"echo x | tee {DATA}other.json",
+    f"dd if=x of={DATA}other.json",
+    f"cd {DATA} && cp ../x.json .",
+    f"cd {DATA} && tar xf ~/e.tar",
+    f"cd {DATA} && sed -i s/a/b/ other.json",
+])
+def test_data_directory_writes_are_denied_without_the_file_name(command):
+    assert _bash(command) == 2, command
+
+
+@pytest.mark.parametrize("command", [
+    f"cp {DATA}other.json /backup/",
+    f"cp {DATA}other.json other.json",
+    f"mv {DATA}other.json /tmp/x",
+    f"rsync -a {DATA} /backup",
+    f"tar -cf out.tar {DATA}",
+    f"tar -tf e.tar",
+    f"tar -xf e.tar -C build",
+    "unzip -o e.zip -d build",
+    f"sed -n 1,3p {DATA}other.json",
+    f"sed 's/a/b/' {DATA}other.json",
+    f"sed -e 's/a/b/' {DATA}other.json > out.json",
+    f"grep -rn proven {DATA}",
+    f"ls -la {DATA}",
+    f"cat {DATA}other.json | tee out.json",
+    f"diff {DATA}a.json {DATA}b.json",
+    f"cp {DATA}other.json /backup/ 2>&1",
+    "cp x scripts/ai_resources/database/y",
+    "sed -i s/a/b/ scripts/ai_resources/setup/wizard.py",
+    "cd scripts/ai_resources/setup && cp x y",
+    "dd if=a of=b",
+])
+def test_data_directory_rules_leave_reads_and_other_paths_alone(command):
+    assert _bash(command) == 0, command
+
+
+def _repo_with_record(tmp_path):
+    def git(*args):
+        subprocess.run(["git", "-C", str(tmp_path), "-c", "user.email=t@t", "-c", "user.name=t", *args],
+                       check=True, capture_output=True)
+    git("init", "-q")
+    rec = tmp_path / REC
+    rec.parent.mkdir(parents=True)
+    rec.write_text("{}\n")
+    (tmp_path / "a.txt").write_text("a\n")
+    git("add", ".")
+    git("commit", "-qm", "init")
+    return rec
+
+
+SWEEPS = [
+    "git commit -a -m x", "git commit -am x", "git commit --all -m x",
+    "git add -A", "git add .", "git add --all", "git add -u", "git add -A && git commit -m x",
+    "git reset --hard", "git reset --hard HEAD~1", "git stash pop", "git stash apply", "git pull", "git pull --rebase",
+    "git merge main",
+]
+READ_ONLY = [
+    "git status", "git diff", "git log --oneline -5", "git show HEAD", "git branch -a", "git fetch", "git stash list",
+    "git commit -m x", "git add a.txt", "git reset --soft HEAD~1", "git reset HEAD a.txt", "git push origin main",
+    "git commit --amend -m x", "git stash", "git checkout -b topic", "git rebase --abort", "git remote -v",
+]
+
+
+@pytest.mark.parametrize("command", SWEEPS)
+def test_sweeping_git_commands_are_denied_while_the_record_is_modified(tmp_path, command):
+    rec = _repo_with_record(tmp_path)
+    assert _bash(command, tmp_path) == 0, "clean record: ordinary git work is untouched"
+    rec.write_text('{"proven": true}\n')
+    assert _bash(command, tmp_path) == 2, command
+
+
+def test_sweeping_git_commands_are_denied_while_the_record_is_untracked(tmp_path):
+    rec = _repo_with_record(tmp_path)
+    subprocess.run(["git", "-C", str(tmp_path), "rm", "-q", "--cached", REC], check=True, capture_output=True)
+    assert rec.exists()
+    assert _bash("git add -A", tmp_path) == 2
+    assert _bash("git commit -am x", tmp_path) == 2
+
+
+@pytest.mark.parametrize("command", READ_ONLY)
+def test_ordinary_git_commands_pass_even_while_the_record_is_modified(tmp_path, command):
+    rec = _repo_with_record(tmp_path)
+    rec.write_text('{"proven": true}\n')
+    assert _bash(command, tmp_path) == 0, command
+
+
+@pytest.mark.parametrize("command", SWEEPS + READ_ONLY)
+def test_git_commands_pass_outside_a_repository_and_in_other_repositories(tmp_path, command):
+    assert _bash(command, tmp_path) == 0, command
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True, capture_output=True)
+    (tmp_path / "f.txt").write_text("x")
+    assert _bash(command, tmp_path) == 0, command

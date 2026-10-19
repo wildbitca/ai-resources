@@ -123,6 +123,11 @@ file name or builds it by concatenating `agy_gate` or `evidence.json` (best effo
 the operator's git review, not prevention: the hook cannot see a command assembled at run time, and an agent with commit
 rights can still forge the record and commit it. The operator therefore reviews EVERY commit that touches
 `scripts/ai_resources/data/` before it counts, and the loader still fails closed on an untracked or modified record.
+Low-severity advisories closed afterwards (the control is unchanged: operator review): `git am` is read as a patch command;
+cp, mv, rsync, ln, install, tar and unzip extraction, `sed -i`, tee and `dd of=` that land anywhere in
+`scripts/ai_resources/data/` are denied without needing the file name; and `git commit -a`, `git add -A/-u/.`,
+`git reset --hard`, `git stash pop/apply`, `git pull` and `git merge` are denied only while the record is modified or
+untracked, so ordinary git work is never blocked.
 
 The single remaining operator action: run the announced probe window (V5, V6, V7, V9-agy, V12, the isolated phase-2
 merge gate for G0, measured cost for G6, G7 approval of the Google text, one Claude Code Gemini tool-call probe

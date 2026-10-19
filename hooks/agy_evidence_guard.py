@@ -9,6 +9,9 @@ apply, an interpreter's file write). It applies in EVERY agent session, not only
 Reading the file is always allowed. Also denied (ADR-0010 N1): git commands that name the record or the data directory,
 any `lanes gates record` command, numeric redirects, glob spellings, patches that name the file and inline interpreter
 scripts that mention or build the name. The operator commits the record from their own terminal.
+Also denied: cp/mv/rsync/ln/install, tar/unzip extraction, sed -i, tee and dd of= that land in the data directory (no file name
+needed), and, only while the record is modified or untracked, `git commit -a`, `git add -A/-u/.`, `git reset --hard`,
+`git stash pop/apply`, `git pull` and `git merge`. The control stays operator review of every commit touching the directory.
 
 It is an accident guard, not a security boundary (the same standing as the other kit hooks): it cannot see a command built
 at run time. The loader fails closed on a file that is untracked or differs from HEAD, so a write that gets past the
@@ -21,6 +24,7 @@ import fnmatch
 import json
 import os
 import re
+import subprocess
 import sys
 
 NAME = "agy_gate_evidence.json"
@@ -58,8 +62,30 @@ _WRITES = (
 )
 _GIT_MUTATING = (r"add|commit|apply|am|checkout|switch|merge|restore|mv|rm|cherry-pick|stash|reset|rebase|revert")
 _GIT_CMD = re.compile(r"\bgit\b[^\n]*?\b(?:" + _GIT_MUTATING + r")\b")
-_GIT_APPLY = re.compile(r"\bgit\b[^\n]*?\bapply\b|(?:^|[|;&(]|\bsudo)\s*patch\b")
+_GIT_APPLY = re.compile(r"\bgit\b[^\n]*?\b(?:apply|am)\b|(?:^|[|;&(]|\bsudo)\s*patch\b")
 _PATCH_SEGMENT = re.compile(r"(?:\bgit\b[^\n;|&]*?\b(?:apply|am)\b|(?:^|[|;&(]|\bsudo)\s*patch\b)([^\n;|&]*)")
+# A path inside the data directory (any file, no file name needed): scripts/ai_resources/data, ./data/, a glob below it.
+_DIRP = r"[^\s;|&<>()]*ai_resources/data\b/?[^\s;|&<>()]*"
+_END = r"\s*(?:$|[|;&)\n])"
+_DIR_WRITES = (
+    r"\b(?:cp|mv|install|ln|rsync)\b[^|;&\n]*\s" + _DIRP + _END,                      # the data dir is the destination
+    r"\b(?:cp|mv|install|ln|rsync)\b[^|;&\n]*\s(?:-t\s*|--target-directory[= ]\s*)" + _DIRP,
+    r"\btar\b[^|;&\n]*\s(?:-[a-zA-Z]*x[a-zA-Z]*|--extract|--get|x[a-zA-Z]*)\b[^|;&\n]*" + _DIRP,   # tar extraction
+    r"\bunzip\b[^|;&\n]*\s-d\s*" + _DIRP,                                              # unzip -d data/
+    r"\bsed\b[^|;&\n]*\s(?:-[a-zA-Z]*i\S*|--in-place\S*)[^|;&\n]*\s" + _DIRP,      # sed -i ... data/x
+    r"\btee\b[^|;&\n]*\s" + _DIRP,                                                    # tee data/x
+    r"\bdd\b[^|;&\n]*\bof=" + _DIRP,                                                   # dd of=data/x
+    # cd into the data directory and then write with a relative path
+    r"\bcd\s+" + _DIRP + r"[^\n]*?(?:\b(?:cp|mv|install|ln|rsync|tee|unzip)\b|\btar\b[^|;&\n]*\sx|\bsed\b[^|;&\n]*\s-[a-zA-Z]*i|\bdd\b[^|;&\n]*\bof=)",
+)
+# Commands that sweep a modified record into a commit or overwrite it from elsewhere. They are denied only while the record
+# is modified or untracked in the repository the command runs in, so they never get in the way of ordinary git work.
+_GIT_SWEEP = re.compile(
+    r"\bgit\b[^\n;|&]*?\bcommit\b[^\n;|&]*\s(?:-[a-zA-Z]*a[a-zA-Z]*|--all)(?=\s|$)"
+    r"|\bgit\b[^\n;|&]*?\badd\b[^\n;|&]*\s(?:-[a-zA-Z]*[Au][a-zA-Z]*|--all|--update|\.|\./|:/|\*)(?=\s|$)"
+    r"|\bgit\b[^\n;|&]*?\breset\b[^\n;|&]*\s--hard\b"
+    r"|\bgit\b[^\n;|&]*?\bstash\b[^\n;|&]*\s(?:pop|apply)\b"
+    r"|\bgit\b[^\n;|&]*?\b(?:pull|merge)\b")
 _RECORD_CMD = re.compile(r"\blanes\s+(?:-\S+\s+)*gates\s+(?:-\S+\s+)*record\b")
 _INLINE_INTERPRETER = re.compile(
     r"\b(?:python[0-9.]*|node|nodejs|deno|bun|ruby|perl|php|lua)\b[^\n]*?(?:\s-[a-zA-Z]*[ceEpr]\b|\s--eval\b|\s-\s|<<|\s-$)"
@@ -130,6 +156,17 @@ def _patch_names_record(command: str, cwd: str) -> bool:
     return False
 
 
+def _record_dirty(cwd: str) -> bool:
+    """True when the record is modified or untracked in the git work tree of `cwd`. Any failure answers False."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", cwd or ".", "status", "--porcelain", "--untracked-files=all", "--", ":(top)" + REL],
+            capture_output=True, text=True, timeout=5)
+        return out.returncode == 0 and bool(out.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _bash_writes(command: str, cwd: str = "") -> bool:
     if _RECORD_CMD.search(re.sub(r"[,\[\]()]", " ", re.sub(r"[\\'\"]", "", command))):
         return True                                   # the TTY-only record command, wrapped or not
@@ -144,6 +181,12 @@ def _bash_writes(command: str, cwd: str = "") -> bool:
         return True
     if _INLINE_INTERPRETER.search(command) and ("agy_gate" in joined or "evidence.json" in joined):
         return True                                   # an inline script that names the file or builds the name
+    for v in variants:
+        bare = re.sub(r"\d*>&\d+|\d*>>?\s*\S+", " ", v)            # redirects do not change the destination argument
+        if _DATA_DIR in v and any(re.search(p, bare, re.M) for p in _DIR_WRITES):
+            return True                                   # a copy/move/extract/edit that lands in the data directory
+    if cwd and _GIT_SWEEP.search(variants[1]) and _record_dirty(cwd):
+        return True                                       # would commit or overwrite the modified record
     for v in variants:
         if NAME not in v:
             continue
