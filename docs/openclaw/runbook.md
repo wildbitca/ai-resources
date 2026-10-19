@@ -321,7 +321,8 @@ LiteLLM is not offered (ADR-0010 N1 removed it from new-setup choices); to use i
 environment and auth store), so a key kept only there is shown as `kit-env-only`. When the gateway has no sign-in for the
 route and you are on a terminal, Apply offers (default No) to run `openclaw models auth login --provider <id>` or
 `openclaw models auth paste-api-key --provider <id>` with your terminal attached; OpenClaw asks for the credential, setup
-sees nothing and stores only the profile id (`<provider>:manual` for a pasted key). Under `--dry-run`, `setup --yes` or without a
+sees nothing and stores only the profile id (`<provider>:manual` for a pasted key), and only when that id is new after the
+sign-in (setup lists `openclaw models auth list --json` before and after, and runs no sign-in when the listing fails). Under `--dry-run`, `setup --yes` or without a
 terminal setup prints the command and runs nothing. Check with `openclaw models auth list`.
 
 **`disable`, in detail.** `config patch` replaces arrays, so setup reads the live `tools.deny`, appends `image_generate` and
@@ -329,7 +330,10 @@ sends the whole list with `--replace-path tools.deny` after a dry run and a re-r
 order. Scope is global: it also applies to kit lane agents and to your own agents ("affects all agents"). It never writes
 `group:media` (which would also remove `view_image`, `tts`, `pdf`, `music_generate` and `video_generate`), `*`, `tools.allow`
 or any `agents.entries.*` path. An entry that already covers the tool (`image_generate` in any case, `group:media`,
-`group:openclaw`, `*`, or an `*` wildcard such as `image*`) means setup writes nothing and says which entry. A live
+`group:openclaw`, `*`, or an `*` wildcard such as `image*`; matched the way OpenClaw does, trimmed and lowercased, nothing
+looser) means setup writes nothing and says which entry. The write itself needs an interactive terminal and a default-No
+confirm: `setup --yes`, a non-interactive run or no TTY never writes it (the manual command is printed), and a token setup
+added that you later removed yourself is not added back. A live
 `tools.deny` that is not a list of strings, an unreadable config, a rejected dry run or a list that changed during the run:
 no write. **Hot only:** when `tools.deny` is a restart key (`gateway.reload.mode: off`, or the reload rules cannot be read)
 setup does not apply it and does not defer it; it prints "Image generation was NOT disabled" and the manual command
