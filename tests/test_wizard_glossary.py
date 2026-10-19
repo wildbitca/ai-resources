@@ -48,7 +48,8 @@ def test_a_subscription_run_reaches_apply_in_four_screens_without_the_old_words(
     assert wizard.run(_args()) == 0
     assert [m.split(":")[0] for m in script.asked] == ["checkbox", "checkbox", "select", "select", "select"]   # + the S14 sign-in list for codex
     assert [x for x in log if x.startswith("[")] == ["[1/5] Your tools", "[2/5] Main tool",
-                                                     "[3/5] How should they work?", "[3/5] Your team", "[5/5] Review"]
+                                                     "[3/5] How should they work?", "[3/5] Your team", "[4/5] Audio",
+                                                     "[5/5] Review"]
     text = "\n".join(script.asked + script.shown + script.titles + log)
     assert not BANNED.findall(text), BANNED.findall(text)
 

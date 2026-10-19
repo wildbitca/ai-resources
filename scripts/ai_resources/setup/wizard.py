@@ -307,8 +307,8 @@ def _report_skip(spec: flow.StepSpec, title: str, reason: str) -> None:
     """A skipped step prints its header and reason; a step a preset made redundant (empty reason) prints nothing."""
     if not reason:
         return
-    if spec.id == "cockpit":                 # phase 2 shares the team's number: it must not mark the team skipped
-        _section(spec.number, title, phase=2)
+    if spec.id in STEP_PHASE:                # a phase that shares another step's number must not mark it skipped
+        _section(spec.number, title, phase=STEP_PHASE[spec.id])
     else:
         ui.mark_skipped(spec.number)
         _section(spec.number, title)
@@ -353,6 +353,15 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
             return None
         return ("Tool configuration", "")
 
+    def audio_skip(c):
+        """Audio is asked only on the path where the cockpit step asked the engine first; without OpenClaw one line says
+        why nothing is asked (ADR-0010 S13)."""
+        if "openclaw" not in _selected_tools(c.s):
+            return ("Audio", "Skipped (voice notes need OpenClaw, which is not one of your tools).")
+        if c.s.__dict__.get(_PHASE2_ATTR) and not c.s.__dict__.get(_WHOLE_ATTR):
+            return None
+        return ("Audio", "")
+
     def cockpit_skip(c):
         """The main-tool step names the tool among the ticked, installed ones and asks only the OpenClaw questions
         that come before the team; with nothing to ask it is a skip that prints its one line (Back steps over it)."""
@@ -385,6 +394,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
           back=True, edit_label="Parallel runs"),
         S("cockpits", 7, "Tool configuration", lambda c: _step7_cockpit_config(c.s, dry_run=c.dry_run),
           back=True, skip=tool_config_done, edit_label="OpenClaw"),
+        S("audio", 7, "Audio", lambda c: _step_audio(c.s), back=True, skip=audio_skip, edit_label="Audio"),
         S("lifecycle", 8, "Start at login", lambda c: _step8_lifecycle(c.s), skip=lifecycle_skip,
           edit_label="Start at login"),
         S("review", 9, "Review", lambda c: _step_summary(c.s, c.args), rewindable=False),
@@ -1174,6 +1184,8 @@ PHASE_LABELS = flow.PHASE_LABELS
 # questions move to phase 2 (plan S11) and the voice questions to phase 4 (S13).
 PHASE_OF = {1: 1, 2: 3, 3: 3, 4: 3, 5: 3, 6: 3, 7: 3, 8: 5, 9: 5, 10: 5}
 """Which phase each internal step belongs to; an unknown step belongs to the last phase."""
+STEP_PHASE = {"cockpit": 2, "audio": 4}
+"""Steps that sit in another phase than their internal number says (they share a number with a neighbour)."""
 # The four-screen names stay importable for callers that still use them.
 SCREENS = PHASES
 SCREEN_OF = PHASE_OF
@@ -2178,22 +2190,34 @@ def _step_cockpit_choice(s: state.SetupState, dry_run: bool = False) -> int:
     return 0
 
 
+_WHOLE_ATTR = "_openclaw_whole"
+"""Instance attribute on the setup state (never serialised): the whole OpenClaw prompt ran in one step this run."""
+
+
 def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
     """The tools were ticked on screen 1; this step only asks the questions a tool has of its own (OpenClaw).
-    When the cockpit step already asked the engine, only the questions that need the team come here."""
+    When the cockpit step already asked the engine, only the questions that need the team come here (the model);
+    voice notes follow on the Audio step and the host section after it."""
     if "openclaw" in _selected_tools(s):
         _section(7, "OpenClaw")
         from .cockpits import openclaw as _openclaw_cockpit
         if _OPEN_OPENCLAW or not s.__dict__.get(_PHASE2_ATTR):
+            setattr(s, _WHOLE_ATTR, True)               # engine, model, voice and host in one go (as before)
             _openclaw_cockpit.prompt(s, dry_run=dry_run)
             if _OPEN_OPENCLAW:
                 from .cockpits import _openclaw_channels
                 _openclaw_channels.prompt(s)
         else:
             _openclaw_cockpit.prompt_model(s, dry_run=dry_run)
-            _openclaw_cockpit.prompt_audio(s)
             _openclaw_cockpit.prompt_more(s)
-        s.__dict__.pop(_PHASE2_ATTR, None)
+    return 0
+
+
+def _step_audio(s: state.SetupState) -> int:
+    """Phase 4: how OpenClaw hears voice notes. Asked here and nowhere else on the phased path."""
+    _section(7, "Audio", phase=4)
+    from .cockpits import openclaw as _openclaw_cockpit
+    _openclaw_cockpit.prompt_audio(s)
     return 0
 
 

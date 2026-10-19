@@ -153,10 +153,11 @@ def test_the_post_team_step_skips_the_engine_when_the_cockpit_step_asked_it(monk
     setattr(s, wizard._PHASE2_ATTR, True)
     Script().install(monkeypatch)
     wizard._step7_cockpit_config(s)
-    assert calls == ["prompt_model", "prompt_audio", "prompt_more"]
+    assert calls == ["prompt_model", "prompt_more"]        # voice notes are the Audio step's
     calls.clear()
-    wizard._step7_cockpit_config(s)                       # the flag is consumed: the legacy whole prompt
-    assert calls == ["prompt"]
+    delattr(s, wizard._PHASE2_ATTR)                       # no cockpit-step pass this run: the whole prompt, as before
+    wizard._step7_cockpit_config(s)
+    assert calls == ["prompt"] and getattr(s, wizard._WHOLE_ATTR) is True
 
 
 def test_old_states_load_with_empty_channel_fields_and_unknown_keys_are_ignored():

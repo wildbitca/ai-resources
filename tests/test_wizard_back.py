@@ -31,7 +31,7 @@ def _single(**extra):
 
 def test_back_is_offered_only_in_the_steps_without_side_effects():
     steps = {s.id: s for s in wizard._build_steps(False)}
-    assert [i for i, s in steps.items() if s.back] == ["cockpit", "preset", "models", "profile", "lanes", "cockpits"]   # ADR-0010 S11: the main-tool step
+    assert [i for i, s in steps.items() if s.back] == ["cockpit", "preset", "models", "profile", "lanes", "cockpits", "audio"]   # ADR-0010 S11: the main-tool step
     assert not steps["gateway"].rewindable and wizard._build_steps(True)[2].rewindable
     for sid in ("tools", "review", "apply"):
         assert not steps[sid].rewindable
