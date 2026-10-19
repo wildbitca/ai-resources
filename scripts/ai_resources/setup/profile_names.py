@@ -19,7 +19,8 @@ PRESET_IDS: tuple[str, ...] = ("balanced", "performance", "low-cost")
 GATEWAY_DIR = "gateway"
 
 # Old name -> new name, accepted forever. An alias is admitted only when tests/test_profile_names.py proves that the
-# old and the new name resolve to the same runtime team with the lane gates closed.
+# old and the new name resolve to the same runtime team with the lane gates closed AND that the new team adds no
+# provider or data path the old one lacked.
 ALIASES: dict[str, str] = {
     "subscription-performance": "performance",
     "subscription-economy": "low-cost",

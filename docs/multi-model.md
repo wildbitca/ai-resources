@@ -277,7 +277,7 @@ A starting team resolves to a kit profile by how the host reaches its models, th
 
 | Starting team | As a team | Each on its own | Advanced: LiteLLM | Advanced: OpenRouter |
 |---|---|---|---|---|
-| Balanced | `balanced` | `balanced` | `balanced-claude-55` | `balanced-claude-55` |
+| Balanced | `balanced` | `balanced` | `balanced-claude-55` | `gateway/balanced` |
 | Performance | `performance` | `performance` | `gateway/performance` | `gateway/performance` |
 | Low cost | `low-cost` | `low-cost` | `gateway/low-cost` | `gateway/low-cost` |
 
@@ -417,7 +417,7 @@ ai-resources setup --no-lanes                            # clear lanes.yaml and 
   uses; resolution refuses it and `lanes prepare` re-checks it at dispatch.
 - **Drift.** When a role's model changes (`models update`, an alias moving) the lane agent is marked `stale`, the
   lanes pass refuses it, and `status`, `verify` and `models update` print a warning; re-run `setup --lanes`.
-- **Profile.** `balanced` (formerly `subscription-claude-55`) declares a lane table; compose never emits a lane.
+- **Profile.** `balanced` (successor of the legacy preset `subscription-claude-55`, which keeps its own Claude-only team) declares a lane table; compose never emits a lane.
 
 ### The Antigravity lane (ADR-0007 section 11, phase 3; closed)
 

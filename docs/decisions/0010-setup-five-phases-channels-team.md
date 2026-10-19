@@ -130,11 +130,13 @@ the opt-in disappears, and writers stay on `claude-cli`.
 Preset ids are the same on every row: `balanced`, `performance`, `low-cost` (the internal key `low-pricing` stays
 accepted); Custom is unchanged. One resolver, `setup/profile_names.resolve(name, mode)`, is the only code that knows
 the layout (`profiles/<id>.yaml` for cli and single, `profiles/gateway/<id>.yaml` for a gateway). ALIASES (old to
-new, accepted forever, admitted only when a test proves the same runtime team with the gates closed):
-`subscription-claude-55` to `balanced`, `subscription-performance` to `performance`, `subscription-economy` to
-`low-cost`, `performance-claude-55` to `gateway/performance`, `economy-claude-55` to `gateway/low-cost`.
+new, accepted forever, admitted only when a test proves the same runtime team with the lane gates closed AND the new team
+adds no provider or data path the old one lacked): `subscription-performance` to `performance`,
+`subscription-economy` to `low-cost`, `performance-claude-55` to `gateway/performance`, `economy-claude-55` to
+`gateway/low-cost`. `subscription-claude-55` is NOT an alias of `balanced`: Balanced gained Gemini candidates over
+Antigravity (a Google path the old preset lacked), so it is a LEGACY preset that keeps its file and its Claude-only team.
 LEGACY_PRESET (preset-question default only; the profile's own file keeps loading): `claude-native`,
-`balanced-claude-55`, `openrouter-balanced` map to `balanced`. Other shipped profiles keep their names under Custom.
+`balanced-claude-55`, `openrouter-balanced` (and `subscription-claude-55`, above) map to `balanced`. Other shipped profiles keep their names under Custom.
 `RECOMMENDED_PROFILE` becomes `recommended_profile(backend)`. The checker overlap is fixed in every shipped profile
 (S2); the shrink-only baseline of S1 lists what is still open. `claude-inherit` and `all-gemini` follow open question
 Q-1 (recommended: a declared in-profile exemption the wizard warns about).

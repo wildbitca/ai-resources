@@ -140,7 +140,7 @@ exists, and is otherwise byte-identical.
 - **Checker independence.** The verifier and security-auditor model families must not intersect any writer's
   (integrating writer and scope-capable roles), checked statically at resolve time (primary plus, in multi-model
   mode, LiteLLM fallbacks) and at dispatch from the run ledger. An unknown family fails closed.
-- **Target mode.** `balanced` (formerly `subscription-claude-55`) is a single-model alias profile (`haiku`/`sonnet`/`opus`); lane agents
+- **Target mode.** `balanced` (the successor of the legacy preset `subscription-claude-55`, which keeps its own Claude-only team) is a single-model alias profile (`haiku`/`sonnet`/`opus`); lane agents
   pin a concrete id. Version drift inside a family is not a conflict; a family or exact-ref mismatch marks the
   agent stale. Antigravity (agy) lanes are phase 3 and not enabled.
 
