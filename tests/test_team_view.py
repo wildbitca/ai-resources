@@ -72,7 +72,13 @@ def test_with_a_valid_record_and_the_acknowledgement_the_four_cells_are_on_and_w
     fk.use(monkeypatch, root)
     fk.write(root, fk.valid_doc(root))
     _doc, rows, mix, lane_rows = mix_for(ticked=True, acks=ack(BALANCED_ROLES))
-    assert cells(lane_rows) == {role: f"{text} (on)" for role, text in GEMINI_CELLS.items()}
+    # ADR-0010 C5: only the code-reviewer second has a dispatching workflow step; the planner and architect seconds
+    # are display-only and must never read "on".
+    display_only = {"planner (second)", "software-architect (second)"}
+    assert cells(lane_rows) == {role: f"{text} ({'display-only' if role in display_only else 'on'})"
+                                for role, text in GEMINI_CELLS.items()}
+    assert not any(cells(lane_rows)[r].endswith("(on)") for r in display_only)
+    assert {r: s for r, s in mix.states.items() if r in display_only} == {r: "display-only" for r in display_only}
     assert "unconfirmed" not in " ".join(cells(lane_rows).values())
     assert mix.lines == () and mix.held == () and mix.next_action == ""
     assert "google" in mix.active
@@ -209,3 +215,14 @@ def test_markup_in_a_model_or_lane_is_escaped(capsys):
     ui.role_lane_table([("[bold red]role[/]", "goo[/]gle", "[link=http://x]m[/link]", "[red]lane[/red]")], title="[b]t[/b]")
     out = capsys.readouterr().out
     assert "[bold red]role[/]" in out and "[red]lane[/red]" in out and "[link=http://x]m[/link]" in out
+
+
+def test_display_only_seconds_keep_held_and_off_and_do_not_activate_google_alone(monkeypatch, tmp_path):
+    root = fk.make_root(tmp_path)
+    fk.use(monkeypatch, root)
+    fk.write(root, fk.valid_doc(root))
+    ack_ = ack(BALANCED_ROLES)
+    assert team_view.member_state("planner", ticked=True, acks=ack_, kind="second")[0] == "display-only"
+    assert team_view.member_state("software-architect", ticked=False, acks=ack_, kind="second")[0] == "off"
+    assert team_view.member_state("planner", ticked=True, acks=None, kind="second")[0] == "held"
+    assert team_view.member_state("code-reviewer", ticked=True, acks=ack_, kind="second")[0] != "display-only"

@@ -83,6 +83,10 @@ def next_action(*, gates_on: bool, record_status: str, agy_ticked: bool, missing
 
 ROWS = ("cli", "single", "openrouter", "litellm")
 ON, HELD, OFF = "on", "held", "off"
+DISPLAY_ONLY = "display-only"
+# Seconds that no workflow step dispatches yet (only the code-reviewer has `lane_member: second` in
+# feature-lanes.workflow.yaml): shown, never reported as "on" (ADR-0010 C5).
+DISPLAY_ONLY_SECONDS = frozenset({"planner", "software-architect"})
 LINE_SINGLE = ("Gemini not active: 'Each on its own' runs Claude Code only "
                "(choose 'As a team' with Antigravity, or OpenRouter)")
 LINE_LITELLM = "Gemini not active: LiteLLM is legacy; choose OpenRouter for Gemini"
@@ -132,12 +136,17 @@ def gemini_members(doc: Mapping[str, Any]) -> list[tuple[str, str, str]]:
     return [m for m in agy_members(doc) if m[2].startswith("agy:gemini-")]
 
 
-def member_state(role: str, *, ticked: bool, acks: Mapping[str, Any] | None) -> tuple[str, str]:
-    """`(on | held | off, reason)` for an Antigravity member of `role`, by the same admission rule lanes use."""
+def member_state(role: str, *, ticked: bool, acks: Mapping[str, Any] | None, kind: str = "lane") -> tuple[str, str]:
+    """`(on | held | off | display-only, reason)` for an Antigravity member of `role`, by the same admission rule lanes
+    use. A second opinion no workflow step dispatches reads `display-only` where it would read `on`."""
     if not ticked:
         return OFF, "Antigravity not selected"
     why = lanes_render.agy_role_reason(role, {"antigravity": True}, acks)
-    return (ON, "") if why is None else (HELD, why)
+    if why is not None:
+        return HELD, why
+    if kind == "second" and role in DISPLAY_ONLY_SECONDS:
+        return DISPLAY_ONLY, "no workflow step dispatches it yet"
+    return ON, ""
 
 
 def agy_team_roles(doc: Mapping[str, Any]) -> list[str]:
@@ -172,7 +181,7 @@ def role_lane_rows(base_rows: Sequence[tuple[str, str, str]], doc: Mapping[str, 
         out.append(LaneRow(role, vendor, model, lane))
     if row == "cli":
         for kind, role, cand in agy_members(doc):
-            state, _why = member_state(role, ticked=ticked, acks=acks)
+            state, _why = member_state(role, ticked=ticked, acks=acks, kind=kind)
             label = f"{role} (second)" if kind == "second" else f"{role} (lane)"
             out.append(LaneRow(label, profiles.vendor_of(cand[4:]), cand[4:], cell_text(cand, state)))
     return out
@@ -205,7 +214,7 @@ def provider_mix(doc: Mapping[str, Any], base_rows: Sequence[tuple[str, str, str
             record = agy_lane_gates.record_status()
             missing: list[str] = []
             for kind, role, cand in members:
-                state, why = member_state(role, ticked=ticked, acks=acks)
+                state, why = member_state(role, ticked=ticked, acks=acks, kind=kind)
                 states[f"{role} ({'second' if kind == 'second' else 'lane'})"] = state
                 if state == HELD:
                     held.append((role, why))
@@ -219,7 +228,7 @@ def provider_mix(doc: Mapping[str, Any], base_rows: Sequence[tuple[str, str, str
                                         missing_roles=sorted(set(missing)))
                 reason = (_gate_summary() if not gates_on else held[0][1].removeprefix("held: "))
                 lines.append(f"Gemini held: {reason}. Next: {next_step}")
-            else:
+            elif ON in states.values():
                 active.add("google")
     elif row == "single":
         if google_roles or gemini_members(doc):
