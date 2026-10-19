@@ -109,6 +109,7 @@ _APPLIED_TARGETS: list[str] = []
 # THIS run. Neither is asked on the default path.
 _PARALLEL_RUNS = False
 _OPEN_OPENCLAW = False
+_OPEN_LIFECYCLE = False
 
 
 def _reject_unavailable_requested_profile(available: list[str], context: str) -> int | None:
@@ -158,10 +159,10 @@ def _report_cancel(e: BaseException) -> int:
 
 def _run(args: argparse.Namespace) -> int:
     ui.require_deps()
-    global _APPLIED_TARGETS, _PRESET, _PARALLEL_RUNS, _OPEN_OPENCLAW
+    global _APPLIED_TARGETS, _PRESET, _PARALLEL_RUNS, _OPEN_OPENCLAW, _OPEN_LIFECYCLE
     _APPLIED_TARGETS = []
     _PRESET = ""
-    _PARALLEL_RUNS = _OPEN_OPENCLAW = False
+    _PARALLEL_RUNS = _OPEN_OPENCLAW = _OPEN_LIFECYCLE = False
     dry_run = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
 
     # Both flags were declared in the CLI and never read, so they accepted input
@@ -277,11 +278,11 @@ def _enter_step(spec: flow.StepSpec, w: flow.Wizard) -> None:
 def _snapshot_run(s: state.SetupState) -> tuple:
     """What a Back rewind restores: the setup state and the run-scoped globals a step may set."""
     return (copy.deepcopy(s.__dict__), _REQUESTED_PROFILE, list(_APPLIED_TARGETS), _PRESET, _PARALLEL_RUNS,
-            _OPEN_OPENCLAW)
+            _OPEN_OPENCLAW, _OPEN_LIFECYCLE)
 
 
 def _restore_run(s: state.SetupState, snap: tuple) -> None:
-    global _REQUESTED_PROFILE, _APPLIED_TARGETS, _PRESET, _PARALLEL_RUNS, _OPEN_OPENCLAW
+    global _REQUESTED_PROFILE, _APPLIED_TARGETS, _PRESET, _PARALLEL_RUNS, _OPEN_OPENCLAW, _OPEN_LIFECYCLE
     s.__dict__.clear()
     s.__dict__.update(copy.deepcopy(snap[0]))
     _REQUESTED_PROFILE = snap[1]
@@ -289,6 +290,7 @@ def _restore_run(s: state.SetupState, snap: tuple) -> None:
     _PRESET = snap[3] if len(snap) > 3 else ""
     _PARALLEL_RUNS = snap[4] if len(snap) > 4 else False
     _OPEN_OPENCLAW = snap[5] if len(snap) > 5 else False
+    _OPEN_LIFECYCLE = snap[6] if len(snap) > 6 else False
 
 
 def _run_mode_step(c) -> int:
@@ -362,6 +364,14 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
             return None
         return ("Audio", "")
 
+    def more_skip(c):
+        """The host section and the stale-plugin check are asked once, on the first configure (the path where the
+        cockpit step asked the engine); a saved answer is kept and More options > OpenClaw asks it all again."""
+        if "openclaw" in _selected_tools(c.s) and c.s.__dict__.get(_PHASE2_ATTR) \
+                and not c.s.__dict__.get(_WHOLE_ATTR):
+            return None
+        return ("More", "")
+
     def cockpit_skip(c):
         """The main-tool step names the tool among the ticked, installed ones and asks only the OpenClaw questions
         that come before the team; with nothing to ask it is a skip that prints its one line (Back steps over it)."""
@@ -395,6 +405,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         S("cockpits", 7, "Tool configuration", lambda c: _step7_cockpit_config(c.s, dry_run=c.dry_run),
           back=True, skip=tool_config_done, edit_label="OpenClaw"),
         S("audio", 7, "Audio", lambda c: _step_audio(c.s), back=True, skip=audio_skip, edit_label="Audio"),
+        S("more", 8, "More", lambda c: _step_more(c.s), back=True, skip=more_skip, edit_label="More"),
         S("lifecycle", 8, "Start at login", lambda c: _step8_lifecycle(c.s), skip=lifecycle_skip,
           edit_label="Start at login"),
         S("review", 9, "Review", lambda c: _step_summary(c.s, c.args), rewindable=False),
@@ -903,7 +914,7 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
 
     With a recorded model selection the review also lists what each tool will get. A non-interactive run keeps its
     silent skip on the kit-profile path, because nothing can answer the question."""
-    global _REVIEW_SHOWN, _PARALLEL_RUNS, _OPEN_OPENCLAW
+    global _REVIEW_SHOWN, _PARALLEL_RUNS, _OPEN_OPENCLAW, _OPEN_LIFECYCLE
     selection = s.get_selection()
     if selection is None and ui.is_non_interactive():
         return 0
@@ -959,6 +970,7 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
         if which == "gateway":
             raise flow.JumpTo("gateway")
         if which == "lifecycle":
+            _OPEN_LIFECYCLE = True
             raise flow.JumpTo("lifecycle")
         if which == "openclaw":
             _OPEN_OPENCLAW = True
@@ -2209,7 +2221,14 @@ def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
                 _openclaw_channels.prompt(s)
         else:
             _openclaw_cockpit.prompt_model(s, dry_run=dry_run)
-            _openclaw_cockpit.prompt_more(s)
+    return 0
+
+
+def _step_more(s: state.SetupState) -> int:
+    """Phase 5: the OpenClaw host section and the stale-plugin check (asked once; kept afterwards)."""
+    _section(8, "More")
+    from .cockpits import openclaw as _openclaw_cockpit
+    _openclaw_cockpit.prompt_more(s)
     return 0
 
 
@@ -2237,6 +2256,14 @@ def _step8_lifecycle(s: state.SetupState) -> int:
         ui.info(f"Skipped — {s.litellm.local.runtime} container uses "
                 f"`restart: always` (no LaunchAgent needed).")
         ui.detail("Container starts automatically when the Docker daemon is running.")
+        return 0
+
+    if s.litellm.local.lifecycle_path and not _OPEN_LIFECYCLE:
+        # A complete saved answer (the unit path was recorded when it was given) is kept without a question;
+        # More options > Start at login asks it again (ADR-0010 PD-5).
+        ui.detail("Start at login: keeping your saved answer ("
+                  + ("auto-start on" if s.litellm.local.auto_start else "manual start")
+                  + "); change it from More options.")
         return 0
 
     s.litellm.local.auto_start = ui.confirm(

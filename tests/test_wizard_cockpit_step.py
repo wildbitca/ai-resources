@@ -153,7 +153,7 @@ def test_the_post_team_step_skips_the_engine_when_the_cockpit_step_asked_it(monk
     setattr(s, wizard._PHASE2_ATTR, True)
     Script().install(monkeypatch)
     wizard._step7_cockpit_config(s)
-    assert calls == ["prompt_model", "prompt_more"]        # voice notes are the Audio step's
+    assert calls == ["prompt_model"]       # voice notes are the Audio step's, the host section the More step's
     calls.clear()
     delattr(s, wizard._PHASE2_ATTR)                       # no cockpit-step pass this run: the whole prompt, as before
     wizard._step7_cockpit_config(s)
