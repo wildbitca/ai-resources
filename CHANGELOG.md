@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Changed (setup in five phases, OpenClaw questions by phase, channel intent; ADR-0010, proposed)
+
+- **Five phases.** Step headers read `[n/5]`: Tools, Cockpit, Team, Audio, More. The ten internal steps, their ids and
+  the saved state are unchanged; a saved v1.0 state dry-runs to the same outputs. Cockpit and Audio ask nothing
+  unless OpenClaw is one of your tools (one line says why).
+- **Main tool before the team.** A new step names the main tool among the ticked, installed ones (Claude Code,
+  OpenClaw) and, for OpenClaw, asks the engine and which channel accounts stay on before the team is picked. The
+  model, MCP servers, voice notes (Audio) and the host section (More) are asked in their own steps; More options >
+  OpenClaw still asks everything in one go. Nothing is written before Apply.
+- **Channel intent, no execution.** Unticking a listed channel account records the intent (`openclaw.channels_seen` and
+  `channels_wanted`, optional state fields, no schema bump). Review prints the `openclaw channels remove ...` command
+  that a later guarded step would run, with its undo (`openclaw channels add ...`, run it yourself). Only
+  `openclaw channels list --all --json` runs, read-only. Executing a disable is not implemented yet.
+- **Sign-in for installed tools.** Ticked, already installed tools with a login command (for example `codex login`)
+  are listed unticked in the sign-in step. The kit never starts `agy`: its sign-in command is only named.
+- **Start at login** keeps a saved answer without asking; More options asks it again.
+- New read-only module `openclaw_channels` (inventory and a pure disable planner) and a shrink-only
+  checker-independence test over every shipped profile. Several shipped profiles still let a checker share a model
+  family with a writer; the test lists them (`KNOWN_VIOLATIONS`) until they are fixed.
+
 ### Changed (LiteLLM leaves the new-setup gateway choice; ADR-0010)
 
 - **Advanced offers OpenRouter only.** Readiness of Balanced with Gemini on LiteLLM was scored 4/10, so a fresh setup

@@ -45,7 +45,7 @@ itself.
 ## Quick start
 
 ```sh
-ai-resources setup       # interactive wizard — four screens
+ai-resources setup       # interactive wizard — five phases (Tools, Cockpit, Team, Audio, More)
 ai-resources doctor      # verify everything works
 ```
 

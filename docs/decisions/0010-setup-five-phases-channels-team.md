@@ -1,9 +1,12 @@
 # ADR-0010: Setup in five phases, unified team presets, disable-only channels (LiteLLM leaves the new-setup choice)
 
 **Status**: Proposed. Plan: `.agent-output/planner/setup-five-steps-plan.md`, revision 3, approved by the operator.
-The software-architect and security-auditor sign-offs that plan step S0 requires are NOT recorded (see "Sign-offs"),
-so this ADR cannot become Accepted and the steps that wait on it (S2, S4a, S4b, S6, S7, S12 and what depends on
-them) are not implemented.
+Implemented so far: S1 (checker-independence test), S3 (read-only channel inventory), S5 (LiteLLM leaves the wizard),
+S9 (five-phase headers), S11 (main-tool step, channel intent without execution), S13 (Audio step), S14 (sign-in) and
+S15 (More phase). The software-architect and security-auditor sign-offs that plan step S0 requires are NOT recorded
+(see "Sign-offs"), so this ADR cannot become Accepted and the steps that wait on it are not implemented: S2 (checker
+fixes), S4a/S4b (naming layer), S6 (Balanced content), S7 (evidence mechanism), S12 (disable executor), and S8 and
+S10, which depend on S7 and S6.
 **Date**: 2026-10-18
 **Decision makers**: operator (N1-N5 answered, D1-D3 given), implementer (record only).
 **Amends**: [ADR-0001](0001-model-pins-and-auto-update.md) d3, [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md),
