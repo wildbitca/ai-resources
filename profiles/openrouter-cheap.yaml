@@ -40,7 +40,7 @@ by_role:
     model: google/gemini-3.5-flash-lite
     fallbacks: [deepseek/deepseek-v4-flash]
   verifier:
-    model: google/gemini-3.5-flash-lite
+    model: anthropic/claude-opus-5.5                    # ADR-0010 S2: independent of every writer family
     fallbacks: []
   package-upgrade:
     model: deepseek/deepseek-v4-flash                   # 0.087 / 0.174
@@ -68,8 +68,8 @@ by_role:
     model: anthropic/claude-sonnet-5.5                    # 2 / 10
     fallbacks: [deepseek/deepseek-v4-pro]
   security-auditor:
-    model: anthropic/claude-sonnet-5.5
-    fallbacks: [deepseek/deepseek-v4-pro]
+    model: anthropic/claude-opus-5.5                    # ADR-0010 S2
+    fallbacks: []
 
   # Domain specialists
   crashlytics-fixer:           { model: deepseek/deepseek-v4-pro }

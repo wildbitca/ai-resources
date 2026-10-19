@@ -22,19 +22,10 @@ from ai_resources.scoring import lanes as scoring_lanes
 REPO = pathlib.Path(__file__).resolve().parents[1]
 PROFILES = sorted(p for p in (REPO / "profiles").rglob("*.yaml"))
 
-# Measured at baseline (plan S1). Shrink-only: remove an entry when its profile is fixed.
+# Measured at baseline (plan S1), shrunk by ADR-0010 S2 to the two Q-1 profiles. Shrink-only.
 KNOWN_VIOLATIONS: dict[str, str] = {
-    "all-claude": "checkers on Sonnet/Haiku next to Sonnet/Haiku writers",
     "all-gemini": "single vendor: the checkers share Gemini families with the writers (Q-1)",
-    "balanced-claude-55": "verifier on Sonnet next to the Sonnet implementer; Sonnet default fallbacks",
     "claude-inherit": "every role is `inherit`: the family is unknown (Q-1)",
-    "claude-native": "verifier on Sonnet next to the Sonnet implementer",
-    "cost-optimized": "checkers on Gemini Pro next to Gemini writers",
-    "measured-best": "checkers on Sonnet/Haiku next to Sonnet/Haiku writers",
-    "openrouter-balanced": "verifier on Haiku next to package-upgrade; default fallback haiku",
-    "openrouter-cheap": "checkers on a model whose family is unknown",
-    "performance-claude-55": "Sonnet fallbacks on Opus-keyed checkers",
-    "quality-first": "checkers on Sonnet/Haiku next to Sonnet/Haiku writers",
 }
 
 WRITERS = tuple(sorted(

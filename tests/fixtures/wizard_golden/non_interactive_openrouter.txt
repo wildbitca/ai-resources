@@ -49,7 +49,7 @@ rc=0
 | tester | anthropic | anthropic/claude-haiku-5.5 |
 | code-reviewer | anthropic | anthropic/claude-sonnet-5.5 |
 | security-auditor | anthropic | anthropic/claude-opus-5.5 |
-| verifier | anthropic | anthropic/claude-sonnet-5.5 |
+| verifier | anthropic | anthropic/claude-opus-5.5 |
 | doc-writer | anthropic | anthropic/claude-sonnet-5.5 |
 | package-upgrade | anthropic | anthropic/claude-haiku-5.5 |
 | crashlytics-fixer | anthropic | anthropic/claude-sonnet-5.5 |

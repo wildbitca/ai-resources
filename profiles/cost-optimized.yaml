@@ -35,8 +35,8 @@ by_role:
 
   # TIER 2 — Flash-lite (cheapest, fast)
   verifier:
-    model: google/gemini-3.5-flash-lite
-    fallbacks: []  # already cheapest, no fallback
+    model: anthropic/claude-opus-5.5   # ADR-0010 S2: a checker never shares a family with a writer
+    fallbacks: []
 
   # TIER 3 — Pro (mid-tier, planning/review)
   planner:
@@ -46,8 +46,8 @@ by_role:
     model: google/gemini-3.1-pro-preview
     fallbacks: [google/gemini-3.7-flash]  # downgrade to flash
   security-auditor:
-    model: google/gemini-3.1-pro-preview
-    fallbacks: [google/gemini-3.7-flash]  # downgrade to flash
+    model: anthropic/claude-opus-5.5   # ADR-0010 S2
+    fallbacks: []
   crashlytics-fixer:
     model: google/gemini-3.1-pro-preview
     fallbacks: [google/gemini-3.7-flash]  # downgrade to flash

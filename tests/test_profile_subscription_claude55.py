@@ -15,7 +15,8 @@ from ai_resources.setup.cockpits import claude
 
 NAME = "subscription-claude-55"
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BALANCED_SHA256 = "24c8650378ee3540384fc0793651dbf5024ac6c57b4cfe49b7609d732680ca5f"
+# ADR-0010 S2: balanced-claude-55 moved its verifier to Opus and dropped the cross-family default fallbacks.
+BALANCED_SHA256 = "af44fbac48c74280516b8080e9427720ece1ef1e439321ce12e40b95769ce77e"
 
 ALIASES = {"haiku", "sonnet", "opus"}
 CHECKERS = ("verifier", "security-auditor")

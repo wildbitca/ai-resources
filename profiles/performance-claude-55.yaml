@@ -37,10 +37,10 @@ by_role:
   sentry-fixer:                 { model: anthropic/claude-sonnet-5.5 }
   terraform-maintainer:         { model: anthropic/claude-sonnet-5.5 }
   crossplane-upjet-maintainer:  { model: anthropic/claude-sonnet-5.5 }
-  code-reviewer:                { model: anthropic/claude-opus-5.5, fallbacks: [anthropic/claude-sonnet-5.5] }
+  code-reviewer:                { model: anthropic/claude-opus-5.5 }
   security-auditor:             { model: anthropic/claude-opus-5.5 }
   verifier:                     { model: anthropic/claude-opus-5.5 }
-  planner:                      { model: anthropic/claude-opus-5.5, fallbacks: [anthropic/claude-sonnet-5.5] }
-  software-architect:           { model: anthropic/claude-opus-5.5, fallbacks: [anthropic/claude-sonnet-5.5] }
+  planner:                      { model: anthropic/claude-opus-5.5 }
+  software-architect:           { model: anthropic/claude-opus-5.5 }
 
 by_persona: {}

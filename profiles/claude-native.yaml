@@ -15,7 +15,7 @@ by_role:
   tester:             { model: sonnet }
   code-reviewer:      { model: opus }
   security-auditor:   { model: opus }
-  verifier:           { model: sonnet }
+  verifier:           { model: opus }
   doc-writer:         { model: sonnet }
   package-upgrade:             { model: haiku }
   crashlytics-fixer:           { model: sonnet }
