@@ -108,9 +108,9 @@ def test_a_google_acknowledgement_without_planner_holds_the_planner_second_with_
     ack = _google_ack(["explore", "code-reviewer", "software-architect"])
     frag = lanes_render.state_from_block(_doc()["lanes"], claude_ids=IDS, gates={"antigravity": True}, acks=ack)
     held = {(h["role"], h["candidate"]): h["reason"] for h in frag["held"]}
-    assert held[("planner", "agy:gemini-3.1-pro-low")] == "held: the Google acknowledgement does not list planner"
+    assert held[("planner", "agy:gemini-4-argon-high")] == "held: the Google acknowledgement does not list planner"
     assert ("explore", "agy:gemini-3.8-flash-high") not in held
-    assert ("code-reviewer", "agy:gemini-3.8-flash-high") not in held
+    assert ("code-reviewer", "agy:gemini-4-argon-high") not in held
 
 
 # --- AC-S6e: OpenRouter Balanced, the opt-in ------------------------------------------------------------------------

@@ -157,7 +157,7 @@ def test_record_writes_nothing_when_nothing_is_attested(kit, window):
 
 def test_record_writes_nothing_when_g1_does_not_cover_the_preset_slugs(kit, window):
     rc, lines = record(kit, window, answers(kit, slugs=["gemini-3.8-flash-high"]))
-    assert rc != 0 and "invalid" in lines[-1] and "gemini-3.1-pro-low" in lines[-1] and _nothing_written(kit)
+    assert rc != 0 and "invalid" in lines[-1] and "gemini-4-argon-high" in lines[-1] and _nothing_written(kit)
 
 
 def test_record_writes_nothing_for_an_anchor_that_is_not_an_evidence_heading(kit, window):

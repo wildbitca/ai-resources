@@ -40,5 +40,9 @@ def test_lane_slugs_are_independent_of_the_engine_list_and_marked_unconfirmed():
     assert model_pins.AGY_LANE_MODELS_CONFIRMED is False
     assert set(model_pins.AGY_STATIC) <= set(model_pins.AGY_LANE_MODELS)
     assert model_pins.AGY_STATIC == (
-        "gemini-3.8-flash-low", "gemini-3.8-flash-high", "gemini-3.1-pro-low",
+        "gemini-3.8-flash-low", "gemini-3.8-flash-medium", "gemini-3.8-flash-high",
+        "gemini-4-argon-low", "gemini-4-argon-medium", "gemini-4-argon-high",
+        "gemini-3.1-pro-low",
+        "claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-high",
+        "claude-opus-5-5-low", "claude-opus-5-5-medium", "claude-opus-5-5-high",
         "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium")

@@ -38,7 +38,11 @@ DEFAULTS: dict[str, str] = {
 # Antigravity (agy) model ids. `agy models` is not trusted for unattended upgrades, so this list is
 # edited by hand; the first entry is the default. Moved verbatim from ENGINES["antigravity"].
 AGY_STATIC: tuple[str, ...] = (
-    "gemini-3.8-flash-low", "gemini-3.8-flash-high", "gemini-3.1-pro-low",
+    "gemini-3.8-flash-low", "gemini-3.8-flash-medium", "gemini-3.8-flash-high",
+    "gemini-4-argon-low", "gemini-4-argon-medium", "gemini-4-argon-high",
+    "gemini-3.1-pro-low",
+    "claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-high",
+    "claude-opus-5-5-low", "claude-opus-5-5-medium", "claude-opus-5-5-high",
     "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium",
 )
 
@@ -46,7 +50,11 @@ AGY_STATIC: tuple[str, ...] = (
 # antigravity engine (composition, direct-only). These are CANDIDATES: V5 (`agy models`, run through the
 # probe harness) has not confirmed them, so gate G1 stays "not proven" and the lane stays closed.
 AGY_LANE_MODELS: tuple[str, ...] = (
-    "claude-sonnet-5-5", "claude-opus-5-5", "gemini-3.8-flash-low", "gemini-3.8-flash-high",
+    "claude-sonnet-5-5", "claude-opus-5-5",
+    "claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-high",
+    "claude-opus-5-5-low", "claude-opus-5-5-medium", "claude-opus-5-5-high",
+    "gemini-3.8-flash-low", "gemini-3.8-flash-medium", "gemini-3.8-flash-high",
+    "gemini-4-argon-low", "gemini-4-argon-medium", "gemini-4-argon-high",
     "gemini-3.1-pro-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium",
 )
 # Constant, never changed by hand (ADR-0010 C3). Per-slug confirmation comes from `agy_slug_confirmed`, which reads the

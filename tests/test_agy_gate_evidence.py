@@ -266,5 +266,5 @@ def test_the_cache_follows_the_file_and_the_loader_is_explicitly_cleared(root):
 
 def test_g1_must_cover_every_slug_the_presets_use(root):
     slugs = fk.preset_slugs(root)
-    assert "gemini-3.8-flash-high" in slugs and "gemini-3.1-pro-low" in slugs
+    assert "gemini-3.8-flash-high" in slugs and "gemini-4-argon-high" in slugs
     assert set(slugs) <= set(model_pins.AGY_LANE_MODELS)

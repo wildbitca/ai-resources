@@ -12,9 +12,9 @@ from ai_resources.setup import lanes_render, profiles, state, team_view, ui, wiz
 BALANCED_ROLES = ["explore", "code-reviewer", "planner", "software-architect"]
 GEMINI_CELLS = {
     "explore (lane)": "google gemini-3.8-flash-high via Antigravity",
-    "code-reviewer (second)": "google gemini-3.8-flash-high via Antigravity",
-    "planner (second)": "google gemini-3.1-pro-low via Antigravity",
-    "software-architect (second)": "google gemini-3.1-pro-low via Antigravity",
+    "code-reviewer (second)": "google gemini-4-argon-high via Antigravity",
+    "planner (second)": "google gemini-4-argon-high via Antigravity",
+    "software-architect (second)": "google gemini-4-argon-high via Antigravity",
 }
 NEXT = "run the probe window, then ai-resources lanes gates record"
 
@@ -170,7 +170,7 @@ def test_role_lane_rows_list_the_seconds_of_every_report_role_and_the_real_provi
 def test_the_wrappers_in_the_wizard_still_answer(monkeypatch):
     doc = balanced()
     assert wizard._agy_team_roles(doc) == team_view.agy_team_roles(doc)
-    assert any("planner (second opinion): gemini-3.1-pro-low [unconfirmed slug]" == e for e in wizard._agy_team_roles(doc))
+    assert any("planner (second opinion): gemini-4-argon-high [unconfirmed slug]" == e for e in wizard._agy_team_roles(doc))
     assert wizard._agy_lanes_on(types.SimpleNamespace(profile=types.SimpleNamespace(lanes=None))) is False
     s = state.SetupState()
     s.profile.lanes = {"agents": {"a": {"backend": "agy-cli-lane"}}}

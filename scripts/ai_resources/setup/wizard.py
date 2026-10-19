@@ -1142,11 +1142,11 @@ def _how_default(s: state.SetupState, is_first: bool = True) -> str:
     """What a saved state means for the question, else team when two or more tools are ticked, else each alone."""
     if s.mode == "multi-model":
         return "advanced"
-    if getattr(s, "cli_team", False):
+    members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
+    if getattr(s, "cli_team", False) or "agy" in members:
         return "team"
     if not is_first:
         return "alone"
-    members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
     return "team" if len(members) >= 2 else "alone"
 
 

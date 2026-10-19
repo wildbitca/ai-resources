@@ -90,11 +90,11 @@ lanes:
     verifier:           [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
     security-auditor:   [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
   second:
-    code-reviewer:      ["agy:gemini-3.8-flash-high", claude-cli:sonnet]
-    planner:            ["agy:gemini-3.1-pro-low", claude-cli:sonnet]
-    software-architect: ["agy:gemini-3.1-pro-low", claude-cli:opus]
+    code-reviewer:      ["agy:gemini-4-argon-high", claude-cli:sonnet]
+    planner:            ["agy:gemini-4-argon-high", claude-cli:sonnet]
+    software-architect: ["agy:gemini-4-argon-high", claude-cli:opus]
   pins:
     explore:            ["agy:gemini-3.8-flash-high"]
-    code-reviewer:      ["agy:gemini-3.8-flash-high"]
-    planner:            ["agy:gemini-3.1-pro-low"]
-    software-architect: ["agy:gemini-3.1-pro-low"]
+    code-reviewer:      ["agy:gemini-4-argon-high"]
+    planner:            ["agy:gemini-4-argon-high"]
+    software-architect: ["agy:gemini-4-argon-high"]
