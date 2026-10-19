@@ -215,3 +215,51 @@ def test_verify_is_quiet_about_lane_mcp_scope_when_lanes_are_disabled(sim, scrip
     _unscoped_doc(sim)
     found = _verify(_lane_state(False))
     assert not [f for f in found if "kit-lane-x" in f.message]
+
+
+# --- image generation (ADR-0011, plan I12): read-only lines ---------------------------------------------------------------------
+
+def _image_lines(found):
+    return [f for f in found if "image" in f.message.lower()]
+
+
+def test_verify_image_says_nothing_for_a_host_that_never_answered_the_question(sim, script):
+    s = _applied(sim, script)
+    assert _image_lines(_verify(s)) == []
+
+
+def test_verify_image_deny_by_setup_names_the_state_and_that_the_effect_is_not_proven(sim, script):
+    s = _applied(sim, script)
+    _edit(sim, lambda d: d.setdefault("tools", {}).__setitem__("deny", ["bundle-mcp", "image_generate"]))
+    s.openclaw.image_mode, s.openclaw.image_deny_added = "disable", True
+    before = _snapshot(sim)
+    found = _verify(s)
+    assert _by(found, "ok", "image_generate denied by setup")
+    assert all("live effect on running sessions: NOT PROVEN" in f.message for f in _image_lines(found) if "denied" in f.message)
+    assert _snapshot(sim) == before
+
+
+def test_verify_image_deny_by_an_operator_entry_names_the_entry(sim, script):
+    s = _applied(sim, script)
+    _edit(sim, lambda d: d.setdefault("tools", {}).__setitem__("deny", ["group:media"]))
+    s.openclaw.image_mode = "disable"
+    found = _verify(s)
+    assert _by(found, "ok", "denied by operator entry group:media") and "NOT PROVEN" in _image_lines(found)[0].message
+
+
+def test_verify_image_not_denied_and_the_route_are_reported(sim, script):
+    s = _applied(sim, script)
+    _edit(sim, lambda d: d.setdefault("agents", {}).setdefault("defaults", {}).__setitem__(
+        "mediaModels", {"image": {"primary": "fal/fal-ai/flux/dev", "timeoutMs": 180000}}))
+    s.openclaw.image_mode, s.openclaw.image_applied = "fal", True
+    found = _verify(s)
+    assert _by(found, "ok", "image generation route: fal/fal-ai/flux/dev (applied by setup)")
+    assert _by(found, "ok", "image_generate not denied")
+
+
+def test_verify_image_warns_when_a_recorded_deny_or_model_is_gone(sim, script):
+    s = _applied(sim, script)
+    s.openclaw.image_mode, s.openclaw.image_deny_added, s.openclaw.image_applied = "fal", True, True
+    found = _verify(s)
+    assert _by(found, "warn", "no longer holds")
+    assert len(_by(found, "warn", "no longer holds")) == 2

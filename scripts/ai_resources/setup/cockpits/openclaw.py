@@ -2355,6 +2355,37 @@ def _verify_identity(doc: dict, F: Any) -> list:
     return out
 
 
+def _verify_image(doc: dict, o: state.OpenClawState, F: Any) -> list:
+    """Read-only: the image route and whether `image_generate` is denied (ADR-0011). Said only when the kit has an image
+    answer or something recorded; a host that never answered the question sees nothing. Tool names and refs only."""
+    mode = o.image_mode or image.KEEP_ID
+    if mode == image.KEEP_ID and not (o.image_applied or o.image_deny_added):
+        return []
+    tool = openclaw_tool_policy.IMAGE_TOOL
+    out: list = []
+    live_ref = image.ref_of(image.live_image_value(doc))
+    if live_ref:
+        out.append(F("ok", ID, f"image generation route: {live_ref}"
+                     + (" (applied by setup)" if o.image_applied else " (not set by setup)")))
+    elif o.image_applied:
+        out.append(F("warn", ID, "setup recorded an image model that mediaModels.image no longer holds",
+                     "re-run `ai-resources setup`"))
+    deny = (doc.get("tools") or {}).get("deny") if isinstance(doc.get("tools"), dict) else None
+    listed = [x for x in deny if isinstance(x, str)] if isinstance(deny, list) else []
+    covering = openclaw_tool_policy.covering_token(listed, tool)
+    note = "live effect on running sessions: NOT PROVEN"
+    if covering and not (covering == tool and o.image_deny_added):
+        out.append(F("ok", ID, f"image_generate denied by operator entry {covering} ({note})"))
+    elif o.image_deny_added and tool in listed:
+        out.append(F("ok", ID, f"image_generate denied by setup ({note})"))
+    elif o.image_deny_added:
+        out.append(F("warn", ID, "setup recorded an image_generate deny that tools.deny no longer holds",
+                     "re-run `ai-resources setup`"))
+    else:
+        out.append(F("ok", ID, f"image_generate not denied ({note})"))
+    return out
+
+
 def verify(ctx: dict) -> list:
     """Read-only: what setup left in OpenClaw. Order: config checks, host, then the plugin."""
     from ...verify import Finding as F
@@ -2370,6 +2401,7 @@ def verify(ctx: dict) -> list:
     else:
         out += _verify_workspace_blocks(doc, o, F)
         out += _verify_identity(doc, F)
+        out += _verify_image(doc, o, F)
         for aid, entry in (((doc.get("agents") or {}).get("entries")) or {}).items():
             raw = (entry or {}).get("model")
             if isinstance(raw, str):
