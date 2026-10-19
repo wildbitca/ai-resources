@@ -2065,6 +2065,20 @@ def _note_newer_recommendation(saved: str, recommended: str, backend: str) -> No
     ui.info(f"To switch: {command}")
 
 
+# Profiles that still let a checker share a model family with a writer (the shrink-only KNOWN_VIOLATIONS of
+# tests/test_profile_checker_independence.py; ADR-0010 Q-1, R4). They stay in the Custom list, with a warning.
+OPEN_CHECKER_PROFILES: dict[str, str] = {
+    "all-gemini": "every role runs on Gemini, so the security-auditor and the implementer use the identical model",
+    "claude-inherit": "every role inherits the session model, so a checker shares its family with the writers",
+}
+
+
+def _warn_open_checker_profile(name: str) -> None:
+    why = OPEN_CHECKER_PROFILES.get(profile_names.canonical(name))
+    if why:
+        ui.warn(f"{name}: {why}. The checkers are not independent of the writers with this profile.")
+
+
 def _step6_profile(s: state.SetupState) -> int:
     _section(6, "Your team - roles")
 
@@ -2122,6 +2136,7 @@ def _step6_profile(s: state.SetupState) -> int:
     chosen = ui.select("Choose profile:", choices, default=default)
     if chosen is None:
         return 130
+    _warn_open_checker_profile(chosen)
 
     if chosen == "__compose__":
         rc = _compose_profile(s, default, None)
@@ -2221,6 +2236,7 @@ def _step6_single_model_profile(s: state.SetupState) -> int:
     chosen = ui.select("How should kit subagents pick their Claude model?", choices, default=default)
     if chosen is None:
         return 130
+    _warn_open_checker_profile(chosen)
     if chosen != saved:
         # A different profile starts clean; the acknowledgements belong to the accounts, not to a profile, and the
         # tools ticked on the first screen travel along. Keeping the same profile keeps the saved team with it

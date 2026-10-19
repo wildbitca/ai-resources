@@ -471,3 +471,40 @@ def test_back_at_screen_two_asks_it_again_and_leaks_nothing(monkeypatch, tmp_pat
     assert wizard.run(_args()) == 0
     assert len([m for m in script.asked if m.startswith("select: Pick how they work")]) == 2
     assert (seen["s"].mode, seen["s"].cli_team) == ("single-model", True)
+
+
+# --- ADR-0010 R4: profiles that leave a checker on a writer's family warn under Custom ---------------------------------
+
+def _run_single_profile_step(monkeypatch, pick):
+    s = state.SetupState()
+    s.cli_team = True
+    warnings = []
+    Script(**{"How should kit subagents pick": lambda v: pick}).install(monkeypatch)
+    monkeypatch.setattr(ui, "role_table", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "section", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "warn", warnings.append)
+    monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "", raising=False)
+    monkeypatch.setattr(wizard, "_COMPOSE", {}, raising=False)
+    assert wizard._step6_single_model_profile(s) == 0
+    return warnings
+
+
+def test_choosing_claude_inherit_under_custom_warns_that_the_checkers_are_not_independent(monkeypatch):
+    warnings = _run_single_profile_step(monkeypatch, "claude-inherit")
+    assert len(warnings) == 1 and "claude-inherit" in warnings[0] and "not independent" in warnings[0]
+
+
+def test_choosing_a_clean_profile_under_custom_does_not_warn(monkeypatch):
+    assert _run_single_profile_step(monkeypatch, SUB) == []
+
+
+def test_the_warned_profiles_are_exactly_the_known_checker_violations():
+    import test_profile_checker_independence as ind
+    assert set(wizard.OPEN_CHECKER_PROFILES) == set(ind.KNOWN_VIOLATIONS)
+
+
+def test_all_gemini_gets_the_same_warning(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(ui, "warn", warnings.append)
+    wizard._warn_open_checker_profile("all-gemini")
+    assert len(warnings) == 1 and "security-auditor" in warnings[0] and "identical model" in warnings[0]

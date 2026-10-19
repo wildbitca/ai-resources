@@ -139,7 +139,7 @@ LEGACY_PRESET (preset-question default only; the profile's own file keeps loadin
 `balanced-claude-55`, `openrouter-balanced` (and `subscription-claude-55`, above) map to `balanced`. Other shipped profiles keep their names under Custom.
 `RECOMMENDED_PROFILE` becomes `recommended_profile(backend)`. The checker overlap is fixed in every shipped profile
 (S2); the shrink-only baseline of S1 lists what is still open. `claude-inherit` and `all-gemini` follow open question
-Q-1 (recommended: a declared in-profile exemption the wizard warns about).
+Q-1 (recommended: a declared in-profile exemption the wizard warns about). Decision (R4): both stay in the Custom list and the wizard prints a warning when either is chosen (`all-gemini`: the security-auditor and the implementer use the identical model; `claude-inherit`: every role inherits the session model). The warned set is pinned equal to `KNOWN_VIOLATIONS` by a test.
 
 ## N5: channels (PD-2)
 
