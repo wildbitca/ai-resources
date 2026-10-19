@@ -133,7 +133,7 @@ def test_multi_model_union_intersection_refuses_with_the_lane_conflict(monkeypat
            "by_role": {"implementer": {"model": "claude-sonnet-5-5", "fallbacks": ["claude-opus-5-5"]},
                        "verifier": {"model": "claude-opus-5-5"}},
            "lanes": {"roles": {"implementer": ["claude-cli:claude-sonnet-5-5"]}}}
-    monkeypatch.setattr(profiles, "load_profile", lambda name: doc)
+    monkeypatch.setattr(profiles, "load_profile", lambda name, mode=None: doc)
     s = state.SetupState()
     s.mode, s.profile.name = "multi-model", "x"
     monkeypatch.setattr(lanes_render, "current_by_role", lambda st: doc["by_role"])

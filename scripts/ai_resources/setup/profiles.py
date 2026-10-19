@@ -14,6 +14,7 @@ except ImportError:
     yaml = None  # type: ignore
 
 from .. import repo_root
+from . import profile_names
 
 
 # Roles that the kit ships with (matches agents/roles/*.md).
@@ -40,9 +41,15 @@ KNOWN_ROLES = [
 RECOMMENDED_PROFILE = "balanced-claude-55"
 
 
-def saved_or_recommended(saved: str) -> str:
+def recommended_profile(backend: str = "litellm") -> str:
+    """The recommendation for a gateway. A state with no profile resolves to it, so a legacy LiteLLM state behaves
+    as before (ADR-0010 N4)."""
+    return RECOMMENDED_PROFILE
+
+
+def saved_or_recommended(saved: str, backend: str = "litellm") -> str:
     """The profile a state runs under: the one it saved, else the recommendation (never a stale default)."""
-    return saved or RECOMMENDED_PROFILE
+    return saved or recommended_profile(backend)
 
 
 def profiles_dir() -> Path:
@@ -87,8 +94,11 @@ def list_profiles(mode: str | None = None, backend: str | None = None) -> list[s
     if not d.is_dir():
         return []
     out = []
-    for n in sorted(p.stem for p in d.glob("*.yaml")):
-        doc = load_profile(n)
+    # Aliases are hidden: a file that an old name points at is listed under its new name.
+    names = sorted({profile_names.canonical(str(p.relative_to(d).with_suffix("")).replace("\\", "/"))
+                    for p in d.rglob("*.yaml")})
+    for n in names:
+        doc = _read(_path_of(n, "single-model" if n in profile_names.PRESET_IDS else None))
         if mode is not None and doc.get("mode", "multi-model") != mode:
             continue
         # A profile that names no backend is gateway-agnostic: its models are
@@ -101,13 +111,22 @@ def list_profiles(mode: str | None = None, backend: str | None = None) -> list[s
     return out
 
 
-def load_profile(name: str) -> dict[str, Any]:
+def _path_of(name: str, mode: str | None) -> Path:
+    return profile_names.resolve(name, mode, profiles_dir())
+
+
+def _read(path: Path) -> dict[str, Any]:
     if yaml is None:
         raise RuntimeError("PyYAML required to load profiles")
-    path = profiles_dir() / f"{name}.yaml"
     if not path.is_file():
         raise FileNotFoundError(f"Profile not found: {path}")
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def load_profile(name: str, mode: str | None = None) -> dict[str, Any]:
+    """Load a profile by name. An old name (profile_names.ALIASES) loads its team under the new name. A bare
+    starting-team id (`balanced`, ...) needs `mode`; without it `profile_names.ProfileModeRequired` is raised."""
+    return _read(_path_of(name, mode))
 
 
 GATEWAYS: dict[str, dict[str, str]] = {

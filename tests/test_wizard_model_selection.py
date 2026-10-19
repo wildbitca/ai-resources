@@ -302,13 +302,14 @@ def test_accepting_the_default_for_a_saved_profile_leaves_executors_yaml_byte_id
     assert path.read_bytes() == before
 
 
-def test_a_fresh_single_model_host_defaults_to_claude_native(monkeypatch):
-    """TS-BC55-012."""
+def test_a_fresh_single_model_host_defaults_to_balanced(monkeypatch):
+    """TS-BC55-012, amended by ADR-0010 N4: a fresh single-model host starts from the shared `balanced` id
+    (claude-native keeps loading for hosts that saved it)."""
     ui_stub = _Step6(monkeypatch)
     s = state.SetupState()
     s.mode = "single-model"
     assert wizard._step6_single_model_profile(s) == 0
-    assert ui_stub.selects[0]["default"] == "claude-native" and s.profile.name == "claude-native"
+    assert ui_stub.selects[0]["default"] == "balanced" and s.profile.name == "balanced"
 
 
 def test_a_non_interactive_run_prints_the_diff_and_the_command_and_never_switches(monkeypatch):
@@ -360,8 +361,9 @@ def test_step_6_hints_single_model_for_a_claude_only_host_with_no_gateway(monkey
 
 
 def test_leaving_multi_model_resets_the_profile_to_the_single_model_default():
-    """TS-BC55-014: the teardown reset keeps claude-native (it is not the recommended multi-model profile)."""
-    assert wizard.SINGLE_MODEL_DEFAULT_PROFILE == "claude-native"
+    """TS-BC55-014, amended by ADR-0010 N4: the teardown reset keeps the single-model default `balanced` (it is not
+    the recommended multi-model profile)."""
+    assert wizard.SINGLE_MODEL_DEFAULT_PROFILE == "balanced"
     assert wizard.RECOMMENDED_PROFILE != wizard.SINGLE_MODEL_DEFAULT_PROFILE
     src = pathlib.Path(wizard.__file__).read_text(encoding="utf-8")
     assert "state.ProfileState(name=SINGLE_MODEL_DEFAULT_PROFILE, customized=False)" in src

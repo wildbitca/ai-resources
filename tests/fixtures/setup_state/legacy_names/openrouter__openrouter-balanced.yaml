@@ -1,0 +1,23 @@
+schema_version: '1.0'
+last_run: '2026-10-01T00:00:00+00:00'
+mode: multi-model
+backend: openrouter
+cockpits:
+  claude:
+    installed: true
+    version: '1.0'
+    binary_path: /opt/claude
+    config_root: ''
+    configured: false
+    last_configured_at: ''
+providers:
+  openrouter:
+    enabled: true
+    auth_method: api_key
+    env_var: OPENROUTER_API_KEY
+    last_validated_at: ''
+    extra: {}
+profile:
+  name: openrouter-balanced
+  customized: false
+  customizations: {}

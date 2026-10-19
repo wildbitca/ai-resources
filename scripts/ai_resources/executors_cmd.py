@@ -318,7 +318,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
         profile_choices = []
         for pname in available:
             try:
-                pdata = profiles.load_profile(pname)
+                pdata = profiles.load_profile(pname, "multi-model")
                 desc = pdata.get("description", "").strip().splitlines()[0][:60]
             except Exception:  # noqa: BLE001
                 desc = ""
@@ -329,7 +329,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
             return 0
 
     try:
-        profile_data = profiles.load_profile(profile_name)
+        profile_data = profiles.load_profile(profile_name, "multi-model")
     except FileNotFoundError:
         ui.error(f"Profile not found: {profile_name}")
         ui.detail(f"Available: {', '.join(available)}")

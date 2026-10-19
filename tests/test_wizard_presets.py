@@ -10,24 +10,24 @@ import argparse
 import pytest
 
 from ai_resources import selection as selection_mod
-from ai_resources.setup import compat, profiles, state, ui, wizard
+from ai_resources.setup import compat, profile_names, profiles, state, ui, wizard
 from test_profile_validity import CELLS, check_cell, profile_refs
 from wizard_fakes import BACK, Script, Seq
 
 ASK = "Starting team:"
 CONFIRM = "Use this?"                      # no longer asked: kept to prove it never is
-KEYS = ("balanced", "performance", "low-pricing")
+KEYS = ("balanced", "performance", "low-cost")
 
 # mode key -> (state setter, expected profile per preset)
+# ADR-0010 N4: one preset id on the no-gateway rows; the gateway rows name a file under profiles/gateway/ (or the
+# legacy Claude-only balanced profile, until the gateway Balanced lands).
 TABLE = {
-    "cli": {"balanced": "subscription-claude-55", "performance": "subscription-performance",
-            "low-pricing": "subscription-economy"},
-    "single": {"balanced": "claude-native", "performance": "subscription-performance",
-               "low-pricing": "subscription-economy"},
-    "litellm": {"balanced": "balanced-claude-55", "performance": "performance-claude-55",
-                "low-pricing": "economy-claude-55"},
-    "openrouter": {"balanced": "balanced-claude-55", "performance": "performance-claude-55",
-                   "low-pricing": "economy-claude-55"},
+    "cli": {"balanced": "balanced", "performance": "performance", "low-cost": "low-cost"},
+    "single": {"balanced": "balanced", "performance": "performance", "low-cost": "low-cost"},
+    "litellm": {"balanced": "balanced-claude-55", "performance": "gateway/performance",
+                "low-cost": "gateway/low-cost"},
+    "openrouter": {"balanced": "balanced-claude-55", "performance": "gateway/performance",
+                   "low-cost": "gateway/low-cost"},
 }
 
 
@@ -77,7 +77,7 @@ def test_the_question_has_exactly_four_choices_in_order_with_plain_labels(monkey
     monkeypatch.setattr(ui, "select", lambda m, choices, default=None, **k: (
         seen.update(titles=[c.title for c in choices]) or grab([c.value for c in choices])))
     wizard._step_preset(make_state("litellm"), args())
-    assert seen["values"] == ["balanced", "performance", "low-pricing", "custom"]
+    assert seen["values"] == ["balanced", "performance", "low-cost", "custom"]
     heads = [t.split(" - ")[0] for t in seen["titles"]]
     assert heads == ["Balanced (recommended)", "Performance", "Low cost", "Custom"]
     for title in seen["titles"]:
@@ -104,7 +104,7 @@ def test_every_preset_maps_to_an_offered_profile_of_the_right_mode(key):
     assert len(set(names)) == 3, "three presets must differ so a saved profile maps back to one preset"
     for name in names:
         assert name in offered, (key, name)
-        doc = profiles.load_profile(name)
+        doc = profiles.load_profile(name, mode)
         assert [r for r in profiles.KNOWN_ROLES if not (doc["by_role"].get(r) or {}).get("model")] == []
         executors = profiles.to_executors(doc, backend) if backend else profiles.to_executors(doc)
         assert profiles.role_table(executors)
@@ -136,7 +136,7 @@ def test_the_new_gateway_profiles_are_claude_only_agnostic_and_keep_checkers_off
     for role in ("verifier", "code-reviewer", "security-auditor", "planner", "software-architect", "implementer"):
         assert "haiku" not in by_role[role]["model"], role
     for backend in ("litellm", "openrouter"):
-        assert name in profiles.list_profiles(mode="multi-model", backend=backend)
+        assert profile_names.canonical(name) in profiles.list_profiles(mode="multi-model", backend=backend)
 
 
 @pytest.mark.parametrize("name", ["subscription-performance", "subscription-economy", "economy-claude-55",
@@ -230,7 +230,7 @@ def test_choosing_a_starting_team_is_the_confirmation(monkeypatch):
     script.install(monkeypatch)
     assert wizard._step_preset(s, args()) == 0
     assert script.asked == [f"select: {ASK}"] and not any(CONFIRM in m for m in script.asked)
-    assert s.profile.name == "performance-claude-55" and wizard._PRESET == "performance"
+    assert s.profile.name == "gateway/performance" and wizard._PRESET == "performance"
 
 
 def test_the_cli_team_shows_the_team_table_with_the_role_table(monkeypatch):
@@ -334,7 +334,7 @@ def test_a_saved_customized_profile_survives_choosing_custom(monkeypatch):
 def _saved_team(key="cli"):
     s = make_state(key)
     s.profile = state.ProfileState(
-        name="subscription-claude-55", customized=True, composed={"mode": "uniform"},
+        name="balanced", customized=True, composed={"mode": "uniform"},
         customizations={"planner": {"model": "opus"}, "__targets__": {"selected": ["claude"]}},
         lanes={"agents": {}, "roles": {}}, lane_acks={"anthropic": {"roles": ["tester"]}})
     return s
@@ -345,7 +345,7 @@ def test_the_custom_path_keeps_a_saved_team_its_lanes_and_acks_when_the_profile_
     (the single-model profile step used to rebuild the profile and drop all of it)."""
     s = _saved_team()
     before = state._to_dict(s)["profile"]
-    Script(**{"How should kit subagents pick": lambda v: "subscription-claude-55"}).install(monkeypatch)
+    Script(**{"How should kit subagents pick": lambda v: "balanced"}).install(monkeypatch)
     assert wizard._step6_single_model_profile(s) == 0
     assert state._to_dict(s)["profile"] == before
 
@@ -436,7 +436,7 @@ def test_a_full_run_with_a_preset_asks_none_of_the_old_step_6_questions(monkeypa
     assert not any(q in asked for q in OLD_STEP_6), asked
     assert [m for m in script.asked if "Starting team" in m or "Use this?" in m] == [f"select: {ASK}"]
     saved = state.load()
-    assert saved.profile.name == "subscription-performance" and saved.cli_team is True
+    assert saved.profile.name == "performance" and saved.cli_team is True
 
 
 def test_a_full_run_with_custom_reaches_the_old_questions(monkeypatch, tmp_path):

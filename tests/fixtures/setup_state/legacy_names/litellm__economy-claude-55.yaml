@@ -1,0 +1,16 @@
+schema_version: '1.0'
+last_run: '2026-10-01T00:00:00+00:00'
+mode: multi-model
+backend: litellm
+cockpits:
+  claude:
+    installed: true
+    version: '1.0'
+    binary_path: /opt/claude
+    config_root: ''
+    configured: false
+    last_configured_at: ''
+profile:
+  name: economy-claude-55
+  customized: false
+  customizations: {}

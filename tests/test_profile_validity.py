@@ -184,6 +184,6 @@ def test_every_shipped_profile_is_valid(name):
 
 def test_every_single_model_profile_uses_claude_aliases_only():
     for name in profiles.list_profiles(mode="single-model"):
-        doc = profiles.load_profile(name)
+        doc = profiles.load_profile(name, "single-model")
         refs = [c["model"] for c in doc["by_role"].values()]
         assert set(refs) <= {"haiku", "sonnet", "opus", "inherit"}, name

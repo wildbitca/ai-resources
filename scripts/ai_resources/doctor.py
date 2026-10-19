@@ -335,11 +335,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         try:
             from .setup import profiles
             backend = getattr(s, "backend", "litellm")
-            executors = profiles.to_executors(profiles.load_profile(profiles.saved_or_recommended(s.profile.name)), backend)
+            executors = profiles.to_executors(profiles.load_profile(profiles.saved_or_recommended(s.profile.name, backend), "multi-model"), backend)
             if s.profile.customized:
                 executors = profiles.to_executors(
                     profiles.merge_customizations(
-                        profiles.load_profile(profiles.saved_or_recommended(s.profile.name)),
+                        profiles.load_profile(profiles.saved_or_recommended(s.profile.name, backend), "multi-model"),
                         {k: v for k, v in s.profile.customizations.items()
                          if k in profiles.KNOWN_ROLES},
                     ),

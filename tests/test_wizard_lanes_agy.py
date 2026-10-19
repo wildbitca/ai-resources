@@ -31,8 +31,8 @@ def _env(monkeypatch):
                          for g in gates_mod.GATES})
     real = profiles.load_profile
 
-    def load(name):
-        doc = copy.deepcopy(real(name))
+    def load(name, mode=None):
+        doc = copy.deepcopy(real(name, mode))
         lanes = doc.get("lanes")
         if not lanes:
             return doc

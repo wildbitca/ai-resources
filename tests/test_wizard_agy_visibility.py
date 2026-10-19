@@ -161,13 +161,13 @@ def test_as_a_team_with_agy_ticked_adds_an_antigravity_row_with_unconfirmed_slug
     assert script.asked == [f"select: {ASK}"]
     assert roles_policy.DEFAULT_INTEGRATING_WRITER not in roles          # writing stays on Claude Code
     # the entries are exactly the agy candidates of the profile's lanes block, minus the writer role
-    doc = profiles.load_profile(wizard.preset_profile(s, preset))
+    doc = profiles.load_profile(wizard.preset_profile(s, preset), "single-model")
     want = {c.split(":", 1)[1] for key in ("roles", "second") for role, cs in doc["lanes"][key].items()
             for c in cs if c.startswith("agy:") and role != roles_policy.DEFAULT_INTEGRATING_WRITER}
     assert {e.split(": ")[1].split(" ")[0].rstrip(".") for e in roles.split(" - sends")[0].split("; ")} == want
 
 
-@pytest.mark.parametrize("preset", ("performance", "low-pricing"))
+@pytest.mark.parametrize("preset", ("performance", "low-cost"))
 def test_performance_and_low_cost_show_gemini_as_the_code_review_second_opinion(monkeypatch, preset):
     _, _, teams, _ = run_preset(monkeypatch, "cli", preset, True, ticked=True)
     entries = [e for e in agy_row(teams)[1].split(" - sends")[0].split("; ") if "gemini" in e]
@@ -215,7 +215,7 @@ def test_the_question_stays_four_choices_with_agy_installed(monkeypatch):
     monkeypatch.setattr(ui, "select", lambda m, choices, default=None, **k: (
         seen.update(values=[c.value for c in choices]) or "custom"))
     wizard._step_preset(make_state("cli"), preset_args())
-    assert seen["values"] == ["balanced", "performance", "low-pricing", "custom"]
+    assert seen["values"] == ["balanced", "performance", "low-cost", "custom"]
 
 
 # --- profiles and the gates -------------------------------------------------------------------------------

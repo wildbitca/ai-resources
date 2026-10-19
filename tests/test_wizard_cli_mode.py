@@ -14,7 +14,7 @@ from ai_resources import cli
 from ai_resources.setup import model_selection as ms, state, ui, wizard
 from wizard_fakes import BACK, Script, Seq, host_env
 
-SUB = "subscription-claude-55"
+SUB = "balanced"
 
 
 def _args(**kw):
@@ -244,9 +244,9 @@ def test_lanes_use_the_subscription_profile_in_cli_mode(monkeypatch):
     asked = {}
     real = wizard.profiles.load_profile
 
-    def spy(name):
+    def spy(name, mode=None):
         asked.setdefault("name", name)
-        return real(name)
+        return real(name, mode)
 
     monkeypatch.setattr(wizard.profiles, "load_profile", spy)
     Script(**{"Orchestrator agent id": "main"}).install(monkeypatch, non_interactive=True)

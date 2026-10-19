@@ -24,16 +24,16 @@ from . import (
     tools,
     ui,
 )
-from . import compat, model_selection
+from . import compat, model_selection, profile_names
 from .cockpits import ALL as ALL_COCKPITS
 from .cockpits import _shared
 from .. import __version__, model_pins, repo_root, roles_policy, selection as selection_mod
 
 
 TOTAL_STEPS = 10
-SINGLE_MODEL_DEFAULT_PROFILE = "claude-native"
+SINGLE_MODEL_DEFAULT_PROFILE = "balanced"       # ADR-0010 N4: one preset id on every row; claude-native keeps loading
 # The default for "multi-model via your CLI subscriptions" (ADR-0008): the subscription team, no gateway.
-CLI_TEAM_DEFAULT_PROFILE = "subscription-claude-55"
+CLI_TEAM_DEFAULT_PROFILE = "balanced"
 
 
 def _carry_targets(old: "state.ProfileState", new: "state.ProfileState") -> "state.ProfileState":
@@ -50,7 +50,7 @@ def _reset_profile_for_cli(s: state.SetupState, was_cli: bool) -> None:
     starting point, not a choice, so it gives way to the subscription team profile."""
     if was_cli or not getattr(s, "cli_team", False):
         return
-    if not s.profile.customized and s.profile.name in ("", SINGLE_MODEL_DEFAULT_PROFILE):
+    if not s.profile.customized and s.profile.name in ("", SINGLE_MODEL_DEFAULT_PROFILE, "claude-native"):
         s.profile = _carry_targets(s.profile, state.ProfileState(name=CLI_TEAM_DEFAULT_PROFILE))
 
 
@@ -72,18 +72,30 @@ RECOMMENDED_PROFILE = profiles.RECOMMENDED_PROFILE        # "balanced-claude-55"
 PRESET_CHOICES = (
     ("balanced", "Balanced (recommended)", "strong models where defects are caught, cheaper ones for the rest"),
     ("performance", "Performance", "the strongest models on planning, review and verification; costs more"),
-    ("low-pricing", "Low cost", "the cheapest models that still keep review, verification and security strong"),
+    ("low-cost", "Low cost", "the cheapest models that still keep review, verification and security strong"),
     ("custom", "Custom", "choose a profile, pick models from your accounts, or set each role yourself"),
 )
+class _PresetRow(dict):
+    """One row of PRESET_PROFILES. The key `low-pricing` was renamed `low-cost` (ADR-0010 N4) and is still accepted
+    wherever a key is read."""
+
+    def __missing__(self, key):
+        renamed = profile_names.preset_key(key)
+        if renamed != key:
+            return self[renamed]
+        raise KeyError(key)
+
+    def get(self, key, default=None):
+        return super().get(profile_names.preset_key(key), default)
+
+
 PRESET_PROFILES: dict[str, dict[str, str]] = {
-    "cli": {"balanced": CLI_TEAM_DEFAULT_PROFILE, "performance": "subscription-performance",
-            "low-pricing": "subscription-economy"},
-    "single": {"balanced": SINGLE_MODEL_DEFAULT_PROFILE, "performance": "subscription-performance",
-               "low-pricing": "subscription-economy"},
-    "litellm": {"balanced": "balanced-claude-55", "performance": "performance-claude-55",
-                "low-pricing": "economy-claude-55"},
-    "openrouter": {"balanced": "balanced-claude-55", "performance": "performance-claude-55",
-                   "low-pricing": "economy-claude-55"},
+    "cli": _PresetRow({"balanced": "balanced", "performance": "performance", "low-cost": "low-cost"}),
+    "single": _PresetRow({"balanced": "balanced", "performance": "performance", "low-cost": "low-cost"}),
+    "litellm": _PresetRow({"balanced": "balanced-claude-55", "performance": "gateway/performance",
+                           "low-cost": "gateway/low-cost"}),
+    "openrouter": _PresetRow({"balanced": "balanced-claude-55", "performance": "gateway/performance",
+                              "low-cost": "gateway/low-cost"}),
 }
 # The preset chosen in THIS run ("" = none: Custom, the flags path or a non-interactive run). Not saved: the
 # state file keeps only the resulting profile name.
@@ -210,12 +222,15 @@ def _run(args: argparse.Namespace) -> int:
     else:
         ui.info("First-time setup detected.")
 
+    if s.profile.name in profile_names.ALIASES:
+        ui.info(f"Profile {s.profile.name} is now called {profile_names.canonical(s.profile.name)}")
+
     # After state.load() and after the branch that discards previous answers,
     # or the assignment is either an UnboundLocalError or silently overwritten.
     if getattr(args, "profile", ""):
         global _REQUESTED_PROFILE
-        _REQUESTED_PROFILE = args.profile
-        s.profile.name = args.profile
+        _REQUESTED_PROFILE = profile_names.canonical(args.profile)
+        s.profile.name = _REQUESTED_PROFILE
 
     # Model-selection flags are checked before anything is written: a contradiction exits non-zero
     # with zero writes (the same plan table is printed non-interactively).
@@ -251,6 +266,8 @@ def _run(args: argparse.Namespace) -> int:
 
     verify_rc = 0
     if not dry_run:
+        # An old profile name is saved under its new one (ADR-0010 N4); every other name is saved as it is.
+        s.profile.name = profile_names.canonical(s.profile.name)
         state.save(s)
         ui.record_action("saved setup state")
         verify_rc = _step10_verify(s, list(_APPLIED_TARGETS))
@@ -626,7 +643,7 @@ def _preset_key(s: state.SetupState) -> str:
 
 def preset_profile(s: state.SetupState, preset: str) -> str:
     """The kit profile a preset resolves to for this state's mode and backend."""
-    return PRESET_PROFILES[_preset_key(s)][preset]
+    return PRESET_PROFILES[_preset_key(s)][profile_names.preset_key(preset)]
 
 
 def _preset_default(s: state.SetupState) -> str:
@@ -637,10 +654,13 @@ def _preset_default(s: state.SetupState) -> str:
         return "custom"
     if not s.profile.name:
         return "balanced"
+    saved = profile_names.canonical(s.profile.name)
     for preset, name in PRESET_PROFILES[_preset_key(s)].items():
-        if name == s.profile.name:
+        if name == saved:
             return preset
-    return "custom"
+    # A profile that predates the preset ids (claude-native, openrouter-balanced, ...) keeps its own file, but the
+    # question still opens on the preset it stands for, never on Custom.
+    return profile_names.LEGACY_PRESET.get(s.profile.name, "custom")
 
 
 def _preset_bypassed(args: argparse.Namespace) -> bool:
@@ -704,7 +724,7 @@ def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
         if name not in available:
             ui.error(f"The {preset} starting team needs the profile {name}, which is not available for this setup.")
             continue
-        base = profiles.load_profile(name)
+        base = profiles.load_profile(name, mode)
         if mode == "multi-model":
             rows = profiles.role_table(profiles.to_executors(base, backend))
         else:
@@ -815,8 +835,10 @@ def _team_label(s: state.SetupState) -> str:
         return "Custom: models picked from your accounts"
     if s.profile.customized or s.profile.composed:
         return f"Custom: {name} (customized)"
+    saved = profile_names.canonical(s.profile.name)
     for key, label, _line in PRESET_CHOICES:
-        if PRESET_PROFILES[_preset_key(s)].get(key) == name and key != "custom":
+        if key != "custom" and (PRESET_PROFILES[_preset_key(s)].get(key) == saved
+                                or profile_names.LEGACY_PRESET.get(s.profile.name) == key):
             return f"{label.replace(' (recommended)', '')}: {name}"
     return f"Custom: {name}"
 
@@ -1930,7 +1952,7 @@ def _compose_profile(s: state.SetupState, base_name: str, mode: str | None, sing
     if single_model:
         overlay = flow.to_aliases(overlay)
     try:
-        base = profiles.load_profile(base_name)
+        base = profiles.load_profile(base_name, "single-model" if single_model else "multi-model")
         before = profiles.to_executors(base, s.backend)["by_role"]
         after = profiles.to_executors(profiles.merge_customizations(base, overlay), s.backend)["by_role"]
         profiles.print_role_diff(before, after, title=f"{base_name} -> composed ({mode})")
@@ -1968,8 +1990,8 @@ def _note_newer_recommendation(saved: str, recommended: str, backend: str) -> No
             f"Show how {recommended} differs from {saved}?", default=False):
         return
     try:
-        before = profiles.to_executors(profiles.load_profile(saved), backend)["by_role"]
-        after = profiles.to_executors(profiles.load_profile(recommended), backend)["by_role"]
+        before = profiles.to_executors(profiles.load_profile(saved, "multi-model"), backend)["by_role"]
+        after = profiles.to_executors(profiles.load_profile(recommended, "multi-model"), backend)["by_role"]
     except (FileNotFoundError, RuntimeError):
         return
     profiles.print_role_diff(before, after, title=f"{saved} -> {recommended}")
@@ -1991,7 +2013,7 @@ def _step6_profile(s: state.SetupState) -> int:
     choices = []
     for name in available:
         try:
-            p = profiles.load_profile(name)
+            p = profiles.load_profile(name, "multi-model")
             desc = p.get("description", "").split("\n")[0][:80]
         except (FileNotFoundError, RuntimeError):
             desc = ""
@@ -2011,8 +2033,9 @@ def _step6_profile(s: state.SetupState) -> int:
     # belonged to the other backend.
     # Gateway-agnostic, so the same recommendation holds for either backend.
     preferred = RECOMMENDED_PROFILE
-    if s.profile.name in available:
-        default = s.profile.name
+    saved = profile_names.canonical(s.profile.name)
+    if saved in available:
+        default = saved
     elif preferred in available:
         default = preferred
     else:
@@ -2020,9 +2043,9 @@ def _step6_profile(s: state.SetupState) -> int:
 
     ui.detail("No gateway? A gateway profile needs LiteLLM or OpenRouter; without one, go back and choose "
               "'As a team' or 'Each on its own'.")
-    if (s.profile.name in available and s.profile.name != preferred and preferred in available
+    if (saved in available and saved != preferred and preferred in available
             and not _REQUESTED_PROFILE):
-        _note_newer_recommendation(s.profile.name, preferred, s.backend)
+        _note_newer_recommendation(saved, preferred, s.backend)
 
     if _COMPOSE.get("mode"):
         # `--compose`: the explicit flag path; the base profile is the one a plain run would have used.
@@ -2045,7 +2068,7 @@ def _step6_profile(s: state.SetupState) -> int:
         # whose namespaced catalogue rejects them — the same defect as the
         # default above, except this one corrupts the config instead of crashing.
         chosen = default if default in available else available[0]
-    base = profiles.load_profile(chosen)
+    base = profiles.load_profile(chosen, "multi-model")
 
     s.profile.name = chosen
     s.profile.composed = None          # a plain profile replaces any earlier composed team (ADR-0006)
@@ -2121,16 +2144,17 @@ def _step6_single_model_profile(s: state.SetupState) -> int:
 
     choices = []
     for name in available:
-        desc = profiles.load_profile(name).get("description", "").split("\n")[0][:80]
+        desc = profiles.load_profile(name, "single-model").get("description", "").split("\n")[0][:80]
         choices.append(ui.Choice(f"{name}  — {desc}" if desc else name, value=name))
-    if s.profile.name in available:
-        default = s.profile.name
+    saved = profile_names.canonical(s.profile.name)
+    if saved in available:
+        default = saved
     else:
         default = _single_default_profile(s) if _single_default_profile(s) in available else available[0]
     chosen = ui.select("How should kit subagents pick their Claude model?", choices, default=default)
     if chosen is None:
         return 130
-    if chosen != s.profile.name:
+    if chosen != saved:
         # A different profile starts clean; the acknowledgements belong to the accounts, not to a profile, and the
         # tools ticked on the first screen travel along. Keeping the same profile keeps the saved team with it
         # (customizations, composed team, lanes), which a re-run used to drop (ADR-0009).
@@ -2151,11 +2175,11 @@ def _step6_single_model_profile(s: state.SetupState) -> int:
 def _single_model_executors(s: state.SetupState) -> dict:
     """Executors for single-model mode: the chosen single-model profile, else the default one."""
     available = profiles.list_profiles(mode="single-model")
-    base_name = s.profile.name if s.profile.name in available else (
+    base_name = profile_names.canonical(s.profile.name) if profile_names.canonical(s.profile.name) in available else (
         _single_default_profile(s) if _single_default_profile(s) in available else "")
     if not base_name:
         return {"by_role": {}}
-    base = profiles.load_profile(base_name)
+    base = profiles.load_profile(base_name, "single-model")
     if s.profile.customized and s.profile.customizations:        # a composed uniform team (ADR-0006)
         base = profiles.merge_customizations(
             base, {k: v for k, v in s.profile.customizations.items() if k in profiles.KNOWN_ROLES})
@@ -2442,10 +2466,10 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         return 0
     if not (want or preview):
         return 0
-    name = profiles.saved_or_recommended(s.profile.name) if s.mode == "multi-model" else (
+    name = profiles.saved_or_recommended(s.profile.name, s.backend) if s.mode == "multi-model" else (
         s.profile.name or _single_default_profile(s))
     try:
-        doc = profiles.load_profile(name)
+        doc = profiles.load_profile(name, "multi-model" if s.mode == "multi-model" else "single-model")
     except FileNotFoundError:
         ui.error(f"--lanes: profile {name!r} not found")
         return 2
@@ -2608,7 +2632,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
 
     # Build the final executors dict
     if s.mode == "multi-model":
-        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name))
+        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name, s.backend), "multi-model")
         if s.profile.customized and s.profile.customizations:
             customizations = {k: v for k, v in s.profile.customizations.items()
                               if k in profiles.KNOWN_ROLES}
@@ -2956,7 +2980,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
 
     # Build executors
     if s.mode == "multi-model":
-        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name))
+        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name, s.backend), "multi-model")
         if s.profile.customized and s.profile.customizations:
             customizations = {k: v for k, v in s.profile.customizations.items()
                               if k in profiles.KNOWN_ROLES}
@@ -2984,7 +3008,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
     mode = s.mode
 
     # Role table
-    ui.role_table(profiles.role_table(executors_doc), title=f"Profile: {profiles.saved_or_recommended(s.profile.name)}")
+    ui.role_table(profiles.role_table(executors_doc), title=f"Profile: {profiles.saved_or_recommended(s.profile.name, s.backend)}")
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="ai-resources-dryrun-"))
     tmp_litellm_yaml = tmp_dir / "litellm.yaml"

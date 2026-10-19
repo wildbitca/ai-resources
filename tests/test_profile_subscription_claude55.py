@@ -53,8 +53,10 @@ def _doc() -> dict:
 
 def test_declares_single_model_and_is_listed_only_there():
     assert _doc()["mode"] == "single-model"
-    assert NAME in profiles.list_profiles(mode="single-model")
-    assert NAME not in profiles.list_profiles(mode="multi-model")
+    # ADR-0010 N4: the old name is an alias, so the list shows the new one (balanced) and hides the old.
+    assert NAME not in profiles.list_profiles(mode="single-model")
+    assert "balanced" in profiles.list_profiles(mode="single-model")
+    assert "balanced" not in profiles.list_profiles(mode="multi-model")
 
 
 def test_every_model_is_a_claude_alias():

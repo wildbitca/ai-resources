@@ -1,0 +1,206 @@
+"""ADR-0010 S4a/PD-6: preset ids, old names that still load, and the one resolver that knows the layout.
+
+An alias is admitted only when the old and the new name resolve to the same runtime team with the lane gates closed;
+the only permitted differences are the `name:` line and the ADR-0010 content fixes. Offline: no network, no real home."""
+from __future__ import annotations
+
+import argparse
+import ast
+import pathlib
+import types
+
+import pytest
+
+from ai_resources.setup import credentials, detection, profile_names, profiles, state, tools, ui, wizard
+
+REPO = pathlib.Path(__file__).resolve().parents[1]
+LEGACY = pathlib.Path(__file__).parent / "fixtures" / "setup_state" / "legacy_names"
+
+
+def _team(doc: dict) -> dict:
+    """What runs: every key except the display name."""
+    return {k: v for k, v in doc.items() if k != "name"}
+
+
+@pytest.mark.parametrize("old,new", sorted(profile_names.ALIASES.items()))
+def test_an_old_name_and_its_new_name_resolve_to_the_same_runtime_team(old, new):
+    """AC-S4a. The gates are closed in the shipped tree, so the lanes block is read as declared."""
+    from ai_resources import agy_lane_gates
+    assert not agy_lane_gates.all_proven()
+    mode = "multi-model" if new.startswith("gateway/") else "single-model"
+    assert _team(profiles.load_profile(old)) == _team(profiles.load_profile(new, mode))
+    assert profiles.to_executors(profiles.load_profile(old))["by_role"] == \
+        profiles.to_executors(profiles.load_profile(new, mode))["by_role"]
+
+
+def test_a_bare_preset_id_without_a_mode_raises_the_named_error():
+    """AC-S4e."""
+    for preset in profile_names.PRESET_IDS:
+        with pytest.raises(profile_names.ProfileModeRequired):
+            profiles.load_profile(preset)
+    assert profiles.load_profile("balanced", "single-model")["by_role"]
+
+
+def test_a_preset_id_resolves_to_the_family_of_its_mode():
+    root = pathlib.Path("/kit/profiles")
+    single = profile_names.resolve("performance", "single-model", root)
+    multi = profile_names.resolve("performance", "multi-model", root)
+    assert single != multi
+    assert profile_names.canonical("performance-claude-55") == "gateway/performance"
+    # An old name already says which family it was, whatever mode the caller passes.
+    assert profile_names.resolve("performance-claude-55", None, root) == multi
+    assert profile_names.resolve("subscription-performance", None, root) == single
+
+
+def test_old_names_load_without_a_mode():
+    for old in profile_names.ALIASES:
+        assert profiles.load_profile(old)["by_role"]
+
+
+def test_the_renamed_preset_key_is_still_accepted():
+    assert profile_names.preset_key("low-pricing") == "low-cost"
+    assert profile_names.preset_key("balanced") == "balanced"
+    s = state.SetupState()
+    assert wizard.PRESET_PROFILES["cli"]["low-pricing"] == wizard.PRESET_PROFILES["cli"]["low-cost"]
+    assert wizard.preset_profile(s, "low-pricing") == wizard.preset_profile(s, "low-cost")
+
+
+def test_list_profiles_hides_aliases_and_shows_the_new_names():
+    single = profiles.list_profiles(mode="single-model")
+    multi = profiles.list_profiles(mode="multi-model")
+    for old, new in profile_names.ALIASES.items():
+        assert old not in single + multi
+        assert new in (multi if new.startswith("gateway/") else single)
+    for kept in ("claude-native", "balanced-claude-55", "openrouter-balanced", "all-claude", "measured-best"):
+        assert kept in single + multi
+
+
+def test_legacy_names_load_their_own_file():
+    """AC-S4d: their content differs from the new preset, so they are not aliases."""
+    for name in profile_names.LEGACY_PRESET:
+        assert name not in profile_names.ALIASES
+        assert profiles.load_profile(name)["name"] == name
+
+
+def test_recommended_profile_for_a_state_with_no_profile_is_unchanged():
+    assert profiles.saved_or_recommended("", "litellm") == "balanced-claude-55"
+    assert profiles.saved_or_recommended("", "openrouter") == profiles.recommended_profile("openrouter")
+    assert profiles.saved_or_recommended("x", "litellm") == "x"
+
+
+def test_every_load_profile_call_site_is_accounted_for():
+    """AC-S4e: a call that loads a name without a mode may only receive a name that is not a bare preset id. The
+    sites below are the ones that do; any other call must pass the mode."""
+    allowed_without_mode = {
+        ("setup/cockpits/claude.py", "'claude-native'"),
+        ("scoring/flow.py", "name"),                 # BASELINE_PROFILE / a shipped reference name
+        ("setup/profiles.py", "name, mode"),         # load_profile itself
+    }
+    found = set()
+    unaccounted = []
+    for path in sorted((REPO / "scripts" / "ai_resources").rglob("*.py")):
+        rel = path.relative_to(REPO / "scripts" / "ai_resources").as_posix()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "load_profile"):
+                continue
+            has_mode = len(node.args) >= 2 or any(k.arg == "mode" for k in node.keywords)
+            if has_mode:
+                continue
+            key = (rel, ast.unparse(node.args[0]) if node.args else "")
+            found.add(key)
+            if key not in allowed_without_mode:
+                unaccounted.append((rel, node.lineno, key[1]))
+    assert not unaccounted, unaccounted
+
+
+# --- saved states per old name and row ----------------------------------------------------------------------------
+
+EXPECTED_PRESET = {
+    "subscription-claude-55": "balanced", "subscription-performance": "performance",
+    "subscription-economy": "low-cost", "performance-claude-55": "performance", "economy-claude-55": "low-cost",
+    "claude-native": "balanced", "balanced-claude-55": "balanced", "openrouter-balanced": "balanced",
+}
+FIXTURES = sorted(LEGACY.glob("*.yaml"))
+
+
+def test_one_fixture_per_old_name_and_row():
+    assert len(FIXTURES) == 15
+    seen = {p.stem.split("__")[1] for p in FIXTURES}
+    assert seen == set(EXPECTED_PRESET)
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    h = tmp_path / "home"
+    (h / "xdg").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(h))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(h / "xdg"))
+    return h
+
+
+def _seed(path):
+    state.config_root().mkdir(parents=True, exist_ok=True)
+    state.state_path().write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
+def test_the_preset_question_defaults_to_the_preset_of_an_old_name(home, path):
+    """AC-S4c: never Custom."""
+    _seed(path)
+    s = state.load()
+    assert s.profile.name == path.stem.split("__")[1]
+    assert wizard._preset_default(s) == EXPECTED_PRESET[s.profile.name]
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
+def test_a_non_interactive_dry_run_keeps_the_saved_profile_and_loads_its_team(home, monkeypatch, path, capsys):
+    """AC-S4b: the saved state is replayed with --dry-run: the answers and the team are as before, nothing is
+    rewritten, and an old name prints its new one once."""
+    _seed(path)
+    before_text = state.state_path().read_text(encoding="utf-8")
+    want = state._to_dict(state.load())
+    monkeypatch.setattr(ui, "_NON_INTERACTIVE", False)
+    monkeypatch.setattr(ui, "require_deps", lambda: None)
+    monkeypatch.setattr(ui, "banner", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "detected_table", lambda rows: None)
+    monkeypatch.setattr(detection, "detect_all_cockpits", lambda: {
+        cid: types.SimpleNamespace(installed=True, version="1.0", binary_path=f"/opt/{cid}", name=cid)
+        for cid in want["cockpits"]})
+    monkeypatch.setattr(detection, "detect_container_runtime",
+                        lambda: ("docker", types.SimpleNamespace(installed=False, version="", binary_path="")))
+    monkeypatch.setattr(tools, "offer", lambda *a, **k: [])
+    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "stored")
+    monkeypatch.setattr(credentials, "get_claude_code_keychain_key", lambda: None)
+    seen = {}
+    monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
+    monkeypatch.setattr(wizard, "_step10_verify", lambda s, t: 0)
+    monkeypatch.setattr(wizard, "_print_completion", lambda s: None)
+    args = argparse.Namespace(dry_run=True, yes=False, non_interactive=True, profile="", lanes=False, no_lanes=False,
+                              lanes_dry_run=False, lanes_orchestrator=[], allow_unverified=False)
+    assert wizard.run(args) == 0
+    got = state._to_dict(seen["s"])
+    # The profile step may restate an old name under its new one in memory; it is the same team, and the file on
+    # disk (checked below) is not rewritten by a dry run.
+    assert profile_names.canonical(got["profile"]["name"]) == profile_names.canonical(want["profile"]["name"])
+    assert got["profile"]["customized"] is False
+    assert state.state_path().read_text(encoding="utf-8") == before_text
+    out = capsys.readouterr().out
+    old = want["profile"]["name"]
+    note = f"Profile {old} is now called {profile_names.canonical(old)}"
+    assert (note in out) == (old in profile_names.ALIASES)
+
+
+def test_a_real_run_saves_the_new_name_for_an_alias_only(home):
+    s = state.SetupState()
+    s.profile.name = "subscription-economy"
+    assert profile_names.canonical(s.profile.name) == "low-cost"
+    for kept in ("claude-native", "balanced-claude-55", "openrouter-balanced", "quality-first"):
+        assert profile_names.canonical(kept) == kept
+    # The save line in wizard._run is `s.profile.name = profile_names.canonical(s.profile.name)`.
+    src = pathlib.Path(wizard.__file__).read_text(encoding="utf-8")
+    assert "s.profile.name = profile_names.canonical(s.profile.name)" in src
+
+
+def test_the_flag_path_accepts_an_old_profile_name_through_the_listing():
+    assert profile_names.canonical("economy-claude-55") in profiles.list_profiles(mode="multi-model")

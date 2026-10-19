@@ -33,8 +33,8 @@ def _profile(monkeypatch):
     monkeypatch.setattr(lanes_render, "AGY_LANE_ADR_ACCEPTED", True)
     real = profiles.load_profile
 
-    def load(name):
-        doc = copy.deepcopy(real(name))
+    def load(name, mode=None):
+        doc = copy.deepcopy(real(name, mode))
         lanes = doc.get("lanes")
         if not lanes:
             return doc

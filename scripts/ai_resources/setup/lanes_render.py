@@ -582,7 +582,7 @@ def current_by_role(s: "state.SetupState") -> dict[str, Any]:
                     return dict(doc.get("by_role") or {})
             except (OSError, yaml.YAMLError):
                 pass
-        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name))
+        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name, s.backend), "multi-model")
         if s.profile.customized and s.profile.customizations:
             base = profiles.merge_customizations(
                 base, {k: v for k, v in s.profile.customizations.items() if k in profiles.KNOWN_ROLES})
