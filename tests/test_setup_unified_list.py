@@ -236,7 +236,7 @@ def test_cursor_login_is_refused_when_cursor_is_not_detected_at_all(monkeypatch)
     assert tools._run_login("cursor") is False and ran == []
 
 
-@pytest.mark.parametrize("tid", ["claude", "agy"])
+@pytest.mark.parametrize("tid", ["claude"])      # agy is only named, never started (ADR-0010 S14: NEVER_RUN_LOGIN)
 def test_a_bare_tool_sign_in_is_recorded_as_started_not_signed_in(monkeypatch, tid):
     _detect(monkeypatch, installed=(tid,))
     monkeypatch.setattr(subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 0))
@@ -246,6 +246,16 @@ def test_a_bare_tool_sign_in_is_recorded_as_started_not_signed_in(monkeypatch, t
     assert tools._run_login(tid) is True
     assert len(done) == 1 and done[0].startswith("started sign-in to") and "signed in to" not in done[0]
     assert any("finish signing in inside the tool" in m for m in said)
+
+
+def test_agy_sign_in_is_named_and_never_started(monkeypatch):
+    _detect(monkeypatch, installed=("agy",))
+    ran = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kw: ran.append(argv) or subprocess.CompletedProcess(argv, 0))
+    said = []
+    monkeypatch.setattr(ui, "info", said.append)
+    assert tools._run_login("agy") is False and ran == []
+    assert any("`agy`" in m for m in said)
 
 
 def test_a_login_subcommand_exit_zero_is_still_recorded_as_signed_in(monkeypatch):
