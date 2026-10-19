@@ -431,3 +431,44 @@ def test_redact_hides_the_value_after_a_quoted_or_suffixed_secret_key(text, secr
 
 def test_redact_keeps_ordinary_lines():
     assert oc.redact("channel telegram:default removed") == ["channel telegram:default removed"]
+
+
+# --- advisory: a capped disable output re-reads the list before FAILED vs succeeded -------------------------------------
+
+CAPPED = "x" * oc.MAX_BYTES
+
+
+def test_a_capped_remove_output_is_judged_by_a_fresh_listing_and_reported_done_when_the_account_is_off():
+    runner = Runner([LISTING, listing(("telegram", "default"))], remove_result=(1, CAPPED))
+    out, runner, _c = run(runner=runner)
+    assert out.status == oc.DONE and out.ran
+    assert runner.argvs[-1] == ["openclaw", "channels", "list", "--all", "--json"]
+    assert [a for a in runner.argvs if a[2:3] == ["list"]].__len__() == 2
+    text = "\n".join(out.lines)
+    assert "output exceeded the cap" in text and "turned off" in text and UNDO in text
+
+
+def test_a_capped_remove_output_is_failed_when_the_account_is_still_on():
+    runner = Runner([LISTING, LISTING], remove_result=(1, CAPPED))
+    out, runner, _c = run(runner=runner)
+    assert out.status == oc.FAILED and out.ran
+    assert "still listed as on" in "\n".join(out.lines)
+
+
+def test_a_capped_remove_output_is_failed_when_the_listing_cannot_be_read():
+    runner = Runner([LISTING], remove_result=(1, CAPPED))                       # the second listing answers rc 1
+    out, runner, _c = run(runner=runner)
+    assert out.status == oc.FAILED and "could not be read" in "\n".join(out.lines)
+
+
+def test_an_ordinary_failed_remove_does_not_re_read_the_list():
+    runner = Runner([LISTING], remove_result=(1, "boom"))
+    out, runner, _c = run(runner=runner)
+    assert out.status == oc.FAILED and len([a for a in runner.argvs if a[2:3] == ["list"]]) == 1
+
+
+def test_redact_of_a_huge_single_word_is_fast_and_bounded():
+    import time
+    start = time.monotonic()
+    out = oc.redact("x" * oc.MAX_BYTES)
+    assert time.monotonic() - start < 5 and len(out) == 1 and len(out[0]) <= oc.OUTPUT_WIDTH

@@ -31,8 +31,10 @@ LIST_ARGV = ("openclaw", "channels", "list", "--all", "--json")
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 TIMEOUT_S = 60
 MAX_BYTES = 256 * 1024
+CAP_MARGIN = 4096                    # the runner strips the kept text, so a capped answer can sit a little under the cap
 OUTPUT_LINES = 6
 OUTPUT_WIDTH = 200
+RAW_LINE_MAX = 4096
 ENV_KEEP = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
             "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")
 _SECRET_NAME = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential|auth)", re.I)
@@ -119,7 +121,9 @@ def redact(text: str, *, lines: int = OUTPUT_LINES, width: int = OUTPUT_WIDTH) -
     of `width` characters."""
     out: list[str] = []
     for raw in str(text or "").splitlines():
-        line = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", raw).strip()
+        # Only the head of a line is ever shown (`width`); cutting before the patterns run keeps a huge single-word
+        # answer (a capped 256 KiB output) from sending the secret patterns into quadratic backtracking.
+        line = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", raw[:RAW_LINE_MAX]).strip()
         if not line:
             continue
         for pattern in _SECRET_TEXT:
@@ -290,11 +294,23 @@ def execute(change: ChannelChange, *, runner: Runner, confirm: Callable[..., boo
     except Exception as exc:  # noqa: BLE001 - reported, not raised: Apply goes on
         rc, text = 1, type(exc).__name__
     detail = [f"  {line}" for line in redact(text)]
+    again = None
+    capped = rc == 1 and len(str(text).encode("utf-8", "replace")) >= MAX_BYTES - CAP_MARGIN
+    if capped:
+        # The runner kills the process group once the cap is hit and reports rc 1, so the remove may well have
+        # succeeded: read the list again, as the success path does, and report what it shows.
+        again = _enabled_keys(list_channels(runner))
+        if again is not None and change.key not in again:
+            rc = 0
+            detail.insert(0, "  the command output exceeded the cap and was stopped; the fresh listing shows the account off")
     if rc != 0:
         why = "timed out after 60 s" if rc == 124 else f"failed (exit {rc})"
+        if capped:
+            why += ("; its output exceeded the cap and " + ("the channel list could not be read again"
+                                                          if again is None else f"{shown} is still listed as on"))
         return Outcome(FAILED, (f"{shown}: turning it off {why}; check `openclaw channels list`", *detail,
                                 f"  {undo}"), True)
-    after = _enabled_keys(list_channels(runner))
+    after = again if capped else _enabled_keys(list_channels(runner))
     lines = [f"{shown}: turned off ({change.command})"]
     if after is None:
         lines.append("  the channel list could not be read afterwards; check `openclaw channels list`")
