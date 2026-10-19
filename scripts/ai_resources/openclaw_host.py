@@ -48,14 +48,43 @@ WATCHDOG_OFF = Path.home() / ".openclaw" / "watchdog.off"
 GATEWAY_UNIT = "openclaw-gateway.service"
 
 
+def _kill_group(proc: "subprocess.Popen") -> None:
+    """SIGKILL the child's whole process group (it was started in its own session), so a grandchild that holds the
+    pipe open dies with it; fall back to the child alone where the group is gone or not ours."""
+    import os
+    import signal
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def _reap(proc: "subprocess.Popen", seconds: float = 5.0) -> int | None:
+    """`proc.wait()` with a bound: after `seconds` the group is killed and one more bounded wait is made. None when the
+    process still cannot be reaped (it is then abandoned, never waited on forever)."""
+    try:
+        return proc.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+    try:
+        return proc.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        return None
+
+
 def _run_capped(argv: list[str], *, env: dict | None, timeout: float | None, cwd: str | None,
-                max_bytes: int) -> tuple[int, str]:
-    """Run `argv` and keep at most `max_bytes` of its output: the process is killed once the cap is reached, so a
-    huge output is never held in memory. The (successful) exit code is reported as 0 in that case."""
+                max_bytes: int, truncate_ok: bool = False) -> tuple[int, str]:
+    """Run `argv` and keep at most `max_bytes` of its output: the process group is killed once the cap is reached, so
+    a huge output is never held in memory. A capped output is a FAILURE (rc 1, the kept text returned) unless the
+    caller says a truncated read is fine (`truncate_ok`: then rc 0). On timeout the whole group is killed (124)."""
     import threading
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, env=env, cwd=cwd or str(Path.home()))
+                                stderr=subprocess.STDOUT, env=env, cwd=cwd or str(Path.home()),
+                                start_new_session=True)
     except FileNotFoundError:
         return 127, f"{argv[0]} not found"
     except OSError as e:
@@ -71,31 +100,37 @@ def _run_capped(argv: list[str], *, env: dict | None, timeout: float | None, cwd
                 return
             buf.extend(chunk)
         capped.set()
-        proc.kill()
+        _kill_group(proc)
 
     t = threading.Thread(target=reader, daemon=True)
     t.start()
     t.join(timeout)
     if t.is_alive():
-        proc.kill()
+        _kill_group(proc)
         t.join(5)
-        proc.wait()
+        _reap(proc)
         return 124, f"timed out after {timeout:g}s"
-    rc = proc.wait()
-    return (0 if capped.is_set() else rc), bytes(buf).decode("utf-8", errors="replace").strip()
+    rc = _reap(proc)
+    text = bytes(buf).decode("utf-8", errors="replace").strip()
+    if capped.is_set():
+        return (0 if truncate_ok else 1), text
+    if rc is None:
+        return 124, text or "process did not exit"
+    return rc, text
 
 
 def default_runner(argv: list[str], *, env: dict | None = None, timeout: float | None = 120,
                    input: str | None = None, cwd: str | None = None,
-                   max_bytes: int | None = None) -> tuple[int, str]:
+                   max_bytes: int | None = None, truncate_ok: bool = False) -> tuple[int, str]:
     """Run `argv`; (return code, combined output).
 
     127 is a missing binary and 124 a timeout (the coreutils `timeout` convention); any other
     OSError is 1. Every caller before the 124 split tested `rc == 0` only, so it is additive.
-    `max_bytes` keeps only that much output and stops the process there (for a read of untrusted text).
+    `max_bytes` keeps only that much output and stops the process there (for a read of untrusted text); hitting the
+    cap is a failure (rc 1) unless `truncate_ok` says a truncated read is acceptable.
     """
     if max_bytes is not None and input is None:
-        return _run_capped(argv, env=env, timeout=timeout, cwd=cwd, max_bytes=max_bytes)
+        return _run_capped(argv, env=env, timeout=timeout, cwd=cwd, max_bytes=max_bytes, truncate_ok=truncate_ok)
     try:
         r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, input=input,
                            env=env, cwd=cwd or str(Path.home()))

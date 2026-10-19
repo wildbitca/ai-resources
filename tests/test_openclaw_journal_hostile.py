@@ -97,13 +97,62 @@ def test_status_and_verify_never_name_a_host_that_failed_validation(capsys):
 def test_the_default_runner_stops_a_process_at_the_byte_cap():
     import sys as _sys
     code = "import sys\nsys.stdout.write('x' * 5_000_000)\nsys.stdout.flush()\n"
-    rc, out = host.default_runner([_sys.executable, "-c", code], max_bytes=100_000, timeout=20)
-    assert rc == 0 and len(out) == 100_000
+    rc, out = host.default_runner([_sys.executable, "-c", code], max_bytes=100_000, timeout=20, truncate_ok=True)
+    assert rc == 0 and len(out) == 100_000                  # the journal read: a truncated answer is acceptable
     rc, out = host.default_runner([_sys.executable, "-c", "print('short')"], max_bytes=100_000, timeout=20)
     assert rc == 0 and out == "short"
     rc, out = host.default_runner([_sys.executable, "-c", "import time; time.sleep(30)"], max_bytes=1000, timeout=1)
     assert rc == 124
     assert host.default_runner(["/no/such/binary"], max_bytes=10)[0] == 127
+
+
+def test_a_capped_output_is_a_failure_unless_the_caller_accepts_truncation():
+    import sys as _sys
+    code = "import sys\nsys.stdout.write('x' * 5_000_000)\nsys.stdout.flush()\n"
+    rc, out = host.default_runner([_sys.executable, "-c", code], max_bytes=100_000, timeout=20)
+    assert rc != 0 and len(out) == 100_000
+
+
+def test_a_timeout_kills_the_whole_process_group_and_returns_promptly(tmp_path):
+    """A shell that backgrounds a grandchild holding the pipe: killing only the child would leave it alive."""
+    import os as _os
+    import signal as _signal
+    import sys as _sys
+    import time as _time
+    pidfile = tmp_path / "grandchild.pid"
+    script = f"sleep 60 & echo $! > {pidfile}; wait"
+    start = _time.monotonic()
+    rc, _out = host.default_runner(["/bin/sh", "-c", script], max_bytes=1000, timeout=1)
+    assert rc == 124 and _time.monotonic() - start < 15
+    pid = int(pidfile.read_text())
+    deadline = _time.monotonic() + 5
+    while _time.monotonic() < deadline:
+        try:
+            _os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        _time.sleep(0.1)
+    else:
+        _os.kill(pid, _signal.SIGKILL)
+        raise AssertionError("the grandchild survived the timeout")
+
+
+def test_the_reap_wait_is_bounded(monkeypatch):
+    import subprocess as _sp
+
+    class Stuck:
+        pid = 2 ** 22 + 12345
+        calls = 0
+
+        def wait(self, timeout=None):
+            Stuck.calls += 1
+            assert timeout is not None, "an unbounded wait"
+            raise _sp.TimeoutExpired("x", timeout)
+
+        def kill(self):
+            pass
+
+    assert host._reap(Stuck(), 0.01) is None and Stuck.calls == 2
 
 
 # --- 2.2c, 6d / 6e ----------------------------------------------------------------------------------------------

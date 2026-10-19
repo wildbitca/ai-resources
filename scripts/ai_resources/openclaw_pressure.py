@@ -463,8 +463,8 @@ def read_journal_signals(runner: Runner, unit: str = UNIT) -> dict:
     try:
         # `max_bytes` tells the default runner to stop reading there; whatever any runner hands back is cut too.
         try:
-            rc, out = runner(argv, timeout=JOURNAL_SIGNAL_TIMEOUT_S, max_bytes=JOURNAL_SIGNAL_BYTES)
-        except TypeError:            # a runner that does not know `max_bytes`: the text is cut below instead
+            rc, out = runner(argv, timeout=JOURNAL_SIGNAL_TIMEOUT_S, max_bytes=JOURNAL_SIGNAL_BYTES, truncate_ok=True)
+        except TypeError:            # a runner that does not know `max_bytes` or `truncate_ok`: the text is cut below instead
             rc, out = runner(argv, timeout=JOURNAL_SIGNAL_TIMEOUT_S)
     except Exception:  # noqa: BLE001 - an unavailable journal is silence, never an error
         return {"available": False, "tls_hosts": [], "completions": 0, "close_failed": 0}
