@@ -367,12 +367,18 @@ def drift(lanes: Mapping[str, Any] | None, by_role: Mapping[str, Any]) -> list[d
     if not isinstance(lanes, Mapping):
         return []
     agents = lanes.get("agents") or {}
+    ids = model_pins.effective()
+    pinned: dict[str, set[str]] = {}
+    for r, texts in (lanes.get("pins") or {}).items():
+        pinned[r] = {f"openclaw-agent:{aid}" for aid in (_agent_id_of(str(x), ids) for x in texts or ()) if aid}
     for role, refs in sorted(lane_refs(lanes).items()):
         role_model = _model_of(by_role, role)
         if not role_model:
             continue
         for ref in refs:
             if not isinstance(ref, str) or not ref.startswith("openclaw-agent:"):
+                continue
+            if ref in pinned.get(role, set()):
                 continue
             aid = ref.split(":", 1)[1]
             agent = agents.get(aid)
@@ -520,7 +526,8 @@ def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
             for ref in candidates[role]:
                 if ref == lane.ref:
                     continue
-                one = scoring_lanes.resolve_lanes(by_role, usable, {role: [ref]}, {}, **kw)
+                one_pins = {role: [p for p in pins.get(role, ()) if p == ref]} if ref in pins.get(role, ()) else {}
+                one = scoring_lanes.resolve_lanes(by_role, usable, {role: [ref]}, {}, **{**kw, "pins": one_pins})
                 if role in one.blocked or one.roles.get(role) is None or one.roles[role].ref != ref:
                     continue
                 fallbacks.append({"lane": ref, "model": one.models.get(role, ""),
