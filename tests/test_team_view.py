@@ -226,3 +226,39 @@ def test_display_only_seconds_keep_held_and_off_and_do_not_activate_google_alone
     assert team_view.member_state("software-architect", ticked=False, acks=ack_, kind="second")[0] == "off"
     assert team_view.member_state("planner", ticked=True, acks=None, kind="second")[0] == "held"
     assert team_view.member_state("code-reviewer", ticked=True, acks=ack_, kind="second")[0] != "display-only"
+
+
+# --- ADR-0010 advisories: the display-only set follows the workflow, and display-only members never activate Google ---
+
+def _dispatched_second_roles():
+    import pathlib
+    import yaml
+    path = pathlib.Path(__file__).resolve().parents[1] / "workflows" / "feature-lanes.workflow.yaml"
+    steps = yaml.safe_load(path.read_text())["steps"]
+    return {s["subagent_type"] for s in steps if (s.get("execution_hints") or {}).get("lane_member") == "second"}
+
+
+def test_display_only_seconds_are_derived_from_the_feature_lanes_workflow():
+    dispatched = _dispatched_second_roles()
+    assert dispatched, "the workflow must keep at least one step with lane_member: second"
+    declared = {role for kind, role, _c in team_view.agy_members(balanced()) if kind == "second"}
+    assert team_view.DISPLAY_ONLY_SECONDS == frozenset(declared - dispatched)
+    assert not team_view.DISPLAY_ONLY_SECONDS & dispatched
+
+
+def test_only_display_only_gemini_members_ticked_does_not_report_google_active(monkeypatch, tmp_path):
+    root = fk.make_root(tmp_path)
+    fk.use(monkeypatch, root)
+    fk.write(root, fk.valid_doc(root))                         # a valid record: nothing is held
+    display_only = sorted(team_view.DISPLAY_ONLY_SECONDS)
+    doc = balanced()
+    doc = {**doc, "lanes": {**doc["lanes"], "roles": {}, "second": {r: doc["lanes"]["second"][r] for r in display_only}}}
+    rows = base_rows(doc)
+    mix = team_view.provider_mix(doc, rows, row="cli", ticked=True, acks=ack(BALANCED_ROLES))
+    assert set(mix.states.values()) == {"display-only"} and len(mix.states) == len(display_only)
+    assert "google" in mix.declared and "google" not in mix.active
+    assert mix.held == () and mix.lines == ()
+    # and the same team with a dispatching member added does activate it
+    full = balanced()
+    assert "google" in team_view.provider_mix(full, base_rows(full), row="cli", ticked=True,
+                                              acks=ack(BALANCED_ROLES)).active
