@@ -249,6 +249,49 @@ tokens leave `tools.deny` and their model leaves `models.providers.agy-cli-lane`
 breaker entry); start a new run after the quota resets. The breaker's patterns are empty until a probe run records
 the real error text.
 
+#### The probe window and the one record command (ADR-0010 N3)
+
+Everything the kit can do for Gemini is wired and held. The single remaining operator action is one probe window, one
+command and one commit.
+
+1. **Prepare.** In your normal `ai-resources setup` run, tick Antigravity on Your tools and sign the Google terms with the
+   roles of the Balanced starting team (explore, code-reviewer, planner, software-architect; the implementer stays
+   unticked). `ai-resources doctor` reports whether the stored acknowledgement lists them.
+2. **Announce and run the window** through the isolated harness `~/.cache/ai-resources-live-e2e/bin-agyprobe`, in a
+   directory named by its UTC stamp (for example `~/.cache/ai-resources-live-e2e/20261101T101010Z`). It covers V5, V6, V7,
+   V9-agy and V12; the isolated phase 2 merge gate (G0, with its heading added to ADR-0007 "Evidence", the heading text
+   containing the stamp); the measured cost per step (G6); your approval of the Google text and its sha256 (G7); and one
+   Claude Code Gemini tool-call probe through OpenRouter.
+3. **Record.** On a terminal, in the kit checkout: `ai-resources lanes gates record --run-dir <window dir>`. It refuses
+   an assume-yes flag, a non-TTY and a kit root that is not a git work tree. It lists the window's files with their sha256, shows each
+   stage and waits for the exact typed attestation (`PASS V5`, `PASS V6`, `PASS V7`, `PASS V9`, `PASS V12`, `PASS
+   merge-gate`, `PASS operator`, `APPROVE G7`, and `PASS cell claude/google/openrouter`); anything else leaves that stage
+   unproven. It writes the file `agy_gate_evidence.json` in the kit's `data` directory (under `scripts/ai_resources`) and prints the commit command. It never runs
+   `agy` or `openclaw`, never touches the network and never commits. An agent session cannot write the file (a hook denies
+   it); only this command does.
+4. **Commit it.** `git add` that file and `git commit` it with the message the command printed. Until the
+   commit the lane stays held: in a git kit root the loader reads the record only when it is tracked and equal to `HEAD`.
+5. **Reach the installed kit.** The running kit is the Homebrew install, not the checkout. The record reaches it through
+   your normal release and `brew upgrade`; this plan publishes nothing. Then re-run `ai-resources setup`.
+
+`ai-resources lanes gates` (read-only) and `ai-resources doctor` show the state, the commit that last touched the record
+and its author.
+
+Before the record (after this change lands), on the cli Balanced starting team:
+
+```
+Gemini held: Antigravity gates 0/8 proven (G6, G7 partial). Next: run the probe window, then ai-resources lanes gates record
+explore   google gemini-3.8-flash-high via Antigravity [unconfirmed slug] (held)
+Antigravity lane: held, gates 0/8 proven (G6, G7 partial); evidence record: absent; operator action: probe window, then ai-resources lanes gates record
+Claude Code x Google via OpenRouter: unverified
+```
+
+After the record (kit at the evidence commit, setup re-run): the cells read `google <slug> via Antigravity (on)` with no
+`[unconfirmed slug]` tag and no held line; the OpenRouter opt-in question disappears because the cell is verified;
+writers stay on `claude-cli`; and doctor prints
+`Antigravity lane: on, gates 8/8 proven (record <sha8>, run <id>, <utc>, <operator>)` and
+`Claude Code x Google via OpenRouter: verified`.
+
 **What teardown cannot undo.** Data already sent to Google; agy conversation and memory state in a shared
 `~/.gemini`; `trustedFolders.json` entries; quota consumed; any account-level ToS consequence; files a skip-permissions
 shell wrote outside the repo and the tripwire list; OAuth credentials in a kit-owned agy home unless you confirm

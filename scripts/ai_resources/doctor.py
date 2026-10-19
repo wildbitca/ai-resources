@@ -56,6 +56,59 @@ def _check_antigravity_quota(s: state.SetupState) -> int:
     return issues
 
 
+def _balanced_agy_roles() -> list[str]:
+    """The roles the shipped Balanced starting team would hand to Antigravity (its Gemini members), in role order."""
+    from .setup import profiles
+    try:
+        block = profiles.load_profile("balanced", "single-model").get("lanes") or {}
+    except (FileNotFoundError, RuntimeError):
+        return []
+    found = {role for key in ("roles", "second") for role, cands in (block.get(key) or {}).items()
+             for c in cands or () if isinstance(c, str) and c.startswith("agy:gemini-")}
+    return [r for r in profiles.KNOWN_ROLES if r in found]
+
+
+def _check_antigravity_lane(s: state.SetupState) -> int:
+    """Doctor sub-check 4f: the Antigravity lane in one place (ADR-0010 S8). Read-only: it reads the gates, the committed
+    evidence record, the stored Google acknowledgement and the compatibility matrix. It never runs agy and starts no
+    process of its own; the backend-registration check reuses the plugin probe sub-check 4c already runs, and only once
+    every gate is proven. Returns the number of new issues (an invalid record is one)."""
+    from . import agy_lane_gates
+    from .setup import compat, lanes_render, team_view
+    issues = 0
+    info = agy_lane_gates.summary()
+    record = info["record"]
+    ui.info(agy_lane_gates.summary_line())
+    if record.status == "invalid":
+        ui.warn(f"The Antigravity evidence record is ignored: {record.reason}")
+        issues += 1
+    elif record.status == "valid" and record.commit:
+        ui.detail(f"Evidence record last touched by commit {record.commit[:8]}, author {record.author}")
+    verified = compat.claude_google_openrouter_verified()
+    ui.detail("Claude Code x Google via OpenRouter: " + ("verified" if verified else "unverified"))
+    ack = lanes_render.valid_acks(s.profile.lane_acks).get("google")
+    listed = set((ack or {}).get("roles") or ())
+    wanted = _balanced_agy_roles()
+    missing = [r for r in wanted if r not in listed]
+    if ack is None:
+        ui.detail("Google acknowledgement: none stored (Antigravity roles in Balanced: " + ", ".join(wanted) + ")")
+    elif missing:
+        ui.detail("Google acknowledgement lists " + (", ".join(sorted(listed)) or "no role")
+                  + "; Balanced also uses: " + ", ".join(missing))
+    else:
+        ui.detail("Google acknowledgement lists every Balanced Antigravity role: " + ", ".join(wanted))
+    if info["on"]:
+        from .setup.cockpits import openclaw as _oc
+        ui.detail("agy-cli-lane backend: " + ("registered" if _oc.backend_registered("agy-cli-lane")
+                                              else "not registered in the running gateway"))
+    ticked = "agy" in ((s.profile.customizations or {}).get("__targets__") or {}).get("selected", [])
+    action = team_view.next_action(gates_on=info["on"], record_status=record.status, agy_ticked=ticked or ack is not None,
+                                   missing_roles=missing if ack is not None else [])
+    if action:
+        ui.detail("Next: " + action)
+    return issues
+
+
 # MCP children under the gateway unit (ADR-0007 OQ-5 follow-up FU-1). Read-only: nothing is ever killed.
 MCP_CHILD_WARN = 24
 _MCP_SERVERS = ("supabase", "engram")
@@ -317,6 +370,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # 4e. MCP server children under the gateway unit (only on a host that enabled subscription lanes).
     if state.lanes_enabled(s):
         issues += _check_mcp_children()
+
+    # 4f. The Antigravity lane: gates, evidence record, Google acknowledgement, OpenRouter Google cell.
+    issues += _check_antigravity_lane(s)
 
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")

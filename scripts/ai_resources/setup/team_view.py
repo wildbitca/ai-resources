@@ -59,3 +59,17 @@ def degrade_unrouted(executors: Mapping[str, Any], providers: Mapping[str, Any] 
     if stuck:
         lines.append("Google is not enabled for this gateway and has no Claude fallback for: " + ", ".join(stuck))
     return out, lines
+
+
+def next_action(*, gates_on: bool, record_status: str, agy_ticked: bool, missing_roles: list[str]) -> str:
+    """The single next step for the operator, in the order the lane opens: sign-in and terms, then the probe window and
+    its record, then a commit. "" when nothing is left. One source for the team view, doctor and `lanes gates`."""
+    if gates_on and not missing_roles:
+        return ""
+    if record_status == "invalid":
+        return "fix or restore the evidence record, then commit it"
+    if not gates_on:
+        return "run the probe window, then ai-resources lanes gates record"
+    if not agy_ticked:
+        return "tick Antigravity in ai-resources setup and sign the Google acknowledgement"
+    return "extend the Google acknowledgement to: " + ", ".join(missing_roles)
