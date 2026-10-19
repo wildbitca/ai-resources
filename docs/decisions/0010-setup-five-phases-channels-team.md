@@ -1,12 +1,13 @@
 # ADR-0010: Setup in five phases, unified team presets, disable-only channels (LiteLLM leaves the new-setup choice)
 
-**Status**: Proposed. Plan: `.agent-output/planner/setup-five-steps-plan.md`, revision 3, approved by the operator.
-Implemented so far: S1 (checker-independence test), S3 (read-only channel inventory), S5 (LiteLLM leaves the wizard),
-S9 (five-phase headers), S11 (main-tool step, channel intent without execution), S13 (Audio step), S14 (sign-in) and
-S15 (More phase). The software-architect and security-auditor sign-offs that plan step S0 requires are NOT recorded
-(see "Sign-offs"), so this ADR cannot become Accepted and the steps that wait on it are not implemented: S2 (checker
-fixes), S4a/S4b (naming layer), S6 (Balanced content), S7 (evidence mechanism), S12 (disable executor), and S8 and
-S10, which depend on S7 and S6.
+**Status**: Proposed: conditions applied, awaiting re-review. Plan: `.agent-output/planner/setup-five-steps-plan.md`,
+revision 3, approved by the operator. The software-architect and security-auditor reviewed this ADR on 2026-10-19 with
+the verdict APPROVE WITH CONDITIONS; the conditions are written into "Review conditions (architect, security-auditor,
+2026-10-19)" below and applied by the steps that carry them. Nobody has re-reviewed the result, so this ADR is NOT
+Accepted and its sign-offs are not self-signed.
+Implemented so far: S1 (checker-independence test), S2 (checker fixes), S3 (read-only channel inventory), S5 (LiteLLM
+leaves the wizard; see the S5 note), S9 (five-phase headers), S11 (main-tool step, channel intent without execution),
+S13 (Audio step), S14 (sign-in) and S15 (More phase). See "Implementation status" at the end for the later steps.
 **Date**: 2026-10-18
 **Decision makers**: operator (N1-N5 answered, D1-D3 given), implementer (record only).
 **Amends**: [ADR-0001](0001-model-pins-and-auto-update.md) d3, [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md),
@@ -59,8 +60,8 @@ and breaks no schema. The score is 4/10 because:
 ## N2: Gemini split by role (PD-1)
 
 Rules: a checker (verifier, security-auditor) never shares a family with any writer and never takes a second member;
-agy is never a writer (only `claude-cli` is a writable lane); agy Gemini goes only on roles the stored Google
-acknowledgement lists.
+presets carry no agy writer (every preset keeps agy off the writer roles); Custom and gate-based unlocking of a
+writable lane stay governed by ADR-0007. Agy Gemini goes only on roles the stored Google acknowledgement lists.
 
 `balanced` on the cli row (Gemini over Antigravity lanes, held until the gates are proven):
 
@@ -149,9 +150,9 @@ bounded output; a re-list afterwards; runs after the config patch and lane write
 
 | ADR | Amendment | Approvers |
 |---|---|---|
-| 0001 d3 | the kit never patches `channels.*`; channel accounts are disabled only by running the OpenClaw CLI after per-change confirmation | operator (approved per N5); security-auditor PENDING |
-| 0003 | carve-out: a confirmed disable may stop that account and restart its listener, never the Gateway | operator (approved); security-auditor PENDING |
-| 0007 §8, §11 | the checker fix and the gateway fallback rule; the Google role list adds the planner and software-architect seconds; presets carry no agy writer candidates; `EVIDENCE` is merged from a validated committed record | operator; software-architect PENDING; security-auditor PENDING |
+| 0001 d3 | the kit never patches `channels.*`; channel accounts are disabled only by running the OpenClaw CLI after per-change confirmation | operator (approved per N5); security-auditor APPROVE WITH CONDITIONS, awaiting re-review |
+| 0003 | carve-out: a confirmed disable may stop that account and restart its listener, never the Gateway | operator (approved); security-auditor APPROVE WITH CONDITIONS, awaiting re-review |
+| 0007 §8, §11 | the checker fix and the gateway fallback rule; the Google role list adds the planner and software-architect seconds; presets carry no agy writer candidates; `EVIDENCE` is merged from a validated committed record | operator; software-architect and security-auditor APPROVE WITH CONDITIONS, awaiting re-review |
 | 0008 | gateway choice: LiteLLM load-only, with the 4/10 evidence | operator |
 | 0009 §2, §8 | five phases; held/on cells and the restore-saved-tick rule | operator |
 
@@ -161,14 +162,69 @@ Channels-rule restatements that S12 re-words (line numbers re-checked before edi
 `profiles/openclaw-host.json5`. No gate symbol (`GATES`, `AGY_LANE_ADR_ACCEPTED`, `CODEX_LANE_ADR_ACCEPTED`,
 `WRITABLE_BACKENDS`) changes in any step.
 
+## Review conditions (architect, security-auditor, 2026-10-19)
+
+Both reviewers returned APPROVE WITH CONDITIONS. Status after this section: **Proposed, conditions applied, awaiting
+re-review.** The implementer wrote the conditions here; it did not sign for either reviewer.
+
+### Operator decisions taken with the review
+
+- **(a) Evidence record, hook plus strict loader (S7).** A PreToolUse hook rule denies Write, Edit and shell writes to
+  `scripts/ai_resources/data/agy_gate_evidence.json` in every agent session, not only lane children. The loader fails
+  closed when the file is untracked, or differs from `HEAD`, in a git kit root. `doctor` and `lanes gates` show the
+  last-touching commit and its author. A hand-written JSON that passes the schema but was not made by
+  `lanes gates record` is rejected (test).
+- **(b) Wording.** "Agy is never a writer" is read as "presets carry no agy writer". Custom and gate-based unlocking
+  stay governed by ADR-0007 and are not changed here.
+- **(c) Gemini second opinions on the planner and the software-architect are approved.** This widens the Google
+  acknowledgement role list (ADR-0007 section 9: adding a role means re-signing). An acknowledgement stored before
+  lists neither role, so it is not valid for them and the operator is asked again through the existing "Extend the
+  Google acknowledgement to: planner, software-architect?" prompt (default No, never auto-answered). `ACK_TEXT` and
+  its hash do not change. This **reverses OQ-P3-1 (pre-selection)** of the phase 3 plan, which left the planner, the
+  software-architect and explore unticked: the terms checklist now pre-ticks them; the implementer stays unticked.
+  The planner and architect seconds are **display-only**: no workflow step with `lane_member: second` is added for them
+  (adding workflow steps changes generated skills and the dispatch contract and is not risk-free), so they show in the
+  team table and are held, and nothing dispatches them until a later change adds those steps.
+- **(d) S5 note.** S5 (LiteLLM leaves the wizard) landed before this ADR was signed off, with the operator's explicit
+  approval in the session. It is one isolated commit and `git revert` undoes it.
+
+### Architect conditions
+
+- **C3. Agy slug confirmation is per slug.** `AGY_LANE_MODELS_CONFIRMED` stays a constant `False`. A slug counts as
+  confirmed when it is in the record's `confirmed_slugs` (G1), so the "[unconfirmed slug]" tag is decided per slug.
+  `AGY_LANE_MODELS_CONFIRMED` joins the gate symbols that never change by hand (with `GATES`, `AGY_LANE_ADR_ACCEPTED`,
+  `CODEX_LANE_ADR_ACCEPTED`, `WRITABLE_BACKENDS`); the constants are never flipped.
+- **C4. Lazy evidence loader.** The loader is an explicit cached function; `EVIDENCE` stays a literal; there is no
+  import-time I/O. The manifest listing with file hashes is committed with the record. The G0 anchor must name a
+  heading, in the ADR-0007 Evidence section, that contains the record's `run_id`.
+- **C6. No saved disable intent.** The channel default comes from the current inventory on every run. Nothing about a
+  disable decision is stored in the state. The `agy_lane_gates.py` docstring is reworded to describe the loader and
+  the hand-edit flow accurately.
+
+### Security conditions (S12)
+
+- Re-list immediately before each change and plan only accounts that are still enabled in the fresh list; refuse when
+  the list is unreadable; re-list after each change and report any difference from what was expected.
+- The undo line says "re-add with credentials" unless re-adding without credentials is proven. No openclaw command is
+  run other than the single read-only `openclaw channels list --all --json` fixture capture, and only if the fixture
+  is not already captured.
+- Names are validated with `fullmatch`, never with `$`.
+- The inventory read has the executor's cap (`max_bytes`), scrubbed environment and 60 s timeout.
+- The `--agent` field is removed from the argv.
+- `execute()` itself checks every guard (TTY, not `--dry-run`, not `--yes`, the cockpit is OpenClaw, reload rules
+  readable and hot); the wizard does not rely on a caller having checked.
+- No secret appears in a log or a print (tested). The extra Telegram confirm defaults to No and is never auto-answered.
+  A stale `_channel_inventory` is cleared when a re-list comes back empty.
+
 ## Sign-offs
 
 | Reviewer | Scope | Verdict |
 |---|---|---|
-| software-architect | this ADR; pre-checks S1 agy translation, S4a single-row lanes, S6 test ban, S7 manifest and packaging, S11 writes, S13 flow | NOT RECORDED: the implementing session had no way to spawn a reviewer subagent |
-| security-auditor | this ADR, channel restatements; later S7 and S12 | NOT RECORDED: same reason |
+| software-architect | this ADR; pre-checks S1 agy translation, S4a single-row lanes, S6 test ban, S7 manifest and packaging, S11 writes, S13 flow | APPROVE WITH CONDITIONS (2026-10-19); conditions applied, awaiting re-review |
+| security-auditor | this ADR, channel restatements; S7 and S12 | APPROVE WITH CONDITIONS (2026-10-19); conditions applied, awaiting re-review |
 
-Until both verdicts are recorded here, S2, S4a, S4b, S6, S7 and S12 do not start (plan S0).
+The implementing session cannot spawn a reviewer, so it records the verdicts it was given and the conditions it
+applied; it does not sign. This ADR stays Proposed until both reviewers re-review the implemented result.
 
 ## Rollback
 
