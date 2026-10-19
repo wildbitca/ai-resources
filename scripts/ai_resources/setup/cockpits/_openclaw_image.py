@@ -408,3 +408,61 @@ def _prompt_account(s: state.SetupState, route: Route, view: AccountView) -> str
     ui.info(f"OpenClaw has no sign-in for {route.label} yet. At Apply you can sign in through OpenClaw "
             f"(its own prompt, on your terminal); setup never sees the key.")
     return SIGN_IN_AT_APPLY
+
+
+# --- the sign-in hand-off to OpenClaw (plan I9) ---------------------------------------------------------------------------
+
+SIGN_IN_TIMEOUT_S = 1200
+PRESENT, PRINTED, DECLINED, FAILED, SIGNED_IN, NOT_NEEDED = (
+    "present", "printed", "declined", "failed", "signed-in", "not-needed")
+
+
+class SignInResult(NamedTuple):
+    status: str
+    command: str = ""
+    profile_id: str = ""                      # an id only, never a value
+    exit_code: int = 0
+
+
+def sign_in_for(route: Route, method: str = "") -> tuple[list[str], str]:
+    """`(argv, profile id the command creates)` for `route`, or `([], "")` when no provider id is established. The argv
+    carries the provider id and nothing else: no key, no token, no stdin. For a route with two methods `method` picks one
+    (`oauth` or `api-key`). `paste-api-key` names its profile `<provider>:manual` (docs/cli/models.md:390); the OAuth login
+    does not say, so no profile id is claimed for it (teardown then offers no sign-out for it)."""
+    use_oauth = (method == "oauth") if len(route.auth) > 1 else ("oauth" in route.auth and "api-key" not in route.auth)
+    if use_oauth and route.login_provider:
+        return ["openclaw", "models", "auth", "login", "--provider", route.login_provider], ""
+    if not use_oauth and route.key_provider:
+        return ["openclaw", "models", "auth", "paste-api-key", "--provider", route.key_provider], f"{route.key_provider}:manual"
+    return [], ""
+
+
+def ensure_account(route: Route, view: AccountView, *, method: str = "", run, interactive: bool, confirm,
+                   dry_run: bool, say=lambda msg: None) -> SignInResult:
+    """Hand the credential to OpenClaw, never take it. Runs `openclaw models auth ...` with the operator's own terminal
+    (the caller's `run(argv)` must inherit stdin/stdout/stderr: no capture, no `input=`), only on a real interactive Apply,
+    only when the gateway does not see a credential, only after a default-No confirm. Everything else prints the command.
+    A non-zero exit is reported by code only and the caller writes no config."""
+    if route.kind != "route" or view.gateway_sees_it:
+        return SignInResult(PRESENT if view.gateway_sees_it else NOT_NEEDED)
+    argv, profile_id = sign_in_for(route, method)
+    command = " ".join(argv)
+    if not argv:
+        say(f"{route.label}: sign in through OpenClaw yourself ({route.requires or 'see docs/tools/image-generation.md'}); "
+            "setup has no established provider id for it.")
+        return SignInResult(PRINTED)
+    if dry_run:
+        say(f"would run: {command}")
+        return SignInResult(PRINTED, command)
+    if not interactive:
+        say(f"{route.label} has no sign-in in OpenClaw yet. Run on your terminal: {command}")
+        return SignInResult(PRINTED, command)
+    if not confirm(f"Sign in to {route.label} through OpenClaw now? OpenClaw asks for the credential on this terminal; "
+                   "setup never sees it.", default=False):
+        say(f"Not signed in. Run on your terminal when ready: {command}")
+        return SignInResult(DECLINED, command)
+    rc = run(argv)
+    if rc != 0:
+        say(f"OpenClaw sign-in exited with code {rc}; the image model was not changed.")
+        return SignInResult(FAILED, command, "", rc)
+    return SignInResult(SIGNED_IN, command, profile_id)

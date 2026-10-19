@@ -695,8 +695,34 @@ def _confirm_replace_image(current: Any, new_ref: str) -> bool:
                               "Setup puts your value back on teardown.")
 
 
+def _image_auth_run(argv: list[str]) -> int:
+    """Run `openclaw models auth ...` on the operator's own terminal: stdin, stdout and stderr are inherited, nothing is
+    captured and nothing is piped in, so the credential goes from the keyboard to OpenClaw and the kit never sees it."""
+    binary = shutil.which("openclaw")
+    if not binary:
+        return 127
+    try:
+        return subprocess.run([binary, *argv[1:]], cwd=str(Path.home()), timeout=image.SIGN_IN_TIMEOUT_S,
+                              check=False).returncode
+    except subprocess.TimeoutExpired:
+        return 124
+    except OSError:
+        return 1
+
+
 def _image_sign_in(s: state.SetupState, route: Any, *, dry_run: bool) -> bool:
     """Hand the sign-in to OpenClaw (plan I9). True when the config patch may go on."""
+    accounts, names = _image_accounts()
+    view = image.provider_account(route, accounts, names)
+    method = s.openclaw.image_account if s.openclaw.image_account in route.auth else ""
+    interactive = (not dry_run) and not ui.is_non_interactive() and ui.stdin_is_a_terminal()
+    res = image.ensure_account(route, view, method=method, run=_image_auth_run, interactive=interactive,
+                               confirm=ui.confirm, dry_run=dry_run, say=ui.info)
+    if res.status == image.FAILED:
+        ui.warn(f"OpenClaw sign-in failed (exit {res.exit_code}); the image model was not changed.")
+        return False
+    if res.status == image.SIGNED_IN and res.profile_id:
+        s.openclaw.image_auth_profile_created = res.profile_id
     return True
 
 
