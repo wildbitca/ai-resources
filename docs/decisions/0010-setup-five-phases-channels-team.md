@@ -5,9 +5,8 @@ revision 3, approved by the operator. The software-architect and security-audito
 the verdict APPROVE WITH CONDITIONS; the conditions are written into "Review conditions (architect, security-auditor,
 2026-10-19)" below and applied by the steps that carry them. Nobody has re-reviewed the result, so this ADR is NOT
 Accepted and its sign-offs are not self-signed.
-Implemented so far: S1 (checker-independence test), S2 (checker fixes), S3 (read-only channel inventory), S5 (LiteLLM
-leaves the wizard; see the S5 note), S9 (five-phase headers), S11 (main-tool step, channel intent without execution),
-S13 (Audio step), S14 (sign-in) and S15 (More phase). See "Implementation status" at the end for the later steps.
+Implemented: S1 to S16 (see "Implementation status"), each as one local commit. The verifier's sign-off (S17) and the
+two reviewers' re-review are still to come.
 **Date**: 2026-10-18
 **Decision makers**: operator (N1-N5 answered, D1-D3 given), implementer (record only).
 **Amends**: [ADR-0001](0001-model-pins-and-auto-update.md) d3, [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md),
@@ -238,6 +237,35 @@ re-review.** The implementer wrote the conditions here; it did not sign for eith
 
 The implementing session cannot spawn a reviewer, so it records the verdicts it was given and the conditions it
 applied; it does not sign. This ADR stays Proposed until both reviewers re-review the implemented result.
+
+## Implementation status
+
+Local commits, one per plan step (nothing is pushed): S1 checker-independence test; S2 checker fixes (shrink-only list
+now holds `claude-inherit` and `all-gemini`, open question Q-1); S3 channel inventory and planner; S4a/S4b naming layer
+and file moves; S5 LiteLLM leaves the wizard (landed before sign-off, with the operator's explicit approval in the
+session); S6 Balanced content and per-row Google routing; S7 evidence mechanism; S8 doctor and runbook; S9 five-phase
+rail; S10 team view; S11 cockpit step and channel intent; S12 disable executor; S13 Audio; S14 sign-in; S15 More; S16 docs.
+The gate constants (`GATES`, `AGY_LANE_ADR_ACCEPTED`, `CODEX_LANE_ADR_ACCEPTED`, `WRITABLE_BACKENDS`,
+`AGY_LANE_MODELS_CONFIRMED`) are untouched, no evidence record is committed and the lane gates still read 0/8 proven.
+Verification (S17) is the verifier's.
+
+Deviations from the plan text, recorded for the re-review: the planner and architect seconds keep their own role's
+Claude family as the non-Gemini member (drift would fire otherwise) and are display-only; `AGY_LANE_MODELS_CONFIRMED`
+stays a `False` constant and per-slug confirmation is `model_pins.agy_slug_confirmed` (C3); the record loader lives in
+`agy_gate_evidence.py` and `agy_lane_gates.effective_evidence()` overlays it (EVIDENCE stays a literal, C4); the doctor
+reuses the existing OpenClaw plugin probe for the `agy-cli-lane` backend check and runs it only when every gate is
+proven; the hook is registered for every Claude Code session by setup and by `hooks.json`.
+
+## Appendix: the questions setup asks
+
+The questions that are never answered for the operator, whatever is saved or passed (`--yes` answers only the offer to
+install missing tools): the OpenClaw engine; the risk acknowledgement; the Antigravity tick, the Google terms and the
+role checklist (the implementer unticked); the `Extend the Google acknowledgement to: ...` prompt (default No); the
+OpenRouter Gemini opt-in (default No); which channel accounts stay on, each channel confirm (default No) and Telegram's
+second confirm (default No); the operator and group ids; and, outside setup, every typed attestation of
+`ai-resources lanes gates record`. Open questions of the plan: Q-0 is answered (N1 reads the score as readiness);
+Q-1 stays open (`claude-inherit`, `all-gemini`); Q-2 is answered for now by "presets carry no agy writer"; Q-3 is the
+operator's normal release and `brew upgrade` path.
 
 ## Rollback
 

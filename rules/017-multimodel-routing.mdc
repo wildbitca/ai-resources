@@ -126,8 +126,10 @@ LiteLLM logs every call. Use:
 Multi-model routing is bypassed. The cockpit talks directly to its native
 provider (e.g. Claude Code → Anthropic) and `executors.yaml` is not used.
 Subagent `model:` values come from a single-model profile chosen in setup:
-`claude-native` (Claude aliases per role) or `claude-inherit` (every role
-inherits the session model).
+`balanced`, `performance` or `low-cost` (Claude aliases per role; Balanced is the default),
+`claude-native` (kept for saved setups) or `claude-inherit` (every role
+inherits the session model). The verifier and the security-auditor never share a model family with a
+writer in any shipped profile (ADR-0010).
 
 ## Composed teams
 

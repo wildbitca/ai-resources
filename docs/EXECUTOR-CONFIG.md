@@ -12,7 +12,9 @@ This file is **shared by all CLIs** and **project-specific directories**. No loc
 
 ## Profiles
 
-The kit ships with several profiles in `/profiles/`:
+The kit ships with several profiles in `/profiles/`. The starting teams are `balanced`, `performance` and `low-cost`
+(and `gateway/balanced`, `gateway/performance`, `gateway/low-cost` for a gateway); the old names still load (see
+`docs/multi-model.md`). In every shipped profile a checker never shares a model family with a writer (ADR-0010):
 
 - `balanced-claude-55.yaml` — **Recommended.** Claude only, three tiers on the 5.5
   family; valid in every compatibility cell it can reach; gateway-agnostic

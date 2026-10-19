@@ -15,16 +15,52 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   OpenClaw) and, for OpenClaw, asks the engine and which channel accounts stay on before the team is picked. The
   model, MCP servers, voice notes (Audio) and the host section (More) are asked in their own steps; More options >
   OpenClaw still asks everything in one go. Nothing is written before Apply.
-- **Channel intent, no execution.** Unticking a listed channel account records the intent (`openclaw.channels_seen` and
-  `channels_wanted`, optional state fields, no schema bump). Review prints the `openclaw channels remove ...` command
-  that a later guarded step would run, with its undo (`openclaw channels add ...`, run it yourself). Only
-  `openclaw channels list --all --json` runs, read-only. Executing a disable is not implemented yet.
+- **Channel accounts, disable only.** Unticking a listed channel account (default: everything that is on now; nothing is
+  remembered between runs) makes Apply run `openclaw channels remove --channel C --account A` after a per-change confirm
+  (default No; Telegram asks twice), only on a terminal, never under `--dry-run` or `--yes`, with the OpenClaw cockpit,
+  with reload rules that call `channels.<C>` hot, and after a fresh listing still shows the account on. It re-lists
+  afterwards and reports any difference; the undo says to re-add the account with credentials, yourself. An enable is
+  only printed. The kit still never patches `channels.*` (`assert_channels_safe` is unchanged).
 - **Sign-in for installed tools.** Ticked, already installed tools with a login command (for example `codex login`)
   are listed unticked in the sign-in step. The kit never starts `agy`: its sign-in command is only named.
 - **Start at login** keeps a saved answer without asking; More options asks it again.
-- New read-only module `openclaw_channels` (inventory and a pure disable planner) and a shrink-only
-  checker-independence test over every shipped profile. Several shipped profiles still let a checker share a model
-  family with a writer; the test lists them (`KNOWN_VIOLATIONS`) until they are fixed.
+- New module `openclaw_channels` (inventory, a pure disable planner and the guarded executor) and a shrink-only
+  checker-independence test over every shipped profile. `KNOWN_VIOLATIONS` now lists only `claude-inherit` and
+  `all-gemini` (open question Q-1).
+
+### Fixed (checkers and writers never share a model family; ADR-0010)
+
+- In `claude-native`, `balanced-claude-55`, `openrouter-balanced`, `measured-best`, `quality-first`, `all-claude`,
+  `cost-optimized` and `openrouter-cheap` the verifier and the security-auditor now run on Opus with no fallback onto a
+  writer's family; cross-family default fallbacks are gone and `performance-claude-55` lost its Sonnet fallbacks on Opus
+  roles. Saved setups that load those profiles get the new checkers on their next run.
+
+### Changed (starting-team names, Balanced with Gemini, per-row Google routing; ADR-0010)
+
+- **One set of names.** The starting teams are `balanced`, `performance` and `low-cost` on every row (`gateway/...` on
+  a gateway). `subscription-claude-55`, `subscription-performance`, `subscription-economy`, `performance-claude-55` and
+  `economy-claude-55` are aliases that load the same team forever; `claude-native`, `balanced-claude-55` and
+  `openrouter-balanced` keep their own file and only open the question on Balanced. A saved old name is saved under the
+  new one on the next real run, with one line saying so. `--profile` and the `low-pricing` key still work.
+- **Balanced is multi-provider.** The CLI Balanced names Gemini over Antigravity on explore and on the second opinions
+  of the code-reviewer, planner and software-architect (held until the lane gates are proven; planner and architect
+  seconds are display-only). `gateway/balanced` runs Gemini Flash on explore, tester and doc-writer; Review asks once
+  (default No) whether to use Gemini through OpenRouter. No preset lists an agy candidate on a writer role. A role list
+  that adds the planner and architect re-signs the Google acknowledgement (text unchanged).
+- **Team table with real providers and lanes.** One set of lines says what is held, on or not active per row (Antigravity
+  not selected, Each on its own, LiteLLM legacy). A new user's Antigravity tick starts off and a saved tick is restored
+  only with a valid stored Google acknowledgement. On the legacy LiteLLM row a `google/*` role without a Google provider
+  runs on its Claude fallback.
+
+### Added (Antigravity gate evidence record; ADR-0010, no gate is flipped)
+
+- `ai-resources lanes gates` (read-only status) and `ai-resources lanes gates record --run-dir <window>` (terminal
+  only, typed attestation per stage, never runs `agy` or `openclaw`, never commits). The record
+  `scripts/ai_resources/data/agy_gate_evidence.json` is validated by a lazy, strict, fail-closed loader (seal, manifest
+  listing, G0 anchor, G1 slug coverage, G7 text hash; tracked and equal to HEAD in a git kit root) and lifts the gates
+  and the OpenRouter Google cell only when valid. No record is shipped; the gate constants are untouched. A PreToolUse hook
+  (`agy_evidence_guard.py`) denies agent writes to the record, the file is forbidden to lane children and watched as a
+  tripwire, and `doctor` gains an Antigravity lane check.
 
 ### Changed (LiteLLM leaves the new-setup gateway choice; ADR-0010)
 

@@ -175,10 +175,13 @@ Profiles define the role → model mapping for kit subagents. Setup offers the p
 
 | Profile | Mode | Strategy |
 |---------|------|----------|
-| `claude-native` | single-model | Claude aliases per role: Haiku to explore, Sonnet to implement/test/verify, Opus to plan/architect/review/audit |
+| `balanced`, `performance`, `low-cost` | single-model | The three starting teams of "Your team" on every row without a gateway (Claude aliases, a lane table; Balanced also names Gemini over Antigravity, held until the gates are proven) |
+| `claude-native` | single-model | Claude aliases per role (kept for saved setups; its preset is Balanced) |
 | `claude-inherit` | single-model | Every role inherits the session model |
 
-Multi-model (LiteLLM gateway) profiles:
+The starting-team ids are the same on every row: `balanced`, `performance`, `low-cost` (and Custom). A gateway row uses `gateway/balanced` (Claude Opus checkers, Sonnet writers, Gemini Flash on explore, tester and doc-writer; Review asks once whether to use Gemini through OpenRouter), `gateway/performance` and `gateway/low-cost`. Old names keep loading and mean the same team (`subscription-claude-55` is `balanced`, `performance-claude-55` is `gateway/performance`, ...). A checker (verifier, security-auditor) never shares a model family with a writer in any shipped profile; `claude-inherit` and `all-gemini` are the two open exceptions.
+
+Multi-model (gateway) profiles:
 
 | Profile | Strategy |
 |---------|----------|

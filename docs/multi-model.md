@@ -286,6 +286,43 @@ Preset ids are the same on every row (ADR-0010). The old names keep loading fore
 state under an old name is saved under the new one on the next real run, with one line saying so. `claude-native`,
 `balanced-claude-55` and `openrouter-balanced` are not aliases: their content differs, so they keep their own file and
 the question only opens on Balanced for them.
+
+**Balanced is multi-provider (ADR-0010).** Checkers never share a family with a writer, in every shipped profile
+(the verifier and security-auditor run on Opus with no fallback onto a writer's family). On the CLI row Balanced adds
+Gemini over Antigravity on `explore` and on the second opinions of the `code-reviewer`, the `planner` and the
+`software-architect` (the planner and architect seconds are display-only: no workflow step dispatches them yet). The
+verifier and the security-auditor take no Gemini; the implementer, tester, doc-writer, generalPurpose, package-upgrade and
+the fixers stay on Claude: no preset lists an agy candidate on a writer role. On OpenRouter (`gateway/balanced`)
+explore, tester and doc-writer run on `google/gemini-3.7-flash` with a Claude fallback and everything else on Claude.
+Adding the planner and the software-architect to the Google acknowledgement is a re-sign of that role list (ADR-0007
+section 9): an acknowledgement stored without them is asked again through the "Extend the Google acknowledgement to"
+prompt (default No); the acknowledgement text itself is unchanged.
+
+What you see for Gemini, from one set of lines (`setup/team_view.py`), and the table says the real provider and lane of
+every role:
+
+| Row | Gemini line |
+|---|---|
+| As a team, Antigravity ticked and acknowledged, gates not proven | `Gemini held: Antigravity gates 0/8 proven (G6, G7 partial). Next: run the probe window, then ai-resources lanes gates record`; the cells read `google <slug> via Antigravity [unconfirmed slug] (held)` |
+| As a team, gates proven and the roles acknowledged | the cells read `google <slug> via Antigravity (on)`, no tag, no held line; writers stay on Claude Code |
+| As a team, Antigravity not ticked | `Gemini not active: Antigravity not selected` |
+| Each on its own | `Gemini not active: 'Each on its own' runs Claude Code only (choose 'As a team' with Antigravity, or OpenRouter)` |
+| OpenRouter, opt-in declined | `Gemini held on OpenRouter: Claude Code x Google not verified; explore, tester, doc-writer use the session model` |
+| LiteLLM (saved, no longer offered to new setups) | `Gemini not active: LiteLLM is legacy; choose OpenRouter for Gemini`; a `google/*` role with no enabled Google provider runs on its Claude fallback |
+
+The OpenRouter opt-in is asked once in Review (`Use Gemini on explore, tester and doc-writer through OpenRouter (not yet
+verified with Claude Code)?`, default No, never answered for you, not by `--yes`); Yes records `profile.allow_unverified`.
+A new user's Antigravity tick starts off, and a saved tick is restored only when a valid stored Google acknowledgement
+exists. The one operator action that turns the Antigravity cells on is the probe window plus
+`ai-resources lanes gates record` and its commit ([runbook](openclaw/runbook.md#the-probe-window-and-the-one-record-command-adr-0010-n3)).
+
+**Channels.** When OpenClaw is a tool, setup lists the channel accounts OpenClaw reports (`openclaw channels list --all
+--json`, read-only) and you untick the ones that should be off; the default always comes from the current listing and no
+choice is saved. Apply turns an unticked account off with `openclaw channels remove --channel C --account A` (never
+`--delete`, never a credential flag, never `--agent`) only on a terminal, not under `--dry-run` or `--yes`, with the
+OpenClaw cockpit, with reload rules that call `channels.<C>` hot, after a fresh listing still shows it on, a per-change
+confirm (default No) and, for Telegram, a second one. The undo is to re-add the account with credentials, yourself; an
+enable is only ever printed. The kit still never patches `channels.*`.
 The question is skipped, and the flags path is unchanged, with `--profile`, `--models`, `--shape`, `--providers`,
 `--compose` or `--non-interactive`. A saved choice is the default of the question and is never replaced: a saved preset
 profile defaults to its preset, and a customized profile, a composed team, a team picked from your accounts or any
