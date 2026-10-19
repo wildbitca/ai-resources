@@ -59,6 +59,19 @@ def is_non_interactive() -> bool:
     return _NON_INTERACTIVE
 
 
+_ASSUME_YES = False
+
+
+def set_assume_yes(enabled: bool = True) -> None:
+    """Record `setup --yes` so opt-ins that must never be answered for the operator can refuse."""
+    global _ASSUME_YES
+    _ASSUME_YES = enabled
+
+
+def is_assume_yes() -> bool:
+    return _ASSUME_YES
+
+
 def stdin_is_a_terminal() -> bool:
     """False when nothing can answer a prompt — a pipe, a CI job, a background run."""
     try:

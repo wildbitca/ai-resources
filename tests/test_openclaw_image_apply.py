@@ -612,6 +612,15 @@ def test_m2_non_interactive_and_yes_never_write_the_deny(rig, monkeypatch):
     assert rig.confirms == [] and any("NOT disabled" in m for m in rig.messages["warn"])
 
 
+def test_m2_yes_flag_with_a_tty_never_writes_the_deny(rig, monkeypatch):
+    monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(openclaw.ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(openclaw.ui, "_ASSUME_YES", True)
+    rig.answer = True
+    _disable_writes_nothing(rig)
+    assert rig.confirms == [] and any("NOT disabled" in m for m in rig.messages["warn"])
+
+
 def test_m2_without_a_tty_the_deny_is_not_written_even_if_a_confirm_would_say_yes(rig, monkeypatch):
     monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: False)
     rig.answer = True

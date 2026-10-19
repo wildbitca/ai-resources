@@ -140,6 +140,7 @@ def run(args: argparse.Namespace) -> int:
     and takes no lock."""
     global _ASSUME_YES, _DRY_RUN, _COMPOSE
     _ASSUME_YES = bool(getattr(args, "yes", False))
+    ui.set_assume_yes(_ASSUME_YES)
     _DRY_RUN = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
     _COMPOSE = {"mode": getattr(args, "compose", "") or "", "headroom": getattr(args, "headroom", "") or "",
                 "live": getattr(args, "headroom_live", "") or "", "why_json": getattr(args, "why_json", "") or "",

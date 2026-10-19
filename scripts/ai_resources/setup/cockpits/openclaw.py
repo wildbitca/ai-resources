@@ -624,7 +624,7 @@ def _confirm_image_deny() -> bool:
     """The gate in front of a global `tools.deny` ADD (review M2): only an interactive run on a terminal, and only after a
     default-No confirm. `--yes`, a non-interactive run and a missing TTY never write it; a saved `disable` answer is
     re-applied under the same rule."""
-    if ui.is_non_interactive() or not ui.stdin_is_a_terminal():
+    if ui.is_non_interactive() or ui.is_assume_yes() or not ui.stdin_is_a_terminal():
         ui.warn(DENY_NEEDS_TERMINAL)
         return False
     return host_section._gate("Add image_generate to OpenClaw's global tools.deny? This turns the tool off for ALL agents "
