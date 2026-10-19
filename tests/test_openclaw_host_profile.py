@@ -516,13 +516,37 @@ def test_an_unsafe_tools_deny_patch_is_refused_before_any_subprocess(patch, path
 @pytest.mark.parametrize("patch,paths", [
     ({"agents": {"entries": {"lane": {"tools": {"deny": ["bundle-mcp", "message"]}}}}}, ["agents.entries.lane.tools.deny"]),
     ({"tools": {"profile": "coding", "alsoAllow": ["x"]}}, []),
-    ({"tools": {"media": {"audio": {}}}}, ["tools.media"]),
-    ({"tools": {"allow": ["exec"]}}, ["tools.allow"]),
+    ({"tools": {"media": {"audio": {}}}}, []),
+    ({"tools": {"allow": ["exec"]}}, []),
     ({"gateway": {"tools": {"deny": ["x"]}}}, []),
     ({}, []),
 ])
 def test_lanes_host_profile_voice_and_other_patches_never_trigger_the_guard(patch, paths):
     host.assert_tools_deny_safe(patch, paths)
+
+
+@pytest.mark.parametrize("patch,paths", [
+    ({"tools": {"media": {"audio": {}}}}, ["tools"]),                                # the case the review named
+    ({"tools": {"media": {"audio": {}}}}, ["tools.media"]),
+    ({"tools": {"allow": ["exec"]}}, ["tools.allow"]),
+    ({"tools": {"profile": "full"}}, ["tools.profile"]),
+    ({"tools": {"deny": ["image_generate"]}}, ["tools"]),
+    ({"tools": {"deny": ["image_generate"]}}, ["tools.deny", "tools.media"]),
+    ({"tools": {"deny": ["image_generate"]}}, ["tools.deny", "tools.deny"]),
+    ({"tools": {"deny": None}}, ["tools.deny.x"]),
+    ({"gateway": {}}, ["tools"]),                                                    # no tools key in the patch at all
+    ({}, ["tools.media"]),
+    ({"tools": {"media": {}}}, ["tools[0]"]),
+])
+def test_a_replace_path_on_tools_must_be_exactly_tools_deny_whether_or_not_the_patch_carries_deny(patch, paths):
+    with pytest.raises(ValueError):
+        host.assert_tools_deny_safe(patch, paths)
+
+
+def test_replace_paths_outside_the_tools_namespace_still_pass_the_guard():
+    host.assert_tools_deny_safe({"agents": {"defaults": {"mediaModels": {"image": {"primary": "a/b"}}}}},
+                                ["agents.defaults.mediaModels.image"])
+    host.assert_tools_deny_safe({"agents": {"entries": {"x": {"tools": {"deny": ["a"]}}}}}, ["agents.entries.x.tools.deny"])
 
 
 def test_the_host_profile_never_carries_tools_deny():

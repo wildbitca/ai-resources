@@ -2279,17 +2279,26 @@ _TOOLS_SIBLINGS = ("allow", "alsoAllow", "profile", "byProvider")
 
 def assert_tools_deny_safe(patch: dict, replace_paths: list[str] | None = None) -> None:
     """The global `tools.deny` invariant (ADR-0011). Shape only: the writer alone has the live list. It fires only when
-    the patch carries top-level `tools.deny`; lanes (`agents.entries.<id>.tools.deny`), the host profile and voice
-    (`tools.media`) never trigger it. A group token or `*` in the list is NOT rejected: operator entries are re-sent as
+    the patch carries top-level `tools.deny` or a replace path reaches `tools`; lanes (`agents.entries.<id>.tools.deny`), the host profile and voice
+    (`tools.media` merged, no replace path) never trigger it. A group token or `*` in the list is NOT rejected: operator entries are re-sent as
     they are.
 
     The value is null or a list of strings; a list comes with `tools.deny` in `replace_paths` (arrays replace, so
     without it the patch could not carry the whole list); the same patch carries no `tools.allow`, `tools.alsoAllow`,
-    `tools.profile`, `tools.byProvider` and no `agents` key; and no replace path is `tools` or under `tools.allow`."""
+    `tools.profile`, `tools.byProvider` and no `agents` key. Independently of the patch body, any replace path that is
+    `tools` or under `tools.` must be exactly `["tools.deny"]` (a bare `--replace-path tools` with a media-only patch is
+    refused), so no other tools block is ever replaced through this writer."""
+    paths = list(replace_paths or [])
+    reaches_tools = [rp for rp in paths if rp == "tools" or rp.startswith("tools.") or rp.startswith("tools[")]
+    if reaches_tools and reaches_tools != ["tools.deny"]:
+        # Whether or not the patch carries `deny`: `--replace-path tools` (or tools.allow, tools.media, ...) replaces a
+        # whole block with whatever the patch holds, so the only replace path under `tools` this writer may send is the
+        # one the deny writers use.
+        raise ValueError("a --replace-path on the tools namespace may only be exactly tools.deny; refusing: "
+                         + ", ".join(reaches_tools))
     tools = patch.get("tools") if isinstance(patch, dict) else None
     if not isinstance(tools, dict) or "deny" not in tools:
         return
-    paths = list(replace_paths or [])
     value = tools["deny"]
     if value is not None and not (isinstance(value, list) and all(isinstance(x, str) for x in value)):
         raise ValueError("refusing a tools.deny patch whose value is not a list of strings or null")
@@ -2300,9 +2309,6 @@ def assert_tools_deny_safe(patch: dict, replace_paths: list[str] | None = None) 
         raise ValueError("a tools.deny patch may not also carry tools." + ", tools.".join(extra))
     if "agents" in patch:
         raise ValueError("a tools.deny patch may not also carry an agents key")
-    for rp in paths:
-        if rp == "tools" or rp == "tools.allow" or rp.startswith("tools.allow.") or rp.startswith("tools["):
-            raise ValueError(f"refusing a --replace-path that reaches the tool allow-list: {rp}")
 
 
 _SECRET_KEY = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential)", re.IGNORECASE)
