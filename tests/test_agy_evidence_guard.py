@@ -54,10 +54,8 @@ def test_shell_writes_to_the_record_are_denied(command):
     f"cat {REC}",
     f"grep -n proven {REC}",
     f"jq . {REC}",
-    f"git add {REC} && git commit -m evidence",
     f"git log -1 -- {REC}",
     f"git diff HEAD -- {REC}",
-    "ai-resources lanes gates record --run-dir ~/.cache/ai-resources-live-e2e/20261101T101010Z",
     "ai-resources lanes gates",
     "python3 -m pytest tests/test_agy_gate_evidence.py",
     "echo hello > notes.txt",
@@ -85,3 +83,90 @@ def test_a_symlink_to_the_record_is_resolved(tmp_path):
     link = tmp_path / "innocent.json"
     link.symlink_to(REPO / REC)
     assert run({"tool_name": "Write", "tool_input": {"file_path": str(link)}, "cwd": str(tmp_path)}).returncode == 2
+
+
+# --- N1 hardening: the bypasses the security-auditor listed ---------------------------------------------------------------
+# These commands were allowed before; the operator reviews every commit touching scripts/ai_resources/data/ (ADR-0010).
+
+DATA = "scripts/ai_resources/data/"
+
+
+@pytest.mark.parametrize("command", [
+    # (i) git commands that name the record or touch the data directory
+    f"git add {REC} && git commit -m evidence",
+    f"git add {DATA}",
+    f"git add -f {DATA}agy_gate_evidence.json",
+    f"git commit {REC} -m x",
+    f"git -C scripts/ai_resources/data add .",
+    f"git apply {REC}.patch",
+    f"git checkout HEAD -- {DATA}",
+    f"git merge x -- {DATA}",
+    f"git restore --source=HEAD~2 {REC}",
+    f"git mv x {REC}",
+    f"git rm {REC}",
+    f"git cherry-pick abc -- {REC}",
+    f"git stash push -- {REC}",
+    f"cd {DATA} && git add .",
+    # (ii) the TTY-only record command, wrapped or not
+    "ai-resources lanes gates record --run-dir ~/.cache/ai-resources-live-e2e/20261101T101010Z",
+    "script -qc 'ai-resources lanes gates record --run-dir x' /dev/null",
+    "expect -c 'spawn ai-resources lanes gates record --run-dir x; interact'",
+    "python3 -c \"import pty; pty.spawn(['ai-resources','lanes','gates','record'])\" ",
+    "ai-resources   lanes   gates   record",
+    "ai-resources lanes gates 'record' --run-dir x",
+    # (iii) numeric redirects and globs
+    f"echo x 1> {REC}",
+    f"echo x 2>> {REC}",
+    f"echo x &> {REC}",
+    f"echo x >| {REC}",
+    f"echo x > {DATA}agy_gate_*",
+    f"echo x > {DATA}agy_gate_evidence.js?n",
+    f"echo x > {DATA}agy_gate_evidenc[e].json",
+    f"echo x > {DATA}agy_gate_evidence.[j]son",
+    f"cp /dev/null {DATA}*evidence.json",
+    f"rm {DATA}agy_gate_*",
+    f"tee {DATA}agy_gate_ev*",
+    f"echo x > {DATA}agy_gate_{{evidence,y}}.json",
+    f"echo x > {DATA}agy_\"\"gate_evi'dence'.json",
+    # (iv) patch / git apply naming the file
+    f"patch -p1 <<'EOF'\n--- a/{REC}\n+++ b/{REC}\nEOF",
+    f"git apply <<'EOF'\n--- a/{REC}\n+++ b/{REC}\nEOF",
+    # (v) inline interpreters that mention or build the name
+    "python3 -c \"open('scripts/ai_resources/data/agy_'+'gate_evidence.json','w').write('x')\"",
+    "python3 -c \"p='agy_gate'; p+='_evidence.json'; open('scripts/ai_resources/data/'+p,'w')\"",
+    "node -e \"require('fs').writeFileSync('scripts/ai_resources/data/'+['agy_gate','evidence.json'].join('_'),'x')\"",
+    "perl -e 'open(F, \">scripts/ai_resources/data/agy_\" . \"gate_evidence.json\")'",
+    "python3 - <<'EOF'\nname = 'agy_gate' + '_evidence.json'\nEOF",
+])
+def test_hardened_bypasses_are_denied(command):
+    assert run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(REPO)}).returncode == 2, command
+
+
+def test_a_patch_file_that_names_the_record_is_denied(tmp_path):
+    patch = tmp_path / "x.patch"
+    patch.write_text(f"--- a/{REC}\n+++ b/{REC}\n")
+    proc = run({"tool_name": "Bash", "tool_input": {"command": f"git apply {patch}"}, "cwd": str(tmp_path)})
+    assert proc.returncode == 2
+    other = tmp_path / "y.patch"
+    other.write_text("--- a/README.md\n+++ b/README.md\n")
+    assert run({"tool_name": "Bash", "tool_input": {"command": f"git apply {other}"}, "cwd": str(tmp_path)}).returncode == 0
+
+
+@pytest.mark.parametrize("command", [
+    "git add README.md && git commit -m x",
+    "git add scripts/ai_resources/setup/wizard.py",
+    "git status",
+    "git log --oneline -3",
+    f"git diff HEAD -- {REC}",
+    "rm -rf build/*",
+    "rm tmp/*.json",
+    "cp * /backup",
+    "echo x 2> /dev/null",
+    "python3 -c \"print(1)\"",
+    "python3 -m pytest tests/test_agy_gate_evidence.py",
+    "node -e \"console.log(1)\"",
+    "ai-resources lanes gates",
+    "ai-resources lanes status",
+])
+def test_hardening_does_not_block_ordinary_commands(command):
+    assert run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(REPO)}).returncode == 0, command

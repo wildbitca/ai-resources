@@ -112,6 +112,18 @@ every agent session, not only lane children.
 non-git kit root, needs a typed attestation per stage, never runs `agy` or `openclaw`, and prints the local `git commit`.
 Trust model: tamper evidence plus git review, not authentication (the seal is not a secret). No record is shipped and no
 gate symbol is edited.
+Hook hardening (N1, operator decision: harden the hook and document the risk; no signed-commit requirement, no
+authentication). In every agent session the hook also denies: (i) a git command (add, commit, apply, am, checkout, switch,
+merge, restore, mv, rm, cherry-pick, stash, reset, rebase, revert) that names the record or the `scripts/ai_resources/data/`
+directory, so the operator makes that commit from their own terminal; (ii) any command containing
+`lanes gates record`, so the TTY-only command cannot be run by an agent through `script`, `expect` or a pty wrapper;
+(iii) numeric and `&>` redirects (`1>`, `2>>`) and glob, brace, bracket or quote-split spellings of the file name
+(`agy_gate_*`, `agy_gate_evidence.js?n`, `agy_gate_evidenc[e].json`); (iv) `patch` or `git apply` of a patch that names the
+file, inline or in a patch file the command names; (v) an inline python, node, perl, ruby or php script that mentions the
+file name or builds it by concatenating `agy_gate` or `evidence.json` (best effort). The control is TAMPER EVIDENCE plus
+the operator's git review, not prevention: the hook cannot see a command assembled at run time, and an agent with commit
+rights can still forge the record and commit it. The operator therefore reviews EVERY commit that touches
+`scripts/ai_resources/data/` before it counts, and the loader still fails closed on an untracked or modified record.
 
 The single remaining operator action: run the announced probe window (V5, V6, V7, V9-agy, V12, the isolated phase-2
 merge gate for G0, measured cost for G6, G7 approval of the Google text, one Claude Code Gemini tool-call probe
