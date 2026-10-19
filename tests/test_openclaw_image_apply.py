@@ -780,3 +780,66 @@ def test_l5_no_kit_env_value_or_credential_field_survives_in_any_state_or_output
     blob += json.dumps(state._to_dict(s))
     assert LEAK not in blob and "apiKey" not in blob and "token" not in blob
     assert "FAL_KEY" in blob, "the variable NAME is what Review may show"
+
+
+# --- review L7: an unparseable listing is unknown, not empty --------------------------------------------------------------
+
+def test_l7_a_zero_exit_with_unparseable_json_is_unknown(rig):
+    for out in ("[info] {", "[info] {\n  not json", "{\"profiles\": [", "[info] loading\n[1, 2"):
+        rig.extra[("models", "auth", "list")] = lambda a, s, _o=out: (0, _o)
+        assert openclaw._auth_profile_ids() is None, out
+
+
+def test_l7_parseable_and_json_free_output_keep_their_meaning(rig):
+    rig.extra[("models", "auth", "list")] = lambda a, s: (0, "no profiles yet")
+    assert openclaw._auth_profile_ids() == set()
+    rig.extra[("models", "auth", "list")] = lambda a, s: (0, "info: ok\n" + json.dumps(
+        {"profiles": [{"id": "fal:manual", "provider": "fal"}]}))
+    assert openclaw._auth_profile_ids() == {"fal:manual"}
+
+
+def test_l7_an_unparseable_listing_before_the_sign_in_runs_no_sign_in_and_records_nothing(signin):
+    signin.extra[("models", "auth", "list")] = lambda a, s: (0, "[info] {")
+    s = S(**FAL)
+    changed, _w = run(s, signin)
+    assert signin.auth.argvs == [] and signin.confirms == [] and s.openclaw.image_auth_profile_created == ""
+    assert any("openclaw models auth paste-api-key --provider fal" in m for m in signin.messages["warn"])
+    assert changed is True
+
+
+def test_l7_an_unparseable_listing_after_the_sign_in_records_nothing(signin):
+    calls = {"n": 0}
+
+    def listing(_a, _s):
+        calls["n"] += 1
+        return (0, json.dumps({"profiles": []})) if calls["n"] == 1 else (0, "[info] {")
+    signin.extra[("models", "auth", "list")] = listing
+    s = S(**FAL)
+    run(s, signin)
+    assert len(signin.auth.argvs) == 1 and s.openclaw.image_auth_profile_created == ""
+
+
+# --- end to end: `setup --yes` with a saved disable reaches the deny path and refuses -----------------------------------
+
+def test_yes_through_wizard_run_with_a_saved_disable_refuses_without_writing(rig, monkeypatch):
+    import argparse
+
+    from ai_resources.setup import wizard
+    monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(openclaw.ui, "is_non_interactive", lambda: False)
+    rig.answer = True
+    rig.write({"tools": {"deny": ["bundle-mcp"]}})
+    before = rig.cfg.read_bytes()
+    s = S(mode="disable", model="")                              # the saved answer from an earlier run
+    result = {}
+
+    def body(_args):
+        result["changed"], _w = run(s, rig)
+        return 0
+    monkeypatch.setattr(wizard, "_run", body)
+    args = argparse.Namespace(yes=True, dry_run=False, lanes_dry_run=False)
+    assert wizard.run(args) == 0
+    assert openclaw.ui.is_assume_yes() is True, "the flag reached the gate through wizard.run, not a test setattr"
+    assert result["changed"] is False and rig.patches() == [] and rig.cfg.read_bytes() == before
+    assert rig.confirms == [] and s.openclaw.image_deny_added is False
+    assert any("NOT disabled" in m for m in rig.messages["warn"])

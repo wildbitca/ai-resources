@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
-### Added (OpenClaw image generation in setup; ADR-0011, proposed)
+### Added (OpenClaw image generation in setup; ADR-0011, accepted)
 
 - **One image question, no recommendation.** With OpenClaw as a tool, phase 2 asks about image generation: `keep` (default,
   writes nothing), `disable`, or any documented route, each with a billing label and a proof label. Choosing a route writes
@@ -15,8 +15,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 - **`disable` is a scoped, reversible `tools.deny` entry.** Setup merges the single token `image_generate` into the global
   `tools.deny` without touching your entries (full list, `--replace-path`, dry run, re-read before the write, hot only, never
   deferred), tracks it in state and removes only that token on teardown. A new shape guard, `assert_tools_deny_safe`, sits on
-  the single writer next to `assert_channels_safe`. Effect on running sessions is NOT PROVEN. ADR-0011 is Proposed: the
-  architect and security-auditor reviews run after the commits by operator waiver.
+  the single writer next to `assert_channels_safe`. Effect on running sessions is NOT PROVEN. ADR-0011 is Accepted (2026-10-19,
+  implemented on main, not released) after the post-commit architect, security-auditor and verifier reviews the operator
+  waived up front.
 - New state fields `image_*` (optional; saved states load unchanged), Review rows, `--dry-run` lines, a `verify` line and the
   runbook section "Image generation".
 

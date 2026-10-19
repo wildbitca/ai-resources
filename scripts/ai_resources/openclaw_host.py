@@ -2277,6 +2277,15 @@ def assert_channels_safe(patch: dict, replace_paths: list[str] | None = None) ->
 _TOOLS_SIBLINGS = ("allow", "alsoAllow", "profile", "byProvider")
 
 
+def _normalise_replace_path(rp: str) -> str:
+    """A replace path as OpenClaw reads it: surrounding whitespace trimmed, a trailing `[]` dropped, so `" tools"` and
+    `"tools[]"` name the `tools` block like `"tools"` does."""
+    rp = str(rp).strip()
+    while rp.endswith("[]"):
+        rp = rp[:-2].rstrip()
+    return rp
+
+
 def assert_tools_deny_safe(patch: dict, replace_paths: list[str] | None = None) -> None:
     """The global `tools.deny` invariant (ADR-0011). Shape only: the writer alone has the live list. It fires only when
     the patch carries top-level `tools.deny` or a replace path reaches `tools`; lanes (`agents.entries.<id>.tools.deny`), the host profile and voice
@@ -2288,7 +2297,7 @@ def assert_tools_deny_safe(patch: dict, replace_paths: list[str] | None = None) 
     `tools.profile`, `tools.byProvider` and no `agents` key. Independently of the patch body, any replace path that is
     `tools` or under `tools.` must be exactly `["tools.deny"]` (a bare `--replace-path tools` with a media-only patch is
     refused), so no other tools block is ever replaced through this writer."""
-    paths = list(replace_paths or [])
+    paths = [_normalise_replace_path(rp) for rp in (replace_paths or [])]
     reaches_tools = [rp for rp in paths if rp == "tools" or rp.startswith("tools.") or rp.startswith("tools[")]
     if reaches_tools and reaches_tools != ["tools.deny"]:
         # Whether or not the patch carries `deny`: `--replace-path tools` (or tools.allow, tools.media, ...) replaces a

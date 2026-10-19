@@ -1,7 +1,8 @@
 # ADR-0011: Setup writes a scoped, reversible global `tools.deny` entry (`image_generate`)
 
-**Status**: Proposed (2026-10-19). Not Accepted. The architect and security-auditor reviews returned APPROVE WITH
-CONDITIONS on 2026-10-19; the conditions are applied (see "Review conditions applied") and a re-review is pending.
+**Status**: Accepted (2026-10-19), implemented on main, not released. The architect and security-auditor reviews returned
+APPROVE WITH CONDITIONS on 2026-10-19 and APPROVE on re-review at a13ae5d; the verifier returned PASS WITH CAVEATS (see
+"Sign-offs"). Live OpenClaw behaviour stays NOT PROVEN.
 **Date**: 2026-10-19
 **Decision makers**: operator (Q1 and Q2 answered, one-run waiver below), implementer (record only).
 **Plan**: `.agent-output/planner/setup-image-generation-plan.md`, revision 2 (decisions 8 to 17).
@@ -18,8 +19,8 @@ reviewers. OPERATOR WAIVER: the operator chose to land all steps in one run on 2
 reviews of ADR-0011 and of I1/I3/I4/I8/I9 run immediately AFTER the commits and gate Acceptance; the plan AC that
 requires the ADR sign-off commit before the deny code is waived for that reason.
 
-Consequences of the waiver, stated so nobody reads more into it: this ADR stays **Proposed**; the implementer does not
-sign it; nothing in this series is Accepted or verified until the re-review of the applied conditions returns.
+Consequences of the waiver, stated so nobody reads more into it: this ADR stayed **Proposed** until the re-review; the
+implementer does not sign it; the re-review returned on 2026-10-19 and the ADR is now Accepted (see Sign-offs).
 
 ## Context
 
@@ -98,7 +99,7 @@ so a naive write of `["image_generate"]` would erase every operator entry (for e
     (a loud line gives the manual command), and a saved `disable` answer is re-applied only under the same rule. A covering
     entry or a dry run asks nothing. When state says the kit added the token (`image_deny_added`) but the token is no
     longer in the live list, the operator took it out: that is their choice, so the flag and `image_deny_key_absent` are
-    cleared (a dry run changes no state) and the token is NOT added back. Reversal (removing the kit's own token) is not
+    cleared (a dry run changes no state) and the token is not added back without a fresh confirmation; the next interactive run asks again (default No) because the saved answer is still `disable`. Reversal (removing the kit's own token) is not
     gated: it only undoes the kit's write.
 15. **Sign-in hand-off and teardown ownership.** Around an interactive sign-in the kit lists the `models auth list --json`
     profile ids before and after and records `image_auth_profile_created` only for the id the command creates AND that
@@ -163,6 +164,6 @@ states load because every new field is optional.
 
 | Reviewer | Scope | Verdict |
 |---|---|---|
-| software-architect | this ADR; P0 decisions (ADR placement, global scope, guard placement, hot-only, re-read-and-abort) | APPROVE WITH CONDITIONS (architect, security-auditor, 2026-10-19); conditions applied; re-review pending |
-| security-auditor | this ADR; I1, I3 (guard), I4 (deny writer), I8 (answer mapping), I9 (auth hand-off) | APPROVE WITH CONDITIONS (architect, security-auditor, 2026-10-19); conditions applied; re-review pending |
-| verifier | plan acceptance criteria | pending (run after the re-review) |
+| software-architect | this ADR; P0 decisions (ADR placement, global scope, guard placement, hot-only, re-read-and-abort) | APPROVE on re-review 2026-10-19 at a13ae5d (advisories: ui._ASSUME_YES reset in tests, decision 14 wording, table wording: applied) |
+| security-auditor | this ADR; I1, I3 (guard), I4 (deny writer), I8 (answer mapping), I9 (auth hand-off) | APPROVE on re-review 2026-10-19 at a13ae5d (L6 and L7 applied in this commit) |
+| verifier | plan acceptance criteria | PASS WITH CAVEATS 2026-10-19 at a13ae5d (caveats: the interactive picker and Review rendering were checked by tests only, not in a TTY; live OpenClaw behaviour NOT PROVEN; AC-D15 waived by the operator) |

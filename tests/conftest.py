@@ -137,3 +137,15 @@ def _agy_not_installed_by_default(monkeypatch):
     except Exception:
         return
     monkeypatch.setattr(detection, "agy_installed", lambda: False, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_assume_yes():
+    """`wizard.run` stores `--yes` in ui._ASSUME_YES (and a test may set it directly): no test may leak it to the next."""
+    yield
+    try:
+        from ai_resources.setup import ui
+    except Exception:
+        return
+    ui._ASSUME_YES = False
+    ui.set_assume_yes(False)

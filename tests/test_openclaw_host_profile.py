@@ -507,6 +507,13 @@ def test_a_tools_deny_list_with_its_replace_path_passes_including_operator_group
     ({"tools": {"deny": ["image_generate"], "byProvider": {}}}, ["tools.deny"]),
     ({"tools": {"deny": ["image_generate"]}, "agents": {"defaults": {}}}, ["tools.deny"]),
     ({"tools": {"deny": ["image_generate"]}, "agents": {"entries": {"x": {}}}}, ["tools.deny"]),
+    # review L6: OpenClaw trims whitespace and drops a trailing `[]`, so these name the same blocks
+    ({"tools": {"media": {"audio": {}}}}, [" tools"]),
+    ({"tools": {"media": {"audio": {}}}}, ["tools[]"]),
+    ({"tools": {"media": {"audio": {}}}}, ["\ttools.media "]),
+    ({"tools": {"media": {"audio": {}}}}, [" tools[] "]),
+    ({"tools": {"deny": ["image_generate"]}}, ["tools.deny", " tools.allow[]"]),
+    ({"tools": {"deny": ["image_generate"]}}, ["tools.deny", "tools"]),
 ])
 def test_an_unsafe_tools_deny_patch_is_refused_before_any_subprocess(patch, paths):
     with pytest.raises(ValueError):
@@ -580,3 +587,8 @@ def test_the_cockpit_writer_refuses_an_unsafe_deny_patch_before_calling_openclaw
     with pytest.raises(ValueError):
         cockpit.apply_patch({"tools": {"deny": ["x"]}, "agents": {}}, replace_paths=["tools.deny"], dry_run=True)
     assert called == []
+
+
+def test_l6_a_deny_replace_path_with_whitespace_or_a_trailing_brackets_pair_is_still_exactly_tools_deny():
+    host.assert_tools_deny_safe(DENY_OK, [" tools.deny "])
+    host.assert_tools_deny_safe(DENY_OK, ["tools.deny[]"])

@@ -740,7 +740,8 @@ def _image_auth_run(argv: list[str]) -> int:
 
 def _auth_profile_ids() -> set[str] | None:
     """The profile ids in `openclaw models auth list --json` (ids only, never a field that could hold a credential), or
-    None when the command exits non-zero. A zero exit with nothing parseable is the empty set."""
+    None (unknown) when the command exits non-zero or exits zero with output that cannot be parsed as JSON. A zero exit
+    with output that has no JSON at all is the empty set."""
     rc, out = _openclaw(["models", "auth", "list", "--json"], timeout=60)
     if rc != 0:
         return None
@@ -751,7 +752,7 @@ def _auth_profile_ids() -> set[str] | None:
     try:
         raw = json.loads(out[min(starts):])
     except (ValueError, TypeError):
-        return ids
+        return None
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
@@ -790,7 +791,7 @@ def _image_sign_in(s: state.SetupState, route: Any, *, dry_run: bool) -> bool:
         return False
     if res.status == image.SIGNED_IN and res.profile_id:
         after = _auth_profile_ids()
-        if after is not None and res.profile_id in after and res.profile_id not in (before or set()):
+        if before is not None and after is not None and res.profile_id in after and res.profile_id not in before:
             s.openclaw.image_auth_profile_created = res.profile_id
     return True
 
