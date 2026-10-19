@@ -155,6 +155,8 @@ checks that fail closed with a message naming the gate, not prose: admission in 
    an agy lane agent as the minimum the plan names. The non-negotiables (anything acting after the turn,
    messaging, `sessions_spawn` and cron tools, the browser and any web fetch or search tool, every agy-native MCP
    server, `engram` first) stay unproven until V7 shows each excluded.
+   Note (ADR-0011, proposed): a global `tools.deny` entry may also be written by setup (`image_generate`, tracked and
+   removed by the kit only); it applies to lane agents too. Lane scoping above is unchanged.
 7. **Cost and placement.** About 50k tokens per step. The `resolved:` table uses static weights (claude 1.0, agy
    0.7): it balances by role count in sorted role order, not by quota. A quota-exhaustion circuit breaker (per pool,
    per run, fed only by `lanes verify --spawn-error`) narrows candidates; there are no pool caps by default and

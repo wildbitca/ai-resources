@@ -49,6 +49,10 @@ sessions, T39, which made the forced restart slow). The root cause, in order:
    as JSON5 and never shell-sourced; a lone `"*"` in `force` restores the 2.0.x behaviour) opts a key back
    in. Array keys are still unioned (add-only). An agent on a haiku primary is still replaced (T29). The
    engine section remains a deliberate wizard choice, but the keys it changed are now listed. (Q2, Q8)
+   See ADR-0011 for the one exception: setup removes only the `image_generate` token it added to the global
+   `tools.deny` itself, tracked in state; operator values stay add-only and nothing restarts.
+   See ADR-0011 for the one exception: setup removes only the `image_generate` token it added to the global
+   `tools.deny` itself, tracked in state; operator values stay add-only and nothing restarts.
 6. **A bounded, backgrounded, cancellable post-setup watch reverts the run on failure.** A transient user
    unit (`systemd-run --user`, `RuntimeMaxSec=1800`, `TimeoutStopSec=600`) polls `openclaw health` for 10 minutes. The unit outlives that poll
    because a revert's drained window alone can take up to ~5.5 min, and a SIGTERM needs time to unwind it. After three
