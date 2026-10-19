@@ -73,7 +73,7 @@ from . import _openclaw_voice as voice
 from . import _openclaw_host as host_section
 from . import openclaw_lanes
 from . import _agy_quota
-from ... import model_pins, openclaw_host, openclaw_reload_rules
+from ... import model_pins, openclaw_host, openclaw_reload_rules, openclaw_tool_policy
 
 
 NAME = "OpenClaw"
@@ -527,6 +527,150 @@ def _apply_hot(patch: dict, *, dry_run: bool = False,
                "never restarts a live gateway")
         ui.warn(msg)
         return False, msg
+
+
+# --- image generation: the scoped global tools.deny entry (ADR-0011) ------------------------------------------------
+
+DENY_NOT_HOT = ("Image generation was NOT disabled: OpenClaw would need a restart to reload tools.deny. "
+                "Run `openclaw config get tools.deny` and add `image_generate` by hand, or re-run setup after "
+                "enabling hot reload.")
+DENY_REMOVAL_NOT_HOT = ("The image_generate entry setup added to tools.deny was NOT removed: OpenClaw would need a "
+                        "restart to reload tools.deny. Remove it by hand (`openclaw config get tools.deny`) or re-run "
+                        "teardown after enabling hot reload.")
+(DENY_APPLIED, DENY_REMOVED, DENY_COVERED, DENY_ALREADY, DENY_GONE, DENY_NONE, DENY_DRY_RUN, DENY_SHAPE, DENY_UNREADABLE,
+ DENY_REJECTED, DENY_RACE, DENY_NOT_HOT_STATUS, DENY_FAILED) = (
+    "applied", "removed", "covered", "already-applied", "gone", "none", "dry-run", "bad-shape", "unreadable",
+    "rejected", "race", "not-hot", "failed")
+
+
+@dataclass(frozen=True)
+class DenyResult:
+    """What `_apply_image_deny` / `_remove_image_deny` did. `before` and `after` are tool names only."""
+    status: str
+    detail: str = ""
+    before: tuple = ()
+    after: tuple | None = ()
+
+    @property
+    def changed(self) -> bool:
+        return self.status in (DENY_APPLIED, DENY_REMOVED)
+
+
+def _live_tools_deny() -> tuple[bool, Any]:
+    """`(readable, value)` of the top-level `tools.deny` from a FRESH read of the live file. Unreadable (missing file,
+    bad JSON5, not UTF-8, not an object) is `(False, None)`: the writers fail closed on it. A `tools` block that is not
+    an object is reported through the value so the shape check refuses it."""
+    try:
+        live = openclaw_host.load_json5(config_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return False, None
+    if not isinstance(live, dict):
+        return False, None
+    tools = live.get("tools")
+    if tools is None:
+        return True, None
+    if not isinstance(tools, dict):
+        return True, tools                  # not a list of strings either: the shape check refuses it
+    return True, tools.get("deny")
+
+
+def _deny_patch(new: list | None) -> tuple[dict, list[str]]:
+    """The one patch shape the deny writers send: the whole list with `--replace-path tools.deny`, or null."""
+    if new is None:
+        return {"tools": {"deny": None}}, []
+    return {"tools": {"deny": list(new)}}, [openclaw_tool_policy.REPLACE_PATH]
+
+
+def _deny_write(live: Any, new: list | None, *, dry_run: bool, adding: bool) -> DenyResult:
+    """Steps 5 to 9 of the fail-closed sequence (ADR-0011 decision 6), shared by the add and the remove."""
+    tool = openclaw_tool_policy.IMAGE_TOOL
+    before = tuple(live or ())
+    after = tuple(new or ())
+    try:
+        openclaw_tool_policy.assert_single_token_delta(live, new, tool)
+    except ValueError as e:
+        ui.warn(f"OpenClaw: tools.deny left unchanged ({e})")
+        return DenyResult(DENY_SHAPE, str(e), before, after)
+    patch, paths = _deny_patch(new)
+    ok, out = apply_patch(patch, dry_run=True, replace_paths=paths)
+    if not ok:
+        ui.warn(f"OpenClaw rejected the tools.deny patch; nothing was changed: {ui.safe_excerpt(out, 300, tail=True)}")
+        return DenyResult(DENY_REJECTED, "", before, after)
+    if dry_run:
+        return DenyResult(DENY_DRY_RUN, "", before, after)
+    if _lanes_classify(patch):
+        ui.warn(DENY_NOT_HOT if adding else DENY_REMOVAL_NOT_HOT)
+        return DenyResult(DENY_NOT_HOT_STATUS, "", before, after)
+    readable, again = _live_tools_deny()
+    if not readable or again != live:
+        ui.warn("OpenClaw: tools.deny changed while setup was running; nothing was written. Re-run setup.")
+        return DenyResult(DENY_RACE, "", before, after)
+    try:
+        ok, out = apply_patch(patch, replace_paths=paths)
+    except RestartRequired:
+        ui.warn(DENY_NOT_HOT if adding else DENY_REMOVAL_NOT_HOT)
+        return DenyResult(DENY_NOT_HOT_STATUS, "", before, after)
+    if not ok:
+        ui.error(f"OpenClaw rejected the tools.deny patch: {ui.safe_excerpt(out, 300, tail=True)}")
+        return DenyResult(DENY_FAILED, "", before, after)
+    return DenyResult(DENY_APPLIED if adding else DENY_REMOVED, "", before, after)
+
+
+def _apply_image_deny(s: state.SetupState, *, dry_run: bool = False) -> DenyResult:
+    """Deny `image_generate` in the global `tools.deny` without losing an operator entry (ADR-0011).
+
+    Order: fresh read, shape check, build the whole list (the live one plus the token), single-token delta, dry-run patch,
+    stop under `--dry-run`, re-read and abort on a change, hot only (never deferred), live patch, and only then state."""
+    tool = openclaw_tool_policy.IMAGE_TOOL
+    readable, live = _live_tools_deny()
+    if not readable:
+        ui.warn("OpenClaw: tools.deny could not be read; image generation was NOT disabled and nothing was written.")
+        return DenyResult(DENY_UNREADABLE)
+    try:
+        live = openclaw_tool_policy.check_shape(live)
+    except ValueError:
+        ui.warn("OpenClaw: tools.deny is not a list of strings; image generation was NOT disabled and nothing was written.")
+        return DenyResult(DENY_SHAPE, "not a list of strings")
+    new = openclaw_tool_policy.deny_add(live, tool)
+    if new is openclaw_tool_policy.NO_CHANGE:
+        entry = openclaw_tool_policy.covering_token(live, tool) or tool
+        if entry == tool and s.openclaw.image_deny_added:
+            return DenyResult(DENY_ALREADY, entry, tuple(live or ()), tuple(live or ()))
+        return DenyResult(DENY_COVERED, entry, tuple(live or ()), tuple(live or ()))
+    result = _deny_write(live, new, dry_run=dry_run, adding=True)
+    if result.status == DENY_APPLIED:
+        s.openclaw.image_deny_added = True
+        s.openclaw.image_deny_key_absent = live is None
+        ui.ok("OpenClaw: image_generate added to tools.deny (affects all agents)")
+    return result
+
+
+def _remove_image_deny(s: state.SetupState, *, dry_run: bool = False) -> DenyResult:
+    """Take back exactly the one `image_generate` token the kit added; never an operator entry (ADR-0011)."""
+    if not s.openclaw.image_deny_added:
+        return DenyResult(DENY_NONE)
+    tool = openclaw_tool_policy.IMAGE_TOOL
+    readable, live = _live_tools_deny()
+    if not readable:
+        ui.warn("OpenClaw: tools.deny could not be read; the image_generate entry setup added was left in place.")
+        return DenyResult(DENY_UNREADABLE)
+    try:
+        live = openclaw_tool_policy.check_shape(live)
+    except ValueError:
+        ui.warn("OpenClaw: tools.deny is not a list of strings; the image_generate entry setup added was left in place.")
+        return DenyResult(DENY_SHAPE, "not a list of strings")
+    new = openclaw_tool_policy.deny_remove(live, tool, key_absent_before=s.openclaw.image_deny_key_absent)
+    if new is openclaw_tool_policy.NO_CHANGE:
+        if not dry_run:                       # the operator already took it out: nothing to write, nothing left to track
+            s.openclaw.image_deny_added = False
+            s.openclaw.image_deny_key_absent = False
+        return DenyResult(DENY_GONE, "", tuple(live or ()), tuple(live or ()))
+    result = _deny_write(live, new, dry_run=dry_run, adding=False)
+    if result.status == DENY_REMOVED:
+        s.openclaw.image_deny_added = False
+        s.openclaw.image_deny_key_absent = False
+        ui.ok("OpenClaw: removed the image_generate entry setup had added to tools.deny")
+    return result
 
 
 def _antigravity_restore_fragment(prev: dict) -> tuple[dict, list[str]]:
@@ -1797,7 +1941,8 @@ def _unlink_plugin(s: state.SetupState) -> list[str]:
 def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
     if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored
-            or s.openclaw.agent_kit_blocks or s.openclaw.lanes_applied or host_section.applied_any(s.openclaw)):
+            or s.openclaw.agent_kit_blocks or s.openclaw.lanes_applied or host_section.applied_any(s.openclaw)
+            or s.openclaw.image_deny_added):
         # A deferral leaves `applied` False (the engine patch waits for the restart), so this is
         # the path that meets it: with nothing to undo there is nothing left to demand either.
         s.openclaw.gateway_restart_pending = {}
@@ -1826,6 +1971,10 @@ def teardown(s: state.SetupState) -> list[str]:
     engine_ok = _teardown_engine(s) if s.openclaw.applied else True
     mcp_ok = _teardown_mcp(s) if s.openclaw.mcp_mirrored else True
     voice_ok = _teardown_voice(s) if s.openclaw.voice_applied else True
+    # The kit's own image_generate token comes out of tools.deny. A removal that cannot be applied (not hot, a changed
+    # list, a rejected patch) keeps its flags so a later teardown can retry; it does not hold the rest of the teardown.
+    if s.openclaw.image_deny_added:
+        _remove_image_deny(s)
     removed: list[str] = []
     if not (engine_ok and mcp_ok and voice_ok and host_ok and lanes_ok):
         return removed
@@ -1845,9 +1994,11 @@ def teardown(s: state.SetupState) -> list[str]:
     # `ai-resources openclaw apply-pending` still has to find them (ADR-0003).
     pending = s.openclaw.host_restart_pending
     left_lanes = s.openclaw.lanes_applied          # lane agents the operator declined to delete stay recorded
+    left_deny = (s.openclaw.image_deny_added, s.openclaw.image_deny_key_absent)     # a removal that could not land
     s.openclaw = state.OpenClawState()
     s.openclaw.host_restart_pending = pending
     s.openclaw.lanes_applied = left_lanes
+    s.openclaw.image_deny_added, s.openclaw.image_deny_key_absent = left_deny
     return removed
 
 
