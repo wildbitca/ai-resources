@@ -1,4 +1,4 @@
-"""Interactive setup wizard — four screens (tools, how, team, review) over ten internal steps (ADR-0009)."""
+"""Interactive setup wizard — five phases (tools, cockpit, team, audio, more) over ten internal steps (ADR-0010)."""
 from __future__ import annotations
 
 import argparse
@@ -1145,21 +1145,31 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
 
 
 # --- Screen 1 "Your tools" (step 1) --------------------------------------------------
-SCREENS = 4
-"""The operator sees four screens (Your tools, How should they work?, Your team, Review) over the ten internal
-steps; the rail and `TOTAL_STEPS` stay (ADR-0009)."""
-SCREEN_OF = {1: 1, 2: 2, 3: 2, 4: 2, 5: 2, 6: 3, 7: 3, 8: 4, 9: 4, 10: 4}
-"""Which screen each internal step belongs to: the gateway steps (3, 4, 5) belong to "How should they work?"."""
+PHASES = 5
+"""The operator sees five phases (Tools, Cockpit, Team, Audio, More) over the ten internal steps; the rail and
+`TOTAL_STEPS` stay (ADR-0010 PD-3, superseding the four screens of ADR-0009)."""
+PHASE_LABELS = flow.PHASE_LABELS
+# Phase of each internal step: tools 1; cockpits 2; mode, gateway, providers, credentials and the whole team 3;
+# voice 4; lifecycle, review and apply 5. Step 7 ("Tool configuration") joins phase 3 until the cockpit
+# questions move to phase 2 (plan S11) and the voice questions to phase 4 (S13).
+PHASE_OF = {1: 1, 2: 3, 3: 3, 4: 3, 5: 3, 6: 3, 7: 3, 8: 5, 9: 5, 10: 5}
+"""Which phase each internal step belongs to; an unknown step belongs to the last phase."""
+# The four-screen names stay importable for callers that still use them.
+SCREENS = PHASES
+SCREEN_OF = PHASE_OF
 BANNER_SUBTITLE = "Set up your AI coding tools"
 
 
-def _screen_of(step: int) -> int:
-    return SCREEN_OF.get(step, SCREENS)
+def _phase_of(step: int) -> int:
+    return PHASE_OF.get(step, PHASES)
+
+
+_screen_of = _phase_of
 
 
 def _section(step: int, title: str) -> None:
-    """A step header numbered by screen (`[2/4]`); the rail under it still counts the ten steps."""
-    ui.section(_screen_of(step), SCREENS, title)
+    """A step header numbered by phase (`[3/5]`); the rail under it still counts the ten steps."""
+    ui.section(_phase_of(step), PHASES, title)
 HIDDEN_TOOLS = ("gemini",)
 """Retired tools: never listed by the wizard (an old state that holds one still loads)."""
 

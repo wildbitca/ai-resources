@@ -47,8 +47,8 @@ def test_a_subscription_run_reaches_apply_in_four_screens_without_the_old_words(
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
     assert [m.split(":")[0] for m in script.asked] == ["checkbox", "select", "select", "select"]
-    assert [x for x in log if x.startswith("[")] == ["[1/4] Your tools", "[2/4] How should they work?",
-                                                     "[3/4] Your team", "[4/4] Review"]
+    assert [x for x in log if x.startswith("[")] == ["[1/5] Your tools", "[3/5] How should they work?",
+                                                     "[3/5] Your team", "[5/5] Review"]
     text = "\n".join(script.asked + script.shown + script.titles + log)
     assert not BANNED.findall(text), BANNED.findall(text)
 
@@ -78,8 +78,8 @@ def test_each_on_its_own_asks_the_same_screens(monkeypatch, tmp_path):
 
 def test_the_screens_are_numbered_out_of_four_while_the_ten_steps_stay():
     from ai_resources.setup import flow
-    assert wizard.TOTAL_STEPS == 10 and len(flow.STEP_LABELS) == 10 and wizard.SCREENS == 4
-    assert [wizard._screen_of(n) for n in range(1, 11)] == [1, 2, 2, 2, 2, 3, 3, 4, 4, 4]
+    assert wizard.TOTAL_STEPS == 10 and len(flow.STEP_LABELS) == 10 and wizard.PHASES == 5
+    assert [wizard._phase_of(n) for n in range(1, 11)] == [1, 3, 3, 3, 3, 3, 3, 5, 5, 5]
 
 
 def test_the_banner_and_the_docstring_describe_the_flow_without_the_old_words():

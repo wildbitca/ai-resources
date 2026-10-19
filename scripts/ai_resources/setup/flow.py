@@ -42,6 +42,9 @@ STEP_LABELS = ("Tools", "How", "Gateway", "Providers", "API keys", "Team", "Tool
                "Review", "Verify")
 """One short rail label per numbered step (1..10); 6a, 6b and 6c share "Team"."""
 
+PHASE_LABELS = ("Tools", "Cockpit", "Team", "Audio", "More")
+"""One label per phase the operator sees (1..5); see `wizard.PHASE_OF` for the steps in each (ADR-0010 PD-3)."""
+
 
 @dataclass
 class StepSpec:
