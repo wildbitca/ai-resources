@@ -2569,7 +2569,8 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
 
     def ask_orchestrators() -> list[str]:
         if not orchestrators and not ui.is_non_interactive():
-            raw = ui.text("Orchestrator agent id(s) that may dispatch lane agents (comma-separated)", default="")
+            raw = ui.text("Orchestrator agent id(s) that may dispatch lane agents (comma-separated)",
+                          default="claude, main")
             return [o.strip() for o in (raw or "").split(",") if o.strip()]
         return orchestrators
 
