@@ -152,6 +152,15 @@ def test_a_patch_file_that_names_the_record_is_denied(tmp_path):
     assert run({"tool_name": "Bash", "tool_input": {"command": f"git apply {other}"}, "cwd": str(tmp_path)}).returncode == 0
 
 
+def test_patch_word_in_a_read_only_command_is_allowed_but_real_patch_commands_still_denied(tmp_path):
+    doc = tmp_path / "doc.md"
+    doc.write_text(f"mentions {REC}\n")
+    for command in (f"grep -n patch {doc}", f"kubectl patch deploy x --patch-file {doc}"):
+        assert run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(tmp_path)}).returncode == 0, command
+    for command in (f"patch -p1 < {doc}", f"patch -i {doc}", f"cd . && patch {doc}"):
+        assert run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(tmp_path)}).returncode == 2, command
+
+
 @pytest.mark.parametrize("command", [
     "git add README.md && git commit -m x",
     "git add scripts/ai_resources/setup/wizard.py",

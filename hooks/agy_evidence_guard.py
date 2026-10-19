@@ -58,7 +58,8 @@ _WRITES = (
 )
 _GIT_MUTATING = (r"add|commit|apply|am|checkout|switch|merge|restore|mv|rm|cherry-pick|stash|reset|rebase|revert")
 _GIT_CMD = re.compile(r"\bgit\b[^\n]*?\b(?:" + _GIT_MUTATING + r")\b")
-_GIT_APPLY = re.compile(r"\bgit\b[^\n]*?\bapply\b|\bpatch\b")
+_GIT_APPLY = re.compile(r"\bgit\b[^\n]*?\bapply\b|(?:^|[|;&(]|\bsudo)\s*patch\b")
+_PATCH_SEGMENT = re.compile(r"(?:\bgit\b[^\n;|&]*?\b(?:apply|am)\b|(?:^|[|;&(]|\bsudo)\s*patch\b)([^\n;|&]*)")
 _RECORD_CMD = re.compile(r"\blanes\s+(?:-\S+\s+)*gates\s+(?:-\S+\s+)*record\b")
 _INLINE_INTERPRETER = re.compile(
     r"\b(?:python[0-9.]*|node|nodejs|deno|bun|ruby|perl|php|lua)\b[^\n]*?(?:\s-[a-zA-Z]*[ceEpr]\b|\s--eval\b|\s-\s|<<|\s-$)"
@@ -111,18 +112,21 @@ def _normalise(command: str) -> str:
 
 
 def _patch_names_record(command: str, cwd: str) -> bool:
-    """`git apply x.patch` / `patch < x.patch`: best effort, read the named patch files and look for the record."""
-    for tok in re.split(r"[\s;|&<>()]+", re.sub(r"[\\'\"]", "", command)):
-        if not tok or tok.startswith("-"):
-            continue
-        path = tok if os.path.isabs(tok) else os.path.join(cwd, tok)
-        try:
-            if os.path.isfile(path) and os.path.getsize(path) < 2_000_000:
-                with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-                    if NAME in fh.read():
-                        return True
-        except OSError:
-            continue
+    """`git apply x.patch` / `patch < x.patch`: best effort. Read only the patch inputs (the arguments of the patch or
+    git apply command and its `<` redirect target), never every token of the command line."""
+    text = re.sub(r"[\\'\"]", "", command)
+    for m in _PATCH_SEGMENT.finditer(text):
+        for tok in re.split(r"[\s<>()]+", m.group(1)):
+            if not tok or tok.startswith("-"):
+                continue
+            path = tok if os.path.isabs(tok) else os.path.join(cwd, tok)
+            try:
+                if os.path.isfile(path) and os.path.getsize(path) < 2_000_000:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                        if NAME in fh.read():
+                            return True
+            except OSError:
+                continue
     return False
 
 
