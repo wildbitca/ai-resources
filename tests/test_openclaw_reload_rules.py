@@ -40,9 +40,24 @@ def test_gateway_bind_is_restart_required():
     "gateway.controlUi.github.token", "gateway.publicOrigin", "agents.defaults.model.primary",
     "agents.defaults.heartbeat.every", "agents.entries.main.model.primary", "tools.profile",
     "channels.telegram.streaming.mode", "plugins.entries.device-pair.config.publicUrl",
+    # image generation (ADR-0011): the model route and the global tool deny are both applied live
+    "tools.deny", "agents.defaults.mediaModels.image", "auth.profiles",
 ])
 def test_known_hot_keys(path):
     assert kind(path) == "hot"
+
+
+def test_tools_deny_and_the_image_route_are_restart_when_reload_is_off():
+    """ADR-0011: setup applies the image_generate deny only when the key is hot; with reload off it is a restart key."""
+    assert kind("tools.deny", reload_mode="off") == "restart"
+    assert kind("agents.defaults.mediaModels.image", reload_mode="off") == "restart"
+    assert kind("tools.deny", reload_mode="hybrid") == "hot"
+
+
+def test_top_level_tools_deny_is_not_the_http_invoke_deny():
+    """F18: `gateway.tools.deny` (HTTP invoke deny) and top-level `tools.deny` are different keys with their own rows."""
+    assert kind("gateway.tools.deny") == "hot" and kind("tools.deny") == "hot"
+    assert kind("gateway.tools.deny", reload_mode="off") == kind("tools.deny", reload_mode="off") == "restart"
 
 
 def test_logging_follows_the_dist_table():
