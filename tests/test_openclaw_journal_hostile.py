@@ -220,3 +220,36 @@ def test_a_host_after_a_dropped_one_on_the_next_line_is_still_read():
 ])
 def test_the_host_field_is_anchored_at_a_word_start(line, expected):
     assert _hosts(line) == expected
+
+
+def test_an_abandoned_reader_thread_gets_its_stdout_pipe_closed(monkeypatch):
+    """A grandchild that left the process group still holds the pipe: the reader stays blocked after the kill, the
+    runner gives up on it and must close the pipe instead of leaking the descriptor."""
+    import subprocess as _sp
+    import sys as _sys
+    seen = []
+    real = _sp.Popen
+
+    def spy(*a, **kw):
+        proc = real(*a, **kw)
+        seen.append(proc)
+        return proc
+
+    monkeypatch.setattr(host.subprocess, "Popen", spy)
+    monkeypatch.setattr(host, "READER_GRACE_S", 0.2)
+    monkeypatch.setattr(host, "_kill_group", lambda proc: None)           # the pipe stays open: the reader is stuck
+    rc, _out = host.default_runner([_sys.executable, "-c", "import time; time.sleep(4)"], max_bytes=1000, timeout=0.3)
+    assert rc == 124 and len(seen) == 1
+    assert seen[0].stdout.closed
+    seen[0].kill()
+    seen[0].wait(timeout=10)
+
+
+def test_a_finished_capped_run_closes_its_stdout_pipe(monkeypatch):
+    import subprocess as _sp
+    import sys as _sys
+    seen = []
+    real = _sp.Popen
+    monkeypatch.setattr(host.subprocess, "Popen", lambda *a, **kw: seen.append(real(*a, **kw)) or seen[-1])
+    assert host.default_runner([_sys.executable, "-c", "print('ok')"], max_bytes=1000, timeout=10) == (0, "ok")
+    assert seen[0].stdout.closed

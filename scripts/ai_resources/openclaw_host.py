@@ -48,6 +48,9 @@ WATCHDOG_OFF = Path.home() / ".openclaw" / "watchdog.off"
 GATEWAY_UNIT = "openclaw-gateway.service"
 
 
+READER_GRACE_S = 5.0
+
+
 def _kill_group(proc: "subprocess.Popen") -> None:
     """SIGKILL the child's whole process group (it was started in its own session), so a grandchild that holds the
     pipe open dies with it; fall back to the child alone where the group is gone or not ours."""
@@ -73,6 +76,18 @@ def _reap(proc: "subprocess.Popen", seconds: float = 5.0) -> int | None:
         return proc.wait(timeout=seconds)
     except subprocess.TimeoutExpired:
         return None
+
+
+def _close_stdout(proc: "subprocess.Popen", reader_alive: bool) -> None:
+    """Close the child's stdout pipe. While the reader thread is still blocked in a read (it is abandoned) the buffered
+    wrapper's lock is held, so only the raw descriptor is closed then; otherwise the wrapper is closed normally."""
+    stream = proc.stdout
+    if stream is None:
+        return
+    try:
+        (getattr(stream, "raw", stream) if reader_alive else stream).close()
+    except (OSError, ValueError):
+        pass
 
 
 def _run_capped(argv: list[str], *, env: dict | None, timeout: float | None, cwd: str | None,
@@ -107,10 +122,12 @@ def _run_capped(argv: list[str], *, env: dict | None, timeout: float | None, cwd
     t.join(timeout)
     if t.is_alive():
         _kill_group(proc)
-        t.join(5)
+        t.join(READER_GRACE_S)
         _reap(proc)
+        _close_stdout(proc, t.is_alive())
         return 124, f"timed out after {timeout:g}s"
     rc = _reap(proc)
+    _close_stdout(proc, False)
     text = bytes(buf).decode("utf-8", errors="replace").strip()
     if capped.is_set():
         return (0 if truncate_ok else 1), text
