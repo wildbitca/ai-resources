@@ -2306,6 +2306,9 @@ def _step_cockpit_choice(s: state.SetupState, dry_run: bool = False) -> int:
         setattr(s, _PHASE2_ATTR, True)
         _openclaw_cockpit.prompt_cockpit(s, dry_run=dry_run)
         _openclaw_channels.prompt(s)
+    if "openclaw" in capable and not s.openclaw.image_mode:
+        from .cockpits import openclaw as _openclaw_cockpit
+        _openclaw_cockpit.prompt_image(s, dry_run=dry_run)          # phase 2.1: asks once, writes nothing (ADR-0011)
     return 0
 
 
@@ -2326,6 +2329,7 @@ def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
             if _OPEN_OPENCLAW:
                 from .cockpits import _openclaw_channels
                 _openclaw_channels.prompt(s)
+                _openclaw_cockpit.prompt_image(s, dry_run=dry_run)      # More options asks the saved answer again
         else:
             _openclaw_cockpit.prompt_model(s, dry_run=dry_run)
     return 0

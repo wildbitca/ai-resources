@@ -86,6 +86,9 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(host_section, "_in_flight", lambda: (0, "0"))
     monkeypatch.setattr(openclaw_cockpit, "_live_reload_mode", lambda: None)
     monkeypatch.setattr(openclaw_cockpit, "_gateway_main_pid", lambda: "")
+    # The image question lists which providers OpenClaw can already sign in to by running `openclaw models status
+    # --json`; a test never runs the host's openclaw. The image tests pass their own accounts.
+    monkeypatch.setattr(openclaw_cockpit, "_image_accounts", lambda: ({}, []))
     # And the start-time read behind `plugin_is_stale`'s time rule: a tmp plugin dir is always newer
     # than the live gateway, so an unstubbed call would make every staleness test report stale.
     monkeypatch.setattr(openclaw_cockpit, "_gateway_started_at", lambda: None)

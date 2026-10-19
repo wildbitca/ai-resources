@@ -21,8 +21,11 @@ docs/providers/*.md). The ids below are documented, not run on this host.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Collection, Mapping, NamedTuple, Sequence
+
+from .. import state, ui
+from ... import openclaw_tool_policy
 
 TIMEOUT_MS = 180000                               # docs/tools/image-generation.md:269-277
 MEDIA_PATH = "agents.defaults.mediaModels.image"
@@ -159,12 +162,12 @@ def validate_model_ref(ref: object, route: Route | None = None) -> str:
 
 # --- patches --------------------------------------------------------------------------------------------------------------
 
-def build_patch(route_id: str, model: str, *, timeout_ms: int = TIMEOUT_MS) -> dict | None:
+def build_patch(route_id: str, model: str, *, timeout_ms: int = TIMEOUT_MS, route: Route | None = None) -> dict | None:
     """The `config patch` body for `route_id` and `model`: None for keep and disable (they write no model), else exactly
     `agents.defaults.mediaModels.image = {primary, timeoutMs}`. ValueError for an unknown route, a route that cannot be
     selected without provider config, or an invalid ref, before anything is built."""
-    route = ROUTES.get(route_id)
-    if route is None:
+    route = route or ROUTES.get(route_id)
+    if route is None or route.id != route_id:
         raise ValueError(f"unknown image route: {route_id!r}")
     if route.kind != "route":
         return None
@@ -229,3 +232,172 @@ def provider_account(route: Route, accounts: Mapping[str, Mapping[str, Any]] | N
     if kit_names:
         return AccountView(False, KIT_ENV_ONLY, " or ".join(kit_names), sign_in_command(route))
     return AccountView(False, MISSING, env_names or route.provider, sign_in_command(route))
+
+
+# --- the question (plan I7): asks, never writes ---------------------------------------------------------------------------
+
+OTHER_REF = "__other__"
+SIGN_IN_AT_APPLY = "sign-in"
+_METHODS = {"api-key": "API key (pasted into OpenClaw's own prompt on your terminal)",
+            "oauth": "MiniMax OAuth (minimax-portal; billing NOT PROVEN)"}
+
+
+def _get(doc: Any, *keys: str) -> Any:
+    cur = doc
+    for k in keys:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return cur
+
+
+def comfy_configured(doc: Mapping[str, Any] | None) -> bool:
+    """True when the live config already has a ComfyUI provider block (the kit writes none)."""
+    providers = _get(doc or {}, "models", "providers")
+    return isinstance(providers, dict) and any("comfy" in str(k).lower() for k in providers)
+
+
+def effective_route(route: Route, doc: Mapping[str, Any] | None) -> Route:
+    """`route`, selectable when its provider config exists (ComfyUI with a workflow block)."""
+    if route.id == "comfyui" and comfy_configured(doc):
+        return replace(route, selectable_without_provider_config=True, free_text_model=True)
+    return route
+
+
+def default_mode(s: state.SetupState) -> str:
+    """The pre-selected answer: the saved one, else `keep`. Nothing is ever pre-selected as advice."""
+    saved = s.openclaw.image_mode
+    return saved if saved in ROUTES else KEEP_ID
+
+
+def live_image_value(doc: Mapping[str, Any] | None) -> Any:
+    return _get(doc or {}, "agents", "defaults", "mediaModels", "image")
+
+
+def ref_of(value: Any) -> str:
+    """The primary model ref of a live `mediaModels.image` value (a string or {primary, ...}); "" when there is none."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and isinstance(value.get("primary"), str):
+        return value["primary"]
+    return ""
+
+
+def live_covering_entry(doc: Mapping[str, Any] | None) -> str | None:
+    deny = _get(doc or {}, "tools", "deny")
+    if isinstance(deny, list) and all(isinstance(x, str) for x in deny):
+        return openclaw_tool_policy.covering_token(deny, openclaw_tool_policy.IMAGE_TOOL)
+    return None
+
+
+def route_choices(doc: Mapping[str, Any] | None, accounts: Mapping[str, Mapping[str, Any]] | None,
+                  kit_env_names: Collection[str] = ()) -> list:
+    """The one provider-style list: keep, disable, then every catalog route in catalog order with its labels and a
+    visibility marker. A route that needs provider config the kit does not write is a disabled choice with its reason."""
+    out = [ui.Choice(KEEP.label, value=KEEP_ID), ui.Choice(DISABLE.label, value=DISABLE_ID)]
+    for route in CATALOG:
+        route = effective_route(route, doc)
+        view = provider_account(route, accounts, kit_env_names)
+        label = choice_label(route)
+        if route.selectable_without_provider_config:
+            out.append(ui.Choice(f"{label} [{view.source_label}]", value=route.id))
+        else:
+            out.append(ui.Choice(label, value=route.id, disabled=route.requires))
+    return out
+
+
+def prompt(s: state.SetupState, accounts: Mapping[str, Mapping[str, Any]] | None = None,
+           doc: Mapping[str, Any] | None = None, kit_env_names: Collection[str] = ()) -> None:
+    """Phase 2.1. Sets answers on the in-memory state and writes nothing; its only I/O is the screen. A non-interactive
+    run asks nothing and leaves the saved answer (or the never-answered "") untouched: that resolves to `keep`."""
+    if ui.is_non_interactive():
+        return
+    ui.detail("OpenClaw generates images with the `image_generate` tool. Setup does not advise a route: every documented "
+              "route is listed with its billing and proof label. Nothing here asks for a key.")
+    mode = ui.select("Which image generation setup should OpenClaw have?", route_choices(doc, accounts, kit_env_names),
+                     default=default_mode(s))
+    s.openclaw.image_mode = mode
+    covering = live_covering_entry(doc)
+    live_ref = ref_of(live_image_value(doc))
+    if mode == KEEP_ID:
+        ui.info("Setup leaves image generation as it is. OpenClaw picks a provider by itself from any sign-in it "
+                "already has" + (f" ({', '.join(sorted(_profile_names(accounts)))})" if _profile_names(accounts) else "") + ".")
+        return
+    if mode == DISABLE_ID:
+        if covering:
+            ui.info(f"image_generate is already denied by your tools.deny entry {covering!r}; setup changes nothing.")
+        else:
+            ui.warn("This adds image_generate to the global tools.deny: it affects ALL agents, including lane agents. "
+                    "Live effect on running sessions: NOT PROVEN.")
+        return
+    route = effective_route(ROUTES[mode], doc)
+    s.openclaw.image_model = _prompt_model(s, route)
+    view = provider_account(route, accounts, kit_env_names)
+    s.openclaw.image_account = _prompt_account(s, route, view)
+    if mode == "openai-key" and (accounts or {}).get("openai", {}).get("profiles"):
+        ui.warn("An OpenAI sign-in already exists in OpenClaw; with it present OpenClaw does not fall back to "
+                "OPENAI_API_KEY.")
+    if live_ref and live_ref != s.openclaw.image_model:
+        ui.warn(f"OpenClaw already has an image model set ({live_ref}). Setup asks before it changes it.")
+    if covering:
+        ui.warn(f"Your tools.deny entry {covering!r} still blocks image_generate; setup does not remove it.")
+    elif s.openclaw.image_deny_added:
+        ui.info("Setup's earlier image_generate entry in tools.deny is removed after the model is set.")
+    if view.source_label == KIT_ENV_ONLY:
+        ui.warn(f"{view.name} is only in the kit's .env, which the gateway does not read. Sign in with: {view.fix}")
+
+
+def _profile_names(accounts: Mapping[str, Mapping[str, Any]] | None) -> list[str]:
+    names = []
+    for provider, info in (accounts or {}).items():
+        if isinstance(info, Mapping) and (info.get("profiles") or info.get("kind") in ("profiles", "env")):
+            names.append(provider)
+    return names
+
+
+def _validate(route: Route):
+    def check(value: str):
+        try:
+            validate_model_ref(value, route)
+            return True
+        except ValueError as e:
+            return str(e)
+    return check
+
+
+def _prompt_model(s: state.SetupState, route: Route) -> str:
+    """The model for `route`: a catalog ref, or a validated free-text one. Never a secret prompt."""
+    saved = s.openclaw.image_model
+    catalog = [m for m in route.models if "<" not in m]
+    if route.free_text_model or not catalog:
+        hint = f"{route.provider}/<deployment>" if route.free_text_model else f"{route.provider}/<model>"
+        value = ui.text(f"{route.label} model ref ({hint}):", default=saved if saved.startswith(route.provider + "/") else "",
+                        validate=_validate(route))
+        try:
+            return validate_model_ref(value, route)
+        except ValueError:
+            return ""
+    choices = [ui.Choice(m, value=m) for m in catalog] + [ui.Choice("Other model ref...", value=OTHER_REF)]
+    pick = ui.select(f"Model for {route.label}?", choices, default=saved if saved in catalog else catalog[0])
+    if pick != OTHER_REF:
+        return pick
+    value = ui.text(f"{route.label} model ref ({route.provider}/<model>):", default="", validate=_validate(route))
+    try:
+        return validate_model_ref(value, route)
+    except ValueError:
+        return catalog[0]
+
+
+def _prompt_account(s: state.SetupState, route: Route, view: AccountView) -> str:
+    """The account answer is a name, never a value: a profile prefix, an env var NAME, or the auth method for a route that
+    has two (MiniMax). Signing in itself is OpenClaw's, on the operator's terminal, at Apply (plan I9)."""
+    if len(route.auth) > 1:
+        saved = s.openclaw.image_account if s.openclaw.image_account in route.auth else route.auth[0]
+        return ui.select(f"How do you sign in to {route.label}?",
+                         [ui.Choice(_METHODS.get(a, a), value=a) for a in route.auth], default=saved)
+    if view.gateway_sees_it:
+        ui.info(f"OpenClaw already has a sign-in for {route.label}: {view.name}")
+        return view.name
+    ui.info(f"OpenClaw has no sign-in for {route.label} yet. At Apply you can sign in through OpenClaw "
+            f"(its own prompt, on your terminal); setup never sees the key.")
+    return SIGN_IN_AT_APPLY

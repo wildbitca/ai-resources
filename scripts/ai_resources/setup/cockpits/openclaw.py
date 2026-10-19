@@ -70,6 +70,7 @@ from ... import repo_root
 from . import _shared
 from . import _openclaw_mcp as mcp
 from . import _openclaw_voice as voice
+from . import _openclaw_image as image
 from . import _openclaw_host as host_section
 from . import openclaw_lanes
 from . import _agy_quota
@@ -785,6 +786,34 @@ def prompt(s: state.SetupState, *, dry_run: bool = False) -> None:
 def prompt_cockpit(s: state.SetupState, *, dry_run: bool = False) -> None:
     """Phase 2: which engine runs the bot. Writes nothing: it only sets answers on the in-memory state."""
     _prompt_engine_choice(s, dry_run=dry_run)
+
+
+def _image_accounts() -> tuple[dict, list[str]]:
+    """What the image question shows about sign-ins: OpenClaw's own view (`models status --json`, allow-listed to provider,
+    kind, profile count: no key field is ever read) and the NAMES present in the kit's .env. Both fail soft to empty."""
+    from ... import model_accounts
+    from .. import credentials
+    accounts: dict = {}
+    rc, out = _openclaw(["models", "status", "--json"], timeout=60)
+    if rc == 0 and "{" in out:
+        try:
+            accounts = model_accounts.allowlist_status(json.loads(out[out.index("{"):out.rindex("}") + 1]))
+        except ValueError:
+            accounts = {}
+    try:
+        names = sorted(k for k, v in (credentials.load_env() or {}).items() if v)
+    except Exception:  # noqa: BLE001 - a display aid: an unreadable env file shows no names
+        names = []
+    return accounts, names
+
+
+def prompt_image(s: state.SetupState, *, dry_run: bool = False) -> None:
+    """Phase 2.1: the image-generation question (ADR-0011). Writes nothing. A non-interactive run asks nothing, runs no
+    subprocess and leaves the saved answer (or none, which resolves to `keep`) as it is."""
+    if ui.is_non_interactive():
+        return
+    accounts, names = _image_accounts()
+    image.prompt(s, accounts, read_config(config_path()), names)
 
 
 def prompt_model(s: state.SetupState, *, dry_run: bool = False) -> None:

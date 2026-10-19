@@ -79,11 +79,12 @@ def test_engine_and_channel_questions_come_first_and_only_list_runs(monkeypatch)
     runner = Runner()
     _wire(monkeypatch, runner)
     s = _state(openclaw=True)
-    script = Script(**{"Which engine": "claude-code",
+    script = Script(**{"Which engine": "claude-code", "Which image generation": "keep",
                        "Which channel accounts": lambda values: [v for v in values if v != "slack:default"]})
     script.install(monkeypatch)
     assert wizard._step_cockpit_choice(s) == 0
-    assert [a.split(": ", 1)[1].split(" ")[1] for a in script.asked] == ["engine", "channel"]
+    # the image question (ADR-0011, phase 2.1) follows the engine and the channels
+    assert [a.split(": ", 1)[1].split(" ")[1] for a in script.asked] == ["engine", "channel", "image"]
     assert not any("Starting team" in a for a in script.asked)
     assert runner.argvs == [["openclaw", "channels", "list", "--all", "--json"]]
     assert s.openclaw.engine == "claude-code"
@@ -104,7 +105,8 @@ def test_a_ticked_disabled_channel_prints_the_add_command_and_plans_no_execution
     runner = Runner(listing)
     _wire(monkeypatch, runner)
     s = _state(openclaw=True)
-    script = Script(**{"Which engine": "keep", "Which channel accounts": lambda values: list(values)})
+    script = Script(**{"Which engine": "keep", "Which image generation": "keep",
+                       "Which channel accounts": lambda values: list(values)})
     script.install(monkeypatch)
     wizard._step_cockpit_choice(s)
     lines = channel_ui.review_lines(s)
@@ -115,7 +117,7 @@ def test_a_ticked_disabled_channel_prints_the_add_command_and_plans_no_execution
 def test_an_unreadable_listing_asks_no_channel_question(monkeypatch):
     _wire(monkeypatch, Runner("not json"))
     s = _state(openclaw=True)
-    script = Script(**{"Which engine": "keep"})
+    script = Script(**{"Which engine": "keep", "Which image generation": "keep"})
     script.install(monkeypatch)
     wizard._step_cockpit_choice(s)
     assert not any("channel accounts" in a for a in script.asked)
@@ -138,10 +140,24 @@ def test_a_saved_engine_is_not_asked_again_in_the_cockpit_step(monkeypatch):
     _wire(monkeypatch, runner)
     s = _state(openclaw=True)
     s.openclaw.engine = "keep"
+    s.openclaw.image_mode = "keep"                   # the image question (ADR-0011) is asked once as well
     script = Script()
     script.install(monkeypatch)
     wizard._step_cockpit_choice(s)
     assert script.asked == [] and runner.argvs == []
+
+
+def test_a_saved_engine_without_an_image_answer_asks_only_the_image_question(monkeypatch):
+    """An existing host: the engine stays unasked, the new image question is asked once."""
+    runner = Runner()
+    _wire(monkeypatch, runner)
+    s = _state(openclaw=True)
+    s.openclaw.engine = "keep"
+    script = Script(**{"Which image generation": "disable"})
+    script.install(monkeypatch)
+    wizard._step_cockpit_choice(s)
+    assert [a.split(": ", 1)[1].split(" ")[1] for a in script.asked] == ["image"] and runner.argvs == []
+    assert s.openclaw.image_mode == "disable"
 
 
 def test_the_post_team_step_skips_the_engine_when_the_cockpit_step_asked_it(monkeypatch):
