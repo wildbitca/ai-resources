@@ -56,4 +56,4 @@ models picked up in the background, with the gateway restarted safely and a way 
 
 ## Amendment (ADR-0010, proposed)
 
-Decision 3 gains a channel clause: the kit never patches `channels.*`; a channel account is disabled only by running the OpenClaw CLI (`channels remove`, no `--delete`) after a per-change confirmation. Enable is printed for the operator, never executed. Approvers: operator (approved, N5); security-auditor sign-off PENDING. See [ADR-0010](0010-setup-five-phases-channels-team.md).
+Decision 3 gains a channel clause: the kit never patches `channels.*`; a channel account is disabled only by running the OpenClaw CLI (`channels remove`, no `--delete`) after a per-change confirmation. Enable is printed for the operator, never executed. Approvers: operator (approved, N5); security-auditor APPROVE (2026-10-19, re-review at 5953c22). See [ADR-0010](0010-setup-five-phases-channels-team.md).

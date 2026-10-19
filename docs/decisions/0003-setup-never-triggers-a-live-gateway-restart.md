@@ -171,4 +171,4 @@ restart-required" mode on every release and bought nothing. The kit no longer pi
 
 ## Amendment (ADR-0010, proposed)
 
-Carve-out: a confirmed channel disable (`openclaw channels remove --channel C --account A`) may ask the Gateway to stop that account and restart its listener. It never restarts the Gateway itself, and the other restart rules are unchanged. Approvers: operator (approved, N5); security-auditor sign-off PENDING. See [ADR-0010](0010-setup-five-phases-channels-team.md).
+Carve-out: a confirmed channel disable (`openclaw channels remove --channel C --account A`) may ask the Gateway to stop that account and restart its listener. It never restarts the Gateway itself, and the other restart rules are unchanged. Approvers: operator (approved, N5); security-auditor APPROVE (2026-10-19, re-review at 5953c22). See [ADR-0010](0010-setup-five-phases-channels-team.md).

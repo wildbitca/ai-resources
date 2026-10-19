@@ -1,12 +1,11 @@
 # ADR-0010: Setup in five phases, unified team presets, disable-only channels (LiteLLM leaves the new-setup choice)
 
-**Status**: Proposed: conditions applied, awaiting re-review. Plan: `.agent-output/planner/setup-five-steps-plan.md`,
+**Status**: Accepted (2026-10-19), implemented on main, not released. Plan: `.agent-output/planner/setup-five-steps-plan.md`,
 revision 3, approved by the operator. The software-architect and security-auditor reviewed this ADR on 2026-10-19 with
-the verdict APPROVE WITH CONDITIONS; the conditions are written into "Review conditions (architect, security-auditor,
-2026-10-19)" below and applied by the steps that carry them. Nobody has re-reviewed the result, so this ADR is NOT
-Accepted and its sign-offs are not self-signed.
-Implemented: S1 to S16 (see "Implementation status"), each as one local commit. The verifier's sign-off (S17) and the
-two reviewers' re-review are still to come.
+APPROVE WITH CONDITIONS, the conditions were applied (R1-R4, N1, L1-L3), and both re-reviewed the result at HEAD 5953c22
+with APPROVE (see "Sign-offs"). The independent verifier signed the acceptance criteria at 333cb9b, before the review-condition commits (PASS, two
+caveats, see "Sign-offs"). The advisories listed there stay open and are not blocking.
+Implemented: S1 to S16 (see "Implementation status"), each as one local commit.
 **Date**: 2026-10-18
 **Decision makers**: operator (N1-N5 answered, D1-D3 given), implementer (record only).
 **Amends**: [ADR-0001](0001-model-pins-and-auto-update.md) d3, [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md),
@@ -176,9 +175,9 @@ bounded output; a re-list afterwards; runs after the config patch and lane write
 
 | ADR | Amendment | Approvers |
 |---|---|---|
-| 0001 d3 | the kit never patches `channels.*`; channel accounts are disabled only by running the OpenClaw CLI after per-change confirmation | operator (approved per N5); security-auditor APPROVE WITH CONDITIONS, awaiting re-review |
-| 0003 | carve-out: a confirmed disable may stop that account and restart its listener, never the Gateway | operator (approved); security-auditor APPROVE WITH CONDITIONS, awaiting re-review |
-| 0007 §8, §11 | the checker fix and the gateway fallback rule; the Google role list adds the planner and software-architect seconds; presets carry no agy writer candidates; `EVIDENCE` is merged from a validated committed record | operator; software-architect and security-auditor APPROVE WITH CONDITIONS, awaiting re-review |
+| 0001 d3 | the kit never patches `channels.*`; channel accounts are disabled only by running the OpenClaw CLI after per-change confirmation | operator (approved per N5); security-auditor APPROVE (2026-10-19, re-review at 5953c22) |
+| 0003 | carve-out: a confirmed disable may stop that account and restart its listener, never the Gateway | operator (approved); security-auditor APPROVE (2026-10-19, re-review at 5953c22) |
+| 0007 §8, §11 | the checker fix and the gateway fallback rule; the Google role list adds the planner and software-architect seconds; presets carry no agy writer candidates; `EVIDENCE` is merged from a validated committed record | operator; software-architect and security-auditor APPROVE (2026-10-19, re-review at 5953c22) |
 | 0008 | gateway choice: LiteLLM load-only, with the 4/10 evidence | operator |
 | 0009 §2, §8 | five phases; held/on cells and the restore-saved-tick rule | operator |
 
@@ -190,8 +189,9 @@ Channels-rule restatements that S12 re-words (line numbers re-checked before edi
 
 ## Review conditions (architect, security-auditor, 2026-10-19)
 
-Both reviewers returned APPROVE WITH CONDITIONS. Status after this section: **Proposed, conditions applied, awaiting
-re-review.** The implementer wrote the conditions here; it did not sign for either reviewer.
+Both reviewers returned APPROVE WITH CONDITIONS. Status after this section: **Accepted** once both
+reviewers re-reviewed the applied result (see "Sign-offs"). The implementer wrote the conditions here; it did not sign
+for either reviewer.
 
 ### Operator decisions taken with the review
 
@@ -246,11 +246,13 @@ re-review.** The implementer wrote the conditions here; it did not sign for eith
 
 | Reviewer | Scope | Verdict |
 |---|---|---|
-| software-architect | this ADR; pre-checks S1 agy translation, S4a single-row lanes, S6 test ban, S7 manifest and packaging, S11 writes, S13 flow | APPROVE WITH CONDITIONS (2026-10-19); conditions R1-R4, N1, L1-L3 applied; architect and security-auditor re-review pending |
-| security-auditor | this ADR, channel restatements; S7 and S12 | APPROVE WITH CONDITIONS (2026-10-19); conditions R1-R4, N1, L1-L3 applied; architect and security-auditor re-review pending |
+| software-architect | this ADR; pre-checks S1 agy translation, S4a single-row lanes, S6 test ban, S7 manifest and packaging, S11 writes, S13 flow | APPROVE WITH CONDITIONS (2026-10-19), then APPROVE on re-review (2026-10-19, HEAD 5953c22): R1-R4 and C5 closed, no remaining conditions. Advisories: derive `DISPLAY_ONLY_SECONDS` from the workflow in a test; assert the team summary when only display-only Gemini seconds are ticked; re-read the channel list when the disable output hits the cap |
+| security-auditor | this ADR, channel restatements; S7 and S12 | APPROVE WITH CONDITIONS (2026-10-19), then APPROVE on re-review (2026-10-19, HEAD 5953c22): N1, L1, L2, L3 closed, gate constants unchanged, no new Critical/High/Medium. Advisories (Low/Info): the hook still misses shell-variable, decoder-to-shell, `find -exec`, directory-level copies, `git am`, `git commit -a` forms (review of every commit touching `scripts/ai_resources/data/` stays the control); redaction misses cookies, URL credentials and bare `sk-` keys; `_run_capped` leaks one pipe fd per abandoned reader |
 
-The implementing session cannot spawn a reviewer, so it records the verdicts it was given and the conditions it
-applied; it does not sign. Conditions R1-R4, N1, L1-L3 applied; architect and security-auditor re-review pending. This ADR stays Proposed until both reviewers re-review the implemented result.
+The implementing sessions cannot spawn a reviewer, so the verdicts above were produced by separate reviewer sessions run by the
+operator's orchestrating session and are recorded here verbatim in substance. The independent verifier signed the plan's
+acceptance criteria (PASS with two caveats: the preset screen was exercised through the functions the wizard calls and
+tests rather than a TTY session, and the Review disable/undo listing was covered by tests, not seen on screen).
 
 ## Implementation status
 
