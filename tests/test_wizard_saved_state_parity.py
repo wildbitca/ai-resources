@@ -12,7 +12,7 @@ from wizard_fakes import Script, host_env
 
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "setup_state_v1_0.json"
 
-STEP_IDS = ["tools", "mode", "gateway", "providers", "credentials", "preset", "models", "profile", "lanes",
+STEP_IDS = ["tools", "cockpit", "mode", "gateway", "providers", "credentials", "preset", "models", "profile", "lanes",
             "cockpits", "lifecycle", "review", "apply"]
 
 
@@ -27,7 +27,7 @@ def _args(**kw):
 def test_step_ids_and_internal_numbers_are_unchanged():
     steps = wizard._build_steps(True)
     assert [s.id for s in steps] == STEP_IDS
-    assert [s.number for s in steps] == [1, 2, 3, 4, 5, 6, 6, 6, 6, 7, 8, 9, 9]
+    assert [s.number for s in steps] == [1, 1, 2, 3, 4, 5, 6, 6, 6, 6, 7, 8, 9, 9]
     assert wizard.TOTAL_STEPS == 10 and len(flow.STEP_LABELS) == 10
 
 
@@ -63,7 +63,7 @@ def test_dry_run_yes_from_the_v1_0_fixture(monkeypatch, tmp_path):
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
     assert headers and all(t == 5 and 1 <= n <= 5 for n, t, _ in headers)
-    assert [n for n, _t, _ in headers] == sorted(n for n, _t, _ in headers)
+    assert [n for n, _t, _ in headers] == sorted(n for n, _t, _ in headers)      # the phases never run backwards
     assert state.state_path().read_bytes() == before        # dry run: the saved file is not rewritten
     got = state._to_dict(seen["s"])
     assert got["mode"] == want["mode"] and got["backend"] == want["backend"]

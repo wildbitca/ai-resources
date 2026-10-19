@@ -626,15 +626,44 @@ def unregister_agy_mcp_bridge() -> bool:
 
 def prompt(s: state.SetupState, *, dry_run: bool = False) -> None:
     """Ask which engine runs the bot, which model it uses, which MCP servers it gets and how it
-    hears voice notes. Called from step 7."""
+    hears voice notes. The legacy single entry point (More options > OpenClaw runs it whole); the
+    wizard's phases call the parts below in order: `prompt_cockpit` before the team, then
+    `prompt_model`, `prompt_audio` and `prompt_more` after it (ADR-0010 PD-3)."""
     _prompt_engine(s, dry_run=dry_run)
     if s.openclaw.engine == "claude-code":
         mcp.prompt(s, _get(read_config(config_path()), "mcp", "servers") or {})
+    prompt_audio(s)
+    prompt_more(s)
+
+
+def prompt_cockpit(s: state.SetupState, *, dry_run: bool = False) -> None:
+    """Phase 2: which engine runs the bot. Writes nothing: it only sets answers on the in-memory state."""
+    _prompt_engine_choice(s, dry_run=dry_run)
+
+
+def prompt_model(s: state.SetupState, *, dry_run: bool = False) -> None:
+    """After the team is known: the model for OpenClaw's default agent, the risk acknowledgement and the MCP
+    servers. The engine is asked again when the team now recorded does not allow it (compat matrix)."""
+    allowed = selection_engines(s)
+    if allowed is not None and s.openclaw.engine not in ("", "keep") and s.openclaw.engine not in allowed:
+        ui.warn(f"The engine {s.openclaw.engine!r} does not fit the team you picked; choose again.")
+        _prompt_engine_choice(s, dry_run=dry_run)
+    _prompt_engine_model(s, dry_run=dry_run)
+    if s.openclaw.engine == "claude-code":
+        mcp.prompt(s, _get(read_config(config_path()), "mcp", "servers") or {})
+
+
+def prompt_audio(s: state.SetupState) -> None:
+    """Phase 4: how the bot hears voice notes."""
     media = _get(read_config(config_path()), "tools", "media")
     if media:      # the question starts from the live value (D2); with none live it is the old question
         voice.prompt(s, current_media=media)
     else:
         voice.prompt(s)
+
+
+def prompt_more(s: state.SetupState) -> None:
+    """Phase 5: the host section and the stale-plugin check."""
     host_section.prompt(s, read_config(config_path()))
     _prompt_stale_check(s)
 
@@ -659,6 +688,11 @@ def _prompt_stale_check(s: state.SetupState) -> None:
 
 
 def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
+    _prompt_engine_choice(s, dry_run=dry_run)
+    _prompt_engine_model(s, dry_run=dry_run)
+
+
+def _prompt_engine_choice(s: state.SetupState, *, dry_run: bool = False) -> None:
     engines = available_engines(s)
     missing = [e for e in ENGINES.values()
               if e.requires and not e.disabled_reason and e not in engines
@@ -675,8 +709,6 @@ def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
         default=default_engine(s),
     )
     s.openclaw.engine = engine_id
-    engine = ENGINES[engine_id]
-
     if engine_id == "antigravity":
         # A vendor-prefixed value saved by an earlier run would build a three-segment
         # ref, which OpenClaw cannot resolve; keep only the model id.
@@ -685,6 +717,12 @@ def _prompt_engine(s: state.SetupState, *, dry_run: bool = False) -> None:
             "Model for the unrestricted claude worker agent:", default=saved_worker,
         ) or saved_worker
 
+
+def _prompt_engine_model(s: state.SetupState, *, dry_run: bool = False) -> None:
+    engine_id = s.openclaw.engine
+    engine = ENGINES.get(engine_id)
+    if engine is None:
+        return
     models = engine_models(engine, s.get_selection() if hasattr(s, "get_selection") else None)
     if not models:
         return

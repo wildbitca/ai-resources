@@ -42,13 +42,13 @@ def test_a_subscription_run_reaches_apply_in_four_screens_without_the_old_words(
     monkeypatch.setattr(ui, "review_table", lambda rows, title="": log.extend(f"{k}: {v}" for k, v in rows))
     monkeypatch.setattr(ui, "role_table", lambda rows, title="": log.append(title))
     monkeypatch.setattr(ui, "team_table", lambda rows, title="": log.extend(" ".join(r) for r in rows))
-    script = Script(**{"Tick the tools": ["claude", "codex"], "Pick how": "team",
+    script = Script(**{"Tick the tools": ["claude", "codex"], "Sign in now": [], "Pick how": "team",
                        "Starting team": "balanced", "Apply this?": ms.APPLY})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
-    assert [m.split(":")[0] for m in script.asked] == ["checkbox", "select", "select", "select"]
-    assert [x for x in log if x.startswith("[")] == ["[1/5] Your tools", "[3/5] How should they work?",
-                                                     "[3/5] Your team", "[5/5] Review"]
+    assert [m.split(":")[0] for m in script.asked] == ["checkbox", "checkbox", "select", "select", "select"]   # + the S14 sign-in list for codex
+    assert [x for x in log if x.startswith("[")] == ["[1/5] Your tools", "[2/5] Main tool",
+                                                     "[3/5] How should they work?", "[3/5] Your team", "[5/5] Review"]
     text = "\n".join(script.asked + script.shown + script.titles + log)
     assert not BANNED.findall(text), BANNED.findall(text)
 

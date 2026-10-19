@@ -307,8 +307,11 @@ def _report_skip(spec: flow.StepSpec, title: str, reason: str) -> None:
     """A skipped step prints its header and reason; a step a preset made redundant (empty reason) prints nothing."""
     if not reason:
         return
-    ui.mark_skipped(spec.number)
-    _section(spec.number, title)
+    if spec.id == "cockpit":                 # phase 2 shares the team's number: it must not mark the team skipped
+        _section(spec.number, title, phase=2)
+    else:
+        ui.mark_skipped(spec.number)
+        _section(spec.number, title)
     ui.info(reason)
 
 
@@ -342,14 +345,28 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         return ("Models and roles", "") if _PRESET else None
 
     def tool_config_done(c):
-        """Step 7 only asks the questions a ticked tool has (OpenClaw): without one it is skipped without output."""
+        """Step 7 only asks the questions a ticked tool has (OpenClaw): without one it is skipped without output.
+        The engine was already asked before the team when this run's cockpit step did it."""
         selected = (c.s.profile.customizations.get("__targets__") or {}).get("selected") or []
-        if "openclaw" in selected and (_OPEN_OPENCLAW or not c.s.openclaw.engine):
+        if "openclaw" in selected and (_OPEN_OPENCLAW or not c.s.openclaw.engine
+                                       or c.s.__dict__.get(_PHASE2_ATTR)):
             return None
         return ("Tool configuration", "")
 
+    def cockpit_skip(c):
+        """The main-tool step names the tool among the ticked, installed ones and asks only the OpenClaw questions
+        that come before the team; with nothing to ask it is a skip that prints its one line (Back steps over it)."""
+        capable = _capable_cockpits(c.s)
+        if not capable:
+            return ("Main tool", "")
+        if "openclaw" in capable and not c.s.openclaw.engine:
+            return None
+        return ("Main tool", _cockpit_line(capable))
+
     return [
         S("tools", 1, "Your tools", lambda c: _step2_cockpits(c.s), rewindable=False),
+        S("cockpit", 1, "Main tool", lambda c: _step_cockpit_choice(c.s, dry_run=c.dry_run), back=True,
+          skip=cockpit_skip),
         S("mode", 2, "How should they work?", _run_mode_step, edit_label="How"),
         S("gateway", 3, "Gateway", lambda c: _step3_litellm(c.s, c.dry_run), rewindable=dry_run,
           skip=gateway_skip, edit_label="Gateway"),
@@ -831,6 +848,9 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     lane_agents = ((s.profile.lanes or {}).get("agents") or {}) if isinstance(s.profile.lanes, dict) else {}
     if any((a or {}).get("backend") == "claude-cli" for a in lane_agents.values()):
         rows.append(("Parallel runs", "on"))
+    from .cockpits import _openclaw_channels
+    for i, line in enumerate(_openclaw_channels.review_lines(s)):
+        rows.append(("OpenClaw channels" if i == 0 else "", line))
     written = "executors.yaml, tool config files" + (", lanes.yaml" if state.lanes_enabled(s) else "")
     rows.append(("Will write", written))
     return rows
@@ -1167,9 +1187,10 @@ def _phase_of(step: int) -> int:
 _screen_of = _phase_of
 
 
-def _section(step: int, title: str) -> None:
-    """A step header numbered by phase (`[3/5]`); the rail under it still counts the ten steps."""
-    ui.section(_phase_of(step), PHASES, title)
+def _section(step: int, title: str, phase: int | None = None) -> None:
+    """A step header numbered by phase (`[3/5]`); the rail under it still counts the ten steps. `phase` overrides
+    the step's own phase for a step that shares a number with the team (the cockpit step is phase 2)."""
+    ui.section(phase or _phase_of(step), PHASES, title)
 HIDDEN_TOOLS = ("gemini",)
 """Retired tools: never listed by the wizard (an old state that holds one still loads)."""
 
@@ -2118,13 +2139,61 @@ def _single_model_executors(s: state.SetupState) -> dict:
 
 
 # --- Step 7 — per-tool configuration questions -----------------------------------------
+_PHASE2_ATTR = "_openclaw_phase2"
+"""Instance attribute on the setup state (never serialised): this run's cockpit step already asked the engine."""
+COCKPIT_TOOLS = ("claude", "openclaw")
+COCKPIT_LABELS = {"claude": "Claude Code", "openclaw": "OpenClaw"}
+
+
+def _selected_tools(s: state.SetupState) -> list[str]:
+    return (s.profile.customizations.get("__targets__") or {}).get("selected") or []
+
+
+def _capable_cockpits(s: state.SetupState) -> list[str]:
+    """The ticked, installed tools that can host the team (ADR-0010 PD-4)."""
+    selected = _selected_tools(s)
+    return [c for c in COCKPIT_TOOLS if c in selected and (s.cockpits.get(c) or state.CockpitState()).installed]
+
+
+def _cockpit_line(capable: list[str]) -> str:
+    names = [COCKPIT_LABELS[c] for c in capable]
+    if len(names) == 1:
+        return f"Main tool: {names[0]} (the only one among your tools)."
+    return f"Main tools: {' and '.join(names)} (each is set up)."
+
+
+def _step_cockpit_choice(s: state.SetupState, dry_run: bool = False) -> int:
+    """Phase 2: name the main tool among the ticked, installed tools (nothing to choose between when there is one;
+    with several each is set up, so no question would change anything), then ask the OpenClaw engine and the channel
+    accounts before the team is picked. Writes nothing. A run with nothing to ask is a skip that prints the line."""
+    capable = _capable_cockpits(s)
+    _section(1, "Main tool", phase=2)
+    ui.info(_cockpit_line(capable))
+    if "openclaw" in capable and not s.openclaw.engine:
+        from .cockpits import openclaw as _openclaw_cockpit
+        from .cockpits import _openclaw_channels
+        setattr(s, _PHASE2_ATTR, True)
+        _openclaw_cockpit.prompt_cockpit(s, dry_run=dry_run)
+        _openclaw_channels.prompt(s)
+    return 0
+
+
 def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
-    """The tools were ticked on screen 1; this step only asks the questions a tool has of its own (OpenClaw)."""
-    selected = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
-    if "openclaw" in selected:
+    """The tools were ticked on screen 1; this step only asks the questions a tool has of its own (OpenClaw).
+    When the cockpit step already asked the engine, only the questions that need the team come here."""
+    if "openclaw" in _selected_tools(s):
         _section(7, "OpenClaw")
         from .cockpits import openclaw as _openclaw_cockpit
-        _openclaw_cockpit.prompt(s, dry_run=dry_run)
+        if _OPEN_OPENCLAW or not s.__dict__.get(_PHASE2_ATTR):
+            _openclaw_cockpit.prompt(s, dry_run=dry_run)
+            if _OPEN_OPENCLAW:
+                from .cockpits import _openclaw_channels
+                _openclaw_channels.prompt(s)
+        else:
+            _openclaw_cockpit.prompt_model(s, dry_run=dry_run)
+            _openclaw_cockpit.prompt_audio(s)
+            _openclaw_cockpit.prompt_more(s)
+        s.__dict__.pop(_PHASE2_ATTR, None)
     return 0
 
 

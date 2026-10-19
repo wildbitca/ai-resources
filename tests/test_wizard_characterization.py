@@ -160,6 +160,7 @@ PATHS = {
 _CLI_TEAM_TRANSCRIPT = [
     'banner',
     'section 1/5 Your tools',
+    'section 2/5 Main tool',
     'section 3/5 How should they work?',
     'select: Pick how they work together:',
     'section 3/5 Your team',
@@ -198,6 +199,7 @@ EXPECTED = {
     "dry-run": [
         'banner',
         'section 1/5 Your tools',
+        'section 2/5 Main tool',
         'section 3/5 How should they work?',
         'select: Pick how they work together:',
         'section 3/5 Your team',
@@ -214,6 +216,7 @@ EXPECTED = {
     "lanes-dry-run": [
         'banner',
         'section 1/5 Your tools',
+        'section 2/5 Main tool',
         'section 3/5 How should they work?',
         'select: Pick how they work together:',
         'section 3/5 Your team',
@@ -233,6 +236,7 @@ EXPECTED = {
         'banner',
         'confirm: Use previous answers as defaults?',
         'section 1/5 Your tools',
+        'section 2/5 Main tool',
         'section 3/5 How should they work?',
         'select: Pick how they work together:',
         'section 3/5 Your team - roles',
@@ -245,6 +249,7 @@ EXPECTED = {
         'banner',
         'confirm: Use previous answers as defaults?',
         'section 1/5 Your tools',
+        'section 2/5 Main tool',
         'section 3/5 How should they work?',
         'select: Pick how they work together:',
         'section 3/5 Your team',
@@ -265,6 +270,7 @@ EXPECTED = {
         'banner',
         'confirm: Use previous answers as defaults?',
         'section 1/5 Your tools',
+        'section 2/5 Main tool',
         'section 3/5 How should they work?',
         'select: Pick how they work together:',
         'select: Which gateway?',
@@ -296,6 +302,7 @@ EXPECTED = {
     "no-lanes": [
         'banner',
         'section 1/5 Your tools',
+        'section 2/5 Main tool',
         'section 3/5 How should they work?',
         'select: Pick how they work together:',
         'section 3/5 Your team',
@@ -315,6 +322,7 @@ EXPECTED = {
         'banner',
         'confirm: Use previous answers as defaults?',
         'section 1/5 Your tools',
+        'section 2/5 Main tool',
         'section 3/5 How should they work?',
         'select: Pick how they work together:',
         'section 3/5 Gateway',
@@ -338,6 +346,7 @@ EXPECTED = {
     "openrouter": [
         'banner',
         'section 1/5 Your tools',
+        'section 2/5 Main tool',
         'section 3/5 How should they work?',
         'select: Pick how they work together:',
         'section 3/5 Gateway',
@@ -363,6 +372,7 @@ EXPECTED = {
     "single-model": [
         'banner',
         'section 1/5 Your tools',
+        'section 2/5 Main tool',
         'section 3/5 How should they work?',
         'select: Pick how they work together:',
         'section 3/5 Your team',

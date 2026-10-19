@@ -14,6 +14,9 @@ rc=0
 
  i 1 tool(s) in use. To add another, install it by your usual method, then re-run `ai-resources setup`.
 
+[2/5] Main tool --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ i Main tool: Claude Code (the only one among your tools).
+
 [3/5] How should they work? --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  i Gateway: OpenRouter.
  ! A gateway credential replaces your claude.ai subscription for Claude Code: usage is billed per token to the gateway, not to your plan.
