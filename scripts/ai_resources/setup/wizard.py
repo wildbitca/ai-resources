@@ -620,7 +620,7 @@ def _agy_team_roles(doc: dict) -> list[str]:
                 continue
             for c in cands or ():
                 if isinstance(c, str) and c.startswith("agy:"):
-                    tag = "" if model_pins.AGY_LANE_MODELS_CONFIRMED else " [unconfirmed slug]"
+                    tag = "" if model_pins.agy_slug_confirmed(c[4:]) else " [unconfirmed slug]"
                     out.append(f"{role}{suffix}: {model_selection.AgyRow(c[4:]).slug}{tag}")
     return out
 

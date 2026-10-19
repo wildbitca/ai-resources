@@ -17,10 +17,12 @@ with ``allow_unverified``. S1 (the spike) flips a cell to verified only with evi
 Kit content (skills, hooks, MCP, instruction blocks) is written for every detected cockpit
 whatever the action (Addendum A2): the action governs the MODEL setting only.
 
-This module is pure: it reads no file, runs no command and imports no cockpit.
+This module is pure: it reads no file, runs no command and imports no cockpit. The one exception (ADR-0010 PD-7): the
+cell Claude Code x Google through OpenRouter may be lifted by a valid committed evidence record, read lazily by `cell()`.
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -210,8 +212,19 @@ def _build() -> tuple[dict, dict, dict]:
 CELLS, ENGINE_CELLS, _ = _build()
 
 
+# The one cell a committed evidence record may lift (ADR-0010 PD-7): Claude Code with Google through OpenRouter. The
+# overlay is read lazily on use, never at import, and only for this key.
+_EVIDENCE_CELLS = {("claude", "google", MULTI_OPENROUTER): "claude/google/openrouter"}
+
+
 def cell(cockpit: str, provider: str, mode_key: str) -> Cell:
-    return CELLS[(cockpit, provider, mode_key)]
+    c = CELLS[(cockpit, provider, mode_key)]
+    evidence_key = _EVIDENCE_CELLS.get((cockpit, provider, mode_key))
+    if evidence_key and not c.verified:
+        from .. import agy_gate_evidence
+        if agy_gate_evidence.cell_verified(evidence_key):
+            return dataclasses.replace(c, verified=True, reason="")
+    return c
 
 
 def mode_key(mode: str, backend: str | None) -> str:
@@ -276,7 +289,7 @@ def _combine(actions: list[tuple[str, str, bool, str, str]]) -> tuple[str, str, 
 def claude_google_openrouter_verified() -> bool:
     """Whether Claude Code with Google models through OpenRouter is a verified cell (ADR-0010 S6): the Review opt-in
     for Gemini on the OpenRouter Balanced profile is asked only while it is not."""
-    return CELLS[("claude", "google", MULTI_OPENROUTER)].verified
+    return cell("claude", "google", MULTI_OPENROUTER).verified
 
 
 def plan(selection, mode: str, backend: str | None, detected: Iterable[str],
@@ -298,7 +311,7 @@ def plan(selection, mode: str, backend: str | None, detected: Iterable[str],
             if cid == "openclaw" and engine:
                 c = ENGINE_CELLS[(engine, provider)]
             else:
-                c = CELLS[(cid, provider, mk)]
+                c = cell(cid, provider, mk)
             act, reason, unv = c.action, c.reason, False
             if not c.verified:
                 if allow_unverified and act != SKIP:

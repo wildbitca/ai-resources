@@ -281,6 +281,6 @@ they stay disabled until enabled, the Antigravity lane stays opt-in and gated, t
 ## Amendment (ADR-0010, proposed)
 
 - Section 8: every shipped profile keeps its checkers off every writer family, including through fallbacks and `defaults.fallbacks` (the gateway fallback rule); the shrink-only test `tests/test_profile_checker_independence.py` lists what is still open.
-- Section 11: the acknowledged Google role list gains the planner and software-architect seconds (the text hash of `ACK_TEXT` does not change); presets carry no agy writer candidates; `EVIDENCE` is merged from a validated, committed record (`agy_gate_evidence.py`) that ships in no release and flips no gate by hand.
+- Section 11: the acknowledged Google role list gains the planner and software-architect seconds (the text hash of `ACK_TEXT` does not change); presets carry no agy writer candidates; a validated, committed record (`agy_gate_evidence.py`, read lazily and cached; `EVIDENCE` stays a literal) is laid over `EVIDENCE` by `effective_evidence()`: the record is made only by `ai-resources lanes gates record`, is tracked and equal to HEAD in a git kit root, ships in no release until the operator commits it, and flips no gate by hand; a hook denies agent writes to it.
 
 Approvers: operator; software-architect and security-auditor sign-offs PENDING. See [ADR-0010](0010-setup-five-phases-channels-team.md).

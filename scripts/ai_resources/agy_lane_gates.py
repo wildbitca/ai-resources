@@ -1,15 +1,21 @@
 """Phase 3 gates G0..G7 of the Antigravity lane (ADR-0007 section 11, plan `subscription-lanes-phase3-plan.md`).
 
-Pure data and pure helpers, no I/O. Each gate carries a status and the evidence that backs it. A gate that is
-not `proven` keeps the agy lane closed everywhere it matters: admission in setup (`lanes_render.agy_admission`),
-the OpenClaw writer (`openclaw_lanes.writable_backends`) and `lanes prepare --lane` (`lanes_cmd._admit_lane`).
-The checks fail closed with a message that names the gates.
+`GATES` and `EVIDENCE` are literals: pure data that nobody edits by hand (ADR-0010: the gate symbols `GATES`,
+`EVIDENCE`, `AGY_LANE_ADR_ACCEPTED`, `CODEX_LANE_ADR_ACCEPTED`, `WRITABLE_BACKENDS` and
+`model_pins.AGY_LANE_MODELS_CONFIRMED` never change by hand). A gate that is not `proven` keeps the agy lane closed
+everywhere it matters: admission in setup (`lanes_render.agy_admission`), the OpenClaw writer
+(`openclaw_lanes.writable_backends`) and `lanes prepare --lane` (`lanes_cmd._admit_lane`). The checks fail closed with a
+message that names the gates.
 
-The statuses below are what the repository can show. V5 (slugs), V6 (sandbox), V7 (tool surface), V9 (agy
-workspace and cwd) and V12 (agy home) are verification stages that run only through the isolated agy probe
-harness (`~/.cache/ai-resources-live-e2e/bin-agyprobe`) in an operator-announced window. None has run, so
-none is claimed. To record a result, edit `EVIDENCE` in the same commit that adds the run directory and seal
-to ADR-0007 "Evidence"; `tests/test_agy_lane_gates.py` pins that a gate cannot be `proven` without evidence.
+The statuses below are what the repository can show. V5 (slugs), V6 (sandbox), V7 (tool surface), V9 (agy workspace
+and cwd) and V12 (agy home) are verification stages that run only through the isolated agy probe harness
+(`~/.cache/ai-resources-live-e2e/bin-agyprobe`) in an operator-announced window. None has run, so none is claimed.
+
+How a result is recorded: the operator runs `ai-resources lanes gates record --run-dir <window dir>` and commits the one
+file it writes, `scripts/ai_resources/data/agy_gate_evidence.json`. `agy_gate_evidence.load()` (lazy, cached, no
+import-time I/O) validates it and fails closed; `effective_evidence()` overlays a valid record on the literals, and the
+helpers below read that overlay. With no record, or with an invalid one, every status is the literal's.
+`tests/test_agy_lane_gates.py` pins that a gate cannot be `proven` without evidence.
 """
 from __future__ import annotations
 
@@ -56,9 +62,20 @@ GATES: tuple[Gate, ...] = (
 EVIDENCE: dict[str, Gate] = {g.id: g for g in GATES}
 
 
+def effective_evidence() -> dict[str, Gate]:
+    """The literal `EVIDENCE` with the gates a VALID committed record proves laid over it (lazy: the record is
+    read, validated and cached on first use, never at import)."""
+    from . import agy_gate_evidence
+    merged = dict(EVIDENCE)
+    record = agy_gate_evidence.load()
+    if record.status == "valid":
+        merged.update(record.gates)
+    return merged
+
+
 def unproven(evidence: Mapping[str, Gate] | None = None) -> list[Gate]:
     """The gates that are not `proven`, in order. A missing gate counts as not proven (fail closed)."""
-    ev = EVIDENCE if evidence is None else evidence
+    ev = effective_evidence() if evidence is None else evidence
     out: list[Gate] = []
     for g in GATES:
         got = ev.get(g.id)
@@ -71,19 +88,35 @@ def all_proven(evidence: Mapping[str, Gate] | None = None) -> bool:
     return not unproven(evidence)
 
 
+def gate_proven(gate_id: str) -> bool:
+    got = effective_evidence().get(gate_id)
+    return got is not None and got.status == PROVEN and bool(got.evidence)
+
+
+def record_status():
+    """The evidence record's state (`absent`, `valid` or `invalid` with a reason), for doctor and `lanes gates`."""
+    from . import agy_gate_evidence
+    return agy_gate_evidence.load()
+
+
 def refusal(evidence: Mapping[str, Gate] | None = None) -> str | None:
     """The fail-closed message, or None when every gate is proven."""
     bad = unproven(evidence)
     if not bad:
         return None
-    return ("held: Antigravity lane gates not proven: "
+    text = ("held: Antigravity lane gates not proven: "
             + ", ".join(f"{g.id} ({g.verification or 'operator'}: {g.status})" for g in bad)
             + "; evidence is recorded in ADR-0007 section 11")
+    if evidence is None:
+        record = record_status()
+        if record.status == "invalid":
+            text += f"; evidence file invalid: {record.reason}"
+    return text
 
 
 def status_table(evidence: Mapping[str, Gate] | None = None) -> dict[str, dict[str, str]]:
     """`{gate: {status, evidence}}`, the shape recorded in a ledger entry or printed by a status command."""
-    ev = EVIDENCE if evidence is None else evidence
+    ev = effective_evidence() if evidence is None else evidence
     return {g.id: {"status": (ev.get(g.id) or g).status, "evidence": (ev.get(g.id) or g).evidence}
             for g in GATES}
 
@@ -92,3 +125,33 @@ def agy_home_path() -> Path:
     """The kit-owned agy home the lane would use (V12, OQ-P3-4). Only a path: nothing here creates it, and it
     is never under /tmp, `workspace_root` or `~/.openclaw/kit-lanes/`."""
     return Path.home().joinpath(*AGY_HOME_PARTS)
+
+
+def summary() -> dict:
+    """The lane's state in numbers and words, for `lanes gates`, doctor and the team view (one source)."""
+    ev = effective_evidence()
+    proven = [g.id for g in GATES if (ev.get(g.id) or g).status == PROVEN and (ev.get(g.id) or g).evidence]
+    partial = [g.id for g in GATES if g.id not in proven and (ev.get(g.id) or g).status == PARTIAL]
+    return {"proven": proven, "partial": partial, "total": len(GATES), "on": len(proven) == len(GATES),
+            "record": record_status()}
+
+
+def summary_line() -> str:
+    """`Antigravity lane: held, gates 0/8 proven (G6, G7 partial); evidence record: absent; operator action: ...`"""
+    info = summary()
+    record = info["record"]
+    count = f"gates {len(info['proven'])}/{info['total']} proven"
+    if info["on"]:
+        who = f"{record.recorded_by}" + (f", commit {record.commit[:8]} by {record.author}" if record.commit else "")
+        return (f"Antigravity lane: on, {count} (record {(record.commit or record.file_sha8)[:8]}, "
+                f"run {record.run_id}, {record.recorded_at}, {who})")
+    text = f"Antigravity lane: held, {count}"
+    if info["partial"]:
+        text += f" ({', '.join(info['partial'])} partial)"
+    if record.status == "invalid":
+        text += f"; evidence record: invalid ({record.reason})"
+    elif record.status == "valid":
+        text += f"; evidence record: valid for run {record.run_id}, other gates still unproven"
+    else:
+        text += "; evidence record: absent"
+    return text + "; operator action: probe window, then ai-resources lanes gates record"

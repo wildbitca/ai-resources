@@ -81,7 +81,7 @@ class AgyRow:
 
     @property
     def label(self) -> str:
-        tag = "lane, opt-in" if model_pins.AGY_LANE_MODELS_CONFIRMED else "unconfirmed slug; lane, opt-in"
+        tag = "lane, opt-in" if model_pins.agy_slug_confirmed(self.slug) else "unconfirmed slug; lane, opt-in"
         return f"{self.slug} [{tag}]"
 
 

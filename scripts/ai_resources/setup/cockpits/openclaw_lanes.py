@@ -136,8 +136,7 @@ agy_home_path = agy_lane_gates.agy_home_path
 
 def agy_home_wanted() -> bool:
     """True only when V12 (G5) is proven: the kit-owned home may then be created."""
-    g5 = agy_lane_gates.EVIDENCE.get("G5")
-    return g5 is not None and g5.status == agy_lane_gates.PROVEN and bool(g5.evidence)
+    return agy_lane_gates.gate_proven("G5")
 
 
 def ensure_agy_home(path: Path) -> dict[str, Any]:

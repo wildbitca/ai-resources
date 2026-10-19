@@ -89,17 +89,30 @@ checker-fixed Balanced and prints `Gemini not active: LiteLLM is legacy; choose 
 ## N3: production mode, the end-to-end ready path (PD-7)
 
 `scripts/ai_resources/agy_gate_evidence.py` (new) validates a committed record,
-`scripts/ai_resources/data/agy_gate_evidence.json`, and `agy_lane_gates.EVIDENCE` becomes `merge(GATES, load())`.
-The merge only upgrades a gate to `proven` when the whole record is valid; an absent file changes nothing; an invalid
-file changes nothing and `refusal()` adds `evidence file invalid: <reason>`. Loader: no symlinks, 64 KiB cap, strict
-schema v1 (unknown keys, duplicate gate ids and wrong types rejected), per-gate required fields (`run_id`
+`scripts/ai_resources/data/agy_gate_evidence.json`. `agy_lane_gates.GATES` and `EVIDENCE` stay literals (architect C4: the
+loader is an explicit cached function, nothing reads the disk at import); `effective_evidence()` lays a valid record over
+them, and `unproven`, `all_proven`, `refusal`, `status_table` and `gate_proven` read that overlay. The merge only
+upgrades a gate to `proven` when the whole record is valid; an absent file changes nothing; an invalid file changes
+nothing and `refusal()` adds `evidence file invalid: <reason>`.
+Loader: no symlinks, 64 KiB cap, strict schema v1 (unknown keys, duplicate gate ids and wrong types rejected),
+a `seal` over the canonical content and a fixed `generator` string (a hand-written JSON that passes the schema but was not
+made by `lanes gates record` is rejected; operator decision (a)), per-gate required fields (`run_id`
 `^\d{8}T\d{6}Z$`, `manifest_sha256`, `recorded_at`, `recorded_by`; G0 `anchor`, G1 `confirmed_slugs` covering every
-preset agy slug, G6 `cost_per_step_tokens`, G7 `ack_text_sha256` equal to the hash of `ACK_TEXT['google']`). An
-optional `cells` entry can verify only `claude/google/openrouter`. `AGY_LANE_MODELS_CONFIRMED` keeps its name and
-becomes derived. The record path joins `LANE_WRITE_FORBIDDEN` and `TRIPWIRE_PATHS`.
+preset agy slug, G6 `cost_per_step_tokens`, G7 `ack_text_sha256` equal to the hash of `ACK_TEXT['google']`). The manifest
+listing (`relpath` and `sha256` of every file of the probe window) is committed inside the record and every
+`manifest_sha256` must equal the hash of that listing. The G0 anchor names a heading of ADR-0007 "Evidence" that
+contains the record's `run_id`. In a git kit root the file must be tracked and equal to `HEAD`, or the whole record is
+invalid; `lanes gates` and `doctor` show the last-touching commit and its author. An optional `cells` entry can verify
+only `claude/google/openrouter`. Per-slug confirmation (C3): `model_pins.agy_slug_confirmed(slug)` is true for a slug in
+the record's `confirmed_slugs`; the constant `AGY_LANE_MODELS_CONFIRMED` stays `False` and, with `GATES`,
+`AGY_LANE_ADR_ACCEPTED`, `CODEX_LANE_ADR_ACCEPTED` and `WRITABLE_BACKENDS`, never changes by hand. The record path joins
+`LANE_WRITE_FORBIDDEN` (by file name, matched at any depth) and `TRIPWIRE_PATHS`, and a PreToolUse hook
+(`hooks/agy_evidence_guard.py`, registered in `hooks.json` and by setup) denies Write, Edit and shell writes to it in
+every agent session, not only lane children.
 `ai-resources lanes gates` is read-only; `lanes gates record --run-dir` refuses non-TTY, `--yes`, piped stdin and a
-non-git kit root, needs a typed attestation, never runs `agy` or `openclaw`, and prints the local `git commit`.
-Trust model: tamper evidence plus git review, not authentication. No record is shipped and no gate symbol is edited.
+non-git kit root, needs a typed attestation per stage, never runs `agy` or `openclaw`, and prints the local `git commit`.
+Trust model: tamper evidence plus git review, not authentication (the seal is not a secret). No record is shipped and no
+gate symbol is edited.
 
 The single remaining operator action: run the announced probe window (V5, V6, V7, V9-agy, V12, the isolated phase-2
 merge gate for G0, measured cost for G6, G7 approval of the Google text, one Claude Code Gemini tool-call probe

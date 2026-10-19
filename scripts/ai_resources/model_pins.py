@@ -49,7 +49,17 @@ AGY_LANE_MODELS: tuple[str, ...] = (
     "claude-sonnet-5-5", "claude-opus-5-5", "gemini-3.8-flash-low", "gemini-3.8-flash-high",
     "gemini-3.1-pro-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium",
 )
-AGY_LANE_MODELS_CONFIRMED = False       # flips only with a recorded V5 run (agy_lane_gates G1)
+# Constant, never changed by hand (ADR-0010 C3). Per-slug confirmation comes from `agy_slug_confirmed`, which reads the
+# committed evidence record (G1 `confirmed_slugs`); the constant stays False in every shipped tree.
+AGY_LANE_MODELS_CONFIRMED = False
+
+
+def agy_slug_confirmed(slug: str) -> bool:
+    """Whether V5 confirmed this Antigravity slug: the constant, or a valid evidence record naming the slug."""
+    if AGY_LANE_MODELS_CONFIRMED:
+        return True
+    from . import agy_gate_evidence
+    return agy_gate_evidence.slug_confirmed(slug)
 
 _ID_RE = re.compile(r"^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?$")
 
