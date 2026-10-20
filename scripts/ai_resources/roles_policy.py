@@ -106,9 +106,9 @@ _COMMON_QUOTA_PATTERNS: tuple[str, ...] = (
 )
 
 QUOTA_PATTERNS: dict[str, tuple[str, ...]] = {
-    "claude-subscription": _COMMON_QUOTA_PATTERNS,
-    "agy-claude-gpt": _COMMON_QUOTA_PATTERNS,
-    "agy-gemini": _COMMON_QUOTA_PATTERNS,
+    "claude-subscription": (),
+    "agy-claude-gpt": (),
+    "agy-gemini": (),
 }
 
 

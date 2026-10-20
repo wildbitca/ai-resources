@@ -112,16 +112,17 @@ class ProviderMix:
 
 
 def agy_members(doc: Mapping[str, Any]) -> list[tuple[str, str, str]]:
-    """`[(kind, role, candidate)]` for every primary Antigravity candidate the profile's lanes block names."""
+    """`[(kind, role, candidate)]` for every Antigravity candidate the profile's lanes block names: `kind` is `lane`
+    (the role's own candidate list) or `second`. The default writer is never listed (writing stays on Claude Code)."""
     block = doc.get("lanes") or {}
     out: list[tuple[str, str, str]] = []
     for key, kind in (("roles", "lane"), ("second", "second")):
         for role, cands in (block.get(key) or {}).items():
             if role == roles_policy.DEFAULT_INTEGRATING_WRITER:
                 continue
-            first = (cands or [None])[0]
-            if isinstance(first, str) and first.startswith("agy:"):
-                out.append((kind, role, first))
+            for c in cands or ():
+                if isinstance(c, str) and c.startswith("agy:"):
+                    out.append((kind, role, c))
     return out
 
 
@@ -169,20 +170,20 @@ def cell_text(cand: str, state: str) -> str:
 def role_lane_rows(base_rows: Sequence[tuple[str, str, str]], doc: Mapping[str, Any], *, row: str, ticked: bool,
                    acks: Mapping[str, Any] | None, allow_unverified: bool = False,
                    cell_verified: bool = False) -> list[LaneRow]:
-    """The team table: a unified line per role with its real provider, model and lane."""
+    """The team table: a line per role with its real provider, model and lane, and (on the CLI row) a line per
+    Antigravity member, the seconds of every report role included."""
     gateway = {"openrouter": "OpenRouter", "litellm": "LiteLLM"}.get(row, "")
-    agy_primary = {role: cand for kind, role, cand in agy_members(doc) if kind == "lane"} if (row == "cli" and ticked) else {}
     out: list[LaneRow] = []
     for role, vendor, model in base_rows:
-        if role in agy_primary:
-            cand = agy_primary[role]
-            slug = cand[4:]
-            out.append(LaneRow(role, profiles.vendor_of(slug), slug, "Antigravity"))
-            continue
         lane = gateway or "Claude Code"
         if gateway and vendor == "google" and row == "openrouter" and not (allow_unverified or cell_verified):
             lane = "OpenRouter (held: session model until you opt in)"
         out.append(LaneRow(role, vendor, model, lane))
+    if row == "cli":
+        for kind, role, cand in agy_members(doc):
+            state, _why = member_state(role, ticked=ticked, acks=acks, kind=kind)
+            label = f"{role} (second)" if kind == "second" else f"{role} (lane)"
+            out.append(LaneRow(label, profiles.vendor_of(cand[4:]), cand[4:], cell_text(cand, state)))
     return out
 
 
@@ -255,7 +256,8 @@ def tool_rows(members: Sequence[str], doc: Mapping[str, Any], rows: Sequence[tup
     if cli_row and agy_installed:
         if "agy" in members:
             listed = "; ".join(agy_team_roles(doc)) or "no role in this starting team"
-            out.append(("Antigravity", listed, "in team"))
+            out.append(("Antigravity", f"{listed} - sends repo content to Google; terms check next",
+                        "in team, terms check next"))
         else:
             out.append(("Antigravity", "not ticked on Your tools: no roles", "off"))
     if codex_selected and codex_held:

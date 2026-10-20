@@ -390,7 +390,10 @@ def resolve_lanes(by_role: Mapping[str, Any],
                 return False, (f"{agent.pool} is direct-only ({cite}); open only with "
                                f"{', '.join(missing)} ({ADR_AGY})"), agent.pool, agent.model, klass
         if pinned:
-            return True, "pinned: operator pin, not scored", agent.pool, agent.model, klass
+            pin_list = pins.get(role) or []
+            is_primary_pin = (not pin_list) or (ref == pin_list[0])
+            pin_klass = PIN if (is_primary_pin and not checker) else TIER1
+            return True, "pinned: operator pin, not scored", agent.pool, agent.model, pin_klass
         if tier_note:
             return True, tier_note, agent.pool, agent.model, klass
         return True, "", agent.pool, agent.model, klass

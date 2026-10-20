@@ -218,31 +218,8 @@ def verify_capability(doc: Mapping[str, Any], orchestrators: Iterable[str]) -> d
     return out
 
 
-def _lane_fallbacks(model_ref: str) -> list[str]:
-    """Cross-pool fallbacks for a lane agent in openclaw.json."""
-    if "opus" in model_ref:
-        cands = ["agy-cli-lane/claude-opus-5-5", "anthropic/claude-opus-5-5"]
-    elif "gemini" in model_ref:
-        cands = [
-            "agy-cli-lane/gemini-4-argon-high",
-            "agy-cli-lane/gemini-3.8-flash-high",
-            "anthropic/claude-sonnet-5-5",
-        ]
-    else:
-        cands = [
-            "agy-cli-lane/gemini-4-argon-high",
-            "agy-cli-lane/gemini-3.8-flash-high",
-        ]
-    return [c for c in cands if c != model_ref]
-
-
 def _agent_entry(agent_id: str, agent: Mapping[str, Any], workspace: Path) -> dict[str, Any]:
-    primary = str(agent.get("model", ""))
-    fbs = _lane_fallbacks(primary)
-    model_obj: dict[str, Any] = {"primary": primary}
-    if fbs:
-        model_obj["fallbacks"] = fbs
-    return {"name": agent_id, "workspace": str(workspace), "model": model_obj}
+    return {"name": agent_id, "workspace": str(workspace), "model": {"primary": agent.get("model", "")}}
 
 
 def _catalog_entry(agent: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -336,24 +313,15 @@ def build_patch(lanes: Mapping[str, Any], doc: Mapping[str, Any], workspaces: Ma
     catalog = _get(doc, "agents", "defaults", "models") or {}
     patch: dict[str, Any] = {}
     for aid in wanted:
-        existing = entries.get(aid) if isinstance(entries, Mapping) else None
         if aid not in entries:
             patch.setdefault("agents", {}).setdefault("entries", {})[aid] = _agent_entry(
                 aid, agents[aid], workspaces[aid])
-        else:
-            primary = str(agents[aid].get("model", ""))
-            fbs = _lane_fallbacks(primary)
-            cur_model = _get(existing or {}, "model")
-            cur_primary = cur_model.get("primary") if isinstance(cur_model, Mapping) else cur_model
-            cur_fbs = list(cur_model.get("fallbacks") or []) if isinstance(cur_model, Mapping) else []
-            if not isinstance(cur_model, Mapping) or cur_primary != primary or cur_fbs != fbs:
-                ent = patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})
-                ent["model"] = {"primary": primary, **({"fallbacks": fbs} if fbs else {})}
         cat = _catalog_entry(agents[aid])
         ref = agents[aid].get("model", "")
         if cat is not None and ref and ref not in catalog:
             patch.setdefault("agents", {}).setdefault("defaults", {}).setdefault("models", {})[ref] = cat
         # MCP scoping (V7): kit-owned tokens in tools.deny; operator tokens are kept, stale kit tokens dropped.
+        existing = entries.get(aid) if isinstance(entries, Mapping) else None
         current = list(_get(existing or {}, "tools", "deny") or [])
         desired = mcp_deny(agents[aid], doc)
         prev = set((mcp_prev or {}).get(aid) or [])

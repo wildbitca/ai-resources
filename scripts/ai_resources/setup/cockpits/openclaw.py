@@ -356,18 +356,20 @@ def _fallbacks_for(primary_ref: str, engine_id: str) -> list[str]:
 def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_command: str, *,
                 openrouter_enabled: bool = True,
                 worker_model: str = "", ak_path: str = "", agy_bin: str = "", claude_bin: str = "",
-                python3_bin: str = "") -> dict:
+                python3_bin: str = "", fallbacks: bool = False) -> dict:
     """The openclaw.json patch that points the default agent at `engine`."""
     if engine.id == "antigravity":
         patch = _build_antigravity_patch(
             model, worker_model, doc, engram_command,
             agy_bin=agy_bin, claude_bin=claude_bin, python3_bin=python3_bin,
+            fallbacks=fallbacks,
         )
     else:
-        fallbacks = _fallbacks_for(model, engine.id)
         model_spec: dict[str, Any] = {"primary": model}
         if fallbacks:
-            model_spec["fallbacks"] = fallbacks
+            fb = _fallbacks_for(model, engine.id)
+            if fb:
+                model_spec["fallbacks"] = fb
         patch = {
             "agents": {"defaults": {
                 "model": model_spec,
@@ -415,7 +417,7 @@ def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_c
 
 
 def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_command: str, *,
-                             agy_bin: str, claude_bin: str, python3_bin: str) -> dict:
+                             agy_bin: str, claude_bin: str, python3_bin: str, fallbacks: bool = False) -> dict:
     engine = ENGINES["antigravity"]
     primary_ref = f"{engine.runtime}/{model}"
     default_fallbacks = _fallbacks_for(primary_ref, engine.id)
@@ -424,13 +426,19 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
         c for c in ("agy-cli/gemini-4-argon-high", "agy-cli/gemini-3.8-flash-high", "agy-cli/claude-sonnet-5-5")
         if c != worker_primary
     ]
+    default_model: dict[str, Any] = {"primary": primary_ref}
+    if fallbacks:
+        default_model["fallbacks"] = default_fallbacks
+    worker_model_dict: dict[str, Any] = {"primary": worker_primary}
+    if fallbacks:
+        worker_model_dict["fallbacks"] = worker_fallbacks
     patch: dict[str, Any] = {
         "agents": {
             "defaults": {
                 # No `agentRuntime` key here: it is not in OpenClaw's agent schema
                 # (`openclaw config patch --dry-run` rejects it). The CLI backend is
                 # resolved from the model ref's first segment, as the S0 spike proved.
-                "model": {"primary": primary_ref, "fallbacks": default_fallbacks},
+                "model": default_model,
             },
             "entries": {
                 "claude": {
@@ -442,7 +450,7 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
                     # Namespaced with the runtime id, same convention as the default
                     # agent's `agy-cli/<model>` ref (architect decision #5/#1): OpenClaw
                     # resolves the backend from the first path segment.
-                    "model": {"primary": worker_primary, "fallbacks": worker_fallbacks},
+                    "model": worker_model_dict,
                     # `tools.exec.mode` is the schema's policy field; `enabled`/`ask:
                     # false` are rejected, and `mode` cannot be combined with `ask`.
                     "tools": {"exec": {"mode": "full"}},
@@ -465,7 +473,7 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
         if "claude" not in existing_allow:
             ent_patch["subagents"] = {"allowAgents": [*existing_allow, "claude"]}
         if "model" in cfg_dict:
-            ent_patch["model"] = {"primary": primary_ref, "fallbacks": default_fallbacks}
+            ent_patch["model"] = dict(default_model)
         if ent_patch:
             patch["agents"]["entries"][name] = ent_patch
     default_allow = _get(doc, "agents", "defaults", "subagents", "allowAgents") or []
@@ -1079,12 +1087,12 @@ def prompt(s: state.SetupState, *, dry_run: bool = False) -> None:
     if s.openclaw.engine == "claude-code":
         mcp.prompt(s, _get(read_config(config_path()), "mcp", "servers") or {})
     prompt_audio(s)
-    prompt_more(s, interactive=True)
+    prompt_more(s)
 
 
 def prompt_cockpit(s: state.SetupState, *, dry_run: bool = False) -> None:
-    """Phase 2: which engine runs the bot and which model it uses. Writes nothing."""
-    _prompt_engine(s, dry_run=dry_run)
+    """Phase 2: which engine runs the bot. Writes nothing: it only sets answers on the in-memory state."""
+    _prompt_engine_choice(s, dry_run=dry_run)
 
 
 def _image_accounts() -> tuple[dict, list[str]]:
@@ -1170,14 +1178,10 @@ def prompt_audio(s: state.SetupState) -> None:
         voice.prompt(s)
 
 
-def prompt_more(s: state.SetupState, *, interactive: bool = False) -> None:
-    """Phase 5: the host section and the stale-plugin check. Uses recommended defaults unless interactive=True."""
-    host_section.apply_defaults(s, read_config(config_path()))
-    if s.openclaw.stale_plugin_check not in STALE_CHECKS:
-        s.openclaw.stale_plugin_check = "linked"
-    if interactive:
-        host_section.prompt(s, read_config(config_path()))
-        _prompt_stale_check(s)
+def prompt_more(s: state.SetupState) -> None:
+    """Phase 5: the host section and the stale-plugin check."""
+    host_section.prompt(s, read_config(config_path()))
+    _prompt_stale_check(s)
 
 
 STALE_CHECKS = ("linked", "engine", "off")
@@ -1864,7 +1868,8 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
             claude_bin=detection._which_extra("claude"),
             python3_bin=shutil.which("python3") or "",
         )
-    patch = build_patch(engine, model, doc, kit_skills, engram, **patch_kwargs)
+    has_lanes = bool(s.profile.lanes)
+    patch = build_patch(engine, model, doc, kit_skills, engram, fallbacks=has_lanes, **patch_kwargs)
 
     # Switching away from antigravity to a different engine: fold in the same restore
     # fragment teardown() would apply for the antigravity-only keys (agentRuntime,

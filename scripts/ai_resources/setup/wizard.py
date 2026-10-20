@@ -369,29 +369,38 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         return ("Models and roles", "") if _PRESET else None
 
     def tool_config_done(c):
-        """Step 7 only runs when explicitly opened via More options (or when Phase 2 did not run)."""
+        """Step 7 only asks the questions a ticked tool has (OpenClaw): without one it is skipped without output.
+        The engine was already asked before the team when this run's cockpit step did it."""
         selected = (c.s.profile.customizations.get("__targets__") or {}).get("selected") or []
-        if "openclaw" in selected and (_OPEN_OPENCLAW or not c.s.__dict__.get(_PHASE2_ATTR)):
+        if "openclaw" in selected and (_OPEN_OPENCLAW or not c.s.openclaw.engine
+                                       or c.s.__dict__.get(_PHASE2_ATTR)):
             return None
         return ("Tool configuration", "")
 
     def audio_skip(c):
-        """Audio uses defaults on the normal flow; only asked when explicitly opened."""
+        """Audio is asked only on the path where the cockpit step asked the engine first; without OpenClaw one line says
+        why nothing is asked (ADR-0010 S13)."""
+        if "openclaw" not in _selected_tools(c.s):
+            return ("Audio", "Skipped (voice notes need OpenClaw, which is not one of your tools).")
+        if c.s.__dict__.get(_PHASE2_ATTR) and not c.s.__dict__.get(_WHOLE_ATTR):
+            return None
         return ("Audio", "")
 
     def more_skip(c):
-        """More uses recommended defaults automatically on the normal flow."""
-        if "openclaw" in _selected_tools(c.s):
-            from .cockpits import openclaw as _openclaw_cockpit
-            _openclaw_cockpit.prompt_more(c.s, interactive=False)
+        """The host section and the stale-plugin check are asked once, on the first configure (the path where the
+        cockpit step asked the engine); a saved answer is kept and More options > OpenClaw asks it all again."""
+        if "openclaw" in _selected_tools(c.s) and c.s.__dict__.get(_PHASE2_ATTR) \
+                and not c.s.__dict__.get(_WHOLE_ATTR):
+            return None
         return ("More", "")
 
     def cockpit_skip(c):
-        """Always run the main-tool / OpenClaw setup step when OpenClaw is among the selected tools."""
+        """The main-tool step names the tool among the ticked, installed ones and asks only the OpenClaw questions
+        that come before the team; with nothing to ask it is a skip that prints its one line (Back steps over it)."""
         capable = _capable_cockpits(c.s)
         if not capable:
             return ("Main tool", "")
-        if "openclaw" in capable:
+        if "openclaw" in capable and not c.s.openclaw.engine:
             return None
         return ("Main tool", _cockpit_line(capable))
 
@@ -702,6 +711,8 @@ def _show_team(s: state.SetupState, base: dict, rows: list, *, title: str) -> No
     ui.role_lane_table(team_view.role_lane_rows(rows, base, **kwargs), title=title)
     for line in team_view.provider_mix(base, rows, **kwargs).lines:
         ui.info(line)
+    if kwargs["row"] == "cli":
+        _show_team_table(s, base, rows)
 
 
 def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
@@ -2288,19 +2299,21 @@ def _cockpit_line(capable: list[str]) -> str:
 
 
 def _step_cockpit_choice(s: state.SetupState, dry_run: bool = False) -> int:
-    """Phase 2: name the main tool among the ticked, installed tools, then ask the OpenClaw engine, model and
-    communication channels. Writes nothing."""
+    """Phase 2: name the main tool among the ticked, installed tools (nothing to choose between when there is one;
+    with several each is set up, so no question would change anything), then ask the OpenClaw engine and the channel
+    accounts before the team is picked. Writes nothing. A run with nothing to ask is a skip that prints the line."""
     capable = _capable_cockpits(s)
     _section(1, "Main tool", phase=2)
     ui.info(_cockpit_line(capable))
-    if "openclaw" in capable:
+    if "openclaw" in capable and not s.openclaw.engine:
         from .cockpits import openclaw as _openclaw_cockpit
         from .cockpits import _openclaw_channels
         setattr(s, _PHASE2_ATTR, True)
         _openclaw_cockpit.prompt_cockpit(s, dry_run=dry_run)
         _openclaw_channels.prompt(s)
-        s.openclaw.image_mode = s.openclaw.image_mode or "keep"
-        _openclaw_cockpit.prompt_more(s, interactive=False)
+    if "openclaw" in capable and not s.openclaw.image_mode:
+        from .cockpits import openclaw as _openclaw_cockpit
+        _openclaw_cockpit.prompt_image(s, dry_run=dry_run)
     return 0
 
 
@@ -2564,7 +2577,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         orchestrators = ask_orchestrators()
     acks = dict(s.profile.lane_acks or {})
     agy_roles = _agy_roles_of(doc)
-    check_roles = list(agy_roles)
+    check_roles = [r for r in agy_roles if r != roles_policy.DEFAULT_INTEGRATING_WRITER] if team_only else list(agy_roles)
     if team_only and not check_roles:
         # ticked, but this team gives Antigravity no role: nothing to ask and nothing to store
         _untick(s, "agy")
@@ -2747,7 +2760,18 @@ def _apply_channel_changes(s: state.SetupState, *, dry_run: bool = False) -> Non
                     ui.ok(f"{item.channel} / {item.account}: enabled (`{' '.join(argv)}`)")
                     ui.record_action(f"enabled the channel account {item.channel}:{item.account}")
                 else:
-                    ui.info(f"{item.channel} / {item.account}: requires interactive credentials — run `{' '.join(argv)}`")
+                    if interactive:
+                        token = ui.text(f"Token/credential for {item.channel}:{item.account} (empty to skip):")
+                        if token and token.strip():
+                            auth_argv = list(argv) + ["--token", token.strip()]
+                            rc2, text2 = runner(auth_argv, timeout=channels.TIMEOUT_S, env=channels.scrubbed_env(),
+                                                max_bytes=channels.MAX_BYTES)
+                            if rc2 == 0:
+                                ui.ok(f"{item.channel} / {item.account}: enabled with credentials")
+                                ui.record_action(f"enabled the channel account {item.channel}:{item.account}")
+                                rc = 0
+                    if rc != 0:
+                        ui.info(f"{item.channel} / {item.account}: requires interactive credentials — run `{' '.join(argv)}`")
 
 
 def _apply_image_dry_run(s: state.SetupState) -> None:

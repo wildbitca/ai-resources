@@ -63,12 +63,18 @@ def prompt(s: state.SetupState, *, runner: Callable[..., "tuple[int, str]"] | No
     o = s.openclaw
     inventory = channels.list_channels(runner or _runner())
     if not inventory:
-        inventory = _fallback_inventory()
+        # Unreadable, or nothing listed: whatever an earlier read of this run left behind is stale and goes
+        # (architect C6/security: a re-list that comes back empty must not leave a plan standing).
+        s.__dict__.pop(INVENTORY_ATTR, None)
+        o.channels_seen, o.channels_wanted = [], []
+        if inventory is None:
+            ui.detail("Could not read the OpenClaw channel list; channels stay as they are.")
+        return
     on = [a.key for a in inventory if a.enabled]
     default = list(on)
     choices = [ui.Choice(_title(a), value=a.key) for a in inventory]
     picked = ui.checkbox(
-        "Which communication channels should be active? (tick to enable, untick to disable)",
+        "Which channel accounts should stay on? (unticking one asks to turn it off at Apply, after its own confirm)",
         choices, default=default)
     keys = {a.key for a in inventory}
     o.channels_seen = on
@@ -77,10 +83,8 @@ def prompt(s: state.SetupState, *, runner: Callable[..., "tuple[int, str]"] | No
 
 
 def _title(a: channels.ChannelAccount) -> str:
-    label = CHANNEL_LABELS.get(a.channel, a.channel)
-    state_text = "active" if a.enabled else "inactive"
-    acct = "" if a.account == "default" else f" / {a.account}"
-    return f"{label}{acct} ({a.channel} — {state_text})"
+    state_text = "on" if a.enabled else "off"
+    return f"{a.channel} / {a.account} ({state_text})"
 
 
 def review_lines(s: state.SetupState) -> list[str]:
