@@ -86,8 +86,8 @@ lanes:
     software-architect: ["agy:gemini-4-argon-high", claude-code, claude-cli:opus]
     code-reviewer:      ["agy:gemini-4-argon-high", claude-code, claude-cli:sonnet]
     doc-writer:         ["agy:gemini-3.8-flash-high", claude-cli:sonnet, claude-code]
-    implementer:        [claude-cli:sonnet, claude-code]
-    tester:             [claude-cli:sonnet, claude-code]
+    implementer:        [claude-cli:sonnet, claude-code, "agy:gemini-4-argon-high"]
+    tester:             [claude-cli:sonnet, claude-code, "agy:gemini-3.8-flash-high"]
     verifier:           ["agy:claude-opus-5-5", claude-code, claude-cli:opus]
     security-auditor:   ["agy:claude-opus-5-5", claude-code, claude-cli:opus]
   pins:
@@ -96,3 +96,5 @@ lanes:
     software-architect: ["agy:gemini-4-argon-high"]
     code-reviewer:      ["agy:gemini-4-argon-high"]
     doc-writer:         ["agy:gemini-3.8-flash-high"]
+    implementer:        ["agy:gemini-4-argon-high"]
+    tester:             ["agy:gemini-3.8-flash-high"]

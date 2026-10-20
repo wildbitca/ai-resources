@@ -112,17 +112,16 @@ class ProviderMix:
 
 
 def agy_members(doc: Mapping[str, Any]) -> list[tuple[str, str, str]]:
-    """`[(kind, role, candidate)]` for every Antigravity candidate the profile's lanes block names: `kind` is `lane`
-    (the role's own candidate list) or `second`. The default writer is never listed (writing stays on Claude Code)."""
+    """`[(kind, role, candidate)]` for every primary Antigravity candidate the profile's lanes block names."""
     block = doc.get("lanes") or {}
     out: list[tuple[str, str, str]] = []
     for key, kind in (("roles", "lane"), ("second", "second")):
         for role, cands in (block.get(key) or {}).items():
             if role == roles_policy.DEFAULT_INTEGRATING_WRITER:
                 continue
-            for c in cands or ():
-                if isinstance(c, str) and c.startswith("agy:"):
-                    out.append((kind, role, c))
+            first = (cands or [None])[0]
+            if isinstance(first, str) and first.startswith("agy:"):
+                out.append((kind, role, first))
     return out
 
 

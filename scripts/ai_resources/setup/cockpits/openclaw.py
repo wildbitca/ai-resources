@@ -325,6 +325,34 @@ def _deep_merge(dst: dict, src: dict) -> dict:
     return dst
 
 
+def _fallbacks_for(primary_ref: str, engine_id: str) -> list[str]:
+    """Cross-pool / cross-provider fallback models for an OpenClaw agent primary model."""
+    if engine_id == "antigravity":
+        candidates = (
+            [
+                "agy-cli/gemini-4-argon-high",
+                "agy-cli/gemini-3.8-flash-high",
+                "agy-cli/claude-sonnet-5-5",
+                "anthropic/claude-sonnet-5-5",
+            ]
+            if "gemini" in primary_ref
+            else [
+                "agy-cli/gemini-4-argon-high",
+                "agy-cli/gemini-3.8-flash-high",
+                "anthropic/claude-sonnet-5-5",
+            ]
+        )
+    elif engine_id == "claude-code":
+        candidates = [
+            "agy-cli/gemini-4-argon-high",
+            "agy-cli/gemini-3.8-flash-high",
+            "agy-cli/claude-sonnet-5-5",
+        ]
+    else:
+        candidates = []
+    return [c for c in candidates if c != primary_ref]
+
+
 def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_command: str, *,
                 openrouter_enabled: bool = True,
                 worker_model: str = "", ak_path: str = "", agy_bin: str = "", claude_bin: str = "",
@@ -336,9 +364,13 @@ def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_c
             agy_bin=agy_bin, claude_bin=claude_bin, python3_bin=python3_bin,
         )
     else:
+        fallbacks = _fallbacks_for(model, engine.id)
+        model_spec: dict[str, Any] = {"primary": model}
+        if fallbacks:
+            model_spec["fallbacks"] = fallbacks
         patch = {
             "agents": {"defaults": {
-                "model": {"primary": model},
+                "model": model_spec,
                 "models": {model: {"agentRuntime": {"id": engine.runtime}}},
             }},
         }
@@ -347,7 +379,7 @@ def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_c
             if str(name).startswith("kit-lane-"):
                 continue
             if isinstance(cfg, dict) and "model" in cfg:
-                patch["agents"].setdefault("entries", {})[name] = {"model": {"primary": model}}
+                patch["agents"].setdefault("entries", {})[name] = {"model": dict(model_spec)}
         # Runtimes are attached per model ref; a ref the kit pinned to another runtime
         # earlier would keep that pin if the user later picked it by hand.
         for ref, cfg in (_get(doc, "agents", "defaults", "models") or {}).items():
@@ -386,13 +418,19 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
                              agy_bin: str, claude_bin: str, python3_bin: str) -> dict:
     engine = ENGINES["antigravity"]
     primary_ref = f"{engine.runtime}/{model}"
+    default_fallbacks = _fallbacks_for(primary_ref, engine.id)
+    worker_primary = f"claude-kit/{worker_model}"
+    worker_fallbacks = [
+        c for c in ("agy-cli/gemini-4-argon-high", "agy-cli/gemini-3.8-flash-high", "agy-cli/claude-sonnet-5-5")
+        if c != worker_primary
+    ]
     patch: dict[str, Any] = {
         "agents": {
             "defaults": {
                 # No `agentRuntime` key here: it is not in OpenClaw's agent schema
                 # (`openclaw config patch --dry-run` rejects it). The CLI backend is
                 # resolved from the model ref's first segment, as the S0 spike proved.
-                "model": {"primary": primary_ref},
+                "model": {"primary": primary_ref, "fallbacks": default_fallbacks},
             },
             "entries": {
                 "claude": {
@@ -404,7 +442,7 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
                     # Namespaced with the runtime id, same convention as the default
                     # agent's `agy-cli/<model>` ref (architect decision #5/#1): OpenClaw
                     # resolves the backend from the first path segment.
-                    "model": {"primary": f"claude-kit/{worker_model}"},
+                    "model": {"primary": worker_primary, "fallbacks": worker_fallbacks},
                     # `tools.exec.mode` is the schema's policy field; `enabled`/`ask:
                     # false` are rejected, and `mode` cannot be combined with `ask`.
                     "tools": {"exec": {"mode": "full"}},
@@ -427,7 +465,7 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
         if "claude" not in existing_allow:
             ent_patch["subagents"] = {"allowAgents": [*existing_allow, "claude"]}
         if "model" in cfg_dict:
-            ent_patch["model"] = {"primary": primary_ref}
+            ent_patch["model"] = {"primary": primary_ref, "fallbacks": default_fallbacks}
         if ent_patch:
             patch["agents"]["entries"][name] = ent_patch
     default_allow = _get(doc, "agents", "defaults", "subagents", "allowAgents") or []

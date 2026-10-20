@@ -691,7 +691,6 @@ def _ensure_agy_ack(s: state.SetupState, base: dict | None = None) -> None:
     if members and "agy" not in members:
         return
     roles = _agy_roles_of(base) if isinstance(base, dict) else list(profiles.KNOWN_ROLES)
-    roles = [r for r in roles if r != roles_policy.DEFAULT_INTEGRATING_WRITER]
     if not roles:
         return
     acks = dict(s.profile.lane_acks or {})
@@ -2588,8 +2587,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         _ensure_agy_ack(s, doc)
     acks = dict(s.profile.lane_acks or {})
     agy_roles = _agy_roles_of(doc)
-    # the team screen never offers the writer role to Antigravity (writing stays on Claude Code)
-    check_roles = [r for r in agy_roles if r != roles_policy.DEFAULT_INTEGRATING_WRITER] if team_only else agy_roles
+    check_roles = list(agy_roles)
     if team_only and not check_roles:
         # ticked, but this team gives Antigravity no role: nothing to ask and nothing to store
         _untick(s, "agy")

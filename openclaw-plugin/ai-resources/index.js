@@ -68,9 +68,10 @@ export function parseAgyLine(line) {
       ? { input: result.usage.input_tokens, output: result.usage.output_tokens }
       : undefined;
     const text = (result.response || "").trim();
-    if (result.status !== "SUCCESS" || !text) {
+    const quotaErr = /^(?:error:\s*)?(?:you(?:'ve| have) hit your limit|usage limit|rate[_ -]?limit|quota[_ -]?exceeded|resource[_ -]?exhausted|429\b|overloaded_error)/i.test(text);
+    if (result.status !== "SUCCESS" || !text || quotaErr) {
       const reason = (result.error && (result.error.message || result.error))
-        || `agy returned status=${result.status} with ${text ? "text" : "no text"}`;
+        || (quotaErr ? text : `agy returned status=${result.status} with ${text ? "text" : "no text"}`);
       return { kind: "result", sessionId: result.conversation_id, usage, errorText: reason };
     }
     return { kind: "result", text, sessionId: result.conversation_id, usage };

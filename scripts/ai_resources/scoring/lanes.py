@@ -324,7 +324,7 @@ def resolve_lanes(by_role: Mapping[str, Any],
 
     PIN, TIER1, TIER2 = 0, 1, 2
 
-    def check_admission(role: str, role_model: str, ref: str) -> tuple[bool, str, str, str, int]:
+    def check_admission(role: str, role_model: str, ref: str, idx: int = 0) -> tuple[bool, str, str, str, int]:
         """(admitted, reason, pool, model that would run, ranking class)."""
         backend, agent_id = _parse_ref(ref)
         if backend == CLAUDE_CODE:
@@ -350,7 +350,7 @@ def resolve_lanes(by_role: Mapping[str, Any],
                          f"{effective_ids.get(role_model, role_model)}: same family, other version "
                          f"(writer fallback, tier 2)")
         if listed and not checker:
-            klass = PIN
+            klass = PIN if idx == 0 else TIER2
         if agent.stale:
             return False, f"{agent.id} is stale (model drift); re-run `ai-resources setup --lanes`", agent.pool, agent.model, klass
         if agent.backend == CLAUDE_CLI:
@@ -390,7 +390,7 @@ def resolve_lanes(by_role: Mapping[str, Any],
                 return False, (f"{agent.pool} is direct-only ({cite}); open only with "
                                f"{', '.join(missing)} ({ADR_AGY})"), agent.pool, agent.model, klass
         if pinned:
-            return True, "pinned: operator pin, not scored", agent.pool, agent.model, PIN if not checker else TIER1
+            return True, "pinned: operator pin, not scored", agent.pool, agent.model, klass
         if tier_note:
             return True, tier_note, agent.pool, agent.model, klass
         return True, "", agent.pool, agent.model, klass
@@ -401,7 +401,7 @@ def resolve_lanes(by_role: Mapping[str, Any],
         rejected: list[str] = []
         rl = float(role_loads.get(role, 1.0))
         for idx, ref in enumerate(refs):
-            ok, reason, pool, model, klass = check_admission(role, role_model, ref)
+            ok, reason, pool, model, klass = check_admission(role, role_model, ref, idx)
             if not ok:
                 rejected.append(f"{ref}: {reason}")
                 continue

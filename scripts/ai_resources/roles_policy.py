@@ -92,10 +92,23 @@ def gemini_tripwires(benign_writes: Iterable[str] | None = None) -> tuple[str, .
 # completion the gateway returned), per pool: regex strings, recorded verbatim from a probe run. Empty until a
 # V6/V7 run records one: a guessed pattern would let a malformed text trip or miss the breaker. A child's own
 # report is never an input.
+_COMMON_QUOTA_PATTERNS: tuple[str, ...] = (
+    r"hit your limit",
+    r"usage limit",
+    r"rate[_ -]?limit",
+    r"quota[_ -]?exceeded",
+    r"resource[_ -]?exhausted",
+    r"too many requests",
+    r"\b429\b",
+    r"overloaded_error",
+    r"credit balance is too low",
+    r"out of .*credits",
+)
+
 QUOTA_PATTERNS: dict[str, tuple[str, ...]] = {
-    "claude-subscription": (),
-    "agy-claude-gpt": (),
-    "agy-gemini": (),
+    "claude-subscription": _COMMON_QUOTA_PATTERNS,
+    "agy-claude-gpt": _COMMON_QUOTA_PATTERNS,
+    "agy-gemini": _COMMON_QUOTA_PATTERNS,
 }
 
 
