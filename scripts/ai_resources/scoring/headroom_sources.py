@@ -169,6 +169,85 @@ def default_lane_deps(home: str | Path | None = None) -> dict[str, Any]:
             "kit_counters_path": Path(counters) if counters else base / ".cache" / "ai-resources" / "usage-counters.json"}
 
 
+def sync_live_usage_caches(home: str | Path | None = None, timeout: int = 15) -> dict[str, Any]:
+    """Probe `claude -p /usage --output-format json` and `agy --output-format json -p /usage` locally (0 tokens)
+    and write their live window percentages into `~/.cache/ai-resources/{claude-rate-limits,usage-counters}.json`.
+    Never raises; returns a summary dict of what was updated."""
+    import re
+    import shutil
+    import subprocess
+    import time
+
+    now_epoch = int(time.time())
+    paths = default_lane_deps(home)
+    summary: dict[str, Any] = {"updated": [], "errors": {}}
+
+    claude_bin = shutil.which("claude")
+    if claude_bin:
+        try:
+            proc = subprocess.run(
+                [claude_bin, "-p", "/usage", "--output-format", "json"],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            doc = json.loads(proc.stdout or "{}")
+            result_text = str(doc.get("result") or "")
+            m_sess = re.search(r"Current session:\s*(\d+(?:\.\d+)?)%\s*used", result_text)
+            m_week = re.search(r"Current week \(all models\):\s*(\d+(?:\.\d+)?)%\s*used", result_text)
+            if m_sess or m_week:
+                rl: dict[str, Any] = {}
+                if m_sess:
+                    rl["five_hour"] = {"used_percentage": float(m_sess.group(1)), "resets_at": now_epoch + 5 * 3600}
+                if m_week:
+                    rl["seven_day"] = {"used_percentage": float(m_week.group(1)), "resets_at": now_epoch + 48 * 3600}
+                payload = {"capturedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now_epoch)),
+                           "source": "claude-cli-usage", "rate_limits": rl}
+                sidecar_path = Path(paths["claude_sidecar_path"])
+                sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+                sidecar_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                summary["updated"].append("claude-subscription")
+                summary["claude"] = rl
+        except Exception as exc:  # noqa: BLE001
+            summary["errors"]["claude"] = str(exc)
+
+    agy_bin = shutil.which("agy")
+    if agy_bin:
+        try:
+            proc = subprocess.run(
+                [agy_bin, "--output-format", "json", "-p", "/usage"],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            doc = json.loads(proc.stdout or "{}")
+            groups = ((doc.get("command") or {}).get("data") or {}).get("groups") or []
+            counters: dict[str, Any] = {}
+            for g in groups:
+                if not isinstance(g, dict):
+                    continue
+                gname = str(g.get("name") or "")
+                buckets = [b for b in (g.get("buckets") or []) if isinstance(b, dict)]
+                fracs = [float(b["remaining_fraction"]) for b in buckets
+                         if isinstance(b.get("remaining_fraction"), (int, float))]
+                if not fracs:
+                    continue
+                min_rem = min(max(min(fracs), 0.0), 1.0)
+                used_pct = round((1.0 - min_rem) * 100.0, 2)
+                if gname == "Gemini Models":
+                    counters["agy-gemini"] = {"used": used_pct, "limit": 100.0}
+                elif gname == "Claude and GPT models":
+                    counters["agy-claude-gpt"] = {"used": used_pct, "limit": 100.0}
+                elif gname == "Gemini 4 Argon":
+                    counters["agy-gemini-argon"] = {"used": used_pct, "limit": 100.0}
+            if counters:
+                counters_path = Path(paths["kit_counters_path"])
+                counters_path.parent.mkdir(parents=True, exist_ok=True)
+                counters_path.write_text(json.dumps(counters, indent=2), encoding="utf-8")
+                summary["updated"].extend(sorted(counters))
+                summary["agy"] = counters
+        except Exception as exc:  # noqa: BLE001
+            summary["errors"]["agy"] = str(exc)
+
+    return summary
+
+
 def lane_weights(pool_ids: Any = LANE_POOLS, deps: Mapping[str, Any] | None = None, now_epoch: int | None = None,
                  static: Mapping[str, float] | None = None) -> dict[str, float]:
     """Effective weights for lane placement, only for pools with a fresh measured reading.

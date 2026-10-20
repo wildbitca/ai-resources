@@ -350,7 +350,7 @@ def resolve_lanes(by_role: Mapping[str, Any],
                          f"{effective_ids.get(role_model, role_model)}: same family, other version "
                          f"(writer fallback, tier 2)")
         if listed and not checker:
-            klass = PIN if idx == 0 else TIER2
+            klass = PIN if (idx == 0 and weight_of(agent.pool) > headroom.EPSILON) else TIER1
         if agent.stale:
             return False, f"{agent.id} is stale (model drift); re-run `ai-resources setup --lanes`", agent.pool, agent.model, klass
         if agent.backend == CLAUDE_CLI:

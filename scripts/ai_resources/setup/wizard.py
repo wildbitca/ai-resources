@@ -2608,6 +2608,8 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
             doc = _without_claude_cli(doc)
     try:
         from ..scoring import headroom_sources
+        if not os.environ.get("PYTEST_CURRENT_TEST"):
+            headroom_sources.sync_live_usage_caches()
         proposal = lanes_render.propose(doc, _current_by_role(s), s.mode, orchestrators=orchestrators,
                                         acks=acks, gates={"antigravity": agy_on},
                                         headroom=headroom_sources.lane_weights(now_epoch=int(time.time())))
