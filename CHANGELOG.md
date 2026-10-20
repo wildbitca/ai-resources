@@ -6,7 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
-### Added (OpenClaw image generation in setup; ADR-0011, accepted)
+## [2.2.0] — 2026-10-20 — subscription lanes, multi-provider fallbacks, OpenClaw concurrency and guided setup
+
+### Added (OpenClaw concurrency and multi-provider fallbacks)
+
+- **Configurable `serializeAgy` in `ai-resources` OpenClaw plugin.** `buildAgyBackend` and `buildAgyLaneBackend` default
+  `serialize: false`, enabling concurrent per-channel/per-run execution in OpenClaw instead of locking all channels into a
+  single global FIFO queue (`agy-cli`). Manifest declares `serializeAgy: { type: "boolean" }` under `configSchema`.
+- **Cross-provider 3-layer fallbacks.** Automatic fallback routing between Claude Code and Gemini (via Antigravity agy)
+  when quotas are exhausted or a provider backend fails.
+- **Interactive channel credential auth in setup.** Enabling channel accounts in `ai-resources setup` interactively
+  prompts for tokens/credentials when required by the underlying channel runner.
+
 
 - **One image question, no recommendation.** With OpenClaw as a tool, phase 2 asks about image generation: `keep` (default,
   writes nothing), `disable`, or any documented route, each with a billing label and a proof label. Choosing a route writes
@@ -227,12 +238,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   Without a terminal, or under `--yes`, the command is printed instead. An already installed tool is not offered a
   sign-in; its command is printed as a dim line.
 
-## [2.2.0] — 2026-10-16 — subscription lanes, the guided setup wizard and the hardening around them
-
-Prepared locally and NOT published: no tag, no release, no Homebrew update. See
-`docs/release-2.2.0-checklist.md` for the operator commands and for what is proven and what is not.
-
-### Added
+### Added (Subscription lanes, guided setup wizard and hardening)
 
 - **Codex lane backend, held (ADR-0007 FU-2).** `codex-cli` is a registered lane backend (pool `codex-subscription`,
   profile candidate `codex:<model>`) for read-only report roles only. It is HELD like Antigravity:
