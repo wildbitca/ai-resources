@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import os
 import platform
 import sys
 import time
@@ -683,32 +684,10 @@ def _show_legacy_difference(s: state.SetupState, new_name: str, mode: str, backe
     profiles.print_role_diff(before, after, title=f"{old} -> {new_name}")
 
 
-def _ensure_agy_ack(s: state.SetupState, base: dict | None = None) -> None:
-    """When Antigravity is selected on the tools screen, automatically populate the Google lane acknowledgement
-    for the profile's agy roles so the team is immediately active without extra prompts."""
-    from . import lanes_render
-    members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
-    if members and "agy" not in members:
-        return
-    roles = _agy_roles_of(base) if isinstance(base, dict) else list(profiles.KNOWN_ROLES)
-    if not roles:
-        return
-    acks = dict(s.profile.lane_acks or {})
-    have = lanes_render.valid_acks(acks).get("google") or {}
-    listed = set(have.get("roles") or ())
-    if not have or (set(roles) - listed):
-        account = str(have.get("account") or "").strip() or "default"
-        acks["google"] = lanes_render.make_ack(
-            "google", sorted(listed | set(roles)), datetime.now(timezone.utc).isoformat(), account=account
-        )
-        s.profile.lane_acks = acks
-
-
 def _team_view_args(s: state.SetupState, base: dict | None = None) -> dict:
     """What the team view needs to know about the host: its row, the ticked tools, the valid acknowledgements and the
     OpenRouter opt-in."""
     from . import lanes_render
-    _ensure_agy_ack(s, base)
     members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
     return {"row": _preset_key(s), "ticked": "agy" in members,
             "acks": lanes_render.valid_acks(s.profile.lane_acks),
@@ -2572,7 +2551,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         ui.error(f"--lanes: profile {name!r} not found")
         return 2
     prev = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
-    orchestrators = list(getattr(args, "lanes_orchestrator", None) or prev.get("orchestrators") or ["claude", "main"])
+    orchestrators = list(getattr(args, "lanes_orchestrator", None) or prev.get("orchestrators") or [])
 
     def ask_orchestrators() -> list[str]:
         if not orchestrators and not ui.is_non_interactive():
@@ -2583,8 +2562,6 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
 
     if not team_only:
         orchestrators = ask_orchestrators()
-    if agy_on:
-        _ensure_agy_ack(s, doc)
     acks = dict(s.profile.lane_acks or {})
     agy_roles = _agy_roles_of(doc)
     check_roles = list(agy_roles)
@@ -2641,6 +2618,15 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
                            for key in ("roles", "second") for c in ((doc.get("lanes") or {}).get(key) or {}).get(r, ()))}
     anth_roles = [r for r in roles if r not in agy_only]
     if not team_only and not lanes_render.acked(acks, "anthropic", anth_roles):
+        if ui.is_non_interactive():
+            ui.error("--lanes: no stored Anthropic acknowledgement lists every lane role; run `ai-resources "
+                     "setup --lanes` from a terminal to sign it")
+            return 2
+        ui.warn(lanes_render.ACK_TEXT["anthropic"])
+        ui.detail("Roles: " + ", ".join(anth_roles))
+        if not ui.confirm("Acknowledge for these roles?", default=False):
+            ui.info("Not acknowledged; lanes stay disabled.")
+            return 0
         acks["anthropic"] = lanes_render.make_ack("anthropic", anth_roles, datetime.now(timezone.utc).isoformat())
     s.profile.lane_acks = acks
     s.profile.lanes = proposal
