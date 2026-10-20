@@ -79,8 +79,9 @@ export function parseAgyLine(line) {
   return null;
 }
 
-/** @param {{agy: string}} bins */
-export function buildAgyBackend(bins) {
+/** @param {{agy: string}} bins @param {{serializeAgy?: boolean, serialize?: boolean}} [options] */
+export function buildAgyBackend(bins, options = {}) {
+  const serialize = Boolean(options.serializeAgy ?? options.serialize ?? false);
   return {
     id: "agy-cli",
     bundleMcp: true,
@@ -103,7 +104,7 @@ export function buildAgyBackend(bins) {
       modelArg: "--model",
       sessionMode: "existing",
       sessionIdFields: ["conversation_id"],
-      serialize: true,
+      serialize,
     },
   };
 }
@@ -130,9 +131,9 @@ export function isAbsoluteBin(p) {
   return typeof p === "string" && p.startsWith("/");
 }
 
-/** @param {{agy: string}} bins */
-export function buildAgyLaneBackend(bins) {
-  const base = buildAgyBackend(bins);
+/** @param {{agy: string}} bins @param {{serializeAgy?: boolean, serialize?: boolean}} [options] */
+export function buildAgyLaneBackend(bins, options = {}) {
+  const base = buildAgyBackend(bins, options);
   const config = JSON.parse(JSON.stringify(base.config));
   return {
     id: "agy-cli-lane",
@@ -255,10 +256,11 @@ export default {
   name: "ai-resources",
   description: "agy-cli, agy-cli-lane and claude-kit CLI backends, plus the /claude and /equipo shortcut.",
   register(api) {
-    const bins = resolveBinaries((api && api.pluginConfig) || {});
-    api.registerCliBackend(buildAgyBackend(bins));
+    const pluginConfig = (api && api.pluginConfig) || {};
+    const bins = resolveBinaries(pluginConfig);
+    api.registerCliBackend(buildAgyBackend(bins, pluginConfig));
     if (isAbsoluteBin(bins.agy)) {
-      api.registerCliBackend(buildAgyLaneBackend(bins));
+      api.registerCliBackend(buildAgyLaneBackend(bins, pluginConfig));
     }
     api.registerCliBackend(buildClaudeBackend(bins));
     const handler = makeClaudeCommandHandler(api);

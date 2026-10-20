@@ -322,7 +322,7 @@ const AGY_CLI_SNAPSHOT = {
     resumeArgs: ["--dangerously-skip-permissions", "--disable-slash-commands",
                  "--conversation", "{sessionId}", "--output-format", "stream-json", "-p", "{prompt}"],
     output: "jsonl", resumeOutput: "jsonl", input: "arg", modelArg: "--model",
-    sessionMode: "existing", sessionIdFields: ["conversation_id"], serialize: true,
+    sessionMode: "existing", sessionIdFields: ["conversation_id"], serialize: false,
   },
 };
 
@@ -342,7 +342,7 @@ test("buildAgyLaneBackend has its own id, no bundled MCP and the same parser, mo
   assert.deepEqual(lane.config, classic.config);
   assert.notEqual(lane.config, classic.config);       // a copy: editing one never edits the other
   assert.equal(lane.config.modelArg, "--model");
-  assert.equal(lane.config.serialize, true);
+  assert.equal(lane.config.serialize, false);
 });
 
 test("the lane argv carries no sandbox, allowlist or agy-home argument: V6, V7 and V12 are not proven", () => {
@@ -353,6 +353,34 @@ test("the lane argv carries no sandbox, allowlist or agy-home argument: V6, V7 a
   }
   assert.equal(lane.config.env, undefined);
   assert.deepEqual(Object.keys(AGY_LANE_UNPROVEN).sort(), ["agyHome", "sandbox", "toolAllowlist"]);
+});
+
+test("buildAgyBackend defaults serialize to false, but honors serializeAgy/serialize if explicitly true", () => {
+  const backendDefault = buildAgyBackend({ agy: "/abs/agy" });
+  assert.equal(backendDefault.config.serialize, false);
+
+  const backendSerializeAgy = buildAgyBackend({ agy: "/abs/agy" }, { serializeAgy: true });
+  assert.equal(backendSerializeAgy.config.serialize, true);
+
+  const backendSerialize = buildAgyBackend({ agy: "/abs/agy" }, { serialize: true });
+  assert.equal(backendSerialize.config.serialize, true);
+});
+
+test("register() passes serializeAgy from pluginConfig to agy-cli backends", () => {
+  const backends = [];
+  plugin.register({
+    pluginConfig: { agyBin: "/abs/agy", serializeAgy: true },
+    registerCliBackend(d) { backends.push(d); },
+    registerCommand() {},
+  });
+  assert.equal(backends.find((b) => b.id === "agy-cli").config.serialize, true);
+  assert.equal(backends.find((b) => b.id === "agy-cli-lane").config.serialize, true);
+});
+
+test("the plugin manifest declares serializeAgy in configSchema", () => {
+  const manifestPath = path.join(HERE, "..", "openclaw.plugin.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+  assert.equal(manifest.configSchema?.properties?.serializeAgy?.type, "boolean");
 });
 
 test("isAbsoluteBin accepts only absolute paths", () => {

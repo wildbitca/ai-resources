@@ -11,7 +11,8 @@
     "properties": {
       "agyBin": { "type": "string", "description": "Absolute path to the agy binary." },
       "claudeBin": { "type": "string", "description": "Absolute path to the claude binary." },
-      "python3Bin": { "type": "string", "description": "Absolute path to python3, used by the agy MCP bridge." }
+      "python3Bin": { "type": "string", "description": "Absolute path to python3, used by the agy MCP bridge." },
+      "serializeAgy": { "type": "boolean", "description": "Whether to serialize agy-cli runs globally into a single queue. Defaults to false (concurrent runs per channel)." }
     },
     "additionalProperties": false
   }
