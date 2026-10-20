@@ -1,4 +1,8 @@
-// ai-resources OpenClaw plugin — agy-cli and claude-kit CLI backends, the /claude shortcut.
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+
+// ai-resources OpenClaw plugin — agy-cli and claude-kit CLI backends, /claude and /lanes commands.
 //
 // Plain JS, no build step, no third-party imports: OpenClaw loads this file directly.
 // Binary paths come from the plugin config (`agyBin`, `claudeBin`), written by
@@ -251,10 +255,155 @@ export function makeClaudeCommandHandler(api) {
   };
 }
 
+// --- /lanes status cockpit command (ADR-0012) ---------------------------------------
+
+/**
+ * Parses rendered lanes.yaml summary without external dependencies.
+ * @param {string} content
+ */
+export function parseLanesSummary(content) {
+  const lines = (content || "").split("\n");
+  let mode = "unknown";
+  const roles = {};
+  let currentSection = null;
+  let currentRole = null;
+  let inResolvedRoles = false;
+  let inFallbacks = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const indent = line.search(/\S/);
+
+    if (indent === 0) {
+      const match = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
+      if (match) {
+        currentSection = match[1];
+        if (currentSection === "mode") mode = match[2].trim();
+        inResolvedRoles = false;
+        currentRole = null;
+      }
+      continue;
+    }
+
+    if (currentSection === "resolved") {
+      if (indent === 2 && trimmed.startsWith("roles:")) {
+        inResolvedRoles = true;
+        continue;
+      }
+      if (inResolvedRoles) {
+        if (indent === 4 && trimmed.endsWith(":")) {
+          currentRole = trimmed.slice(0, -1);
+          roles[currentRole] = { lane: "", model: "", fallbacks: [], reason: "" };
+          inFallbacks = false;
+          continue;
+        }
+        if (currentRole && indent >= 6) {
+          if (trimmed.startsWith("fallbacks:")) {
+            inFallbacks = true;
+            continue;
+          }
+          if (trimmed.startsWith("evidence:") || trimmed.startsWith("effort:")) {
+            inFallbacks = false;
+            continue;
+          }
+          if (inFallbacks) {
+            if (trimmed.startsWith("- lane:")) {
+              const fbLane = trimmed.replace("- lane:", "").trim().replace(/^['"]|['"]$/g, "");
+              roles[currentRole].fallbacks.push({ lane: fbLane, model: "" });
+            } else if (trimmed.startsWith("model:") && roles[currentRole].fallbacks.length > 0) {
+              const fbModel = trimmed.replace("model:", "").trim().replace(/^['"]|['"]$/g, "");
+              roles[currentRole].fallbacks[roles[currentRole].fallbacks.length - 1].model = fbModel;
+            }
+            continue;
+          }
+
+          const m = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
+          if (m) {
+            const key = m[1];
+            const val = m[2].trim().replace(/^['"]|['"]$/g, "");
+            if (key === "lane") roles[currentRole].lane = val;
+            if (key === "model") roles[currentRole].model = val;
+            if (key === "reason") roles[currentRole].reason = val;
+          }
+        }
+      }
+    }
+  }
+  return { mode, roles };
+}
+
+/**
+ * Formats a lanes summary object into markdown suitable for chat output.
+ * @param {{mode: string, roles: Record<string, {lane: string, model: string, fallbacks: Array<{lane: string, model: string}>}>}} summary
+ * @param {string} lanesPath
+ */
+export function formatLanesMarkdown(summary, lanesPath) {
+  if (!summary || !summary.roles || Object.keys(summary.roles).length === 0) {
+    return `### 🚦 ai-resources: Subscription Lanes\n\nNo resolved lanes found in \`${lanesPath}\`.\nRun \`ai-resources setup --lanes\` to resolve subscription lanes.`;
+  }
+  let md = `### 🚦 ai-resources: Subscription Lanes\n`;
+  md += `**Mode:** \`${summary.mode || "unknown"}\` | **Config:** \`${lanesPath}\`\n\n`;
+  md += `| Role | Active Lane | Model | Fallbacks |\n`;
+  md += `| :--- | :--- | :--- | :--- |\n`;
+  for (const [role, info] of Object.entries(summary.roles)) {
+    const laneShort = (info.lane || "").replace("openclaw-agent:", "");
+    const modelShort = (info.model || "").replace("agy-cli-lane/", "");
+    const fbText = info.fallbacks && info.fallbacks.length > 0
+      ? info.fallbacks.map((f) => `\`${(f.lane || "").replace("openclaw-agent:", "")}\``).join(", ")
+      : "—";
+    md += `| **${role}** | \`${laneShort}\` | \`${modelShort}\` | ${fbText} |\n`;
+  }
+  return md;
+}
+
+export function buildLanesCommand(name, handler) {
+  return {
+    name,
+    nativeNames: { default: name },
+    description: "Display subscription lanes status and model assignments directly in chat.",
+    acceptsArgs: true,
+    requireAuth: true,
+    handler,
+  };
+}
+
+export function makeLanesCommandHandler(api) {
+  return async function lanesCommandHandler(_ctx) {
+    const pluginConfig = (api && api.pluginConfig) || {};
+    const lanesPath = pluginConfig.lanesConfigPath
+      || path.join(os.homedir(), ".config", "ai-resources", "lanes.yaml");
+
+    let text;
+    try {
+      if (!fs.existsSync(lanesPath)) {
+        return {
+          text: `ℹ️ **ai-resources lanes**: No configuration found at \`${lanesPath}\`.\nRun \`ai-resources setup --lanes\` to configure subscription lanes.`,
+          continueAgent: false,
+        };
+      }
+      text = fs.readFileSync(lanesPath, "utf8");
+    } catch (err) {
+      return {
+        text: `⚠️ **ai-resources lanes error**: Failed to read \`${lanesPath}\`: ${err.message}`,
+        continueAgent: false,
+      };
+    }
+
+    const summary = parseLanesSummary(text);
+    return {
+      text: formatLanesMarkdown(summary, lanesPath),
+      continueAgent: false,
+    };
+  };
+}
+
 export default {
   id: "ai-resources",
   name: "ai-resources",
-  description: "agy-cli, agy-cli-lane and claude-kit CLI backends, plus the /claude and /equipo shortcut.",
+  description: "agy-cli, agy-cli-lane and claude-kit CLI backends, plus /claude, /equipo and /lanes cockpit commands.",
   register(api) {
     const pluginConfig = (api && api.pluginConfig) || {};
     const bins = resolveBinaries(pluginConfig);
@@ -263,9 +412,11 @@ export default {
       api.registerCliBackend(buildAgyLaneBackend(bins, pluginConfig));
     }
     api.registerCliBackend(buildClaudeBackend(bins));
-    const handler = makeClaudeCommandHandler(api);
-    api.registerCommand(buildClaudeCommand("claude", handler));
-    api.registerCommand(buildClaudeCommand("equipo", handler));
+    const claudeHandler = makeClaudeCommandHandler(api);
+    api.registerCommand(buildClaudeCommand("claude", claudeHandler));
+    api.registerCommand(buildClaudeCommand("equipo", claudeHandler));
+    const lanesHandler = makeLanesCommandHandler(api);
+    api.registerCommand(buildLanesCommand("lanes", lanesHandler));
   },
 };
 

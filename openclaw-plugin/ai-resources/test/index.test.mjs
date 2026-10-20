@@ -16,6 +16,10 @@ import plugin, {
   makeClaudeCommandHandler,
   claudeSubagentSessionKey,
   FORBIDDEN_CLAUDE_FLAGS,
+  parseLanesSummary,
+  formatLanesMarkdown,
+  buildLanesCommand,
+  makeLanesCommandHandler,
 } from "../index.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -248,8 +252,10 @@ test("register() registers /claude and /equipo as two command definitions sharin
     runtime: { subagent: { async run() { return { runId: "r1" }; } } },
   };
   plugin.register(api);
-  assert.deepEqual(commands.map((c) => c.name).sort(), ["claude", "equipo"]);
-  assert.equal(commands[0].handler, commands[1].handler);
+  assert.deepEqual(commands.map((c) => c.name).sort(), ["claude", "equipo", "lanes"]);
+  const claudeCmd = commands.find((c) => c.name === "claude");
+  const equipoCmd = commands.find((c) => c.name === "equipo");
+  assert.equal(claudeCmd.handler, equipoCmd.handler);
 });
 
 test("claudeSubagentSessionKey targets the claude agent, derived from the invoking context", () => {
@@ -291,7 +297,7 @@ test("the command handler throws a clear error when the runtime subagent API is 
 
 // --- register() wires everything together ------------------------------------------
 
-test("register() adds both CLI backends and the claude command", () => {
+test("register() adds both CLI backends and the cockpit commands", () => {
   const backends = [];
   const commands = [];
   const api = {
@@ -304,7 +310,7 @@ test("register() adds both CLI backends and the claude command", () => {
   assert.deepEqual(backends.map((b) => b.id).sort(), ["agy-cli", "agy-cli-lane", "claude-kit"]);
   assert.equal(backends.find((b) => b.id === "agy-cli").config.command, "/abs/agy");
   assert.equal(backends.find((b) => b.id === "claude-kit").config.command, "/abs/claude");
-  assert.deepEqual(commands.map((c) => c.name).sort(), ["claude", "equipo"]);
+  assert.deepEqual(commands.map((c) => c.name).sort(), ["claude", "equipo", "lanes"]);
 });
 
 // --- agy-cli-lane (ADR-0007 section 11, phase 3) -----------------------------------
@@ -394,5 +400,107 @@ test("a relative or missing agyBin makes the lane backend refuse to register; th
     plugin.register({ pluginConfig, registerCliBackend(d) { backends.push(d); }, registerCommand() {} });
     assert.deepEqual(backends.map((b) => b.id).sort(), ["agy-cli", "claude-kit"]);
     assert.equal(backends.find((b) => b.id === "agy-cli").config.command, pluginConfig.agyBin || "agy");
+  }
+});
+
+// --- /lanes status cockpit command (ADR-0012) ---------------------------------------
+
+test("the plugin manifest declares kitRoot, lanesConfigPath and enableOrchestrator in configSchema", () => {
+  const manifestPath = path.join(HERE, "..", "openclaw.plugin.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+  assert.equal(manifest.configSchema?.properties?.kitRoot?.type, "string");
+  assert.equal(manifest.configSchema?.properties?.lanesConfigPath?.type, "string");
+  assert.equal(manifest.configSchema?.properties?.enableOrchestrator?.type, "boolean");
+});
+
+test("buildLanesCommand matches OpenClawPluginCommandDefinition contract", () => {
+  const handler = async () => ({ text: "lanes" });
+  const cmd = buildLanesCommand("lanes", handler);
+  assert.equal(cmd.name, "lanes");
+  assert.equal(typeof cmd.description, "string");
+  assert.ok(cmd.description.length > 0);
+  assert.equal(cmd.acceptsArgs, true);
+  assert.equal(cmd.requireAuth, true);
+  assert.equal(cmd.handler, handler);
+});
+
+test("parseLanesSummary parses mode, roles, and fallbacks cleanly", () => {
+  const yamlSample = `
+mode: single-model
+resolved:
+  roles:
+    planner:
+      lane: claude-code
+      model: sonnet
+      reason: single candidate
+      fallbacks: []
+    explore:
+      lane: openclaw-agent:kit-lane-agy-gemini38flashhigh
+      model: agy-cli-lane/gemini-3.8-flash-high
+      reason: pinned
+      fallbacks:
+      - lane: claude-code
+        model: haiku
+`;
+  const summary = parseLanesSummary(yamlSample);
+  assert.equal(summary.mode, "single-model");
+  assert.equal(summary.roles.planner.lane, "claude-code");
+  assert.equal(summary.roles.planner.model, "sonnet");
+  assert.deepEqual(summary.roles.planner.fallbacks, []);
+
+  assert.equal(summary.roles.explore.lane, "openclaw-agent:kit-lane-agy-gemini38flashhigh");
+  assert.equal(summary.roles.explore.model, "agy-cli-lane/gemini-3.8-flash-high");
+  assert.equal(summary.roles.explore.fallbacks.length, 1);
+  assert.equal(summary.roles.explore.fallbacks[0].lane, "claude-code");
+  assert.equal(summary.roles.explore.fallbacks[0].model, "haiku");
+});
+
+test("formatLanesMarkdown renders markdown table with formatted lanes and fallbacks", () => {
+  const summary = {
+    mode: "single-model",
+    roles: {
+      planner: { lane: "claude-code", model: "sonnet", fallbacks: [] },
+      explore: {
+        lane: "openclaw-agent:kit-lane-agy-gemini38flashhigh",
+        model: "agy-cli-lane/gemini-3.8-flash-high",
+        fallbacks: [{ lane: "claude-code", model: "haiku" }],
+      },
+    },
+  };
+  const md = formatLanesMarkdown(summary, "/fake/lanes.yaml");
+  assert.match(md, /### 🚦 ai-resources: Subscription Lanes/);
+  assert.match(md, /\*\*Mode:\*\* `single-model`/);
+  assert.match(md, /\|\s+\*\*planner\*\*\s+\|\s+`claude-code`\s+\|\s+`sonnet`\s+\|\s+—\s+\|/);
+  assert.match(md, /\|\s+\*\*explore\*\*\s+\|\s+`kit-lane-agy-gemini38flashhigh`\s+\|\s+`gemini-3.8-flash-high`\s+\|\s+`claude-code`\s+\|/);
+});
+
+test("makeLanesCommandHandler returns message when lanes file does not exist", async () => {
+  const handler = makeLanesCommandHandler({ pluginConfig: { lanesConfigPath: "/nonexistent/lanes.yaml" } });
+  const res = await handler({});
+  assert.equal(res.continueAgent, false);
+  assert.match(res.text, /No configuration found at `/);
+});
+
+test("makeLanesCommandHandler reads custom lanesConfigPath if provided", async () => {
+  const fsModule = await import("node:fs");
+  const tmpPath = path.join(HERE, "fixtures", "tmp-lanes.yaml");
+  const yamlContent = `mode: multi-model
+resolved:
+  roles:
+    implementer:
+      lane: claude-code
+      model: sonnet
+      fallbacks: []
+`;
+  fsModule.writeFileSync(tmpPath, yamlContent, "utf8");
+  try {
+    const handler = makeLanesCommandHandler({ pluginConfig: { lanesConfigPath: tmpPath } });
+    const res = await handler({});
+    assert.equal(res.continueAgent, false);
+    assert.match(res.text, /Subscription Lanes/);
+    assert.match(res.text, /multi-model/);
+    assert.match(res.text, /implementer/);
+  } finally {
+    if (fsModule.existsSync(tmpPath)) fsModule.unlinkSync(tmpPath);
   }
 });
