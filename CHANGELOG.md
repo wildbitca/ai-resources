@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.2.1] — 2026-10-20 — skip Telegram prompts when disabled and exclude kit-lane agents from host bindings
+
+### Fixed
+
+- **Skip Telegram prompts when Telegram is disabled in setup.** When the operator disables or unticks Telegram in the
+  channels step, the OpenClaw host section no longer prompts for team narration into Telegram topics, group chat IDs,
+  or the operator Telegram user ID.
+- **Exclude `kit-lane-*` agents from Telegram group binding prompts.** Internal lane agents created for subscription
+  routing are no longer treated as human-routed agents requiring Telegram group chat IDs.
+
 ## [2.2.0] — 2026-10-20 — subscription lanes, multi-provider fallbacks, OpenClaw concurrency and guided setup
 
 ### Added (OpenClaw concurrency and multi-provider fallbacks)

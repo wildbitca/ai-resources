@@ -378,6 +378,30 @@ def test_the_domain_and_cidr_are_only_asked_when_the_config_block_is_wanted(sim,
     assert s.openclaw.host_domain == "" and s.openclaw.host_pod_cidr == ""
 
 
+def test_telegram_disabled_skips_narration_group_ids_and_operator_id(sim, script):
+    s = _state()
+    s.openclaw.channels_seen = ["telegram:default", "slack:default"]
+    s.openclaw.channels_wanted = ["slack:default"]
+    openclaw.prompt(s)
+    o = s.openclaw
+    assert not any("Telegram topic" in q or "group chat id" in q or "Your Telegram user id" in q for q in script.asked)
+    assert o.host_narration == ""
+    assert o.host_operator_id == ""
+    assert o.host_group_ids == {}
+
+
+def test_routed_agents_excludes_kit_lane_internal_agents():
+    doc = {"agents": {"entries": {
+        "main": {}, "claude": {}, "app": {}, "devops": {},
+        "kit-lane-cli-sonnet55": {}, "kit-lane-agy-gemini38flashhigh": {}
+    }}}
+    routed = section._routed_agents(doc)
+    assert "kit-lane-cli-sonnet55" not in routed
+    assert "kit-lane-agy-gemini38flashhigh" not in routed
+    assert set(routed) == {"app", "devops"}
+
+
+
 # --- configure: every section -------------------------------------------------------------------------
 
 def test_configure_applies_every_section(sim, script):

@@ -104,9 +104,23 @@ def apply_defaults(s: state.SetupState, doc: dict | None = None) -> None:
         o.host_narration = env["OPENCLAW_NARRATION"]
 
 
+def is_telegram_active(s: state.SetupState | state.OpenClawState, doc: dict | None = None) -> bool:
+    """Whether Telegram is active: either selected in channels step, or enabled in config."""
+    o = s.openclaw if hasattr(s, "openclaw") else s
+    if getattr(o, "channels_seen", None):
+        return any(k == "telegram" or k.startswith("telegram:") for k in (o.channels_wanted or []))
+    if getattr(o, "channels_wanted", None):
+        return any(k == "telegram" or k.startswith("telegram:") for k in o.channels_wanted)
+    ch = (doc or {}).get("channels") or {}
+    tg = ch.get("telegram")
+    if isinstance(tg, dict):
+        return tg.get("enabled", True) is not False
+    return False
+
+
 def prompt(s: state.SetupState, doc: dict | None = None) -> None:
     """Ask what to set up on this OpenClaw host. Called from step 7."""
-    o = s.openclaw
+    o = s.openclaw if hasattr(s, "openclaw") else s
     env = host.read_host_env()
     o.host = bool(ui.confirm(
         "Configure this machine as an OpenClaw host (team narration, gateway guard, systemd units, "
@@ -115,11 +129,16 @@ def prompt(s: state.SetupState, doc: dict | None = None) -> None:
     if not o.host:
         return
 
-    choice = ui.select("Narrate the Claude Code team's work into its Telegram topic?",
-                       [ui.Choice(label, value=value) for value, label in NARRATION_CHOICES],
-                       default=o.host_narration or env.get("OPENCLAW_NARRATION") or "off")
-    o.host_narration = "" if choice == "off" else choice
-    _ask_group_ids(o, doc or {})
+    tg_active = is_telegram_active(s, doc)
+    if tg_active:
+        choice = ui.select("Narrate the Claude Code team's work into its Telegram topic?",
+                           [ui.Choice(label, value=value) for value, label in NARRATION_CHOICES],
+                           default=o.host_narration or env.get("OPENCLAW_NARRATION") or "off")
+        o.host_narration = "" if choice == "off" else choice
+        _ask_group_ids(o, doc or {})
+    else:
+        o.host_narration = ""
+
     o.host_guard = bool(ui.confirm(
         "Install the gateway guard hook (denies `openclaw doctor --fix` and a plain gateway stop while "
         "the gateway is live; `ai-resources openclaw doctor` is the safe way)?",
@@ -132,7 +151,7 @@ def prompt(s: state.SetupState, doc: dict | None = None) -> None:
         "streaming)? You will see the patch and a dry-run result first.", default=o.host_config))
 
     if o.host_units or o.host_config:
-        _ask_host_values(o, env)
+        _ask_host_values(o, env, telegram_active=tg_active)
     _ask_resource_safety(o, env)
     if env.get("OPENCLAW_OFFBOX_BUCKET") and not o.host_offbox_config_created:
         o.host_offbox_identity = bool(ui.confirm(
@@ -185,7 +204,7 @@ def _ask_resource_safety(o: state.OpenClawState, env: dict[str, str]) -> None:
 def _routed_agents(doc: dict) -> list[str]:
     """The agents that get their own Telegram group: not main (the catch-all) and not the worker."""
     entries = ((doc.get("agents") or {}).get("entries")) or {}
-    return [a for a in entries if a != "main" and a not in host.ENGINE_OWNED_ENTRIES]
+    return [a for a in entries if a != "main" and a not in host.ENGINE_OWNED_ENTRIES and not a.startswith("kit-lane-")]
 
 
 def _ask_group_ids(o: state.OpenClawState, doc: dict) -> None:
@@ -218,16 +237,19 @@ def _group_id_check(value: str):
     return True if host.validate_group_id(value) is None else host.validate_group_id(value)
 
 
-def _ask_host_values(o: state.OpenClawState, env: dict[str, str]) -> None:
+def _ask_host_values(o: state.OpenClawState, env: dict[str, str], *, telegram_active: bool = True) -> None:
     def valid(key: str) -> Callable[[str], Any]:
         def check(value: str):
             problems = host.validate_host_values({key: value.strip()})
             return True if not problems else problems[0]
         return check
 
-    o.host_operator_id = (ui.text("Your Telegram user id, for failure notices (empty: no notices):",
-                                  default=o.host_operator_id or env.get("OPENCLAW_OWNER_TELEGRAM_ID", ""),
-                                  validate=valid("OWNER_TELEGRAM_ID")) or "").strip()
+    if telegram_active:
+        o.host_operator_id = (ui.text("Your Telegram user id, for failure notices (empty: no notices):",
+                                      default=o.host_operator_id or env.get("OPENCLAW_OWNER_TELEGRAM_ID", ""),
+                                      validate=valid("OWNER_TELEGRAM_ID")) or "").strip()
+    else:
+        o.host_operator_id = ""
     o.host_backup_dir = (ui.text("Where the backup tiers are written:",
                                  default=o.host_backup_dir or env.get("OPENCLAW_BACKUP_DIR", "/srv/openclaw-backups"),
                                  validate=valid("BACKUP_DIR")) or "").strip()
