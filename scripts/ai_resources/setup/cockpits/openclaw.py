@@ -1768,6 +1768,10 @@ def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
         plugin_dir = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
         rc_link, out_link = _openclaw([
             "plugins", "install", "--link", "--force", "--accept-capabilities", plugin_dir])
+        if rc_link != 0 and "INVALID_CONFIG" in (out_link or ""):
+            _openclaw(["doctor", "--fix"])
+            rc_link, out_link = _openclaw([
+                "plugins", "install", "--link", "--force", "--accept-capabilities", plugin_dir])
         if rc_link == 0:
             s.openclaw.plugin_linked = True
         else:

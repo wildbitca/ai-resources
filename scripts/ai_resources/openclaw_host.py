@@ -157,7 +157,11 @@ def default_runner(argv: list[str], *, env: dict | None = None, timeout: float |
         return 124, str(e)
     except OSError as e:
         return 1, str(e)
-    return r.returncode, (r.stdout + r.stderr).strip()
+    out = (r.stdout + r.stderr).strip()
+    if max_bytes is not None and len(out.encode("utf-8", "replace")) > max_bytes:
+        out = out.encode("utf-8", "replace")[:max_bytes].decode("utf-8", "replace")
+        return (0 if truncate_ok else 1), out
+    return r.returncode, out
 
 
 # --- resource-safety knobs (ADR-0004) -----------------------------------------------------------------------
@@ -4682,7 +4686,10 @@ def offbox_identity_apply(runner: Runner, plan: dict, *, out: Callable[[str], No
     for argv in plan["steps"]:
         rc, text = runner(argv, timeout=60)
         if rc != 0:
-            out(f"failed: {' '.join(argv)}: {text.strip()[-200:]}")
+            if "gcloud auth login" in text:
+                out(f"failed: {' '.join(argv)}: active gcloud credentials have expired; run 'gcloud auth login'")
+            else:
+                out(f"failed: {' '.join(argv)}: {text.strip()[-200:]}")
             return None
         if progress is not None:
             if argv[:4] == ["gcloud", "config", "configurations", "create"]:

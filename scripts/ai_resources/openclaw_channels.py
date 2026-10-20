@@ -296,7 +296,10 @@ def execute(change: ChannelChange, *, runner: Runner, confirm: Callable[..., boo
             "Telegram is how you reach OpenClaw. Turn this Telegram account off anyway?", default=False):
         return Outcome(DECLINED, (f"{shown}: left on (Telegram needs its own yes)", f"  {command}"))
     try:
-        rc, text = runner(list(change.argv), timeout=TIMEOUT_S, env=scrubbed_env(), max_bytes=MAX_BYTES)
+        try:
+            rc, text = runner(list(change.argv), timeout=TIMEOUT_S, env=scrubbed_env(), max_bytes=MAX_BYTES, input="y\n")
+        except TypeError:
+            rc, text = runner(list(change.argv), timeout=TIMEOUT_S, env=scrubbed_env(), max_bytes=MAX_BYTES)
     except Exception as exc:  # noqa: BLE001 - reported, not raised: Apply goes on
         rc, text = 1, type(exc).__name__
     detail = [f"  {line}" for line in redact(text)]
