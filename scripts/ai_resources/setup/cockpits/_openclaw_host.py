@@ -90,6 +90,20 @@ def _values(o: state.OpenClawState) -> dict[str, str]:
 
 # --- the questions ----------------------------------------------------------------------------------------
 
+def apply_defaults(s: state.SetupState, doc: dict | None = None) -> None:
+    """Apply recommended host defaults without interrogating the operator."""
+    o = s.openclaw
+    env = host.read_host_env()
+    o.host_operator_id = (o.host_operator_id or env.get("OPENCLAW_OWNER_TELEGRAM_ID", "")).strip()
+    o.host_backup_dir = (o.host_backup_dir or env.get("OPENCLAW_BACKUP_DIR", "/srv/openclaw-backups")).strip()
+    o.host_domain = (o.host_domain or env.get("OPENCLAW_PUBLIC_DOMAIN", "")).strip()
+    o.host_pod_cidr = (o.host_pod_cidr or env.get("OPENCLAW_POD_CIDR", "")).strip()
+    o.host_graceful_restart = o.host_graceful_restart or env.get("OPENCLAW_GRACEFUL_RESTART") or "on"
+    o.host_resource_guards = o.host_resource_guards or env.get("OPENCLAW_RESOURCE_GUARDS") or "on"
+    if not o.host_narration and env.get("OPENCLAW_NARRATION"):
+        o.host_narration = env["OPENCLAW_NARRATION"]
+
+
 def prompt(s: state.SetupState, doc: dict | None = None) -> None:
     """Ask what to set up on this OpenClaw host. Called from step 7."""
     o = s.openclaw

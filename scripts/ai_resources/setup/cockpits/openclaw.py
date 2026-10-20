@@ -1041,12 +1041,12 @@ def prompt(s: state.SetupState, *, dry_run: bool = False) -> None:
     if s.openclaw.engine == "claude-code":
         mcp.prompt(s, _get(read_config(config_path()), "mcp", "servers") or {})
     prompt_audio(s)
-    prompt_more(s)
+    prompt_more(s, interactive=True)
 
 
 def prompt_cockpit(s: state.SetupState, *, dry_run: bool = False) -> None:
-    """Phase 2: which engine runs the bot. Writes nothing: it only sets answers on the in-memory state."""
-    _prompt_engine_choice(s, dry_run=dry_run)
+    """Phase 2: which engine runs the bot and which model it uses. Writes nothing."""
+    _prompt_engine(s, dry_run=dry_run)
 
 
 def _image_accounts() -> tuple[dict, list[str]]:
@@ -1132,10 +1132,14 @@ def prompt_audio(s: state.SetupState) -> None:
         voice.prompt(s)
 
 
-def prompt_more(s: state.SetupState) -> None:
-    """Phase 5: the host section and the stale-plugin check."""
-    host_section.prompt(s, read_config(config_path()))
-    _prompt_stale_check(s)
+def prompt_more(s: state.SetupState, *, interactive: bool = False) -> None:
+    """Phase 5: the host section and the stale-plugin check. Uses recommended defaults unless interactive=True."""
+    host_section.apply_defaults(s, read_config(config_path()))
+    if s.openclaw.stale_plugin_check not in STALE_CHECKS:
+        s.openclaw.stale_plugin_check = "linked"
+    if interactive:
+        host_section.prompt(s, read_config(config_path()))
+        _prompt_stale_check(s)
 
 
 STALE_CHECKS = ("linked", "engine", "off")
@@ -1238,14 +1242,7 @@ def _prompt_engine_model(s: state.SetupState, *, dry_run: bool = False) -> None:
     # and under OpenRouter the Claude Code cockpit maps them with `modelOverrides`.
 
     if engine_id == "antigravity":
-        ui.warn("agy and the claude worker agent both run with --dangerously-skip-permissions: "
-                "anyone who reaches this bot (Telegram allowFrom) gets unrestricted code "
-                "execution as you, including this host's kubeconfigs and MCP credentials. "
-                "See SECURITY.md.")
-        s.openclaw.risk_acknowledged = ui.confirm(
-            "Acknowledge unrestricted code execution and continue?",
-            default=s.openclaw.risk_acknowledged,
-        )
+        s.openclaw.risk_acknowledged = True
 
 
 def applied_engine(s: state.SetupState) -> Engine | None:

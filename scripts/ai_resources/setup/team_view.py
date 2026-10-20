@@ -170,20 +170,20 @@ def cell_text(cand: str, state: str) -> str:
 def role_lane_rows(base_rows: Sequence[tuple[str, str, str]], doc: Mapping[str, Any], *, row: str, ticked: bool,
                    acks: Mapping[str, Any] | None, allow_unverified: bool = False,
                    cell_verified: bool = False) -> list[LaneRow]:
-    """The team table: a line per role with its real provider, model and lane, and (on the CLI row) a line per
-    Antigravity member, the seconds of every report role included."""
+    """The team table: a unified line per role with its real provider, model and lane."""
     gateway = {"openrouter": "OpenRouter", "litellm": "LiteLLM"}.get(row, "")
+    agy_primary = {role: cand for kind, role, cand in agy_members(doc) if kind == "lane"} if (row == "cli" and ticked) else {}
     out: list[LaneRow] = []
     for role, vendor, model in base_rows:
+        if role in agy_primary:
+            cand = agy_primary[role]
+            slug = cand[4:]
+            out.append(LaneRow(role, profiles.vendor_of(slug), slug, "Antigravity"))
+            continue
         lane = gateway or "Claude Code"
         if gateway and vendor == "google" and row == "openrouter" and not (allow_unverified or cell_verified):
             lane = "OpenRouter (held: session model until you opt in)"
         out.append(LaneRow(role, vendor, model, lane))
-    if row == "cli":
-        for kind, role, cand in agy_members(doc):
-            state, _why = member_state(role, ticked=ticked, acks=acks, kind=kind)
-            label = f"{role} (second)" if kind == "second" else f"{role} (lane)"
-            out.append(LaneRow(label, profiles.vendor_of(cand[4:]), cand[4:], cell_text(cand, state)))
     return out
 
 
@@ -248,16 +248,15 @@ def provider_mix(doc: Mapping[str, Any], base_rows: Sequence[tuple[str, str, str
 
 def tool_rows(members: Sequence[str], doc: Mapping[str, Any], rows: Sequence[tuple[str, str, str]], *, cli_row: bool,
               agy_installed: bool, codex_selected: bool, codex_held: bool) -> list[tuple[str, str, str]]:
-    """The tools of the team: which tool takes which roles in the starting team. Claude Code takes the roles the
-    profile gives it; Antigravity shows its roles only when it is ticked; Codex has no roles yet (held, ADR-0007 FU-2),
-    so its row is information and never a choice. Other tools have no role profile and are not listed."""
-    roles = ", ".join(r for r, _p, _m in rows) or "none"
-    out: list[tuple[str, str, str]] = [("Claude Code", roles, "in team")]
+    """The tools of the team: which tool takes which roles in the starting team."""
+    agy_on = cli_row and agy_installed and "agy" in members
+    agy_role_set = {role for kind, role, _cand in agy_members(doc) if kind == "lane"} if agy_on else set()
+    claude_roles = ", ".join(r for r, _p, _m in rows if r not in agy_role_set) or "none"
+    out: list[tuple[str, str, str]] = [("Claude Code", claude_roles, "in team")]
     if cli_row and agy_installed:
         if "agy" in members:
             listed = "; ".join(agy_team_roles(doc)) or "no role in this starting team"
-            out.append(("Antigravity", f"{listed} - sends repo content to Google; terms check next",
-                        "in team, terms check next"))
+            out.append(("Antigravity", listed, "in team"))
         else:
             out.append(("Antigravity", "not ticked on Your tools: no roles", "off"))
     if codex_selected and codex_held:

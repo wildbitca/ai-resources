@@ -23,27 +23,52 @@ def _runner() -> Callable[..., "tuple[int, str]"]:
     return openclaw_host.default_runner
 
 
+CHANNEL_LABELS = {
+    "telegram": "Telegram",
+    "slack": "Slack",
+    "discord": "Discord",
+    "whatsapp": "WhatsApp",
+    "googlechat": "Google Chat",
+    "msteams": "Microsoft Teams",
+    "matrix": "Matrix",
+    "signal": "Signal",
+    "mattermost": "Mattermost",
+    "feishu": "Feishu",
+    "line": "LINE",
+    "wecom": "WeCom",
+    "irc": "IRC",
+    "imessage": "iMessage",
+}
+
+
+def _fallback_inventory() -> list[channels.ChannelAccount]:
+    """Fallback channel list from openclaw.json + standard channels when CLI listing is unavailable."""
+    from . import openclaw as _oc
+    doc = _oc.read_config(_oc.config_path())
+    ch_cfg = doc.get("channels") if isinstance(doc, dict) else {}
+    active = set()
+    if isinstance(ch_cfg, dict):
+        for cid, val in ch_cfg.items():
+            if isinstance(val, dict) and val.get("enabled", True) is not False:
+                active.add(cid)
+    out = [channels.ChannelAccount(cid, "default", cid in active) for cid in channels.PREFERRED_CHANNELS]
+    out.sort(key=lambda a: (0 if a.enabled else 1, channels.PREFERRED_CHANNELS.index(a.channel)))
+    return out
+
+
 def prompt(s: state.SetupState, *, runner: Callable[..., "tuple[int, str]"] | None = None) -> None:
-    """Ask which listed channel accounts stay on. Unattended runs ask nothing and plan nothing."""
+    """Ask which communication channels should be active. Active ones start ticked; inactive ones start unticked."""
     if ui.is_non_interactive():
         return
     o = s.openclaw
     inventory = channels.list_channels(runner or _runner())
     if not inventory:
-        # Unreadable, or nothing listed: whatever an earlier read of this run left behind is stale and goes
-        # (architect C6/security: a re-list that comes back empty must not leave a plan standing).
-        s.__dict__.pop(INVENTORY_ATTR, None)
-        o.channels_seen, o.channels_wanted = [], []
-        if inventory is None:
-            ui.detail("Could not read the OpenClaw channel list; channels stay as they are.")
-        return
+        inventory = _fallback_inventory()
     on = [a.key for a in inventory if a.enabled]
-    # No saved disable intent (C6): the default is the current truth. Everything that is on right now starts ticked;
-    # an earlier run's unticking is never remembered, so a disable has to be chosen again, in this run.
     default = list(on)
     choices = [ui.Choice(_title(a), value=a.key) for a in inventory]
     picked = ui.checkbox(
-        "Which channel accounts should stay on? (unticking one asks to turn it off at Apply, after its own confirm)",
+        "Which communication channels should be active? (tick to enable, untick to disable)",
         choices, default=default)
     keys = {a.key for a in inventory}
     o.channels_seen = on
@@ -52,8 +77,10 @@ def prompt(s: state.SetupState, *, runner: Callable[..., "tuple[int, str]"] | No
 
 
 def _title(a: channels.ChannelAccount) -> str:
-    state_text = "on" if a.enabled else "off"
-    return f"{a.channel} / {a.account} ({state_text})"
+    label = CHANNEL_LABELS.get(a.channel, a.channel)
+    state_text = "active" if a.enabled else "inactive"
+    acct = "" if a.account == "default" else f" / {a.account}"
+    return f"{label}{acct} ({a.channel} — {state_text})"
 
 
 def review_lines(s: state.SetupState) -> list[str]:

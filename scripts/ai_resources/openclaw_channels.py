@@ -140,6 +140,12 @@ def redact(text: str, *, lines: int = OUTPUT_LINES, width: int = OUTPUT_WIDTH) -
     return out
 
 
+PREFERRED_CHANNELS = (
+    "telegram", "slack", "discord", "whatsapp", "googlechat", "msteams",
+    "matrix", "signal", "mattermost", "feishu", "line", "wecom", "irc", "imessage",
+)
+
+
 def parse_inventory(text: str) -> list[ChannelAccount] | None:
     """The accounts in a `channels list --all --json` payload, or None for a shape this parser does not know."""
     try:
@@ -155,7 +161,13 @@ def parse_inventory(text: str) -> list[ChannelAccount] | None:
     for channel, info in chat.items():
         if not isinstance(info, dict) or not isinstance(info.get("accounts"), list):
             return None
-        for raw in info["accounts"]:
+        if not valid_id(channel):
+            return None
+        accounts = info["accounts"]
+        if not accounts:
+            out.append(ChannelAccount(channel, "default", False))
+            continue
+        for raw in accounts:
             if isinstance(raw, str):
                 account, enabled = raw, True
             elif isinstance(raw, dict) and isinstance(raw.get("id"), str):
@@ -165,9 +177,11 @@ def parse_inventory(text: str) -> list[ChannelAccount] | None:
                     return None
             else:
                 return None
-            if not (valid_id(channel) and valid_id(account)):
+            if not valid_id(account):
                 return None
             out.append(ChannelAccount(channel, account, enabled))
+    rank = {c: i for i, c in enumerate(PREFERRED_CHANNELS)}
+    out.sort(key=lambda a: (0 if a.enabled else 1, rank.get(a.channel, 999), a.channel, a.account))
     return out
 
 

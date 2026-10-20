@@ -82,19 +82,17 @@ by_persona: {}
 lanes:
   roles:
     explore:            ["agy:gemini-3.8-flash-high", claude-cli:haiku, claude-code]
+    planner:            ["agy:gemini-4-argon-high", claude-code, claude-cli:sonnet]
+    software-architect: ["agy:gemini-4-argon-high", claude-code, claude-cli:opus]
+    code-reviewer:      ["agy:gemini-4-argon-high", claude-code, claude-cli:sonnet]
+    doc-writer:         ["agy:gemini-3.8-flash-high", claude-cli:sonnet, claude-code]
     implementer:        [claude-cli:sonnet, claude-code]
     tester:             [claude-cli:sonnet, claude-code]
-    doc-writer:         [claude-cli:sonnet, claude-code]
-    planner:            [claude-code, claude-cli:sonnet]
-    software-architect: [claude-code, claude-cli:opus]
-    verifier:           [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
-    security-auditor:   [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
-  second:
-    code-reviewer:      ["agy:gemini-4-argon-high", claude-cli:sonnet]
-    planner:            ["agy:gemini-4-argon-high", claude-cli:sonnet]
-    software-architect: ["agy:gemini-4-argon-high", claude-cli:opus]
+    verifier:           ["agy:claude-opus-5-5", claude-code, claude-cli:opus]
+    security-auditor:   ["agy:claude-opus-5-5", claude-code, claude-cli:opus]
   pins:
     explore:            ["agy:gemini-3.8-flash-high"]
-    code-reviewer:      ["agy:gemini-4-argon-high"]
     planner:            ["agy:gemini-4-argon-high"]
     software-architect: ["agy:gemini-4-argon-high"]
+    code-reviewer:      ["agy:gemini-4-argon-high"]
+    doc-writer:         ["agy:gemini-3.8-flash-high"]
