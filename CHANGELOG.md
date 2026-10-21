@@ -6,7 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
-## [2.2.1] — 2026-10-20 — skip Telegram prompts when disabled and exclude kit-lane agents from host bindings
+## [2.3.0] — 2026-10-21 — OpenClaw native cockpit and lifecycle orchestrator plugin (ADR-0012)
+
+### Added (OpenClaw Cockpit & Lifecycle Orchestrator)
+
+- **ADR-0012: OpenClaw Native Cockpit & Lifecycle Orchestrator.** Architecture formalizing OpenClaw as the primary cockpit and event dispatcher, while keeping the Python engine as the offline setup and auditing authority.
+- **Cockpit `/lanes` command in `ai-resources` plugin.** Displays subscription lanes status, mode (`single-model` vs `multi-model`), resolved role mappings across Claude Code and Gemini (Antigravity), and active fallback chains directly inside chat (Telegram/Discord/Web UI).
+- **Cockpit `/workflow` command family.** Native discovery and execution of declarative workflows:
+  - `/workflow list`: Formatted table of all 19 kit workflows and pipeline stages.
+  - `/workflow info <id>`: Step-by-step breakdown of criteria, roles, and transitions.
+  - `/workflow run <id> [goal]`: Dispatches workflows to worker subagents safely without blocking gateway event loop.
+- **Enhanced `/equipo` command.** Elevated to full lifecycle team dispatcher enforcing the sequential role protocol (`planner` ➔ `implementer` ➔ `verifier`) with an immutable non-self-approval barrier on the implementer.
+- **Expanded plugin manifest schema.** Adds `kitRoot`, `lanesConfigPath`, and `enableOrchestrator` to `configSchema`.
+- **Automated setup plugin configuration.** `ai-resources setup` automatically writes `kitRoot`, `lanesConfigPath`, and `enableOrchestrator=True` into `plugins.entries["ai-resources"].config` in `openclaw.json`.
 
 ### Fixed
 
