@@ -14,6 +14,8 @@ import plugin, {
   buildClaudeBackend,
   buildClaudeCommand,
   makeClaudeCommandHandler,
+  buildEquipoCommand,
+  makeEquipoCommandHandler,
   claudeSubagentSessionKey,
   FORBIDDEN_CLAUDE_FLAGS,
   parseLanesSummary,
@@ -250,7 +252,7 @@ test("buildClaudeCommand matches the OpenClawPluginCommandDefinition contract: n
   assert.equal(cmd.continueAgent, undefined, "continueAgent belongs on the handler's PluginCommandResult, not the definition");
 });
 
-test("register() registers /claude and /equipo as two command definitions sharing one handler", () => {
+test("register() registers /claude and /equipo as cockpit command definitions", () => {
   const commands = [];
   const api = {
     pluginConfig: {},
@@ -262,7 +264,8 @@ test("register() registers /claude and /equipo as two command definitions sharin
   assert.deepEqual(commands.map((c) => c.name).sort(), ["claude", "equipo", "lanes", "workflow"]);
   const claudeCmd = commands.find((c) => c.name === "claude");
   const equipoCmd = commands.find((c) => c.name === "equipo");
-  assert.equal(claudeCmd.handler, equipoCmd.handler);
+  assert.equal(typeof claudeCmd.handler, "function");
+  assert.equal(typeof equipoCmd.handler, "function");
 });
 
 test("claudeSubagentSessionKey targets the claude agent, derived from the invoking context", () => {
@@ -616,4 +619,50 @@ test("makeWorkflowCommandHandler run delegates to runtime.subagent when availabl
   assert.equal(dispatched.length, 1);
   assert.match(dispatched[0].message, /Executing workflow explore-and-plan/);
   assert.match(dispatched[0].message, /Refactor authentication tokens/);
+});
+
+// --- /equipo team lifecycle command (ADR-0012) --------------------------------------
+
+test("buildEquipoCommand matches OpenClawPluginCommandDefinition contract", () => {
+  const handler = async () => ({ text: "equipo" });
+  const cmd = buildEquipoCommand("equipo", handler);
+  assert.equal(cmd.name, "equipo");
+  assert.equal(typeof cmd.description, "string");
+  assert.ok(cmd.description.length > 0);
+  assert.equal(cmd.acceptsArgs, true);
+  assert.equal(cmd.requireAuth, true);
+  assert.equal(cmd.handler, handler);
+});
+
+test("makeEquipoCommandHandler formats team protocol and delivers to runtime.subagent", async () => {
+  const calls = [];
+  const api = {
+    runtime: {
+      subagent: {
+        async run(opts) {
+          calls.push(opts);
+          return { sessionKey: "agent:claude:subagent:eq-123" };
+        },
+      },
+    },
+  };
+  const handler = makeEquipoCommandHandler(api);
+  const res = await handler({ args: "Build full metrics dashboard" });
+  assert.equal(res.continueAgent, false);
+  assert.match(res.text, /👥 \*\*Team Lifecycle Dispatched\*\*/);
+  assert.match(res.text, /Build full metrics dashboard/);
+  assert.match(res.text, /`planner` ➔ `implementer` ➔ `verifier`/);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].message, /\[AI-RESOURCES TEAM LIFECYCLE: ADR-0012\]/);
+  assert.match(calls[0].message, /1\. PLANNER:/);
+  assert.match(calls[0].message, /2\. IMPLEMENTER:.*\(Self-approval is forbidden\)/);
+  assert.match(calls[0].message, /3\. VERIFIER:/);
+});
+
+test("makeEquipoCommandHandler throws a clear error when runtime.subagent is unavailable", async () => {
+  const handler = makeEquipoCommandHandler({});
+  await assert.rejects(
+    () => handler({ args: "Build something" }),
+    /runtime.subagent.run is not available/,
+  );
 });

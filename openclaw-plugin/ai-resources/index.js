@@ -258,6 +258,54 @@ export function makeClaudeCommandHandler(api) {
   };
 }
 
+// --- /equipo team lifecycle command (ADR-0012) --------------------------------------
+
+/** @param {{name: string, handler: (ctx: object) => Promise<object>}} */
+export function buildEquipoCommand(name, handler) {
+  return {
+    name,
+    nativeNames: { default: name },
+    description: "Dispatch the full engineering team lifecycle (planner ➔ implementer ➔ verifier) for a goal.",
+    acceptsArgs: true,
+    requireAuth: true,
+    handler,
+  };
+}
+
+/** @param {object} api The register(api) object; the handler closes over it. */
+export function makeEquipoCommandHandler(api) {
+  return async function equipoCommandHandler(ctx) {
+    const run = api && api.runtime && api.runtime.subagent && api.runtime.subagent.run;
+    if (typeof run !== "function") {
+      throw new Error(
+        "ai-resources: runtime.subagent.run is not available on this gateway; "
+        + "agy's AGENTS.md instructions cover /equipo instead."
+      );
+    }
+    const goal = String((ctx && ctx.args) || "").trim() || "No goal specified";
+    const sessionKey = claudeSubagentSessionKey(ctx);
+
+    const teamMessage = [
+      "[AI-RESOURCES TEAM LIFECYCLE: ADR-0012]",
+      `Goal: ${goal}`,
+      "Pipeline Protocol:",
+      "1. PLANNER: Analyze specs and research, generate plan with explicit acceptance criteria.",
+      "2. IMPLEMENTER: Make code changes and write tests. (Self-approval is forbidden).",
+      "3. VERIFIER: Independently verify all acceptance criteria before completion.",
+      "Execute Phase 1 (planner) now.",
+    ].join("\n");
+
+    const result = await run.call(api.runtime.subagent, { sessionKey, message: teamMessage, deliver: true });
+    const startedKey = (result && result.sessionKey) || sessionKey;
+    return {
+      text: `👥 **Team Lifecycle Dispatched** (Session \`${startedKey}\`)\n`
+        + `**Goal**: ${goal}\n`
+        + `**Pipeline**: \`planner\` ➔ \`implementer\` ➔ \`verifier\` (Active: \`planner\`)`,
+      continueAgent: false,
+    };
+  };
+}
+
 // --- /lanes status cockpit command (ADR-0012) ---------------------------------------
 
 /**
@@ -665,7 +713,8 @@ export default {
     api.registerCliBackend(buildClaudeBackend(bins));
     const claudeHandler = makeClaudeCommandHandler(api);
     api.registerCommand(buildClaudeCommand("claude", claudeHandler));
-    api.registerCommand(buildClaudeCommand("equipo", claudeHandler));
+    const equipoHandler = makeEquipoCommandHandler(api);
+    api.registerCommand(buildEquipoCommand("equipo", equipoHandler));
     const lanesHandler = makeLanesCommandHandler(api);
     api.registerCommand(buildLanesCommand("lanes", lanesHandler));
     const workflowHandler = makeWorkflowCommandHandler(api);
