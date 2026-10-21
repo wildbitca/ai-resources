@@ -356,13 +356,15 @@ def _fallbacks_for(primary_ref: str, engine_id: str) -> list[str]:
 def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_command: str, *,
                 openrouter_enabled: bool = True,
                 worker_model: str = "", ak_path: str = "", agy_bin: str = "", claude_bin: str = "",
-                python3_bin: str = "", fallbacks: bool = False) -> dict:
+                python3_bin: str = "", fallbacks: bool = False,
+                lanes_path: str = "", enable_orchestrator: bool = True) -> dict:
     """The openclaw.json patch that points the default agent at `engine`."""
     if engine.id == "antigravity":
         patch = _build_antigravity_patch(
             model, worker_model, doc, engram_command,
             agy_bin=agy_bin, claude_bin=claude_bin, python3_bin=python3_bin,
             fallbacks=fallbacks,
+            ak_path=ak_path, lanes_path=lanes_path, enable_orchestrator=enable_orchestrator,
         )
     else:
         model_spec: dict[str, Any] = {"primary": model}
@@ -417,7 +419,8 @@ def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_c
 
 
 def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_command: str, *,
-                             agy_bin: str, claude_bin: str, python3_bin: str, fallbacks: bool = False) -> dict:
+                             agy_bin: str, claude_bin: str, python3_bin: str, fallbacks: bool = False,
+                             ak_path: str = "", lanes_path: str = "", enable_orchestrator: bool = True) -> dict:
     engine = ENGINES["antigravity"]
     primary_ref = f"{engine.runtime}/{model}"
     default_fallbacks = _fallbacks_for(primary_ref, engine.id)
@@ -488,13 +491,19 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
 
 
 
-    plugin_config: dict[str, str] = {}
+    plugin_config: dict[str, Any] = {}
     if agy_bin:
         plugin_config["agyBin"] = agy_bin
     if claude_bin:
         plugin_config["claudeBin"] = claude_bin
     if python3_bin:
         plugin_config["python3Bin"] = python3_bin
+    if ak_path:
+        plugin_config["kitRoot"] = ak_path
+    if lanes_path:
+        plugin_config["lanesConfigPath"] = lanes_path
+    if enable_orchestrator:
+        plugin_config["enableOrchestrator"] = True
     if plugin_config:
         patch["plugins"] = {"entries": {"ai-resources": {"config": plugin_config}}}
 
@@ -1857,6 +1866,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
     if not s.openclaw.applied:
         s.openclaw.previous = snapshot(doc)
 
+    has_lanes = bool(s.profile.lanes)
     patch_kwargs: dict[str, Any] = {"openrouter_enabled": openrouter_selected(s)}
     if engine.id == "antigravity":
         # Not plain shutil.which: both official installers default to ~/.local/bin,
@@ -1871,8 +1881,9 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
             agy_bin=detection._which_extra("agy"),
             claude_bin=detection._which_extra("claude"),
             python3_bin=shutil.which("python3") or "",
+            lanes_path=str(state.lanes_path()) if has_lanes else "",
+            enable_orchestrator=True,
         )
-    has_lanes = bool(s.profile.lanes)
     patch = build_patch(engine, model, doc, kit_skills, engram, fallbacks=has_lanes, **patch_kwargs)
 
     # Switching away from antigravity to a different engine: fold in the same restore
