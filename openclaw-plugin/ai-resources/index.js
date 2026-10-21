@@ -1,8 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 
-// ai-resources OpenClaw plugin — agy-cli and claude-kit CLI backends, /claude and /lanes commands.
+const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+// ai-resources OpenClaw plugin — agy-cli and claude-kit CLI backends, /claude, /lanes and /workflow commands.
 //
 // Plain JS, no build step, no third-party imports: OpenClaw loads this file directly.
 // Binary paths come from the plugin config (`agyBin`, `claudeBin`), written by
@@ -400,10 +403,258 @@ export function makeLanesCommandHandler(api) {
   };
 }
 
+// --- /workflow cockpit commands (ADR-0012) -----------------------------------------
+
+/**
+ * Resolves the kit libexec root directory.
+ * @param {Record<string, string>} pluginConfig
+ * @param {string} [baseDir]
+ */
+export function resolveKitRoot(pluginConfig = {}, baseDir = PLUGIN_DIR) {
+  if (pluginConfig.kitRoot && isAbsoluteBin(pluginConfig.kitRoot)) {
+    return pluginConfig.kitRoot;
+  }
+  if (process.env.AGENT_KIT) {
+    return process.env.AGENT_KIT;
+  }
+  const candidate = path.resolve(baseDir, "../..");
+  if (fs.existsSync(path.join(candidate, "workflows"))) {
+    return candidate;
+  }
+  const brewDefault = "/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec";
+  if (fs.existsSync(path.join(brewDefault, "workflows"))) {
+    return brewDefault;
+  }
+  return candidate;
+}
+
+/**
+ * Parses header information and steps from a workflow YAML file without external deps.
+ * @param {string} filePath
+ */
+export function parseWorkflowHeader(filePath) {
+  const content = fs.readFileSync(filePath, "utf8");
+  const lines = content.split("\n");
+  const base = path.basename(filePath);
+  const id = base.endsWith(".workflow.yaml") ? base.slice(0, -14) : base.replace(/\.ya?ml$/, "");
+
+  const data = {
+    id,
+    name: id,
+    description: "",
+    trigger: "",
+    steps: [],
+  };
+
+  let inSteps = false;
+  let currentStep = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.search(/\S/);
+
+    if (indent === 0) {
+      if (trimmed.startsWith("name:")) data.name = trimmed.replace("name:", "").trim().replace(/^['"]|['"]$/g, "");
+      else if (trimmed.startsWith("description:")) data.description = trimmed.replace("description:", "").trim().replace(/^['"]|['"]$/g, "");
+      else if (trimmed.startsWith("trigger:")) data.trigger = trimmed.replace("trigger:", "").trim().replace(/^['"]|['"]$/g, "");
+      else if (trimmed.startsWith("steps:")) inSteps = true;
+      continue;
+    }
+
+    if (inSteps) {
+      if (trimmed.startsWith("- id:")) {
+        currentStep = {
+          id: trimmed.replace("- id:", "").trim().replace(/^['"]|['"]$/g, ""),
+          role: "",
+          to: "",
+          entry: "",
+          exit: "",
+        };
+        data.steps.push(currentStep);
+      } else if (currentStep) {
+        if (trimmed.startsWith("subagent_type:")) currentStep.role = trimmed.replace("subagent_type:", "").trim().replace(/^['"]|['"]$/g, "");
+        else if (trimmed.startsWith("handoff_to:")) currentStep.to = trimmed.replace("handoff_to:", "").trim().replace(/^['"]|['"]$/g, "");
+        else if (trimmed.startsWith("entry_criteria:")) currentStep.entry = trimmed.replace("entry_criteria:", "").trim().replace(/^['"]|['"]$/g, "");
+        else if (trimmed.startsWith("exit_criteria:")) currentStep.exit = trimmed.replace("exit_criteria:", "").trim().replace(/^['"]|['"]$/g, "");
+      }
+    }
+  }
+  return data;
+}
+
+/**
+ * Lists all workflow definitions found in workflowsDir.
+ * @param {string} workflowsDir
+ */
+export function listWorkflows(workflowsDir) {
+  if (!fs.existsSync(workflowsDir)) return [];
+  try {
+    const files = fs.readdirSync(workflowsDir)
+      .filter((f) => f.endsWith(".workflow.yaml") && !f.startsWith("_"))
+      .sort();
+    return files.map((f) => parseWorkflowHeader(path.join(workflowsDir, f)));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Formats workflow listing in markdown table.
+ * @param {Array<object>} workflows
+ * @param {string} workflowsDir
+ */
+export function formatWorkflowListMarkdown(workflows, workflowsDir) {
+  if (!workflows || workflows.length === 0) {
+    return `### 📋 ai-resources: Workflows\n\nNo workflows found in \`${workflowsDir}\`.`;
+  }
+  let md = `### 📋 ai-resources: Available Workflows\n`;
+  md += `**Workflows directory:** \`${workflowsDir}\` (${workflows.length} workflows)\n\n`;
+  md += `| Workflow ID | Pipeline / Steps | Description |\n`;
+  md += `| :--- | :--- | :--- |\n`;
+  for (const w of workflows) {
+    const pipeline = w.steps.length > 0
+      ? w.steps.map((s) => `\`${s.id}\``).join(" ➔ ")
+      : "—";
+    const desc = w.description ? w.description.slice(0, 80) + (w.description.length > 80 ? "..." : "") : "—";
+    md += `| **${w.id}** | ${pipeline} | ${desc} |\n`;
+  }
+  md += `\n*Tip: Run \`/workflow info <id>\` for details, or \`/workflow run <id> [goal]\` to execute.*`;
+  return md;
+}
+
+/**
+ * Formats detailed info for a single workflow.
+ * @param {object} w
+ */
+export function formatWorkflowInfoMarkdown(w) {
+  let md = `### 📋 Workflow: \`${w.id}\`\n`;
+  if (w.name && w.name !== w.id) md += `**Name:** ${w.name}\n`;
+  if (w.description) md += `**Description:** ${w.description}\n`;
+  if (w.trigger) md += `**Trigger:** ${w.trigger}\n`;
+  md += `\n#### Pipeline Steps (${w.steps.length})\n`;
+  if (w.steps.length === 0) {
+    md += `No structured steps defined.\n`;
+  } else {
+    md += `| Step ID | Role (Subagent) | Next Step | Criteria |\n`;
+    md += `| :--- | :--- | :--- | :--- |\n`;
+    for (const s of w.steps) {
+      const criteria = s.exit ? `Exit: ${s.exit}` : (s.entry ? `Entry: ${s.entry}` : "—");
+      md += `| **${s.id}** | \`${s.role || "standard"}\` | \`${s.to || "finish"}\` | ${criteria} |\n`;
+    }
+  }
+  md += `\n*To execute this workflow: \`/workflow run ${w.id} [goal]\`*`;
+  return md;
+}
+
+export function buildWorkflowCommand(name, handler) {
+  return {
+    name,
+    nativeNames: { default: name },
+    description: "Inspect and run declarative workflows (/workflow list, /workflow info <id>, /workflow run <id>).",
+    acceptsArgs: true,
+    requireAuth: true,
+    handler,
+  };
+}
+
+export function makeWorkflowCommandHandler(api) {
+  return async function workflowCommandHandler(ctx) {
+    const pluginConfig = (api && api.pluginConfig) || {};
+    const kitRoot = resolveKitRoot(pluginConfig);
+    const workflowsDir = path.join(kitRoot, "workflows");
+
+    const rawArgs = String((ctx && ctx.args) || "").trim();
+    const parts = rawArgs.split(/\s+/).filter(Boolean);
+    const subcmd = (parts[0] || "list").toLowerCase();
+    const targetId = parts[1];
+
+    if (subcmd === "list") {
+      const workflows = listWorkflows(workflowsDir);
+      return {
+        text: formatWorkflowListMarkdown(workflows, workflowsDir),
+        continueAgent: false,
+      };
+    }
+
+    if (subcmd === "info") {
+      if (!targetId) {
+        return {
+          text: "⚠️ **Usage**: `/workflow info <workflow-id>` (e.g. `/workflow info feature-lanes`)",
+          continueAgent: false,
+        };
+      }
+      const candidates = [
+        path.join(workflowsDir, `${targetId}.workflow.yaml`),
+        path.join(workflowsDir, `${targetId}.yaml`),
+        path.join(workflowsDir, `_${targetId}.workflow.yaml`),
+      ];
+      const match = candidates.find((p) => fs.existsSync(p));
+      if (!match) {
+        return {
+          text: `⚠️ **Workflow not found**: Could not find workflow \`${targetId}\` in \`${workflowsDir}\`.\nRun \`/workflow list\` to see available workflows.`,
+          continueAgent: false,
+        };
+      }
+      const wf = parseWorkflowHeader(match);
+      return {
+        text: formatWorkflowInfoMarkdown(wf),
+        continueAgent: false,
+      };
+    }
+
+    if (subcmd === "run") {
+      if (!targetId) {
+        return {
+          text: "⚠️ **Usage**: `/workflow run <workflow-id> [goal]` (e.g. `/workflow run explore-and-plan review auth`)",
+          continueAgent: false,
+        };
+      }
+      const candidates = [
+        path.join(workflowsDir, `${targetId}.workflow.yaml`),
+        path.join(workflowsDir, `${targetId}.yaml`),
+        path.join(workflowsDir, `_${targetId}.workflow.yaml`),
+      ];
+      const match = candidates.find((p) => fs.existsSync(p));
+      if (!match) {
+        return {
+          text: `⚠️ **Workflow not found**: Could not find workflow \`${targetId}\` in \`${workflowsDir}\`.`,
+          continueAgent: false,
+        };
+      }
+      const wf = parseWorkflowHeader(match);
+      const goal = parts.slice(2).join(" ") || "No specific goal provided";
+
+      const run = api && api.runtime && api.runtime.subagent && api.runtime.subagent.run;
+      if (typeof run === "function") {
+        const sessionKey = claudeSubagentSessionKey(ctx);
+        const firstStep = wf.steps[0];
+        const initialPrompt = `Executing workflow ${wf.id} (${wf.name}):\nGoal: ${goal}\nInitial Phase: ${firstStep ? firstStep.id : "start"} (role: ${firstStep ? firstStep.role : "standard"})\nWorkflow definition: ${match}`;
+        const result = await run.call(api.runtime.subagent, { sessionKey, message: initialPrompt, deliver: true });
+        const startedKey = (result && result.sessionKey) || sessionKey;
+        return {
+          text: `🚀 **Workflow Started**: \`${wf.id}\` (Session \`${startedKey}\`)\n**Goal**: ${goal}\n**Pipeline**: ${wf.steps.map((s) => `\`${s.id}\``).join(" ➔ ") || "direct"}`,
+          continueAgent: false,
+        };
+      }
+
+      return {
+        text: `🚀 **Workflow Ready**: \`${wf.id}\`\n**Goal**: ${goal}\nRun subagent via \`sessions_spawn\` to start phase \`${wf.steps[0]?.id || "initial"}\`.`,
+        continueAgent: false,
+      };
+    }
+
+    return {
+      text: `⚠️ **Unknown sub-command**: \`/workflow ${subcmd}\`.\nAvailable commands: \`/workflow list\`, \`/workflow info <id>\`, \`/workflow run <id> [goal]\``,
+      continueAgent: false,
+    };
+  };
+}
+
 export default {
   id: "ai-resources",
   name: "ai-resources",
-  description: "agy-cli, agy-cli-lane and claude-kit CLI backends, plus /claude, /equipo and /lanes cockpit commands.",
+  description: "agy-cli, agy-cli-lane and claude-kit CLI backends, plus /claude, /equipo, /lanes and /workflow cockpit commands.",
   register(api) {
     const pluginConfig = (api && api.pluginConfig) || {};
     const bins = resolveBinaries(pluginConfig);
@@ -417,6 +668,8 @@ export default {
     api.registerCommand(buildClaudeCommand("equipo", claudeHandler));
     const lanesHandler = makeLanesCommandHandler(api);
     api.registerCommand(buildLanesCommand("lanes", lanesHandler));
+    const workflowHandler = makeWorkflowCommandHandler(api);
+    api.registerCommand(buildWorkflowCommand("workflow", workflowHandler));
   },
 };
 

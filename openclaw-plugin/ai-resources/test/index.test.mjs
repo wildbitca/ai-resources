@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -20,6 +20,13 @@ import plugin, {
   formatLanesMarkdown,
   buildLanesCommand,
   makeLanesCommandHandler,
+  resolveKitRoot,
+  parseWorkflowHeader,
+  listWorkflows,
+  formatWorkflowListMarkdown,
+  formatWorkflowInfoMarkdown,
+  buildWorkflowCommand,
+  makeWorkflowCommandHandler,
 } from "../index.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -252,7 +259,7 @@ test("register() registers /claude and /equipo as two command definitions sharin
     runtime: { subagent: { async run() { return { runId: "r1" }; } } },
   };
   plugin.register(api);
-  assert.deepEqual(commands.map((c) => c.name).sort(), ["claude", "equipo", "lanes"]);
+  assert.deepEqual(commands.map((c) => c.name).sort(), ["claude", "equipo", "lanes", "workflow"]);
   const claudeCmd = commands.find((c) => c.name === "claude");
   const equipoCmd = commands.find((c) => c.name === "equipo");
   assert.equal(claudeCmd.handler, equipoCmd.handler);
@@ -310,7 +317,7 @@ test("register() adds both CLI backends and the cockpit commands", () => {
   assert.deepEqual(backends.map((b) => b.id).sort(), ["agy-cli", "agy-cli-lane", "claude-kit"]);
   assert.equal(backends.find((b) => b.id === "agy-cli").config.command, "/abs/agy");
   assert.equal(backends.find((b) => b.id === "claude-kit").config.command, "/abs/claude");
-  assert.deepEqual(commands.map((c) => c.name).sort(), ["claude", "equipo", "lanes"]);
+  assert.deepEqual(commands.map((c) => c.name).sort(), ["claude", "equipo", "lanes", "workflow"]);
 });
 
 // --- agy-cli-lane (ADR-0007 section 11, phase 3) -----------------------------------
@@ -503,4 +510,110 @@ resolved:
   } finally {
     if (fsModule.existsSync(tmpPath)) fsModule.unlinkSync(tmpPath);
   }
+});
+
+// --- /workflow cockpit commands (ADR-0012) -----------------------------------------
+
+const REPO_ROOT = path.resolve(HERE, "../../..");
+
+test("resolveKitRoot falls back to repo root when workflows directory exists", () => {
+  const root = resolveKitRoot({}, path.resolve(HERE, ".."));
+  assert.ok(typeof root === "string");
+  assert.ok(root.length > 0);
+  assert.ok(root.endsWith("ai-resources"));
+});
+
+test("parseWorkflowHeader extracts id, name, description, trigger, and steps", () => {
+  const yaml = `
+name: test-flow
+description: Test workflow for unit testing
+trigger: When tests run
+steps:
+  - id: step-one
+    subagent_type: planner
+    handoff_to: step-two
+    entry_criteria: Start
+    exit_criteria: Done
+  - id: step-two
+    subagent_type: implementer
+    handoff_to: null
+`;
+  const f = path.join(HERE, "fixtures", "tmp-workflow.yaml");
+  writeFileSync(f, yaml, "utf8");
+  try {
+    const parsed = parseWorkflowHeader(f);
+    assert.equal(parsed.id, "tmp-workflow");
+    assert.equal(parsed.name, "test-flow");
+    assert.equal(parsed.description, "Test workflow for unit testing");
+    assert.equal(parsed.trigger, "When tests run");
+    assert.equal(parsed.steps.length, 2);
+    assert.equal(parsed.steps[0].id, "step-one");
+    assert.equal(parsed.steps[0].role, "planner");
+    assert.equal(parsed.steps[0].to, "step-two");
+    assert.equal(parsed.steps[1].id, "step-two");
+    assert.equal(parsed.steps[1].role, "implementer");
+    assert.equal(parsed.steps[1].to, "null");
+  } finally {
+    if (existsSync(f)) unlinkSync(f);
+  }
+});
+
+test("buildWorkflowCommand matches OpenClawPluginCommandDefinition contract", () => {
+  const handler = async () => ({ text: "workflow" });
+  const cmd = buildWorkflowCommand("workflow", handler);
+  assert.equal(cmd.name, "workflow");
+  assert.equal(typeof cmd.description, "string");
+  assert.ok(cmd.description.length > 0);
+  assert.equal(cmd.acceptsArgs, true);
+  assert.equal(cmd.requireAuth, true);
+  assert.equal(cmd.handler, handler);
+});
+
+test("makeWorkflowCommandHandler list returns formatted table of workflows", async () => {
+  const handler = makeWorkflowCommandHandler({ pluginConfig: { kitRoot: REPO_ROOT } });
+  const res = await handler({ args: "list" });
+  assert.equal(res.continueAgent, false);
+  assert.match(res.text, /### 📋 ai-resources: Available Workflows/);
+  assert.match(res.text, /explore-and-plan/);
+  assert.match(res.text, /feature-lanes/);
+});
+
+test("makeWorkflowCommandHandler info displays detailed pipeline for valid workflow", async () => {
+  const handler = makeWorkflowCommandHandler({ pluginConfig: { kitRoot: REPO_ROOT } });
+  const res = await handler({ args: "info explore-and-plan" });
+  assert.equal(res.continueAgent, false);
+  assert.match(res.text, /### 📋 Workflow: `explore-and-plan`/);
+  assert.match(res.text, /Pipeline Steps/);
+  assert.match(res.text, /explore/);
+  assert.match(res.text, /plan/);
+});
+
+test("makeWorkflowCommandHandler info returns error for unknown workflow", async () => {
+  const handler = makeWorkflowCommandHandler({ pluginConfig: { kitRoot: REPO_ROOT } });
+  const res = await handler({ args: "info non-existent-flow" });
+  assert.equal(res.continueAgent, false);
+  assert.match(res.text, /⚠️ \*\*Workflow not found\*\*/);
+});
+
+test("makeWorkflowCommandHandler run delegates to runtime.subagent when available", async () => {
+  const dispatched = [];
+  const api = {
+    pluginConfig: { kitRoot: REPO_ROOT },
+    runtime: {
+      subagent: {
+        async run(opts) {
+          dispatched.push(opts);
+          return { sessionKey: "agent:claude:subagent:wf-test" };
+        },
+      },
+    },
+  };
+  const handler = makeWorkflowCommandHandler(api);
+  const res = await handler({ args: "run explore-and-plan Refactor authentication tokens" });
+  assert.equal(res.continueAgent, false);
+  assert.match(res.text, /🚀 \*\*Workflow Started\*\*: `explore-and-plan`/);
+  assert.match(res.text, /wf-test/);
+  assert.equal(dispatched.length, 1);
+  assert.match(dispatched[0].message, /Executing workflow explore-and-plan/);
+  assert.match(dispatched[0].message, /Refactor authentication tokens/);
 });
