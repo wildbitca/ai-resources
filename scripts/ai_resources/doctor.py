@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
-from . import verify
+from . import billing, verify
 from .setup import state, detection, credentials, litellm, providers, smoke, ui
 
 
@@ -173,6 +173,26 @@ def _check_mcp_children(*, runner: "Callable[..., tuple[int, str]] | None" = Non
     ui.detail("The kit scopes kit-lane-* agents with tools.deny bundle-mcp; its effect on already running "
               "children is not proven (isolated merge gate only).")
     return 1
+
+
+def _check_billing() -> int:
+    """Doctor sub-check 4g (ADR-0014 D2): how Claude Code is billed, the quota and the manual credit file.
+
+    Read-only. These are warnings about money and quota, not defects of the install, so they do not count as issues
+    (the exit code stays about the configuration)."""
+    try:
+        snap = billing.snapshot()
+    except Exception as e:  # noqa: BLE001 - a reader must never break the doctor
+        ui.detail(f"Billing awareness skipped ({e.__class__.__name__}).")
+        return 0
+    for line in billing.summary_lines(snap):
+        ui.detail(line)
+    found = billing.alerts_for(snap)
+    for a in found:
+        (ui.warn if a.severity == "warn" else ui.info)(a.message)
+    if not found:
+        ui.ok("Billing and quota: nothing to flag")
+    return 0
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -373,6 +393,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     # 4f. The Antigravity lane: gates, evidence record, Google acknowledgement, OpenRouter Google cell.
     issues += _check_antigravity_lane(s)
+
+    # 4g. Billing mode, quota and the manual credit file.
+    issues += _check_billing()
 
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")

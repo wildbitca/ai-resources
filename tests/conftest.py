@@ -156,3 +156,17 @@ def _reset_assume_yes():
         return
     ui._ASSUME_YES = False
     ui.set_assume_yes(False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home_derived_paths(tmp_path_factory, monkeypatch):
+    """Round 2 (ADR-0014): every reader or writer that resolves a path from the real HOME is pointed at a scratch
+    directory before its first test: the billing reader (~/.claude.json, credits.json, the statusline cache)."""
+    root = tmp_path_factory.mktemp("home-derived")
+    try:
+        from ai_resources import billing
+    except Exception:
+        return
+    monkeypatch.setattr(billing, "claude_json_path", lambda: root / ".claude.json")
+    monkeypatch.setattr(billing, "credits_path", lambda: root / "config" / "ai-resources" / "credits.json")
+    monkeypatch.setattr(billing, "sidecar_path", lambda: root / "cache" / "claude-rate-limits.json")

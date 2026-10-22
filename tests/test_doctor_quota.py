@@ -160,3 +160,75 @@ def test_read_failure_warns_with_the_reason_zero_issues(monkeypatch):
     assert issues == 0
     assert len(warnings) == 1 and "timed out" in warnings[0]
     assert any("Singleflight" in d for d in details)
+
+
+# --- ADR-0014 D2: billing and quota awareness (sub-check 4g) ---------------------------------------------------------
+
+def _capture_ui(monkeypatch):
+    seen = {"warn": [], "info": [], "detail": [], "ok": [], "error": []}
+    for name in seen:
+        monkeypatch.setattr(ui, name, lambda msg, _n=name: seen[_n].append(msg))
+    return seen
+
+
+def _write_billing(monkeypatch, tmp_path, billing_type="prepaid", week=100.0, five=0.0, credits=None):
+    import json
+    from ai_resources import billing
+    cj = tmp_path / "claude.json"
+    cj.write_text(json.dumps({"oauthAccount": {"billingType": billing_type, "emailAddress": "who@example.com"}}))
+    sc = tmp_path / "limits.json"
+    sc.write_text(json.dumps({"rate_limits": {"five_hour": {"used_percentage": five, "resets_at": 4102444800},
+                                              "seven_day": {"used_percentage": week, "resets_at": 4102444800}}}))
+    monkeypatch.setattr(billing, "claude_json_path", lambda: cj)
+    monkeypatch.setattr(billing, "sidecar_path", lambda: sc)
+    if credits is not None:
+        cp = tmp_path / "credits.json"
+        cp.write_text(json.dumps(credits))
+        cp.chmod(0o600)
+        monkeypatch.setattr(billing, "credits_path", lambda: cp)
+
+
+def test_doctor_warns_when_prepaid_and_weekly_quota_is_exhausted(monkeypatch, tmp_path):
+    seen = _capture_ui(monkeypatch)
+    _write_billing(monkeypatch, tmp_path, "prepaid", week=100.0)
+
+    assert doctor._check_billing() == 0           # a warning about money, not a defect of the install
+    warns = " | ".join(seen["warn"])
+    assert "prepaid" in warns.lower() and "Weekly Claude quota exhausted" in warns
+    assert "who@example.com" not in " ".join(sum(seen.values(), []))
+
+
+def test_doctor_is_quiet_on_a_subscription_with_headroom(monkeypatch, tmp_path):
+    seen = _capture_ui(monkeypatch)
+    _write_billing(monkeypatch, tmp_path, "stripe_subscription", week=20.0, five=10.0)
+
+    doctor._check_billing()
+    assert seen["warn"] == []
+    assert any("nothing to flag" in m for m in seen["ok"])
+
+
+def test_doctor_billing_with_missing_files_says_unknown_and_does_not_crash(monkeypatch):
+    seen = _capture_ui(monkeypatch)
+
+    assert doctor._check_billing() == 0
+    assert "auth mode: unknown" in seen["detail"]
+    assert any(m.startswith("credit: unknown") for m in seen["detail"])
+
+
+def test_doctor_billing_with_corrupt_files_does_not_crash(monkeypatch, tmp_path):
+    from ai_resources import billing
+    seen = _capture_ui(monkeypatch)
+    for name in ("claude_json_path", "sidecar_path", "credits_path"):
+        bad = tmp_path / f"{name}.json"
+        bad.write_text("\x00{broken")
+        monkeypatch.setattr(billing, name, lambda b=bad: b)
+
+    assert doctor._check_billing() == 0
+    assert seen["warn"] == []
+
+
+def test_cmd_doctor_runs_the_billing_check(monkeypatch):
+    calls = []
+    monkeypatch.setattr(doctor, "_check_billing", lambda: calls.append(1) or 0)
+    _drive_cmd_doctor(monkeypatch, _state(applied=False))
+    assert calls == [1]
