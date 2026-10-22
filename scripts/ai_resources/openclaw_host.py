@@ -2141,7 +2141,8 @@ def validate_host_values(values: dict[str, str]) -> list[str]:
 
 def _substitute(node, values: dict[str, str], missing: set[str]):
     if isinstance(node, dict):
-        return {k: _substitute(v, values, missing) for k, v in node.items()}
+        # Keys too: a model ref such as "anthropic/@MODEL_SONNET@" is a map key (agents.defaults.models).
+        return {_substitute(k, values, missing): _substitute(v, values, missing) for k, v in node.items()}
     if isinstance(node, list):
         return [_substitute(v, values, missing) for v in node]
     if isinstance(node, str):
@@ -2367,6 +2368,8 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
     values.setdefault("HOME", str(Path.home()))
     # The one declaration of the sonnet pin (model_pins), resolved at call time.
     values.setdefault("MODEL_SONNET", model_pins.effective()["sonnet"])
+    values.setdefault("MODEL_OPUS", model_pins.effective()["opus"])
+    values.setdefault("MODEL_HAIKU", model_pins.effective()["haiku"])
     tree = expand_wildcards(profile, doc)
     skipped: list[str] = []
     missing: set[str] = set()

@@ -325,27 +325,37 @@ def _deep_merge(dst: dict, src: dict) -> dict:
     return dst
 
 
+# The routine safety net of a fallback chain runs on the cheap thinking variant: `gemini-3.8-flash-low` is a confirmed
+# agy id (model_pins' agy slugs, `openclaw models list` on 2026.10.5). There is no `gemini-4-argon-low`, so the argon
+# entry keeps `-high`; a `-low` id is never invented.
+AGY_ROUTINE_FALLBACK = "agy-cli/gemini-3.8-flash-low"
+
+# Printed only: the kit does not write ~/.gemini/config/mcp_config.json (agy gate V7 is unproven).
+AGY_MCP_HINT = ("agy loads every server in ~/.gemini/config/mcp_config.json into each session. Keep only `engram` "
+                "there and drop the ones you do not use; edit it by hand, the kit never writes that file.")
+
+
 def _fallbacks_for(primary_ref: str, engine_id: str) -> list[str]:
     """Cross-pool / cross-provider fallback models for an OpenClaw agent primary model."""
     if engine_id == "antigravity":
         candidates = (
             [
                 "agy-cli/gemini-4-argon-high",
-                "agy-cli/gemini-3.8-flash-high",
+                AGY_ROUTINE_FALLBACK,
                 "agy-cli/claude-sonnet-5-5",
                 "anthropic/claude-sonnet-5-5",
             ]
             if "gemini" in primary_ref
             else [
                 "agy-cli/gemini-4-argon-high",
-                "agy-cli/gemini-3.8-flash-high",
+                AGY_ROUTINE_FALLBACK,
                 "anthropic/claude-sonnet-5-5",
             ]
         )
     elif engine_id == "claude-code":
         candidates = [
             "agy-cli/gemini-4-argon-high",
-            "agy-cli/gemini-3.8-flash-high",
+            AGY_ROUTINE_FALLBACK,
             "agy-cli/claude-sonnet-5-5",
         ]
     else:
@@ -1362,6 +1372,8 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
                ak_path: str, run_changes: list[dict]) -> list[Path]:
 
     engine_changed = _configure_engine(ctx, doc, path, ak_path, written)
+    if s.openclaw.engine == "antigravity":
+        ui.detail(AGY_MCP_HINT)
     mcp_changed = _configure_mcp(s, doc, path, written, dry_run=dry_run)
     voice_changed = _configure_voice(s, doc, path, ak_path, written, dry_run=dry_run)
     # Image generation (ADR-0011): the config is re-read first, the engine/voice patches above may have changed it.
@@ -1394,10 +1406,11 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     return written
 
 
-def _lanes_apply(patch: dict, *, dry_run: bool = False) -> tuple[bool, str]:
+def _lanes_apply(patch: dict, *, dry_run: bool = False,
+                 replace_paths: list[str] | None = None) -> tuple[bool, str]:
     """`apply_patch` for the lanes writer: a restart-required key is a refusal, never a crash."""
     try:
-        return apply_patch(patch, dry_run=dry_run)
+        return apply_patch(patch, dry_run=dry_run, replace_paths=replace_paths)
     except RestartRequired as e:
         return False, "needs a gateway restart: " + ", ".join(e.paths)
 
@@ -2012,15 +2025,19 @@ def _configure_skill_workshop(s: state.SetupState, doc: dict, path: Path, writte
 def _configure_mcp(s: state.SetupState, doc: dict, path: Path, written: list[Path], *,
                    dry_run: bool) -> bool:
     """Mirror Claude Code's MCP servers when the bot runs on it. True when openclaw.json changed."""
+    # Opt-in mode: servers the kit mirrored earlier that the list no longer names are denied per agent, by name.
+    scoped = mcp.scope_agents(s, doc, _lanes_apply, include=mcp.include_list(s), dry_run=dry_run)
+    if scoped and path not in written:
+        written.append(path)
     engine = applied_engine(s) if s.openclaw.engine == "keep" else ENGINES.get(s.openclaw.engine)
     if s.openclaw.mcp != "mirror" or not engine or engine.id != "claude-code":
         if s.openclaw.mcp_mirrored and s.openclaw.mcp == "keep" and not dry_run and ui.confirm(
                 "The kit mirrored Claude Code's MCP servers into OpenClaw earlier. Restore the "
                 "servers it replaced?", default=False):
-            return _teardown_mcp(s)
-        return False
+            return _teardown_mcp(s) or scoped
+        return scoped
     if not mcp.configure(s, doc, _openclaw, dry_run=dry_run):
-        return False
+        return scoped
     s.openclaw.config_path = str(path)
     if path not in written:
         written.append(path)
@@ -2029,10 +2046,14 @@ def _configure_mcp(s: state.SetupState, doc: dict, path: Path, written: list[Pat
 
 def _teardown_mcp(s: state.SetupState) -> bool:
     """Remove or restore the MCP servers the kit mirrored. True when it finished."""
-    if not s.openclaw.mcp_mirrored:
+    if not s.openclaw.mcp_mirrored and not s.openclaw.mcp_deny_added:
         return False
-    servers = _get(read_config(config_path()), "mcp", "servers") or {}
-    return mcp.teardown(s, servers, _openclaw)
+    doc = read_config(config_path())
+    servers = _get(doc, "mcp", "servers") or {}
+    ok = mcp.teardown(s, servers, _openclaw) if s.openclaw.mcp_mirrored else True
+    if ok and s.openclaw.mcp_deny_added:
+        mcp.scope_agents(s, doc, _lanes_apply, include=[])     # nothing is mirrored now: the recorded tokens come out
+    return ok
 
 
 def _configure_voice(s: state.SetupState, doc: dict, path: Path, ak_path: str,
@@ -2326,7 +2347,7 @@ def _unlink_plugin(s: state.SetupState) -> list[str]:
 
 def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
-    if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored
+    if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored or s.openclaw.mcp_deny_added
             or s.openclaw.agent_kit_blocks or s.openclaw.lanes_applied or host_section.applied_any(s.openclaw)
             or s.openclaw.image_deny_added or s.openclaw.image_applied or s.openclaw.image_auth_profile_created):
         # A deferral leaves `applied` False (the engine patch waits for the restart), so this is
@@ -2355,7 +2376,7 @@ def teardown(s: state.SetupState) -> list[str]:
     host_ok = host_section.teardown(s, apply_patch=apply_patch, oc=_openclaw, doc=doc) \
         if host_section.applied_any(s.openclaw) else True
     engine_ok = _teardown_engine(s) if s.openclaw.applied else True
-    mcp_ok = _teardown_mcp(s) if s.openclaw.mcp_mirrored else True
+    mcp_ok = _teardown_mcp(s) if (s.openclaw.mcp_mirrored or s.openclaw.mcp_deny_added) else True
     voice_ok = _teardown_voice(s) if s.openclaw.voice_applied else True
     # The kit's own image_generate token comes out of tools.deny. A removal that cannot be applied (not hot, a changed
     # list, a rejected patch) keeps its flags so a later teardown can retry; it does not hold the rest of the teardown.
@@ -2559,6 +2580,8 @@ def verify(ctx: dict) -> list:
                 out.append(F("warn", ID, f"agent {aid} spells its model as a string ({raw}); the short form is legal "
                              "and the kit reads both",
                              f"openclaw config set agents.entries.{aid}.model.primary {raw}"))
+        for msg in openclaw_lanes.agy_primary_drift_findings(doc):
+            out.append(F("warn", ID, msg, "no kit action; see ADR-0007 section 11"))
         lanes = s.profile.lanes
         if state.lanes_enabled(s) and isinstance(lanes, dict):
             for msg in openclaw_lanes.mcp_scope_findings(lanes, doc, s.profile.lane_acks):

@@ -47,7 +47,9 @@ from typing import Any, Callable
 
 from .. import state, ui
 from ... import openclaw_host as host
+from ... import openclaw_cost_migrations as cost_migrations
 from ... import openclaw_reload_rules as rr
+from ... import openclaw_slack_cost as slack_cost
 from . import claude as claude_cockpit
 
 RESTART_NOTE = ("Some keys only take effect after a gateway restart. Setup never makes the gateway restart while it "
@@ -598,6 +600,147 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
                       apply_patch: Callable[..., tuple[bool, str]],
                       oc: Callable[..., tuple[int, str]] | None = None,
                       run_changes: list[dict] | None = None) -> bool:
+    """The fill-only canonical patch, then the confirmed cost migrations for values this host already sets."""
+    applied = _configure_config_fill(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
+                                     run_changes=run_changes)
+    if o.host_config:
+        from . import openclaw_lanes
+        for msg in openclaw_lanes.agy_primary_drift_findings(doc):      # shown early, before any question
+            ui.warn(msg)
+        for name in cost_migrations.opus_fallback_agents(doc):
+            ui.warn(f"{name}: an Opus fallback sits behind a non-Opus primary, so a failed turn escalates to the most "
+                    "expensive model. The cost migration below offers to remove it.")
+        applied = _offer_cost_migrations(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
+                                         run_changes=run_changes) or applied
+        applied = _offer_slack_cost(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch) or applied
+    return applied
+
+
+def _offer_slack_cost(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
+                      apply_patch: Callable[..., tuple[bool, str]]) -> bool:
+    """The narrow Slack writer (ADR-0013): thread participation off, and `allowBots: mentions` on the notification
+    channels the operator names. Fill-only, one confirm per path, interactive only; otherwise the exact
+    `openclaw config set` commands are printed and nothing is written. `assert_channels_safe` is not involved."""
+    if not slack_cost.slack_enabled(doc):
+        return False
+    wanted: list[tuple[str, ...]] = []
+    thread = slack_cost.thread_proposal(doc)
+    if thread:
+        wanted.append(thread)
+    candidates = slack_cost.allow_bots_candidates(doc)
+    if not wanted and not candidates:
+        return False
+    if dry_run or ui.is_non_interactive():
+        if thread:
+            ui.info("Slack cost keys (not written; run by hand if you want them):")
+            for cmd in slack_cost.snippets([thread]):
+                ui.detail(cmd)
+        if candidates:
+            ui.detail("To make a notification channel react only to bots that mention it: "
+                      + slack_cost.snippets([slack_cost.allow_bots_path("<channel-id>")])[0])
+        return False
+    accepted: list[tuple[str, ...]] = []
+    if thread and ui.confirm("Stop the Slack bot answering every message of a thread it once replied in "
+                             "(channels.slack.implicitMentions.threadParticipation = false)?", default=False):
+        accepted.append(thread)
+    if candidates:
+        chosen = ui.checkbox("Slack channels that carry bot notifications (they will react only to bots that "
+                             "mention the app; leave empty to change none):",
+                             [ui.Choice(c, value=c) for c in candidates], default=[]) or []
+        accepted += [slack_cost.allow_bots_path(c) for c in candidates if c in chosen]
+    if not accepted:
+        return False
+    try:
+        patch = slack_cost.build_patch(accepted)
+    except ValueError as e:
+        ui.error(f"Slack cost patch refused: {e}")
+        return False
+    ok, out = apply_patch(patch, dry_run=True, replace_paths=[])
+    if not ok:
+        ui.error(f"OpenClaw rejected the Slack cost keys in a dry run; nothing was applied: {ui.safe_excerpt(out, 400, tail=True)}")
+        return False
+    ok, out = apply_patch(patch, replace_paths=[])
+    if not ok:
+        ui.error(f"OpenClaw rejected the Slack cost keys: {ui.safe_excerpt(out, 400, tail=True)}")
+        return False
+    o.slack_cost_changes.extend(slack_cost.change_records(accepted, doc))
+    o.config_path = str(path)
+    if path not in written:
+        written.append(path)
+    ui.ok(f"OpenClaw Slack: {len(accepted)} cost key(s) set (hot reload, no restart)")
+    return True
+
+
+def _teardown_slack_cost(o: state.OpenClawState, apply_patch: Callable[..., tuple[bool, str]], doc: dict) -> bool:
+    patch = slack_cost.restore_patch(o.slack_cost_changes, doc)
+    if patch:
+        ok, out = apply_patch(patch, replace_paths=[])
+        if not ok:
+            ui.error(f"OpenClaw Slack cost keys teardown failed: {ui.safe_excerpt(out, 300, tail=True)}")
+            return False
+    o.slack_cost_changes = []
+    return True
+
+
+def _offer_cost_migrations(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
+                           apply_patch: Callable[..., tuple[bool, str]],
+                           oc: Callable[..., tuple[int, str]] | None = None,
+                           run_changes: list[dict] | None = None) -> bool:
+    """Show each lean value this host holds differently as `old -> new`, ask per path, apply the confirmed hot ones.
+
+    Non-interactive and dry runs apply nothing and print the exact snippet instead. A declined path stays proposed on
+    the next run; an applied one is recorded by id and never proposed again."""
+    try:
+        overrides = host.load_host_overrides()
+    except ValueError:
+        return False
+    props = cost_migrations.proposals(doc, applied=o.cost_migrations_applied, keep=overrides["keep"],
+                                      force=overrides["force"])
+    if not props:
+        return False
+    ui.info("Lean cost values that differ from what this host has set (nothing is replaced without your confirm):")
+    for p in props:
+        ui.detail(f"{p.dotted}: {json.dumps(p.old)} -> {json.dumps(p.new)}  ({p.why})")
+    if dry_run or ui.is_non_interactive():
+        ui.info("Not applied (needs an interactive confirm). To apply by hand:")
+        for p in props:
+            ui.detail(p.snippet)
+        return False
+    accepted = [p for p in props if ui.confirm(
+        f"Replace {p.dotted} ({json.dumps(p.old)} -> {json.dumps(p.new)})? {p.why}.", default=False)]
+    for p in props:
+        if p not in accepted:
+            ui.detail(f"Kept your value for {p.dotted}. To apply later: {p.snippet}")
+    if not accepted:
+        return False
+    patch, replace_paths = cost_migrations.build_patch(accepted)
+    ok, out = apply_patch(patch, dry_run=True, replace_paths=replace_paths)
+    if not ok:
+        ui.error(f"OpenClaw rejected the cost migration in a dry run; nothing was applied: {ui.safe_excerpt(out, 400, tail=True)}")
+        return False
+    ruleset = rr.current_ruleset(_oc_runner(oc), refresh=True) if oc else None
+    restart = rr.restart_paths(patch, ruleset=ruleset, reload_mode=rr.reload_mode_of(doc))
+    if restart:
+        ui.warn("These keys would need a gateway restart, so they are not applied here: " + ", ".join(restart))
+        return False
+    ok, out = apply_patch(patch, replace_paths=replace_paths)
+    if not ok:
+        ui.error(f"OpenClaw rejected the cost migration: {ui.safe_excerpt(out, 400, tail=True)}")
+        return False
+    changes = cost_migrations.change_records(accepted)
+    _record_changes(o, changes, run_changes)
+    o.cost_migrations_applied.extend(p.id for p in accepted if p.id not in o.cost_migrations_applied)
+    o.config_path = str(path)
+    if path not in written:
+        written.append(path)
+    ui.ok(f"OpenClaw config: {len(accepted)} cost value(s) replaced (hot reload, no restart)")
+    return True
+
+
+def _configure_config_fill(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
+                           apply_patch: Callable[..., tuple[bool, str]],
+                           oc: Callable[..., tuple[int, str]] | None = None,
+                           run_changes: list[dict] | None = None) -> bool:
     if not o.host_config:
         return False
     try:
@@ -969,6 +1112,11 @@ def _record_kinds(run_changes: list[dict]) -> tuple["str | None", "str | None", 
     return version, mode, records
 
 
+WORKBOARD_COST_HINT = ("The workboard plugin adds its tools to every agent session. If nobody uses the shared task "
+                       "board, drop it with `openclaw config set plugins.entries.workboard.enabled false` "
+                       "(hot reload). The kit does not do this for you; `tools.profile` is left as it is (ADR-0011).")
+
+
 def _configure_workboard(o: state.OpenClawState, doc: dict, *, dry_run: bool,
                          oc: Callable[..., tuple[int, str]]) -> bool:
     if not o.host_workboard:
@@ -976,6 +1124,7 @@ def _configure_workboard(o: state.OpenClawState, doc: dict, *, dry_run: bool,
     enabled = (((doc.get("plugins") or {}).get("entries") or {}).get("workboard") or {}).get("enabled")
     if enabled is True:
         o.host_workboard_applied = o.host_workboard_applied or "already-enabled"
+        ui.detail(WORKBOARD_COST_HINT)       # a hint only: the kit never disables a plugin the operator runs
         return False
     if dry_run:
         ui.detail("Would run `openclaw plugins enable workboard`.")
@@ -1189,6 +1338,9 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
                 ui.warn(f"{'.'.join(ch['path'])} held a credential before the kit replaced it with a reference. "
                         "The old value was never stored, so it is not restored: set it again with `openclaw configure`.")
         ok = _teardown_config(o, apply_patch, oc, doc or {}) and ok
+
+    if o.slack_cost_changes:
+        ok = _teardown_slack_cost(o, apply_patch, doc or {}) and ok
 
     if o.host_workboard_applied == "enabled-by-kit":
         rc, out = oc(["plugins", "disable", "workboard"])

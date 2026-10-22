@@ -33,7 +33,21 @@
 //
 // Deliberately absent too: `mcp.servers`. The kit cannot invent a safe version, so a server
 // declared with `@latest` is REPORTED by the wizard, not rewritten. Pin the version by hand.
+//
+// Lean cost defaults (ADR-0013, from the 2026-10-22 cost analysis). Every key below was checked against the installed
+// OpenClaw's config schema and reload table (all `hot` or `none`: applying them never restarts the gateway). They are
+// fill-only like the rest: an operator value is kept, and `ai-resources openclaw config` offers the confirmed
+// migration for the ones this host already sets differently (thinking level, fallbacks, heartbeat).
 {
+  // Idle sessions reset after 2 hours instead of growing for days (context was above 200k in 39.6% of calls).
+  "session": {
+    "reset": { "mode": "idle", "idleMinutes": 120 },
+    "resetByType": {
+      "group": { "mode": "idle", "idleMinutes": 120 },
+      "thread": { "mode": "idle", "idleMinutes": 120 },
+    },
+  },
+
   "agents": {
     "defaults": {
       // T20: heartbeats off by default (every=0m); only the main agent wakes up, every 2 hours.
@@ -41,14 +55,30 @@
       // ADR-0004 (resource guard, `OPENCLAW_RESOURCE_GUARDS=off` skips it): a run is capped at 4 hours;
       // the unset default is 48 hours, and one Slack thread sat 102 minutes in a model call.
       "timeoutSeconds": 14400,
+      // Server-side `clear_tool_uses` once the cache TTL has passed, so a resumed session does not re-send old tool output.
+      "contextPruning": { "mode": "cache-ttl" },
+      // Anthropic server-side compaction (documented in OpenClaw's providers/anthropic page): compacts at 150k
+      // instead of letting the prompt grow toward the 1M window. A threshold below 50000 is clamped by OpenClaw.
+      "models": {
+        "anthropic/@MODEL_SONNET@": { "params": { "anthropicServerCompaction": true, "anthropicCompactThreshold": 150000 } },
+        "anthropic/@MODEL_OPUS@": { "params": { "anthropicServerCompaction": true, "anthropicCompactThreshold": 150000 } },
+      },
+      // Routine turns do not need deep thinking; main is raised below.
+      "thinkingDefault": "low",
+      // Fan-out is capped: unbounded children multiply the shared prefix cost.
+      "subagents": { "model": "anthropic/@MODEL_SONNET@", "maxConcurrent": 3, "maxChildrenPerAgent": 3 },
+      // Titles and progress narration run on a valid, cheap model: unset derives an older haiku that the
+      // Anthropic API key rejects (400). Haiku is exempt from the "no haiku orchestrator" rule here: this is not an orchestrator.
+      "utilityModel": "anthropic/@MODEL_HAIKU@",
     },
     "entries": {
       // Runbook B2.1: an orchestrator on haiku confabulates topics. Sonnet 5 for every entry that is not
       // engine-owned and has no model, or a haiku one.
       "*": { "model": { "primary": "anthropic/@MODEL_SONNET@" } },
       "main": {
-        "thinkingDefault": "high",
-        "heartbeat": { "every": "2h" },
+        "thinkingDefault": "medium",
+        // A heartbeat in its own session with a light context does not re-send the main conversation every 2 hours.
+        "heartbeat": { "every": "2h", "isolatedSession": true, "lightContext": true },
       },
     },
   },

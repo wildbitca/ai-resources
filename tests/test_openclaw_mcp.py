@@ -355,6 +355,8 @@ def test_a_saved_answer_wins(monkeypatch):
 
 
 def test_prompt_stores_unticked_servers(home, monkeypatch):
+    # An install that mirrors everything (no opt-in list): a new install now defaults to an empty list, see below.
+    monkeypatch.setattr(mcp, "include_list", lambda s, env=None: None)
     monkeypatch.setattr(ui, "select", lambda *_a, **_k: "mirror")
     monkeypatch.setattr(ui, "checkbox", lambda _m, choices, default=None, **_k: ["sentry"])
     s = state.SetupState()
@@ -525,3 +527,153 @@ def test_teardown_restores_when_the_previous_value_only_equals_the_live_one_by_p
     assert mcp.teardown(s, {"sentry": applied}, rec)
     [(_args, patch)] = rec.patches()
     assert patch == {"mcp": {"servers": {"sentry": previous}}}
+
+
+# --- opt-in include list (ADR-0013) ------------------------------------------------------------
+
+def test_a_new_install_mirrors_nothing_by_default():
+    assert mcp.include_list(state.SetupState(), env={}) == []
+
+
+def test_an_existing_install_keeps_mirroring_what_it_did():
+    s = state.SetupState()
+    s.openclaw.mcp = "mirror"
+    assert mcp.include_list(s, env={}) is None
+    t = state.SetupState()
+    t.openclaw.mcp_mirrored = {"clickup": {"applied": {}, "previous": None}}
+    assert mcp.include_list(t, env={}) is None
+
+
+def test_the_env_list_wins_and_an_empty_value_means_none():
+    s = state.SetupState()
+    s.openclaw.mcp = "mirror"
+    assert mcp.include_list(s, env={"OPENCLAW_MCP_SERVERS": "engram, clickup"}) == ["engram", "clickup"]
+    assert mcp.include_list(s, env={"OPENCLAW_MCP_SERVERS": ""}) == []
+
+
+def test_an_empty_list_plans_nothing_to_add_and_removes_nothing(home):
+    items = mcp.plan(mcp.collect(home), {}, {}, include=[])
+    assert not [i for i in items if i.action in mcp.ACTIONABLE]
+    assert all("opt-in list" in i.reason for i in items if i.name != "engram")
+
+
+def test_only_the_listed_server_is_mirrored(home):
+    items = mcp.plan(mcp.collect(home), {}, {}, include=["stripe"])
+    assert [i.name for i in items if i.action in mcp.ACTIONABLE] == ["stripe"]
+
+
+def test_a_server_the_kit_mirrored_earlier_is_not_removed_when_the_list_shrinks(home):
+    sources = mcp.collect(home)
+    first = mcp.plan(sources, {}, {}, include=["stripe", "clickup"])
+    entry = {i.name: i.entry for i in first if i.entry}
+    mirrored = {n: {"applied": e, "previous": None} for n, e in entry.items()}
+    after = mcp.plan(sources, dict(entry), mirrored, include=["stripe"])
+    assert not [i for i in after if i.action == "remove"]
+    assert [i for i in after if i.name == "clickup"][0].action == "skip"
+
+
+def test_a_rerun_with_the_same_list_changes_nothing(home):
+    sources = mcp.collect(home)
+    first = mcp.plan(sources, {}, {}, include=["stripe"])
+    entry = {i.name: i.entry for i in first if i.action == "add"}
+    mirrored = {n: {"applied": e, "previous": None} for n, e in entry.items()}
+    again = mcp.plan(sources, dict(entry), mirrored, include=["stripe"])
+    assert not [i for i in again if i.action in mcp.WRITES]
+
+
+def test_the_prompt_for_a_new_install_prints_the_hint_and_asks_nothing(home, monkeypatch):
+    asked = []
+    monkeypatch.setattr(ui, "select", lambda *a, **k: asked.append(a) or "mirror")
+    monkeypatch.setattr(mcp, "include_list", lambda s, env=None: [])
+    seen = []
+    monkeypatch.setattr(ui, "info", seen.append)
+    mcp.prompt(state.SetupState(), {}, home)
+    assert not asked and any("OPENCLAW_MCP_SERVERS" in m for m in seen)
+
+
+# --- opt-in mode: mirrored-but-unlisted servers are denied per agent, by name -------------------------------
+
+def _scope_doc(**deny):
+    entries = {"main": {"tools": {"deny": deny.get("main", ["exec"])}}, "worker": {},
+               "kit-lane-claude": {"tools": {"deny": ["bundle-mcp"]}}}
+    return {"agents": {"entries": entries}, "tools": {"deny": ["image_generate"]}}
+
+
+class _Applier:
+    """Records each patch and folds it into the doc, as `openclaw config patch` would."""
+
+    def __init__(self, doc):
+        self.doc, self.patches = doc, []
+
+    def __call__(self, patch, **kw):
+        self.patches.append(patch)
+        self.replace_paths = kw.get("replace_paths")
+        for aid, ent in patch["agents"]["entries"].items():
+            tools = self.doc["agents"]["entries"].setdefault(aid, {}).setdefault("tools", {})
+            if ent["tools"]["deny"] is None:
+                tools.pop("deny", None)
+            else:
+                tools["deny"] = ent["tools"]["deny"]
+        return True, "ok"
+
+
+def _mirrored(*names):
+    return {n: {"previous": None, "applied": {"url": f"https://{n}.example/mcp"}} for n in names}
+
+
+def test_unlisted_mirrored_servers_are_denied_per_agent_by_exact_name():
+    s = state.SetupState()
+    s.openclaw.mcp_mirrored = _mirrored("clickup", "stripe")
+    doc = _scope_doc()
+    apply = _Applier(doc)
+    # [engram]-style list: engram is declared by the engine setup (MANAGED_ELSEWHERE) and is never denied here.
+    assert mcp.scope_agents(s, doc, apply, include=["engram"]) is True
+    entries = apply.patches[0]["agents"]["entries"]
+    assert entries["main"]["tools"]["deny"] == ["exec", "clickup__*", "stripe__*"]
+    assert entries["worker"]["tools"]["deny"] == ["clickup__*", "stripe__*"]
+    assert "kit-lane-claude" not in entries, "lane agents are scoped by openclaw_lanes.mcp_deny"
+    assert sorted(apply.replace_paths) == ["agents.entries.main.tools.deny", "agents.entries.worker.tools.deny"]
+    assert "tools" not in apply.patches[0], "the global tools.deny is never written (ADR-0011)"
+    assert not any("engram" in t for e in entries.values() for t in e["tools"]["deny"])
+    from ai_resources import openclaw_host
+    openclaw_host.assert_tools_deny_safe(apply.patches[0], None)
+    assert s.openclaw.mcp_deny_added == {"main": ["clickup__*", "stripe__*"], "worker": ["clickup__*", "stripe__*"]}
+    # fill-only and idempotent: the second run changes nothing
+    assert mcp.scope_agents(s, doc, apply, include=["engram"]) is False and len(apply.patches) == 1
+
+
+def test_a_server_listed_again_loses_only_the_token_the_kit_added():
+    s = state.SetupState()
+    s.openclaw.mcp_mirrored = _mirrored("clickup", "stripe")
+    doc = _scope_doc(main=["exec", "stripe__*"])      # the operator already denied stripe on main
+    apply = _Applier(doc)
+    mcp.scope_agents(s, doc, apply, include=[])
+    assert s.openclaw.mcp_deny_added["main"] == ["clickup__*"], "an operator token is never recorded as the kit's"
+    mcp.scope_agents(s, doc, apply, include=["clickup", "stripe"])
+    assert doc["agents"]["entries"]["main"]["tools"]["deny"] == ["exec", "stripe__*"]
+    assert doc["agents"]["entries"]["worker"]["tools"].get("deny") is None
+    assert s.openclaw.mcp_deny_added == {}
+
+
+def test_no_opt_in_list_denies_nothing():
+    s = state.SetupState()
+    s.openclaw.mcp_mirrored = _mirrored("clickup")
+    apply = _Applier(_scope_doc())
+    assert mcp.scope_agents(s, apply.doc, apply, include=None) is False and apply.patches == []
+
+
+def test_configure_mcp_scopes_agents_in_opt_in_mode_and_teardown_removes_the_tokens(monkeypatch, tmp_path):
+    s = state.SetupState()
+    s.openclaw.mcp_mirrored = _mirrored("clickup")
+    doc = _scope_doc()
+    apply = _Applier(doc)
+    monkeypatch.setattr(openclaw, "_lanes_apply", apply)
+    monkeypatch.setattr(mcp, "include_list", lambda s, env=None: ["engram"])
+    written: list = []
+    assert openclaw._configure_mcp(s, doc, tmp_path / "openclaw.json", written, dry_run=False) is True
+    assert written and doc["agents"]["entries"]["main"]["tools"]["deny"] == ["exec", "clickup__*"]
+    monkeypatch.setattr(openclaw, "read_config", lambda _p: doc)
+    monkeypatch.setattr(mcp, "teardown", lambda s_, servers, run: (s_.openclaw.mcp_mirrored.clear(), True)[1])
+    assert openclaw._teardown_mcp(s) is True
+    assert doc["agents"]["entries"]["main"]["tools"]["deny"] == ["exec"]
+    assert s.openclaw.mcp_deny_added == {}
