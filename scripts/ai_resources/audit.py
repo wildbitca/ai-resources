@@ -81,6 +81,11 @@ SCHEDULED: dict[str, tuple[date, tuple[float, float, float, float, float]]] = {
     "gemini-3.8-flash": (date(2026, 12, 31), (1.50, 7.50, 0.15, 0.00, 0.00)),
 }
 
+# ADR-0014 D7: poll turns (waits, yields, sleeps) re-read the whole context. The audit alerts when their share of the
+# estimated cost is strictly above this fraction; AI_RESOURCES_POLL_SHARE_ALERT overrides it (a fraction, 0 < x <= 1).
+POLL_SHARE_ALERT = 0.05
+POLL_SHARE_ENV = "AI_RESOURCES_POLL_SHARE_ALERT"
+
 # Claude Code aliases that can appear as the model name; they resolve to the newest model.
 ALIASES: dict[str, str] = dict(model_pins.effective())
 
@@ -136,6 +141,39 @@ def _cache_writes(usage: dict) -> tuple[int, int]:
         if five_min or one_hour:
             return five_min, one_hour
     return total, 0
+
+
+def poll_share_threshold() -> float:
+    raw = os.environ.get(POLL_SHARE_ENV)
+    if raw:
+        try:
+            value = float(raw)
+            if 0 < value <= 1:
+                return value
+        except ValueError:
+            pass
+    return POLL_SHARE_ALERT
+
+
+def poll_alert(share) -> bool:
+    """True only when the poll-turn cost share is strictly above the threshold."""
+    return isinstance(share, (int, float)) and share > poll_share_threshold()
+
+
+def poll_cost_share(usages) -> float:
+    """Share of the estimated cost spent on poll turns (0.0 when nothing is priced)."""
+    total = poll = 0.0
+    for u in usages:
+        c = _estimate(u.model, u.input, u.output, u.cache_read, u.cache_write_5m, u.cache_write_1h, on=u.ts.date())
+        total += c
+        if u.poll:
+            poll += c
+    return poll / total if total else 0.0
+
+
+def poll_alert_message(share: float) -> str:
+    return (f"Poll turns are {share:.0%} of the estimated cost (alert above {poll_share_threshold():.0%}): wait with one "
+            "blocking call or run_in_background, not sleep loops; the kit sleep guard refuses a sleep over 30 s.")
 
 
 def _project_jsonl_dir(cwd: str | None = None) -> Path | None:
@@ -275,6 +313,9 @@ def cmd_audit_json(args: argparse.Namespace) -> int:
         "billing": billing_report(),
         "all": audit_snapshot.summarize(usages),
     }
+    share = poll_cost_share(usages)
+    doc["poll"] = {"share": round(share, 4), "threshold": poll_share_threshold(), "alert": poll_alert(share)}
+    doc["poll_alert"] = doc["poll"]["alert"]
     if oc_stats is not None and oc_stats.undecoded:
         doc["undecoded_rows"] = oc_stats.undecoded
     print(json.dumps(doc, indent=1, default=str))
@@ -303,7 +344,9 @@ def cmd_audit(args: argparse.Namespace) -> int:
     if args.days > 0:
         since = datetime.now(tz=timezone.utc) - timedelta(days=args.days)
 
-    model_stats, sessions = _parse(jsonl_dir, since, include_sub) if jsonl_dir else ({}, [])
+    cc_usages = audit_sources.load_claude_jsonl(
+        list(jsonl_dir) if isinstance(jsonl_dir, (list, tuple)) else [jsonl_dir], since, include_sub) if jsonl_dir else []
+    model_stats, sessions = _tally(cc_usages) if cc_usages else ({}, [])
     oc_usages: list = []
     oc_stats = None
     if with_openclaw:
@@ -406,6 +449,9 @@ def cmd_audit(args: argparse.Namespace) -> int:
         cache_pct = 100.0 * (total_cr / (total_cr + total_out + sum(v["inp"] for v in model_stats.values()) + 1))
         ui.detail(f"Cache reads are {total_cr/1e9:.2f}B tokens ({cache_pct:.0f}% of all tokens) — cache reduces cost vs fresh input.")
 
+    share = poll_cost_share(cc_usages + oc_usages)
+    if poll_alert(share):
+        ui.warn(poll_alert_message(share))
     _print_billing(con)
     return 0
 

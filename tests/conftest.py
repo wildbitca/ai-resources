@@ -163,6 +163,8 @@ def _isolate_home_derived_paths(tmp_path_factory, monkeypatch):
     """Round 2 (ADR-0014): every reader or writer that resolves a path from the real HOME is pointed at a scratch
     directory before its first test: the billing reader (~/.claude.json, credits.json, the statusline cache)."""
     root = tmp_path_factory.mktemp("home-derived")
+    # The cost snapshots (doctor's poll-share check reads the newest one) live under XDG_STATE_HOME.
+    monkeypatch.setenv("XDG_STATE_HOME", str(root / "state"))
     try:
         from ai_resources import billing
     except Exception:

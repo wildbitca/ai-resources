@@ -252,6 +252,19 @@ def inventory_diff(a: dict, b: dict) -> list[tuple[str, object, object]]:
     return [(k, fa.get(k), fb.get(k)) for k in sorted(set(fa) | set(fb)) if fa.get(k) != fb.get(k)]
 
 
+def latest_snapshot() -> tuple[str, float] | None:
+    """(label, poll-turn cost share) of the newest readable snapshot file, or None. Reads files only."""
+    d = baselines_dir()
+    if not d.is_dir():
+        return None
+    for f in sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        doc = _load_json(f)
+        share = ((doc or {}).get("all") or {}).get("share_cost_poll_turns") if isinstance(doc, dict) else None
+        if isinstance(share, (int, float)):
+            return f.stem, float(share)
+    return None
+
+
 def format_compare(a: dict, b: dict) -> str:
     lines = []
     last = None
@@ -260,6 +273,11 @@ def format_compare(a: dict, b: dict) -> str:
             lines.append(f"\n## {scope}   ({a.get('label')} -> {b.get('label')})")
             last = scope
         lines.append(f"  {k:36} {str(u):>12} -> {str(v):>12} {d}")
+    for doc in (a, b):
+        share = (doc.get("all") or {}).get("share_cost_poll_turns")
+        if audit.poll_alert(share):
+            lines.append(f"\nALERT: poll turns are {share:.0%} of the cost in {doc.get('label')!r} "
+                         f"(alert above {audit.poll_share_threshold():.0%}).")
     if a.get("method") != b.get("method") or not a.get("method"):
         lines.append("\nWARNING: the snapshots were not counted with the same method "
                      f"(a: {a.get('method') or 'bench.py or unknown'}; b: {b.get('method') or 'bench.py or unknown'}). "
