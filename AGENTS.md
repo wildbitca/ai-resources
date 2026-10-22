@@ -88,5 +88,6 @@ Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upg
 ## Further reading
 
 - **Kit map:** `rules/016-kit-architecture.mdc`
+- **Token cost:** `docs/decisions/0013-token-cost-lean-defaults.md`, `docs/decisions/0014-token-cost-round-2.md`
 - **Engram / persistence:** `rules/014-engram-mcp-protocol.mdc`, `rules/300-engram-memory.mdc`, `skills/_shared/persistence-contract.md`
 - **Multi-model routing:** `rules/017-multimodel-routing.mdc`, `docs/multi-model.md`

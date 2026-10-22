@@ -44,9 +44,25 @@ def credits_path() -> Path:
     return base / "ai-resources" / "credits.json"
 
 
+def sidecar_candidates() -> list[Path]:
+    """Where a statusline rate-limit cache may live: the kit's own, and the daily-report workspace copy that
+    `capture-statusline.sh` refreshes on every status line render."""
+    return [Path.home() / ".cache" / "ai-resources" / "claude-rate-limits.json",
+            Path.home() / ".openclaw" / "workspace" / "scripts" / "ai-usage" / "rate-limits-cache.json"]
+
+
 def sidecar_path() -> Path:
+    """`AI_RESOURCES_CLAUDE_SIDECAR` wins; otherwise the freshest existing candidate (by mtime), else the kit's own path."""
     env = os.environ.get("AI_RESOURCES_CLAUDE_SIDECAR")
-    return Path(env) if env else Path.home() / ".cache" / "ai-resources" / "claude-rate-limits.json"
+    if env:
+        return Path(env)
+    found = []
+    for p in sidecar_candidates():
+        try:
+            found.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+    return max(found, key=lambda x: x[0])[1] if found else sidecar_candidates()[0]
 
 
 def _read_json(path: Path):

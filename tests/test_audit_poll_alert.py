@@ -151,3 +151,14 @@ def test_doctor_warns_from_the_latest_snapshot(monkeypatch):
     monkeypatch.setattr(audit_snapshot, "latest_snapshot", lambda: None)
     doctor._check_poll_share()
     assert any("No cost snapshot" in d for d in details)
+
+
+def test_json_billing_only_reads_no_transcript(monkeypatch, capsys):
+    def boom(*a, **k):
+        raise AssertionError("no transcript may be read")
+    monkeypatch.setattr(audit_sources, "load_claude_jsonl", boom)
+    monkeypatch.setattr(audit_sources, "load_openclaw_events", boom)
+    rc = audit.cmd_audit(argparse.Namespace(json=True, billing_only=True, days=0, all_projects=True, subagents=False,
+                                            openclaw=True, verbose=False, audit_cmd=None))
+    doc = json.loads(capsys.readouterr().out)
+    assert rc == 0 and set(doc) == {"schema", "billing"} and doc["billing"]["auth_mode"] in ("subscription", "prepaid", "unknown")

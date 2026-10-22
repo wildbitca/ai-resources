@@ -1780,6 +1780,51 @@ teardown. The global `tools.deny` is never written for this (ADR-0011). Lane age
 
 **How to catch it.** `ai-resources audit snapshot` before and after: the first-call context median drops with the schemas.
 
+## T51 — The workboard and the main heartbeat are cost options with their own confirm, and a restart-class key waits for the drained path *(added 2026-10-22; ADR-0014 D5)*
+
+**Symptom.** Every agent session carries the workboard tools, or the main agent wakes up every two hours and re-reads its
+context; or setup printed "recorded as pending" instead of applying a migration.
+
+**Cause.** `plugins.entries.workboard.enabled=false` and `agents.entries.main.heartbeat.every="0m"` are proposed by
+`openclaw_cost_migrations` (per path, default No, recorded by id). The reload class is read from the installed OpenClaw at run
+time. A key that is restart-required, or whose class cannot be read, is never applied by setup: it is recorded in
+`host_restart_pending` (op `migration`, with the new value and the value it expects to replace) and applied only by
+`ai-resources openclaw apply-pending`, which skips a path you changed since. After the workboard migration is applied the host
+section stops re-enabling the plugin; `openclaw plugins enable workboard` turns it back on.
+
+**What to do.** Answer the host question for the heartbeat, confirm the paths you want, and run `apply-pending` from outside the
+gateway when something is pending. Undo with teardown (the old values are restored) or `openclaw config set`.
+
+**How to catch it.** `openclaw config get plugins.entries.workboard.enabled`; `ai-resources openclaw status` lists pending paths.
+
+## T52 — The Haiku notification route only fills: a channel that already has a route is reported and left alone *(added 2026-10-22; ADR-0014 D4)*
+
+**Symptom.** A notifications channel still answers with the Sonnet orchestrator after setup, or setup said the route is pending.
+
+**Cause.** `bindings[]` is replaced whole, so the writer is fill-only by construction: a Slack channel whose peer already has a
+binding to any agent is never re-pointed (the report gives the line to change by hand). New routes go before main's
+peer-less catch-all, which must stay last. A key that is not hot is recorded as a pending `route` entry and re-derived from
+the live config by `apply-pending`. The names of the channels are not in the config, so the checkbox shows the binding comment
+or the channel id.
+
+**What to do.** Change an existing binding's `agentId` to `kit-notifications` by hand if you want that channel on Haiku.
+
+**How to catch it.** `openclaw config get bindings` shows entries with `agentId: kit-notifications`.
+
+## T53 — The utility-model probe bills a call and OpenClaw has no key to silence completion announcements *(added 2026-10-22; ADR-0014 D5)*
+
+**Symptom.** Titles fail with a 400 although the key works elsewhere, or announcements keep arriving after a subagent finishes.
+
+**Cause.** An unset `utilityModel` derives an older Haiku that an Anthropic workspace key rejects. The check is opt-in because it
+is a real (tiny) model turn through `openclaw infer model run --local`; its output is classified, never echoed. Completion
+announcements have no suppression key in OpenClaw 2026.10.5 (the schema has only `agents.defaults.subagents.announceTimeoutMs`),
+so the kit writes nothing for them and `ai-resources doctor` prints an INFO line instead.
+
+**What to do.** Create the API key inside the workspace that owns the model, or set `agents.defaults.utilityModel` to a model
+the probe verified.
+
+**How to catch it.** `ai-resources doctor --probe-utility-model`.
+
 
 ---
 

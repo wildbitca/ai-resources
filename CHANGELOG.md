@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Added (token-cost round 2, ADR-0014)
+
+- **`balanced` is retuned** (no new profile): Haiku for explore, tester, doc-writer and package-upgrade, Sonnet for the planner,
+  architect and writers, Opus for the verifier and security auditor only. A saved `balanced` shows the old -> new table once.
+  `validate_kit.py` fails a Haiku role whose estimated static prompt reaches the 100k Haiku price tier; `audit` reports the share
+  of Haiku calls above 100k and the global CLAUDE.md weight (estimate).
+- **Billing awareness.** `doctor`, `audit` (`--json`, `--billing-only`) and the daily Slack section show the auth mode, the 5 h and
+  weekly quota and the credit left from a manual `~/.config/ai-resources/credits.json`; alerts for prepaid billing, an
+  exhausted quota, an expiring promo and a low balance.
+- **Polling guard.** `hooks/kit_sleep_guard.py` refuses a Bash `sleep` over 30 s; `audit` and `doctor` alert when poll turns
+  exceed 5% of the cost.
+- **Hygiene.** Setup offers (default No, one by one) to disable user-level MCP servers and plugins with no call in 30 days, and to
+  move heavy blocks of the global CLAUDE.md to a skill or a rule; both are backed up, recorded and restored with
+  `setup --restore-hygiene` and `--restore-claude-md`. Persona subagents are rendered only for active domains.
+- **OpenClaw.** Confirmed workboard and heartbeat migrations (restart-class keys wait for `apply-pending`), an opt-in
+  utility-model probe, a guarded Haiku route for Slack notification channels, and a doctor note that completion announcements
+  cannot be silenced.
+- **agy.** Setup can add `engram` and servers you pick to the agy MCP file (fill-only, backup, `--restore-agy-mcp`); Flash-low in a
+  fallback chain needs a valid Google acknowledgement and proven gates.
+
 ### Added (token-cost lean defaults, ADR-0013)
 
 - **`ai-resources audit snapshot <label>` and `audit compare <a> <b>`.** Cost per active hour, per session and per call,
