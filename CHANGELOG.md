@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-10-22 — token-cost lean defaults and round 2: retuned balanced, billing awareness, hygiene and lean OpenClaw (ADR-0013, ADR-0014)
+
 ### Added (token-cost round 2, ADR-0014)
 
 - **`balanced` is retuned** (no new profile): Haiku for explore, tester, doc-writer and package-upgrade, Sonnet for the planner,
