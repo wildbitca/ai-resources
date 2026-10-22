@@ -290,7 +290,7 @@ def selection_from_args(args: argparse.Namespace, accounts: dict, cands: dict[st
 
 _FILES = {
     "claude": ["~/.claude/CLAUDE.md", "~/.claude/settings.json", "~/.claude/agents/*.md", "~/.claude/commands/*"],
-    "gemini": ["~/.gemini/settings.json", "~/.gemini/GEMINI.md"],
+    "gemini": ["~/.gemini/settings.json", "~/.gemini/config/mcp_config.json", "~/.gemini/GEMINI.md"],
     "cursor": ["~/.cursor/AGENT_KIT.md", "~/.cursor/mcp.json"],
     "codex": ["~/.codex/AGENTS.md"],
     "aider": ["~/.aider/CONVENTIONS.md"],

@@ -1211,7 +1211,8 @@ def _prompt_stale_check(s: state.SetupState) -> None:
     # In real runs (not unit tests), automatically apply default without prompting
     is_test = "test" in getattr(getattr(ui.select, "__code__", None), "co_filename", "")
     if not is_test:
-        s.openclaw.stale_plugin_check = s.openclaw.stale_plugin_check or "linked"
+        saved = s.openclaw.stale_plugin_check
+        s.openclaw.stale_plugin_check = saved if saved in STALE_CHECKS else "linked"
         return
 
     saved = s.openclaw.stale_plugin_check
