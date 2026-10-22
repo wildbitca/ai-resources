@@ -79,6 +79,12 @@ Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upg
 - **Index:** `skills-index.json` is generated; do not hand-maintain a skill list anywhere else.
 - **Imported skills (`gpm-*`):** re-import from **`resources.json`** with `ai-resources generate` when refreshing upstream copies (conflicts need `--force`).
 
+## Polling guard (Claude Code, ADR-0014)
+
+- `ai-resources setup` registers `hooks/kit_sleep_guard.py` as a PreToolUse hook on Bash: a `sleep` longer than 30 seconds is refused with exit 2. Wait with `run_in_background` and one read, or the Monitor tool.
+- The hook does not fire inside OpenClaw `claude-cli` children (ADR-0005, ADR-0007 section 9); the "Waiting without polling" rules above are the guard there.
+- `ai-resources audit` and `ai-resources doctor` alert when poll turns exceed 5% of the estimated cost (`AI_RESOURCES_POLL_SHARE_ALERT` overrides the threshold).
+
 ## Further reading
 
 - **Kit map:** `rules/016-kit-architecture.mdc`

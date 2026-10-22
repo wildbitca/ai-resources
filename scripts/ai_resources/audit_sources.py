@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
+from . import sleep_pattern
+
 POLL_TOOLS = {"sessions_yield", "agents_wait", "Monitor"}
 
 
@@ -68,7 +70,11 @@ def is_poll(name: str, args) -> bool:
         return True
     if short == "process" and "poll" in text:
         return True
-    return short in ("exec", "Bash") and "sleep " in text
+    if short not in ("exec", "Bash"):
+        return False
+    # The command string(s) only, one per line, so a sleep at command position is found by the shared definition.
+    command = "\n".join(v for v in args.values() if isinstance(v, str)) if isinstance(args, dict) else text
+    return sleep_pattern.has_sleep(command)
 
 
 def _parse_ts(value) -> datetime | None:

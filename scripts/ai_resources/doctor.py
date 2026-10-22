@@ -195,6 +195,25 @@ def _check_billing() -> int:
     return 0
 
 
+def _check_poll_share() -> int:
+    """Doctor sub-check 4h: the poll-turn cost share of the newest cost snapshot (ADR-0014 D7). Reads a file only."""
+    from . import audit, audit_snapshot
+    try:
+        found = audit_snapshot.latest_snapshot()
+    except Exception:  # noqa: BLE001 - best-effort
+        found = None
+    if not found:
+        ui.detail("No cost snapshot yet: run `ai-resources audit snapshot <label>` to measure the poll-turn share.")
+        return 0
+    label, share = found
+    if audit.poll_alert(share):
+        ui.warn(f"Poll turns are {share:.0%} of the cost in snapshot {label!r} (alert above "
+                f"{audit.poll_share_threshold():.0%}). Wait with one blocking call or run_in_background, not sleep loops.")
+    else:
+        ui.ok(f"Poll-turn share {share:.1%} in snapshot {label!r}")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     ui.require_deps()
     ui.banner("ai-resources doctor", subtitle="Health check across all components")
@@ -394,8 +413,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # 4f. The Antigravity lane: gates, evidence record, Google acknowledgement, OpenRouter Google cell.
     issues += _check_antigravity_lane(s)
 
-    # 4g. Billing mode, quota and the manual credit file.
+    # 4g. Billing mode, quota and the manual credit file; 4h. the poll-turn share of the newest snapshot.
     issues += _check_billing()
+    issues += _check_poll_share()
 
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")
