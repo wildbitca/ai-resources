@@ -73,6 +73,12 @@ Output: NO_COLOR (set and non-empty) or a non-UTF-8 stream selects ASCII glyphs 
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
+    if getattr(args, "restore_hygiene", False):
+        from .setup import hygiene
+        return hygiene.cmd_restore()
+    if getattr(args, "restore_claude_md", False):
+        from .setup import claude_md_migrate
+        return claude_md_migrate.cmd_restore()
     return wizard.run(args)
 
 
@@ -164,6 +170,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Show the proposed lane table and write nothing")
     p_st.add_argument("--lanes-orchestrator", dest="lanes_orchestrator", action="append", default=[], metavar="ID",
                       help="Agent id that receives the lane ids in subagents.allowAgents (repeatable)")
+    p_st.add_argument("--restore-hygiene", dest="restore_hygiene", action="store_true",
+                      help="Put back every MCP server and plugin the hygiene step disabled, then exit")
+    p_st.add_argument("--restore-claude-md", dest="restore_claude_md", action="store_true",
+                      help="Move back into ~/.claude/CLAUDE.md every block the migration moved out, then exit")
     p_st.set_defaults(func=cmd_setup)
 
     # version
