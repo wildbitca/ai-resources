@@ -184,3 +184,15 @@ def _isolate_usage_index(tmp_path_factory, monkeypatch):
         return
     monkeypatch.setattr(usage_index, "cache_path", lambda: root / "cache" / "ai-resources" / "usage-index.json")
     monkeypatch.setattr(usage_index, "default_roots", lambda: [])
+
+
+@pytest.fixture(autouse=True)
+def _isolate_hygiene(tmp_path_factory, monkeypatch):
+    """The hygiene step runs the `claude` CLI and reads ~/.claude.json (ADR-0014 D3.2): a test never reaches either."""
+    root = tmp_path_factory.mktemp("hygiene")
+    try:
+        from ai_resources.setup import hygiene
+    except Exception:
+        return
+    monkeypatch.setattr(hygiene, "default_runner", lambda argv: (127, "claude is not run by tests"))
+    monkeypatch.setattr(hygiene, "backup_dir", lambda: root / "hygiene")

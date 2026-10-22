@@ -409,6 +409,12 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
             return None
         return ("Main tool", _cockpit_line(capable))
 
+    def hygiene_skip(c):
+        """Hygiene writes the operator's Claude Code config on confirmation: never headless, only with Claude Code
+        among the tools. Skipped without a line of output (a headless run must read exactly as it did)."""
+        from . import hygiene
+        return ("Hygiene", "") if hygiene.skip_reason(c.s, c.dry_run) else None
+
     return [
         S("tools", 1, "Your tools", lambda c: _step2_cockpits(c.s), rewindable=False),
         S("cockpit", 1, "Main tool", lambda c: _step_cockpit_choice(c.s, dry_run=c.dry_run), back=True,
@@ -435,6 +441,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         S("more", 8, "More", lambda c: _step_more(c.s), back=True, skip=more_skip, edit_label="More"),
         S("lifecycle", 8, "Start at login", lambda c: _step8_lifecycle(c.s), skip=lifecycle_skip,
           edit_label="Start at login"),
+        S("hygiene", 8, "Hygiene", lambda c: _step_hygiene(c.s, c.dry_run), skip=hygiene_skip),
         S("review", 9, "Review", lambda c: _step_summary(c.s, c.args), rewindable=False),
         S("apply", 9, "Apply", lambda c: _step9_apply(c.s, dry_run=c.dry_run), rewindable=False),
     ]
@@ -2366,6 +2373,12 @@ def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
         else:
             _openclaw_cockpit.prompt_model(s, dry_run=dry_run)
     return 0
+
+
+def _step_hygiene(s: state.SetupState, dry_run: bool = False) -> int:
+    """Offer to disable user-level MCP servers and plugins with no call in 30 days (ADR-0014; setup/hygiene.py)."""
+    from . import hygiene
+    return hygiene.run_step(s, dry_run=dry_run)
 
 
 def _step_more(s: state.SetupState) -> int:
