@@ -50,6 +50,8 @@ from ... import openclaw_host as host
 from ... import openclaw_cost_migrations as cost_migrations
 from ... import openclaw_reload_rules as rr
 from ... import openclaw_slack_cost as slack_cost
+from ... import openclaw_notification_route as notif_route
+from ... import model_pins
 from . import claude as claude_cockpit
 
 RESTART_NOTE = ("Some keys only take effect after a gateway restart. Setup never makes the gateway restart while it "
@@ -619,6 +621,8 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
         applied = _offer_cost_migrations(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
                                          run_changes=run_changes) or applied
         applied = _offer_slack_cost(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch) or applied
+        applied = _offer_notification_route(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch,
+                                            oc=oc) or applied
     return applied
 
 
@@ -674,6 +678,106 @@ def _offer_slack_cost(o: state.OpenClawState, doc: dict, path: Path, written: li
     if path not in written:
         written.append(path)
     ui.ok(f"OpenClaw Slack: {len(accepted)} cost key(s) set (hot reload, no restart)")
+    return True
+
+
+def _haiku_ref() -> str:
+    return f"anthropic/{model_pins.effective()['haiku']}"
+
+
+def _record_route_pending(o: state.OpenClawState, channels: list[str]) -> None:
+    """One pending `route` entry whose channel list grows; `apply-pending` re-derives the patch from the live config."""
+    for e in o.host_restart_pending:
+        if isinstance(e, dict) and e.get("op") == "route" and e.get("source") == "setup":
+            e["channels"] = sorted(set(e.get("channels") or []) | set(channels))
+            return
+    o.host_restart_pending.append({"op": "route", "path": "bindings", "channels": sorted(set(channels)),
+                                   "source": "setup", "at": _now()})
+
+
+def _offer_notification_route(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
+                              apply_patch: Callable[..., tuple[bool, str]],
+                              oc: Callable[..., tuple[int, str]] | None = None) -> bool:
+    """The Haiku notification route (ADR-0014 D4): a Haiku-only agent and `bindings[]` routes for the Slack channels the
+    operator ticks. Fill-only (a channel that already has a route is reported, never replaced), one confirm per channel,
+    interactive only, guarded by `assert_notification_route_safe`. A key that needs a restart (or whose class cannot be
+    read) is recorded in `host_restart_pending`, never applied here. Returns True when the config was written."""
+    if not slack_cost.slack_enabled(doc):
+        return False
+    labels = notif_route.slack_channel_labels(doc)
+    already = {str(((r.get("entry") or {}).get("match") or {}).get("peer", {}).get("id")) for r in o.notification_route_changes
+               if isinstance(r, dict) and r.get("kind") == "binding"}
+    probe = notif_route.build_plan(doc, sorted(labels), _haiku_ref())
+    candidates = [c for c in probe.channels if c not in already]
+    for note in probe.skipped:
+        if note.split(":", 1)[0] not in already:           # a channel the kit routed earlier is not news
+            ui.detail("Haiku notification route: " + note)
+    if not candidates:
+        return False
+    if dry_run or ui.is_non_interactive():
+        ui.detail(f"Haiku notification route: {len(candidates)} Slack channel(s) have no route yet; run setup in a terminal "
+                  f"to send the notification ones to a Haiku-only agent ({notif_route.AGENT_ID}).")
+        return False
+    if not ui.confirm("Route Slack notification channels to a cheap Haiku-only agent "
+                      f"({notif_route.AGENT_ID}, no fallbacks)? You pick the channels next.", default=False):
+        return False
+    chosen = ui.checkbox("Slack channels that only carry notifications (each gets a route to the Haiku agent; leave empty "
+                         "to change none):", [ui.Choice(labels.get(c, c), value=c) for c in candidates], default=[]) or []
+    plan = notif_route.build_plan(doc, [c for c in candidates if c in chosen], _haiku_ref())
+    if not plan.patch:
+        return False
+    if plan.agent_created:
+        ui.detail(f"New agent {notif_route.AGENT_ID}: model {json.dumps(plan.agent_entry['model'])}")
+    for entry in plan.routes:
+        ui.detail(f"New route: slack channel {entry['match']['peer']['id']} -> {notif_route.AGENT_ID}")
+    ok, out = apply_patch(plan.patch, dry_run=True, replace_paths=plan.replace_paths)
+    if not ok:
+        ui.error(f"OpenClaw rejected the notification route in a dry run; nothing was applied: {ui.safe_excerpt(out, 400, tail=True)}")
+        return False
+    ruleset = rr.current_ruleset(_oc_runner(oc), refresh=True) if oc else None
+    restart = rr.restart_paths(plan.patch, ruleset=ruleset, reload_mode=rr.reload_mode_of(doc))
+    if restart:
+        ui.warn("The notification route would need a gateway restart (or its reload class cannot be read), so it is not "
+                "applied here: " + ", ".join(restart))
+        _record_route_pending(o, plan.channels)
+        ui.info("Recorded as pending: `ai-resources openclaw apply-pending` applies it in a drained window.")
+        return False
+    try:
+        ok, out = apply_patch(plan.patch, replace_paths=plan.replace_paths)
+    except rr.RestartRequired as e:
+        ui.warn(f"notification route not applied: {e}")
+        _record_route_pending(o, plan.channels)
+        return False
+    if not ok:
+        ui.error(f"OpenClaw rejected the notification route: {ui.safe_excerpt(out, 400, tail=True)}")
+        return False
+    o.notification_route_changes.extend(notif_route.change_records(plan))
+    o.config_path = str(path)
+    if path not in written:
+        written.append(path)
+    ui.ok(f"OpenClaw notification route: {len(plan.channels)} Slack channel(s) routed to {notif_route.AGENT_ID} "
+          "(hot reload, no restart)")
+    return True
+
+
+def _teardown_notification_route(o: state.OpenClawState, apply_patch: Callable[..., tuple[bool, str]], doc: dict) -> bool:
+    try:
+        patch, rp, notes = notif_route.restore_plan(o.notification_route_changes, doc)
+    except ValueError as e:
+        ui.warn(f"The notification route record is not what the kit wrote ({e}); nothing was removed.")
+        return False
+    for note in notes:
+        ui.warn(note)
+    if patch:
+        try:
+            ok, out = apply_patch(patch, replace_paths=rp)
+        except rr.RestartRequired as e:
+            ui.warn(f"The notification route was NOT removed: {e}. Remove the kit-notifications routes by hand.")
+            return False
+        if not ok:
+            ui.error(f"OpenClaw notification route teardown failed: {ui.safe_excerpt(out, 300, tail=True)}")
+            return False
+    o.notification_route_changes = []
     return True
 
 
@@ -1004,6 +1108,17 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
                         "action": "forced" if live_had else "filled"})
         if e.get("id"):
             applied_ids.append(str(e["id"]))
+    route_plans: list = []
+    route_channels = sorted({c for e in pending if e.get("op") == "route" for c in (e.get("channels") or [])})
+    if route_channels:
+        # The notification route is re-derived from the live config (fill-only), like a profile entry.
+        plan = notif_route.build_plan(doc, route_channels, _haiku_ref())
+        if plan.patch:
+            patch = rr.deep_merge(patch, plan.patch)
+            rp += plan.replace_paths
+            route_plans.append(plan)
+        else:
+            ui.detail("notification route: nothing left to add (the channels are routed already).")
     restores = [e["change"] for e in pending if e.get("op") == "restore"]
     if restores:
         rpatch, rrp = host.restore_patch(restores, doc)      # a restore the live value already satisfies is a no-op
@@ -1034,6 +1149,8 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
         return 1
     _record_changes(o, changes)
     o.cost_migrations_applied.extend(i for i in applied_ids if i not in o.cost_migrations_applied)
+    for plan in route_plans:
+        o.notification_route_changes.extend(notif_route.change_records(plan))
     o.host_restart_pending = list(leftover)
     ui.ok("Restart-required config applied in a drained window.")
     return 0 if window_ok else 1
@@ -1419,6 +1536,9 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
 
     if o.slack_cost_changes:
         ok = _teardown_slack_cost(o, apply_patch, doc or {}) and ok
+
+    if o.notification_route_changes:
+        ok = _teardown_notification_route(o, apply_patch, doc or {}) and ok
 
     if o.host_workboard_applied == "enabled-by-kit":
         rc, out = oc(["plugins", "disable", "workboard"])
