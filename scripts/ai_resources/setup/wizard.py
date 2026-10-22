@@ -1151,8 +1151,11 @@ def _how_default(s: state.SetupState, is_first: bool = True) -> str:
     if getattr(s, "cli_team_api", False):
         return "team_api"
     members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
-    if getattr(s, "cli_team", False) or "agy" in members:
-        return "team_api" if bool(credentials.get_key("GOOGLE_CLOUD_PROJECT") or credentials.get_key("CLAUDE_CODE_USE_VERTEX") == "1") else "team"
+    if getattr(s, "cli_team", False):
+        return "team"               # a saved subscription team keeps its meaning; only an unsaved choice is guessed
+    if "agy" in members:
+        vertex = bool(credentials.get_key("GOOGLE_CLOUD_PROJECT") or credentials.get_key("CLAUDE_CODE_USE_VERTEX") == "1")
+        return "team_api" if vertex else "team"
     if not is_first:
         return "alone"
     return "team" if len(members) >= 2 else "alone"
@@ -1324,15 +1327,17 @@ def _agy_tick_restorable(s: state.SetupState) -> bool:
 
 
 def _default_members(s: state.SetupState, detected: dict) -> list[str]:
-    """The tools ticked when the screen opens: every installed tool. Antigravity is included when installed."""
+    """The tools ticked when the screen opens (and the team of a run that cannot ask): the saved or requested
+    selection that is still installed, else every installed tool. Antigravity is the exception: it starts ticked only
+    when it was saved ticked (or the saved lanes hold it) AND a valid Google acknowledgement is stored; a fresh install
+    never opts in on its own."""
     installed = [cid for cid, det in detected.items() if det.installed]
     saved = (s.profile.customizations.get("__targets__") or {}).get("selected")
-    if saved:
-        res = [c for c in saved if c in installed]
-        if "agy" in installed and "agy" not in res:
-            res.append("agy")
-        return res
-    return [cid for cid in installed if cid not in HIDDEN_TOOLS]
+    restorable = _agy_tick_restorable(s)
+    held = [c for c in (saved or []) if c in installed and (c != "agy" or restorable)]
+    if held:
+        return held
+    return [cid for cid in installed if cid not in HIDDEN_TOOLS and (cid != "agy" or (_agy_lanes_on(s) and restorable))]
 
 
 def _step2_cockpits(s: state.SetupState) -> int:
@@ -3186,11 +3191,15 @@ def _dry_run_targets(s: state.SetupState, executors_doc: dict, env_patch: dict |
             if _claude_cockpit.SETTINGS_PATH.is_file() else None
         out.append(("settings.json env", _claude_cockpit.SETTINGS_PATH,
                     json.dumps({"env": merged}, indent=2, sort_keys=True), before))
-    from . import shell
-    rc_files = shell.get_existing_rc_files()
-    for rc in rc_files:
-        out.append((f"{rc.name} env", rc, "# managed ai-resources env block", None))
     return out
+
+
+def _dry_run_shell_targets() -> list[tuple[str, Path, str, str | None]]:
+    """The shell rc files a real run would sync the env block into. Kept apart from `_dry_run_targets`, which
+    renders only what the state decides: these depend on the files of the current home."""
+    from . import shell
+    return [(f"{rc.name} env", rc, "# managed ai-resources env block", None)
+            for rc in shell.get_existing_rc_files()]
 
 
 def _print_dry_run_diffs(s: state.SetupState, executors_doc: dict, env_patch: dict | None,
@@ -3198,7 +3207,8 @@ def _print_dry_run_diffs(s: state.SetupState, executors_doc: dict, env_patch: di
     console = ui.console()
     console.print()
     ui.info("What a real run would change (masked; nothing is written):")
-    for label, path, text, current in _dry_run_targets(s, executors_doc, env_patch, existing_env):
+    for label, path, text, current in (_dry_run_targets(s, executors_doc, env_patch, existing_env)
+                                       + _dry_run_shell_targets()):
         for line in _diff_lines(label, path, text, current):
             console.print(line, markup=False, highlight=False)
     console.print()
