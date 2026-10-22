@@ -23,6 +23,7 @@ class Proposal:
     new: object
     why: str
     replace: bool = False          # a list: replace it, do not union
+    had: bool = True               # False: the path is absent today, so applying it is a fill (teardown deletes it)
     snippet: str = field(default="", compare=False)
 
     @property
@@ -36,7 +37,17 @@ VALUE_MIGRATIONS: tuple[tuple[str, tuple[str, ...], object, str], ...] = (
      "routine turns do not need deep thinking (output tokens are the expensive ones)"),
     ("cost-thinking-main-medium", ("agents", "entries", "main", "thinkingDefault"), "medium",
      "main was on high for every turn"),
+    # ADR-0014 D5: the workboard plugin adds its tools to every agent session. Proposed only when it is enabled today; a
+    # host that applies it keeps it off (the host section does not re-enable it, see _configure_workboard).
+    ("cost-workboard-disable", ("plugins", "entries", "workboard", "enabled"), False,
+     "the workboard plugin adds its tools to every agent session; nobody on this host may use the shared board"),
 )
+
+WORKBOARD_DISABLE_ID = "cost-workboard-disable"
+HEARTBEAT_OFF_ID = "cost-heartbeat-off"
+HEARTBEAT_PATH = ("agents", "entries", "main", "heartbeat", "every")
+UTILITY_MODEL_ID = "cost-utility-model"
+UTILITY_MODEL_PATH = ("agents", "defaults", "utilityModel")
 
 
 def _is_opus(ref: object) -> bool:
@@ -84,9 +95,14 @@ def _covered(path: tuple[str, ...], entries) -> bool:
     return False
 
 
-def proposals(doc: dict, *, applied=(), keep=frozenset(), force=frozenset()) -> list[Proposal]:
+def proposals(doc: dict, *, applied=(), keep=frozenset(), force=frozenset(), heartbeat_off: bool = False,
+              utility_model: str = "") -> list[Proposal]:
     """The migrations still worth proposing for `doc`. A path in `keep` is skipped; one already in `force` is left to
-    the normal forced fill (it is applied without a second question)."""
+    the normal forced fill (it is applied without a second question).
+
+    `heartbeat_off` is the operator's answer to the wizard question (default No: the 2h isolated light heartbeat stays);
+    `utility_model` is a model ref a probe VERIFIED works with this host's key (never a guessed id): it is proposed only
+    when the configured utilityModel is set, differs, and a verified replacement exists."""
     done = set(applied or ())
     out: list[Proposal] = []
     for mid, path, new, why in VALUE_MIGRATIONS:
@@ -95,6 +111,20 @@ def proposals(doc: dict, *, applied=(), keep=frozenset(), force=frozenset()) -> 
             continue
         out.append(Proposal(mid, path, old, new, why,
                             snippet=f'{{"force": ["{".".join(path)}"]}} in ~/.openclaw/kit-host-overrides.json5'))
+    if heartbeat_off and HEARTBEAT_OFF_ID not in done and not _covered(HEARTBEAT_PATH, keep) \
+            and not _covered(HEARTBEAT_PATH, force):
+        old, had = _get(doc, HEARTBEAT_PATH)
+        if not (had and old == "0m"):
+            out.append(Proposal(HEARTBEAT_OFF_ID, HEARTBEAT_PATH, old if had else None, "0m",
+                                "the main agent wakes up every couple of hours and re-reads its context each time",
+                                had=had, snippet="openclaw config set agents.entries.main.heartbeat.every 0m"))
+    if utility_model and UTILITY_MODEL_ID not in done and not _covered(UTILITY_MODEL_PATH, keep) \
+            and not _covered(UTILITY_MODEL_PATH, force):
+        old, had = _get(doc, UTILITY_MODEL_PATH)
+        if had and old != utility_model:
+            out.append(Proposal(UTILITY_MODEL_ID, UTILITY_MODEL_PATH, old, utility_model,
+                                "titles and progress notes run on a model the probe verified with your key",
+                                snippet=f"openclaw config set agents.defaults.utilityModel {utility_model}"))
     for name in opus_fallback_agents(doc):
         path = ("agents", "defaults", "model", "fallbacks") if name == "defaults" else \
                ("agents", "entries", name, "model", "fallbacks")
@@ -124,4 +154,14 @@ def build_patch(accepted: list[Proposal]) -> tuple[dict, list[str]]:
 
 def change_records(accepted: list[Proposal]) -> list[dict]:
     """Records for the setup state, shaped like the profile's own, so teardown restores the old values."""
-    return [{"path": list(p.path), "previous": p.old, "had": True, "action": "forced"} for p in accepted]
+    return [{"path": list(p.path), "previous": p.old if p.had else None, "had": p.had,
+             "action": "forced" if p.had else "filled"} for p in accepted]
+
+
+def pending_entries(accepted: list[Proposal], *, at: str, source: str = "setup") -> list[dict]:
+    """Records for `host_restart_pending` of accepted proposals whose key needs a restart (or could not be classified):
+    nothing is applied now, `ai-resources openclaw apply-pending` applies them in a drained window (ADR-0003). They carry
+    the new value and the value they expect to replace (not secrets), so the apply can skip a path the operator
+    changed since."""
+    return [{"op": "migration", "id": p.id, "path": p.dotted, "value": p.new, "previous": p.old if p.had else None,
+             "had": p.had, "replace": p.replace, "source": source, "at": at} for p in accepted]

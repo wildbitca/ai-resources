@@ -191,3 +191,131 @@ def test_the_state_file_omits_the_ids_until_one_is_applied_and_round_trips_them(
     s.openclaw.cost_migrations_applied.append("x")
     back = state._from_dict(state.SetupState, state._to_dict(s))
     assert back.openclaw.cost_migrations_applied == ["x"]
+
+
+# --- ADR-0014 D5: workboard disable ----------------------------------------------------------------------------------
+
+from ai_resources import openclaw_reload_rules as rr  # noqa: E402
+from ai_resources.setup.cockpits import _openclaw_host as section  # noqa: E402
+from reload_rules_fixture import make_rules_unavailable  # noqa: E402
+
+WB = ("plugins", "entries", "workboard", "enabled")
+
+
+def test_the_workboard_migration_is_proposed_only_when_the_plugin_is_enabled():
+    on = {"plugins": {"entries": {"workboard": {"enabled": True}}}}
+    got = {p.id: p for p in cm.proposals(on)}
+    assert got["cost-workboard-disable"].path == WB and got["cost-workboard-disable"].new is False
+    assert cm.WORKBOARD_DISABLE_ID == "cost-workboard-disable"
+    assert "cost-workboard-disable" not in {p.id for p in cm.proposals({"plugins": {"entries": {"workboard": {"enabled": False}}}})}
+    assert "cost-workboard-disable" not in {p.id for p in cm.proposals({})}
+    assert "cost-workboard-disable" not in {p.id for p in cm.proposals(on, applied=["cost-workboard-disable"])}
+    assert "cost-workboard-disable" not in {p.id for p in cm.proposals(on, keep=frozenset({"plugins.entries.workboard"}))}
+
+
+def _wb_live(sim, enabled=True):
+    doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
+    doc.setdefault("plugins", {}).setdefault("entries", {}).setdefault("workboard", {})["enabled"] = enabled
+    sim.cfg.write_text(json.dumps(doc), encoding="utf-8")
+    sim.overrides_file.unlink(missing_ok=True)
+
+
+def _only(script, key, answer):
+    script.answers["Replace "] = False                       # every other migration is declined
+    script.answers[key] = answer
+
+
+def test_confirming_the_workboard_disable_sets_it_hot_records_the_id_and_keeps_it_off(sim, script):
+    _wb_live(sim)
+    _only(script, "Replace plugins.entries.workboard.enabled", True)
+    s = _state()
+    _run_wizard(s)
+    assert _cfg(sim)["plugins"]["entries"]["workboard"]["enabled"] is False
+    assert "cost-workboard-disable" in s.openclaw.cost_migrations_applied
+    assert any(c["path"] == list(WB) and c["previous"] is True and c["had"] is True for c in s.openclaw.host_config_changes)
+    # the host section must not turn it back on, now or on the next run
+    sim.oc.calls.clear()
+    _run_wizard(s)
+    assert not [a for a, _p in sim.oc.calls if a[:2] == ["plugins", "enable"]]
+    assert _cfg(sim)["plugins"]["entries"]["workboard"]["enabled"] is False
+
+
+def test_declining_the_workboard_disable_changes_and_records_nothing(sim, script):
+    _wb_live(sim)
+    _only(script, "Replace plugins.entries.workboard.enabled", False)
+    s = _state()
+    _run_wizard(s)
+    assert _cfg(sim)["plugins"]["entries"]["workboard"]["enabled"] is True
+    assert "cost-workboard-disable" not in s.openclaw.cost_migrations_applied
+    assert any("workboard" in m and "config set" in m or "kit-host-overrides" in m for m in script.messages("detail"))
+
+
+# --- ADR-0003: a restart-required (or unclassifiable) key is never applied unattended ----------------------------------
+
+def _gateway_restarts(sim):
+    return [c for c in sim.systemd.calls if c[:3] == ["systemctl", "--user", "stop"] or c[:3] == ["systemctl", "--user", "restart"]]
+
+
+def test_unattended_never_applies_a_migration_even_a_hot_one(sim, script):
+    _live(sim)
+    _wb_live(sim)
+    script.non_interactive = True
+    s = _state()
+    _run_wizard(s)
+    assert [a for a, p in sim.oc.real_patches() if p and ("plugins" in p or "thinkingDefault" in json.dumps(p))] == []
+    assert _cfg(sim)["plugins"]["entries"]["workboard"]["enabled"] is True
+    assert s.openclaw.cost_migrations_applied == [] and s.openclaw.host_restart_pending == []
+    assert _gateway_restarts(sim) == []
+
+
+def test_a_confirmed_key_the_rules_cannot_classify_is_recorded_pending_and_not_applied(sim, script, monkeypatch):
+    _wb_live(sim)
+    make_rules_unavailable(monkeypatch)                      # fail closed: every key reads restart-required
+    script.answers["Apply in a drained window"] = False      # the profile's own restart-required keys stay pending too
+    _only(script, "Replace plugins.entries.workboard.enabled", True)
+    s = _state()
+    _run_wizard(s)
+    assert _cfg(sim)["plugins"]["entries"]["workboard"]["enabled"] is True            # not applied
+    pend = [e for e in s.openclaw.host_restart_pending if e.get("op") == "migration"]
+    assert [(e["id"], e["path"], e["value"], e["previous"], e["had"]) for e in pend] == [
+        ("cost-workboard-disable", "plugins.entries.workboard.enabled", False, True, True)]
+    assert "cost-workboard-disable" not in s.openclaw.cost_migrations_applied
+    assert _gateway_restarts(sim) == []
+    assert any("apply-pending" in m for m in script.messages("info"))
+    # recording it twice does not duplicate it
+    _run_wizard(s)
+    assert len([e for e in s.openclaw.host_restart_pending if e.get("op") == "migration"]) == 1
+
+
+def test_apply_pending_applies_a_pending_migration_in_a_drained_window_and_records_its_id(sim, script, monkeypatch):
+    _wb_live(sim)
+    s = _state()
+    s.openclaw.host_restart_pending = cm.pending_entries(
+        [p for p in cm.proposals(_cfg(sim)) if p.id == "cost-workboard-disable"], at="2026-10-22T00:00:00+00:00")
+    assert section.apply_pending(s, assume_yes=True) == 0
+    assert _cfg(sim)["plugins"]["entries"]["workboard"]["enabled"] is False
+    assert "cost-workboard-disable" in s.openclaw.cost_migrations_applied and s.openclaw.host_restart_pending == []
+    assert any(c["path"] == list(WB) and c["previous"] is True for c in s.openclaw.host_config_changes)
+
+
+def test_apply_pending_drops_a_migration_whose_path_the_operator_changed_since(sim, script):
+    _wb_live(sim)
+    s = _state()
+    s.openclaw.host_restart_pending = cm.pending_entries(
+        [p for p in cm.proposals(_cfg(sim)) if p.id == "cost-workboard-disable"], at="2026-10-22T00:00:00+00:00")
+    _wb_live(sim, enabled="manual")                          # the operator set something else meanwhile
+    sim.oc.calls.clear()
+    assert section.apply_pending(s, assume_yes=True) == 0
+    assert _cfg(sim)["plugins"]["entries"]["workboard"]["enabled"] == "manual"
+    assert s.openclaw.cost_migrations_applied == [] and s.openclaw.host_restart_pending == []
+    assert not sim.oc.real_patches()
+
+
+def test_pending_entries_carry_no_secret_and_the_expected_shape():
+    p = cm.Proposal("x", ("a", "b"), "old", "new", "why", replace=True)
+    (e,) = cm.pending_entries([p], at="T")
+    assert e == {"op": "migration", "id": "x", "path": "a.b", "value": "new", "previous": "old", "had": True,
+                 "replace": True, "source": "setup", "at": "T"}
+    q = cm.Proposal("y", ("a",), None, "0m", "why", had=False)
+    assert cm.change_records([q]) == [{"path": ["a"], "previous": None, "had": False, "action": "filled"}]
+    assert cm.change_records([p]) == [{"path": ["a", "b"], "previous": "old", "had": True, "action": "forced"}]

@@ -214,6 +214,40 @@ def _check_poll_share() -> int:
     return 0
 
 
+ANNOUNCE_INFO = ("OpenClaw completion announcements: no config key exists to suppress them (schema checked 2026-10-22; "
+                 "only agents.defaults.subagents.announceTimeoutMs, a timeout). The kit writes nothing for this.")
+
+
+def _openclaw_present(s: state.SetupState) -> bool:
+    cs = s.cockpits.get("openclaw")
+    return bool((cs and cs.installed) or s.openclaw.applied or s.openclaw.host)
+
+
+def _check_openclaw_cost(s: state.SetupState, args: argparse.Namespace) -> int:
+    """Doctor sub-check 4i (ADR-0014 D5): the OpenClaw cost notes and the opt-in utility-model probe. Informational:
+    never counted as an issue. The probe is one tiny model turn (printed first) and runs only with the flag."""
+    if not _openclaw_present(s):
+        return 0
+    ui.info(ANNOUNCE_INFO)
+    if not getattr(args, "probe_utility_model", False):
+        return 0
+    from . import openclaw_utility_probe as up, openclaw_host
+    from .setup.cockpits import openclaw as cockpit
+    ref = (((cockpit.read_config(cockpit.config_path()).get("agents") or {}).get("defaults") or {}).get("utilityModel"))
+    if not isinstance(ref, str) or not ref:
+        ui.detail("utilityModel is not set; nothing to probe (setup fills the pinned Haiku).")
+        return 0
+    ui.info(up.NOTICE)
+    result = up.probe(ref, lambda argv: openclaw_host.default_runner(["openclaw", *argv], timeout=120))
+    if result.status == "ok":
+        ui.ok(f"utility model {ref}: the probe got an answer")
+    elif result.status == "invalid":
+        ui.warn(f"utility model {ref}: {result.detail}")
+    else:
+        ui.detail(f"utility model {ref}: {result.detail}")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     ui.require_deps()
     ui.banner("ai-resources doctor", subtitle="Health check across all components")
@@ -416,6 +450,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # 4g. Billing mode, quota and the manual credit file; 4h. the poll-turn share of the newest snapshot.
     issues += _check_billing()
     issues += _check_poll_share()
+    issues += _check_openclaw_cost(s, args)
 
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")
@@ -473,6 +508,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def add_subparser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("doctor", help="Run full health check across all components")
+    p.add_argument("--probe-utility-model", dest="probe_utility_model", action="store_true",
+                   help="Also check that OpenClaw's utilityModel works with your key (one tiny model turn, billed)")
     p.add_argument("--skip-smoke", action="store_true",
                    help="Don't run live API round-trips (saves a few tokens)")
     p.set_defaults(func=cmd_doctor)

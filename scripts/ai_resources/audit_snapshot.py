@@ -210,14 +210,16 @@ def build_snapshot(label: str, since: datetime, until: datetime, home: Path | No
 
 
 PROBE_NOTICE = (
-    "--probe runs two REAL model calls (one fixed 'Reply with exactly OK' prompt each): "
+    "--probe runs REAL model calls (one fixed 'Reply with exactly OK' prompt each): "
     "`claude -p` from $HOME (~39k prompt tokens on the 2026-10-22 baseline) and "
-    "`openclaw agent --agent main` on a fresh bench session (~24k prompt tokens). "
+    "`openclaw agent --agent main` on a fresh bench session (~24k prompt tokens), and, when "
+    "agents.defaults.utilityModel is set, one tiny `openclaw infer model run --local` turn on it. "
     "Each is billed like any other call on its account."
 )
 
 
-def run_probes(label: str, run: Callable[[list[str]], str] = _default_run, say: Callable[[str], None] = print) -> dict:
+def run_probes(label: str, run: Callable[[list[str]], str] = _default_run, say: Callable[[str], None] = print,
+               home: Path | None = None) -> dict:
     """Opt-in: the two fixed probes. Never called by tests (they inject `run`)."""
     say(PROBE_NOTICE)
     out: dict = {"taken_at": datetime.now(timezone.utc).isoformat()}
@@ -226,7 +228,24 @@ def run_probes(label: str, run: Callable[[list[str]], str] = _default_run, say: 
     raw = run(["openclaw", "agent", "--agent", "main", "--session-key", f"agent:main:bench-{label}",
                "-m", "Reply with exactly OK", "--json"])
     out["openclaw_main_fresh"] = _probe_usage(raw)
+    out["utility_model"] = _utility_probe(run, home)
     return out
+
+
+def openclaw_json_path(home: Path | None = None) -> Path:
+    return (home or Path.home()) / ".openclaw" / "openclaw.json"
+
+
+def _utility_probe(run: Callable[[list[str]], str], home: Path | None = None) -> dict:
+    """The configured utilityModel through the local CLI transport (ADR-0014 D5); `{"status": "unset"}` when none."""
+    from . import openclaw_utility_probe as up
+    doc = _load_json(openclaw_json_path(home)) or {}
+    ref = (((doc.get("agents") or {}).get("defaults") or {}).get("utilityModel"))
+    if not isinstance(ref, str) or not ref:
+        return {"status": "unset"}
+    raw = run(["openclaw", *up.command(ref)])
+    res = up.classify(ref, 0 if raw else 1, raw)
+    return {"ref": ref, "status": res.status, "detail": res.detail}
 
 
 def _probe_usage(raw: str) -> dict:
