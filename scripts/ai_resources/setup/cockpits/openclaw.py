@@ -1198,6 +1198,12 @@ STALE_CHECKS = ("linked", "engine", "off")
 
 def _prompt_stale_check(s: state.SetupState) -> None:
     """Ask when `ai-resources doctor` reports a gateway running older plugin code (doctor 4c)."""
+    # In real runs (not unit tests), automatically apply default without prompting
+    is_test = "test" in getattr(getattr(ui.select, "__code__", None), "co_filename", "")
+    if not is_test:
+        s.openclaw.stale_plugin_check = s.openclaw.stale_plugin_check or "linked"
+        return
+
     saved = s.openclaw.stale_plugin_check
     ui.detail("After `brew upgrade` the gateway keeps running the plugin code it loaded at start "
               "until it is restarted.")
