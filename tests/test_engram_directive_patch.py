@@ -108,3 +108,21 @@ def test_the_claude_cockpit_wrapper_never_raises(monkeypatch):
     from ai_resources.setup.cockpits import claude
     monkeypatch.setattr(engram_patch, "trim_engram_hooks", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert claude._trim_engram_hooks() == {}
+
+
+# --- ADR-0014 S10: what the kit does NOT control in engram -----------------------------------------------------------
+
+def test_mem_judge_only_ever_sat_in_the_toolsearch_line_the_kit_already_replaces():
+    """The S0 spike found `mem_judge` named only inside the ToolSearch `select:` list of user-prompt-submit.sh. That
+    line is replaced hash-guarded, so no second patch exists: the judge itself is server-side."""
+    assert "mem_judge" in ORIGINAL_LINE and "mem_judge" not in engram_patch.REPLACEMENT_LINE
+    assert engram_patch.REPLACEMENT_LINE.count("mem_") >= 1                    # the replacement still tells the model to read context
+
+
+def test_the_kit_patches_one_known_line_and_the_unpatchable_parts_are_documented():
+    """No hash-guardable site exists for the SessionStart `/context` payload (the script prints what the server returns
+    and has no size knob), so the module stays a single-line patch and ADR-0014 lists the rest as not kit-controllable."""
+    assert engram_patch.SCRIPT_NAME == "user-prompt-submit.sh"
+    assert "SessionStart" in engram_patch.__doc__ and "not controllable" in engram_patch.__doc__
+    adr = (Path(__file__).resolve().parents[1] / "docs" / "decisions" / "0014-token-cost-round-2.md").read_text()
+    assert "Not kit-controllable" in adr and "SessionStart" in adr and "mem_judge" in adr
