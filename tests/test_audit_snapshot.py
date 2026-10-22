@@ -208,3 +208,37 @@ def test_probes_print_the_cost_notice_first_and_use_the_injected_runner():
     assert calls == ["claude", "openclaw"]
     assert "REAL model calls" in said[0]
     assert out["claude_p_hi"]["cost_usd"] == 0.01
+
+
+# --- ADR-0014 D2: billing in `audit --json` and in the snapshot inventory -----------------------------------------------
+
+def test_audit_json_carries_billing_alerts_and_no_identifier(home, monkeypatch, capsys, tmp_path):
+    from ai_resources import audit, billing
+    cj = tmp_path / "claude.json"
+    cj.write_text(json.dumps({"oauthAccount": {"billingType": "prepaid", "emailAddress": "who@example.com"}}))
+    monkeypatch.setattr(billing, "claude_json_path", lambda: cj)
+    monkeypatch.setattr(audit, "_project_jsonl_dir", lambda cwd=None: home / ".claude" / "projects" / "-work-p")
+
+    rc = audit.cmd_audit(argparse.Namespace(json=True, days=0, all_projects=False, subagents=False, openclaw=False,
+                                            verbose=False, audit_cmd=None))
+    out = capsys.readouterr().out
+    doc = json.loads(out)
+
+    assert rc == 0
+    assert doc["billing"]["auth_mode"] == "prepaid"
+    assert "prepaid" in [a["code"] for a in doc["billing"]["alerts"]]
+    assert doc["billing"]["credit"]["state"] == "unknown"
+    assert doc["all"]["calls"] == 3
+    assert "who@example.com" not in out
+
+
+def test_snapshot_inventory_records_the_billing_mode_without_identifiers(home, monkeypatch, tmp_path):
+    from ai_resources import billing
+    cj = tmp_path / "claude.json"
+    cj.write_text(json.dumps({"oauthAccount": {"billingType": "prepaid", "emailAddress": "who@example.com"}}))
+    monkeypatch.setattr(billing, "claude_json_path", lambda: cj)
+
+    inv = audit_snapshot.inventory(home, run=lambda cmd: "")
+
+    assert inv["billing"]["auth_mode"] == "prepaid"
+    assert "who@example.com" not in json.dumps(inv)

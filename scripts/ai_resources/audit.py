@@ -25,7 +25,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import audit_sources, model_pins
+from . import audit_sources, billing, model_pins
 from .setup import ui
 
 
@@ -230,7 +230,60 @@ def _print_openclaw(con, usages: list, stats) -> None:
         ui.detail(note)
 
 
+def billing_report() -> dict:
+    """Billing mode, quota, credit and the alerts they raise, as plain JSON-safe data (no identifiers)."""
+    snap = billing.snapshot()
+    return {**snap, "alerts": [{"code": a.code, "severity": a.severity, "message": a.message}
+                               for a in billing.alerts_for(snap)]}
+
+
+def _print_billing(con) -> None:
+    """The billing block of the text report: mode, quota, credit and the alerts."""
+    con.print()
+    ui.detail("Billing and quota (read-only):")
+    snap = billing.snapshot()
+    for line in billing.summary_lines(snap):
+        ui.detail("  " + line)
+    for a in billing.alerts_for(snap):
+        (ui.warn if a.severity == "warn" else ui.info)(a.message)
+
+
+def _load_usages(args: argparse.Namespace) -> tuple[list, "audit_sources.LoadStats | None"]:
+    """(usages, OpenClaw load stats) for the arguments of the report; used by the JSON path."""
+    all_projects = bool(getattr(args, "all_projects", False))
+    include_sub = all_projects or bool(getattr(args, "subagents", False))
+    roots = _all_project_dirs() if all_projects else [d for d in (_project_jsonl_dir(),) if d]
+    since = datetime.now(tz=timezone.utc) - timedelta(days=args.days) if args.days > 0 else None
+    usages = audit_sources.load_claude_jsonl(roots, since, include_sub) if roots else []
+    oc_stats = None
+    if getattr(args, "openclaw", False):
+        oc, oc_stats = audit_sources.load_openclaw_events(Path.home() / ".openclaw" / "agents", since)
+        usages = usages + oc
+    return usages, oc_stats
+
+
+def cmd_audit_json(args: argparse.Namespace) -> int:
+    """`ai-resources audit --json`: one JSON document on stdout for tools (the daily Slack section). Read-only.
+
+    It never prints an identifier and does not need rich."""
+    from . import audit_snapshot
+    usages, oc_stats = _load_usages(args)
+    doc = {
+        "schema": 1,
+        "window_days": args.days,
+        "estimate": "API-equivalent; subscription use is not billed per token",
+        "billing": billing_report(),
+        "all": audit_snapshot.summarize(usages),
+    }
+    if oc_stats is not None and oc_stats.undecoded:
+        doc["undecoded_rows"] = oc_stats.undecoded
+    print(json.dumps(doc, indent=1, default=str))
+    return 0
+
+
 def cmd_audit(args: argparse.Namespace) -> int:
+    if getattr(args, "json", False) and not getattr(args, "audit_cmd", None):
+        return cmd_audit_json(args)
     ui.require_deps()
     con = ui.console()
 
@@ -353,6 +406,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         cache_pct = 100.0 * (total_cr / (total_cr + total_out + sum(v["inp"] for v in model_stats.values()) + 1))
         ui.detail(f"Cache reads are {total_cr/1e9:.2f}B tokens ({cache_pct:.0f}% of all tokens) — cache reduces cost vs fresh input.")
 
+    _print_billing(con)
     return 0
 
 
@@ -385,6 +439,8 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
                    help="Include subagent transcripts of the current project")
     p.add_argument("--openclaw", action="store_true",
                    help="Also report OpenClaw native-runtime usage per agent and model (read-only)")
+    p.add_argument("--json", action="store_true",
+                   help="Print one JSON document (billing, quota, credit, alerts and the summary metrics) and exit")
     p.set_defaults(func=cmd_audit)
 
     asub = p.add_subparsers(dest="audit_cmd")

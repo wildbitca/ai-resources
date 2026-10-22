@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import audit, audit_sources
+from . import audit, audit_sources, billing
 
 # How the kit counts a call. bench.py (the operator's script) kept the FIRST record per (message id, requestId); the kit
 # keeps the LAST record per message id, because streamed records carry cumulative usage. Counts differ, so a baseline
@@ -99,6 +99,19 @@ def _load_json(path: Path):
         return None
 
 
+def _billing_inventory() -> dict:
+    """Auth mode and the two quota percentages (no identifier). Read-only; unknown when a file is missing."""
+    try:
+        snap = billing.snapshot()
+    except Exception:  # noqa: BLE001 - inventory is best-effort
+        return {"auth_mode": "unknown"}
+    q = snap.get("quota") or {}
+    return {"auth_mode": snap.get("auth_mode"),
+            "weekly_used_pct": (q.get("seven_day") or {}).get("used_percentage"),
+            "five_hour_used_pct": (q.get("five_hour") or {}).get("used_percentage"),
+            "credit_state": (snap.get("credit") or {}).get("state")}
+
+
 def inventory(home: Path | None = None, run: Callable[[list[str]], str] | None = _default_run) -> dict:
     """Static prefix drivers plus the config values the lean-defaults work changes. Read-only."""
     home = home or Path.home()
@@ -142,6 +155,7 @@ def inventory(home: Path | None = None, run: Callable[[list[str]], str] | None =
                        for k, v in agents.items() if isinstance(v, dict)},
         },
         "agy": {"settings": agy_settings, "mcp_config_servers": sorted(mcp.get("mcpServers") or {})},
+        "billing": _billing_inventory(),
         "kit_version": run(["ai-resources", "--version"]),
     }
 
