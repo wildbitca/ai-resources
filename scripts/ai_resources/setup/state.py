@@ -173,6 +173,19 @@ class InstallTracking:
     # Ids of one-time cost migrations already applied (a key removed or a value replaced on the operator's
     # confirmation). A re-run skips an id that is recorded, so a value the operator changed back stays theirs.
     cost_migrations_applied: list[str] = field(default_factory=list)
+    # Round 2 (ADR-0014). All additive: absent from the file while empty, so a state saved before round 2 round-trips.
+    # Hygiene: user-level MCP servers and plugins the operator disabled on confirmation, each
+    # {kind: mcp|plugin, name, scope, previous: <full config as read>, timestamp, secrets_recoverable}. Restore re-adds
+    # exactly these; a re-run skips an id that is recorded.
+    hygiene_disabled: list[dict] = field(default_factory=list)
+    # Global CLAUDE.md blocks moved out on confirmation, each {block_id, sha256, destination, backup, pointer,
+    # kind: skill|rule}. Restore re-inlines a block only while its destination still hashes to `sha256`.
+    claude_md_migrations: list[dict] = field(default_factory=list)
+    # The persona domains whose subagents were rendered on the last run (domains.active_domains()).
+    persona_domains_active: list[str] = field(default_factory=list)
+    # agy MCP servers the kit added to ~/.gemini/config/mcp_config.json: {name: definition written}. Teardown removes
+    # only these, and only while the entry still equals what was written.
+    agy_mcp_added: dict[str, Any] = field(default_factory=dict)
 
 
 IMAGE_STATE_DEFAULTS: dict[str, Any] = {
@@ -189,6 +202,9 @@ class OpenClawState:
     cost_migrations_applied: list[str] = field(default_factory=list)
     # What the narrow Slack cost writer set (openclaw_slack_cost): change records, so teardown deletes exactly those.
     slack_cost_changes: list[dict] = field(default_factory=list)
+    # What the Haiku notification route set (openclaw_notification_route): change records, so teardown removes exactly
+    # those. Additive: absent while empty.
+    notification_route_changes: list[dict] = field(default_factory=list)
     engine: str = ""                  # antigravity | claude-code | codex | gemini-cli | keep
     model: str = ""                   # OpenClaw model ref (bare id for antigravity, e.g.
                                        # gemini-3.8-flash-low, claude-sonnet-4-6 or
@@ -416,6 +432,13 @@ def _to_dict(obj: Any) -> Any:
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
                 and not doc["openclaw"].get("slack_cost_changes"):
             doc["openclaw"].pop("slack_cost_changes", None)        # additive field: absent until the writer ran
+        if isinstance(obj, SetupState) and isinstance(doc.get("tracking"), dict):
+            for key in ("hygiene_disabled", "claude_md_migrations", "persona_domains_active", "agy_mcp_added"):
+                if not doc["tracking"].get(key):
+                    doc["tracking"].pop(key, None)         # round 2 (ADR-0014): absent until the writer ran
+        if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
+                and not doc["openclaw"].get("notification_route_changes"):
+            doc["openclaw"].pop("notification_route_changes", None)    # round 2: absent until the route ran
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
                 and not doc["openclaw"].get("mcp_deny_added"):
             doc["openclaw"].pop("mcp_deny_added", None)            # additive field: absent until the opt-in scoping ran

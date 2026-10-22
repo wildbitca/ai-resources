@@ -15,7 +15,7 @@ from .. import state, ui
 from ..detection import detect_claude_code
 from ... import repo_root
 from ...generate import parse_simple_frontmatter
-from ... import skill_scope
+from ... import domains, skill_scope
 from . import _shared
 
 
@@ -555,6 +555,10 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         candidates = [r for r in role_bodies if name.startswith(f"{r}-")]
         if not candidates:
             continue
+        # ADR-0014 D6: a persona subagent exists only for an active domain (AI_RESOURCES_SKILLS). The role subagent
+        # still reads the overlay by path, and the stale-removal below takes an inactive persona away again.
+        if not domains.persona_is_active(name, role_bodies):
+            continue
         base = max(candidates, key=len)
         try:
             text = persona_md.read_text(encoding="utf-8", errors="replace")
@@ -582,6 +586,7 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
             if path.is_file():
                 path.unlink()
         tracking.subagent_files_installed = sorted(generated)
+        tracking.persona_domains_active = sorted(domains.active_domains())
 
     return generated
 

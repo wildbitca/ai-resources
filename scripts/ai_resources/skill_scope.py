@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import os
 
+from . import domains
+
 # Domain prefixes linked natively (a trailing "-" is part of the prefix).
 INCLUDE_PREFIXES: tuple[str, ...] = ("workflow-",)
 
@@ -47,15 +49,15 @@ LOADABLE_BY_PATH: tuple[str, ...] = (
     "common-system-design",
 )
 
-ENV_VAR = "AI_RESOURCES_SKILLS"
+ENV_VAR = domains.ENV_VAR
 
 
 def include_list(skill_ids, env: dict | None = None) -> set[str] | None:
     """The skill ids to link, or None for "all" (no filtering)."""
-    raw = ((env if env is not None else os.environ).get(ENV_VAR) or "").strip().lower()
-    if raw == "all":
+    toks = domains.tokens(env=env if env is not None else os.environ)
+    if toks == ["all"]:
         return None
-    extra = tuple(p if p.endswith("-") else p + "-" for p in (x.strip() for x in raw.split(",")) if p and p != "lean")
+    extra = tuple(p if p.endswith("-") else p + "-" for p in toks)
     prefixes = INCLUDE_PREFIXES + extra
     ids = set(INCLUDE_IDS)
     ids |= {sk for skills in ROLE_SKILLS.values() for sk in skills}   # preloads must resolve: Claude Code skips unlinked ones
