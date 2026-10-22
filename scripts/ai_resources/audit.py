@@ -323,6 +323,10 @@ def cmd_audit_json(args: argparse.Namespace) -> int:
 
     It never prints an identifier and does not need rich."""
     from . import audit_snapshot
+    if getattr(args, "billing_only", False):
+        # Billing, quota and credit only: no transcript is read (the daily Slack section already has the snapshot).
+        print(json.dumps({"schema": 1, "billing": billing_report()}, indent=1, default=str))
+        return 0
     usages, oc_stats = _load_usages(args)
     doc = {
         "schema": 1,
@@ -516,6 +520,8 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
                    help="Also report OpenClaw native-runtime usage per agent and model (read-only)")
     p.add_argument("--json", action="store_true",
                    help="Print one JSON document (billing, quota, credit, alerts and the summary metrics) and exit")
+    p.add_argument("--billing-only", dest="billing_only", action="store_true",
+                   help="With --json: print only the billing block and read no transcript")
     p.set_defaults(func=cmd_audit)
 
     asub = p.add_subparsers(dest="audit_cmd")

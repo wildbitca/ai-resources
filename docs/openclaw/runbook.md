@@ -325,13 +325,33 @@ runs print `openclaw config set` commands instead. `assert_channels_safe` still 
 `~/.openclaw/kit-host.env` as `OPENCLAW_MCP_SERVERS=engram,clickup`. An install that already mirrors keeps doing so.
 In opt-in mode a mirrored server that is no longer listed is denied per non-lane agent by exact token (`<server>__*`, never the global `tools.deny`); a lane agent denies the unlisted servers by name through `lanes.mcp`. See pitfall T50.
 
-**Printed, never written:** `plugins.entries.workboard.enabled=false` (drops the workboard tools from every session),
-`tools.profile` (ADR-0011), the agy `mcp_config.json` trim. **Reported, never repointed:** a `kit-lane-agy-*` agent whose
-primary is an Anthropic model (ADR-0007 section 11 keeps agy lanes closed).
+**Printed, never written:** `tools.profile` (ADR-0011) and the removal of an entry from agy's `mcp_config.json`.
+**Offered as confirmed migrations since ADR-0014:** `plugins.entries.workboard.enabled=false` and the main heartbeat
+(see "Round 2" below). **Reported, never repointed:** a `kit-lane-agy-*` agent whose primary is an Anthropic model
+(ADR-0007 section 11 keeps agy lanes closed).
 
 **Measure it.** `ai-resources audit snapshot before`, apply, use the bot for a few days, `ai-resources audit snapshot after`,
 then `ai-resources audit compare before after`.
 A baseline taken earlier with the operator's `bench.py` counts differently (first record per message id and request id; the kit keeps the last record per message id), so re-take it with the kit over the same window: `ai-resources audit snapshot before --since <ISO> --until <ISO>`. `compare` warns when the two methods differ. Figures are API-equivalent estimates; subscription use is not billed per token.
+
+### Round 2 cost options (ADR-0014)
+
+All of these ask first, default No, record what they change, and never restart the gateway (ADR-0003). A key that the installed
+reload table classifies as restart-required, or that it cannot classify, is not applied: it is recorded in
+`host_restart_pending` and `ai-resources openclaw apply-pending` applies it later in a drained window. On OpenClaw 2026.10.5
+every key below reads hot or none.
+
+| Option | Where | Behaviour |
+|---|---|---|
+| Disable the workboard plugin | per-path confirm in the cost migrations | `plugins.entries.workboard.enabled` true -> false; once applied, the host section no longer re-enables it |
+| Main heartbeat off | host question "Turn the main agent's heartbeat off?" (default No keeps the 2h isolated light heartbeat) | `agents.entries.main.heartbeat.every = "0m"`: filled when unset, otherwise proposed as `old -> new` with its own confirm, recorded by id |
+| Utility-model check | opt-in question, or `ai-resources doctor --probe-utility-model`, or `audit snapshot --probe` | one tiny `openclaw infer model run --local` turn per model, billed like any call, never through the gateway; a 400 is reported as "key not valid for this model, create the key inside the workspace"; a replacement is proposed only if a probe verified it |
+| Haiku notification route | interactive question, then a channel checkbox | agent `kit-notifications` on the pinned Haiku (no fallbacks) and one `bindings[]` route per ticked Slack channel, before main's catch-all; a channel that already has a route is reported and left alone; teardown removes only the entries the kit wrote |
+| Completion announcements | doctor INFO line | no config key exists (schema checked 2026-10-22; only `agents.defaults.subagents.announceTimeoutMs`, a timeout), so nothing is written |
+
+The notification route has its own guard (`assert_notification_route_safe`, `scripts/ai_resources/openclaw_notification_route.py`):
+it may send only that agent entry and the `bindings` array whole with `--replace-path bindings`, and it never writes `channels.*`
+or `tools.*`. The Slack cost writer and `assert_channels_safe` are unchanged.
 
 ## Image generation (ADR-0011, proposed)
 

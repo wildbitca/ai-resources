@@ -170,3 +170,28 @@ def test_the_isolated_paths_never_point_at_the_real_home():
     real = Path.home()
     for p in (billing.claude_json_path(), billing.credits_path(), billing.sidecar_path()):
         assert real not in p.parents or "pytest" in str(p)
+
+
+def test_the_sidecar_is_the_freshest_candidate_and_the_env_override_wins(tmp_path, monkeypatch):
+    import os
+    old, new = tmp_path / "kit.json", tmp_path / "workspace.json"
+    old.write_text("{}")
+    new.write_text("{}")
+    os.utime(old, (1000, 1000))
+    os.utime(new, (2000, 2000))
+    monkeypatch.undo()                                     # the conftest isolation: this test wants the real function
+    monkeypatch.setattr(billing, "sidecar_candidates", lambda: [old, new])
+    monkeypatch.delenv("AI_RESOURCES_CLAUDE_SIDECAR", raising=False)
+    assert billing.sidecar_path() == new
+    os.utime(old, (3000, 3000))
+    assert billing.sidecar_path() == old
+    monkeypatch.setattr(billing, "sidecar_candidates", lambda: [tmp_path / "none-a", tmp_path / "none-b"])
+    assert billing.sidecar_path() == tmp_path / "none-a"             # nothing exists: the kit's own path
+    monkeypatch.setenv("AI_RESOURCES_CLAUDE_SIDECAR", str(new))
+    assert billing.sidecar_path() == new
+
+
+def test_the_workspace_cache_is_one_of_the_candidates(monkeypatch):
+    monkeypatch.undo()                                     # the conftest isolation replaces the list
+    names = [str(p) for p in billing.sidecar_candidates()]
+    assert any(n.endswith("ai-usage/rate-limits-cache.json") for n in names)

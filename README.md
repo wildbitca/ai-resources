@@ -179,6 +179,8 @@ Profiles define the role → model mapping for kit subagents. Setup offers the p
 | `claude-native` | single-model | Claude aliases per role (kept for saved setups; its preset is Balanced) |
 | `claude-inherit` | single-model | Every role inherits the session model |
 
+`balanced` (single-model) is the performant and low-cost mix, retuned on 2026-10-22 (ADR-0014): Haiku 5.5 for explore, tester, doc-writer and package-upgrade; Sonnet 5.5 for the planner, architect, implementer, reviewer and the fixers; Opus 5.5 for the verifier and security auditor only (no writer on Opus, no fallback to Opus). A host that saved `balanced` sees the old -> new table at its next `setup`; nothing is renamed and `low-cost` keeps its team.
+
 The starting-team ids are the same on every row: `balanced`, `performance`, `low-cost` (and Custom). A gateway row uses `gateway/balanced` (Claude Opus checkers, Sonnet writers, Gemini Flash on explore, tester and doc-writer; Review asks once whether to use Gemini through OpenRouter), `gateway/performance` and `gateway/low-cost`. Old names keep loading and mean the same team (`performance-claude-55` is `gateway/performance`, ...). `subscription-claude-55` is a legacy preset, not an alias: it keeps its own file and its Claude-only team. A checker (verifier, security-auditor) never shares a model family with a writer in any shipped profile; `claude-inherit` and `all-gemini` are the two open exceptions.
 
 Multi-model (gateway) profiles:
@@ -230,6 +232,7 @@ Installed into `~/.claude/settings.json` by setup (your own hooks are kept):
 - `kit_session_start.py` (SessionStart) — reports in-progress or stale `.agent-output/handoff-*.md` files
 - `kit_subagent_return.py` (SubagentStop) — during a workflow, sends a kit role subagent back if it did not end with the return block
 - `kit_handoff_guard.py` (PreToolUse) — while `.agent-output/parallel-group.json` exists, blocks subagents from writing the shared handoff
+- `kit_sleep_guard.py` (PreToolUse, Bash) — refuses a `sleep` longer than 30 seconds (exit 2) and points at `run_in_background` and Monitor; fail-open, stdlib only (ADR-0014)
 
 ### Install as a Claude Code plugin
 
@@ -264,6 +267,25 @@ Project scaffolding templates:
 - `mcp.json.template` — MCP server configuration
 
 ---
+
+## Token cost and billing awareness (ADR-0013, ADR-0014)
+
+`ai-resources setup` keeps the configuration lean and every cost lever is measured, confirmed and reversible.
+
+| What | Command or file |
+|---|---|
+| Measure before and after | `ai-resources audit snapshot before`, `ai-resources setup`, `ai-resources audit snapshot after`, `ai-resources audit compare before after` (API-equivalent estimates; no saving is claimed without it) |
+| Cost report, machine-readable | `ai-resources audit --json` (add `--billing-only` to read no transcript); the text report also prints the global CLAUDE.md weight (`~N tokens (estimate)`) and the share of Haiku calls above 100k |
+| Billing, quota, credit | `ai-resources doctor` and `audit` show the auth mode (subscription or prepaid), the 5 h and weekly quota, and warn when prepaid, weekly >= 100%, or 5 h >= 90% |
+| Credit left | a manual file `~/.config/ai-resources/credits.json`, mode 0600, no secrets: `{"prepaid_usd": 12.5, "promo_usd": 5, "promo_expires": "2026-12-01", "updated": "2026-10-22"}`. Absent means "unknown", older than 7 days means "stale". Alerts: promo expiring within 7 days, balance below `AI_RESOURCES_CREDIT_LOW_USD` (default 10) |
+| Poll turns | the sleep guard hook, and an alert when poll turns exceed 5% of the cost (`AI_RESOURCES_POLL_SHARE_ALERT` overrides) |
+| Unused tools | setup offers, one by one and default No, to disable user-level MCP servers and plugins with no call in 30 days; `ai-resources setup --restore-hygiene` puts them back |
+| Global CLAUDE.md | setup offers to move heavy blocks of your own content to a skill or a rule, verbatim, with a backup; `ai-resources setup --restore-claude-md` re-inlines them (refuses if you edited the destination) |
+| Personas | persona subagents exist only for active domains: `AI_RESOURCES_SKILLS=flutter,angular` (or `all`) |
+| agy MCP file | setup can add `engram` and servers you pick to `~/.gemini/config/mcp_config.json`, fill-only with a backup; `ai-resources setup --restore-agy-mcp` takes them back |
+| OpenClaw | confirmed migrations for the workboard plugin and the main heartbeat (restart-class keys wait for `ai-resources openclaw apply-pending`), an opt-in utility-model probe, and a Haiku route for Slack notification channels |
+
+Not kit-controllable, so documented and never written: OpenClaw completion announcements (only `announceTimeoutMs`, a timeout, exists), the engram SessionStart payload and its server-side `mem_judge`, the remaining prepaid credit (use `credits.json`), and hooks inside OpenClaw `claude-cli` children.
 
 ## Orchestration Overview
 
@@ -328,6 +350,7 @@ Agents discover skills — including the `workflow-*` skills — natively from t
 | [Multi-model Guide](docs/multi-model.md) | LiteLLM gateway setup, per-role routing, OAuth integration, OpenClaw chat-bot engines |
 | [LiteLLM Service](docs/litellm-service.md) | Running and managing the local LiteLLM container |
 | [Orchestration Guide](docs/orchestration.md) | Detailed workflow diagrams, agent roles, and handoff protocol |
+| [ADR-0013](docs/decisions/0013-token-cost-lean-defaults.md), [ADR-0014](docs/decisions/0014-token-cost-round-2.md) | Token-cost decisions: lean defaults, `balanced` retune, hygiene, billing awareness, polling guard |
 | [AGENTS.md](AGENTS.md) | Orchestration policy and skill discovery rules |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, and the unrestricted-execution risk of OpenClaw's `antigravity` engine |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
