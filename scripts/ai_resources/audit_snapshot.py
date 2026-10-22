@@ -32,7 +32,8 @@ METHOD = "kit-2: dedupe=message.id, last-record-wins; subagents and OpenClaw eve
 METRIC_KEYS = [
     "calls", "sessions", "active_hours", "cost_usd", "cost_per_active_hour", "cost_per_session", "cost_per_call",
     "calls_per_session_median", "first_call_ctx_median", "ctx_p50", "ctx_p90", "share_calls_ctx_gt_200k",
-    "share_cache_read_from_ctx_gt_200k", "share_cost_poll_turns", "cache_hit_ratio",
+    "share_cache_read_from_ctx_gt_200k", "share_cost_poll_turns", "cache_hit_ratio", "haiku_calls",
+    "share_haiku_calls_ctx_gt_100k",
 ]
 
 
@@ -65,6 +66,7 @@ def summarize(usages: list[audit_sources.Usage]) -> dict:
     inp_total = sum(u.cache_read + u.cache_write + u.input for u in usages) or 1
     q = st.quantiles(ctx, n=10) if len(ctx) > 1 else [ctx[0]] * 9
     agents = {u.agent for u in usages if u.agent}
+    haiku = [u for u in usages if "haiku" in u.model]
     return {
         "calls": len(usages), "sessions": len(by_sess), "active_hours": len(hours), "active_days": len(days),
         "cost_usd": round(cost, 2), "unpriced_calls": len(usages) - len(priced),
@@ -77,6 +79,9 @@ def summarize(usages: list[audit_sources.Usage]) -> dict:
         "share_cache_read_from_ctx_gt_200k": round(sum(u.cache_read for u in usages if u.ctx > 200_000) / cr_total, 3),
         "share_cost_poll_turns": round(sum(c or 0 for u, c in costs if u.poll) / (cost or 1), 3),
         "cache_hit_ratio": round(cr_total / inp_total, 3),
+        # ADR-0014 D1: a Haiku call above 100k prompt tokens is priced in the higher tier (audit.LONG_CONTEXT).
+        "haiku_calls": len(haiku),
+        "share_haiku_calls_ctx_gt_100k": round(sum(1 for u in haiku if u.ctx > 100_000) / len(haiku), 3) if haiku else 0.0,
         "by_model": dict(Counter(u.model for u in usages)),
         "by_agent_cost": {k: round(v, 2) for k, v in sorted(
             ((a, sum(c or 0 for u, c in costs if u.agent == a)) for a in agents), key=lambda x: -x[1])},
@@ -97,6 +102,20 @@ def _load_json(path: Path):
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+KIT_BLOCK_BEGIN = "<!-- BEGIN ai-resources"
+KIT_BLOCK_END = "<!-- END ai-resources -->"
+
+
+def claude_md_tokens(text: str) -> dict:
+    """Token estimate (bytes / 4, labelled an estimate) of a global CLAUDE.md, split into the kit block and the rest."""
+    begin = text.find(KIT_BLOCK_BEGIN)
+    end = text.find(KIT_BLOCK_END, begin) if begin >= 0 else -1
+    kit = text[begin:end + len(KIT_BLOCK_END)] if begin >= 0 and end >= 0 else ""
+    rest = text.replace(kit, "", 1) if kit else text
+    est = lambda s: len(s.encode("utf-8")) // 4          # noqa: E731 - bytes/4: an estimate, not a tokenizer
+    return {"total": est(text), "kit_block": est(kit), "rest": est(rest), "basis": "bytes/4 (estimate)"}
 
 
 def _billing_inventory() -> dict:
@@ -132,6 +151,8 @@ def inventory(home: Path | None = None, run: Callable[[list[str]], str] | None =
             "user_skills": len(glob.glob(str(home / ".claude" / "skills" / "*" / "SKILL.md"))),
             "user_agents": len(glob.glob(str(home / ".claude" / "agents" / "*.md"))),
             "global_claude_md_bytes": cmd_md.stat().st_size if cmd_md.exists() else 0,
+            "global_claude_md_tokens_est": claude_md_tokens(cmd_md.read_text(encoding="utf-8", errors="replace"))
+            if cmd_md.exists() else {"total": 0, "kit_block": 0, "rest": 0, "basis": "bytes/4 (estimate)"},
             "enabled_plugins": settings.get("enabledPlugins"),
             "env": {k: v for k, v in (settings.get("env") or {}).items()
                     if any(s in k for s in ("COMPACT", "AGENT_TEAMS", "CACHE", "TOOL_SEARCH", "1M"))},

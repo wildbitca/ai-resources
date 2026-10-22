@@ -172,3 +172,15 @@ def _isolate_home_derived_paths(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(billing, "claude_json_path", lambda: root / ".claude.json")
     monkeypatch.setattr(billing, "credits_path", lambda: root / "config" / "ai-resources" / "credits.json")
     monkeypatch.setattr(billing, "sidecar_path", lambda: root / "cache" / "claude-rate-limits.json")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_usage_index(tmp_path_factory, monkeypatch):
+    """The usage index reads every Claude Code transcript and caches under ~/.cache/ai-resources (ADR-0014 S5)."""
+    root = tmp_path_factory.mktemp("usage-index")
+    try:
+        from ai_resources import usage_index
+    except Exception:
+        return
+    monkeypatch.setattr(usage_index, "cache_path", lambda: root / "cache" / "ai-resources" / "usage-index.json")
+    monkeypatch.setattr(usage_index, "default_roots", lambda: [])

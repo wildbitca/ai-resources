@@ -171,6 +171,24 @@ def poll_cost_share(usages) -> float:
     return poll / total if total else 0.0
 
 
+def haiku_share_above_100k(usages) -> tuple[int, float]:
+    """(Haiku calls, share of them whose prompt exceeds the Haiku price-tier threshold of 100k tokens)."""
+    haiku = [u for u in usages if "haiku" in u.model]
+    if not haiku:
+        return 0, 0.0
+    return len(haiku), sum(1 for u in haiku if u.ctx > LONG_CONTEXT["claude-haiku-5-5"][0]) / len(haiku)
+
+
+def claude_md_report(home: Path | None = None) -> dict:
+    """The global ~/.claude/CLAUDE.md in tokens (estimate), split into the kit block and the rest."""
+    from . import audit_snapshot
+    path = (home or Path.home()) / ".claude" / "CLAUDE.md"
+    try:
+        return audit_snapshot.claude_md_tokens(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return {"total": 0, "kit_block": 0, "rest": 0, "basis": "bytes/4 (estimate)"}
+
+
 def poll_alert_message(share: float) -> str:
     return (f"Poll turns are {share:.0%} of the estimated cost (alert above {poll_share_threshold():.0%}): wait with one "
             "blocking call or run_in_background, not sleep loops; the kit sleep guard refuses a sleep over 30 s.")
@@ -316,6 +334,9 @@ def cmd_audit_json(args: argparse.Namespace) -> int:
     share = poll_cost_share(usages)
     doc["poll"] = {"share": round(share, 4), "threshold": poll_share_threshold(), "alert": poll_alert(share)}
     doc["poll_alert"] = doc["poll"]["alert"]
+    calls, hshare = haiku_share_above_100k(usages)
+    doc["haiku"] = {"calls": calls, "share_above_100k": round(hshare, 3)}
+    doc["global_claude_md_tokens_est"] = claude_md_report()
     if oc_stats is not None and oc_stats.undecoded:
         doc["undecoded_rows"] = oc_stats.undecoded
     print(json.dumps(doc, indent=1, default=str))
@@ -449,9 +470,17 @@ def cmd_audit(args: argparse.Namespace) -> int:
         cache_pct = 100.0 * (total_cr / (total_cr + total_out + sum(v["inp"] for v in model_stats.values()) + 1))
         ui.detail(f"Cache reads are {total_cr/1e9:.2f}B tokens ({cache_pct:.0f}% of all tokens) — cache reduces cost vs fresh input.")
 
-    share = poll_cost_share(cc_usages + oc_usages)
+    all_usages = cc_usages + oc_usages
+    share = poll_cost_share(all_usages)
     if poll_alert(share):
         ui.warn(poll_alert_message(share))
+    calls, hshare = haiku_share_above_100k(all_usages)
+    if calls:
+        ui.detail(f"Haiku calls above the 100k prompt tier: {hshare:.1%} of {calls:,} calls "
+                  "(those are priced at the higher tier).")
+    md = claude_md_report()
+    ui.detail(f"global CLAUDE.md ~{md['total']:,} tokens (estimate): kit block ~{md['kit_block']:,}, "
+              f"your own content ~{md['rest']:,}.")
     _print_billing(con)
     return 0
 
