@@ -260,3 +260,10 @@ def test_the_rewrite_keeps_the_file_mode(tmp_path, monkeypatch):
     assert host.cmd_dedupe_agents_md(_args(p, apply=True)) == 0
     assert (p.stat().st_mode & 0o777) == 0o640
     assert HEAD not in p.read_text(encoding="utf-8").split(_shared.MANAGED_BEGIN)[0]
+
+
+def test_the_polling_guidance_is_in_the_openclaw_block_exactly_once_and_short():
+    md = _shared.openclaw_agent_kit_md("/kit")
+    assert md.count(_shared.OPENCLAW_POLLING_HEADING) == 1
+    assert len(_shared.OPENCLAW_POLLING_MD.strip().splitlines()) < 10
+    assert "sessions_yield" in _shared.OPENCLAW_POLLING_MD and "60-120 s" in _shared.OPENCLAW_POLLING_MD

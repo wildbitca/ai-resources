@@ -254,6 +254,37 @@ def mcp_deny(agent: Mapping[str, Any], doc: Mapping[str, Any]) -> list[str]:
     return [f"{n}__*" for n in names]
 
 
+AGY_AGENT_PREFIX = PREFIX + "agy-"
+
+
+def agy_primary_drift(doc: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """(agent id, primary ref) for every `kit-lane-agy-*` agent in the live config whose primary is an Anthropic model.
+
+    An agy lane is meant to run on the Antigravity subscription (`agy-cli-lane/*`). One that runs a Claude model
+    on the API bills per token (the 2026-10-22 analysis found Opus 5.5 on three of them). The kit only REPORTS this:
+    it does not repoint the agent, and it leaves the agy lane gates and held agents exactly as they are (ADR-0007
+    section 11: the gates stay unproven)."""
+    entries = _get(doc, "agents", "entries") or {}
+    out: list[tuple[str, str]] = []
+    if not isinstance(entries, Mapping):
+        return out
+    for aid in sorted(entries):
+        if not (isinstance(aid, str) and aid.startswith(AGY_AGENT_PREFIX)):
+            continue
+        model = (entries[aid] or {}).get("model") if isinstance(entries[aid], Mapping) else None
+        primary = model.get("primary") if isinstance(model, Mapping) else model
+        if isinstance(primary, str) and (primary.startswith("anthropic/") or primary.startswith("claude-")):
+            out.append((aid, primary))
+    return out
+
+
+def agy_primary_drift_findings(doc: Mapping[str, Any]) -> list[str]:
+    return [f"{aid} is an agy lane but its primary is {ref} on the Anthropic API (billed per token, not the "
+            "Antigravity subscription). The kit does not repoint it: agy lanes stay closed until the ADR-0007 "
+            "gates are proven. Repoint or remove the agent by hand if the spend is unwanted."
+            for aid, ref in agy_primary_drift(doc)]
+
+
 def mcp_scope_findings(lanes: Mapping[str, Any], doc: Mapping[str, Any],
                        acks: Mapping[str, Any] | None = None) -> list[str]:
     """One message per kit lane agent present in `doc` whose `tools.deny` lacks the scoping tokens."""

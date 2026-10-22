@@ -20,6 +20,11 @@ Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upg
 - Never call the native AskUserQuestion in a headless or subagent session: it hangs until the watchdog fires. Use `ask_user` with a `timeoutSeconds` of 120-300, then end the turn; never leave it open waiting. A subagent returns its question to the parent.
 - A cron job reports at each phase, so a timeout names the phase that hung.
 
+## Waiting without polling
+
+- Every poll turn re-reads the whole context: wait with one blocking call, or poll no more often than every 60-120 s.
+- No `process(poll)`, `sleep` or `sessions_yield` loops at short intervals; check a background job's output file with one short read per phase.
+
 ## Worktrees
 
 - Do a task's work on its own branch in a managed worktree, not in the shared checkout: `openclaw worktrees create <repoRoot> --name <agent>-<task> [--base-ref <ref>]` prints the path and the branch (`openclaw/<name>`); work only there. The kit does not create, snapshot or clean worktrees: it delegates to `openclaw worktrees`.

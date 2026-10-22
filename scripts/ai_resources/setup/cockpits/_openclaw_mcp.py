@@ -29,10 +29,11 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 from urllib.parse import parse_qsl, urlsplit
 
 from .. import state, ui
+from . import openclaw_lanes as _lanes
 from ... import openclaw_host as _host
 
 Runner = Callable[..., tuple[int, str]]
@@ -280,8 +281,31 @@ def env_refs(entries: list[dict]) -> list[str]:
 
 # --- plan ----------------------------------------------------------------------------
 
-def plan(sources: list[Source], servers: dict, mirrored: dict) -> list[Item]:
+INCLUDE_ENV = "OPENCLAW_MCP_SERVERS"
+INCLUDE_HINT = (
+    "No MCP server is mirrored into OpenClaw by default: every mirrored server adds its tool schemas to every bot "
+    f"session. To mirror some, list them in ~/.openclaw/kit-host.env, e.g. {INCLUDE_ENV}=engram,clickup, and re-run "
+    "`ai-resources setup`. Lane agents stay scoped by `lanes.mcp` (names outside it are denied per agent).")
+
+
+def include_list(s: state.SetupState, env: dict[str, str] | None = None) -> list[str] | None:
+    """The opt-in list of server names to mirror; None means no filter (the pre-opt-in behaviour).
+
+    OPENCLAW_MCP_SERVERS in kit-host.env wins (an empty value means none). Otherwise an install that already answered
+    the question or mirrored something keeps mirroring everything it did; a new install mirrors nothing."""
+    env = _host.read_host_env() if env is None else env
+    if INCLUDE_ENV in env:
+        return [n.strip() for n in env[INCLUDE_ENV].split(",") if n.strip()]
+    if s.openclaw.mcp in ANSWERS or s.openclaw.mcp_mirrored:
+        return None
+    return []
+
+
+def plan(sources: list[Source], servers: dict, mirrored: dict, include: list[str] | None = None) -> list[Item]:
     """What mirroring would do to OpenClaw's `servers`, given the kit's earlier `mirrored` record.
+
+    With an `include` list only those names are considered; the rest are skipped, and a server the kit mirrored
+    earlier that is not listed is left in place (removing it is the confirmed teardown, never a side effect).
 
     A server the user defined in OpenClaw is never overwritten: when it already matches it is
     adopted, otherwise it is left alone. A server the kit wrote is updated only while it still
@@ -296,6 +320,9 @@ def plan(sources: list[Source], servers: dict, mirrored: dict) -> list[Item]:
             item.reason = f"same name as the server from {seen[src.name]}"
             continue
         seen[src.name] = src.origin
+        if include is not None and src.name not in include and src.name not in MANAGED_ELSEWHERE:
+            item.reason = f"not in the MCP opt-in list ({INCLUDE_ENV})"
+            continue
         if src.name in MANAGED_ELSEWHERE:
             item.reason = MANAGED_ELSEWHERE[src.name]
             continue
@@ -334,6 +361,71 @@ def plan(sources: list[Source], servers: dict, mirrored: dict) -> list[Item]:
             items.append(Item(name, "", "kit", "skip",
                               reason="gone from Claude Code, but changed in OpenClaw by hand"))
     return items
+
+
+# --- per-agent scoping of mirrored-but-unlisted servers ------------------------------------
+
+def unlisted_mirrored(s: state.SetupState, include: list[str] | None) -> list[str]:
+    """Servers the kit mirrored earlier that the opt-in list no longer names (never the engine-managed ones).
+
+    They stay configured in OpenClaw (removing one is the confirmed teardown); each agent is told not to load them."""
+    if include is None:
+        return []
+    return sorted(n for n in s.openclaw.mcp_mirrored if n not in include and n not in MANAGED_ELSEWHERE)
+
+
+def deny_tokens(names: list[str]) -> list[str]:
+    """OpenClaw's whole-server denial tokens: exact `<model-facing server name>__*`, never a broad glob."""
+    return sorted({f"{_lanes.safe_server_name(n)}__*" for n in names})
+
+
+def scope_patch(doc: Mapping[str, Any], desired: list[str], recorded: Mapping[str, list[str]]) -> dict[str, Any]:
+    """The fill-only per-agent `tools.deny` patch. Lane agents are skipped (`openclaw_lanes.mcp_deny` scopes them);
+    an operator token is kept; only tokens the kit recorded earlier and no longer wants are dropped.
+    The global `tools.deny` is never in this patch (ADR-0011)."""
+    entries = ((doc.get("agents") or {}).get("entries") or {}) if isinstance(doc.get("agents"), Mapping) else {}
+    out: dict[str, Any] = {}
+    for aid, entry in sorted(entries.items()):
+        if not isinstance(aid, str) or aid.startswith(_lanes.PREFIX) or not isinstance(entry, Mapping):
+            continue
+        tools = entry.get("tools")
+        current = [t for t in ((tools.get("deny") if isinstance(tools, Mapping) else None) or []) if isinstance(t, str)]
+        prev = set(recorded.get(aid) or [])
+        stale = [t for t in current if t in prev and t not in desired]
+        missing = [t for t in desired if t not in current]
+        if stale or missing:
+            merged = [t for t in current if t not in stale] + missing
+            out[aid] = {"tools": {"deny": merged or None}}
+    return {"agents": {"entries": out}} if out else {}
+
+
+def scope_agents(s: state.SetupState, doc: Mapping[str, Any], apply_patch: Callable[..., tuple[bool, str]], *,
+                 include: list[str] | None, dry_run: bool = False) -> bool:
+    """Deny the mirrored-but-unlisted servers per agent by name and record what was added. True when the file changed."""
+    desired = deny_tokens(unlisted_mirrored(s, include))
+    recorded = s.openclaw.mcp_deny_added
+    patch = scope_patch(doc, desired, recorded)
+    if not patch or dry_run:
+        return False
+    entries = doc["agents"]["entries"]
+    after: dict[str, list[str]] = {}
+    for aid, ent in patch["agents"]["entries"].items():          # computed from the snapshot, before the write
+        new = ent["tools"]["deny"] or []
+        live = set(((entries.get(aid) or {}).get("tools") or {}).get("deny") or [])
+        kept = [t for t in recorded.get(aid, []) if t in new]
+        after[aid] = sorted(set(kept) | {t for t in new if t not in live})
+    # `config patch` unions lists: each agent's whole deny list is sent with --replace-path so a stale token comes out too.
+    replace = [f"agents.entries.{aid}.tools.deny" for aid in patch["agents"]["entries"]]
+    ok, out = apply_patch(patch, replace_paths=replace)
+    if not ok:
+        ui.warn(f"OpenClaw MCP per-agent scoping not applied: {ui.safe_excerpt(out, 300, tail=True)}")
+        return False
+    for aid, merged in after.items():
+        if merged:
+            recorded[aid] = merged
+        else:
+            recorded.pop(aid, None)
+    return True
 
 
 # --- OpenClaw writes --------------------------------------------------------------------
@@ -522,10 +614,15 @@ def default_answer(s: state.SetupState) -> str:
 
 
 def prompt(s: state.SetupState, servers: dict, home: Path | None = None) -> None:
-    items = plan(collect(home), servers, s.openclaw.mcp_mirrored)
+    include = include_list(s)
+    items = plan(collect(home), servers, s.openclaw.mcp_mirrored, include)
     if not items:
         return
     table(items)
+    if include is not None and not any(i.action in ACTIONABLE for i in items):
+        if not include:
+            ui.info(INCLUDE_HINT)
+        return
     s.openclaw.mcp = ui.select("Give the bot the same MCP servers as Claude Code?",
                                [ui.Choice(label, value=a) for a, label in ANSWERS.items()],
                                default=default_answer(s))
@@ -548,7 +645,7 @@ def configure(s: state.SetupState, doc: dict, run: Runner, *, home: Path | None 
               dry_run: bool = False) -> bool:
     """Apply the saved answer. True when openclaw.json changed."""
     servers = (doc.get("mcp") or {}).get("servers") or {}
-    items = plan(collect(home), servers, s.openclaw.mcp_mirrored)
+    items = plan(collect(home), servers, s.openclaw.mcp_mirrored, include_list(s))
     if not apply(items, s, run, dry_run=dry_run) or dry_run:
         return False
 
