@@ -363,3 +363,13 @@ def test_a_hygiene_step_that_disabled_something_locks_the_run_against_a_rewind(w
     before = len(ui.actions_done())
     hygiene.run_step(_state(), runner=_runner(world), index=_index(world), now=NOW)
     assert len(ui.actions_done()) > before              # flow.Wizard compares this counter: the step is then locked
+
+
+def test_restore_of_a_config_with_secrets_says_the_argv_exposure_first(capsys):
+    from ai_resources.setup import hygiene as h
+    calls = []
+    rec = {"kind": "mcp", "name": "s", "previous": {"command": "x", "env": {"PLAIN": "1"}}}
+    assert h.restore(rec, runner=lambda argv: (calls.append(argv), (0, ""))[1])[0]
+    assert "command line" not in capsys.readouterr().out
+    assert h.has_secrets({"command": "x", "env": {"API_TOKEN": "t"}})
+    assert not h.has_secrets({"command": "x", "env": {"PLAIN": "1"}})

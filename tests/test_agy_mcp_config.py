@@ -282,3 +282,22 @@ def test_the_setup_flag_runs_the_restore_without_the_wizard(monkeypatch):
     monkeypatch.setattr(wizard, "run", lambda a: (_ for _ in ()).throw(AssertionError("the wizard must not run")))
     args = cli.build_parser().parse_args(["setup", "--restore-agy-mcp"])
     assert args.func(args) == 0 and called == [1]
+
+
+def test_a_server_with_a_secret_looking_arg_is_not_offered(tmp_path):
+    cj = tmp_path / "claude.json"
+    cj.write_text(json.dumps({"mcpServers": {
+        "flag": {"command": "srv", "args": ["--api-key=abc"]},
+        "url": {"command": "pg", "args": ["postgres://user:pw@db/x"]},
+        "prov": {"command": "srv", "args": ["sk-ant-123"]},
+        "plain": {"command": "srv", "args": ["-y", "pkg"]},
+    }}))
+    assert set(agy_mcp.portable_candidates(cj)) == {"plain"}
+
+
+def test_a_file_the_kit_creates_is_private(tmp_path):
+    import stat
+    from types import SimpleNamespace
+    path = tmp_path / "config" / "mcp_config.json"
+    agy_mcp.add_servers(path, {"engram": {"command": "engram", "args": ["mcp"]}}, SimpleNamespace(agy_mcp_added={}))
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600

@@ -5,7 +5,9 @@ to only print a hint. ADR-0014 lets it keep the file lean, on confirmation, with
 
 - the kit's own entry is `engram`, written only if absent (fill-only) after one confirm;
 - other servers are opt-in: a multiselect (default none) over the Claude Code user-level servers that are plain stdio
-  commands with no environment values (nothing secret is copied into this file); each chosen one is written only if absent;
+  commands with no environment values and no secret-looking argument (nothing secret is copied into this file); each
+  chosen one is written only if absent;
+- a file the kit creates is mode 0600 (an existing file keeps its mode);
 - merge-preserving: every other key and server of the file stays byte-for-value as it was; the file is replaced atomically;
 - an exclusive backup of the file is made before the first edit of a run;
 - every added server is recorded in `tracking.agy_mcp_added` with the definition written; teardown removes only an entry that
@@ -16,6 +18,8 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -25,6 +29,10 @@ from . import ui
 from .cockpits import _shared
 
 KIT_SERVER = "engram"
+# An argument that names a secret (`--api-key=...`, `--token`), carries URL credentials (`postgres://u:p@h`) or looks
+# like a provider key: a server with one is not offered, since its args would be copied as they are.
+_SECRET_ARG = re.compile(r"(key|token|secret|passw|auth|bearer|credential|cookie)|://[^/@\s]+:[^/@\s]+@|\b(sk|pk|ghp|xox[bp])[-_]",
+                         re.IGNORECASE)
 
 
 def mcp_path() -> Path:
@@ -59,6 +67,8 @@ def portable_candidates(claude_json: Path | None = None) -> dict[str, dict]:
         if cfg.get("type", "stdio") != "stdio" or not isinstance(cfg.get("command"), str) or cfg.get("env"):
             continue
         args = cfg.get("args")
+        if isinstance(args, list) and any(_SECRET_ARG.search(str(a)) for a in args):
+            continue
         out[name] = {"command": cfg["command"], "args": list(args) if isinstance(args, list) else []}
     return out
 
@@ -91,6 +101,8 @@ def add_servers(path: Path, additions: dict[str, dict], tracking, *, now: dateti
     if target is None:
         return backup
     path.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))   # the atomic replace keeps this mode
     _shared._replace_atomically(target, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
     for name, defn in fresh.items():
         tracking.agy_mcp_added[name] = copy.deepcopy(defn)

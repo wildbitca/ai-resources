@@ -14,7 +14,9 @@ to disable exactly those, one by one:
   (`tracking.hygiene_disabled`), so no secret value lands in the state file. If the private copy cannot be written the
   server is not removed;
 - `ai-resources setup --restore-hygiene` puts every recorded item back (`claude mcp add-json`, `claude plugin enable`)
-  and drops its record; an item that cannot be restored stays recorded and is said out loud;
+  and drops its record; an item that cannot be restored stays recorded and is said out loud. `claude mcp add-json`
+  takes the config only as a positional argument (no stdin or file option), so while it runs the restored config,
+  secrets included, is visible in its argv to other local users (`/proc/<pid>/cmdline`); restore says so first;
 - never run headless (no terminal, `--non-interactive`, an OpenClaw child session): AGENTS.md forbids prompts there.
 
 A plugin's slash commands and hooks are not counted as usage (only its tool, skill and subagent calls are), which is why
@@ -119,6 +121,11 @@ def has_redactions(config: dict) -> bool:
     return REDACTED in json.dumps(config)
 
 
+def has_secrets(config: dict) -> bool:
+    """True when `redact` would hide something in this config."""
+    return redact(config) != config
+
+
 def find_candidates(index: "usage_index.Index", recorded: list[dict] | None = None, *, window_days: int = WINDOW_DAYS,
                     claude_json: Path | None = None, settings: Path | None = None,
                     now: datetime | None = None) -> list[Candidate]:
@@ -214,6 +221,9 @@ def restore(record: dict, *, runner: Runner) -> tuple[bool, str]:
         else:
             return False, (f"the private copy of '{name}' is missing or changed, and the recorded config has redacted "
                            "values: re-add it by hand with `claude mcp add-json`")
+    if has_secrets(cfg):
+        print(f"Note: '{name}' has secret values; `claude mcp add-json` only takes them on its command line, where other "
+              "local users can see them while it runs.")
     rc, out = runner(["claude", "mcp", "add-json", name, json.dumps(cfg), "-s", "user"])
     if rc != 0:
         return False, f"`claude mcp add-json` failed: {out.strip()[:120]}"
