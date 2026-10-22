@@ -1868,9 +1868,20 @@ def _step5_credentials(s: state.SetupState, dry_run: bool = False) -> int:
         if pid == "vertex":
             # Vertex needs project + location, not an API key
             existing_proj = credentials.get_key("GOOGLE_CLOUD_PROJECT")
-            project = ui.text("GOOGLE_CLOUD_PROJECT (GCP project ID)", default=existing_proj)
+            if not existing_proj:
+                try:
+                    import subprocess
+                    proc = subprocess.run(["gcloud", "config", "get-value", "project"],
+                                          capture_output=True, text=True, timeout=2)
+                    if proc.returncode == 0 and proc.stdout.strip():
+                        existing_proj = proc.stdout.strip()
+                except Exception:
+                    pass
+            project = ui.text("GOOGLE_CLOUD_PROJECT (GCP project ID)", default=existing_proj or "")
             if project:
                 updates["GOOGLE_CLOUD_PROJECT"] = project
+                updates["ANTHROPIC_VERTEX_PROJECT_ID"] = project
+                updates["CLAUDE_CODE_USE_VERTEX"] = "1"
             # "global" rather than a specific region: regional endpoints serve
             # Claude Sonnet 4.6 and earlier only, so a regional default silently
             # rules out every current model. Multi-region ("us"/"eu") and
@@ -1880,7 +1891,8 @@ def _step5_credentials(s: state.SetupState, dry_run: bool = False) -> int:
                                default=existing_loc)
             if location:
                 updates["GOOGLE_CLOUD_LOCATION"] = location
-            ui.info("Run `gcloud auth application-default login` if you haven't already.")
+                updates["CLOUD_ML_REGION"] = location
+            ui.info("Vertex AI: Using GCP credentials (WIF/ADC).")
             continue
 
         if pid == "ollama":
@@ -3009,6 +3021,56 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
         ui.console().print()
         ui.info(line)
 
+    # Sync managed environment to shell rc files (~/.zshrc and ~/.bashrc) and OpenClaw systemd env
+    from . import shell
+    active_env_vars: dict[str, str] = {}
+    is_vertex = any(pid == "vertex" and ps.enabled for pid, ps in s.providers.items())
+    if is_vertex:
+        proj = credentials.get_key("GOOGLE_CLOUD_PROJECT")
+        loc = credentials.get_key("GOOGLE_CLOUD_LOCATION") or "us-east5"
+        if proj:
+            active_env_vars["GOOGLE_CLOUD_PROJECT"] = proj
+            active_env_vars["ANTHROPIC_VERTEX_PROJECT_ID"] = proj
+            active_env_vars["CLAUDE_CODE_USE_VERTEX"] = "1"
+        if loc:
+            active_env_vars["GOOGLE_CLOUD_LOCATION"] = loc
+            active_env_vars["CLOUD_ML_REGION"] = loc
+        wif_p = Path("~/.config/gcloud/agent-wif/cred-config.json").expanduser()
+        adc_p = Path("~/.config/gcloud/application_default_credentials.json").expanduser()
+        if wif_p.exists():
+            active_env_vars["GOOGLE_APPLICATION_CREDENTIALS"] = str(wif_p)
+        elif adc_p.exists():
+            active_env_vars["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_p)
+
+    if any(pid == "google" and ps.enabled for pid, ps in s.providers.items()):
+        gemini_k = credentials.get_key("GEMINI_API_KEY")
+        if gemini_k:
+            active_env_vars["GEMINI_API_KEY"] = gemini_k
+
+    if any(pid == "anthropic" and ps.enabled for pid, ps in s.providers.items()) and not is_vertex:
+        ant_k = credentials.get_key("ANTHROPIC_API_KEY")
+        if ant_k:
+            active_env_vars["ANTHROPIC_API_KEY"] = ant_k
+
+    if active_env_vars:
+        synced_rcs = shell.sync_all_shell_envs(active_env_vars, dry_run=dry_run)
+        for rc in synced_rcs:
+            ui.ok(f"Synced managed environment variables to {rc}")
+        openclaw_env = shell.sync_openclaw_systemd_env(
+            active_env_vars,
+            purge_keys=["ANTHROPIC_API_KEY"] if is_vertex else None,
+            dry_run=dry_run,
+        )
+        if openclaw_env:
+            ui.ok(f"Synced OpenClaw service environment: {openclaw_env}")
+
+    purged = shell.purge_stale_credentials(
+        "vertex" if is_vertex else "hybrid_direct",
+        dry_run=dry_run,
+    )
+    for p in purged:
+        ui.info(f"Credential hygiene: {p}")
+
     return 0
 
 
@@ -3116,6 +3178,10 @@ def _dry_run_targets(s: state.SetupState, executors_doc: dict, env_patch: dict |
             if _claude_cockpit.SETTINGS_PATH.is_file() else None
         out.append(("settings.json env", _claude_cockpit.SETTINGS_PATH,
                     json.dumps({"env": merged}, indent=2, sort_keys=True), before))
+    from . import shell
+    rc_files = shell.get_existing_rc_files()
+    for rc in rc_files:
+        out.append((f"{rc.name} env", rc, "# managed ai-resources env block", None))
     return out
 
 
