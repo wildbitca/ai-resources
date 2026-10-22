@@ -13,8 +13,8 @@ from wizard_fakes import Script, host_env
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "setup_state_v1_0.json"
 
 STEP_IDS = ["tools", "cockpit", "mode", "gateway", "providers", "credentials", "preset", "models", "profile", "lanes",
-            "cockpits", "audio", "more", "lifecycle", "hygiene", "review", "apply"]
-# ADR-0014: "hygiene" (number 8) is the one step added since ADR-0010; every other id and number is as it was.
+            "cockpits", "audio", "more", "lifecycle", "hygiene", "claude_md", "review", "apply"]
+# ADR-0014: "hygiene" and "claude_md" (number 8) are the only steps added since ADR-0010; every other id and number is as it was.
 
 
 def _args(**kw):
@@ -28,7 +28,7 @@ def _args(**kw):
 def test_step_ids_and_internal_numbers_are_unchanged():
     steps = wizard._build_steps(True)
     assert [s.id for s in steps] == STEP_IDS
-    assert [s.number for s in steps] == [1, 1, 2, 3, 4, 5, 6, 6, 6, 6, 7, 7, 8, 8, 8, 9, 9]
+    assert [s.number for s in steps] == [1, 1, 2, 3, 4, 5, 6, 6, 6, 6, 7, 7, 8, 8, 8, 8, 9, 9]
     assert wizard.TOTAL_STEPS == 10 and len(flow.STEP_LABELS) == 10
 
 
