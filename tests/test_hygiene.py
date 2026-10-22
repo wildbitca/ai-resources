@@ -310,7 +310,8 @@ def test_skipped_without_claude_code_or_its_cli(monkeypatch):
 
 def test_the_wizard_step_is_registered_between_more_and_review_and_is_silent_when_skipped(monkeypatch):
     ids = [sp.id for sp in wizard._build_steps(False)]
-    assert ids.index("hygiene") == ids.index("lifecycle") + 1 and ids.index("hygiene") == ids.index("review") - 1
+    assert ids.index("hygiene") == ids.index("lifecycle") + 1 and ids.index("claude_md") == ids.index("hygiene") + 1
+    assert ids.index("claude_md") == ids.index("review") - 1
     spec = next(sp for sp in wizard._build_steps(False) if sp.id == "hygiene")
     # A step that records an action locks itself (flow.Wizard), so a Back or an Edit never re-runs a disable.
     assert spec.rewindable is True
