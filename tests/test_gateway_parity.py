@@ -177,6 +177,8 @@ def test_password_aborts_rather_than_returning_empty(non_interactive):
 @pytest.fixture
 def agents_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(claude_cockpit, "AGENTS_DIR", tmp_path)
+    # Persona subagents exist only for an active domain (ADR-0014 D6; tests/test_persona_domains.py covers the gating).
+    monkeypatch.setenv("AI_RESOURCES_SKILLS", "all")
     return tmp_path
 
 

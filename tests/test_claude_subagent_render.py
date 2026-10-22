@@ -14,6 +14,9 @@ EXECUTORS = {"by_role": {"implementer": {"model": "google/gemini-3.7-flash"}, "p
 @pytest.fixture
 def agents(tmp_path, monkeypatch):
     monkeypatch.setattr(claude, "AGENTS_DIR", tmp_path / "agents")
+    # These tests are about how a persona renders. Persona subagents exist only for an active domain (ADR-0014 D6;
+    # the gating itself is tests/test_persona_domains.py), so they switch every domain on.
+    monkeypatch.setenv("AI_RESOURCES_SKILLS", "all")
     return tmp_path / "agents"
 
 

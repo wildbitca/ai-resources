@@ -30,7 +30,7 @@ def test_the_fixture_matrix_is_complete():
     assert NAMES == sorted([
         "account_picked_selection", "cli_lanes_anthropic_ack", "cli_lanes_google_ack", "cli_team_balanced",
         "cli_team_customized", "composed_team", "gemini_cockpit", "multi_litellm", "multi_openrouter",
-        "openclaw-pre-image", "openclaw_host_voice", "single_claude_native"])
+        "openclaw-pre-image", "openclaw_host_voice", "round2_fields", "single_claude_native"])
 
 
 @pytest.fixture
@@ -97,3 +97,43 @@ def _flat(doc, prefix=""):
     for k, v in doc.items():
         out.update(_flat(v, f"{prefix}.{k}" if prefix else k))
     return out
+
+
+# --- ADR-0014 (round 2): additive fields ---------------------------------------------------------------------------
+
+ROUND2_TRACKING = ("hygiene_disabled", "claude_md_migrations", "persona_domains_active", "agy_mcp_added")
+
+
+def test_the_schema_version_stays_1_0():
+    assert state.SCHEMA_VERSION == "1.0"
+
+
+@pytest.mark.parametrize("name", [n for n in NAMES if n != "round2_fields"])
+def test_a_state_from_before_round_2_gains_no_new_key(home, name):
+    _seed(name)
+    doc = state._to_dict(state.load())
+    for key in ROUND2_TRACKING:
+        assert key not in doc["tracking"]
+    assert "notification_route_changes" not in doc["openclaw"] and "roles_seen" not in doc["profile"]
+
+
+def test_the_round_2_fields_are_loaded_and_saved_unchanged(home):
+    _seed("round2_fields")
+    s = state.load()
+    assert s.tracking.hygiene_disabled[0]["name"] == "grafana" and s.tracking.hygiene_disabled[0]["previous"]["command"] == "npx"
+    assert s.tracking.claude_md_migrations[0]["kind"] == "skill"
+    assert s.tracking.persona_domains_active == ["angular"]
+    assert s.tracking.agy_mcp_added["engram"]["command"] == "engram"
+    assert s.openclaw.notification_route_changes[0]["path"] == "bindings"
+    assert s.profile.roles_seen["tester"] == {"model": "haiku", "fallbacks": ["sonnet"]}
+
+
+def test_a_state_with_round_2_fields_survives_an_unrelated_save(home):
+    _seed("round2_fields")
+    s = state.load()
+    s.profile.customized = False
+    state.save(s)
+    again = state.load()
+    assert again.tracking.hygiene_disabled == s.tracking.hygiene_disabled
+    assert again.tracking.claude_md_migrations == s.tracking.claude_md_migrations
+    assert again.openclaw.notification_route_changes == s.openclaw.notification_route_changes
