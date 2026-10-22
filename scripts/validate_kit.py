@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # The package is not installed when CI runs this script, so put `scripts/` on the path for the
 # policy module (pure data, no other imports).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ai_resources import roles_policy, skill_scope  # noqa: E402
+from ai_resources import haiku_budget, roles_policy, skill_scope  # noqa: E402
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DESCRIPTION_LIMIT = 1024  # Claude Code truncates description + when_to_use at 1536 chars
 VERIFIER_DOC_SKILL = "knowledge-audit"
@@ -363,6 +363,15 @@ def check_skill_scope(skill_ids: set[str], role_names: set[str]) -> None:
                 fail("skill-scope", f"ROLE_SKILLS[{role}] preloads '{skill}', which not every '{role}' step names")
 
 
+def check_haiku_budget() -> None:
+    """A role that any shipped profile runs on Haiku must start under the 100k-token Haiku price tier (ADR-0014 D1)."""
+    for role, tokens in haiku_budget.over_budget(ROOT):
+        fail("haiku-budget", f"role '{role}' runs on Haiku and its static prompt is estimated at ~{tokens:,} tokens "
+                             f"(4 chars/token, x{haiku_budget.SAFETY_MARGIN} margin, {haiku_budget.FIXED_PREFIX_TOKENS:,} fixed prefix), "
+                             f"above the {haiku_budget.HAIKU_PROMPT_THRESHOLD_TOKENS:,}-token price tier: "
+                             f"shrink its role file, preloaded skills or the native skill listing")
+
+
 def check_workflows(skill_ids: set[str], role_names: set[str]) -> None:
     """Steps reference real roles and skills; routing targets resolve; invariants hold."""
     for wf_path in sorted((ROOT / "workflows").glob("*.workflow.yaml")):
@@ -615,6 +624,7 @@ def main() -> int:
     persona_count = check_personas(role_names)
     check_workflows(skill_ids, role_names)
     check_skill_scope(skill_ids, role_names)
+    check_haiku_budget()
     check_workflow_scripts()
     check_hooks()
     check_references()

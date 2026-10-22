@@ -22,11 +22,13 @@ ALIASES = {"haiku", "sonnet", "opus"}
 CHECKERS = ("verifier", "security-auditor")
 FIXERS = ("crashlytics-fixer", "sentry-fixer", "terraform-maintainer", "crossplane-upjet-maintainer")
 
+# ADR-0014 D1 (operator decision 2026-10-22): `balanced` is retuned. Haiku for explore, tester, doc-writer and
+# package-upgrade; Sonnet for the planner, the architect and the writers; Opus for the two checkers only; no Opus fallback.
 EXPECTED = {
     "explore": ("haiku", ["sonnet"]),
-    "tester": ("sonnet", ["haiku"]),
-    "doc-writer": ("sonnet", []),
-    "package-upgrade": ("sonnet", []),
+    "tester": ("haiku", ["sonnet"]),
+    "doc-writer": ("haiku", []),
+    "package-upgrade": ("haiku", []),
     "generalPurpose": ("sonnet", []),
     "implementer": ("sonnet", []),
     "crashlytics-fixer": ("sonnet", []),
@@ -36,8 +38,8 @@ EXPECTED = {
     "code-reviewer": ("sonnet", []),
     "security-auditor": ("opus", []),
     "verifier": ("opus", []),
-    "planner": ("sonnet", ["opus"]),
-    "software-architect": ("opus", ["sonnet"]),
+    "planner": ("sonnet", []),
+    "software-architect": ("sonnet", []),
 }
 
 

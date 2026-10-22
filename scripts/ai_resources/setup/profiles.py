@@ -47,6 +47,43 @@ def recommended_profile(backend: str = "litellm") -> str:
     return "gateway/balanced" if backend == "openrouter" else RECOMMENDED_PROFILE
 
 
+# The `balanced` single-model team before the ADR-0014 D1 retune. A host that saved `balanced` and recorded no table
+# (`state.profile.roles_seen`) was running this one, so the first `setup` after the update shows old -> new from it.
+LEGACY_PROFILE_TABLES: dict[str, dict[str, dict[str, Any]]] = {
+    "balanced": {
+        "explore": {"model": "haiku", "fallbacks": ["sonnet"]},
+        "tester": {"model": "sonnet", "fallbacks": ["haiku"]},
+        "doc-writer": {"model": "sonnet"},
+        "package-upgrade": {"model": "sonnet"},
+        "generalPurpose": {"model": "sonnet"},
+        "implementer": {"model": "sonnet"},
+        "crashlytics-fixer": {"model": "sonnet"},
+        "sentry-fixer": {"model": "sonnet"},
+        "terraform-maintainer": {"model": "sonnet"},
+        "crossplane-upjet-maintainer": {"model": "sonnet"},
+        "code-reviewer": {"model": "sonnet"},
+        "security-auditor": {"model": "opus"},
+        "verifier": {"model": "opus"},
+        "planner": {"model": "sonnet", "fallbacks": ["opus"]},
+        "software-architect": {"model": "opus", "fallbacks": ["sonnet"]},
+    },
+}
+
+
+def profile_table(by_role: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The comparable shape of a profile's roles: {role: {"model": ..., "fallbacks": [...] (only when not empty)}}."""
+    out: dict[str, dict[str, Any]] = {}
+    for role in KNOWN_ROLES:
+        cfg = by_role.get(role)
+        if not isinstance(cfg, dict) or not cfg.get("model"):
+            continue
+        row: dict[str, Any] = {"model": cfg["model"]}
+        if cfg.get("fallbacks"):
+            row["fallbacks"] = list(cfg["fallbacks"])
+        out[role] = row
+    return out
+
+
 def saved_or_recommended(saved: str, backend: str = "litellm") -> str:
     """The profile a state runs under: the one it saved, else the recommendation (never a stale default)."""
     return saved or recommended_profile(backend)
