@@ -2,6 +2,7 @@
 name: workflow-k8s-debug
 description: "User asks to debug, monitor, or investigate Kubernetes resources — pods, deployments, services, ingress, nodes, events, PVCs, HPA, RBAC, or cluster health. Runs the kit workflow 'k8s-debug': Kubernetes cluster debugging and monitoring. Gathers cluster state, diagnoses root cause, optionally applies fix."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/k8s-debug.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

@@ -2,6 +2,7 @@
 name: workflow-dependency-audit
 description: "User asks to audit dependencies, check for vulnerabilities, update packages, upgrade libraries, review CVEs, check outdated deps, or reduce bundle size. Runs the kit workflow 'dependency-audit': Audit dependencies for vulnerabilities and outdated packages, plan upgrades by risk, apply and verify."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/dependency-audit.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

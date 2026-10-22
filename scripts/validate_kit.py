@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # The package is not installed when CI runs this script, so put `scripts/` on the path for the
 # policy module (pure data, no other imports).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ai_resources import roles_policy  # noqa: E402
+from ai_resources import roles_policy, skill_scope  # noqa: E402
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DESCRIPTION_LIMIT = 1024  # Claude Code truncates description + when_to_use at 1536 chars
 VERIFIER_DOC_SKILL = "knowledge-audit"
@@ -311,6 +311,58 @@ def check_lane_workflow(rel, doc: dict, steps: list, groups: dict) -> None:
                 f(f"{rel}:{iid}", "an integrating step needs a following verifier step that names it in 'verifies'")
 
 
+def check_skill_scope(skill_ids: set[str], role_names: set[str]) -> None:
+    """The lean native skill list must not hide a skill a workflow step needs.
+
+    A skill named by a workflow step stays reachable without the native listing: the step loads
+    `$AGENT_KIT/skills/<id>/SKILL.md` by path (check_workflows already fails an unknown id), or the role's
+    subagent preloads it (ROLE_SKILLS, which must be a subset of what EVERY step of the role names).
+    Every generated workflow-* skill must carry `disable-model-invocation: true`, and the native include
+    list must name real skills.
+    """
+    for sid in skill_scope.INCLUDE_IDS:
+        if sid not in skill_ids:
+            fail("skill-scope", f"skill_scope.INCLUDE_IDS names unknown skill '{sid}'")
+    for sid in sorted(skill_ids):
+        if sid.startswith("workflow-") and not frontmatter(ROOT / "skills" / sid / "SKILL.md").get("disable-model-invocation"):
+            fail("skill-scope", f"skills/{sid}: workflow skills must set disable-model-invocation: true (run `ai-resources generate`)")
+    for sid in skill_scope.LOADABLE_BY_PATH:
+        if sid not in skill_ids:
+            fail("skill-scope", f"skill_scope.LOADABLE_BY_PATH names unknown skill '{sid}'")
+    linked = skill_scope.include_list(skill_ids, env={}) or set()
+    loadable = set(skill_scope.LOADABLE_BY_PATH)
+    role_steps: dict[str, list[set[str]]] = {}
+    for wf_path in sorted((ROOT / "workflows").glob("*.workflow.yaml")):
+        try:
+            doc = yaml.safe_load(wf_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            continue
+        for step in doc.get("steps") or []:
+            role, skills = step.get("subagent_type"), set(step.get("skills") or [])
+            role_steps.setdefault(role, []).append(skills)
+            for skill in sorted(skills):
+                if skill in skill_ids and skill not in linked and skill not in loadable \
+                        and skill not in skill_scope.ROLE_SKILLS.get(role, ()):
+                    fail("skill-scope", f"{wf_path.name} step '{step.get('id')}' names '{skill}', which is not linked "
+                                        f"(INCLUDE_*), not preloaded for role '{role}' (ROLE_SKILLS) and not marked "
+                                        f"loadable-by-path (skill_scope.LOADABLE_BY_PATH)")
+
+    for role, skills in skill_scope.ROLE_SKILLS.items():
+        for skill in skills:
+            if skill not in linked:
+                fail("skill-scope", f"ROLE_SKILLS[{role}] preloads '{skill}', which is not linked (Claude Code skips it)")
+            elif skill in skill_ids and skill not in skill_scope.INCLUDE_IDS and (ROOT / "skills" / skill / "SKILL.md").is_file() \
+                    and not frontmatter(ROOT / "skills" / skill / "SKILL.md").get("disable-model-invocation"):
+                fail("skill-scope", f"skills/{skill}: a preloaded skill outside INCLUDE_IDS must set disable-model-invocation: true")
+        if role not in role_names:
+            fail("skill-scope", f"ROLE_SKILLS names unknown role '{role}'")
+        for skill in skills:
+            if skill not in skill_ids:
+                fail("skill-scope", f"ROLE_SKILLS[{role}] names unknown skill '{skill}'")
+            elif not all(skill in step_skills for step_skills in role_steps.get(role, [set()])):
+                fail("skill-scope", f"ROLE_SKILLS[{role}] preloads '{skill}', which not every '{role}' step names")
+
+
 def check_workflows(skill_ids: set[str], role_names: set[str]) -> None:
     """Steps reference real roles and skills; routing targets resolve; invariants hold."""
     for wf_path in sorted((ROOT / "workflows").glob("*.workflow.yaml")):
@@ -562,6 +614,7 @@ def main() -> int:
     role_names = check_roles()
     persona_count = check_personas(role_names)
     check_workflows(skill_ids, role_names)
+    check_skill_scope(skill_ids, role_names)
     check_workflow_scripts()
     check_hooks()
     check_references()

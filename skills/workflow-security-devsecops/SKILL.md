@@ -2,6 +2,7 @@
 name: workflow-security-devsecops
 description: "User asks for security audit, pen test, vulnerability scan, DevSecOps review, or exploit validation. Runs the kit workflow 'security-devsecops': DevSecOps audit — recon, SAST, dependency scan, secret detection, DAST, exploit validation, report."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/security-devsecops.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

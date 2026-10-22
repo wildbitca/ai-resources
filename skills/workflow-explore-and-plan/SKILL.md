@@ -2,6 +2,7 @@
 name: workflow-explore-and-plan
 description: "User wants to understand the codebase or get a plan before implementing. Runs the kit workflow 'explore-and-plan': Discovery and planning only (no implementation). Works for any domain."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/explore-and-plan.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

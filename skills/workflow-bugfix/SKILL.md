@@ -2,6 +2,7 @@
 name: workflow-bugfix
 description: "User asks to fix a bug, resolve an issue, or correct broken behavior. Runs the kit workflow 'bugfix': Domain-agnostic bugfix workflow. research → explore → implement → test → security → verify."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/_bugfix-template.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

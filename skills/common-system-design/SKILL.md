@@ -1,6 +1,7 @@
 ---
 name: common-system-design
 description: 'Universal architectural standards for robust, scalable systems. Use when designing new features, evaluating architecture, or resolving scalability concerns. (triggers: architecture, design, system, scalability)'
+disable-model-invocation: true
 ---
 
 # System Design & Architecture Standards

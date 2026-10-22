@@ -2,6 +2,7 @@
 name: workflow-incident-response
 description: "User reports a production incident, outage, degraded service, SLO breach, alert storm, or asks for emergency rollback or hotfix. Runs the kit workflow 'incident-response': Full incident lifecycle — triage (gather signals) → diagnose (root cause) → fix (apply resolution) → document (postmortem)."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/incident-response.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

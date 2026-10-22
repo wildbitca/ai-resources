@@ -2,6 +2,7 @@
 name: workflow-cross-domain-backend-infra
 description: "User asks to deploy, change infra, or run a flow that touches both app and infra. Runs the kit workflow 'cross-domain-backend-infra': Task crossing app (backend) and infra — app → infra → test → review → verify."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/cross-domain-backend-infra.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

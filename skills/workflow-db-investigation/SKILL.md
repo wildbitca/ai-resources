@@ -2,6 +2,7 @@
 name: workflow-db-investigation
 description: "User asks to investigate slow queries, missing indexes, N+1 queries, database schema, migration conflicts, data integrity issues, connection pool problems, or DB performance. Runs the kit workflow 'db-investigation': Investigate database performance, schema, data integrity, or migration issues. Inspect → analyze → fix."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/db-investigation.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

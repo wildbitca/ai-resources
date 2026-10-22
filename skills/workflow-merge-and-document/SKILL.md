@@ -2,6 +2,7 @@
 name: workflow-merge-and-document
 description: "User asks to merge a branch and write docs, SDD specs, or handoff documents. Includes 'merge + document', 'merge and write specs/docs', 'merge and update SDD'. Runs the kit workflow 'merge-and-document': Merge feature branch to develop and write/update SDD specs. Delegates all heavy work to cheap models."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/merge-and-document.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

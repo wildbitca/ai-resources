@@ -2,6 +2,7 @@
 name: workflow-infra-triage
 description: "User reports broken infrastructure, resources not syncing, provider errors, Crossplane composition failures, or needs to debug and stabilize IaC resources. Runs the kit workflow 'infra-triage': Infrastructure triage and stabilization. Diagnose broken IaC resources, fix provider/composition issues, monitor until healthy."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/infra-triage.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

@@ -2,6 +2,7 @@
 name: workflow-feature-lanes
 description: "User asks to implement a feature and wants the team to run on subscription lanes (claude-cli lane agents, and Antigravity agents once that lane is open) under the kit's verified landing path (explicit request only; the plain feature workflow is the default). Runs the kit workflow 'feature-lanes': Feature workflow on subscription lanes. Every role is a lane step resolved from the setup lanes table; scope writers are verified in sequence, the implementer integrates, review has a second member and the kit lands the result."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/feature-lanes.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

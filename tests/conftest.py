@@ -60,6 +60,12 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # v1.9.7 reported as fixed (1.10.2).
     from ai_resources.setup.cockpits import openclaw as openclaw_cockpit
     monkeypatch.setattr(openclaw_cockpit, "CONFIG_ROOT", root / "openclaw-home", raising=False)
+    # The kit's trim of the Engram plugin hook rewrites a file inside ~/.claude/plugins: a test that calls
+    # `claude.configure()` must never reach the operator's real plugin directory. Tests of the trim pass `home`.
+    from ai_resources.setup import engram_patch
+    _real_plugin_dirs = engram_patch.plugin_dirs
+    monkeypatch.setattr(engram_patch, "plugin_dirs",
+                        lambda home=None: _real_plugin_dirs(home) if home is not None else [])
     # And the model pins overlay (~/.config/ai-resources/model-pins.json): a host overlay must never
     # leak into a test, and a test must never write the operator's real one.
     from ai_resources import agy_gate_evidence, model_pins
