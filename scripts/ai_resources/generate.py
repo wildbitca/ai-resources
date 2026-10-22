@@ -269,6 +269,9 @@ def _workflow_skill_md(filename: str, doc: dict) -> str:
         f"name: workflow-{name}\n"
         f'description: "{description}"\n'
         'argument-hint: "[goal]"\n'
+        # Not listed to the model: the description of every workflow skill would otherwise sit in each
+        # session's prefix. Users invoke /workflow-<name>; /kit-plan and /kit-implement are the usual route.
+        "disable-model-invocation: true\n"
         "---\n\n"
         f"<!-- Generated from workflows/{filename} by `ai-resources generate`. Edit the YAML, not this file. -->\n\n"
         f"# Workflow: {name}\n\n"

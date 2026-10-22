@@ -2,6 +2,7 @@
 name: workflow-feature-implementation
 description: "User asks to implement a feature, new functionality, or multi-step task. Runs the kit workflow 'feature-implementation': Domain-agnostic feature workflow. research → plan → architect → implement → test → (review ‖ security) → verify."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/_feature-template.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

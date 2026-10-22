@@ -2,6 +2,7 @@
 name: workflow-cloud-ops
 description: "User asks to query, check, manage, or integrate with cloud resources (AWS, GCP, Azure) or external APIs (Stripe, Twilio, GitHub, Slack, etc.). Includes cost checks, IAM, storage, queues, DNS, certificates. Runs the kit workflow 'cloud-ops': Cloud resource query, management, and external API integration. Gather resource state → analyze → optionally act."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/cloud-ops.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

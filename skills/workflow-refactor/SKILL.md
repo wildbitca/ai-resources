@@ -2,6 +2,7 @@
 name: workflow-refactor
 description: "User asks to refactor, clean up, restructure, deduplicate, rename, extract, simplify, reduce coupling, improve readability, or pay down technical debt — without adding new functionality. Runs the kit workflow 'refactor': Structured code refactoring — assess technical debt → plan atomic steps → implement without behavior change → verify no regressions."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/refactor.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

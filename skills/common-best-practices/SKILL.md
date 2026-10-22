@@ -1,6 +1,7 @@
 ---
 name: common-best-practices
 description: "Universal clean-code principles for any environment. (triggers: **/*.ts, **/*.tsx, **/*.go, **/*.dart, **/*.java, **/*.kt, **/*.swift, **/*.py, solid, kiss, dry, yagni, naming, conventions, refactor, clean code)"
+disable-model-invocation: true
 ---
 
 # Global Best Practices

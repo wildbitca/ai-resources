@@ -171,19 +171,25 @@ def _is_kit_skills_dir(d: Path, skills_root: Path) -> bool:
     )
 
 
-def sync_skill_links(links_dir: Path, skills_root: Path, *, dry_run: bool = False) -> dict[str, list[str]]:
+def sync_skill_links(links_dir: Path, skills_root: Path, *, dry_run: bool = False,
+                     include: "set[str] | None" = None) -> dict[str, list[str]]:
     """Link every kit skill as `links_dir/<skill-id>` → `skills_root/<skill-id>`.
 
     Agents discover skills one directory level below their skills dir, so a single link to
     the whole kit (`links_dir/ai-resources`) hides every skill. This replaces that legacy link,
     prunes kit links whose skill no longer exists, and never touches the user's own skills:
     a name already taken by a real directory or a foreign link is reported as skipped.
+
+    `include` limits the linked skills to those ids (None = every skill, the historical behaviour).
+    A kit link whose skill is excluded is pruned like one whose skill is gone; foreign links are never touched.
     """
     result: dict[str, list[str]] = {"linked": [], "removed": [], "skipped": []}
     skills_root = Path(os.path.normpath(skills_root))
     if not skills_root.is_dir():
         return result
     wanted = {d.name: d for d in sorted(skills_root.iterdir()) if (d / "SKILL.md").is_file()}
+    if include is not None:
+        wanted = {n: d for n, d in wanted.items() if n in include}
 
     if links_dir.is_dir():
         for entry in sorted(links_dir.iterdir()):
@@ -248,7 +254,7 @@ LEGACY_KIT_HEADINGS = frozenset({
 # are only ever stripped under a `# ai-resources (<tool>)` title, so a user's own section of the
 # same name under another H1 is kept.
 CURRENT_KIT_HEADINGS = frozenset({
-    "Using the kit", "Delegation", "Multi-model routing", "Kit workflow", "Worktrees",
+    "Using the kit", "Delegation", "Waiting", "Waiting without polling", "Multi-model routing", "Kit workflow", "Worktrees",
     "Long-running commands never block a tool call", "Memory", "Voice notes", "Orchestration", "Voice",
 })
 
@@ -617,6 +623,16 @@ OPENCLAW_LONG_RUNNING_MD = (
 )
 
 
+OPENCLAW_POLLING_HEADING = "## Waiting without polling"
+OPENCLAW_POLLING_MD = (
+    f"\n{OPENCLAW_POLLING_HEADING}\n\n"
+    "- Every poll turn re-reads the whole context: wait with one blocking call, or poll no more often than every "
+    "60-120 s.\n"
+    "- No `process(poll)`, `sleep` or `sessions_yield` loops at short intervals; check a background job's output "
+    "file with one short read per phase.\n"
+)
+
+
 def _squash(text: str) -> str:
     return " ".join(text.split())
 
@@ -736,6 +752,7 @@ def openclaw_agent_kit_md(ak_path: str, *, delegates: bool = True) -> str:
         f"`.agent-output/handoff.md`); the shape is `{ak_path}/handoff.md.template`.\n"
     )
     text += OPENCLAW_LONG_RUNNING_MD
+    text += OPENCLAW_POLLING_MD
     text += (
         "\n## Worktrees\n\n"
         "- Do a task's work on its own branch in a managed worktree, not in the shared checkout: "

@@ -2,6 +2,7 @@
 name: workflow-release-dart-flutter
 description: "User asks to prepare a release or generate release notes before publishing to GitHub. Runs the kit workflow 'release-dart-flutter': Pre-publish hook. Diff since latest tag → humanized release notes (CHANGELOG + release_notes_*.txt). No agent commit/push; human integrates. Pipeline trusts these files."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/release-dart-flutter.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

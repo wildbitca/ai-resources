@@ -2,6 +2,7 @@
 name: workflow-ci-debug
 description: "User reports a failing CI pipeline, broken GitHub Actions workflow, failing deployment job, flaky test in CI, or CI environment error. Runs the kit workflow 'ci-debug': Diagnose and fix CI/CD pipeline failures. Fetch CI logs → identify failing step → fix cause."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/ci-debug.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

@@ -15,6 +15,7 @@ from .. import state, ui
 from ..detection import detect_claude_code
 from ... import repo_root
 from ...generate import parse_simple_frontmatter
+from ... import skill_scope
 from . import _shared
 
 
@@ -322,12 +323,53 @@ def _remove_kit_model_overrides(path: Path) -> list[str]:
     return removed
 
 
+# Lean-cost env (fill-only: an operator value is kept). Verified on Claude Code 2.1.308: the binary
+# reads CLAUDE_CODE_AUTO_COMPACT_WINDOW (it takes precedence over the `autoCompactWindow` setting).
+# A 1M-context session otherwise compacts only near 1M tokens; 200k keeps every call under the
+# long-prompt cost tier (2026-10-22 baseline: 39.6% of calls were above 200k).
+COST_ENV_FILL_ONLY: dict[str, str] = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000"}
+
+# One-time migration: the kit used to write CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 and no kit workflow
+# uses agent teams (rules/014 only names the upstream agent-teams-lite docs). Only the kit-written value
+# "1" is removed; any other value is the operator's own and stays.
+AGENT_TEAMS_MIGRATION_ID = "claude-env-drop-agent-teams-v1"
+AGENT_TEAMS_KEY = "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
+
+
+def _apply_cost_env(patch: dict, existing: dict) -> list[str]:
+    """Add the fill-only cost env keys the operator has not set. Returns the keys added to the patch."""
+    have = existing.get("env") if isinstance(existing.get("env"), dict) else {}
+    added = []
+    for key, value in COST_ENV_FILL_ONLY.items():
+        if key not in have:
+            patch.setdefault("env", {})[key] = value
+            added.append(key)
+    return added
+
+
+def _migrate_agent_teams(path: Path, applied: list[str]) -> bool:
+    """Remove the kit-written AGENT_TEAMS=1 once; record the migration id. Returns True when removed."""
+    if AGENT_TEAMS_MIGRATION_ID in applied:
+        return False
+    removed = False
+    if path.is_file():
+        try:
+            cur = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return False
+        env = cur.get("env") if isinstance(cur, dict) else None
+        if isinstance(env, dict) and env.get(AGENT_TEAMS_KEY) == "1":
+            _shared.remove_env_keys_from_settings(path, [AGENT_TEAMS_KEY])
+            removed = True
+    applied.append(AGENT_TEAMS_MIGRATION_ID)
+    return removed
+
+
 def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
                           ak_path: str, mode: str, backend: str = "litellm") -> dict:
     """Compute the settings.json patch for Claude Code."""
     env: dict[str, str] = {
         "AGENT_SKILLS_ROOT": f"{ak_path}/skills",
-        "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     }
     if mode == "multi-model":
         env["ANTHROPIC_BASE_URL"] = gateway_url
@@ -420,8 +462,15 @@ def _rewrite_body(body: str, ak_path: str) -> str:
     return body
 
 
-def _subagent_text(name: str, desc: str, tools: str | None, model: str, body: str) -> str:
-    """The content of one subagent file (pure)."""
+def _frontmatter_list(key: str, values) -> list[str]:
+    return [f"{key}:", *[f"  - {v}" for v in values]]
+
+
+def _subagent_text(name: str, desc: str, tools: str | None, model: str, body: str,
+                   skills: tuple[str, ...] | list[str] | None = None,
+                   mcp_servers: tuple[str, ...] | list[str] | None = None) -> str:
+    """The content of one subagent file (pure). `skills` and `mcp_servers` are emitted only when non-empty,
+    so a role without data renders exactly as before."""
     # Quote defensively: frontmatter is parsed as YAML now, so a description
     # containing a quote or a newline would otherwise emit a broken file.
     safe_desc = " ".join(desc.split()).replace("\\", "\\\\").replace('"', '\\"')
@@ -429,12 +478,18 @@ def _subagent_text(name: str, desc: str, tools: str | None, model: str, body: st
     if tools is not None:
         fm_lines.append(f"tools: {tools}")
     fm_lines.append(f"model: {model}")
+    if skills:
+        fm_lines += _frontmatter_list("skills", skills)
+    if mcp_servers:
+        fm_lines += _frontmatter_list("mcpServers", mcp_servers)
     return f"---\n{chr(10).join(fm_lines)}\n---\n\n{body}"
 
 
-def _write_subagent(name: str, desc: str, tools: str | None, model: str, body: str) -> bool:
+def _write_subagent(name: str, desc: str, tools: str | None, model: str, body: str,
+                    skills=None, mcp_servers=None) -> bool:
     """Emit one subagent file. Returns True when the file changed on disk."""
-    return _shared.write_text(AGENTS_DIR / f"{name}.md", _subagent_text(name, desc, tools, model, body))
+    return _shared.write_text(AGENTS_DIR / f"{name}.md",
+                              _subagent_text(name, desc, tools, model, body, skills, mcp_servers))
 
 
 def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
@@ -485,7 +540,8 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         # agent on any re-run where content was identical.
         write(name, str(meta.get("description", "")),
               ROLE_TOOLS.get(name), model,
-              body + _shared.kit_context_block(ak_path))
+              body + _shared.kit_context_block(ak_path),
+              skill_scope.ROLE_SKILLS.get(name), skill_scope.ROLE_MCP_SERVERS.get(name))
         generated.append(name)
 
     personas_dir = repo_root() / "agents" / "personas"
@@ -513,7 +569,8 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         body = (role_bodies[base] + "\n\n---\n\n" + _rewrite_body(overlay, ak_path)
                 + _shared.kit_context_block(ak_path))
         write(name, str(meta.get("description", "")),
-              ROLE_TOOLS.get(base), model, body)
+              ROLE_TOOLS.get(base), model, body,
+              skill_scope.ROLE_SKILLS.get(base), skill_scope.ROLE_MCP_SERVERS.get(base))
         generated.append(name)
 
     if tracking is not None:
@@ -532,8 +589,8 @@ def render_subagent_files(executors: dict, ak_path: str, mode: str, strict: bool
     out: dict[str, str] = {}
     _generate_subagent_files(executors, ak_path, mode, None, strict,
                              allow_unverified=allow_unverified, backend=backend,
-                             sink=lambda name, desc, tools, model, body: out.__setitem__(
-                                 name, _subagent_text(name, desc, tools, model, body)))
+                             sink=lambda name, desc, tools, model, body, skills=None, mcp=None: out.__setitem__(
+                                 name, _subagent_text(name, desc, tools, model, body, skills, mcp)))
     return out
 
 
@@ -574,32 +631,41 @@ def _install_workflow_scripts(ak_path: str, tracking: state.InstallTracking) -> 
     return installed, pruned
 
 
+# Kit-managed block for ~/.claude/CLAUDE.md. Kept lean on purpose: the whole block is part of every session's prefix.
+# It carries the two safety rules that must hold in every session (no long waits inside one tool call; no native
+# AskUserQuestion when headless) and the polling guidance, once.
+POLLING_GUIDANCE = (
+    "## Waiting\n\n"
+    "- Never block one tool call on a long wait: run long work in the background, write to a file, and read it with short calls.\n"
+    "- Wait with one blocking call (or a poll interval of 60-120 s or more); never loop `sleep`, `process poll` or "
+    "`sessions_yield` at short intervals: every poll re-reads the whole context.\n"
+    "- In a headless or subagent session never call the native AskUserQuestion (it hangs until the watchdog fires): "
+    "return the question to the parent or use `ask_user`.\n"
+)
+
+
 def _claude_md(ak_path: str, gateway_url: str, mode: str) -> str:
-    """Kit block for ~/.claude/CLAUDE.md — a short map; details live in skills."""
+    """Kit block for ~/.claude/CLAUDE.md: a short map; details live in skills."""
     return (
         "# ai-resources (Claude Code)\n\n"
         f"Kit root: `{ak_path}`. After `brew upgrade ai-resources`, run `ai-resources setup` to refresh "
         "skills, subagents and hooks.\n\n"
         "## Using the kit\n\n"
-        "- **Skills** are installed as native skills. Load one when its description matches the task; "
-        "a loaded skill overrides generic habits.\n"
-        "- **Workflows** are the `workflow-*` skills (feature, bugfix, refactor, incident response, …). "
-        "Use one for multi-step work that matches its description; the `kit-orchestration` skill "
-        "explains how to run steps, handoffs and parallel groups.\n"
-        "- **Deterministic core loop:** `/kit-plan <goal>` explores, drafts plans from three angles and "
-        "writes one for you to approve; `/kit-implement` then implements it with tests, reviews the diff "
-        "from three lenses, verifies each finding and signs off. Use them for feature, bugfix and refactor "
-        "work instead of running those steps by hand.\n"
-        "- **Subagents** for the kit roles are in `~/.claude/agents/` (planner, software-architect, "
-        "implementer, tester, code-reviewer, security-auditor, verifier, doc-writer, …).\n"
+        "- **Workflows:** `/kit-plan <goal>` explores, plans from three angles and writes a plan for you to approve; "
+        "`/kit-implement` implements it with tests, reviews the diff and verifies each finding. Use them for feature, "
+        "bugfix and refactor work. Other flows are the `/workflow-<name>` skills (incident response, k8s debug, "
+        "release, ...); load `kit-orchestration` to run one.\n"
+        "- **Skills:** only the core ones are listed. Any other kit skill is `" + ak_path + "/skills/<id>/SKILL.md`: read it when the "
+        "task matches (a loaded skill overrides generic habits).\n"
+        "- **Subagents** for the kit roles are in `~/.claude/agents/` (planner, software-architect, implementer, "
+        "tester, code-reviewer, security-auditor, verifier, doc-writer, ...).\n"
         "- **Commands:** `/delegate`, `/setup-project`, `/knowledge-audit`, `/self-update`.\n\n"
         "## Delegation\n\n"
-        "Decide by task shape, not by step or file count:\n\n"
-        "- Delegate work that would flood the context (broad searches, long logs, test output), "
-        "independent review, and parallelizable fan-out.\n"
-        "- Do targeted reads and small edits directly.\n"
-        "- A delegated prompt carries the workspace path, the goal, the skills to read first, and the "
-        "return format from `kit-orchestration`.\n\n"
+        "- Delegate work that would flood the context (broad searches, long logs, test output), independent review, "
+        "and parallel fan-out; do targeted reads and small edits directly.\n"
+        "- A delegated prompt carries the workspace path, the goal, the skills to read first, and the return format "
+        "from `kit-orchestration`.\n\n"
+        f"{POLLING_GUIDANCE}\n"
         f"{_shared.multimodel_protocol_md(ak_path, gateway_url, mode)}"
     )
 
@@ -745,6 +811,15 @@ def _install_engram_plugin() -> bool:
     return True
 
 
+def _trim_engram_hooks() -> dict[str, str]:
+    """Best-effort: never aborts setup (see engram_patch for the contract)."""
+    try:
+        from .. import engram_patch
+        return engram_patch.trim_engram_hooks()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def configure(ctx: dict) -> list[Path]:
     """Apply Claude Code configuration. ctx contains: state, executors, master_key.
 
@@ -784,6 +859,7 @@ def configure(ctx: dict) -> list[Path]:
     # Record env keys that teardown must remove.
     # Always include the known multi-model-only keys regardless of whether they were
     # pre-existing (older installs may have written them before tracking existed).
+    _apply_cost_env(settings_patch, existing)
     newly_added = _shared.env_keys_added_by_patch(SETTINGS_PATH, settings_patch.get("env", {}))
     if mode == "multi-model":
         s.tracking.cockpit_env_keys_added.setdefault(ID, [])
@@ -795,6 +871,9 @@ def configure(ctx: dict) -> list[Path]:
     # A patch that carries the gateway token makes settings.json a key-bearing file: 0600, not the umask default.
     carries_key = bool(settings_patch.get("env", {}).get("ANTHROPIC_AUTH_TOKEN"))
     _shared.deep_merge_json(SETTINGS_PATH, settings_patch, mode=0o600 if carries_key else None)
+
+    if _migrate_agent_teams(SETTINGS_PATH, s.tracking.cost_migrations_applied):
+        ui.info(f"Claude Code: removed {AGENT_TEAMS_KEY}=1 (no kit workflow uses agent teams)")
 
     # Kit hooks: replace earlier kit entries, keep the user's own hooks
     _shared.merge_kit_hooks(SETTINGS_PATH, _kit_hooks(ak_path), _is_kit_hook_command)
@@ -849,11 +928,15 @@ def configure(ctx: dict) -> list[Path]:
     if pruned_scripts:
         ui.info(f"Removed kit workflow scripts no longer shipped: {', '.join(pruned_scripts)}")
 
-    # 5. Engram plugin (best-effort)
+    # 5. Engram plugin (best-effort), then trim its first-message ToolSearch directive (hash-guarded)
     _install_engram_plugin()
+    _trim_engram_hooks()
 
     # 6. Skill links — one per skill, so Claude Code discovers them natively
-    links = _shared.sync_skill_links(CONFIG_ROOT / "skills", Path(ak_path) / "skills")
+    # Lean by default: only the skills in skill_scope are listed natively (AI_RESOURCES_SKILLS=all restores every one).
+    skills_root = Path(ak_path) / "skills"
+    all_ids = [d.name for d in skills_root.iterdir() if (d / "SKILL.md").is_file()] if skills_root.is_dir() else []
+    links = _shared.sync_skill_links(CONFIG_ROOT / "skills", skills_root, include=skill_scope.include_list(all_ids))
     if links["removed"]:
         ui.info(f"Removed outdated kit skill links: {', '.join(links['removed'])}")
     if links["skipped"]:

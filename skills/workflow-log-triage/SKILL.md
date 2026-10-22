@@ -2,6 +2,7 @@
 name: workflow-log-triage
 description: "User asks to search logs, analyze errors in logs, find what caused something in logs, trace a request, investigate log anomalies, or understand log patterns. Runs the kit workflow 'log-triage': Collect, filter, and analyze logs from any source to identify error patterns, root causes, or user journeys."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/log-triage.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

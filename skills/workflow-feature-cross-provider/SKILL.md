@@ -2,6 +2,7 @@
 name: workflow-feature-cross-provider
 description: "User asks to implement a feature and wants part of the team to run on a different OpenClaw agent or provider (explicit request only; the plain feature workflow is the default). Runs the kit workflow 'feature-cross-provider': Feature workflow with a mixed team. research and plan run on other OpenClaw agents, review runs on another agent in parallel with the Claude Code security audit."
 argument-hint: "[goal]"
+disable-model-invocation: true
 ---
 
 <!-- Generated from workflows/feature-cross-provider.workflow.yaml by `ai-resources generate`. Edit the YAML, not this file. -->

@@ -166,6 +166,9 @@ class InstallTracking:
     # Retired in kit 2.2b: install consent is per run and is never stored or replayed (an old "yes" must not
     # authorise a later run). The key is still read and written (always None) so an old file loads.
     install_tools_answer: str | None = None
+    # Ids of one-time cost migrations already applied (a key removed or a value replaced on the operator's
+    # confirmation). A re-run skips an id that is recorded, so a value the operator changed back stays theirs.
+    cost_migrations_applied: list[str] = field(default_factory=list)
 
 
 IMAGE_STATE_DEFAULTS: dict[str, Any] = {
@@ -178,6 +181,10 @@ IMAGE_STATE_DEFAULTS: dict[str, Any] = {
 @dataclass
 class OpenClawState:
     """Which engine the kit pointed OpenClaw's default agent at, and what it replaced."""
+    # Ids of the confirmed cost migrations already applied to openclaw.json (see openclaw_cost_migrations).
+    cost_migrations_applied: list[str] = field(default_factory=list)
+    # What the narrow Slack cost writer set (openclaw_slack_cost): change records, so teardown deletes exactly those.
+    slack_cost_changes: list[dict] = field(default_factory=list)
     engine: str = ""                  # antigravity | claude-code | codex | gemini-cli | keep
     model: str = ""                   # OpenClaw model ref (bare id for antigravity, e.g.
                                        # gemini-3.8-flash-low, claude-sonnet-4-6 or
@@ -230,6 +237,9 @@ class OpenClawState:
     mcp: str = ""
     mcp_skipped: list[str] = field(default_factory=list)
     mcp_mirrored: dict[str, Any] = field(default_factory=dict)
+    # Per-agent `tools.deny` tokens (`<server>__*`) the kit added for mirrored servers outside the opt-in list:
+    # {agent id: [tokens]}. Only these are ever removed again (an operator's own token stays).
+    mcp_deny_added: dict[str, list[str]] = field(default_factory=dict)
     # antigravity engine only, below:
     orchestrator_model: str = "gemini-3.8-flash-low"
     # Bare model id: the ref is built as `claude-kit/<worker_model>`, and OpenClaw
@@ -389,10 +399,22 @@ def _to_dict(obj: Any) -> Any:
         if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict) \
                 and not doc["profile"].get("allow_unverified"):
             doc["profile"].pop("allow_unverified", None)   # additive field: absent until the opt-in is recorded
+        if isinstance(obj, SetupState) and isinstance(doc.get("tracking"), dict) \
+                and not doc["tracking"].get("cost_migrations_applied"):
+            doc["tracking"].pop("cost_migrations_applied", None)   # additive field: absent until a migration ran
         if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict):
             for key in ("lanes", "lane_acks"):             # additive fields: absent until lanes are enabled
                 if not doc["profile"].get(key):
                     doc["profile"].pop(key, None)
+        if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
+                and not doc["openclaw"].get("cost_migrations_applied"):
+            doc["openclaw"].pop("cost_migrations_applied", None)   # additive field: absent until a migration ran
+        if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
+                and not doc["openclaw"].get("slack_cost_changes"):
+            doc["openclaw"].pop("slack_cost_changes", None)        # additive field: absent until the writer ran
+        if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
+                and not doc["openclaw"].get("mcp_deny_added"):
+            doc["openclaw"].pop("mcp_deny_added", None)            # additive field: absent until the opt-in scoping ran
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
                 and not doc["openclaw"].get("lanes_applied"):
             doc["openclaw"].pop("lanes_applied", None)
