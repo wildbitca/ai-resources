@@ -629,8 +629,10 @@ def _show_agy_in_custom(s: state.SetupState) -> None:
 
 def _preset_key(s: state.SetupState) -> str:
     """The row of PRESET_PROFILES that applies: how this host reaches its models."""
+    if getattr(s, "cli_team", False) or s.backend == "cli":
+        return "cli"
     if s.mode != "multi-model":
-        return "cli" if getattr(s, "cli_team", False) else "single"
+        return "single"
     return "openrouter" if s.backend == "openrouter" else "litellm"
 
 
@@ -1126,10 +1128,9 @@ def _gateway_credential_warning(s: state.SetupState) -> None:
 
 
 HOW_CHOICES = (
-    ("team_api", "As a team (API Keys / Vertex AI)", "direct API keys or GCP Vertex AI (Google AI Studio, Anthropic, GCP)"),
-    ("team", "As a team (Subscriptions)", "each role on your CLI subscriptions, no API keys"),
+    ("team", "As a team (subscriptions)", "each role on your CLI subscriptions, no API keys"),
     ("alone", "Each on its own", "every tool keeps its own sign-in and settings"),
-    ("advanced", "Advanced (Gateway)", "gateway (OpenRouter) with an API key and budgets"),
+    ("advanced", "Advanced (gateway)", "gateway (OpenRouter) with an API key and budgets"),
 )
 # ADR-0010 (N1): LiteLLM is no longer offered to new setups. A saved litellm gateway still loads and runs.
 GATEWAY_CHOICES = (
@@ -1184,10 +1185,6 @@ def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None, *
     was_cli = bool(getattr(s, "cli_team", False))
     if picked == "alone":
         s.mode, s.cli_team = "single-model", False
-        return 0
-    if picked == "team_api":
-        s.mode, s.cli_team, s.backend = "multi-model", True, "cli"
-        _reset_profile_for_cli(s, was_cli)
         return 0
     if picked == "team":
         # No gateway: the mode stays single-model-shaped, the flag names the team (ADR-0008 addendum).
