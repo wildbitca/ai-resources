@@ -354,6 +354,7 @@ class SetupState:
     # path can engage; this flag only names the team. Additive: absent from the file while False, so an old file
     # loads and round-trips unchanged and keeps its meaning.
     cli_team: bool = False
+    cli_team_api: bool = False
     cockpits: dict[str, CockpitState] = field(default_factory=dict)
     litellm: LiteLLMState = field(default_factory=LiteLLMState)
     providers: dict[str, ProviderState] = field(default_factory=dict)
@@ -380,6 +381,8 @@ def _to_dict(obj: Any) -> Any:
         doc = {k: _to_dict(v) for k, v in asdict(obj).items()}
         if isinstance(obj, SetupState) and not doc.get("cli_team"):
             doc.pop("cli_team", None)                      # additive field: absent until the CLI mode is chosen
+        if isinstance(obj, SetupState) and not doc.get("cli_team_api"):
+            doc.pop("cli_team_api", None)                  # additive field: absent until the CLI API mode is chosen
         if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict) \
                 and doc["profile"].get("composed") is None:
             doc["profile"].pop("composed", None)       # additive field: absent until a composed team exists

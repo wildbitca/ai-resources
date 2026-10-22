@@ -414,10 +414,10 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         S("gateway", 3, "Gateway", lambda c: _step3_litellm(c.s, c.dry_run), rewindable=dry_run,
           skip=gateway_skip, edit_label="Gateway"),
         S("providers", 4, "Providers", lambda c: _step4_providers(c.s),
-          skip=lambda c: None if multi(c) else ("Providers", ""),
+          skip=lambda c: None if (multi(c) or getattr(c.s, "cli_team_api", False)) else ("Providers", ""),
           edit_label="Providers"),
         S("credentials", 5, "API keys", lambda c: _step5_credentials(c.s, c.dry_run),
-          skip=lambda c: None if multi(c) else ("API keys", ""), edit_label="API keys"),
+          skip=lambda c: None if (multi(c) or getattr(c.s, "cli_team_api", False)) else ("API keys", ""), edit_label="API keys"),
         S("preset", 6, "Your team", lambda c: _step_preset(c.s, c.args), back=True, edit_label="Models"),
         S("models", 6, "Your team - models", lambda c: _step_models(c.s, c.args, c.dry_run), back=True,
           skip=preset_done, edit_label="Models"),
@@ -1128,6 +1128,7 @@ def _gateway_credential_warning(s: state.SetupState) -> None:
 
 
 HOW_CHOICES = (
+    ("team_api", "As a team (Vertex AI / API keys)", "direct GCP Vertex AI or API keys, no gateway"),
     ("team", "As a team (subscriptions)", "each role on your CLI subscriptions, no API keys"),
     ("alone", "Each on its own", "every tool keeps its own sign-in and settings"),
     ("advanced", "Advanced (gateway)", "gateway (OpenRouter) with an API key and budgets"),
@@ -1147,9 +1148,11 @@ def _how_default(s: state.SetupState, is_first: bool = True) -> str:
     """What a saved state means for the question, else team when two or more tools are ticked, else each alone."""
     if s.mode == "multi-model":
         return "advanced"
+    if getattr(s, "cli_team_api", False):
+        return "team_api"
     members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
     if getattr(s, "cli_team", False) or "agy" in members:
-        return "team"
+        return "team_api" if bool(credentials.get_key("GOOGLE_CLOUD_PROJECT") or credentials.get_key("CLAUDE_CODE_USE_VERTEX") == "1") else "team"
     if not is_first:
         return "alone"
     return "team" if len(members) >= 2 else "alone"
@@ -1184,11 +1187,16 @@ def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None, *
 
     was_cli = bool(getattr(s, "cli_team", False))
     if picked == "alone":
-        s.mode, s.cli_team = "single-model", False
+        s.mode, s.cli_team, s.cli_team_api = "single-model", False, False
+        return 0
+    if picked == "team_api":
+        s.mode, s.cli_team, s.cli_team_api = "single-model", True, True
+        s.backend = "cli"
+        _reset_profile_for_cli(s, was_cli)
         return 0
     if picked == "team":
         # No gateway: the mode stays single-model-shaped, the flag names the team (ADR-0008 addendum).
-        s.mode, s.cli_team = "single-model", True
+        s.mode, s.cli_team, s.cli_team_api = "single-model", True, False
         _reset_profile_for_cli(s, was_cli)
         return 0
     saved_litellm = s.mode == "multi-model" and s.backend == "litellm"
@@ -1845,21 +1853,19 @@ def _step5_credentials(s: state.SetupState, dry_run: bool = False) -> int:
         return 0
 
     # Master key for LiteLLM.
-    # Claude Code v2+ reads its API key from the macOS Keychain ("Claude Code"
-    # service) and sends it verbatim — it ignores ANTHROPIC_API_KEY in settings.json.
-    # The gateway master key must equal that Keychain key for auth to succeed.
-    keychain_key = credentials.get_claude_code_keychain_key()
-    current_master = credentials.get_key("LITELLM_MASTER_KEY")
-    if keychain_key:
-        if current_master != keychain_key:
-            updates["LITELLM_MASTER_KEY"] = keychain_key
-            ui.detail(f"LITELLM_MASTER_KEY synced from Claude Code Keychain ({credentials.mask(keychain_key)})")
-        else:
-            ui.detail(f"LITELLM_MASTER_KEY already matches Keychain ({credentials.mask(current_master)})")
-    elif not current_master:
-        master = credentials.generate_master_key()
-        updates["LITELLM_MASTER_KEY"] = master
-        ui.detail(f"Generated LITELLM_MASTER_KEY ({credentials.mask(master)})")
+    if s.backend == "litellm":
+        keychain_key = credentials.get_claude_code_keychain_key()
+        current_master = credentials.get_key("LITELLM_MASTER_KEY")
+        if keychain_key:
+            if current_master != keychain_key:
+                updates["LITELLM_MASTER_KEY"] = keychain_key
+                ui.detail(f"LITELLM_MASTER_KEY synced from Claude Code Keychain ({credentials.mask(keychain_key)})")
+            else:
+                ui.detail(f"LITELLM_MASTER_KEY already matches Keychain ({credentials.mask(current_master)})")
+        elif not current_master:
+            master = credentials.generate_master_key()
+            updates["LITELLM_MASTER_KEY"] = master
+            ui.detail(f"Generated LITELLM_MASTER_KEY ({credentials.mask(master)})")
 
     # Per-provider keys
     for pid, ps in s.providers.items():
