@@ -15,6 +15,7 @@ NAME = "Gemini CLI"
 ID = "gemini"
 CONFIG_ROOT = Path.home() / ".gemini"
 SETTINGS_PATH = CONFIG_ROOT / "settings.json"
+AGY_MCP_PATH = CONFIG_ROOT / "config" / "mcp_config.json"
 GEMINI_MD_PATH = CONFIG_ROOT / "GEMINI.md"
 
 
@@ -31,10 +32,17 @@ def _settings_patch(auth_method: str = "gemini-api-key") -> dict:
     }
 
 
+def _agy_mcp_patch() -> dict:
+    """Patch ~/.gemini/config/mcp_config.json with Engram MCP server for agy."""
+    return {
+        "mcpServers": _shared.mcp_engram_block(),
+    }
+
+
 def _gemini_md(ak_path: str, gateway_url: str, mode: str) -> str:
     memory = (
-        "Memory: Engram MCP is configured in `~/.gemini/settings.json`. Search it before redoing "
-        "past investigations; save decisions and gotchas that are not already in code or specs.\n\n"
+        "Memory: Engram MCP is configured in `~/.gemini/settings.json` and `~/.gemini/config/mcp_config.json`. "
+        "Search it before redoing past investigations; save decisions and gotchas that are not already in code or specs.\n\n"
     )
     return _shared.kit_instructions_md("Gemini CLI", ak_path, gateway_url, mode,
                                        native_skills=True, extra=memory)
@@ -51,6 +59,9 @@ def configure(ctx: dict) -> list[Path]:
 
     _shared.deep_merge_json(SETTINGS_PATH, _settings_patch(auth_method))
     written.append(SETTINGS_PATH)
+
+    _shared.deep_merge_json(AGY_MCP_PATH, _agy_mcp_patch())
+    written.append(AGY_MCP_PATH)
 
     md = _gemini_md(ak_path, gateway_url, mode)
     if _shared.write_managed_block(GEMINI_MD_PATH, md):
