@@ -41,3 +41,9 @@ def test_a_teardown_with_no_configured_workspace_touches_only_tmp(tmp_path, monk
     monkeypatch.setattr(openclaw, "_openclaw", lambda *a, **k: (0, "ok"))
     openclaw.teardown(s)
     assert agents_md.read_text(encoding="utf-8") == hand_written   # the sandbox's own file, and only that
+
+
+def test_no_test_can_run_the_real_engram_plugin_installer():
+    """`claude.configure()` would run `claude plugin marketplace add/install engram` on the host: the suite stubs it."""
+    from ai_resources.setup.cockpits import claude
+    assert claude._install_engram_plugin() is False
