@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_resources import audit_snapshot
+from ai_resources import audit_snapshot, audit_sources
 
 SINCE = datetime(2026, 10, 20, tzinfo=timezone.utc)
 UNTIL = datetime(2026, 10, 22, tzinfo=timezone.utc)
@@ -242,3 +242,60 @@ def test_snapshot_inventory_records_the_billing_mode_without_identifiers(home, m
 
     assert inv["billing"]["auth_mode"] == "prepaid"
     assert "who@example.com" not in json.dumps(inv)
+
+
+# --- ADR-0014 S5 / AC-12: CLAUDE.md weight and the Haiku share above 100k ------------------------------------------------
+
+def test_claude_md_tokens_split_the_kit_block_from_the_rest():
+    block = "<!-- BEGIN ai-resources: managed by `ai-resources setup`; edits inside this block are overwritten -->\n" \
+            + "k" * 400 + "\n<!-- END ai-resources -->\n"
+    mine = "m" * 800
+    est = audit_snapshot.claude_md_tokens(block + mine)
+    assert est["kit_block"] == len(block.rstrip("\n").encode()) // 4
+    assert est["rest"] == (len(block.encode()) + 800 - len(block.rstrip("\n").encode())) // 4
+    assert est["total"] == (len(block) + 800) // 4 and "estimate" in est["basis"]
+    assert audit_snapshot.claude_md_tokens(mine) == {"total": 200, "kit_block": 0, "rest": 200, "basis": "bytes/4 (estimate)"}
+    assert audit_snapshot.claude_md_tokens("")["total"] == 0
+
+
+def test_inventory_records_the_estimate_next_to_the_byte_count(home):
+    (home / ".claude").mkdir(exist_ok=True)
+    (home / ".claude" / "CLAUDE.md").write_text("x" * 4000)
+    inv = audit_snapshot.inventory(home, run=lambda cmd: "")["claude_code"]
+    assert inv["global_claude_md_bytes"] == 4000 and inv["global_claude_md_tokens_est"]["total"] == 1000
+
+
+def test_summarize_reports_the_haiku_share_above_100k():
+    def u(i, model, inp):
+        return audit_sources.Usage(ts=datetime(2026, 10, 20, 10, i, tzinfo=timezone.utc), source="claude-code", project="p",
+                                   agent="", model=model, input=inp, output=10, cache_read=0, cache_write_5m=0,
+                                   cache_write_1h=0, msg_id=str(i), session="s", origin="claude-code")
+    s = audit_snapshot.summarize([u(1, "claude-haiku-5-5", 50_000), u(2, "claude-haiku-5-5", 150_000),
+                                  u(3, "claude-haiku-5-5", 100_000), u(4, "claude-sonnet-5-5", 900_000)])
+    assert s["haiku_calls"] == 3 and s["share_haiku_calls_ctx_gt_100k"] == 0.333
+    assert audit_snapshot.summarize([u(5, "claude-sonnet-5-5", 10)])["haiku_calls"] == 0
+
+
+def test_the_text_report_prints_the_claude_md_weight_and_the_haiku_share(home, monkeypatch, tmp_path):
+    from ai_resources import audit
+    from ai_resources.setup import ui
+    rich = pytest.importorskip("rich.console")
+    (tmp_path / ".claude").mkdir(exist_ok=True)
+    (tmp_path / ".claude" / "CLAUDE.md").write_text("y" * 4000)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    proj = home / ".claude" / "projects" / "-work-p"
+    lines = [_line("h1", "2026-10-20T10:00:00Z", "H", model="claude-haiku-5-5", inp=150_000)]
+    (proj / "H.jsonl").write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(audit, "_project_jsonl_dir", lambda cwd=None: proj)
+    seen = []
+    monkeypatch.setattr(ui, "require_deps", lambda: None)
+    monkeypatch.setattr(ui, "detail", seen.append)
+    monkeypatch.setattr(ui, "warn", seen.append)
+    monkeypatch.setattr(ui, "info", seen.append)
+    monkeypatch.setattr(ui, "banner", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "console", lambda: rich.Console(file=open("/dev/null", "w")))
+    audit.cmd_audit(argparse.Namespace(json=False, days=0, all_projects=False, subagents=False, openclaw=False,
+                                       verbose=False, audit_cmd=None))
+    text = "\n".join(seen)
+    assert "global CLAUDE.md ~1,000 tokens (estimate)" in text
+    assert "Haiku calls above the 100k prompt tier: 100.0% of 1 calls" in text
