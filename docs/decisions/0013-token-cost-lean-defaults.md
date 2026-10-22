@@ -4,6 +4,7 @@
 (sections 9 and 10 carry the operator decisions). Source analysis: the 2026-10-22 cost analysis (`REPORT.md` in the
 operator's cache, outside the repo).
 **Date**: 2026-10-22
+**Followed by**: [ADR-0014](0014-token-cost-round-2.md) (round 2: balanced retune, hygiene, billing, polling guard).
 **Decision makers**: operator (Q1 and Q7 answered, the other questions took their defaults), implementer (record only).
 **Amends**: [ADR-0001](0001-model-pins-and-auto-update.md) (the price table gains sourced 5.5 and Gemini 4 rows) and,
 for exactly one narrow writer, ADR-0001 and [ADR-0010](0010-setup-five-phases-channels-team.md) on `channels.*` (Q1).
