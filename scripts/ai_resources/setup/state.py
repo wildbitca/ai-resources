@@ -118,6 +118,10 @@ class ProfileState:
     lanes: Any = None
     # {anthropic?: Ack, google?: Ack}, Ack = {date, text_sha256, text, roles}.
     lane_acks: Any = None
+    # The role -> {model, fallbacks} table of the saved profile as it was last applied (ADR-0014 D1). A profile whose
+    # table changed in a kit update shows the old -> new diff once (ADR-0001), then this record is updated. Additive:
+    # absent from the file while empty.
+    roles_seen: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -403,7 +407,7 @@ def _to_dict(obj: Any) -> Any:
                 and not doc["tracking"].get("cost_migrations_applied"):
             doc["tracking"].pop("cost_migrations_applied", None)   # additive field: absent until a migration ran
         if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict):
-            for key in ("lanes", "lane_acks"):             # additive fields: absent until lanes are enabled
+            for key in ("lanes", "lane_acks", "roles_seen"):   # additive fields: absent until lanes / a table are recorded
                 if not doc["profile"].get(key):
                     doc["profile"].pop(key, None)
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \

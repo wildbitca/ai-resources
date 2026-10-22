@@ -1,32 +1,33 @@
 name: balanced
 mode: single-model
 description: |
-  Curated reference for a Claude subscription without a gateway: each kit subagent uses
-  a Claude alias. Haiku for read-only exploration, Sonnet for writers, tests, review,
-  docs and the planner, Opus for the architect, the security auditor and the verifier.
+  Performant and low-cost mix for a Claude subscription without a gateway (retuned 2026-10-22, ADR-0014 D1): Haiku 5.5 for
+  the reading-heavy and mechanical roles (explore, tester, doc-writer, package-upgrade), Sonnet 5.5 for the planner, the
+  architect, the writers and the code reviewer, Opus 5.5 for the two checkers only (verifier, security-auditor).
 
-  Checker independence by family: the verifier and the security auditor run on Opus and
-  no writer role (implementer, tester, doc-writer, the fixers, package-upgrade,
-  generalPurpose) runs on Opus, so a checker never shares a model family with the code it
-  checks. Fallbacks are inert in single-model mode. The checkers declare none, so a
-  fallback cannot move them onto a writer's family; the writers that declare one fall back
-  only within the Sonnet and Haiku families (explore, tester), and the planner and the
-  architect, which are neither writers nor checkers, declare Opus and Sonnet fallbacks.
+  The Haiku roles must stay under the 100k-token Haiku price tier: `validate_kit.py` estimates each Haiku role's static
+  prompt (tests/test_haiku_prompt_budget.py) and the audit reports the share of Haiku calls above 100k at run time.
 
-  Alias drift: an alias floats to the newest model of its family, so a family upgrade can
-  change which Sonnet or Opus runs without any kit change. Independence still holds
-  (families stay distinct), but the evidence behind this table (the 2026-10 study of the
-  5.5 models) may stop describing what runs.
+  Checker independence by family: the verifier and the security auditor run on Opus and no writer role (implementer,
+  tester, doc-writer, the fixers, package-upgrade, generalPurpose) runs on Opus, so a checker never shares a model family
+  with the code it checks. Fallbacks are inert in single-model mode. The checkers declare none, so a fallback cannot move
+  them onto a writer's family; no role falls back to Opus (the planner and the architect declare none), and the Haiku
+  roles that declare one fall back only to Sonnet (explore, tester).
 
-  Security-auditor caveat (Vals CyberBench): Opus 5.5 scores 74.6 when tagged CVP and
-  55.4 untagged; Sonnet 5.5 scores 59.6. The operator account holds no CVP tag, so the
-  untagged 55.4 is the conservative reference, and on that value Sonnet 5.5 is ahead.
-  The auditor stays on Opus to keep it off the writers' family.
+  Versus the earlier balanced table: the tester, the doc-writer and package-upgrade move to Haiku, and the architect moves
+  from Opus to Sonnet. A host that saved this profile sees the old -> new table at its next `setup` (ADR-0001).
 
-  Evidence label: INFERRED, medium to low confidence, curated from the 2026-10 study and
-  not score-derived. The planner is a statistical tie (Vals 67.04 vs 66.97); Sonnet was
-  chosen. Compose disagrees with this table; this profile is a reference, and
-  `balanced-claude-55` remains the recommended profile.
+  Alias drift: an alias floats to the newest model of its family, so a family upgrade can change which Sonnet or Opus runs
+  without any kit change. Independence still holds (families stay distinct), but the evidence behind this table (the
+  2026-10 study of the 5.5 models) may stop describing what runs.
+
+  Security-auditor caveat (Vals CyberBench): Opus 5.5 scores 74.6 when tagged CVP and 55.4 untagged; Sonnet 5.5 scores
+  59.6. The operator account holds no CVP tag, so the untagged 55.4 is the conservative reference, and on that value Sonnet
+  5.5 is ahead. The auditor stays on Opus to keep it off the writers' family.
+
+  Evidence label: INFERRED, medium to low confidence, curated from the 2026-10 study and not score-derived. The planner is
+  a statistical tie (Vals 67.04 vs 66.97); Sonnet was chosen. Compose disagrees with this table; this profile is a
+  reference, and `balanced-claude-55` remains the recommended profile.
 
 # Per-role evidence tag and effort (ADR-0007 FU-3, FU-4). The map is `role_effort`, never `effort`:
 # the profile keeps no `effort` key (tests/test_profile_subscription_claude55.py): read-only metadata copied into `lanes.yaml`
@@ -50,9 +51,9 @@ defaults:
 
 by_role:
   explore:            { model: haiku, fallbacks: [sonnet] }
-  tester:             { model: sonnet, fallbacks: [haiku] }
-  doc-writer:         { model: sonnet }
-  package-upgrade:    { model: sonnet }
+  tester:             { model: haiku, fallbacks: [sonnet] }
+  doc-writer:         { model: haiku }
+  package-upgrade:    { model: haiku }
   generalPurpose:     { model: sonnet }
   implementer:        { model: sonnet }
   crashlytics-fixer:           { model: sonnet }
@@ -62,8 +63,8 @@ by_role:
   code-reviewer:      { model: sonnet }
   security-auditor:   { model: opus }
   verifier:           { model: opus }
-  planner:            { model: sonnet, fallbacks: [opus] }
-  software-architect: { model: opus, fallbacks: [sonnet] }
+  planner:            { model: sonnet }
+  software-architect: { model: sonnet }
 
 by_persona: {}
 
@@ -83,16 +84,16 @@ lanes:
   roles:
     explore:            ["agy:gemini-3.8-flash-high", claude-cli:haiku, claude-code]
     implementer:        [claude-cli:sonnet, claude-code]
-    tester:             [claude-cli:sonnet, claude-code]
-    doc-writer:         [claude-cli:sonnet, claude-code]
+    tester:             [claude-cli:haiku, claude-code]
+    doc-writer:         [claude-cli:haiku, claude-code]
     planner:            [claude-code, claude-cli:sonnet]
-    software-architect: [claude-code, claude-cli:opus]
+    software-architect: [claude-code, claude-cli:sonnet]
     verifier:           [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
     security-auditor:   [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
   second:
     code-reviewer:      ["agy:gemini-4-argon-high", claude-cli:sonnet]
     planner:            ["agy:gemini-4-argon-high", claude-cli:sonnet]
-    software-architect: ["agy:gemini-4-argon-high", claude-cli:opus]
+    software-architect: ["agy:gemini-4-argon-high", claude-cli:sonnet]
   pins:
     explore:            ["agy:gemini-3.8-flash-high"]
     code-reviewer:      ["agy:gemini-4-argon-high"]

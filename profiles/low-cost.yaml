@@ -12,8 +12,9 @@ description: |
   from weakening verification, review or security (rule 017). The checkers declare no
   fallback. Fallbacks are inert in single-model mode.
 
-  Versus balanced: the architect moves from Opus to Sonnet and doc-writer
-  and package-upgrade from Sonnet to Haiku. Alias drift applies.
+  Versus balanced (retuned 2026-10-22, ADR-0014 D1): the two now differ only in the tester (low-cost keeps it on
+  Sonnet with a Haiku fallback; balanced runs it on Haiku with a Sonnet fallback) and in explore's Sonnet fallback.
+  Alias drift applies.
 
   Evidence label: INFERRED, medium to low confidence, curated from the 2026-10 study
   (study-support-roles, study-subscriptions) and not score-derived.

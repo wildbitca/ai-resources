@@ -201,6 +201,8 @@ def _run(args: argparse.Namespace) -> int:
         ui.console().print(f"[bold yellow]DRY RUN {'—' if ui.unicode_ok() else '-'} no files will be written.[/bold yellow]\n")
 
     prev_s = state.load()  # frozen snapshot of the previous run (used for teardown)
+    global _PREV_STATE
+    _PREV_STATE = prev_s
     s = state.load()
     corrupt = state.take_corrupt_notice()
     if corrupt:
@@ -264,6 +266,7 @@ def _run(args: argparse.Namespace) -> int:
         rc = runner.run(ctx)
     finally:
         _RUNNER = None
+        _PREV_STATE = None
         ui.set_progress(0, [])
     if rc != 0:
         return rc
@@ -2815,7 +2818,40 @@ def _apply_image_dry_run(s: state.SetupState) -> None:
     _openclaw_cockpit.dry_run_image(s)
 
 
+_PREV_STATE: "state.SetupState | None" = None
+"""The setup state as the previous run saved it (set by `_run`); None outside a run."""
+
+
+def _note_profile_table_change(s: state.SetupState, dry_run: bool) -> None:
+    """ADR-0014 D1 / ADR-0001: a saved profile whose role table changed in a kit update shows the old -> new diff
+    (nothing is renamed and the saved choice is kept). The table last applied is recorded in `profile.roles_seen`; the
+    first run after an update reads the pre-retune table for `balanced`. A dry run shows the diff and records nothing."""
+    name = profile_names.canonical(s.profile.name)
+    if not name:
+        return
+    new_table = None
+    for mode in ("single-model", "multi-model"):
+        try:
+            new_table = profiles.profile_table(profiles.load_profile(name, mode).get("by_role") or {})
+            break
+        except (FileNotFoundError, RuntimeError, profile_names.ProfileModeRequired):
+            continue
+    if not new_table:
+        return
+    prev = _PREV_STATE
+    old_table = None
+    if prev is not None and profile_names.canonical(prev.profile.name) == name:
+        old_table = dict(prev.profile.roles_seen or {}) or profiles.LEGACY_PROFILE_TABLES.get(name)
+    if old_table and old_table != new_table:
+        ui.info(f"The {name} team changed in this kit version (ADR-0001: shown, never silent). "
+                "Your saved choice is kept; the new models apply now.")
+        profiles.print_role_diff(old_table, new_table, title=f"{name}: old -> new")
+    if not dry_run:
+        s.profile.roles_seen = new_table
+
+
 def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
+    _note_profile_table_change(s, dry_run)
     if dry_run:
         return _step9_dry_run(s)
     if not _REVIEW_SHOWN:
