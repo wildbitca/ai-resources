@@ -122,10 +122,11 @@ def prompt(s: state.SetupState, doc: dict | None = None) -> None:
     """Ask what to set up on this OpenClaw host. Called from step 7."""
     o = s.openclaw if hasattr(s, "openclaw") else s
     env = host.read_host_env()
+    is_host_already = bool(o.host or env or Path("~/.openclaw/kit-host.env").expanduser().exists())
     o.host = bool(ui.confirm(
         "Configure this machine as an OpenClaw host (team narration, gateway guard, systemd units, "
         "canonical config, workboard)? Nothing that touches the running gateway is applied without "
-        "its own confirm.", default=o.host))
+        "its own confirm.", default=is_host_already))
     if not o.host:
         return
 

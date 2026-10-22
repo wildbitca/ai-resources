@@ -355,6 +355,8 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         output (ADR-0009). A gateway path that skips one of them still says why."""
         if not multi(c):
             return ("Gateway", "")
+        if c.s.backend == "cli":
+            return ("Gateway", "Skipped \u2014 direct CLI and API invocation; no gateway to supervise.")
         if c.s.backend != "litellm":
             return ("Gateway", "Skipped \u2014 OpenRouter is hosted; there is nothing to install or supervise.")
         return None
@@ -1124,9 +1126,10 @@ def _gateway_credential_warning(s: state.SetupState) -> None:
 
 
 HOW_CHOICES = (
-    ("team", "As a team", "each role goes to the tool you choose, on your subscriptions, no API keys"),
+    ("team_api", "As a team (API Keys / Vertex AI)", "direct API keys or GCP Vertex AI (Google AI Studio, Anthropic, GCP)"),
+    ("team", "As a team (Subscriptions)", "each role on your CLI subscriptions, no API keys"),
     ("alone", "Each on its own", "every tool keeps its own sign-in and settings"),
-    ("advanced", "Advanced", "gateway (OpenRouter) with an API key and budgets"),
+    ("advanced", "Advanced (Gateway)", "gateway (OpenRouter) with an API key and budgets"),
 )
 # ADR-0010 (N1): LiteLLM is no longer offered to new setups. A saved litellm gateway still loads and runs.
 GATEWAY_CHOICES = (
@@ -1181,6 +1184,10 @@ def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None, *
     was_cli = bool(getattr(s, "cli_team", False))
     if picked == "alone":
         s.mode, s.cli_team = "single-model", False
+        return 0
+    if picked == "team_api":
+        s.mode, s.cli_team, s.backend = "multi-model", True, "cli"
+        _reset_profile_for_cli(s, was_cli)
         return 0
     if picked == "team":
         # No gateway: the mode stays single-model-shaped, the flag names the team (ADR-0008 addendum).
@@ -1312,17 +1319,15 @@ def _agy_tick_restorable(s: state.SetupState) -> bool:
 
 
 def _default_members(s: state.SetupState, detected: dict) -> list[str]:
-    """The tools ticked when the screen opens (and the team of a run that cannot ask): the saved or requested
-    selection that is still installed, else every installed tool. Antigravity is the exception: it starts ticked only
-    when it was saved ticked (or the saved lanes hold it) AND a valid Google acknowledgement is stored; a fresh install
-    never opts in on its own."""
+    """The tools ticked when the screen opens: every installed tool. Antigravity is included when installed."""
     installed = [cid for cid, det in detected.items() if det.installed]
     saved = (s.profile.customizations.get("__targets__") or {}).get("selected")
-    restorable = _agy_tick_restorable(s)
-    held = [c for c in (saved or []) if c in installed and (c != "agy" or restorable)]
-    if held:
-        return held
-    return [cid for cid in installed if cid not in HIDDEN_TOOLS and (cid != "agy" or (_agy_lanes_on(s) and restorable))]
+    if saved:
+        res = [c for c in saved if c in installed]
+        if "agy" in installed and "agy" not in res:
+            res.append("agy")
+        return res
+    return [cid for cid in installed if cid not in HIDDEN_TOOLS]
 
 
 def _step2_cockpits(s: state.SetupState) -> int:
