@@ -1711,6 +1711,76 @@ hide a command; the wrong deny costs one rewritten call. It is kept on purpose.
 what actually restarted (`journalctl --user -u openclaw-gateway`), and `source=cli` marks a command.
 
 
+## T47 — `anthropicServerCompaction` and `anthropicCompactThreshold` live under `agents.defaults.models.<ref>.params`, per model ref *(added 2026-10-22; ADR-0013)*
+
+**Symptom.** Server-side compaction is "on" in the profile and nothing compacts, or the threshold is silently ignored.
+
+**Cause.** Both keys are provider params, not agent settings. `params` is a free-form object in the schema, so a key in
+the wrong place validates and does nothing. They only apply to the model ref that carries them
+(`agents.defaults.models.anthropic/<model>.params.anthropicServerCompaction`, `...anthropicCompactThreshold`); a fallback
+model without its own entry gets neither. OpenClaw's Anthropic provider doc (`docs/providers/anthropic.md`) documents them;
+a threshold below 50000 is clamped to 50000. The kit writes `true` and 150000 for the Sonnet and Opus pins only.
+`models.providers.anthropic.models[]` was not tested for merge or replace, so the kit does not touch it.
+
+**What to do.** Check with `openclaw config get agents.defaults.models`; add the same params to any other Anthropic ref
+you route to. The path is hot (no restart).
+
+**How to catch it.** After a long session, the transcript shows a compaction event; `ai-resources audit snapshot` shows
+the share of calls above 200k falling.
+
+## T48 — The host profile is fill-only, so a host that already set a value drifts from the lean defaults until a confirmed migration runs *(added 2026-10-22; ADR-0013)*
+
+**Symptom.** `ai-resources setup` ran, the profile has `thinkingDefault: low` and no Opus fallback behind Sonnet, and the
+live config still says `high` and still lists Opus.
+
+**Cause.** The profile fills only keys that are absent (ADR-0003: no silent change of an operator value, and lists are
+unioned by `config patch`, never replaced). So a value the host already holds wins, and the lean value never arrives.
+
+**What to do.** Run `ai-resources setup` interactively. `openclaw_cost_migrations` shows each differing path as
+`old -> new` and applies it only after its own confirm; the applied migration ids are stored in the setup state
+(`openclaw.cost_migrations_applied`), so a re-run proposes nothing and a value you changed back stays yours. An Opus
+fallback is removed by replacing the list (`--replace-path`), never by a force entry. Unattended and non-interactive runs
+apply nothing and print an `openclaw config set` snippet. A path listed in `keep` in `kit-host-overrides.json5` is never
+proposed. To redo one, delete its id from the state.
+
+**How to catch it.** The setup report lists "kept (differs from the lean value)" paths.
+
+## T49 — The Slack cost writer touches two keys only, and only on channels you pick *(added 2026-10-22; ADR-0013, Q1)*
+
+**Symptom.** Bots answer in every Slack thread they ever joined, or reply to other bots in notification channels, and
+`ai-resources setup` printed commands instead of writing them.
+
+**Cause.** `channels.*` is guarded by `assert_channels_safe` because the Telegram allowlist is the only gate in front of
+the unrestricted `claude-kit` backend. The one exception is `openclaw_slack_cost.py`: it may set exactly
+`channels.slack.implicitMentions.threadParticipation=false` and `channels.slack.channels.<id>.allowBots="mentions"`, after an
+interactive per-path confirm, fill-only, recorded in state and removed again on teardown. Its own guard
+(`assert_slack_cost_safe`) refuses an allowlist, a replace path, any other key and any other value. A non-interactive run,
+or a channel you did not tick, gets a printed `openclaw config set` line.
+
+**What to do.** Run setup on a terminal and tick the notification channels; do not edit `assert_channels_safe` to widen it.
+
+**How to catch it.** `openclaw config get channels.slack` shows the two keys; the writer never adds `allowFrom`/`groupAllowFrom`.
+
+## T50 — MCP mirroring is opt-in, and an unlisted mirrored server is denied per agent by name, never in the global `tools.deny` *(added 2026-10-22; ADR-0011, ADR-0013)*
+
+**Symptom.** Every bot session carries the tool schemas of every Claude Code MCP server (a large share of the prefix), or,
+after listing fewer servers, an agent still loads one that is no longer listed.
+
+**Cause.** The mirror used to copy every Claude Code server. It is now opt-in for new installs: list the servers in
+`~/.openclaw/kit-host.env` (`OPENCLAW_MCP_SERVERS=engram,clickup`; an empty value means none). An install that already
+mirrors keeps its servers. `engram` is declared by the engine setup (`MANAGED_ELSEWHERE`) and is never mirrored, listed or
+denied by this module. In opt-in mode, a server the kit mirrored earlier that is no longer listed stays configured (removing
+it is the confirmed teardown) but each non-lane agent in `agents.entries` gets the exact token `<server>__*` in its own
+`tools.deny`: fill-only, the whole list sent with `--replace-path` (`config patch` unions lists), recorded in state
+(`openclaw.mcp_deny_added`) so only the kit's tokens are ever removed, and taken out again when the server is listed or on
+teardown. The global `tools.deny` is never written for this (ADR-0011). Lane agents are scoped by `lanes.mcp` through
+`openclaw_lanes.mcp_deny`. Agents that exist only through `agents.defaults` (no entry) are not touched: add an entry or deny the token by hand.
+
+**What to do.** Set the list, re-run `ai-resources setup`, and check `openclaw config get agents.entries.<id>.tools.deny`.
+
+**How to catch it.** `ai-resources audit snapshot` before and after: the first-call context median drops with the schemas.
+
+
 ---
 
 # SECTION C — CUSTOMIZATIONS FOR THE `ai-resources` KIT (implemented in 1.9.0)
