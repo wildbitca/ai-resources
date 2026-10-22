@@ -2,10 +2,34 @@
   "patch": {
     "agents": {
       "defaults": {
+        "contextPruning": {
+          "mode": "cache-ttl"
+        },
         "heartbeat": {
           "every": "0m"
         },
-        "timeoutSeconds": 14400
+        "models": {
+          "anthropic/claude-opus-5-5": {
+            "params": {
+              "anthropicCompactThreshold": 150000,
+              "anthropicServerCompaction": true
+            }
+          },
+          "anthropic/claude-sonnet-5-5": {
+            "params": {
+              "anthropicCompactThreshold": 150000,
+              "anthropicServerCompaction": true
+            }
+          }
+        },
+        "subagents": {
+          "maxChildrenPerAgent": 3,
+          "maxConcurrent": 3,
+          "model": "anthropic/claude-sonnet-5-5"
+        },
+        "thinkingDefault": "low",
+        "timeoutSeconds": 14400,
+        "utilityModel": "anthropic/claude-haiku-5-5"
       },
       "entries": {
         "app": {
@@ -20,9 +44,11 @@
         },
         "main": {
           "heartbeat": {
-            "every": "2h"
+            "every": "2h",
+            "isolatedSession": true,
+            "lightContext": true
           },
-          "thinkingDefault": "high"
+          "thinkingDefault": "medium"
         }
       }
     },
@@ -69,6 +95,22 @@
           "config": {
             "publicUrl": "https://ai.example.org"
           }
+        }
+      }
+    },
+    "session": {
+      "reset": {
+        "idleMinutes": 120,
+        "mode": "idle"
+      },
+      "resetByType": {
+        "group": {
+          "idleMinutes": 120,
+          "mode": "idle"
+        },
+        "thread": {
+          "idleMinutes": 120,
+          "mode": "idle"
         }
       }
     },

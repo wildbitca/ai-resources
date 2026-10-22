@@ -8,6 +8,7 @@ import pytest
 
 from ai_resources import audit, models
 from ai_resources import model_pins as mp
+from pin_generation import prices_without_five_five
 
 CATALOG = (pathlib.Path(__file__).parent / "fixtures" / "models" / "claude-cli-catalog.json").read_text()
 
@@ -66,7 +67,9 @@ def test_unavailable_models_are_ignored():
 
 
 @pytest.mark.usefixtures("previous_generation_pins")
-def test_todays_prices_make_bumps_wait_for_approval(disc):
+def test_todays_prices_make_bumps_wait_for_approval(disc, monkeypatch):
+    # A table without the 5.5 rows (the state this test was written for): the bump has no price to judge by.
+    monkeypatch.setattr(audit, "PRICES", prices_without_five_five())
     p = by_cls(models.propose(mp.effective({}), disc, {}))
     assert p["sonnet"].decision == "needs_approval" and "price unknown" in p["sonnet"].reasons
     assert p["opus"].decision == "needs_approval" and "price unknown" in p["opus"].reasons
@@ -75,9 +78,18 @@ def test_todays_prices_make_bumps_wait_for_approval(disc):
     assert p["fable"].decision == "current" and not p["fable"].applicable
 
 
+@pytest.mark.usefixtures("previous_generation_pins")
+def test_the_sourced_five_five_prices_judge_the_bump(disc):
+    # With the real table (AC-3): sonnet 5 -> 5.5 is the same input/output price, opus 5 -> 5.5 is cheaper: both auto.
+    p = by_cls(models.propose(mp.effective({}), disc, {}))
+    assert (p["sonnet"].price, p["sonnet"].decision) == ("equal", "auto")
+    assert (p["opus"].price, p["opus"].decision) == ("lower", "auto")
+    assert p["haiku"].decision == "needs_approval" and "major jump" in p["haiku"].reasons
+
+
 @pytest.fixture
 def priced(monkeypatch):
-    prices = dict(audit.PRICES)
+    prices = prices_without_five_five()
     prices["claude-sonnet-5-5"] = audit.PRICES["claude-sonnet-5"]
     monkeypatch.setattr(audit, "PRICES", prices)
     return prices
