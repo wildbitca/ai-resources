@@ -103,11 +103,22 @@ I_COCKPITS = ["gemini", "cursor", "codex", "copilot", "windsurf", "continue", "o
 
 
 @pytest.fixture
-def captured(monkeypatch):
+def captured(monkeypatch, request):
     writes: list[str] = []
+    # conftest points the gemini cockpit at a scratch ~/.gemini (ADR-0014 D3.4: the kit may write the agy MCP file, so no
+    # test may reach the real one). `ms.covers` shortens paths under HOME to `~`, so for that cockpit the scratch parent is
+    # HOME for the duration of the test, exactly the relation the real paths have.
+    if getattr(getattr(request.node, "callspec", None), "params", {}).get("cid") == "gemini":
+        from pathlib import Path
+        from ai_resources.setup.cockpits import gemini
+        scratch_home = gemini.CONFIG_ROOT.parent
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: scratch_home))
     monkeypatch.setattr(_shared, "write_text", lambda p, c, **k: writes.append(str(p)) or True)
     monkeypatch.setattr(_shared, "write_managed_block", lambda p, b, **k: writes.append(str(p)) or True)
     monkeypatch.setattr(_shared, "deep_merge_json", lambda p, patch, **k: writes.append(str(p)) or True)
+    # ADR-0014 D3.4: the agy MCP file is written fill-only through the atomic replace, not through deep_merge_json
+    # (which would overwrite an entry of the operator's); it is a write like the others.
+    monkeypatch.setattr(_shared, "_replace_atomically", lambda target, text: writes.append(str(target)))
     monkeypatch.setattr(_shared, "link_agents_skills", lambda *a, **k: None)
     return writes
 

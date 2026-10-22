@@ -198,3 +198,20 @@ def _isolate_hygiene(tmp_path_factory, monkeypatch):
         return
     monkeypatch.setattr(hygiene, "default_runner", lambda argv: (127, "claude is not run by tests"))
     monkeypatch.setattr(hygiene, "backup_dir", lambda: root / "hygiene")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_gemini_home(tmp_path_factory, monkeypatch):
+    """~/.gemini (agy's settings and MCP file) is resolved from the real HOME at import time and by `agy_mcp.mcp_path`:
+    ADR-0014 D3.4 lets the kit write the MCP file, so no test may reach it."""
+    root = tmp_path_factory.mktemp("gemini-home")
+    try:
+        from ai_resources.setup import agy_mcp
+        from ai_resources.setup.cockpits import gemini
+    except Exception:
+        return
+    monkeypatch.setattr(agy_mcp, "mcp_path", lambda: root / ".gemini" / "config" / "mcp_config.json")
+    monkeypatch.setattr(gemini, "CONFIG_ROOT", root / ".gemini", raising=False)
+    monkeypatch.setattr(gemini, "SETTINGS_PATH", root / ".gemini" / "settings.json", raising=False)
+    monkeypatch.setattr(gemini, "AGY_MCP_PATH", root / ".gemini" / "config" / "mcp_config.json", raising=False)
+    monkeypatch.setattr(gemini, "GEMINI_MD_PATH", root / ".gemini" / "GEMINI.md", raising=False)

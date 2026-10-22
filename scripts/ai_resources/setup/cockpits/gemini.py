@@ -60,8 +60,13 @@ def configure(ctx: dict) -> list[Path]:
     _shared.deep_merge_json(SETTINGS_PATH, _settings_patch(auth_method))
     written.append(SETTINGS_PATH)
 
-    _shared.deep_merge_json(AGY_MCP_PATH, _agy_mcp_patch())
-    written.append(AGY_MCP_PATH)
+    # ADR-0014 D3.4: the agy MCP file gets `engram` only if absent, with a backup and a state record; never a bare merge.
+    from .. import agy_mcp
+    try:
+        if agy_mcp.add_servers(AGY_MCP_PATH, _shared.mcp_engram_block(), s.tracking) is not None or AGY_MCP_PATH.is_file():
+            written.append(AGY_MCP_PATH)
+    except OSError:
+        pass
 
     md = _gemini_md(ak_path, gateway_url, mode)
     if _shared.write_managed_block(GEMINI_MD_PATH, md):

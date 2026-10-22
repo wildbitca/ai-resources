@@ -421,6 +421,11 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         from . import claude_md_migrate
         return ("Global CLAUDE.md", "") if claude_md_migrate.skip_reason(c.s) else None
 
+    def agy_mcp_skip(c):
+        """The agy MCP file is the operator's: asked only when agy is in use, never headless; skipped without output."""
+        from . import agy_mcp, hygiene
+        return ("agy MCP servers", "") if (hygiene.is_headless() or not agy_mcp.agy_in_use(c.s)) else None
+
     return [
         S("tools", 1, "Your tools", lambda c: _step2_cockpits(c.s), rewindable=False),
         S("cockpit", 1, "Main tool", lambda c: _step_cockpit_choice(c.s, dry_run=c.dry_run), back=True,
@@ -449,6 +454,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
           edit_label="Start at login"),
         S("hygiene", 8, "Hygiene", lambda c: _step_hygiene(c.s, c.dry_run), skip=hygiene_skip),
         S("claude_md", 8, "Global CLAUDE.md", lambda c: _step_claude_md(c.s, c.dry_run), skip=claude_md_skip),
+        S("agy_mcp", 8, "agy MCP servers", lambda c: _step_agy_mcp(c.s, c.dry_run), skip=agy_mcp_skip),
         S("review", 9, "Review", lambda c: _step_summary(c.s, c.args), rewindable=False),
         S("apply", 9, "Apply", lambda c: _step9_apply(c.s, dry_run=c.dry_run), rewindable=False),
     ]
@@ -2386,6 +2392,14 @@ def _step_hygiene(s: state.SetupState, dry_run: bool = False) -> int:
     """Offer to disable user-level MCP servers and plugins with no call in 30 days (ADR-0014; setup/hygiene.py)."""
     from . import hygiene
     return hygiene.run_step(s, dry_run=dry_run)
+
+
+def _step_agy_mcp(s: state.SetupState, dry_run: bool = False) -> int:
+    """Offer `engram` and any servers you pick for agy's MCP file, fill-only with a backup (ADR-0014; agy_mcp.py)."""
+    from . import agy_mcp
+    ui.section(5, 5, "agy MCP servers")
+    agy_mcp.run_step(s, dry_run=dry_run)
+    return 0
 
 
 def _step_claude_md(s: state.SetupState, dry_run: bool = False) -> int:
