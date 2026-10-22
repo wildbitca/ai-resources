@@ -38,7 +38,7 @@ def test_the_question_lists_three_ways_with_the_team_first(monkeypatch):
     script = Script(**{"Pick how they work": lambda values: seen.setdefault("v", list(values)) and "alone"})
     script.install(monkeypatch)
     wizard._step1_mode(s)
-    assert seen["v"] == ["team", "alone", "advanced"]
+    assert seen["v"] == ["team_api", "team", "alone", "advanced"]
 
 
 def test_advanced_asks_which_gateway(monkeypatch):
