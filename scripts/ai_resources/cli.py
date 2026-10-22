@@ -76,6 +76,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
     if getattr(args, "restore_hygiene", False):
         from .setup import hygiene
         return hygiene.cmd_restore()
+    if getattr(args, "restore_agy_mcp", False):
+        from .setup import agy_mcp
+        return agy_mcp.cmd_restore()
     if getattr(args, "restore_claude_md", False):
         from .setup import claude_md_migrate
         return claude_md_migrate.cmd_restore()
@@ -174,6 +177,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Put back every MCP server and plugin the hygiene step disabled, then exit")
     p_st.add_argument("--restore-claude-md", dest="restore_claude_md", action="store_true",
                       help="Move back into ~/.claude/CLAUDE.md every block the migration moved out, then exit")
+    p_st.add_argument("--restore-agy-mcp", dest="restore_agy_mcp", action="store_true",
+                      help="Remove from agy's mcp_config.json the servers the kit added (where unchanged), then exit")
     p_st.set_defaults(func=cmd_setup)
 
     # version

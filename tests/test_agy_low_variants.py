@@ -38,5 +38,8 @@ def test_the_chains_keep_their_order_and_never_list_the_primary():
     assert "agy-cli/gemini-3.8-flash-low" not in _chain("antigravity", "agy-cli/gemini-3.8-flash-low")
 
 
-def test_the_agy_mcp_hint_is_a_hint_only():
-    assert "engram" in openclaw.AGY_MCP_HINT and "never writes" in openclaw.AGY_MCP_HINT
+def test_the_agy_mcp_hint_says_what_the_kit_does_and_does_not_touch():
+    # ADR-0014 D3.4 replaced "the kit never writes that file": it adds `engram` and your picks after a confirm, with a
+    # backup, and never removes or edits an entry of yours.
+    assert "engram" in openclaw.AGY_MCP_HINT and "never removes or edits" in openclaw.AGY_MCP_HINT
+    assert "never writes" not in openclaw.AGY_MCP_HINT

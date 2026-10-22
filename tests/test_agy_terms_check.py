@@ -233,3 +233,18 @@ def test_the_checklist_pre_ticks_planner_architect_and_explore_but_not_the_imple
         _, offered, default = u.boxes[0]
         assert {"planner", "software-architect", "explore"} <= set(default)
         assert roles_policy.DEFAULT_INTEGRATING_WRITER not in default and "implementer" in offered
+
+
+# --- ADR-0014 D3.4: Flash-low rides on the same acknowledgement -----------------------------------------------------------
+
+def test_a_stored_acknowledgement_for_changed_terms_text_drops_flash_low(monkeypatch):
+    """The routine Flash-low fallback is a Google path: it needs an acknowledgement whose text hash is the CURRENT text,
+    exactly like an agy lane. Changing the terms text means re-signing, and until then Flash-low is left out."""
+    from ai_resources import agy_lane_gates
+    from ai_resources.setup.cockpits import openclaw
+    monkeypatch.setattr(agy_lane_gates, "refusal", lambda evidence=None: None)
+    s = _s(_google(["explore"]))
+    s.profile.lanes = {"agents": {"kit-lane-agy-x": {"backend": agy_lane_gates.AGY_LANE_BACKEND}}}
+    assert openclaw.agy_flash_low_reason(s) is None
+    monkeypatch.setitem(lanes_render.ACK_TEXT, "google", lanes_render.ACK_TEXT["google"] + " (changed)")
+    assert openclaw.agy_flash_low_reason(s) == lanes_render.HELD_NO_ACK_REASON

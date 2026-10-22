@@ -330,13 +330,31 @@ def _deep_merge(dst: dict, src: dict) -> dict:
 # entry keeps `-high`; a `-low` id is never invented.
 AGY_ROUTINE_FALLBACK = "agy-cli/gemini-3.8-flash-low"
 
-# Printed only: the kit does not write ~/.gemini/config/mcp_config.json (agy gate V7 is unproven).
+# ADR-0014 D3.4: the kit may add `engram` (and servers you pick) to this file after a confirm, fill-only and with a backup
+# (setup/agy_mcp.py); it never removes or edits anything already in it, so trimming stays by hand.
 AGY_MCP_HINT = ("agy loads every server in ~/.gemini/config/mcp_config.json into each session. Keep only `engram` "
-                "there and drop the ones you do not use; edit it by hand, the kit never writes that file.")
+                "there and drop the ones you do not use by hand: the kit adds `engram` and the servers you pick after a "
+                "confirm (with a backup) but never removes or edits an entry of yours.")
 
 
-def _fallbacks_for(primary_ref: str, engine_id: str) -> list[str]:
-    """Cross-pool / cross-provider fallback models for an OpenClaw agent primary model."""
+def agy_flash_low_reason(s) -> str | None:
+    """Why `gemini-3.8-flash-low` may not sit in a fallback chain, or None when it may (ADR-0014 D3.4). It is a Google
+    model, so it needs what an agy lane needs: the lane flag, a valid Google acknowledgement for the current text, and
+    gates G0-G7 proven. Fail closed, same order as `lanes_render.agy_role_reason`; the gates themselves are untouched."""
+    from .. import lanes_render, team_view
+    from ... import agy_lane_gates
+    if not lanes_render.AGY_LANE_ADR_ACCEPTED:
+        return lanes_render.HELD_AGY_REASON
+    if not team_view.agy_lanes_on(s.profile.lanes):
+        return lanes_render.HELD_FLAG_REASON
+    if lanes_render.valid_acks(s.profile.lane_acks).get("google") is None:
+        return lanes_render.HELD_NO_ACK_REASON
+    return agy_lane_gates.refusal()
+
+
+def _fallbacks_for(primary_ref: str, engine_id: str, *, flash_low: bool = True) -> list[str]:
+    """Cross-pool / cross-provider fallback models for an OpenClaw agent primary model. `flash_low=False` leaves the
+    routine Flash-low entry out (no Google acknowledgement, or the gates are not proven)."""
     if engine_id == "antigravity":
         candidates = (
             [
@@ -360,26 +378,26 @@ def _fallbacks_for(primary_ref: str, engine_id: str) -> list[str]:
         ]
     else:
         candidates = []
-    return [c for c in candidates if c != primary_ref]
+    return [c for c in candidates if c != primary_ref and (flash_low or c != AGY_ROUTINE_FALLBACK)]
 
 
 def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_command: str, *,
                 openrouter_enabled: bool = True,
                 worker_model: str = "", ak_path: str = "", agy_bin: str = "", claude_bin: str = "",
                 python3_bin: str = "", fallbacks: bool = False,
-                lanes_path: str = "", enable_orchestrator: bool = True) -> dict:
+                lanes_path: str = "", enable_orchestrator: bool = True, flash_low: bool = True) -> dict:
     """The openclaw.json patch that points the default agent at `engine`."""
     if engine.id == "antigravity":
         patch = _build_antigravity_patch(
             model, worker_model, doc, engram_command,
             agy_bin=agy_bin, claude_bin=claude_bin, python3_bin=python3_bin,
             fallbacks=fallbacks,
-            ak_path=ak_path, lanes_path=lanes_path, enable_orchestrator=enable_orchestrator,
+            ak_path=ak_path, lanes_path=lanes_path, enable_orchestrator=enable_orchestrator, flash_low=flash_low,
         )
     else:
         model_spec: dict[str, Any] = {"primary": model}
         if fallbacks:
-            fb = _fallbacks_for(model, engine.id)
+            fb = _fallbacks_for(model, engine.id, flash_low=flash_low)
             if fb:
                 model_spec["fallbacks"] = fb
         patch = {
@@ -430,10 +448,11 @@ def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_c
 
 def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_command: str, *,
                              agy_bin: str, claude_bin: str, python3_bin: str, fallbacks: bool = False,
-                             ak_path: str = "", lanes_path: str = "", enable_orchestrator: bool = True) -> dict:
+                             ak_path: str = "", lanes_path: str = "", enable_orchestrator: bool = True,
+                             flash_low: bool = True) -> dict:
     engine = ENGINES["antigravity"]
     primary_ref = f"{engine.runtime}/{model}"
-    default_fallbacks = _fallbacks_for(primary_ref, engine.id)
+    default_fallbacks = _fallbacks_for(primary_ref, engine.id, flash_low=flash_low)
     worker_primary = f"claude-kit/{worker_model}"
     worker_fallbacks = [
         c for c in ("agy-cli/gemini-4-argon-high", "agy-cli/gemini-3.8-flash-high", "agy-cli/claude-sonnet-5-5")
@@ -1375,6 +1394,7 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     engine_changed = _configure_engine(ctx, doc, path, ak_path, written)
     if s.openclaw.engine == "antigravity":
         ui.detail(AGY_MCP_HINT)
+
     mcp_changed = _configure_mcp(s, doc, path, written, dry_run=dry_run)
     voice_changed = _configure_voice(s, doc, path, ak_path, written, dry_run=dry_run)
     # Image generation (ADR-0011): the config is re-read first, the engine/voice patches above may have changed it.
@@ -1888,6 +1908,10 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
 
     has_lanes = bool(s.profile.lanes)
     patch_kwargs: dict[str, Any] = {"openrouter_enabled": openrouter_selected(s)}
+    flash_low_why = agy_flash_low_reason(s)
+    if has_lanes and flash_low_why:
+        ui.info(f"Fallback chain: gemini-3.8-flash-low is left out ({flash_low_why}).")
+    patch_kwargs["flash_low"] = flash_low_why is None
     if engine.id == "antigravity":
         # Not plain shutil.which: both official installers default to ~/.local/bin,
         # which a non-login systemd/service unit's PATH may not see. detect_agy()
