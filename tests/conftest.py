@@ -172,6 +172,8 @@ def _isolate_home_derived_paths(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(billing, "claude_json_path", lambda: root / ".claude.json")
     monkeypatch.setattr(billing, "credits_path", lambda: root / "config" / "ai-resources" / "credits.json")
     monkeypatch.setattr(billing, "sidecar_path", lambda: root / "cache" / "claude-rate-limits.json")
+    from ai_resources import audit_snapshot
+    monkeypatch.setattr(audit_snapshot, "openclaw_json_path", lambda home=None: (home or root / "home") / ".openclaw" / "openclaw.json")
 
 
 @pytest.fixture(autouse=True)

@@ -2402,6 +2402,10 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
         if path == ["gateway", "controlUi", "github", "token"] and not _secret_env_available("GH_TOKEN"):
             skipped.append(f"{dotted}: GH_TOKEN is not available on this host (set it with `openclaw configure`)")
             continue
+        # ADR-0014 D5: the operator said "heartbeat off" in the wizard, so the fill for the main agent's wake-up interval
+        # is `0m`. Still fill-only: a value the host already holds is changed only by the confirmed cost migration.
+        if path == ["agents", "entries", "main", "heartbeat", "every"] and values.get("MAIN_HEARTBEAT_EVERY"):
+            wanted = values["MAIN_HEARTBEAT_EVERY"]
         current, had = _get_path(doc, path)
         if isinstance(wanted, list):
             merged = _union(current, wanted)

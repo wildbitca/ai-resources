@@ -87,7 +87,9 @@ def _gate(message: str, detail: str = "") -> bool:
 def _values(o: state.OpenClawState) -> dict[str, str]:
     return {"DOMAIN": o.host_domain, "POD_CIDR": o.host_pod_cidr, "OWNER_TELEGRAM_ID": o.host_operator_id,
             "BACKUP_DIR": o.host_backup_dir, "TAILNET": "1" if host.tailnet_available() else "0",
-            "RESOURCE_GUARDS": o.host_resource_guards or host.read_host_env().get("OPENCLAW_RESOURCE_GUARDS", "on")}
+            "RESOURCE_GUARDS": o.host_resource_guards or host.read_host_env().get("OPENCLAW_RESOURCE_GUARDS", "on"),
+            # ADR-0014 D5: "0m" only after the operator answered Yes to the heartbeat question; "" keeps the profile's 2h.
+            "MAIN_HEARTBEAT_EVERY": "0m" if getattr(o, "host_heartbeat_off", False) else ""}
 
 
 # --- the questions ----------------------------------------------------------------------------------------
@@ -186,6 +188,10 @@ def prompt(s: state.SetupState, doc: dict | None = None) -> None:
             "infra step.", default=o.host_offbox_identity))
     o.host_workboard = bool(ui.confirm(
         "Enable the workboard plugin (a shared task board for the agents)?", default=o.host_workboard))
+    o.host_heartbeat_off = bool(ui.confirm(
+        "Turn the main agent's heartbeat off? (Default No keeps the 2-hour isolated light heartbeat; Yes sets "
+        "agents.entries.main.heartbeat.every to 0m, filled when unset or replaced only after its own confirm.)",
+        default=o.host_heartbeat_off))
     o.host_agents_md = bool(ui.confirm(
         "Write an AGENTS.md into every agent workspace that has none (an existing file is never replaced; "
         "only the kit's marked block is refreshed in it)?",
@@ -682,6 +688,38 @@ def _teardown_slack_cost(o: state.OpenClawState, apply_patch: Callable[..., tupl
     return True
 
 
+def _probe_utility_model(o: state.OpenClawState, doc: dict, oc: Callable[..., tuple[int, str]] | None) -> str:
+    """Opt-in (default No): check that the configured utilityModel works with this host's key and, when it does not,
+    look for a model the probe verifies. Returns the verified replacement ref, or "". Never in a dry run, a
+    non-interactive run, or without a runner; the cost is printed before the question."""
+    from ... import openclaw_utility_probe as up
+    if oc is None or ui.is_non_interactive():
+        return ""
+    current = (((doc.get("agents") or {}).get("defaults") or {}).get("utilityModel"))
+    if not isinstance(current, str) or not current:
+        return ""                                    # unset: the profile fill sets the pinned Haiku, nothing to check
+    ui.info(up.NOTICE)
+    if not ui.confirm(f"Check that the utility model ({current}) works with your key now?", default=False):
+        return ""
+
+    def run(argv):
+        return oc(list(argv), timeout=120)
+
+    first = up.probe(current, run)
+    if first.status == "ok":
+        ui.ok(f"utility model {current}: the probe got an answer")
+        return ""
+    ui.warn(f"utility model {current}: {first.detail or 'the probe could not tell'}")
+    if first.status != "invalid":
+        return ""
+    verified = up.first_verified(up.candidates(), run, skip=current)
+    if verified is None:
+        ui.info("No pinned model answered either; nothing is proposed. Create the key inside the workspace.")
+        return ""
+    ui.ok(f"{verified.ref} answered the probe; it is proposed below (nothing changes until you confirm).")
+    return verified.ref
+
+
 def _offer_cost_migrations(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
                            apply_patch: Callable[..., tuple[bool, str]],
                            oc: Callable[..., tuple[int, str]] | None = None,
@@ -689,13 +727,17 @@ def _offer_cost_migrations(o: state.OpenClawState, doc: dict, path: Path, writte
     """Show each lean value this host holds differently as `old -> new`, ask per path, apply the confirmed hot ones.
 
     Non-interactive and dry runs apply nothing and print the exact snippet instead. A declined path stays proposed on
-    the next run; an applied one is recorded by id and never proposed again."""
+    the next run; an applied one is recorded by id and never proposed again. A confirmed key that needs a restart (or
+    whose reload class cannot be read) is NOT applied: it is recorded in `host_restart_pending` for the drained path
+    (`ai-resources openclaw apply-pending`, ADR-0003) and its id is recorded when it is applied there."""
     try:
         overrides = host.load_host_overrides()
     except ValueError:
         return False
+    verified = "" if dry_run else _probe_utility_model(o, doc, oc)
     props = cost_migrations.proposals(doc, applied=o.cost_migrations_applied, keep=overrides["keep"],
-                                      force=overrides["force"])
+                                      force=overrides["force"], heartbeat_off=bool(getattr(o, "host_heartbeat_off", False)),
+                                      utility_model=verified)
     if not props:
         return False
     ui.info("Lean cost values that differ from what this host has set (nothing is replaced without your confirm):")
@@ -721,8 +763,17 @@ def _offer_cost_migrations(o: state.OpenClawState, doc: dict, path: Path, writte
     ruleset = rr.current_ruleset(_oc_runner(oc), refresh=True) if oc else None
     restart = rr.restart_paths(patch, ruleset=ruleset, reload_mode=rr.reload_mode_of(doc))
     if restart:
+        # Fail closed (ADR-0003): a key that needs a restart, or one the rules cannot classify, is never applied here.
+        later = [p for p in accepted if any(p.dotted == r or p.dotted.startswith(r + ".") or r.startswith(p.dotted + ".")
+                                            for r in restart)]
         ui.warn("These keys would need a gateway restart, so they are not applied here: " + ", ".join(restart))
-        return False
+        if later:
+            _record_pending(o, cost_migrations.pending_entries(later, at=_now()))
+            ui.info("Recorded as pending: `ai-resources openclaw apply-pending` applies them in a drained window.")
+        accepted = [p for p in accepted if p not in later]
+        if not accepted:
+            return False
+        patch, replace_paths = cost_migrations.build_patch(accepted)
     ok, out = apply_patch(patch, replace_paths=replace_paths)
     if not ok:
         ui.error(f"OpenClaw rejected the cost migration: {ui.safe_excerpt(out, 400, tail=True)}")
@@ -932,6 +983,27 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
         patch = rr.deep_merge(patch, only)
         rp += rr.split_replace_paths(built["replace_paths"], have)[1]
         changes += [c for c in built["changes"] if ".".join(c["path"]) in wanted]
+    migrations = [e for e in pending if e.get("op") == "migration"]
+    applied_ids: list[str] = []
+    for e in migrations:
+        # A confirmed cost migration waiting for a drained window (ADR-0014 D5). Skipped when the operator changed the
+        # path since: the live value must still be the one it was proposed to replace.
+        dotted_path = str(e.get("path") or "")
+        segs = dotted_path.split(".")
+        live, live_had = host._get_path(doc, segs)
+        if bool(e.get("had", True)) != live_had or (live_had and live != e.get("previous")):
+            ui.detail(f"{dotted_path}: changed since it was proposed; dropped from the pending list.")
+            continue
+        cur = patch
+        for k in segs[:-1]:
+            cur = cur.setdefault(k, {})
+        cur[segs[-1]] = e.get("value")
+        if e.get("replace"):
+            rp.append(dotted_path)
+        changes.append({"path": segs, "previous": e.get("previous") if live_had else None, "had": live_had,
+                        "action": "forced" if live_had else "filled"})
+        if e.get("id"):
+            applied_ids.append(str(e["id"]))
     restores = [e["change"] for e in pending if e.get("op") == "restore"]
     if restores:
         rpatch, rrp = host.restore_patch(restores, doc)      # a restore the live value already satisfies is a no-op
@@ -961,6 +1033,7 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
     if not written:
         return 1
     _record_changes(o, changes)
+    o.cost_migrations_applied.extend(i for i in applied_ids if i not in o.cost_migrations_applied)
     o.host_restart_pending = list(leftover)
     ui.ok("Restart-required config applied in a drained window.")
     return 0 if window_ok else 1
@@ -1122,6 +1195,11 @@ def _configure_workboard(o: state.OpenClawState, doc: dict, *, dry_run: bool,
     if not o.host_workboard:
         return False
     enabled = (((doc.get("plugins") or {}).get("entries") or {}).get("workboard") or {}).get("enabled")
+    if cost_migrations.WORKBOARD_DISABLE_ID in (o.cost_migrations_applied or []):
+        # The operator confirmed the cost migration that turns the workboard off: the host section does not turn it back
+        # on every run. Enabling it again is an explicit `openclaw plugins enable workboard`.
+        ui.detail("workboard plugin: left off (the cost migration was applied).")
+        return False
     if enabled is True:
         o.host_workboard_applied = o.host_workboard_applied or "already-enabled"
         ui.detail(WORKBOARD_COST_HINT)       # a hint only: the kit never disables a plugin the operator runs

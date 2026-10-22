@@ -43,6 +43,9 @@ ANSWERS = {
     "Let setup fill the gateway's resource guards": "on",
     "Telegram group chat id for agent": "",          # empty: leave every binding alone (C2)
     "Enable the workboard plugin (a shared": True,
+    "Replace plugins.entries.workboard.enabled": False,   # ADR-0014 D5: disabling the workboard is its own confirm
+    "Check that the utility model": False,          # ADR-0014 D5: the probe is opt-in and bills a tiny call
+    "Turn the main agent's heartbeat off": False,   # ADR-0014 D5: the default keeps the 2h isolated light heartbeat
     "Write an AGENTS.md into every agent workspace": True,
     "Check this host against the documented setup": False,
     "When should `ai-resources doctor` report that": "linked",
@@ -323,7 +326,9 @@ def test_a_first_run_defaults_every_answer_to_no_except_the_workboard(sim, scrip
     group_questions = [k for k in defaults if k.startswith("Telegram group chat id for agent")]
     assert len(group_questions) == 3 and all(defaults[k] == "" for k in group_questions)
     # +1: the stale-plugin question; +2: the ADR-0004 resource-safety questions (graceful restart, guards)
-    assert len(defaults) == 12 + 3 + 1 + 2, sorted(defaults)
+    # +1: ADR-0014 D5, the heartbeat question, which defaults to No (the 2h isolated light heartbeat stays).
+    assert default_of("Turn the main agent's heartbeat off") is False
+    assert len(defaults) == 12 + 3 + 1 + 2 + 1, sorted(defaults)
     assert default_of("Let the health check restart the gateway") == "notify"
     assert default_of("Let setup fill the gateway's resource guard") == "on"
 

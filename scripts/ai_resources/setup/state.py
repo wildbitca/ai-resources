@@ -284,6 +284,9 @@ class OpenClawState:
     host_units: bool = False          # the openclaw-* systemd units (backup, watchdog, ...)
     host_config: bool = False         # the canonical config block (profiles/openclaw-host.json5)
     host_workboard: bool = True       # `openclaw plugins enable workboard` (asked; defaults to yes)
+    # ADR-0014 D5: the operator's answer to "turn the main heartbeat off?" (default No keeps the 2h isolated light
+    # heartbeat). Additive: absent from the file while False.
+    host_heartbeat_off: bool = False
     host_agents_md: bool = False      # AGENTS.md templates for workspaces that have none
     host_check: bool = False          # report (and offer to fix) what `openclaw bootstrap` finds
     # ADR-0004. "" means "keep whatever kit-host.env holds, else the shipped default".
@@ -436,6 +439,9 @@ def _to_dict(obj: Any) -> Any:
             for key in ("hygiene_disabled", "claude_md_migrations", "persona_domains_active", "agy_mcp_added"):
                 if not doc["tracking"].get(key):
                     doc["tracking"].pop(key, None)         # round 2 (ADR-0014): absent until the writer ran
+        if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
+                and not doc["openclaw"].get("host_heartbeat_off"):
+            doc["openclaw"].pop("host_heartbeat_off", None)           # round 2: absent until the answer is Yes
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
                 and not doc["openclaw"].get("notification_route_changes"):
             doc["openclaw"].pop("notification_route_changes", None)    # round 2: absent until the route ran
