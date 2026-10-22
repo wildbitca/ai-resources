@@ -12,7 +12,7 @@ import pytest
 from ai_resources import audit, models
 from ai_resources import model_pins as mp
 from ai_resources import openclaw_host
-from pin_generation import pin_previous_generation
+from pin_generation import pin_previous_generation, prices_without_five_five
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "models"
 CATALOG = (FIX / "claude-cli-catalog.json").read_text()
@@ -26,10 +26,10 @@ class Env:
                  post_smoke_ok=True, defer_restart=False, rollback_ok=True, lock=True, previous_generation=True):
         if previous_generation:     # the recorded fixtures were written against the generation before 5.5
             pin_previous_generation(monkeypatch)
+        prices = prices_without_five_five()
         if priced:   # make sonnet 5 -> 5-5 an auto bump
-            prices = dict(audit.PRICES)
             prices["claude-sonnet-5-5"] = audit.PRICES["claude-sonnet-5"]
-            monkeypatch.setattr(audit, "PRICES", prices)
+        monkeypatch.setattr(audit, "PRICES", prices)
         self.doc = json.loads((FIX / "openclaw-model-sites.json").read_text())
         self.events, self.patches, self.restarts, self.smokes, self.runner_calls = [], [], 0, [], []
         self.health_ok, self.busy_n, self.smoke_ok, self.post_smoke_ok = health, busy, smoke_ok, post_smoke_ok

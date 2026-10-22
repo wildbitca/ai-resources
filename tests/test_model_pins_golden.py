@@ -53,7 +53,9 @@ def snapshots(tmp_home: pathlib.Path) -> dict[str, object]:
                               "cockpit_fallbacks": _worker_model_literals()},
         # The sonnet literal in the profile is now the @MODEL_SONNET@ marker; resolve it to compare.
         "host_profile.json": json.loads(json.dumps(profile).replace(
-            "@MODEL_SONNET@", model_pins.DEFAULTS["sonnet"])),
+            "@MODEL_SONNET@", model_pins.DEFAULTS["sonnet"]).replace(
+            "@MODEL_OPUS@", model_pins.DEFAULTS["opus"]).replace(
+            "@MODEL_HAIKU@", model_pins.DEFAULTS["haiku"])),
         "host_patch.json": {"patch": built["patch"], "replace_paths": built["replace_paths"],
                             "skipped": built["skipped"]},
     }

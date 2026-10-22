@@ -130,7 +130,8 @@ def test_propose_decisions_are_identical_before_and_after_migration(monkeypatch)
     def runner(argv, **kw):
         return 0, ("updated" if "refresh" in argv else catalog)
 
-    prices = dict(audit.PRICES)
+    from pin_generation import prices_without_five_five
+    prices = prices_without_five_five()
     prices["claude-sonnet-5-5"] = audit.PRICES["claude-sonnet-5"]
     monkeypatch.setattr(audit, "PRICES", prices)
     disc = models.discover(runner)
