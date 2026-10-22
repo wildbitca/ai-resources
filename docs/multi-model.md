@@ -353,7 +353,9 @@ with a Sonnet fallback; override it per host with `ai-resources executors set so
 sets the `classes` aliases only under OpenRouter. On Claude Code, `/model haiku` is the measured cheap
 orchestrator (a Haiku-directed run cost 77% less than an Opus-directed one and took 12 turns instead of 37).
 That is Claude Code only: OpenClaw orchestrators stay on Sonnet, because on Haiku the orchestrator announced work
-it had not done (see the OpenClaw runbook, "Why sonnet and not haiku").
+it had not done (see the OpenClaw runbook, "Why sonnet and not haiku"). The Haiku measurement predates the 5.5
+generation and the audit fixes below (message-id dedupe, subagent transcripts); re-measure it with
+`ai-resources audit snapshot <label>` before and after a change, and compare with `ai-resources audit compare`.
 
 **Claude-only host with no gateway.** A multi-model profile, even an all-Claude one, needs a LiteLLM or OpenRouter
 gateway. With no gateway use single-model mode and `claude-native`: each role picks a Claude alias and Claude Code
@@ -377,6 +379,8 @@ model is whatever that OpenClaw agent runs.
 - A reviewer from another model family has different blind spots. That is reasoning, not a measurement: the
   evaluation that would decide it (recall and precision of reviewer candidates on seeded defects, from the
   `ai-resources audit` cost breakdown) has not been run, and no `by_role` entry changes on its account.
+  `ai-resources audit --all-projects --openclaw` now reports the API-equivalent cost per model, agent and origin, and
+  `ai-resources audit snapshot` / `compare` give the before/after deltas such an evaluation needs (ADR-0013).
 - agy model labels (`gemini-3.8-flash-low`, `model_pins.AGY_STATIC`) are **not** API ids and must not be mixed up
   with the `google/gemini-*` ids of `measured-best`: the first run through an agy-backed agent, the second through
   a gateway.

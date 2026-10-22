@@ -6,6 +6,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Added (token-cost lean defaults, ADR-0013)
+
+- **`ai-resources audit snapshot <label>` and `audit compare <a> <b>`.** Cost per active hour, per session and per call,
+  first-call and p50/p90 context, share of calls above 200k, poll-turn cost share and cache hit ratio, by origin and agent,
+  plus the config inventory of the keys this release changes. The operator's `bench.py` `before-*.json` files are readable.
+  `--probe` is opt-in and prints its cost first. Figures are API-equivalent estimates.
+- **`audit --all-projects`, `--subagents`, `--openclaw`.** Subagent transcripts, every project, and OpenClaw native-runtime usage
+  per agent and model (read-only; zstd rows are decoded when a decoder exists, otherwise counted as "undecoded rows").
+- **Prices** for Opus, Sonnet and Haiku 5.5 (Haiku with a >100k prompt tier), Fable 5.1 and Gemini 4 Argon, with date-bounded rows
+  for the Gemini price changes; source and date cited in `audit.py`.
+- **Claude Code.** `CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000` (fill-only); only the core skills are linked natively
+  (`AI_RESOURCES_SKILLS=all` restores every one); `workflow-*` skills are not listed to the model; role subagents preload their
+  skills; the Engram plugin's first-message ToolSearch directive is trimmed (hash-guarded, backed up, re-applied by setup).
+- **OpenClaw host profile.** Idle session reset, `cache-ttl` context pruning, Anthropic server-side compaction at 150k, lower
+  thinking defaults, capped subagent fan-out, an explicit utility model and an isolated, light main heartbeat. All keys are hot.
+- **Confirmed cost migrations** for values a host already sets (thinking level, Opus fallbacks behind a Sonnet primary): per path,
+  recorded by id, nothing applied unattended.
+- **A narrow Slack writer** (`threadParticipation=false`, `allowBots="mentions"` on channels you pick), confirmed per path;
+  `assert_channels_safe` is unchanged.
+- **MCP mirror is opt-in for new installs** (`OPENCLAW_MCP_SERVERS` in `kit-host.env`).
+- A drift report for `kit-lane-agy-*` agents running a Claude model on the API, a printed workboard and agy MCP hint, and a
+  polling guidance block in the kit's AGENTS.md and CLAUDE.md blocks.
+- The OpenClaw plugin tests (`npm test`) now run in CI.
+
+### Changed
+
+- The audit counts each streamed message once (the last record), so earlier totals were over-counted.
+- The `claude-kit` backend is unchanged: `--disable-slash-commands` would strip `/kit-plan`, `/kit-implement` and all skills from OpenClaw-spawned Claude workers, so the saving comes from skill scoping. `--strict-mcp-config` stays forbidden.
+- Automatic pin bumps to the 5.5 models (sonnet 5 -> 5.5 equal price, opus 5 -> 5.5 lower price) are accepted.
+- Role-preloaded skills are linked (hidden from the main listing); `audit --openclaw` with no data exits 0; `audit snapshot` records its counting method and `compare` warns on a mismatch with a `bench.py` baseline (re-take it with `--since/--until`).
+- In MCP opt-in mode, mirrored servers that are not listed are denied per agent by name (never the global `tools.deny`).
+- agy fallback chains use `gemini-3.8-flash-low` as their routine safety net.
+- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` is no longer written, and the kit-written value is removed once.
+
 ## [2.3.0] — 2026-10-21 — OpenClaw native cockpit and lifecycle orchestrator plugin (ADR-0012)
 
 ### Added (OpenClaw Cockpit & Lifecycle Orchestrator)

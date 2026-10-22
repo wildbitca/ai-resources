@@ -297,6 +297,42 @@ writers stay on `claude-cli`; and doctor prints
 shell wrote outside the repo and the tripwire list; OAuth credentials in a kit-owned agy home unless you confirm
 their removal.
 
+## Lean cost defaults (ADR-0013)
+
+`ai-resources setup` applies the cost levers measured on 2026-10-22, every one `hot` or `none` in the installed reload
+table, so none of them restarts the gateway. They are fill-only (ADR-0003): a value you set is kept and listed.
+
+| Key | Lean value |
+|---|---|
+| `session.reset`, `session.resetByType.{group,thread}` | idle, 120 minutes |
+| `agents.defaults.contextPruning.mode` | `cache-ttl` |
+| `agents.defaults.models.<sonnet, opus>.params` | `anthropicServerCompaction: true`, `anthropicCompactThreshold: 150000` |
+| `agents.defaults.thinkingDefault` / `agents.entries.main.thinkingDefault` | `low` / `medium` |
+| `agents.defaults.subagents` | `model` sonnet, `maxConcurrent: 3`, `maxChildrenPerAgent: 3` |
+| `agents.defaults.utilityModel` | the pinned haiku (unset derives an older haiku that the API key rejects with a 400) |
+| `agents.entries.main.heartbeat` | `isolatedSession: true`, `lightContext: true` (`every` stays yours) |
+
+**Values this host already sets** (thinking level, an Opus fallback behind a Sonnet primary) are not replaced silently.
+An interactive run lists each as `old -> new` and asks per path; a confirmed path is recorded by id and never proposed
+again, a declined one prints the exact snippet, and a non-interactive or dry run applies nothing. `keep` in
+`kit-host-overrides.json5` wins. Fallbacks are lists, so they are replaced, not forced.
+
+**Slack** (the only `channels.*` the kit may write, and only after a confirm): `channels.slack.implicitMentions.threadParticipation = false`
+and `channels.slack.channels.<id>.allowBots = "mentions"` for the notification channels you pick. Non-interactive
+runs print `openclaw config set` commands instead. `assert_channels_safe` still refuses everything else.
+
+**MCP mirror is opt-in.** A new install mirrors no Claude Code MCP server into OpenClaw: list the ones you want in
+`~/.openclaw/kit-host.env` as `OPENCLAW_MCP_SERVERS=engram,clickup`. An install that already mirrors keeps doing so.
+In opt-in mode a mirrored server that is no longer listed is denied per non-lane agent by exact token (`<server>__*`, never the global `tools.deny`); a lane agent denies the unlisted servers by name through `lanes.mcp`. See pitfall T50.
+
+**Printed, never written:** `plugins.entries.workboard.enabled=false` (drops the workboard tools from every session),
+`tools.profile` (ADR-0011), the agy `mcp_config.json` trim. **Reported, never repointed:** a `kit-lane-agy-*` agent whose
+primary is an Anthropic model (ADR-0007 section 11 keeps agy lanes closed).
+
+**Measure it.** `ai-resources audit snapshot before`, apply, use the bot for a few days, `ai-resources audit snapshot after`,
+then `ai-resources audit compare before after`.
+A baseline taken earlier with the operator's `bench.py` counts differently (first record per message id and request id; the kit keeps the last record per message id), so re-take it with the kit over the same window: `ai-resources audit snapshot before --since <ISO> --until <ISO>`. `compare` warns when the two methods differ. Figures are API-equivalent estimates; subscription use is not billed per token.
+
 ## Image generation (ADR-0011, proposed)
 
 `ai-resources setup` asks one question about image generation when OpenClaw is one of your tools (phase 2, once; More

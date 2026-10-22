@@ -56,6 +56,13 @@ jobs:
       - name: Run unit tests
         run: python3 -m pytest tests/ -q
 
+      # The OpenClaw plugin (claude-kit and agy-cli backends) has its own node:test suite, which no job ran before.
+      # It has no dependencies, so the Node that ships on the runner is enough (engines: node >= 18).
+      - name: Run the OpenClaw plugin tests
+        run: |
+          node --version
+          cd openclaw-plugin/ai-resources && npm test
+
       # The plugin and marketplace manifests are checked by validate_kit.py above: it verifies
       # every declared path exists and that the agents list matches agents/roles/. Running
       # `claude plugin validate` here as well would mean installing and authenticating the CLI
