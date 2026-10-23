@@ -388,6 +388,9 @@ class SetupState:
     # loads and round-trips unchanged and keeps its meaning.
     cli_team: bool = False
     cli_team_api: bool = False
+    # Round 3 (ADR-0015): each cockpit's own auth, {cockpit: {"method": str, "providers": {provider: method}}}. Method
+    # names and provider ids only, never a key or a token. Additive: absent from the file while empty, no schema bump.
+    cockpit_auth: dict[str, Any] = field(default_factory=dict)
     cockpits: dict[str, CockpitState] = field(default_factory=dict)
     litellm: LiteLLMState = field(default_factory=LiteLLMState)
     providers: dict[str, ProviderState] = field(default_factory=dict)
@@ -416,6 +419,8 @@ def _to_dict(obj: Any) -> Any:
             doc.pop("cli_team", None)                      # additive field: absent until the CLI mode is chosen
         if isinstance(obj, SetupState) and not doc.get("cli_team_api"):
             doc.pop("cli_team_api", None)                  # additive field: absent until the CLI API mode is chosen
+        if isinstance(obj, SetupState) and not doc.get("cockpit_auth"):
+            doc.pop("cockpit_auth", None)                  # round 3: absent until a cockpit answered its auth
         if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict) \
                 and doc["profile"].get("composed") is None:
             doc["profile"].pop("composed", None)       # additive field: absent until a composed team exists
