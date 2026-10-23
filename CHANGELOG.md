@@ -41,11 +41,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   no longer prints a literal "(on)". The Google acknowledgement now states that the Antigravity terms prohibit third-party tools
   using Antigravity OAuth and that you accept the suspension risk; its text hash changed, so a stored Google acknowledgement is
   rejected once and setup asks you to re-confirm it (it never re-signs for you).
+- **OpenClaw routing follows the live reading.** When OpenClaw reports no usable provider, setup changes no routing, fallback,
+  kit-role or image entry and points to `openclaw configure --section model`; usability is read per agent, not across all of them.
+  A provider profile of unknown type is billed "unknown", never "API key".
+- **No silent billing change in Claude Code.** A saved `apiKeyHelper` is no longer written back from saved state; it is applied only
+  when chosen in this run, cleared when another sign-in is chosen, and every form (file, `cat <file>`, command with arguments) is
+  checked for owner and 0600 mode at Apply. Choosing Vertex records the live kind after a re-read.
+- The live model is the default of the OpenClaw engine model question, so keeping it raises no "old -> new" confirm.
+- The operator-rules file is secret-scanned again at every render; a flagged file is not copied into any cockpit. A discarded
+  seed no longer leaves planned headings behind.
+- **Tests never touch the host.** An unstubbed configure path ran `npm install -g openclaw@latest` and `systemctl --user enable --now`
+  on every full run. `tests/conftest.py` now refuses host binaries (also through shells, wrappers and `os.system`/`exec*`).
+  `scripts/run-tests.sh` runs the suite in parallel with pytest-xdist and the wall-clock `timing` tests serially: about 3 minutes
+  instead of 28. CI uses the same script. kit-plan asks each step to verify with its own tests, and kit-implement's reviewers read
+  the branch diff instead of an empty working tree.
 
 ### Removed
 
 - The kit's own key prompt for OpenClaw providers (`paste-api-key`), the image gate's own sign-in and its `<provider>:manual`
-  profile, the dead Providers and Credentials wizard steps and the stale ten-step rail labels.
+  profile, the dead Providers and Credentials wizard steps, the unused lifecycle step and the stale ten-step rail labels.
 
 ## [2.5.0] — 2026-10-23 — per-cockpit setup, OpenClaw providers and kit roles, native orchestrator (ADR-0015)
 
