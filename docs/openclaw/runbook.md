@@ -411,6 +411,8 @@ agents.defaults.mediaModels --json`.
 - every route's image generation on this host (docs only; none was run);
 - whether `openclaw configure --section model` restarts the gateway (the docs are silent): setup hands the terminal over only
   after a default-No confirm and never restarts the gateway itself (ADR-0003);
+- the provider ids that earlier kit versions passed to `models auth login` and `paste-api-key` (MiniMax OAuth `minimax-portal`
+  and the profile an OAuth login creates were never verified): ADR-0016 removed both calls, so the kit runs neither any more;
 - that `config patch` rejects a non-string `tools.deny` element (`tests/test_openclaw_image_facts.py`, opt-in with
   `AI_RESOURCES_LIVE_FACTS=1`, was written but not run by the implementer);
 - OpenClaw's wildcard grammar beyond what the docs state ("case-insensitive, supports `*` wildcards"); any other spelling is not
