@@ -6,6 +6,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Added (per-cockpit setup, OpenClaw providers and roles, native orchestrator; ADR-0015)
+
+- **Each tool asks its own sign-in.** The global "how should they work" question is gone. Claude Code: subscription, an API
+  key (read from your environment, never stored) or Vertex AI. OpenClaw: pick the providers from its own catalog and, per
+  provider, an API key (saved by OpenClaw's own store) or a CLI backend. Antigravity: your Google account. A saved answer is
+  migrated once, fill-only, and shown old -> new. The gateway (LiteLLM, OpenRouter) is no longer offered; an installed one is
+  left alone. `--backend` is deprecated and pre-fills the subscription sign-in.
+- **One role renderer for every cockpit** (`setup/role_render.py`): Claude subagents are byte-identical to before; OpenClaw gets
+  one `kit-role-<role>` agent per role with the profile's model limited to the enabled providers, `thinkingDefault` and a scoped
+  skills list; agy gets a lean role list in `GEMINI.md`.
+- **Effort is applied**: `role_effort` is complete in `balanced` and `performance`; Claude subagents carry `effort:` (an
+  operator edit is kept) and OpenClaw agents the mapped `thinkingDefault`.
+- **Skill scoping for every cockpit** (the Claude Code include list, `AI_RESOURCES_SKILLS` to widen): `~/.agents/skills` and
+  OpenClaw (`skills.load.extraDirs` with a managed directory). `doctor` warns when a vendor pin is behind upstream.
+- **OpenClaw**: `maxSpawnDepth` and `runTimeoutSeconds` beside the existing subagent limits (fill-only, hot); a confirmed
+  migration for `kit-lane-agy-*` agents billed on the Anthropic API (repoint at the Antigravity catalog or remove, one agent at a
+  time, never silent); the waiting rules in every cockpit's instruction file.
+- **Native team orchestrator**: `ai-resources orchestrate ...` (a resumable state machine) and the OpenClaw plugin commands
+  `/equipo` and `/workflow run|status|approve|cancel|resume|cost`. Plan approval before the first writer, per-role timeouts,
+  `maxTeams` with a queue, a worktree and branch per team, `Blocked`/`Return_to_step` at most 3 times, verifier independence,
+  no spend cap. A new plugin version is recorded as ONE pending reload for `apply-pending`; setup never restarts the gateway.
+- **Audit**: spend by origin, provider and role, an effort validation table and `orchestrate cost`. Older snapshots compare as
+  `n/a`. See [docs/validating-cost.md](docs/validating-cost.md) and [docs/cockpit-recommendations.md](docs/cockpit-recommendations.md).
+
+### Changed
+
+- `tests/test_openclaw_gateway_guard_words.py` timing bound 3 s -> 10 s (a slow host, not a regression).
+- The wizard step ids: `cockpit_auth` replaces `mode`; `gateway`, `providers`, `credentials` and `lifecycle` are no longer steps.
+
+
 ## [2.4.0] — 2026-10-22 — token-cost lean defaults and round 2: retuned balanced, billing awareness, hygiene and lean OpenClaw (ADR-0013, ADR-0014)
 
 ### Added (token-cost round 2, ADR-0014)
