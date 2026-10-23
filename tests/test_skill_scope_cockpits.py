@@ -100,6 +100,9 @@ class FakeOC:
 
 
 def run_skills(s, fake, kit, tmp_path, monkeypatch, *, dry_run=False):
+    from ai_resources.setup import cockpit_auth
+    if not cockpit_auth.providers(s):
+        cockpit_auth.set_providers(s, {"anthropic": "cli"})            # skills are scoped once the sign-in is answered
     monkeypatch.setattr(oc, "_apply_hot", lambda patch, dry_run=False, replace_paths=None:
                         fake.apply(patch, dry_run=dry_run, replace_paths=replace_paths))
     monkeypatch.setattr(oc.openclaw_host, "change_records", lambda *a, **k: [])
@@ -177,3 +180,11 @@ def test_agy_gets_a_managed_role_block_listing_the_fifteen_roles(tmp_path, monke
     text = (tmp_path / "g" / "GEMINI.md").read_text()
     assert "## Kit roles" in text and text.count("\n- `") >= 15 and "agents/roles/verifier.md" in text
     assert "implementer-symfony" not in text                      # personas are not listed in the lean block
+
+
+def test_without_an_openclaw_sign_in_answer_the_skills_are_left_alone(kit, tmp_path, monkeypatch):
+    s, fake = state.SetupState(), FakeOC()
+    monkeypatch.setattr(oc, "_apply_hot", lambda *a, **k: (_ for _ in ()).throw(AssertionError("patched")))
+    written: list = []
+    assert oc._configure_skills(s, fake.doc, tmp_path / "o.json", written, str(kit), dry_run=False, run_changes=[]) is False
+    assert written == [] and not _shared.scoped_skills_dir().exists()

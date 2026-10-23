@@ -1427,10 +1427,13 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
                                        dry_run=dry_run, run_changes=run_changes)
     roles_changed = _configure_roles(ctx, s, doc if dry_run else read_config(path), ak_path, dry_run=dry_run,
                                      run_changes=run_changes)
+    plugin_changed = _configure_orchestrator_plugin(ctx, s, doc if dry_run else read_config(path), path, ak_path,
+                                                    dry_run=dry_run, run_changes=run_changes)
     drift_changed = _configure_agy_drift(s, doc if dry_run else read_config(path), dry_run=dry_run,
                                          run_changes=run_changes)
     changed = (engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
-               or lanes_changed or roles_changed or drift_changed or skills_changed)
+               or lanes_changed or roles_changed or drift_changed or skills_changed
+               or plugin_changed)
     if not dry_run and run_changes:
         host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
     # The kit block in every agent workspace does not depend on the engine, on the host section's
@@ -1487,12 +1490,90 @@ def _configure_lanes(s: state.SetupState, doc: dict, *, dry_run: bool, run_chang
         teardown_fn=lambda st, d: _teardown_lanes(st, d))
 
 
+ORCHESTRATOR_PLUGIN_KEYS = {"enableOrchestrator": True, "maxTeams": 2}
+
+
+def plugin_version(ak_path: str) -> str:
+    """The version in the kit plugin's package.json ('' when unreadable)."""
+    try:
+        return str(json.loads((Path(ak_path) / "openclaw-plugin" / "ai-resources" / "package.json")
+                              .read_text(encoding="utf-8")).get("version") or "")
+    except (OSError, ValueError):
+        return ""
+
+
+def _note_plugin_pending(s: state.SetupState, version: str) -> None:
+    """Record exactly ONE `host_restart_pending` entry for a plugin version the gateway has not loaded (ADR-0003: setup
+    never restarts a live gateway for this). An earlier setup entry for the plugin is replaced, never stacked."""
+    entry = {"op": "plugin", "path": f"plugins.entries.{PLUGIN_ID}", "action": "reload", "version": version,
+             "source": "setup", "at": datetime.now(timezone.utc).isoformat()}
+    s.openclaw.host_restart_pending = [e for e in s.openclaw.host_restart_pending
+                                       if not (e.get("op") == "plugin" and e.get("source") == "setup")] + [entry]
+
+
+def _configure_orchestrator_plugin(ctx: dict, s: state.SetupState, doc: dict, path: Path, ak_path: str, *,
+                                   dry_run: bool, run_changes: list[dict]) -> bool:
+    """The native orchestrator needs the kit plugin loaded (ADR-0015 D3). Link it, fill its config keys (fill-only), and
+    when the version the gateway runs is not the one on disk record ONE pending entry and print the apply-pending
+    command: no restart is issued here (ADR-0003). An antigravity engine already has the guarded restart path of
+    `_register_plugin_and_backends`; it only has its version remembered. Only when the operator chose providers."""
+    if enabled_providers(s) is None:
+        return False
+    version = plugin_version(ak_path)
+    o = s.openclaw
+    if o.antigravity_applied:
+        if not dry_run and version:
+            o.plugin_version_seen = version
+        return False
+    if dry_run:
+        ui.info(f"OpenClaw orchestrator (dry run): plugin {version or '?'} would be linked and its config filled; "
+                f"a gateway reload would be recorded as pending ({host_pending_command()}).")
+        return False
+    changed = False
+    plugin_dir = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
+    newly_linked = False
+    if not o.plugin_linked:
+        rc, out = _openclaw(["plugins", "install", "--link", "--force", "--accept-capabilities", plugin_dir])
+        if rc == 0:
+            o.plugin_linked = newly_linked = True
+        else:
+            ui.warn(f"OpenClaw: could not link the ai-resources plugin ({ui.safe_text((out or '')[-200:])})")
+            return False
+    live = (_get(doc, "plugins", "entries", PLUGIN_ID, "config") or {})
+    wanted = {"kitRoot": ak_path, "python3Bin": shutil.which("python3") or "", **ORCHESTRATOR_PLUGIN_KEYS}
+    fill = {k: v for k, v in wanted.items() if v not in ("", None) and k not in live}
+    if fill:
+        patch = {"plugins": {"entries": {PLUGIN_ID: {"config": fill}}}}
+        ok, out = _apply_hot(patch)
+        if not ok:
+            ui.error(f"OpenClaw rejected the orchestrator plugin config: {ui.safe_excerpt(out, 300, tail=True)}")
+            return False
+        run_changes.extend(openclaw_host.change_records(doc, patch, None, "orchestrator-plugin"))
+        ui.info("OpenClaw orchestrator plugin config filled: " + ", ".join(sorted(fill)) + " (your values are kept)")
+        changed = True
+    owed = bool(version) and (newly_linked or version != o.plugin_version_seen)
+    if owed:
+        _note_plugin_pending(s, version)
+        o.plugin_version_seen = version
+        ui.info(f"The kit plugin {version} is not loaded by the running gateway yet. Setup does not restart it; recorded as "
+                f"pending: run `{host_pending_command()}` from a terminal when the gateway is idle.")
+        changed = True
+    return changed
+
+
+def host_pending_command() -> str:
+    return openclaw_host.PENDING_COMMAND
+
+
 def _configure_skills(s: state.SetupState, doc: dict, path: Path, written: list[Path], ak_path: str, *,
                       dry_run: bool, run_changes: list[dict]) -> bool:
     """Scoped skills for OpenClaw (ADR-0015 S9): a kit-managed directory with one link per scoped skill, added to
     `skills.load.extraDirs`, and the real kit skills root added to `skills.load.allowSymlinkTargets` (the links point
     outside the scanned root). Fill-only: operator entries stay; only entries the kit recorded are replaced or removed.
-    Both keys are under `skills`, which the reload table calls hot (no restart)."""
+    Both keys are under `skills`, which the reload table calls hot (no restart). Like the role agents, it runs only
+    once the operator has answered OpenClaw's sign-in (unattended hosts that never did are left as they are)."""
+    if enabled_providers(s) is None:
+        return False               # the operator never answered OpenClaw's sign-in: nothing here is written unasked
     scoped = str(_shared.scoped_skills_dir())
     real_root = os.path.realpath(Path(ak_path) / "skills")
     if dry_run:
