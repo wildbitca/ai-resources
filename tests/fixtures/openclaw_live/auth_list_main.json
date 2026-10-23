@@ -1,0 +1,3 @@
+{"agentId": "main", "provider": null, "profiles": [
+ {"id": "anthropic:default", "provider": "anthropic", "type": "api_key", "label": "anthropic:default"},
+ {"id": "claude-cli:default", "provider": "claude-cli", "type": "oauth", "label": "claude-cli:default"}]}
