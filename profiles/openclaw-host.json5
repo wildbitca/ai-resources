@@ -66,7 +66,10 @@
       // Routine turns do not need deep thinking; main is raised below.
       "thinkingDefault": "low",
       // Fan-out is capped: unbounded children multiply the shared prefix cost.
-      "subagents": { "model": "anthropic/@MODEL_SONNET@", "maxConcurrent": 3, "maxChildrenPerAgent": 3 },
+      // ADR-0015 D3/(d): depth 2 (a chat agent may run a team lead that runs a role) and a 2 h ceiling per run. Every value is
+      // lower than the platform default (8 / 5 / 5), so the kit only ever narrows; an operator value is kept and listed.
+      "subagents": { "model": "anthropic/@MODEL_SONNET@", "maxConcurrent": 3, "maxChildrenPerAgent": 3,
+                     "maxSpawnDepth": 2, "runTimeoutSeconds": 7200 },
       // Titles and progress narration run on a valid, cheap model: unset derives an older haiku that the
       // Anthropic API key rejects (400). Haiku is exempt from the "no haiku orchestrator" rule here: this is not an orchestrator.
       "utilityModel": "anthropic/@MODEL_HAIKU@",
