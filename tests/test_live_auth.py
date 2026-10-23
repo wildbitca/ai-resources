@@ -9,6 +9,7 @@ import pytest
 from ai_resources.setup import live_auth as la
 
 FIX = Path(__file__).parent / "fixtures"
+REAL_DEFAULT_RUNNER = la.default_runner            # captured at import, before conftest replaces it for every test
 
 
 def runner_for(text, rc=0):
@@ -124,3 +125,57 @@ def test_read_claude_settings_tolerates_missing_and_bad_files(tmp_path):
     assert la.read_claude_settings(tmp_path / "nope.json") == {}
     (tmp_path / "s.json").write_text("{bad", encoding="utf-8")
     assert la.read_claude_settings(tmp_path / "s.json") == {}
+
+
+# --- the real default runner (conftest replaces it in every test; this one is called with shutil.which and subprocess.run
+# --- stubbed here, so no binary is ever looked up or started) --------------------------------------------------------------
+
+def _stub_process(monkeypatch, *, which="/stub/bin/tool", result=None, raises=None):
+    ran = []
+    monkeypatch.setattr(la.shutil, "which", lambda name: which)
+
+    def fake_run(argv, **kw):
+        ran.append((argv, kw))
+        if raises is not None:
+            raise raises
+        return result
+    monkeypatch.setattr(la.subprocess, "run", fake_run)
+    return ran
+
+
+class _Done:
+    def __init__(self, rc, out="", err=""):
+        self.returncode, self.stdout, self.stderr = rc, out, err
+
+
+def test_the_real_runner_answers_127_when_the_binary_is_not_on_path(monkeypatch):
+    ran = _stub_process(monkeypatch, which=None)
+    assert REAL_DEFAULT_RUNNER(["claude", "auth", "status"]) == (127, "claude not found on PATH")
+    assert ran == []                                       # nothing was started
+
+
+def test_the_real_runner_runs_the_resolved_binary_with_a_timeout_in_the_home_directory(monkeypatch):
+    ran = _stub_process(monkeypatch, result=_Done(0, '{"ok": true}', "noise"))
+    assert REAL_DEFAULT_RUNNER(["openclaw", "models", "status", "--json"]) == (0, '{"ok": true}')
+    argv, kw = ran[0]
+    assert argv == ["/stub/bin/tool", "models", "status", "--json"]
+    assert kw["timeout"] == la.STATUS_TIMEOUT_S and kw["capture_output"] is True and kw["text"] is True
+    assert kw["cwd"] == str(Path.home())
+
+
+def test_the_real_runner_appends_stderr_only_when_the_command_failed(monkeypatch):
+    _stub_process(monkeypatch, result=_Done(0, "out", "warning text"))
+    assert REAL_DEFAULT_RUNNER(["x"]) == (0, "out")
+    _stub_process(monkeypatch, result=_Done(3, "out", "boom"))
+    assert REAL_DEFAULT_RUNNER(["x"]) == (3, "outboom")
+    _stub_process(monkeypatch, result=_Done(2, None, None))
+    assert REAL_DEFAULT_RUNNER(["x"]) == (2, "")
+
+
+def test_the_real_runner_turns_a_timeout_or_an_os_error_into_a_failed_status(monkeypatch):
+    import subprocess
+    _stub_process(monkeypatch, raises=subprocess.TimeoutExpired(["x"], 20))
+    rc, text = REAL_DEFAULT_RUNNER(["x"])
+    assert rc == 1 and "timed out" in text
+    _stub_process(monkeypatch, raises=OSError("exec format error"))
+    assert REAL_DEFAULT_RUNNER(["x"]) == (1, "exec format error")
