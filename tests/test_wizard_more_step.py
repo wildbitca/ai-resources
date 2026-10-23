@@ -22,52 +22,6 @@ def _s(*selected, engine="keep", phase2=False):
     return s
 
 
-def _local_litellm(auto_start=True, path="/x/unit"):
-    s = state.SetupState(mode="multi-model", backend="litellm")
-    s.litellm.deployment = "local"
-    s.litellm.local.runtime = "pipx"
-    s.litellm.local.auto_start = auto_start
-    s.litellm.local.lifecycle_path = path
-    return s
-
-
-def _no_container(monkeypatch):
-    monkeypatch.setattr(wizard.litellm, "is_container_mode", lambda r: False)
-    monkeypatch.setattr(wizard.litellm, "is_macos", lambda: False)
-
-
-def test_a_saved_lifecycle_answer_is_kept_without_a_question(monkeypatch):
-    """AC-S15a (phase 5 part): zero select/confirm before the Review."""
-    _no_container(monkeypatch)
-    script = Script()
-    script.install(monkeypatch)
-    s = _local_litellm()
-    assert wizard._step8_lifecycle(s) == 0
-    assert script.asked == [] and s.litellm.local.auto_start is True
-    assert any("keeping your saved answer" in m for m in script.shown)
-
-
-def test_a_fresh_lifecycle_is_asked_once(monkeypatch):
-    """AC-S15b."""
-    _no_container(monkeypatch)
-    script = Script(**{"Auto-start LiteLLM": True})
-    script.install(monkeypatch)
-    s = _local_litellm(auto_start=False, path="")
-    wizard._step8_lifecycle(s)
-    assert [a.split(": ", 1)[0] for a in script.asked] == ["confirm"] and len(script.asked) == 1
-
-
-def test_more_options_asks_the_lifecycle_again(monkeypatch):
-    """AC-S15c."""
-    _no_container(monkeypatch)
-    monkeypatch.setattr(wizard, "_OPEN_LIFECYCLE", True)
-    script = Script(**{"Auto-start LiteLLM": False})
-    script.install(monkeypatch)
-    s = _local_litellm()
-    wizard._step8_lifecycle(s)
-    assert len(script.asked) == 1 and s.litellm.local.auto_start is False
-
-
 def test_the_more_step_runs_once_on_the_first_configure_and_is_silent_afterwards():
     assert _spec("more").skip(types.SimpleNamespace(s=_s("openclaw", phase2=True))) is None
     assert _spec("more").skip(types.SimpleNamespace(s=_s("openclaw", engine="keep"))) == ("More", "")

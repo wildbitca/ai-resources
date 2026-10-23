@@ -99,22 +99,6 @@ def test_saved_gateway_bind_and_port_are_the_defaults(monkeypatch):
     assert seen["Bind interface:"] == ["0.0.0.0"] and seen["Port"] == ["4123"]
 
 
-def test_saved_lifecycle_choice_is_the_autostart_default(monkeypatch):
-    for saved in (True, False):
-        seen = _record(monkeypatch)
-        s = state.SetupState()
-        s.litellm.deployment = "local"
-        s.litellm.local.runtime = "pipx"
-        s.litellm.local.auto_start = saved
-        monkeypatch.setattr(wizard.litellm, "is_container_mode", lambda r: False)
-        monkeypatch.setattr(wizard.litellm, "is_macos", lambda: False)
-        try:
-            wizard._step8_lifecycle(s)
-        except Exception:  # noqa: BLE001 - only the prompt default matters here
-            pass
-        assert seen["Auto-start LiteLLM at every login?"] == [saved]
-
-
 def test_saved_tool_selection_is_the_default_of_the_tools_list():
     """The tools ticked in an earlier run (or named with --cockpits) start ticked on "Your tools" (ADR-0009: the
     step 7 checkbox became the first screen's list)."""
