@@ -110,3 +110,63 @@ def test_the_refusal_reads_shell_strings_and_absolute_paths():
     assert host_binary_refused(["/usr/bin/systemctl", "--user"], env, roots) == "systemctl"
     assert host_binary_refused("/usr/bin/curl -s https://example.invalid", env, roots) == "curl"
     assert host_binary_refused([], env, roots) is None
+
+
+def _fake_host_bin(tmp_path, name="npm"):
+    bindir = tmp_path / "hostbin"
+    bindir.mkdir(exist_ok=True)
+    (bindir / name).write_text("#!/bin/sh\nexit 0\n")
+    (bindir / name).chmod(0o755)
+    return {"PATH": f"{bindir}:/usr/bin:/bin"}
+
+
+def test_the_refusal_looks_through_shells_wrappers_and_chained_commands(tmp_path):
+    from conftest import host_binary_refused
+    roots = ("/nonexistent-root",)
+    env = _fake_host_bin(tmp_path)
+    for argv in (["bash", "-c", "npm install -g @openai/codex"],
+                 ["sh", "-lc", "cd x && npm i -g y"],
+                 ["env", "FOO=1", "npm", "i"],
+                 ["timeout", "-s", "KILL", "5", "npm", "i"],
+                 ["nohup", "npm", "i"], ["setsid", "npm", "i"], ["xargs", "npm"],
+                 ["env", "bash", "-c", "true; npm i"],
+                 "cd x && npm i -g y", "true || npm i", "echo a | xargs npm", "echo hi\nnpm i", "echo `npm i`",
+                 "FOO=1 npm i", "bash -c 'true | npm i'"):
+        assert host_binary_refused(argv, env, roots) == "npm", argv
+    for argv in (["bash", "-c", "echo hello && git status"], "echo npm", ["env", "FOO=1", "git", "status"],
+                 ["bash", "script.sh"]):
+        assert host_binary_refused(argv, env, roots) is None, argv
+
+
+def test_the_refusal_reads_the_executable_keyword(tmp_path):
+    from conftest import host_binary_refused
+    env = _fake_host_bin(tmp_path)
+    assert host_binary_refused(["whatever"], env, ("/nonexistent-root",), executable=str(tmp_path / "hostbin" / "npm")) == "npm"
+    assert host_binary_refused(["whatever"], env, (str(tmp_path),), executable=str(tmp_path / "hostbin" / "npm")) is None
+
+
+def test_a_shell_wrapped_host_binary_is_refused_through_subprocess_and_os(tmp_path):
+    import subprocess
+
+    import pytest
+    import shutil
+    host = next((shutil.which(n) for n in ("systemctl", "curl", "npm", "node") if shutil.which(n)), None)
+    if host is None or str(tmp_path) in host:
+        pytest.skip("no real host binary to refuse on this machine")
+    name = os.path.basename(host)
+    with pytest.raises(FileNotFoundError):
+        subprocess.run(["bash", "-c", f"cd /tmp && {name} --version"], capture_output=True, timeout=5)
+    with pytest.raises(FileNotFoundError):
+        subprocess.run(f"true && {name} --version", shell=True, capture_output=True, timeout=5)
+    with pytest.raises(FileNotFoundError):
+        subprocess.Popen(["x"], executable=host)
+    with pytest.raises(FileNotFoundError):
+        os.system(f"{name} --version")
+    with pytest.raises(FileNotFoundError):
+        os.posix_spawn(host, [name], os.environ)
+
+
+def test_the_kits_own_installer_never_reaches_the_host():
+    from ai_resources.setup import tools
+    ok, out = tools._run_install("npm install -g @openai/codex")
+    assert ok is False and "host binary blocked in tests: npm" in out
