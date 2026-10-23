@@ -2311,48 +2311,6 @@ def _step_audio(s: state.SetupState) -> int:
     return 0
 
 
-# --- Step 8 — Lifecycle ---------------------------------------------------------
-def _step8_lifecycle(s: state.SetupState) -> int:
-    _section(8, "Start at login")
-
-    if s.litellm.deployment != "local":
-        ui.info("Skipped (gateway is not local).")
-        return 0
-
-    # Docker / Podman containers self-restart via compose's `restart: always`
-    # whenever the runtime comes back up — no LaunchAgent / systemd unit needed.
-    if litellm.is_container_mode(s.litellm.local.runtime):
-        s.litellm.local.auto_start = True  # implicit via container restart policy
-        s.litellm.local.log_dir = str(litellm.log_dir())
-        ui.info(f"Skipped — {s.litellm.local.runtime} container uses "
-                f"`restart: always` (no LaunchAgent needed).")
-        ui.detail("Container starts automatically when the Docker daemon is running.")
-        return 0
-
-    if s.litellm.local.lifecycle_path and not _OPEN_LIFECYCLE:
-        # A complete saved answer (the unit path was recorded when it was given) is kept without a question;
-        # More options > Start at login asks it again (ADR-0010 PD-5).
-        ui.detail("Start at login: keeping your saved answer ("
-                  + ("auto-start on" if s.litellm.local.auto_start else "manual start")
-                  + "); change it from More options.")
-        return 0
-
-    s.litellm.local.auto_start = ui.confirm(
-        "Auto-start LiteLLM at every login?",
-        default=s.litellm.local.auto_start,
-    )
-
-    if s.litellm.local.auto_start:
-        path = litellm.lifecycle_path()
-        s.litellm.local.lifecycle_path = str(path)
-        s.litellm.local.log_dir = str(litellm.log_dir())
-        if litellm.is_macos():
-            ui.detail(f"Will install macOS LaunchAgent: {path}")
-        else:
-            ui.detail(f"Will install systemd-user service: {path}")
-    return 0
-
-
 # --- Subscription lanes: the lane step and lanes.yaml (ADR-0007) --------------------
 def _current_by_role(s: state.SetupState) -> dict:
     from . import lanes_render
