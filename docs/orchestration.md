@@ -512,6 +512,38 @@ The orchestrator manages context window usage following the `kit-orchestration` 
 - **Subagents** hold execution context (code, diffs, test output) and return a short structured block
 - Handoff files and `.agent-output/` directories carry context between phases instead of chat history
 
+## Native team orchestrator (OpenClaw)
+
+OpenClaw can run a kit workflow as a team without a Claude Code parent (ADR-0015). Two parts, with one narrow seam:
+
+| Part | What it is |
+|---|---|
+| Engine | `ai-resources orchestrate <verb> --json` (Python). A pure, resumable state machine over a `workflows/*.workflow.yaml`. It never dispatches, never sleeps, never polls. |
+| Runtime | The `ai-resources` OpenClaw plugin. `/equipo <goal>` and `/workflow run|status|approve|cancel|resume|cost` call the engine through `execFile` (an argv array, no shell), dispatch with `api.runtime.subagent.run({ deliver: true })` to the `kit-role-<role>` agent, wait with one blocking call per attempt raced by a per-role timer, and report back. |
+
+```text
+start --workflow W --goal G      -> run registered (queued behind maxTeams, or running with its own worktree + branch)
+next RUN                         -> actions: dispatch(role, agent, cwd, timeout, prompt) | ask(approval) | notice | wait | done | failed
+report RUN STEP --reply-file -   -> the role's reply (return block), or --timeout, or --error; returns the next actions
+approve | cancel | resume | status | cost
+```
+
+Rules the engine enforces: steps run in workflow order; a parallel group runs together only when every member is a
+read-only role (`planner`, `explore`, `software-architect`, `code-reviewer`, `security-auditor`, `verifier`) and joins before
+the next step, otherwise it runs sequentially; `Blocked` with `Return_to_step` returns to the named step at most 3 times and
+the 4th fails the run; a `READY` from any role but the verifier is rejected; the verifier must run on its own agent and, where
+the models are known, in a different model family than every writer (fail closed), and in a different session where the
+runtime reports one; the plan is approved by the operator before the first step that writes; each role has a timeout
+(planner 1200 s, implementer 9000 s, tester 2700 s, verifier 1800 s, others 1800 s, configurable); at most `maxTeams` (2)
+teams work at once and the rest wait in a FIFO queue; every team has its own worktree and branch; one writer per run.
+There is no spend cap: provider limits are the brake, and `orchestrate cost RUN` reports the API-equivalent estimate per role.
+
+State lives under `$XDG_STATE_HOME/ai-resources/runs/<run>/{state.json,handoff.md}` (atomic writes, one lock per run, never
+under `/tmp`). The orchestrator owns the handoff: roles end their reply with the return block and the engine merges it. After a
+gateway restart the plugin calls `resume`, which hands out again the steps that were never reported without counting a retry.
+Installing a new plugin version records ONE pending entry; `ai-resources openclaw apply-pending` reloads it in a drained
+window. Setup never restarts a live gateway for this (ADR-0003).
+
 ## Quick Reference
 
 | Resource | Path |

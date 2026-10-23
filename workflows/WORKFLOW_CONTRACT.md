@@ -127,3 +127,20 @@ Steps may include an `execution_hints` block with **optional** metadata that run
 Handoff files and placeholders (e.g. `{{workspace}}`, `{{handoff_file}}`) are documented in workflow comments and the **`kit-orchestration`** skill (`references/handoff.md`).
 
 See **`workflows/_feature-template.workflow.yaml`** for a full example.
+
+## Native orchestrator mapping (ADR-0015)
+
+`ai-resources orchestrate` runs any workflow above as a team on OpenClaw. It reads the same fields and maps them like this:
+
+| Field | In the orchestrator |
+|---|---|
+| `steps` order, `id`, `subagent_type`, `skills` | The step order, the `kit-role-<role>` agent each step is dispatched to, and the skill paths in the child prompt |
+| `execution_hints.parallel_group` | Members dispatched together and joined, only when every member is a read-only role; otherwise the group runs sequentially and the run says so |
+| `on_concern_return_to` | The step a `Blocked` reply returns to when it names none (`Return_to_step` wins); at most 3 returns per step, the 4th fails the run |
+| `prompt_template` | Filled (`{{workspace}}` is the team's worktree, `{{handoff_file}}` the run's handoff) and prefixed with the orchestrated-run rules; "update the handoff" becomes "put the fields in the return block" |
+| `backend: lane` / `openclaw-agent`, `agentId`, `write_scope`, `integrates`, `verifies` | Not used: every step is dispatched to its role agent, one writer per run, teams parallel only across their own worktrees. The lanes ledger and `lanes land` stay the Claude Code flow of ADR-0007 |
+| First step run by a writer role (`implementer`, fixers, maintainers) | The plan approval pause: the run waits for `approve` before that step |
+| `verifier` steps | The only sign-off: a `READY` from any other role is rejected; the verifier runs on its own agent and an independent model family |
+
+`ai-resources workflows show <name> --json` prints the parsed steps, roles, groups and the approval gate.
+

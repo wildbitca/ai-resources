@@ -1,6 +1,6 @@
 # ADR-0015: Per-cockpit setup, OpenClaw providers, native team orchestrator (round 3)
 
-**Status**: Proposed (2026-10-23), implemented on `feat/per-cockpit-setup-orchestrator`, not released. Plan:
+**Status**: Proposed (2026-10-23), implemented on `feat/per-cockpit-setup-orchestrator`, not released, awaiting the independent Verifier. Plan:
 `.agent-output/planner/per-cockpit-setup-openclaw-orchestrator-plan.md` (section 10 carries the operator answers).
 **Date**: 2026-10-23
 **Decision makers**: operator (plan section 10, binding), implementer (record only).
@@ -128,6 +128,73 @@ conservative and fill-only: an operator value is kept and listed.
 
 None remain: plan section 10 answered every open question (gateway removed, no Gemini CLI cockpit, full agy lanes in OpenClaw
 behind the acknowledgement, no spend cap, orchestrator not deferred).
+
+## Orchestrator interface (the seam)
+
+`ai-resources orchestrate <verb> --json`, one JSON object per call. The engine returns ACTIONS; it dispatches nothing.
+
+| Verb | Input | Output |
+|---|---|---|
+| `start` | `--workflow`, `--goal`, `--workspace`, `--domain`, `--max-teams`, `--role-timeouts`, `--executors` | the run, its worktree and branch, and the first actions (or a `queued` notice) |
+| `next RUN` | | `dispatch` (role, `kit-role-*` agent, cwd, timeout, prompt, attempt), `ask` (plan approval), `notice`, `wait`, `done`, `failed`, `cancelled` |
+| `report RUN STEP` | `--reply-file` (`-` is stdin), `--session`, `--agent`, or `--timeout`, or `--error` | the next actions and the `promoted` runs that left the queue |
+| `approve`, `cancel`, `resume [--all]`, `status`, `cost` | the run id | the new state / actions / a per-role cost report |
+| `workflows list`, `workflows show NAME` | | the parsed steps, roles, groups and the approval gate |
+
+Exit codes: 0 ok, 1 refused (stable `code`: `unknown-run`, `not-running`, `no-approval`, ...), 2 usage or environment.
+The return block a role ends its reply with (`Status`, `Blocked`, `Return_to_step`, `Block_reason`, `Verdict`, ...) is parsed by
+`orchestrator/reply.py`: tolerant of markdown decoration, bounded, never executed. State is `runs/<id>/{state.json,handoff.md}`
+under the XDG state home (atomic writes, one `flock` per run, a global lock for team admission, never under a volatile root).
+The state holds ids, counters, paths and short reasons: no prompt body and no reply text.
+
+## Migration of saved answers (fill-only, shown once)
+
+| Saved answer | Claude Code | OpenClaw | agy |
+|---|---|---|---|
+| `cli_team_api` | `api_key` (`vertex_adc` with a Vertex project in the kit env) | providers `api_key` | `google_account` |
+| `cli_team`, each on its own | `subscription` | providers `cli` | `google_account` |
+| `advanced` (litellm, openrouter) | `subscription` | providers `api_key` | `google_account` |
+
+Only cockpits that are ticked are filled; a non-empty entry is never touched. The derived legacy fields are `mode: single-model`,
+`cli_team: true` and `cli_team_api` when a tool uses a key or Vertex; a saved `backend` is left as it was. A gateway-only
+profile (not available in single-model mode) is replaced by `balanced` and the run says so.
+
+## Reload classes and writes (ADR-0003)
+
+| Written by | Keys | Class under the installed table | If not hot |
+|---|---|---|---|
+| Role agents | `agents.entries.kit-role-*`, `agents.defaults.models.<ref>` | `agents` (none) | deferred and listed, never applied |
+| Subagent limits | `agents.defaults.subagents.{maxConcurrent,maxChildrenPerAgent,maxSpawnDepth,runTimeoutSeconds}` | none | `host_restart_pending` |
+| Scoped skills | `skills.load.extraDirs`, `skills.load.allowSymlinkTargets` | none | `host_restart_pending` |
+| Agy drift repoint | `agents.entries.kit-lane-agy-*.model.primary` | none | not applied, warned |
+| Plugin config | `plugins.entries.ai-resources.config.*` (fill-only) | `plugins` (hot) | `host_restart_pending` |
+| Plugin code | the plugin itself | needs a gateway reload | ONE `op: plugin` pending entry; `apply-pending` reloads it in a drained window |
+
+Every patch is dry-run validated by OpenClaw and classified at run time; an unreadable table fails closed.
+
+## Limits rationale
+
+Defaults written only when the key is unset: `maxConcurrent 3`, `maxChildrenPerAgent 3`, `maxSpawnDepth 2`,
+`runTimeoutSeconds 7200`. The platform defaults on 2026.10.5 are 8, 5 and 5, so the kit only narrows. Each concurrent subagent
+can hold MCP child processes; `maxTeams 2` teams of at most 3 concurrent children keeps the worst case under the gateway
+`MemoryHigh` of 12G and under the Anthropic rate limits seen in the audit. The values are conservative and fill-only: an
+operator value is kept and listed. Validate them with `ai-resources audit` by role and provider.
+
+## Deviations from the plan, recorded
+
+* The provider multiselect and the per-provider auth live in the **Sign-in** step (`OpenClaw.ask_auth`), not in
+  `_prompt_engine_choice`. The engine question stays and is the runtime of OpenClaw's default agent; the engine's provider is
+  added to the selection automatically.
+* The provider list is kept in `cockpit_auth` (`providers{provider: method}`), not duplicated in `OpenClawState`.
+* The legacy-answer table is not guarded by a marker: the filled `cockpit_auth` is the marker, so the table appears once.
+* Scoped skills, role agents and the plugin step run only once the operator has answered OpenClaw's sign-in, so unattended
+  hosts that never did keep their zero-diff behaviour.
+* `kit-role-*` ids are short (`kit-role-architect`, `kit-role-implementer-flutter`): OpenClaw agent ids are limited to 31
+  characters. `orchestrator/` returns the agent id in every `dispatch` action, so the plugin never derives it.
+* `spend.py` and its pause were dropped (operator answer 4); `orchestrator/cost.py` only reports.
+* The gateway step functions and tests that only exercised the removed "How should they work?" question were removed or
+  rewritten; `_teardown_multi_model` and the gateway steps' code remain but are unreachable from the wizard.
+* The antigravity engine keeps its guarded restart path (ADR-0004); only the orchestrator plugin install is pending-only.
 
 ## Non-goals
 

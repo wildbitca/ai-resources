@@ -13,10 +13,11 @@ default path, use six words:
 | Role | A job in the team: explorer, planner, architect, implementer, reviewer, security, verifier, tester, docs. |
 | Team | Which tool does which role. |
 | Starting team | Balanced, Performance, Low cost or Custom: a ready-made team you can start from. |
-| Subscription | A plan you already pay for (Claude, Google, OpenAI). "As a team" runs on subscriptions and asks for no API key. |
-| Gateway | Advanced only: OpenRouter with an API key and budgets. LiteLLM is no longer offered to new setups (ADR-0010); a saved LiteLLM setup keeps loading and running, with one notice line. |
+| Subscription | A plan you already pay for (Claude, Google, OpenAI). Signing in with it asks for no API key. |
+| Sign-in | How one tool authenticates, asked per tool (ADR-0015): Claude Code with a subscription, an API key or Vertex AI; OpenClaw with the providers you pick, each by API key or CLI backend; Antigravity with your Google account. |
+| Gateway | **No longer offered** (ADR-0015). A gateway installed earlier keeps running and is never removed by setup; a saved `advanced` answer is migrated to the tools' own sign-in, shown once as old -> new. |
 
-Plain phrases stand in for the internal names: "How should they work?" is the *mode*, "Parallel runs" are the
+Plain phrases stand in for the internal names: "Sign-in" is the per-tool *cockpit auth* (it replaced the old "How should they work?" *mode* question in ADR-0015), "Parallel runs" are the
 *subscription lanes*, "Terms check" is the *acknowledgement* (the stored text is unchanged), "Start at login" is the
 *lifecycle*, "API keys" are the *credentials*. The old words stay where they are exact: state keys (`mode`, `backend`,
 `cli_team`, `profile`, `lanes`, `lane_acks`, `cockpits`), CLI flags, file names (`executors.yaml`, `lanes.yaml`), the
@@ -50,8 +51,8 @@ ai-resources doctor      # verify everything works
 ```
 
 The wizard finds the tools you have (Claude Code, Cursor, Antigravity CLI, …) and lets you tick more to install, asks
-how they should work (as a team on your subscriptions, each on its own, or Advanced with a gateway), gives each role
-to a tool through a starting team, and shows a review before it writes anything.
+each ticked tool how it signs in (ADR-0015), gives each role to a tool through a starting team, and shows a review
+before it writes anything.
 
 ### What the wizard looks like
 
@@ -59,8 +60,8 @@ Four screens, over ten internal steps. Each step starts with a header, a progres
 header counts screens (`[2/4]`), the rail counts the ten steps:
 
 ```
-[2/4] How should they work? ----------------------------------------------------------------
- ✔ Tools  ● Mode  ○ Gateway  ○ Providers  ○ Credentials  ○ Models  ○ Cockpits  ○ Lifecycle  ○ Review  ○ Verify
+[2/5] Sign-in -------------------------------------------------------------------------------
+ ✔ Tools  ● Sign-in  ○ Gateway  ○ Providers  ○ Credentials  ○ Models  ○ Cockpits  ○ Lifecycle  ○ Review  ○ Verify
  ↑/↓ move · Space toggle · Enter confirm · Ctrl-C cancel
 ```
 
@@ -79,10 +80,15 @@ checked.
     [-] Windsurf  manual install   (manual install: https://docs.devin.ai/desktop/getting-started)
 ```
 
-**Screen 2, How should they work?** *As a team* (each role goes to the tool you choose, on your subscriptions, no API
-keys), *Each on its own* (every tool keeps its own sign-in and settings) or *Advanced* (a gateway, LiteLLM or
-OpenRouter, with API keys and budgets; one follow-up asks which). The default is *As a team* when two or more tools are
-ticked, and a saved answer is never replaced. `--backend` decides it and the screen is not shown.
+**Screen 2, Sign-in.** Every ticked tool asks its OWN question and nothing else does (ADR-0015). Claude Code: your
+subscription, an Anthropic API key (read from your environment, never stored) or Google Vertex AI (only the project and
+region are kept). OpenClaw: which providers to use, read from OpenClaw itself (`openclaw models list`), and per provider an
+API key (saved by OpenClaw in its own store through `openclaw models auth paste-api-key`, typed on your terminal) or a CLI
+backend where one exists. Antigravity: your Google account, with the terms check where its lanes are enabled. Cursor: managed
+in Cursor, nothing asked. The kit stores method names and provider ids, never a key. There is no team question and no
+gateway question; a saved "As a team / Each on its own / Advanced" answer is migrated once (see
+[Signing in](#choosing-the-mode)). `--backend` is deprecated: any value pre-fills Claude Code's subscription sign-in and the
+question is not asked.
 
 **Screen 3, Your team.** One question, *Starting team*: Balanced (recommended), Performance, Low cost or Custom.
 Choosing it is the confirmation; the role table and a team table (which tool takes which roles) are shown with it.
@@ -90,11 +96,10 @@ Writing code always stays with Claude Code. Antigravity shows roles only when it
 and is never a choice. Custom opens the model and role questions of earlier kits unchanged. If Antigravity is ticked, a
 terms check follows (see [the Antigravity lane](#the-antigravity-lane-adr-0007-section-11-phase-3-closed)).
 
-**Screen 4, Review.** The answers by name (How, Team, Tools, Will write) and the choices *Apply*, *Change tools*,
-*Change how*, *Change team*, *More options...* and *Cancel*. A *Change* jumps back to that screen with your answers as
+**Screen 4, Review.** The answers by name (Sign-in, Team, Tools, Will write) and the choices *Apply*, *Change tools*,
+*Change sign-in*, *Change team*, *More options...* and *Cancel*. A *Change* jumps back to that screen with your answers as
 defaults and returns here. *More options...* holds what the default path does not ask: Parallel runs (Claude Code on
-your subscription, off by default), Gateway and API keys and Start at login (only with a gateway), and OpenClaw
-(engine, host, voice; asked on the first configure only). Nothing of the kit's configuration is written before Apply.
+your subscription, off by default) and OpenClaw (engine, host, voice; asked on the first configure only). Nothing of the kit's configuration is written before Apply.
 
 A step that does not apply is skipped without output on the default path; a gateway path still says why. In a narrow
 terminal (under 60 columns) the header is one line, `Step 4/10  Provider backends`; with `NO_COLOR` set, or on a
@@ -123,23 +128,20 @@ Design: [ADR-0008](decisions/0008-setup-wizard-tui-on-rich-questionary.md), amen
 
 ### Choosing the mode
 
-Screen 2 ("How should they work?") writes the same state the old four-way mode question wrote:
+**Since ADR-0015 there is no mode question.** Each tool asks its own sign-in (screen 2) and the old global fields are
+derived from the answers: `mode` is always `single-model`, `cli_team` is on, and `cli_team_api` is on when a tool signs
+in with an API key or Vertex AI. A saved answer migrates once, fill-only, and the old -> new table is shown once:
 
-| Answer | Gateway | Billing | State |
+| Saved answer | Claude Code | OpenClaw | Antigravity |
 |---|---|---|---|
-| As a team | none | your plans, nothing per token (Claude Code, Antigravity `agy`, Codex plans) | `mode: single-model`, `cli_team: true` |
-| Each on its own | none | your plan | `mode: single-model` |
-| Advanced > OpenRouter | hosted | per token, to the gateway | `mode: multi-model`, `backend: openrouter` |
-| Advanced > LiteLLM | the kit installs one | per token, to the gateway | `mode: multi-model`, `backend: litellm` |
+| As a team (API keys / Vertex) | `api_key` (`vertex_adc` with a configured Vertex project) | providers by `api_key` | `google_account` |
+| As a team (subscriptions), Each on its own | `subscription` | providers by `cli` | `google_account` |
+| Advanced (LiteLLM, OpenRouter) | `subscription` | providers by `api_key` | `google_account` |
 
-*Each on its own* means every tool works on its own sign-in with no cross-tool team; it does not mean one tool does
-every role. *As a team* asks for no key, installs no gateway and shows no gateway warning (a gateway credential would
-replace the claude.ai login; this answer never sets one). Your team starts from `balanced`, and the
-subscription lanes ([below](#subscription-lanes)) are reached from Review > More options > Parallel runs: Antigravity
-stays opt-in and gated, and the Codex lane stays held. `ai-resources setup --backend cli` picks it without a prompt, and
-`--backend litellm` / `--backend openrouter` do the same for a gateway (the screen is not shown). The `cli_team` key is
-absent otherwise, so older files are unchanged. Moving from a gateway to a no-gateway answer offers the cleanup of what
-the kit installed; moving between the two no-gateway answers leaves gateway artifacts alone.
+A gateway installed on a host stays as it is (no teardown, no removal); a gateway-only profile is replaced by `balanced`
+and the run says so. Your team starts from `balanced`, and the subscription lanes ([below](#subscription-lanes)) are reached
+from Review > More options > Parallel runs: Antigravity stays opt-in and gated, and the Codex lane stays held. The
+`cli_team` key is absent from a state that never chose a team, so older files are unchanged.
 
 ### Where Gemini shows
 
