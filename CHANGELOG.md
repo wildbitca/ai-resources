@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.6.1] — 2026-10-23 — the dry run shows rc files as a real apply leaves them
+
+### Fixed
+
+- **`setup --dry-run` no longer shows ~/.zshrc and ~/.bashrc as replaced by one line.** The preview diffed the whole file against a
+  placeholder, so every operator line looked deleted; a real apply has always kept them and only written the managed env block.
+  The preview now renders the file a real apply leaves (same variables, values masked) and lists no rc file when there is nothing
+  to export.
+
 ## [2.6.0] — 2026-10-23 — delegated cockpit auth, live state over saved state, one operator-rules file (ADR-0016)
 
 ### Changed (setup is a coordinator; ADR-0016 supersedes the auth parts of ADR-0015)
