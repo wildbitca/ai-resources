@@ -1,0 +1,18 @@
+{
+ "agentId": "main",
+ "provider": null,
+ "profiles": [
+  {
+   "id": "anthropic:default",
+   "provider": "anthropic",
+   "type": "api_key",
+   "label": "anthropic:default"
+  },
+  {
+   "id": "openai:default",
+   "provider": "openai",
+   "type": "api_key",
+   "label": "openai:default"
+  }
+ ]
+}
