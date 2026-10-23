@@ -24,6 +24,9 @@ import time
 
 import pytest
 
+# Wall-clock budgets: a loaded CPU would fail them, so they run in the serial pass (scripts/run-tests.sh).
+pytestmark = pytest.mark.timing
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 HOOK = REPO / "hooks" / "openclaw_gateway_guard.py"
 GW = "openclaw gateway restart"

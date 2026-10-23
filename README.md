@@ -251,9 +251,10 @@ Use the Homebrew CLI when you also want the wizard (`ai-resources setup`), multi
 | Command | What it checks |
 |---------|----------------|
 | `python3 scripts/validate_kit.py` | Skill frontmatter (valid YAML, name matches directory, description present and within budget), workflow steps (roles, skills, routing targets, parallel-group rules, verifier/document split), workflow script rules, hook compilation, `$AGENT_KIT` references, plugin manifests, vendored provenance, and that `skills-index.json` matches the tree |
+| `scripts/run-tests.sh` | The Python suite: in parallel with pytest-xdist, then the `timing` tests (wall-clock budgets) in one process. While changing code, run only the affected files (`scripts/run-tests.sh tests/test_x.py`); the full suite is the gate before a PR. No test may run a real host binary (`systemctl`, `npm`, `openclaw`, …): `tests/conftest.py` refuses them |
 | `claude plugin eval .` | Behaviour: whether the kit actually steers Claude on realistic prompts, scored against a no-plugin baseline (see `evals/`) |
 
-CI runs the validator and the manifest check on every pull request (`.github/workflows/ci.yml`). Evals are run locally because they make real model calls.
+CI runs the validator, the manifest check and the suite on every pull request (`.github/workflows/ci.yml`). Evals are run locally because they make real model calls.
 
 ### Vendored skills
 
