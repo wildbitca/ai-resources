@@ -43,6 +43,9 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setattr(claude, "CLAUDE_MD_PATH", md)
     monkeypatch.setattr(claude, "CONFIG_ROOT", md.parent)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    # ADR-0016 D4 backstop: a block with an operator-rules heading (IDIOMA, CLUSTERS...) also asks "add it to
+    # operator-rules.md?". These tests are about the migration itself, so that question is answered No here.
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: False)
     return types.SimpleNamespace(md=md, root=md.parent, tmp=tmp_path)
 
 

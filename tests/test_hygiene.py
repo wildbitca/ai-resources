@@ -310,7 +310,9 @@ def test_skipped_without_claude_code_or_its_cli(monkeypatch):
 
 def test_the_wizard_step_is_registered_between_more_and_review_and_is_silent_when_skipped(monkeypatch):
     ids = [sp.id for sp in wizard._build_steps(False)]
-    assert ids.index("hygiene") == ids.index("more") + 1 and ids.index("claude_md") == ids.index("hygiene") + 1
+    # ADR-0016 D4: the operator-rules seed runs between hygiene and the CLAUDE.md migration (before blocks move out).
+    assert ids.index("hygiene") == ids.index("more") + 1 and ids.index("operator_rules") == ids.index("hygiene") + 1
+    assert ids.index("claude_md") == ids.index("operator_rules") + 1
     assert ids.index("agy_mcp") == ids.index("claude_md") + 1 and ids.index("agy_mcp") == ids.index("review") - 1
     spec = next(sp for sp in wizard._build_steps(False) if sp.id == "hygiene")
     # A step that records an action locks itself (flow.Wizard), so a Back or an Edit never re-runs a disable.

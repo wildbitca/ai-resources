@@ -1122,7 +1122,8 @@ def configure(ctx: dict) -> list[Path]:
         written.append(AGENTS_DIR)
 
     # 3. CLAUDE.md — only the kit's managed block; the user's content is preserved
-    md = _claude_md(ak_path, gateway_url, mode)
+    from .. import operator_rules
+    md = operator_rules.append_to(_claude_md(ak_path, gateway_url, mode))     # ADR-0016 D4: one rules file, three cockpits
     if _shared.write_managed_block(CLAUDE_MD_PATH, md):
         written.append(CLAUDE_MD_PATH)
 
