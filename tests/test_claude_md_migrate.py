@@ -19,6 +19,11 @@ KIT = ("<!-- BEGIN ai-resources: managed by `ai-resources setup`; edits inside t
        "<!-- END ai-resources -->\n")
 
 
+
+def _raw(path):
+    with path.open(encoding="utf-8", newline="") as fh:
+        return fh.read()
+
 def _section(title, n, word="regla"):
     # ~n tokens of text (bytes / 4), non-ASCII on purpose: the text must move verbatim
     body = (f"{word} importante: no traducir, mantener acentos y eñes. " * 40)[: n * 4]
@@ -137,7 +142,7 @@ def test_decline_leaves_the_file_byte_identical_with_no_backup_and_no_record(hos
     asked = _answers(monkeypatch, {})                      # every question answered with its default: keep
     s = _state()
     assert cmm.run_step(s, now=NOW) == 0
-    assert host.md.read_text(encoding="utf-8", newline="") == original
+    assert _raw(host.md) == original
     assert len(asked) == 2 and not any("Nota breve" in a for a in asked)    # only the heavy blocks, one at a time
     assert asked[0].startswith("'IDIOMA") and "estimate" in asked[0]          # heaviest first
     assert s.tracking.claude_md_migrations == []
@@ -148,7 +153,7 @@ def test_a_dry_run_asks_nothing(host, monkeypatch):
     original = _write(host, KIT + "\n" + OPERATOR)
     monkeypatch.setattr(ui, "select", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no question")))
     cmm.run_step(_state(), dry_run=True, now=NOW)
-    assert host.md.read_text(encoding="utf-8", newline="") == original
+    assert _raw(host.md) == original
 
 
 def test_nothing_heavy_means_no_question(host, monkeypatch):
@@ -168,17 +173,17 @@ def test_accept_to_a_skill_moves_the_block_verbatim_and_leaves_the_rest(host, mo
     (rec,) = s.tracking.claude_md_migrations
     dest = host.root / "skills" / "operator-idioma-regla-global" / "SKILL.md"
     assert rec["destination"] == str(dest) and rec["kind"] == "skill" and rec["block_id"] == cmm.parse_blocks(original)[0][0].id
-    text = dest.read_text(encoding="utf-8", newline="")
+    text = _raw(dest)
     assert text.startswith("---\nname: operator-idioma-regla-global\ndescription: \"Use when writing any artifact: language rules.\"\n---\n\n")
     assert BIG1.rstrip("\n") + "\n" in text and "acentos y eñes" in text           # verbatim, never translated
     assert rec["sha256"] == cmm.sha(text) and text[rec["body_offset"]:] == BIG1.rstrip("\n") + "\n"
-    new = host.md.read_text(encoding="utf-8", newline="")
+    new = _raw(host.md)
     assert rec["pointer"] in new and BIG1.rstrip("\n") not in new and "## IDIOMA" not in new
     assert KIT in new and SMALL in new and BIG2 in new                              # kit block, small block, kept block
     assert cmm.parse_blocks(new)[1] == cmm.sha(KIT)
     assert (rec["pointer"].count("\n") == 0) and "operator-idioma-regla-global" in rec["pointer"]
     backup = host.root / "CLAUDE.md.ai-resources-backup-20261022T120000Z"
-    assert rec["backup"] == str(backup) and backup.read_text(encoding="utf-8", newline="") == original
+    assert rec["backup"] == str(backup) and _raw(backup) == original
 
 
 def test_accept_to_a_rule_writes_the_operator_paths(host, monkeypatch):
@@ -188,7 +193,7 @@ def test_accept_to_a_rule_writes_the_operator_paths(host, monkeypatch):
     cmm.run_step(s, now=NOW)
     (rec,) = s.tracking.claude_md_migrations
     dest = host.root / "rules" / "clusters-solo-wildbit.md"
-    text = dest.read_text(encoding="utf-8", newline="")
+    text = _raw(dest)
     assert text.startswith('---\npaths:\n  - "k8s/**/*.yaml"\n  - "infra/**"\n---\n\n') and BIG2.rstrip("\n") in text
     assert rec["kind"] == "rule" and dest.is_file()
 
@@ -198,7 +203,7 @@ def test_a_rule_without_paths_stays_in_claude_md(host, monkeypatch):
     _answers(monkeypatch, {"CLUSTERS": ("rule", "  ,  ")})
     s = _state()
     cmm.run_step(s, now=NOW)
-    assert host.md.read_text(encoding="utf-8", newline="") == original and s.tracking.claude_md_migrations == []
+    assert _raw(host.md) == original and s.tracking.claude_md_migrations == []
 
 
 def test_the_backup_is_made_once_per_run_and_before_the_first_edit(host, monkeypatch):
@@ -207,7 +212,7 @@ def test_the_backup_is_made_once_per_run_and_before_the_first_edit(host, monkeyp
     s = _state()
     cmm.run_step(s, now=NOW)
     backups = list(host.root.glob("CLAUDE.md.ai-resources-backup*"))
-    assert len(backups) == 1 and backups[0].read_text(encoding="utf-8", newline="") == original
+    assert len(backups) == 1 and _raw(backups[0]) == original
     assert len(s.tracking.claude_md_migrations) == 2 and len({r["backup"] for r in s.tracking.claude_md_migrations}) == 1
 
 
@@ -236,7 +241,7 @@ def test_the_kit_block_is_never_edited_even_when_a_write_would_change_it(host, m
     monkeypatch.setattr(ui, "warn", warned.append)
     s = _state()
     cmm.run_step(s, now=NOW)
-    assert host.md.read_text(encoding="utf-8", newline="") == original and s.tracking.claude_md_migrations == []
+    assert _raw(host.md) == original and s.tracking.claude_md_migrations == []
     assert any("kit block" in w for w in warned)
 
 
@@ -252,10 +257,10 @@ def _migrated(host, monkeypatch, text=None, plan=None):
 
 def test_restore_round_trips_to_the_original_bytes(host, monkeypatch):
     original, s = _migrated(host, monkeypatch)
-    assert host.md.read_text(encoding="utf-8", newline="") != original
+    assert _raw(host.md) != original
     for rec in reversed(s.tracking.claude_md_migrations):
         assert cmm.restore_one(rec) == (True, "")
-    assert host.md.read_text(encoding="utf-8", newline="") == original
+    assert _raw(host.md) == original
     assert not (host.root / "skills" / "operator-idioma-regla-global").exists()
     assert not (host.root / "rules" / "clusters-solo-wildbit.md").exists()
 
@@ -265,16 +270,16 @@ def test_restore_refuses_when_the_destination_was_edited(host, monkeypatch):
     (rec,) = s.tracking.claude_md_migrations
     dest = host.root / "skills" / "operator-idioma-regla-global" / "SKILL.md"
     dest.write_text(dest.read_text(encoding="utf-8") + "\nmy later edit\n", encoding="utf-8")
-    after = host.md.read_text(encoding="utf-8", newline="")
+    after = _raw(host.md)
     ok, why = cmm.restore_one(rec)
     assert ok is False and "edited" in why and rec["backup"] in why
-    assert host.md.read_text(encoding="utf-8", newline="") == after and dest.is_file()
+    assert _raw(host.md) == after and dest.is_file()
 
 
 def test_restore_refuses_when_the_pointer_was_edited_or_duplicated(host, monkeypatch):
     _original, s = _migrated(host, monkeypatch, plan={"IDIOMA": ("skill", "d")})
     (rec,) = s.tracking.claude_md_migrations
-    good = host.md.read_text(encoding="utf-8", newline="")
+    good = _raw(host.md)
     host.md.write_text(good.replace(rec["pointer"], rec["pointer"] + " (mine)"), encoding="utf-8", newline="")
     assert cmm.restore_one(rec)[0] is False
     host.md.write_text(good + rec["pointer"] + "\n", encoding="utf-8", newline="")
@@ -284,34 +289,34 @@ def test_restore_refuses_when_the_pointer_was_edited_or_duplicated(host, monkeyp
 def test_restore_never_touches_a_pointer_text_inside_the_kit_block(host, monkeypatch):
     _original, s = _migrated(host, monkeypatch, plan={"IDIOMA": ("skill", "d")})
     (rec,) = s.tracking.claude_md_migrations
-    text = host.md.read_text(encoding="utf-8", newline="")
+    text = _raw(host.md)
     host.md.write_text(text.replace("- Delegate wide searches.", rec["pointer"]).replace(rec["pointer"] + "\n\n", "", 0),
                        encoding="utf-8", newline="")
     # the real pointer is still outside the block exactly once, so the restore still finds the right one
     ok, _why = cmm.restore_one(rec)
-    assert ok is True and rec["pointer"] in host.md.read_text(encoding="utf-8", newline="")   # the kit block's copy stays
+    assert ok is True and rec["pointer"] in _raw(host.md)   # the kit block's copy stays
 
 
 def test_crlf_files_and_a_block_at_the_end_without_a_newline_round_trip(host, monkeypatch):
     crlf = (KIT + "\n" + OPERATOR).replace("\n", "\r\n")
     original, s = _migrated(host, monkeypatch, text=crlf, plan={"IDIOMA": ("skill", "d")})
-    assert "\r\n" in host.md.read_text(encoding="utf-8", newline="")
+    assert "\r\n" in _raw(host.md)
     assert cmm.restore_one(s.tracking.claude_md_migrations[0]) == (True, "")
-    assert host.md.read_text(encoding="utf-8", newline="") == original
+    assert _raw(host.md) == original
 
     no_eol = KIT + "\n" + SMALL + BIG1.rstrip("\n")
     original2, s2 = _migrated(host, monkeypatch, text=no_eol, plan={"IDIOMA": ("skill", "d")})
     assert s2.tracking.claude_md_migrations and not s2.tracking.claude_md_migrations[0]["ends_with_newline"]
     assert cmm.restore_one(s2.tracking.claude_md_migrations[0]) == (True, "")
-    assert host.md.read_text(encoding="utf-8", newline="") == original2
+    assert _raw(host.md) == original2
 
 
 def test_a_second_run_offers_nothing_new(host, monkeypatch):
     _original, s = _migrated(host, monkeypatch, plan={"IDIOMA": ("skill", "d"), "CLUSTERS": ("skill", "d")})
-    before = host.md.read_text(encoding="utf-8", newline="")
+    before = _raw(host.md)
     asked = _answers(monkeypatch, {})
     cmm.run_step(s, now=NOW)
-    assert asked == [] and host.md.read_text(encoding="utf-8", newline="") == before and len(s.tracking.claude_md_migrations) == 2
+    assert asked == [] and _raw(host.md) == before and len(s.tracking.claude_md_migrations) == 2
 
 
 def test_cmd_restore_restores_updates_the_state_and_keeps_what_it_cannot(host, monkeypatch):
