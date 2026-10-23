@@ -2236,17 +2236,28 @@ def _step_operator_rules(s: state.SetupState, dry_run: bool = False) -> int:
     captured. Nothing is written here (D6)."""
     from . import hygiene, operator_rules
     targets = _operator_rules_targets(s)
+
+    def drop_file_action() -> None:
+        """The planned file creation is discarded (No, Back then Edit, empty seed, secret scan): its queue entries and the
+        seed text go together, so nothing reports headings of a file that will not be created."""
+        deferred.discard(s, "operator_rules_file")
+        deferred.discard(s, "operator_rules_blocks")
+        setattr(s, operator_rules.SEED_ATTR, "")
+
     if operator_rules.exists():
         deferred.discard(s, "operator_rules_file")
+        setattr(s, operator_rules.SEED_ATTR, "")
         if targets:
             deferred.enqueue(s, deferred.Action(
                 "operator_rules_blocks", f"refresh the operator-rules block in {targets}",
                 plan_text=f"refresh the managed operator-rules block in {targets} from {operator_rules.path()}"))
         return 0
     if hygiene.is_headless():
+        drop_file_action()
         return 0
     seed = operator_rules.seed_from_claude_md()
     if not seed:
+        drop_file_action()
         return 0
     composed = operator_rules.compose(seed)
     _section(8, "Operator rules")
@@ -2258,14 +2269,15 @@ def _step_operator_rules(s: state.SetupState, dry_run: bool = False) -> int:
     if bad:
         ui.warn(f"Line(s) {', '.join(map(str, bad[:5]))} of those blocks look like a key, token or password; the file "
                 "is not created. Take the secret out of CLAUDE.md and run setup again.")
+        drop_file_action()
         return 0
     if dry_run:
         ui.detail("DRY RUN: would offer to create the file from these blocks.")
+        drop_file_action()
         return 0
     if not ui.confirm(f"Create {operator_rules.path()} from these blocks (at Apply) and render it into {targets or 'your tools'}?",
                       default=True):
-        deferred.discard(s, "operator_rules_file")
-        deferred.discard(s, "operator_rules_blocks")
+        drop_file_action()
         return 0
     setattr(s, operator_rules.SEED_ATTR, composed)
     deferred.enqueue(s, deferred.Action(

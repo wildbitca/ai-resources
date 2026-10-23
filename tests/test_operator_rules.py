@@ -320,3 +320,62 @@ def test_the_state_never_holds_the_rules_text(world, monkeypatch):
     wizard._step_operator_rules(s)
     dumped = json.dumps(state._to_dict(s))
     assert "IDIOMA" not in dumped and "Regla de" not in dumped
+
+
+# --- a discarded file action leaves no planned text behind (Back then Edit) --------------------------------------------
+
+def _quiet(monkeypatch, confirm=True):
+    for name in ("section", "info", "detail", "warn"):
+        monkeypatch.setattr(ui, name, lambda *a, **k: None)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: confirm)
+
+
+def _planned_run(host, monkeypatch):
+    _quiet(monkeypatch, True)
+    s = mk_state("claude", "openclaw", "agy")
+    wizard._step_operator_rules(s)
+    assert getattr(s, rules.SEED_ATTR) and rules.has_heading("IDIOMA", s)       # the file is planned
+    return s
+
+
+def _nothing_planned(s):
+    assert getattr(s, rules.SEED_ATTR) == "" and not rules.has_heading("IDIOMA", s)
+    assert [a.key for a in deferred.pending(s)] == []
+
+
+def test_answering_no_on_a_rerun_forgets_the_planned_seed(host, monkeypatch):
+    s = _planned_run(host, monkeypatch)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: False)
+    wizard._step_operator_rules(s)
+    _nothing_planned(s)
+
+
+def test_an_empty_seed_on_a_rerun_forgets_the_planned_seed_and_its_queue(host, monkeypatch):
+    s = _planned_run(host, monkeypatch)
+    host.md.write_text(OTHER, encoding="utf-8")
+    wizard._step_operator_rules(s)
+    _nothing_planned(s)
+
+
+def test_a_secret_on_a_rerun_forgets_the_planned_seed_and_its_queue(host, monkeypatch):
+    s = _planned_run(host, monkeypatch)
+    host.md.write_text(OTHER + FIVE + section("CLUSTERS secrets", f"token {KEY_LIKE}"), encoding="utf-8")
+    wizard._step_operator_rules(s)
+    _nothing_planned(s)
+
+
+def test_a_headless_or_dry_rerun_forgets_the_planned_seed(host, monkeypatch):
+    s = _planned_run(host, monkeypatch)
+    wizard._step_operator_rules(s, dry_run=True)
+    _nothing_planned(s)
+    s = _planned_run(host, monkeypatch)
+    monkeypatch.setattr(hygiene, "is_headless", lambda: True)
+    wizard._step_operator_rules(s)
+    _nothing_planned(s)
+
+
+def test_the_claude_md_backstop_offers_the_file_again_once_the_seed_is_discarded(host, monkeypatch):
+    s = _planned_run(host, monkeypatch)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: False)
+    wizard._step_operator_rules(s)
+    assert not rules.has_heading("COMMITS", s)       # what claude_md_migrate asks before it offers `also add to the file`
