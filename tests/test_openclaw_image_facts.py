@@ -1,9 +1,10 @@
 """Integration pins for the OpenClaw facts the image-generation setup rests on (ADR-0011, plan I0).
 
-These run a real `openclaw config patch --dry-run` against a scratch copy of the config, so they are opt-in: they are
-skipped unless `openclaw` is installed AND `AI_RESOURCES_LIVE_FACTS=1` is set. Nothing here writes: every patch is a
-`--dry-run`, the config and state directories are scratch directories, and the operator's real
-`~/.openclaw/openclaw.json` is hashed before and after. Each call runs under a timeout (the CLI loads plugins, F11).
+INTENTIONALLY RETIRED. These ran a real `openclaw config patch --dry-run` against a scratch copy of the config, opt-in
+through `AI_RESOURCES_LIVE_FACTS=1`. The suite now refuses host binaries (tests/conftest.py `_no_host_binaries`), so the
+call would raise "host binary blocked in tests: openclaw" instead of reaching OpenClaw. They are kept as the record of
+what each fact was and how it was checked; to re-check a fact, run the same dry run by hand against a scratch config
+(`OPENCLAW_CONFIG_PATH=<scratch> openclaw config patch --stdin --dry-run`), never from pytest.
 """
 from __future__ import annotations
 
@@ -17,9 +18,9 @@ import subprocess
 import pytest
 
 OPENCLAW = shutil.which("openclaw")
-pytestmark = pytest.mark.skipif(
-    not OPENCLAW or os.environ.get("AI_RESOURCES_LIVE_FACTS") != "1",
-    reason="needs openclaw on PATH and AI_RESOURCES_LIVE_FACTS=1 (opt-in; dry-run only, scratch config)")
+pytestmark = pytest.mark.skip(
+    reason="retired: host binaries are refused in tests, so the real `openclaw config patch --dry-run` cannot run here; "
+           "use a dry run by hand against a scratch config instead")
 
 REAL = pathlib.Path.home() / ".openclaw" / "openclaw.json"
 TIMEOUT = 110
