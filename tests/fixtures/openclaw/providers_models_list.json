@@ -1,0 +1,160 @@
+{
+ "count": 16,
+ "models": [
+  {
+   "key": "anthropic/claude-sonnet-5-5",
+   "name": "claude-sonnet-5-5",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "anthropic/claude-opus-5-5",
+   "name": "claude-opus-5-5",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "anthropic/claude-haiku-4-5",
+   "name": "claude-haiku-4-5",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "openai/gpt-5.5",
+   "name": "gpt-5.5",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "openai/gpt-5.5-mini",
+   "name": "gpt-5.5-mini",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "google/gemini-3.8-flash",
+   "name": "gemini-3.8-flash",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "google/gemini-4-argon",
+   "name": "gemini-4-argon",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "google-vertex/gemini-3.8-flash",
+   "name": "gemini-3.8-flash",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "openrouter/deepseek/deepseek-v4",
+   "name": "deepseek/deepseek-v4",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "deepseek/deepseek-v4",
+   "name": "deepseek-v4",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "mistral/mistral-large-3",
+   "name": "mistral-large-3",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "xai/grok-5",
+   "name": "grok-5",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "claude-cli/claude-opus-5-5",
+   "name": "claude-opus-5-5",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": true,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "agy-cli-lane/gemini-3.8-flash-low",
+   "name": "gemini-3.8-flash-low",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": true,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "elevenlabs/eleven-v4",
+   "name": "eleven-v4",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  },
+  {
+   "key": "fal/flux-3",
+   "name": "flux-3",
+   "input": "text",
+   "contextWindow": 128000,
+   "local": false,
+   "available": true,
+   "tags": []
+  }
+ ],
+ "providerOutcomes": [
+  {
+   "provider": "anthropic",
+   "profileId": "anthropic:default",
+   "status": "ready"
+  },
+  {
+   "provider": "google",
+   "status": "auth-rejected"
+  }
+ ]
+}

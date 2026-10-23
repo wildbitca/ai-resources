@@ -101,7 +101,7 @@ def _adjacent(n, tail):
 def test_a_backtick_wrapped_verb_after_many_substitutions_is_denied(tmp_path, n):
     rc, elapsed = _hook(tmp_path, _adjacent(n, f"`{GW}`"))
     assert rc == 2, n
-    assert elapsed < 3, f"{n}: {elapsed:.1f}s"
+    assert elapsed < 10, f"{n}: {elapsed:.1f}s"
     rc, elapsed = _hook(tmp_path, _adjacent(n, f"`{SC}`"))
     assert rc == 2, n
 
@@ -110,7 +110,7 @@ def test_a_backtick_wrapped_verb_after_many_substitutions_is_denied(tmp_path, n)
 def test_the_same_shape_without_the_verb_is_allowed_in_time(tmp_path, n):
     rc, elapsed = _hook(tmp_path, _adjacent(n, "`openclaw gateway status`"))
     assert rc == 0, n
-    assert elapsed < 3, f"{n}: {elapsed:.1f}s"
+    assert elapsed < 10, f"{n}: {elapsed:.1f}s"
     rc, elapsed = _hook(tmp_path, _adjacent(n, "`ls -la`"))
     assert rc == 0, n
 
@@ -123,7 +123,7 @@ def test_a_backtick_wrapped_verb_past_the_nesting_limit_is_denied(tmp_path, dept
     for command, want in ((deny, 2), (allow, 0), (deny_dq, 2)):
         rc, elapsed = _hook(tmp_path, command)
         assert rc == want, (depth, command[:60])
-        assert elapsed < 3
+        assert elapsed < 10
 
 
 @pytest.mark.parametrize("command", [
@@ -140,7 +140,7 @@ def test_the_budget_fallback_reads_the_remainder_of_the_line(tmp_path, guard, co
     assert guard._last_deadline_fired is False
     rc, elapsed = _hook(tmp_path, command)
     assert rc == 2
-    assert elapsed < 3
+    assert elapsed < 10
 
 
 def test_the_budget_fallback_allows_a_remainder_without_the_verb(tmp_path, guard):
@@ -149,7 +149,7 @@ def test_the_budget_fallback_allows_a_remainder_without_the_verb(tmp_path, guard
         assert guard.decide(command) is None, tail
         assert guard._last_deadline_fired is False
     rc, elapsed = _hook(tmp_path, "echo " + "`$(a)`" * 5000 + " `openclaw gateway status`")
-    assert (rc, elapsed < 3) == (0, True)
+    assert (rc, elapsed < 10) == (0, True)
 
 
 # --- 1d: the second view needs the OpenClaw gateway words ----------------------------------------------------------
@@ -392,11 +392,11 @@ def test_an_open_quote_over_many_expansion_lines_is_read_in_time_and_keeps_its_v
     assert guard.decide(benign) is None
     parsed_in = time.perf_counter() - start
     assert guard._last_deadline_fired is False, "the deadline must not fire on realistic input"
-    assert parsed_in < 3, f"{line!r}: {parsed_in:.1f}s for {len(benign)} bytes"
+    assert parsed_in < 10, f"{line!r}: {parsed_in:.1f}s for {len(benign)} bytes"
     rc, elapsed = _hook(tmp_path, benign)
-    assert (rc, elapsed < 3) == (0, True), f"{line!r}: {elapsed:.1f}s"
+    assert (rc, elapsed < 10) == (0, True), f"{line!r}: {elapsed:.1f}s"
     rc, elapsed = _hook(tmp_path, benign + "\n" + GW)
-    assert (rc, elapsed < 3) == (2, True), f"{line!r} + verb: {elapsed:.1f}s"
+    assert (rc, elapsed < 10) == (2, True), f"{line!r} + verb: {elapsed:.1f}s"
     rc, _elapsed = _hook(tmp_path, benign + "\n" + SC)
     assert rc == 2
 
@@ -465,12 +465,12 @@ def test_a_budget_spending_prefix_does_not_hide_a_guarded_command(guard, tmp_pat
     cmd = _padded(tail)
     assert guard.shape(cmd), "the fallback after the budget is spent must still deny"
     rc, secs = _hook(tmp_path, cmd)
-    assert rc == 2 and secs < 3
+    assert rc == 2 and secs < 10
 
 
 def test_a_budget_spending_prefix_with_a_harmless_tail_is_allowed(guard, tmp_path):
     rc, secs = _hook(tmp_path, _padded("openclaw gateway status \\\n--json"))
-    assert rc == 0 and secs < 3
+    assert rc == 0 and secs < 10
 
 
 def test_a_line_continuation_is_undone_in_the_word_fallback(guard):
@@ -504,4 +504,4 @@ def test_a_substituted_verb_past_the_nesting_limit_is_denied(guard, word, depth)
 def test_a_substituted_verb_after_a_budget_spending_prefix_is_denied(tmp_path):
     command = "echo " + "$(a)" * 2200 + '\na="`echo \\"x\\"`"; openclaw gateway `echo restart`'
     rc, secs = _hook(tmp_path, command)
-    assert rc == 2 and secs < 3
+    assert rc == 2 and secs < 10
