@@ -956,6 +956,56 @@ def _forget_tool_answers(s: state.SetupState) -> None:
         s.__dict__.pop(attr, None)
 
 
+# The OpenRouter Gemini opt-in below belongs to the gateway path that ADR-0015 removed from the wizard: nothing calls it
+# any more (a saved gateway state is migrated to single-model before the review). It is kept, with its tests, as the one
+# place that knows the rule if a gateway is ever offered again.
+_GEMINI_ASKED: set[str] = set()     # teams for which Review already asked the OpenRouter Gemini opt-in in this run
+
+
+def _google_roles(s: state.SetupState) -> list[str]:
+    """The roles of this state's profile that run a Google model, in role order."""
+    try:
+        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name, s.backend), "multi-model")
+    except (FileNotFoundError, RuntimeError):
+        return []
+    if s.profile.customized and s.profile.customizations:
+        base = profiles.merge_customizations(
+            base, {k: v for k, v in s.profile.customizations.items() if k in profiles.KNOWN_ROLES})
+    by_role = base.get("by_role") or {}
+    return [r for r in profiles.KNOWN_ROLES if str((by_role.get(r) or {}).get("model", "")).startswith("google/")]
+
+
+def _openrouter_gemini_optin(s: state.SetupState) -> None:
+    """OpenRouter Balanced declares Gemini, which Claude Code does not verify through OpenRouter yet. The roles that
+    use it would silently run on the session model, so Review asks once (default No, never answered for the operator)
+    and records `profile.allow_unverified` on a Yes; a No names the roles instead. Skipped when the cell is verified,
+    when the flag already allows it, or when the profile has no Google role (ADR-0010 S6b, PD-5)."""
+    if s.mode != "multi-model" or s.backend != "openrouter" or compat.claude_google_openrouter_verified():
+        return
+    roles = _google_roles(s)
+    if not roles or _COMPOSE.get("allow_unverified"):
+        return
+    if "claude" not in _detected_cockpit_ids(s):
+        return
+    key = profiles.saved_or_recommended(s.profile.name, s.backend) + ("*" if s.profile.customized else "")
+    if key in _GEMINI_ASKED:                     # asked once per team in this run, not again on a return to Review
+        return
+    _GEMINI_ASKED.add(key)
+    rows = [(r, "google", "") for r in roles]
+    held = team_view.provider_mix({}, rows, row="openrouter").lines[0]
+    if ui.is_non_interactive() or _ASSUME_YES:
+        # `--yes` answers the install offer only; this opt-in is never answered for the operator.
+        if not s.profile.allow_unverified:
+            ui.info(held)
+        return
+    pretty = ", ".join(roles[:-1]) + " and " + roles[-1] if len(roles) > 1 else roles[0]
+    if ui.confirm(f"Use Gemini on {pretty} through OpenRouter (not yet verified with Claude Code)?", default=False):
+        s.profile.allow_unverified = True
+    else:
+        s.profile.allow_unverified = False
+        ui.info(held)
+
+
 def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
     """Screen 4, "Review", BEFORE the write: the answers by name, then Apply, Change tools, Change how, Change team,
     More options or Cancel. A Change jumps back to that screen with the current answers as defaults and returns here.
