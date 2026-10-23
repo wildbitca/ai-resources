@@ -372,6 +372,33 @@ def check_haiku_budget() -> None:
                              f"shrink its role file, preloaded skills or the native skill listing")
 
 
+EFFORT_COMPLETE_PROFILES = ("balanced", "performance")
+
+
+def check_role_effort(role_names: set[str]) -> None:
+    """Every kit role has a `role_effort` entry with an allowed level in the profiles that declare the full table
+    (ADR-0015 S3). The key stays `role_effort`; a profile may never carry an `effort` key."""
+    import yaml
+    allowed = {"low", "medium", "high"}
+    for name in EFFORT_COMPLETE_PROFILES:
+        path = ROOT / "profiles" / f"{name}.yaml"
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as e:
+            fail("role-effort", f"{path.name}: {e}")
+            continue
+        table = doc.get("role_effort") or {}
+        if "effort" in doc:
+            fail("role-effort", f"{path.name}: the key is `role_effort`, never `effort`")
+        for role in sorted(role_names):
+            if table.get(role) not in allowed:
+                fail("role-effort", f"{path.name}: role '{role}' needs a role_effort of {sorted(allowed)}, "
+                                    f"got {table.get(role)!r}")
+        for role in table:
+            if role not in role_names:
+                fail("role-effort", f"{path.name}: role_effort names unknown role '{role}'")
+
+
 def check_workflows(skill_ids: set[str], role_names: set[str]) -> None:
     """Steps reference real roles and skills; routing targets resolve; invariants hold."""
     for wf_path in sorted((ROOT / "workflows").glob("*.workflow.yaml")):
@@ -625,6 +652,7 @@ def main() -> int:
     check_workflows(skill_ids, role_names)
     check_skill_scope(skill_ids, role_names)
     check_haiku_budget()
+    check_role_effort(role_names)
     check_workflow_scripts()
     check_hooks()
     check_references()

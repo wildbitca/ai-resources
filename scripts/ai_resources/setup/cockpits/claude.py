@@ -16,6 +16,7 @@ from ..detection import detect_claude_code
 from ... import repo_root
 from ... import domains, skill_scope
 from .. import role_render
+from .. import effort as effort_mod
 from . import _shared
 
 
@@ -471,9 +472,10 @@ def _frontmatter_list(key: str, values) -> list[str]:
 
 def _subagent_text(name: str, desc: str, tools: str | None, model: str, body: str,
                    skills: tuple[str, ...] | list[str] | None = None,
-                   mcp_servers: tuple[str, ...] | list[str] | None = None) -> str:
-    """The content of one subagent file (pure). `skills` and `mcp_servers` are emitted only when non-empty,
-    so a role without data renders exactly as before."""
+                   mcp_servers: tuple[str, ...] | list[str] | None = None,
+                   effort: str | None = None) -> str:
+    """The content of one subagent file (pure). `skills`, `mcp_servers` and `effort` are emitted only when
+    non-empty, so a role without data renders exactly as before."""
     # Quote defensively: frontmatter is parsed as YAML now, so a description
     # containing a quote or a newline would otherwise emit a broken file.
     safe_desc = " ".join(desc.split()).replace("\\", "\\\\").replace('"', '\\"')
@@ -481,6 +483,8 @@ def _subagent_text(name: str, desc: str, tools: str | None, model: str, body: st
     if tools is not None:
         fm_lines.append(f"tools: {tools}")
     fm_lines.append(f"model: {model}")
+    if effort:
+        fm_lines.append(f"effort: {effort}")
     if skills:
         fm_lines += _frontmatter_list("skills", skills)
     if mcp_servers:
@@ -489,15 +493,40 @@ def _subagent_text(name: str, desc: str, tools: str | None, model: str, body: st
 
 
 def _write_subagent(name: str, desc: str, tools: str | None, model: str, body: str,
-                    skills=None, mcp_servers=None) -> bool:
+                    skills=None, mcp_servers=None, effort=None) -> bool:
     """Emit one subagent file. Returns True when the file changed on disk."""
     return _shared.write_text(AGENTS_DIR / f"{name}.md",
-                              _subagent_text(name, desc, tools, model, body, skills, mcp_servers))
+                              _subagent_text(name, desc, tools, model, body, skills, mcp_servers, effort))
+
+
+_EFFORT_LINE = re.compile(r"^effort:[ \t]*(\S+)[ \t]*$", re.M)
+
+
+def _frontmatter_effort(name: str) -> str | None:
+    """The `effort:` value currently in the subagent file of `name` (frontmatter only), None when absent."""
+    try:
+        text = (AGENTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    head = text.split("\n---", 2)[0] if text.startswith("---") else ""
+    m = _EFFORT_LINE.search(head)
+    return m.group(1) if m else None
+
+
+def effective_effort(name: str, kit_value: str | None, recorded: dict | None) -> tuple[str | None, bool]:
+    """(value to render, kept). The kit fills `effort:` only where the operator has not changed it: a file whose value
+    differs from what the kit last wrote (`recorded`) keeps that value, and `kept` is True so setup lists it."""
+    current = _frontmatter_effort(name)
+    if current is not None and current != (recorded or {}).get(name):
+        return current, current != kit_value
+    return kit_value, False
 
 
 def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
                              tracking: Any = None, strict: bool = False, sink: Any = None,
-                             allow_unverified: bool | None = None, backend: str = "litellm") -> list[str]:
+                             allow_unverified: bool | None = None, backend: str = "litellm",
+                             effort: dict | None = None, recorded_effort: dict | None = None,
+                             effort_kept: list | None = None) -> list[str]:
     """Write one Claude Code subagent per kit role and per persona.
 
     Personas (`agents/personas/<role>-<domain>.md`) are domain overlays with no
@@ -523,6 +552,7 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
     if sink is None:
         AGENTS_DIR.mkdir(parents=True, exist_ok=True)
 
+    effort_written: dict[str, str] = {}
     for spec in specs:
         body = spec.prompt(lambda b: _rewrite_body(b, ak_path), _shared.kit_context_block(ak_path))
         if spec.is_persona:
@@ -540,8 +570,18 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
         # Append unconditionally: `_write_subagent` reports whether the file changed, which is not the same as
         # whether it should exist. Treating a no-op rewrite as "not produced" made the pruning below delete every
         # agent on any re-run where content was identical.
+        kit_effort = None
+        if effort and effort_mod.CLAUDE_EFFORT_FRONTMATTER and effort.get(spec.base):
+            kit_effort = effort_mod.for_cockpit(effort[spec.base], "claude")
+        recorded = recorded_effort if recorded_effort is not None else getattr(tracking, "subagent_effort", None)
+        value, kept = effective_effort(spec.name, kit_effort, recorded) if kit_effort else (None, False)
+        if kept and effort_kept is not None:
+            effort_kept.append(spec.name)
+        if value:
+            effort_written[spec.name] = kit_effort or value
+        extra = {"effort": value} if value else {}
         write(spec.name, spec.description, ROLE_TOOLS.get(spec.base), model, body,
-              skill_scope.ROLE_SKILLS.get(spec.base), skill_scope.ROLE_MCP_SERVERS.get(spec.base))
+              skill_scope.ROLE_SKILLS.get(spec.base), skill_scope.ROLE_MCP_SERVERS.get(spec.base), **extra)
         generated.append(spec.name)
 
     if tracking is not None:
@@ -551,18 +591,22 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
                 path.unlink()
         tracking.subagent_files_installed = sorted(generated)
         tracking.persona_domains_active = sorted(domains.active_domains())
+        if hasattr(tracking, "subagent_effort"):
+            tracking.subagent_effort = dict(effort_written)
 
     return generated
 
 
 def render_subagent_files(executors: dict, ak_path: str, mode: str, strict: bool = False,
-                          allow_unverified: bool | None = None, backend: str = "litellm") -> dict[str, str]:
+                          allow_unverified: bool | None = None, backend: str = "litellm",
+                          effort: dict | None = None, recorded_effort: dict | None = None) -> dict[str, str]:
     """name -> file content for every subagent, without touching disk (the S12 re-render diffs it)."""
     out: dict[str, str] = {}
     _generate_subagent_files(executors, ak_path, mode, None, strict,
                              allow_unverified=allow_unverified, backend=backend,
-                             sink=lambda name, desc, tools, model, body, skills=None, mcp=None: out.__setitem__(
-                                 name, _subagent_text(name, desc, tools, model, body, skills, mcp)))
+                             effort=effort, recorded_effort=recorded_effort or {},
+                             sink=lambda name, desc, tools, model, body, skills=None, mcp=None, effort=None: out.__setitem__(
+                                 name, _subagent_text(name, desc, tools, model, body, skills, mcp, effort)))
     return out
 
 
@@ -884,8 +928,13 @@ def configure(ctx: dict) -> list[Path]:
     if gated:
         ui.warn("Claude Code: models not verified for this cockpit were not written (roles inherit the session "
                 f"model; pass --allow-unverified to write them): {', '.join(gated)}")
+    effort_kept: list[str] = []
     agents = _generate_subagent_files(executors, ak_path, mode, s.tracking, strict,
-                                      allow_unverified=allow_unverified, backend=backend)
+                                      allow_unverified=allow_unverified, backend=backend,
+                                      effort=effort_mod.table_for_state(s), effort_kept=effort_kept)
+    if effort_kept:
+        ui.info("Claude Code: kept your own `effort:` in " + ", ".join(sorted(effort_kept))
+                + " (the kit fills effort only where you have not set it).")
     if agents:
         written.append(AGENTS_DIR)
 

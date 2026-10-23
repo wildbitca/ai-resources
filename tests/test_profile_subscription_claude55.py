@@ -175,3 +175,11 @@ def test_the_agy_candidates_do_not_change_by_role_and_are_held_while_the_flag_or
     assert all(h["reason"].startswith("held:") and ("--lanes-antigravity" in h["reason"]
                                                     or "gate" in h["reason"].lower())
                for h in frag["held"]), frag["held"]
+
+
+def test_role_effort_is_a_positive_map_of_allowed_levels():
+    """ADR-0015 S3: the key stays `role_effort`; the cockpit adapters translate it (`setup/effort.py`)."""
+    doc = _doc()
+    assert doc["role_effort"]["planner"] in ("low", "medium", "high")
+    for level in doc["role_effort"].values():
+        assert level in ("low", "medium", "high")
