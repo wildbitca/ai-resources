@@ -143,6 +143,28 @@ def test_a_live_claude_cli_engine_keeps_its_live_model_as_the_default(agy_world,
     assert openclaw.default_engine(s, doc) == "claude-code"
 
 
+def test_the_live_agy_model_is_the_default_even_when_the_engine_offers_bare_ids(agy_world, monkeypatch):
+    """The live ref is `agy-cli/<id>`; the engine offers bare ids. Enter must keep the model that already runs, with no
+    spurious old -> new confirm."""
+    models = openclaw.engine_models(openclaw.ENGINES["antigravity"])
+    live_id = models[1]
+    doc = live_doc()
+    doc["agents"]["defaults"]["model"] = {"primary": f"agy-cli/{live_id}"}
+    doc["agents"]["defaults"]["models"] = {f"agy-cli/{live_id}": {"agentRuntime": {"id": "agy-cli"}}}
+    for e in doc["agents"]["entries"].values():
+        e.pop("model", None)
+    agy_world.write_text(json.dumps(doc), encoding="utf-8")
+    s = saved_state()
+    s.openclaw.engine = "antigravity"
+    openclaw._set_live(s, doc)
+    ans = Answers(monkeypatch)
+    openclaw._prompt_engine_model(s)
+    model_q = [d for m, d in ans.selects if "Model for OpenClaw" in m]
+    assert model_q == [live_id]
+    assert s.openclaw.model == live_id and ans.confirms == []
+    assert s.openclaw.engine == "antigravity"
+
+
 def test_a_stale_saved_engine_is_asked_again_by_the_wizard(agy_world):
     from ai_resources.setup import wizard
     s = saved_state()
