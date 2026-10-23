@@ -407,39 +407,141 @@ def read_live(runner=None) -> "live_auth.LiveAuth":
     return live_auth.read_claude(runner, os.environ, live_auth.read_claude_settings(SETTINGS_PATH))
 
 
-def helper_setting(value: str) -> tuple[str, str]:
-    """`(apiKeyHelper setting, problem)` for what the operator typed. A command is kept as typed. A path to a file must
-    be yours with no group or other access (0600, or 0700 for a script that prints the key): a readable key file is
-    refused. A key pasted by mistake is refused too, because the kit stores a path or command, never a key."""
+_OPERATOR_CHARS = frozenset("();<>|&")
+
+
+def _split_command(text: str) -> "tuple[list[str], bool]":
+    """(words, has_operator): the shell words of `text`, and whether an unquoted-or-quoted shell operator (pipe, redirect,
+    `;`, `&&`, parentheses) stands as its own word. Quoted text inside a word (a path with a space or `;`) is one word."""
+    import shlex
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    words = list(lexer)
+    return words, any(w and set(w) <= _OPERATOR_CHARS for w in words)
+
+
+def _owner_only_file(path: str, shown: str) -> str:
+    """Why a key or helper FILE is not acceptable, '' when it is. Symlinks are resolved first, so the target is what is
+    checked: it must be a regular file you own, with no group or other access (0600; a 0700 script is fine), in a
+    directory nobody else can write to (otherwise the checked file could be swapped later)."""
     import shlex
     import stat as _stat
+    real = os.path.realpath(path)
+    try:
+        st = os.stat(real)
+    except OSError:
+        return f"{shown} does not exist"
+    if not _stat.S_ISREG(st.st_mode):
+        return f"{shown} is not a regular file"
+    if st.st_uid != os.getuid():
+        return f"{shown} is not owned by you"
+    executable = bool(st.st_mode & 0o100)
+    if st.st_mode & 0o077 or (not executable and st.st_mode & 0o777 != 0o600):
+        return (f"{shown} has mode {st.st_mode & 0o777:04o}; a key file must be 0600 "
+                f"(chmod 600 {shlex.quote(shown)})")
+    return _shared_dir_problem(os.path.dirname(real), shown)
+
+
+def _shared_dir_problem(directory: str, shown: str) -> str:
+    import stat as _stat
+    try:
+        st = os.stat(directory)
+    except OSError:
+        return f"the folder of {shown} cannot be read"
+    if st.st_uid not in (os.getuid(), 0):
+        return f"the folder of {shown} is owned by someone else"
+    if st.st_mode & 0o022 and not st.st_mode & _stat.S_ISVTX:
+        return f"the folder of {shown} can be changed by other users"
+    return ""
+
+
+def _program_problem(path: str, shown: str) -> str:
+    """Why an absolute-path PROGRAM (a command with arguments) is not acceptable, '' when it is: a real executable, owned
+    by you or root, that other users cannot write to or replace."""
+    import stat as _stat
+    real = os.path.realpath(path)
+    try:
+        st = os.stat(real)
+    except OSError:
+        return f"{shown} does not exist"
+    if not _stat.S_ISREG(st.st_mode) or not st.st_mode & 0o111:
+        return f"{shown} is not an executable file"
+    if st.st_uid not in (os.getuid(), 0) or st.st_mode & 0o022:
+        return f"{shown} must be owned by you or root and not writable by others"
+    return _shared_dir_problem(os.path.dirname(real), shown)
+
+
+def _is_path_like(arg: str) -> bool:
+    return arg.startswith(("/", "~", "./", "../"))
+
+
+def helper_setting(value: str) -> tuple[str, str]:
+    """`(apiKeyHelper setting, problem)` for what the operator typed: a command, or the path of a file only they can read.
+
+    * A path to one file is checked (see `_owner_only_file`) and stored as `cat <path>` (a key file) or the quoted path
+      (a private script).
+    * `cat <file>...` and any argument that looks like a file path (absolute, `~`, `./`) get the same owner + 0600 check;
+      a path that cannot be checked (missing, relative form) is refused, never stored unchecked.
+    * An absolute-path command with arguments keeps its arguments; the executable path is shell-quoted.
+    * Any other command (`pass show anthropic/api`) is kept as typed.
+    A key pasted by mistake is refused: the kit stores a path or command, never a key."""
+    import shlex
     text = (value or "").strip()
     if not text:
         return "", "nothing was entered"
     if cockpit_auth.looks_like_secret(text):
         return "", "that looks like a key itself; give a command or a file path, the kit never stores a key"
-    expanded = os.path.expanduser(text)
-    if expanded.startswith("/"):
-        try:
-            st = os.stat(expanded)
-        except OSError:
-            return "", f"{text} does not exist"
-        if not _stat.S_ISREG(st.st_mode):
-            return "", f"{text} is not a regular file"
-        if st.st_uid != os.getuid():
-            return "", f"{text} is not owned by you"
-        executable = bool(st.st_mode & 0o100)
-        if st.st_mode & 0o077 or (not executable and st.st_mode & 0o777 != 0o600):
-            return "", (f"{text} has mode {st.st_mode & 0o777:04o}; a key file must be 0600 "
-                        f"(chmod 600 {shlex.quote(text)})")
-        return (expanded if executable else f"cat {shlex.quote(expanded)}"), ""
-    return text, ""
+    whole = os.path.expanduser(text)
+    if whole.startswith("/") and os.path.lexists(whole):
+        problem = _owner_only_file(whole, text)
+        if problem:
+            return "", problem
+        executable = bool(os.stat(os.path.realpath(whole)).st_mode & 0o100)
+        return (shlex.quote(whole) if executable else f"cat {shlex.quote(whole)}"), ""
+    try:
+        words, has_operator = _split_command(text)
+    except ValueError:
+        return "", "that command could not be parsed (unbalanced quote)"
+    if not words:
+        return "", "nothing was entered"
+    exe, args = words[0], words[1:]
+    is_cat = exe == "cat" or os.path.expanduser(exe) in ("/bin/cat", "/usr/bin/cat")
+    absolute_exe = os.path.expanduser(exe).startswith("/")
+    refs = [a for a in args if not a.startswith("-") and (is_cat or _is_path_like(a))]
+    if exe.startswith(("./", "../")) or (not absolute_exe and not exe.startswith("~") and "/" in exe):
+        return "", f"{exe} is a relative path and cannot be checked; give an absolute path"
+    if not (is_cat or absolute_exe or refs):
+        return text, ""                                    # a plain command from PATH is kept as typed
+    if has_operator:
+        return "", "a pipe, redirect or substitution cannot be checked; give one command or one file path"
+    if is_cat and not refs:
+        return "", "cat needs the file it prints"
+    if absolute_exe and not is_cat:
+        program = os.path.expanduser(exe)
+        problem = _program_problem(program, exe)
+        if problem:
+            return "", problem
+        exe = program
+    for ref in refs:
+        path = os.path.expanduser(ref)
+        if not path.startswith("/"):
+            return "", f"{ref} is a relative path and cannot be checked; give an absolute path"
+        if os.path.isdir(os.path.realpath(path)) and not is_cat:
+            continue                                      # a directory argument holds no key by itself
+        problem = _owner_only_file(path, ref)
+        if problem:
+            return "", problem
+    checked = [exe if exe == "cat" else shlex.quote(exe)]
+    checked += [shlex.quote(os.path.expanduser(a)) if _is_path_like(a) else shlex.quote(a) for a in args]
+    return " ".join(checked), ""
 
 
 def record_live(s: Any, auth: "live_auth.LiveAuth") -> None:
     """Record what Claude Code REPORTS, not what was answered. "API key" can only appear when a key or helper is live;
     a saved `api_key` with no live evidence falls back to the subscription method (a harmless default, no key)."""
     cockpit_auth.set_live(s, ID, auth.kind)
+    if auth.kind != live_auth.API_KEY_HELPER and not getattr(s, HELPER_OK_ATTR, False):
+        cockpit_auth.set_helper(s, ID, "")               # a helper that is no longer the live sign-in is forgotten
     method = _METHOD_OF_KIND.get(auth.kind)
     if method is None:
         saved = cockpit_auth.method(s, ID)
@@ -481,6 +583,10 @@ def ask_auth(ui_mod: Any, s: Any, detected: Any = None, dry_run: bool = False) -
 def _change(ui_mod: Any, s: Any, how: str, *, dry_run: bool) -> "live_auth.LiveAuth | None":
     """Carry out the chosen change. Returns the live state to record, or None to re-read it."""
     from .. import credentials
+    if how != HELPER:
+        # Another sign-in was chosen: the helper chosen earlier (or in this run before Back) no longer applies.
+        cockpit_auth.set_helper(s, ID, "")
+        setattr(s, HELPER_OK_ATTR, False)
     if how == LOGIN:
         shown = " ".join(LOGIN_ARGV)
         if dry_run:
@@ -1040,7 +1146,9 @@ def configure(ctx: dict) -> list[Path]:
 
     # 1. settings.json (env vars + MCP servers)
     _apply_pending_vertex(s)
-    helper_text = cockpit_auth.helper(s, ID)
+    # A saved helper is never re-applied from saved state (ADR-0016: live over saved, no silent billing change): only the
+    # one the operator chose in this run is written, and its file is checked again now.
+    helper_text = cockpit_auth.helper(s, ID) if getattr(s, HELPER_OK_ATTR, False) else ""
     helper_setting_text, helper_problem = helper_setting(helper_text) if helper_text else ("", "")
     if helper_problem:
         ui.warn(f"Claude Code: apiKeyHelper not written ({helper_problem}).")

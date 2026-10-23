@@ -211,6 +211,10 @@ def helper(s: Any, cockpit: str = "claude") -> str:
 def set_helper(s: Any, cockpit: str, value: str) -> None:
     if looks_like_secret(value):
         raise ValueError("a key or token cannot be stored as a helper")
+    if not value:
+        if "helper" in entry(s, cockpit):
+            _slot(s, cockpit).pop("helper", None)         # forgetting a helper leaves no empty key behind
+        return
     _slot(s, cockpit)["helper"] = value
 
 

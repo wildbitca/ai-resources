@@ -107,6 +107,79 @@ def test_a_directory_is_not_a_helper(tmp_path):
     assert "regular file" in claude.helper_setting(str(tmp_path))[1]
 
 
+# --- the command forms: arguments, quoting, file references, symlinks --------------------------------------------------
+
+def program(tmp_path, name="get-key", mode=0o700):
+    p = tmp_path / name
+    p.write_text("#!/bin/sh\necho x\n", encoding="utf-8")
+    p.chmod(mode)
+    return p
+
+
+def test_an_absolute_path_command_keeps_its_arguments(tmp_path):
+    exe = program(tmp_path)
+    setting, problem = claude.helper_setting(f"{exe} --vault team")
+    assert problem == "" and setting == f"{exe} --vault team"
+
+
+def test_a_tilde_command_with_arguments_is_expanded_and_checked(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    program(tmp_path)
+    setting, problem = claude.helper_setting("~/get-key arg")
+    assert problem == "" and setting == f"{tmp_path}/get-key arg"
+
+
+def test_the_executable_path_is_shell_quoted(tmp_path):
+    exe = program(tmp_path, "get key; id")
+    setting, problem = claude.helper_setting(f"'{exe}' --x")
+    assert problem == ""
+    import shlex
+    assert shlex.split(setting) == [str(exe), "--x"]          # one program, not `get` then `key` then `id`
+
+
+def test_a_program_other_users_can_replace_is_refused(tmp_path):
+    exe = program(tmp_path, mode=0o722)
+    assert "not writable by others" in claude.helper_setting(f"{exe} a")[1]
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    inner = program(shared)
+    assert "can be changed by other users" in claude.helper_setting(f"{inner} a")[1]
+
+
+def test_a_cat_command_gets_the_same_owner_and_mode_check_as_a_bare_path(tmp_path):
+    ok = keyfile(tmp_path, 0o600)
+    assert claude.helper_setting(f"cat {ok}") == (f"cat {ok}", "")
+    bad = keyfile(tmp_path, 0o644)
+    setting, problem = claude.helper_setting(f"cat {bad}")
+    assert setting == "" and "0600" in problem
+
+
+def test_a_file_argument_of_any_command_is_checked(tmp_path):
+    exe = program(tmp_path)
+    bad = keyfile(tmp_path, 0o640)
+    assert "0600" in claude.helper_setting(f"{exe} --file {bad}")[1]
+    ok = keyfile(tmp_path, 0o600)
+    assert claude.helper_setting(f"{exe} --file {ok}")[1] == ""
+    assert "does not exist" in claude.helper_setting(f"{exe} --file {tmp_path}/missing")[1]
+
+
+def test_what_cannot_be_checked_is_refused_rather_than_stored(tmp_path):
+    for text in ("cat ~/missing-key", "cat key", "cat ./key", "./get-key", "cat", f"cat {tmp_path}/k | tr a b"):
+        setting, problem = claude.helper_setting(text)
+        assert setting == "" and problem, text
+
+
+def test_a_symlink_is_resolved_and_its_target_is_what_is_checked(tmp_path):
+    target = keyfile(tmp_path, 0o644)
+    link = tmp_path / "link.key"
+    link.symlink_to(target)
+    assert "0600" in claude.helper_setting(str(link))[1]
+    assert "0600" in claude.helper_setting(f"cat {link}")[1]
+    target.chmod(0o600)
+    assert claude.helper_setting(f"cat {link}")[1] == ""
+
+
 # --- AC-7: settings.json gets only the path or command, idempotently, and the state holds no key -------------------------
 
 def test_apply_writes_only_the_command_idempotently_and_no_key_reaches_state_or_settings(home, tmp_path):
@@ -141,6 +214,40 @@ def test_an_existing_different_helper_is_kept_unless_chosen_in_this_run(home):
     setattr(s, claude.HELPER_OK_ATTR, True)
     apply(s)
     assert settings(home)["apiKeyHelper"] == "pass show anthropic"
+
+
+def test_a_saved_helper_is_not_re_applied_from_saved_state(home, tmp_path):
+    """ADR-0016: only a helper the operator chose in this run reaches settings.json; a saved one never turns API-key
+    billing back on by itself."""
+    p = keyfile(tmp_path, 0o600)
+    s = state_with_helper(f"cat {p}")
+    delattr(s, claude.HELPER_OK_ATTR)
+    apply(s)
+    assert "apiKeyHelper" not in settings(home)
+
+
+def test_apply_checks_the_cat_form_again(home, tmp_path):
+    p = keyfile(tmp_path, 0o600)
+    s = state_with_helper(f"cat {p}")
+    p.chmod(0o644)
+    apply(s)
+    assert "apiKeyHelper" not in settings(home)
+
+
+def test_choosing_another_sign_in_forgets_the_saved_helper(monkeypatch, tmp_path):
+    p = keyfile(tmp_path, 0o600)
+    s = state_with_helper(f"cat {p}")
+    run_ask(monkeypatch, s, {"Claude Code sign-in": "change", "How should Claude Code sign in": "login"})
+    assert cockpit_auth.helper(s, "claude") == "" and not getattr(s, claude.HELPER_OK_ATTR, False)
+    assert "helper" not in s.cockpit_auth["claude"]
+
+
+def test_a_helper_that_is_not_the_live_sign_in_is_forgotten_on_keep(monkeypatch, tmp_path):
+    p = keyfile(tmp_path, 0o600)
+    s = state.SetupState()
+    cockpit_auth.set_helper(s, "claude", f"cat {p}")             # saved earlier; settings.json no longer has it
+    run_ask(monkeypatch, s, {"Claude Code sign-in": "keep"})
+    assert cockpit_auth.helper(s, "claude") == ""
 
 
 def test_no_helper_means_no_apikeyhelper_key(home):
