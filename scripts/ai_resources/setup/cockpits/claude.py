@@ -729,14 +729,7 @@ def _install_workflow_scripts(ak_path: str, tracking: state.InstallTracking) -> 
 # Kit-managed block for ~/.claude/CLAUDE.md. Kept lean on purpose: the whole block is part of every session's prefix.
 # It carries the two safety rules that must hold in every session (no long waits inside one tool call; no native
 # AskUserQuestion when headless) and the polling guidance, once.
-POLLING_GUIDANCE = (
-    "## Waiting\n\n"
-    "- Never block one tool call on a long wait: run long work in the background, write to a file, and read it with short calls.\n"
-    "- Wait with one blocking call (or a poll interval of 60-120 s or more); never loop `sleep`, `process poll` or "
-    "`sessions_yield` at short intervals: every poll re-reads the whole context.\n"
-    "- In a headless or subagent session never call the native AskUserQuestion (it hangs until the watchdog fires): "
-    "return the question to the parent or use `ask_user`.\n"
-)
+POLLING_GUIDANCE = _shared.WAITING_GUIDANCE
 
 
 def _claude_md(ak_path: str, gateway_url: str, mode: str) -> str:

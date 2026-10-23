@@ -565,12 +565,26 @@ def multimodel_protocol_md(ak_path: str, gateway_url: str, mode: str = "multi-mo
     )
 
 
+# The waiting rules every cockpit's kit block carries (ADR-0014 polling guard, ADR-0015 S5): one short section, so a
+# cockpit without the Claude Code hook still gets the rule. Claude Code's CLAUDE.md block re-exports it.
+WAITING_GUIDANCE = (
+    "## Waiting\n\n"
+    "- Never block one tool call on a long wait: run long work in the background, write to a file, and read it with short calls.\n"
+    "- Wait with one blocking call (or a poll interval of 60-120 s or more); never loop `sleep`, `process poll` or "
+    "`sessions_yield` at short intervals: every poll re-reads the whole context.\n"
+    "- In a headless or subagent session never call the native AskUserQuestion (it hangs until the watchdog fires): "
+    "return the question to the parent or use `ask_user`.\n"
+)
+
+
 def kit_instructions_md(tool: str, ak_path: str, gateway_url: str, mode: str, *,
-                        native_skills: bool, extra: str = "", route: str = "instructions_only") -> str:
+                        native_skills: bool, extra: str = "", route: str = "instructions_only",
+                        waiting: bool = True) -> str:
     """Kit block for the instruction files of cockpits other than Claude Code.
 
     `route` defaults to instructions-only: a cockpit gets the gateway sentence only when its caller
-    passes `via_gateway` (Aider, in multi-model).
+    passes `via_gateway` (Aider, in multi-model). `waiting` adds the short "Waiting" section; OpenClaw's own block
+    carries its longer variant and passes False.
     """
     if native_skills:
         skills = ("- **Skills** are linked into `~/.agents/skills/`, which this tool discovers natively. "
@@ -588,6 +602,7 @@ def kit_instructions_md(tool: str, ak_path: str, gateway_url: str, mode: str, *,
         f"{skills}"
         "- **Workflows** for multi-step work are the `workflow-*` skills; the `kit-orchestration` "
         f"skill explains how to run them (definitions in `{ak_path}/workflows/`).\n\n"
+        f"{WAITING_GUIDANCE + chr(10) if waiting else ''}"
         f"{multimodel_protocol_md(ak_path, gateway_url, mode, route)}"
     )
 

@@ -2145,7 +2145,7 @@ def _write_workspace_block(s: state.SetupState, agents_md: Path, ak_path: str,
     engine = applied_engine(s) if engine_part else None
     if engine and engine.id == "direct":
         md = _shared.kit_instructions_md("OpenClaw", ak_path, gateway_url, "single-model",
-                                         native_skills=False) + "\n" + MEMORY_MD
+                                         native_skills=False, waiting=False) + "\n" + MEMORY_MD
     elif engine and engine.id == "antigravity":
         md = _antigravity_agents_md(ak_path)
     elif engine:
