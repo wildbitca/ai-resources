@@ -38,8 +38,21 @@ evidence:
   confidence: medium-low
   source: 2026-10 study of the 5.5 models
 role_effort:
+  explore: low
+  doc-writer: low
+  tester: low
+  package-upgrade: low
+  implementer: medium
+  code-reviewer: medium
+  generalPurpose: medium
+  crashlytics-fixer: medium
+  sentry-fixer: medium
+  terraform-maintainer: medium
+  crossplane-upjet-maintainer: medium
   planner: high
-  implementer: high
+  software-architect: high
+  verifier: high
+  security-auditor: high
 
 classes:
   opus:   opus

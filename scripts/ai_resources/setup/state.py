@@ -186,6 +186,9 @@ class InstallTracking:
     # agy MCP servers the kit added to ~/.gemini/config/mcp_config.json: {name: definition written}. Teardown removes
     # only these, and only while the entry still equals what was written.
     agy_mcp_added: dict[str, Any] = field(default_factory=dict)
+    # Round 3 (ADR-0015 S3): the `effort:` value the kit last wrote into each Claude subagent file ({name: level}). A file
+    # whose `effort:` differs from this record was edited by the operator: the value is kept (fill-only) and listed.
+    subagent_effort: dict[str, str] = field(default_factory=dict)
 
 
 IMAGE_STATE_DEFAULTS: dict[str, Any] = {
@@ -441,7 +444,8 @@ def _to_dict(obj: Any) -> Any:
                 and not doc["openclaw"].get("slack_cost_changes"):
             doc["openclaw"].pop("slack_cost_changes", None)        # additive field: absent until the writer ran
         if isinstance(obj, SetupState) and isinstance(doc.get("tracking"), dict):
-            for key in ("hygiene_disabled", "claude_md_migrations", "persona_domains_active", "agy_mcp_added"):
+            for key in ("hygiene_disabled", "claude_md_migrations", "persona_domains_active", "agy_mcp_added",
+                        "subagent_effort"):
                 if not doc["tracking"].get(key):
                     doc["tracking"].pop(key, None)         # round 2 (ADR-0014): absent until the writer ran
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \

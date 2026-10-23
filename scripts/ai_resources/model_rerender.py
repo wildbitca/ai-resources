@@ -454,9 +454,12 @@ def build(*, state, selection, detected: list[str], home: Path | None = None) ->
         return (yaml.safe_load(path.read_text(encoding="utf-8")) or {}) if path.is_file() else {}
 
     def render_subagents(doc: dict, _tag: str) -> dict[str, str]:
+        from .setup import effort as effort_mod
         return claude.render_subagent_files(doc, ak_path, mode, strict,
                                             allow_unverified=allow_unverified,
-                                            backend=backend or "litellm")
+                                            backend=backend or "litellm",
+                                            effort=effort_mod.table_for_state(state),
+                                            recorded_effort=dict(getattr(state.tracking, "subagent_effort", {}) or {}))
 
     url = f"http://{state.litellm.local.bind_address}:{state.litellm.local.port}/health/liveliness"
     arts: list[Artifact] = [
