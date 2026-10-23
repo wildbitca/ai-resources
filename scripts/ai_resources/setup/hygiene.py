@@ -260,18 +260,19 @@ def skip_reason(s, dry_run: bool = False) -> str | None:
     return None
 
 
-def run_step(s, *, dry_run: bool = False, runner: Runner | None = None, index: "usage_index.Index | None" = None,
-             now: datetime | None = None) -> int:
-    """The wizard step. Asks one question per candidate (default No); a dry run lists them and asks nothing."""
-    runner = runner or default_runner
+def plan(s, *, dry_run: bool = False, index: "usage_index.Index | None" = None,
+         now: datetime | None = None) -> list:
+    """The asking half of the wizard step (ADR-0016 D6): one question per candidate (default No), nothing changed. Returns
+    the candidates the operator chose to disable. A dry run lists them and asks nothing."""
     idx = index if index is not None else usage_index.build(say=ui.info)
     found = find_candidates(idx, s.tracking.hygiene_disabled, now=now)
     if not found:
         ui.detail(f"Hygiene: no user-level MCP server or plugin is unused in the last {WINDOW_DAYS} days.")
-        return 0
+        return []
     ui.section(5, 5, "Hygiene - unused tools")
     ui.info(f"{len(found)} user-level tool(s) had no call in the last {WINDOW_DAYS} days. Each one you disable stops "
-            "loading into every session; you can bring them back with `ai-resources setup --restore-hygiene`.")
+            "loading into every session (at Apply); you can bring them back with `ai-resources setup --restore-hygiene`.")
+    chosen = []
     for c in found:
         label = f"MCP server '{c.name}'" if c.kind == "mcp" else f"plugin '{c.name}'"
         if dry_run:
@@ -282,8 +283,17 @@ def run_step(s, *, dry_run: bool = False, runner: Runner | None = None, index: "
             extra = " Its settings hold secret values: a private copy (mode 0600) is kept so it can be restored."
         if c.kind == "plugin":
             extra = " Its slash commands and hooks are not counted as usage."
-        if not ui.confirm(f"Disable {label}? (no call in {WINDOW_DAYS} days){extra}", default=False):
-            continue
+        if ui.confirm(f"Disable {label}? (no call in {WINDOW_DAYS} days){extra}", default=False):
+            chosen.append(c)
+    return chosen
+
+
+def apply(s, chosen: list, *, runner: Runner | None = None, now: datetime | None = None) -> int:
+    """The writing half: disable what `plan` returned, record each result. Runs at Apply. Returns how many were disabled."""
+    runner = runner or default_runner
+    done = 0
+    for c in chosen:
+        label = f"MCP server '{c.name}'" if c.kind == "mcp" else f"plugin '{c.name}'"
         record = disable(c, runner=runner, now=now)
         if record is None:
             ui.warn(f"Could not disable {label}; nothing was changed.")
@@ -291,6 +301,15 @@ def run_step(s, *, dry_run: bool = False, runner: Runner | None = None, index: "
         s.tracking.hygiene_disabled.append(record)
         ui.ok(f"Disabled {label}")
         ui.record_action(f"disabled {c.kind} {c.name}")
+        done += 1
+    return done
+
+
+def run_step(s, *, dry_run: bool = False, runner: Runner | None = None, index: "usage_index.Index | None" = None,
+             now: datetime | None = None) -> int:
+    """`plan` then `apply` in one go, for a caller that has no Apply of its own. The wizard queues `apply` instead."""
+    chosen = plan(s, dry_run=dry_run, index=index, now=now)
+    apply(s, chosen, runner=runner, now=now)
     return 0
 
 

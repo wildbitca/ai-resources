@@ -373,3 +373,25 @@ def test_restore_of_a_config_with_secrets_says_the_argv_exposure_first(capsys):
     assert "command line" not in capsys.readouterr().out
     assert h.has_secrets({"command": "x", "env": {"API_TOKEN": "t"}})
     assert not h.has_secrets({"command": "x", "env": {"PLAIN": "1"}})
+
+
+# --- ADR-0016 D6: plan asks, apply writes ------------------------------------------------------------------------------
+
+def test_plan_asks_and_changes_nothing_and_apply_disables_what_plan_returned(world, monkeypatch):
+    monkeypatch.setattr(ui, "confirm", _accept(["grafana", "idleplug@m"]))
+    s = _state()
+    before = (world.claude_json.read_bytes(), world.settings.read_bytes())
+    chosen = hygiene.plan(s, index=_index(world), now=NOW)
+    assert _names(chosen) == [("mcp", "grafana"), ("plugin", "idleplug@m")]
+    assert world.calls == [] and s.tracking.hygiene_disabled == []
+    assert (world.claude_json.read_bytes(), world.settings.read_bytes()) == before
+    assert hygiene.apply(s, chosen, runner=_runner(world), now=NOW) == 2
+    assert ["claude", "mcp", "remove", "grafana", "-s", "user"] in world.calls
+    assert len(s.tracking.hygiene_disabled) == 2
+
+
+def test_run_step_is_plan_then_apply(world, monkeypatch):
+    monkeypatch.setattr(ui, "confirm", _accept(["grafana"]))
+    s = _state()
+    hygiene.run_step(s, runner=_runner(world), index=_index(world), now=NOW)
+    assert [r["name"] for r in s.tracking.hygiene_disabled] == ["grafana"]
