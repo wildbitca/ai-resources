@@ -50,14 +50,34 @@ rc=0
 
 [5/5] Review -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Your answers 
-+------------------------------------------------------------------------------------------------------+
++---------------------------------------------------------------------------------------------------------------+
 | Section | Your answer |
-|------------+-----------------------------------------------------------------------------------------|
-| Sign-in | Claude Code: subscription |
+|---------------------+-----------------------------------------------------------------------------------------|
+| Claude Code sign-in | subscription (billed to: subscription) |
 | Team | Custom: models picked from your accounts (anthropic:sonnet=anthropic/claude-sonnet-5-5) |
 | Tools | Claude Code |
 | Will write | executors.yaml, tool config files |
-+------------------------------------------------------------------------------------------------------+
++---------------------------------------------------------------------------------------------------------------+
+ Who runs what 
++-------------------------------------------------------------------------------------+
+| Role | Runs in | Billed to | Model | Effort |
+|-----------------------------+----------------------+--------------+--------+--------|
+| explore | Claude Code subagent | subscription | haiku | low |
+| generalPurpose | Claude Code subagent | subscription | sonnet | medium |
+| planner | Claude Code subagent | subscription | sonnet | high |
+| software-architect | Claude Code subagent | subscription | sonnet | high |
+| implementer | Claude Code subagent | subscription | sonnet | medium |
+| tester | Claude Code subagent | subscription | haiku | low |
+| code-reviewer | Claude Code subagent | subscription | sonnet | medium |
+| security-auditor | Claude Code subagent | subscription | opus | high |
+| verifier | Claude Code subagent | subscription | opus | high |
+| doc-writer | Claude Code subagent | subscription | haiku | low |
+| package-upgrade | Claude Code subagent | subscription | haiku | low |
+| crashlytics-fixer | Claude Code subagent | subscription | sonnet | medium |
+| sentry-fixer | Claude Code subagent | subscription | sonnet | medium |
+| terraform-maintainer | Claude Code subagent | subscription | sonnet | medium |
+| crossplane-upjet-maintainer | Claude Code subagent | subscription | sonnet | medium |
++-------------------------------------------------------------------------------------+
 
  i Summary of what will be configured
  Shape: One model
