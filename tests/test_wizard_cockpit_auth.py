@@ -60,14 +60,14 @@ def test_each_cockpit_records_its_own_method_name(monkeypatch):
     assert s.cli_team_api is True and s.cli_team is True and s.mode == "single-model"
 
 
-def test_cursor_and_agy_ask_no_question(monkeypatch):
+def test_cursor_asks_no_question_and_agy_only_asks_keep_or_change(monkeypatch):
     s = _state("cursor", "agy")
     script = Script()
     script.install(monkeypatch)
     assert wizard._step_cockpit_auth(s, _args()) == 0
-    assert script.asked == []
+    assert script.asked == ["select: Antigravity sign-in:"]               # keep by default; Cursor asks nothing
     shown = " ".join(script.shown)
-    assert "managed in Cursor" in shown and "Google account" in shown
+    assert "managed in Cursor" in shown and "Antigravity:" in shown
 
 
 def test_a_cancel_inside_a_cockpit_question_stops_the_step(monkeypatch):

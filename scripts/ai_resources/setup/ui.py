@@ -327,22 +327,52 @@ def role_table(rows: list[tuple[str, str, str]], title: str = "") -> None:
     console().print(t)
 
 
-def role_lane_table(rows: list[tuple[str, str, str, str]], title: str = "") -> None:
-    """The team screen's role table: role, real provider, model and lane. Every cell is escaped, so model or lane text
-    that looks like Rich markup is shown as it is."""
+def role_lane_table(rows: list[tuple[str, ...]], title: str = "") -> None:
+    """The team screen's role table: role, real provider, model, where it runs ("Runs in") and, when a row carries it,
+    who is billed ("Billed to", ADR-0016 D5) and the effort. Every cell is escaped, so model or lane text that looks like
+    Rich markup is shown as it is."""
     rows = [tuple(safe_text(c) for c in r) for r in rows]
+    billed = any(len(r) > 4 for r in rows)
     if not _HAS_RICH:
         print(f"\n{safe_text(title)}")
-        for role, provider, model, lane in rows:
-            print(f"  {role:<28} {provider:<10} {model:<28} {lane}")
+        for r in rows:
+            extra = f"  billed to: {r[4]}" if billed and len(r) > 4 else ""
+            print(f"  {r[0]:<28} {r[1]:<10} {r[2]:<28} {r[3]}{extra}")
         return
     t = Table(title=_markup_safe(title), show_header=True, header_style="bold cyan", border_style="dim", **_box_kw())
     t.add_column("Role", style="bold")
     t.add_column("Provider")
     t.add_column("Model", style="dim")
-    t.add_column("Lane")
-    for r, p, m, lane in rows:
-        t.add_row(_markup_safe(r), _markup_safe(p), _markup_safe(m), _markup_safe(lane))
+    t.add_column("Runs in")
+    if billed:
+        t.add_column("Billed to")
+        t.add_column("Effort", style="dim")
+    for r in rows:
+        cells = [_markup_safe(c) for c in r[:4]]
+        if billed:
+            cells += [_markup_safe(r[4] if len(r) > 4 else "unknown"), _markup_safe(r[5] if len(r) > 5 else "")]
+        t.add_row(*cells)
+    console().print(t)
+
+
+def runs_table(rows: list[tuple[str, str, str, str, str]], title: str = "") -> None:
+    """The Review table "Who runs what" (ADR-0016 D5): role, where it runs, who is billed (a separate column), model and
+    effort. Every cell is escaped; "unknown" is shown as it is, never replaced by a guess."""
+    rows = [tuple(safe_text(c) for c in r) for r in rows]
+    if not _HAS_RICH:
+        print(f"\n{safe_text(title)}")
+        for role, runs_in, billed, model, effort in rows:
+            print(f"  {role:<28} {runs_in:<24} {billed:<16} {model:<28} {effort}")
+        return
+    t = Table(title=_markup_safe(title), show_header=True, header_style="bold cyan", border_style="dim", **_box_kw())
+    t.add_column("Role", style="bold")
+    t.add_column("Runs in")
+    t.add_column("Billed to")
+    t.add_column("Model", style="dim")
+    t.add_column("Effort", style="dim")
+    for role, runs_in, billed, model, effort in rows:
+        t.add_row(_markup_safe(role), _markup_safe(runs_in), _markup_safe(billed), _markup_safe(model),
+                  _markup_safe(effort))
     console().print(t)
 
 

@@ -3,11 +3,12 @@ Cancel (ADR-0009; ADR-0015 replaced "Change how" by "Change sign-in" when each t
 from __future__ import annotations
 
 import argparse
+import json
 
 import pytest
 
 from ai_resources import selection as sel
-from ai_resources.setup import cockpit_auth, credentials, model_selection as ms, profiles, state, ui, wizard
+from ai_resources.setup import cockpit_auth, credentials, lanes_render, model_selection as ms, profiles, state, ui, wizard
 from wizard_fakes import SENTINEL, Script, Seq, host_env
 
 SUB = "subscription-claude-55"
@@ -44,10 +45,15 @@ def test_rows_come_from_the_state_and_never_show_a_secret(monkeypatch):
     cockpit_auth.set_method(s, "claude", "api_key")
     cockpit_auth.set_providers(s, {"anthropic": "cli", "openai": "api_key"})
     rows = dict(wizard._review_rows(s))
-    assert rows["Sign-in"] == ("Claude Code: API key; OpenClaw: anthropic (CLI backend), openai (API key); "
-                               "Antigravity CLI (agy): not set")
+    # ADR-0016 D5: one row per ticked cockpit; with no live reading recorded the recorded method name is all there is,
+    # and billing reads "unknown" (never guessed).
+    assert rows["Claude Code sign-in"] == "API key"
+    assert rows["OpenClaw sign-in"] == ("anthropic: CLI backend (billed to: unknown); "
+                                        "openai: API key (billed to: unknown)")
+    assert rows["Antigravity sign-in"] == "not set"
     assert SENTINEL not in " ".join(f"{k} {v}" for k, v in rows.items())
-    assert set(rows) == {"Sign-in", "Team", "Tools", "Will write", "Image generation"}   # OpenClaw is ticked; no gateway row
+    assert set(rows) == {"Claude Code sign-in", "OpenClaw sign-in", "Antigravity sign-in", "Team", "Tools", "Will write",
+                         "Image generation"}   # OpenClaw is ticked; no gateway row
 
 
 def test_every_state_reads_the_same_rows_whatever_the_saved_gateway_was():
@@ -59,8 +65,8 @@ def test_every_state_reads_the_same_rows_whatever_the_saved_gateway_was():
         cockpit_auth.migrate_legacy(s)
         cockpit_auth.apply_legacy_flags(s)
         rows = dict(wizard._review_rows(s))
-        assert set(rows) == {"Sign-in", "Team", "Tools", "Will write"}
-        assert rows["Sign-in"] == "Claude Code: subscription"
+        assert set(rows) == {"Claude Code sign-in", "Team", "Tools", "Will write"}
+        assert rows["Claude Code sign-in"] == "subscription"
 
 
 def _team_state(*members):
@@ -105,7 +111,7 @@ def test_the_review_offers_the_three_changes_and_more_options_after_a_full_pass(
     values = seen["values"]
     assert values == [ms.APPLY, wizard.CHANGE_TOOLS, wizard.CHANGE_AUTH, wizard.CHANGE_TEAM, wizard.MORE_OPTIONS,
                       ms.CANCEL]
-    assert len(review_env) == 1 and review_env[0]["Sign-in"] == "Claude Code: subscription"
+    assert len(review_env) == 1 and review_env[0]["Claude Code sign-in"] == "subscription (billed to: subscription)"
 
 
 def test_change_team_with_a_picked_team_asks_the_picker_again_and_returns_to_the_review(review_env, monkeypatch):
@@ -190,7 +196,8 @@ def test_change_sign_in_reasks_the_question_and_the_row_follows_the_answer(revie
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
     assert len([m for m in script.asked if m.startswith("select: Claude Code sign-in")]) == 2
-    assert [r["Sign-in"] for r in review_env] == ["Claude Code: subscription", "Claude Code: API key (apiKeyHelper)"]
+    assert [r["Claude Code sign-in"] for r in review_env] == ["subscription (billed to: subscription)",
+                                                              "API key (apiKeyHelper) (billed to: API per token)"]
 
 
 def test_a_saved_gateway_state_is_migrated_with_the_table_shown_once_and_no_gateway_question(review_env, monkeypatch):
@@ -327,3 +334,82 @@ def test_image_review_never_shows_a_secret_for_any_route_or_disable(monkeypatch)
         setattr(s, _image.CTX_ATTR, _ctx(names=("OPENAI_API_KEY", "FAL_KEY")))
         text = _image_text(s) + json.dumps(state._to_dict(s))
         assert "sk-test-SECRET" not in text and "SECRET" not in text, mode
+
+
+# --- ADR-0016 D5 (AC-15): "Who runs what" with separate Runs in and Billed to columns ---------------------------------------
+
+def _runs_state(tmp_path, monkeypatch, *, members=("claude", "openclaw"), openclaw_live=None, live_models=None):
+    cfg = tmp_path / "openclaw.json"
+    entries = {f"kit-role-{k}": {"model": {"primary": v}} for k, v in (live_models or {}).items()}
+    cfg.write_text(json.dumps({"agents": {"entries": entries}}), encoding="utf-8")
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(cfg))
+    s = _team_state(*members)
+    cockpit_auth.set_live(s, "claude", "subscription")
+    cockpit_auth.set_method(s, "claude", "subscription")
+    if "openclaw" in members:
+        cockpit_auth.set_providers(s, {"anthropic": "cli", "openai": "api_key"})
+        cockpit_auth.set_provider_live(s, openclaw_live or {"anthropic": "subscription", "openai": "api_key"})
+    return s
+
+
+def test_the_review_table_separates_where_a_role_runs_from_who_is_billed(tmp_path, monkeypatch):
+    s = _runs_state(tmp_path, monkeypatch, live_models={"reviewer": "openai/gpt-5.6-sol"})
+    rows = wizard._review_role_rows(s)
+    assert rows and all(len(r) == 5 for r in rows)
+    claude = [r for r in rows if r.runs_in == "Claude Code subagent"]
+    openclaw = [r for r in rows if r.runs_in == "OpenClaw kit-role agent"]
+    assert claude and openclaw and {r.role for r in claude} == {r.role for r in openclaw}
+    assert {r.billed_to for r in claude} == {"subscription"}
+    reviewer = next(r for r in openclaw if r.role == "code-reviewer")
+    assert reviewer.model == "openai/gpt-5.6-sol" and reviewer.billed_to == "API per token"      # live model, its provider
+    assert all(r.model and r.effort for r in rows)                                                # model and effort everywhere
+
+
+def test_a_provider_openclaw_does_not_report_reads_unknown_never_a_guess(tmp_path, monkeypatch):
+    s = _runs_state(tmp_path, monkeypatch, openclaw_live={"anthropic": "subscription"},
+                    live_models={"reviewer": "openai/gpt-5.6-sol"})
+    reviewer = next(r for r in wizard._review_role_rows(s)
+                    if r.runs_in == "OpenClaw kit-role agent" and r.role == "code-reviewer")
+    assert reviewer.billed_to == "unknown"
+
+
+def test_claude_with_no_recorded_sign_in_reads_unknown(tmp_path, monkeypatch):
+    s = _runs_state(tmp_path, monkeypatch, members=("claude",))
+    s.cockpit_auth.pop("claude")
+    assert {r.billed_to for r in wizard._review_role_rows(s)} == {"unknown"}
+
+
+def test_agy_members_read_held_without_gate_evidence_and_bill_the_google_plan(tmp_path, monkeypatch):
+    s = _runs_state(tmp_path, monkeypatch, members=("claude", "agy"))
+    s.profile.lane_acks = {"google": lanes_render.make_ack("google", ["explore", "code-reviewer", "planner",
+                                                                     "software-architect"], "2026-10-19", account="a@x.y")}
+    agy = [r for r in wizard._review_role_rows(s) if r.runs_in.startswith("agy")]
+    assert agy and all(r.runs_in == "agy (held)" and r.billed_to == "Google plan" for r in agy)
+    assert not any(r.runs_in == "agy" for r in agy)
+
+
+def test_the_review_screen_prints_the_table_with_its_own_columns(review_env, monkeypatch):
+    shown = []
+    monkeypatch.setattr(ui, "runs_table", lambda rows, title="": shown.append((title, list(rows))))
+    _seed_saved()
+    script = Script(**{"Use previous answers": True, "Claude Code sign-in": "keep", "Starting team": "custom",
+                       "How do you want to choose models": "profile", "How should kit subagents pick": lambda v: v[0],
+                       "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
+    script.install(monkeypatch)
+    assert wizard.run(_args()) == 0
+    assert shown and shown[0][0] == "Who runs what"
+    assert {row[1] for row in shown[0][1]} == {"Claude Code subagent"} and {row[2] for row in shown[0][1]} == {"subscription"}
+
+
+def test_the_table_is_real_columns_in_the_rendered_output(capsys):
+    rich = pytest.importorskip("rich.console")
+    monkeypatch_console = rich.Console(width=200, force_terminal=False, no_color=True, legacy_windows=False, highlight=False)
+    saved = ui._console
+    ui._console = monkeypatch_console
+    try:
+        ui.runs_table([("planner", "OpenClaw kit-role agent", "API per token", "openai/gpt-x", "high")], title="Who runs what")
+    finally:
+        ui._console = saved
+    out = capsys.readouterr().out
+    header = next(line for line in out.splitlines() if "Runs in" in line)
+    assert "Billed to" in header and header.index("Runs in") < header.index("Billed to") < header.index("Model")

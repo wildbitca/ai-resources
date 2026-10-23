@@ -63,6 +63,7 @@ class Seq:
 
 AUTH_PROMPT = "Claude Code sign-in:"
 OPENCLAW_AUTH_PROMPT = "OpenClaw sign-in:"
+AGY_AUTH_PROMPT = "Antigravity sign-in:"
 """Screen 2 since ADR-0015: each ticked tool asks its own sign-in; the global "how should they work" question is gone.
 Since ADR-0016 Claude Code shows its LIVE sign-in and asks keep or change; an unscripted ask keeps it."""
 
@@ -115,7 +116,7 @@ class Script:
     def _pick(self, message, choices, default, multi=False):
         self.defaults.setdefault(message, []).append(default)
         self.titles.extend(str(getattr(c, "title", c)) for c in choices)
-        if message in (AUTH_PROMPT, OPENCLAW_AUTH_PROMPT) and not any(k in message for k in self.answers):
+        if message in (AUTH_PROMPT, OPENCLAW_AUTH_PROMPT, AGY_AUTH_PROMPT) and not any(k in message for k in self.answers):
             self.asked.append(f"select: {message}")
             return default
         raw = self._find(message, "checkbox" if multi else "select")

@@ -46,8 +46,10 @@ def mix_for(**kw):
     doc = balanced()
     rows = base_rows(doc)
     kw.setdefault("row", "cli")
-    return doc, rows, team_view.provider_mix(doc, rows, **kw), team_view.role_lane_rows(
-        rows, doc, **{k: v for k, v in kw.items() if k in ("row", "ticked", "acks", "allow_unverified", "cell_verified")})
+    row_only = ("claude_billed", "effort")
+    return doc, rows, team_view.provider_mix(doc, rows, **{k: v for k, v in kw.items() if k not in row_only}), \
+        team_view.role_lane_rows(rows, doc, **{k: v for k, v in kw.items() if k in (
+            "row", "ticked", "acks", "allow_unverified", "cell_verified", *row_only)})
 
 
 # --- AC-S10a ---------------------------------------------------------------------------------------------------------
@@ -305,3 +307,42 @@ def test_the_review_suffix_is_computed_from_the_gate_record_not_a_literal(monkey
     fk.use(monkeypatch, root)
     fk.write(root, fk.valid_doc(root))
     assert "held" not in wizard._agy_team_suffix(s)
+
+
+# --- ADR-0016 D5: separate Runs in and Billed to columns ---------------------------------------------------------------
+
+def test_role_lane_rows_carry_billed_to_as_its_own_field(monkeypatch, tmp_path):
+    fk.use(monkeypatch, fk.make_root(tmp_path))
+    _doc, _rows, _mix, lane_rows = mix_for(ticked=True, acks=ack(BALANCED_ROLES), claude_billed="subscription",
+                                           effort={"planner": "high"})
+    claude = [r for r in lane_rows if r.lane == "Claude Code"]
+    assert claude and {r.billed_to for r in claude} == {"subscription"}
+    assert next(r for r in claude if r.role == "planner").effort == "high"
+    agy = [r for r in lane_rows if "via Antigravity" in r.lane]
+    assert agy and {r.billed_to for r in agy} == {"Google plan"}
+    assert all("subscription" not in r.lane and "Google plan" not in r.lane for r in lane_rows)   # not mixed into the lane text
+
+
+def test_a_gateway_row_bills_its_gateway_and_an_unset_claude_reads_unknown():
+    doc = balanced()
+    rows = base_rows(doc)
+    via = team_view.role_lane_rows(rows, doc, row="openrouter", ticked=False, acks={})
+    assert {r.billed_to for r in via} == {"API per token (OpenRouter)"}
+    alone = team_view.role_lane_rows(rows, doc, row="single", ticked=False, acks={})
+    assert {r.billed_to for r in alone} == {"unknown"}
+
+
+def test_review_role_rows_never_guess(monkeypatch, tmp_path):
+    fk.use(monkeypatch, fk.make_root(tmp_path))
+    doc = balanced()
+    rows = base_rows(doc)[:2]
+    out = team_view.review_role_rows(rows, doc, selected=["claude", "openclaw", "agy"], claude_billed="unknown",
+                                     openclaw_models={rows[0][0]: "openai/gpt-x"}, openclaw_billed={"anthropic": "subscription"},
+                                     acks=ack(BALANCED_ROLES))
+    first = [r for r in out if r.role == rows[0][0]]
+    assert [r.runs_in for r in first] == ["Claude Code subagent", "OpenClaw kit-role agent"]
+    assert first[0].billed_to == "unknown" and first[1].billed_to == "unknown" and first[1].model == "openai/gpt-x"
+    second = next(r for r in out if r.role == rows[1][0] and r.runs_in == "OpenClaw kit-role agent")
+    assert second.model == "unknown" and second.billed_to == "unknown"          # no model known: said so
+    agy = [r for r in out if r.runs_in.startswith("agy")]
+    assert agy and all(r.runs_in == "agy (held)" for r in agy)                   # no gate evidence: held, never "agy"
