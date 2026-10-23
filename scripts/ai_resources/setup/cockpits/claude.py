@@ -468,6 +468,12 @@ def ask_auth(ui_mod: Any, s: Any, detected: Any = None, dry_run: bool = False) -
         if how is None:
             return 130
         auth = _change(ui_mod, s, how, dry_run=dry_run) or read_live()
+        record_live(s, auth)
+        if how == VERTEX_ADC and not dry_run:
+            # The answer only drives what Apply writes (the legacy fill-only method that adds the Vertex env). The
+            # recorded sign-in stays what Claude Code reports after the re-read, never the answer (plan S7, ADR-0016).
+            cockpit_auth.set_method(s, ID, "vertex_adc")
+        return 0
     record_live(s, auth)
     return 0
 
@@ -512,7 +518,7 @@ def _change(ui_mod: Any, s: Any, how: str, *, dry_run: bool) -> "live_auth.LiveA
         if updates and not dry_run:
             setattr(s, VERTEX_PENDING_ATTR, updates)          # written at Apply (configure), never here
         ui_mod.detail("Vertex AI uses your Application Default Credentials (`gcloud auth application-default login`).")
-        return live_auth.LiveAuth(live_auth.VERTEX, live_auth.B_API, "Google Vertex AI (ADC)")
+        return None
     return None
 
 
