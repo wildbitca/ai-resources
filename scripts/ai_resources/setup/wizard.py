@@ -2832,6 +2832,8 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     targets = s.profile.customizations.get("__targets__", {}).get("selected", [])
     if not targets:
         targets = [cid for cid, cs in s.cockpits.items() if cs.installed]
+    # The wizard ticks Antigravity as `agy`; its files (GEMINI.md, the MCP file, skills) are written by the gemini module.
+    targets = ["gemini" if cid == "agy" else cid for cid in targets]
     # Dict order, not selection order: OpenClaw's engines reuse what the other cockpits install.
     targets = [cid for cid in ALL_COCKPITS if cid in targets]
     global _APPLIED_TARGETS
