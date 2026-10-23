@@ -2456,6 +2456,9 @@ def _write_workspace_block(s: state.SetupState, agents_md: Path, ak_path: str,
             md = common
         # ADR-0016 D4: the operator's rules reach every agent workspace, the same text as CLAUDE.md and GEMINI.md.
         md = operator_rules.append_to(md)
+        if operator_rules.blocked():
+            ui.warn(f"OpenClaw: {operator_rules.blocked_warning()}")      # the existing block stays as it is
+            return False
 
     with_voice = engine_part and s.openclaw.voice_applied in ("agy", "cloud", "local") \
         and (dry_run or _claim_voice_section(agents_md))

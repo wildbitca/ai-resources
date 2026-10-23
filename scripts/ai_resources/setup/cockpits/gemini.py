@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import state
+from .. import state, ui
 from ..detection import detect_gemini_cli
 from ... import repo_root
 from . import _shared
@@ -79,7 +79,9 @@ def configure(ctx: dict) -> list[Path]:
 
     from .. import operator_rules
     md = operator_rules.append_to(_gemini_md(ak_path, gateway_url, mode))     # ADR-0016 D4: one rules file, three cockpits
-    if _shared.write_managed_block(GEMINI_MD_PATH, md):
+    if operator_rules.blocked():
+        ui.warn(f"Antigravity: {operator_rules.blocked_warning()}")      # the existing block stays as it is
+    elif _shared.write_managed_block(GEMINI_MD_PATH, md):
         written.append(GEMINI_MD_PATH)
     _shared.link_agents_skills(ak_path)
 

@@ -176,13 +176,34 @@ def render(text: str) -> str:
     return "## Operator rules\n\n" + body + "\n"
 
 
+def blocked() -> list[int]:
+    """Line numbers of the file that look like a key, token or password, [] when it is clean or absent.
+
+    The file is copied into three cockpits and every OpenClaw agent workspace, some of them reachable from a chat group, so
+    the scan runs again at every render, not only when the file is seeded: a secret pasted into it later is never copied."""
+    return secret_findings(read())
+
+
+def blocked_warning() -> str:
+    """The warning a writer prints when it refuses to render the rules ('' when nothing is flagged)."""
+    bad = blocked()
+    if not bad:
+        return ""
+    return (f"{path()}: line(s) {', '.join(map(str, bad[:5]))} look like a key, token or password, so the operator rules "
+            "were not rendered anywhere and the existing managed blocks were left as they are. Take the secret out of "
+            "the file and run setup again.")
+
+
 def block() -> str:
-    """The rendered block for the file as it is now, '' when there is no file (every writer appends this)."""
+    """The rendered block for the file as it is now, '' when there is no file or the file is flagged by `blocked()`."""
+    if blocked():
+        return ""
     return render(read())
 
 
 def append_to(md: str) -> str:
-    """`md` with the rendered rules appended (one blank line between); unchanged when there are no rules."""
+    """`md` with the rendered rules appended (one blank line between); unchanged when there are no rules or the file is
+    flagged. A writer checks `blocked()` first and skips the managed block entirely, so the existing one stays as it is."""
     rules = block()
     if not rules:
         return md
