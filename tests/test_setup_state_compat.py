@@ -32,7 +32,8 @@ KNOWN_TODAY: dict[str, tuple[str, ...]] = {
     name: (GATEWAY_MIGRATION if name.startswith("multi_") else MIGRATION) for name in
     ("account_picked_selection", "cli_lanes_anthropic_ack", "cli_lanes_google_ack", "cli_team_balanced",
      "cli_team_customized", "composed_team", "gemini_cockpit", "multi_litellm", "multi_openrouter",
-     "openclaw-pre-image", "openclaw_host_voice", "round2_fields", "single_claude_native")}
+     "live_anthropic_saved_antigravity", "openclaw-pre-image", "openclaw_host_voice", "round2_fields",
+     "single_claude_native")}
 _LAST_RUN = re.compile(r"^last_run: .*$", re.M)
 
 
@@ -40,7 +41,8 @@ def test_the_fixture_matrix_is_complete():
     assert NAMES == sorted([
         "account_picked_selection", "cli_lanes_anthropic_ack", "cli_lanes_google_ack", "cli_team_balanced",
         "cli_team_customized", "composed_team", "gemini_cockpit", "multi_litellm", "multi_openrouter",
-        "openclaw-pre-image", "openclaw_host_voice", "round2_fields", "single_claude_native"])
+        "live_anthropic_saved_antigravity", "openclaw-pre-image", "openclaw_host_voice", "round2_fields",
+        "single_claude_native"])
 
 
 @pytest.fixture
