@@ -1274,6 +1274,21 @@ def _prompt_engine_choice(s: state.SetupState, *, dry_run: bool = False) -> None
         s.openclaw.worker_model = saved_worker
 
 
+def _model_tail(ref: str) -> str:
+    """The model id without its runtime or provider prefix (`agy-cli/gemini-x` -> `gemini-x`, bare ids unchanged)."""
+    return ref.split("/", 1)[1] if "/" in ref else ref
+
+
+def _live_model_among(live: tuple[str, str], engine: Engine, models: tuple[str, ...]) -> "str | None":
+    """The offered model OpenClaw runs now. The live ref is `<runtime>/<id>` (agy ids are offered bare) or a provider ref
+    (`claude-cli/...` where the engine offers `anthropic/...`), so the match is on the full ref the engine would write,
+    then on the id after the prefix."""
+    for m in models:
+        if (m if "/" in m else f"{engine.runtime}/{m}") == live[0]:
+            return m
+    return next((m for m in models if _model_tail(m) == _model_tail(live[0])), None)
+
+
 def _prompt_engine_model(s: state.SetupState, *, dry_run: bool = False) -> None:
     engine_id = s.openclaw.engine
     engine = ENGINES.get(engine_id)
@@ -1283,8 +1298,9 @@ def _prompt_engine_model(s: state.SetupState, *, dry_run: bool = False) -> None:
     if not models:
         return
     live = _live_of(s)
-    if live and live[0] in models:
-        saved = live[0]                  # the live model is the default; the saved one only fills where live is empty
+    live_model = _live_model_among(live, engine, models) if live else None
+    if live_model:
+        saved = live_model               # the live model is the default; the saved one only fills where live is empty
     elif live:
         saved = models[0]
     else:
