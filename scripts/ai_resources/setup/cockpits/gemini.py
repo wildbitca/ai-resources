@@ -24,13 +24,13 @@ def detect():
     return detect_gemini_cli()
 
 
-def _settings_patch(auth_method: str = "gemini-api-key") -> dict:
-    """Patch ~/.gemini/settings.json with Engram MCP + auth selection."""
-    return {
-        "selectedAuthType": auth_method,
-        "mcpServers": _shared.mcp_engram_block(),
-        "contextFileName": "GEMINI.md",
-    }
+def _settings_patch(auth_method: str | None = None) -> dict:
+    """Patch ~/.gemini/settings.json with Engram MCP; the auth type only when one is asked for explicitly, because agy
+    signs in with a Google account and a forced `gemini-api-key` would override it."""
+    patch = {"mcpServers": _shared.mcp_engram_block(), "contextFileName": "GEMINI.md"}
+    if auth_method:
+        patch["selectedAuthType"] = auth_method
+    return patch
 
 
 def _agy_mcp_patch() -> dict:
@@ -63,7 +63,7 @@ def configure(ctx: dict) -> list[Path]:
     gateway_url = ctx.get("gateway_url", "http://127.0.0.1:4000")
     mode = s.mode
 
-    auth_method = ctx.get("gemini_auth_method", "gemini-api-key")
+    auth_method = ctx.get("gemini_auth_method")
     written: list[Path] = []
 
     _shared.deep_merge_json(SETTINGS_PATH, _settings_patch(auth_method))
