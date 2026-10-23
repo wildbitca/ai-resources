@@ -204,7 +204,8 @@ def _status_providers(doc: Any) -> dict[str, LiveAuth]:
         kind = info.get("kind") or ""
         if info.get("profiles", 0) <= 0 and kind not in ("env", "synthetic", "profiles"):
             continue
-        found[prov] = _provider_auth(prov, "env" if kind == "env" else "profile")
+        # `models status` does not say the credential type of a profile: never guess API key (billed per token).
+        found[prov] = _provider_auth(prov, "env" if kind == "env" else "")
     return found
 
 
@@ -226,7 +227,7 @@ def _provider_auth(provider: str, how: str) -> LiveAuth:
         return LiveAuth(SUBSCRIPTION, B_SUBSCRIPTION, "Claude sign-in (claude-cli)")
     if provider in ("agy-cli", "google-antigravity"):
         return LiveAuth(OAUTH_GOOGLE, B_GOOGLE, "Google account (agy)")
-    if how in ("api_key", "api-key", "env", "profile"):
+    if how in ("api_key", "api-key", "env"):
         return LiveAuth(API_KEY, B_API, "API key")
     if how in ("oauth", "token"):
         return LiveAuth(UNKNOWN, B_UNKNOWN, "OAuth sign-in")

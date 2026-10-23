@@ -104,6 +104,15 @@ def test_google_vertex_is_adc_never_an_api_key():
     assert live["main"]["google-vertex"].kind == la.ADC
 
 
+def test_a_status_profile_of_unknown_type_is_unknown_billing_never_an_api_key():
+    status = json.dumps({"auth": {"providers": [{"provider": "anthropic", "effective": {"kind": "profiles"},
+                                                 "profiles": {"count": 1}}]}})
+    live = la.read_openclaw(lambda argv: (0, status) if "status" in argv else (1, "no list"), ["main"])
+    got = live["main"]["anthropic"]
+    assert got.kind == la.UNKNOWN and got.billed_to == la.B_UNKNOWN
+    assert la.usable_providers(live) == {"anthropic"}              # still usable: only the billing is unknown
+
+
 def test_agy_presence_only(tmp_path):
     assert la.read_agy(home=tmp_path).kind == la.NONE
     (tmp_path / "google_accounts.json").write_text('{"active": "someone@example.invalid"}', encoding="utf-8")
