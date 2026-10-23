@@ -10,12 +10,12 @@ API-equivalent estimates; on a subscription you spend quota, not dollars ([valid
 | Question | Answer | Why |
 |---|---|---|
 | Starting team | **Balanced** | Haiku for explore, tester, doc-writer and package-upgrade; Sonnet for planner, architect, implementer and reviewer; Opus only for the verifier and the security auditor. The checkers are independent of the writers. |
-| Claude Code sign-in | **Your subscription** when you have one; an API key only when you want per-token billing and its limits | A key is read from your environment and never stored. Vertex AI keeps only the project and region. |
+| Claude Code sign-in | **Your subscription** when you have one; an API key only when you want per-token billing and its limits | Setup shows what Claude Code itself reports and asks keep or change; change hands the terminal to `claude auth login`. An API key counts only when `ANTHROPIC_API_KEY` or an `apiKeyHelper` is live; the kit stores a helper path or command, never a key. Vertex AI keeps only the project and region. |
 | Skills | Leave `AI_RESOURCES_SKILLS` unset; add a domain (`flutter`, `symfony`, ...) only for the stacks you use | Every listed skill costs prompt tokens in every session; the lean list is the same for every cockpit. |
 | Effort | Keep the profile's `role_effort` | planner, architect, verifier and security-auditor high; implementer and reviewer medium; explore, tester and docs low. |
 | Parallel runs | Off unless you need them | They add Claude Code lanes and, with Antigravity, a terms acknowledgement. |
-| OpenClaw providers | Tick only the providers you really use | Routing, fallbacks and the 15 role agents are limited to the ticked providers. A role whose provider you did not tick runs on the cheapest ticked one and the review says so. |
-| OpenClaw sign-in per provider | **CLI backend** for a provider you have a subscription for (Claude Code, Codex); **API key** otherwise | The API key is saved by OpenClaw in its own store through `openclaw models auth paste-api-key`; the kit never sees it. |
+| OpenClaw providers | Sign in only to the providers you really use | Setup reads which providers OpenClaw reports usable; routing, fallbacks and the 15 role agents are limited to them. A role whose provider is not usable runs on the cheapest usable one and the review says so. |
+| OpenClaw sign-in per provider | **CLI backend** for a provider you have a subscription for (Claude Code, Codex); **API key** otherwise | Change it with `openclaw configure --section model`: setup hands the terminal over only on your explicit choice, and the kit never sees a credential. |
 
 ## Per cockpit
 

@@ -373,13 +373,11 @@ LiteLLM is not offered (ADR-0010 N1 removed it from new-setup choices); to use i
 `openclaw config set agents.defaults.mediaModels.image` after a dry run. Antigravity sign-in is not an image route
 (Antigravity terms).
 
-**The credential never touches the kit.** The gateway does not read `~/.config/ai-resources/.env` (OpenClaw reads its own
-environment and auth store), so a key kept only there is shown as `kit-env-only`. When the gateway has no sign-in for the
-route and you are on a terminal, Apply offers (default No) to run `openclaw models auth login --provider <id>` or
-`openclaw models auth paste-api-key --provider <id>` with your terminal attached; OpenClaw asks for the credential, setup
-sees nothing and stores only the profile id (`<provider>:manual` for a pasted key), and only when that id is new after the
-sign-in (setup lists `openclaw models auth list --json` before and after, and runs no sign-in when the listing fails). Under `--dry-run`, `setup --yes` or without a
-terminal setup prints the command and runs nothing. Check with `openclaw models auth list`.
+**The credential never touches the kit, and the kit has no sign-in of its own (ADR-0016).** The gateway does not read
+`~/.config/ai-resources/.env` (OpenClaw reads its own environment and auth store), so a key kept only there is shown as
+`kit-env-only`. A route is written only for a provider OpenClaw reports usable (`openclaw models status --json`, ids and kinds
+only). When it has no sign-in for the route, setup prints OpenClaw's own flow, `openclaw configure --section model`, writes nothing
+for that route and runs nothing. Check with `openclaw models auth list`.
 
 **`disable`, in detail.** `config patch` replaces arrays, so setup reads the live `tools.deny`, appends `image_generate` and
 sends the whole list with `--replace-path tools.deny` after a dry run and a re-read; your entries keep their bytes and their
@@ -398,8 +396,8 @@ removes setup's own token second; a failed model write leaves image generation o
 
 **Teardown** restores `mediaModels.image` (null when the key was absent, the previous value with `--replace-path`
 otherwise; a value you changed since is left alone), removes exactly the one `image_generate` token setup added (null when
-`tools.deny` did not exist before) and offers, default No, `openclaw models auth logout <profile id>` only for a profile
-setup signed in.
+`tools.deny` did not exist before) and prints `openclaw models auth logout <profile id>` for a profile an earlier kit version
+signed in (it never runs it).
 
 `ai-resources verify --cockpit openclaw` reports the route and whether `image_generate` is denied by setup, by an operator
 entry or not at all. To read it by hand: `openclaw config get tools.deny --json`, `openclaw config get
@@ -411,9 +409,8 @@ agents.defaults.mediaModels --json`.
   run); probe it with a session open, then `openclaw infer image generate`;
 - ChatGPT/Codex subscription access to `openai/gpt-image-2` and to GPT Image 2.5, and its quota;
 - every route's image generation on this host (docs only; none was run);
-- the provider ids passed to `models auth login` and `paste-api-key` (taken from the docs; MiniMax OAuth `minimax-portal`
-  and the profile an OAuth login creates are unverified, so no sign-out is offered for an OAuth login);
-- what `paste-api-key` writes besides the auth profile, and its behaviour with no terminal (setup never pipes a key to it);
+- whether `openclaw configure --section model` restarts the gateway (the docs are silent): setup hands the terminal over only
+  after a default-No confirm and never restarts the gateway itself (ADR-0003);
 - that `config patch` rejects a non-string `tools.deny` element (`tests/test_openclaw_image_facts.py`, opt-in with
   `AI_RESOURCES_LIVE_FACTS=1`, was written but not run by the implementer);
 - OpenClaw's wildcard grammar beyond what the docs state ("case-insensitive, supports `*` wildcards"); any other spelling is not
