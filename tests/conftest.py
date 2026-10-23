@@ -238,6 +238,10 @@ def _isolate_round4(tmp_path_factory, monkeypatch):
     Modules that do not exist yet in an older checkout are skipped, so this fixture never hides an import error.
     """
     root = tmp_path_factory.mktemp("round4-home")
+    # `openclaw` is never run by a test: the module-level seam answers "not installed" unless the test installs its own
+    # fake (every test that needs an answer already does).
+    from ai_resources.setup.cockpits import openclaw as _oc_cockpit
+    monkeypatch.setattr(_oc_cockpit, "_openclaw", lambda args, stdin=None, timeout=120: (127, "openclaw is not run by tests"))
     try:
         from ai_resources.setup import live_auth
     except ImportError:

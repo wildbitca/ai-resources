@@ -65,6 +65,7 @@ from typing import Any, Iterable
 
 from .. import state, ui
 from .. import detection
+from .. import live_openclaw
 from ..detection import detect_openclaw
 from ... import repo_root
 from . import _shared
@@ -195,9 +196,44 @@ def available_engines(s: state.SetupState) -> list[Engine]:
     return out
 
 
-def default_engine(s: state.SetupState) -> str:
-    """The saved answer, else antigravity when agy is installed, else Claude Code, else keep."""
+CHANGE_OK_ATTR = "_openclaw_change_confirmed"
+"""Instance attribute on the setup state (never serialised): the operator confirmed "old -> new" this run."""
+LIVE_ATTR = "_openclaw_live"
+"""Instance attribute on the setup state (never serialised): (primary, runtime) of the live default agent, or absent."""
+
+
+def engine_for_live(primary: str, runtime: str) -> str:
+    """The kit engine a live (primary, runtime) pair corresponds to, or "keep" when it is none of them (OpenClaw's own
+    runtime on an `anthropic/...` ref is not an engine the kit offers: it is left as it is)."""
+    if primary.startswith("agy-cli/") or runtime == "agy-cli":
+        return "antigravity"
+    if runtime == "claude-cli" or primary.startswith("claude-cli/"):
+        return "claude-code"
+    if runtime == "codex":
+        return "codex"
+    return "keep"
+
+
+def _set_live(s: state.SetupState, doc: dict | None) -> tuple[str, str] | None:
+    """Remember what `openclaw.json` runs NOW on the in-memory state (ADR-0016 D2); None when it names no agent."""
+    live = live_openclaw.live_default(doc or {})
+    value = live if live[0] else None
+    setattr(s, LIVE_ATTR, value)
+    return value
+
+
+def _live_of(s: state.SetupState) -> tuple[str, str] | None:
+    return getattr(s, LIVE_ATTR, None)
+
+
+def default_engine(s: state.SetupState, doc: dict | None = None) -> str:
+    """The engine that matches what OpenClaw runs NOW (ADR-0016 D2); only when the live config names no agent does the
+    saved answer apply, else antigravity when agy is installed, else Claude Code, else keep."""
     ids = [e.id for e in available_engines(s)]
+    live = live_openclaw.live_default(doc) if doc else ("", "")
+    if live[0]:
+        eid = engine_for_live(*live)
+        return eid if eid in ids else "keep"
     if s.openclaw.engine in ids:
         return s.openclaw.engine
     if s.openclaw.engine == "direct":
@@ -1277,10 +1313,12 @@ def _prompt_engine_choice(s: state.SetupState, *, dry_run: bool = False) -> None
     for e in disabled:
         ui.detail(f"Not offered: {e.id} — {e.disabled_reason}")
 
+    doc = read_config(config_path())
+    _set_live(s, doc)
     engine_id = ui.select(
         "Which engine should OpenClaw run its agents on?",
         [ui.Choice(e.label, value=e.id) for e in engines],
-        default=default_engine(s),
+        default=default_engine(s, doc),
     )
     s.openclaw.engine = engine_id
     if engine_id == "antigravity":
@@ -1298,7 +1336,13 @@ def _prompt_engine_model(s: state.SetupState, *, dry_run: bool = False) -> None:
     models = engine_models(engine, s.get_selection() if hasattr(s, "get_selection") else None)
     if not models:
         return
-    saved = s.openclaw.model if s.openclaw.model in models else models[0]
+    live = _live_of(s)
+    if live and live[0] in models:
+        saved = live[0]                  # the live model is the default; the saved one only fills where live is empty
+    elif live:
+        saved = models[0]
+    else:
+        saved = s.openclaw.model if s.openclaw.model in models else models[0]
 
     if engine_id == "antigravity":
         # Antigravity serves two independent weekly quota pools (see `_agy_quota.py`);
@@ -1341,12 +1385,53 @@ def _prompt_engine_model(s: state.SetupState, *, dry_run: bool = False) -> None:
     # ref says. That works under either gateway: LiteLLM registers bare Claude IDs,
     # and under OpenRouter the Claude Code cockpit maps them with `modelOverrides`.
 
-    if engine_id == "antigravity":
+    _confirm_live_change(s, engine, models)
+    if s.openclaw.engine == "antigravity":
         s.openclaw.risk_acknowledged = True
 
 
+def _confirm_live_change(s: state.SetupState, engine: Engine, models: tuple[str, ...]) -> None:
+    """A difference between what OpenClaw runs now and what was chosen is shown "old -> new" and needs an explicit confirm
+    (default No). Without it the engine falls back to `keep`, so no `agents.*.model` and no runtime is ever patched."""
+    live = _live_of(s)
+    if not live or engine.id == "keep":
+        return
+    new = _target_of(s, engine, models)
+    if live[0] == new[0] and live[1] == new[1]:
+        return
+    old_txt = f"{live[0]} ({live[1] or 'default runtime'})"
+    new_txt = f"{new[0]} ({new[1] or 'default runtime'})"
+    ui.info(f"OpenClaw default agent: {old_txt} -> {new_txt}")
+    if ui.is_non_interactive() or not ui.confirm("Change what OpenClaw runs now? Nothing is written without a yes.",
+                                                 default=False):
+        s.openclaw.engine = "keep"
+        ui.info("OpenClaw: left as it is.")
+    else:
+        setattr(s, CHANGE_OK_ATTR, True)
+
+
+def _target_of(s: state.SetupState, engine: Engine, models: tuple[str, ...]) -> tuple[str, str]:
+    chosen = s.openclaw.model if s.openclaw.model in models else models[0]
+    # agy ids are bare; the ref OpenClaw runs is `<runtime>/<id>` (see `_build_antigravity_patch`).
+    return (chosen if "/" in chosen else f"{engine.runtime}/{chosen}", engine.runtime)
+
+
+def engine_unsettled(s: state.SetupState) -> bool:
+    """True when the saved engine is not what OpenClaw runs now, so the wizard must ask again instead of trusting it."""
+    saved = s.openclaw.engine
+    if not saved or saved == "keep":
+        return False
+    live = _set_live(s, read_config(config_path()))
+    return bool(live) and engine_for_live(*live) != saved
+
+
 def applied_engine(s: state.SetupState) -> Engine | None:
-    """The engine the kit's last write pointed OpenClaw at, None when it never wrote one."""
+    """The engine OpenClaw runs on, None when it is none of the kit's. The live config wins (ADR-0016 D2); the saved
+    model only answers where the live config names no agent."""
+    live = _live_of(s)
+    if live:
+        eid = engine_for_live(*live)
+        return ENGINES.get(eid) if eid != "keep" else None
     if not s.openclaw.applied:
         return None
     for eng in ENGINES.values():
@@ -1377,6 +1462,7 @@ def configure(ctx: dict) -> list[Path]:
 
     path = config_path()
     doc = read_config(path)
+    _set_live(s, doc)
     ak_path = str(_shared.stable_kit_root(repo_root()))
     run_changes: list[dict] = []
     ctx["run_changes"] = run_changes
@@ -2123,6 +2209,14 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
     kit_skills = str(Path(ak_path) / "skills")
     engram = shutil.which("engram") or "engram"
 
+    live = _live_of(s)
+    if live and ui.is_non_interactive() and not getattr(s, CHANGE_OK_ATTR, False):
+        target = _target_of(s, engine, models)
+        if live != target:
+            ui.info(f"OpenClaw default agent: {live[0]} ({live[1] or 'default runtime'}) -> {target[0]} ({target[1]}): "
+                    "not written without your confirm; run `ai-resources setup` interactively to change it.")
+            return False
+
     if not s.openclaw.applied:
         s.openclaw.previous = snapshot(doc)
 
@@ -2213,6 +2307,8 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
 
     s.openclaw.applied = True
     s.openclaw.model = model
+    # What this run just wrote is what OpenClaw runs now (the document in hand is the pre-write snapshot).
+    setattr(s, LIVE_ATTR, (model if "/" in model else f"{engine.runtime}/{model}", engine.runtime))
     if engine.id == "antigravity":
         s.openclaw.worker_model = worker_model
     s.openclaw.config_path = str(path)
@@ -2938,10 +3034,7 @@ def ask_auth(ui_mod, s: state.SetupState, detected=None, dry_run: bool = False) 
     except Exception:  # noqa: BLE001 - a custom profile must not break the question
         profile = None
     saved = cockpit_auth.providers(s)
-    engine_provider = providers_mod.ENGINE_PROVIDER.get(s.openclaw.engine or "")
     default = [p for p in discovery.providers if p in saved] or providers_mod.preselected(discovery, authed, profile)
-    if engine_provider and engine_provider in discovery.providers and engine_provider not in default:
-        default.append(engine_provider)
     choices = [ui_mod.Choice(p + ("  (signed in)" if p in authed else ""), value=p) for p in discovery.providers]
     picked = ui_mod.checkbox(AUTH_PROVIDERS_PROMPT, choices, default=default)
     if picked is None:
@@ -2968,9 +3061,6 @@ def ask_auth(ui_mod, s: state.SetupState, detected=None, dry_run: bool = False) 
             _store_api_key(ui_mod, provider, dry_run=dry_run)
         elif how == "api_key":
             ui_mod.detail(f"{provider}: already signed in (kept; the kit does not read the key).")
-    if engine_provider and engine_provider not in chosen and engine_provider in discovery.providers:
-        chosen[engine_provider] = "cli"
-        ui_mod.info(f"{engine_provider} was added: the engine you picked runs on it.")
     if not chosen:
         ui_mod.warn("No provider chosen: OpenClaw routing is left as it is.")
         return 0

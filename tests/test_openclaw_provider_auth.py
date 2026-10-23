@@ -101,15 +101,17 @@ def test_a_dry_run_and_a_non_interactive_run_run_no_command(host, monkeypatch):
     assert log == [] and cockpit_auth.providers(quiet) == {"anthropic": "cli"}      # saved answers kept, no command
 
 
-def test_the_engine_provider_is_always_enabled(host, monkeypatch):
+def test_the_engine_provider_is_never_added_behind_the_operators_back(host, monkeypatch):
+    # ADR-0016 D2 replaces the round-3 rule "the engine's provider is always enabled": picking engine antigravity no
+    # longer adds google (CLI backend) to the providers the operator chose.
     from ai_resources.setup import ui
     s = _s("agy")
     s.openclaw.engine = "antigravity"
     script = _script(monkeypatch, **{"Which providers should OpenClaw use": ["anthropic"],
                                       "How does OpenClaw sign in to anthropic": "api_key"})
     oc.ask_auth(ui, s, None, True)
-    assert cockpit_auth.providers(s)["google"] == "cli"
-    assert any("google was added" in m for m in script.shown)
+    assert "google" not in cockpit_auth.providers(s)
+    assert not any("was added" in m for m in script.shown)
 
 
 def test_cancelling_the_multiselect_is_a_cancel(host, monkeypatch):

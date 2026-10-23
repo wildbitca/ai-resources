@@ -433,7 +433,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         capable = _capable_cockpits(c.s)
         if not capable:
             return ("Main tool", "")
-        if "openclaw" in capable and not c.s.openclaw.engine:
+        if "openclaw" in capable and _openclaw_engine_unasked(c.s):
             return None
         return ("Main tool", _cockpit_line(capable))
 
@@ -2225,6 +2225,13 @@ def _cockpit_line(capable: list[str]) -> str:
     return f"Main tools: {' and '.join(names)} (each is set up)."
 
 
+def _openclaw_engine_unasked(s: state.SetupState) -> bool:
+    """The OpenClaw engine question is still owed: nothing saved, or the saved engine is not what OpenClaw runs now
+    (ADR-0016 D2: the live config beats the saved answer, so a stale saved engine is asked again, never applied)."""
+    from .cockpits import openclaw as _openclaw_cockpit
+    return not s.openclaw.engine or _openclaw_cockpit.engine_unsettled(s)
+
+
 def _step_cockpit_choice(s: state.SetupState, dry_run: bool = False) -> int:
     """Phase 2: name the main tool among the ticked, installed tools (nothing to choose between when there is one;
     with several each is set up, so no question would change anything), then ask the OpenClaw engine and the channel
@@ -2232,7 +2239,7 @@ def _step_cockpit_choice(s: state.SetupState, dry_run: bool = False) -> int:
     capable = _capable_cockpits(s)
     _section(1, "Main tool", phase=2)
     ui.info(_cockpit_line(capable))
-    if "openclaw" in capable and not s.openclaw.engine:
+    if "openclaw" in capable and _openclaw_engine_unasked(s):
         from .cockpits import openclaw as _openclaw_cockpit
         from .cockpits import _openclaw_channels
         setattr(s, _PHASE2_ATTR, True)
