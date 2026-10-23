@@ -91,18 +91,11 @@ def test_authenticated_providers_survive_a_changed_shape():
     assert prov.authenticated_providers(runner(auth_out=(0, json.dumps({"profiles": [{"id": "claude-cli:d", "provider": "claude-cli"}]})))) == {"anthropic"}
 
 
-def test_api_key_is_always_offered_and_a_cli_backend_only_where_the_kit_has_an_engine():
-    assert [m for m, _ in prov.auth_options("deepseek")] == ["api_key"]
-    assert [m for m, _ in prov.auth_options("anthropic")] == ["api_key"]
-    assert [m for m, _ in prov.auth_options("anthropic", installed={"claude": True})] == ["api_key", "cli"]
-    assert [m for m, _ in prov.auth_options("openai", installed={"codex": True})] == ["api_key", "cli"]
-    assert [m for m, _ in prov.auth_options("google", installed={"agy": True})] == ["api_key", "cli"]
-    assert [m for m, _ in prov.auth_options("google", backends={"google"})] == ["api_key", "cli"]
-    assert [m for m, _ in prov.auth_options("xai", installed={"claude": True, "codex": True, "agy": True})] == ["api_key"]
-
-
-def test_the_api_key_command_carries_no_secret():
-    assert prov.auth_command("openai") == ["models", "auth", "paste-api-key", "--provider", "openai"]
+def test_the_kit_offers_no_auth_options_and_no_key_command():
+    """ADR-0016 D1: sign-in belongs to OpenClaw (`openclaw configure --section model`). The kit has no per-provider
+    method list, no key-entry command and no engine-provider table."""
+    for gone in ("auth_options", "auth_command", "ENGINE_PROVIDER", "CLI_BACKENDS"):
+        assert not hasattr(prov, gone), gone
 
 
 def test_the_real_cli_catalog_shape_is_read_through_the_same_parser():

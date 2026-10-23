@@ -49,8 +49,7 @@ def test_only_the_selected_cockpits_ask_their_own_sign_in(monkeypatch, members):
 def test_each_cockpit_records_its_own_method_name(monkeypatch):
     s = _state("claude", "openclaw", "agy", "cursor")
     fake_openclaw(monkeypatch)
-    Script(**{"Claude Code sign-in": "keep", "Which providers should OpenClaw use": ["anthropic", "openai"],
-              "How does OpenClaw sign in to": "api_key"}).install(monkeypatch)
+    Script(**{"Claude Code sign-in": "keep", "OpenClaw sign-in": "keep"}).install(monkeypatch)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     assert wizard._step_cockpit_auth(s, _args()) == 0
     got = {k: v["method"] for k, v in s.cockpit_auth.items()}
@@ -101,7 +100,7 @@ def test_a_fresh_run_reaches_the_review_with_no_team_or_gateway_question(monkeyp
     monkeypatch.setattr(_openclaw_channels, "prompt", lambda *a, **k: None)
     fake_openclaw(monkeypatch)
     script = Script(**{"Tick the tools": list(members), "Sign in now": [], "Claude Code sign-in": "keep",
-                       "Which providers should OpenClaw use": ["anthropic"], "How does OpenClaw sign in to": "api_key",
+                       "OpenClaw sign-in": "keep",
                        "Starting team": "balanced", "Apply this?": ms.APPLY})
     script.install(monkeypatch)
     seen = {}

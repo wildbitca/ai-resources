@@ -173,6 +173,11 @@ def set_live(s: Any, cockpit: str, kind: str) -> None:
     _slot(s, cockpit)["live"] = kind
 
 
+def set_provider_live(s: Any, kinds: dict[str, str]) -> None:
+    """OpenClaw: provider id -> the live credential kind OpenClaw reports (ids and kind names only)."""
+    _slot(s, "openclaw")["live"] = dict(kinds)
+
+
 def helper(s: Any, cockpit: str = "claude") -> str:
     """The apiKeyHelper path or command the operator chose (never a key)."""
     return str(entry(s, cockpit).get("helper") or "")

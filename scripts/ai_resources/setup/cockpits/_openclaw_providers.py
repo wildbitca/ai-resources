@@ -1,4 +1,4 @@
-"""The OpenClaw provider catalog and each provider's auth options (ADR-0015 D2).
+"""The OpenClaw provider catalog and the routing helpers that keep to the usable providers (ADR-0015 D2, ADR-0016 D1).
 
 The providers come from OpenClaw itself, read-only:
 
@@ -39,13 +39,6 @@ BACKEND_RUNTIMES: dict[str, str] = {
     "agy-cli": "google",
     "agy-cli-lane": "google",
     "google-gemini-cli": "google",
-}
-
-# provider -> (OpenClaw runtime id, tool that must be installed, label)
-CLI_BACKENDS: dict[str, tuple[str, str, str]] = {
-    "anthropic": ("claude-cli", "claude", "Claude Code CLI backend (your subscription, no key)"),
-    "openai": ("codex", "codex", "Codex CLI backend (your subscription, no key)"),
-    "google": ("agy-cli", "agy", "Antigravity CLI backend (Google terms acknowledgement required)"),
 }
 
 Runner = Callable[..., "tuple[int, str]"]
@@ -212,25 +205,7 @@ def preselected(discovery: Discovery, authenticated: Iterable[str], profile: Map
     return [p for p in discovery.providers if p in wanted]
 
 
-def auth_options(provider: str, *, installed: Mapping[str, bool] | None = None,
-                 backends: Iterable[str] = ()) -> list[tuple[str, str]]:
-    """[(method, label)] for a provider. `api_key` is always there (OpenClaw's own store, entered on the operator's terminal).
-    A CLI backend is offered only where the kit has an engine for it AND the tool is installed or the catalog lists it."""
-    options = [("api_key", "An API key (saved by OpenClaw in its own store; the kit never sees it)")]
-    spec = CLI_BACKENDS.get(provider)
-    if spec:
-        _method, tool, label = spec
-        if (installed or {}).get(tool) or provider in set(backends):
-            options.append(("cli", label))
-    return options
-
-
-def auth_command(provider: str) -> list[str]:
-    """argv that stores an API key in OpenClaw's own store. It runs on the operator's terminal: the kit passes no secret."""
-    return ["models", "auth", "paste-api-key", "--provider", provider]
-
-
-# --- routing restricted to the enabled providers (ADR-0015 S7) ----------------------------------------------------------
+# --- routing restricted to the providers OpenClaw reports usable (ADR-0016 D1; ADR-0015 S7) ----------------------------------------------------------
 
 # The first segment of an OpenClaw model ref -> the provider it bills. A runtime prefix is the CLI backend of its provider.
 REF_PROVIDER: dict[str, str] = {
@@ -239,8 +214,6 @@ REF_PROVIDER: dict[str, str] = {
     "google": "google", "google-vertex": "google-vertex", "agy-cli": "google", "agy-cli-lane": "google",
     "google-gemini-cli": "google",
 }
-# The provider each kit engine runs on: the engine's own provider is always enabled with its CLI backend.
-ENGINE_PROVIDER: dict[str, str] = {"antigravity": "google", "claude-code": "anthropic", "codex": "openai"}
 
 _CHEAP_HINTS = ("haiku", "mini", "flash", "lite", "small", "nano", "low")
 

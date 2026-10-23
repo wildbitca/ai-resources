@@ -137,13 +137,14 @@ def test_picking_a_route_asks_model_and_account_and_never_a_secret(monkeypatch, 
     assert s.openclaw.image_account == "openai:*"
 
 
-def test_a_route_without_a_sign_in_says_it_signs_in_at_apply(monkeypatch, no_other_prompts):
+def test_a_route_without_a_sign_in_names_openclaws_own_flow_and_does_not_offer_one(monkeypatch, no_other_prompts):
     s = _state()
     script = Script(**{Q: "fal", "Model for": "fal/krea/v2/medium/text-to-image"})
     script.install(monkeypatch)
     wizard._step_cockpit_choice(s)
     assert s.openclaw.image_account == img.SIGN_IN_AT_APPLY
-    assert any("never sees the key" in m for m in script.shown)
+    assert any("openclaw configure --section model" in m and "no usable sign-in" in m for m in script.shown)
+    assert not any("Apply you can sign in" in m or "never sees the key" in m for m in script.shown)
 
 
 def test_other_model_ref_is_validated_and_a_secret_looking_ref_is_refused(monkeypatch, no_other_prompts):
@@ -168,12 +169,14 @@ def test_foundry_asks_a_validated_deployment_name_with_ui_text(monkeypatch, no_o
     assert any(a.startswith("text: ") for a in script.asked)
 
 
-def test_minimax_asks_the_sign_in_method(monkeypatch, no_other_prompts):
+def test_minimax_no_longer_asks_a_sign_in_method(monkeypatch, no_other_prompts):
+    """ADR-0016 D1: the kit has no sign-in of its own, so it does not ask which method it would have used."""
     s = _state()
-    script = Script(**{Q: "minimax", "Model for": "minimax/image-01", "How do you sign in": "oauth"})
+    script = Script(**{Q: "minimax", "Model for": "minimax/image-01"})
     script.install(monkeypatch)
     wizard._step_cockpit_choice(s)
-    assert s.openclaw.image_account == "oauth"
+    assert not any("How do you sign in" in m for m in script.asked)
+    assert s.openclaw.image_account == img.SIGN_IN_AT_APPLY
 
 
 def test_disable_warns_that_it_affects_all_agents_and_notes_an_operator_entry(monkeypatch, no_other_prompts):

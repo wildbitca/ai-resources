@@ -1,16 +1,22 @@
-"""Per-provider sign-in for OpenClaw (ADR-0015 D2, acceptance 2 and 9): OpenClaw's own store, names only in kit state."""
+"""OpenClaw's sign-in step (ADR-0016 D1, AC-10): read what each agent can use LIVE, keep or change; names only in kit state.
+
+The kit has no key prompt, no `paste-api-key` and no provider multiselect of its own. Sign-in belongs to OpenClaw
+(`openclaw configure --section model`, handed the terminal only on an explicit choice; see
+test_openclaw_delegated_configure.py)."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 import yaml
 
-from ai_resources.setup import cockpit_auth, state
+from ai_resources.setup import cockpit_auth, live_auth, state, ui
 from ai_resources.setup.cockpits import openclaw as oc
 from wizard_fakes import Script, fake_openclaw
 
 SENTINEL = "sk-test-SENTINEL-KEY-0123456789abcdef"
+FIX = Path(__file__).parent / "fixtures" / "openclaw_live"
 
 
 @pytest.fixture
@@ -19,15 +25,14 @@ def host(monkeypatch, tmp_path):
     (home / "xdg").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "xdg"))
-    runs: list[list[str]] = []
-
-    def run(argv, **k):
-        runs.append(list(argv))
-        return type("R", (), {"returncode": 0})()
-    monkeypatch.setattr(oc.shutil, "which", lambda name: "/fake/bin/openclaw" if name == "openclaw" else None)
+    cfg = tmp_path / "openclaw.json"
+    cfg.write_text((FIX / "all_anthropic.json").read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(cfg))
+    monkeypatch.setattr(oc.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("subprocess.run")))
     log = fake_openclaw(monkeypatch)
-    monkeypatch.setattr(oc.subprocess, "run", run)
-    return type("H", (), {"runs": runs, "calls": log, "home": home})
+    handed = []
+    monkeypatch.setattr(live_auth, "handoff", lambda argv: handed.append(list(argv)) or 0)
+    return type("H", (), {"calls": log, "home": home, "handed": handed, "cfg": cfg})
 
 
 def _s(*installed):
@@ -43,108 +48,109 @@ def _script(monkeypatch, **answers):
     return script
 
 
-def test_anthropic_cli_and_openai_api_key_use_openclaws_own_auth_command(host, monkeypatch):
+def test_the_providers_openclaw_reports_usable_are_recorded_as_ids_and_method_names(host, monkeypatch):
     s = _s("claude")
-    script = _script(monkeypatch, **{"Which providers should OpenClaw use": ["anthropic", "openai"],
-                                      "How does OpenClaw sign in to anthropic": "cli",
-                                      "How does OpenClaw sign in to openai": "api_key",
-                                      "Save the openai API key now": True})
-    # openai is already signed in in the fixture, so nothing is asked of the operator
-    assert oc.ask_auth(__import__("ai_resources.setup.ui", fromlist=["ui"]), s, None, False) == 0
-    assert cockpit_auth.providers(s) == {"anthropic": "cli", "openai": "api_key"}
-    assert host.runs == []                                       # already signed in: no key command is run
-    assert any("openai: already signed in" in m for m in script.shown)
-
-
-def test_a_provider_without_a_saved_sign_in_runs_paste_api_key_on_the_operators_terminal(host, monkeypatch):
-    from ai_resources.setup import ui
-    fake_openclaw(monkeypatch, authed=("anthropic",))
-    host_runs = []
-    monkeypatch.setattr(oc.subprocess, "run", lambda argv, **k: host_runs.append((list(argv), k)) or
-                        type("R", (), {"returncode": 0})())
-    s = _s("claude")
-    script = _script(monkeypatch, **{"Which providers should OpenClaw use": ["anthropic", "openai"],
-                                      "How does OpenClaw sign in to anthropic": "cli",
-                                      "How does OpenClaw sign in to openai": "api_key",
-                                      "Save the openai API key now": True})
+    script = _script(monkeypatch, **{"OpenClaw sign-in": "keep"})
     assert oc.ask_auth(ui, s, None, False) == 0
-    assert host_runs == [(["/fake/bin/openclaw", "models", "auth", "paste-api-key", "--provider", "openai"],
-                          {"cwd": host_runs[0][1]["cwd"]})]
-    assert "capture_output" not in host_runs[0][1] and "input" not in host_runs[0][1]       # stdio is the operator's
-    assert any("saved a openai API key in OpenClaw's store" in a for a in ui.actions_done())
-    assert cockpit_auth.providers(s)["openai"] == "api_key"
-    assert SENTINEL not in script.transcript
+    assert cockpit_auth.providers(s) == {"anthropic": "api_key", "openai": "api_key"}      # the fixture's two profiles
+    assert host.handed == []
+    assert any("OpenClaw agent" in m and "anthropic" in m for m in script.shown)
+    assert not any("paste-api-key" in m or "Save the" in m for m in script.shown + script.asked)
 
 
-def test_a_declined_key_save_runs_nothing_and_prints_the_command(host, monkeypatch):
-    from ai_resources.setup import ui
+def test_every_non_kit_agent_is_read_with_its_own_agent_flag(host, monkeypatch):
+    _script(monkeypatch, **{"OpenClaw sign-in": "keep"})
+    oc.ask_auth(ui, _s(), None, False)
+    asked = [c[c.index("--agent") + 1] for c in host.calls if c[:3] == ["models", "auth", "list"] and "--agent" in c]
+    assert asked[0] == "main" and "claude" in asked and not [a for a in asked if a.startswith("kit-")]
+    assert len(asked) <= oc.MAX_AUTH_AGENTS
+
+
+def test_only_read_only_commands_are_issued_and_never_a_gateway_call(host, monkeypatch):
+    _script(monkeypatch, **{"OpenClaw sign-in": "keep"})
+    oc.ask_auth(ui, _s(), None, False)
+    for call in host.calls:
+        assert call[:2] in (["models", "status"], ["config", "file"]) or call[:3] == ["models", "auth", "list"], call
+        assert call[0] not in ("gateway", "restart", "agent", "agents", "channels")
+
+
+def test_nothing_usable_leaves_the_saved_providers_and_says_routing_is_unchanged(host, monkeypatch):
     fake_openclaw(monkeypatch, authed=())
     s = _s()
-    script = _script(monkeypatch, **{"Which providers should OpenClaw use": ["openai"],
-                                      "Save the openai API key now": False})
+    cockpit_auth.set_providers(s, {"anthropic": "cli"})
+    script = _script(monkeypatch, **{"OpenClaw sign-in": "keep"})
     assert oc.ask_auth(ui, s, None, False) == 0
-    assert host.runs == []
-    assert any("openclaw models auth paste-api-key --provider openai" in m for m in script.shown)
+    assert cockpit_auth.providers(s) == {"anthropic": "cli"}
+    assert any("no usable provider" in m and "openclaw configure --section model" in m for m in script.shown)
 
 
-def test_a_dry_run_and_a_non_interactive_run_run_no_command(host, monkeypatch):
-    from ai_resources.setup import ui
-    fake_openclaw(monkeypatch, authed=())
+def test_a_missing_openclaw_changes_nothing_and_asks_only_keep_or_change(host, monkeypatch):
+    monkeypatch.setattr(oc, "_openclaw", lambda argv, stdin=None, timeout=120: (127, "openclaw not found on PATH"))
     s = _s()
-    _script(monkeypatch, **{"Which providers should OpenClaw use": ["openai"]})
-    assert oc.ask_auth(ui, s, None, True) == 0 and host.runs == []
+    script = _script(monkeypatch, **{"OpenClaw sign-in": "keep"})
+    assert oc.ask_auth(ui, s, None, False) == 0
+    assert cockpit_auth.providers(s) == {} and host.handed == []
+    assert [m for m in script.asked if m.startswith("select")] == ["select: OpenClaw sign-in:"]
+
+
+def test_a_non_interactive_run_keeps_the_saved_providers_and_runs_no_command(host, monkeypatch):
     quiet = _s()
     cockpit_auth.set_providers(quiet, {"anthropic": "cli"})
     Script().install(monkeypatch, non_interactive=True)
     log = fake_openclaw(monkeypatch)
     assert oc.ask_auth(ui, quiet, None, False) == 0
-    assert log == [] and cockpit_auth.providers(quiet) == {"anthropic": "cli"}      # saved answers kept, no command
+    assert log == [] and cockpit_auth.providers(quiet) == {"anthropic": "cli"} and host.handed == []
+
+
+def test_cancelling_the_question_is_a_cancel(host, monkeypatch):
+    _script(monkeypatch, **{"OpenClaw sign-in": lambda v: None})
+    assert oc.ask_auth(ui, _s(), None, True) == 130
 
 
 def test_the_engine_provider_is_never_added_behind_the_operators_back(host, monkeypatch):
-    # ADR-0016 D2 replaces the round-3 rule "the engine's provider is always enabled": picking engine antigravity no
-    # longer adds google (CLI backend) to the providers the operator chose.
-    from ai_resources.setup import ui
     s = _s("agy")
     s.openclaw.engine = "antigravity"
-    script = _script(monkeypatch, **{"Which providers should OpenClaw use": ["anthropic"],
-                                      "How does OpenClaw sign in to anthropic": "api_key"})
+    script = _script(monkeypatch, **{"OpenClaw sign-in": "keep"})
     oc.ask_auth(ui, s, None, True)
     assert "google" not in cockpit_auth.providers(s)
     assert not any("was added" in m for m in script.shown)
 
 
-def test_cancelling_the_multiselect_is_a_cancel(host, monkeypatch):
-    from ai_resources.setup import ui
-    _script(monkeypatch, **{"Which providers should OpenClaw use": lambda v: None})
-    assert oc.ask_auth(ui, _s(), None, True) == 130
-
-
-def test_a_missing_catalog_falls_back_and_says_so(host, monkeypatch, tmp_path):
-    from ai_resources.setup import ui
-    from ai_resources.setup.cockpits import _openclaw_providers as P
-    monkeypatch.setattr(oc, "_openclaw", lambda argv, stdin=None, timeout=120: (127, "openclaw not found on PATH"))
-    monkeypatch.setattr(P, "docs_providers_dir", lambda binary=None: None)
-    script = _script(monkeypatch, **{"Which providers should OpenClaw use": ["anthropic"],
-                                      "How does OpenClaw sign in to anthropic": "api_key",
-                                      "Save the anthropic API key now": False})
-    assert oc.ask_auth(ui, _s(), None, True) == 0
-    assert any("could not be read" in m and "providers the kit knows" in m for m in script.shown)
+def test_google_vertex_is_shown_as_adc_never_as_an_api_key_option(host, monkeypatch):
+    def runner(argv, stdin=None, timeout=120):
+        if argv[:3] == ["models", "auth", "list"]:
+            return 0, json.dumps({"profiles": [{"id": "google-vertex:default", "provider": "google-vertex",
+                                                "type": "adc"}]})
+        return 1, "refused"
+    monkeypatch.setattr(oc, "_openclaw", runner)
+    s = _s()
+    script = _script(monkeypatch, **{"OpenClaw sign-in": "keep"})
+    oc.ask_auth(ui, s, None, False)
+    assert cockpit_auth.providers(s) == {"google-vertex": "cli"}
+    assert s.cockpit_auth["openclaw"]["live"] == {"google-vertex": "adc"}
+    assert not any("API key" in t for t in script.titles)
 
 
 def test_the_state_holds_names_only_and_no_secret_ever_reaches_a_file_or_a_log(host, monkeypatch):
-    from ai_resources.setup import ui
     s = _s("claude")
-    script = _script(monkeypatch, **{"Which providers should OpenClaw use": ["anthropic", "openai"],
-                                      "How does OpenClaw sign in to anthropic": "cli",
-                                      "How does OpenClaw sign in to openai": "api_key"})
+    script = _script(monkeypatch, **{"OpenClaw sign-in": "keep"})
     monkeypatch.setenv("OPENAI_API_KEY", SENTINEL)                 # present in the environment, never read by the kit
-    oc.ask_auth(ui, s, None, True)
+    oc.ask_auth(ui, s, None, False)
     state.save(s)
     text = state.state_path().read_text()
     assert SENTINEL not in text and SENTINEL not in script.transcript
     doc = yaml.safe_load(text)
     assert cockpit_auth.secret_findings(doc["cockpit_auth"]) == []
-    assert doc["cockpit_auth"]["openclaw"]["providers"] == {"anthropic": "cli", "openai": "api_key"}
-    for call in host.calls:                                         # only read-only catalog commands were issued
-        assert call[:2] == ["models", "list"] or call[:3] == ["models", "auth", "list"]
+    assert doc["cockpit_auth"]["openclaw"]["providers"] == {"anthropic": "api_key", "openai": "api_key"}
+
+
+def test_routing_uses_only_the_usable_providers(host, monkeypatch):
+    """AC-10: a provider with no usable profile is referenced by no route and no fallback."""
+    s = _s()
+    _script(monkeypatch, **{"OpenClaw sign-in": "keep"})
+    oc.ask_auth(ui, s, None, False)
+    enabled = oc.enabled_providers(s)
+    assert set(enabled) == {"anthropic", "openai"}
+    from ai_resources.setup.cockpits import _openclaw_providers as P
+    refs = ["anthropic/claude-sonnet-5-5", "google/gemini-3.1-pro", "agy-cli/gemini-3.8-flash-low", "openai/gpt-5.6-sol"]
+    assert P.restrict_refs(refs, enabled) == ["anthropic/claude-sonnet-5-5", "openai/gpt-5.6-sol"]

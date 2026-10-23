@@ -150,7 +150,7 @@ def test_account_a_gemini_key_only_in_the_kit_env_is_kit_env_only_and_names_the_
     view = img.provider_account(img.ROUTES["google-key"], accounts_from("empty.json"), {"GEMINI_API_KEY"})
     assert view.source_label == "kit-env-only" and view.gateway_sees_it is False
     assert view.name == "GEMINI_API_KEY"
-    assert view.fix == "openclaw models auth paste-api-key --provider google"
+    assert view.fix == "openclaw configure --section model"                  # OpenClaw's own flow (ADR-0016 D1)
 
 
 def test_account_the_gateway_env_and_profiles_count_as_seen():
@@ -166,24 +166,23 @@ def test_account_the_gateway_env_and_profiles_count_as_seen():
 def test_account_missing_names_the_env_vars_and_the_sign_in_command():
     view = img.provider_account(img.ROUTES["fal"], accounts_from("empty.json"))
     assert (view.gateway_sees_it, view.source_label, view.name) == (False, "missing", "FAL_KEY")
-    assert view.fix == "openclaw models auth paste-api-key --provider fal"
+    assert view.fix == "openclaw configure --section model"
     assert img.provider_account(img.ROUTES["fal"], None).source_label == "missing"
 
 
-def test_account_comfyui_needs_provider_config_and_foundry_has_no_established_command():
+def test_account_comfyui_needs_provider_config_and_every_provider_points_at_the_same_native_flow():
     view = img.provider_account(img.ROUTES["comfyui"], accounts_from("openai_profile.json"))
     assert view.source_label == "provider-config-needed" and "workflow" in view.name
-    assert img.sign_in_command(img.ROUTES["microsoft-foundry"]) == ""
-    assert img.provider_account(img.ROUTES["microsoft-foundry"], None).fix == ""
+    assert img.sign_in_command(img.ROUTES["microsoft-foundry"]) == img.NATIVE_SIGN_IN
+    assert img.sign_in_command(img.KEEP) == "" and img.sign_in_command(img.DISABLE) == ""
 
 
-def test_sign_in_commands_carry_the_provider_id_only():
-    assert img.sign_in_command(img.ROUTES["openai-codex"]) == "openclaw models auth login --provider openai"
-    assert img.sign_in_command(img.ROUTES["openai-key"]) == "openclaw models auth paste-api-key --provider openai"
-    assert img.sign_in_command(img.ROUTES["minimax"]) == "openclaw models auth paste-api-key --provider minimax"
+def test_sign_in_command_is_openclaws_own_flow_and_carries_no_key_or_provider_flag():
     for r in img.CATALOG:
         cmd = img.sign_in_command(r)
+        assert cmd == "openclaw configure --section model"
         assert "=" not in cmd and "sk-" not in cmd and not any(name in cmd for name in r.env)
+        assert "paste-api-key" not in cmd and "--provider" not in cmd
 
 
 def test_account_never_reads_or_returns_a_secret_value():
