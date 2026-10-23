@@ -14,8 +14,8 @@ from typing import Any
 from .. import state, ui
 from ..detection import detect_claude_code
 from ... import repo_root
-from ...generate import parse_simple_frontmatter
 from ... import domains, skill_scope
+from .. import role_render
 from . import _shared
 
 
@@ -512,8 +512,8 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
     longer produced are deleted. Only recorded names are removed, so an agent
     the user wrote by hand is never touched.
     """
-    roles_dir = repo_root() / "agents" / "roles"
-    if not roles_dir.is_dir():
+    specs = role_render.load_specs(repo_root())
+    if not specs:
         return []
 
     by_role = executors.get("by_role", {})
@@ -523,62 +523,26 @@ def _generate_subagent_files(executors: dict, ak_path: str, mode: str,
     if sink is None:
         AGENTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    role_bodies: dict[str, str] = {}
-
-    for role_md in sorted(roles_dir.glob("*.md")):
-        try:
-            text = role_md.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        meta, body = parse_simple_frontmatter(text)
-        name = str(meta.get("name", role_md.stem))
-        body = _rewrite_body(body, ak_path)
-        role_bodies[name] = body
-
-        configured = _gate_model(str(by_role.get(name, {}).get("model", "") or ""), mode, backend, allow_unverified)
-        model = _resolve_model(configured, meta, mode, strict)
-        # Append unconditionally: `_write_subagent` reports whether the file
-        # changed, which is not the same as whether it should exist. Treating a
-        # no-op rewrite as "not produced" made the pruning below delete every
+    for spec in specs:
+        body = spec.prompt(lambda b: _rewrite_body(b, ak_path), _shared.kit_context_block(ak_path))
+        if spec.is_persona:
+            # The persona's model, else its role's: never a silent default.
+            configured = str(
+                by_persona.get(spec.name, {}).get("model", "")
+                or by_role.get(spec.base, {}).get("model", "")
+                or ""
+            )
+            model = _resolve_model(_gate_model(configured, mode, backend, allow_unverified), spec.meta, mode, strict)
+        else:
+            configured = _gate_model(str(by_role.get(spec.name, {}).get("model", "") or ""), mode, backend,
+                                     allow_unverified)
+            model = _resolve_model(configured, spec.meta, mode, strict)
+        # Append unconditionally: `_write_subagent` reports whether the file changed, which is not the same as
+        # whether it should exist. Treating a no-op rewrite as "not produced" made the pruning below delete every
         # agent on any re-run where content was identical.
-        write(name, str(meta.get("description", "")),
-              ROLE_TOOLS.get(name), model,
-              body + _shared.kit_context_block(ak_path),
-              skill_scope.ROLE_SKILLS.get(name), skill_scope.ROLE_MCP_SERVERS.get(name))
-        generated.append(name)
-
-    personas_dir = repo_root() / "agents" / "personas"
-    for persona_md in sorted(personas_dir.glob("*.md")) if personas_dir.is_dir() else []:
-        name = persona_md.stem
-        # Longest match wins: both halves of `<role>-<domain>` can contain
-        # hyphens, so `code-reviewer-api-platform` cannot be split on one.
-        candidates = [r for r in role_bodies if name.startswith(f"{r}-")]
-        if not candidates:
-            continue
-        # ADR-0014 D6: a persona subagent exists only for an active domain (AI_RESOURCES_SKILLS). The role subagent
-        # still reads the overlay by path, and the stale-removal below takes an inactive persona away again.
-        if not domains.persona_is_active(name, role_bodies):
-            continue
-        base = max(candidates, key=len)
-        try:
-            text = persona_md.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        meta, overlay = parse_simple_frontmatter(text)
-
-        # The persona's model, else its role's: never a silent default.
-        configured = str(
-            by_persona.get(name, {}).get("model", "")
-            or by_role.get(base, {}).get("model", "")
-            or ""
-        )
-        model = _resolve_model(_gate_model(configured, mode, backend, allow_unverified), meta, mode, strict)
-        body = (role_bodies[base] + "\n\n---\n\n" + _rewrite_body(overlay, ak_path)
-                + _shared.kit_context_block(ak_path))
-        write(name, str(meta.get("description", "")),
-              ROLE_TOOLS.get(base), model, body,
-              skill_scope.ROLE_SKILLS.get(base), skill_scope.ROLE_MCP_SERVERS.get(base))
-        generated.append(name)
+        write(spec.name, spec.description, ROLE_TOOLS.get(spec.base), model, body,
+              skill_scope.ROLE_SKILLS.get(spec.base), skill_scope.ROLE_MCP_SERVERS.get(spec.base))
+        generated.append(spec.name)
 
     if tracking is not None:
         for stale in sorted(set(getattr(tracking, "subagent_files_installed", [])) - set(generated)):
