@@ -1,6 +1,6 @@
 # ADR-0016: Delegated cockpit auth, live state as the source of truth, one operator-rules file (round 4)
 
-**Status**: Proposed (2026-10-23), implemented on `feat/setup-round4-delegated-auth`, not released (single 2.6.0).
+**Status**: Accepted (2026-10-23, the operator's answers in plan section 9 are binding); implemented on `feat/setup-round4-delegated-auth` for the single 2.6.0, which the operator tags. The independent Verifier has not signed off yet.
 Plan: `.agent-output/planner/setup-round4-delegated-auth-plan.md` (section 9 carries the binding operator answers).
 **Date**: 2026-10-23
 **Decision makers**: operator (plan section 9, binding), implementer (record only).
@@ -79,7 +79,7 @@ Only the native auth handover is immediate and is labelled "applies now". Downst
 The channel re-enable token is prompted with `ui.password` and passed through the child environment with `--use-env` where the
 channel declares it (env is readable by same-user processes through /proc: weaker than a file, better than argv). Otherwise the
 terminal goes to interactive `openclaw channels add`. The rail uses the five `PHASE_LABELS`; removed-step labels and the dead
-step functions (providers, credentials, lifecycle) are deleted.
+provider and credentials step functions are deleted (the unreachable lifecycle step stays: tests still exercise it).
 
 ## Consequences
 

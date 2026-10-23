@@ -6,6 +6,47 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-10-23 — delegated cockpit auth, live state over saved state, one operator-rules file (ADR-0016)
+
+### Changed (setup is a coordinator; ADR-0016 supersedes the auth parts of ADR-0015)
+
+- **Sign-in is delegated.** Each tool shows what it reports LIVE and asks keep or change. Change hands the terminal to the tool's
+  own flow (`claude auth login`, `openclaw configure --section model`, `agy`) only on an explicit choice and never in
+  `--non-interactive`, `--dry-run` or a test; the kit re-reads the live state and records that, not the answer. "API key" is shown
+  only when `ANTHROPIC_API_KEY` or an `apiKeyHelper` is live. Claude Code's only kit extra is the `apiKeyHelper` setting (a
+  command or a 0600 key-file path; a readable key file is refused; the key is never read or stored). `claude auth status` fields
+  other than the method (email, org id) are dropped at the parse.
+- **Live config beats saved state.** The OpenClaw engine and model defaults come from `openclaw.json`; the saved answer only fills
+  where live is empty. A difference is shown "old -> new" and needs an explicit confirm (default No); without it no
+  `agents.*.model` or runtime is patched. A stale saved `antigravity` engine is asked again, never applied. The engine no longer
+  adds "google (CLI backend)" on its own. The confirmed `kit-lane-agy-*` drift migration is unchanged.
+- **All writes wait for Apply.** Hygiene, the agy MCP file, the CLAUDE.md migration and the operator-rules file queue their
+  changes (`setup/deferred.py`); Review lists them under *Will write*, `--dry-run` lists them, Ctrl-C before Apply leaves the disk as
+  it was.
+- **Review shows who runs and who is billed**, in separate columns (Runs in, Billed to) with the model and effort of every role;
+  one live sign-in row per tool; "unknown" is shown, never guessed. The progress rail follows the five phases.
+- **Channel re-enable** takes the token with a masked prompt and passes it through the child environment (`--use-env`, Telegram);
+  other channels get OpenClaw's own interactive command. A token is never an argument.
+
+### Added
+
+- **One operator-rules file** (`~/.config/ai-resources/operator-rules.md`, seeded once from your CLAUDE.md after a confirm,
+  secret-scanned) rendered as a managed block into `~/.claude/CLAUDE.md`, every OpenClaw agent workspace `AGENTS.md` and
+  `~/.gemini/GEMINI.md`. A rule moved to a skill by the CLAUDE.md migration is offered to the file first.
+- Antigravity shows whether a Google account state is present (presence only) and offers keep or change.
+
+### Fixed
+
+- **agy lanes read "held" without gate evidence.** The host overlay that made absent evidence count as proven is gone; the Review
+  no longer prints a literal "(on)". The Google acknowledgement now states that the Antigravity terms prohibit third-party tools
+  using Antigravity OAuth and that you accept the suspension risk; its text hash changed, so a stored Google acknowledgement is
+  rejected once and setup asks you to re-confirm it (it never re-signs for you).
+
+### Removed
+
+- The kit's own key prompt for OpenClaw providers (`paste-api-key`), the image gate's own sign-in and its `<provider>:manual`
+  profile, the dead Providers and Credentials wizard steps and the stale ten-step rail labels.
+
 ## [2.5.0] — 2026-10-23 — per-cockpit setup, OpenClaw providers and kit roles, native orchestrator (ADR-0015)
 
 ### Added (per-cockpit setup, OpenClaw providers and roles, native orchestrator; ADR-0015)

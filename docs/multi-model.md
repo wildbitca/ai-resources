@@ -80,13 +80,15 @@ checked.
     [-] Windsurf  manual install   (manual install: https://docs.devin.ai/desktop/getting-started)
 ```
 
-**Screen 2, Sign-in.** Every ticked tool asks its OWN question and nothing else does (ADR-0015). Claude Code: your
-subscription, an Anthropic API key (read from your environment, never stored) or Google Vertex AI (only the project and
-region are kept). OpenClaw: which providers to use, read from OpenClaw itself (`openclaw models list`), and per provider an
-API key (saved by OpenClaw in its own store through `openclaw models auth paste-api-key`, typed on your terminal) or a CLI
-backend where one exists. Antigravity: your Google account, with the terms check where its lanes are enabled. Cursor: managed
-in Cursor, nothing asked. The kit stores method names and provider ids, never a key. There is no team question and no
-gateway question; a saved "As a team / Each on its own / Advanced" answer is migrated once (see
+**Screen 2, Sign-in.** Every ticked tool shows what it reports LIVE and asks keep or change (ADR-0016); nothing is collected
+by the kit. Claude Code: its own sign-in (`claude auth status`); change hands the terminal to `claude auth login`, or writes an
+`apiKeyHelper` command or 0600 file path into `settings.json` (the key is never read or stored), or keeps Vertex AI's project and
+region. OpenClaw: the providers each agent can use, read from OpenClaw's own auth store (`openclaw models status` and `models auth
+list`); change hands the terminal to `openclaw configure --section model`. Antigravity: whether a Google account state is present;
+change hands the terminal to `agy`. The terms check stays where its lanes are enabled. Cursor: managed in Cursor, nothing asked.
+After a handover the live state is read again and that is what is recorded. The kit stores kind and method names and provider
+ids, never a key. A native flow is never started in `--non-interactive`, `--dry-run` or by a test. There is no team question and
+no gateway question; a saved "As a team / Each on its own / Advanced" answer is migrated once (see
 [Signing in](#choosing-the-mode)). `--backend` is deprecated: any value pre-fills Claude Code's subscription sign-in and the
 question is not asked.
 
