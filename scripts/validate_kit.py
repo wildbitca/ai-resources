@@ -363,7 +363,7 @@ def check_skill_scope(skill_ids: set[str], role_names: set[str]) -> None:
                 fail("skill-scope", f"ROLE_SKILLS[{role}] preloads '{skill}', which not every '{role}' step names")
 
     # ADR-0015 S9: every cockpit is scoped by the one rule, and the skills an OpenClaw kit-role agent may use are linked.
-    for cockpit in ("claude", "openclaw", "agy", "cursor"):
+    for cockpit in ("claude", "openclaw", "codex", "cursor"):
         if (skill_scope.scope_for(cockpit, skill_ids, env={}) or set()) != linked:
             fail("skill-scope", f"skill_scope.scope_for({cockpit!r}) differs from the Claude Code include list")
         if skill_scope.scope_for(cockpit, skill_ids, env={skill_scope.ENV_VAR: "all"}) is not None:
