@@ -18,8 +18,9 @@ KEYS = ("blocked", "return_to_step", "block_reason", "verdict", "status", "plan_
         "requires_tests", "security_critical_feature", "next", "changes_made")
 
 # What a verdict word means to the engine.
-BLOCKING_VERDICTS = frozenset({"FAIL", "FAILED", "REQUIRES_CHANGES", "BLOCKED", "GAPS", "REJECTED", "NO"})
-PASSING_VERDICTS = frozenset({"PASS", "PASSED", "APPROVED", "OK", "SUCCESS", "YES", "CONDITIONAL", "N/A"})
+BLOCKING_VERDICTS = frozenset({"FAIL", "FAILED", "REQUIRES_CHANGES", "REQUEST_CHANGES", "CHANGES_REQUESTED", "BLOCK",
+                               "BLOCKED", "GAPS", "REJECTED", "NO"})
+PASSING_VERDICTS = frozenset({"PASS", "PASSED", "APPROVE", "APPROVED", "OK", "SUCCESS", "YES", "CONDITIONAL", "N/A"})
 # Only the verifier may sign a run off: these words from any other role are rejected.
 SIGNOFF_WORDS = frozenset({"READY", "SIGNED_OFF", "SIGNOFF", "VERIFIED", "ACCEPTED"})
 
@@ -68,8 +69,17 @@ class Reply:
         return bool(self.words() & SIGNOFF_WORDS)
 
 
+_PHRASES = ("REQUEST_CHANGES", "REQUESTS_CHANGES", "REQUIRES_CHANGES", "CHANGES_REQUESTED", "CHANGES_REQUIRED")
+
+
 def _word(value: str) -> str:
-    m = re.match(r"[A-Za-z][A-Za-z_/]*", value.strip().strip("*_`").strip())
+    """The verdict word of a value; a multi-word phrase (`request changes`) is normalised whole, never cut at a space."""
+    text = value.strip().strip("*_`").strip()
+    norm = re.sub(r"[ \t_-]+", "_", text.upper())
+    for phrase in _PHRASES:
+        if norm == phrase or norm.startswith(phrase + "_") or norm.startswith(phrase + ":"):
+            return "REQUIRES_CHANGES" if phrase != "CHANGES_REQUESTED" else phrase
+    m = re.match(r"[A-Za-z][A-Za-z_/]*", text)
     return m.group(0).upper().replace("/", "_") if m else ""
 
 

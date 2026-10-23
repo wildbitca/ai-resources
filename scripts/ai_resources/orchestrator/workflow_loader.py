@@ -73,9 +73,17 @@ class Workflow:
         return out
 
     def first_writer(self) -> str:
-        """Id of the first step run by a role that writes, '' when the workflow never writes (no approval pause)."""
+        """Id of the step before which the operator approves the plan, '' when every step is read-only.
+
+        The first step of a code-writing role (WRITER_ROLES) when there is one, so a research step by a general-purpose
+        role ahead of the plan does not pause the run before a plan exists. A workflow with no such role is gated at its
+        first step by any role outside READ_ONLY_ROLES (generalPurpose, doc-writer, tester, ...): it must never run
+        end to end with no checkpoint."""
         for s in self.steps:
             if s.role in WRITER_ROLES:
+                return s.id
+        for s in self.steps:
+            if s.role not in READ_ONLY_ROLES:
                 return s.id
         return ""
 
