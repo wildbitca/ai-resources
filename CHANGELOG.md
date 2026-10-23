@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-10-23 — per-cockpit setup, OpenClaw providers and kit roles, native orchestrator (ADR-0015)
+
 ### Added (per-cockpit setup, OpenClaw providers and roles, native orchestrator; ADR-0015)
 
 - **Each tool asks its own sign-in.** The global "how should they work" question is gone. Claude Code: subscription, an API
@@ -35,6 +37,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 - `tests/test_openclaw_gateway_guard_words.py` timing bound 3 s -> 10 s (a slow host, not a regression).
 - The wizard step ids: `cockpit_auth` replaces `mode`; `gateway`, `providers`, `credentials` and `lifecycle` are no longer steps.
 
+
+### Fixed
+
+- **Ticking Antigravity now writes its files.** The wizard ticked `agy` but the apply step only knew the module that
+  writes `~/.gemini/GEMINI.md`, the MCP file and the skills, so agy got none of the kit content. Its settings no longer
+  force `selectedAuthType: gemini-api-key`, since agy signs in with a Google account.
+- **A second `ai-resources setup` is a zero diff again.** The kit-role agents get their kit block on the first run, the
+  host profile's `*` model rule no longer moves them off their profile model, and the kit's own block in a role's
+  `AGENTS.md` is not mistaken for an operator edit.
 
 ## [2.4.0] — 2026-10-22 — token-cost lean defaults and round 2: retuned balanced, billing awareness, hygiene and lean OpenClaw (ADR-0013, ADR-0014)
 
