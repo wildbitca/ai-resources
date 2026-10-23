@@ -74,13 +74,15 @@ def test_only_read_only_commands_are_issued_and_never_a_gateway_call(host, monke
         assert call[0] not in ("gateway", "restart", "agent", "agents", "channels")
 
 
-def test_nothing_usable_leaves_the_saved_providers_and_says_routing_is_unchanged(host, monkeypatch):
+def test_nothing_usable_drops_the_saved_providers_and_says_nothing_is_routed(host, monkeypatch):
+    """Deliberate behaviour change (AC-10, ADR-0016): a readable OpenClaw that reports no usable provider is authoritative;
+    the saved providers are no longer kept for routing."""
     fake_openclaw(monkeypatch, authed=())
     s = _s()
     cockpit_auth.set_providers(s, {"anthropic": "cli"})
     script = _script(monkeypatch, **{"OpenClaw sign-in": "keep"})
     assert oc.ask_auth(ui, s, None, False) == 0
-    assert cockpit_auth.providers(s) == {"anthropic": "cli"}
+    assert cockpit_auth.providers(s) == {} and oc.enabled_providers(s) == []
     assert any("no usable provider" in m and "openclaw configure --section model" in m for m in script.shown)
 
 

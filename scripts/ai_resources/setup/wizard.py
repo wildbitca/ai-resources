@@ -955,7 +955,7 @@ def _review_role_rows(s: state.SetupState) -> list:
         if "openclaw" in selected:
             refs = {role: openclaw_roles.resolve_ref(model) for role, _v, model in rows}
             routed, _fell = providers_mod.route_roles({r: ref for r, ref in refs.items() if ref},
-                                                      _oc.enabled_providers(s))
+                                                      _oc.enabled_providers(s, _oc.MAIN_AGENT))
             live = _oc.live_openclaw.live_agents(_oc.read_config(_oc.config_path()))
             for role, ref in routed.items():
                 aid = openclaw_roles.agent_id_for(role)

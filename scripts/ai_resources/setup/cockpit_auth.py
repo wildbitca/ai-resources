@@ -83,6 +83,31 @@ def set_providers(s: Any, chosen: dict[str, str]) -> None:
     slot.setdefault("method", next(iter(chosen.values()), "api_key"))
 
 
+def set_agent_providers(s: Any, per_agent: dict[str, list[str]]) -> None:
+    """OpenClaw: agent id -> the provider ids OpenClaw reported usable for that agent (ids only)."""
+    _slot(s, "openclaw")["agents"] = {str(a): sorted(p) for a, p in per_agent.items()}
+
+
+def agent_providers(s: Any, agent: str) -> "list[str] | None":
+    """The providers recorded usable for one agent, or None when that agent was never read."""
+    raw = entry(s, "openclaw").get("agents")
+    got = raw.get(agent) if isinstance(raw, dict) else None
+    return [str(p) for p in got] if isinstance(got, list) else None
+
+
+def set_none_usable(s: Any, flag: bool) -> None:
+    """OpenClaw was readable and reported no usable provider: an authoritative empty set, not "never asked"."""
+    slot = _slot(s, "openclaw")
+    if flag:
+        slot["none_usable"] = True
+    else:
+        slot.pop("none_usable", None)
+
+
+def none_usable(s: Any) -> bool:
+    return bool(entry(s, "openclaw").get("none_usable"))
+
+
 def legacy_label(s: Any) -> str:
     """Which of the four old answers a saved state expressed, '' for a state that never answered."""
     if getattr(s, "mode", "") == "multi-model":

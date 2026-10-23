@@ -178,20 +178,28 @@ def claude_signed_in(auth: LiveAuth) -> bool:
 
 # --- OpenClaw ----------------------------------------------------------------------------------------------------------
 
-def read_openclaw(runner: Runner | None = None, agents: list[str] | None = None) -> dict[str, dict[str, LiveAuth]]:
+class LiveReading(dict):
+    """agent -> provider -> LiveAuth, plus `readable`: whether OpenClaw answered at all. An unreadable OpenClaw (not
+    installed, timed out) says nothing about usability; a readable one with no provider says "nothing is usable"."""
+    readable: bool = False
+
+
+def read_openclaw(runner: Runner | None = None, agents: list[str] | None = None) -> LiveReading:
     """OpenClaw's live auth: agent id -> provider id -> LiveAuth, from the local auth store (no gateway call).
 
     `models status --json` gives the provider kinds; `models auth list --json --agent <id>` the per-agent profiles. A
     provider with neither a profile nor an env credential is absent from the result (not usable). Profile ids, labels
     and key material are never read: only the provider and the credential type.
     """
-    out: dict[str, dict[str, LiveAuth]] = {}
+    out = LiveReading()
     rc, text = run(["openclaw", "models", "status", "--json"], runner)
+    out.readable = rc == 0
     shared = _status_providers(_parse_json(text)) if rc == 0 else {}
     for agent in agents or ["main"]:
         per = dict(shared)
         rc, text = run(["openclaw", "models", "auth", "list", "--json", "--agent", agent], runner)
         if rc == 0:
+            out.readable = True
             for prov, auth in _profile_providers(_parse_json(text)).items():
                 per[prov] = auth
         out[agent] = per
