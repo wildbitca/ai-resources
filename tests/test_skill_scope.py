@@ -1,4 +1,4 @@
-"""Skill scoping: the Claude Code cockpit links an include list; other behaviour of sync_skill_links is unchanged."""
+"""Skill scoping: the include list is the one rule for every cockpit; other behaviour of sync_skill_links is unchanged."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -183,3 +183,14 @@ def test_every_role_preload_is_linked_and_hidden_from_the_main_listing():
     for skills in skill_scope.ROLE_SKILLS.values():
         assert set(skills) <= linked
     assert linked >= {s for v in skill_scope.ROLE_SKILLS.values() for s in v}
+
+
+# --- ADR-0015 S9: one rule for every cockpit ------------------------------------------------------------------------
+
+def test_scope_for_is_the_one_rule_for_every_cockpit():
+    ids = {"workflow-bugfix", "kit-orchestration", "flutter-bloc", "terraform-x", "common-tdd", "common-protocol-enforcement"}
+    base = skill_scope.include_list(ids, env={})
+    for cockpit in ("claude", "openclaw", "agy", "cursor", "codex"):
+        assert skill_scope.scope_for(cockpit, ids, env={}) == base
+    assert "flutter-bloc" not in base and "flutter-bloc" in skill_scope.scope_for("openclaw", ids, env={"AI_RESOURCES_SKILLS": "flutter"})
+    assert skill_scope.scope_for("agy", ids, env={"AI_RESOURCES_SKILLS": "all"}) is None

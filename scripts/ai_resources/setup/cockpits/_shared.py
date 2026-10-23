@@ -513,15 +513,38 @@ def merge_kit_hooks(path: Path, kit_hooks: dict[str, list[dict]],
     return True
 
 
-def link_agents_skills(ak_path: str) -> None:
-    """Link kit skills into ~/.agents/skills, the shared Agent Skills location."""
+def _kit_skill_ids(skills_root: Path) -> list[str]:
+    return [d.name for d in skills_root.iterdir() if (d / "SKILL.md").is_file()] if skills_root.is_dir() else []
+
+
+def link_agents_skills(ak_path: str, cockpit: str = "agents") -> None:
+    """Link the scoped kit skills into ~/.agents/skills, the shared Agent Skills location (ADR-0015 S9: the same
+    `skill_scope` rule as Claude Code; AI_RESOURCES_SKILLS=all restores every skill)."""
+    from ... import skill_scope
     agents_skills = Path.home() / ".agents" / "skills"
-    links = sync_skill_links(agents_skills, Path(ak_path) / "skills")
+    skills_root = Path(ak_path) / "skills"
+    links = sync_skill_links(agents_skills, skills_root,
+                             include=skill_scope.scope_for(cockpit, _kit_skill_ids(skills_root)))
     if links["removed"]:
         ui.info(f"Removed outdated kit skill links: {', '.join(links['removed'])}")
     if links["skipped"]:
         ui.warn(f"Skills not linked (name already used in {agents_skills}): "
                 f"{', '.join(links['skipped'])}")
+
+
+def scoped_skills_dir() -> Path:
+    """The kit-managed directory of scoped skill links that OpenClaw reads through `skills.load.extraDirs`.
+    Under the XDG state home (never /tmp, which is tmpfs and emptied on reboot)."""
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "ai-resources" / "scoped-skills"
+
+
+def sync_scoped_skills(ak_path: str, *, dry_run: bool = False) -> dict[str, list[str]]:
+    """Make `scoped_skills_dir()` hold exactly one link per scoped kit skill (kit links only; a foreign entry is left)."""
+    from ... import skill_scope
+    skills_root = Path(ak_path) / "skills"
+    return sync_skill_links(scoped_skills_dir(), skills_root, dry_run=dry_run,
+                            include=skill_scope.scope_for("openclaw", _kit_skill_ids(skills_root)))
 
 
 def multimodel_protocol_md(ak_path: str, gateway_url: str, mode: str = "multi-model",

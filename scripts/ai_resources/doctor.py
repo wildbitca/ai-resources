@@ -214,6 +214,25 @@ def _check_poll_share() -> int:
     return 0
 
 
+def _check_vendor_pins() -> int:
+    """Doctor sub-check 4j (ADR-0015 S9): vendored skill pins against upstream. Warn-only; skipped offline."""
+    from . import vendor_pin
+    try:
+        found = vendor_pin.check()
+    except Exception as e:  # noqa: BLE001 - a reader must never break the doctor
+        ui.detail(f"Vendor pin check skipped ({e.__class__.__name__}).")
+        return 0
+    for st in found:
+        if st.status == "behind":
+            ui.warn(f"Vendored skills {st.id}: pinned {st.pinned[:12]}, {st.detail}. "
+                    "Review the upstream change, then `ai-resources generate --force` to re-import.")
+        elif st.status == "current":
+            ui.ok(f"Vendored skills {st.id}: pin is current ({st.pinned[:12]})")
+        else:
+            ui.detail(f"Vendored skills {st.id}: pin not compared ({st.detail}).")
+    return 0
+
+
 ANNOUNCE_INFO = ("OpenClaw completion announcements: no config key exists to suppress them (schema checked 2026-10-22; "
                  "only agents.defaults.subagents.announceTimeoutMs, a timeout). The kit writes nothing for this.")
 
@@ -450,6 +469,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # 4g. Billing mode, quota and the manual credit file; 4h. the poll-turn share of the newest snapshot.
     issues += _check_billing()
     issues += _check_poll_share()
+    issues += _check_vendor_pins()
     issues += _check_openclaw_cost(s, args)
 
     # 5. Executors mapping

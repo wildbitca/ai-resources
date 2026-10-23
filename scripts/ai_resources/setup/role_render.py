@@ -105,5 +105,6 @@ def agy_role_block(specs: list[RoleSpec], kit_path: str) -> str:
             continue
         skills = ", ".join(spec.skills) or "-"
         desc = " ".join(spec.description.split())
+        desc = desc if len(desc) <= 110 else desc[:107].rsplit(" ", 1)[0] + "..."
         lines.append(f"- `{spec.name}`: {desc} Skills: {skills}. Prompt: `{kit_path}/agents/roles/{spec.name}.md`")
     return "\n".join(lines) + "\n"

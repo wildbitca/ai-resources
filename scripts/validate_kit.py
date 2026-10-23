@@ -362,6 +362,16 @@ def check_skill_scope(skill_ids: set[str], role_names: set[str]) -> None:
             elif not all(skill in step_skills for step_skills in role_steps.get(role, [set()])):
                 fail("skill-scope", f"ROLE_SKILLS[{role}] preloads '{skill}', which not every '{role}' step names")
 
+    # ADR-0015 S9: every cockpit is scoped by the one rule, and the skills an OpenClaw kit-role agent may use are linked.
+    for cockpit in ("claude", "openclaw", "agy", "cursor"):
+        if (skill_scope.scope_for(cockpit, skill_ids, env={}) or set()) != linked:
+            fail("skill-scope", f"skill_scope.scope_for({cockpit!r}) differs from the Claude Code include list")
+        if skill_scope.scope_for(cockpit, skill_ids, env={skill_scope.ENV_VAR: "all"}) is not None:
+            fail("skill-scope", f"skill_scope.scope_for({cockpit!r}) must be unscoped when {skill_scope.ENV_VAR}=all")
+    for skill in ("kit-orchestration",):
+        if skill not in linked:
+            fail("skill-scope", f"OpenClaw kit-role agents always allow '{skill}', which is not linked")
+
 
 def check_haiku_budget() -> None:
     """A role that any shipped profile runs on Haiku must start under the 100k-token Haiku price tier (ADR-0014 D1)."""

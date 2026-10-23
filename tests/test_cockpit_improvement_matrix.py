@@ -15,6 +15,8 @@ from ai_resources.setup.cockpits import _shared, claude, cursor, gemini
 
 WAITING = "Never block one tool call on a long wait"
 COCKPITS = ("claude", "openclaw", "agy", "cursor")
+LEAN_LIMIT = 4000
+AGY_LIMIT = 7000
 
 
 @pytest.fixture
@@ -65,9 +67,9 @@ MATRIX = {
         "openclaw": lambda r: "Waiting without polling" in r["text"],
     },
     "lean instruction block (no multi-model section on the subscription path)": {
-        "claude": lambda r: "Multi-model routing" not in r["text"] and len(r["text"]) < 4000,
-        "agy": lambda r: "Multi-model routing" not in r["text"] and len(r["text"]) < 4000,
-        "cursor": lambda r: "Multi-model routing" not in r["text"] and len(r["text"]) < 4000,
+        "claude": lambda r: "Multi-model routing" not in r["text"] and len(r["text"]) < LEAN_LIMIT,
+        "agy": lambda r: "Multi-model routing" not in r["text"] and len(r["text"]) < AGY_LIMIT,   # carries the role block
+        "cursor": lambda r: "Multi-model routing" not in r["text"] and len(r["text"]) < LEAN_LIMIT,
         "openclaw": lambda r: len(r["text"]) < 6000,
     },
     "auto-compact window and cost env": {
