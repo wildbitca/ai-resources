@@ -499,3 +499,101 @@ def test_redact_masks_cookies_url_credentials_bare_keys_and_auth(line, hidden):
 ])
 def test_redact_keeps_lines_without_those_secrets(line):
     assert oc.redact(line) == [line]
+
+
+# --- ADR-0016 D7 (AC-12): the enable path takes the credential masked and never on argv or in the output -----------------
+
+TOKEN = "123456:SENTINEL-CHANNEL-TOKEN-never-on-argv"
+
+
+class EnableRunner:
+    """Fake runner for `channels add`: the first (plain) call needs a credential; the --use-env call checks the env."""
+    def __init__(self, plain_rc=1, env_rc=0):
+        self.calls, self.plain_rc, self.env_rc = [], plain_rc, env_rc
+
+    def __call__(self, argv, **kw):
+        self.calls.append((list(argv), dict(kw)))
+        return (self.env_rc, "") if "--use-env" in argv else (self.plain_rc, "needs a credential")
+
+
+def _item(channel="telegram", account="default"):
+    return oc.PrintOnly(channel, account, "run it yourself")
+
+
+@pytest.fixture
+def enable_ui(monkeypatch):
+    from ai_resources.setup import live_auth, ui
+    seen = {"password": [], "text": [], "shown": [], "handed": [], "confirm": []}
+    monkeypatch.setattr(ui, "password", lambda msg, **k: seen["password"].append(msg) or TOKEN)
+    monkeypatch.setattr(ui, "text", lambda msg, **k: seen["text"].append(msg) or pytest.fail("a plain text prompt"))
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: seen["confirm"].append((msg, default)) or True)
+    for name in ("info", "detail", "warn", "error", "ok"):
+        monkeypatch.setattr(ui, name, lambda m, *a, _n=name, **k: seen["shown"].append(str(m)))
+    monkeypatch.setattr(ui, "record_action", lambda m: None)
+    monkeypatch.setattr(live_auth, "handoff", lambda argv: seen["handed"].append(list(argv)) or 0)
+    return seen
+
+
+def test_add_argv_never_carries_a_credential_flag():
+    assert oc.add_argv("telegram", "default") == ("openclaw", "channels", "add", "--channel", "telegram", "--account",
+                                                  "default")
+    assert oc.add_argv("telegram", "default", use_env=True)[-1] == "--use-env"
+    for argv in (oc.add_argv("telegram", "default"), oc.add_argv("telegram", "default", use_env=True)):
+        assert not any(oc.CREDENTIAL_FLAG.match(a) for a in argv)
+
+
+def test_a_use_env_channel_gets_the_masked_token_through_the_environment_only(enable_ui, monkeypatch):
+    from ai_resources.setup import wizard
+    runner = EnableRunner()
+    assert wizard._enable_channel(_item(), runner, interactive=True, dry_run=False) is True
+    assert len(enable_ui["password"]) == 1 and enable_ui["text"] == []          # ui.password, never ui.text
+    (plain, _kw1), (env_argv, kw2) = runner.calls
+    assert "--use-env" not in plain and env_argv[-1] == "--use-env"
+    assert kw2["env"]["TELEGRAM_BOT_TOKEN"] == TOKEN
+    assert "TELEGRAM_BOT_TOKEN" not in runner.calls[0][1]["env"]                # only the second call carries it
+    for argv, _kw in runner.calls:
+        assert TOKEN not in " ".join(argv) and not any(oc.CREDENTIAL_FLAG.match(a) for a in argv)
+    assert TOKEN not in "\n".join(enable_ui["shown"])
+    assert enable_ui["handed"] == []
+
+
+def test_a_rejected_credential_is_reported_by_exit_code_without_the_token(enable_ui):
+    from ai_resources.setup import wizard
+    runner = EnableRunner(env_rc=2)
+    assert wizard._enable_channel(_item(), runner, interactive=True, dry_run=False) is False
+    shown = "\n".join(enable_ui["shown"])
+    assert "exit 2" in shown and TOKEN not in shown
+
+
+def test_an_empty_token_skips_without_a_second_call(enable_ui, monkeypatch):
+    from ai_resources.setup import ui, wizard
+    monkeypatch.setattr(ui, "password", lambda msg, **k: "  ")
+    runner = EnableRunner()
+    assert wizard._enable_channel(_item(), runner, interactive=True, dry_run=False) is False
+    assert len(runner.calls) == 1
+
+
+def test_a_channel_without_use_env_hands_the_terminal_to_the_interactive_native_command(enable_ui):
+    from ai_resources.setup import wizard
+    runner = EnableRunner()
+    assert wizard._enable_channel(_item("slack", "work"), runner, interactive=True, dry_run=False) is True
+    assert enable_ui["password"] == []                                          # no prompt: OpenClaw asks itself
+    assert enable_ui["handed"] == [["openclaw", "channels", "add", "--channel", "slack", "--account", "work"]]
+    assert len(runner.calls) == 1 and enable_ui["confirm"][0][1] is False
+
+
+def test_non_interactive_and_dry_run_prompt_and_hand_over_nothing(enable_ui):
+    from ai_resources.setup import wizard
+    runner = EnableRunner()
+    assert wizard._enable_channel(_item(), runner, interactive=False, dry_run=False) is False
+    assert enable_ui["password"] == [] and enable_ui["handed"] == [] and len(runner.calls) == 1
+    runner2 = EnableRunner()
+    wizard._enable_channel(_item(), runner2, interactive=True, dry_run=True)
+    assert runner2.calls == [] and enable_ui["password"] == []
+
+
+def test_an_already_credentialed_account_is_enabled_by_the_plain_command(enable_ui):
+    from ai_resources.setup import wizard
+    runner = EnableRunner(plain_rc=0)
+    assert wizard._enable_channel(_item(), runner, interactive=True, dry_run=False) is True
+    assert len(runner.calls) == 1 and enable_ui["password"] == []
