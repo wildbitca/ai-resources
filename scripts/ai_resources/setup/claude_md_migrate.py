@@ -38,6 +38,12 @@ _HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 POINTER_PREFIX = "Moved out of this file by ai-resources:"
 
 
+
+def _read_raw(path: Path) -> str:
+    """The text with line endings untouched (`Path.read_text(newline=)` needs Python 3.13)."""
+    with path.open(encoding="utf-8", newline="") as fh:
+        return fh.read()
+
 def claude_md_path() -> Path:
     from .cockpits import claude
     return claude.CLAUDE_MD_PATH
@@ -288,7 +294,7 @@ def restore_one(record: dict, *, path: Path | None = None) -> tuple[bool, str]:
     path = path or claude_md_path()
     dest = Path(str(record.get("destination") or ""))
     try:
-        text = dest.read_text(encoding="utf-8", newline="")
+        text = _read_raw(dest)
     except OSError:
         return False, f"{dest} is missing"
     if sha(text) != record.get("sha256"):
