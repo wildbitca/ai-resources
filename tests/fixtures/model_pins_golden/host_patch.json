@@ -25,7 +25,9 @@
         "subagents": {
           "maxChildrenPerAgent": 3,
           "maxConcurrent": 3,
-          "model": "anthropic/claude-sonnet-5-5"
+          "maxSpawnDepth": 2,
+          "model": "anthropic/claude-sonnet-5-5",
+          "runTimeoutSeconds": 7200
         },
         "thinkingDefault": "low",
         "timeoutSeconds": 14400,
