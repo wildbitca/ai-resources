@@ -50,6 +50,15 @@ class LiveAuth:
 
 
 UNKNOWN_AUTH = LiveAuth(UNKNOWN, B_UNKNOWN, "unknown")
+
+_BILLED_OF_KIND = {SUBSCRIPTION: B_SUBSCRIPTION, API_KEY: B_API, API_KEY_HELPER: B_API, VERTEX: B_API, BEDROCK: B_API,
+                   ADC: B_API, OAUTH_GOOGLE: B_GOOGLE}
+
+
+def billed_for_kind(kind: str) -> str:
+    """Who is billed for a recorded live kind. A kind that says nothing about billing (none, unknown, '') is "unknown":
+    the Review table shows that word rather than guess."""
+    return _BILLED_OF_KIND.get(kind, B_UNKNOWN)
 NO_AUTH = LiveAuth(NONE, B_UNKNOWN, "not signed in")
 
 
@@ -235,6 +244,8 @@ def usable_providers(live: Mapping[str, Mapping[str, LiveAuth]], agent: str | No
 
 
 # --- agy ---------------------------------------------------------------------------------------------------------------
+
+AGY_LOGIN_ARGV = ["agy"]
 
 def agy_home() -> Path:
     """agy's home (`~/.gemini`), resolved at call time so the suite points it at a scratch directory."""

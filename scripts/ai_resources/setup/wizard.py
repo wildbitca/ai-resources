@@ -748,10 +748,14 @@ def _team_view_args(s: state.SetupState, base: dict | None = None) -> dict:
     OpenRouter opt-in."""
     from . import lanes_render
     members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
+    from . import effort as effort_mod, live_auth
+    table = effort_mod.table_for_state(s)
     return {"row": _preset_key(s), "ticked": "agy" in members,
             "acks": lanes_render.valid_acks(s.profile.lane_acks),
             "allow_unverified": bool(s.profile.allow_unverified or _COMPOSE.get("allow_unverified")),
-            "cell_verified": compat.claude_google_openrouter_verified()}
+            "cell_verified": compat.claude_google_openrouter_verified(),
+            "claude_billed": live_auth.billed_for_kind(cockpit_auth.live_kind(s, "claude")),
+            "effort": {r: effort_mod.for_cockpit(lv, "claude") for r, lv in table.items()}}
 
 
 def _show_team(s: state.SetupState, base: dict, rows: list, *, title: str) -> None:
@@ -759,7 +763,8 @@ def _show_team(s: state.SetupState, base: dict, rows: list, *, title: str) -> No
     the table of tools (ADR-0010 S10)."""
     kwargs = _team_view_args(s, base)
     ui.role_lane_table(team_view.role_lane_rows(rows, base, **kwargs), title=title)
-    for line in team_view.provider_mix(base, rows, **kwargs).lines:
+    mix_kwargs = {k: v for k, v in kwargs.items() if k not in ("claude_billed", "effort")}
+    for line in team_view.provider_mix(base, rows, **mix_kwargs).lines:
         ui.info(line)
     if kwargs["row"] == "cli":
         _show_team_table(s, base, rows)
@@ -885,28 +890,79 @@ def _team_label(s: state.SetupState) -> str:
     return f"Custom: {name}"
 
 
-_AUTH_LABEL = {"subscription": "subscription", "api_key": "API key", "vertex_adc": "Vertex AI",
-               "google_account": "Google account", "managed": "managed in the tool", "cli": "CLI backend"}
+# What a recorded method means when the cockpit has not reported a live kind (a saved state, a test): names only.
+_METHOD_LABEL = {"subscription": "subscription", "api_key": "API key", "vertex_adc": "Vertex AI",
+                 "google_account": "Google account", "managed": "managed in the tool", "cli": "CLI backend"}
 # What the cockpit itself reported (ADR-0016): the kind recorded by `cockpit_auth.set_live`.
 _LIVE_LABEL = {"subscription": "subscription", "api_key": "API key (ANTHROPIC_API_KEY)",
                "api_key_helper": "API key (apiKeyHelper)", "vertex": "Vertex AI", "bedrock": "Amazon Bedrock",
                "oauth_google": "Google account", "adc": "Vertex AI (ADC)", "none": "not signed in",
                "unknown": "unknown"}
+_SIGN_IN_ROW = {"claude": "Claude Code sign-in", "openclaw": "OpenClaw sign-in", "agy": "Antigravity sign-in",
+                "cursor": "Cursor sign-in"}
 
 
-def _auth_text(s: state.SetupState) -> str:
-    """"Claude Code: subscription; OpenClaw: anthropic (CLI), openai (API key)": method names only, never a value."""
-    parts = []
+def _sign_in_rows(s: state.SetupState) -> list[tuple[str, str]]:
+    """One Review row per ticked cockpit that asks, from what that cockpit REPORTED (ADR-0016 D5): the sign-in and, in
+    its own words, who is billed. Method names only, never a value; "unknown" when nothing says."""
+    from . import live_auth
+    rows: list[tuple[str, str]] = []
     for cockpit in _auth_cockpits(s):
-        name = tools.TOOLS[cockpit].label if cockpit in tools.TOOLS else cockpit
+        name = _SIGN_IN_ROW.get(cockpit) or f"{tools.TOOLS[cockpit].label if cockpit in tools.TOOLS else cockpit} sign-in"
         provs = cockpit_auth.providers(s) if cockpit == "openclaw" else {}
+        kinds = (cockpit_auth.entry(s, "openclaw").get("live") or {}) if cockpit == "openclaw" else {}
         if provs:
-            parts.append(f"{name}: " + ", ".join(f"{p} ({_AUTH_LABEL.get(m, m)})" for p, m in provs.items()))
-        elif cockpit_auth.live_kind(s, cockpit):
-            parts.append(f"{name}: {_LIVE_LABEL.get(cockpit_auth.live_kind(s, cockpit), 'unknown')}")
+            def one(p, m):
+                kind = kinds.get(p, "") if isinstance(kinds, dict) else ""
+                label = _LIVE_LABEL.get(kind) if kind else _METHOD_LABEL.get(m, m)
+                billed = live_auth.BILLED_LABEL[live_auth.billed_for_kind(kind)] if kind else "unknown"
+                return f"{p}: {label} (billed to: {billed})"
+            rows.append((name, "; ".join(one(p, m) for p, m in provs.items())))
+            continue
+        kind = cockpit_auth.live_kind(s, cockpit)
+        if kind:
+            billed = live_auth.BILLED_LABEL[live_auth.billed_for_kind(kind)]
+            rows.append((name, f"{_LIVE_LABEL.get(kind, 'unknown')} (billed to: {billed})"))
         else:
-            parts.append(f"{name}: {_AUTH_LABEL.get(cockpit_auth.method(s, cockpit), 'not set')}")
-    return "; ".join(parts) or "none to ask"
+            rows.append((name, _METHOD_LABEL.get(cockpit_auth.method(s, cockpit), "not set")))
+    return rows or [("Sign-in", "none to ask")]
+
+
+def _review_role_rows(s: state.SetupState) -> list:
+    """The Review table "Who runs what" (ADR-0016 D5): per role and cockpit, where it runs and who is billed in separate
+    columns, with the model and the effort. Inputs are the recorded live kinds, the profile and the OpenClaw config
+    (a local read); a fact that is not known reads "unknown". Never raises: a profile that cannot be read shows no table."""
+    from . import effort as effort_mod, live_auth, lanes_render
+    from .cockpits import _openclaw_providers as providers_mod, openclaw as _oc, openclaw_roles
+    try:
+        selected = [c for c in _selected_tools(s) if c in ("claude", "openclaw", "agy")]
+        if not selected:
+            return []
+        name = profile_names.canonical(s.profile.name) or profiles.RECOMMENDED_PROFILE
+        doc = profiles.load_profile(name, "single-model")
+        rows = profiles.role_table(_single_model_executors(s))
+        claude_billed = live_auth.billed_for_kind(cockpit_auth.live_kind(s, "claude"))
+        table = effort_mod.table_for_state(s)
+        claude_effort = {r: effort_mod.for_cockpit(lv, "claude") for r, lv in table.items()}
+        openclaw_effort = {r: effort_mod.for_cockpit(lv, "openclaw") for r, lv in table.items()}
+        models: dict[str, str] = {}
+        billed: dict[str, str] = {}
+        if "openclaw" in selected:
+            refs = {role: openclaw_roles.resolve_ref(model) for role, _v, model in rows}
+            routed, _fell = providers_mod.route_roles({r: ref for r, ref in refs.items() if ref},
+                                                      _oc.enabled_providers(s))
+            live = _oc.live_openclaw.live_agents(_oc.read_config(_oc.config_path()))
+            for role, ref in routed.items():
+                aid = openclaw_roles.agent_id_for(role)
+                models[role] = live[aid][0] if aid in live else ref
+            kinds = cockpit_auth.entry(s, "openclaw").get("live") or {}
+            billed = {p: live_auth.billed_for_kind(k) for p, k in kinds.items()} if isinstance(kinds, dict) else {}
+        return team_view.review_role_rows(
+            rows, doc, selected=selected, claude_billed=claude_billed, openclaw_models=models, openclaw_billed=billed,
+            acks=lanes_render.valid_acks(s.profile.lane_acks), claude_effort=claude_effort,
+            openclaw_effort=openclaw_effort)
+    except Exception:  # noqa: BLE001 - the table is information; it must never stop the review
+        return []
 
 
 def _tools_text(s: state.SetupState) -> str:
@@ -935,7 +991,7 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
         team += " (" + ", ".join(f"{slot}={sl.ref}" for slot, sl in sel.slots.items()) + ")"
     if "agy" in members and ("google" in (s.profile.lane_acks or {}) or _agy_lanes_on(s)):
         team += _agy_team_suffix(s)
-    rows = [("Sign-in", _auth_text(s)), ("Team", team), ("Tools", _tools_text(s))]
+    rows = [*_sign_in_rows(s), ("Team", team), ("Tools", _tools_text(s))]
     lane_agents = ((s.profile.lanes or {}).get("agents") or {}) if isinstance(s.profile.lanes, dict) else {}
     if any((a or {}).get("backend") == "claude-cli" for a in lane_agents.values()):
         rows.append(("Parallel runs", "on"))
@@ -1039,6 +1095,9 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
     _section(9, "Review")
     _REVIEW_SHOWN = True
     ui.review_table(_review_rows(s), title="Your answers")
+    runs = _review_role_rows(s)
+    if runs:
+        ui.runs_table([tuple(r) for r in runs], title="Who runs what")
     if selection is not None:
         detected = _detected_cockpit_ids(s)
         actions = model_selection.plan_table(selection, s.mode, s.backend, detected,

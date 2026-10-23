@@ -95,9 +95,36 @@ def configure(ctx: dict) -> list[Path]:
     return written
 
 
+AUTH_PROMPT = "Antigravity sign-in:"
+
+
 def ask_auth(ui_mod, s, detected=None, dry_run: bool = False) -> int:
-    """Antigravity (agy) signs in with a Google account in its own app; there is nothing to choose. The ADR-0007 Google
-    terms acknowledgement is asked where the agy lanes are enabled (never here), so a stored tick cannot skip it."""
+    """Antigravity (agy) signs in with a Google account in its own app (ADR-0016 D1): show whether that account state is
+    present (presence only, nothing in it is read), ask keep or change. Change hands the terminal to `agy` itself on an
+    explicit choice, never in a non-interactive run or a dry run. The ADR-0007 Google terms acknowledgement is asked where
+    the agy lanes are enabled (never here), so a stored tick cannot skip it."""
+    from .. import live_auth
     cockpit_auth.set_method(s, "agy", "google_account")
-    ui_mod.detail("Antigravity: signs in with your Google account; its terms are confirmed when you enable agy lanes.")
+    auth = live_auth.read_agy()
+    cockpit_auth.set_live(s, "agy", auth.kind)
+    ui_mod.detail(f"Antigravity: {auth.label}; its terms are confirmed when you enable agy lanes.")
+    if ui_mod.is_non_interactive():
+        return 0
+    picked = ui_mod.select(AUTH_PROMPT, [ui_mod.Choice("Keep it", value="keep"),
+                                         ui_mod.Choice("Change it with agy's own sign-in", value="change")],
+                           default="keep")
+    if picked is None:
+        return 130
+    if picked == "change":
+        shown = " ".join(live_auth.AGY_LOGIN_ARGV)
+        if dry_run:
+            ui_mod.detail(f"Dry run: would hand this terminal to `{shown}`.")
+            return 0
+        ui_mod.info(f"Applies now: `{shown}` runs on this terminal; sign in there, then exit it. The kit sees nothing you type.")
+        rc = live_auth.run_handoff(live_auth.AGY_LOGIN_ARGV)
+        if rc != 0:
+            ui_mod.warn(f"`{shown}` exited {rc}; the sign-in is whatever agy reports now.")
+        else:
+            ui_mod.record_action("opened agy for its own sign-in")
+        cockpit_auth.set_live(s, "agy", live_auth.read_agy().kind)
     return 0

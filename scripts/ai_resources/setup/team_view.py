@@ -94,11 +94,15 @@ LINE_NOT_SELECTED = "Gemini not active: Antigravity not selected"
 
 
 class LaneRow(NamedTuple):
-    """One line of the team table: the role (or its lane/second member), the real provider, the model and the lane."""
+    """One line of the team table: the role (or its lane/second member), the real provider, the model and where it runs
+    (`lane`, shown as "Runs in"). `billed_to` is a separate column (ADR-0016 D5): who pays for the run, "unknown" when
+    nothing says so; `effort` is the role's level where the cockpit has one."""
     role: str
     provider: str
     model: str
     lane: str
+    billed_to: str = "unknown"
+    effort: str = ""
 
 
 @dataclass(frozen=True)
@@ -167,23 +171,73 @@ def cell_text(cand: str, state: str) -> str:
     return f"{provider} {slug} via Antigravity{tag} ({state})"
 
 
+BILLED_LABEL = {"subscription": "subscription", "api_per_token": "API per token", "google_plan": "Google plan",
+                "unknown": "unknown"}
+GATEWAY_BILLED = {"openrouter": "API per token (OpenRouter)", "litellm": "API per token (LiteLLM)"}
+
+
 def role_lane_rows(base_rows: Sequence[tuple[str, str, str]], doc: Mapping[str, Any], *, row: str, ticked: bool,
                    acks: Mapping[str, Any] | None, allow_unverified: bool = False,
-                   cell_verified: bool = False) -> list[LaneRow]:
-    """The team table: a line per role with its real provider, model and lane, and (on the CLI row) a line per
-    Antigravity member, the seconds of every report role included."""
+                   cell_verified: bool = False, claude_billed: str = "unknown",
+                   effort: Mapping[str, str] | None = None) -> list[LaneRow]:
+    """The team table: a line per role with its real provider, model, where it runs ("Runs in") and who is billed
+    ("Billed to", a separate column), and (on the CLI row) a line per Antigravity member, the seconds of every report
+    role included. `claude_billed` is Claude Code's LIVE billing (`live_auth.B_*`); a gateway row bills its gateway."""
     gateway = {"openrouter": "OpenRouter", "litellm": "LiteLLM"}.get(row, "")
     out: list[LaneRow] = []
     for role, vendor, model in base_rows:
         lane = gateway or "Claude Code"
         if gateway and vendor == "google" and row == "openrouter" and not (allow_unverified or cell_verified):
             lane = "OpenRouter (held: session model until you opt in)"
-        out.append(LaneRow(role, vendor, model, lane))
+        billed = GATEWAY_BILLED[row] if gateway else BILLED_LABEL.get(claude_billed, "unknown")
+        out.append(LaneRow(role, vendor, model, lane, billed, (effort or {}).get(role, "")))
     if row == "cli":
         for kind, role, cand in agy_members(doc):
             state, _why = member_state(role, ticked=ticked, acks=acks, kind=kind)
             label = f"{role} (second)" if kind == "second" else f"{role} (lane)"
-            out.append(LaneRow(label, profiles.vendor_of(cand[4:]), cand[4:], cell_text(cand, state)))
+            out.append(LaneRow(label, profiles.vendor_of(cand[4:]), cand[4:], cell_text(cand, state),
+                               BILLED_LABEL["google_plan"], ""))
+    return out
+
+
+class RoleRow(NamedTuple):
+    """One line of the Review table "Who runs what" (ADR-0016 D5): a role on ONE cockpit, with separate columns."""
+    role: str
+    runs_in: str
+    billed_to: str
+    model: str
+    effort: str
+
+
+def review_role_rows(base_rows: Sequence[tuple[str, str, str]], doc: Mapping[str, Any], *, selected: Sequence[str],
+                     claude_billed: str, openclaw_models: Mapping[str, str], openclaw_billed: Mapping[str, str],
+                     acks: Mapping[str, Any] | None, claude_effort: Mapping[str, str] | None = None,
+                     openclaw_effort: Mapping[str, str] | None = None) -> list[RoleRow]:
+    """The Review table: for every role, where it runs and who is billed, per selected cockpit. Pure.
+
+    - Claude Code subagent: model from the team, billing from Claude Code's live sign-in.
+    - OpenClaw kit-role agent: the model the kit-role agent has (live, else planned), billing of THAT model's provider from
+      what OpenClaw reports ("unknown" for a provider it does not report).
+    - agy: every Antigravity member; "held" in Runs in while the gates are not proven (never "on" by default).
+    Nothing is guessed: a missing fact reads "unknown"."""
+    out: list[RoleRow] = []
+    if "claude" in selected:
+        for role, _vendor, model in base_rows:
+            out.append(RoleRow(role, "Claude Code subagent", BILLED_LABEL.get(claude_billed, "unknown"), model,
+                               (claude_effort or {}).get(role, "default")))
+    if "openclaw" in selected:
+        for role, _vendor, _model in base_rows:
+            ref = openclaw_models.get(role, "")
+            provider = ref.split("/", 1)[0] if "/" in ref else ""
+            billed = BILLED_LABEL.get(openclaw_billed.get(provider, "unknown"), "unknown") if provider else "unknown"
+            out.append(RoleRow(role, "OpenClaw kit-role agent", billed, ref or "unknown",
+                               (openclaw_effort or {}).get(role, "default")))
+    if "agy" in selected:
+        for kind, role, cand in agy_members(doc):
+            state, _why = member_state(role, ticked=True, acks=acks, kind=kind)
+            runs = {ON: "agy", HELD: "agy (held)", DISPLAY_ONLY: "agy (display-only)", OFF: "agy (off)"}[state]
+            label = f"{role} (second)" if kind == "second" else f"{role} (lane)"
+            out.append(RoleRow(label, runs, BILLED_LABEL["google_plan"], cand[4:], "-"))
     return out
 
 
