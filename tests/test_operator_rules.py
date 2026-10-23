@@ -379,3 +379,33 @@ def test_the_claude_md_backstop_offers_the_file_again_once_the_seed_is_discarded
     monkeypatch.setattr(ui, "confirm", lambda *a, **k: False)
     wizard._step_operator_rules(s)
     assert not rules.has_heading("COMMITS", s)       # what claude_md_migrate asks before it offers `also add to the file`
+
+
+# --- the file is scanned again at every render ---------------------------------------------------------------------------
+
+def test_a_secret_added_to_the_file_later_is_rendered_nowhere_and_the_blocks_stay_as_they_are(world, monkeypatch):
+    warned = []
+    for name in ("section", "info", "detail", "ok"):
+        monkeypatch.setattr(ui, name, lambda *a, **k: None)
+    monkeypatch.setattr(ui, "warn", lambda m, *a, **k: warned.append(str(m)))
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    s = mk_state("claude", "openclaw", "agy")
+    wizard._step_operator_rules(s)
+    deferred.run_all(s)
+    render_all(world, s)
+    files = [claude.CLAUDE_MD_PATH, gemini.GEMINI_MD_PATH, world.ws["main"] / "AGENTS.md", world.ws["ai"] / "AGENTS.md"]
+    before = {f: f.read_bytes() for f in files}
+    rules.path().write_text(rules.read() + f"\nMy token is {KEY_LIKE}\n", encoding="utf-8")
+    line = len(rules.read().splitlines())
+    assert rules.blocked() == [line] and rules.block() == "" and rules.append_to("md\n") == "md\n"
+    render_all(world, s)
+    for f in files:
+        assert f.read_bytes() == before[f], f                       # the existing managed block is kept as it is
+        assert KEY_LIKE not in f.read_text(encoding="utf-8")
+    assert warned and all(f"{line}" in m and "look like a key" in m for m in warned)
+    assert len(warned) >= 3                                          # claude, antigravity and OpenClaw each said so
+
+
+def test_a_clean_file_has_nothing_blocked(host):
+    rules.create(rules.compose(rules.seed_from_claude_md()))
+    assert rules.blocked() == [] and rules.blocked_warning() == "" and rules.block()

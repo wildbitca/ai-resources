@@ -1238,7 +1238,9 @@ def configure(ctx: dict) -> list[Path]:
     # 3. CLAUDE.md — only the kit's managed block; the user's content is preserved
     from .. import operator_rules
     md = operator_rules.append_to(_claude_md(ak_path, gateway_url, mode))     # ADR-0016 D4: one rules file, three cockpits
-    if _shared.write_managed_block(CLAUDE_MD_PATH, md):
+    if operator_rules.blocked():
+        ui.warn(f"Claude Code: {operator_rules.blocked_warning()}")      # the existing block stays as it is
+    elif _shared.write_managed_block(CLAUDE_MD_PATH, md):
         written.append(CLAUDE_MD_PATH)
 
     # 4. Dynamic workflow scripts (/kit-plan, /kit-implement)
