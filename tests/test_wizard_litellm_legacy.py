@@ -31,7 +31,7 @@ def _args(**kw):
 def test_a_fresh_run_offers_no_gateway_anywhere(monkeypatch):
     s = state.SetupState()
     s.profile.customizations = {"__targets__": {"selected": ["claude"]}}
-    script = Script(**{"How does Claude Code sign in": "subscription"})
+    script = Script(**{"Claude Code sign-in": "keep"})
     script.install(monkeypatch)
     assert wizard._step_cockpit_auth(s, _args()) == 0
     text = (" ".join(script.asked) + " ".join(script.titles) + " ".join(script.shown)).lower()
@@ -126,7 +126,7 @@ def test_dry_run_yes_from_a_saved_litellm_renders_the_same_team(monkeypatch, tmp
     shutil.copy(FIXTURES / "multi_litellm.yaml", state.state_path())
     seen = {}
     monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
-    script = Script(**{"Use previous": True, "How does Claude Code sign in": "subscription",
+    script = Script(**{"Use previous": True, "Claude Code sign-in": "keep",
                        "Starting team": lambda values: values[0], "Apply this?": lambda values: values[0]})
     script.install(monkeypatch)
     before = state.state_path().read_bytes()

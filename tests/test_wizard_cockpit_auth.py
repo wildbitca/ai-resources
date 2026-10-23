@@ -49,11 +49,12 @@ def test_only_the_selected_cockpits_ask_their_own_sign_in(monkeypatch, members):
 def test_each_cockpit_records_its_own_method_name(monkeypatch):
     s = _state("claude", "openclaw", "agy", "cursor")
     fake_openclaw(monkeypatch)
-    Script(**{"How does Claude Code sign in": "api_key", "Which providers should OpenClaw use": ["anthropic", "openai"],
+    Script(**{"Claude Code sign-in": "keep", "Which providers should OpenClaw use": ["anthropic", "openai"],
               "How does OpenClaw sign in to": "api_key"}).install(monkeypatch)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     assert wizard._step_cockpit_auth(s, _args()) == 0
     got = {k: v["method"] for k, v in s.cockpit_auth.items()}
+    assert s.cockpit_auth["claude"]["live"] == "api_key"          # the key is live (ANTHROPIC_API_KEY), so "keep" records it
     assert got["claude"] == "api_key" and got["agy"] == "google_account" and got["cursor"] == "managed"
     assert got["openclaw"] in cockpit_auth.OPENCLAW_PROVIDER_METHODS
     assert cockpit_auth.providers(s) == {"anthropic": "api_key", "openai": "api_key"}
@@ -99,7 +100,7 @@ def test_a_fresh_run_reaches_the_review_with_no_team_or_gateway_question(monkeyp
     from ai_resources.setup.cockpits import _openclaw_channels
     monkeypatch.setattr(_openclaw_channels, "prompt", lambda *a, **k: None)
     fake_openclaw(monkeypatch)
-    script = Script(**{"Tick the tools": list(members), "Sign in now": [], "How does Claude Code sign in": "subscription",
+    script = Script(**{"Tick the tools": list(members), "Sign in now": [], "Claude Code sign-in": "keep",
                        "Which providers should OpenClaw use": ["anthropic"], "How does OpenClaw sign in to": "api_key",
                        "Starting team": "balanced", "Apply this?": ms.APPLY})
     script.install(monkeypatch)
@@ -108,7 +109,7 @@ def test_a_fresh_run_reaches_the_review_with_no_team_or_gateway_question(monkeyp
     assert wizard.run(_args()) == 0
     text = " | ".join(script.asked + script.titles).lower()
     assert not any(w in text for w in FORBIDDEN), [w for w in FORBIDDEN if w in text]
-    sign_in = [m for m in script.asked if "Claude Code sign in" in m and m.startswith("select")]
+    sign_in = [m for m in script.asked if "Claude Code sign-in" in m and m.startswith("select")]
     assert len(sign_in) == (1 if "claude" in members else 0)
     auth = seen["s"].cockpit_auth
     assert set(auth) == {c for c in members if c in ("claude", "openclaw", "agy")}

@@ -16,12 +16,11 @@ A module MAY also expose:
                            state file recorded. `Finding.level` is `error` only for a genuinely
                            broken state; everything advisory is `warn`.
     ask_auth(ui, state, detected=None, dry_run=False) -> int
-                         — this cockpit's OWN sign-in question (ADR-0015 D1). It records method names and
-                           provider ids in `state.cockpit_auth` (never a key or a token) and returns 0, or 130
-                           on a cancel.
-    auth_options() -> list[(method, label, line)]
-                         — the methods it offers, for the review and the docs. A module without either is
-                           unchanged: the wizard asks nothing for it.
+                         — this cockpit's sign-in step (ADR-0016 D1): it shows the LIVE sign-in the cockpit itself
+                           reports and asks keep or change; change hands the terminal to the cockpit's own flow.
+                           It records kind and method names in `state.cockpit_auth` (never a key or a token) and
+                           returns 0, or 130 on a cancel. A module without it is unchanged: the wizard asks
+                           nothing for it.
 """
 from __future__ import annotations
 

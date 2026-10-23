@@ -238,6 +238,9 @@ def _isolate_round4(tmp_path_factory, monkeypatch):
     Modules that do not exist yet in an older checkout are skipped, so this fixture never hides an import error.
     """
     root = tmp_path_factory.mktemp("round4-home")
+    # The live Claude reader looks at these first; a developer's own shell must not decide a test.
+    for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_BEDROCK"):
+        monkeypatch.delenv(name, raising=False)
     # `openclaw` is never run by a test: the module-level seam answers "not installed" unless the test installs its own
     # fake (every test that needs an answer already does).
     from ai_resources.setup.cockpits import openclaw as _oc_cockpit
@@ -247,7 +250,15 @@ def _isolate_round4(tmp_path_factory, monkeypatch):
     except ImportError:
         live_auth = None
     if live_auth is not None:
-        monkeypatch.setattr(live_auth, "default_runner", lambda argv: (127, f"{argv[0]} is not run by tests"))
+        def _fake_runner(argv):
+            # The default host the suite pretends to be on: Claude Code on a subscription (the observed
+            # `claude auth status` shape, tests/fixtures/claude_auth), nothing else installed.
+            if list(argv[:3]) == ["claude", "auth", "status"]:
+                return 0, ('{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty", '
+                           '"subscriptionType": "max"}')
+            return 127, f"{argv[0]} is not run by tests"
+
+        monkeypatch.setattr(live_auth, "default_runner", _fake_runner)
 
         def _no_native_flow(argv):
             raise AssertionError(f"a native flow was started by a test without a stub: {argv}")

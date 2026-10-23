@@ -73,22 +73,21 @@ def _record(monkeypatch, picks=None, confirm=True, text=""):
     return seen
 
 
-def test_the_saved_sign_in_is_the_default_of_the_sign_in_question(monkeypatch):
-    """ADR-0015: the question each tool asks starts on the saved method; a fresh host starts on the subscription."""
+def test_the_sign_in_question_starts_on_keep_and_the_live_sign_in_beats_the_saved_method(monkeypatch):
+    """ADR-0016 D1: the saved method is a fill-only default. The live sign-in (a subscription on the suite's host) is what
+    gets recorded, whatever was saved."""
     from ai_resources.setup import cockpit_auth, credentials
     from ai_resources.setup.cockpits import claude
     monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
-    for saved, expect in (("api_key", "api_key"), ("vertex_adc", "vertex_adc"), ("subscription", "subscription"),
-                          ("", "subscription")):
+    for saved in ("api_key", "vertex_adc", "subscription", ""):
         seen = _record(monkeypatch)
         s = state.SetupState()
         if saved:
             cockpit_auth.set_method(s, "claude", saved)
         assert claude.ask_auth(ui, s, None, True) == 0
-        assert seen[claude.AUTH_PROMPT] == [expect]
-        assert cockpit_auth.method(s, "claude") == expect
+        assert seen[claude.AUTH_PROMPT] == ["keep"]
+        assert cockpit_auth.method(s, "claude") == "subscription"
+        assert cockpit_auth.live_kind(s, "claude") == "subscription"
 
 
 def test_saved_gateway_bind_and_port_are_the_defaults(monkeypatch):

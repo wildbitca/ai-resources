@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 
 
-from ai_resources.setup import credentials, state, ui, wizard
+from ai_resources.setup import credentials, live_auth, state, ui, wizard
 from wizard_fakes import BACK, Script, Seq, host_env
 
 SUB = "subscription-claude-55"
@@ -22,7 +22,7 @@ def _snapshot(root):
 
 
 def _single(**extra):
-    base = {"How does Claude Code sign in": "subscription", "Starting team": "custom", "How do you want to choose models": "profile",
+    base = {"Claude Code sign-in": "keep", "Starting team": "custom", "How do you want to choose models": "profile",
             "How should kit subagents pick": lambda v: SUB, "Configure detected cockpits": lambda v: list(v),
             "Apply this?": lambda v: v[0]}
     base.update(extra)
@@ -54,24 +54,26 @@ def test_back_at_the_profile_reasks_the_models_with_the_previous_answer_and_writ
 
 def test_back_at_the_team_reasks_the_sign_in_with_the_previous_answer(monkeypatch, tmp_path):
     host_env(monkeypatch, tmp_path)
-    script = Script(**_single(**{"Starting team": Seq(BACK, "custom"), "How does Claude Code sign in": "api_key"}))
+    script = Script(**_single(**{"Starting team": Seq(BACK, "custom"), "Claude Code sign-in": "keep"}))
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
-    assert len([m for m in script.asked if "How does Claude Code sign in" in m]) == 2
-    assert script.defaults["How does Claude Code sign in?"] == ["subscription", "api_key"]
+    assert len([m for m in script.asked if "Claude Code sign-in" in m]) == 2
+    assert script.defaults["Claude Code sign-in:"] == ["keep", "keep"]
 
 
-def test_back_is_refused_once_the_sign_in_saved_the_vertex_project(monkeypatch, tmp_path):
+def test_back_is_refused_once_the_sign_in_handed_the_terminal_to_claude(monkeypatch, tmp_path):
     host_env(monkeypatch, tmp_path)
-    monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: (state.env_path(), list(updates)))
-    script = Script(**_single(**{"How does Claude Code sign in": "vertex_adc", "GOOGLE_CLOUD_PROJECT": "demo",
-                                 "GOOGLE_CLOUD_LOCATION": "global", "Starting team": Seq(BACK, "custom")}))
+    handed = []
+    monkeypatch.setattr(live_auth, "handoff", lambda argv: handed.append(list(argv)) or 0)
+    script = Script(**_single(**{"Claude Code sign-in": "change", "How should Claude Code sign in": "login",
+                                 "Starting team": Seq(BACK, "custom")}))
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
     notices = [m for m in script.shown if "Back stops here" in m]
     assert len(notices) == 1 and "Sign-in already changed this machine" in notices[0]
     assert len([m for m in script.asked if "Starting team" in m]) == 2
-    assert len([m for m in script.asked if "How does Claude Code sign in" in m]) == 1     # not re-asked
+    assert len([m for m in script.asked if "Claude Code sign-in" in m]) == 1     # not re-asked
+    assert handed == [["claude", "auth", "login"]]                                 # and the native flow ran once
 
 
 def test_back_inside_the_lanes_step_returns_to_the_profile_and_stores_nothing(monkeypatch, tmp_path):

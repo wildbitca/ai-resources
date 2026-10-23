@@ -61,8 +61,9 @@ class Seq:
         return self.items.pop(0) if len(self.items) > 1 else self.items[0]
 
 
-AUTH_PROMPT = "How does Claude Code sign in?"
-"""Screen 2 since ADR-0015: each ticked tool asks its own sign-in; the global "how should they work" question is gone."""
+AUTH_PROMPT = "Claude Code sign-in:"
+"""Screen 2 since ADR-0015: each ticked tool asks its own sign-in; the global "how should they work" question is gone.
+Since ADR-0016 Claude Code shows its LIVE sign-in and asks keep or change; an unscripted ask keeps it."""
 
 
 class Script:
