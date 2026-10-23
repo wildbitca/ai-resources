@@ -48,6 +48,29 @@ def _cost(u: audit_sources.Usage) -> float | None:
     return audit._estimate(u.model, u.input, u.output, u.cache_read, u.cache_write_5m, u.cache_write_1h, on=u.ts.date())
 
 
+BREAKDOWNS = ("by_origin", "by_provider", "by_role")
+BREAKDOWN_FIELDS = ("calls", "input", "output", "usd")
+
+
+def _breakdown(usages: list[audit_sources.Usage], key: Callable[[audit_sources.Usage], str]) -> dict[str, dict]:
+    """{group: {calls, input, output, usd, unpriced_calls}} sorted by cost then name (ADR-0015 S14)."""
+    out: dict[str, dict] = {}
+    for u in usages:
+        name = key(u) or "unknown"
+        b = out.setdefault(name, {"calls": 0, "input": 0, "output": 0, "usd": 0.0, "unpriced_calls": 0})
+        b["calls"] += 1
+        b["input"] += u.input
+        b["output"] += u.output
+        c = _cost(u)
+        if c is None:
+            b["unpriced_calls"] += 1
+        else:
+            b["usd"] += c
+    for b in out.values():
+        b["usd"] = round(b["usd"], 4)
+    return dict(sorted(out.items(), key=lambda kv: (-kv[1]["usd"], kv[0])))
+
+
 def summarize(usages: list[audit_sources.Usage]) -> dict:
     """Same metric definitions as bench.py."""
     if not usages:
@@ -85,6 +108,10 @@ def summarize(usages: list[audit_sources.Usage]) -> dict:
         "by_model": dict(Counter(u.model for u in usages)),
         "by_agent_cost": {k: round(v, 2) for k, v in sorted(
             ((a, sum(c or 0 for u, c in costs if u.agent == a)) for a in agents), key=lambda x: -x[1])},
+        # ADR-0015 S14: who spent what. An older snapshot has none of these keys and compares as n/a.
+        "by_origin": _breakdown(usages, lambda u: u.origin),
+        "by_provider": _breakdown(usages, lambda u: u.provider),
+        "by_role": _breakdown(usages, lambda u: u.role),
     }
 
 
@@ -265,6 +292,11 @@ def resolve(ref: str) -> Path:
     return cand
 
 
+def _delta(u, v) -> str:
+    num = isinstance(u, (int, float)) and isinstance(v, (int, float)) and not isinstance(u, bool)
+    return f"{(v - u) / u:+.0%}" if num and u else ""
+
+
 def compare_rows(a: dict, b: dict) -> list[tuple[str, str, object, object, str]]:
     rows = []
     scopes = ["all"] + sorted(set(a.get("by_origin") or {}) | set(b.get("by_origin") or {}))
@@ -273,9 +305,15 @@ def compare_rows(a: dict, b: dict) -> list[tuple[str, str, object, object, str]]
         y = b["all"] if scope == "all" else (b.get("by_origin") or {}).get(scope, {})
         for k in METRIC_KEYS:
             u, v = x.get(k), y.get(k)
-            num = isinstance(u, (int, float)) and isinstance(v, (int, float))
-            delta = f"{(v - u) / u:+.0%}" if num and u else ""
-            rows.append((scope, k, u, v, delta))
+            rows.append((scope, k, u, v, _delta(u, v)))
+    # ADR-0015 S14: the breakdowns of `all` by origin, provider and role. A snapshot taken before them has none: n/a.
+    for table in BREAKDOWNS:
+        xa, xb = (a.get("all") or {}).get(table), (b.get("all") or {}).get(table)
+        for group in sorted(set(xa or {}) | set(xb or {})):
+            for field_ in BREAKDOWN_FIELDS:
+                u = (xa or {}).get(group, {}).get(field_) if xa is not None else "n/a"
+                v = (xb or {}).get(group, {}).get(field_) if xb is not None else "n/a"
+                rows.append(("all", f"{table}.{group}.{field_}", u, v, _delta(u, v)))
     return rows
 
 
