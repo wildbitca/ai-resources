@@ -10,7 +10,9 @@ Opt out or widen with AI_RESOURCES_SKILLS:
   unset / "lean"      the include list below
   "all"               every kit skill (the pre-2.4 behaviour)
   "flutter,terraform" the include list plus every skill whose id starts with those prefixes
-Only the Claude Code cockpit is scoped; other cockpits keep linking every skill.
+Since ADR-0015 every cockpit the kit configures is scoped by the same rule (`scope_for`): Claude Code links the include
+list into ~/.claude/skills, the shared Agent Skills tools (Codex, Cursor, Windsurf, OpenCode, Gemini/agy, Copilot) into
+~/.agents/skills, and OpenClaw reads a kit-managed scoped directory through `skills.load.extraDirs`.
 """
 from __future__ import annotations
 
@@ -62,6 +64,12 @@ def include_list(skill_ids, env: dict | None = None) -> set[str] | None:
     ids = set(INCLUDE_IDS)
     ids |= {sk for skills in ROLE_SKILLS.values() for sk in skills}   # preloads must resolve: Claude Code skips unlinked ones
     return {s for s in skill_ids if s in ids or s.startswith(prefixes)}
+
+
+def scope_for(cockpit: str, skill_ids, env: dict | None = None) -> set[str] | None:
+    """The skill ids `cockpit` should expose (None: every skill). One rule for all cockpits; the argument keeps the call
+    sites honest about WHO is being scoped and lets a cockpit diverge later without touching the callers."""
+    return include_list(skill_ids, env=env)
 
 
 # Skills preloaded into a role's subagent (`skills:` frontmatter). Derived from the workflow steps: the skills EVERY

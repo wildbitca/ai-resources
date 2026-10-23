@@ -33,6 +33,11 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # The setup state (and its lock file) resolve through XDG_CONFIG_HOME: a test that does not set it itself
     # must never reach the operator's real ~/.config/ai-resources.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(root / "xdg-config"))
+    # ADR-0015: the scoped OpenClaw skills links and the orchestrator runs live under the XDG state home; a test must
+    # never create them under the operator's real ~/.local/state.
+    monkeypatch.setenv("XDG_STATE_HOME", str(root / "xdg-state"))
+    # The doctor's vendor pin check asks upstream with `git ls-remote`; the suite never reaches the network.
+    monkeypatch.setenv("AI_RESOURCES_OFFLINE", "1")
     monkeypatch.setattr(claude, "CONFIG_ROOT", root, raising=False)
     monkeypatch.setattr(claude, "SETTINGS_PATH", root / "settings.json", raising=False)
     # CLAUDE_MD_PATH, AGENTS_DIR and WORKFLOWS_DIR are also computed from the real HOME at import time, so a test that

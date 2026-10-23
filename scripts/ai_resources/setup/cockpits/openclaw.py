@@ -1423,12 +1423,14 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     if not dry_run:
         doc = read_config(path)
     lanes_changed = _configure_lanes(s, doc, dry_run=dry_run, run_changes=run_changes)
+    skills_changed = _configure_skills(s, doc if dry_run else read_config(path), path, written, ak_path,
+                                       dry_run=dry_run, run_changes=run_changes)
     roles_changed = _configure_roles(ctx, s, doc if dry_run else read_config(path), ak_path, dry_run=dry_run,
                                      run_changes=run_changes)
     drift_changed = _configure_agy_drift(s, doc if dry_run else read_config(path), dry_run=dry_run,
                                          run_changes=run_changes)
     changed = (engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
-               or lanes_changed or roles_changed or drift_changed)
+               or lanes_changed or roles_changed or drift_changed or skills_changed)
     if not dry_run and run_changes:
         host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
     # The kit block in every agent workspace does not depend on the engine, on the host section's
@@ -1483,6 +1485,77 @@ def _configure_lanes(s: state.SetupState, doc: dict, *, dry_run: bool, run_chang
         dry_run=dry_run, info=ui.info, warn=ui.warn, error=ui.error, confirm=confirm,
         delete_agent=lambda aid: _openclaw(["agents", "delete", aid, "--force"]),
         teardown_fn=lambda st, d: _teardown_lanes(st, d))
+
+
+def _configure_skills(s: state.SetupState, doc: dict, path: Path, written: list[Path], ak_path: str, *,
+                      dry_run: bool, run_changes: list[dict]) -> bool:
+    """Scoped skills for OpenClaw (ADR-0015 S9): a kit-managed directory with one link per scoped skill, added to
+    `skills.load.extraDirs`, and the real kit skills root added to `skills.load.allowSymlinkTargets` (the links point
+    outside the scanned root). Fill-only: operator entries stay; only entries the kit recorded are replaced or removed.
+    Both keys are under `skills`, which the reload table calls hot (no restart)."""
+    scoped = str(_shared.scoped_skills_dir())
+    real_root = os.path.realpath(Path(ak_path) / "skills")
+    if dry_run:
+        pending = _shared.sync_scoped_skills(ak_path, dry_run=True)
+        ui.info(f"OpenClaw skills (dry run): {len(pending['linked'])} link(s) to add in {scoped}")
+        return False
+    _shared.sync_scoped_skills(ak_path)
+    o = s.openclaw
+    dirs = [d for d in (_get(doc, "skills", "load", "extraDirs") or []) if isinstance(d, str)]
+    targets = [d for d in (_get(doc, "skills", "load", "allowSymlinkTargets") or []) if isinstance(d, str)]
+    # An entry the kit added earlier for another real root (the Cellar path moves on every upgrade) is replaced.
+    stale = [t for t in o.skills_symlink_targets_added if t != real_root and t in targets]
+    new_targets = [t for t in targets if t not in stale]
+    new_dirs = list(dirs)
+    if scoped not in new_dirs:
+        new_dirs.append(scoped)
+    if real_root not in new_targets:
+        new_targets.append(real_root)
+    owns_dir = scoped not in dirs or scoped in o.skills_extra_dirs_added
+    owns_target = real_root not in targets or real_root in o.skills_symlink_targets_added
+    load: dict[str, Any] = {}
+    replace: list[str] = []
+    if new_dirs != dirs:
+        load["extraDirs"] = new_dirs
+    if new_targets != targets:
+        load["allowSymlinkTargets"] = new_targets
+        if stale:
+            replace.append("skills.load.allowSymlinkTargets")
+    if load:
+        patch = {"skills": {"load": load}}
+        ok, out = _apply_hot(patch, replace_paths=replace or None)
+        if not ok:
+            ui.error(f"OpenClaw rejected the scoped skills patch: {ui.safe_excerpt(out, 300, tail=True)}")
+            return False
+        run_changes.extend(openclaw_host.change_records(doc, patch, replace or None, "skills"))
+        written.append(path)
+        ui.info("OpenClaw skills: scoped to the kit's include list (" + ", ".join(sorted(load)) + ")")
+    o.skills_extra_dirs_added = [scoped] if owns_dir else []
+    o.skills_symlink_targets_added = [real_root] if owns_target else []
+    return bool(load)
+
+
+def _teardown_skills(s: state.SetupState) -> bool:
+    """Remove exactly the `skills.load` entries the kit added."""
+    o = s.openclaw
+    if not (o.skills_extra_dirs_added or o.skills_symlink_targets_added):
+        return True
+    doc = read_config(config_path())
+    load: dict[str, Any] = {}
+    replace: list[str] = []
+    for key, mine in (("extraDirs", o.skills_extra_dirs_added), ("allowSymlinkTargets", o.skills_symlink_targets_added)):
+        live = [d for d in (_get(doc, "skills", "load", key) or []) if isinstance(d, str)]
+        kept = [d for d in live if d not in set(mine)]
+        if kept != live:
+            load[key] = kept or None
+            replace.append(f"skills.load.{key}")
+    if load:
+        ok, out = _apply_hot({"skills": {"load": load}}, replace_paths=replace)
+        if not ok:
+            ui.error(f"OpenClaw rejected the scoped skills removal: {ui.safe_excerpt(out, 300, tail=True)}")
+            return False
+    o.skills_extra_dirs_added, o.skills_symlink_targets_added = [], []
+    return True
 
 
 def _configure_roles(ctx: dict, s: state.SetupState, doc: dict, ak_path: str, *, dry_run: bool,
@@ -2442,6 +2515,7 @@ def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
     if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored or s.openclaw.mcp_deny_added
             or s.openclaw.agent_kit_blocks or s.openclaw.lanes_applied or s.openclaw.role_agents_applied
+            or s.openclaw.skills_extra_dirs_added or s.openclaw.skills_symlink_targets_added
             or host_section.applied_any(s.openclaw)
             or s.openclaw.image_deny_added or s.openclaw.image_applied or s.openclaw.image_auth_profile_created):
         # A deferral leaves `applied` False (the engine patch waits for the restart), so this is
@@ -2463,6 +2537,7 @@ def teardown(s: state.SetupState) -> list[str]:
         return removed
     doc = read_config(config_path())
     # Reverse order of configure(): the lanes writer ran after the host section, so it is undone first.
+    skills_ok = _teardown_skills(s)
     had_roles = bool(s.openclaw.role_agents_applied)
     roles_ok = _teardown_roles(s, doc) if had_roles else True
     if had_roles:
@@ -2483,7 +2558,7 @@ def teardown(s: state.SetupState) -> list[str]:
     if s.openclaw.image_deny_added:
         _remove_image_deny(s)
     removed: list[str] = []
-    if not (engine_ok and mcp_ok and voice_ok and host_ok and lanes_ok and roles_ok):
+    if not (engine_ok and mcp_ok and voice_ok and host_ok and lanes_ok and roles_ok and skills_ok):
         return removed
     removed.append(str(config_path()))
 

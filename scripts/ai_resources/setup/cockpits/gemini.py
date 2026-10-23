@@ -9,7 +9,7 @@ from .. import state
 from ..detection import detect_gemini_cli
 from ... import repo_root
 from . import _shared
-from .. import cockpit_auth
+from .. import cockpit_auth, role_render
 
 
 NAME = "Gemini CLI"
@@ -41,9 +41,17 @@ def _agy_mcp_patch() -> dict:
 
 
 def _gemini_md(ak_path: str, gateway_url: str, mode: str) -> str:
+    roles = ""
+    try:
+        specs = role_render.load_specs(Path(ak_path))
+        if specs:
+            roles = "## Kit roles\n\n" + role_render.agy_role_block(specs, ak_path) + "\n"
+    except OSError:
+        roles = ""
     memory = (
         "Memory: Engram MCP is configured in `~/.gemini/settings.json` and `~/.gemini/config/mcp_config.json`. "
         "Search it before redoing past investigations; save decisions and gotchas that are not already in code or specs.\n\n"
+        + roles
     )
     return _shared.kit_instructions_md("Gemini CLI", ak_path, gateway_url, mode,
                                        native_skills=True, extra=memory)
