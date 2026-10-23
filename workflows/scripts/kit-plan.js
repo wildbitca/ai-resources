@@ -84,7 +84,7 @@ const LENSES = [
 
 const ANGLES = [
   'Smallest correct change: the least code that satisfies the goal, reusing what exists.',
-  'Risk-first: order the work so the riskiest unknown is proven first, and every step keeps the suite green.',
+  'Risk-first: order the work so the riskiest unknown is proven first, and every step keeps the tests for its area green.',
   'Structure-first: respect and, where cheap, improve the module boundaries and interfaces this touches.',
 ]
 
@@ -170,7 +170,8 @@ const plan = await agent(
   (grafts.length ? `Graft these ideas from the other drafts where they fit:\n- ${grafts.join('\n- ')}\n` : '') +
   `\nWrite the final plan to .agent-output/planner/<slug>-plan.md (create the directory if needed) with:\n` +
   `- Goal and scope, plus what is explicitly out of scope\n` +
-  `- Numbered steps, each with the files it touches and how to verify it\n` +
+  `- Numbered steps, each with the files it touches and how to verify it: the tests for those files, never the full suite per step ` +
+  `(the full suite runs once, in the Test phase of /kit-implement)\n` +
   `- Acceptance criteria as Given/When/Then, each mapped to the command that proves it\n` +
   `- Test plan: what needs new tests, which existing suites must stay green\n` +
   `- Risks and rollback\n` +

@@ -104,7 +104,8 @@ const impl = await agent(
   `Goal (${kind}): ${goal}\n${planRef}\n\n` +
   `You are the only writer in this run. Work step by step:\n` +
   `- Write or update tests for the behaviour you are changing, and watch them fail before you make them pass.\n` +
-  `- Keep each step small; run the project's lint/typecheck and the tests for the area as you go.\n` +
+  `- Keep each step small; run the project's lint/typecheck and the tests for the area as you go. Do not run the full suite ` +
+  `after each step: the Test phase runs it once.\n` +
   `- Never weaken or delete an existing assertion to make a suite pass. If a test is wrong, say so in deviations.\n` +
   `- If the plan turns out to be wrong, follow the goal, record what you changed in deviations, and continue.\n` +
   `- Stop and set blocked only if the work cannot proceed without a decision.\n\n` +
@@ -174,7 +175,9 @@ const REVIEW_LENSES = [
 const reviews = (await parallel(REVIEW_LENSES.map(lens => () =>
   agent(
     `Goal (${kind}): ${goal}\n${planPath ? `Plan: ${planPath}\n` : ''}Files changed: ${changed}\n` +
-    `Read the diff (git diff, plus git diff --staged) and the files it touches.\n\n${lens.prompt}\n\n` +
+    `The change is every commit on this branch that the default branch lacks, plus uncommitted work: read it with ` +
+    `git diff $(git merge-base HEAD origin/HEAD 2>/dev/null || git merge-base HEAD main), and git diff --staged, ` +
+    `then the files it touches.\n\n${lens.prompt}\n\n` +
     `Do not modify any file. Return an empty list when you find nothing — do not invent findings to look thorough.`,
     { label: `review:${lens.key}`, phase: 'Review', agentType: lens.agentType, schema: FINDINGS_SCHEMA },
   ).then(r => ({ lens: lens.key, findings: (r && r.findings) || [] })),
@@ -219,7 +222,7 @@ if (blockers.length) {
       `${i + 1}. [${f.severity}/${f.lens}] ${f.title} — ${f.file}${f.line ? `:${f.line}` : ''}\n   ${f.detail}` +
       (f.fix ? `\n   Suggested: ${f.fix}` : ''),
     ).join('\n') +
-    `\n\nFix the cause of each one, keep the tests green (re-run the suite at the end), and do not weaken assertions. ` +
+    `\n\nFix the cause of each one, keep the tests for the touched files green (the sign-off runs the full suite), and do not weaken assertions. ` +
     `If you disagree with a finding, leave the code as is and explain why in deviations.`,
     { label: 'apply-fixes', phase: 'Fix', agentType: 'implementer', schema: IMPL_SCHEMA },
   )
