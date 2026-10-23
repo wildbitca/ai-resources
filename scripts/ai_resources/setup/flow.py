@@ -38,10 +38,6 @@ class JumpTo(BaseException):
 BACK = object()
 """Result a prompt exits with when Ctrl-B is pressed (ui converts it to GoBack)."""
 
-STEP_LABELS = ("Tools", "How", "Gateway", "Providers", "API keys", "Team", "Tool setup", "Start at login",
-               "Review", "Verify")
-"""One short rail label per numbered step (1..10); 6a, 6b and 6c share "Team"."""
-
 PHASE_LABELS = ("Tools", "Cockpit", "Team", "Audio", "More")
 """One label per phase the operator sees (1..5); see `wizard.PHASE_OF` for the steps in each (ADR-0010 PD-3)."""
 
@@ -191,9 +187,10 @@ _ASCII = {"done": "[x]", "current": "[>]", "pending": "[ ]", "skipped": "[-]"}
 
 
 def rail_model(current: int, done: Any = (), skipped: Any = ()) -> list[tuple[int, str, str]]:
-    """`(number, label, status)` for the ten numbered steps; status is done, current, pending or skipped."""
+    """`(phase, label, status)` for the five phases of `PHASE_LABELS` (ADR-0016 D7: the rail follows the steps the
+    wizard really has; no label of a removed step); status is done, current, pending or skipped."""
     out = []
-    for n, label in enumerate(STEP_LABELS, start=1):
+    for n, label in enumerate(PHASE_LABELS, start=1):
         if n == current:
             status = "current"
         elif n in skipped:
@@ -208,7 +205,7 @@ def rail_model(current: int, done: Any = (), skipped: Any = ()) -> list[tuple[in
 
 def format_rail(model: list[tuple[int, str, str]], width: int, unicode_ok: bool = True, title: str = "") -> str:
     """The rail as plain text. 80+ columns: one line when it fits; 60-79: wrapped to `width`;
-    below 60: one line `Step n/10  title` and no rail."""
+    below 60: one line `Step n/5  title` and no rail."""
     glyphs = _UNICODE if unicode_ok else _ASCII
     total = len(model)
     if width < 60:

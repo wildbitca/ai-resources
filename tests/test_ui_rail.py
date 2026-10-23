@@ -47,7 +47,7 @@ def test_wide_header_has_the_rail_and_key_hints(term):
     ui.section(4, 10, "Provider backends")
     text = "\n".join(con.out)
     assert "[4/10]" in text and "Provider backends" in text
-    assert "✔ Tools" in text and "● Providers" in text and "○ Verify" in text
+    assert "✔ Tools" in text and "● Audio" in text and "○ More" in text
     assert "Enter confirm" in text and "Ctrl-C cancel" in text and "Ctrl-B" not in text
 
 
@@ -61,7 +61,7 @@ def test_the_rail_wraps_at_70_columns(term):
     con = term(70)
     ui.section(4, 10, "Provider backends")
     rail_lines = [l for l in con.out if "Tools" in l and "RULE" not in l][0].split("\n")
-    assert len(rail_lines) >= 2 and all(len(l) <= 70 for l in rail_lines)
+    assert rail_lines and all(len(l) <= 70 for l in rail_lines)         # five short labels fit; the limit still holds
 
 
 def test_below_60_columns_one_line_and_no_rail(term):
@@ -75,7 +75,7 @@ def test_ascii_glyphs_without_utf8_or_with_no_color(term):
         con = term(130, **kw)
         ui.section(4, 10, "Provider backends")
         text = "\n".join(con.out)
-        assert "[x] Tools" in text and "[>] Providers" in text and "[ ] Verify" in text
+        assert "[x] Tools" in text and "[>] Audio" in text and "[ ] More" in text
         assert "'characters'" in text           # the rule is drawn with "-"
         assert "✔" not in text and "·" not in text
 
@@ -143,7 +143,7 @@ def test_real_rich_renders_the_header_without_ansi_under_no_color(monkeypatch):
     finally:
         ui.set_progress(0, [])
     out = buf.getvalue()
-    assert "[4/10] Provider backends" in out and "[>] Providers" in out
+    assert "[4/10] Provider backends" in out and "[>] Audio" in out
     assert "\x1b[3" not in out and "\x1b[9" not in out      # no foreground colour codes
 
 
@@ -161,7 +161,7 @@ def test_real_rich_width_70_wraps(monkeypatch):
     finally:
         ui.set_progress(0, [])
     assert all(len(l) <= 70 for l in buf.getvalue().splitlines())
-    assert "Verify" in buf.getvalue()
+    assert "More" in buf.getvalue()
 
 
 def test_the_pure_rail_text_matches_flow(monkeypatch):
@@ -201,3 +201,36 @@ def test_real_rich_header_fits_at_the_boundary_widths(monkeypatch, width, ascii_
         assert "Ctrl-C cancel" in out
     if ascii_only:
         assert out.isascii()
+
+
+# --- ADR-0016 D7 (AC-16): the rail names only the phases the wizard has ------------------------------------------------------
+
+REMOVED = ("How", "Gateway", "Providers", "API keys", "Start at login")
+
+
+@pytest.mark.parametrize("phase", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("ascii_only", [False, True])
+def test_no_removed_step_label_appears_in_any_rail(term, phase, ascii_only):
+    con = term(130, step=phase, utf8=not ascii_only)
+    ui.section(phase, 5, "Anything")
+    text = "\n".join(con.out)
+    for label in REMOVED:
+        assert label not in text, label
+    assert [m[1] for m in flow.rail_model(phase)] == list(flow.PHASE_LABELS)
+
+
+def test_the_stale_ten_step_label_table_is_gone():
+    assert not hasattr(flow, "STEP_LABELS")
+
+
+def test_the_wizard_enters_each_step_on_its_phase(monkeypatch):
+    from ai_resources.setup import wizard
+    seen = []
+    monkeypatch.setattr(ui, "set_progress", lambda cur, done=(), skipped=None: seen.append((cur, list(done), set(skipped or ()))))
+    steps = {s.id: s for s in wizard._build_steps(False)}
+    runner = flow.Wizard(list(steps.values()), snapshot=lambda: None, restore=lambda snap: None)
+    for sid in ("tools", "cockpit", "cockpit_auth", "preset", "cockpits", "audio", "more", "hygiene", "operator_rules",
+                "claude_md", "agy_mcp", "review"):
+        wizard._enter_step(steps[sid], runner)
+    assert [c for c, _d, _s in seen] == [1, 2, 2, 3, 3, 4, 5, 5, 5, 5, 5, 5]
+    assert seen[3][1] == [1, 2]
