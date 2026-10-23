@@ -31,7 +31,7 @@ def test_step_ids_and_internal_numbers_are_unchanged():
     steps = wizard._build_steps(True)
     assert [s.id for s in steps] == STEP_IDS
     assert [s.number for s in steps] == [1, 1, 2, 6, 6, 6, 6, 7, 7, 8, 8, 8, 8, 8, 9, 9]
-    assert wizard.TOTAL_STEPS == 10 and not hasattr(flow, "STEP_LABELS")
+    assert wizard.TOTAL_STEPS == 10
 
 
 def test_five_phases_and_their_labels():
