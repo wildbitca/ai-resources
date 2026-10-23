@@ -9,6 +9,7 @@ from .. import state
 from ..detection import detect_gemini_cli
 from ... import repo_root
 from . import _shared
+from .. import cockpit_auth
 
 
 NAME = "Gemini CLI"
@@ -83,3 +84,11 @@ def configure(ctx: dict) -> list[Path]:
     s.cockpits[ID] = cs
 
     return written
+
+
+def ask_auth(ui_mod, s, detected=None, dry_run: bool = False) -> int:
+    """Antigravity (agy) signs in with a Google account in its own app; there is nothing to choose. The ADR-0007 Google
+    terms acknowledgement is asked where the agy lanes are enabled (never here), so a stored tick cannot skip it."""
+    cockpit_auth.set_method(s, "agy", "google_account")
+    ui_mod.detail("Antigravity: signs in with your Google account; its terms are confirmed when you enable agy lanes.")
+    return 0

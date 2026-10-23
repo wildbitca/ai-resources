@@ -49,18 +49,17 @@ _SETUP_EPILOG = """\
 The wizard asks three things in four screens, over 10 internal steps (a header, a progress rail and one line of
 key hints each):
   1 Your tools (every coding CLI is a tool: tick the ones to use, tick a missing one to install it)
-  2 How should they work? (as a team on your subscriptions, each on its own, or Advanced: a gateway)
+  2 Sign-in (each ticked tool asks its own: Claude Code subscription, API key or Vertex AI; OpenClaw providers; agy Google account)
   3 Your team (a starting team - Balanced, Performance, Low cost or Custom - and who does what)
-  4 Review (Apply, Change tools, Change how, Change team, More options, Cancel), then Apply and Verification
-Steps 3 to 5 and 8 of the rail (gateway, providers, API keys, start at login) only run on the Advanced path.
+  4 Review (Apply, Change tools, Change sign-in, Change team, More options, Cancel), then Apply and Verification
+There is no gateway and no global team question (ADR-0015): the old answer is migrated once, shown as old -> new.
 
 Keys:
   Enter   confirm the highlighted answer
   Ctrl-B  go back one step (only in steps that have changed nothing on this machine yet)
   Ctrl-C  cancel; Ctrl-D also cancels. Nothing past the last confirmed step is applied.
-Review lists the answers by name (How, Team, Tools; API keys show only `set` or `missing`). A Change jumps
-back to that screen and returns to the review; More options holds parallel runs, gateway and API keys, start at
-login and the OpenClaw questions.
+Review lists the answers by name (Sign-in, Team, Tools; a key is never shown or stored). A Change jumps
+back to that screen and returns to the review; More options holds parallel runs and the OpenClaw questions.
 
 Unattended and preview runs:
   --non-interactive   use saved answers, never prompt (a prompt with no default aborts)
@@ -139,12 +138,11 @@ def build_parser() -> argparse.ArgumentParser:
                       choices=["", "claude-cli", "litellm", "openrouter", "direct"],
                       help="How `models update` probes a new model")
     p_st.add_argument("--backend", default="", choices=["", "litellm", "openrouter", "cli"],
-                      help="Gateway for multi-model (litellm or openrouter), or `cli` for multi-model via your CLI "
-                           "subscriptions (Claude Code / Antigravity / Codex plans: no gateway, no per-token "
-                           "billing, no keys asked); omitted: keep the saved mode. "
-                           "Given, the mode question is not asked")
+                      help="Deprecated (ADR-0015): the gateway is no longer offered. Any value is accepted and pre-fills "
+                           "Claude Code's subscription sign-in (no gateway, no keys asked) with a deprecation note")
     p_st.add_argument("--cockpits", default="",
-                      help="Comma-separated cockpits to configure (fails if the matrix cannot serve the models)")
+                      help="Comma-separated cockpits to configure (pre-fills the tools; fails if the matrix cannot serve "
+                           "the models)")
     p_st.add_argument("--allow-unverified", dest="allow_unverified", action="store_true",
                       help="Also configure compatibility cells that are not verified end to end (labelled)")
     p_st.add_argument("--compose", default="", choices=["", "uniform", "single-provider", "mixed"],

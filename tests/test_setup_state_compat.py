@@ -22,7 +22,17 @@ NAMES = sorted(p.stem for p in FIX.glob("*.yaml"))
 # were fixed by ADR-0009: the single-model profile step rebuilt `profile` (dropping a customized or composed team
 # and the lanes with their acknowledgements), and the OpenClaw prompt normalised `openclaw.model` and filled
 # `voice_correction` on every run (it is now asked on the first configure only).
-KNOWN_TODAY: dict[str, tuple[str, ...]] = {}
+# ADR-0015 (round 3): the one deliberate drift is the per-cockpit sign-in migration. `cockpit_auth` is filled
+# (additive, fill-only) and the old global fields are derived from it: the team is always on (`cli_team`), and a saved
+# gateway state (`mode: multi-model`) becomes the single-model team with the gateway profile replaced by the default.
+# Nothing else may move.
+MIGRATION = ("cockpit_auth", "cli_team")
+GATEWAY_MIGRATION = MIGRATION + ("mode", "profile.name")
+KNOWN_TODAY: dict[str, tuple[str, ...]] = {
+    name: (GATEWAY_MIGRATION if name.startswith("multi_") else MIGRATION) for name in
+    ("account_picked_selection", "cli_lanes_anthropic_ack", "cli_lanes_google_ack", "cli_team_balanced",
+     "cli_team_customized", "composed_team", "gemini_cockpit", "multi_litellm", "multi_openrouter",
+     "openclaw-pre-image", "openclaw_host_voice", "round2_fields", "single_claude_native")}
 _LAST_RUN = re.compile(r"^last_run: .*$", re.M)
 
 
@@ -137,3 +147,18 @@ def test_a_state_with_round_2_fields_survives_an_unrelated_save(home):
     assert again.tracking.hygiene_disabled == s.tracking.hygiene_disabled
     assert again.tracking.claude_md_migrations == s.tracking.claude_md_migrations
     assert again.openclaw.notification_route_changes == s.openclaw.notification_route_changes
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_the_migration_fills_only_the_declared_sign_in_surface(home, name):
+    """The drift above is exactly the migration: nothing outside `cockpit_auth` and the derived legacy fields moves."""
+    from ai_resources.setup import cockpit_auth
+    _seed(name)
+    s = state.load()
+    want = _flat(state._to_dict(s))
+    cockpit_auth.migrate_legacy(s)
+    cockpit_auth.apply_legacy_flags(s)
+    got = _flat(state._to_dict(s))
+    moved = sorted(k for k in set(want) | set(got) if want.get(k) != got.get(k))
+    allowed = ("cockpit_auth", "cli_team", "cli_team_api", "mode")
+    assert all(any(k == a or k.startswith(a + ".") for a in allowed) for k in moved), moved

@@ -2639,3 +2639,13 @@ def verify(ctx: dict) -> list:
         else:
             out.append(F("ok", ID, "the kit plugin is linked and loaded"))
     return out
+
+
+def ask_auth(ui_mod, s: state.SetupState, detected=None, dry_run: bool = False) -> int:
+    """OpenClaw's own sign-in question (ADR-0015 D1/D2): which providers, and per provider an API key or a CLI backend.
+    The provider catalog and the per-provider auth arrive in the provider steps (S6, S7); until a provider is chosen
+    the saved or default method name is kept (fill-only)."""
+    from .. import cockpit_auth
+    if not cockpit_auth.method(s, "openclaw"):
+        cockpit_auth.set_method(s, "openclaw", "cli")
+    return 0

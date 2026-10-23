@@ -22,7 +22,7 @@ def _snapshot(root):
 
 
 def _single(**extra):
-    base = {"Choose mode": "single-model", "Model preset": "custom", "How do you want to choose models": "profile",
+    base = {"How does Claude Code sign in": "subscription", "Starting team": "custom", "How do you want to choose models": "profile",
             "How should kit subagents pick": lambda v: SUB, "Configure detected cockpits": lambda v: list(v),
             "Apply this?": lambda v: v[0]}
     base.update(extra)
@@ -31,8 +31,9 @@ def _single(**extra):
 
 def test_back_is_offered_only_in_the_steps_without_side_effects():
     steps = {s.id: s for s in wizard._build_steps(False)}
-    assert [i for i, s in steps.items() if s.back] == ["cockpit", "preset", "models", "profile", "lanes", "cockpits", "audio", "more"]   # ADR-0010 S11: the main-tool step
-    assert not steps["gateway"].rewindable and wizard._build_steps(True)[2].rewindable
+    assert [i for i, s in steps.items() if s.back] == ["cockpit", "cockpit_auth", "preset", "models", "profile", "lanes",
+                                                       "cockpits", "audio", "more"]   # ADR-0015: the sign-in step replaces mode
+    assert not {"mode", "gateway", "providers", "credentials", "lifecycle"} & set(steps)   # the gateway path is gone
     for sid in ("tools", "review", "apply"):
         assert not steps[sid].rewindable
 
@@ -51,21 +52,26 @@ def test_back_at_the_profile_reasks_the_models_with_the_previous_answer_and_writ
     assert set(_snapshot(home)) - set(before) == {str(state.state_path())}
 
 
-def test_back_at_models_is_refused_after_a_credential_was_saved(monkeypatch, tmp_path):
-    home = host_env(monkeypatch, tmp_path)
+def test_back_at_the_team_reasks_the_sign_in_with_the_previous_answer(monkeypatch, tmp_path):
+    host_env(monkeypatch, tmp_path)
+    script = Script(**_single(**{"Starting team": Seq(BACK, "custom"), "How does Claude Code sign in": "api_key"}))
+    script.install(monkeypatch)
+    assert wizard.run(_args()) == 0
+    assert len([m for m in script.asked if "How does Claude Code sign in" in m]) == 2
+    assert script.defaults["How does Claude Code sign in?"] == ["subscription", "api_key"]
+
+
+def test_back_is_refused_once_the_sign_in_saved_the_vertex_project(monkeypatch, tmp_path):
+    host_env(monkeypatch, tmp_path)
     monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: (state.env_path(), list(updates)))
-    script = Script(**{"Choose mode": "multi-model:openrouter", "Update OPENROUTER_API_KEY": True,
-                       "OPENROUTER_API_KEY": "new-secret",
-                       "Model preset": Seq(BACK, "custom"), "How do you want to choose models": "profile",
-                       "Choose profile": lambda v: v[0],
-                       "Customize any role": False, "Configure detected cockpits": lambda v: list(v),
-                       "Apply this?": lambda v: v[0]})
+    script = Script(**_single(**{"How does Claude Code sign in": "vertex_adc", "GOOGLE_CLOUD_PROJECT": "demo",
+                                 "GOOGLE_CLOUD_LOCATION": "global", "Starting team": Seq(BACK, "custom")}))
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
     notices = [m for m in script.shown if "Back stops here" in m]
-    assert len(notices) == 1 and "API keys already changed this machine" in notices[0]
-    assert [m for m in script.asked if "Starting team" in m].__len__() == 2      # the first question of step 6
-    assert [m for m in script.asked if m.startswith("password")].__len__() == 1      # credentials not re-asked
+    assert len(notices) == 1 and "Sign-in already changed this machine" in notices[0]
+    assert len([m for m in script.asked if "Starting team" in m]) == 2
+    assert len([m for m in script.asked if "How does Claude Code sign in" in m]) == 1     # not re-asked
 
 
 def test_back_inside_the_lanes_step_returns_to_the_profile_and_stores_nothing(monkeypatch, tmp_path):
@@ -102,25 +108,19 @@ def test_non_interactive_never_raises_goback_and_never_attaches_a_binding(monkey
     assert not ui.back_enabled()
 
 
-def test_a_gateway_step_is_asked_again_in_a_dry_run_only():
-    for dry, expected in ((True, True), (False, False)):
-        gateway = [s for s in wizard._build_steps(dry) if s.id == "gateway"][0]
-        assert gateway.rewindable is expected
-
-
 def test_the_progress_rail_rebuilds_skipped_from_the_runner_history(monkeypatch):
-    """Edit-to-LiteLLM: step 3 was skipped on the OpenRouter pass; after the jump it is run, not skipped."""
+    """Change sign-in: step 2 was skipped on the first pass; after the jump it is run, not skipped."""
     from ai_resources.setup import flow
     steps = wizard._build_steps(False)
     runner = flow.Wizard(steps)
-    gateway = runner.index_of("gateway")
+    gateway = runner.index_of("cockpit_auth")
     runner.history = [flow._Done(0, None, False), flow._Done(1, None, False),
                       flow._Done(gateway, None, False, skipped=True)]
     ui.set_progress(0, [])
-    ui.mark_skipped(3)
+    ui.mark_skipped(2)
     wizard._enter_step(steps[gateway + 1], runner)
-    assert ui._SKIPPED == {3}
-    runner.history = runner.history[:2]               # the jump to Mode truncated the history
+    assert ui._SKIPPED == {2}
+    runner.history = runner.history[:2]               # the jump to Sign-in truncated the history
     wizard._enter_step(steps[gateway], runner)
     assert ui._SKIPPED == set()
     ui.set_progress(0, [])

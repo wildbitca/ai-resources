@@ -12,8 +12,9 @@ from wizard_fakes import Script, host_env
 
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "setup_state_v1_0.json"
 
-STEP_IDS = ["tools", "cockpit", "mode", "gateway", "providers", "credentials", "preset", "models", "profile", "lanes",
-            "cockpits", "audio", "more", "lifecycle", "hygiene", "claude_md", "agy_mcp", "review", "apply"]
+STEP_IDS = ["tools", "cockpit", "cockpit_auth", "preset", "models", "profile", "lanes",
+            "cockpits", "audio", "more", "hygiene", "claude_md", "agy_mcp", "review", "apply"]
+# ADR-0015: "cockpit_auth" (number 2) replaces "mode"; the gateway steps (gateway, providers, credentials, lifecycle) are gone.
 # ADR-0014: "hygiene", "claude_md" and "agy_mcp" (number 8) are the only steps added since ADR-0010; every other id and number is as it was.
 
 
@@ -28,7 +29,7 @@ def _args(**kw):
 def test_step_ids_and_internal_numbers_are_unchanged():
     steps = wizard._build_steps(True)
     assert [s.id for s in steps] == STEP_IDS
-    assert [s.number for s in steps] == [1, 1, 2, 3, 4, 5, 6, 6, 6, 6, 7, 7, 8, 8, 8, 8, 8, 9, 9]
+    assert [s.number for s in steps] == [1, 1, 2, 6, 6, 6, 6, 7, 7, 8, 8, 8, 8, 9, 9]
     assert wizard.TOTAL_STEPS == 10 and len(flow.STEP_LABELS) == 10
 
 
@@ -59,7 +60,7 @@ def test_dry_run_yes_from_the_v1_0_fixture(monkeypatch, tmp_path):
     headers = []
     real = ui.section
     monkeypatch.setattr(ui, "section", lambda n, t, title: (headers.append((n, t, title)), real(n, t, title))[1])
-    script = Script(**{"Pick how they work": "advanced", "Use previous": True, "Select providers": ["openrouter"], "Update OPENROUTER": False,
+    script = Script(**{"Use previous": True, "How does Claude Code sign in": "subscription",
                        "Starting team": lambda values: values[0], "Apply this?": lambda values: values[0]})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
@@ -67,9 +68,13 @@ def test_dry_run_yes_from_the_v1_0_fixture(monkeypatch, tmp_path):
     assert [n for n, _t, _ in headers] == sorted(n for n, _t, _ in headers)      # the phases never run backwards
     assert state.state_path().read_bytes() == before        # dry run: the saved file is not rewritten
     got = state._to_dict(seen["s"])
-    assert got["mode"] == want["mode"] and got["backend"] == want["backend"]
-    # ADR-0010 S6: the scripted "Starting team" answer is Balanced, which on OpenRouter is now gateway/balanced. The
-    # saved balanced-claude-55 is a legacy name (its own file keeps loading until the operator picks the preset).
+    # ADR-0015: the saved gateway answer is migrated to the cockpit's own sign-in. The old global fields are derived
+    # from it (single-model team, no gateway) and the saved backend is left as it was: nothing is torn down.
+    assert want["mode"] == "multi-model" and got["mode"] == "single-model"
+    assert got["backend"] == want["backend"]
+    assert got["cockpit_auth"]["claude"]["method"] == "subscription"
+    # The scripted "Starting team" answer is Balanced, which is the one `balanced` preset now. The saved
+    # balanced-claude-55 is a legacy name (its own file keeps loading until the operator picks the preset).
     assert want["profile"]["name"] == "balanced-claude-55"
-    assert got["profile"]["name"] == "gateway/balanced"
+    assert got["profile"]["name"] == "balanced"
     assert re.fullmatch(r"\d+\.\d+", got["schema_version"]) and got["schema_version"] == want["schema_version"]

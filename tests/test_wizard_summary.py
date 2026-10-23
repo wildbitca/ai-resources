@@ -57,7 +57,6 @@ def test_no_backend_question_is_asked_for_a_single_model_without_a_gateway_cockp
     s = _single_flash()
     s.mode = "single-model"
     args = argparse.Namespace()
-    assert wizard._step1_mode(s) == 0
     assert wizard._step_models(s, args) == 0
     assert wizard._step_summary(s, args) == 0
     assert s.mode == "single-model"
@@ -67,13 +66,14 @@ def test_no_backend_question_is_asked_for_a_single_model_without_a_gateway_cockp
     assert "Backend: none (single-model)" in script.transcript
 
 
-def test_the_mode_question_is_still_asked_when_no_selection_is_recorded(monkeypatch):
-    script = Script(**{"Choose mode:": "single-model"})
+def test_the_sign_in_question_is_still_asked_when_no_selection_is_recorded(monkeypatch):
+    script = Script(**{"How does Claude Code sign in": "subscription"})
     script.install(monkeypatch)
     s = state.SetupState()
-    s.mode = "single-model"
-    assert wizard._step1_mode(s) == 0
-    assert any(wizard.HOW_PROMPT in q for q in script.asked)
+    s.profile.customizations = {"__targets__": {"selected": ["claude"]}}
+    assert wizard._step_cockpit_auth(s, argparse.Namespace()) == 0
+    assert any("How does Claude Code sign in" in q for q in script.asked)
+    assert s.cockpit_auth["claude"]["method"] == "subscription"
 
 
 def _tree_digest(root: Path) -> str:

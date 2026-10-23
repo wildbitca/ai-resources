@@ -1,0 +1,74 @@
+rc=0
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| |
+| AI Resources Kit - Setup Wizard |
+| Set up your AI coding tools |
+| v<VERSION> |
+| |
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+ i Previous config detected at <HOME>/xdg/ai-resources/setup-state.yaml
+ Last run: <TS>
+ i Sign-in is now asked per tool instead of once for all of them. Your earlier answer maps like this:
+ claude: Advanced (gateway) -> subscription
+ i The gateway is no longer offered. An existing gateway on this host is left as it is; setup does not remove it.
+
+[1/5] Your tools -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ i Scanning installed AI CLIs...
+
+ i 1 tool(s) in use. To add another, install it by your usual method, then re-run `ai-resources setup`.
+
+[2/5] Main tool --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ i Main tool: Claude Code (the only one among your tools).
+
+[2/5] Sign-in ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subscription sign-in is read by Claude Code itself; the kit stores nothing.
+
+[3/5] Your team - roles ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Profile: balanced 
++--------------------------------------------------+
+| Role | Provider | Model |
+|-----------------------------+-----------+--------|
+| explore | anthropic | haiku |
+| generalPurpose | anthropic | sonnet |
+| planner | anthropic | sonnet |
+| software-architect | anthropic | sonnet |
+| implementer | anthropic | sonnet |
+| tester | anthropic | haiku |
+| code-reviewer | anthropic | sonnet |
+| security-auditor | anthropic | opus |
+| verifier | anthropic | opus |
+| doc-writer | anthropic | haiku |
+| package-upgrade | anthropic | haiku |
+| crashlytics-fixer | anthropic | sonnet |
+| sentry-fixer | anthropic | sonnet |
+| terraform-maintainer | anthropic | sonnet |
+| crossplane-upjet-maintainer | anthropic | sonnet |
++--------------------------------------------------+
+
+[4/5] Audio ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ i Skipped (voice notes need OpenClaw, which is not one of your tools).
+
+[5/5] Review -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Your answers 
++------------------------------------------------------------------------------------------------------+
+| Section | Your answer |
+|------------+-----------------------------------------------------------------------------------------|
+| Sign-in | Claude Code: subscription |
+| Team | Custom: models picked from your accounts (anthropic:sonnet=anthropic/claude-sonnet-5-5) |
+| Tools | Claude Code |
+| Will write | executors.yaml, tool config files |
++------------------------------------------------------------------------------------------------------+
+
+ i Summary of what will be configured
+ Shape: One model
+ anthropic:sonnet = anthropic/claude-sonnet-5-5 [family] (primary)
+ Smoke path: direct
+ Backend: none (single-model)
+ Cockpits:
+ Claude Code: will configure anthropic/claude-sonnet-5-5
+ Files that will change:
+ ~/.claude/CLAUDE.md
+ ~/.claude/settings.json
+ ~/.claude/agents/*.md
+ ~/.claude/commands/*
+ Note: kit content (skills, hooks, instructions) is written for every detected cockpit; a cockpit that is not authenticated will not work until you authenticate.

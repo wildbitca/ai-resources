@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from ai_resources import selection as sel
-from ai_resources.setup import model_selection as ms, ui, wizard
+from ai_resources.setup import model_selection as ms, state, ui, wizard
 
 
 def _cands():
@@ -73,17 +73,22 @@ def _record(monkeypatch, picks=None, confirm=True, text=""):
     return seen
 
 
-def test_saved_mode_and_backend_are_the_default_of_the_mode_question(monkeypatch):
-    """The saved mode and gateway start selected on screen 2 ("How should they work?", then "Which gateway?")."""
-    for mode, backend, how, gateway in (("multi-model", "openrouter", "advanced", None),   # one gateway left: auto-picked, not asked (ADR-0010)
-                                        ("multi-model", "litellm", "advanced", "litellm"),
-                                        ("single-model", "litellm", "alone", None)):
+def test_the_saved_sign_in_is_the_default_of_the_sign_in_question(monkeypatch):
+    """ADR-0015: the question each tool asks starts on the saved method; a fresh host starts on the subscription."""
+    from ai_resources.setup import cockpit_auth, credentials
+    from ai_resources.setup.cockpits import claude
+    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
+    for saved, expect in (("api_key", "api_key"), ("vertex_adc", "vertex_adc"), ("subscription", "subscription"),
+                          ("", "subscription")):
         seen = _record(monkeypatch)
         s = state.SetupState()
-        s.mode, s.backend = mode, backend
-        wizard._step1_mode(s, is_first=False)
-        assert seen[wizard.HOW_PROMPT] == [how]
-        assert seen.get("Which gateway?") == ([gateway] if gateway else None)
+        if saved:
+            cockpit_auth.set_method(s, "claude", saved)
+        assert claude.ask_auth(ui, s, None, True) == 0
+        assert seen[claude.AUTH_PROMPT] == [expect]
+        assert cockpit_auth.method(s, "claude") == expect
 
 
 def test_saved_gateway_bind_and_port_are_the_defaults(monkeypatch):

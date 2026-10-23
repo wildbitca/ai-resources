@@ -61,26 +61,20 @@ class Seq:
         return self.items.pop(0) if len(self.items) > 1 else self.items[0]
 
 
-LEGACY_MODE = {"single-model": ("alone", None), "multi-model:cli": ("team", None),
-               "multi-model:openrouter": ("advanced", "openrouter"), "multi-model:litellm": ("advanced", "litellm")}
-"""The four answers of the old "Choose mode:" question, as the two questions of screen 2 (ADR-0009)."""
-HOW_PROMPT = "Pick how they work together:"
+AUTH_PROMPT = "How does Claude Code sign in?"
+"""Screen 2 since ADR-0015: each ticked tool asks its own sign-in; the global "how should they work" question is gone."""
 
 
 class Script:
     """Answers ui prompts by a substring of the message, records everything shown.
 
-    A script written for the old four-way "Choose mode" question keeps working: that answer is replayed through
-    screen 2 ("How should they work?", then "Which gateway?" for Advanced) and the state it writes is the same."""
+    The old four-way "Choose mode" answer is dropped (ADR-0015 removed the question). An unscripted sign-in question
+    takes the default it offers, so a script that predates per-cockpit sign-in still reaches the end of the run."""
 
     def __init__(self, **answers):
         self.answers = dict(answers)
         for key in [k for k in self.answers if k.startswith("Choose mode")]:
-            legacy = self.answers.pop(key)
-            how, gateway = LEGACY_MODE.get(legacy, (legacy, None)) if isinstance(legacy, str) else (legacy, None)
-            self.answers["Pick how they work"] = how
-            if gateway:
-                self.answers["Which gateway"] = gateway
+            self.answers.pop(key)           # the question no longer exists (ADR-0015): the answer is dropped
         if "Model preset" in self.answers:           # the old name of the "Starting team:" question (ADR-0009)
             self.answers["Starting team"] = self.answers.pop("Model preset")
         self.asked: list[str] = []
@@ -119,6 +113,9 @@ class Script:
     def _pick(self, message, choices, default, multi=False):
         self.defaults.setdefault(message, []).append(default)
         self.titles.extend(str(getattr(c, "title", c)) for c in choices)
+        if message == AUTH_PROMPT and not any(k in message for k in self.answers):
+            self.asked.append(f"select: {message}")
+            return default
         raw = self._find(message, "checkbox" if multi else "select")
         values = [getattr(c, "value", c) for c in choices]
         if callable(raw):

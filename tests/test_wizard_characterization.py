@@ -108,35 +108,22 @@ def _saved(mode="multi-model", backend="litellm", profile="", acks=False):
     return make
 
 
-LITELLM_DOCKER = {
-    "Choose mode": "multi-model:litellm", "Where is your gateway": "local-docker", "Bind interface": "127.0.0.1",
-    "Port": "4000", "Container image": "", "Pull ": False, "Select providers": lambda v: ["anthropic"],
-    "Update ANTHROPIC_API_KEY": False, "Update GOOGLE": False,
-    "Model preset": "custom", "How do you want to choose models": "profile", "Choose profile": _first, "Customize any role": False,
-    "Configure detected cockpits": lambda v: list(v), "Auto-start LiteLLM": False,
-    "Apply this?": _first,
-}
-
-
-SINGLE = {"Choose mode": "single-model", "Model preset": "custom", "How do you want to choose models": "profile",
+SINGLE = {"How does Claude Code sign in": "subscription", "Model preset": "custom", "How do you want to choose models": "profile",
           "How should kit subagents pick": _first, "Configure detected cockpits": lambda v: list(v),
           "Apply this?": _first}
-OPENROUTER = {"Choose mode": "multi-model:openrouter", "Update OPENROUTER_API_KEY": False,
-              "Model preset": "custom", "How do you want to choose models": "profile", "Choose profile": _first,
-              "Customize any role": False, "Configure detected cockpits": lambda v: list(v),
-              "Apply this?": _first}
 SUB = "subscription-claude-55"
 LANES_ANSWERS = {**SINGLE, "Use previous answers": True, "Acknowledge for these roles?": True, "How should kit subagents pick": lambda v: SUB, "Orchestrator agent id": "main"}
-CLI_TEAM = {"Choose mode": "multi-model:cli", "Model preset": "balanced", "Use this?": True,
+CLI_TEAM = {"How does Claude Code sign in": "subscription", "Model preset": "balanced", "Use this?": True,
             "Enable subscription lanes?": False, "Configure detected cockpits": lambda v: list(v),
             "Apply this?": _first}
 CORRUPT = "profile: [unclosed\n  name: {oops\n"
 
 PATHS = {
-    # ADR-0010: LiteLLM is offered only to a saved litellm setup, so this legacy path starts from one.
-    "litellm-docker": dict(args=_args(), answers={**LITELLM_DOCKER, "Use previous answers": True},
-                           seed=_saved("multi-model", "litellm")),
-    "openrouter": dict(args=_args(), answers=OPENROUTER),
+    # ADR-0015: a saved gateway state is migrated to the cockpit's own sign-in; no gateway question follows.
+    "saved-litellm-migrated": dict(args=_args(), answers={**SINGLE, "Use previous answers": True},
+                                   seed=_saved("multi-model", "litellm")),
+    "saved-openrouter-migrated": dict(args=_args(), answers={**SINGLE, "Use previous answers": True},
+                                      seed=_saved("multi-model", "openrouter")),
     "single-model": dict(args=_args(), answers=SINGLE),
     "non-interactive-saved-state": dict(args=_args(non_interactive=True),
                                         seed=_saved("multi-model", "openrouter", "balanced-claude-55")),
@@ -161,8 +148,8 @@ _CLI_TEAM_TRANSCRIPT = [
     'banner',
     'section 1/5 Your tools',
     'section 2/5 Main tool',
-    'section 3/5 How should they work?',
-    'select: Pick how they work together:',
+    'section 2/5 Sign-in',
+    'select: How does Claude Code sign in?',
     'section 3/5 Your team',
     'select: Starting team:',
     'section 4/5 Audio',
@@ -175,22 +162,31 @@ _CLI_TEAM_TRANSCRIPT = [
 ]
 
 
-# Recorded on main before the step runner was introduced. Notes:
+# Recorded on main before the step runner was introduced, re-recorded for ADR-0015 (round 3). Notes:
+# - The "How should they work?" screen is gone: every ticked tool asks its OWN sign-in ("Sign-in", phase 2). Steps 3, 4, 5
+#   and 8 of the old gateway path (gateway, providers, API keys, start at login) no longer exist, so a saved gateway state
+#   (the two "-migrated" paths) goes through the same questions as any other and prints no gateway line.
+# - `--backend` is deprecated: it answers Claude Code's sign-in with the subscription, so that question is not asked.
 # - "lanes-with-stored-ack" no longer asks the acknowledgement again: `_step6_single_model_profile` used to rebuild
-#   `s.profile`, which dropped a stored `lane_acks` before the lanes step read it; ADR-0009 S7 keeps the profile (and
-#   its acknowledgements) when the same one is chosen again.
-# - S6 renamed the step 6 headers to sub-steps 6a Models, 6b Role assignment and 6c Subscription lanes
-#   (6a prints when it asks, 6c when a lanes flag is given); no other line changed from the S2 recording.
+#   `s.profile`, which dropped a stored `lane_acks` before the lanes step read it; ADR-0009 S7 keeps the profile.
 # - The preset question opens step 6 (answered Custom here, so the earlier questions follow unchanged).
-# - Steps 3, 4, 5 and 8 print nothing when the path has no gateway (ADR-0009 S3); a gateway path still says why.
 EXPECTED = {
-    # S1 (ADR-0009): the subscription path asks six questions today (mode, preset, "Use this?", lanes, cockpits,
-    # apply). `--backend cli` used to ask the mode question (V1, fixed by S4) and `--yes` changes nothing here (installs are
-    # faked in this module).
     "cli-team-subscription": _CLI_TEAM_TRANSCRIPT,
-    # `--backend cli` decided the mode: the mode screen is not shown (V1 fixed, ADR-0009 S4).
-    "backend-cli-flag": [line for line in _CLI_TEAM_TRANSCRIPT
-                         if line not in ('section 3/5 How should they work?', 'select: Pick how they work together:')],
+    "backend-cli-flag": [
+        'banner',
+        'section 1/5 Your tools',
+        'section 2/5 Main tool',
+        'section 2/5 Sign-in',
+        'section 3/5 Your team',
+        'select: Starting team:',
+        'section 4/5 Audio',
+        'info: Skipped (voice notes need OpenClaw, which is not one of your tools).',
+        'section 5/5 Review',
+        'select: Apply this?',
+        'apply dry_run=False',
+        'verify',
+        'rc=0',
+    ],
     "yes-flag": _CLI_TEAM_TRANSCRIPT,
     "corrupt-state-non-interactive": [
         'banner',
@@ -202,8 +198,8 @@ EXPECTED = {
         'banner',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
-        'section 3/5 How should they work?',
-        'select: Pick how they work together:',
+        'section 2/5 Sign-in',
+        'select: How does Claude Code sign in?',
         'section 3/5 Your team',
         'select: Starting team:',
         'section 3/5 Your team - models',
@@ -221,8 +217,8 @@ EXPECTED = {
         'banner',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
-        'section 3/5 How should they work?',
-        'select: Pick how they work together:',
+        'section 2/5 Sign-in',
+        'select: How does Claude Code sign in?',
         'section 3/5 Your team',
         'select: Starting team:',
         'section 3/5 Your team - models',
@@ -243,8 +239,8 @@ EXPECTED = {
         'confirm: Use previous answers as defaults?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
-        'section 3/5 How should they work?',
-        'select: Pick how they work together:',
+        'section 2/5 Sign-in',
+        'select: How does Claude Code sign in?',
         'section 3/5 Your team - roles',
         'select: How should kit subagents pick their Claude model?',
         'section 3/5 Your team - parallel runs',
@@ -256,8 +252,8 @@ EXPECTED = {
         'confirm: Use previous answers as defaults?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
-        'section 3/5 How should they work?',
-        'select: Pick how they work together:',
+        'section 2/5 Sign-in',
+        'select: How does Claude Code sign in?',
         'section 3/5 Your team',
         'select: Starting team:',
         'section 3/5 Your team - models',
@@ -274,47 +270,12 @@ EXPECTED = {
         'verify',
         'rc=0',
     ],
-    "litellm-docker": [
-        'banner',
-        'confirm: Use previous answers as defaults?',
-        'section 1/5 Your tools',
-        'section 2/5 Main tool',
-        'section 3/5 How should they work?',
-        'select: Pick how they work together:',
-        'select: Which gateway?',
-        'section 3/5 Gateway (LiteLLM)',
-        'select: Where is your gateway?',
-        'select: Bind interface:',
-        'text: Port',
-        'text: Container image',
-        'confirm: Pull ghcr.io/berriai/litellm:main-stable now?  (~400MB, takes 30-90s)',
-        'section 3/5 Providers',
-        'checkbox: Select providers to enable:',
-        'section 3/5 API keys',
-        'confirm: Update ANTHROPIC_API_KEY?',
-        'section 3/5 Your team',
-        'select: Starting team:',
-        'section 3/5 Your team - models',
-        'select: How do you want to choose models?',
-        'section 3/5 Your team - roles',
-        'select: Choose profile:',
-        'confirm: Customize any role?',
-        'section 4/5 Audio',
-        'info: Skipped (voice notes need OpenClaw, which is not one of your tools).',
-        'section 5/5 Start at login',
-        'info: Skipped — docker container uses `restart: always` (no LaunchAgent needed).',
-        'section 5/5 Review',
-        'select: Apply this?',
-        'apply dry_run=False',
-        'verify',
-        'rc=0',
-    ],
     "no-lanes": [
         'banner',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
-        'section 3/5 How should they work?',
-        'select: Pick how they work together:',
+        'section 2/5 Sign-in',
+        'select: How does Claude Code sign in?',
         'section 3/5 Your team',
         'select: Starting team:',
         'section 3/5 Your team - models',
@@ -335,20 +296,12 @@ EXPECTED = {
         'confirm: Use previous answers as defaults?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
-        'section 3/5 How should they work?',
-        'select: Pick how they work together:',
-        'section 3/5 Gateway',
-        'info: Skipped — OpenRouter is hosted; there is nothing to install or supervise.',
-        'section 3/5 Providers',
-        'section 3/5 API keys',
-        'confirm: Update OPENROUTER_API_KEY?',
+        'section 2/5 Sign-in',
+        'select: How does Claude Code sign in?',
         'section 3/5 Your team - roles',
-        'select: Choose profile:',
-        'confirm: Customize any role?',
+        'select: How should kit subagents pick their Claude model?',
         'section 4/5 Audio',
         'info: Skipped (voice notes need OpenClaw, which is not one of your tools).',
-        'section 5/5 Start at login',
-        'info: Skipped (no local gateway to supervise).',
         'apply dry_run=False',
         'verify',
         'rc=0',
@@ -357,28 +310,42 @@ EXPECTED = {
         'error: No terminal to prompt on. Re-run with --non-interactive to use saved answers, or from an interactive shell.',
         'rc=1',
     ],
-    "openrouter": [
+    "saved-litellm-migrated": [
         'banner',
+        'confirm: Use previous answers as defaults?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
-        'section 3/5 How should they work?',
-        'select: Pick how they work together:',
-        'section 3/5 Gateway',
-        'info: Skipped — OpenRouter is hosted; there is nothing to install or supervise.',
-        'section 3/5 Providers',
-        'section 3/5 API keys',
-        'confirm: Update OPENROUTER_API_KEY?',
+        'section 2/5 Sign-in',
+        'select: How does Claude Code sign in?',
         'section 3/5 Your team',
         'select: Starting team:',
         'section 3/5 Your team - models',
         'select: How do you want to choose models?',
         'section 3/5 Your team - roles',
-        'select: Choose profile:',
-        'confirm: Customize any role?',
+        'select: How should kit subagents pick their Claude model?',
         'section 4/5 Audio',
         'info: Skipped (voice notes need OpenClaw, which is not one of your tools).',
-        'section 5/5 Start at login',
-        'info: Skipped (no local gateway to supervise).',
+        'section 5/5 Review',
+        'select: Apply this?',
+        'apply dry_run=False',
+        'verify',
+        'rc=0',
+    ],
+    "saved-openrouter-migrated": [
+        'banner',
+        'confirm: Use previous answers as defaults?',
+        'section 1/5 Your tools',
+        'section 2/5 Main tool',
+        'section 2/5 Sign-in',
+        'select: How does Claude Code sign in?',
+        'section 3/5 Your team',
+        'select: Starting team:',
+        'section 3/5 Your team - models',
+        'select: How do you want to choose models?',
+        'section 3/5 Your team - roles',
+        'select: How should kit subagents pick their Claude model?',
+        'section 4/5 Audio',
+        'info: Skipped (voice notes need OpenClaw, which is not one of your tools).',
         'section 5/5 Review',
         'select: Apply this?',
         'apply dry_run=False',
@@ -389,8 +356,8 @@ EXPECTED = {
         'banner',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
-        'section 3/5 How should they work?',
-        'select: Pick how they work together:',
+        'section 2/5 Sign-in',
+        'select: How does Claude Code sign in?',
         'section 3/5 Your team',
         'select: Starting team:',
         'section 3/5 Your team - models',

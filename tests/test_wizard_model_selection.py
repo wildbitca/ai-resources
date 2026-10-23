@@ -136,7 +136,8 @@ def test_flags_build_the_selection_with_no_prompt(host, monkeypatch):
     assert rc == 0 and not [a for a in script.asked]                         # zero prompts
     sel = s.get_selection()
     assert list(sel.slots) == ["google:gemini-flash"] and sel.slots["google:gemini-flash"].ref == "google/gemini-3.8-flash"
-    assert (s.mode, s.backend) == ("multi-model", "litellm") and sel.smoke_path == "litellm"
+    # ADR-0015: the gateway flag is deprecated; it no longer selects a gateway, so the team stays single-model
+    assert (s.mode, s.backend) == ("single-model", "litellm") and sel.smoke_path == "direct"
 
 
 def test_without_flags_nothing_is_decided_and_no_prompt_happens(host, monkeypatch):
@@ -166,18 +167,18 @@ def test_a_cockpit_the_matrix_skips_is_refused_with_its_reason(host, monkeypatch
     rc = wizard._preflight_selection(args(cockpits="claude", models="google:gemini-flash"), s)
     assert rc == 2 and s.get_selection() is None
     assert any("runs only Claude models without a gateway" in m for m in script.shown)
-    # with a gateway and the explicit opt-in the same request is legal
+    # ADR-0015: the gateway is gone, so the deprecated flag plus the opt-in no longer makes the request legal
     rc = wizard._preflight_selection(args(cockpits="claude", models="google:gemini-flash", backend="litellm",
                                           allow_unverified=True), s)
-    assert rc == 0 and s.get_selection() is not None
-    assert s.profile.customizations["__targets__"]["selected"] == ["claude"]
+    assert rc == 2 and s.get_selection() is None
+    assert any("deprecated" in m for m in script.shown)
 
 
-def test_unverified_gateway_cells_are_refused_without_the_opt_in(host, monkeypatch):
+def test_a_gateway_flag_does_not_unlock_non_claude_models_for_claude(host, monkeypatch):
     script = Script()
     script.install(monkeypatch, non_interactive=True)
     rc = wizard._preflight_selection(args(cockpits="claude", models="google:gemini-flash", backend="litellm"), _state("claude"))
-    assert rc == 2 and any("not verified yet" in m for m in script.shown)
+    assert rc == 2 and any("runs only Claude models without a gateway" in m for m in script.shown)
 
 
 def test_unknown_models_providers_and_cockpits_are_refused(host, monkeypatch):
@@ -364,7 +365,7 @@ def test_step_6_hints_single_model_for_a_claude_only_host_with_no_gateway(monkey
 
 def test_leaving_multi_model_resets_the_profile_to_the_single_model_default():
     """TS-BC55-014, amended by ADR-0010 N4: the teardown reset keeps the single-model default `balanced` (it is not
-    the recommended multi-model profile)."""
+    the recommended multi-model profile). The reset function survives ADR-0015 although the wizard no longer calls it."""
     assert wizard.SINGLE_MODEL_DEFAULT_PROFILE == "balanced"
     assert wizard.RECOMMENDED_PROFILE != wizard.SINGLE_MODEL_DEFAULT_PROFILE
     src = pathlib.Path(wizard.__file__).read_text(encoding="utf-8")

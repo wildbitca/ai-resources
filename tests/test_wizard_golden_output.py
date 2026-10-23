@@ -15,7 +15,7 @@ from ai_resources import selection as sel
 from ai_resources.setup import credentials, state, ui, wizard
 from wizard_fakes import host_env
 
-GOLDEN = Path(__file__).parent / "fixtures" / "wizard_golden" / "non_interactive_openrouter.txt"
+GOLDEN = Path(__file__).parent / "fixtures" / "wizard_golden" / "non_interactive_migrated_gateway.txt"
 
 
 def _args(**kw):
@@ -35,6 +35,7 @@ def test_non_interactive_run_output_matches_the_golden(monkeypatch, tmp_path, ca
     monkeypatch.setattr(ui, "unicode_ok", lambda: False)
     monkeypatch.setattr(ui, "_NON_INTERACTIVE", False)
     monkeypatch.setattr(credentials, "get_key", lambda name, *a, **k: "stored" if name == "OPENROUTER_API_KEY" else "")
+    # ADR-0015: a saved gateway state is migrated to the cockpit's own sign-in; the run prints the old -> new table once.
     s = state.SetupState()
     s.mode, s.backend = "multi-model", "openrouter"
     s.last_run = "2026-01-01T00:00:00+00:00"
