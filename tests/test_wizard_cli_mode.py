@@ -97,11 +97,22 @@ def test_vertex_keeps_only_the_project_and_the_region_and_writes_them_at_apply(m
     script.install(monkeypatch)
     assert claude.ask_auth(ui, s, None, False) == 0
     assert wrote == []                                    # D6: nothing is written while asking
-    assert cockpit_auth.live_kind(s, "claude") == "vertex" and cockpit_auth.method(s, "claude") == "vertex_adc"
+    # The record is what Claude Code reports, not the answer: nothing says Vertex is live yet, so it is not "vertex".
+    assert cockpit_auth.live_kind(s, "claude") == claude.read_live().kind != "vertex"
+    assert cockpit_auth.method(s, "claude") == "vertex_adc"        # the answer still drives what Apply writes
     claude._apply_pending_vertex(s)                       # what configure() does at Apply
     assert wrote == [{"GOOGLE_CLOUD_PROJECT": "demo-project", "GOOGLE_CLOUD_LOCATION": "global"}]
     assert s.tracking.env_keys_added == ["GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"]
     assert cockpit_auth.secret_findings(s.cockpit_auth) == []
+
+
+def test_vertex_is_recorded_as_live_only_when_claude_code_reports_it(monkeypatch):
+    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
+    monkeypatch.setenv("CLAUDE_CODE_USE_VERTEX", "1")
+    s = state.SetupState()
+    _ask_sign_in(monkeypatch, {"Claude Code sign-in": "change", "How should Claude Code sign in": "vertex_adc"}, s,
+                 **{"GOOGLE_CLOUD_PROJECT": "p", "GOOGLE_CLOUD_LOCATION": "global"})
+    assert cockpit_auth.live_kind(s, "claude") == "vertex" and cockpit_auth.method(s, "claude") == "vertex_adc"
 
 
 def test_a_dry_run_writes_nothing_for_vertex(monkeypatch):
