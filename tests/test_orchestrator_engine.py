@@ -346,3 +346,34 @@ def test_the_real_feature_workflow_runs_end_to_end_with_a_fake_dispatcher(tmp_pa
     assert seen == ["research", "plan", "architect", "implement", "test", "review", "security", "verify", "document"] \
         or sorted(seen[5:7]) == ["review", "security"]
     assert seen[:5] == ["research", "plan", "architect", "implement", "test"] and seen[-2:] == ["verify", "document"]
+
+
+@pytest.mark.parametrize("verdict", ["request changes", "block", "`request changes`"])
+def test_a_code_reviewer_asking_for_changes_is_a_blocked_return(tmp_path, verdict):
+    e, wf, _ = make(tmp_path)
+    run = start(e, wf)
+    both = dispatches(drive_to(e, run["id"], "review", wf))
+    finish(e, run["id"], next(d for d in both if d["step"] == "review"), OK + f"Code review verdict: {verdict}\n")
+    res = finish(e, run["id"], next(d for d in both if d["step"] == "security"), OK + "Verdict: PASS\n")
+    [d] = dispatches(res)
+    assert (d["step"], d["attempt"]) == ("implement", 2)
+    assert e.status(run["id"])["returns"] == {"implement": 1}
+
+
+def test_a_workflow_whose_only_writer_is_general_purpose_needs_approval(tmp_path):
+    text = """\
+name: gp
+description: x
+steps:
+  - id: look
+    subagent_type: explore
+    prompt_template: look
+  - id: act
+    subagent_type: generalPurpose
+    prompt_template: act
+"""
+    e, wf, _ = make(tmp_path, text=text)
+    assert wf.first_writer() == "act"
+    run = start(e, wf)
+    res = finish(e, run["id"], dispatches(e.next(run["id"]))[0])
+    assert res["status"] == "awaiting_approval"

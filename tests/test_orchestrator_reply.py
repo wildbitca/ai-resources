@@ -51,3 +51,12 @@ def test_the_block_is_read_from_the_end_of_a_long_reply():
     body = "noise\n" * 100_000 + "Blocked: true\nReturn_to_step: plan\n"
     r = reply.parse(body)
     assert r.blocked and r.return_to == "plan"
+
+
+@pytest.mark.parametrize("text,blocking", [
+    ("Code review verdict: approve", False), ("Code review verdict: request changes", True),
+    ("Code review verdict: block", True), ("Code review verdict: request-changes", True),
+    ("**Code review verdict:** `approve`", False), ("**Code review verdict:** `request changes`", True),
+    ("**Code review verdict:** `block`", True), ("Verdict: changes requested", True)])
+def test_code_reviewer_role_file_phrasings(text, blocking):
+    assert reply.parse(text).blocking_verdict is blocking

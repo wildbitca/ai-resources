@@ -57,14 +57,21 @@ def test_the_read_only_groups_of_the_shipped_workflows_run_in_parallel_and_the_r
     assert [(g[0].id, len(g)) for g in lanes.groups() if len(g) > 1] == [("review", 2)]
 
 
-def test_the_first_writer_gate_of_each_workflow_is_a_writer_role():
+def test_the_first_writer_gate_of_each_workflow_is_never_a_read_only_step():
     for name in NAMES:
         wf = wl.load(name)
         gate = wf.first_writer()
         if gate:
-            assert wf.step(gate).role in wl.WRITER_ROLES
+            assert wf.step(gate).role not in wl.READ_ONLY_ROLES
         else:
-            assert not any(s.role in wl.WRITER_ROLES for s in wf.steps)
+            assert all(s.role in wl.READ_ONLY_ROLES for s in wf.steps)
+
+
+@pytest.mark.parametrize("name", ["openclaw-host-setup", "security-devsecops", "log-triage", "explore-and-plan"])
+def test_workflows_run_by_other_writing_roles_are_gated(name):
+    wf = wl.load(name)
+    if any(s.role not in wl.READ_ONLY_ROLES for s in wf.steps):
+        assert wf.first_writer()
 
 
 def test_workflow_parameters_are_filled_from_params_or_point_at_the_goal(tmp_path):

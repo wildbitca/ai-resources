@@ -242,3 +242,12 @@ def test_the_engine_model_rewrite_skips_role_agents():
     patch = oc.build_patch(oc.ENGINES["claude-code"], "claude-sonnet-5-5", doc, "/s", "engram", fallbacks=False)
     assert set(patch["agents"].get("entries", {})) == {"chat"}
     assert oc._is_kit_agent("kit-role-verifier") and oc._is_kit_agent("kit-lane-agy-x") and not oc._is_kit_agent("main")
+
+
+def test_report_role_agents_cannot_edit_files_and_writer_roles_can(tmp_path):
+    host = Host()
+    assert run(state.SetupState(), host, tmp_path) is True
+    entries = host.doc["agents"]["entries"]
+    for aid in ("kit-role-verifier", "kit-role-planner", "kit-role-reviewer"):
+        assert entries[aid]["tools"] == {"deny": ["write", "edit", "apply_patch"]}, aid
+    assert "tools" not in entries["kit-role-implementer"]

@@ -23,7 +23,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from .. import effort as effort_mod
 from .. import role_render, state, ui
-from ... import model_pins, skill_scope
+from ... import model_pins, roles_policy, skill_scope
 from . import _openclaw_providers as providers_mod
 from . import _shared
 
@@ -124,6 +124,8 @@ def _entry(agent: RoleAgent, workspace: Path) -> dict[str, Any]:
                              "model": {"primary": agent["model"]}, "skills": list(agent["skills"])}
     if agent["thinking"]:
         entry["thinkingDefault"] = agent["thinking"]
+    if agent.get("role") in roles_policy.REPORT_ROLES:
+        entry["tools"] = {"deny": ["write", "edit", "apply_patch"]}      # report roles read; they never edit files
     return entry
 
 
