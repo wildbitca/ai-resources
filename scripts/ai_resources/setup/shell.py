@@ -51,6 +51,18 @@ def render_shell_block(env_vars: Dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def planned_content(content: str, env_vars: Dict[str, str]) -> str:
+    """The whole rc text after the managed block is written into `content`: everything else is kept as is."""
+    rendered = render_shell_block(env_vars)
+    if not env_vars:
+        # If env_vars is empty, remove the block if present
+        return _BLOCK_REGEX.sub("", content).strip() + "\n" if _BLOCK_REGEX.search(content) else content
+    if _BLOCK_REGEX.search(content):
+        return _BLOCK_REGEX.sub(rendered, content)            # replace the existing block
+    nl = "\n" if content and not content.endswith("\n") else ""
+    return content + nl + rendered + "\n"                   # append the block
+
+
 def write_shell_managed_block(rc_path: Path, env_vars: Dict[str, str], *, dry_run: bool = False) -> bool:
     """Write or replace the managed block in `rc_path`. Returns True if changed."""
     rc_path = rc_path.expanduser()
@@ -62,22 +74,7 @@ def write_shell_managed_block(rc_path: Path, env_vars: Dict[str, str], *, dry_ru
             ui.warn(f"Could not read {rc_path}: {e}")
             return False
 
-    rendered = render_shell_block(env_vars)
-    if not env_vars:
-        # If env_vars is empty, remove the block if present
-        if _BLOCK_REGEX.search(content):
-            new_content = _BLOCK_REGEX.sub("", content).strip() + "\n"
-        else:
-            return False
-    else:
-        if _BLOCK_REGEX.search(content):
-            # Replace existing block
-            new_content = _BLOCK_REGEX.sub(rendered, content)
-        else:
-            # Append block
-            nl = "\n" if content and not content.endswith("\n") else ""
-            new_content = content + nl + rendered + "\n"
-
+    new_content = planned_content(content, env_vars)
     if new_content == content:
         return False
     if dry_run:

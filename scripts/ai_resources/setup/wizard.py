@@ -2790,6 +2790,40 @@ def _run_deferred(s: state.SetupState) -> None:
     deferred.run_all(s, say=ui.info, warn=ui.warn)
 
 
+def _managed_env_vars(s: state.SetupState) -> dict[str, str]:
+    """The variables a real apply writes into the managed block of the shell rc files and the OpenClaw unit env."""
+    active_env_vars: dict[str, str] = {}
+    is_vertex = any(pid == "vertex" and ps.enabled for pid, ps in s.providers.items())
+    if is_vertex:
+        proj = credentials.get_key("GOOGLE_CLOUD_PROJECT")
+        loc = credentials.get_key("GOOGLE_CLOUD_LOCATION") or "us-east5"
+        if proj:
+            active_env_vars["GOOGLE_CLOUD_PROJECT"] = proj
+            active_env_vars["ANTHROPIC_VERTEX_PROJECT_ID"] = proj
+            active_env_vars["CLAUDE_CODE_USE_VERTEX"] = "1"
+        if loc:
+            active_env_vars["GOOGLE_CLOUD_LOCATION"] = loc
+            active_env_vars["CLOUD_ML_REGION"] = loc
+        wif_p = Path("~/.config/gcloud/agent-wif/cred-config.json").expanduser()
+        adc_p = Path("~/.config/gcloud/application_default_credentials.json").expanduser()
+        if wif_p.exists():
+            active_env_vars["GOOGLE_APPLICATION_CREDENTIALS"] = str(wif_p)
+        elif adc_p.exists():
+            active_env_vars["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_p)
+
+    if any(pid == "google" and ps.enabled for pid, ps in s.providers.items()):
+        gemini_k = credentials.get_key("GEMINI_API_KEY")
+        if gemini_k:
+            active_env_vars["GEMINI_API_KEY"] = gemini_k
+
+    if any(pid == "anthropic" and ps.enabled for pid, ps in s.providers.items()) and not is_vertex:
+        ant_k = credentials.get_key("ANTHROPIC_API_KEY")
+        if ant_k:
+            active_env_vars["ANTHROPIC_API_KEY"] = ant_k
+
+    return active_env_vars
+
+
 def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     _note_profile_table_change(s, dry_run)
     if dry_run:
@@ -3015,35 +3049,8 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
 
     # Sync managed environment to shell rc files (~/.zshrc and ~/.bashrc) and OpenClaw systemd env
     from . import shell
-    active_env_vars: dict[str, str] = {}
+    active_env_vars = _managed_env_vars(s)
     is_vertex = any(pid == "vertex" and ps.enabled for pid, ps in s.providers.items())
-    if is_vertex:
-        proj = credentials.get_key("GOOGLE_CLOUD_PROJECT")
-        loc = credentials.get_key("GOOGLE_CLOUD_LOCATION") or "us-east5"
-        if proj:
-            active_env_vars["GOOGLE_CLOUD_PROJECT"] = proj
-            active_env_vars["ANTHROPIC_VERTEX_PROJECT_ID"] = proj
-            active_env_vars["CLAUDE_CODE_USE_VERTEX"] = "1"
-        if loc:
-            active_env_vars["GOOGLE_CLOUD_LOCATION"] = loc
-            active_env_vars["CLOUD_ML_REGION"] = loc
-        wif_p = Path("~/.config/gcloud/agent-wif/cred-config.json").expanduser()
-        adc_p = Path("~/.config/gcloud/application_default_credentials.json").expanduser()
-        if wif_p.exists():
-            active_env_vars["GOOGLE_APPLICATION_CREDENTIALS"] = str(wif_p)
-        elif adc_p.exists():
-            active_env_vars["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_p)
-
-    if any(pid == "google" and ps.enabled for pid, ps in s.providers.items()):
-        gemini_k = credentials.get_key("GEMINI_API_KEY")
-        if gemini_k:
-            active_env_vars["GEMINI_API_KEY"] = gemini_k
-
-    if any(pid == "anthropic" and ps.enabled for pid, ps in s.providers.items()) and not is_vertex:
-        ant_k = credentials.get_key("ANTHROPIC_API_KEY")
-        if ant_k:
-            active_env_vars["ANTHROPIC_API_KEY"] = ant_k
-
     if active_env_vars:
         synced_rcs = shell.sync_all_shell_envs(active_env_vars, dry_run=dry_run)
         for rc in synced_rcs:
@@ -3173,12 +3180,22 @@ def _dry_run_targets(s: state.SetupState, executors_doc: dict, env_patch: dict |
     return out
 
 
-def _dry_run_shell_targets() -> list[tuple[str, Path, str, str | None]]:
-    """The shell rc files a real run would sync the env block into. Kept apart from `_dry_run_targets`, which
-    renders only what the state decides: these depend on the files of the current home."""
+def _dry_run_shell_targets(s: state.SetupState) -> list[tuple[str, Path, str, str | None]]:
+    """The shell rc files a real run would sync the env block into, with the whole text a real apply leaves: the
+    operator's own lines stay and only the managed block changes. Kept apart from `_dry_run_targets`, which renders
+    only what the state decides: these depend on the files of the current home."""
     from . import shell
-    return [(f"{rc.name} env", rc, "# managed ai-resources env block", None)
-            for rc in shell.get_existing_rc_files()]
+    env_vars = _managed_env_vars(s)
+    if not env_vars:
+        return []                                            # a real run syncs nothing when there is nothing to export
+    out = []
+    for rc in shell.get_existing_rc_files():
+        try:
+            current = rc.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        out.append((f"{rc.name} env", rc, shell.planned_content(current, env_vars), current))
+    return out
 
 
 def _print_dry_run_diffs(s: state.SetupState, executors_doc: dict, env_patch: dict | None,
@@ -3187,7 +3204,7 @@ def _print_dry_run_diffs(s: state.SetupState, executors_doc: dict, env_patch: di
     console.print()
     ui.info("What a real run would change (masked; nothing is written):")
     for label, path, text, current in (_dry_run_targets(s, executors_doc, env_patch, existing_env)
-                                       + _dry_run_shell_targets()):
+                                       + _dry_run_shell_targets(s)):
         for line in _diff_lines(label, path, text, current):
             console.print(line, markup=False, highlight=False)
     console.print()
