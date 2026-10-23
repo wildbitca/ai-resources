@@ -1,8 +1,8 @@
 {
   "name": "@ai-resources/openclaw-plugin",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "OpenClaw plugin: agy-cli and claude-kit CLI backends, the /claude shortcut.",
+  "description": "OpenClaw plugin: agy-cli and claude-kit CLI backends, the /claude shortcut and the native team orchestrator.",
   "type": "module",
   "main": "index.js",
   "openclaw": {

@@ -3,6 +3,8 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 
+import { createOrchestrator, formatActions, formatStatus, RUN_ID_RE } from "./orchestrator.js";
+
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 // ai-resources OpenClaw plugin — agy-cli and claude-kit CLI backends, /claude, /lanes and /workflow commands.
@@ -258,6 +260,47 @@ export function makeClaudeCommandHandler(api) {
   };
 }
 
+// --- native team orchestrator (ADR-0015) -------------------------------------------
+//
+// With `enableOrchestrator` in the plugin config, /equipo and /workflow run|status|approve|cancel|resume|cost drive the
+// Python engine (`ai-resources orchestrate`) through ./orchestrator.js. Without it every command behaves as before.
+
+const ORCHESTRATORS = new WeakMap();
+export const EQUIPO_WORKFLOW = "feature-implementation";
+
+/** The orchestrator of this `api`, or null when the plugin config does not enable it. `api.orchestratorDeps` is the test seam. */
+export function orchestratorFor(api) {
+  const pluginConfig = (api && api.pluginConfig) || {};
+  if (!api || !pluginConfig.enableOrchestrator) return null;
+  if (!ORCHESTRATORS.has(api)) {
+    ORCHESTRATORS.set(api, createOrchestrator(api, {
+      pluginConfig,
+      kitRoot: resolveKitRoot(pluginConfig),
+      python3: resolveBinaries(pluginConfig).python3,
+      ...(api.orchestratorDeps || {}),
+    }));
+  }
+  return ORCHESTRATORS.get(api);
+}
+
+/** `--repo <path>` anywhere in a goal text, removed from it. */
+export function splitRepoFlag(text) {
+  const m = /(?:^|\s)--repo\s+(\S+)/.exec(text);
+  if (!m) return { goal: text.trim(), workspace: "" };
+  return { goal: text.replace(m[0], " ").replace(/\s+/g, " ").trim(), workspace: m[1] };
+}
+
+async function orchestratedStart(orch, workflow, rawGoal, ctx) {
+  const { goal, workspace } = splitRepoFlag(rawGoal);
+  if (!goal) return { text: "⚠️ **Usage**: give the team a goal, e.g. `/equipo add rate limiting to the API --repo /path/to/repo`", continueAgent: false };
+  const result = await orch.start(workflow, goal, ctx, { workspace: workspace || (ctx && (ctx.workspaceDir || ctx.cwd)) || "" });
+  const where = result.branch ? `\n**Branch**: \`${result.branch}\` (own worktree)` : "";
+  return {
+    text: `👥 **Team started**: \`${workflow}\`\n**Goal**: ${goal}${where}\n${formatActions(result)}\n\nFollow it with \`/workflow status ${result.run}\`.`,
+    continueAgent: false,
+  };
+}
+
 // --- /equipo team lifecycle command (ADR-0012) --------------------------------------
 
 /** @param {{name: string, handler: (ctx: object) => Promise<object>}} */
@@ -283,6 +326,10 @@ export function makeEquipoCommandHandler(api) {
       );
     }
     const goal = String((ctx && ctx.args) || "").trim() || "No goal specified";
+    const orch = orchestratorFor(api);
+    if (orch) {
+      return orchestratedStart(orch, EQUIPO_WORKFLOW, String((ctx && ctx.args) || "").trim(), ctx);
+    }
     const sessionKey = claudeSubagentSessionKey(ctx);
 
     const teamMessage = [
@@ -599,7 +646,7 @@ export function buildWorkflowCommand(name, handler) {
   return {
     name,
     nativeNames: { default: name },
-    description: "Inspect and run declarative workflows (/workflow list, /workflow info <id>, /workflow run <id>).",
+    description: "Inspect and run declarative workflows (/workflow list, /workflow info <id>, /workflow run <id>, and with the orchestrator status, approve, cancel, resume, cost).",
     acceptsArgs: true,
     requireAuth: true,
     handler,
@@ -616,6 +663,38 @@ export function makeWorkflowCommandHandler(api) {
     const parts = rawArgs.split(/\s+/).filter(Boolean);
     const subcmd = (parts[0] || "list").toLowerCase();
     const targetId = parts[1];
+
+    const orch = orchestratorFor(api);
+    if (orch && ["run", "status", "approve", "cancel", "resume", "cost"].includes(subcmd)) {
+      try {
+        if (subcmd === "run") {
+          if (!targetId) {
+            return { text: "⚠️ **Usage**: `/workflow run <workflow-id> <goal> [--repo <path>]`", continueAgent: false };
+          }
+          return await orchestratedStart(orch, targetId, parts.slice(2).join(" "), ctx);
+        }
+        if (subcmd === "status") {
+          return { text: formatStatus(await orch.status(targetId || "")), continueAgent: false };
+        }
+        if (subcmd === "resume") {
+          return { text: formatActions(await orch.resume(targetId || "")) || "Nothing to resume.", continueAgent: false };
+        }
+        if (!targetId || !RUN_ID_RE.test(targetId)) {
+          return { text: `⚠️ **Usage**: \`/workflow ${subcmd} <run-id>\` (see \`/workflow status\`)`, continueAgent: false };
+        }
+        if (subcmd === "approve") return { text: formatActions(await orch.approve(targetId)), continueAgent: false };
+        if (subcmd === "cancel") return { text: formatActions(await orch.cancel(targetId)) || `Run \`${targetId}\` cancelled.`, continueAgent: false };
+        const cost = await orch.cost(targetId);
+        const rows = Object.entries(cost.by_role || {}).map(([r, v]) => `| ${r} | ${v.calls} | ${v.input} | ${v.output} | ${v.usd} |`);
+        return {
+          text: [`**Cost of \`${targetId}\`** — ${cost.label}`, "", "| Role | Calls | Input | Output | USD |", "| :--- | ---: | ---: | ---: | ---: |",
+            ...rows, `| **total** | ${cost.total.calls} | ${cost.total.input} | ${cost.total.output} | ${cost.total.usd} |`].join("\n"),
+          continueAgent: false,
+        };
+      } catch (e) {
+        return { text: `⚠️ **Orchestrator**: ${e.message}`, continueAgent: false };
+      }
+    }
 
     if (subcmd === "list") {
       const workflows = listWorkflows(workflowsDir);
@@ -719,6 +798,9 @@ export default {
     api.registerCommand(buildLanesCommand("lanes", lanesHandler));
     const workflowHandler = makeWorkflowCommandHandler(api);
     api.registerCommand(buildWorkflowCommand("workflow", workflowHandler));
+    // ADR-0015: hand out again the steps a gateway restart interrupted. Fire and forget: a failure is logged, never thrown.
+    const orch = orchestratorFor(api);
+    if (orch) orch.resumeAll();
   },
 };
 
