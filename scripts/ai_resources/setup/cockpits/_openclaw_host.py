@@ -1124,11 +1124,16 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
         rpatch, rrp = host.restore_patch(restores, doc)      # a restore the live value already satisfies is a no-op
         patch = rr.deep_merge(patch, rpatch)
         rp += rrp
-    if not patch:
+    plugin_entries = [e for e in pending if e.get("op") == "plugin"]
+    if not patch and not plugin_entries:
         ui.ok("Nothing left to apply: the pending keys already match.")
         o.host_restart_pending = list(leftover)
         return 0
-    ui.info("Will apply (keys only): " + ", ".join(rr.leaf_paths(patch)))
+    if patch:
+        ui.info("Will apply (keys only): " + ", ".join(rr.leaf_paths(patch)))
+    if plugin_entries:
+        ui.info("Will reload the kit plugin (version " + ", ".join(sorted({str(e.get("version") or "?") for e in plugin_entries}))
+                + "): the gateway stops and starts once in the drained window.")
     if not assume_yes:
         if ui.is_non_interactive():
             ui.warn("Needs an interactive confirm, or pass --yes.")

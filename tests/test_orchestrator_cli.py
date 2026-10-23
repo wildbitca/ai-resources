@@ -130,3 +130,30 @@ def test_a_huge_reply_file_is_read_from_its_end_where_the_return_block_is(harnes
     big.write_text("x" * (ocli.MAX_REPLY_FILE + 5000) + "\nBlocked: true\n")
     out = harness.call("orchestrate", "report", "r-1", "plan", "--reply-file", str(big), "--json")
     assert out["actions"][0]["type"] == "dispatch" and out["actions"][0]["attempt"] == 2     # the tail said Blocked: true
+
+
+# --- the exact argv forms the OpenClaw plugin builds (openclaw-plugin/ai-resources/orchestrator.js) ---------------------
+
+def test_the_plugin_argv_forms_parse_and_carry_hostile_text_as_data(harness):
+    goal = "add a thing; rm -rf / && echo $(whoami) `id` -- --weird"
+    out = harness.call("orchestrate", "start", "--workflow=" + harness.wf, "--goal=" + goal, "--max-teams=2",
+                       "--workspace=/work/repo", "--executors=" + harness.ex, "--role-timeouts=" + json.dumps({"planner": 600}),
+                       "--json")
+    assert out["actions"][0]["timeout_s"] == 600 and goal in out["actions"][0]["prompt"]
+    rid = out["run"]
+    again = harness.call("orchestrate", "report", rid, "plan", "--timeout", "--session=agent:kit-role-planner:subagent:x-plan-a1",
+                         "--agent=kit-role-planner", "--json")
+    assert again["actions"][0]["attempt"] == 2
+    harness.call("orchestrate", "report", rid, "plan", "--error=-weird error text", "--json")
+    st = harness.call("orchestrate", "status", rid, "--json")
+    assert st["steps"]["plan"]["attempt"] == 3 and "-weird error text" in st["steps"]["plan"]["reason"]
+    assert harness.call("orchestrate", "resume", "--all", "--json")["runs"]
+
+
+def test_the_plugin_reads_the_reply_from_stdin(harness, monkeypatch, capsys):
+    import io, sys
+    start(harness, run_id="r-in")
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO((OK + "Plan_ref: from-stdin.md\n").encode())))
+    rc = cli.main(["orchestrate", "report", "r-in", "plan", "--session=s", "--agent=kit-role-planner", "--reply-file=-", "--json"])
+    assert rc == 0 and json.loads(capsys.readouterr().out)["status"] == "awaiting_approval"
+    assert "from-stdin.md" in harness.store.handoff_path("r-in").read_text()

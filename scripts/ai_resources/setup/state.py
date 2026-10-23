@@ -377,6 +377,9 @@ class OpenClawState:
     # (the scoped skills directory and the real kit skills root). Teardown removes exactly these. Additive.
     skills_extra_dirs_added: list[str] = field(default_factory=list)
     skills_symlink_targets_added: list[str] = field(default_factory=list)
+    # Round 3 (ADR-0015 S13): the kit plugin version setup last linked or recorded as owed a gateway reload, so a rerun
+    # records no second pending entry. Additive.
+    plugin_version_seen: str = ""
     # Channel intent (ADR-0010 N5, plan S11): `channels_seen` are the "<channel>:<account>" keys that were enabled
     # when setup last listed them; `channels_wanted` the ones the operator left ticked. A key seen and not wanted is
     # a planned DISABLE. Never written to the file (`_to_dict` always strips both); no schema bump.
@@ -472,7 +475,7 @@ def _to_dict(obj: Any) -> Any:
                 and not doc["openclaw"].get("role_agents_applied"):
             doc["openclaw"].pop("role_agents_applied", None)
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict):
-            for key in ("skills_extra_dirs_added", "skills_symlink_targets_added"):
+            for key in ("skills_extra_dirs_added", "skills_symlink_targets_added", "plugin_version_seen"):
                 if not doc["openclaw"].get(key):
                     doc["openclaw"].pop(key, None)         # round 3: absent until the scoped skills dir is linked
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict):
