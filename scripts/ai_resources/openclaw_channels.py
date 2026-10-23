@@ -100,8 +100,21 @@ class PrintOnly:
     text: str
 
 
-def add_argv(channel: str, account: str) -> tuple[str, ...]:
-    return ("openclaw", "channels", "add", "--channel", channel, "--account", account)
+# Channels documented to declare `--use-env` (docs/cli/channels.md): channel -> the env var the command requires. Any other
+# channel leaves `--use-env` out, so its credential goes through the interactive native command (ADR-0016 D7).
+USE_ENV_CHANNELS: dict[str, str] = {"telegram": "TELEGRAM_BOT_TOKEN"}
+
+
+def token_env_name(channel: str) -> str:
+    """The env var that carries `channel`'s credential to `channels add --use-env`, or "" when the channel has none."""
+    return USE_ENV_CHANNELS.get(channel, "")
+
+
+def add_argv(channel: str, account: str, *, use_env: bool = False) -> tuple[str, ...]:
+    """The enable command. A credential is NEVER an argument (not `--token`, not any value): with `use_env` the channel
+    reads it from the child's environment (`token_env_name`), otherwise it is typed into OpenClaw's own prompt."""
+    argv = ("openclaw", "channels", "add", "--channel", channel, "--account", account)
+    return argv + ("--use-env",) if use_env else argv
 
 
 def remove_argv(channel: str, account: str) -> tuple[str, ...]:

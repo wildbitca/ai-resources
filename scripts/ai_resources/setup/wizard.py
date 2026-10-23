@@ -25,7 +25,7 @@ from . import (
     tools,
     ui,
 )
-from . import cockpit_auth, compat, model_selection, profile_names, team_view
+from . import cockpit_auth, compat, live_auth, model_selection, profile_names, team_view
 from .cockpits import ALL as ALL_COCKPITS
 from .cockpits import _shared
 from .. import __version__, model_pins, repo_root, roles_policy, selection as selection_mod
@@ -2725,28 +2725,57 @@ def _apply_channel_changes(s: state.SetupState, *, dry_run: bool = False) -> Non
             if out.ran:
                 ui.record_action(f"turned off the channel account {item.key}")
         elif isinstance(item, channels.PrintOnly):
-            argv = list(channels.add_argv(item.channel, item.account))
-            if dry_run:
-                ui.info(f"{item.channel} / {item.account}: dry run: would run `{' '.join(argv)}`")
-            else:
-                rc, text = runner(argv, timeout=channels.TIMEOUT_S, env=channels.scrubbed_env(),
-                                  max_bytes=channels.MAX_BYTES)
-                if rc == 0:
-                    ui.ok(f"{item.channel} / {item.account}: enabled (`{' '.join(argv)}`)")
-                    ui.record_action(f"enabled the channel account {item.channel}:{item.account}")
-                else:
-                    if interactive:
-                        token = ui.text(f"Token/credential for {item.channel}:{item.account} (empty to skip):")
-                        if token and token.strip():
-                            auth_argv = list(argv) + ["--token", token.strip()]
-                            rc2, text2 = runner(auth_argv, timeout=channels.TIMEOUT_S, env=channels.scrubbed_env(),
-                                                max_bytes=channels.MAX_BYTES)
-                            if rc2 == 0:
-                                ui.ok(f"{item.channel} / {item.account}: enabled with credentials")
-                                ui.record_action(f"enabled the channel account {item.channel}:{item.account}")
-                                rc = 0
-                    if rc != 0:
-                        ui.info(f"{item.channel} / {item.account}: requires interactive credentials — run `{' '.join(argv)}`")
+            _enable_channel(item, runner, interactive=interactive, dry_run=dry_run)
+
+
+def _enable_channel(item, runner, *, interactive: bool, dry_run: bool) -> bool:
+    """Turn a ticked, disabled channel account on. The credential never travels on argv or into the output (ADR-0016 D7).
+
+    First the plain `channels add` runs (it succeeds when the account already holds its credential). If it needs one:
+    a channel that declares `--use-env` gets it through the child's environment after a MASKED prompt; any other channel
+    gets the terminal for OpenClaw's own interactive `channels add`. Returns True when the account was enabled."""
+    from .. import openclaw_channels as channels
+    argv = list(channels.add_argv(item.channel, item.account))
+    where = f"{item.channel} / {item.account}"
+    if dry_run:
+        ui.info(f"{where}: dry run: would run `{' '.join(argv)}`")
+        return False
+    rc, _text = runner(argv, timeout=channels.TIMEOUT_S, env=channels.scrubbed_env(), max_bytes=channels.MAX_BYTES)
+    if rc == 0:
+        ui.ok(f"{where}: enabled (`{' '.join(argv)}`)")
+        ui.record_action(f"enabled the channel account {item.channel}:{item.account}")
+        return True
+    if not interactive:
+        ui.info(f"{where}: requires interactive credentials: run `{' '.join(argv)}`")
+        return False
+    env_name = channels.token_env_name(item.channel)
+    if env_name:
+        token = ui.password(f"Credential for {where} (hidden, passed to OpenClaw through the environment; "
+                            "empty to skip):")
+        if token and token.strip():
+            env_argv = list(channels.add_argv(item.channel, item.account, use_env=True))
+            env = {**channels.scrubbed_env(), env_name: token.strip()}
+            rc2, _text2 = runner(env_argv, timeout=channels.TIMEOUT_S, env=env, max_bytes=channels.MAX_BYTES)
+            if rc2 == 0:
+                ui.ok(f"{where}: enabled with credentials")
+                ui.record_action(f"enabled the channel account {item.channel}:{item.account}")
+                return True
+            ui.warn(f"{where}: OpenClaw rejected the credential (exit {rc2}); nothing was enabled.")
+            return False
+        ui.info(f"{where}: skipped. Later: `{' '.join(argv)}`")
+        return False
+    # No `--use-env` for this channel: OpenClaw's own interactive command gets the terminal.
+    if ui.confirm(f"{where} needs its credential. Hand this terminal to `{' '.join(argv)}`? OpenClaw asks for it itself; "
+                  "the kit sees nothing you type.", default=False):
+        rc3 = live_auth.run_handoff(argv)
+        if rc3 == 0:
+            ui.ok(f"{where}: enabled")
+            ui.record_action(f"enabled the channel account {item.channel}:{item.account}")
+            return True
+        ui.warn(f"{where}: `{' '.join(argv)}` exited {rc3}.")
+        return False
+    ui.info(f"{where}: requires interactive credentials: run `{' '.join(argv)}`")
+    return False
 
 
 def _apply_image_dry_run(s: state.SetupState) -> None:
