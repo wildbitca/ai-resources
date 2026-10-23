@@ -11,6 +11,7 @@ import io
 import json
 import pathlib
 import sys
+import time
 
 import subprocess
 
@@ -126,6 +127,17 @@ class _Popens:
                                 "openclaw-team-watch.py", "--agent-id", argv[argv.index("--agent-id") + 1]],
                                start_new_session=True)
             self.procs.append(proc)
+            # Until the child has exec'd, /proc/<pid>/cmdline still shows the forking test process, and the hook
+            # would read the watcher as dead and launch it again. On a loaded CI runner that window is real.
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                try:
+                    with open(f"/proc/{proc.pid}/cmdline", "rb") as fh:
+                        if b"openclaw-team-watch.py" in fh.read():
+                            break
+                except OSError:
+                    pass
+                time.sleep(0.01)
             return proc
         return type("Proc", (), {"pid": 0})()
 
