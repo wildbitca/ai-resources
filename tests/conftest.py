@@ -38,31 +38,97 @@ HOST_BINARIES = frozenset({
 _REPO = Path(__file__).resolve().parents[1]
 
 
-def host_binary_refused(args, env, allowed_roots) -> str | None:
-    """The blocked binary's name when `args` would run a real host binary, else None."""
+SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash"})
+# Programs that run another program given in their arguments.
+WRAPPERS = frozenset({"env", "timeout", "nohup", "setsid", "xargs", "stdbuf", "nice", "ionice", "command", "exec",
+                      "time", "chronic", "unbuffer", "flock", "script"})
+_SHELL_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "exec"})
+_OPERATOR_CHARS = frozenset("();&|<>")
+
+
+def _word_refused(word, env, allowed_roots) -> str | None:
+    """The word's name when it is a host binary that resolves outside the allowed roots."""
     import os
-    import shlex
     import shutil
-    if isinstance(args, (str, bytes)):
-        text = os.fsdecode(args)
-        try:
-            words = shlex.split(text)
-        except ValueError:
-            words = text.split()
-    else:
-        words = [os.fsdecode(a) for a in args]
-    if not words:
+    if os.path.basename(word) not in HOST_BINARIES:
         return None
-    argv0 = words[0]
-    if os.path.basename(argv0) not in HOST_BINARIES:
-        return None
-    path = argv0 if os.sep in argv0 else shutil.which(argv0, path=(env or os.environ).get("PATH"))
+    path = word if os.sep in word else shutil.which(word, path=(env or os.environ).get("PATH"))
     if path is None:
         return None                                   # not installed: Popen raises FileNotFoundError by itself
     real = os.path.realpath(path)
     if any(real == root or real.startswith(root + os.sep) for root in allowed_roots):
         return None
-    return os.path.basename(argv0)
+    return os.path.basename(word)
+
+
+def _shell_segments(text) -> list[list[str]]:
+    """The simple commands of a shell string: split on newlines, backticks and every control operator."""
+    import shlex
+    text = text.replace("\n", ";").replace("`", ";")
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        tokens = text.split()
+    segments, current = [], []
+    for tok in tokens:
+        if tok and all(c in _OPERATOR_CHARS for c in tok):
+            segments.append(current)
+            current = []
+        else:
+            current.append(tok)
+    segments.append(current)
+    return [seg for seg in segments if seg]
+
+
+def _words_refused(words, env, allowed_roots) -> str | None:
+    import os
+    # Leading assignments (FOO=1 npm i) and shell keywords (then npm i) do not change what runs.
+    while words and (words[0] in _SHELL_KEYWORDS - {"exec"} or ("=" in words[0] and not words[0].startswith("-")
+                                                              and os.sep not in words[0].split("=", 1)[0])):
+        words = words[1:]
+    if not words:
+        return None
+    blocked = _word_refused(words[0], env, allowed_roots)
+    if blocked:
+        return blocked
+    base = os.path.basename(words[0])
+    if base in SHELLS:
+        for i, w in enumerate(words[1:], 1):
+            if w.startswith("-") and not w.startswith("--") and "c" in w and i + 1 < len(words):
+                return _string_refused(words[i + 1], env, allowed_roots)
+        return None
+    if base in WRAPPERS:
+        # `timeout -s KILL 5 npm i`, `env -i FOO=1 bash -c ...`: try every later word as the start of the real command.
+        for i in range(1, len(words)):
+            blocked = _words_refused(words[i:], env, allowed_roots)
+            if blocked:
+                return blocked
+    return None
+
+
+def _string_refused(text, env, allowed_roots) -> str | None:
+    for seg in _shell_segments(text):
+        blocked = _words_refused(seg, env, allowed_roots)
+        if blocked:
+            return blocked
+    return None
+
+
+def host_binary_refused(args, env, allowed_roots, executable=None) -> str | None:
+    """The blocked binary's name when `args` (or `executable`) would run a real host binary, else None.
+
+    Looks through shells (`bash -c "cd x && npm i -g y"`), wrappers (env, timeout, nohup, setsid, xargs ...) and every
+    command of a shell string, not just the first word."""
+    import os
+    if executable is not None:
+        blocked = _word_refused(os.fsdecode(executable), env, allowed_roots)
+        if blocked:
+            return blocked
+    if isinstance(args, (str, bytes)):
+        return _string_refused(os.fsdecode(args), env, allowed_roots)
+    return _words_refused([os.fsdecode(a) for a in args], env, allowed_roots)
 
 
 @pytest.fixture(autouse=True)
@@ -75,15 +141,49 @@ def _no_host_binaries(tmp_path_factory, monkeypatch):
                           (tmp_path_factory.getbasetemp(), tempfile.gettempdir(), _REPO))
     real_popen = subprocess.Popen
 
+    def _refuse(blocked):
+        # Exactly what a host without the binary raises, so callers take their "not installed" path.
+        return FileNotFoundError(errno.ENOENT, f"host binary blocked in tests: {blocked}", blocked)
+
     class _GuardedPopen(real_popen):
         def __init__(self, args, *a, **kw):
-            blocked = host_binary_refused(args, kw.get("env"), allowed_roots)
+            blocked = host_binary_refused(args, kw.get("env"), allowed_roots, kw.get("executable"))
             if blocked:
-                # Exactly what a host without the binary raises, so callers take their "not installed" path.
-                raise FileNotFoundError(errno.ENOENT, f"host binary blocked in tests: {blocked}", blocked)
+                raise _refuse(blocked)
             super().__init__(args, *a, **kw)
 
     monkeypatch.setattr(subprocess, "Popen", _GuardedPopen)
+
+    # The same refusal on the paths that never go through subprocess.Popen.
+    def _guard_exec(name, argv_index, env_index=None):
+        real = getattr(os, name, None)
+        if real is None:
+            return
+
+        def guarded(*a, **kw):
+            argv = a[argv_index] if len(a) > argv_index else ()
+            env = a[env_index] if env_index is not None and len(a) > env_index else None
+            blocked = (_word_refused(os.fsdecode(a[0]), env, allowed_roots) if a else None) \
+                or host_binary_refused(list(argv) or [], env, allowed_roots)
+            if blocked:
+                raise _refuse(blocked)
+            return real(*a, **kw)
+
+        monkeypatch.setattr(os, name, guarded)
+
+    for name, env_i in (("execv", None), ("execve", 2), ("execvp", None), ("execvpe", 2),
+                        ("posix_spawn", 2), ("posix_spawnp", 2)):
+        _guard_exec(name, 1, env_i)
+
+    real_system = os.system
+
+    def _guarded_system(command):
+        blocked = host_binary_refused(os.fsdecode(command), None, allowed_roots)
+        if blocked:
+            raise _refuse(blocked)
+        return real_system(command)
+
+    monkeypatch.setattr(os, "system", _guarded_system)
 
 
 @pytest.fixture(autouse=True)
