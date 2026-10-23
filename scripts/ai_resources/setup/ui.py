@@ -361,6 +361,7 @@ def runs_table(rows: list[tuple[str, str, str, str, str]], title: str = "") -> N
     rows = [tuple(safe_text(c) for c in r) for r in rows]
     if not _HAS_RICH:
         print(f"\n{safe_text(title)}")
+        print(f"  {'Role':<28} {'Runs in':<24} {'Billed to':<16} {'Model':<28} Effort")      # the same columns as the table
         for role, runs_in, billed, model, effort in rows:
             print(f"  {role:<28} {runs_in:<24} {billed:<16} {model:<28} {effort}")
         return
