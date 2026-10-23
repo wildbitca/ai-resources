@@ -17,6 +17,7 @@ State changes are written atomically under a per-run lock, so a killed process r
 """
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -100,6 +101,9 @@ def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Pat
     template = (step.prompt_template or "").replace("{{workspace}}", cwd).replace("{{domain}}", domain) \
         .replace("{{user_goal}}", str(run.get("goal") or "")).replace("{{handoff_file}}", handoff_file) \
         .replace("$AGENT_KIT", kit)
+    # Workflow-specific parameters ({{ci_run_url}}, {{provider}}, ...): the run's `params`, else "take it from the goal".
+    template = re.sub(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}",
+                      lambda m: str((run.get("params") or {}).get(m.group(1)) or f"<{m.group(1)}: see the goal>"), template)
     verdict = "Verdict: <PASS | REQUIRES_CHANGES | FAIL>\n" if step.role in ("verifier", "code-reviewer", "security-auditor",
                                                                               "tester", "software-architect") else ""
     return (
@@ -182,8 +186,8 @@ class Engine:
     # -- start / admission ----------------------------------------------------------------------------------------
     def start(self, wf: Workflow, goal: str, workspace: str, *, domain: str = "", run_id: str = "",
               models: Mapping[str, Any] | None = None, role_timeouts: Mapping[str, Any] | None = None,
-              max_teams: int = limits.DEFAULT_MAX_TEAMS, base_ref: str = "HEAD", use_worktree: bool = True
-              ) -> dict[str, Any]:
+              max_teams: int = limits.DEFAULT_MAX_TEAMS, base_ref: str = "HEAD", use_worktree: bool = True,
+              params: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Register a run. It runs now when a team slot is free, else it is queued (FIFO)."""
         if not goal.strip():
             raise EngineError("a run needs a goal", "usage")
@@ -197,7 +201,8 @@ class Engine:
             "workspace": str(workspace), "cwd": str(workspace), "domain": domain, "status": "queued",
             "created_at": now, "queued_at": now, "started_at": 0, "finished_at": 0, "updated_at": now,
             "max_teams": limits.clamp_max_teams(max_teams), "base_ref": base_ref, "use_worktree": bool(use_worktree),
-            "worktree": None, "models": {k: str(v) for k, v in (models or {}).items() if v},
+            "worktree": None, "params": {str(k): str(v)[:500] for k, v in (params or {}).items()},
+            "models": {k: str(v) for k, v in (models or {}).items() if v},
             "role_timeouts": {k: v for k, v in (role_timeouts or {}).items()},
             "workflow_steps": _wf_to_state(wf), "order": [s.id for s in wf.steps], "steps": steps, "returns": {},
             "approval": {"before": approval_step, "state": "pending" if approval_step else "not_needed"},
