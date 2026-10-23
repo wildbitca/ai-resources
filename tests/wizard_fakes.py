@@ -181,3 +181,28 @@ def host_env(monkeypatch, tmp_path):
     monkeypatch.setattr(wizard, "_step10_verify", lambda s, t: 0)
     monkeypatch.setattr(wizard, "_print_completion", lambda s: None)
     return home
+
+
+OPENCLAW_FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "openclaw"
+
+
+def fake_openclaw(monkeypatch, *, authed=None, calls=None):
+    """Replace the OpenClaw CLI runner of the OpenClaw cockpit by canned, read-only answers (ADR-0003: a test never runs
+    the real binary). `models list` answers the recorded 12-provider catalog; `models auth list` the given providers.
+    Any other command is refused and recorded in `calls`."""
+    from ai_resources.setup.cockpits import openclaw as oc
+    log = calls if calls is not None else []
+    catalog = (OPENCLAW_FIXTURES / "providers_models_list.json").read_text(encoding="utf-8")
+    profiles = [{"id": f"{p}:default", "provider": p, "type": "api_key", "label": f"{p}:default"}
+                for p in (authed if authed is not None else ("anthropic", "openai"))]
+
+    def runner(argv, stdin=None, timeout=120):
+        log.append(list(argv))
+        if argv[:2] == ["models", "list"]:
+            return 0, catalog
+        if argv[:3] == ["models", "auth", "list"]:
+            return 0, json.dumps({"agentId": "main", "profiles": profiles})
+        return 1, "refused by the test fake"
+    monkeypatch.setattr(oc, "_openclaw", runner)
+    monkeypatch.setattr(oc.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("subprocess.run")))
+    return log
