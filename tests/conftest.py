@@ -21,6 +21,69 @@ def pytest_configure(config):
     # Before the tmpdir plugin reads the option: a bare run must not fill the /tmp tmpfs.
     from basetemp_default import apply_default
     apply_default(config)
+    config.addinivalue_line("markers", "timing: asserts on wall-clock time; runs in the serial pass of scripts/run-tests.sh")
+
+
+# Host binaries no test may run. One unstubbed configure path ran `npm install -g openclaw@latest` and
+# `systemctl --user enable --now` on the operator's machine on every full run; under xdist the concurrent
+# installs swapped the live gateway's files mid-start and left it down (2026-10-23). A stub script under the
+# test's own temp dir or the repo is still allowed, so tests that put a fake `openclaw` on PATH keep working.
+HOST_BINARIES = frozenset({
+    "systemctl", "loginctl", "journalctl", "crontab", "sudo",
+    "npm", "npx", "pnpm", "node", "brew",
+    "openclaw", "claude", "agy", "gemini", "engram",
+    "tailscale", "gcloud", "kubectl", "flux", "helm", "docker",
+    "gh", "curl", "wget", "ssh",
+})
+_REPO = Path(__file__).resolve().parents[1]
+
+
+def host_binary_refused(args, env, allowed_roots) -> str | None:
+    """The blocked binary's name when `args` would run a real host binary, else None."""
+    import os
+    import shlex
+    import shutil
+    if isinstance(args, (str, bytes)):
+        text = os.fsdecode(args)
+        try:
+            words = shlex.split(text)
+        except ValueError:
+            words = text.split()
+    else:
+        words = [os.fsdecode(a) for a in args]
+    if not words:
+        return None
+    argv0 = words[0]
+    if os.path.basename(argv0) not in HOST_BINARIES:
+        return None
+    path = argv0 if os.sep in argv0 else shutil.which(argv0, path=(env or os.environ).get("PATH"))
+    if path is None:
+        return None                                   # not installed: Popen raises FileNotFoundError by itself
+    real = os.path.realpath(path)
+    if any(real == root or real.startswith(root + os.sep) for root in allowed_roots):
+        return None
+    return os.path.basename(argv0)
+
+
+@pytest.fixture(autouse=True)
+def _no_host_binaries(tmp_path_factory, monkeypatch):
+    import errno
+    import os
+    import subprocess
+    import tempfile
+    allowed_roots = tuple(os.path.realpath(str(p)) for p in
+                          (tmp_path_factory.getbasetemp(), tempfile.gettempdir(), _REPO))
+    real_popen = subprocess.Popen
+
+    class _GuardedPopen(real_popen):
+        def __init__(self, args, *a, **kw):
+            blocked = host_binary_refused(args, kw.get("env"), allowed_roots)
+            if blocked:
+                # Exactly what a host without the binary raises, so callers take their "not installed" path.
+                raise FileNotFoundError(errno.ENOENT, f"host binary blocked in tests: {blocked}", blocked)
+            super().__init__(args, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "Popen", _GuardedPopen)
 
 
 @pytest.fixture(autouse=True)

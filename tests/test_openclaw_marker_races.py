@@ -65,6 +65,7 @@ def sigterm_sentinel():
     signal.signal(signal.SIGTERM, previous)
 
 
+@pytest.mark.timing
 def test_a_sigterm_between_the_create_and_the_return_does_not_leave_the_marker(tmp_path, monkeypatch,
                                                                             sigterm_sentinel):
     path = tmp_path / "watchdog.off"

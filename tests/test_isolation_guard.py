@@ -78,3 +78,35 @@ def test_a_native_handoff_without_a_stub_fails_loudly():
     from ai_resources.setup import live_auth
     with pytest.raises(AssertionError, match="native flow"):
         live_auth.run_handoff(["claude"])
+
+
+def test_a_host_binary_is_refused_as_if_it_were_not_installed():
+    import subprocess
+
+    import pytest
+    for argv in (["systemctl", "--user", "is-enabled", "openclaw-gateway.service"],
+                 ["npm", "install", "-g", "openclaw@latest"]):
+        with pytest.raises(FileNotFoundError):
+            subprocess.run(argv, capture_output=True, timeout=5)
+
+
+def test_a_stub_binary_under_the_test_temp_dir_still_runs(tmp_path):
+    import subprocess
+    stub = tmp_path / "openclaw"
+    stub.write_text("#!/bin/sh\necho stub $1\n")
+    stub.chmod(0o755)
+    out = subprocess.run([str(stub), "--version"], capture_output=True, text=True, timeout=5)
+    assert out.stdout.strip() == "stub --version"
+    on_path = subprocess.run(["openclaw", "x"], capture_output=True, text=True, timeout=5,
+                             env={**os.environ, "PATH": f"{tmp_path}:{os.environ.get('PATH', '')}"})
+    assert on_path.stdout.strip() == "stub x"
+
+
+def test_the_refusal_reads_shell_strings_and_absolute_paths():
+    from conftest import host_binary_refused
+    roots = ("/nonexistent-root",)
+    env = {"PATH": "/usr/bin:/bin"}
+    assert host_binary_refused(["git", "status"], env, roots) is None
+    assert host_binary_refused(["/usr/bin/systemctl", "--user"], env, roots) == "systemctl"
+    assert host_binary_refused("/usr/bin/curl -s https://example.invalid", env, roots) == "curl"
+    assert host_binary_refused([], env, roots) is None

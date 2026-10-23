@@ -37,8 +37,8 @@ jobs:
         # httpx too: the LiteLLM module imports it, and the gateway-rendering
         # tests exercise that module. rich, questionary and prompt_toolkit are pinned (the matrix
         # runs the Formula versions and the newest ones) so the real-library UI tests run instead of
-        # being skipped.
-        run: pip install pyyaml pytest httpx ${{ matrix.pins }}
+        # being skipped. pytest-xdist runs the suite in parallel (scripts/run-tests.sh).
+        run: pip install pyyaml pytest pytest-xdist httpx ${{ matrix.pins }}
 
       - name: Validate skills, workflows, roles, scripts and references
         run: python3 scripts/validate_kit.py
@@ -53,8 +53,9 @@ jobs:
       # exercises behaviour. These cover the gateway translation, profile
       # selection, non-interactive prompts and subagent generation — the paths
       # where silent breakage would otherwise reach a release unnoticed.
+      # In parallel, then the `timing` tests (wall-clock budgets) in one process: the same script as local runs.
       - name: Run unit tests
-        run: python3 -m pytest tests/ -q
+        run: scripts/run-tests.sh
 
       # The OpenClaw plugin (claude-kit and agy-cli backends) has its own node:test suite, which no job ran before.
       # It has no dependencies, so the Node that ships on the runner is enough (engines: node >= 18).

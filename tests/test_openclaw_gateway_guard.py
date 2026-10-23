@@ -867,6 +867,7 @@ def test_a_command_after_the_commit_message_heredoc_is_still_read(guard):
     assert guard.shape(cmd) == "doctor"
 
 
+@pytest.mark.timing
 def test_a_huge_multiline_quoted_command_stays_inside_the_hook_timeout(guard):
     import time
     big = "echo \"$(echo x)\n" + ("line of text with 'quotes' \n" * 9000)   # just under the cap
@@ -1084,6 +1085,7 @@ def test_four_to_seven_nested_wrappers_are_followed(guard, times):
     assert guard.shape(_wrap("openclaw gateway status", times)) is None
 
 
+@pytest.mark.timing
 def test_past_the_cap_the_text_is_denied_only_when_it_names_the_gateway_and_a_verb(guard):
     # ten levels of quoting is 118 KB: past the nesting limit (8), under the size cap
     assert len(_wrap("systemctl --user stop openclaw-gateway", 10)) < guard._MAX_COMMAND_CHARS
@@ -1337,6 +1339,7 @@ def _timed(guard, command, limit=3.0):
     return result
 
 
+@pytest.mark.timing
 def test_28000_openclaw_words_in_a_deep_nest_cost_less_than_three_seconds(guard):
     # 1c: the window of an `openclaw` word is bounded, and the fallback is charged against the work budget
     # (`cat`, not `echo`: a data command is skipped by the fallback and the window code would never run)
@@ -1347,6 +1350,7 @@ def test_28000_openclaw_words_in_a_deep_nest_cost_less_than_three_seconds(guard)
     assert _timed(guard, "'x\n" + "openclaw doctor " * 14000) is None
 
 
+@pytest.mark.timing
 def test_thousands_of_heredoc_operators_cost_less_than_three_seconds(guard):
     group = 'echo "' + "".join(f"$(cat<<D{i}\nD{i}\n)\n" for i in range(6000)) + '"'
     assert _timed(guard, group) is None
