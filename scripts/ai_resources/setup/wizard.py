@@ -25,7 +25,7 @@ from . import (
     tools,
     ui,
 )
-from . import cockpit_auth, compat, live_auth, model_selection, profile_names, team_view
+from . import cockpit_auth, compat, deferred, live_auth, model_selection, profile_names, team_view
 from .cockpits import ALL as ALL_COCKPITS
 from .cockpits import _shared
 from .. import __version__, model_pins, repo_root, roles_policy, selection as selection_mod
@@ -945,6 +945,9 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
         from .cockpits import _openclaw_image as _image
         rows += _image.review_rows(s, getattr(s, _image.CTX_ATTR, None))
     written = "executors.yaml, tool config files" + (", lanes.yaml" if state.lanes_enabled(s) else "")
+    queued = deferred.review_labels(s)
+    if queued:
+        written += "; also at Apply: " + "; ".join(queued)
     rows.append(("Will write", written))
     return rows
 
@@ -2291,23 +2294,52 @@ def _step7_cockpit_config(s: state.SetupState, dry_run: bool = False) -> int:
 
 
 def _step_hygiene(s: state.SetupState, dry_run: bool = False) -> int:
-    """Offer to disable user-level MCP servers and plugins with no call in 30 days (ADR-0014; setup/hygiene.py)."""
+    """Offer to disable user-level MCP servers and plugins with no call in 30 days (ADR-0014; setup/hygiene.py). The
+    answers are queued; the disabling happens at Apply (ADR-0016 D6)."""
     from . import hygiene
-    return hygiene.run_step(s, dry_run=dry_run)
+    chosen = hygiene.plan(s, dry_run=dry_run)
+    if chosen:
+        names = ", ".join(f"{c.kind} {c.name}" for c in chosen)
+        deferred.enqueue(s, deferred.Action(
+            "hygiene", f"disable unused Claude Code tools: {names}",
+            plan_text=f"disable {len(chosen)} unused Claude Code tool(s): {names}",
+            run=lambda: hygiene.apply(s, chosen)))
+    else:
+        deferred.discard(s, "hygiene")
+    return 0
 
 
 def _step_agy_mcp(s: state.SetupState, dry_run: bool = False) -> int:
-    """Offer `engram` and any servers you pick for agy's MCP file, fill-only with a backup (ADR-0014; agy_mcp.py)."""
+    """Offer `engram` and any servers you pick for agy's MCP file, fill-only with a backup (ADR-0014; agy_mcp.py). The
+    answer is queued; the file is written at Apply (ADR-0016 D6)."""
     from . import agy_mcp
-    ui.section(5, 5, "agy MCP servers")
-    agy_mcp.run_step(s, dry_run=dry_run)
+    _section(8, "agy MCP servers")
+    additions = agy_mcp.plan(s, dry_run=dry_run)
+    if additions:
+        names = ", ".join(sorted(additions))
+        deferred.enqueue(s, deferred.Action(
+            "agy_mcp", f"add to the agy MCP file: {names}",
+            plan_text=f"add {names} to {agy_mcp.mcp_path()} (fill-only, with a backup)",
+            run=lambda: agy_mcp.apply(s, additions)))
+    else:
+        deferred.discard(s, "agy_mcp")
     return 0
 
 
 def _step_claude_md(s: state.SetupState, dry_run: bool = False) -> int:
-    """Offer to move heavy blocks of the operator's global CLAUDE.md to skills or rules (ADR-0014; claude_md_migrate.py)."""
+    """Offer to move heavy blocks of the operator's global CLAUDE.md to skills or rules (ADR-0014; claude_md_migrate.py).
+    The answers are queued; nothing moves until Apply (ADR-0016 D6)."""
     from . import claude_md_migrate
-    return claude_md_migrate.run_step(s, dry_run=dry_run)
+    decisions = claude_md_migrate.plan(s, dry_run=dry_run)
+    if decisions:
+        names = ", ".join(f"'{d.heading}' -> {d.kind}" for d in decisions)
+        deferred.enqueue(s, deferred.Action(
+            "claude_md", f"move CLAUDE.md blocks: {names}",
+            plan_text=f"move {len(decisions)} block(s) out of {claude_md_migrate.claude_md_path()} (backup first): {names}",
+            run=lambda: claude_md_migrate.apply(s, decisions)))
+    else:
+        deferred.discard(s, "claude_md")
+    return 0
 
 
 def _step_more(s: state.SetupState) -> int:
@@ -2826,6 +2858,15 @@ def _note_profile_table_change(s: state.SetupState, dry_run: bool) -> None:
         s.profile.roles_seen = new_table
 
 
+def _run_deferred(s: state.SetupState) -> None:
+    """Run the writes the wizard queued while it asked (hygiene, the agy MCP file, the CLAUDE.md migration, the operator
+    rules), in the order they were queued and before the cockpits are configured: the same order the immediate steps had."""
+    if not deferred.pending(s):
+        return
+    ui.info("Writing what you chose earlier...")
+    deferred.run_all(s, say=ui.info, warn=ui.warn)
+
+
 def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     _note_profile_table_change(s, dry_run)
     if dry_run:
@@ -2833,6 +2874,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
     if not _REVIEW_SHOWN:
         _section(9, "Apply")
     ui.console().print()
+    _run_deferred(s)
     ui.info("Generating configuration files...")
 
     # Build the final executors dict
@@ -3250,6 +3292,8 @@ def _step9_dry_run(s: state.SetupState) -> int:
     _print_plan_table(s)
     _apply_channel_changes(s, dry_run=True)
     _apply_image_dry_run(s)
+    for line in deferred.dry_run_lines(s):
+        ui.info(line)
 
     # Build executors
     if s.mode == "multi-model":

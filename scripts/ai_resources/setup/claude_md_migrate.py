@@ -216,30 +216,43 @@ def migrate_block(raw: str, block: Block, kind: str, *, description: str = "", p
     return _replace_lines(raw, block, replacement), record
 
 
-def run_step(s, *, dry_run: bool = False, now: datetime | None = None) -> int:
-    """The wizard step: one block at a time, heaviest first, default keep. A dry run lists them and asks nothing."""
+@dataclass(frozen=True)
+class Decision:
+    """One block the operator chose to move: nothing about it has been written yet (ADR-0016 D6)."""
+    block_id: str
+    heading: str
+    tokens: int
+    kind: str
+    description: str = ""
+    paths: tuple[str, ...] = ()
+
+
+def plan(s, *, dry_run: bool = False) -> list[Decision]:
+    """The asking half: one block at a time, heaviest first, default keep. Nothing is written. A dry run lists them and
+    asks nothing."""
     path = claude_md_path()
     try:
         raw = _shared._read_raw(path)
     except OSError:
-        return 0
+        return []
     if not raw:
-        return 0
+        return []
     blocks, _kit = parse_blocks(raw)
     done = {r.get("block_id") for r in s.tracking.claude_md_migrations if isinstance(r, dict)}
     offers = sorted((b for b in blocks if b.tokens >= MIN_TOKENS and b.id not in done), key=lambda b: -b.tokens)
     total = tokens_of(raw)
     if not offers:
         ui.detail(f"Global CLAUDE.md: ~{total:,} tokens (estimate); no block of your own is heavy enough to move.")
-        return 0
+        return []
     ui.section(5, 5, "Global CLAUDE.md - move heavy blocks out")
     ui.info(f"{path} is loaded into every session: ~{total:,} tokens (estimate). These blocks of your own content are "
-            f"{MIN_TOKENS}+ tokens each; moving one makes it load only when it is relevant. Nothing moves unless you say so.")
+            f"{MIN_TOKENS}+ tokens each; moving one makes it load only when it is relevant. Nothing moves unless you say so, "
+            "and nothing moves until Apply.")
     if dry_run:
         for b in offers:
             ui.detail(f"DRY RUN: would offer '{b.heading}' (~{b.tokens:,} tokens).")
-        return 0
-    backup: Path | None = None
+        return []
+    out: list[Decision] = []
     for offer in offers:
         choice = ui.select(
             f"'{offer.heading}' (~{offer.tokens:,} tokens, estimate): what should happen to this block?",
@@ -261,18 +274,29 @@ def run_step(s, *, dry_run: bool = False, now: datetime | None = None) -> int:
             if not paths:
                 ui.info("A rule needs at least one path glob; the block stays in CLAUDE.md.")
                 continue
+        out.append(Decision(offer.id, offer.heading, offer.tokens, choice, description, tuple(paths or ())))
+    return out
+
+
+def apply(s, decisions: list[Decision], *, now: datetime | None = None) -> int:
+    """The writing half, at Apply: move each chosen block (backup first, destination created exclusively, the kit block
+    never touched). Returns how many moved. Same bytes as the old immediate step."""
+    path = claude_md_path()
+    backup: Path | None = None
+    moved = 0
+    for d in decisions:
         current = _shared._read_raw(path)
         fresh, kit_before = parse_blocks(current)
-        target = next((b for b in fresh if b.id == offer.id), None)
+        target = next((b for b in fresh if b.id == d.block_id), None)
         if target is None:
-            ui.warn(f"'{offer.heading}' changed while asking; left in place.")
+            ui.warn(f"'{d.heading}' changed while asking; left in place.")
             continue
         try:
             if backup is None:
                 stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
                 backup = _shared._create_backup(path, current, stamp)
-            new_text, record = migrate_block(current, target, choice, description=description, paths=paths,
-                                             backup=backup, now=now)
+            new_text, record = migrate_block(current, target, d.kind, description=d.description,
+                                             paths=list(d.paths) or None, backup=backup, now=now)
             _fresh, kit_after = parse_blocks(new_text)
             if kit_after != kit_before:
                 raise OSError("the kit block would change")             # never edit inside the kit block
@@ -281,11 +305,18 @@ def run_step(s, *, dry_run: bool = False, now: datetime | None = None) -> int:
                 continue
             _shared._replace_atomically(write_to, new_text)
         except OSError as e:
-            ui.warn(f"Could not move '{offer.heading}': {e}. CLAUDE.md is unchanged for this block.")
+            ui.warn(f"Could not move '{d.heading}': {e}. CLAUDE.md is unchanged for this block.")
             continue
         s.tracking.claude_md_migrations.append(record)
-        ui.ok(f"Moved '{offer.heading}' to {record['destination']} (backup: {backup})")
-        ui.record_action(f"moved CLAUDE.md block {offer.id}")
+        ui.ok(f"Moved '{d.heading}' to {record['destination']} (backup: {backup})")
+        ui.record_action(f"moved CLAUDE.md block {d.block_id}")
+        moved += 1
+    return moved
+
+
+def run_step(s, *, dry_run: bool = False, now: datetime | None = None) -> int:
+    """`plan` then `apply` in one go, for a caller that has no Apply of its own. The wizard queues `apply` instead."""
+    apply(s, plan(s, dry_run=dry_run), now=now)
     return 0
 
 

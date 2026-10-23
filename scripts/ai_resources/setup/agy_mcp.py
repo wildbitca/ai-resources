@@ -73,7 +73,7 @@ def portable_candidates(claude_json: Path | None = None) -> dict[str, dict]:
     return out
 
 
-def plan(doc: dict, wanted: dict[str, dict]) -> dict[str, dict]:
+def missing_servers(doc: dict, wanted: dict[str, dict]) -> dict[str, dict]:
     """The servers that will be added: wanted ones the file does not have (fill-only)."""
     have = servers_of(doc)
     return {name: copy.deepcopy(defn) for name, defn in wanted.items() if name not in have}
@@ -85,7 +85,7 @@ def add_servers(path: Path, additions: dict[str, dict], tracking, *, now: dateti
     doc, raw = _read(path)
     if doc is None:
         raise OSError(f"{path} is not a JSON object; left as it is")
-    fresh = plan(doc, additions)
+    fresh = missing_servers(doc, additions)
     if not fresh:
         return None
     backup = None
@@ -135,17 +135,17 @@ def agy_in_use(s) -> bool:
     return "agy" in selected or s.openclaw.engine == "antigravity" or team_view.agy_lanes_on(s.profile.lanes)
 
 
-def run_step(s, *, dry_run: bool = False, path: Path | None = None, candidates: dict[str, dict] | None = None,
-             now: datetime | None = None) -> bool:
-    """Ask, then write. True when the file changed. Never headless, never in a dry run."""
+def plan(s, *, dry_run: bool = False, path: Path | None = None, candidates: dict[str, dict] | None = None) -> dict:
+    """The asking half (ADR-0016 D6): the servers the operator wants added, `{}` when none. Nothing is written. Never
+    headless, never in a dry run (those only say what a terminal run would offer)."""
     from . import hygiene
     if not agy_in_use(s):
-        return False
+        return {}
     path = path or mcp_path()
     doc, _raw = _read(path)
     if doc is None:
         ui.warn(f"{path} is not a JSON object; the kit leaves it as it is.")
-        return False
+        return {}
     have = servers_of(doc)
     missing_engram = KIT_SERVER not in have
     cands = portable_candidates() if candidates is None else candidates
@@ -154,7 +154,7 @@ def run_step(s, *, dry_run: bool = False, path: Path | None = None, candidates: 
         if missing_engram or offers:
             ui.detail(("DRY RUN: " if dry_run else "") + f"agy loads every server in {path} into each session; "
                       "run setup in a terminal to add `engram` and pick any others (default none).")
-        return False
+        return {}
     additions: dict[str, dict] = {}
     if missing_engram and ui.confirm(f"Add the engram MCP server to {path} (agy)? Nothing already in the file is "
                                      "changed or removed.", default=True):
@@ -164,8 +164,14 @@ def run_step(s, *, dry_run: bool = False, path: Path | None = None, candidates: 
                              "agy session; leave empty to add none.", [ui.Choice(n, value=n) for n in sorted(offers)],
                              default=[]) or []
         additions.update({n: offers[n] for n in sorted(offers) if n in chosen})
+    return additions
+
+
+def apply(s, additions: dict, *, path: Path | None = None, now: datetime | None = None) -> bool:
+    """The writing half, at Apply: add `additions` to the agy MCP file, fill-only, with a backup. True when it changed."""
     if not additions:
         return False
+    path = path or mcp_path()
     try:
         backup = add_servers(path, additions, s.tracking, now=now)
     except OSError as e:
@@ -174,6 +180,13 @@ def run_step(s, *, dry_run: bool = False, path: Path | None = None, candidates: 
     ui.ok(f"agy MCP: added {', '.join(sorted(additions))} to {path}" + (f" (backup: {backup})" if backup else ""))
     ui.record_action("updated the agy MCP file")
     return True
+
+
+def run_step(s, *, dry_run: bool = False, path: Path | None = None, candidates: dict[str, dict] | None = None,
+             now: datetime | None = None) -> bool:
+    """`plan` then `apply` in one go, for a caller that has no Apply of its own. The wizard queues `apply` instead."""
+    additions = plan(s, dry_run=dry_run, path=path, candidates=candidates)
+    return apply(s, additions, path=path, now=now)
 
 
 def cmd_restore(*, path: Path | None = None, say: Callable[[str], None] = print) -> int:
