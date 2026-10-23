@@ -429,3 +429,50 @@ def test_all_gemini_gets_the_same_warning(monkeypatch):
     monkeypatch.setattr(ui, "warn", warnings.append)
     wizard._warn_open_checker_profile("all-gemini")
     assert len(warnings) == 1 and "security-auditor" in warnings[0] and "identical model" in warnings[0]
+
+
+# --- acceptance 4: --cockpits pre-fills the ticked tools, each answers its OWN sign-in, no other one asks ---------------
+def test_cockpits_flag_runs_non_interactively_with_each_ticked_cockpit_on_its_own_prefilled_auth(monkeypatch, tmp_path, capsys):
+    import types
+
+    from ai_resources.setup import detection
+    from ai_resources.setup.cockpits import ALL, openclaw as oc
+    host_env(monkeypatch, tmp_path)
+    detected = {c: types.SimpleNamespace(installed=True, version="1.0", binary_path=f"/opt/{c}", name=c)
+                for c in ("claude", "openclaw", "agy", "cursor")}
+    monkeypatch.setattr(detection, "detect_all_cockpits", lambda: detected)
+    monkeypatch.setattr(wizard.model_selection, "detect_accounts", lambda: {})
+    monkeypatch.setattr(wizard.model_selection, "candidates", lambda a, f: [])
+    monkeypatch.setattr(ui, "review_table", lambda rows, title="": None)
+    commands = []
+    monkeypatch.setattr(oc, "_openclaw", lambda argv, stdin=None, timeout=120: commands.append(list(argv)) or
+                        (127, "openclaw not found on PATH"))                    # ADR-0003: never the real binary
+    asked = []
+    for cid, mod in ALL.items():
+        real = getattr(mod, "ask_auth", None)
+        if real is not None:
+            monkeypatch.setattr(mod, "ask_auth", lambda *a, _r=real, _c=cid, **k: asked.append(_c) or _r(*a, **k))
+    assert wizard.run(_args(non_interactive=True, cockpits="claude,openclaw")) == 0
+    # only the two ticked tools asked, each its own question; agy and Cursor were detected but not ticked
+    assert asked == ["claude", "openclaw"]
+    assert [c for c in commands if c[:2] != ["config", "file"]] == []          # no sign-in command: path lookups only
+    saved = state.load().cockpit_auth
+    assert saved["claude"] == {"method": "subscription"}                       # Claude Code's own pre-filled answer
+    assert saved["openclaw"]["method"] == "cli"                                # OpenClaw's own, a different shape
+    assert "agy" not in saved and "cursor" not in saved and "gemini" not in saved
+    assert cockpit_auth.secret_findings(saved) == []
+
+
+def test_the_cockpits_flag_prints_no_deprecation_note_unlike_backend(monkeypatch, tmp_path, capsys):
+    """Plan acceptance 4 reads "`--backend litellm` or `--cockpits claude,openclaw` ... works with deprecation note". The code
+    deprecates only --backend (cli.py help, wizard._preflight_selection); --cockpits is documented as a live pre-fill and
+    prints no note. This pins today's behaviour so the plan-vs-code difference is visible, not papered over."""
+    monkeypatch.setattr(wizard.model_selection, "detect_accounts", lambda: {})
+    monkeypatch.setattr(wizard.model_selection, "candidates", lambda a, f: [])
+    monkeypatch.setattr(wizard.detection, "detect_all_cockpits", lambda: {})
+    script = Script()
+    script.install(monkeypatch)
+    s = state.SetupState()
+    assert wizard._preflight_selection(_args(cockpits="claude,openclaw"), s) == 0
+    assert not any("deprecated" in m for m in script.shown)
+    assert s.profile.customizations["__targets__"]["selected"] == ["claude", "openclaw"]
