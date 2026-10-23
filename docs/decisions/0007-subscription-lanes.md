@@ -286,3 +286,11 @@ they stay disabled until enabled, the Antigravity lane stays opt-in and gated, t
 - Section 11: the acknowledged Google role list gains the planner and software-architect seconds (the text hash of `ACK_TEXT` does not change); presets carry no agy writer candidates; a validated, committed record (`agy_gate_evidence.py`, read lazily and cached; `EVIDENCE` stays a literal) is laid over `EVIDENCE` by `effective_evidence()`: the record is made only by `ai-resources lanes gates record`, is tracked and equal to HEAD in a git kit root, ships in no release until the operator commits it, and flips no gate by hand; a hook denies agent writes to it. Evidence note (ADR-0010 N1): that hook is tamper evidence plus the operator's git review, not a security boundary; it also denies git commands that name the record or `scripts/ai_resources/data/` and any `lanes gates record` command in an agent session, but an agent with commit rights can still forge the record, so the operator reviews every commit touching `scripts/ai_resources/data/`.
 
 Approvers: operator; software-architect and security-auditor APPROVE (2026-10-19, re-review at 5953c22). See [ADR-0010](0010-setup-five-phases-channels-team.md).
+
+## Addendum (ADR-0016 D3, 2026-10-23): Antigravity terms conflict
+
+The OpenClaw docs (`providers/google.md`) state that the Antigravity terms prohibit third-party tools from using Antigravity
+OAuth. The acknowledgement text (`ACK_TEXT['google']`) now says so and records that the operator accepts the suspension risk.
+Its hash changes, so stored Google acknowledgements are rejected and setup asks once more (fail closed, no auto re-sign). The
+gates G0-G7, their gate record file and the hash algorithm are unchanged; the host overlay of the gate-record module is removed,
+so absent evidence means held.

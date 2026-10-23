@@ -1,6 +1,6 @@
 # ADR-0015: Per-cockpit setup, OpenClaw providers, native team orchestrator (round 3)
 
-**Status**: Proposed (2026-10-23), implemented on `feat/per-cockpit-setup-orchestrator`, not released, awaiting the independent Verifier. Plan:
+**Status**: Proposed (2026-10-23); D1 table and D2 provider question superseded by [ADR-0016](0016-delegated-auth-live-source-of-truth.md), implemented on `feat/per-cockpit-setup-orchestrator`, not released, awaiting the independent Verifier. Plan:
 `.agent-output/planner/per-cockpit-setup-openclaw-orchestrator-plan.md` (section 10 carries the operator answers).
 **Date**: 2026-10-23
 **Decision makers**: operator (plan section 10, binding), implementer (record only).
