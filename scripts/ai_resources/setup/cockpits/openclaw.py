@@ -74,6 +74,7 @@ from . import _openclaw_image as image
 from . import _openclaw_providers as providers_mod
 from . import _openclaw_host as host_section
 from . import openclaw_lanes
+from . import openclaw_roles
 from . import _agy_quota
 from ... import model_pins, openclaw_host, openclaw_reload_rules, openclaw_tool_policy
 
@@ -353,6 +354,11 @@ def agy_flash_low_reason(s) -> str | None:
     return agy_lane_gates.refusal()
 
 
+def _is_kit_agent(name: Any) -> bool:
+    """A lane or role agent the kit wrote: the engine's model rewrites never touch it (ADR-0007, ADR-0015 S8)."""
+    return str(name).startswith(("kit-lane-", openclaw_roles.PREFIX))
+
+
 def _fallbacks_for(primary_ref: str, engine_id: str, *, flash_low: bool = True,
                    enabled: "Iterable[str] | None" = None) -> list[str]:
     """Cross-pool / cross-provider fallback models for an OpenClaw agent primary model. `flash_low=False` leaves the
@@ -415,7 +421,7 @@ def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_c
         }
         entries = _get(doc, "agents", "entries") or {}
         for name, cfg in entries.items():
-            if str(name).startswith("kit-lane-"):
+            if _is_kit_agent(name):
                 continue
             if isinstance(cfg, dict) and "model" in cfg:
                 patch["agents"].setdefault("entries", {})[name] = {"model": dict(model_spec)}
@@ -504,7 +510,7 @@ def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_co
     # carries an explicit `model` key so the chosen engine + model applies completely.
     entries = _get(doc, "agents", "entries") or {}
     for name, cfg in entries.items():
-        if name == "claude" or str(name).startswith("kit-lane-"):
+        if name == "claude" or _is_kit_agent(name):
             continue
         cfg_dict = cfg if isinstance(cfg, dict) else {}
         existing_allow = _get(cfg_dict, "subagents", "allowAgents") or []
@@ -1417,8 +1423,12 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     if not dry_run:
         doc = read_config(path)
     lanes_changed = _configure_lanes(s, doc, dry_run=dry_run, run_changes=run_changes)
+    roles_changed = _configure_roles(ctx, s, doc if dry_run else read_config(path), ak_path, dry_run=dry_run,
+                                     run_changes=run_changes)
+    drift_changed = _configure_agy_drift(s, doc if dry_run else read_config(path), dry_run=dry_run,
+                                         run_changes=run_changes)
     changed = (engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
-               or lanes_changed)
+               or lanes_changed or roles_changed or drift_changed)
     if not dry_run and run_changes:
         host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
     # The kit block in every agent workspace does not depend on the engine, on the host section's
@@ -1473,6 +1483,53 @@ def _configure_lanes(s: state.SetupState, doc: dict, *, dry_run: bool, run_chang
         dry_run=dry_run, info=ui.info, warn=ui.warn, error=ui.error, confirm=confirm,
         delete_agent=lambda aid: _openclaw(["agents", "delete", aid, "--force"]),
         teardown_fn=lambda st, d: _teardown_lanes(st, d))
+
+
+def _configure_roles(ctx: dict, s: state.SetupState, doc: dict, ak_path: str, *, dry_run: bool,
+                     run_changes: list[dict]) -> bool:
+    """One `kit-role-*` agent per kit role (ADR-0015 S8). Only when the operator chose OpenClaw's providers."""
+    from .. import cockpit_auth, effort as effort_mod
+    enabled = enabled_providers(s)
+    if enabled is None:
+        return False
+    executors = ctx.get("executors") or {}
+
+    def confirm(msg: str) -> bool:
+        return True if ui.is_non_interactive() else bool(ui.confirm(msg, default=True))
+    catalog = providers_mod.discover_providers(_openclaw).models if not ui.is_non_interactive() else {}
+    return openclaw_roles.configure(
+        s, doc, config_root=CONFIG_ROOT, by_role=executors.get("by_role") or {},
+        by_persona=executors.get("by_persona") or {}, ak_path=ak_path, kit_root=repo_root(), enabled=enabled,
+        catalog=catalog, effort_table=effort_mod.table_for_state(s), methods=cockpit_auth.providers(s),
+        apply_patch=_lanes_apply, register_agent=_lanes_register, classify=_lanes_classify,
+        change_records=openclaw_host.change_records, run_changes=run_changes, dry_run=dry_run,
+        info=ui.info, warn=ui.warn, error=ui.error)
+
+
+def _configure_agy_drift(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:
+    """The confirmed migration of agy lanes that run on the Anthropic API (ADR-0015 D2b). Never silent, never unattended."""
+    from .. import lanes_render
+    if not openclaw_lanes.agy_primary_drift(doc):
+        return False
+    acked = lanes_render.valid_acks(s.profile.lane_acks).get("google") is not None
+    interactive = not ui.is_non_interactive()
+    applied = openclaw_lanes.migrate_agy_drift(
+        doc, google_acknowledged=acked, apply_patch=_lanes_apply, classify=_lanes_classify,
+        confirm=lambda m: bool(ui.confirm(m, default=False)), delete_agent=lambda aid: _openclaw(
+            ["agents", "delete", aid, "--force"]),
+        change_records=openclaw_host.change_records, run_changes=run_changes, interactive=interactive,
+        dry_run=dry_run, info=ui.info, warn=ui.warn, error=ui.error)
+    return bool(applied)
+
+
+def _teardown_roles(s: state.SetupState, doc: dict) -> bool:
+    if not s.openclaw.role_agents_applied:
+        return True
+
+    def confirm(msg: str) -> bool:
+        return True if ui.is_non_interactive() else bool(ui.confirm(msg, default=True))
+    return openclaw_roles.teardown(s, doc, apply_patch=_lanes_apply, oc=_openclaw, confirm=confirm,
+                                   info=ui.info, error=ui.error)
 
 
 def _teardown_lanes(s: state.SetupState, doc: dict) -> bool:
@@ -2384,7 +2441,8 @@ def _unlink_plugin(s: state.SetupState) -> list[str]:
 def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
     if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored or s.openclaw.mcp_deny_added
-            or s.openclaw.agent_kit_blocks or s.openclaw.lanes_applied or host_section.applied_any(s.openclaw)
+            or s.openclaw.agent_kit_blocks or s.openclaw.lanes_applied or s.openclaw.role_agents_applied
+            or host_section.applied_any(s.openclaw)
             or s.openclaw.image_deny_added or s.openclaw.image_applied or s.openclaw.image_auth_profile_created):
         # A deferral leaves `applied` False (the engine patch waits for the restart), so this is
         # the path that meets it: with nothing to undo there is nothing left to demand either.
@@ -2405,6 +2463,10 @@ def teardown(s: state.SetupState) -> list[str]:
         return removed
     doc = read_config(config_path())
     # Reverse order of configure(): the lanes writer ran after the host section, so it is undone first.
+    had_roles = bool(s.openclaw.role_agents_applied)
+    roles_ok = _teardown_roles(s, doc) if had_roles else True
+    if had_roles:
+        doc = read_config(config_path())
     had_lanes = bool(s.openclaw.lanes_applied)
     lanes_ok = _teardown_lanes(s, doc) if had_lanes else True
     if had_lanes:
@@ -2421,7 +2483,7 @@ def teardown(s: state.SetupState) -> list[str]:
     if s.openclaw.image_deny_added:
         _remove_image_deny(s)
     removed: list[str] = []
-    if not (engine_ok and mcp_ok and voice_ok and host_ok and lanes_ok):
+    if not (engine_ok and mcp_ok and voice_ok and host_ok and lanes_ok and roles_ok):
         return removed
     removed.append(str(config_path()))
 
@@ -2439,6 +2501,7 @@ def teardown(s: state.SetupState) -> list[str]:
     # `ai-resources openclaw apply-pending` still has to find them (ADR-0003).
     pending = s.openclaw.host_restart_pending
     left_lanes = s.openclaw.lanes_applied          # lane agents the operator declined to delete stay recorded
+    left_roles = s.openclaw.role_agents_applied    # the same for kit-role agents
     # What a retry still owes. The sign-out offer (`image_auth_profile_created`) rides with a model restore that failed:
     # `_teardown_image` returns before the offer then, and a later teardown must still make it.
     left_image = {k: getattr(s.openclaw, k) for k in state.IMAGE_STATE_DEFAULTS
@@ -2449,6 +2512,7 @@ def teardown(s: state.SetupState) -> list[str]:
     s.openclaw = state.OpenClawState()
     s.openclaw.host_restart_pending = pending
     s.openclaw.lanes_applied = left_lanes
+    s.openclaw.role_agents_applied = left_roles
     for k, v in left_image.items():
         setattr(s.openclaw, k, v)
     return removed

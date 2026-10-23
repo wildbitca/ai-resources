@@ -262,8 +262,8 @@ def agy_primary_drift(doc: Mapping[str, Any]) -> list[tuple[str, str]]:
 
     An agy lane is meant to run on the Antigravity subscription (`agy-cli-lane/*`). One that runs a Claude model
     on the API bills per token (the 2026-10-22 analysis found Opus 5.5 on three of them). The kit only REPORTS this:
-    it does not repoint the agent, and it leaves the agy lane gates and held agents exactly as they are (ADR-0007
-    section 11: the gates stay unproven)."""
+    it never repoints or removes anything by itself (`migrate_agy_drift` does, one confirmed agent at a time), and it
+    leaves the agy lane gates and held agents exactly as they are (ADR-0007 section 11: the gates stay unproven)."""
     entries = _get(doc, "agents", "entries") or {}
     out: list[tuple[str, str]] = []
     if not isinstance(entries, Mapping):
@@ -280,9 +280,95 @@ def agy_primary_drift(doc: Mapping[str, Any]) -> list[tuple[str, str]]:
 
 def agy_primary_drift_findings(doc: Mapping[str, Any]) -> list[str]:
     return [f"{aid} is an agy lane but its primary is {ref} on the Anthropic API (billed per token, not the "
-            "Antigravity subscription). The kit does not repoint it: agy lanes stay closed until the ADR-0007 "
-            "gates are proven. Repoint or remove the agent by hand if the spend is unwanted."
+            "Antigravity subscription). Setup never changes it silently: it offers to point it back at "
+            "agy-cli-lane/* (needs the ADR-0007 Google terms acknowledgement) or to remove it, one agent at a time, "
+            "after your confirmation. The ADR-0007 gates stay as they are."
             for aid, ref in agy_primary_drift(doc)]
+
+
+def _stub_models(doc: Mapping[str, Any]) -> set[str]:
+    return {str(m.get("id")) for m in (_get(doc, "models", "providers", STUB_PROVIDER, "models") or [])
+            if isinstance(m, Mapping) and m.get("id")}
+
+
+def agy_drift_proposals(doc: Mapping[str, Any], *, google_acknowledged: bool) -> list[dict[str, str]]:
+    """One proposal per drifted agy lane (ADR-0015 D2b, operator answer 3). Pure: nothing is changed here.
+
+    `repoint` needs a valid Google acknowledgement AND the stub catalog to list the target model
+    (`models.providers.agy-cli-lane`); otherwise the only offer is `remove`. Each proposal says why."""
+    known = _stub_models(doc)
+    out: list[dict[str, str]] = []
+    for aid, ref in agy_primary_drift(doc):
+        slug = ref.split("/", 1)[1] if ref.startswith("anthropic/") else ref
+        target = f"{STUB_PROVIDER}/{slug}"
+        if google_acknowledged and slug in known:
+            out.append({"id": aid, "action": "repoint", "from": ref, "to": target,
+                        "why": "the Google terms are acknowledged and the Antigravity catalog lists this model"})
+        elif not google_acknowledged:
+            out.append({"id": aid, "action": "remove", "from": ref, "to": "",
+                        "why": "no valid Google acknowledgement, so it cannot be pointed at the subscription"})
+        else:
+            out.append({"id": aid, "action": "remove", "from": ref, "to": "",
+                        "why": f"the Antigravity catalog has no {slug}, so there is nothing to point it at"})
+    return out
+
+
+def migrate_agy_drift(doc: Mapping[str, Any], *, google_acknowledged: bool,
+                      apply_patch: Callable[..., "tuple[bool, str]"], classify: Callable[[dict], list[str]],
+                      confirm: Callable[[str], bool], delete_agent: Callable[[str], "tuple[int, str]"],
+                      change_records: Callable[[dict, dict, Any, str], list[dict]] | None = None,
+                      run_changes: list[dict] | None = None, interactive: bool = True, dry_run: bool = False,
+                      info: Callable[[str], None] = print, warn: Callable[[str], None] = print,
+                      error: Callable[[str], None] = print) -> list[dict[str, str]]:
+    """The confirmed migration of drifted agy lanes. Returns the proposals that were applied.
+
+    Never silent: a non-interactive run and a dry run only list the proposals. A repoint is one fill-only-style patch of
+    `agents.entries.<id>.model.primary`, classified first (a restart-class key is not applied). A removal asks again,
+    takes the id out of every `allowAgents` list in the same patch and then runs `agents delete`. Only ids that start
+    with `kit-lane-agy-` are ever touched."""
+    proposals = [p for p in agy_drift_proposals(doc, google_acknowledged=google_acknowledged)
+                 if p["id"].startswith(AGY_AGENT_PREFIX)]
+    applied: list[dict[str, str]] = []
+    for p in proposals:
+        line = (f"{p['id']}: {p['action']} ({p['from']}" + (f" -> {p['to']}" if p["to"] else "") + f"); {p['why']}")
+        if dry_run or not interactive:
+            info(f"agy lane drift ({'dry run' if dry_run else 'not asked: unattended'}): {line}")
+            continue
+        if not confirm(f"Apply this change? {line}"):
+            info(f"agy lane drift: {p['id']} left as it is.")
+            continue
+        if p["action"] == "repoint":
+            patch = {"agents": {"entries": {p["id"]: {"model": {"primary": p["to"]}}}}}
+            restart = classify(patch)
+            if restart:
+                warn("agy lane drift: the repoint needs a gateway restart and was NOT applied: " + ", ".join(restart))
+                continue
+            ok, out = apply_patch(patch)
+            if not ok:
+                error(f"OpenClaw rejected the agy lane repoint: {ui.safe_excerpt(out, 300, tail=True)}")
+                continue
+            if change_records is not None and run_changes is not None:
+                run_changes.extend(change_records(dict(doc), patch, None, "agy-drift"))
+        else:
+            if not confirm(f"Delete the lane agent {p['id']}? Its workspace is kept."):
+                continue
+            allow: dict[str, Any] = {}
+            for orch, entry in ((_get(doc, "agents", "entries") or {}).items()):
+                lst = _get(entry, "subagents", "allowAgents")
+                if isinstance(lst, list) and p["id"] in lst:
+                    allow[orch] = {"subagents": {"allowAgents": [x for x in lst if x != p["id"]]}}
+            if allow:
+                ok, out = apply_patch({"agents": {"entries": allow}})
+                if not ok:
+                    error(f"OpenClaw rejected the allowAgents cleanup: {ui.safe_excerpt(out, 300, tail=True)}")
+                    continue
+            rc, out = delete_agent(p["id"])
+            if rc != 0:
+                error(f"could not delete {p['id']}: {ui.safe_excerpt(out, 200, tail=True)}")
+                continue
+        applied.append(p)
+        info(f"agy lane drift: applied {p['action']} to {p['id']}.")
+    return applied
 
 
 def mcp_scope_findings(lanes: Mapping[str, Any], doc: Mapping[str, Any],
