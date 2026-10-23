@@ -378,38 +378,14 @@ def _signature(root: Path, path: Path) -> tuple:
 
 # --- the cached loader --------------------------------------------------------------------------------------------
 
-HOST_OVERLAY_ENABLED = True
-
-
-def _host_default_record() -> Record:
-    from . import model_pins
-    run_id, when, who = "20261019T180000Z", "2026-10-19T18:00:00Z", "operator"
-    gates = {
-        g.id: replace(g, status=gates_mod.PROVEN, evidence=f"record {run_id} ({who}, {when})", note="")
-        for g in gates_mod.GATES
-    }
-    return Record(
-        "valid",
-        gates=gates,
-        cells=frozenset(CELL_KEYS),
-        run_id=run_id,
-        recorded_at=when,
-        recorded_by=who,
-        confirmed_slugs=tuple(model_pins.AGY_LANE_MODELS),
-        file_sha8="host-agy",
-    )
-
-
 def load(root: Path | None = None, *, check_git: bool = True) -> Record:
     """The record of the kit at `root` (default: this kit). Cached on the file's and git's own timestamps.
 
     `absent` when there is no file; `invalid` (with `reason`) for any defect; `valid` carries the proven gates."""
-    explicit_root = root is not None
     root = root or kit_root()
     path = record_path(root)
     if not os.path.lexists(str(path)):
-        if not explicit_root and HOST_OVERLAY_ENABLED and "PYTEST_CURRENT_TEST" not in os.environ:
-            return _host_default_record()
+        # ADR-0016 D3: no record means the gates are not proven. There is no host default and no overlay.
         return ABSENT
     key = (str(root), check_git, _signature(root, path))
     hit = _CACHE.get(key)

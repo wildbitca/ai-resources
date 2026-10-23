@@ -688,9 +688,12 @@ ACK_TEXT = {
         "any task, and only `lanes prepare --lane` refuses a role the acknowledgement does not list, so a step "
         "that skipped `prepare` has already sent its repository content to Anthropic."),
     "google": (
-        "The Antigravity lane runs `agy -p` children through OpenClaw on the Google account named below. Google's "
-        "terms name third-party tools, OpenClaw included, and a suspension covers Antigravity, Gemini CLI and "
-        "Code Assist and may reach the account's other Google services; use an account that is not used for "
+        "The Antigravity lane runs `agy -p` children through OpenClaw on the Google account named below. The "
+        "OpenClaw docs (providers/google.md) state that the Antigravity terms prohibit third-party tools from "
+        "accessing the service through Antigravity OAuth, and this lane does exactly that: you accept the risk "
+        "that Google suspends the account, and a suspension covers Antigravity, Gemini CLI and Code Assist and "
+        "may reach the account's other Google services. This acknowledgement admits nothing by itself: gates "
+        "G0-G7 still decide whether the lane is admitted. Use an account that is not used for "
         "wildbit GCP or other critical work if your subscription allows it. Repository content, diffs, test "
         "output and MCP results of every listed role go to Google and cannot be recalled. An agy child runs with "
         "--dangerously-skip-permissions, a full shell. Without a usable sandbox the tool exclusions bound the "

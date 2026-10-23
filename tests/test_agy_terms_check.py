@@ -248,3 +248,59 @@ def test_a_stored_acknowledgement_for_changed_terms_text_drops_flash_low(monkeyp
     assert openclaw.agy_flash_low_reason(s) is None
     monkeypatch.setitem(lanes_render.ACK_TEXT, "google", lanes_render.ACK_TEXT["google"] + " (changed)")
     assert openclaw.agy_flash_low_reason(s) == lanes_render.HELD_NO_ACK_REASON
+
+
+# --- ADR-0016 D3 (AC-5): the Google terms text states the Antigravity conflict; an old acknowledgement is re-confirmed ----
+
+OLD_TEXT_SHA = "0" * 64
+
+
+def _capture_info(monkeypatch):
+    told: list[str] = []
+    monkeypatch.setattr(ui, "info", told.append)
+    return told
+
+
+def _stale_google():
+    ack = _google(["explore"])["google"]
+    ack["text_sha256"] = OLD_TEXT_SHA                      # signed against a text this kit no longer ships
+    return {"google": ack}
+
+
+def test_the_google_ack_text_states_the_terms_conflict_and_that_the_gates_still_decide():
+    text = lanes_render.ACK_TEXT["google"]
+    assert "providers/google.md" in text
+    assert "prohibit third-party tools" in text and "Antigravity OAuth" in text
+    assert "accept the risk" in text and "suspends the account" in text
+    assert "G0-G7 still decide" in text
+
+
+def test_an_acknowledgement_with_the_old_hash_is_rejected_by_valid_acks():
+    assert lanes_render.valid_acks(_stale_google()) == {}
+    assert lanes_render.valid_acks(_google(["explore"])).get("google")
+
+
+def test_a_stale_ack_prints_the_reconfirm_notice_and_is_never_resigned_automatically(monkeypatch):
+    s = _s(_stale_google())
+    Ui(monkeypatch, confirm=False)
+    told = _capture_info(monkeypatch)
+    ok, acks, rc = wizard.agy_terms_check(s, ["explore"], interactive=True)
+    assert any("terms text changed" in m.lower() and "re-confirm" in m for m in told)
+    assert ok is False and rc == 0 and acks["google"]["text_sha256"] == OLD_TEXT_SHA   # nothing was replaced
+
+
+def test_a_stale_ack_without_a_prompt_fails_closed_and_still_says_why(monkeypatch):
+    s = _s(_stale_google())
+    Ui(monkeypatch)
+    told = _capture_info(monkeypatch)
+    ok, _acks, rc = wizard.agy_terms_check(s, ["explore"], interactive=False)
+    assert ok is False and rc == 2
+    assert any("re-confirm" in m for m in told)
+
+
+def test_a_current_ack_prints_no_notice(monkeypatch):
+    s = _s(_google(["explore"]))
+    Ui(monkeypatch)
+    told = _capture_info(monkeypatch)
+    ok, _acks, _rc = wizard.agy_terms_check(s, ["explore"], interactive=True)
+    assert ok is True and not any("re-confirm" in m for m in told)

@@ -79,7 +79,7 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # leak into a test, and a test must never write the operator's real one.
     from ai_resources import agy_gate_evidence, model_pins
     monkeypatch.setattr(model_pins, "overlay_path", lambda: root / "model-pins.json")
-    monkeypatch.setattr(agy_gate_evidence, "HOST_OVERLAY_ENABLED", False)
+    # ADR-0016 D3: the gate-record module has no host overlay any more; there is nothing to switch off.
     # And the restart guard's two systemd reads: an unstubbed `restart_gateway()` would ask the
     # live unit whether agent turns are running, and a busy host would defer a restart a test
     # expects to happen. The guard's own tests pass a fake probe explicitly.
