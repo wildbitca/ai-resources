@@ -236,7 +236,7 @@ def test_review_names_the_sign_in_and_has_no_gateway_rows():
     s.profile.customizations = {"__targets__": {"selected": ["claude"]}}
     cockpit_auth.set_method(s, "claude", "subscription")
     rows = dict(wizard._review_rows(s))
-    assert rows["Sign-in"] == "Claude Code: subscription"
+    assert rows["Claude Code sign-in"] == "subscription"        # one row per cockpit (ADR-0016 D5)
     assert not {"Gateway", "Providers", "API keys", "Start at login", "How"} & set(rows)
 
 
