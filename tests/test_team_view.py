@@ -262,3 +262,46 @@ def test_only_display_only_gemini_members_ticked_does_not_report_google_active(m
     full = balanced()
     assert "google" in team_view.provider_mix(full, base_rows(full), row="cli", ticked=True,
                                               acks=ack(BALANCED_ROLES)).active
+
+
+# --- ADR-0016 D3 (AC-4): no host overlay, absent evidence is held ------------------------------------------------------
+
+def test_the_kit_default_root_without_a_record_holds_every_agy_member_and_never_reads_on(monkeypatch):
+    """Not a tmp root: the real kit root has no committed record, and `PYTEST_CURRENT_TEST` is removed so no bypass
+    can matter. Absent evidence means the gates are not proven."""
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    ev.clear_cache()
+    assert ev.load().status == "absent"
+    _doc, _rows, mix, lane_rows = mix_for(ticked=True, acks=ack(BALANCED_ROLES + ["verifier"]))
+    texts = list(cells(lane_rows).values())
+    assert len(texts) == 4 and all(t.endswith("(held)") for t in texts)
+    assert not any("(on)" in t for t in texts)
+    assert {role for role, _why in mix.held} == set(BALANCED_ROLES)
+    assert all("gates not proven" in why for _role, why in mix.held)
+
+
+def test_member_state_is_held_with_the_refusal_reason_when_no_record_exists(monkeypatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    ev.clear_cache()
+    st, why = team_view.member_state("explore", ticked=True, acks=ack(BALANCED_ROLES))
+    assert st == team_view.HELD and why.startswith("held: Antigravity lane gates not proven")
+
+
+def test_a_valid_record_fixture_reads_on_for_the_lane_member(monkeypatch, tmp_path):
+    root = fk.make_root(tmp_path)
+    fk.use(monkeypatch, root)
+    fk.write(root, fk.valid_doc(root))
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    st, why = team_view.member_state("explore", ticked=True, acks=ack(BALANCED_ROLES))
+    assert (st, why) == (team_view.ON, "")
+
+
+def test_the_review_suffix_is_computed_from_the_gate_record_not_a_literal(monkeypatch, tmp_path):
+    s = state.SetupState()
+    s.profile.lane_acks = ack(BALANCED_ROLES)
+    ev.clear_cache()
+    assert "held" in wizard._agy_team_suffix(s) and "(on" not in wizard._agy_team_suffix(s)
+    root = fk.make_root(tmp_path)
+    fk.use(monkeypatch, root)
+    fk.write(root, fk.valid_doc(root))
+    assert "held" not in wizard._agy_team_suffix(s)

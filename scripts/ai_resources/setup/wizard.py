@@ -907,6 +907,16 @@ def _tools_text(s: state.SetupState) -> str:
     return ", ".join(names) or "none"
 
 
+def _agy_team_suffix(s: state.SetupState) -> str:
+    """Whether the Antigravity members read held or on comes from the gate record (ADR-0016 D3), never from a literal."""
+    from .. import agy_lane_gates
+    if agy_lane_gates.refusal() is not None:
+        return " + Antigravity (held: its gates are not proven; reviews and checks only once they are)"
+    if _agy_lanes_on(s):
+        return " + Antigravity (on: reviews and checks only; writing stays on Claude Code)"
+    return " + Antigravity (terms accepted; its lane is not enabled)"
+
+
 def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     """The review screen's rows from the setup state: Sign-in (one phrase per ticked tool), Team, Tools and what will
     be written."""
@@ -916,8 +926,7 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     if sel is not None:
         team += " (" + ", ".join(f"{slot}={sl.ref}" for slot, sl in sel.slots.items()) + ")"
     if "agy" in members and ("google" in (s.profile.lane_acks or {}) or _agy_lanes_on(s)):
-        team += (" + Antigravity (reviews and checks only; writing stays on Claude Code)" if _agy_lanes_on(s)
-                 else " + Antigravity (terms accepted; held until its gates are proven)")
+        team += _agy_team_suffix(s)
     rows = [("Sign-in", _auth_text(s)), ("Team", team), ("Tools", _tools_text(s))]
     lane_agents = ((s.profile.lanes or {}).get("agents") or {}) if isinstance(s.profile.lanes, dict) else {}
     if any((a or {}).get("backend") == "claude-cli" for a in lane_agents.values()):
@@ -2397,6 +2406,11 @@ def agy_terms_check(s: state.SetupState, roles: list[str], interactive: bool = T
     acks = dict(s.profile.lane_acks or {})
     have = lanes_render.valid_acks(acks).get("google")
     listed = set((have or {}).get("roles") or ())
+    if have is None and isinstance(acks.get("google"), dict):
+        # ADR-0016 D3: a stored acknowledgement whose text hash is not the current one is rejected (fail closed). Say
+        # why, once per run, and never re-sign it for the operator.
+        ui.info("The Google terms text changed since you acknowledged it (it now states the Antigravity terms conflict "
+                "with third-party tools): re-confirm it. The old acknowledgement admits nothing.")
     if not interactive:
         if not have or not listed:
             ui.error(f"{flag}: no stored valid Google acknowledgement lists a role (hash of the "
