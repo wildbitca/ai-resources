@@ -27,69 +27,78 @@ def _args(**kw):
     return argparse.Namespace(**ns)
 
 
-def _ask_sign_in(monkeypatch, answer, s, **extra):
-    script = Script(**{"How does Claude Code sign in": answer, **extra})
+def _ask_sign_in(monkeypatch, answers, s, **extra):
+    script = Script(**{**answers, **extra})
     script.install(monkeypatch)
     assert claude.ask_auth(ui, s, None, True) == 0
     return script
 
 
-# --- the sign-in question (replaces the four-way mode question) ----------------------------------------
-def test_the_question_lists_three_methods_and_no_gateway(monkeypatch):
+KEEP = {"Claude Code sign-in": "keep"}
+
+
+# --- the sign-in step (ADR-0016 D1: show the live sign-in, keep or change) ----------------------------
+def test_the_step_asks_keep_or_change_and_no_gateway_option(monkeypatch):
     seen = {}
     s = state.SetupState()
-    script = Script(**{"How does Claude Code sign in": lambda values: seen.setdefault("v", list(values)) and "subscription"})
+    script = Script(**{"Claude Code sign-in": lambda values: seen.setdefault("v", list(values)) and "keep"})
     script.install(monkeypatch)
     claude.ask_auth(ui, s, None, True)
-    assert seen["v"] == ["subscription", "api_key", "vertex_adc"]
+    assert seen["v"] == ["keep", "change"]
     text = " ".join(script.titles).lower()
     assert "gateway" not in text and "litellm" not in text and "openrouter" not in text
 
 
-def test_the_options_are_worded_for_subscriptions_keys_and_vertex():
-    text = {k: f"{label} {line}" for k, label, line in claude.auth_options()}
-    for needle in ("subscription", "no key is stored"):
-        assert needle in text["subscription"], needle
-    assert "never stores it" in text["api_key"] and "Application Default Credentials" in text["vertex_adc"]
+def test_the_change_options_are_the_native_login_the_helper_and_vertex_only():
+    text = {k: f"{label} {line}" for k, label, line in claude.change_options()}
+    assert list(text) == ["login", "api_key_helper", "vertex_adc"]
+    assert "claude auth login" in text["login"] and "never sees the credential" in text["login"]
+    assert "never reads or stores the key" in text["api_key_helper"]
+    assert "Application Default Credentials" in text["vertex_adc"]
 
 
-def test_choosing_the_subscription_records_the_method_and_asks_nothing_else(monkeypatch):
+def test_keep_records_the_live_kind_and_asks_nothing_else(monkeypatch):
     s = state.SetupState()
-    script = _ask_sign_in(monkeypatch, "subscription", s)
-    assert cockpit_auth.method(s, "claude") == "subscription"
-    assert [m for m in script.asked if not m.startswith("select: How does Claude Code")] == []
+    script = _ask_sign_in(monkeypatch, KEEP, s)
+    assert cockpit_auth.method(s, "claude") == "subscription" and cockpit_auth.live_kind(s, "claude") == "subscription"
+    assert [m for m in script.asked if not m.startswith("select: Claude Code sign-in")] == []
+    assert any("Claude subscription" in m for m in script.shown)
     assert not any("gateway credential" in m or "OpenRouter" in m for m in script.shown)
 
 
-def test_an_api_key_is_never_read_or_stored(monkeypatch):
+def test_a_live_api_key_is_recorded_without_being_read_or_stored(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-SENTINEL-NOT-STORED")
-    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
     wrote = []
     monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: wrote.append(updates) or (None, []))
     s = state.SetupState()
-    script = _ask_sign_in(monkeypatch, "api_key", s)
-    assert cockpit_auth.method(s, "claude") == "api_key" and wrote == []
+    script = _ask_sign_in(monkeypatch, KEEP, s)
+    assert cockpit_auth.method(s, "claude") == "api_key" and cockpit_auth.live_kind(s, "claude") == "api_key"
+    assert wrote == []
     assert "SENTINEL" not in script.transcript and "SENTINEL" not in yaml.safe_dump(state._to_dict(s))
 
 
-def test_a_missing_api_key_is_a_warning_not_a_prompt(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
-    script = _ask_sign_in(monkeypatch, "api_key", state.SetupState())
-    assert not any(m.startswith("password:") for m in script.asked)
-    assert any("ANTHROPIC_API_KEY is not set" in m for m in script.shown)
+def test_a_saved_api_key_with_no_key_live_falls_back_to_the_subscription(monkeypatch):
+    """AC-6: the record follows the live kind; "API key" without a key or helper is never recorded."""
+    s = state.SetupState()
+    cockpit_auth.set_method(s, "claude", "api_key")
+    _ask_sign_in(monkeypatch, KEEP, s)
+    assert cockpit_auth.method(s, "claude") == "subscription"
+    assert cockpit_auth.live_kind(s, "claude") == "subscription"
 
 
-def test_vertex_keeps_only_the_project_and_the_region(monkeypatch):
+def test_vertex_keeps_only_the_project_and_the_region_and_writes_them_at_apply(monkeypatch):
     monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
     wrote = []
     monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: wrote.append(dict(updates)) or (None, list(updates)))
     s = state.SetupState()
     monkeypatch.setattr(ui, "record_action", lambda msg: None)
-    claude_dry = Script(**{"How does Claude Code sign in": "vertex_adc", "GOOGLE_CLOUD_PROJECT": "demo-project",
-                           "GOOGLE_CLOUD_LOCATION": "global"})
-    claude_dry.install(monkeypatch)
+    script = Script(**{"Claude Code sign-in": "change", "How should Claude Code sign in": "vertex_adc",
+                       "GOOGLE_CLOUD_PROJECT": "demo-project", "GOOGLE_CLOUD_LOCATION": "global"})
+    script.install(monkeypatch)
     assert claude.ask_auth(ui, s, None, False) == 0
+    assert wrote == []                                    # D6: nothing is written while asking
+    assert cockpit_auth.live_kind(s, "claude") == "vertex" and cockpit_auth.method(s, "claude") == "vertex_adc"
+    claude._apply_pending_vertex(s)                       # what configure() does at Apply
     assert wrote == [{"GOOGLE_CLOUD_PROJECT": "demo-project", "GOOGLE_CLOUD_LOCATION": "global"}]
     assert s.tracking.env_keys_added == ["GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"]
     assert cockpit_auth.secret_findings(s.cockpit_auth) == []
@@ -98,7 +107,10 @@ def test_vertex_keeps_only_the_project_and_the_region(monkeypatch):
 def test_a_dry_run_writes_nothing_for_vertex(monkeypatch):
     monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
     monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: (_ for _ in ()).throw(AssertionError("wrote")))
-    _ask_sign_in(monkeypatch, "vertex_adc", state.SetupState(), **{"GOOGLE_CLOUD_PROJECT": "p", "GOOGLE_CLOUD_LOCATION": "global"})
+    s = state.SetupState()
+    _ask_sign_in(monkeypatch, {"Claude Code sign-in": "change", "How should Claude Code sign in": "vertex_adc"}, s,
+                 **{"GOOGLE_CLOUD_PROJECT": "p", "GOOGLE_CLOUD_LOCATION": "global"})
+    claude._apply_pending_vertex(s)                       # nothing pending after a dry run
 
 
 # --- saved state -------------------------------------------------------------------------------------
@@ -183,7 +195,7 @@ def test_a_plain_single_model_state_still_defaults_to_claude_native(monkeypatch)
 
 def test_no_key_is_asked_in_cli_mode(monkeypatch, tmp_path):
     host_env(monkeypatch, tmp_path)
-    script = Script(**{"Use previous answers": True, "How does Claude Code sign in": "subscription",
+    script = Script(**{"Use previous answers": True, "Claude Code sign-in": "keep",
                        "Model preset": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: SUB,
                        "Enable subscription lanes?": False,
@@ -339,7 +351,7 @@ def test_a_run_with_backend_cli_never_prompts_the_sign_in_and_records_the_cli_te
     seen = {}
     monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
     assert wizard.run(_args(backend="cli")) == 0
-    assert not any("How does Claude Code sign in" in m for m in script.asked)
+    assert not any("Claude Code sign-in" in m for m in script.asked)
     assert (seen["s"].mode, seen["s"].cli_team) == ("single-model", True)
 
 
@@ -362,21 +374,15 @@ def test_each_legacy_answer_migrates_to_the_same_meaning(monkeypatch, legacy, ex
     assert cockpit_auth.method(s, "claude") == method
 
 
-def test_the_sign_in_default_is_the_saved_answer_and_a_fresh_host_starts_on_the_subscription(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
-
-    def default_for(s):
-        script = Script(**{"How does Claude Code sign in": "subscription"})
+def test_the_sign_in_default_is_always_keep_so_nothing_is_handed_over_without_a_choice(monkeypatch):
+    for saved in ("", "vertex_adc", "api_key"):
+        s = state.SetupState()
+        if saved:
+            cockpit_auth.set_method(s, "claude", saved)
+        script = Script(**KEEP)
         script.install(monkeypatch)
         claude.ask_auth(ui, s, None, True)
-        return script.defaults[claude.AUTH_PROMPT][-1]
-    assert default_for(state.SetupState()) == "subscription"
-    s = state.SetupState()
-    cockpit_auth.set_method(s, "claude", "vertex_adc")
-    assert default_for(s) == "vertex_adc"
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
-    assert default_for(state.SetupState()) == "api_key"
+        assert script.defaults[claude.AUTH_PROMPT][-1] == "keep"
 
 
 def test_back_at_the_team_asks_the_sign_in_again_and_leaks_nothing(monkeypatch, tmp_path):
@@ -390,7 +396,7 @@ def test_back_at_the_team_asks_the_sign_in_again_and_leaks_nothing(monkeypatch, 
     seen = {}
     monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
     assert wizard.run(_args()) == 0
-    assert len([m for m in script.asked if m.startswith("select: How does Claude Code sign in")]) == 2
+    assert len([m for m in script.asked if m.startswith("select: Claude Code sign-in")]) == 2
     assert (seen["s"].mode, seen["s"].cli_team) == ("single-model", True)
 
 
@@ -457,7 +463,7 @@ def test_cockpits_flag_runs_non_interactively_with_each_ticked_cockpit_on_its_ow
     assert asked == ["claude", "openclaw"]
     assert [c for c in commands if c[:2] != ["config", "file"]] == []          # no sign-in command: path lookups only
     saved = state.load().cockpit_auth
-    assert saved["claude"] == {"method": "subscription"}                       # Claude Code's own pre-filled answer
+    assert saved["claude"] == {"method": "subscription", "live": "subscription"}   # what Claude Code itself reports (ADR-0016)
     assert saved["openclaw"]["method"] == "cli"                                # OpenClaw's own, a different shape
     assert "agy" not in saved and "cursor" not in saved and "gemini" not in saved
     assert cockpit_auth.secret_findings(saved) == []

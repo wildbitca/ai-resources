@@ -20,6 +20,7 @@ from .. import role_render
 from .. import effort as effort_mod
 from . import _shared
 from .. import cockpit_auth
+from .. import live_auth
 
 
 NAME = "Claude Code"
@@ -372,46 +373,131 @@ def _migrate_agent_teams(path: Path, applied: list[str]) -> bool:
 
 
 VERTEX_ENV_KEYS = ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION")
-AUTH_PROMPT = "How does Claude Code sign in?"
+AUTH_PROMPT = "Claude Code sign-in:"
+CHANGE_PROMPT = "How should Claude Code sign in?"
+HELPER_PROMPT = "apiKeyHelper: a command that prints the key, or the path of a file only you can read"
+KEEP, CHANGE = "keep", "change"
+LOGIN, HELPER, VERTEX_ADC = "login", "api_key_helper", "vertex_adc"
+LOGIN_ARGV = ["claude", "auth", "login"]
+HELPER_OK_ATTR = "_claude_helper_confirmed"
+"""Instance attribute on the setup state (never serialised): the operator chose this apiKeyHelper in this run."""
+VERTEX_PENDING_ATTR = "_claude_vertex_pending"
+"""Instance attribute on the setup state (never serialised): project and region typed in this run, written at Apply."""
+
+# live kind -> the legacy method name the state keeps as a fill-only default
+_METHOD_OF_KIND = {live_auth.SUBSCRIPTION: "subscription", live_auth.API_KEY: "api_key",
+                   live_auth.API_KEY_HELPER: "api_key", live_auth.VERTEX: "vertex_adc"}
 
 
-def auth_options() -> list[tuple[str, str, str]]:
-    """(method, label, one-line effect) in the order the question lists them (ADR-0015 D1). No gateway option."""
+def change_options() -> list[tuple[str, str, str]]:
+    """(value, label, one-line effect) of the "change" question (ADR-0016 D1). Claude Code owns its sign-in; the only
+    kit extra is the apiKeyHelper setting, because Claude Code has no flow that stores a key for you."""
     return [
-        ("subscription", "Your Claude subscription", "OAuth sign-in (`claude auth login`); no key is stored"),
-        ("api_key", "An Anthropic API key", "read from ANTHROPIC_API_KEY in your environment; the kit never stores it"),
-        ("vertex_adc", "Google Vertex AI", "your Application Default Credentials; only the project and region are kept"),
+        (LOGIN, "Sign in with Claude Code's own flow",
+         "hands this terminal to `claude auth login`; the kit never sees the credential"),
+        (HELPER, "Use an API key helper (apiKeyHelper)",
+         "the kit writes only the command or file path into settings.json and never reads or stores the key"),
+        (VERTEX_ADC, "Google Vertex AI",
+         "your Application Default Credentials; only the project and region are kept"),
     ]
 
 
-def _auth_default(s: Any) -> str:
-    saved = cockpit_auth.method(s, ID)
-    if saved in cockpit_auth.CLAUDE_METHODS:
-        return saved
-    # No `claude auth status` probe here: it spawns the host binary, which writes its own state, and the question
-    # needs no more than the environment to pick a sensible default.
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "api_key"
-    if os.environ.get("CLAUDE_CODE_USE_VERTEX") == "1":
-        return "vertex_adc"
-    return "subscription"
+def read_live(runner=None) -> "live_auth.LiveAuth":
+    """Claude Code's sign-in as Claude Code itself reports it (env, settings, `claude auth status`). Read-only."""
+    return live_auth.read_claude(runner, os.environ, live_auth.read_claude_settings(SETTINGS_PATH))
+
+
+def helper_setting(value: str) -> tuple[str, str]:
+    """`(apiKeyHelper setting, problem)` for what the operator typed. A command is kept as typed. A path to a file must
+    be yours with no group or other access (0600, or 0700 for a script that prints the key): a readable key file is
+    refused. A key pasted by mistake is refused too, because the kit stores a path or command, never a key."""
+    import shlex
+    import stat as _stat
+    text = (value or "").strip()
+    if not text:
+        return "", "nothing was entered"
+    if cockpit_auth.looks_like_secret(text):
+        return "", "that looks like a key itself; give a command or a file path, the kit never stores a key"
+    expanded = os.path.expanduser(text)
+    if expanded.startswith("/"):
+        try:
+            st = os.stat(expanded)
+        except OSError:
+            return "", f"{text} does not exist"
+        if not _stat.S_ISREG(st.st_mode):
+            return "", f"{text} is not a regular file"
+        if st.st_uid != os.getuid():
+            return "", f"{text} is not owned by you"
+        executable = bool(st.st_mode & 0o100)
+        if st.st_mode & 0o077 or (not executable and st.st_mode & 0o777 != 0o600):
+            return "", (f"{text} has mode {st.st_mode & 0o777:04o}; a key file must be 0600 "
+                        f"(chmod 600 {shlex.quote(text)})")
+        return (expanded if executable else f"cat {shlex.quote(expanded)}"), ""
+    return text, ""
+
+
+def record_live(s: Any, auth: "live_auth.LiveAuth") -> None:
+    """Record what Claude Code REPORTS, not what was answered. "API key" can only appear when a key or helper is live;
+    a saved `api_key` with no live evidence falls back to the subscription method (a harmless default, no key)."""
+    cockpit_auth.set_live(s, ID, auth.kind)
+    method = _METHOD_OF_KIND.get(auth.kind)
+    if method is None:
+        saved = cockpit_auth.method(s, ID)
+        method = saved if saved in ("subscription", "vertex_adc") else "subscription"
+    cockpit_auth.set_method(s, ID, method)
 
 
 def ask_auth(ui_mod: Any, s: Any, detected: Any = None, dry_run: bool = False) -> int:
-    """Ask how Claude Code signs in and record the METHOD NAME (never a key). 0 on an answer, 130 on a cancel."""
-    from .. import credentials
-    choices = [ui_mod.Choice(f"{label} - {line}", value=key) for key, label, line in auth_options()]
-    picked = ui_mod.select(AUTH_PROMPT, choices, default=_auth_default(s))
+    """Show Claude Code's LIVE sign-in and ask keep or change (ADR-0016 D1). 0 on an answer, 130 on a cancel.
+
+    Change hands the terminal to Claude Code's own flow on an explicit choice only, never in a non-interactive run or a
+    dry run. The kit stores a kind name, a helper path or command and Vertex's project and region: never a key."""
+    auth = read_live()
+    ui_mod.info(f"Claude Code is signed in with: {auth.line()}" if live_auth.claude_signed_in(auth)
+                else f"Claude Code sign-in: {auth.label}")
+    if ui_mod.is_non_interactive():
+        record_live(s, auth)
+        return 0
+    picked = ui_mod.select(AUTH_PROMPT, [ui_mod.Choice("Keep it", value=KEEP),
+                                         ui_mod.Choice("Change it", value=CHANGE)], default=KEEP)
     if picked is None:
         return 130
-    cockpit_auth.set_method(s, ID, picked)
-    if picked == "api_key":
-        if os.environ.get("ANTHROPIC_API_KEY") or credentials.get_key("ANTHROPIC_API_KEY"):
-            ui_mod.detail("ANTHROPIC_API_KEY is set; the kit does not read or store it.")
+    if picked == CHANGE:
+        how = ui_mod.select(CHANGE_PROMPT, [ui_mod.Choice(f"{label} - {line}", value=key)
+                                            for key, label, line in change_options()], default=LOGIN)
+        if how is None:
+            return 130
+        auth = _change(ui_mod, s, how, dry_run=dry_run) or read_live()
+    record_live(s, auth)
+    return 0
+
+
+def _change(ui_mod: Any, s: Any, how: str, *, dry_run: bool) -> "live_auth.LiveAuth | None":
+    """Carry out the chosen change. Returns the live state to record, or None to re-read it."""
+    from .. import credentials
+    if how == LOGIN:
+        shown = " ".join(LOGIN_ARGV)
+        if dry_run:
+            ui_mod.detail(f"Dry run: would hand this terminal to `{shown}`.")
+            return None
+        ui_mod.info(f"Applies now: `{shown}` runs on this terminal; the kit sees nothing you type.")
+        rc = live_auth.run_handoff(LOGIN_ARGV)
+        if rc != 0:
+            ui_mod.warn(f"`{shown}` exited {rc}; the sign-in is whatever Claude Code reports now.")
         else:
-            ui_mod.warn("ANTHROPIC_API_KEY is not set in this shell. Export it before using Claude Code; "
-                        "the kit never stores an API key.")
-    elif picked == "vertex_adc":
+            ui_mod.record_action("signed in with Claude Code's own flow")       # Back stops here: this ran for real
+        return None                      # re-read: record the live kind, not the answer
+    if how == HELPER:
+        typed = ui_mod.text(HELPER_PROMPT, default=cockpit_auth.helper(s, ID))
+        setting, problem = helper_setting(typed or "")
+        if problem:
+            ui_mod.warn(f"apiKeyHelper not set: {problem}.")
+            return None
+        cockpit_auth.set_helper(s, ID, setting)
+        setattr(s, HELPER_OK_ATTR, True)
+        ui_mod.detail("apiKeyHelper is written to settings.json at Apply; the kit never reads or stores the key.")
+        return live_auth.LiveAuth(live_auth.API_KEY_HELPER, live_auth.B_API, "Anthropic API key (apiKeyHelper)")
+    if how == VERTEX_ADC:
         updates: dict[str, str] = {}
         project = ui_mod.text("GOOGLE_CLOUD_PROJECT (GCP project ID)",
                               default=credentials.get_key("GOOGLE_CLOUD_PROJECT")
@@ -424,15 +510,24 @@ def ask_auth(ui_mod: Any, s: Any, detected: Any = None, dry_run: bool = False) -
         if location:
             updates["GOOGLE_CLOUD_LOCATION"] = location
         if updates and not dry_run:
-            _, added = credentials.update_env_tracked(updates)
-            for key in added:
-                if key not in s.tracking.env_keys_added:
-                    s.tracking.env_keys_added.append(key)
-            ui_mod.record_action("saved the Vertex project and region")
+            setattr(s, VERTEX_PENDING_ATTR, updates)          # written at Apply (configure), never here
         ui_mod.detail("Vertex AI uses your Application Default Credentials (`gcloud auth application-default login`).")
-    else:
-        ui_mod.detail("Subscription sign-in is read by Claude Code itself; the kit stores nothing.")
-    return 0
+        return live_auth.LiveAuth(live_auth.VERTEX, live_auth.B_API, "Google Vertex AI (ADC)")
+    return None
+
+
+def _apply_pending_vertex(s: Any) -> None:
+    """Apply-time half of the Vertex answer: the project and region go to the kit .env, tracked for teardown."""
+    from .. import credentials
+    updates = getattr(s, VERTEX_PENDING_ATTR, None)
+    if not updates:
+        return
+    _, added = credentials.update_env_tracked(updates)
+    for key in added:
+        if key not in s.tracking.env_keys_added:
+            s.tracking.env_keys_added.append(key)
+    ui.record_action("saved the Vertex project and region")
+    setattr(s, VERTEX_PENDING_ATTR, None)
 
 
 def _vertex_env() -> dict[str, str]:
@@ -446,7 +541,8 @@ def _vertex_env() -> dict[str, str]:
 
 
 def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
-                          ak_path: str, mode: str, backend: str = "litellm", auth: str = "") -> dict:
+                          ak_path: str, mode: str, backend: str = "litellm", auth: str = "",
+                          helper: str = "") -> dict:
     """Compute the settings.json patch for Claude Code. `auth` is the cockpit's own method (ADR-0015): only
     `vertex_adc` adds env (project and region, never a secret); subscription and api_key write none."""
     env: dict[str, str] = {
@@ -489,6 +585,8 @@ def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
     if mode == "multi-model" and backend == "openrouter":
         # LiteLLM needs no equivalent: it registers every bare Claude ID itself.
         patch["modelOverrides"] = _openrouter_model_overrides()
+    if helper:
+        patch["apiKeyHelper"] = helper            # a command or `cat <file>`: never the key (ADR-0016 D1)
     return patch
 
 
@@ -935,8 +1033,13 @@ def configure(ctx: dict) -> list[Path]:
     written: list[Path] = []
 
     # 1. settings.json (env vars + MCP servers)
+    _apply_pending_vertex(s)
+    helper_text = cockpit_auth.helper(s, ID)
+    helper_setting_text, helper_problem = helper_setting(helper_text) if helper_text else ("", "")
+    if helper_problem:
+        ui.warn(f"Claude Code: apiKeyHelper not written ({helper_problem}).")
     settings_patch = _build_settings_patch(executors, master_key, gateway_url, ak_path, mode, backend,
-                                           auth=cockpit_auth.method(s, ID))
+                                           auth=cockpit_auth.method(s, ID), helper=helper_setting_text)
 
     existing: dict = {}
     if SETTINGS_PATH.is_file():
@@ -944,6 +1047,13 @@ def configure(ctx: dict) -> list[Path]:
             existing = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             existing = {}
+
+    # Fill-only: a different apiKeyHelper the operator already has is replaced only when they chose one in this run.
+    held = existing.get("apiKeyHelper")
+    if "apiKeyHelper" in settings_patch and held not in (None, "", settings_patch["apiKeyHelper"]) \
+            and not getattr(s, HELPER_OK_ATTR, False):
+        del settings_patch["apiKeyHelper"]
+        ui.info("Claude Code: your existing apiKeyHelper was kept (change the sign-in to replace it).")
 
     # Record env keys that teardown must remove.
     # Always include the known multi-model-only keys regardless of whether they were

@@ -886,6 +886,11 @@ def _team_label(s: state.SetupState) -> str:
 
 _AUTH_LABEL = {"subscription": "subscription", "api_key": "API key", "vertex_adc": "Vertex AI",
                "google_account": "Google account", "managed": "managed in the tool", "cli": "CLI backend"}
+# What the cockpit itself reported (ADR-0016): the kind recorded by `cockpit_auth.set_live`.
+_LIVE_LABEL = {"subscription": "subscription", "api_key": "API key (ANTHROPIC_API_KEY)",
+               "api_key_helper": "API key (apiKeyHelper)", "vertex": "Vertex AI", "bedrock": "Amazon Bedrock",
+               "oauth_google": "Google account", "adc": "Vertex AI (ADC)", "none": "not signed in",
+               "unknown": "unknown"}
 
 
 def _auth_text(s: state.SetupState) -> str:
@@ -896,6 +901,8 @@ def _auth_text(s: state.SetupState) -> str:
         provs = cockpit_auth.providers(s) if cockpit == "openclaw" else {}
         if provs:
             parts.append(f"{name}: " + ", ".join(f"{p} ({_AUTH_LABEL.get(m, m)})" for p, m in provs.items()))
+        elif cockpit_auth.live_kind(s, cockpit):
+            parts.append(f"{name}: {_LIVE_LABEL.get(cockpit_auth.live_kind(s, cockpit), 'unknown')}")
         else:
             parts.append(f"{name}: {_AUTH_LABEL.get(cockpit_auth.method(s, cockpit), 'not set')}")
     return "; ".join(parts) or "none to ask"

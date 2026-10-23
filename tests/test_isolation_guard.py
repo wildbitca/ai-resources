@@ -67,8 +67,10 @@ def test_the_gate_record_module_has_no_host_overlay_at_all():
 
 def test_the_live_runner_never_runs_a_real_binary():
     from ai_resources.setup import live_auth
-    rc, out = live_auth.run(["claude", "auth", "status"])
+    rc, out = live_auth.run(["openclaw", "models", "status", "--json"])
     assert rc == 127 and "not run by tests" in out
+    rc, out = live_auth.run(["claude", "auth", "status"])
+    assert rc == 0 and '"authMethod": "claude.ai"' in out and "@" not in out
 
 
 def test_a_native_handoff_without_a_stub_fails_loudly():

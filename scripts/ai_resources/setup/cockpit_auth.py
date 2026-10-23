@@ -153,10 +153,40 @@ def apply_legacy_flags(s: Any) -> None:
     s.cli_team_api = api
 
 
+import re as _re
+
+_TOKEN_LIKE = _re.compile(r"(sk-[A-Za-z0-9_-]{8,}|AIza[0-9A-Za-z_-]{20,}|ya29\.[0-9A-Za-z_-]+|[A-Za-z0-9_-]{40,})")
+
+
+def looks_like_secret(text: str) -> bool:
+    """Whether a string looks like a key or token (the kit stores paths and commands, never one of these)."""
+    return bool(_TOKEN_LIKE.search(text or ""))
+
+
+# --- live sign-in (ADR-0016 D1): what the cockpit itself reports, recorded as a kind name ------------------------------
+
+def live_kind(s: Any, cockpit: str) -> str:
+    return str(entry(s, cockpit).get("live") or "")
+
+
+def set_live(s: Any, cockpit: str, kind: str) -> None:
+    _slot(s, cockpit)["live"] = kind
+
+
+def helper(s: Any, cockpit: str = "claude") -> str:
+    """The apiKeyHelper path or command the operator chose (never a key)."""
+    return str(entry(s, cockpit).get("helper") or "")
+
+
+def set_helper(s: Any, cockpit: str, value: str) -> None:
+    if looks_like_secret(value):
+        raise ValueError("a key or token cannot be stored as a helper")
+    _slot(s, cockpit)["helper"] = value
+
+
 def secret_findings(doc: Any) -> list[str]:
     """Paths in a serialized `cockpit_auth` that look like a secret (a secret-named key or a token-like value)."""
-    import re
-    token_like = re.compile(r"(sk-[A-Za-z0-9_-]{8,}|AIza[0-9A-Za-z_-]{20,}|ya29\.[0-9A-Za-z_-]+|[A-Za-z0-9_-]{40,})")
+    token_like = _TOKEN_LIKE
     bad: list[str] = []
 
     def walk(node: Any, path: str) -> None:

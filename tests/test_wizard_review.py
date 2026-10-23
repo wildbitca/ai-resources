@@ -96,7 +96,7 @@ def test_the_review_offers_the_three_changes_and_more_options_after_a_full_pass(
     def apply_pick(values):
         seen["values"] = list(values)
         return ms.APPLY
-    script = Script(**{"Use previous answers": True, "How does Claude Code sign in": "subscription",
+    script = Script(**{"Use previous answers": True, "Claude Code sign-in": "keep",
                        "Starting team": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: v[0],
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": apply_pick})
@@ -112,7 +112,7 @@ def test_change_team_with_a_picked_team_asks_the_picker_again_and_returns_to_the
     _seed_saved()
     available = profiles.list_profiles(mode="single-model")
     assert len(available) >= 2
-    script = Script(**{"Use previous answers": True, "How does Claude Code sign in": "subscription",
+    script = Script(**{"Use previous answers": True, "Claude Code sign-in": "keep",
                        "Starting team": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": Seq(lambda v: v[0], lambda v: v[1]),
                        "Configure detected cockpits": lambda v: list(v),
@@ -123,7 +123,7 @@ def test_change_team_with_a_picked_team_asks_the_picker_again_and_returns_to_the
     # Change team re-opens "Your team" (Custom, then the models question and the profile list); the sign-in question
     # belongs to an earlier screen and is not asked again
     assert len([m for m in asked if m.startswith("select: How do you want to choose models")]) == 2
-    assert len([m for m in asked if m.startswith("select: How does Claude Code sign in")]) == 1
+    assert len([m for m in asked if m.startswith("select: Claude Code sign-in")]) == 1
     # this host recorded a team picked from its accounts, so Change team asks that picker again (not the profile list)
     assert len([m for m in asked if m.startswith("select: How should kit subagents pick")]) == 1
     assert len(review_env) == 2 and review_env[0]["Team"] != review_env[1]["Team"]
@@ -133,7 +133,7 @@ def test_cancel_at_the_review_is_130_and_the_apply_never_runs(review_env, monkey
     _seed_saved()
     applied = []
     monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: applied.append(1) or 0)
-    script = Script(**{"Use previous answers": True, "How does Claude Code sign in": "subscription",
+    script = Script(**{"Use previous answers": True, "Claude Code sign-in": "keep",
                        "Starting team": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: v[0],
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.CANCEL})
@@ -166,7 +166,7 @@ def test_parallel_runs_from_more_options_ask_the_acknowledgement_once(review_env
                                   primary="anthropic:sonnet", smoke_path="claude-cli"))
     state.config_root().mkdir(parents=True, exist_ok=True)
     state.save(s)
-    script = Script(**{"Use previous answers": True, "How does Claude Code sign in": "subscription",
+    script = Script(**{"Use previous answers": True, "Claude Code sign-in": "keep",
                        "Model preset": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: SUB, "Orchestrator agent id": "main",
                        "Acknowledge for these roles?": True, "Configure detected cockpits": lambda v: list(v),
@@ -181,20 +181,21 @@ def test_parallel_runs_from_more_options_ask_the_acknowledgement_once(review_env
 
 def test_change_sign_in_reasks_the_question_and_the_row_follows_the_answer(review_env, monkeypatch):
     _seed_saved()
-    script = Script(**{"Use previous answers": True, "How does Claude Code sign in": Seq("subscription", "api_key"),
+    script = Script(**{"Use previous answers": True, "Claude Code sign-in": Seq("keep", "change"),
+                       "How should Claude Code sign in": "api_key_helper", "apiKeyHelper": "pass show anthropic",
                        "Starting team": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: v[0],
                        "Configure detected cockpits": lambda v: list(v),
                        "Apply this?": Seq(wizard.CHANGE_AUTH, ms.APPLY)})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
-    assert len([m for m in script.asked if m.startswith("select: How does Claude Code sign in")]) == 2
-    assert [r["Sign-in"] for r in review_env] == ["Claude Code: subscription", "Claude Code: API key"]
+    assert len([m for m in script.asked if m.startswith("select: Claude Code sign-in")]) == 2
+    assert [r["Sign-in"] for r in review_env] == ["Claude Code: subscription", "Claude Code: API key (apiKeyHelper)"]
 
 
 def test_a_saved_gateway_state_is_migrated_with_the_table_shown_once_and_no_gateway_question(review_env, monkeypatch):
     _seed_saved(mode="multi-model", backend="openrouter")
-    script = Script(**{"Use previous answers": True, "How does Claude Code sign in": "subscription",
+    script = Script(**{"Use previous answers": True, "Claude Code sign-in": "keep",
                        "Starting team": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: v[0],
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
@@ -217,7 +218,7 @@ def test_cancel_at_the_review_prints_the_shared_cancel_block(review_env, monkeyp
         ui.record_action("installed something")
         return real(s, args)
     monkeypatch.setattr(wizard, "_step_summary", with_action)
-    script = Script(**{"Use previous answers": True, "How does Claude Code sign in": "subscription",
+    script = Script(**{"Use previous answers": True, "Claude Code sign-in": "keep",
                        "Starting team": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: v[0],
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.CANCEL})

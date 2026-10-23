@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_resources.setup import credentials, detection, state, tools, ui, wizard
+from ai_resources.setup import credentials, detection, live_auth, state, tools, ui, wizard
 
 pytestmark = pytest.mark.usefixtures("extra_tools_present")   # the selector now knows more CLIs
 from wizard_fakes import ABORT, INTERRUPT, Script
@@ -95,14 +95,14 @@ def test_cancel_at_resume_confirm(host, capsys):
 
 def test_cancel_at_the_sign_in_question(host, capsys):
     before = _snapshot(host.home)
-    rc, script = _drive(host, {"How does Claude Code sign in": ABORT})
+    rc, script = _drive(host, {"Claude Code sign-in": ABORT})
     _assert_clean_cancel(rc, capsys, host, before, step="Sign-in")
-    assert any(m.startswith("select: How does Claude Code sign in") for m in script.asked)
+    assert any(m.startswith("select: Claude Code sign-in") for m in script.asked)
 
 
 def test_cancel_at_the_starting_team(host, capsys):
     before = _snapshot(host.home)
-    rc, script = _drive(host, {"How does Claude Code sign in": "subscription", "Starting team": ABORT})
+    rc, script = _drive(host, {"Claude Code sign-in": "keep", "Starting team": ABORT})
     _assert_clean_cancel(rc, capsys, host, before, step="Your team")
     assert any(m.startswith("select: Starting team") for m in script.asked)
 
@@ -110,7 +110,7 @@ def test_cancel_at_the_starting_team(host, capsys):
 def test_cancel_at_the_role_profile_question(host, capsys):
     """Custom leads to the profile question of step 6; Ctrl-C there is a clean cancel that names the step."""
     before = _snapshot(host.home)
-    rc, script = _drive(host, {"How does Claude Code sign in": "subscription", "Starting team": "custom",
+    rc, script = _drive(host, {"Claude Code sign-in": "keep", "Starting team": "custom",
                                "How do you want to choose models": "profile", "How should kit subagents pick": ABORT})
     _assert_clean_cancel(rc, capsys, host, before, step="Your team - roles")
     assert any(m.startswith("select: How should kit subagents pick") for m in script.asked)
@@ -132,16 +132,17 @@ def test_cancel_at_lanes_acknowledgement(host, capsys):
 def test_bare_keyboard_interrupt_names_the_step(host, capsys):
     """prompt_scope restores the section on exit, so the name must be read before the scope ends."""
     before = _snapshot(host.home)
-    rc, _ = _drive(host, {"How does Claude Code sign in": INTERRUPT})
+    rc, _ = _drive(host, {"Claude Code sign-in": INTERRUPT})
     _assert_clean_cancel(rc, capsys, host, before, step="Sign-in")
 
 
-def test_cancel_after_the_vertex_project_was_saved_lists_what_was_done(host, capsys):
-    rc, _ = _drive(host, {"How does Claude Code sign in": "vertex_adc", "GOOGLE_CLOUD_PROJECT": "demo-project",
-                          "GOOGLE_CLOUD_LOCATION": "global", "Starting team": ABORT})
+def test_cancel_after_the_native_sign_in_ran_lists_what_was_done(host, capsys):
+    host.monkeypatch.setattr(live_auth, "handoff", lambda argv: 0)
+    rc, _ = _drive(host, {"Claude Code sign-in": "change", "How should Claude Code sign in": "login",
+                          "Starting team": ABORT})
     err = capsys.readouterr().err
     assert rc == 130 and "Traceback" not in err
-    assert "Already done in this run" in err and "saved the Vertex project and region" in err
+    assert "Already done in this run" in err and "signed in with Claude Code's own flow" in err
     assert "Nothing was applied" not in err
     assert host.saves == []                      # the state file is saved at the end of a run, never mid-way
     assert state.locked_run(lambda: 0) == 0
@@ -156,7 +157,7 @@ def test_cancel_after_the_tools_offer_installed_something_lists_it(host, capsys)
     mp.setattr(tools, "_detect_tools", lambda: {t: detection.Detected(t, t != tool_id, "1", "/bin/" + t)
                                                 for t in tools.TOOLS})
     mp.setattr(tools, "_run_install", lambda cmd, timeout=300: (True, ""))
-    rc, script = _drive(host, {"Tick the tools the kit should use": [tool_id], "Sign in now": [], "How does Claude Code sign in": ABORT})
+    rc, script = _drive(host, {"Tick the tools the kit should use": [tool_id], "Sign in now": [], "Claude Code sign-in": ABORT})
     err = capsys.readouterr().err
     assert rc == 130 and "Traceback" not in err
     assert any(m.startswith("checkbox: Tick the tools the kit should use") for m in script.asked)
@@ -165,7 +166,7 @@ def test_cancel_after_the_tools_offer_installed_something_lists_it(host, capsys)
 
 
 def test_cancel_in_the_middle_of_step9_lists_the_files_already_written(host, capsys):
-    """Real _step9_apply: the Vertex project was saved earlier in the run, then a Ctrl-C hits at the start of the apply."""
+    """Real _step9_apply: the native sign-in ran earlier in the run, then a Ctrl-C hits at the start of the apply."""
     from ai_resources import selection as sel
     s = state.SetupState()
     s.last_run = "2026-01-01T00:00:00+00:00"
@@ -180,13 +181,15 @@ def test_cancel_in_the_middle_of_step9_lists_the_files_already_written(host, cap
         raise KeyboardInterrupt
     host.monkeypatch.setattr(wizard, "_apply_lanes_file", interrupt)
     from ai_resources.setup import model_selection as ms
-    rc, _ = _drive(host, {"Use previous answers": True, "How does Claude Code sign in": "vertex_adc", "GOOGLE_CLOUD_PROJECT": "demo-project", "GOOGLE_CLOUD_LOCATION": "global",
+    host.monkeypatch.setattr(live_auth, "handoff", lambda argv: 0)
+    rc, _ = _drive(host, {"Use previous answers": True, "Claude Code sign-in": "change",
+                          "How should Claude Code sign in": "login",
                           "Starting team": "custom", "How do you want to choose models": "profile",
                           "How should kit subagents pick": lambda v: v[0], "Customize any role": False,
                           "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
     err = capsys.readouterr().err
     assert rc == 130 and "Traceback" not in err
-    assert "Already done in this run" in err and "saved the Vertex project and region" in err
+    assert "Already done in this run" in err and "signed in with Claude Code's own flow" in err
     assert "Nothing was applied" not in err
 
 
@@ -206,7 +209,7 @@ def test_cancel_inside_a_cockpit_configure_names_the_partial_write(host, capsys)
     def interrupt(ctx):
         raise KeyboardInterrupt
     host.monkeypatch.setattr(wizard.ALL_COCKPITS["claude"], "configure", interrupt)
-    rc, _ = _drive(host, {"Use previous answers": True, "How does Claude Code sign in": "subscription",
+    rc, _ = _drive(host, {"Use previous answers": True, "Claude Code sign-in": "keep",
                           "Starting team": "custom", "How do you want to choose models": "profile",
                           "How should kit subagents pick": lambda v: v[0], "Customize any role": False,
                           "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})

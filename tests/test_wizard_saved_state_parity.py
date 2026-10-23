@@ -60,7 +60,7 @@ def test_dry_run_yes_from_the_v1_0_fixture(monkeypatch, tmp_path):
     headers = []
     real = ui.section
     monkeypatch.setattr(ui, "section", lambda n, t, title: (headers.append((n, t, title)), real(n, t, title))[1])
-    script = Script(**{"Use previous": True, "How does Claude Code sign in": "subscription",
+    script = Script(**{"Use previous": True, "Claude Code sign-in": "keep",
                        "Starting team": lambda values: values[0], "Apply this?": lambda values: values[0]})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0

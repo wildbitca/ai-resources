@@ -67,12 +67,12 @@ def test_no_backend_question_is_asked_for_a_single_model_without_a_gateway_cockp
 
 
 def test_the_sign_in_question_is_still_asked_when_no_selection_is_recorded(monkeypatch):
-    script = Script(**{"How does Claude Code sign in": "subscription"})
+    script = Script(**{"Claude Code sign-in": "keep"})
     script.install(monkeypatch)
     s = state.SetupState()
     s.profile.customizations = {"__targets__": {"selected": ["claude"]}}
     assert wizard._step_cockpit_auth(s, argparse.Namespace()) == 0
-    assert any("How does Claude Code sign in" in q for q in script.asked)
+    assert any("Claude Code sign-in" in q for q in script.asked)
     assert s.cockpit_auth["claude"]["method"] == "subscription"
 
 
