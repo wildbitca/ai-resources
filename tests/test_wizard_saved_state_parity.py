@@ -13,9 +13,10 @@ from wizard_fakes import Script, host_env
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "setup_state_v1_0.json"
 
 STEP_IDS = ["tools", "cockpit", "cockpit_auth", "preset", "models", "profile", "lanes",
-            "cockpits", "audio", "more", "hygiene", "claude_md", "agy_mcp", "review", "apply"]
+            "cockpits", "audio", "more", "hygiene", "operator_rules", "claude_md", "agy_mcp", "review", "apply"]
 # ADR-0015: "cockpit_auth" (number 2) replaces "mode"; the gateway steps (gateway, providers, credentials, lifecycle) are gone.
 # ADR-0014: "hygiene", "claude_md" and "agy_mcp" (number 8) are the only steps added since ADR-0010; every other id and number is as it was.
+# ADR-0016 D4 adds "operator_rules" (number 8), between hygiene and claude_md.
 
 
 def _args(**kw):
@@ -29,7 +30,7 @@ def _args(**kw):
 def test_step_ids_and_internal_numbers_are_unchanged():
     steps = wizard._build_steps(True)
     assert [s.id for s in steps] == STEP_IDS
-    assert [s.number for s in steps] == [1, 1, 2, 6, 6, 6, 6, 7, 7, 8, 8, 8, 8, 9, 9]
+    assert [s.number for s in steps] == [1, 1, 2, 6, 6, 6, 6, 7, 7, 8, 8, 8, 8, 8, 9, 9]
     assert wizard.TOTAL_STEPS == 10 and len(flow.STEP_LABELS) == 10
 
 

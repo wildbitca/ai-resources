@@ -60,7 +60,7 @@ def answers_move_first_block(monkeypatch):
         return "skill" if "IDIOMA" in message else "keep"
     monkeypatch.setattr(ui, "select", select)
     monkeypatch.setattr(ui, "text", lambda message, default="", validate=None: "Operator language rules")
-    monkeypatch.setattr(ui, "confirm", lambda message, default=True: True)
+    monkeypatch.setattr(ui, "confirm", lambda message, default=True: "standing rules" not in message)
     monkeypatch.setattr(ui, "checkbox", lambda message, choices, default=None, **k: [])
 
 
@@ -244,7 +244,8 @@ def test_ctrl_c_at_review_leaves_the_scratch_home_untouched(home, monkeypatch, c
                        "How should kit subagents pick": lambda v: v[0], "Customize any role": False,
                        "Configure detected cockpits": lambda v: list(v),
                        "what should happen to this block": lambda v: "skill" if True else "keep",
-                       "When should Claude load": "Operator language rules", "Apply this?": ABORT})
+                       "When should Claude load": "Operator language rules", "standing rules": False,
+                       "Create ": True, "Apply this?": ABORT})
     script.install(monkeypatch)
     before = snapshot(home.root)
     rc = wizard.run(_args())
@@ -252,4 +253,7 @@ def test_ctrl_c_at_review_leaves_the_scratch_home_untouched(home, monkeypatch, c
     assert rc == 130 and "Traceback" not in err
     assert snapshot(home.root) == before, "Ctrl-C at Review changed the disk"
     assert saves == []
+    from ai_resources.setup import operator_rules
+    assert not operator_rules.path().exists(), "the operator-rules file was created before Apply"
     assert any("what should happen to this block" in m for m in script.asked)      # it really asked, and queued
+    assert any(m.startswith("confirm: Create ") for m in script.asked)

@@ -225,6 +225,7 @@ class Decision:
     kind: str
     description: str = ""
     paths: tuple[str, ...] = ()
+    copy_to_rules: bool = False         # the block is an operator rule: also add it to operator-rules.md (ADR-0016 D4)
 
 
 def plan(s, *, dry_run: bool = False) -> list[Decision]:
@@ -274,7 +275,13 @@ def plan(s, *, dry_run: bool = False) -> list[Decision]:
             if not paths:
                 ui.info("A rule needs at least one path glob; the block stays in CLAUDE.md.")
                 continue
-        out.append(Decision(offer.id, offer.heading, offer.tokens, choice, description, tuple(paths or ())))
+        copy = False
+        from . import operator_rules
+        if operator_rules.category_of(offer.heading) and not operator_rules.has_heading(offer.heading, s):
+            # Backstop: a rule that leaves CLAUDE.md must not leave OpenClaw and agy without it (they read the shared file).
+            copy = ui.confirm(f"'{offer.heading}' is one of your standing rules. Also add it to {operator_rules.path()} "
+                              "(at Apply) so OpenClaw and Antigravity get it too?", default=True)
+        out.append(Decision(offer.id, offer.heading, offer.tokens, choice, description, tuple(paths or ()), copy))
     return out
 
 
@@ -291,6 +298,10 @@ def apply(s, decisions: list[Decision], *, now: datetime | None = None) -> int:
         if target is None:
             ui.warn(f"'{d.heading}' changed while asking; left in place.")
             continue
+        if d.copy_to_rules:
+            from . import operator_rules
+            if operator_rules.append_section(d.heading, target.core):
+                ui.ok(f"Added '{d.heading}' to {operator_rules.path()}")
         try:
             if backup is None:
                 stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")

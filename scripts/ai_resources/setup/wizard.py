@@ -473,6 +473,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         S("audio", 7, "Audio", lambda c: _step_audio(c.s), back=True, skip=audio_skip, edit_label="Audio"),
         S("more", 8, "More", lambda c: _step_more(c.s), back=True, skip=more_skip, edit_label="More"),
         S("hygiene", 8, "Hygiene", lambda c: _step_hygiene(c.s, c.dry_run), skip=hygiene_skip),
+        S("operator_rules", 8, "Operator rules", lambda c: _step_operator_rules(c.s, c.dry_run)),
         S("claude_md", 8, "Global CLAUDE.md", lambda c: _step_claude_md(c.s, c.dry_run), skip=claude_md_skip),
         S("agy_mcp", 8, "agy MCP servers", lambda c: _step_agy_mcp(c.s, c.dry_run), skip=agy_mcp_skip),
         S("review", 9, "Review", lambda c: _step_summary(c.s, c.args), rewindable=False),
@@ -2323,6 +2324,68 @@ def _step_agy_mcp(s: state.SetupState, dry_run: bool = False) -> int:
             run=lambda: agy_mcp.apply(s, additions)))
     else:
         deferred.discard(s, "agy_mcp")
+    return 0
+
+
+def _operator_rules_targets(s: state.SetupState) -> str:
+    selected = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
+    names = []
+    if "claude" in selected:
+        names.append("~/.claude/CLAUDE.md")
+    if "openclaw" in selected:
+        names.append("every OpenClaw agent workspace AGENTS.md")
+    if "agy" in selected:
+        names.append("~/.gemini/GEMINI.md")
+    return ", ".join(names)
+
+
+def _step_operator_rules(s: state.SetupState, dry_run: bool = False) -> int:
+    """One operator-rules file, rendered into every selected cockpit (ADR-0016 D4). With the file present the step is silent
+    and only queues the refresh of the managed blocks; without it, the rules found in CLAUDE.md are shown and the file is
+    created at Apply after a confirm. It runs BEFORE the CLAUDE.md migration, so blocks that move to skills are already
+    captured. Nothing is written here (D6)."""
+    from . import hygiene, operator_rules
+    targets = _operator_rules_targets(s)
+    if operator_rules.exists():
+        deferred.discard(s, "operator_rules_file")
+        if targets:
+            deferred.enqueue(s, deferred.Action(
+                "operator_rules_blocks", f"refresh the operator-rules block in {targets}",
+                plan_text=f"refresh the managed operator-rules block in {targets} from {operator_rules.path()}"))
+        return 0
+    if hygiene.is_headless():
+        return 0
+    seed = operator_rules.seed_from_claude_md()
+    if not seed:
+        return 0
+    composed = operator_rules.compose(seed)
+    _section(8, "Operator rules")
+    ui.info(f"Your CLAUDE.md holds {len(seed)} standing rule block(s). One shared file, {operator_rules.path()}, can carry "
+            "them to every tool you use, so they are written once:")
+    for b in seed:
+        ui.detail(f"{b.category}: {b.heading} (~{b.tokens:,} tokens, estimate)")
+    bad = operator_rules.secret_findings(composed)
+    if bad:
+        ui.warn(f"Line(s) {', '.join(map(str, bad[:5]))} of those blocks look like a key, token or password; the file "
+                "is not created. Take the secret out of CLAUDE.md and run setup again.")
+        return 0
+    if dry_run:
+        ui.detail("DRY RUN: would offer to create the file from these blocks.")
+        return 0
+    if not ui.confirm(f"Create {operator_rules.path()} from these blocks (at Apply) and render it into {targets or 'your tools'}?",
+                      default=True):
+        deferred.discard(s, "operator_rules_file")
+        deferred.discard(s, "operator_rules_blocks")
+        return 0
+    setattr(s, operator_rules.SEED_ATTR, composed)
+    deferred.enqueue(s, deferred.Action(
+        "operator_rules_file", f"create {operator_rules.path()} from {len(seed)} CLAUDE.md block(s)",
+        plan_text=f"create {operator_rules.path()} (only if absent) from {len(seed)} CLAUDE.md block(s)",
+        run=lambda: operator_rules.create(composed)))
+    if targets:
+        deferred.enqueue(s, deferred.Action(
+            "operator_rules_blocks", f"render the operator-rules block into {targets}",
+            plan_text=f"render the managed operator-rules block into {targets}"))
     return 0
 
 

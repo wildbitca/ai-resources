@@ -77,7 +77,8 @@ def configure(ctx: dict) -> list[Path]:
     except OSError:
         pass
 
-    md = _gemini_md(ak_path, gateway_url, mode)
+    from .. import operator_rules
+    md = operator_rules.append_to(_gemini_md(ak_path, gateway_url, mode))     # ADR-0016 D4: one rules file, three cockpits
     if _shared.write_managed_block(GEMINI_MD_PATH, md):
         written.append(GEMINI_MD_PATH)
     _shared.link_agents_skills(ak_path)
