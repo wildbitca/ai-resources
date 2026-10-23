@@ -293,6 +293,52 @@ def billing_report() -> dict:
                                for a in billing.alerts_for(snap)]}
 
 
+def effort_validation(usages: list, table: dict | None = None) -> list[dict]:
+    """Per role: the effort the profile asks for, the calls, the output tokens and the output per call (ADR-0015 S14).
+
+    The question it answers: does a role set to `high` really write more per call than one set to `low`? When the
+    ordering does not follow the setting, the setting is not reaching the model. Calls with no known role are skipped.
+    API-equivalent estimate only; nothing is priced here."""
+    by_role: dict[str, dict] = {}
+    for u in usages:
+        role = getattr(u, "role", "") or ""
+        if not role or role in ("main", "subagent"):
+            continue
+        b = by_role.setdefault(role, {"calls": 0, "output": 0})
+        b["calls"] += 1
+        b["output"] += u.output
+    rows = []
+    for role, b in sorted(by_role.items()):
+        rows.append({"role": role, "effort": (table or {}).get(role, "n/a"), "calls": b["calls"],
+                     "output_tokens": b["output"], "output_per_call": round(b["output"] / b["calls"], 1)})
+    return rows
+
+
+def _effort_table() -> dict:
+    try:
+        from .setup import effort, state as setup_state
+        return effort.table_for_state(setup_state.load())
+    except Exception:  # noqa: BLE001 - a display aid: no profile table means "n/a"
+        return {}
+
+
+def _print_effort_validation(con, usages: list) -> None:
+    rows = effort_validation(usages, _effort_table())
+    if not rows:
+        return
+    from rich.table import Table  # type: ignore[import]
+    con.print()
+    t = Table(title="Effort validation (output per call by role)", show_header=True, header_style="bold cyan",
+              border_style="dim")
+    for col in ("Role", "Effort", "Calls", "Output", "Output/call"):
+        t.add_column(col, justify="left" if col in ("Role", "Effort") else "right")
+    for r in sorted(rows, key=lambda r: -r["output_per_call"]):
+        t.add_row(r["role"], str(r["effort"]), f"{r['calls']:,}", f"{r['output_tokens']:,}", f"{r['output_per_call']:,.0f}")
+    con.print(t)
+    ui.detail("A role set to high should write more per call than one set to low. If the order does not follow the "
+              "setting, the effort is not reaching the model (check the subagent file or the agent's thinkingDefault).")
+
+
 def _print_billing(con) -> None:
     """The billing block of the text report: mode, quota, credit and the alerts."""
     con.print()
@@ -341,6 +387,7 @@ def cmd_audit_json(args: argparse.Namespace) -> int:
     calls, hshare = haiku_share_above_100k(usages)
     doc["haiku"] = {"calls": calls, "share_above_100k": round(hshare, 3)}
     doc["global_claude_md_tokens_est"] = claude_md_report()
+    doc["effort_validation"] = effort_validation(usages, _effort_table())
     if oc_stats is not None and oc_stats.undecoded:
         doc["undecoded_rows"] = oc_stats.undecoded
     print(json.dumps(doc, indent=1, default=str))
@@ -485,6 +532,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
     md = claude_md_report()
     ui.detail(f"global CLAUDE.md ~{md['total']:,} tokens (estimate): kit block ~{md['kit_block']:,}, "
               f"your own content ~{md['rest']:,}.")
+    _print_effort_validation(con, all_usages)
     _print_billing(con)
     return 0
 

@@ -43,6 +43,8 @@ class Usage:
     session: str = ""
     origin: str = ""
     poll: bool = False
+    provider: str = ""     # who bills the call: anthropic, openai, google, ... (ADR-0015 S14)
+    role: str = ""         # the kit role that made it: planner, verifier, main, ... ("" when unknown)
 
     @property
     def cache_write(self) -> int:
@@ -60,6 +62,65 @@ class LoadStats:
     databases: int = 0
     missing: bool = False
     notes: list[str] = field(default_factory=list)
+
+
+def provider_of_model(model: str, default: str = "") -> str:
+    """The provider a model id belongs to, from its name; `default` when it cannot be told."""
+    m = (model or "").lower()
+    head = m.split("/", 1)[0] if "/" in m else ""
+    if head and head not in ("claude-cli", "claude-kit", "agy-cli", "agy-cli-lane", "codex"):
+        return head
+    if head in ("claude-cli", "claude-kit"):
+        return "anthropic"
+    if head in ("agy-cli", "agy-cli-lane"):
+        return "google"
+    if head == "codex":
+        return "openai"
+    if "claude" in m or any(f in m for f in ("sonnet", "opus", "haiku", "fable")):
+        return "anthropic"
+    if m.startswith(("gpt", "o1", "o3", "o4")):
+        return "openai"
+    if "gemini" in m:
+        return "google"
+    return default
+
+
+_ROLE_ALIASES = {"general-purpose": "generalPurpose", "generalpurpose": "generalPurpose"}
+
+
+def normalise_role(raw: str) -> str:
+    """A Claude Code `agentType` as a kit role name (`general-purpose` -> `generalPurpose`, `Explore` -> `explore`)."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    low = text.lower()
+    return _ROLE_ALIASES.get(low, low)
+
+
+def claude_subagent_role(transcript: Path) -> str:
+    """The role of a Claude Code subagent transcript: `agentType` in `<stem>.meta.json` beside it, else 'subagent'.
+    Read-only; an unreadable or absent meta file is not an error."""
+    meta = transcript.with_suffix("").with_suffix(".meta.json") if transcript.suffix == ".jsonl" else None
+    if meta is not None:
+        try:
+            doc = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            doc = None
+        if isinstance(doc, dict) and isinstance(doc.get("agentType"), str) and doc["agentType"].strip():
+            return normalise_role(doc["agentType"])
+    return "subagent"
+
+
+def openclaw_role(agent: str) -> str:
+    """The kit role of an OpenClaw agent id: `kit-role-architect` -> `software-architect`; the id itself otherwise."""
+    if agent.startswith("kit-role-"):
+        from .setup.cockpits import openclaw_roles
+        short = agent[len("kit-role-"):]
+        for role, word in openclaw_roles.SHORT.items():
+            if short == word or short.startswith(word + "-"):
+                return role
+        return short.split("-")[0]
+    return agent
 
 
 def is_poll(name: str, args) -> bool:
@@ -124,6 +185,7 @@ def load_claude_jsonl(roots: Iterable[Path], since: datetime | None = None, incl
                 continue
             sub = "/subagents/" in str(f)
             entry = None
+            role: str | None = None            # a subagent file's role, read once from its meta file
             try:
                 fh = open(f, encoding="utf-8", errors="ignore")
             except OSError:
@@ -156,11 +218,14 @@ def load_claude_jsonl(roots: Iterable[Path], since: datetime | None = None, incl
                     key = f"id:{key}" if key else f"file:{f}:{lineno}"
                     origin = ("openclaw-cli" if entry == "sdk-cli" else "claude-code") + ("/subagent" if sub else "")
                     order += 1
+                    if sub and role is None:
+                        role = claude_subagent_role(f)
                     records[key] = Usage(
-                        ts=ts, source="claude-code", project=project, agent="",
+                        ts=ts, source="claude-code", project=project, agent=role if sub else "",
                         model=model, input=i, output=o, cache_read=u.get("cache_read_input_tokens") or 0,
                         cache_write_5m=w5, cache_write_1h=w1, msg_id=key,
-                        session=str(f) if sub else (d.get("sessionId") or f.stem), origin=origin, poll=polls)
+                        session=str(f) if sub else (d.get("sessionId") or f.stem), origin=origin, poll=polls,
+                        provider=provider_of_model(model, "anthropic"), role=(role if sub else "main"))
     return list(records.values())
 
 
@@ -259,5 +324,6 @@ def load_openclaw_events(agents_dir: Path, since: datetime | None = None, until:
                 agent=agent, model=m.get("model", ""), input=u.get("input") or 0, output=u.get("output") or 0,
                 cache_read=u.get("cacheRead") or 0, cache_write_5m=w5, cache_write_1h=w1, msg_id=str(key),
                 session=str(sid), origin="openclaw-api" if m.get("provider") == "anthropic" else "openclaw-" + str(m.get("provider")),
-                poll=polls)
+                poll=polls, provider=str(m.get("provider") or provider_of_model(m.get("model", ""))),
+                role=openclaw_role(agent))
     return list(records.values()), stats
