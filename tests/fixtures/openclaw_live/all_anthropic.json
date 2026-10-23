@@ -1,0 +1,178 @@
+{
+ "agents": {
+  "defaults": {
+   "workspace": "~/.openclaw/workspace",
+   "model": {
+    "primary": "anthropic/claude-sonnet-5-5",
+    "fallbacks": [
+     "anthropic/claude-opus-5-5",
+     "anthropic/claude-haiku-5-5"
+    ]
+   },
+   "models": {
+    "anthropic/claude-sonnet-5": {
+     "agentRuntime": {
+      "id": "openclaw"
+     }
+    },
+    "anthropic/claude-haiku-4-5": {
+     "agentRuntime": {
+      "id": "openclaw"
+     }
+    },
+    "anthropic/*": {
+     "agentRuntime": {
+      "id": "openclaw"
+     }
+    },
+    "anthropic/claude-haiku-5-5": {
+     "agentRuntime": {
+      "id": "openclaw"
+     }
+    },
+    "anthropic/claude-opus-5-5": {
+     "agentRuntime": {
+      "id": "openclaw"
+     }
+    },
+    "anthropic/claude-sonnet-5-5": {
+     "agentRuntime": {
+      "id": "openclaw"
+     }
+    }
+   }
+  },
+  "entries": {
+   "main": {
+    "workspace": "/home/operator/.openclaw/workspace",
+    "model": {
+     "primary": "anthropic/claude-sonnet-5-5",
+     "fallbacks": [
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "snoutzone": {
+    "workspace": "/home/operator/.openclaw/workspace-snoutzone",
+    "model": {
+     "primary": "anthropic/claude-sonnet-5-5",
+     "fallbacks": [
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "elinvo": {
+    "workspace": "/home/operator/.openclaw/workspace-elinvo",
+    "model": {
+     "primary": "anthropic/claude-sonnet-5-5",
+     "fallbacks": [
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "devops": {
+    "workspace": "/home/operator/.openclaw/workspace-devops",
+    "model": {
+     "primary": "anthropic/claude-sonnet-5-5",
+     "fallbacks": [
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "claude": {
+    "workspace": "/home/operator/.openclaw/workspace-claude",
+    "model": {
+     "primary": "anthropic/claude-sonnet-5-5",
+     "fallbacks": [
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "ai": {
+    "workspace": "/home/operator/.openclaw/workspace-ai",
+    "model": {
+     "primary": "anthropic/claude-sonnet-5-5",
+     "fallbacks": [
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "security": {
+    "workspace": "/home/operator/.openclaw/workspace-security",
+    "model": {
+     "primary": "anthropic/claude-sonnet-5-5",
+     "fallbacks": [
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "kit-lane-agy-gemini38flashhigh": {
+    "workspace": "/home/operator/.openclaw/workspace-kit-lane-agy-gemini38flashhigh",
+    "model": {
+     "primary": "anthropic/claude-sonnet-5-5",
+     "fallbacks": [
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "kit-lane-agy-gemini4argonhigh": {
+    "workspace": "/home/operator/.openclaw/workspace-kit-lane-agy-gemini4argonhigh",
+    "model": {
+     "primary": "anthropic/claude-opus-5-5",
+     "fallbacks": [
+      "anthropic/claude-sonnet-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "kit-lane-agy-opus55": {
+    "workspace": "/home/operator/.openclaw/workspace-kit-lane-agy-opus55",
+    "model": {
+     "primary": "anthropic/claude-opus-5-5",
+     "fallbacks": [
+      "anthropic/claude-sonnet-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "kit-lane-cli-haiku55": {
+    "workspace": "/home/operator/.openclaw/workspace-kit-lane-cli-haiku55",
+    "model": {
+     "primary": "anthropic/claude-haiku-5-5",
+     "fallbacks": [
+      "anthropic/claude-sonnet-5-5",
+      "anthropic/claude-opus-5-5"
+     ]
+    }
+   },
+   "kit-lane-cli-opus55": {
+    "workspace": "/home/operator/.openclaw/workspace-kit-lane-cli-opus55",
+    "model": {
+     "primary": "anthropic/claude-opus-5-5",
+     "fallbacks": [
+      "anthropic/claude-sonnet-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   },
+   "kit-lane-cli-sonnet55": {
+    "workspace": "/home/operator/.openclaw/workspace-kit-lane-cli-sonnet55",
+    "model": {
+     "primary": "anthropic/claude-sonnet-5-5",
+     "fallbacks": [
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5"
+     ]
+    }
+   }
+  }
+ }
+}

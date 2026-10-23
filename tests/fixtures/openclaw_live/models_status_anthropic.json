@@ -1,0 +1,6 @@
+{"defaultModel": "anthropic/claude-sonnet-5-5", "fallbacks": ["anthropic/claude-opus-5-5"],
+ "auth": {"providers": [
+  {"provider": "anthropic", "effective": {"kind": "profiles", "detail": "FAKEKEY-DO-NOT-LEAK"},
+   "profiles": {"count": 1, "oauth": 0, "token": 0, "apiKey": 1, "labels": []}},
+  {"provider": "claude-cli", "effective": {"kind": "profiles", "detail": "FAKEKEY-DO-NOT-LEAK"},
+   "profiles": {"count": 1, "oauth": 1, "token": 0, "apiKey": 0, "labels": []}}]}}
