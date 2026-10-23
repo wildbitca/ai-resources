@@ -413,3 +413,15 @@ def test_the_table_is_real_columns_in_the_rendered_output(capsys):
     out = capsys.readouterr().out
     header = next(line for line in out.splitlines() if "Runs in" in line)
     assert "Billed to" in header and header.index("Runs in") < header.index("Billed to") < header.index("Model")
+
+
+def test_the_plain_fallback_prints_runs_in_and_billed_to_as_separate_columns(capsys, monkeypatch):
+    monkeypatch.setattr(ui, "_HAS_RICH", False)
+    ui.runs_table([("planner", "OpenClaw kit-role agent", "API per token", "openai/gpt-x", "high")], title="Who runs what")
+    lines = capsys.readouterr().out.splitlines()
+    header = next(line for line in lines if "Runs in" in line)
+    row = next(line for line in lines if line.lstrip().startswith("planner"))
+    assert header.index("Runs in") < header.index("Billed to") < header.index("Model") < header.index("Effort")
+    assert row.index("OpenClaw kit-role agent") == header.index("Runs in")           # the cells line up under the headers
+    assert row.index("API per token") == header.index("Billed to") and row.index("openai/gpt-x") == header.index("Model")
+    assert "Who runs what" in lines[1]
