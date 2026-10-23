@@ -65,7 +65,7 @@ from typing import Any, Iterable
 
 from .. import state, ui
 from .. import detection
-from .. import live_openclaw
+from .. import live_auth, live_openclaw
 from ..detection import detect_openclaw
 from ... import repo_root
 from . import _shared
@@ -870,77 +870,18 @@ def _confirm_replace_image(current: Any, new_ref: str) -> bool:
                               "Setup puts your value back on teardown.")
 
 
-def _image_auth_run(argv: list[str]) -> int:
-    """Run `openclaw models auth ...` on the operator's own terminal: stdin, stdout and stderr are inherited, nothing is
-    captured and nothing is piped in, so the credential goes from the keyboard to OpenClaw and the kit never sees it."""
-    binary = shutil.which("openclaw")
-    if not binary:
-        return 127
-    try:
-        return subprocess.run([binary, *argv[1:]], cwd=str(Path.home()), timeout=image.SIGN_IN_TIMEOUT_S,
-                              check=False).returncode
-    except subprocess.TimeoutExpired:
-        return 124
-    except OSError:
-        return 1
-
-
-def _auth_profile_ids() -> set[str] | None:
-    """The profile ids in `openclaw models auth list --json` (ids only, never a field that could hold a credential), or
-    None (unknown) when the command exits non-zero or exits zero with output that cannot be parsed as JSON. A zero exit
-    with output that has no JSON at all is the empty set."""
-    rc, out = _openclaw(["models", "auth", "list", "--json"], timeout=60)
-    if rc != 0:
-        return None
-    ids: set[str] = set()
-    starts = [i for i in (out.find("{"), out.find("[")) if i >= 0]
-    if not starts:
-        return ids
-    try:
-        raw = json.loads(out[min(starts):])
-    except (ValueError, TypeError):
-        return None
-
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            if isinstance(node.get("id"), str) and isinstance(node.get("provider"), str):
-                ids.add(node["id"])
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-    walk(raw)
-    return ids
-
-
 def _image_sign_in(s: state.SetupState, route: Any, *, dry_run: bool) -> bool:
-    """Hand the sign-in to OpenClaw (plan I9). True when the config patch may go on.
+    """True when the image model may be written: OpenClaw reports a usable sign-in for the route's provider (ADR-0016 D1).
 
-    Review M1: the profile ids are listed before and after the sign-in and `image_auth_profile_created` is recorded only
-    for an id that is new, so teardown never offers to sign out a profile setup did not create. When the listing before
-    the sign-in exits non-zero, no sign-in runs: the command is printed instead."""
+    The kit has no sign-in of its own: when OpenClaw sees no credential it prints OpenClaw's own flow, writes nothing and
+    runs nothing. Reads only `models status` / `models auth list`; no gateway call."""
     accounts, names = _image_accounts()
     view = image.provider_account(route, accounts, names)
-    method = s.openclaw.image_account if s.openclaw.image_account in route.auth else ""
-    interactive = (not dry_run) and not ui.is_non_interactive() and ui.stdin_is_a_terminal()
-    before: set[str] | None = set()
-    if interactive and route.kind == "route" and not view.gateway_sees_it:
-        before = _auth_profile_ids()
-        if before is None:
-            ui.warn("OpenClaw: `models auth list` failed, so setup cannot tell what a sign-in would add and runs none. "
-                    "Sign in yourself: " + (image.sign_in_command(route, method) or "see docs/tools/image-generation.md"))
-            return True
-    res = image.ensure_account(route, view, method=method, run=_image_auth_run, interactive=interactive,
-                               confirm=ui.confirm, dry_run=dry_run, say=ui.info)
-    if res.status == image.FAILED:
-        ui.warn(f"OpenClaw sign-in failed (exit {res.exit_code}); the image model was not changed.")
-        return False
-    if res.status == image.SIGNED_IN and res.profile_id:
-        after = _auth_profile_ids()
-        if before is not None and after is not None and res.profile_id in after and res.profile_id not in before:
-            s.openclaw.image_auth_profile_created = res.profile_id
-    return True
+    if route.kind != "route" or view.gateway_sees_it:
+        return True
+    ui.warn(f"OpenClaw reports no usable {route.label} sign-in, so the image model was not "
+            f"{'planned' if dry_run else 'written'}. Sign in with OpenClaw's own flow: `{image.NATIVE_SIGN_IN}`.")
+    return dry_run                       # a dry run goes on to show the patch verdict; Apply stops here
 
 
 def _configure_image(s: state.SetupState, doc: dict, path: Path, written: list[Path], *, dry_run: bool) -> bool:
@@ -1054,16 +995,9 @@ def _teardown_image(s: state.SetupState) -> bool:
         o.image_previous, o.image_previous_absent, o.image_model, o.image_applied_ref = None, False, "", ""
     profile = o.image_auth_profile_created
     if profile:
-        argv = ["openclaw", "models", "auth", "logout", profile]
-        command = " ".join(argv)
-        if (not ui.is_non_interactive() and ui.stdin_is_a_terminal()
-                and ui.confirm(f"Sign out the image provider profile {profile} that setup signed in? "
-                               "OpenClaw asks again on this terminal.", default=False)):
-            rc = _image_auth_run(argv)
-            if rc != 0:
-                ui.warn(f"OpenClaw sign-out exited with code {rc}; run it yourself if you want it gone: {command}")
-        else:
-            ui.info(f"Signed in by setup and left as it is. To sign out: {command}")
+        # Signed in by an earlier kit: this kit never signs out for you (ADR-0016 D1), it only says how.
+        ui.info(f"An earlier setup signed in the image provider profile {profile} and left it as it is. "
+                f"To sign out: openclaw models auth logout {profile}")
         o.image_auth_profile_created = ""
     return True
 
@@ -2984,85 +2918,94 @@ def _installed_tools(s: state.SetupState) -> dict[str, bool]:
     return {cid: bool(cs.installed) for cid, cs in s.cockpits.items()}
 
 
-def _store_api_key(ui_mod, provider: str, *, dry_run: bool) -> None:
-    """Save an API key in OpenClaw's OWN store: `openclaw models auth paste-api-key --provider <p>` runs on the operator's
-    terminal with inherited stdio, so the key is typed into OpenClaw's prompt and never passes through the kit."""
-    argv = providers_mod.auth_command(provider)
-    shown = "openclaw " + " ".join(argv)
-    if dry_run or ui_mod.is_non_interactive():
-        ui_mod.detail(f"{provider}: to save its API key run `{shown}`.")
+AUTH_PROMPT = "OpenClaw sign-in:"
+CONFIGURE_ARGV = ["openclaw", "configure", "--section", "model"]
+MAX_AUTH_AGENTS = 8
+CONFIGURE_CONFIRM = ("Hand this terminal to `openclaw configure --section model`? It is OpenClaw's own interactive flow "
+                     "and may write openclaw.json; setup never restarts the gateway, so restart it yourself in a "
+                     "maintenance window if OpenClaw asks.")
+
+
+def _auth_agent_ids(doc: dict) -> list[str]:
+    """The agents whose auth store is read: the operator's own, `main` first. Kit lane and role agents inherit."""
+    ids = [a for a in live_openclaw._entries(doc) if not a.startswith("kit-")]
+    ids.sort(key=lambda a: (a != "main", a))
+    return (ids or ["main"])[:MAX_AUTH_AGENTS]
+
+
+def _live_runner(argv: list[str]) -> tuple[int, str]:
+    return _openclaw(list(argv[1:]), timeout=60)
+
+
+def read_live_auth(doc: dict) -> dict:
+    """agent -> provider -> LiveAuth, from OpenClaw's own local auth store (read-only, no gateway call)."""
+    return live_auth.read_openclaw(_live_runner, _auth_agent_ids(doc))
+
+
+def _record_openclaw_auth(s: state.SetupState, live: dict) -> None:
+    """Record the providers OpenClaw reports usable (ids and a method name only). An empty reading changes nothing:
+    routing stays as it is rather than being restricted to nothing."""
+    from .. import cockpit_auth
+    usable = live_auth.usable_providers(live)
+    if not usable:
         return
-    binary = shutil.which("openclaw")
-    if not binary:
-        ui_mod.warn(f"{provider}: OpenClaw is not on PATH. Run `{shown}` once it is installed.")
-        return
-    if not ui_mod.confirm(f"Save the {provider} API key now? OpenClaw asks for it on this terminal; the kit never sees it.",
-                          default=True):
-        ui_mod.detail(f"Later: `{shown}`.")
-        return
-    try:
-        rc = subprocess.run([binary, *argv], cwd=str(Path.home())).returncode
-    except OSError as e:
-        ui_mod.warn(f"{provider}: could not run {shown} ({type(e).__name__}).")
-        return
-    if rc == 0:
-        ui_mod.record_action(f"saved a {provider} API key in OpenClaw's store")
-    else:
-        ui_mod.warn(f"{provider}: `{shown}` exited {rc}; nothing was saved.")
+    kinds = {}
+    for per in live.values():
+        for prov, auth in per.items():
+            kinds.setdefault(prov, auth)
+    cockpit_auth.set_providers(s, {p: ("api_key" if kinds[p].kind == live_auth.API_KEY else "cli")
+                                   for p in sorted(usable)})
+    cockpit_auth.set_provider_live(s, {p: kinds[p].kind for p in sorted(usable)})
 
 
 def ask_auth(ui_mod, s: state.SetupState, detected=None, dry_run: bool = False) -> int:
-    """OpenClaw's own sign-in question (ADR-0015 D1/D2): which providers, and per provider an API key or a CLI backend.
+    """OpenClaw's sign-in step (ADR-0016 D1): show what each agent can use LIVE, ask keep or change.
 
-    The catalog comes from OpenClaw itself (`models list --all --json`); the providers that already hold a sign-in are
-    preselected (`models auth list --json`). Only provider ids and method names are stored. A non-interactive run keeps
-    the saved providers and runs no command."""
-    from .. import cockpit_auth, profiles
+    Change hands the terminal to OpenClaw's own `openclaw configure --section model` on an explicit choice only, never in
+    a non-interactive run or a dry run, then reads the auth again. The kit stores provider ids and method names only. A
+    non-interactive run keeps the saved providers and runs no command."""
+    from .. import cockpit_auth
     if ui_mod.is_non_interactive():
         if not cockpit_auth.method(s, "openclaw"):
             cockpit_auth.set_method(s, "openclaw", "cli")
         return 0
-    discovery = providers_mod.discover_providers(_openclaw)
-    authed = providers_mod.authenticated_providers(_openclaw)
-    if discovery.source != "cli":
-        ui_mod.warn("OpenClaw's provider list could not be read ("
-                    + "; ".join(discovery.problems or ("no catalog",)) + "); "
-                    + ("the provider docs shipped with OpenClaw are used." if discovery.source == "docs"
-                       else "the providers the kit knows are listed."))
-    try:
-        profile = profiles.load_profile(profiles.saved_or_recommended(s.profile.name), "single-model")
-    except Exception:  # noqa: BLE001 - a custom profile must not break the question
-        profile = None
-    saved = cockpit_auth.providers(s)
-    default = [p for p in discovery.providers if p in saved] or providers_mod.preselected(discovery, authed, profile)
-    choices = [ui_mod.Choice(p + ("  (signed in)" if p in authed else ""), value=p) for p in discovery.providers]
-    picked = ui_mod.checkbox(AUTH_PROVIDERS_PROMPT, choices, default=default)
+    doc = read_config(config_path())
+    live = read_live_auth(doc)
+    _show_live_auth(ui_mod, live)
+    _record_openclaw_auth(s, live)
+    picked = ui_mod.select(AUTH_PROMPT, [ui_mod.Choice("Keep it", value="keep"),
+                                         ui_mod.Choice("Change it with OpenClaw's own flow", value="change")],
+                           default="keep")
     if picked is None:
         return 130
-    chosen: dict[str, str] = {}
-    installed = _installed_tools(s)
-    for provider in discovery.providers:
-        if provider not in picked:
-            continue
-        options = providers_mod.auth_options(provider, installed=installed, backends=discovery.backends)
-        saved_how = saved.get(provider)
-        if provider in authed and not saved_how:
-            saved_how = "api_key"
-        default_how = saved_how if saved_how in [m for m, _ in options] else options[0][0]
-        if len(options) == 1:
-            how = options[0][0]
-        else:
-            how = ui_mod.select(f"How does OpenClaw sign in to {provider}?",
-                                [ui_mod.Choice(label, value=m) for m, label in options], default=default_how)
-            if how is None:
-                return 130
-        chosen[provider] = how
-        if how == "api_key" and provider not in authed:
-            _store_api_key(ui_mod, provider, dry_run=dry_run)
-        elif how == "api_key":
-            ui_mod.detail(f"{provider}: already signed in (kept; the kit does not read the key).")
-    if not chosen:
-        ui_mod.warn("No provider chosen: OpenClaw routing is left as it is.")
-        return 0
-    cockpit_auth.set_providers(s, chosen)
+    if picked == "change":
+        shown = " ".join(CONFIGURE_ARGV)
+        if dry_run:
+            ui_mod.detail(f"Dry run: would hand this terminal to `{shown}`.")
+        elif ui_mod.confirm(CONFIGURE_CONFIRM, default=False):
+            ui_mod.info(f"Applies now: `{shown}` runs on this terminal; the kit sees nothing you type.")
+            rc = live_auth.run_handoff(CONFIGURE_ARGV)
+            if rc != 0:
+                ui_mod.warn(f"`{shown}` exited {rc}; the sign-in is whatever OpenClaw reports now.")
+            else:
+                ui_mod.record_action("changed OpenClaw's model sign-in with its own flow")
+            live = read_live_auth(read_config(config_path()))
+            _show_live_auth(ui_mod, live)
+            _record_openclaw_auth(s, live)
+    if not live_auth.usable_providers(live):
+        ui_mod.warn("OpenClaw reports no usable provider sign-in: routing is left as it is. "
+                    f"Sign in with `{' '.join(CONFIGURE_ARGV)}`.")
+    if not cockpit_auth.method(s, "openclaw"):
+        cockpit_auth.set_method(s, "openclaw", "cli")
     return 0
+
+
+def _show_live_auth(ui_mod, live: dict) -> None:
+    """One line per distinct set of providers; agents that share a set are listed together. Names only."""
+    groups: dict[tuple, list[str]] = {}
+    for agent, per in live.items():
+        groups.setdefault(tuple(sorted((p, a.billed_to) for p, a in per.items())), []).append(agent)
+    for key, agents in groups.items():
+        what = ", ".join(f"{p} (billed to: {live_auth.BILLED_LABEL.get(b, 'unknown')})" for p, b in key) \
+            or "no usable provider"
+        ui_mod.info(f"OpenClaw {'agents' if len(agents) > 1 else 'agent'} {', '.join(agents)}: {what}")

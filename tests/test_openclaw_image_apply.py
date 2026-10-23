@@ -35,6 +35,12 @@ def rig(tmp_path, monkeypatch):
         return fake.answer
     monkeypatch.setattr(openclaw.ui, "confirm", confirm)
     monkeypatch.setattr(openclaw.ui, "is_non_interactive", lambda: False)
+    # ADR-0016 D1: an image route is written only for a provider OpenClaw reports usable. The default rig has a sign-in
+    # for the routes the tests use; the tests about a missing one replace this.
+    fake.accounts = {"openrouter": {"kind": "profiles", "profiles": 1, "source": ""},
+                     "openai": {"kind": "profiles", "profiles": 1, "source": ""},
+                     "minimax": {"kind": "profiles", "profiles": 1, "source": ""}}
+    monkeypatch.setattr(openclaw, "_image_accounts", lambda: (fake.accounts, []))
     return fake
 
 
@@ -279,128 +285,69 @@ def test_a_value_the_operator_changed_after_the_kit_applied_asks_again(rig):
     assert run(s, rig)[0] is False and len(rig.confirms) == 1 and rig.live_patches() == []
 
 
-# --- I9 / AC-14, AC-15: the sign-in hand-off ----------------------------------------------------------------------------------
-
-import subprocess
+# --- ADR-0016 D1: no kit sign-in; a route is written only for a provider OpenClaw reports usable ------------------------------
 
 from ai_resources.setup import credentials as kit_credentials
 
 MISSING = {}                                                # no provider has a credential in OpenClaw
 
 
-class Auth:
-    """Records `openclaw models auth ...` runs; stands in for `_image_auth_run`. A successful `paste-api-key` adds the
-    profile `<provider>:manual` to the fake profile list (`profiles`), like OpenClaw does."""
-    def __init__(self, rc=0, profiles=None):
-        self.rc, self.argvs = rc, []
-        self.profiles = profiles if profiles is not None else []
-
-    def __call__(self, argv):
-        self.argvs.append(list(argv))
-        if self.rc == 0 and "paste-api-key" in argv:
-            self.profiles.append(argv[argv.index("--provider") + 1] + ":manual")
-        return self.rc
+def _no_auth_calls(fake):
+    return [a for a, _s in fake.calls if a[:2] == ["models", "auth"] and a[2:3] != ["list"]]
 
 
-def auth_list(profiles):
-    def fn(_args, _stdin):
-        return 0, json.dumps({"profiles": [{"id": i, "provider": i.split(":")[0]} for i in profiles]})
-    return fn
-
-
-@pytest.fixture
-def signin(rig, monkeypatch):
-    auth = Auth()
-    rig.extra[("models", "auth", "list")] = auth_list(auth.profiles)
-    monkeypatch.setattr(openclaw, "_image_auth_run", auth)
+def test_a_route_without_a_usable_sign_in_writes_nothing_and_prints_openclaws_own_flow(rig, monkeypatch):
     monkeypatch.setattr(openclaw, "_image_accounts", lambda: (MISSING, []))
-    monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: True)
-    rig.answer = True
-    rig.auth = auth
-    return rig
-
-
-def test_account_a_missing_profile_and_a_confirmed_interactive_apply_make_exactly_one_auth_call(signin):
     s = S(mode="fal", model="fal/krea/v2/medium/text-to-image")
-    assert run(s, signin)[0] is True
-    assert signin.auth.argvs == [["openclaw", "models", "auth", "paste-api-key", "--provider", "fal"]]
-    assert s.openclaw.image_auth_profile_created == "fal:manual"
-    assert signin.confirms and signin.confirms[0][1] is False
-    assert len(signin.live_patches()) == 1, "the model is written after the sign-in"
+    changed, written = run(s, rig)
+    assert changed is False and written == [] and rig.live_patches() == []
+    assert any("openclaw configure --section model" in m for m in rig.messages["warn"])
+    assert s.openclaw.image_applied is False
+    assert _no_auth_calls(rig) == [] and rig.confirms == []
 
 
-def test_account_oauth_routes_use_login_and_claim_no_profile_id(signin):
-    s = S(mode="openai-codex", model="openai/gpt-image-2")
-    run(s, signin)
-    assert signin.auth.argvs == [["openclaw", "models", "auth", "login", "--provider", "openai"]]
+def test_no_run_ever_calls_a_models_auth_command_or_a_native_flow(rig, monkeypatch):
+    from ai_resources.setup import live_auth
+    monkeypatch.setattr(live_auth, "handoff", lambda argv: pytest.fail(f"a native flow ran: {argv}"))
+    for accounts in (MISSING, rig.accounts):
+        monkeypatch.setattr(openclaw, "_image_accounts", lambda a=accounts: (a, []))
+        run(S(), rig)
+        run(S(), rig, dry_run=True)
+    assert _no_auth_calls(rig) == []
+
+
+def test_a_dry_run_names_the_missing_sign_in_and_still_shows_the_patch_verdict(rig, monkeypatch):
+    monkeypatch.setattr(openclaw, "_image_accounts", lambda: (MISSING, []))
+    changed, _w = run(S(), rig, dry_run=True)
+    assert changed is False and rig.live_patches() == []
+    assert any("openclaw configure --section model" in m for m in rig.messages["warn"])
+    lines = img.dry_run_lines(S(), {"accounts": MISSING, "kit_env": []})
+    assert any("not written" in line and "openclaw configure --section model" in line for line in lines)
+    assert not any("paste-api-key" in line or "would run" in line for line in lines)
+
+
+def test_a_usable_sign_in_writes_the_route_as_before(rig):
+    s = S()
+    changed, _w = run(s, rig)
+    assert changed and s.openclaw.image_applied
+    assert not any("openclaw configure" in m for m in rig.messages["warn"])
+
+
+def test_the_image_catalog_has_no_sign_in_fields_or_helpers():
+    assert not any(hasattr(r, "login_provider") or hasattr(r, "key_provider") for r in img.CATALOG)
+    for gone in ("ensure_account", "sign_in_for", "SignInResult", "SIGN_IN_TIMEOUT_S"):
+        assert not hasattr(img, gone), gone
+    assert not hasattr(openclaw, "_image_auth_run") and not hasattr(openclaw, "_auth_profile_ids")
+
+
+def test_teardown_of_a_profile_an_earlier_kit_signed_in_only_prints_the_logout(rig, monkeypatch):
+    from ai_resources.setup import live_auth
+    monkeypatch.setattr(live_auth, "handoff", lambda argv: pytest.fail("teardown ran a native flow"))
+    s = S(image_auth_profile_created="fal:manual")
+    openclaw._teardown_image(s)
     assert s.openclaw.image_auth_profile_created == ""
-
-
-def test_account_minimax_follows_the_chosen_method(signin):
-    run(S(mode="minimax", model="minimax/image-01", image_account="oauth"), signin)
-    run(S(mode="minimax", model="minimax/image-01", image_account="api-key"), signin)
-    assert signin.auth.argvs == [["openclaw", "models", "auth", "login", "--provider", "minimax-portal"],
-                                 ["openclaw", "models", "auth", "paste-api-key", "--provider", "minimax"]]
-
-
-@pytest.mark.parametrize("why", ["dry_run", "yes", "no_tty", "declined", "present"])
-def test_account_no_auth_call_runs_and_the_command_prints(signin, monkeypatch, why):
-    s = S(mode="fal", model="fal/krea/v2/medium/text-to-image")
-    if why == "yes":
-        monkeypatch.setattr(openclaw.ui, "is_non_interactive", lambda: True)
-    elif why == "no_tty":
-        monkeypatch.setattr(openclaw.ui, "stdin_is_a_terminal", lambda: False)
-    elif why == "declined":
-        signin.answer = False
-    elif why == "present":
-        monkeypatch.setattr(openclaw, "_image_accounts", lambda: ({"fal": {"kind": "profiles", "profiles": 1, "source": ""}}, []))
-    run(s, signin, dry_run=(why == "dry_run"))
-    assert signin.auth.argvs == []
-    text = " ".join(signin.messages["info"])
-    if why != "present":
-        assert "openclaw models auth paste-api-key --provider fal" in text
-    assert s.openclaw.image_auth_profile_created == ""
-
-
-def test_account_a_failed_sign_in_writes_no_config_and_reports_only_the_exit_code(signin):
-    signin.auth.rc = 3
-    s = S(mode="fal", model="fal/krea/v2/medium/text-to-image")
-    assert run(s, signin)[0] is False
-    assert signin.live_patches() == [] and s.openclaw.image_applied is False and s.openclaw.image_auth_profile_created == ""
-    warn = " ".join(signin.messages["warn"])
-    assert "exit 3" in warn
-
-
-def test_account_foundry_prints_the_docs_pointer_and_runs_nothing(signin):
-    run(S(mode="microsoft-foundry", model="microsoft-foundry/mai-image-2"), signin)
-    assert signin.auth.argvs == [] and any("sign in through OpenClaw yourself" in m for m in signin.messages["info"])
-
-
-def test_account_the_real_runner_inherits_the_terminal_and_pipes_nothing(monkeypatch):
-    seen = {}
-
-    def fake_run(argv, **kw):
-        seen["argv"], seen["kw"] = argv, kw
-        return subprocess.CompletedProcess(argv, 0)
-    monkeypatch.setattr(openclaw.shutil, "which", lambda name: "/usr/bin/openclaw")
-    monkeypatch.setattr(openclaw.subprocess, "run", fake_run)
-    assert openclaw._image_auth_run(["openclaw", "models", "auth", "login", "--provider", "openai"]) == 0
-    assert seen["argv"] == ["/usr/bin/openclaw", "models", "auth", "login", "--provider", "openai"]
-    for forbidden in ("capture_output", "input", "stdin", "stdout", "stderr", "text", "env"):
-        assert forbidden not in seen["kw"], forbidden
-    monkeypatch.setattr(openclaw.shutil, "which", lambda name: None)
-    assert openclaw._image_auth_run(["openclaw", "x"]) == 127
-
-
-def test_account_no_secret_is_ever_stored_or_printed_and_the_kit_env_is_untouched(signin, monkeypatch, tmp_path):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-SECRET")
-    monkeypatch.setattr(kit_credentials, "load_env", lambda: {"FAL_KEY": "sk-test-SECRET"})
-    monkeypatch.setattr(kit_credentials, "update_env", lambda *a, **k: pytest.fail("the kit .env was written"))
-    monkeypatch.setattr(kit_credentials, "save_env", lambda *a, **k: pytest.fail("the kit .env was written"))
-    s = S(mode="fal", model="fal/krea/v2/medium/text-to-image")
-    run(s, signin)
-    blob = json.dumps(state._to_dict(s)) + json.dumps(signin.messages) + json.dumps(signin.calls)
-    assert "sk-test-SECRET" not in blob
+    assert any("openclaw models auth logout fal:manual" in m for m in rig.messages["info"])
+    assert rig.confirms == [] and _no_auth_calls(rig) == []
 
 
 def test_account_the_image_modules_never_touch_the_kit_credential_store():
@@ -420,7 +367,7 @@ def test_account_the_image_modules_never_touch_the_kit_credential_store():
     assert not called & {"save_env", "update_env", "load_env", "password", "getpass", "environ", "getenv", "system", "Popen"}
 
 
-# --- I11 / AC-18: teardown of the model and the sign-out offer ------------------------------------------------------------------
+# --- I11 / AC-18: teardown of the model ------------------------------------------------------------------
 
 def _applied(rig, **kw):
     s = S(**kw)
@@ -472,48 +419,6 @@ def test_teardown_that_would_need_a_restart_keeps_its_fields_for_a_retry(rig, mo
     assert s.openclaw.image_applied is True and s.openclaw.image_previous_absent is True
 
 
-def test_teardown_logout_only_for_a_created_profile_and_only_on_confirm(signin):
-    s = S(mode="fal", model="fal/krea/v2/medium/text-to-image")
-    run(s, signin)
-    assert s.openclaw.image_auth_profile_created == "fal:manual"
-    signin.answer = False
-    signin.auth.argvs.clear()
-    signin.confirms.clear()
-    openclaw._teardown_image(s)
-    assert signin.auth.argvs == [] and len(signin.confirms) == 1 and signin.confirms[0][1] is False
-    assert any("openclaw models auth logout fal:manual" in m for m in signin.messages["info"])
-    assert s.openclaw.image_auth_profile_created == ""
-
-
-def test_teardown_logout_runs_after_a_yes_with_the_profile_id_only(signin):
-    s = S(mode="fal", model="fal/krea/v2/medium/text-to-image")
-    run(s, signin)
-    signin.auth.argvs.clear()
-    signin.answer = True
-    openclaw._teardown_image(s)
-    assert signin.auth.argvs == [["openclaw", "models", "auth", "logout", "fal:manual"]]
-
-
-def test_teardown_no_logout_is_offered_when_setup_signed_nothing_in(signin, monkeypatch):
-    monkeypatch.setattr(openclaw, "_image_accounts",
-                        lambda: ({"openrouter": {"kind": "profiles", "profiles": 1, "source": ""}}, []))
-    s = S()
-    run(s, signin)
-    assert s.openclaw.image_auth_profile_created == ""
-    signin.confirms.clear()
-    openclaw._teardown_image(s)
-    assert signin.confirms == [] and signin.auth.argvs == []
-
-
-def test_teardown_non_interactive_never_signs_out(signin, monkeypatch):
-    s = S(mode="fal", model="fal/krea/v2/medium/text-to-image")
-    run(s, signin)
-    signin.auth.argvs.clear()
-    monkeypatch.setattr(openclaw.ui, "is_non_interactive", lambda: True)
-    openclaw._teardown_image(s)
-    assert signin.auth.argvs == []
-
-
 def test_teardown_a_second_teardown_is_a_no_op(rig):
     s = _applied(rig)
     openclaw._teardown_image(s)
@@ -539,57 +444,7 @@ def test_the_openclaw_teardown_undoes_the_model_then_the_deny_in_that_order(rig,
     assert kinds == ["media", "deny"]
 
 
-# --- review M1: only a profile id that is NEW is recorded; no sign-in when the listing fails --------------------------------
-
 FAL = dict(mode="fal", model="fal/krea/v2/medium/text-to-image")
-
-
-def test_m1_a_profile_id_that_existed_before_the_sign_in_is_never_recorded(signin):
-    signin.auth.profiles.append("fal:manual")                    # already there; the paste-api-key re-uses it
-    s = S(**FAL)
-    assert run(s, signin)[0] is True
-    assert len(signin.auth.argvs) == 1 and s.openclaw.image_auth_profile_created == ""
-    signin.confirms.clear()
-    openclaw._teardown_image(s)
-    assert signin.confirms == [], "setup did not create the profile, so teardown never offers to sign it out"
-
-
-def test_m1_a_new_profile_id_is_recorded_and_the_offer_is_made_at_teardown(signin):
-    s = S(**FAL)
-    run(s, signin)
-    assert s.openclaw.image_auth_profile_created == "fal:manual"
-    signin.confirms.clear()
-    openclaw._teardown_image(s)
-    assert len(signin.confirms) == 1 and "fal:manual" in signin.confirms[0][0]
-
-
-def test_m1_when_the_listing_before_the_sign_in_exits_non_zero_no_sign_in_runs(signin):
-    signin.extra[("models", "auth", "list")] = lambda a, s: (1, "boom")
-    s = S(**FAL)
-    changed, _w = run(s, signin)
-    assert signin.auth.argvs == [] and signin.confirms == [] and s.openclaw.image_auth_profile_created == ""
-    assert any("openclaw models auth paste-api-key --provider fal" in m for m in signin.messages["warn"])
-    assert changed is True, "the model write is not held hostage to the listing"
-
-
-def test_m1_when_the_listing_after_the_sign_in_fails_nothing_is_recorded(signin):
-    calls = {"n": 0}
-
-    def listing(_a, _s):
-        calls["n"] += 1
-        return (0, json.dumps({"profiles": []})) if calls["n"] == 1 else (1, "boom")
-    signin.extra[("models", "auth", "list")] = listing
-    s = S(**FAL)
-    run(s, signin)
-    assert len(signin.auth.argvs) == 1 and s.openclaw.image_auth_profile_created == ""
-
-
-def test_m1_no_listing_and_no_sign_in_on_a_dry_run_or_a_non_interactive_run(signin, monkeypatch):
-    run(S(**FAL), signin, dry_run=True)
-    monkeypatch.setattr(openclaw.ui, "is_non_interactive", lambda: True)
-    run(S(**FAL), signin)
-    assert signin.auth.argvs == []
-    assert not [a for a in signin.argvs() if a[:3] == ["models", "auth", "list"]]
 
 
 # --- review M2: the global tools.deny add needs an interactive terminal and a yes ----------------------------------------
@@ -708,49 +563,6 @@ def test_l2_teardown_leaves_a_value_that_is_not_the_kits_written_ref_untouched(r
     assert any("changed after setup applied it" in m for m in rig.messages["warn"])
 
 
-# --- review L3: a failed model restore keeps the sign-out offer for a later teardown -----------------------------------------
-
-def test_l3_a_rejected_model_restore_keeps_the_profile_and_a_later_teardown_still_offers_the_sign_out(signin):
-    s = S(**FAL)
-    run(s, signin)
-    assert s.openclaw.image_auth_profile_created == "fal:manual"
-    signin.reject_live = True
-    openclaw.teardown(s)
-    assert s.openclaw.image_applied is True and s.openclaw.image_auth_profile_created == "fal:manual"
-    signin.reject_live = False
-    signin.auth.argvs.clear()
-    signin.confirms.clear()
-    openclaw.teardown(s)
-    assert signin.auth.argvs == [["openclaw", "models", "auth", "logout", "fal:manual"]]
-    assert s.openclaw.image_auth_profile_created == "" and s.openclaw.image_applied is False
-
-
-def test_l3_a_restart_needed_restore_keeps_the_profile_too(signin, monkeypatch):
-    s = S(**FAL)
-    run(s, signin)
-    monkeypatch.setattr(openclaw, "_live_reload_mode", lambda: "off")
-    openclaw.teardown(s)
-    assert s.openclaw.image_applied is True and s.openclaw.image_auth_profile_created == "fal:manual"
-
-
-# --- review L4: the dry run names the command Apply runs -----------------------------------------------------------------------
-
-def test_l4_dry_run_lines_name_the_oauth_login_for_minimax_oauth_and_the_key_command_otherwise():
-    def lines(**kw):
-        return "\n".join(img.dry_run_lines(S(mode="minimax", model="minimax/image-01", **kw), {}))
-    oauth = lines(image_account="oauth")
-    assert "openclaw models auth login --provider minimax-portal" in oauth and "paste-api-key" not in oauth
-    key = lines(image_account="api-key")
-    assert "openclaw models auth paste-api-key --provider minimax" in key and "login" not in key
-    assert "paste-api-key --provider minimax" in lines()                       # no saved method: the default Apply uses
-
-
-def test_l4_the_dry_run_command_equals_the_command_apply_runs(signin):
-    s = S(mode="minimax", model="minimax/image-01", image_account="oauth")
-    shown = img.dry_run_lines(s, {})
-    run(s, signin)
-    ran = " ".join(signin.auth.argvs[0])
-    assert any(ran in line for line in shown)
 
 
 # --- review L5: only the NAMES of the kit .env are kept, never a value -----------------------------------------------------------
@@ -781,42 +593,6 @@ def test_l5_no_kit_env_value_or_credential_field_survives_in_any_state_or_output
     assert LEAK not in blob and "apiKey" not in blob and "token" not in blob
     assert "FAL_KEY" in blob, "the variable NAME is what Review may show"
 
-
-# --- review L7: an unparseable listing is unknown, not empty --------------------------------------------------------------
-
-def test_l7_a_zero_exit_with_unparseable_json_is_unknown(rig):
-    for out in ("[info] {", "[info] {\n  not json", "{\"profiles\": [", "[info] loading\n[1, 2"):
-        rig.extra[("models", "auth", "list")] = lambda a, s, _o=out: (0, _o)
-        assert openclaw._auth_profile_ids() is None, out
-
-
-def test_l7_parseable_and_json_free_output_keep_their_meaning(rig):
-    rig.extra[("models", "auth", "list")] = lambda a, s: (0, "no profiles yet")
-    assert openclaw._auth_profile_ids() == set()
-    rig.extra[("models", "auth", "list")] = lambda a, s: (0, "info: ok\n" + json.dumps(
-        {"profiles": [{"id": "fal:manual", "provider": "fal"}]}))
-    assert openclaw._auth_profile_ids() == {"fal:manual"}
-
-
-def test_l7_an_unparseable_listing_before_the_sign_in_runs_no_sign_in_and_records_nothing(signin):
-    signin.extra[("models", "auth", "list")] = lambda a, s: (0, "[info] {")
-    s = S(**FAL)
-    changed, _w = run(s, signin)
-    assert signin.auth.argvs == [] and signin.confirms == [] and s.openclaw.image_auth_profile_created == ""
-    assert any("openclaw models auth paste-api-key --provider fal" in m for m in signin.messages["warn"])
-    assert changed is True
-
-
-def test_l7_an_unparseable_listing_after_the_sign_in_records_nothing(signin):
-    calls = {"n": 0}
-
-    def listing(_a, _s):
-        calls["n"] += 1
-        return (0, json.dumps({"profiles": []})) if calls["n"] == 1 else (0, "[info] {")
-    signin.extra[("models", "auth", "list")] = listing
-    s = S(**FAL)
-    run(s, signin)
-    assert len(signin.auth.argvs) == 1 and s.openclaw.image_auth_profile_created == ""
 
 
 # --- end to end: `setup --yes` with a saved disable reaches the deny path and refuses -----------------------------------

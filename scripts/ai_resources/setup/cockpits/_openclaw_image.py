@@ -11,12 +11,11 @@ The catalog recommends nothing. Every route carries a plain billing label and a 
 for a route whose installed OpenClaw docs say so (`billing_source` names the file and line); every other route reads
 "billing per provider, not verified". Every route's generation is "docs only, not tested on this host".
 
-The kit never holds an image credential. Signing in goes through `openclaw models auth login --provider <id>` or
-`openclaw models auth paste-api-key --provider <p>` on the operator's terminal (plan I9); this module only names the
-provider ids and the env var NAMES a route uses.
+The kit never holds an image credential and has no sign-in of its own (ADR-0016 D1): a route whose provider OpenClaw does
+not report usable is not written, and the operator signs in with OpenClaw's own `openclaw configure --section model`. This
+module only names the provider ids and the env var NAMES a route uses.
 
-Facts read from OpenClaw 2026.10.5 docs (docs/tools/image-generation.md:84-124, docs/cli/models.md:392,
-docs/providers/*.md). The ids below are documented, not run on this host.
+Facts read from OpenClaw 2026.10.5 docs (docs/tools/image-generation.md:84-124, docs/providers/*.md). The ids below are documented, not run on this host.
 """
 from __future__ import annotations
 
@@ -52,8 +51,6 @@ class Route:
     proof_label: str = PROOF_DOCS
     requires: str = ""                            # what must exist before the route is selectable
     selectable_without_provider_config: bool = True
-    login_provider: str = ""                      # `models auth login --provider` (OAuth); "" = print the docs, run nothing
-    key_provider: str = ""                        # `models auth paste-api-key --provider`; "" = print only
     note: str = ""
     free_text_model: bool = False                 # the model is a free-text deployment name (Foundry)
 
@@ -67,42 +64,41 @@ CATALOG: tuple[Route, ...] = (
     Route("openai-codex", "OpenAI", provider="openai", auth=("oauth",),
           models=("openai/gpt-image-2", "openai/gpt-image-1.5"), profile_prefixes=("openai:",),
           billing_label="subscription, account access NOT PROVEN",
-          proof_label=PROOF_DOCS + "; quota NOT PROVEN", login_provider="openai",
+          proof_label=PROOF_DOCS + "; quota NOT PROVEN",
           note="ChatGPT/Codex sign-in; GPT Image 2.5 subscription access is not established"),
     Route("openai-key", "OpenAI", provider="openai", auth=("api-key",),
           models=("openai/gpt-image-2", "openai/gpt-image-2.5-flare", "openai/gpt-image-2.5-sunburst",
                   "openai/gpt-image-1.5"),
           env=("OPENAI_API_KEY",), profile_prefixes=("openai:",), billing_label="pay per use",
-          billing_source="docs/providers/openai.md:21", key_provider="openai",
+          billing_source="docs/providers/openai.md:21",
           note="with an OpenAI OAuth profile present OpenClaw does not fall back to OPENAI_API_KEY"),
     Route("google-key", "Google Gemini", provider="google", auth=("api-key",),
           models=("google/gemini-3.1-flash-image",), env=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-          profile_prefixes=("google:",), key_provider="google",
+          profile_prefixes=("google:",),
           note="API key only; Antigravity sign-in is not an image route (Antigravity terms)"),
     Route("openrouter", "OpenRouter", provider="openrouter", auth=("api-key",),
           models=("openrouter/google/gemini-3.1-flash-image-preview",), env=("OPENROUTER_API_KEY",),
-          profile_prefixes=("openrouter:",), key_provider="openrouter"),
+          profile_prefixes=("openrouter:",)),
     Route("xai", "xAI", provider="xai", auth=("api-key",), models=("xai/grok-imagine-image",
                                                                      "xai/grok-imagine-image-quality"),
-          env=("XAI_API_KEY",), profile_prefixes=("xai:",), key_provider="xai"),
+          env=("XAI_API_KEY",), profile_prefixes=("xai:",)),
     Route("fal", "fal", provider="fal", auth=("api-key",),
           models=("fal/krea/v2/medium/text-to-image", "fal/openai/gpt-image-2.5/flare/text-to-image",
                   "fal/openai/gpt-image-2.5/sunburst/text-to-image"),
-          env=("FAL_KEY",), profile_prefixes=("fal:",), key_provider="fal"),
+          env=("FAL_KEY",), profile_prefixes=("fal:",)),
     Route("deepinfra", "DeepInfra", provider="deepinfra", auth=("api-key",),
           models=("deepinfra/black-forest-labs/FLUX-1-schnell",), env=("DEEPINFRA_API_KEY",),
-          profile_prefixes=("deepinfra:",), key_provider="deepinfra"),
+          profile_prefixes=("deepinfra:",)),
     Route("minimax", "MiniMax", provider="minimax", auth=("api-key", "oauth"), models=("minimax/image-01",),
           env=("MINIMAX_API_KEY",), profile_prefixes=("minimax:", "minimax-portal:"),
-          billing_label=BILLING_UNVERIFIED + " (OAuth: NOT PROVEN)", key_provider="minimax",
-          login_provider="minimax-portal", note="API key or MiniMax OAuth (minimax-portal)"),
+          billing_label=BILLING_UNVERIFIED + " (OAuth: NOT PROVEN)", note="API key or MiniMax OAuth (minimax-portal)"),
     Route("microsoft-foundry", "Microsoft Foundry", provider="microsoft-foundry", auth=("api-key",),
           models=("microsoft-foundry/<deployment>",), env=("AZURE_OPENAI_API_KEY",),
           profile_prefixes=("microsoft-foundry:",), billing_label="billing per Azure subscription, not verified",
           requires="needs a Foundry deployment configured in OpenClaw", free_text_model=True,
           note="Entra ID (`az login`) is also documented; the kit does not run it"),
     Route("vydra", "Vydra", provider="vydra", auth=("api-key",), models=("vydra/grok-imagine",),
-          env=("VYDRA_API_KEY",), profile_prefixes=("vydra:",), key_provider="vydra"),
+          env=("VYDRA_API_KEY",), profile_prefixes=("vydra:",)),
     Route("comfyui", "ComfyUI", provider="comfy", auth=("api-key",), models=(), env=("COMFY_API_KEY",
                                                                                       "COMFY_CLOUD_API_KEY"),
           profile_prefixes=("comfy:",), billing_label="billing NOT PROVEN",
@@ -199,20 +195,13 @@ class AccountView(NamedTuple):
     fix: str = ""                             # the command the operator runs, never run by the kit here
 
 
+NATIVE_SIGN_IN = "openclaw configure --section model"
+"""OpenClaw's own interactive sign-in (ADR-0016 D1). The kit prints it and never runs a sign-in for an image route."""
+
+
 def sign_in_command(route: Route, method: str = "") -> str:
-    """The OpenClaw command that signs `route` in, with the provider id only. "" when no id is established. For a route
-    with two methods (MiniMax) `method` picks one, the same way Apply does (`sign_in_for`); without it the key path."""
-    if method and len(route.auth) > 1:
-        argv, _profile = sign_in_for(route, method)
-        if argv:
-            return " ".join(argv)
-    if "oauth" in route.auth and route.login_provider and "api-key" not in route.auth:
-        return f"openclaw models auth login --provider {route.login_provider}"
-    if route.key_provider:
-        return f"openclaw models auth paste-api-key --provider {route.key_provider}"
-    if route.login_provider:
-        return f"openclaw models auth login --provider {route.login_provider}"
-    return ""
+    """The command the operator runs to sign `route` in: OpenClaw's own configure flow, "" for a route with no provider."""
+    return NATIVE_SIGN_IN if route.kind == "route" and route.provider else ""
 
 
 def provider_account(route: Route, accounts: Mapping[str, Mapping[str, Any]] | None,
@@ -243,8 +232,6 @@ def provider_account(route: Route, accounts: Mapping[str, Mapping[str, Any]] | N
 
 OTHER_REF = "__other__"
 SIGN_IN_AT_APPLY = "sign-in"
-_METHODS = {"api-key": "API key (pasted into OpenClaw's own prompt on your terminal)",
-            "oauth": "MiniMax OAuth (minimax-portal; billing NOT PROVEN)"}
 
 
 def _get(doc: Any, *keys: str) -> Any:
@@ -401,76 +388,14 @@ def _prompt_model(s: state.SetupState, route: Route) -> str:
 
 
 def _prompt_account(s: state.SetupState, route: Route, view: AccountView) -> str:
-    """The account answer is a name, never a value: a profile prefix, an env var NAME, or the auth method for a route that
-    has two (MiniMax). Signing in itself is OpenClaw's, on the operator's terminal, at Apply (plan I9)."""
-    if len(route.auth) > 1:
-        saved = s.openclaw.image_account if s.openclaw.image_account in route.auth else route.auth[0]
-        return ui.select(f"How do you sign in to {route.label}?",
-                         [ui.Choice(_METHODS.get(a, a), value=a) for a in route.auth], default=saved)
+    """The account answer is a name, never a value: the profile prefix or env var NAME OpenClaw already reports. A route
+    with no usable sign-in is NOT written (ADR-0016 D1): the operator signs in with OpenClaw's own flow first."""
     if view.gateway_sees_it:
         ui.info(f"OpenClaw already has a sign-in for {route.label}: {view.name}")
         return view.name
-    ui.info(f"OpenClaw has no sign-in for {route.label} yet. At Apply you can sign in through OpenClaw "
-            f"(its own prompt, on your terminal); setup never sees the key.")
+    ui.info(f"OpenClaw reports no usable sign-in for {route.label}. Sign in with OpenClaw's own flow: "
+            f"`{NATIVE_SIGN_IN}`; until then setup leaves image generation as it is.")
     return SIGN_IN_AT_APPLY
-
-
-# --- the sign-in hand-off to OpenClaw (plan I9) ---------------------------------------------------------------------------
-
-SIGN_IN_TIMEOUT_S = 1200
-PRESENT, PRINTED, DECLINED, FAILED, SIGNED_IN, NOT_NEEDED = (
-    "present", "printed", "declined", "failed", "signed-in", "not-needed")
-
-
-class SignInResult(NamedTuple):
-    status: str
-    command: str = ""
-    profile_id: str = ""                      # an id only, never a value
-    exit_code: int = 0
-
-
-def sign_in_for(route: Route, method: str = "") -> tuple[list[str], str]:
-    """`(argv, profile id the command creates)` for `route`, or `([], "")` when no provider id is established. The argv
-    carries the provider id and nothing else: no key, no token, no stdin. For a route with two methods `method` picks one
-    (`oauth` or `api-key`). `paste-api-key` names its profile `<provider>:manual` (docs/cli/models.md:390); the OAuth login
-    does not say, so no profile id is claimed for it (teardown then offers no sign-out for it)."""
-    use_oauth = (method == "oauth") if len(route.auth) > 1 else ("oauth" in route.auth and "api-key" not in route.auth)
-    if use_oauth and route.login_provider:
-        return ["openclaw", "models", "auth", "login", "--provider", route.login_provider], ""
-    if not use_oauth and route.key_provider:
-        return ["openclaw", "models", "auth", "paste-api-key", "--provider", route.key_provider], f"{route.key_provider}:manual"
-    return [], ""
-
-
-def ensure_account(route: Route, view: AccountView, *, method: str = "", run, interactive: bool, confirm,
-                   dry_run: bool, say=lambda msg: None) -> SignInResult:
-    """Hand the credential to OpenClaw, never take it. Runs `openclaw models auth ...` with the operator's own terminal
-    (the caller's `run(argv)` must inherit stdin/stdout/stderr: no capture, no `input=`), only on a real interactive Apply,
-    only when the gateway does not see a credential, only after a default-No confirm. Everything else prints the command.
-    A non-zero exit is reported by code only and the caller writes no config."""
-    if route.kind != "route" or view.gateway_sees_it:
-        return SignInResult(PRESENT if view.gateway_sees_it else NOT_NEEDED)
-    argv, profile_id = sign_in_for(route, method)
-    command = " ".join(argv)
-    if not argv:
-        say(f"{route.label}: sign in through OpenClaw yourself ({route.requires or 'see docs/tools/image-generation.md'}); "
-            "setup has no established provider id for it.")
-        return SignInResult(PRINTED)
-    if dry_run:
-        say(f"would run: {command}")
-        return SignInResult(PRINTED, command)
-    if not interactive:
-        say(f"{route.label} has no sign-in in OpenClaw yet. Run on your terminal: {command}")
-        return SignInResult(PRINTED, command)
-    if not confirm(f"Sign in to {route.label} through OpenClaw now? OpenClaw asks for the credential on this terminal; "
-                   "setup never sees it.", default=False):
-        say(f"Not signed in. Run on your terminal when ready: {command}")
-        return SignInResult(DECLINED, command)
-    rc = run(argv)
-    if rc != 0:
-        say(f"OpenClaw sign-in exited with code {rc}; the image model was not changed.")
-        return SignInResult(FAILED, command, "", rc)
-    return SignInResult(SIGNED_IN, command, profile_id)
 
 
 # --- Review rows and the dry-run preview (plan I10): names and refs only, no I/O -------------------------------------------
@@ -559,11 +484,9 @@ def dry_run_lines(s: state.SetupState, ctx: Mapping[str, Any] | None = None) -> 
     route = ROUTES.get(mode)
     lines = [f"image generation: would set {MEDIA_PATH} to {s.openclaw.image_model or '(model not set)'}"]
     if route is not None and route.kind == "route":
-        saved = s.openclaw.image_account
-        cmd = sign_in_command(route, saved if saved in route.auth else "")      # the command Apply runs, not the default
         view = provider_account(route, (ctx or {}).get("accounts"), (ctx or {}).get("kit_env") or ())
-        if cmd and not view.gateway_sees_it:
-            lines.append(f"would run: {cmd}  (only after your confirm, on your terminal)")
+        if not view.gateway_sees_it:
+            lines.append(f"not written: OpenClaw reports no usable {route.label} sign-in; run `{NATIVE_SIGN_IN}` yourself")
     if s.openclaw.image_deny_added:
         lines.append("would remove the image_generate entry setup added to tools.deny (after the model is set)")
     return [_safe(line) for line in lines]

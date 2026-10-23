@@ -138,11 +138,12 @@ def test_image_dry_run_disable_shows_the_merged_list_and_sends_only_dry_run_patc
     assert s.openclaw.image_deny_added is False
 
 
-def test_image_dry_run_route_shows_the_ref_and_the_sign_in_command_without_running_it(monkeypatch, tmp_path):
+def test_image_dry_run_route_shows_the_ref_and_the_native_flow_without_running_it(monkeypatch, tmp_path):
     monkeypatch.setattr(_oc_cockpit, "_image_accounts", lambda: ({}, []))
     fake, text, s = _image_dry_run(monkeypatch, tmp_path, "fal", "fal/krea/v2/medium/text-to-image", doc={})
     assert "agents.defaults.mediaModels.image to fal/krea/v2/medium/text-to-image" in text
-    assert "would run: openclaw models auth paste-api-key --provider fal" in text
+    assert "not written: OpenClaw reports no usable fal sign-in; run `openclaw configure --section model` yourself" in text
+    assert "paste-api-key" not in text
     assert fake.live_patches() == [] and s.openclaw.image_applied is False
     assert all("--dry-run" in a for a in fake.argvs())
 
