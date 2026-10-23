@@ -111,12 +111,13 @@ def test_non_interactive_never_raises_goback_and_never_attaches_a_binding(monkey
 
 
 def test_the_progress_rail_rebuilds_skipped_from_the_runner_history(monkeypatch):
-    """Change sign-in: step 2 was skipped on the first pass; after the jump it is run, not skipped."""
+    """Change sign-in: phase 2 (Cockpit: the main-tool and sign-in steps) was skipped on the first pass; after the jump
+    it is run, not skipped. A phase counts as skipped only when every one of its steps was (ADR-0016 D7)."""
     from ai_resources.setup import flow
     steps = wizard._build_steps(False)
     runner = flow.Wizard(steps)
     gateway = runner.index_of("cockpit_auth")
-    runner.history = [flow._Done(0, None, False), flow._Done(1, None, False),
+    runner.history = [flow._Done(0, None, False), flow._Done(1, None, False, skipped=True),
                       flow._Done(gateway, None, False, skipped=True)]
     ui.set_progress(0, [])
     ui.mark_skipped(2)

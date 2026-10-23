@@ -79,7 +79,7 @@ def test_each_on_its_own_asks_the_same_screens(monkeypatch, tmp_path):
 
 def test_the_screens_are_numbered_out_of_four_while_the_ten_steps_stay():
     from ai_resources.setup import flow
-    assert wizard.TOTAL_STEPS == 10 and len(flow.STEP_LABELS) == 10 and wizard.PHASES == 5
+    assert wizard.TOTAL_STEPS == 10 and not hasattr(flow, "STEP_LABELS") and wizard.PHASES == 5
     assert [wizard._phase_of(n) for n in range(1, 11)] == [1, 3, 3, 3, 3, 3, 3, 5, 5, 5]
 
 

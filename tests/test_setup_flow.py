@@ -199,40 +199,40 @@ def test_scope_receives_the_step_and_wraps_its_run():
 
 def test_rail_model_statuses():
     m = flow.rail_model(4, skipped={3})
-    assert [s for _n, _l, s in m] == ["done", "done", "skipped", "current"] + ["pending"] * 6
-    assert [l for _n, l, _s in m][:5] == ["Tools", "How", "Gateway", "Providers", "API keys"]
+    assert [s for _n, _l, s in m] == ["done", "done", "skipped", "current", "pending"]
+    assert [l for _n, l, _s in m] == ["Tools", "Cockpit", "Team", "Audio", "More"]
     assert flow.rail_model(1)[0][2] == "current"
-    assert len(flow.rail_model(10)) == 10
+    assert len(flow.rail_model(5)) == 5 and flow.rail_model(5)[-1][2] == "current"
 
 
 def test_wide_rail_is_one_line_with_unicode_glyphs():
     out = flow.format_rail(flow.rail_model(4), 130, True)
     assert "\n" not in out and out.startswith(" ✔ Tools")
-    assert "● Providers" in out and "○ Verify" in out
+    assert "● Audio" in out and "○ More" in out
 
 
 def test_rail_wraps_between_60_and_79_columns():
-    out = flow.format_rail(flow.rail_model(4), 70, True)
+    out = flow.format_rail(flow.rail_model(4), 40 + 30, True)
     lines = out.split("\n")
-    assert len(lines) >= 2 and all(len(l) <= 70 for l in lines)
-    assert "Providers" in out and "Verify" in out
+    assert all(len(l) <= 70 for l in lines)
+    assert "Audio" in out and "More" in out
 
 
 def test_narrow_terminal_gets_one_line_without_a_rail():
     out = flow.format_rail(flow.rail_model(4), 50, True, title="Provider backends")
-    assert out == "Step 4/10  Provider backends" and "✔" not in out
+    assert out == "Step 4/5  Provider backends" and "✔" not in out
 
 
 def test_ascii_glyphs_and_skipped_marker():
     out = flow.format_rail(flow.rail_model(4, skipped={3}), 120, False)
-    assert "[x] Tools" in out and "[-] Gateway (skipped)" in out and "[>] Providers" in out and "[ ] Verify" in out
+    assert "[x] Tools" in out and "[-] Team (skipped)" in out and "[>] Audio" in out and "[ ] More" in out
     assert out.isascii()
 
 
 @pytest.mark.parametrize("width", [100, 70, 59, 50])
 @pytest.mark.parametrize("unicode_ok", [True, False])
 def test_every_width_renders_without_error(width, unicode_ok):
-    assert flow.format_rail(flow.rail_model(7), width, unicode_ok)
+    assert flow.format_rail(flow.rail_model(3), width, unicode_ok)
 
 
 def test_wizard_snapshot_restores_state_and_the_run_globals(monkeypatch):

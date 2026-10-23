@@ -346,15 +346,20 @@ def _step_cockpit_auth(s: state.SetupState, args: argparse.Namespace, dry_run: b
     return 0
 
 
+def _phase_of_spec(spec: flow.StepSpec) -> int:
+    return STEP_PHASE.get(spec.id) or _phase_of(spec.number)
+
+
 def _enter_step(spec: flow.StepSpec, w: flow.Wizard) -> None:
-    """Point the progress rail at `spec`; the skipped marks come from the runner history, so a step that a
-    Back or an Edit made run again is no longer shown as skipped."""
-    by_number: dict[int, list[bool]] = {}
+    """Point the progress rail at the phase of `spec` (the five phases of `flow.PHASE_LABELS`); the skipped marks come
+    from the runner history, so a step that a Back or an Edit made run again is no longer shown as skipped. A phase
+    counts as skipped only when every one of its steps was."""
+    phase = _phase_of_spec(spec)
+    by_phase: dict[int, list[bool]] = {}
     for d in w.history:
-        by_number.setdefault(w.steps[d.index].number, []).append(d.skipped)
-    # A numbered step with sub-steps (6a, 6b, 6c) is skipped only when every one of its sub-steps was.
-    skipped = {n for n, marks in by_number.items() if n < spec.number and all(marks)}
-    ui.set_progress(spec.number, [n for n in range(1, spec.number)], skipped)
+        by_phase.setdefault(_phase_of_spec(w.steps[d.index]), []).append(d.skipped)
+    skipped = {p for p, marks in by_phase.items() if p < phase and all(marks)}
+    ui.set_progress(phase, [p for p in range(1, phase)], skipped)
 
 
 def _snapshot_run(s: state.SetupState) -> tuple:
@@ -382,7 +387,7 @@ def _report_skip(spec: flow.StepSpec, title: str, reason: str) -> None:
     if spec.id in STEP_PHASE:                # a phase that shares another step's number must not mark it skipped
         _section(spec.number, title, phase=STEP_PHASE[spec.id])
     else:
-        ui.mark_skipped(spec.number)
+        ui.mark_skipped(_phase_of_spec(spec))
         _section(spec.number, title)
     ui.info(reason)
 
@@ -1268,8 +1273,8 @@ def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
 
 # --- Screen 1 "Your tools" (step 1) --------------------------------------------------
 PHASES = 5
-"""The operator sees five phases (Tools, Cockpit, Team, Audio, More) over the ten internal steps; the rail and
-`TOTAL_STEPS` stay (ADR-0010 PD-3, superseding the four screens of ADR-0009)."""
+"""The operator sees five phases (Tools, Cockpit, Team, Audio, More) over the internal steps, and the rail draws exactly
+those five (ADR-0016 D7); `TOTAL_STEPS` counts the internal step numbers (ADR-0010 PD-3)."""
 PHASE_LABELS = flow.PHASE_LABELS
 # Phase of each internal step: tools 1; cockpits 2; mode, gateway, providers, credentials and the whole team 3;
 # voice 4; lifecycle, review and apply 5. Step 7 ("Tool configuration") joins phase 3 until the cockpit
@@ -1745,180 +1750,6 @@ def _step3_remote(s: state.SetupState, dry_run: bool = False) -> int:
             return 1
     else:
         ui.ok("Remote endpoint reachable")
-    return 0
-
-
-# --- Step 4 — Providers ----------------------------------------------------------
-def _step4_providers(s: state.SetupState) -> int:
-    _section(4, "Providers")
-
-    if s.backend == "openrouter":
-        # One upstream key fans out to the whole catalogue, so there is nothing
-        # to choose here: picking providers is a LiteLLM-only concern.
-        ps = s.providers.get("openrouter") or state.ProviderState()
-        ps.enabled = True
-        ps.auth_method = "api_key"
-        ps.env_var = providers.get("openrouter").primary_env_var
-        s.providers = {"openrouter": ps}
-        ui.info("OpenRouter reaches every provider with one key — no per-provider selection needed.")
-        return 0
-
-    enabled_now = {p for p, ps in s.providers.items() if ps.enabled}
-    choices = [
-        ui.Choice(f"{providers.get(pid).name}  — {providers.get(pid).description}",
-                  value=pid)
-        for pid in providers.all_ids()
-    ]
-    selected = ui.checkbox(
-        "Select providers to enable:",
-        choices,
-        default=list(enabled_now) or ["anthropic", "google"],
-    )
-    if not selected:
-        ui.error("Select at least one provider.")
-        return 1
-
-    # Update state
-    new_providers: dict[str, state.ProviderState] = {}
-    for pid in selected:
-        prov = providers.get(pid)
-        existing = s.providers.get(pid) or state.ProviderState()
-        existing.enabled = True
-        existing.env_var = prov.primary_env_var
-        # Determine auth method
-        if pid == "vertex":
-            existing.auth_method = "vertex_adc"
-        else:
-            existing.auth_method = prov.auth_methods[0]
-        new_providers[pid] = existing
-    # Disable any not selected
-    for pid in s.providers:
-        if pid not in selected:
-            s.providers[pid].enabled = False
-            new_providers[pid] = s.providers[pid]
-    s.providers = new_providers
-
-    return 0
-
-
-# --- Step 5 — Credentials --------------------------------------------------------
-def _step5_credentials(s: state.SetupState, dry_run: bool = False) -> int:
-    _section(5, "API keys")
-    ui.info(f"Stored in {state.env_path()} (chmod 600)")
-    ui.info("Press Enter to keep an existing value")
-
-    updates: dict[str, str] = {}
-
-    if s.backend == "openrouter":
-        env_var = "OPENROUTER_API_KEY"
-        existing = credentials.get_key(env_var)
-        if existing:
-            ui.detail(f"{env_var}: {credentials.mask(existing)}  (saved)")
-            if ui.confirm(f"Update {env_var}?", default=False):
-                new_val = ui.password(env_var)
-                if new_val:
-                    updates[env_var] = new_val
-        else:
-            new_val = ui.password(env_var, validate=_required(f"{env_var} (OpenRouter backend)"))
-            if not new_val:
-                ui.error(f"{env_var} is required for the OpenRouter backend.")
-                return 1
-            updates[env_var] = new_val
-        ui.detail("Set a spend limit on this key at https://openrouter.ai/settings/keys — "
-                  "it is the only budget ceiling that applies in this mode.")
-        if updates and dry_run:
-            ui.detail(f"(dry run) would write {', '.join(sorted(updates))} "
-                      f"to {state.env_path()}")
-        elif updates:
-            _, newly_added = credentials.update_env_tracked(updates)
-            for k in newly_added:
-                if k not in s.tracking.env_keys_added:
-                    s.tracking.env_keys_added.append(k)
-            ui.ok(f"Credentials written to {state.env_path()}")
-            ui.record_action("saved credentials")
-        return 0
-
-    # Master key for LiteLLM.
-    if s.backend == "litellm":
-        keychain_key = credentials.get_claude_code_keychain_key()
-        current_master = credentials.get_key("LITELLM_MASTER_KEY")
-        if keychain_key:
-            if current_master != keychain_key:
-                updates["LITELLM_MASTER_KEY"] = keychain_key
-                ui.detail(f"LITELLM_MASTER_KEY synced from Claude Code Keychain ({credentials.mask(keychain_key)})")
-            else:
-                ui.detail(f"LITELLM_MASTER_KEY already matches Keychain ({credentials.mask(current_master)})")
-        elif not current_master:
-            master = credentials.generate_master_key()
-            updates["LITELLM_MASTER_KEY"] = master
-            ui.detail(f"Generated LITELLM_MASTER_KEY ({credentials.mask(master)})")
-
-    # Per-provider keys
-    for pid, ps in s.providers.items():
-        if not ps.enabled:
-            continue
-        prov = providers.get(pid)
-
-        if pid == "vertex":
-            # Vertex needs project + location, not an API key
-            existing_proj = credentials.get_key("GOOGLE_CLOUD_PROJECT")
-            if not existing_proj:
-                try:
-                    import subprocess
-                    proc = subprocess.run(["gcloud", "config", "get-value", "project"],
-                                          capture_output=True, text=True, timeout=2)
-                    if proc.returncode == 0 and proc.stdout.strip():
-                        existing_proj = proc.stdout.strip()
-                except Exception:
-                    pass
-            project = ui.text("GOOGLE_CLOUD_PROJECT (GCP project ID)", default=existing_proj or "")
-            if project:
-                updates["GOOGLE_CLOUD_PROJECT"] = project
-                updates["ANTHROPIC_VERTEX_PROJECT_ID"] = project
-                updates["CLAUDE_CODE_USE_VERTEX"] = "1"
-            # "global" rather than a specific region: regional endpoints serve
-            # Claude Sonnet 4.6 and earlier only, so a regional default silently
-            # rules out every current model. Multi-region ("us"/"eu") and
-            # regional endpoints also carry a 10% premium over global.
-            existing_loc = credentials.get_key("GOOGLE_CLOUD_LOCATION") or "global"
-            location = ui.text("GOOGLE_CLOUD_LOCATION (global, us, eu, or a region)",
-                               default=existing_loc)
-            if location:
-                updates["GOOGLE_CLOUD_LOCATION"] = location
-                updates["CLOUD_ML_REGION"] = location
-            ui.info("Vertex AI: Using GCP credentials (WIF/ADC).")
-            continue
-
-        if pid == "ollama":
-            ui.detail("(Ollama: no credentials needed; ensure localhost:11434 is reachable)")
-            continue
-
-        env_var = prov.primary_env_var
-        existing = credentials.get_key(env_var)
-        if existing:
-            ui.detail(f"{env_var}: {credentials.mask(existing)}  (saved)")
-            if ui.confirm(f"Update {env_var}?", default=False):
-                new_val = ui.password(f"{env_var}")
-                if new_val:
-                    updates[env_var] = new_val
-        else:
-            new_val = ui.password(f"{env_var}")
-            if not new_val:
-                ui.warn(f"{env_var} skipped — provider may fail validation")
-            else:
-                updates[env_var] = new_val
-
-    if updates and dry_run:
-        ui.detail(f"(dry run) would write {', '.join(sorted(updates))} "
-                  f"to {state.env_path()}")
-    elif updates:
-        _, newly_added = credentials.update_env_tracked(updates)
-        for k in newly_added:
-            if k not in s.tracking.env_keys_added:
-                s.tracking.env_keys_added.append(k)
-        ui.ok(f"Credentials written to {state.env_path()}")
-        ui.record_action("saved credentials")
-
     return 0
 
 
