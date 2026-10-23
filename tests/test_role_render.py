@@ -16,7 +16,8 @@ def test_a_persona_is_a_spec_of_its_role_with_the_overlay():
     persona = specs["implementer-symfony"]
     assert persona.is_persona and persona.base == "implementer" and persona.overlay
     assert persona.skills == specs["implementer"].skills
-    assert role_render.SEPARATOR in persona.prompt() and role_render.SEPARATOR not in specs["implementer"].prompt()
+    assert persona.prompt().endswith(role_render.SEPARATOR + persona.overlay)
+    assert persona.overlay not in specs["implementer"].prompt()
 
 
 def test_prompt_applies_the_rewrite_and_the_context_last():
