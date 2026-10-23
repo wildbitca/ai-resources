@@ -8,6 +8,7 @@ from . import __version__
 from .generate import cmd_generate
 from . import daemon, doctor, executors_cmd, audit, models_cmd, openclaw_host, verify, lanes_cmd
 from .setup import flow, wizard
+from .orchestrator import cli as orchestrator_cli
 
 
 _EPILOG = """Typical flows:
@@ -192,6 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
     openclaw_host.add_subparser(sub)
     models_cmd.add_subparser(sub)
     lanes_cmd.add_subparser(sub)
+    orchestrator_cli.add_subparser(sub)
 
     return ap
 
