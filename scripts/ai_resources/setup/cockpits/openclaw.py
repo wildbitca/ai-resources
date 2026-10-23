@@ -61,7 +61,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from .. import state, ui
 from .. import detection
@@ -432,9 +432,11 @@ def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_c
                 worker_model: str = "", ak_path: str = "", agy_bin: str = "", claude_bin: str = "",
                 python3_bin: str = "", fallbacks: bool = False,
                 lanes_path: str = "", enable_orchestrator: bool = True, flash_low: bool = True,
-                enabled_providers: "Iterable[str] | None" = None) -> dict:
+                enabled_providers: "Iterable[str] | None" = None,
+                enabled_by_agent: "Mapping[str, Iterable[str] | None] | None" = None) -> dict:
     """The openclaw.json patch that points the default agent at `engine`. `enabled_providers` restricts the fallbacks to
-    the providers the operator enabled (ADR-0015 S7); None restricts nothing."""
+    the providers the operator enabled (ADR-0015 S7); None restricts nothing. `enabled_by_agent` (S8) gives an agent entry
+    its own set; an entry not in it uses `enabled_providers`."""
     if engine.id == "antigravity":
         patch = _build_antigravity_patch(
             model, worker_model, doc, engram_command,
@@ -460,7 +462,13 @@ def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_c
             if _is_kit_agent(name):
                 continue
             if isinstance(cfg, dict) and "model" in cfg:
-                patch["agents"].setdefault("entries", {})[name] = {"model": dict(model_spec)}
+                own_spec = dict(model_spec)
+                if fallbacks and enabled_by_agent and name in enabled_by_agent:
+                    own_fb = _fallbacks_for(model, engine.id, flash_low=flash_low, enabled=enabled_by_agent[name])
+                    own_spec.pop("fallbacks", None)
+                    if own_fb:
+                        own_spec["fallbacks"] = own_fb
+                patch["agents"].setdefault("entries", {})[name] = {"model": own_spec}
         # Runtimes are attached per model ref; a ref the kit pinned to another runtime
         # earlier would keep that pin if the user later picked it by hand.
         for ref, cfg in (_get(doc, "agents", "defaults", "models") or {}).items():
@@ -877,7 +885,11 @@ def _image_sign_in(s: state.SetupState, route: Any, *, dry_run: bool) -> bool:
     runs nothing. Reads only `models status` / `models auth list`; no gateway call."""
     accounts, names = _image_accounts()
     view = image.provider_account(route, accounts, names)
-    if route.kind != "route" or view.gateway_sees_it:
+    if route.kind != "route":
+        return True
+    # Per agent (S8): once the sign-in step has read the operator's main agent, its own usable set must hold the provider.
+    own = enabled_providers(s, MAIN_AGENT)
+    if view.gateway_sees_it and (own is None or route.provider in own):
         return True
     ui.warn(f"OpenClaw reports no usable {route.label} sign-in, so the image model was not "
             f"{'planned' if dry_run else 'written'}. Sign in with OpenClaw's own flow: `{image.NATIVE_SIGN_IN}`.")
@@ -1665,8 +1677,11 @@ def _configure_roles(ctx: dict, s: state.SetupState, doc: dict, ak_path: str, *,
                      run_changes: list[dict]) -> bool:
     """One `kit-role-*` agent per kit role (ADR-0015 S8). Only when the operator chose OpenClaw's providers."""
     from .. import cockpit_auth, effort as effort_mod
-    enabled = enabled_providers(s)
+    enabled = enabled_providers(s, MAIN_AGENT)          # kit-role agents inherit the operator's main agent's auth
     if enabled is None:
+        return False
+    if not enabled:
+        ui.info("Kit-role agents: not written, OpenClaw reports no usable provider.")
         return False
     executors = ctx.get("executors") or {}
 
@@ -2156,10 +2171,17 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
 
     has_lanes = bool(s.profile.lanes)
     patch_kwargs: dict[str, Any] = {"openrouter_enabled": openrouter_selected(s)}
-    enabled = enabled_providers(s)
+    enabled = enabled_providers(s, MAIN_AGENT)
     if enabled is not None:
         patch_kwargs["enabled_providers"] = enabled
-        ui.info("Fallbacks and role routes use only: " + ", ".join(sorted(enabled)))
+        patch_kwargs["enabled_by_agent"] = {
+            name: enabled_providers(s, name) for name, cfg in (_get(doc, "agents", "entries") or {}).items()
+            if not _is_kit_agent(name) and isinstance(cfg, dict) and "model" in cfg}
+        if enabled:
+            ui.info("Fallbacks and role routes use only: " + ", ".join(sorted(enabled)))
+        else:
+            ui.warn("OpenClaw reports no usable provider: no fallbacks are written and your current ones stay. "
+                    f"Sign in with `{' '.join(CONFIGURE_ARGV)}`.")
     flash_low_why = agy_flash_low_reason(s)
     if has_lanes and flash_low_why:
         ui.info(f"Fallback chain: gemini-3.8-flash-low is left out ({flash_low_why}).")
@@ -2180,7 +2202,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
             lanes_path=str(state.lanes_path()) if has_lanes else "",
             enable_orchestrator=True,
         )
-    patch = build_patch(engine, model, doc, kit_skills, engram, fallbacks=has_lanes, **patch_kwargs)
+    patch = build_patch(engine, model, doc, kit_skills, engram, fallbacks=has_lanes and enabled != [], **patch_kwargs)
 
     # Switching away from antigravity to a different engine: fold in the same restore
     # fragment teardown() would apply for the antigravity-only keys (agentRuntime,
@@ -2909,9 +2931,19 @@ def verify(ctx: dict) -> list:
 AUTH_PROVIDERS_PROMPT = "Which providers should OpenClaw use?"
 
 
-def enabled_providers(s: state.SetupState) -> "list[str] | None":
-    """The providers the operator enabled for OpenClaw, or None when the sign-in was never asked (nothing is restricted)."""
+MAIN_AGENT = "main"
+
+
+def enabled_providers(s: state.SetupState, agent: "str | None" = None) -> "list[str] | None":
+    """The providers OpenClaw can use, or None when the sign-in was never asked (nothing is restricted).
+
+    `[]` means OpenClaw was read and reported nothing usable: the live empty set is authoritative (ADR-0016), so nothing
+    is routed. With `agent`, the providers recorded usable for that agent (S8); an agent never read gets the combined set."""
     from .. import cockpit_auth
+    if cockpit_auth.none_usable(s):
+        return []
+    if agent is not None and (own := cockpit_auth.agent_providers(s, agent)) is not None:
+        return own
     chosen = list(cockpit_auth.providers(s))
     return chosen or None
 
@@ -2945,11 +2977,18 @@ def read_live_auth(doc: dict) -> dict:
 
 
 def _record_openclaw_auth(s: state.SetupState, live: dict) -> None:
-    """Record the providers OpenClaw reports usable (ids and a method name only). An empty reading changes nothing:
-    routing stays as it is rather than being restricted to nothing."""
+    """Record the providers OpenClaw reports usable, per agent (ids and a method name only). An UNREADABLE OpenClaw
+    changes nothing (it says nothing about usability); a readable one with no usable provider is authoritative: the saved
+    providers are dropped and nothing is routed (AC-10)."""
     from .. import cockpit_auth
+    if not getattr(live, "readable", True):
+        return
     usable = live_auth.usable_providers(live)
+    cockpit_auth.set_none_usable(s, not usable)
+    cockpit_auth.set_agent_providers(s, {a: sorted(live_auth.usable_providers(live, agent=a)) for a in live})
     if not usable:
+        cockpit_auth.set_providers(s, {})
+        cockpit_auth.set_provider_live(s, {})
         return
     kinds = {}
     for per in live.values():
@@ -2994,8 +3033,9 @@ def ask_auth(ui_mod, s: state.SetupState, detected=None, dry_run: bool = False) 
             live = read_live_auth(read_config(config_path()))
             _show_live_auth(ui_mod, live)
             _record_openclaw_auth(s, live)
-    if not live_auth.usable_providers(live):
-        ui_mod.warn("OpenClaw reports no usable provider sign-in: routing is left as it is. "
+    if getattr(live, "readable", True) and not live_auth.usable_providers(live):
+        ui_mod.warn("OpenClaw reports no usable provider sign-in: setup makes no routing, fallback, kit-role or image "
+                    "change and leaves your current OpenClaw config untouched. "
                     f"Sign in with `{' '.join(CONFIGURE_ARGV)}`.")
     if not cockpit_auth.method(s, "openclaw"):
         cockpit_auth.set_method(s, "openclaw", "cli")
