@@ -225,3 +225,34 @@ def _isolate_gemini_home(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(gemini, "SETTINGS_PATH", root / ".gemini" / "settings.json", raising=False)
     monkeypatch.setattr(gemini, "AGY_MCP_PATH", root / ".gemini" / "config" / "mcp_config.json", raising=False)
     monkeypatch.setattr(gemini, "GEMINI_MD_PATH", root / ".gemini" / "GEMINI.md", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_round4(tmp_path_factory, monkeypatch):
+    """ADR-0016: the live readers, the native sign-in handovers and the operator-rules file never reach the host.
+
+    - `live_auth.default_runner` answers "not installed" instead of running the operator's `claude`, `openclaw` or `agy`;
+    - `live_auth.handoff` FAILS the test when a native flow (`claude`, `openclaw configure`, `agy`) is reached without
+      the test installing its own recording stub (a native flow must only ever run on an explicit operator choice);
+    - `live_auth.agy_home` and `operator_rules.path` resolve under a scratch directory.
+    Modules that do not exist yet in an older checkout are skipped, so this fixture never hides an import error.
+    """
+    root = tmp_path_factory.mktemp("round4-home")
+    try:
+        from ai_resources.setup import live_auth
+    except ImportError:
+        live_auth = None
+    if live_auth is not None:
+        monkeypatch.setattr(live_auth, "default_runner", lambda argv: (127, f"{argv[0]} is not run by tests"))
+
+        def _no_native_flow(argv):
+            raise AssertionError(f"a native flow was started by a test without a stub: {argv}")
+
+        monkeypatch.setattr(live_auth, "handoff", _no_native_flow)
+        monkeypatch.setattr(live_auth, "agy_home", lambda: root / ".gemini")
+    try:
+        from ai_resources.setup import operator_rules
+    except ImportError:
+        operator_rules = None
+    if operator_rules is not None:
+        monkeypatch.setattr(operator_rules, "path", lambda: root / "config" / "ai-resources" / "operator-rules.md")
