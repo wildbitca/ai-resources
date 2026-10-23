@@ -12,7 +12,7 @@ import pytest
 
 from ai_resources.setup import flow, model_selection as ms, state, ui, wizard
 from ai_resources.setup.cockpits import openclaw as openclaw_cockpit
-from wizard_fakes import Script, Seq, host_env
+from wizard_fakes import Script, Seq, fake_openclaw, host_env
 
 SUB = "subscription-claude-55"
 
@@ -192,7 +192,9 @@ def _drive_run(monkeypatch, tmp_path, review_answers, more=""):
     monkeypatch.setattr(openclaw_cockpit, "prompt", lambda s, **k: prompts.append("prompt"))
     seen = {}
     monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
+    fake_openclaw(monkeypatch)                           # OpenClaw's own sign-in question reads a canned catalog
     script = Script(**{"Use previous answers": True, "Model preset": "custom",
+                       "Which providers should OpenClaw use": ["anthropic"], "How does OpenClaw sign in to": "cli",
                        "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: SUB, "Enable subscription lanes?": False,
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": Seq(*review_answers),

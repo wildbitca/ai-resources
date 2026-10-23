@@ -61,7 +61,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .. import state, ui
 from .. import detection
@@ -71,6 +71,7 @@ from . import _shared
 from . import _openclaw_mcp as mcp
 from . import _openclaw_voice as voice
 from . import _openclaw_image as image
+from . import _openclaw_providers as providers_mod
 from . import _openclaw_host as host_section
 from . import openclaw_lanes
 from . import _agy_quota
@@ -352,9 +353,11 @@ def agy_flash_low_reason(s) -> str | None:
     return agy_lane_gates.refusal()
 
 
-def _fallbacks_for(primary_ref: str, engine_id: str, *, flash_low: bool = True) -> list[str]:
+def _fallbacks_for(primary_ref: str, engine_id: str, *, flash_low: bool = True,
+                   enabled: "Iterable[str] | None" = None) -> list[str]:
     """Cross-pool / cross-provider fallback models for an OpenClaw agent primary model. `flash_low=False` leaves the
-    routine Flash-low entry out (no Google acknowledgement, or the gates are not proven)."""
+    routine Flash-low entry out (no Google acknowledgement, or the gates are not proven). `enabled` (ADR-0015 S7) keeps
+    only the fallbacks whose provider the operator enabled; None restricts nothing."""
     if engine_id == "antigravity":
         candidates = (
             [
@@ -378,26 +381,30 @@ def _fallbacks_for(primary_ref: str, engine_id: str, *, flash_low: bool = True) 
         ]
     else:
         candidates = []
-    return [c for c in candidates if c != primary_ref and (flash_low or c != AGY_ROUTINE_FALLBACK)]
+    kept = [c for c in candidates if c != primary_ref and (flash_low or c != AGY_ROUTINE_FALLBACK)]
+    return providers_mod.restrict_refs(kept, enabled)
 
 
 def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_command: str, *,
                 openrouter_enabled: bool = True,
                 worker_model: str = "", ak_path: str = "", agy_bin: str = "", claude_bin: str = "",
                 python3_bin: str = "", fallbacks: bool = False,
-                lanes_path: str = "", enable_orchestrator: bool = True, flash_low: bool = True) -> dict:
-    """The openclaw.json patch that points the default agent at `engine`."""
+                lanes_path: str = "", enable_orchestrator: bool = True, flash_low: bool = True,
+                enabled_providers: "Iterable[str] | None" = None) -> dict:
+    """The openclaw.json patch that points the default agent at `engine`. `enabled_providers` restricts the fallbacks to
+    the providers the operator enabled (ADR-0015 S7); None restricts nothing."""
     if engine.id == "antigravity":
         patch = _build_antigravity_patch(
             model, worker_model, doc, engram_command,
             agy_bin=agy_bin, claude_bin=claude_bin, python3_bin=python3_bin,
             fallbacks=fallbacks,
             ak_path=ak_path, lanes_path=lanes_path, enable_orchestrator=enable_orchestrator, flash_low=flash_low,
+            enabled_providers=enabled_providers,
         )
     else:
         model_spec: dict[str, Any] = {"primary": model}
         if fallbacks:
-            fb = _fallbacks_for(model, engine.id, flash_low=flash_low)
+            fb = _fallbacks_for(model, engine.id, flash_low=flash_low, enabled=enabled_providers)
             if fb:
                 model_spec["fallbacks"] = fb
         patch = {
@@ -449,15 +456,15 @@ def build_patch(engine: Engine, model: str, doc: dict, kit_skills: str, engram_c
 def _build_antigravity_patch(model: str, worker_model: str, doc: dict, engram_command: str, *,
                              agy_bin: str, claude_bin: str, python3_bin: str, fallbacks: bool = False,
                              ak_path: str = "", lanes_path: str = "", enable_orchestrator: bool = True,
-                             flash_low: bool = True) -> dict:
+                             flash_low: bool = True, enabled_providers: "Iterable[str] | None" = None) -> dict:
     engine = ENGINES["antigravity"]
     primary_ref = f"{engine.runtime}/{model}"
-    default_fallbacks = _fallbacks_for(primary_ref, engine.id, flash_low=flash_low)
+    default_fallbacks = _fallbacks_for(primary_ref, engine.id, flash_low=flash_low, enabled=enabled_providers)
     worker_primary = f"claude-kit/{worker_model}"
-    worker_fallbacks = [
+    worker_fallbacks = providers_mod.restrict_refs([
         c for c in ("agy-cli/gemini-4-argon-high", "agy-cli/gemini-3.8-flash-high", "agy-cli/claude-sonnet-5-5")
         if c != worker_primary
-    ]
+    ], enabled_providers)
     default_model: dict[str, Any] = {"primary": primary_ref}
     if fallbacks:
         default_model["fallbacks"] = default_fallbacks
@@ -1908,6 +1915,10 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
 
     has_lanes = bool(s.profile.lanes)
     patch_kwargs: dict[str, Any] = {"openrouter_enabled": openrouter_selected(s)}
+    enabled = enabled_providers(s)
+    if enabled is not None:
+        patch_kwargs["enabled_providers"] = enabled
+        ui.info("Fallbacks and role routes use only: " + ", ".join(sorted(enabled)))
     flash_low_why = agy_flash_low_reason(s)
     if has_lanes and flash_low_why:
         ui.info(f"Fallback chain: gemini-3.8-flash-low is left out ({flash_low_why}).")
@@ -2641,11 +2652,105 @@ def verify(ctx: dict) -> list:
     return out
 
 
+AUTH_PROVIDERS_PROMPT = "Which providers should OpenClaw use?"
+
+
+def enabled_providers(s: state.SetupState) -> "list[str] | None":
+    """The providers the operator enabled for OpenClaw, or None when the sign-in was never asked (nothing is restricted)."""
+    from .. import cockpit_auth
+    chosen = list(cockpit_auth.providers(s))
+    return chosen or None
+
+
+def _installed_tools(s: state.SetupState) -> dict[str, bool]:
+    return {cid: bool(cs.installed) for cid, cs in s.cockpits.items()}
+
+
+def _store_api_key(ui_mod, provider: str, *, dry_run: bool) -> None:
+    """Save an API key in OpenClaw's OWN store: `openclaw models auth paste-api-key --provider <p>` runs on the operator's
+    terminal with inherited stdio, so the key is typed into OpenClaw's prompt and never passes through the kit."""
+    argv = providers_mod.auth_command(provider)
+    shown = "openclaw " + " ".join(argv)
+    if dry_run or ui_mod.is_non_interactive():
+        ui_mod.detail(f"{provider}: to save its API key run `{shown}`.")
+        return
+    binary = shutil.which("openclaw")
+    if not binary:
+        ui_mod.warn(f"{provider}: OpenClaw is not on PATH. Run `{shown}` once it is installed.")
+        return
+    if not ui_mod.confirm(f"Save the {provider} API key now? OpenClaw asks for it on this terminal; the kit never sees it.",
+                          default=True):
+        ui_mod.detail(f"Later: `{shown}`.")
+        return
+    try:
+        rc = subprocess.run([binary, *argv], cwd=str(Path.home())).returncode
+    except OSError as e:
+        ui_mod.warn(f"{provider}: could not run {shown} ({type(e).__name__}).")
+        return
+    if rc == 0:
+        ui_mod.record_action(f"saved a {provider} API key in OpenClaw's store")
+    else:
+        ui_mod.warn(f"{provider}: `{shown}` exited {rc}; nothing was saved.")
+
+
 def ask_auth(ui_mod, s: state.SetupState, detected=None, dry_run: bool = False) -> int:
     """OpenClaw's own sign-in question (ADR-0015 D1/D2): which providers, and per provider an API key or a CLI backend.
-    The provider catalog and the per-provider auth arrive in the provider steps (S6, S7); until a provider is chosen
-    the saved or default method name is kept (fill-only)."""
-    from .. import cockpit_auth
-    if not cockpit_auth.method(s, "openclaw"):
-        cockpit_auth.set_method(s, "openclaw", "cli")
+
+    The catalog comes from OpenClaw itself (`models list --all --json`); the providers that already hold a sign-in are
+    preselected (`models auth list --json`). Only provider ids and method names are stored. A non-interactive run keeps
+    the saved providers and runs no command."""
+    from .. import cockpit_auth, profiles
+    if ui_mod.is_non_interactive():
+        if not cockpit_auth.method(s, "openclaw"):
+            cockpit_auth.set_method(s, "openclaw", "cli")
+        return 0
+    discovery = providers_mod.discover_providers(_openclaw)
+    authed = providers_mod.authenticated_providers(_openclaw)
+    if discovery.source != "cli":
+        ui_mod.warn("OpenClaw's provider list could not be read ("
+                    + "; ".join(discovery.problems or ("no catalog",)) + "); "
+                    + ("the provider docs shipped with OpenClaw are used." if discovery.source == "docs"
+                       else "the providers the kit knows are listed."))
+    try:
+        profile = profiles.load_profile(profiles.saved_or_recommended(s.profile.name), "single-model")
+    except Exception:  # noqa: BLE001 - a custom profile must not break the question
+        profile = None
+    saved = cockpit_auth.providers(s)
+    engine_provider = providers_mod.ENGINE_PROVIDER.get(s.openclaw.engine or "")
+    default = [p for p in discovery.providers if p in saved] or providers_mod.preselected(discovery, authed, profile)
+    if engine_provider and engine_provider in discovery.providers and engine_provider not in default:
+        default.append(engine_provider)
+    choices = [ui_mod.Choice(p + ("  (signed in)" if p in authed else ""), value=p) for p in discovery.providers]
+    picked = ui_mod.checkbox(AUTH_PROVIDERS_PROMPT, choices, default=default)
+    if picked is None:
+        return 130
+    chosen: dict[str, str] = {}
+    installed = _installed_tools(s)
+    for provider in discovery.providers:
+        if provider not in picked:
+            continue
+        options = providers_mod.auth_options(provider, installed=installed, backends=discovery.backends)
+        saved_how = saved.get(provider)
+        if provider in authed and not saved_how:
+            saved_how = "api_key"
+        default_how = saved_how if saved_how in [m for m, _ in options] else options[0][0]
+        if len(options) == 1:
+            how = options[0][0]
+        else:
+            how = ui_mod.select(f"How does OpenClaw sign in to {provider}?",
+                                [ui_mod.Choice(label, value=m) for m, label in options], default=default_how)
+            if how is None:
+                return 130
+        chosen[provider] = how
+        if how == "api_key" and provider not in authed:
+            _store_api_key(ui_mod, provider, dry_run=dry_run)
+        elif how == "api_key":
+            ui_mod.detail(f"{provider}: already signed in (kept; the kit does not read the key).")
+    if engine_provider and engine_provider not in chosen and engine_provider in discovery.providers:
+        chosen[engine_provider] = "cli"
+        ui_mod.info(f"{engine_provider} was added: the engine you picked runs on it.")
+    if not chosen:
+        ui_mod.warn("No provider chosen: OpenClaw routing is left as it is.")
+        return 0
+    cockpit_auth.set_providers(s, chosen)
     return 0
