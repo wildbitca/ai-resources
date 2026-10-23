@@ -157,3 +157,11 @@ def test_the_plugin_reads_the_reply_from_stdin(harness, monkeypatch, capsys):
     rc = cli.main(["orchestrate", "report", "r-in", "plan", "--session=s", "--agent=kit-role-planner", "--reply-file=-", "--json"])
     assert rc == 0 and json.loads(capsys.readouterr().out)["status"] == "awaiting_approval"
     assert "from-stdin.md" in harness.store.handoff_path("r-in").read_text()
+
+
+def test_param_flags_fill_workflow_placeholders_and_a_bad_param_is_a_usage_error(harness):
+    out = harness.call("orchestrate", "start", "--workflow=" + harness.wf, "--goal=g", "--workspace=/w",
+                       "--executors=" + harness.ex, "--param=ticket=ABC-123", "--run-id=pp", "--json")
+    assert out["run"] == "pp"
+    bad = harness.call("orchestrate", "start", "--workflow=" + harness.wf, "--goal=g", "--param=oops", "--json", code=2)
+    assert bad["code"] == "usage"

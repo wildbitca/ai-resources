@@ -40,6 +40,13 @@ def _models(path: str) -> dict[str, str]:
     return out
 
 
+def _param(text: str) -> tuple[str, str]:
+    key, sep, value = text.partition("=")
+    if not sep or not key.strip():
+        raise EngineError(f"--param needs name=value, got {text!r}", "usage")
+    return key.strip(), value
+
+
 def _read_reply(path: str) -> str:
     """The reply text, at most MAX_REPLY_FILE bytes of its END: the return block is the last thing a role writes."""
     if not path:
@@ -95,7 +102,7 @@ def run(args: argparse.Namespace) -> int:
             workspace = str(Path(args.workspace or os.getcwd()).resolve())
             r = e.start(wf, args.goal, workspace, domain=args.domain, run_id=args.run_id, models=_models(args.executors),
                         role_timeouts=timeouts, max_teams=args.max_teams, base_ref=args.base_ref,
-                        use_worktree=not args.no_worktree)
+                        use_worktree=not args.no_worktree, params=dict(_param(x) for x in args.param))
             doc = e.next(r["id"])
             doc.update({"workflow": wf.name, "worktree": (r.get("worktree") or {}).get("path", ""),
                         "branch": (r.get("worktree") or {}).get("branch", ""), "failure": r.get("failure", "")})
@@ -170,6 +177,8 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     s.add_argument("--max-teams", type=int, default=limits.DEFAULT_MAX_TEAMS)
     s.add_argument("--role-timeouts", default="", help='JSON {"planner": 1200, ...} in seconds')
     s.add_argument("--base-ref", default="HEAD")
+    s.add_argument("--param", action="append", default=[], metavar="NAME=VALUE",
+                   help="A workflow parameter that fills {{NAME}} in the step prompts (repeatable)")
     s.add_argument("--no-worktree", action="store_true", help="Work in the workspace itself (no per-team worktree)")
     n = common(verbs.add_parser("next", help="The actions to perform now"))
     n.add_argument("run")
