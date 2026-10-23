@@ -13,15 +13,17 @@ import types
 import pytest
 import yaml
 
-from ai_resources.setup import credentials, detection, profile_names, profiles, state, tools, ui, wizard
+from ai_resources.setup import cockpit_auth, credentials, detection, profile_names, profiles, state, tools, ui, wizard
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 LEGACY = pathlib.Path(__file__).parent / "fixtures" / "setup_state" / "legacy_names"
 
 
 def _team(doc: dict) -> dict:
-    """What runs: every key except the display name and the prose (which names the renamed presets)."""
-    return {k: v for k, v in doc.items() if k not in ("name", "description")}
+    """What runs: every key except the display name and the prose (which names the renamed presets), and the read-only
+    `role_effort` metadata: ADR-0015 completed that table in `balanced` and `performance` (it never moves a role to another
+    model; `tests/test_effort_resolver.py` pins the new tables)."""
+    return {k: v for k, v in doc.items() if k not in ("name", "description", "role_effort")}
 
 
 SNAPSHOTS = pathlib.Path(__file__).parent / "fixtures" / "profile_snapshots"
@@ -252,7 +254,12 @@ def test_a_non_interactive_dry_run_keeps_the_saved_profile_and_loads_its_team(ho
     got = state._to_dict(seen["s"])
     # The profile step may restate an old name under its new one in memory; it is the same team, and the file on
     # disk (checked below) is not rewritten by a dry run.
-    assert profile_names.canonical(got["profile"]["name"]) == profile_names.canonical(want["profile"]["name"])
+    # ADR-0015: a saved GATEWAY state is migrated to the single-model team, so a gateway-only profile is replaced by the
+    # default (and the operator was told); every other state keeps its profile.
+    saved = profile_names.canonical(want["profile"]["name"])
+    gateway_state = path.stem.split("__")[0] in ("litellm", "openrouter")
+    replaced = gateway_state and saved not in profiles.list_profiles(mode="single-model")
+    assert profile_names.canonical(got["profile"]["name"]) == (cockpit_auth.TEAM_PROFILE if replaced else saved)
     assert got["profile"]["customized"] is False
     assert state.state_path().read_text(encoding="utf-8") == before_text
     out = capsys.readouterr().out
