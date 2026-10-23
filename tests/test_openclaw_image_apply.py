@@ -333,11 +333,14 @@ def test_a_usable_sign_in_writes_the_route_as_before(rig):
     assert not any("openclaw configure" in m for m in rig.messages["warn"])
 
 
-def test_the_image_catalog_has_no_sign_in_fields_or_helpers():
-    assert not any(hasattr(r, "login_provider") or hasattr(r, "key_provider") for r in img.CATALOG)
-    for gone in ("ensure_account", "sign_in_for", "SignInResult", "SIGN_IN_TIMEOUT_S"):
-        assert not hasattr(img, gone), gone
-    assert not hasattr(openclaw, "_image_auth_run") and not hasattr(openclaw, "_auth_profile_ids")
+def test_every_image_route_points_at_openclaws_own_sign_in_and_nothing_else():
+    """ADR-0016 D1: whatever the route, the only sign-in guidance the operator is given is OpenClaw's own command."""
+    for route in img.CATALOG:
+        for method in ("", "oauth", "api-key"):
+            assert img.sign_in_command(route, method) in ("", img.NATIVE_SIGN_IN), route.id
+        view = img.provider_account(route, {}, [])
+        assert view.fix in ("", img.NATIVE_SIGN_IN), (route.id, view.fix)
+        assert not view.gateway_sees_it or route.kind != "route"
 
 
 def test_teardown_of_a_profile_an_earlier_kit_signed_in_only_prints_the_logout(rig, monkeypatch):

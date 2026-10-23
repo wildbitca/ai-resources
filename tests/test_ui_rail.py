@@ -219,10 +219,6 @@ def test_no_removed_step_label_appears_in_any_rail(term, phase, ascii_only):
     assert [m[1] for m in flow.rail_model(phase)] == list(flow.PHASE_LABELS)
 
 
-def test_the_stale_ten_step_label_table_is_gone():
-    assert not hasattr(flow, "STEP_LABELS")
-
-
 def test_the_wizard_enters_each_step_on_its_phase(monkeypatch):
     from ai_resources.setup import wizard
     seen = []

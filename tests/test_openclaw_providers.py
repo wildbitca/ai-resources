@@ -91,11 +91,14 @@ def test_authenticated_providers_survive_a_changed_shape():
     assert prov.authenticated_providers(runner(auth_out=(0, json.dumps({"profiles": [{"id": "claude-cli:d", "provider": "claude-cli"}]})))) == {"anthropic"}
 
 
-def test_the_kit_offers_no_auth_options_and_no_key_command():
-    """ADR-0016 D1: sign-in belongs to OpenClaw (`openclaw configure --section model`). The kit has no per-provider
-    method list, no key-entry command and no engine-provider table."""
-    for gone in ("auth_options", "auth_command", "ENGINE_PROVIDER", "CLI_BACKENDS"):
-        assert not hasattr(prov, gone), gone
+def test_discovering_providers_only_issues_read_only_commands():
+    """ADR-0016 D1: sign-in belongs to OpenClaw (`openclaw configure --section model`). Reading the catalog and the
+    signed-in providers issues list commands only: no key entry, no auth mutation, whatever the providers are."""
+    run = runner()
+    prov.discover_providers(run)
+    prov.authenticated_providers(run)
+    assert run.calls and all(c[:2] == ["models", "list"] or c[:3] == ["models", "auth", "list"] for c in run.calls), run.calls
+    assert not any(w in " ".join(c) for c in run.calls for w in ("login", "paste", "logout", "set-key", "add", "remove"))
 
 
 def test_the_real_cli_catalog_shape_is_read_through_the_same_parser():
