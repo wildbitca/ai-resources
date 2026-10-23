@@ -67,16 +67,6 @@ def _drive(host, answers, args=None):
     return wizard.run(args or _args()), script
 
 
-def _seed_saved_litellm(host):
-    """LiteLLM is no longer offered to new setups (ADR-0010): a run that reaches the gateway steps needs a saved
-    litellm state. The file is written directly so the counted `state.save` stays untouched."""
-    import yaml
-    s = state.SetupState(mode="multi-model", backend="litellm")
-    s.last_run = "2026-01-01T00:00:00+00:00"
-    state.state_path().parent.mkdir(parents=True, exist_ok=True)
-    state.state_path().write_text(yaml.safe_dump(state._to_dict(s)), encoding="utf-8")
-
-
 def _assert_clean_cancel(rc, capsys, host, before, step=None):
     assert rc == 130
     err = capsys.readouterr().err
@@ -103,45 +93,27 @@ def test_cancel_at_resume_confirm(host, capsys):
     _assert_clean_cancel(rc, capsys, host, before)
 
 
-def test_cancel_at_port_text(host, capsys):
-    _seed_saved_litellm(host)
-    host.monkeypatch.setattr(detection, "detect_container_runtime",
-                             lambda: ("docker", types.SimpleNamespace(installed=True, version="1", binary_path="/d")))
-    host.monkeypatch.setattr(detection, "detect_compose", lambda cli: True)
+def test_cancel_at_the_sign_in_question(host, capsys):
     before = _snapshot(host.home)
-    rc, script = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:litellm", "Where is your gateway": "local-docker",
-                               "Bind interface": "127.0.0.1", "Port": ABORT})
-    _assert_clean_cancel(rc, capsys, host, before, step="Gateway (LiteLLM)")
-    assert any(m.startswith("text: Port") for m in script.asked)
+    rc, script = _drive(host, {"How does Claude Code sign in": ABORT})
+    _assert_clean_cancel(rc, capsys, host, before, step="Sign-in")
+    assert any(m.startswith("select: How does Claude Code sign in") for m in script.asked)
 
 
-def test_cancel_at_providers_checkbox(host, capsys):
-    _seed_saved_litellm(host)
+def test_cancel_at_the_starting_team(host, capsys):
     before = _snapshot(host.home)
-    rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:litellm", "Where is your gateway": "skipped",
-                          "Select providers": ABORT})
-    _assert_clean_cancel(rc, capsys, host, before, step="Providers")
+    rc, script = _drive(host, {"How does Claude Code sign in": "subscription", "Starting team": ABORT})
+    _assert_clean_cancel(rc, capsys, host, before, step="Your team")
+    assert any(m.startswith("select: Starting team") for m in script.asked)
 
 
-def test_cancel_at_profile_confirm(host, capsys):
-    from ai_resources.scoring import db as scores_db, detect as scoring_detect, explain, flow, profile_out
-    mp = host.monkeypatch
-    mp.setattr(scores_db, "load", lambda: types.SimpleNamespace(problems=[]))
-    mp.setattr(scoring_detect, "default_deps", lambda: object())
-    mp.setattr(scoring_detect, "inventory", lambda deps, db: {})
-    mp.setattr(flow, "enabled_providers", lambda s, inv: ["openrouter"])
-    mp.setattr(flow, "askable_pools", lambda inv, enabled, db: [])
-    mp.setattr(flow, "run", lambda *a, **k: (types.SimpleNamespace(refused=False, kept_default=True),
-                                             types.SimpleNamespace(readings={})))
-    mp.setattr(profile_out, "to_customizations", lambda comp: {})
-    mp.setattr(explain, "render_text", lambda comp, lanes: "")
+def test_cancel_at_the_role_profile_question(host, capsys):
+    """Custom leads to the profile question of step 6; Ctrl-C there is a clean cancel that names the step."""
     before = _snapshot(host.home)
-    rc, script = _drive(host, {"Choose mode": "multi-model:openrouter", "Model preset": "custom", "How do you want to choose models": "profile",
-                               "Update OPENROUTER_API_KEY": False, "Choose profile": "__compose__",
-                               "Composition mode": "uniform",
-                               "Use this team?": ABORT})
+    rc, script = _drive(host, {"How does Claude Code sign in": "subscription", "Starting team": "custom",
+                               "How do you want to choose models": "profile", "How should kit subagents pick": ABORT})
     _assert_clean_cancel(rc, capsys, host, before, step="Your team - roles")
-    assert any(m.startswith("confirm: Use this team?") for m in script.asked)
+    assert any(m.startswith("select: How should kit subagents pick") for m in script.asked)
 
 
 def test_cancel_at_lanes_acknowledgement(host, capsys):
@@ -158,27 +130,20 @@ def test_cancel_at_lanes_acknowledgement(host, capsys):
 
 
 def test_bare_keyboard_interrupt_names_the_step(host, capsys):
-    _seed_saved_litellm(host)
     """prompt_scope restores the section on exit, so the name must be read before the scope ends."""
     before = _snapshot(host.home)
-    rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:litellm", "Where is your gateway": "skipped",
-                          "Select providers": INTERRUPT})
-    _assert_clean_cancel(rc, capsys, host, before, step="Providers")
+    rc, _ = _drive(host, {"How does Claude Code sign in": INTERRUPT})
+    _assert_clean_cancel(rc, capsys, host, before, step="Sign-in")
 
 
-def test_cancel_after_the_gateway_save_lists_what_was_done(host, capsys):
-    _seed_saved_litellm(host)
-    host.monkeypatch.setattr(detection, "detect_container_runtime",
-                             lambda: ("docker", types.SimpleNamespace(installed=True, version="1", binary_path="/d")))
-    host.monkeypatch.setattr(detection, "detect_compose", lambda cli: True)
-    rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:litellm", "Where is your gateway": "local-docker",
-                          "Bind interface": "127.0.0.1", "Port": "4000", "Container image": "",
-                          "Pull": ABORT})
+def test_cancel_after_the_vertex_project_was_saved_lists_what_was_done(host, capsys):
+    rc, _ = _drive(host, {"How does Claude Code sign in": "vertex_adc", "GOOGLE_CLOUD_PROJECT": "demo-project",
+                          "GOOGLE_CLOUD_LOCATION": "global", "Starting team": ABORT})
     err = capsys.readouterr().err
     assert rc == 130 and "Traceback" not in err
-    assert len(host.saves) == 1
-    assert "Already done in this run" in err and "saved gateway state" in err
+    assert "Already done in this run" in err and "saved the Vertex project and region" in err
     assert "Nothing was applied" not in err
+    assert host.saves == []                      # the state file is saved at the end of a run, never mid-way
     assert state.locked_run(lambda: 0) == 0
 
 
@@ -191,7 +156,7 @@ def test_cancel_after_the_tools_offer_installed_something_lists_it(host, capsys)
     mp.setattr(tools, "_detect_tools", lambda: {t: detection.Detected(t, t != tool_id, "1", "/bin/" + t)
                                                 for t in tools.TOOLS})
     mp.setattr(tools, "_run_install", lambda cmd, timeout=300: (True, ""))
-    rc, script = _drive(host, {"Tick the tools the kit should use": [tool_id], "Sign in now": [], "Choose mode": ABORT})
+    rc, script = _drive(host, {"Tick the tools the kit should use": [tool_id], "Sign in now": [], "How does Claude Code sign in": ABORT})
     err = capsys.readouterr().err
     assert rc == 130 and "Traceback" not in err
     assert any(m.startswith("checkbox: Tick the tools the kit should use") for m in script.asked)
@@ -200,10 +165,9 @@ def test_cancel_after_the_tools_offer_installed_something_lists_it(host, capsys)
 
 
 def test_cancel_in_the_middle_of_step9_lists_the_files_already_written(host, capsys):
-    """Real _step9_apply: executors.yaml is written, then a Ctrl-C hits before the rest of the apply."""
+    """Real _step9_apply: the Vertex project was saved earlier in the run, then a Ctrl-C hits at the start of the apply."""
     from ai_resources import selection as sel
     s = state.SetupState()
-    s.mode, s.backend = "multi-model", "openrouter"
     s.last_run = "2026-01-01T00:00:00+00:00"
     s.set_selection(sel.Selection(shape="single", providers={"anthropic": sel.ProviderSel()},
                                   slots={"anthropic:sonnet": sel.SlotSel("anthropic/claude-sonnet-5-5")},
@@ -216,14 +180,13 @@ def test_cancel_in_the_middle_of_step9_lists_the_files_already_written(host, cap
         raise KeyboardInterrupt
     host.monkeypatch.setattr(wizard, "_apply_lanes_file", interrupt)
     from ai_resources.setup import model_selection as ms
-    rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:openrouter",
-                          "Update OPENROUTER_API_KEY": False, "Model preset": "custom", "How do you want to choose models": "profile",
-                          "Choose profile": lambda v: v[0], "Customize any role": False,
+    rc, _ = _drive(host, {"Use previous answers": True, "How does Claude Code sign in": "vertex_adc", "GOOGLE_CLOUD_PROJECT": "demo-project", "GOOGLE_CLOUD_LOCATION": "global",
+                          "Starting team": "custom", "How do you want to choose models": "profile",
+                          "How should kit subagents pick": lambda v: v[0], "Customize any role": False,
                           "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
     err = capsys.readouterr().err
     assert rc == 130 and "Traceback" not in err
-    assert state.executors_path().exists()
-    assert "Already done in this run" in err and "wrote executors.yaml" in err
+    assert "Already done in this run" in err and "saved the Vertex project and region" in err
     assert "Nothing was applied" not in err
 
 
@@ -232,7 +195,6 @@ def test_cancel_inside_a_cockpit_configure_names_the_partial_write(host, capsys)
     from ai_resources import selection as sel
     from ai_resources.setup import model_selection as ms
     s = state.SetupState()
-    s.mode, s.backend = "multi-model", "openrouter"
     s.last_run = "2026-01-01T00:00:00+00:00"
     s.set_selection(sel.Selection(shape="single", providers={"anthropic": sel.ProviderSel()},
                                   slots={"anthropic:sonnet": sel.SlotSel("anthropic/claude-sonnet-5-5")},
@@ -244,9 +206,9 @@ def test_cancel_inside_a_cockpit_configure_names_the_partial_write(host, capsys)
     def interrupt(ctx):
         raise KeyboardInterrupt
     host.monkeypatch.setattr(wizard.ALL_COCKPITS["claude"], "configure", interrupt)
-    rc, _ = _drive(host, {"Use previous answers": True, "Choose mode": "multi-model:openrouter",
-                          "Update OPENROUTER_API_KEY": False, "Model preset": "custom", "How do you want to choose models": "profile",
-                          "Choose profile": lambda v: v[0], "Customize any role": False,
+    rc, _ = _drive(host, {"Use previous answers": True, "How does Claude Code sign in": "subscription",
+                          "Starting team": "custom", "How do you want to choose models": "profile",
+                          "How should kit subagents pick": lambda v: v[0], "Customize any role": False,
                           "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
     err = capsys.readouterr().err
     assert rc == 130 and "Traceback" not in err

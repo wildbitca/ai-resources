@@ -1,8 +1,8 @@
 """Screen 4, "Review", and its "More options..." (ADR-0009).
 
-The review offers Apply, Change tools, Change how, Change team, More options and Cancel. The Claude parallel runs, the
-gateway and API keys, start at login and the OpenClaw questions are not asked on the default path: each is an entry
-of More options that opens the existing step and returns to the review. Offline; the ui is the scripted fake."""
+The review offers Apply, Change tools, Change sign-in, Change team, More options and Cancel. The Claude parallel runs and
+the OpenClaw questions are not asked on the default path: each is an entry of More options that opens the existing step
+and returns to the review (ADR-0015 removed the gateway and start-at-login entries). Offline; the ui is the scripted fake."""
 from __future__ import annotations
 
 import argparse
@@ -57,7 +57,7 @@ def test_the_review_offers_apply_three_changes_more_options_and_cancel(monkeypat
     s = _team("claude", "openclaw")
     seen, script = _review(monkeypatch, s, [ms.APPLY])
     assert wizard._step_summary(s, _args()) == 0
-    assert seen["values"][0] == [ms.APPLY, wizard.CHANGE_TOOLS, wizard.CHANGE_HOW, wizard.CHANGE_TEAM,
+    assert seen["values"][0] == [ms.APPLY, wizard.CHANGE_TOOLS, wizard.CHANGE_AUTH, wizard.CHANGE_TEAM,
                                  wizard.MORE_OPTIONS, ms.CANCEL]
 
 
@@ -70,7 +70,7 @@ def test_more_options_is_absent_when_nothing_applies(monkeypatch):
 
 
 def test_every_change_jumps_back_to_its_screen(monkeypatch):
-    for pick, step in ((wizard.CHANGE_HOW, "mode"), (wizard.CHANGE_TEAM, "preset"), (wizard.CHANGE_TOOLS, "tools")):
+    for pick, step in ((wizard.CHANGE_AUTH, "cockpit_auth"), (wizard.CHANGE_TEAM, "preset"), (wizard.CHANGE_TOOLS, "tools")):
         s = _team()
         _review(monkeypatch, s, [pick])
         with pytest.raises(flow.JumpTo) as jump:
@@ -97,22 +97,17 @@ def test_cancel_exits_130_with_the_shared_cancel_block(monkeypatch):
 def test_the_entries_follow_the_run(monkeypatch):
     s = _team("claude", "openclaw")
     assert [c.value for c in wizard._more_options(s)] == ["parallel", "openclaw"]
+    # ADR-0015: a saved gateway state offers no gateway or start-at-login entry any more
     g = state.SetupState(mode="multi-model", backend="litellm")
     g.litellm.deployment = "local"
     g.profile.customizations = {"__targets__": {"selected": ["claude"]}}
-    assert [c.value for c in wizard._more_options(g)] == ["gateway", "lifecycle"]
-    g.backend = "openrouter"
-    assert [c.value for c in wizard._more_options(g)] == ["gateway"]
+    assert [c.value for c in wizard._more_options(g)] == []
     assert wizard._more_options(state.SetupState()) == []
 
 
-@pytest.mark.parametrize("entry,step", [("parallel", "lanes"), ("openclaw", "cockpits"), ("gateway", "gateway"),
-                                        ("lifecycle", "lifecycle")])
+@pytest.mark.parametrize("entry,step", [("parallel", "lanes"), ("openclaw", "cockpits")])
 def test_each_entry_opens_its_step_and_returns_to_the_review(monkeypatch, entry, step):
-    s = _team("claude", "openclaw") if entry in ("parallel", "openclaw") else state.SetupState(
-        mode="multi-model", backend="litellm")
-    if entry in ("gateway", "lifecycle"):
-        s.litellm.deployment = "local"
+    s = _team("claude", "openclaw")
     seen, script = _review(monkeypatch, s, [wizard.MORE_OPTIONS])
     script.answers["More options"] = entry
     with pytest.raises(flow.JumpTo) as jump:
@@ -242,14 +237,14 @@ def test_agy_saved_in_targets_with_the_lanes_cleared_is_not_pre_ticked():
 # --- a Change / More options jump that would re-run a locked step is refused -------------------------------------
 def test_a_jump_across_a_locked_step_is_refused_and_the_review_is_asked_again(monkeypatch):
     s = _team("claude", "openclaw")
-    seen, script = _review(monkeypatch, s, [wizard.CHANGE_HOW, ms.APPLY])
+    seen, script = _review(monkeypatch, s, [wizard.CHANGE_AUTH, ms.APPLY])
     notes = []
     monkeypatch.setattr(ui, "warn", lambda m, *a, **k: notes.append(m))
     steps = wizard._build_steps(False)
     runner = flow.Wizard(steps=steps, on_skip=lambda *a: None, on_enter=lambda *a: None, snapshot=lambda: None,
                          restore=lambda snap: None, notify=lambda m: None, scope=lambda spec, back: __import__("contextlib").nullcontext(),
                          changes=lambda: 0)
-    runner.history = [flow._Done(runner.index_of("gateway"), None, True)]
+    runner.history = [flow._Done(runner.index_of("preset"), None, True)]
     monkeypatch.setattr(wizard, "_RUNNER", runner)
     assert wizard._step_summary(s, _args()) == 0
     assert any("cannot be asked again" in n for n in notes)

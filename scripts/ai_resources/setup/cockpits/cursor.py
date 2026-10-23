@@ -8,6 +8,7 @@ from .. import state
 from ..detection import detect_cursor
 from ... import repo_root
 from . import _shared
+from .. import cockpit_auth
 
 
 NAME = "Cursor"
@@ -49,3 +50,10 @@ def configure(ctx: dict) -> list[Path]:
     s.cockpits[ID] = cs
 
     return written
+
+
+def ask_auth(ui_mod, s, detected=None, dry_run: bool = False) -> int:
+    """Cursor keeps its current behaviour: sign-in is managed inside Cursor, so nothing is asked."""
+    cockpit_auth.set_method(s, ID, "managed")
+    ui_mod.detail("Cursor: sign-in is managed in Cursor.")
+    return 0

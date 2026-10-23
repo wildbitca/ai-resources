@@ -25,7 +25,7 @@ from . import (
     tools,
     ui,
 )
-from . import compat, model_selection, profile_names, team_view
+from . import cockpit_auth, compat, model_selection, profile_names, team_view
 from .cockpits import ALL as ALL_COCKPITS
 from .cockpits import _shared
 from .. import __version__, model_pins, repo_root, roles_policy, selection as selection_mod
@@ -33,8 +33,8 @@ from .. import __version__, model_pins, repo_root, roles_policy, selection as se
 
 TOTAL_STEPS = 10
 SINGLE_MODEL_DEFAULT_PROFILE = "balanced"       # ADR-0010 N4: one preset id on every row; claude-native keeps loading
-# The default for "multi-model via your CLI subscriptions" (ADR-0008): the subscription team, no gateway.
-CLI_TEAM_DEFAULT_PROFILE = "balanced"
+# The default team (ADR-0008, ADR-0015): the subscription team, no gateway. One helper owns the logic.
+CLI_TEAM_DEFAULT_PROFILE = cockpit_auth.TEAM_PROFILE
 
 
 def _carry_targets(old: "state.ProfileState", new: "state.ProfileState") -> "state.ProfileState":
@@ -121,9 +121,9 @@ _APPLIED_TARGETS: list[str] = []
 # Set by Review > More options (ADR-0009): the operator asked for the Claude parallel runs / the OpenClaw questions in
 # THIS run. Neither is asked on the default path.
 _PARALLEL_RUNS = False
-_GEMINI_ASKED: set[str] = set()     # teams for which Review already asked the OpenRouter Gemini opt-in in this run
 _OPEN_OPENCLAW = False
 _OPEN_LIFECYCLE = False
+_AUTH_PREFILLED: set[str] = set()   # cockpits whose sign-in a flag (--backend) answered in this run: not asked again
 
 
 def _reject_unavailable_requested_profile(available: list[str], context: str) -> int | None:
@@ -178,7 +178,7 @@ def _run(args: argparse.Namespace) -> int:
     _APPLIED_TARGETS = []
     _PRESET = ""
     _PARALLEL_RUNS = _OPEN_OPENCLAW = _OPEN_LIFECYCLE = False
-    _GEMINI_ASKED.clear()
+    _AUTH_PREFILLED.clear()
     dry_run = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
 
     # Both flags were declared in the CLI and never read, so they accepted input
@@ -230,6 +230,8 @@ def _run(args: argparse.Namespace) -> int:
 
     if s.profile.name in profile_names.ALIASES:
         ui.info(f"Profile {s.profile.name} is now called {profile_names.canonical(s.profile.name)}")
+
+    _migrate_cockpit_auth(s)
 
     # After state.load() and after the branch that discards previous answers,
     # or the assignment is either an UnboundLocalError or silently overwritten.
@@ -289,6 +291,61 @@ def _run(args: argparse.Namespace) -> int:
     return verify_rc   # non-zero when a tooling has an error-level finding or a requested apply was refused
 
 
+def _migrate_cockpit_auth(s: state.SetupState) -> None:
+    """ADR-0015 D1: a saved global answer (team / each on its own / advanced gateway) becomes the cockpits' own auth,
+    fill-only, with the old -> new table shown once (the filled answers are saved, so the next run has nothing to
+    fill). The old global fields are then derived from the answers; no gateway is offered and nothing is torn down."""
+    legacy = cockpit_auth.legacy_label(s)
+    was_gateway = s.mode == "multi-model"
+    vertex = bool(credentials.get_key("GOOGLE_CLOUD_PROJECT") or credentials.get_key("CLAUDE_CODE_USE_VERTEX") == "1")
+    rows = cockpit_auth.migrate_legacy(s, vertex=vertex)
+    if rows:
+        ui.info("Sign-in is now asked per tool instead of once for all of them. Your earlier answer maps like this:")
+        for row in rows:
+            ui.detail(f"  {row.cockpit}: {row.old} -> {row.new}")
+    if legacy:
+        cockpit_auth.apply_legacy_flags(s)
+    if was_gateway:
+        ui.info("The gateway is no longer offered. An existing gateway on this host is left as it is; "
+                "setup does not remove it.")
+        if not s.profile.customized and s.profile.name not in profiles.list_profiles(mode="single-model"):
+            s.profile = _carry_targets(s.profile, state.ProfileState(name=cockpit_auth.default_profile_for(s)))
+
+
+def _auth_cockpits(s: state.SetupState) -> list[str]:
+    """The ticked tools that ask their own sign-in question, in a fixed order (Cursor only prints its note)."""
+    selected = _selected_tools(s)
+    return [c for c in ("claude", "openclaw", "agy", "cursor") if c in selected]
+
+
+_AUTH_MODULES = ("claude", "openclaw", "gemini", "cursor")
+
+
+def _auth_module(cockpit: str):
+    """The cockpit module that owns `cockpit`'s sign-in question (agy shares the file that holds its paths)."""
+    return ALL_COCKPITS.get({"agy": "gemini"}.get(cockpit, cockpit))
+
+
+def _step_cockpit_auth(s: state.SetupState, args: argparse.Namespace, dry_run: bool = False) -> int:
+    """Phase 2, "Sign-in": every ticked tool asks its OWN question (ADR-0015 D1) and nothing else does. The answer is a
+    method name stored in `state.cockpit_auth`; a key is never read or kept by the kit."""
+    _section(2, "Sign-in", phase=2)
+    for cockpit in _auth_cockpits(s):
+        mod = _auth_module(cockpit)
+        ask = getattr(mod, "ask_auth", None)
+        if ask is None:
+            continue
+        if cockpit in _AUTH_PREFILLED and cockpit_auth.method(s, cockpit):
+            ui.info(f"Sign-in for {tools.TOOLS[cockpit].label if cockpit in tools.TOOLS else cockpit} set by "
+                    "--backend; the question is skipped.")
+            continue
+        rc = ask(ui, s, _detected_cockpit_ids(s), dry_run)
+        if rc != 0:
+            return rc
+    cockpit_auth.apply_legacy_flags(s)
+    return 0
+
+
 def _enter_step(spec: flow.StepSpec, w: flow.Wizard) -> None:
     """Point the progress rail at `spec`; the skipped marks come from the runner history, so a step that a
     Back or an Edit made run again is no longer shown as skipped."""
@@ -318,18 +375,6 @@ def _restore_run(s: state.SetupState, snap: tuple) -> None:
     _OPEN_LIFECYCLE = snap[6] if len(snap) > 6 else False
 
 
-def _run_mode_step(c) -> int:
-    """Step 2 and, right after it, the cleanup offer when the operator just left multi-model."""
-    rc = _step1_mode(c.s, getattr(c, "args", None), is_first=getattr(c, "is_first", True))
-    if rc != 0:
-        return rc
-    # If the user just switched multi-model -> single-model, offer to clean up everything we previously
-    # installed (the tracking record drives the actions).
-    if c.prev_s.mode == "multi-model" and c.s.mode == "single-model" and not c.is_first:
-        return _teardown_multi_model(c.prev_s, c.s)
-    return 0
-
-
 def _report_skip(spec: flow.StepSpec, title: str, reason: str) -> None:
     """A skipped step prints its header and reason; a step a preset made redundant (empty reason) prints nothing."""
     if not reason:
@@ -347,27 +392,10 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
     header and reason from the runner (`skip` returns the header title and the reason)."""
     S = flow.StepSpec
 
-    def multi(c) -> bool:
-        return c.s.mode == "multi-model"
-
-    def local_gateway(c) -> bool:
-        return multi(c) and c.s.backend == "litellm"
-
-    def gateway_skip(c):
-        """Steps 3, 4, 5 and 8 belong to the gateway path: on any other path they are skipped without a line of
-        output (ADR-0009). A gateway path that skips one of them still says why."""
-        if not multi(c):
-            return ("Gateway", "")
-        if c.s.backend == "cli":
-            return ("Gateway", "Skipped \u2014 direct CLI and API invocation; no gateway to supervise.")
-        if c.s.backend != "litellm":
-            return ("Gateway", "Skipped \u2014 OpenRouter is hosted; there is nothing to install or supervise.")
-        return None
-
-    def lifecycle_skip(c):
-        if local_gateway(c):
-            return None
-        return ("Start at login", "Skipped (no local gateway to supervise)." if multi(c) else "")
+    def cockpit_auth_skip(c):
+        """Each selected cockpit asks its own sign-in; with none that asks (only Cursor, or nothing) the step is a
+        silent skip."""
+        return None if _auth_cockpits(c.s) else ("Sign-in", "")
 
     def preset_done(c):
         """6a and 6b are answered by the preset: skipped without a line of output."""
@@ -430,19 +458,13 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         S("tools", 1, "Your tools", lambda c: _step2_cockpits(c.s), rewindable=False),
         S("cockpit", 1, "Main tool", lambda c: _step_cockpit_choice(c.s, dry_run=c.dry_run), back=True,
           skip=cockpit_skip),
-        S("mode", 2, "How should they work?", _run_mode_step, edit_label="How"),
-        S("gateway", 3, "Gateway", lambda c: _step3_litellm(c.s, c.dry_run), rewindable=dry_run,
-          skip=gateway_skip, edit_label="Gateway"),
-        S("providers", 4, "Providers", lambda c: _step4_providers(c.s),
-          skip=lambda c: None if (multi(c) or getattr(c.s, "cli_team_api", False)) else ("Providers", ""),
-          edit_label="Providers"),
-        S("credentials", 5, "API keys", lambda c: _step5_credentials(c.s, c.dry_run),
-          skip=lambda c: None if (multi(c) or getattr(c.s, "cli_team_api", False)) else ("API keys", ""), edit_label="API keys"),
+        S("cockpit_auth", 2, "Sign-in", lambda c: _step_cockpit_auth(c.s, c.args, c.dry_run), back=True,
+          skip=cockpit_auth_skip, edit_label="Sign-in"),
         S("preset", 6, "Your team", lambda c: _step_preset(c.s, c.args), back=True, edit_label="Models"),
         S("models", 6, "Your team - models", lambda c: _step_models(c.s, c.args, c.dry_run), back=True,
           skip=preset_done, edit_label="Models"),
         S("profile", 6, "Your team - roles",
-          lambda c: _step6_profile(c.s) if multi(c) else _step6_single_model_profile(c.s), back=True,
+          lambda c: _step6_single_model_profile(c.s), back=True,
           skip=preset_done, edit_label="Role assignment"),
         S("lanes", 6, "Parallel runs", lambda c: _step_lanes(c.s, c.args, dry_run=c.dry_run),
           back=True, edit_label="Parallel runs"),
@@ -450,8 +472,6 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
           back=True, skip=tool_config_done, edit_label="OpenClaw"),
         S("audio", 7, "Audio", lambda c: _step_audio(c.s), back=True, skip=audio_skip, edit_label="Audio"),
         S("more", 8, "More", lambda c: _step_more(c.s), back=True, skip=more_skip, edit_label="More"),
-        S("lifecycle", 8, "Start at login", lambda c: _step8_lifecycle(c.s), skip=lifecycle_skip,
-          edit_label="Start at login"),
         S("hygiene", 8, "Hygiene", lambda c: _step_hygiene(c.s, c.dry_run), skip=hygiene_skip),
         S("claude_md", 8, "Global CLAUDE.md", lambda c: _step_claude_md(c.s, c.dry_run), skip=claude_md_skip),
         S("agy_mcp", 8, "agy MCP servers", lambda c: _step_agy_mcp(c.s, c.dry_run), skip=agy_mcp_skip),
@@ -494,19 +514,21 @@ def _preflight_selection(args: argparse.Namespace, s: state.SetupState) -> int:
     if backend and backend not in ("litellm", "openrouter", "cli"):
         ui.error(f"--backend must be litellm, openrouter or cli, not {backend!r}")
         return 2
-    # `cli` is no gateway: single-model shaped (nothing gateway-side can engage), flagged as the CLI team.
-    if backend == "cli":
-        mode, eff_backend = "single-model", s.backend
-    else:
-        mode, eff_backend = ("multi-model", backend) if backend else (s.mode, s.backend)
+    if backend:
+        # ADR-0015: the gateway is gone from setup. The flag still parses (scripts keep working) and pre-fills the
+        # native sign-in of the cockpits; nothing gateway-side is configured or removed.
+        ui.warn(f"--backend {backend} is deprecated: the gateway is no longer offered, so Claude Code signs in with "
+                "your subscription unless a saved or interactive answer says otherwise.")
+    mode, eff_backend = "single-model", s.backend
 
     def apply_backend() -> None:
-        if backend == "cli":
+        if backend:
             was_cli = bool(getattr(s, "cli_team", False))
-            s.mode, s.cli_team = "single-model", True
+            if not cockpit_auth.method(s, "claude"):
+                cockpit_auth.set_method(s, "claude", "subscription")
+            _AUTH_PREFILLED.add("claude")
+            cockpit_auth.apply_legacy_flags(s)
             _reset_profile_for_cli(s, was_cli)
-        elif backend:
-            s.mode, s.backend, s.cli_team = "multi-model", backend, False
     try:
         accounts = model_selection.detect_accounts()
         cands = model_selection.candidates(accounts, _discover_for_wizard)
@@ -846,28 +868,6 @@ _RUNNER: "flow.Wizard | None" = None        # the running step list (kept for te
 _REVIEW_SHOWN = False                        # the review printed the step 9 header; apply does not repeat it
 
 
-def _credential_state(s: state.SetupState) -> str:
-    """`set` or `missing` per credential this setup needs. Never a value."""
-    if s.mode != "multi-model":
-        return "native cockpit auth"
-    if s.backend == "openrouter":
-        names = ["OPENROUTER_API_KEY"]
-    else:
-        names = []
-        for pid, ps in s.providers.items():
-            if not ps.enabled or pid == "ollama":
-                continue
-            try:
-                var = "GOOGLE_CLOUD_PROJECT" if pid == "vertex" else providers.get(pid).primary_env_var
-            except KeyError:
-                continue
-            if var:
-                names.append(var)
-    if not names:
-        return "none needed"
-    return " \u00b7 ".join(f"{n} {'set' if credentials.get_key(n) else 'missing'}" for n in names)
-
-
 def _team_label(s: state.SetupState) -> str:
     """The starting team's name for the review: a preset's label when the saved profile is one of the presets', else
     the profile name, marked when it is customized, composed or picked from accounts."""
@@ -884,6 +884,23 @@ def _team_label(s: state.SetupState) -> str:
     return f"Custom: {name}"
 
 
+_AUTH_LABEL = {"subscription": "subscription", "api_key": "API key", "vertex_adc": "Vertex AI",
+               "google_account": "Google account", "managed": "managed in the tool", "cli": "CLI backend"}
+
+
+def _auth_text(s: state.SetupState) -> str:
+    """"Claude Code: subscription; OpenClaw: anthropic (CLI), openai (API key)": method names only, never a value."""
+    parts = []
+    for cockpit in _auth_cockpits(s):
+        name = tools.TOOLS[cockpit].label if cockpit in tools.TOOLS else cockpit
+        provs = cockpit_auth.providers(s) if cockpit == "openclaw" else {}
+        if provs:
+            parts.append(f"{name}: " + ", ".join(f"{p} ({_AUTH_LABEL.get(m, m)})" for p, m in provs.items()))
+        else:
+            parts.append(f"{name}: {_AUTH_LABEL.get(cockpit_auth.method(s, cockpit), 'not set')}")
+    return "; ".join(parts) or "none to ask"
+
+
 def _tools_text(s: state.SetupState) -> str:
     targets = (s.profile.customizations or {}).get("__targets__", {}).get("selected") or _detected_cockpit_ids(s)
     names = [tools.TOOLS[c].label if c in tools.TOOLS else c for c in targets]
@@ -891,16 +908,8 @@ def _tools_text(s: state.SetupState) -> str:
 
 
 def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
-    """The review screen's rows from the setup state: How, Team, Tools and what will be written. The gateway rows
-    (Gateway, Providers, API keys, Start at login) appear only on the gateway path."""
-    multi = s.mode == "multi-model"
-    cli_team = not multi and getattr(s, "cli_team", False)
-    if cli_team:
-        how = "As a team, on your subscriptions (no gateway)"
-    elif not multi:
-        how = "Each on its own (no gateway)"
-    else:
-        how = f"Advanced: {s.backend} gateway"
+    """The review screen's rows from the setup state: Sign-in (one phrase per ticked tool), Team, Tools and what will
+    be written."""
     sel = s.get_selection()
     members = (s.profile.customizations or {}).get("__targets__", {}).get("selected") or []
     team = _team_label(s)
@@ -909,26 +918,7 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     if "agy" in members and ("google" in (s.profile.lane_acks or {}) or _agy_lanes_on(s)):
         team += (" + Antigravity (reviews and checks only; writing stays on Claude Code)" if _agy_lanes_on(s)
                  else " + Antigravity (terms accepted; held until its gates are proven)")
-    rows = [("How", how), ("Team", team), ("Tools", _tools_text(s))]
-    if multi:
-        if s.backend == "openrouter":
-            gateway = "openrouter (hosted)"
-        elif s.litellm.deployment == "remote":
-            gateway = f"litellm (remote {s.litellm.remote.url or 'url not set'})"
-        elif s.litellm.deployment == "skipped":
-            gateway = "litellm (skipped)"
-        elif litellm.is_container_mode(s.litellm.local.runtime):
-            gateway = f"litellm ({s.litellm.local.runtime})"
-        else:
-            gateway = f"litellm ({s.litellm.local.runtime or 'local'})"
-        rows.append(("Gateway", gateway))
-        rows.append(("Providers", ", ".join(p for p, ps in s.providers.items() if ps.enabled) or "none"))
-        rows.append(("API keys", _credential_state(s)))
-        if s.backend == "litellm" and s.litellm.deployment == "local":
-            if litellm.is_container_mode(s.litellm.local.runtime):
-                rows.append(("Start at login", "container restart policy"))
-            else:
-                rows.append(("Start at login", "login service" if s.litellm.local.auto_start else "manual start"))
+    rows = [("Sign-in", _auth_text(s)), ("Team", team), ("Tools", _tools_text(s))]
     lane_agents = ((s.profile.lanes or {}).get("agents") or {}) if isinstance(s.profile.lanes, dict) else {}
     if any((a or {}).get("backend") == "claude-cli" for a in lane_agents.values()):
         rows.append(("Parallel runs", "on"))
@@ -943,7 +933,7 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     return rows
 
 
-CHANGE_TOOLS, CHANGE_HOW, CHANGE_TEAM, MORE_OPTIONS = "change-tools", "change-how", "change-team", "more-options"
+CHANGE_TOOLS, CHANGE_AUTH, CHANGE_TEAM, MORE_OPTIONS = "change-tools", "change-auth", "change-team", "more-options"
 """The review's choices besides Apply and Cancel (their titles are what the operator reads)."""
 
 
@@ -954,10 +944,6 @@ def _more_options(s: state.SetupState) -> list:
     out = []
     if getattr(s, "cli_team", False):
         out.append(ui.Choice("Parallel runs - Claude Code on your subscription (off by default)", value="parallel"))
-    if s.mode == "multi-model":
-        out.append(ui.Choice("Gateway and API keys", value="gateway"))
-        if s.backend == "litellm" and s.litellm.deployment == "local":
-            out.append(ui.Choice("Start at login", value="lifecycle"))
     if "openclaw" in members:
         out.append(ui.Choice("OpenClaw - engine, host and voice", value="openclaw"))
     return out
@@ -968,54 +954,6 @@ def _forget_tool_answers(s: state.SetupState) -> None:
     for attr in ("_install_answer_this_run", "_preview_answer_this_run", "_tool_members_this_run",
                  "_sign_in_answers_this_run"):
         s.__dict__.pop(attr, None)
-
-
-_REENTRANT = ("gateway", "providers", "credentials", "lifecycle")
-"""Steps More options > Gateway / Start at login re-run by design: they are idempotent, so they never refuse."""
-
-
-def _google_roles(s: state.SetupState) -> list[str]:
-    """The roles of this state's profile that run a Google model, in role order."""
-    try:
-        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name, s.backend), "multi-model")
-    except (FileNotFoundError, RuntimeError):
-        return []
-    if s.profile.customized and s.profile.customizations:
-        base = profiles.merge_customizations(
-            base, {k: v for k, v in s.profile.customizations.items() if k in profiles.KNOWN_ROLES})
-    by_role = base.get("by_role") or {}
-    return [r for r in profiles.KNOWN_ROLES if str((by_role.get(r) or {}).get("model", "")).startswith("google/")]
-
-
-def _openrouter_gemini_optin(s: state.SetupState) -> None:
-    """OpenRouter Balanced declares Gemini, which Claude Code does not verify through OpenRouter yet. The roles that
-    use it would silently run on the session model, so Review asks once (default No, never answered for the operator)
-    and records `profile.allow_unverified` on a Yes; a No names the roles instead. Skipped when the cell is verified,
-    when the flag already allows it, or when the profile has no Google role (ADR-0010 S6b, PD-5)."""
-    if s.mode != "multi-model" or s.backend != "openrouter" or compat.claude_google_openrouter_verified():
-        return
-    roles = _google_roles(s)
-    if not roles or _COMPOSE.get("allow_unverified"):
-        return
-    if "claude" not in _detected_cockpit_ids(s):
-        return
-    key = profiles.saved_or_recommended(s.profile.name, s.backend) + ("*" if s.profile.customized else "")
-    if key in _GEMINI_ASKED:                     # asked once per team in this run, not again on a return to Review
-        return
-    _GEMINI_ASKED.add(key)
-    rows = [(r, "google", "") for r in roles]
-    held = team_view.provider_mix({}, rows, row="openrouter").lines[0]
-    if ui.is_non_interactive() or _ASSUME_YES:
-        # `--yes` answers the install offer only; this opt-in is never answered for the operator.
-        if not s.profile.allow_unverified:
-            ui.info(held)
-        return
-    pretty = ", ".join(roles[:-1]) + " and " + roles[-1] if len(roles) > 1 else roles[0]
-    if ui.confirm(f"Use Gemini on {pretty} through OpenRouter (not yet verified with Claude Code)?", default=False):
-        s.profile.allow_unverified = True
-    else:
-        s.profile.allow_unverified = False
-        ui.info(held)
 
 
 def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
@@ -1030,7 +968,6 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
         return 0
     _section(9, "Review")
     _REVIEW_SHOWN = True
-    _openrouter_gemini_optin(s)
     ui.review_table(_review_rows(s), title="Your answers")
     if selection is not None:
         detected = _detected_cockpit_ids(s)
@@ -1043,7 +980,7 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
     if ui.is_non_interactive():
         return 0
     choices = [model_selection.APPLY, ui.Choice("Change tools", value=CHANGE_TOOLS),
-               ui.Choice("Change how", value=CHANGE_HOW), ui.Choice("Change team", value=CHANGE_TEAM)]
+               ui.Choice("Change sign-in", value=CHANGE_AUTH), ui.Choice("Change team", value=CHANGE_TEAM)]
     more = _more_options(s)
     if more:
         choices.append(ui.Choice("More options...", value=MORE_OPTIONS))
@@ -1054,20 +991,20 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
         which = ui.select("More options", more + [ui.Choice("Back to the review", value="")])
         if not which:
             return _step_summary(s, args)
-    target = {CHANGE_TOOLS: "tools", CHANGE_HOW: "mode"}.get(answer) or {
-        "parallel": "lanes", "gateway": "gateway", "lifecycle": "lifecycle", "openclaw": "cockpits"}.get(which)
+    target = {CHANGE_TOOLS: "tools", CHANGE_AUTH: "cockpit_auth"}.get(answer) or {
+        "parallel": "lanes", "openclaw": "cockpits"}.get(which)
     if answer == CHANGE_TEAM and selection is None:
         target = "preset"
     if target and _RUNNER is not None:
-        refusal = _RUNNER.jump_refusal(target, reentrant=_REENTRANT if which in ("gateway", "lifecycle") else ())
+        refusal = _RUNNER.jump_refusal(target)
         if refusal:
             ui.warn(refusal.lstrip("! "))
             return _step_summary(s, args)
     if answer == CHANGE_TOOLS:
         _forget_tool_answers(s)
         raise flow.JumpTo("tools")
-    if answer == CHANGE_HOW:
-        raise flow.JumpTo("mode")
+    if answer == CHANGE_AUTH:
+        raise flow.JumpTo("cockpit_auth")
     if answer == CHANGE_TEAM:
         if selection is None:
             raise flow.JumpTo("preset")
@@ -1078,11 +1015,6 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
         if which == "parallel":
             _PARALLEL_RUNS = True
             raise flow.JumpTo("lanes")
-        if which == "gateway":
-            raise flow.JumpTo("gateway")
-        if which == "lifecycle":
-            _OPEN_LIFECYCLE = True
-            raise flow.JumpTo("lifecycle")
         if which == "openclaw":
             _OPEN_OPENCLAW = True
             raise flow.JumpTo("cockpits")
@@ -1139,112 +1071,9 @@ def _try_install_pipx() -> bool:
     return True
 
 
-def _gateway_credential_warning(s: state.SetupState) -> None:
-    """Stated up front because it is irreversible in practice and surprises people: a gateway credential
-    replaces the claude.ai login, so the subscription stops applying and every token is billed to the gateway."""
-    ui.warn("A gateway credential replaces your claude.ai subscription for Claude Code: "
-            "usage is billed per token to the gateway, not to your plan.")
-    if s.backend == "openrouter":
-        ui.detail("Claude Code's own cost figures (/usage, statusline, --max-budget-usd) are "
-                  "computed at Anthropic list price and will be wrong. Set spend limits on the "
-                  "OpenRouter key instead.")
-
-
-HOW_CHOICES = (
-    ("team_api", "As a team (Vertex AI / API keys)", "direct GCP Vertex AI or API keys, no gateway"),
-    ("team", "As a team (subscriptions)", "each role on your CLI subscriptions, no API keys"),
-    ("alone", "Each on its own", "every tool keeps its own sign-in and settings"),
-    ("advanced", "Advanced (gateway)", "gateway (OpenRouter) with an API key and budgets"),
-)
-# ADR-0010 (N1): LiteLLM is no longer offered to new setups. A saved litellm gateway still loads and runs.
-GATEWAY_CHOICES = (
-    ("openrouter", "OpenRouter", "hosted: one key, nothing to install"),
-)
-LEGACY_GATEWAY_CHOICE = ("litellm", "LiteLLM (saved; no longer offered for new setups)",
-                         "the gateway this kit installed and supervises for you")
-LITELLM_LEGACY_NOTICE = ("LiteLLM is no longer offered for new setups; your saved gateway keeps working. "
-                         "Choose OpenRouter to switch.")
-HOW_PROMPT = "Pick how they work together:"
-
-
-def _how_default(s: state.SetupState, is_first: bool = True) -> str:
-    """What a saved state means for the question, else team when two or more tools are ticked, else each alone."""
-    if s.mode == "multi-model":
-        return "advanced"
-    if getattr(s, "cli_team_api", False):
-        return "team_api"
-    members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
-    if getattr(s, "cli_team", False):
-        return "team"               # a saved subscription team keeps its meaning; only an unsaved choice is guessed
-    if "agy" in members:
-        vertex = bool(credentials.get_key("GOOGLE_CLOUD_PROJECT") or credentials.get_key("CLAUDE_CODE_USE_VERTEX") == "1")
-        return "team_api" if vertex else "team"
-    if not is_first:
-        return "alone"
-    return "team" if len(members) >= 2 else "alone"
-
-
-def _step1_mode(s: state.SetupState, args: "argparse.Namespace | None" = None, *, is_first: bool = True) -> int:
-    """Screen 2: how the tools work together. The answer is the same state as the four-way mode question wrote
-    (ADR-0009): As a team is `single-model` + `cli_team`, Each on its own is `single-model`, Advanced asks which
-    gateway and is `multi-model`."""
-    backend = getattr(args, "backend", "") if args is not None else ""
-    if backend:
-        # `--backend` already decided the mode (the preflight applied it to the state): no question (ADR-0009).
-        ui.info(f"Mode set by --backend {backend}; the mode question is skipped.")
-        if backend == "litellm":
-            ui.info(LITELLM_LEGACY_NOTICE)
-        if s.mode == "multi-model":
-            _gateway_credential_warning(s)
-        return 0
-    _section(2, "How should they work?")
-    chosen = s.get_selection()
-    if chosen is not None and s.mode == "single-model":
-        # A single-model selection is already recorded: the choice is made and the summary says which
-        # tools it leaves out. Pass --backend to move to a gateway; no question is asked.
-        ui.info("Single-model selection recorded; no gateway or backend is asked for "
-                "(pass --backend to use one).")
-        return 0
-    choices = [ui.Choice(f"{label} - {line}", value=key, description=" ") for key, label, line in HOW_CHOICES]
-    picked = ui.select(HOW_PROMPT, choices, default=_how_default(s, is_first))
-    if picked is None:
-        ui.warn("Setup cancelled.")
-        return 130
-
-    was_cli = bool(getattr(s, "cli_team", False))
-    if picked == "alone":
-        s.mode, s.cli_team, s.cli_team_api = "single-model", False, False
-        return 0
-    if picked == "team_api":
-        s.mode, s.cli_team, s.cli_team_api = "single-model", True, True
-        s.backend = "cli"
-        _reset_profile_for_cli(s, was_cli)
-        return 0
-    if picked == "team":
-        # No gateway: the mode stays single-model-shaped, the flag names the team (ADR-0008 addendum).
-        s.mode, s.cli_team, s.cli_team_api = "single-model", True, False
-        _reset_profile_for_cli(s, was_cli)
-        return 0
-    saved_litellm = s.mode == "multi-model" and s.backend == "litellm"
-    offered = ((LEGACY_GATEWAY_CHOICE,) if saved_litellm else ()) + GATEWAY_CHOICES
-    if saved_litellm:
-        ui.info(LITELLM_LEGACY_NOTICE)
-    if len(offered) == 1:
-        gateway = offered[0][0]
-        ui.info(f"Gateway: {offered[0][1]}.")
-    else:
-        gateway = ui.select("Which gateway?", [ui.Choice(f"{label} - {line}", value=key, description=" ")
-                                               for key, label, line in offered],
-                            default="litellm" if saved_litellm else "openrouter")
-        if gateway is None:
-            ui.warn("Setup cancelled.")
-            return 130
-    s.mode, s.cli_team, s.backend = "multi-model", False, gateway
-    _gateway_credential_warning(s)
-    return 0
-
-
 # --- Teardown — multi-model → single-model ---------------------------------------
+# No longer called by the wizard (ADR-0015 removed the global mode question and with it the cleanup offer); kept as the
+# one place that knows how to reset the setup state after the gateway artifacts are removed on purpose.
 def _teardown_multi_model(prev_s: state.SetupState, s: state.SetupState) -> int:
     """When switching multi-model → single-model, undo what we previously installed.
 
@@ -1318,7 +1147,7 @@ PHASE_LABELS = flow.PHASE_LABELS
 # questions move to phase 2 (plan S11) and the voice questions to phase 4 (S13).
 PHASE_OF = {1: 1, 2: 3, 3: 3, 4: 3, 5: 3, 6: 3, 7: 3, 8: 5, 9: 5, 10: 5}
 """Which phase each internal step belongs to; an unknown step belongs to the last phase."""
-STEP_PHASE = {"cockpit": 2, "audio": 4}
+STEP_PHASE = {"cockpit": 2, "cockpit_auth": 2, "audio": 4}
 """Steps that sit in another phase than their internal number says (they share a number with a neighbour)."""
 # The four-screen names stay importable for callers that still use them.
 SCREENS = PHASES

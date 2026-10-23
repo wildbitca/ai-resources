@@ -1,7 +1,8 @@
-"""The explicit "multi-model via your CLI subscriptions" mode (ADR-0008, ADR-0007).
+"""The subscription team and the per-cockpit sign-in (ADR-0008, ADR-0007, ADR-0015).
 
-Representation: `mode` stays `single-model` (so no gateway code path can engage) and the additive
-`SetupState.cli_team` flag marks the subscription team. Old state files carry no such key and load unchanged.
+Representation: `mode` stays `single-model` (so no gateway code path can engage) and the additive `SetupState.cli_team`
+flag marks the team. Since ADR-0015 there is no global "how should they work" question: each ticked tool asks its OWN
+sign-in, the old global fields are derived from those answers, and the gateway is not offered.
 """
 from __future__ import annotations
 
@@ -11,7 +12,8 @@ import pytest
 import yaml
 
 from ai_resources import cli
-from ai_resources.setup import model_selection as ms, state, ui, wizard
+from ai_resources.setup import cockpit_auth, credentials, model_selection as ms, state, ui, wizard
+from ai_resources.setup.cockpits import claude
 from wizard_fakes import BACK, Script, Seq, host_env
 
 SUB = "balanced"
@@ -25,98 +27,78 @@ def _args(**kw):
     return argparse.Namespace(**ns)
 
 
-def _ask_mode(monkeypatch, answer, s):
-    script = Script(**{"Choose mode": answer})
+def _ask_sign_in(monkeypatch, answer, s, **extra):
+    script = Script(**{"How does Claude Code sign in": answer, **extra})
     script.install(monkeypatch)
-    assert wizard._step1_mode(s) == 0
+    assert claude.ask_auth(ui, s, None, True) == 0
     return script
 
 
-def test_the_question_lists_three_ways_with_the_team_first(monkeypatch):
+# --- the sign-in question (replaces the four-way mode question) ----------------------------------------
+def test_the_question_lists_three_methods_and_no_gateway(monkeypatch):
     seen = {}
     s = state.SetupState()
-    script = Script(**{"Pick how they work": lambda values: seen.setdefault("v", list(values)) and "alone"})
+    script = Script(**{"How does Claude Code sign in": lambda values: seen.setdefault("v", list(values)) and "subscription"})
     script.install(monkeypatch)
-    wizard._step1_mode(s)
-    assert seen["v"] == ["team_api", "team", "alone", "advanced"]
+    claude.ask_auth(ui, s, None, True)
+    assert seen["v"] == ["subscription", "api_key", "vertex_adc"]
+    text = " ".join(script.titles).lower()
+    assert "gateway" not in text and "litellm" not in text and "openrouter" not in text
 
 
-def test_advanced_asks_which_gateway(monkeypatch):
-    """ADR-0010: the question is asked only when a saved litellm gateway exists (it is then offered beside OpenRouter)."""
-    seen = {}
-    s = state.SetupState(mode="multi-model", backend="litellm")
-    script = Script(**{"Pick how they work": "advanced",
-                       "Which gateway": lambda values: seen.setdefault("v", list(values)) and "openrouter"})
-    script.install(monkeypatch)
-    wizard._step1_mode(s)
-    assert seen["v"] == ["litellm", "openrouter"] and (s.mode, s.backend, s.cli_team) == (
-        "multi-model", "openrouter", False)
-    assert [m for m in script.asked if m.startswith("select")] == [
-        "select: Pick how they work together:", "select: Which gateway?"]
+def test_the_options_are_worded_for_subscriptions_keys_and_vertex():
+    text = {k: f"{label} {line}" for k, label, line in claude.auth_options()}
+    for needle in ("subscription", "no key is stored"):
+        assert needle in text["subscription"], needle
+    assert "never stores it" in text["api_key"] and "Application Default Credentials" in text["vertex_adc"]
 
 
-def test_the_team_option_is_worded_for_subscriptions_without_a_gateway(monkeypatch):
-    labels = {}
-
-    def pick(message, choices, default=None, **k):
-        labels.update({c.value: c.title if hasattr(c, "title") else str(c) for c in choices})
-        return "alone"
-
-    monkeypatch.setattr(ui, "select", pick)
-    monkeypatch.setattr(ui, "section", lambda *a, **k: None)
-    wizard._step1_mode(state.SetupState())
-    text = labels["team"]
-    for needle in ("As a team", "subscriptions", "no API keys", "each role"):
-        assert needle in text, needle
-    assert "Each on its own" in labels["alone"] and "own sign-in" in labels["alone"]
-    assert "Advanced" in labels["advanced"] and "gateway" in labels["advanced"] and "API key" in labels["advanced"]
-    for label in labels.values():
-        assert "cockpit" not in label.lower() and "single-model" not in label
-
-
-def test_choosing_cli_sets_the_state_and_shows_no_gateway_warning(monkeypatch):
+def test_choosing_the_subscription_records_the_method_and_asks_nothing_else(monkeypatch):
     s = state.SetupState()
-    script = _ask_mode(monkeypatch, "multi-model:cli", s)
-    assert s.mode == "single-model" and s.cli_team is True
-    assert not any("gateway credential" in m or "billed per token to the gateway" in m for m in script.shown)
-    assert not any("OpenRouter" in m for m in script.shown)
+    script = _ask_sign_in(monkeypatch, "subscription", s)
+    assert cockpit_auth.method(s, "claude") == "subscription"
+    assert [m for m in script.asked if not m.startswith("select: How does Claude Code")] == []
+    assert not any("gateway credential" in m or "OpenRouter" in m for m in script.shown)
 
 
-@pytest.mark.parametrize("pick,backend", [("single-model", None), ("multi-model:openrouter", "openrouter"),
-                                          ("multi-model:litellm", "litellm")])
-def test_every_other_choice_clears_the_cli_flag(monkeypatch, pick, backend):
+def test_an_api_key_is_never_read_or_stored(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-SENTINEL-NOT-STORED")
+    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
+    wrote = []
+    monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: wrote.append(updates) or (None, []))
     s = state.SetupState()
-    if backend == "litellm":           # LiteLLM is offered only to a saved litellm setup (ADR-0010)
-        s.mode, s.backend = "multi-model", "litellm"
-    s.cli_team = True
-    _ask_mode(monkeypatch, pick, s)
-    assert s.cli_team is False
-    if backend:
-        assert s.mode == "multi-model" and s.backend == backend
+    script = _ask_sign_in(monkeypatch, "api_key", s)
+    assert cockpit_auth.method(s, "claude") == "api_key" and wrote == []
+    assert "SENTINEL" not in script.transcript and "SENTINEL" not in yaml.safe_dump(state._to_dict(s))
 
 
-def test_gateway_choices_keep_the_warning(monkeypatch):
-    s = state.SetupState(mode="multi-model", backend="litellm")
-    script = _ask_mode(monkeypatch, "multi-model:litellm", s)
-    assert any("gateway credential" in m for m in script.shown)
+def test_a_missing_api_key_is_a_warning_not_a_prompt(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
+    script = _ask_sign_in(monkeypatch, "api_key", state.SetupState())
+    assert not any(m.startswith("password:") for m in script.asked)
+    assert any("ANTHROPIC_API_KEY is not set" in m for m in script.shown)
 
 
-def test_a_saved_cli_state_is_the_default_of_the_question(monkeypatch):
+def test_vertex_keeps_only_the_project_and_the_region(monkeypatch):
+    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
+    wrote = []
+    monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: wrote.append(dict(updates)) or (None, list(updates)))
     s = state.SetupState()
-    s.cli_team = True
-    script = _ask_mode(monkeypatch, "multi-model:cli", s)
-    assert script.defaults[wizard.HOW_PROMPT] == ["team"]
+    monkeypatch.setattr(ui, "record_action", lambda msg: None)
+    claude_dry = Script(**{"How does Claude Code sign in": "vertex_adc", "GOOGLE_CLOUD_PROJECT": "demo-project",
+                           "GOOGLE_CLOUD_LOCATION": "global"})
+    claude_dry.install(monkeypatch)
+    assert claude.ask_auth(ui, s, None, False) == 0
+    assert wrote == [{"GOOGLE_CLOUD_PROJECT": "demo-project", "GOOGLE_CLOUD_LOCATION": "global"}]
+    assert s.tracking.env_keys_added == ["GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"]
+    assert cockpit_auth.secret_findings(s.cockpit_auth) == []
 
 
-def test_a_saved_gateway_or_single_state_keeps_its_default(monkeypatch):
-    s = state.SetupState(mode="multi-model", backend="openrouter")
-    script = _ask_mode(monkeypatch, "multi-model:openrouter", s)
-    assert script.defaults[wizard.HOW_PROMPT] == ["advanced"]
-    assert "Which gateway?" not in script.defaults       # one gateway is left: auto-picked (ADR-0010)
-    assert s.backend == "openrouter"
-    s2 = state.SetupState()
-    script2 = _ask_mode(monkeypatch, "single-model", s2)
-    assert script2.defaults[wizard.HOW_PROMPT] == ["alone"]
+def test_a_dry_run_writes_nothing_for_vertex(monkeypatch):
+    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
+    monkeypatch.setattr(credentials, "update_env_tracked", lambda updates: (_ for _ in ()).throw(AssertionError("wrote")))
+    _ask_sign_in(monkeypatch, "vertex_adc", state.SetupState(), **{"GOOGLE_CLOUD_PROJECT": "p", "GOOGLE_CLOUD_LOCATION": "global"})
 
 
 # --- saved state -------------------------------------------------------------------------------------
@@ -155,41 +137,22 @@ def _spec(step_id):
     return next(sp for sp in wizard._build_steps(False) if sp.id == step_id)
 
 
-def test_gateway_provider_credential_and_lifecycle_steps_are_skipped():
+def test_the_gateway_steps_and_the_mode_question_are_gone():
+    ids = {sp.id for sp in wizard._build_steps(False)}
+    assert not {"mode", "gateway", "providers", "credentials", "lifecycle"} & ids
+    assert "cockpit_auth" in ids
+
+
+def test_the_sign_in_step_asks_only_for_the_ticked_tools_that_have_a_question():
     import types
     s = state.SetupState()
-    s.cli_team = True
     c = types.SimpleNamespace(s=s)
-    for step_id in ("gateway", "providers", "credentials", "lifecycle"):
-        assert _spec(step_id).skip(c) is not None, step_id
-    assert _spec("profile").skip(c) is None and _spec("lanes").skip is None   # no preset answered here
-
-
-def test_non_gateway_paths_skip_the_gateway_steps_without_a_word(monkeypatch):
-    """ADR-0009: steps 3, 4, 5 and 8 print nothing on a path with no gateway; the ten steps stay."""
-    import types
-    from ai_resources.setup import flow
-    assert wizard.TOTAL_STEPS == 10 and len(flow.STEP_LABELS) == 10
-    for cli_team in (False, True):
-        s = state.SetupState()
-        s.cli_team = cli_team
-        c = types.SimpleNamespace(s=s)
-        for step_id in ("gateway", "providers", "credentials", "lifecycle"):
-            assert _spec(step_id).skip(c)[1] == "", (cli_team, step_id)
-    shown = []
-    monkeypatch.setattr(ui, "section", lambda *a: shown.append(a))
-    monkeypatch.setattr(ui, "info", shown.append)
-    wizard._report_skip(_spec("gateway"), *_spec("gateway").skip(types.SimpleNamespace(s=state.SetupState())))
-    assert shown == []
-
-
-def test_a_gateway_path_that_skips_a_step_still_says_why():
-    import types
-    s = state.SetupState(mode="multi-model", backend="openrouter")
-    c = types.SimpleNamespace(s=s)
-    assert "OpenRouter is hosted" in _spec("gateway").skip(c)[1]
-    assert "no local gateway" in _spec("lifecycle").skip(c)[1]
-    assert _spec("providers").skip(c) is None and _spec("credentials").skip(c) is None
+    assert _spec("cockpit_auth").skip(c) == ("Sign-in", "")                    # nothing ticked: a silent skip
+    s.profile.customizations = {"__targets__": {"selected": ["claude"]}}
+    assert _spec("cockpit_auth").skip(c) is None
+    assert wizard._auth_cockpits(s) == ["claude"]
+    s.profile.customizations = {"__targets__": {"selected": ["claude", "codex", "agy", "openclaw", "cursor"]}}
+    assert wizard._auth_cockpits(s) == ["claude", "openclaw", "agy", "cursor"]
 
 
 def test_the_profile_step_defaults_to_the_subscription_team(monkeypatch):
@@ -220,7 +183,7 @@ def test_a_plain_single_model_state_still_defaults_to_claude_native(monkeypatch)
 
 def test_no_key_is_asked_in_cli_mode(monkeypatch, tmp_path):
     host_env(monkeypatch, tmp_path)
-    script = Script(**{"Use previous answers": True, "Choose mode": "multi-model:cli",
+    script = Script(**{"Use previous answers": True, "How does Claude Code sign in": "subscription",
                        "Model preset": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: SUB,
                        "Enable subscription lanes?": False,
@@ -234,7 +197,7 @@ def test_no_key_is_asked_in_cli_mode(monkeypatch, tmp_path):
     wizard.run(_args(non_interactive=False))
     assert not any(m.startswith("password:") for m in script.asked)
     assert not any("gateway credential" in m for m in script.shown)
-    assert state.load().cli_team is True
+    assert state.load().cli_team is True and state.load().cockpit_auth["claude"]["method"] == "subscription"
 
 
 # --- lanes ---------------------------------------------------------------------------------------------
@@ -255,43 +218,33 @@ def test_lanes_use_the_subscription_profile_in_cli_mode(monkeypatch):
 
 
 # --- review --------------------------------------------------------------------------------------------
-def test_review_names_the_team_and_has_no_gateway_rows():
+def test_review_names_the_sign_in_and_has_no_gateway_rows():
     s = state.SetupState()
     s.cli_team = True
+    s.profile.customizations = {"__targets__": {"selected": ["claude"]}}
+    cockpit_auth.set_method(s, "claude", "subscription")
     rows = dict(wizard._review_rows(s))
-    assert rows["How"] == "As a team, on your subscriptions (no gateway)"
-    assert not {"Gateway", "Providers", "API keys", "Start at login"} & set(rows)
+    assert rows["Sign-in"] == "Claude Code: subscription"
+    assert not {"Gateway", "Providers", "API keys", "Start at login", "How"} & set(rows)
 
 
-def test_review_of_plain_single_model_is_unchanged():
+def test_review_of_a_plain_state_has_no_gateway_rows():
     rows = dict(wizard._review_rows(state.SetupState()))
-    assert rows["How"] == "Each on its own (no gateway)" and "Gateway" not in rows
+    assert "Gateway" not in rows and rows["Sign-in"] == "none to ask"
 
 
-# --- teardown -------------------------------------------------------------------------------------------
-def _switch(monkeypatch, prev, picked):
-    calls = []
-    monkeypatch.setattr(wizard, "_teardown_multi_model", lambda p, s: calls.append((p, s)) or 0)
-    Script(**{"Choose mode": picked}).install(monkeypatch)
-    import types
-    s = state.SetupState(mode=prev.mode, backend=prev.backend)
-    s.cli_team = prev.cli_team
-    c = types.SimpleNamespace(s=s, prev_s=prev, is_first=False)
-    assert wizard._run_mode_step(c) == 0
-    return calls
-
-
-def test_gateway_to_cli_offers_the_cleanup(monkeypatch):
-    prev = state.SetupState(mode="multi-model", backend="litellm")
-    assert len(_switch(monkeypatch, prev, "multi-model:cli")) == 1
-
-
-def test_cli_and_single_model_never_touch_gateway_artifacts(monkeypatch):
-    cli_prev = state.SetupState()
-    cli_prev.cli_team = True
-    assert _switch(monkeypatch, cli_prev, "single-model") == []
-    assert _switch(monkeypatch, state.SetupState(), "multi-model:cli") == []
-    assert _switch(monkeypatch, cli_prev, "multi-model:cli") == []
+# --- the gateway is never torn down by setup -------------------------------------------------------------
+@pytest.mark.parametrize("mode,backend", [("multi-model", "litellm"), ("multi-model", "openrouter")])
+def test_migrating_a_saved_gateway_state_never_runs_a_teardown(monkeypatch, mode, backend):
+    from ai_resources.setup import litellm
+    monkeypatch.setattr(litellm, "execute_multi_model_teardown", lambda p: (_ for _ in ()).throw(AssertionError("teardown")))
+    monkeypatch.setattr(wizard, "_teardown_multi_model", lambda p, s: (_ for _ in ()).throw(AssertionError("teardown")))
+    Script().install(monkeypatch)
+    s = state.SetupState(mode=mode, backend=backend)
+    s.last_run = "2026-01-01T00:00:00+00:00"
+    wizard._migrate_cockpit_auth(s)
+    assert (s.mode, s.cli_team, s.backend) == ("single-model", True, backend)
+    assert cockpit_auth.method(s, "claude") == "subscription"
 
 
 def test_teardown_into_cli_keeps_the_flag_and_picks_the_subscription_profile(monkeypatch):
@@ -322,26 +275,21 @@ def test_backend_cli_is_a_valid_flag_and_documented(capsys):
     with pytest.raises(SystemExit):
         parser.parse_args(["setup", "--help"])
     out = capsys.readouterr().out
-    assert "cli" in out and "subscription" in out.lower()
+    assert "deprecated" in out.lower() and "subscription" in out.lower()
 
 
-def test_backend_cli_sets_the_cli_team_without_a_gateway(monkeypatch):
+@pytest.mark.parametrize("backend", ["cli", "litellm", "openrouter"])
+def test_every_backend_value_becomes_the_subscription_team_with_a_deprecation_note(monkeypatch, backend):
     monkeypatch.setattr(wizard.model_selection, "detect_accounts", lambda: {})
     monkeypatch.setattr(wizard.model_selection, "candidates", lambda a, f: [])
     monkeypatch.setattr(wizard.detection, "detect_all_cockpits", lambda: {})
+    script = Script()
+    script.install(monkeypatch)
     s = state.SetupState(mode="multi-model", backend="openrouter")
-    assert wizard._preflight_selection(_args(backend="cli"), s) == 0
+    assert wizard._preflight_selection(_args(backend=backend), s) == 0
     assert (s.mode, s.cli_team) == ("single-model", True)
-
-
-def test_backend_gateway_flag_clears_the_cli_flag(monkeypatch):
-    monkeypatch.setattr(wizard.model_selection, "detect_accounts", lambda: {})
-    monkeypatch.setattr(wizard.model_selection, "candidates", lambda a, f: [])
-    monkeypatch.setattr(wizard.detection, "detect_all_cockpits", lambda: {})
-    s = state.SetupState()
-    s.cli_team = True
-    assert wizard._preflight_selection(_args(backend="litellm"), s) == 0
-    assert (s.mode, s.backend, s.cli_team) == ("multi-model", "litellm", False)
+    assert cockpit_auth.method(s, "claude") == "subscription"
+    assert any(f"--backend {backend} is deprecated" in m for m in script.shown)
 
 
 def test_an_unknown_backend_is_still_refused(monkeypatch):
@@ -349,21 +297,6 @@ def test_an_unknown_backend_is_still_refused(monkeypatch):
     monkeypatch.setattr(ui, "error", errors.append)
     assert wizard._preflight_selection(_args(backend="nope"), state.SetupState()) == 2
     assert "litellm, openrouter or cli" in errors[0]
-
-
-# --- saved claude-native profile and interactive lanes ---------------------------------------------------
-def test_picking_cli_replaces_a_saved_claude_native_profile(monkeypatch):
-    s = state.SetupState()
-    s.profile = state.ProfileState(name=wizard.SINGLE_MODEL_DEFAULT_PROFILE)
-    _ask_mode(monkeypatch, "multi-model:cli", s)
-    assert s.cli_team is True and s.profile.name == SUB
-
-
-def test_picking_cli_keeps_a_customized_profile(monkeypatch):
-    s = state.SetupState()
-    s.profile = state.ProfileState(name=wizard.SINGLE_MODEL_DEFAULT_PROFILE, customized=True)
-    _ask_mode(monkeypatch, "multi-model:cli", s)
-    assert s.profile.name == wizard.SINGLE_MODEL_DEFAULT_PROFILE
 
 
 def test_cli_mode_does_not_ask_about_parallel_runs_on_the_default_path(monkeypatch):
@@ -379,35 +312,21 @@ def test_cli_mode_does_not_ask_about_parallel_runs_on_the_default_path(monkeypat
     assert s.profile.lanes is None
 
 
-# --- ADR-0009: --backend decides the mode, so the mode question is not asked -------------------------------
+# --- ADR-0015: --backend answers Claude Code's sign-in, so that question is not asked --------------------------
 @pytest.mark.parametrize("backend", ["cli", "litellm", "openrouter"])
-def test_the_backend_flag_skips_the_mode_question(monkeypatch, backend):
+def test_the_backend_flag_skips_the_sign_in_question(monkeypatch, backend):
     s = state.SetupState()
-    if backend == "cli":
-        s.mode, s.cli_team = "single-model", True
-    else:
-        s.mode, s.backend = "multi-model", backend
+    s.profile.customizations = {"__targets__": {"selected": ["claude"]}}
+    cockpit_auth.set_method(s, "claude", "subscription")
+    monkeypatch.setattr(wizard, "_AUTH_PREFILLED", {"claude"})
     script = Script()                              # nothing is scripted: any prompt would raise
     script.install(monkeypatch)
-    assert wizard._step1_mode(s, _args(backend=backend)) == 0
+    assert wizard._step_cockpit_auth(s, _args(backend=backend)) == 0
     assert script.asked == []
-    assert any(f"--backend {backend}" in m for m in script.shown)
+    assert any("set by --backend" in m for m in script.shown)
 
 
-def test_the_backend_flag_keeps_the_gateway_warning(monkeypatch):
-    s = state.SetupState(mode="multi-model", backend="openrouter")
-    script = Script()
-    script.install(monkeypatch)
-    wizard._step1_mode(s, _args(backend="openrouter"))
-    assert any("gateway credential" in m for m in script.shown)
-    assert any("OpenRouter key" in m for m in script.shown)
-    quiet = Script()
-    quiet.install(monkeypatch)
-    wizard._step1_mode(state.SetupState(), _args(backend="cli"))
-    assert not any("gateway credential" in m for m in quiet.shown)
-
-
-def test_a_run_with_backend_cli_never_prompts_the_mode_and_records_the_cli_team(monkeypatch, tmp_path):
+def test_a_run_with_backend_cli_never_prompts_the_sign_in_and_records_the_cli_team(monkeypatch, tmp_path):
     host_env(monkeypatch, tmp_path)
     monkeypatch.setattr(wizard, "_PRESET", wizard._PRESET)
     script = Script(**{"Model preset": "custom", "How do you want to choose models": "profile",
@@ -420,56 +339,58 @@ def test_a_run_with_backend_cli_never_prompts_the_mode_and_records_the_cli_team(
     seen = {}
     monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
     assert wizard.run(_args(backend="cli")) == 0
-    assert not any("Choose mode" in m or "How should they work" in m for m in script.asked)
+    assert not any("How does Claude Code sign in" in m for m in script.asked)
     assert (seen["s"].mode, seen["s"].cli_team) == ("single-model", True)
 
 
-# --- ADR-0009 S6: screen 2, "How should they work?" ------------------------------------------------------------
+# --- the legacy answers, replayed through the migration --------------------------------------------------------
 @pytest.mark.parametrize("legacy,expect", [
-    ("single-model", ("single-model", False, "litellm")),
-    ("multi-model:cli", ("single-model", True, "litellm")),
-    ("multi-model:openrouter", ("multi-model", False, "openrouter")),
-    ("multi-model:litellm", ("multi-model", False, "litellm"))])
-def test_each_legacy_answer_replayed_through_screen_two_saves_the_same_state(monkeypatch, legacy, expect):
-    s = state.SetupState()
-    if legacy == "multi-model:litellm":    # LiteLLM is offered only to a saved litellm setup (ADR-0010)
-        s.mode, s.backend = "multi-model", "litellm"
-    _ask_mode(monkeypatch, legacy, s)
-    assert (s.mode, s.cli_team, s.backend) == expect
+    (dict(), ("single-model", False, "litellm", "subscription")),
+    (dict(cli_team=True), ("single-model", True, "litellm", "subscription")),
+    (dict(mode="multi-model", backend="openrouter"), ("single-model", True, "openrouter", "subscription")),
+    (dict(mode="multi-model", backend="litellm"), ("single-model", True, "litellm", "subscription")),
+    (dict(cli_team=True, cli_team_api=True), ("single-model", True, "litellm", "api_key"))])
+def test_each_legacy_answer_migrates_to_the_same_meaning(monkeypatch, legacy, expect):
+    monkeypatch.setattr(credentials, "get_key", lambda *a, **k: "")
+    Script().install(monkeypatch)
+    s = state.SetupState(**legacy)
+    s.last_run = "2026-01-01T00:00:00+00:00"
+    wizard._migrate_cockpit_auth(s)
+    mode, team, backend, method = expect
+    # a never-answered "alone" state keeps cli_team False only until the derived flags run: the team is always on
+    assert (s.mode, s.backend) == (mode, backend) and s.cli_team is True
+    assert cockpit_auth.method(s, "claude") == method
 
 
-def test_the_default_is_team_with_two_tools_each_alone_with_one_and_a_saved_answer_wins(monkeypatch):
-    def default_for(s, **kw):
-        script = Script(**{"Pick how they work": "alone"})
+def test_the_sign_in_default_is_the_saved_answer_and_a_fresh_host_starts_on_the_subscription(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
+
+    def default_for(s):
+        script = Script(**{"How does Claude Code sign in": "subscription"})
         script.install(monkeypatch)
-        wizard._step1_mode(s, **kw)
-        return script.defaults[wizard.HOW_PROMPT][-1]
-
-    def with_tools(*ids):
-        s = state.SetupState()
-        s.profile.customizations = {"__targets__": {"selected": list(ids)}}
-        return s
-    assert default_for(with_tools("claude", "codex")) == "team"
-    assert default_for(with_tools("claude")) == "alone"
-    assert default_for(with_tools("claude", "codex"), is_first=False) == "alone"      # a saved answer is kept
-    s = with_tools("claude", "codex")
-    s.cli_team = True
-    assert default_for(s, is_first=False) == "team"
-    assert default_for(state.SetupState(mode="multi-model", backend="litellm"), is_first=False) == "advanced"
+        claude.ask_auth(ui, s, None, True)
+        return script.defaults[claude.AUTH_PROMPT][-1]
+    assert default_for(state.SetupState()) == "subscription"
+    s = state.SetupState()
+    cockpit_auth.set_method(s, "claude", "vertex_adc")
+    assert default_for(s) == "vertex_adc"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    assert default_for(state.SetupState()) == "api_key"
 
 
-def test_back_at_screen_two_asks_it_again_and_leaks_nothing(monkeypatch, tmp_path):
+def test_back_at_the_team_asks_the_sign_in_again_and_leaks_nothing(monkeypatch, tmp_path):
     host_env(monkeypatch, tmp_path)
     monkeypatch.setattr(wizard, "_PRESET", wizard._PRESET)
-    script = Script(**{"Pick how they work": Seq(BACK, "team"), "Model preset": "custom",
-                       "How do you want to choose models": "profile", "How should kit subagents pick": lambda v: SUB,
-                       "Enable subscription lanes?": False, "Apply this?": ms.APPLY})
+    script = Script(**{"Starting team": Seq(BACK, "custom"), "How do you want to choose models": "profile",
+                       "How should kit subagents pick": lambda v: SUB, "Enable subscription lanes?": False,
+                       "Apply this?": ms.APPLY})
     script.install(monkeypatch)
     monkeypatch.setattr(ui, "review_table", lambda rows, title="": None)
     seen = {}
     monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
     assert wizard.run(_args()) == 0
-    assert len([m for m in script.asked if m.startswith("select: Pick how they work")]) == 2
+    assert len([m for m in script.asked if m.startswith("select: How does Claude Code sign in")]) == 2
     assert (seen["s"].mode, seen["s"].cli_team) == ("single-model", True)
 
 

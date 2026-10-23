@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import re
 import shutil
@@ -18,6 +19,7 @@ from ... import domains, skill_scope
 from .. import role_render
 from .. import effort as effort_mod
 from . import _shared
+from .. import cockpit_auth
 
 
 NAME = "Claude Code"
@@ -369,12 +371,89 @@ def _migrate_agent_teams(path: Path, applied: list[str]) -> bool:
     return removed
 
 
+VERTEX_ENV_KEYS = ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION")
+AUTH_PROMPT = "How does Claude Code sign in?"
+
+
+def auth_options() -> list[tuple[str, str, str]]:
+    """(method, label, one-line effect) in the order the question lists them (ADR-0015 D1). No gateway option."""
+    return [
+        ("subscription", "Your Claude subscription", "OAuth sign-in (`claude auth login`); no key is stored"),
+        ("api_key", "An Anthropic API key", "read from ANTHROPIC_API_KEY in your environment; the kit never stores it"),
+        ("vertex_adc", "Google Vertex AI", "your Application Default Credentials; only the project and region are kept"),
+    ]
+
+
+def _auth_default(s: Any) -> str:
+    saved = cockpit_auth.method(s, ID)
+    if saved in cockpit_auth.CLAUDE_METHODS:
+        return saved
+    # No `claude auth status` probe here: it spawns the host binary, which writes its own state, and the question
+    # needs no more than the environment to pick a sensible default.
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "api_key"
+    if os.environ.get("CLAUDE_CODE_USE_VERTEX") == "1":
+        return "vertex_adc"
+    return "subscription"
+
+
+def ask_auth(ui_mod: Any, s: Any, detected: Any = None, dry_run: bool = False) -> int:
+    """Ask how Claude Code signs in and record the METHOD NAME (never a key). 0 on an answer, 130 on a cancel."""
+    from .. import credentials
+    choices = [ui_mod.Choice(f"{label} - {line}", value=key) for key, label, line in auth_options()]
+    picked = ui_mod.select(AUTH_PROMPT, choices, default=_auth_default(s))
+    if picked is None:
+        return 130
+    cockpit_auth.set_method(s, ID, picked)
+    if picked == "api_key":
+        if os.environ.get("ANTHROPIC_API_KEY") or credentials.get_key("ANTHROPIC_API_KEY"):
+            ui_mod.detail("ANTHROPIC_API_KEY is set; the kit does not read or store it.")
+        else:
+            ui_mod.warn("ANTHROPIC_API_KEY is not set in this shell. Export it before using Claude Code; "
+                        "the kit never stores an API key.")
+    elif picked == "vertex_adc":
+        updates: dict[str, str] = {}
+        project = ui_mod.text("GOOGLE_CLOUD_PROJECT (GCP project ID)",
+                              default=credentials.get_key("GOOGLE_CLOUD_PROJECT")
+                              or os.environ.get("GOOGLE_CLOUD_PROJECT", ""))
+        if project:
+            updates["GOOGLE_CLOUD_PROJECT"] = project
+        # "global": regional endpoints serve older Sonnet models only (ADR-0008 addendum), so it is the default.
+        location = ui_mod.text("GOOGLE_CLOUD_LOCATION (global, us, eu or a region)",
+                               default=credentials.get_key("GOOGLE_CLOUD_LOCATION") or "global")
+        if location:
+            updates["GOOGLE_CLOUD_LOCATION"] = location
+        if updates and not dry_run:
+            _, added = credentials.update_env_tracked(updates)
+            for key in added:
+                if key not in s.tracking.env_keys_added:
+                    s.tracking.env_keys_added.append(key)
+            ui_mod.record_action("saved the Vertex project and region")
+        ui_mod.detail("Vertex AI uses your Application Default Credentials (`gcloud auth application-default login`).")
+    else:
+        ui_mod.detail("Subscription sign-in is read by Claude Code itself; the kit stores nothing.")
+    return 0
+
+
+def _vertex_env() -> dict[str, str]:
+    """Non-secret Vertex settings for Claude Code, from the kit .env (project and region only)."""
+    from .. import credentials
+    project = credentials.get_key("GOOGLE_CLOUD_PROJECT")
+    if not project:
+        return {}
+    location = credentials.get_key("GOOGLE_CLOUD_LOCATION") or "global"
+    return {"CLAUDE_CODE_USE_VERTEX": "1", "ANTHROPIC_VERTEX_PROJECT_ID": project, "CLOUD_ML_REGION": location}
+
+
 def _build_settings_patch(executors: dict, master_key: str, gateway_url: str,
-                          ak_path: str, mode: str, backend: str = "litellm") -> dict:
-    """Compute the settings.json patch for Claude Code."""
+                          ak_path: str, mode: str, backend: str = "litellm", auth: str = "") -> dict:
+    """Compute the settings.json patch for Claude Code. `auth` is the cockpit's own method (ADR-0015): only
+    `vertex_adc` adds env (project and region, never a secret); subscription and api_key write none."""
     env: dict[str, str] = {
         "AGENT_SKILLS_ROOT": f"{ak_path}/skills",
     }
+    if auth == "vertex_adc":
+        env.update(_vertex_env())
     if mode == "multi-model":
         env["ANTHROPIC_BASE_URL"] = gateway_url
 
@@ -863,7 +942,8 @@ def configure(ctx: dict) -> list[Path]:
     written: list[Path] = []
 
     # 1. settings.json (env vars + MCP servers)
-    settings_patch = _build_settings_patch(executors, master_key, gateway_url, ak_path, mode, backend)
+    settings_patch = _build_settings_patch(executors, master_key, gateway_url, ak_path, mode, backend,
+                                           auth=cockpit_auth.method(s, ID))
 
     existing: dict = {}
     if SETTINGS_PATH.is_file():

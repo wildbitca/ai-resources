@@ -39,7 +39,7 @@ def _wire(monkeypatch, runner):
 
 def test_the_cockpit_step_comes_before_the_team_and_the_rest_after_it():
     ids = [s.id for s in wizard._build_steps(True)]
-    assert ids.index("tools") < ids.index("cockpit") < ids.index("mode") < ids.index("preset")
+    assert ids.index("tools") < ids.index("cockpit") < ids.index("cockpit_auth") < ids.index("preset")
     assert ids.index("preset") < ids.index("lanes") < ids.index("cockpits")
     spec = {s.id: s for s in wizard._build_steps(True)}["cockpit"]
     assert spec.rewindable and spec.number == 1

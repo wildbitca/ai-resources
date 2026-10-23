@@ -1,16 +1,23 @@
-"""LiteLLM leaves the new-setup gateway choice but saved litellm states keep loading (ADR-0010 N1, S5)."""
+"""A saved gateway state keeps loading, is migrated to the cockpit's own sign-in and is never torn down (ADR-0015 D1).
+
+This file replaced the ADR-0010 tests of the "Which gateway?" question: LiteLLM and OpenRouter are no longer offered to
+any cockpit, so what remains to prove is the migration (old -> new shown once), that nothing on the host is removed, and
+that the deprecated `--backend` flag still parses.
+"""
 from __future__ import annotations
 
 import argparse
 import pathlib
 import shutil
 
-from ai_resources.setup import state, wizard
-from ai_resources.setup import litellm, profiles
-from wizard_fakes import BACK, Script, Seq, host_env
+import pytest
 
-NOTICE = ("LiteLLM is no longer offered for new setups; your saved gateway keeps working. "
-          "Choose OpenRouter to switch.")
+from ai_resources.setup import cockpit_auth, litellm, profiles, state, wizard
+from wizard_fakes import Script, host_env
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "setup_state"
+GATEWAYS = ("multi_litellm", "multi_openrouter")
+MIGRATION_LINE = "Sign-in is now asked per tool instead of once for all of them"
 
 
 def _args(**kw):
@@ -21,139 +28,110 @@ def _args(**kw):
     return argparse.Namespace(**ns)
 
 
-def test_fresh_advanced_offers_no_litellm(monkeypatch):
-    """AC-S5a: a fresh run picking Advanced is never shown LiteLLM and is not asked which gateway."""
+def test_a_fresh_run_offers_no_gateway_anywhere(monkeypatch):
     s = state.SetupState()
-    script = Script(**{"Pick how they work": "advanced"})
+    s.profile.customizations = {"__targets__": {"selected": ["claude"]}}
+    script = Script(**{"How does Claude Code sign in": "subscription"})
     script.install(monkeypatch)
-    assert wizard._step1_mode(s) == 0
-    assert (s.mode, s.backend) == ("multi-model", "openrouter")
-    assert not any(a.endswith("Which gateway?") for a in script.asked)
-    assert not any("LiteLLM" in t for t in script.titles)
-    assert not any("LiteLLM" in m for m in script.shown)
+    assert wizard._step_cockpit_auth(s, _args()) == 0
+    text = (" ".join(script.asked) + " ".join(script.titles) + " ".join(script.shown)).lower()
+    assert not any(w in text for w in ("litellm", "openrouter", "gateway"))
+    assert (s.mode, s.cli_team) == ("single-model", True)
 
 
-def test_the_advanced_text_does_not_name_litellm():
-    assert all("LiteLLM" not in line for _k, _l, line in wizard.HOW_CHOICES)
-    assert [k for k, _l, _t in wizard.GATEWAY_CHOICES] == ["openrouter"]
+def test_the_removed_gateway_constants_are_gone():
+    for name in ("HOW_CHOICES", "GATEWAY_CHOICES", "LEGACY_GATEWAY_CHOICE", "LITELLM_LEGACY_NOTICE", "HOW_PROMPT",
+                 "_step1_mode", "_how_default", "_run_mode_step", "_gateway_credential_warning"):
+        assert not hasattr(wizard, name), name
 
 
-def test_saved_litellm_is_offered_as_the_default_with_one_notice(monkeypatch):
-    """AC-S5b (selection part): the saved gateway stays selectable and the notice prints exactly once."""
-    s = state.SetupState(mode="multi-model", backend="litellm")
-    seen = {}
-    script = Script(**{"Pick how they work": "advanced",
-                       "Which gateway": lambda values: seen.setdefault("v", list(values)) and "litellm"})
-    script.install(monkeypatch)
-    assert wizard._step1_mode(s, is_first=False) == 0
-    assert seen["v"] == ["litellm", "openrouter"]
-    assert script.defaults["Which gateway?"] == ["litellm"]
-    assert any("LiteLLM (saved; no longer offered for new setups)" in t for t in script.titles)
-    assert (s.mode, s.backend) == ("multi-model", "litellm")
-    assert sum(NOTICE in m for m in script.shown) == 1
-
-
-def test_saved_litellm_can_switch_to_openrouter(monkeypatch):
-    s = state.SetupState(mode="multi-model", backend="litellm")
-    Script(**{"Pick how they work": "advanced", "Which gateway": "openrouter"}).install(monkeypatch)
-    assert wizard._step1_mode(s, is_first=False) == 0
-    assert s.backend == "openrouter"
-
-
-def test_backend_flag_litellm_is_accepted_with_the_notice(monkeypatch):
-    s = state.SetupState(mode="multi-model", backend="litellm")
-    script = Script()
-    script.install(monkeypatch)
-    assert wizard._step1_mode(s, _args(backend="litellm")) == 0
-    assert sum(NOTICE in m for m in script.shown) == 1
-
-
-def test_backend_flag_openrouter_prints_no_notice(monkeypatch):
-    s = state.SetupState(mode="multi-model", backend="openrouter")
-    script = Script()
-    script.install(monkeypatch)
-    wizard._step1_mode(s, _args(backend="openrouter"))
-    assert not any(NOTICE in m for m in script.shown)
-
-
-def test_single_model_state_with_default_litellm_backend_prints_no_notice(monkeypatch):
-    """AC-S5c: the state.backend default is untouched and silent for cli and single states."""
-    assert state.SetupState().backend == "litellm"
-    for how in ("alone", "team"):
-        s = state.SetupState()
-        script = Script(**{"Pick how they work": how})
-        script.install(monkeypatch)
-        assert wizard._step1_mode(s) == 0
-        assert not any(NOTICE in m for m in script.shown)
-
-
-FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "setup_state" / "multi_litellm.yaml"
-
-
-def _saved_team(values):
-    """Keep the saved team: the choice that names the fixture's profile, else the first offered."""
-    return next((v for v in values if "balanced-claude-55" in str(v)), values[0])
-
-
-_ANSWERS = {"Use previous": True, "Where is your gateway": "skipped", "Select providers": ["anthropic"],
-            "Update ANTHROPIC": False, "Starting team": _saved_team, "Apply this?": lambda values: values[0],
-            "Pick how they work": "advanced", "Which gateway": "litellm"}
-
-
-def _review_then_apply():
-    """The review answers Change how once (screen 2 again), then Apply."""
-    seq = Seq(wizard.CHANGE_HOW, "apply")
-
-    def answer(values):
-        want = seq.next()
-        return wizard.CHANGE_HOW if want == wizard.CHANGE_HOW else values[0]
-    return answer
-
-
-def _renders(s):
-    """What step 9 renders from a state: the executors document and the litellm.yaml text."""
-    base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name))
-    doc = profiles.to_executors(base, s.backend)
-    text = litellm._render_litellm_yaml(doc, {k: v.__dict__ for k, v in s.providers.items()}, "LITELLM_MASTER_KEY")
-    return doc, text
-
-
-def _run_saved_litellm(monkeypatch, tmp_path, args, answers):
-    """Drive the real wizard.run over the saved multi_litellm state; step 9 records the state it would render."""
+@pytest.mark.parametrize("name", GATEWAYS)
+def test_a_saved_gateway_is_migrated_once_and_the_table_is_shown_once(monkeypatch, tmp_path, name):
     home = host_env(monkeypatch, tmp_path)
-    cfg = home / "xdg" / "ai-resources"
-    cfg.mkdir(parents=True, exist_ok=True)
-    shutil.copy(FIXTURE, state.state_path())
-    want = _renders(state.load())          # the pre-change outputs: rendered from the saved state as loaded
+    (home / "xdg" / "ai-resources").mkdir(parents=True, exist_ok=True)
+    shutil.copy(FIXTURES / f"{name}.yaml", state.state_path())
+    saved = state.load()
+    script = Script()
+    script.install(monkeypatch)
+    wizard._migrate_cockpit_auth(saved)
+    shown = " | ".join(script.shown)
+    assert shown.count(MIGRATION_LINE) == 1 and "Advanced (gateway) -> subscription" in shown
+    assert "left as it is; setup does not remove it" in shown
+    state.save(saved)
+    again = state.load()
+    script2 = Script()
+    script2.install(monkeypatch)
+    wizard._migrate_cockpit_auth(again)
+    assert MIGRATION_LINE not in " | ".join(script2.shown)         # the second load has nothing to fill
+
+
+@pytest.mark.parametrize("name", GATEWAYS)
+def test_the_gateway_installation_on_the_host_is_left_untouched(monkeypatch, tmp_path, name):
+    """No teardown, no litellm state reset: only the global fields are derived and the sign-in is filled."""
+    home = host_env(monkeypatch, tmp_path)
+    (home / "xdg" / "ai-resources").mkdir(parents=True, exist_ok=True)
+    shutil.copy(FIXTURES / f"{name}.yaml", state.state_path())
+    monkeypatch.setattr(litellm, "execute_multi_model_teardown", lambda p: (_ for _ in ()).throw(AssertionError("teardown")))
+    monkeypatch.setattr(litellm, "plan_multi_model_teardown", lambda p: (_ for _ in ()).throw(AssertionError("teardown")))
+    s = state.load()
+    before = state._to_dict(s)
+    Script().install(monkeypatch)
+    wizard._migrate_cockpit_auth(s)
+    after = state._to_dict(s)
+    for key in ("litellm", "providers", "tracking", "backend", "openclaw"):
+        assert after[key] == before[key], key
+    assert after["mode"] == "single-model" and after["cockpit_auth"]["claude"]["method"] == "subscription"
+
+
+@pytest.mark.parametrize("name", GATEWAYS)
+def test_a_gateway_profile_is_replaced_by_the_default_when_it_is_not_a_single_model_profile(monkeypatch, tmp_path, name):
+    home = host_env(monkeypatch, tmp_path)
+    (home / "xdg" / "ai-resources").mkdir(parents=True, exist_ok=True)
+    shutil.copy(FIXTURES / f"{name}.yaml", state.state_path())
+    s = state.load()
+    s.profile.name = "gateway/performance"
+    s.profile.customized = False
+    Script().install(monkeypatch)
+    wizard._migrate_cockpit_auth(s)
+    assert s.profile.name == cockpit_auth.default_profile_for(s)
+    assert s.profile.name in profiles.list_profiles(mode="single-model")
+
+
+def test_backend_flag_litellm_is_accepted_with_one_deprecation_note(monkeypatch):
+    monkeypatch.setattr(wizard.model_selection, "detect_accounts", lambda: {})
+    monkeypatch.setattr(wizard.model_selection, "candidates", lambda a, f: [])
+    monkeypatch.setattr(wizard.detection, "detect_all_cockpits", lambda: {})
+    s = state.SetupState(mode="multi-model", backend="litellm")
+    script = Script()
+    script.install(monkeypatch)
+    assert wizard._preflight_selection(_args(backend="litellm"), s) == 0
+    assert sum("--backend litellm is deprecated" in m for m in script.shown) == 1
+    assert (s.mode, s.backend) == ("single-model", "litellm")          # the saved gateway fields are left as they are
+
+
+def test_state_backend_default_stays_litellm_and_is_silent(monkeypatch):
+    """The `backend` default is untouched (older kits read it) and a fresh run prints no gateway line."""
+    assert state.SetupState().backend == "litellm"
+    s = state.SetupState()
+    script = Script()
+    script.install(monkeypatch)
+    wizard._migrate_cockpit_auth(s)
+    assert script.shown == []
+
+
+def test_dry_run_yes_from_a_saved_litellm_renders_the_same_team(monkeypatch, tmp_path):
+    """--dry-run --yes over the saved litellm state: the executors the apply renders are those of the saved profile."""
+    home = host_env(monkeypatch, tmp_path)
+    (home / "xdg" / "ai-resources").mkdir(parents=True, exist_ok=True)
+    shutil.copy(FIXTURES / "multi_litellm.yaml", state.state_path())
     seen = {}
     monkeypatch.setattr(wizard, "_step9_apply", lambda s, dry_run=False: seen.setdefault("s", s) and 0)
-    script = Script(**answers)
+    script = Script(**{"Use previous": True, "How does Claude Code sign in": "subscription",
+                       "Starting team": lambda values: values[0], "Apply this?": lambda values: values[0]})
     script.install(monkeypatch)
-    assert wizard.run(args) == 0
-    return seen["s"], want, script
-
-
-def test_dry_run_yes_from_saved_litellm_renders_the_same_and_notices_once(monkeypatch, tmp_path):
-    """AC-S5b: saved litellm, --dry-run --yes: same litellm.yaml and executors.yaml, exactly one notice."""
-    s, want, script = _run_saved_litellm(monkeypatch, tmp_path, _args(dry_run=True, yes=True),
-                                         _ANSWERS)
-    assert (s.mode, s.backend) == ("multi-model", "litellm")
-    assert _renders(s) == want
-    assert sum(NOTICE in m for m in script.shown) == 1
-
-
-def test_backend_litellm_flag_from_saved_litellm_notices_once(monkeypatch, tmp_path):
-    answers = {k: v for k, v in _ANSWERS.items() if k not in ("Pick how they work", "Which gateway")}
-    s, want, script = _run_saved_litellm(monkeypatch, tmp_path, _args(dry_run=True, yes=True, backend="litellm"),
-                                         answers)
-    assert _renders(s) == want
-    assert sum(NOTICE in m for m in script.shown) == 1
-
-
-def test_reentering_screen_2_from_the_review_notices_once_per_visit(monkeypatch, tmp_path):
-    """Change how (a re-entry of screen 2) shows the notice once per visit: twice over two visits, never more."""
-    s, want, script = _run_saved_litellm(
-        monkeypatch, tmp_path, _args(dry_run=True, yes=True),
-        {**_ANSWERS, "Apply this?": _review_then_apply()})
-    assert _renders(s) == want
-    assert sum(NOTICE in m for m in script.shown) == 2
+    before = state.state_path().read_bytes()
+    assert wizard.run(_args(dry_run=True, yes=True)) == 0
+    assert state.state_path().read_bytes() == before                    # a dry run rewrites nothing
+    s = seen["s"]
+    assert (s.mode, s.backend) == ("single-model", "litellm")
+    assert sum(MIGRATION_LINE in m for m in script.shown) == 1
