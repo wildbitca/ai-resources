@@ -92,3 +92,47 @@ def test_the_kit_state_holds_method_names_only(home):
     s = _state("vertex_adc")
     _apply(s)
     assert cockpit_auth.secret_findings(state._to_dict(s)["cockpit_auth"]) == []
+
+
+# --- acceptance 5: Claude Code on a subscription and OpenClaw on an API key, in one run ------------------------------
+def test_claude_on_a_subscription_and_openclaw_on_an_api_key_stay_independent(home, monkeypatch):
+    from ai_resources.setup import ui
+    from ai_resources.setup.cockpits import openclaw as oc
+    from wizard_fakes import Script, fake_openclaw
+    secret = "sk-ant-api03-COMBINED-CASE-SECRET-0123456789"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", secret)                  # in the environment; the kit must never read it
+    monkeypatch.setenv("OPENAI_API_KEY", secret)
+    monkeypatch.setattr(oc.shutil, "which", lambda name: "/fake/bin/openclaw" if name == "openclaw" else None)
+    fake_openclaw(monkeypatch, authed=("anthropic",))               # OpenAI has no stored profile yet
+    host_runs = []
+    monkeypatch.setattr(oc.subprocess, "run", lambda argv, **k: host_runs.append((list(argv), k)) or
+                        type("R", (), {"returncode": 0})())
+    script = Script(**{"Which providers should OpenClaw use": ["openai"],
+                       "How does OpenClaw sign in to openai": "api_key", "Save the openai API key now": True})
+    script.install(monkeypatch)
+    s = state.SetupState()
+    s.profile.name = "balanced"
+    s.cockpits["claude"] = state.CockpitState(installed=True)
+    s.cockpits["openclaw"] = state.CockpitState(installed=True)
+
+    cockpit_auth.set_method(s, "claude", "subscription")             # Claude Code's own answer
+    assert oc.ask_auth(ui, s, None, False) == 0                      # OpenClaw's own question, in the same run
+    cockpit_auth.apply_legacy_flags(s)
+    _apply(s)                                                         # Claude Code applies its answer
+
+    # Claude Code stays on its subscription: no API key, helper, endpoint or Vertex setting anywhere under ~/.claude
+    settings = json.loads((home / "settings.json").read_text())
+    assert "apiKeyHelper" not in settings and not [k for k in GATEWAY_KEYS + VERTEX_KEYS if k in settings.get("env", {})]
+    for path in home.rglob("*"):
+        if path.is_file():
+            assert secret not in path.read_text(errors="ignore"), path
+            assert "apiKeyHelper" not in path.read_text(errors="ignore"), path
+    # OpenClaw got its own provider auth, through its own store: the stubbed `paste-api-key` on the operator's terminal
+    assert [argv for argv, _k in host_runs] == [["/fake/bin/openclaw", "models", "auth", "paste-api-key", "--provider", "openai"]]
+    assert "input" not in host_runs[0][1] and "capture_output" not in host_runs[0][1]       # the kit never sees the key
+    # and the two answers stay separate in the state, names only
+    doc = state._to_dict(s)["cockpit_auth"]
+    assert doc["claude"] == {"method": "subscription"}
+    assert doc["openclaw"]["providers"] == {"openai": "api_key"}
+    assert cockpit_auth.secret_findings(doc) == []
+    assert secret not in json.dumps(state._to_dict(s)) and secret not in script.transcript

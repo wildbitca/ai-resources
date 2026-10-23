@@ -1438,7 +1438,9 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
         host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
     # The kit block in every agent workspace does not depend on the engine, on the host section's
     # answers or on openclaw.json having changed: it is refreshed on every run (B1, v1.9.7).
-    _configure_workspace_blocks(s, doc, ak_path, ctx.get("gateway_url", ""), written,
+    # Re-read: the kit-role agents added above are not in the snapshot taken before the writers ran, and a block
+    # missing from their workspaces would only appear on the next run (a second run must be a no-op).
+    _configure_workspace_blocks(s, doc if dry_run else read_config(path), ak_path, ctx.get("gateway_url", ""), written,
                                 dry_run=dry_run, force_default=changed)
     if dry_run or not changed:
         return written

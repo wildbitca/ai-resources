@@ -187,6 +187,11 @@ def _write_prompt(workspace: Path, agent: RoleAgent, recorded_sha: str | None) -
             current = target.read_text(encoding="utf-8")
         except OSError:
             return "kept"
+        # The kit's own managed block (added by the workspace-block step) is not an operator edit.
+        lines = current.splitlines(keepends=True)
+        begin, end = _shared._managed_block_span(lines)
+        if begin is not None and end is not None:
+            current = "".join(lines[:begin] + lines[end + 1:]).lstrip("\r\n")
         if current == new:
             return "same"
         if recorded_sha is None or hashlib.sha256(current.encode("utf-8")).hexdigest() != recorded_sha:
