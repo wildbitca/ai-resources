@@ -369,6 +369,10 @@ class OpenClawState:
     #  allow_agents_absent: [orchestrator], catalog_added: [model refs], deferred: [paths]}.
     # Additive: absent from the file while empty.
     lanes_applied: dict[str, Any] = field(default_factory=dict)
+    # Round 3 (ADR-0015 S8): the kit-role-* agents setup wrote, so a rerun updates only what it wrote and teardown removes
+    # only that: {created_agent_ids, created_workspaces, workspace_root, models, thinking, prompt_sha256, catalog_added}.
+    # Additive: absent from the file while empty.
+    role_agents_applied: dict[str, Any] = field(default_factory=dict)
     # Channel intent (ADR-0010 N5, plan S11): `channels_seen` are the "<channel>:<account>" keys that were enabled
     # when setup last listed them; `channels_wanted` the ones the operator left ticked. A key seen and not wanted is
     # a planned DISABLE. Never written to the file (`_to_dict` always strips both); no schema bump.
@@ -460,6 +464,9 @@ def _to_dict(obj: Any) -> Any:
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
                 and not doc["openclaw"].get("lanes_applied"):
             doc["openclaw"].pop("lanes_applied", None)
+        if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
+                and not doc["openclaw"].get("role_agents_applied"):
+            doc["openclaw"].pop("role_agents_applied", None)
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict):
             # Channel intent lives for one run only (ADR-0010 C6): never serialized, so no save, mid-run or final, can
             # persist it, whatever the in-memory lists hold.

@@ -1,4 +1,7 @@
-"""Drift report: an agy lane that runs a Claude model on the API (cost analysis 2026-10-22). Report only, no repoint."""
+"""Drift report: an agy lane that runs a Claude model on the API (cost analysis 2026-10-22).
+
+The report changes nothing. ADR-0015 added the confirmed migration (`migrate_agy_drift`, tests/test_openclaw_agy_drift_migration.py);
+the report's wording says so instead of "the kit does not repoint it"."""
 from __future__ import annotations
 
 from ai_resources import agy_lane_gates
@@ -15,7 +18,8 @@ DOC = {"agents": {"entries": {
 def test_an_agy_lane_on_an_anthropic_primary_is_reported_and_others_are_not():
     assert [a for a, _ in ol.agy_primary_drift(DOC)] == ["kit-lane-agy-gemini4argonhigh", "kit-lane-agy-opus55"]
     msgs = ol.agy_primary_drift_findings(DOC)
-    assert len(msgs) == 2 and all("does not repoint" in m and "ADR-0007" in m for m in msgs)
+    assert len(msgs) == 2 and all("never changes it silently" in m and "ADR-0007" in m and "confirmation" in m
+                                  for m in msgs)
 
 
 def test_the_report_does_not_change_the_lane_gates():
