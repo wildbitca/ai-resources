@@ -23,6 +23,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from .. import effort as effort_mod
 from .. import role_render, state, ui
+from ..live_openclaw import _primary
 from ... import model_pins, roles_policy, skill_scope
 from . import _openclaw_providers as providers_mod
 from . import _shared
@@ -148,6 +149,15 @@ def _entry(agent: RoleAgent, workspace: Path, runtime: str = "") -> dict[str, An
     return entry
 
 
+_SHELL_KEYS = frozenset({"name", "workspace", "agentDir", "model"})
+
+
+def _registration_shell(live: Mapping[str, Any], agent: RoleAgent, workspace: Path) -> bool:
+    """True for the bare entry `openclaw agents add` writes for a kit role: only its keys, the kit's workspace and model."""
+    return (set(live) <= _SHELL_KEYS and live.get("workspace") == str(workspace)
+            and _primary(live.get("model")) == agent["model"])
+
+
 def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Mapping[str, Path],
                 recorded: Mapping[str, Any], methods: Mapping[str, str],
                 cli_runtimes: Iterable[str] = ()) -> tuple[dict[str, Any], list[str]]:
@@ -155,7 +165,7 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
 
     A new id gets its whole entry. An existing id is updated only when it is a recorded kit id whose live model and
     thinking still equal what the kit last wrote (so a profile change moves it); otherwise it is the operator's and is
-    kept. A role whose model runs through a CLI (`runtime_for`) gets that runtime in its own `models` map; a model the
+    kept. The bare entry `agents add` leaves when a run stops early is the kit's and gets its fields. A role whose model runs through a CLI (`runtime_for`) gets that runtime in its own `models` map; a model the
     kit moves away from loses the pin the kit gave it."""
     entries = _get(doc, "agents", "entries") or {}
     last = recorded.get("models") or {}
@@ -169,9 +179,14 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
         if not isinstance(live, Mapping):
             patch.setdefault("agents", {}).setdefault("entries", {})[aid] = _entry(agent, workspaces[aid], runtime)
         else:
-            live_model = _get(live, "model", "primary")
+            live_model = _primary(live.get("model"))   # OpenClaw also takes the bare-string form
             live_think = live.get("thinkingDefault", "")
             ours = aid in set(recorded.get("created_agent_ids") or [])
+            if _registration_shell(live, agent, workspaces[aid]):
+                # `agents add` ran but the run stopped before the kit's fields landed: finish the kit's own entry
+                ent = {k: v for k, v in _entry(agent, workspaces[aid], runtime).items() if k not in ("name", "model")}
+                patch.setdefault("agents", {}).setdefault("entries", {})[aid] = ent
+                continue
             if live_model == agent["model"] and (live_think or "") == (agent["thinking"] or ""):
                 pass
             elif ours and live_model == last.get(aid) and (live_think or "") == (last_think.get(aid) or ""):

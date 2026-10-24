@@ -206,3 +206,50 @@ def test_the_repair_rides_the_one_question_and_pins_the_restored_ref(oc, monkeyp
     assert lane["model"] == {"primary": HAIKU}
     assert lane["models"] == {SONNET: CLI, HAIKU: CLI}
     assert "main" not in oc.applied[0]["agents"]["entries"]
+
+
+# --- 2.6.5: a role spelled as a bare model string is the kit's, not the operator's ---------------------------------
+
+def _role(model=SONNET, thinking=""):
+    return openclaw_roles.RoleAgent(id="kit-role-reviewer", role="code-reviewer", name="reviewer", domain="",
+                                    description="d", model=model, thinking=thinking, skills=[], prompt="p",
+                                    prompt_sha256="x")
+
+
+def test_a_role_whose_model_is_a_bare_string_still_gets_its_claude_cli_pin(tmp_path):
+    doc = {"agents": {"entries": {"kit-role-reviewer": {"model": SONNET}}}}
+    recorded = {"created_agent_ids": ["kit-role-reviewer"], "models": {"kit-role-reviewer": SONNET}, "thinking": {}}
+    patch, kept = openclaw_roles.build_patch([_role()], doc, {"kit-role-reviewer": tmp_path}, recorded,
+                                             {"anthropic": "api_key"}, ("claude-cli",))
+    assert kept == []
+    assert patch == {"agents": {"entries": {"kit-role-reviewer": {"models": {SONNET: CLI}}}}}
+
+
+def test_a_bare_string_role_the_kit_wrote_follows_a_profile_change(tmp_path):
+    doc = {"agents": {"entries": {"kit-role-reviewer": {"model": SONNET}}}}
+    recorded = {"created_agent_ids": ["kit-role-reviewer"], "models": {"kit-role-reviewer": SONNET}, "thinking": {}}
+    patch, kept = openclaw_roles.build_patch([_role(OPUS, "high")], doc, {"kit-role-reviewer": tmp_path}, recorded,
+                                             {"anthropic": "api_key"}, ("claude-cli",))
+    assert kept == []
+    ent = patch["agents"]["entries"]["kit-role-reviewer"]
+    assert ent["model"] == {"primary": OPUS} and ent["thinkingDefault"] == "high"
+    assert ent["models"] == {OPUS: CLI}
+
+
+def test_the_bare_entry_agents_add_left_behind_gets_the_kits_fields(tmp_path):
+    shell = {"name": "kit-role-reviewer", "workspace": str(tmp_path), "agentDir": "/x/agent", "model": SONNET}
+    doc = {"agents": {"entries": {"kit-role-reviewer": shell}}}
+    patch, kept = openclaw_roles.build_patch([_role(SONNET, "medium")], doc, {"kit-role-reviewer": tmp_path},
+                                             {}, {"anthropic": "api_key"}, ("claude-cli",))
+    assert kept == []
+    ent = patch["agents"]["entries"]["kit-role-reviewer"]
+    assert ent["thinkingDefault"] == "medium" and ent["models"] == {SONNET: CLI} and ent["description"] == "d"
+    assert "model" not in ent and "name" not in ent
+
+
+def test_an_entry_the_operator_shaped_is_not_a_shell(tmp_path):
+    live = {"name": "kit-role-reviewer", "workspace": str(tmp_path), "model": OPUS}
+    doc = {"agents": {"entries": {"kit-role-reviewer": live}}}
+    patch, kept = openclaw_roles.build_patch([_role(SONNET, "medium")], doc, {"kit-role-reviewer": tmp_path},
+                                             {}, {"anthropic": "api_key"}, ("claude-cli",))
+    assert kept == ["kit-role-reviewer"] and patch == {}

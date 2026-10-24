@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.6.5] — 2026-10-24 — every kit role runs through Claude Code
+
+### Fixed
+
+- **A kit role spelled as a bare model string is read as the kit's.** OpenClaw accepts `"model": "<ref>"` as well as
+  `{"primary": "<ref>"}`; the role and lane steps read only the second form, so such a role looked operator-changed,
+  was kept, and never got its claude-cli pin (it stayed on the Anthropic API).
+- **The bare entry `openclaw agents add` leaves when a run stops early is finished.** A run interrupted during the
+  agent registrations left 13 roles with only name, workspace, agentDir and model. A rerun now recognizes that shell
+  (only those keys, the kit's workspace and model) and fills the kit's fields: description, skills, thinking, the
+  report roles' tool deny and the claude-cli pin. An entry with any other shape is still the operator's.
+
 ## [2.6.4] — 2026-10-24 — the haiku lane runs haiku again
 
 ### Fixed

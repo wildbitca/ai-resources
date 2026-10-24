@@ -28,6 +28,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from ... import agy_lane_gates
 from .. import state, ui
+from ..live_openclaw import _primary
 
 PREFIX = "kit-lane-"
 CLAUDE_CLI = "claude-cli"
@@ -210,7 +211,7 @@ def verify_capability(doc: Mapping[str, Any], orchestrators: Iterable[str]) -> d
             out[orch] = {"mode": "none", "source": "static-config", "evidence_ref": ""}
         elif (isinstance(mode, str) and mode.lower() not in _EXEC_OFF) or allow_names_exec:
             out[orch] = {"mode": "exec", "source": "static-config", "evidence_ref": ""}
-        elif str(_get(entry, "model", "primary") or "").startswith(("claude-cli/", "claude-kit/")):
+        elif _primary(entry.get("model")).startswith(("claude-cli/", "claude-kit/")):
             out[orch] = {"mode": "exec", "source": "isolated-evidence",
                          "evidence_ref": "docs/decisions/0007-subscription-lanes.md#evidence-v8"}
         else:
