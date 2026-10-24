@@ -303,15 +303,23 @@ def _stub_models(doc: Mapping[str, Any]) -> set[str]:
             if isinstance(m, Mapping) and m.get("id")}
 
 
-def agy_drift_proposals(doc: Mapping[str, Any], *, google_acknowledged: bool) -> list[dict[str, str]]:
+def agy_drift_proposals(doc: Mapping[str, Any], *, google_acknowledged: bool,
+                        lanes: Mapping[str, Any] | None = None) -> list[dict[str, str]]:
     """One proposal per drifted agy lane (ADR-0015 D2b, operator answer 3). Pure: nothing is changed here.
 
     `repoint` needs a valid Google acknowledgement AND the stub catalog to list the target model
-    (`models.providers.agy-cli-lane`); otherwise the only offer is `remove`. Each proposal says why."""
+    (`models.providers.agy-cli-lane`); otherwise the only offer is `remove`. Each proposal says why. The target is the
+    lane's own model in the lanes table (`kit-lane-agy-gemini38flashhigh` -> `gemini-3.8-flash-high`); only a lane the
+    table does not know falls back to the slug of the drifted Anthropic ref."""
+    table = (lanes or {}).get("agents") or {}
     known = _stub_models(doc)
     out: list[dict[str, str]] = []
     for aid, ref in agy_primary_drift(doc):
-        slug = ref.split("/", 1)[1] if ref.startswith("anthropic/") else ref
+        own = str(((table.get(aid) or {}) if isinstance(table, Mapping) else {}).get("model") or "")
+        if own.startswith(f"{STUB_PROVIDER}/"):
+            slug = own.split("/", 1)[1]
+        else:
+            slug = ref.split("/", 1)[1] if ref.startswith("anthropic/") else ref
         target = f"{STUB_PROVIDER}/{slug}"
         if google_acknowledged and slug in known:
             out.append({"id": aid, "action": "repoint", "from": ref, "to": target,
@@ -325,7 +333,7 @@ def agy_drift_proposals(doc: Mapping[str, Any], *, google_acknowledged: bool) ->
     return out
 
 
-def migrate_agy_drift(doc: Mapping[str, Any], *, google_acknowledged: bool,
+def migrate_agy_drift(doc: Mapping[str, Any], *, google_acknowledged: bool, lanes: Mapping[str, Any] | None = None,
                       apply_patch: Callable[..., "tuple[bool, str]"], classify: Callable[[dict], list[str]],
                       confirm: Callable[[str], bool], delete_agent: Callable[[str], "tuple[int, str]"],
                       change_records: Callable[[dict, dict, Any, str], list[dict]] | None = None,
@@ -338,7 +346,7 @@ def migrate_agy_drift(doc: Mapping[str, Any], *, google_acknowledged: bool,
     `agents.entries.<id>.model.primary`, classified first (a restart-class key is not applied). A removal asks again,
     takes the id out of every `allowAgents` list in the same patch and then runs `agents delete`. Only ids that start
     with `kit-lane-agy-` are ever touched."""
-    proposals = [p for p in agy_drift_proposals(doc, google_acknowledged=google_acknowledged)
+    proposals = [p for p in agy_drift_proposals(doc, google_acknowledged=google_acknowledged, lanes=lanes)
                  if p["id"].startswith(AGY_AGENT_PREFIX)]
     applied: list[dict[str, str]] = []
     for p in proposals:

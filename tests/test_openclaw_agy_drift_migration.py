@@ -129,3 +129,12 @@ def test_a_new_agy_lane_is_still_held_while_the_gates_are_closed():
     assert ol.kit_agent_ids(lanes, gates={}, acks={}) == []
     for aid in ol.kit_agent_ids(lanes, gates={}, acks={}):
         assert not lanes["agents"][aid]["model"].startswith(("anthropic/", "claude-"))
+
+
+def test_the_repoint_target_is_the_lanes_own_model_not_the_drifted_anthropic_ref():
+    lanes = {"agents": {"kit-lane-agy-sonnet": {"backend": "agy-cli-lane", "model": "agy-cli-lane/gemini-3.8-flash-low"},
+                        "kit-lane-agy-opus55": {"backend": "agy-cli-lane", "model": "agy-cli-lane/claude-opus-5-5"}}}
+    got = {p["id"]: p for p in ol.agy_drift_proposals(doc(), google_acknowledged=True, lanes=lanes)}
+    assert got["kit-lane-agy-sonnet"]["action"] == "repoint"
+    assert got["kit-lane-agy-sonnet"]["to"] == "agy-cli-lane/gemini-3.8-flash-low"
+    assert got["kit-lane-agy-opus55"]["to"] == "agy-cli-lane/claude-opus-5-5"

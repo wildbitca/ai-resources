@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.7.2] — 2026-10-24 — agy drift repoints to the lane's own model
+
+### Fixed
+
+- The agy lane drift migration derived its target from the drifted Anthropic primary, so `kit-lane-agy-gemini38flashhigh` (on `anthropic/claude-sonnet-5-5`) was offered only removal and `kit-lane-agy-gemini4argonhigh` would have been repointed to `claude-opus-5-5`. The target is now the lane's own model in the lanes table (`agy-cli-lane/gemini-3.8-flash-high`, `agy-cli-lane/gemini-4-argon-high`).
+
 ## [2.7.1] — 2026-10-24 — re-signing the Google acknowledgement keeps its account
 
 ### Fixed

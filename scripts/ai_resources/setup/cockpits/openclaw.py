@@ -1724,7 +1724,7 @@ def _configure_agy_drift(s: state.SetupState, doc: dict, *, dry_run: bool, run_c
     acked = lanes_render.valid_acks(s.profile.lane_acks).get("google") is not None
     interactive = not ui.is_non_interactive()
     applied = openclaw_lanes.migrate_agy_drift(
-        doc, google_acknowledged=acked, apply_patch=_lanes_apply, classify=_lanes_classify,
+        doc, google_acknowledged=acked, lanes=s.profile.lanes or {}, apply_patch=_lanes_apply, classify=_lanes_classify,
         confirm=lambda m: bool(ui.confirm(m, default=False)), delete_agent=lambda aid: _openclaw(
             ["agents", "delete", aid, "--force"]),
         change_records=openclaw_host.change_records, run_changes=run_changes, interactive=interactive,
