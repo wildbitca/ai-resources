@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.7.3] — 2026-10-24 — a Slack cost key no longer aborts the OpenClaw step
+
+### Fixed
+
+- Accepting "Stop the Slack bot answering every message of a thread" sent the patch through the host channels guard, which only admits `channels.telegram.streaming`. Its error aborted the rest of the OpenClaw step, so the lanes, kit roles, orchestrator plugin and agy drift migration never ran (the drifted agy lanes were never offered their repoint). The Slack cost writer and its teardown now run their own guard, which admits exactly their two keys, and a refused Slack patch is reported without stopping the step.
+
 ## [2.7.2] — 2026-10-24 — agy drift repoints to the lane's own model
 
 ### Fixed

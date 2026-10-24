@@ -78,7 +78,8 @@ def env(tmp_path, monkeypatch):
 
 
 def _apply(oc):
-    def apply_patch(patch, *, dry_run=False, replace_paths=None):
+    def apply_patch(patch, *, dry_run=False, replace_paths=None, slack_cost=False):
+        assert slack_cost, "the Slack writer must ask for its own guard"
         args = ["config", "patch", "--stdin"] + (["--dry-run"] if dry_run else [])
         for rp in replace_paths or []:
             args += ["--replace-path", rp]
@@ -184,3 +185,41 @@ def test_the_keys_are_hot_in_the_reload_table():
     rs = rr.RuleSet("b", "installed", rr.BASELINE_RULES, "")
     paths = [".".join(sc.THREAD_PATH), ".".join(sc.allow_bots_path("C1"))]
     assert set(rr.classify(paths, ruleset=rs).values()) == {rr.HOT}
+
+
+# --- through the real cockpit writer -----------------------------------------------------------------------------
+
+def test_the_cockpit_writer_runs_the_slack_guard_instead_of_the_channels_guard(monkeypatch):
+    """Regression (2.7.3): the Slack patch went through `assert_channels_safe`, whose ValueError aborted the rest of
+    the OpenClaw step, so lanes, roles and the agy drift migration never ran."""
+    from ai_resources.setup.cockpits import openclaw as oc_mod
+    sent = []
+    monkeypatch.setattr(oc_mod, "_openclaw", lambda args, stdin=None: (sent.append((args, stdin)), (0, "ok"))[1])
+    patch = sc.build_patch([sc.THREAD_PATH])
+    assert oc_mod.apply_patch(patch, dry_run=True, replace_paths=[], slack_cost=True) == (True, "ok")
+    assert json.loads(sent[0][1]) == patch
+    with pytest.raises(ValueError):
+        oc_mod.apply_patch(patch, dry_run=True, replace_paths=[])
+    with pytest.raises(ValueError):
+        oc_mod.apply_patch({"channels": {"slack": {"allowFrom": ["U1"]}}}, dry_run=True, replace_paths=[],
+                           slack_cost=True)
+
+
+def test_a_refused_slack_patch_reports_and_does_not_raise(env):
+    cfg, oc, fake, o = env
+
+    def refusing(patch, **kw):
+        raise ValueError("refused")
+    assert section._offer_slack_cost(o, json.loads(cfg.read_text()), cfg, [], dry_run=False,
+                                     apply_patch=refusing) is False
+
+
+def test_the_cockpit_writer_admits_the_restore_patch_and_nothing_wider(monkeypatch):
+    from ai_resources.setup.cockpits import openclaw as oc_mod
+    monkeypatch.setattr(oc_mod, "_openclaw", lambda args, stdin=None: (0, "ok"))
+    restore = {"channels": {"slack": {"implicitMentions": None, "channels": {"C1": {"allowBots": None}}}}}
+    assert oc_mod.apply_patch(restore, dry_run=True, replace_paths=[], slack_cost=True) == (True, "ok")
+    for wider in ({"channels": {"slack": None}}, {"channels": {"slack": {"channels": {"C1": None}}}},
+                  {"channels": {"telegram": {"allowFrom": None}}}):
+        with pytest.raises(ValueError):
+            oc_mod.apply_patch(wider, dry_run=True, replace_paths=[], slack_cost=True)

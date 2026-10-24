@@ -61,6 +61,30 @@ def assert_slack_cost_safe(patch: dict, replace_paths: list[str] | None = None) 
                 raise ValueError(f"the Slack cost writer sets only the fixed values; refused: {'.'.join(path)}")
 
 
+def assert_slack_restore_safe(patch: dict, replace_paths: list[str] | None = None) -> None:
+    """Refuse anything but a `restore_patch`: null leaves on the two keys or the `implicitMentions` block. Raises ValueError."""
+    if replace_paths:
+        raise ValueError("the Slack cost writer never sends a replace-path")
+
+    def walk(node, path):
+        if isinstance(node, dict) and node:
+            for k, v in node.items():
+                walk(v, path + (str(k),))
+            return
+        if node is not None or not (_allowed_leaf(path) or path == THREAD_PATH[:3]):
+            raise ValueError(f"the Slack cost teardown may only delete the kit's two keys; refused: {'.'.join(path)}")
+
+    walk(patch, ())
+
+
+def assert_slack_patch_safe(patch: dict, replace_paths: list[str] | None = None) -> None:
+    """The guard `apply_patch(slack_cost=True)` runs: the set patch or the restore patch, nothing else."""
+    try:
+        assert_slack_cost_safe(patch, replace_paths)
+    except ValueError:
+        assert_slack_restore_safe(patch, replace_paths)
+
+
 def _get(doc: dict, path):
     cur = doc
     for k in path:

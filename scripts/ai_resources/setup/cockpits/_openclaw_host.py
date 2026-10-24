@@ -630,7 +630,8 @@ def _offer_slack_cost(o: state.OpenClawState, doc: dict, path: Path, written: li
                       apply_patch: Callable[..., tuple[bool, str]]) -> bool:
     """The narrow Slack writer (ADR-0013): thread participation off, and `allowBots: mentions` on the notification
     channels the operator names. Fill-only, one confirm per path, interactive only; otherwise the exact
-    `openclaw config set` commands are printed and nothing is written. `assert_channels_safe` is not involved."""
+    `openclaw config set` commands are printed and nothing is written. `assert_channels_safe` is not involved: the
+    patch goes through `apply_patch(slack_cost=True)`, which runs `assert_slack_cost_safe` in its place."""
     if not slack_cost.slack_enabled(doc):
         return False
     wanted: list[tuple[str, ...]] = []
@@ -665,11 +666,16 @@ def _offer_slack_cost(o: state.OpenClawState, doc: dict, path: Path, written: li
     except ValueError as e:
         ui.error(f"Slack cost patch refused: {e}")
         return False
-    ok, out = apply_patch(patch, dry_run=True, replace_paths=[])
-    if not ok:
-        ui.error(f"OpenClaw rejected the Slack cost keys in a dry run; nothing was applied: {ui.safe_excerpt(out, 400, tail=True)}")
+    try:
+        ok, out = apply_patch(patch, dry_run=True, replace_paths=[], slack_cost=True)
+        if not ok:
+            ui.error(f"OpenClaw rejected the Slack cost keys in a dry run; nothing was applied: {ui.safe_excerpt(out, 400, tail=True)}")
+            return False
+        ok, out = apply_patch(patch, replace_paths=[], slack_cost=True)
+    except ValueError as e:
+        # A refused patch must not abort the rest of the OpenClaw step (lanes, roles, agy drift run after it).
+        ui.error(f"Slack cost patch refused: {e}")
         return False
-    ok, out = apply_patch(patch, replace_paths=[])
     if not ok:
         ui.error(f"OpenClaw rejected the Slack cost keys: {ui.safe_excerpt(out, 400, tail=True)}")
         return False
@@ -784,7 +790,10 @@ def _teardown_notification_route(o: state.OpenClawState, apply_patch: Callable[.
 def _teardown_slack_cost(o: state.OpenClawState, apply_patch: Callable[..., tuple[bool, str]], doc: dict) -> bool:
     patch = slack_cost.restore_patch(o.slack_cost_changes, doc)
     if patch:
-        ok, out = apply_patch(patch, replace_paths=[])
+        try:
+            ok, out = apply_patch(patch, replace_paths=[], slack_cost=True)
+        except ValueError as e:
+            ok, out = False, str(e)
         if not ok:
             ui.error(f"OpenClaw Slack cost keys teardown failed: {ui.safe_excerpt(out, 300, tail=True)}")
             return False

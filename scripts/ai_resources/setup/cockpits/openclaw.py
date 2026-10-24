@@ -77,7 +77,7 @@ from . import _openclaw_host as host_section
 from . import openclaw_lanes
 from . import openclaw_roles
 from . import _agy_quota
-from ... import model_pins, openclaw_host, openclaw_reload_rules, openclaw_tool_policy
+from ... import model_pins, openclaw_host, openclaw_reload_rules, openclaw_slack_cost, openclaw_tool_policy
 
 
 NAME = "OpenClaw"
@@ -639,11 +639,15 @@ def _patch_changes_a_leaf(patch: dict, replace_paths: list[str] | None) -> bool:
 
 def apply_patch(patch: dict, *, dry_run: bool = False,
                 replace_paths: list[str] | None = None, allow_restart: bool = False,
-                reload_mode: str | None = None) -> tuple[bool, str]:
+                reload_mode: str | None = None, slack_cost: bool = False) -> tuple[bool, str]:
     global _before_first_write
     # The Telegram allowlist is the only gate in front of the unrestricted claude-kit backend:
     # no patch may carry an allowlist or a topic binding, and no --replace-path may name channels.
-    openclaw_host.assert_channels_safe(patch, replace_paths)
+    # The one exception is the Slack cost writer (ADR-0013): its own guard admits exactly its two keys (set or deleted).
+    if slack_cost:
+        openclaw_slack_cost.assert_slack_patch_safe(patch, replace_paths)
+    else:
+        openclaw_host.assert_channels_safe(patch, replace_paths)
     # The global tools.deny has its own shape guard (ADR-0011); lanes, voice and host patches never trigger it.
     openclaw_host.assert_tools_deny_safe(patch, replace_paths)
     if not dry_run and not _patch_changes_a_leaf(patch, replace_paths):
