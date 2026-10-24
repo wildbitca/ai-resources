@@ -75,14 +75,19 @@ def record(kit, window, ask, *, yes=False, tty=True, now=None):
 
 # --- status (read-only) -------------------------------------------------------------------------------------------
 
+def _kit_files(kit):
+    """The kit's files, without `.git`: git's own background maintenance may add a lock there at any moment."""
+    return sorted(p for p in kit.rglob("*") if p.is_file() and ".git" not in p.relative_to(kit).parts)
+
+
 def test_gates_status_is_read_only_and_names_the_next_action(capsys, kit):
-    before = sorted(p for p in kit.rglob("*") if p.is_file())
+    before = _kit_files(kit)
     assert lanes_cmd.main(["gates"]) == 0
     out = capsys.readouterr().out
     assert "gates 0/8 proven (G6, G7 partial)" in out
     assert "evidence record: absent" in out and "ai-resources lanes gates record" in out
     assert "G0  not proven" in out and "G7  partial" in out
-    assert before == sorted(p for p in kit.rglob("*") if p.is_file())
+    assert before == _kit_files(kit)
     assert not ev.record_path(kit).exists()
 
 
