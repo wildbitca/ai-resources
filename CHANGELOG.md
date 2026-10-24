@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.6.4] — 2026-10-24 — the haiku lane runs haiku again
+
+### Fixed
+
+- **A claude-cli lane whose primary drifted goes back to the model its id names.** Before 2.6.3 the B2.1 "no
+  orchestrator on haiku" rule rewrote `kit-lane-cli-haiku55` to sonnet, and a rerun kept it there (the lane writes are
+  fill-only). The worker question that moves the kit's agents to Claude Code now also restores such a lane's primary to
+  its `anthropic/claude-<family>-<version>` ref and pins that ref on claude-cli. A primary off the Anthropic route is
+  the operator's own and is left alone.
+
 ## [2.6.3] — 2026-10-24 — one question, then the recommended setup
 
 ### Changed

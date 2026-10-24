@@ -185,3 +185,24 @@ def test_the_recommended_run_moves_the_worker_without_asking(oc, monkeypatch):
     finally:
         cockpit.ui.set_auto(False)
     assert oc.applied == [cockpit.worker_runtime_patch([SONNET, OPUS, HAIKU])]
+
+
+# --- 2.6.4: a claude-cli lane whose primary drifted goes back to the model its id names ------------------------------
+
+def test_a_cli_lane_moved_off_the_model_its_id_names_goes_back():
+    doc = _doc()
+    doc["agents"]["entries"]["kit-lane-cli-haiku55"] = {"model": {"primary": SONNET, "fallbacks": [SONNET]}}
+    doc["agents"]["entries"]["kit-lane-cli-opus55"] = {"model": {"primary": OPUS}}
+    doc["agents"]["entries"]["kit-lane-cli-sonnet55"] = {"model": {"primary": "agy-cli-lane/gemini-4-argon-high"}}
+    assert cockpit.lane_primary_repairs(doc) == {"kit-lane-cli-haiku55": HAIKU}
+
+
+def test_the_repair_rides_the_one_question_and_pins_the_restored_ref(oc, monkeypatch):
+    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False, **k: True)
+    doc = _doc()
+    doc["agents"]["entries"]["kit-lane-cli-haiku55"] = {"model": {"primary": SONNET, "fallbacks": [SONNET]}}
+    assert cockpit._configure_worker_runtime(_state(), doc, dry_run=False, run_changes=[]) is True
+    lane = oc.applied[0]["agents"]["entries"]["kit-lane-cli-haiku55"]
+    assert lane["model"] == {"primary": HAIKU}
+    assert lane["models"] == {SONNET: CLI, HAIKU: CLI}
+    assert "main" not in oc.applied[0]["agents"]["entries"]

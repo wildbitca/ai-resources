@@ -1803,10 +1803,40 @@ def kit_api_agents(doc: dict) -> dict[str, list[str]]:
     return {aid: refs for aid, refs in out.items() if refs}
 
 
-def kit_runtime_patch(by_agent: dict[str, list[str]]) -> dict:
-    """The fill-only patch that pins claude-cli on each agent's own `models` map for its refs; nothing shared."""
-    return {"agents": {"entries": {aid: {"models": {r: {"agentRuntime": {"id": "claude-cli"}} for r in refs}}
-                                   for aid, refs in by_agent.items()}}}
+_CLI_LANE_ID = re.compile(r"^kit-lane-cli-(haiku|sonnet|opus)(\d)(\d)$")
+
+
+def lane_primary_repairs(doc: dict) -> dict[str, str]:
+    """{kit-lane-cli agent id: the Anthropic ref its id names} for a lane whose primary drifted to another one. Pure.
+
+    A claude-cli lane is named after the model it runs (`kit-lane-cli-haiku55` runs `anthropic/claude-haiku-5-5`).
+    Before 2.6.3 the B2.1 "no orchestrator on haiku" rule rewrote the haiku lane's primary to sonnet; this puts it
+    back. A primary off the Anthropic route (an operator's own choice) is left alone."""
+    out: dict[str, str] = {}
+    for aid, entry in (_get(doc, "agents", "entries") or {}).items():
+        m = _CLI_LANE_ID.match(aid) if isinstance(aid, str) else None
+        model = entry.get("model") if isinstance(entry, dict) else None
+        if not m or not isinstance(model, dict):
+            continue
+        wanted = f"anthropic/claude-{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        primary = model.get("primary")
+        if isinstance(primary, str) and primary.startswith("anthropic/") and primary != wanted:
+            out[aid] = wanted
+    return out
+
+
+def kit_runtime_patch(by_agent: dict[str, list[str]], primaries: dict[str, str] | None = None) -> dict:
+    """The fill-only patch that pins claude-cli on each agent's own `models` map for its refs; nothing shared.
+
+    `primaries` ({agent id: ref}) also sets those agents' primary (see `lane_primary_repairs`)."""
+    entries: dict = {}
+    for aid, refs in by_agent.items():
+        entries[aid] = {"models": {r: {"agentRuntime": {"id": "claude-cli"}} for r in refs}}
+    for aid, ref in (primaries or {}).items():
+        ent = entries.setdefault(aid, {})
+        ent["model"] = {"primary": ref}
+        ent.setdefault("models", {}).setdefault(ref, {"agentRuntime": {"id": "claude-cli"}})
+    return {"agents": {"entries": entries}}
 
 
 def _configure_worker_runtime(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:
@@ -1815,10 +1845,11 @@ def _configure_worker_runtime(s: state.SetupState, doc: dict, *, dry_run: bool, 
     The operator's agents keep their route (the API key, where the Claude Platform credits of a Max plan apply); the
     work they hand to the worker then runs on the Claude sign-in, like the kit roles and the claude-cli lanes."""
     by_agent = kit_api_agents(doc)
-    if not by_agent or "claude-cli" not in kit_cli_runtimes(s):
+    primaries = lane_primary_repairs(doc)
+    if not (by_agent or primaries) or "claude-cli" not in kit_cli_runtimes(s):
         return False
     refs = by_agent.get(WORKER_AGENT) or []
-    lanes = sorted(a for a in by_agent if a != WORKER_AGENT)
+    lanes = sorted(set(by_agent) - {WORKER_AGENT} | set(primaries))
     parts = []
     if refs:
         parts.append(f"OpenClaw's `{WORKER_AGENT}` worker (the agent your agents hand code work to) runs "
@@ -1826,6 +1857,9 @@ def _configure_worker_runtime(s: state.SetupState, doc: dict, *, dry_run: bool, 
     if lanes:
         parts.append(f"{len(lanes)} kit lane(s) ({', '.join(lanes)}) run Claude")
     line = " and ".join(parts) + " on OpenClaw's own Anthropic route (an API key is billed per token)."
+    if primaries:
+        line += " " + "; ".join(f"{a} runs {_get(doc, 'agents', 'entries', a, 'model', 'primary')}, not the {r} its "
+                                f"name says (it goes back)" for a, r in sorted(primaries.items())) + "."
     if dry_run:
         ui.info(line + " Dry run: setup would offer to run it through Claude Code (claude-cli, your Claude sign-in).")
         return False
@@ -1837,7 +1871,7 @@ def _configure_worker_runtime(s: state.SetupState, doc: dict, *, dry_run: bool, 
                       "Your other agents keep their route.", default=False, recommended=True):
         ui.info("Worker: left as it is.")
         return False
-    patch = kit_runtime_patch(by_agent)
+    patch = kit_runtime_patch(by_agent, primaries)
     restart = _lanes_classify(patch)
     if restart:
         ui.warn("Worker runtime keys need a gateway restart and were NOT written (the kit never restarts a live "
@@ -1850,7 +1884,7 @@ def _configure_worker_runtime(s: state.SetupState, doc: dict, *, dry_run: bool, 
         ui.error(f"OpenClaw rejected the worker runtime patch: {ui.safe_excerpt(out, 300, tail=True)}")
         return False
     run_changes.extend(openclaw_host.change_records(dict(doc), patch, None, "worker"))
-    ui.info(f"{', '.join(f'`{a}`' for a in by_agent)}: run through Claude Code (claude-cli) from the next session.")
+    ui.info(f"{', '.join(f'`{a}`' for a in patch['agents']['entries'])}: run through Claude Code (claude-cli) from the next session.")
     return True
 
 
