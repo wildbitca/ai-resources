@@ -22,6 +22,7 @@ def pytest_configure(config):
     from basetemp_default import apply_default
     apply_default(config)
     config.addinivalue_line("markers", "timing: asserts on wall-clock time; runs in the serial pass of scripts/run-tests.sh")
+    config.addinivalue_line("markers", "agy_waiver: sees the shipped operator waiver of the Antigravity gates")
 
 
 # Host binaries no test may run. One unstubbed configure path ran `npm install -g openclaw@latest` and
@@ -434,3 +435,17 @@ def _isolate_round4(tmp_path_factory, monkeypatch):
         operator_rules = None
     if operator_rules is not None:
         monkeypatch.setattr(operator_rules, "path", lambda: root / "config" / "ai-resources" / "operator-rules.md")
+
+
+@pytest.fixture(autouse=True)
+def _agy_gate_waiver_off(request, monkeypatch):
+    """The gate machinery (G0..G7, the evidence record, the held messages) is tested with the operator waiver off, so it
+    keeps failing closed when the waiver is withdrawn. A test of the waiver itself is marked `agy_waiver` and sees the
+    shipped `WAIVED_BY_OPERATOR` (ADR-0007 section 11, operator waiver of 2026-10-24)."""
+    if request.node.get_closest_marker("agy_waiver"):
+        return
+    try:
+        from ai_resources import agy_lane_gates
+    except Exception:
+        return
+    monkeypatch.setattr(agy_lane_gates, "WAIVED_BY_OPERATOR", frozenset())

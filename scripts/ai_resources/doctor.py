@@ -103,7 +103,7 @@ def _check_antigravity_lane(s: state.SetupState) -> int:
                                               else "not registered in the running gateway"))
     ticked = "agy" in ((s.profile.customizations or {}).get("__targets__") or {}).get("selected", [])
     action = team_view.next_action(gates_on=info["on"], record_status=record.status, agy_ticked=ticked or ack is not None,
-                                   missing_roles=missing if ack is not None else [])
+                                   missing_roles=missing if ack is not None else [], acked=ack is not None)
     if action:
         ui.detail("Next: " + action)
     return issues

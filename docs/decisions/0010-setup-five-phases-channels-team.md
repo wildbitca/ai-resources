@@ -227,6 +227,8 @@ for either reviewer.
   confirmed when it is in the record's `confirmed_slugs` (G1), so the "[unconfirmed slug]" tag is decided per slug.
   `AGY_LANE_MODELS_CONFIRMED` joins the gate symbols that never change by hand (with `GATES`, `AGY_LANE_ADR_ACCEPTED`,
   `CODEX_LANE_ADR_ACCEPTED`, `WRITABLE_BACKENDS`); the constants are never flipped.
+  The operator's waiver of 2026-10-24 (`agy_lane_gates.WAIVED_BY_OPERATOR`, ADR-0007 "Operator waiver") is an operator
+  decision recorded in that ADR. It flips none of these symbols; it only stops G0-G7 from gating admission.
 - **C4. Lazy evidence loader.** The loader is an explicit cached function; `EVIDENCE` stays a literal; there is no
   import-time I/O. The manifest listing with file hashes is committed with the record. The G0 anchor must name a
   heading, in the ADR-0007 Evidence section, that contains the record's `run_id`.

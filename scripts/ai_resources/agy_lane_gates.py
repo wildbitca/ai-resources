@@ -16,6 +16,11 @@ file it writes, `scripts/ai_resources/data/agy_gate_evidence.json`. `agy_gate_ev
 import-time I/O) validates it and fails closed; `effective_evidence()` overlays a valid record on the literals, and the
 helpers below read that overlay. With no record, or with an invalid one, every status is the literal's.
 `tests/test_agy_lane_gates.py` pins that a gate cannot be `proven` without evidence.
+
+Operator waiver (2026-10-24, ADR-0007 section 11 addendum): the operator waived G0..G7 as admission preconditions, so
+`unproven`, `all_proven` and `refusal` skip the gates in `WAIVED_BY_OPERATOR` and the lane is admitted with the flag and
+a valid Google acknowledgement alone. A waived gate is not proven: `gate_proven` and `status_table` still read the
+literals and the record only, so G5 (the kit-owned agy home) stays off and agy keeps the operator's real login.
 """
 from __future__ import annotations
 
@@ -61,6 +66,10 @@ GATES: tuple[Gate, ...] = (
 
 EVIDENCE: dict[str, Gate] = {g.id: g for g in GATES}
 
+# The gates the operator waived as admission preconditions (ADR-0007 section 11, operator waiver of 2026-10-24).
+WAIVED_BY_OPERATOR: frozenset[str] = frozenset(g.id for g in GATES)
+WAIVER_REF = "docs/decisions/0007-subscription-lanes.md#operator-waiver-2026-10-24"
+
 
 def effective_evidence() -> dict[str, Gate]:
     """The literal `EVIDENCE` with the gates a VALID committed record proves laid over it (lazy: the record is
@@ -74,10 +83,13 @@ def effective_evidence() -> dict[str, Gate]:
 
 
 def unproven(evidence: Mapping[str, Gate] | None = None) -> list[Gate]:
-    """The gates that are not `proven`, in order. A missing gate counts as not proven (fail closed)."""
+    """The gates that are neither `proven` nor waived by the operator, in order. A missing gate counts as not
+    proven (fail closed)."""
     ev = effective_evidence() if evidence is None else evidence
     out: list[Gate] = []
     for g in GATES:
+        if g.id in WAIVED_BY_OPERATOR:
+            continue
         got = ev.get(g.id)
         if got is None or got.status != PROVEN or not got.evidence:
             out.append(got or g)
@@ -132,8 +144,9 @@ def summary() -> dict:
     ev = effective_evidence()
     proven = [g.id for g in GATES if (ev.get(g.id) or g).status == PROVEN and (ev.get(g.id) or g).evidence]
     partial = [g.id for g in GATES if g.id not in proven and (ev.get(g.id) or g).status == PARTIAL]
-    return {"proven": proven, "partial": partial, "total": len(GATES), "on": len(proven) == len(GATES),
-            "record": record_status()}
+    waived = [g.id for g in GATES if g.id not in proven and g.id in WAIVED_BY_OPERATOR]
+    return {"proven": proven, "partial": partial, "waived": waived, "total": len(GATES),
+            "on": len(proven) + len(waived) == len(GATES), "record": record_status()}
 
 
 def summary_line() -> str:
@@ -141,6 +154,9 @@ def summary_line() -> str:
     info = summary()
     record = info["record"]
     count = f"gates {len(info['proven'])}/{info['total']} proven"
+    if info["on"] and info["waived"]:
+        return (f"Antigravity lane: on, {count}, {', '.join(info['waived'])} waived by the operator "
+                f"({WAIVER_REF}); admission needs the flag and a valid Google acknowledgement")
     if info["on"]:
         who = f"{record.recorded_by}" + (f", commit {record.commit[:8]} by {record.author}" if record.commit else "")
         return (f"Antigravity lane: on, {count} (record {(record.commit or record.file_sha8)[:8]}, "

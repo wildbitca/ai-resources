@@ -294,3 +294,38 @@ OAuth. The acknowledgement text (`ACK_TEXT['google']`) now says so and records t
 Its hash changes, so stored Google acknowledgements are rejected and setup asks once more (fail closed, no auto re-sign). The
 gates G0-G7, their gate record file and the hash algorithm are unchanged; the host overlay of the gate-record module is removed,
 so absent evidence means held.
+
+## Operator waiver (2026-10-24)
+
+The operator waived gates G0-G7 as preconditions for admitting the Antigravity lane. agy is installed and signed in
+on the host, and the operator wants the lane enabled and configured without a probe window. In code,
+`agy_lane_gates.WAIVED_BY_OPERATOR` lists every gate. `unproven`, `all_proven` and `refusal` skip the waived gates, so
+`agy-cli-lane` is writable and an agy candidate is admitted when all of these hold:
+
+- section 11 is Accepted;
+- `--lanes-antigravity` is on;
+- a valid Google acknowledgement exists for the current `ACK_TEXT['google']` with the account named;
+- the role is listed in that acknowledgement;
+- the plugin carries an absolute `agyBin`.
+
+The acknowledgement stays the operator's own signature, and setup never signs it.
+
+A waived gate is not a proven gate:
+
+- `GATES`, `EVIDENCE`, `status_table` and `gate_proven` still read only the literals and the evidence record.
+- G5 (V12) is therefore not proven, and the kit-owned agy home is not created. agy runs with the operator's real
+  `~/.gemini` login.
+- Slugs stay "unconfirmed" in the display; that tag is display only and blocks nothing.
+- Doctor and `lanes gates` report the lane as "on ... waived by the operator".
+
+The operator accepts these risks, none of them measured:
+
+- `agy --sandbox` containment of writes and network (V6) is unproven. A lane child may write outside its cwd.
+- The MCP and OpenClaw tool surface in the lane child (V7) is unproven. `AGY_TOOL_DENY` is the plan's minimum, not an
+  enumerated list.
+- The worktree cwd behaviour (V9) is unproven.
+- The cost per step (G6) is unmeasured, and the account-suspension risk of the Antigravity terms (ADR-0016 D3) still
+  applies.
+
+Withdrawing the waiver means emptying `WAIVED_BY_OPERATOR`. The gate machinery and the record path are unchanged: the
+tests run with the waiver off (`tests/conftest.py`), and `tests/test_agy_operator_waiver.py` pins the waiver itself.

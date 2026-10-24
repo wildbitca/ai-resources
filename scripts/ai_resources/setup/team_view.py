@@ -65,9 +65,13 @@ def degrade_unrouted(executors: Mapping[str, Any], providers: Mapping[str, Any] 
     return out, lines
 
 
-def next_action(*, gates_on: bool, record_status: str, agy_ticked: bool, missing_roles: list[str]) -> str:
+def next_action(*, gates_on: bool, record_status: str, agy_ticked: bool, missing_roles: list[str],
+                acked: bool = True) -> str:
     """The single next step for the operator, in the order the lane opens: sign-in and terms, then the probe window and
-    its record, then a commit. "" when nothing is left. One source for the team view, doctor and `lanes gates`."""
+    its record, then a commit. "" when nothing is left. One source for the team view, doctor and `lanes gates`.
+    With the gates waived by the operator (ADR-0007 section 11), `gates_on` is true and the signature is what is left."""
+    if gates_on and not acked:
+        return "sign the Google acknowledgement: ai-resources setup --lanes --lanes-antigravity"
     if gates_on and not missing_roles:
         return ""
     if record_status == "invalid":
@@ -278,8 +282,10 @@ def provider_mix(doc: Mapping[str, Any], base_rows: Sequence[tuple[str, str, str
                 lines.append(LINE_NOT_SELECTED)
             elif held:
                 gates_on = agy_lane_gates.all_proven()
+                from . import lanes_render as _lr
                 next_step = next_action(gates_on=gates_on, record_status=record.status, agy_ticked=True,
-                                        missing_roles=sorted(set(missing)))
+                                        missing_roles=sorted(set(missing)),
+                                        acked=_lr.valid_acks(acks).get("google") is not None)
                 reason = (_gate_summary() if not gates_on else held[0][1].removeprefix("held: "))
                 lines.append(f"Gemini held: {reason}. Next: {next_step}")
             elif ON in states.values():

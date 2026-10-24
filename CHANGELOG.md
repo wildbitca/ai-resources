@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.7.0] — 2026-10-24 — the Antigravity lane opens on the operator's signature
+
+### Changed
+
+- **Gates G0-G7 no longer hold the Antigravity lane (operator waiver, ADR-0007 section 11).**
+  - `agy_lane_gates.WAIVED_BY_OPERATOR` lists every gate, so `agy-cli-lane` becomes writable.
+  - An agy candidate is admitted when the flag is on, a valid Google acknowledgement for the current text lists its
+    role, and the plugin has an absolute `agyBin`. No probe window is needed.
+  - The acknowledgement is still signed only by the operator.
+  - A waived gate is not proven. G5 stays off, so agy keeps the operator's `~/.gemini` login, and slugs stay
+    "unconfirmed" (display only).
+  - Doctor and `lanes gates` report "waived by the operator". The next step they print is the signature.
+
 ## [2.6.6] — 2026-10-24 — the registration shell includes its identity
 
 ### Fixed
