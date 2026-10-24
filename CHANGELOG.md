@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.6.2] — 2026-10-24 — kit agents run through Claude Code without moving the operator's agents
+
+### Fixed
+
+- **claude-cli lanes and kit-role agents no longer run on the Anthropic API by accident.** The kit put the `claude-cli` runtime
+  in the shared `agents.defaults.models`, and only for a ref not listed there yet. On a host whose catalog already listed the
+  ref (`anthropic/*` on the API) nothing was written and the lanes billed per token; on another host the pin would have moved
+  every agent on that ref. The runtime is now pinned in the kit agent's own `models` map (OpenClaw reads it first), fill-only,
+  and the lanes restore removes exactly the pins it added.
+
+### Changed
+
+- **A kit role on a Claude model runs through Claude Code** when Claude Code is installed and signed in, even when OpenClaw
+  itself signs in to Anthropic with an API key. Review's "Billed to" shows the Claude Code sign-in for those rows.
+- **Setup offers to run the `claude` worker through Claude Code** (default No; never in a dry run or a non-interactive run).
+  Your own agents keep their route, so they can use an API key whose organization receives a Max plan's monthly API credits
+  while the work they hand off runs on the subscription. ADR-0016 has an addendum.
+
 ## [2.6.1] — 2026-10-23 — the dry run shows rc files as a real apply leaves them
 
 ### Fixed
