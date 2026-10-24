@@ -205,3 +205,20 @@ def test_the_flag_pair_contradicts_and_no_lanes_wins_over_nothing():
     s = _s()
     assert wizard._step_lanes(s, _args(lanes_antigravity=True, no_lanes_antigravity=True)) == 2
     assert wizard._step_lanes(s, _args(no_lanes=True, lanes_antigravity=True)) == 2
+
+
+def test_a_stale_google_ack_proposes_its_account_so_enter_re_signs(monkeypatch):
+    log = _interactive(monkeypatch)
+    proposed = []
+
+    def text(msg, default="", validate=None):
+        log["text"].append(msg)
+        proposed.append(default)
+        return default if "Google account" in msg else "main"
+    monkeypatch.setattr(ui, "text", text)
+    s = _s()
+    s.profile.lane_acks = {**_anthropic(s), **_google(["tester"])}
+    s.profile.lane_acks["google"]["text_sha256"] = "0" * 64
+    assert wizard._step_lanes(s, _args(lanes=True, lanes_antigravity=True)) == 0
+    assert ACCT in proposed
+    assert lanes_render.valid_acks(s.profile.lane_acks)["google"]["account"] == ACCT

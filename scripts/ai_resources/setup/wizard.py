@@ -2389,6 +2389,13 @@ def _drop_agy(lanes: dict) -> dict:
     return out
 
 
+def _ack_account(have: dict | None, acks: dict) -> str:
+    """The account the Google prompt proposes: the valid acknowledgement's, else the one a stale acknowledgement named
+    (a text change re-asks the signature, not who signs it)."""
+    stale = acks.get("google") if isinstance(acks.get("google"), dict) else {}
+    return str((have or stale or {}).get("account") or "").strip()
+
+
 def agy_terms_check(s: state.SetupState, roles: list[str], interactive: bool = True, *,
                    flag: str = "--lanes-antigravity") -> tuple[bool, dict, int]:
     """The Antigravity (Google) terms check, ADR-0007 section 11: the one place the Google acknowledgement is shown
@@ -2428,7 +2435,7 @@ def agy_terms_check(s: state.SetupState, roles: list[str], interactive: bool = T
     ui.warn(lanes_render.ACK_TEXT["google"])
     ui.detail("Roles an agy lane may run: " + ", ".join(roles))
     account = (ui.text("Google account that signs this acknowledgement (one per account)",
-                       default=str((have or {}).get("account") or "")) or "").strip()
+                       default=_ack_account(have, acks)) or "").strip()
     if not account:
         ui.error(f"{flag}: the Google account must be named; the Antigravity lane stays closed")
         return False, acks, 0

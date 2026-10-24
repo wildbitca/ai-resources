@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.7.1] — 2026-10-24 — re-signing the Google acknowledgement keeps its account
+
+### Fixed
+
+- The Google acknowledgement prompt proposed an empty account when the stored acknowledgement was stale (its text changed), so pressing Enter closed the Antigravity lane with "the Google account must be named". It now proposes the account the stale acknowledgement named.
+
 ## [2.7.0] — 2026-10-24 — the Antigravity lane opens on the operator's signature
 
 ### Changed
