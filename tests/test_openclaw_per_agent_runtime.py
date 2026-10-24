@@ -93,7 +93,7 @@ def oc(monkeypatch):
 
 def test_a_yes_pins_the_worker_and_records_the_change(oc, monkeypatch):
     asked: list[str] = []
-    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False: asked.append(m) or True)
+    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False, **k: asked.append(m) or True)
     changes: list[dict] = []
     assert cockpit._configure_worker_runtime(_state(), _doc(), dry_run=False, run_changes=changes) is True
     assert oc.applied == [cockpit.worker_runtime_patch([SONNET, OPUS, HAIKU])]
@@ -102,14 +102,14 @@ def test_a_yes_pins_the_worker_and_records_the_change(oc, monkeypatch):
 
 
 def test_the_default_answer_changes_nothing(oc, monkeypatch):
-    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False: default)
+    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False, **k: default)
     assert cockpit._configure_worker_runtime(_state(), _doc(), dry_run=False, run_changes=[]) is False
     assert oc.applied == []
 
 
 @pytest.mark.parametrize("mode", ["dry_run", "non_interactive", "no_claude_code"])
 def test_the_worker_is_never_moved_unasked(oc, monkeypatch, mode):
-    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False: pytest.fail("asked"))
+    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False, **k: pytest.fail("asked"))
     if mode == "non_interactive":
         monkeypatch.setattr(cockpit.ui, "is_non_interactive", lambda: True)
     s = _state(installed=mode != "no_claude_code")
@@ -118,7 +118,7 @@ def test_the_worker_is_never_moved_unasked(oc, monkeypatch, mode):
 
 
 def test_a_restart_class_key_is_deferred_not_written(oc, monkeypatch):
-    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False: True)
+    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False, **k: True)
     monkeypatch.setattr(cockpit, "_lanes_classify", lambda p: ["agents.entries.claude.models"])
     monkeypatch.setattr(cockpit.ui, "warn", lambda m: None)
     assert cockpit._configure_worker_runtime(_state(), _doc(), dry_run=False, run_changes=[]) is False
@@ -155,3 +155,33 @@ def test_a_role_that_changes_model_drops_the_old_pin_and_pins_the_new_one(tmp_pa
     assert ent["model"] == {"primary": OPUS}
     assert ent["models"] == {SONNET: None, OPUS: CLI}
     assert "defaults" not in patch["agents"]
+
+
+# --- 2.6.3: orphan kit lanes move with the worker; the recommended run answers yes ---------------------------------
+
+def test_a_kit_lane_on_the_api_route_moves_with_the_worker_and_the_operators_agents_do_not():
+    doc = _doc()
+    doc["agents"]["entries"]["kit-lane-cli-haiku55"] = {"model": {"primary": HAIKU}}
+    doc["agents"]["entries"]["kit-lane-agy-flash"] = {"model": {"primary": "agy-cli/gemini-4-flash"}}
+    assert cockpit.kit_api_agents(doc) == {"claude": [SONNET, OPUS, HAIKU], "kit-lane-cli-haiku55": [HAIKU]}
+    assert cockpit.kit_runtime_patch({"kit-lane-cli-haiku55": [HAIKU]}) == {
+        "agents": {"entries": {"kit-lane-cli-haiku55": {"models": {HAIKU: CLI}}}}}
+
+
+def test_the_one_question_pins_the_worker_and_the_orphan_lanes_together(oc, monkeypatch):
+    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False, **k: True)
+    doc = _doc()
+    doc["agents"]["entries"]["kit-lane-cli-haiku55"] = {"model": {"primary": HAIKU}}
+    assert cockpit._configure_worker_runtime(_state(), doc, dry_run=False, run_changes=[]) is True
+    assert oc.applied == [cockpit.kit_runtime_patch({"claude": [SONNET, OPUS, HAIKU],
+                                                     "kit-lane-cli-haiku55": [HAIKU]})]
+
+
+def test_the_recommended_run_moves_the_worker_without_asking(oc, monkeypatch):
+    monkeypatch.setattr(cockpit.ui, "detail", lambda m: None)
+    cockpit.ui.set_auto(True)
+    try:
+        assert cockpit._configure_worker_runtime(_state(), _doc(), dry_run=False, run_changes=[]) is True
+    finally:
+        cockpit.ui.set_auto(False)
+    assert oc.applied == [cockpit.worker_runtime_patch([SONNET, OPUS, HAIKU])]

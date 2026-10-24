@@ -606,3 +606,11 @@ def test_the_cockpit_writer_refuses_an_unsafe_deny_patch_before_calling_openclaw
 def test_l6_a_deny_replace_path_with_whitespace_or_a_trailing_brackets_pair_is_still_exactly_tools_deny():
     host.assert_tools_deny_safe(DENY_OK, [" tools.deny "])
     host.assert_tools_deny_safe(DENY_OK, ["tools.deny[]"])
+
+
+def test_a_kit_lane_runs_haiku_by_design_and_is_never_moved_off_it(doc):
+    # 2.6.2 moved kit-lane-cli-haiku55 to sonnet: a lane named for haiku is the team's choice, not an orchestrator
+    doc["agents"]["entries"]["kit-lane-cli-haiku55"] = {"model": {"primary": "anthropic/claude-haiku-5-5"}}
+    built = _fill_only(doc)
+    assert "kit-lane-cli-haiku55" not in (built["patch"].get("agents", {}).get("entries") or {})
+    assert "agents.entries.kit-lane-cli-haiku55.model.primary" not in built["forced"] + built["filled"]

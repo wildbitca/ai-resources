@@ -98,7 +98,8 @@ def _run_wizard(monkeypatch, *, non_interactive: bool, answer: bool = False):
     monkeypatch.setattr(ui, "info", lambda *a, **k: None)
     monkeypatch.setattr(ui, "detail", lambda *a, **k: None)
     asked: list[str] = []
-    monkeypatch.setattr(ui, "confirm", lambda msg, default=True: asked.append(msg) or answer)
+    monkeypatch.setattr(ui, "confirm", lambda msg, default=True, **k: asked.append(msg) or answer)
+    monkeypatch.setattr(ui, "select", lambda *a, **k: wizard.RUN_ASK)   # "How should setup run?"
     stop = RuntimeError("went on past the state check")
     monkeypatch.setattr(wizard, "_preflight_selection", lambda args, s: (_ for _ in ()).throw(stop))
     args = argparse.Namespace(dry_run=False, non_interactive=non_interactive, profile="", yes=False)

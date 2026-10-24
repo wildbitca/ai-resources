@@ -201,6 +201,27 @@ def block() -> str:
     return render(read())
 
 
+def drop_rendered_copies(raw: str) -> tuple[str, list[str]]:
+    """(`raw` without the operator's own blocks the rendered rules block already carries word for word, their headings).
+
+    Seeding copies the CLAUDE.md blocks into the file; once the managed block renders them, the originals outside the
+    markers would load twice in every session. Only a block whose text is in the rendered block verbatim is dropped: one the
+    operator edited after seeding stays, and nothing inside the kit block is touched."""
+    rules = block()
+    if not rules:
+        return raw, []
+    blocks, _kit = cmm.parse_blocks(raw)
+    drop = [b for b in blocks if category_of(b.heading) and b.core.strip() and b.core.strip() in rules]
+    if not drop:
+        return raw, []
+    lines = raw.splitlines(keepends=True)
+    gone = set()
+    for b in drop:
+        gone.update(range(b.start, b.end))
+    out = "".join(line for i, line in enumerate(lines) if i not in gone)
+    return out.rstrip("\n") + "\n", [b.heading for b in drop]
+
+
 def append_to(md: str) -> str:
     """`md` with the rendered rules appended (one blank line between); unchanged when there are no rules or the file is
     flagged. A writer checks `blocked()` first and skips the managed block entirely, so the existing one stays as it is."""

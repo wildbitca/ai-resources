@@ -1964,6 +1964,7 @@ PROFILE_PATH_NAME = Path("profiles") / "openclaw-host.json5"
 # Entries whose model belongs to the engine section (the antigravity worker agent).
 ENGINE_OWNED_ENTRIES = ("claude",)
 KIT_ROLE_PREFIX = "kit-role-"      # the agents `setup` writes per kit role (openclaw_roles.PREFIX)
+KIT_LANE_PREFIX = "kit-lane-"      # the subscription lane agents (openclaw_lanes.PREFIX): a haiku lane runs haiku by design
 # A dict with these keys is one value (a SecretRef), not a subtree to merge into.
 _ATOMIC_KEYS = {"source", "id"}
 _HOST_MARKERS = ("HOME", "DOMAIN", "POD_CIDR")
@@ -2251,8 +2252,8 @@ def expand_wildcards(profile: dict, doc: dict) -> dict:
     template = entries.pop("*", None)
     if template is not None:
         for aid, entry in ((doc.get("agents") or {}).get("entries") or {}).items():
-            if aid in ENGINE_OWNED_ENTRIES or aid.startswith(KIT_ROLE_PREFIX):
-                continue                 # a kit-role agent's haiku is the team's choice (ADR-0015 S8), not a stale pin
+            if aid in ENGINE_OWNED_ENTRIES or aid.startswith((KIT_ROLE_PREFIX, KIT_LANE_PREFIX)):
+                continue                 # a kit agent's haiku is the team's choice (ADR-0015 S8), not a stale pin
             primary = model_primary(entry)
             if primary and not _is_haiku(primary):
                 continue

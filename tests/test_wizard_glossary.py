@@ -46,7 +46,7 @@ def test_a_subscription_run_reaches_apply_in_four_screens_without_the_old_words(
                        "Starting team": "balanced", "Apply this?": ms.APPLY})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
-    assert [m.split(":")[0] for m in script.asked] == ["checkbox", "checkbox", "select", "select", "select"]   # + the S14 sign-in list for codex
+    assert [m.split(":")[0] for m in script.asked] == ["select", "checkbox", "checkbox", "select", "select", "select"]   # run mode first; + the S14 sign-in list for codex
     assert [x for x in log if x.startswith("[")] == ["[1/5] Your tools", "[2/5] Main tool",
                                                      "[2/5] Sign-in", "[3/5] Your team", "[4/5] Audio",
                                                      "[5/5] Review"]
@@ -72,7 +72,7 @@ def test_each_on_its_own_asks_the_same_screens(monkeypatch, tmp_path):
                        "Apply this?": ms.APPLY})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
-    assert [m.split(":")[0] for m in script.asked] == ["checkbox", "select", "select", "select"]
+    assert [m.split(":")[0] for m in script.asked] == ["select", "checkbox", "select", "select", "select"]
     text = "\n".join(script.asked + script.shown + script.titles + log)
     assert not BANNED.findall(text), BANNED.findall(text)
 

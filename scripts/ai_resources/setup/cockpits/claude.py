@@ -942,6 +942,24 @@ def _install_workflow_scripts(ak_path: str, tracking: state.InstallTracking) -> 
 POLLING_GUIDANCE = _shared.WAITING_GUIDANCE
 
 
+def _drop_rule_copies() -> bool:
+    """Remove the operator's CLAUDE.md blocks the operator-rules block now carries verbatim (backup first), so the rules
+    are not loaded twice per session. True when the file changed."""
+    from .. import operator_rules
+    try:
+        raw = CLAUDE_MD_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    new, headings = operator_rules.drop_rendered_copies(raw)
+    if not headings:
+        return False
+    backup = _shared._create_backup(CLAUDE_MD_PATH, raw, datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+    CLAUDE_MD_PATH.write_text(new, encoding="utf-8")
+    ui.info(f"Claude Code: removed {len(headings)} block(s) of CLAUDE.md the operator-rules block already carries "
+            f"(backup: {backup})")
+    return True
+
+
 def _claude_md(ak_path: str, gateway_url: str, mode: str) -> str:
     """Kit block for ~/.claude/CLAUDE.md: a short map; details live in skills."""
     return (
@@ -1241,6 +1259,8 @@ def configure(ctx: dict) -> list[Path]:
     if operator_rules.blocked():
         ui.warn(f"Claude Code: {operator_rules.blocked_warning()}")      # the existing block stays as it is
     elif _shared.write_managed_block(CLAUDE_MD_PATH, md):
+        written.append(CLAUDE_MD_PATH)
+    if not operator_rules.blocked() and _drop_rule_copies():
         written.append(CLAUDE_MD_PATH)
 
     # 4. Dynamic workflow scripts (/kit-plan, /kit-implement)

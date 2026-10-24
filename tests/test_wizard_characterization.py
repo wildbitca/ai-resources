@@ -146,6 +146,7 @@ PATHS = {
 
 _CLI_TEAM_TRANSCRIPT = [
     'banner',
+    'select: How should setup run?',
     'section 1/5 Your tools',
     'section 2/5 Main tool',
     'section 2/5 Sign-in',
@@ -174,6 +175,7 @@ EXPECTED = {
     "cli-team-subscription": _CLI_TEAM_TRANSCRIPT,
     "backend-cli-flag": [
         'banner',
+        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -196,6 +198,7 @@ EXPECTED = {
     ],
     "dry-run": [
         'banner',
+        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -215,6 +218,7 @@ EXPECTED = {
     ],
     "lanes-dry-run": [
         'banner',
+        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -236,7 +240,6 @@ EXPECTED = {
     ],
     "lanes-non-interactive-without-ack": [
         'banner',
-        'confirm: Use previous answers as defaults?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -248,7 +251,7 @@ EXPECTED = {
     ],
     "lanes-with-stored-ack": [
         'banner',
-        'confirm: Use previous answers as defaults?',
+        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -271,6 +274,7 @@ EXPECTED = {
     ],
     "no-lanes": [
         'banner',
+        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -292,7 +296,6 @@ EXPECTED = {
     ],
     "non-interactive-saved-state": [
         'banner',
-        'confirm: Use previous answers as defaults?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -310,7 +313,7 @@ EXPECTED = {
     ],
     "saved-litellm-migrated": [
         'banner',
-        'confirm: Use previous answers as defaults?',
+        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -331,7 +334,7 @@ EXPECTED = {
     ],
     "saved-openrouter-migrated": [
         'banner',
-        'confirm: Use previous answers as defaults?',
+        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -352,6 +355,7 @@ EXPECTED = {
     ],
     "single-model": [
         'banner',
+        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',

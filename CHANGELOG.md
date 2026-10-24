@@ -6,6 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.6.3] — 2026-10-24 — one question, then the recommended setup
+
+### Changed
+
+- **Setup asks one question, then takes the recommended answers.** "How should setup run?" offers the recommended setup
+  (OpenClaw's agents on the Anthropic API, the kit team on Claude Code), every question, or every question from empty
+  answers; it replaces "Use previous answers as defaults?". In the recommended run each prompt with an answer takes it and
+  prints one line; credentials, hand-overs and prompts with no answer are still asked. `setup --auto` skips the question.
+  ADR-0016 has an addendum.
+- **The worker step also moves orphan kit lanes.** A `kit-lane-*` agent the current lanes mode no longer lists kept running
+  on the API key, billed per token; it now moves to Claude Code with the `claude` worker, in the same question.
+
+### Fixed
+
+- **Setup no longer looks hung while it adds the kit-role agents.** Each `openclaw agents add` reloads the gateway (about
+  20 s) and fifteen ran with no output; setup now says how many it adds and prints one line per agent.
+- **The haiku lane stays on haiku.** The "no orchestrator on haiku" rule moved `kit-lane-cli-haiku55` to Sonnet; kit lanes
+  are now exempt, as kit-role agents already were.
+- **CLAUDE.md no longer loads the operator rules twice.** After the rules file was seeded, the rules rendered inside the
+  managed block while the original blocks stayed below it. Blocks the rendered rules carry word for word are removed after a
+  backup; an edited block stays.
+- **Review no longer labels every OpenClaw provider "API key (ANTHROPIC_API_KEY)".** That variable is Claude Code's; an
+  OpenClaw provider's key reads "API key".
+- **The recommended run never signs the Google acknowledgement** for the operator: without a valid one Antigravity stays off.
+
 ## [2.6.2] — 2026-10-24 — kit agents run through Claude Code without moving the operator's agents
 
 ### Fixed

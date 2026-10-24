@@ -90,6 +90,7 @@ def test_lanes_dry_run_makes_the_whole_run_a_dry_run(monkeypatch, flags):
     monkeypatch.setattr(wizard.ui, "banner", lambda *a, **k: None)
     monkeypatch.setattr(wizard.ui, "console", lambda: type("C", (), {"print": lambda self, *a, **k: None, "rule": lambda self, *a, **k: None})())
     monkeypatch.setattr(wizard.ui, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(wizard.ui, "select", lambda *a, **k: wizard.RUN_ASK)   # "How should setup run?"
     monkeypatch.setattr(wizard, "_preflight_selection", lambda a, s: 0)
     monkeypatch.setattr(wizard, "_preflight_compose", lambda: 0)
     monkeypatch.setattr(wizard, "_step2_cockpits", lambda s: 0)
