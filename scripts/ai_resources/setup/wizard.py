@@ -955,13 +955,15 @@ def _review_role_rows(s: state.SetupState) -> list:
         if "openclaw" in selected:
             refs = {role: openclaw_roles.resolve_ref(model) for role, _v, model in rows}
             routed, _fell = providers_mod.route_roles({r: ref for r, ref in refs.items() if ref},
-                                                      _oc.enabled_providers(s, _oc.MAIN_AGENT))
+                                                      _oc.role_providers(s))
             live = _oc.live_openclaw.live_agents(_oc.read_config(_oc.config_path()))
             for role, ref in routed.items():
                 aid = openclaw_roles.agent_id_for(role)
                 models[role] = live[aid][0] if aid in live else ref
             kinds = cockpit_auth.entry(s, "openclaw").get("live") or {}
             billed = {p: live_auth.billed_for_kind(k) for p, k in kinds.items()} if isinstance(kinds, dict) else {}
+            if "claude-cli" in _oc.kit_cli_runtimes(s):
+                billed["anthropic"] = claude_billed         # a Claude kit role runs through Claude Code (its sign-in)
         return team_view.review_role_rows(
             rows, doc, selected=selected, claude_billed=claude_billed, openclaw_models=models, openclaw_billed=billed,
             acks=lanes_render.valid_acks(s.profile.lane_acks), claude_effort=claude_effort,

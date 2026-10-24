@@ -87,3 +87,20 @@ provider and credentials step functions are deleted (the unreachable lifecycle s
 - The operator re-confirms the Google terms once.
 - Order of effects changes because writes are deferred; readers consult the planned state.
 - Rollback: one commit per step; reverting the D3 commit restores the overlay.
+
+## Addendum (2.6.2): the runtime is pinned per agent, never in the shared catalog
+
+OpenClaw resolves a runtime from the agent's own exact `models` entry first, then from `agents.defaults.models` (exact
+before the `provider/*` wildcard). The shared catalog is every agent's, so a `claude-cli` pin there moves the operator's
+agents too; and when the ref was already listed (as `anthropic/*` is on an API host) the kit wrote nothing and its lanes ran
+on the API. From 2.6.2:
+
+- The kit's own agents (`kit-role-*`, claude-cli `kit-lane-*`) get `claude-cli` in their own `models` map, fill-only. A role
+  on a Claude model runs through Claude Code when Claude Code is installed and not signed out, whatever OpenClaw's own
+  Anthropic sign-in is: the kit team runs on the operator's CLIs (ADR-0015). Review bills those rows to the Claude Code sign-in.
+- The `claude` worker is the operator's agent: setup offers to pin it to `claude-cli` (default No, never in a dry run or a
+  non-interactive run) and records the change.
+- The operator's agents are not touched: they keep OpenClaw's route, for example an API key whose organization receives the
+  monthly Claude Platform credits of a Max plan.
+- The lanes restore removes the pins the kit recorded (`runtime_pins_added`); catalog refs an older run recorded are still
+  removed.

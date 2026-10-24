@@ -228,6 +228,17 @@ def _catalog_entry(agent: Mapping[str, Any]) -> dict[str, Any] | None:
     return None      # an agy catalog stub is phase 3 and not written here
 
 
+def runtime_pins(entry: Mapping[str, Any] | None, refs: Iterable[str], shape: Mapping[str, Any]) -> dict[str, Any]:
+    """`{ref: shape}` for each ref the agent's OWN `models` map does not give a runtime yet (fill-only).
+
+    OpenClaw resolves an agent's exact model entry before `agents.defaults.models` (model-runtime-policy), so a pin here
+    moves this agent only: the operator's agents that run the same ref keep the runtime they have (the API, say)."""
+    own = _get(entry or {}, "models")
+    own = own if isinstance(own, Mapping) else {}
+    return {ref: copy.deepcopy(dict(shape)) for ref in refs
+            if isinstance(ref, str) and ref and not _get(own.get(ref) or {}, "agentRuntime", "id")}
+
+
 BUNDLE_MCP = "bundle-mcp"
 _SAFE_RE = re.compile(r"[^A-Za-z0-9_-]")
 
@@ -419,24 +430,27 @@ def build_patch(lanes: Mapping[str, Any], doc: Mapping[str, Any], workspaces: Ma
                 mcp_prev: Mapping[str, Iterable[str]] | None = None) -> dict[str, Any]:
     """The fill-only lanes patch for `doc`. Empty when nothing is missing.
 
-    Entries are only added for ids absent from the config; the catalog only for refs absent from
-    `agents.defaults.models`; `allowAgents` receives the ids missing from each NAMED orchestrator that
-    exists in the config. `agents.defaults.subagents` and every other agent are never touched.
+    Entries are only added for ids absent from the config; a claude-cli lane gets its runtime in its OWN
+    `models` map when that map does not give the ref one yet (never in `agents.defaults.models`, which every
+    agent shares); `allowAgents` receives the ids missing from each NAMED orchestrator that exists in the config.
+    `agents.defaults` and every other agent are never touched.
     """
     agents = lanes.get("agents") or {}
     wanted = ([i for i in ids if isinstance(i, str) and i.startswith(PREFIX) and i in agents]
               if ids is not None else kit_agent_ids(lanes))
     entries = _get(doc, "agents", "entries") or {}
-    catalog = _get(doc, "agents", "defaults", "models") or {}
     patch: dict[str, Any] = {}
     for aid in wanted:
+        live_entry = entries.get(aid) if isinstance(entries, Mapping) else None
         if aid not in entries:
             patch.setdefault("agents", {}).setdefault("entries", {})[aid] = _agent_entry(
                 aid, agents[aid], workspaces[aid])
         cat = _catalog_entry(agents[aid])
-        ref = agents[aid].get("model", "")
-        if cat is not None and ref and ref not in catalog:
-            patch.setdefault("agents", {}).setdefault("defaults", {}).setdefault("models", {})[ref] = cat
+        if cat is not None:
+            pins = runtime_pins(live_entry if isinstance(live_entry, Mapping) else None,
+                                [agents[aid].get("model", "")], cat)
+            if pins:
+                patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})["models"] = pins
         # MCP scoping (V7): kit-owned tokens in tools.deny; operator tokens are kept, stale kit tokens dropped.
         existing = entries.get(aid) if isinstance(entries, Mapping) else None
         current = list(_get(existing or {}, "tools", "deny") or [])
@@ -517,8 +531,19 @@ def restore_fragment(applied: Mapping[str, Any], doc: Mapping[str, Any], *,
                     patch["models"]["providers"] = None
             else:
                 patch["models"]["providers"][STUB_PROVIDER] = {"models": kept_models}
+    for aid, refs in sorted((applied.get("runtime_pins_added") or {}).items()):
+        if scope is not None and aid not in scope:
+            continue
+        own = _get(entries.get(aid) or {}, "models") if isinstance(entries, Mapping) else None
+        gone = [r for r in refs or [] if isinstance(own, Mapping) and r in own]
+        if gone:
+            models = patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {}) \
+                .setdefault("models", {})
+            for ref in gone:
+                models[ref] = None
     if scope is not None:
         return patch, []
+    # Before 2.6.2 a claude-cli lane put its runtime in the shared catalog: what those runs recorded is still removed.
     catalog = _get(doc, "agents", "defaults", "models") or {}
     removed = [ref for ref in applied.get("catalog_added") or [] if ref in catalog]
     for ref in removed:
@@ -734,12 +759,11 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
                     applied["provider_container_absent"] = _get(doc, "models", "providers") is None
                 if "provider_entry_absent" not in applied:
                     applied["provider_entry_absent"] = _get(doc, "models", "providers", STUB_PROVIDER) is None
-            cat = sorted(set(applied.get("catalog_added") or [])
-                         | set(((patch2.get("agents") or {}).get("defaults") or {}).get("models") or {}))
-            applied["catalog_added"] = cat
-            if cat and "catalog_container_absent" not in applied:
-                # The kit created `agents.defaults.models` itself: teardown removes the empty container too.
-                applied["catalog_container_absent"] = _get(doc, "agents", "defaults", "models") is None
+            pinned = dict(applied.get("runtime_pins_added") or {})
+            for aid, ent in ((patch2.get("agents") or {}).get("entries") or {}).items():
+                if aid in ready and isinstance(ent.get("models"), Mapping):
+                    pinned[aid] = sorted(set(pinned.get(aid, [])) | set(ent["models"]))
+            applied["runtime_pins_added"] = pinned
     if agy_home_wanted() and any((lanes["agents"].get(i) or {}).get("backend") == AGY_BACKEND for i in ready):
         prior = applied.get("agy_home")
         rec = ensure_agy_home(agy_home_path())

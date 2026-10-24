@@ -1479,8 +1479,10 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
                                                     dry_run=dry_run, run_changes=run_changes)
     drift_changed = _configure_agy_drift(s, doc if dry_run else read_config(path), dry_run=dry_run,
                                          run_changes=run_changes)
+    worker_changed = _configure_worker_runtime(s, doc if dry_run else read_config(path), dry_run=dry_run,
+                                               run_changes=run_changes)
     changed = (engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
-               or lanes_changed or roles_changed or drift_changed or skills_changed
+               or lanes_changed or roles_changed or drift_changed or worker_changed or skills_changed
                or plugin_changed)
     if not dry_run and run_changes:
         host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
@@ -1693,12 +1695,13 @@ def _configure_roles(ctx: dict, s: state.SetupState, doc: dict, ak_path: str, *,
                      run_changes: list[dict]) -> bool:
     """One `kit-role-*` agent per kit role (ADR-0015 S8). Only when the operator chose OpenClaw's providers."""
     from .. import cockpit_auth, effort as effort_mod
-    enabled = enabled_providers(s, MAIN_AGENT)          # kit-role agents inherit the operator's main agent's auth
+    enabled = role_providers(s)
     if enabled is None:
         return False
     if not enabled:
         ui.info("Kit-role agents: not written, OpenClaw reports no usable provider.")
         return False
+    cli_runtimes = kit_cli_runtimes(s)
     executors = ctx.get("executors") or {}
 
     def confirm(msg: str) -> bool:
@@ -1710,7 +1713,7 @@ def _configure_roles(ctx: dict, s: state.SetupState, doc: dict, ak_path: str, *,
         catalog=catalog, effort_table=effort_mod.table_for_state(s), methods=cockpit_auth.providers(s),
         apply_patch=_lanes_apply, register_agent=_lanes_register, classify=_lanes_classify,
         change_records=openclaw_host.change_records, run_changes=run_changes, dry_run=dry_run,
-        info=ui.info, warn=ui.warn, error=ui.error)
+        info=ui.info, warn=ui.warn, error=ui.error, cli_runtimes=cli_runtimes)
 
 
 def _configure_agy_drift(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:
@@ -1727,6 +1730,103 @@ def _configure_agy_drift(s: state.SetupState, doc: dict, *, dry_run: bool, run_c
         change_records=openclaw_host.change_records, run_changes=run_changes, interactive=interactive,
         dry_run=dry_run, info=ui.info, warn=ui.warn, error=ui.error)
     return bool(applied)
+
+
+WORKER_AGENT = "claude"
+"""The worker the operator's agents hand code and team work to (`subagents.allowAgents`)."""
+
+
+def kit_cli_runtimes(s: state.SetupState) -> tuple[str, ...]:
+    """The CLI runtimes the kit's own agents may run on: `claude-cli` when Claude Code is installed and not signed out.
+
+    Only kit agents (roles, claude-cli lanes) and a confirmed worker get it: the operator's agents keep OpenClaw's own
+    route, the Anthropic API for instance, so their billing never moves without a question."""
+    from .. import cockpit_auth, live_auth
+    cs = s.cockpits.get("claude") or state.CockpitState()
+    if not cs.installed or cockpit_auth.live_kind(s, "claude") == live_auth.NONE:
+        return ()
+    return ("claude-cli",)
+
+
+def role_providers(s: state.SetupState) -> "list[str] | None":
+    """The providers a kit-role agent may run on: the main agent's (they inherit its auth), plus Anthropic when Claude
+    Code can run the Claude roles (`kit_cli_runtimes`). None and [] keep their meaning (never asked; nothing usable)."""
+    enabled = enabled_providers(s, MAIN_AGENT)
+    if enabled and "claude-cli" in kit_cli_runtimes(s) and "anthropic" not in enabled:
+        return [*enabled, "anthropic"]
+    return enabled
+
+
+def worker_api_refs(doc: dict) -> list[str]:
+    """The Anthropic refs (primary, then fallbacks) the `claude` worker runs on OpenClaw's own route. Pure.
+
+    A ref the worker's own `models` map gives a runtime is the operator's choice and is left out, and so is one the
+    shared `agents.defaults.models` already runs through claude-cli. Empty when there is no worker."""
+    entry = _get(doc, "agents", "entries", WORKER_AGENT)
+    if not isinstance(entry, dict):
+        return []
+    model = entry.get("model")
+    if isinstance(model, str):
+        refs = [model]
+    elif isinstance(model, dict):
+        refs = [model.get("primary"), *(model.get("fallbacks") or [])]
+    else:
+        refs = []
+    own = entry.get("models") if isinstance(entry.get("models"), dict) else {}
+    shared = _get(doc, "agents", "defaults", "models") or {}
+    out: list[str] = []
+    for ref in refs:
+        if not (isinstance(ref, str) and ref.startswith("anthropic/")) or ref in out:
+            continue
+        if _get(own.get(ref) or {}, "agentRuntime", "id"):
+            continue
+        if isinstance(shared, dict) and _get(shared.get(ref) or {}, "agentRuntime", "id") == "claude-cli":
+            continue
+        out.append(ref)
+    return out
+
+
+def worker_runtime_patch(refs: list[str]) -> dict:
+    """The fill-only patch that runs `refs` of the worker through claude-cli: its own `models` map, nothing shared."""
+    return {"agents": {"entries": {WORKER_AGENT: {"models": {r: {"agentRuntime": {"id": "claude-cli"}} for r in refs}}}}}
+
+
+def _configure_worker_runtime(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:
+    """Offer to run the `claude` worker through Claude Code (ADR-0016 addendum). Asked, default No; never unattended.
+
+    The operator's agents keep their route (the API key, where the Claude Platform credits of a Max plan apply); the
+    work they hand to the worker then runs on the Claude sign-in, like the kit roles and the claude-cli lanes."""
+    refs = worker_api_refs(doc)
+    if not refs or "claude-cli" not in kit_cli_runtimes(s):
+        return False
+    line = (f"OpenClaw's `{WORKER_AGENT}` worker (the agent your agents hand code work to) runs {', '.join(refs)} on "
+            "OpenClaw's own Anthropic route (an API key is billed per token).")
+    if dry_run:
+        ui.info(line + " Dry run: setup would offer to run it through Claude Code (claude-cli, your Claude sign-in).")
+        return False
+    if ui.is_non_interactive():
+        ui.info(line + " Run `ai-resources setup` from a terminal to move it to Claude Code.")
+        return False
+    ui.info(line)
+    if not ui.confirm("Run the worker through Claude Code instead (claude-cli, billed to your Claude sign-in)? "
+                      "Your other agents keep their route.", default=False):
+        ui.info("Worker: left as it is.")
+        return False
+    patch = worker_runtime_patch(refs)
+    restart = _lanes_classify(patch)
+    if restart:
+        ui.warn("Worker runtime keys need a gateway restart and were NOT written (the kit never restarts a live "
+                "gateway): " + ", ".join(sorted(restart)))
+        return False
+    ok, out = _lanes_apply(patch, dry_run=True)
+    if ok:
+        ok, out = _lanes_apply(patch)
+    if not ok:
+        ui.error(f"OpenClaw rejected the worker runtime patch: {ui.safe_excerpt(out, 300, tail=True)}")
+        return False
+    run_changes.extend(openclaw_host.change_records(dict(doc), patch, None, "worker"))
+    ui.info(f"Worker `{WORKER_AGENT}`: runs through Claude Code (claude-cli) from its next session.")
+    return True
 
 
 def _teardown_roles(s: state.SetupState, doc: dict) -> bool:

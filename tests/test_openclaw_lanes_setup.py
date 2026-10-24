@@ -131,19 +131,25 @@ def test_writes_only_kit_entries_catalog_and_allow_agents_on_named_orchestrators
     assert after["agents"]["entries"]["claude"] == before["agents"]["entries"]["claude"]
     allow = after["agents"]["entries"]["main"]["subagents"]["allowAgents"]
     assert allow == ["claude", "kit-lane-cli-opus55", "kit-lane-cli-sonnet55"]
-    models = after["agents"]["defaults"]["models"]
-    assert models[SONNET] == {"agentRuntime": {"id": "claude-cli"}}
-    assert models[OPUS] == {"agentRuntime": {"id": "claude-cli"}}
+    assert "models" not in after["agents"]["defaults"]               # the shared catalog is every agent's: untouched
+    entries = after["agents"]["entries"]
+    assert entries["kit-lane-cli-sonnet55"]["models"] == {SONNET: {"agentRuntime": {"id": "claude-cli"}}}
+    assert entries["kit-lane-cli-opus55"]["models"] == {OPUS: {"agentRuntime": {"id": "claude-cli"}}}
+    assert "models" not in entries["main"] and "models" not in entries["other"]
     entry = after["agents"]["entries"]["kit-lane-cli-sonnet55"]
     assert entry["model"]["primary"] == SONNET
 
 
 def test_patch_is_fill_only_and_never_touches_channels(host):
     doc = host.doc()
-    doc["agents"]["defaults"]["models"] = {SONNET: {"alias": "mine"}}
+    doc["agents"]["defaults"]["models"] = {SONNET: {"agentRuntime": {"id": "openclaw"}}}     # the operator's API route
+    doc["agents"]["entries"]["kit-lane-cli-opus55"] = {"name": "kit-lane-cli-opus55",
+                                                       "models": {OPUS: {"agentRuntime": {"id": "mine"}}}}
     host.path.write_text(json.dumps(doc))
     patch = openclaw_lanes.build_patch(LANES, doc, {i: host.path.parent / i for i in LANES["agents"]})
-    assert SONNET not in patch["agents"]["defaults"]["models"]          # present: left alone
+    assert "models" not in patch["agents"].get("defaults", {})          # the shared catalog is never written
+    assert patch["agents"]["entries"]["kit-lane-cli-sonnet55"]["models"] == {SONNET: {"agentRuntime": {"id": "claude-cli"}}}
+    assert "models" not in patch["agents"]["entries"].get("kit-lane-cli-opus55", {})   # its own pin: left alone
     assert "channels" not in json.dumps(patch)
     openclaw_host.assert_channels_safe(patch, [])
     assert "subagents" not in patch["agents"].get("defaults", {})        # agents.defaults.subagents untouched
@@ -271,7 +277,7 @@ def test_every_lane_leaf_enters_the_run_changes(host):
     _run(s, host, run_changes=changes)
     paths = {".".join(c["path"]) for c in changes}
     assert "agents.entries.main.subagents.allowAgents" in paths
-    assert f"agents.defaults.models.{SONNET}.agentRuntime.id" in paths
+    assert f"agents.entries.kit-lane-cli-sonnet55.models.{SONNET}.agentRuntime.id" in paths
     assert all(c["action"] == "lanes" for c in changes)
     # and the restore patch of those records puts the previous values back
     patch, _ = openclaw_host.restore_patch(changes)
