@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.6.6] — 2026-10-24 — the registration shell includes its identity
+
+### Fixed
+
+- **The bare entry `openclaw agents add` leaves is recognized with its `identity`.** That command also writes
+  `identity: {name: <id>}`, so the 2.6.5 shell check never matched a live entry and the 13 unfinished kit roles stayed
+  on the Anthropic API. An identity other than the bare name is still the operator's.
+
 ## [2.6.5] — 2026-10-24 — every kit role runs through Claude Code
 
 ### Fixed

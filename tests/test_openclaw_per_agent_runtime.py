@@ -237,7 +237,8 @@ def test_a_bare_string_role_the_kit_wrote_follows_a_profile_change(tmp_path):
 
 
 def test_the_bare_entry_agents_add_left_behind_gets_the_kits_fields(tmp_path):
-    shell = {"name": "kit-role-reviewer", "workspace": str(tmp_path), "agentDir": "/x/agent", "model": SONNET}
+    shell = {"name": "kit-role-reviewer", "identity": {"name": "kit-role-reviewer"}, "workspace": str(tmp_path),
+             "agentDir": "/x/agent", "model": SONNET}
     doc = {"agents": {"entries": {"kit-role-reviewer": shell}}}
     patch, kept = openclaw_roles.build_patch([_role(SONNET, "medium")], doc, {"kit-role-reviewer": tmp_path},
                                              {}, {"anthropic": "api_key"}, ("claude-cli",))
@@ -253,3 +254,12 @@ def test_an_entry_the_operator_shaped_is_not_a_shell(tmp_path):
     patch, kept = openclaw_roles.build_patch([_role(SONNET, "medium")], doc, {"kit-role-reviewer": tmp_path},
                                              {}, {"anthropic": "api_key"}, ("claude-cli",))
     assert kept == ["kit-role-reviewer"] and patch == {}
+
+
+def test_an_identity_the_operator_set_keeps_the_entry_theirs(tmp_path):
+    live = {"name": "kit-role-reviewer", "identity": {"name": "Rev", "emoji": "x"}, "workspace": str(tmp_path),
+            "model": SONNET}
+    doc = {"agents": {"entries": {"kit-role-reviewer": live}}}
+    _, kept = openclaw_roles.build_patch([_role(SONNET, "medium")], doc, {"kit-role-reviewer": tmp_path},
+                                         {}, {"anthropic": "api_key"}, ("claude-cli",))
+    assert kept == ["kit-role-reviewer"]

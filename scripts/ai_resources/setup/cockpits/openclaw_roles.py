@@ -149,13 +149,14 @@ def _entry(agent: RoleAgent, workspace: Path, runtime: str = "") -> dict[str, An
     return entry
 
 
-_SHELL_KEYS = frozenset({"name", "workspace", "agentDir", "model"})
+_SHELL_KEYS = frozenset({"name", "identity", "workspace", "agentDir", "model"})
 
 
 def _registration_shell(live: Mapping[str, Any], agent: RoleAgent, workspace: Path) -> bool:
     """True for the bare entry `openclaw agents add` writes for a kit role: only its keys, the kit's workspace and model."""
+    identity = live.get("identity", {"name": agent.id})
     return (set(live) <= _SHELL_KEYS and live.get("workspace") == str(workspace)
-            and _primary(live.get("model")) == agent["model"])
+            and _primary(live.get("model")) == agent["model"] and identity == {"name": agent.id})
 
 
 def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Mapping[str, Path],
