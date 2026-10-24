@@ -17,7 +17,8 @@ ALLOWED_ASYMMETRIES: dict[str, tuple[str, ...]] = {
     "account_gate": (r"(^|\.)(acks|gates)(\.|$)", r"(^|\.)agy_gates(\.|$)"),
     "pool_and_weight": (r"(^|\.)pool$", r"(^|\.)pools?(\.|$)", r"(^|\.)weights?(\.|$)"),
     "agent_id_kind": (),                       # `kit-lane-cli-*` vs `kit-lane-agy-*`: normalised, see ID_KIND
-    "catalog_entry": (r"^agents\.defaults\.models(\.|$)", r"^models(\.|$)"),
+    "catalog_entry": (r"^agents\.defaults\.models(\.|$)", r"^agents\.entries\.[^.]+\.models(\.|$)",
+                      r"^models(\.|$)"),
     "backend_id_and_argv_env": (r"(^|\.)backend$", r"(^|\.)(argv|env)(\.|$)"),
     "process_flags": (r"(^|\.)process_flags(\.|$)", r"(^|\.)permission_mode$"),
     "extra_tools_deny": (r"(^|\.)tools\.deny(\[\])?$", r"(^|\.)(tool|mcp)_deny_added(\.|$)"),

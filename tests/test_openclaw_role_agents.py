@@ -67,7 +67,8 @@ def _merge(dst, src):
             dst[k] = copy.deepcopy(v)
 
 
-def run(s, host, tmp_path, *, enabled=("anthropic",), dry_run=False, methods=None, warns=None, env=None):
+def run(s, host, tmp_path, *, enabled=("anthropic",), dry_run=False, methods=None, warns=None, env=None,
+        cli_runtimes=()):
     ex = balanced()
     return R.configure(
         s, host.doc, config_root=tmp_path / "oc", by_role=ex["by_role"], by_persona={}, ak_path="/kit",
@@ -75,7 +76,8 @@ def run(s, host, tmp_path, *, enabled=("anthropic",), dry_run=False, methods=Non
         methods=methods or {"anthropic": "api_key"}, apply_patch=host.apply, register_agent=host.register,
         classify=lambda p: host.restart, change_records=lambda *a, **k: host.records.append(a) or [],
         run_changes=[], dry_run=dry_run, info=lambda m: None, warn=(warns.append if warns is not None else (lambda m: None)),
-        error=lambda m: (_ for _ in ()).throw(AssertionError(m)), env=env if env is not None else {})
+        error=lambda m: (_ for _ in ()).throw(AssertionError(m)), env=env if env is not None else {},
+        cli_runtimes=cli_runtimes)
 
 
 def test_fifteen_role_agents_carry_the_profile_models_and_the_mapped_thinking():
@@ -162,15 +164,43 @@ def test_a_profile_change_moves_the_kit_value_but_an_operator_edit_is_kept(tmp_p
     assert any("kit-role-verifier" in w for w in warns) and any("kit-role-planner" in w for w in warns)
 
 
-def test_a_cli_provider_gets_its_runtime_in_the_catalog_fill_only(tmp_path):
+def _pins(doc):
+    return {aid: e["models"] for aid, e in doc["agents"]["entries"].items() if "models" in e}
+
+
+def test_a_cli_provider_gets_its_runtime_in_each_role_agent_and_never_in_the_shared_catalog(tmp_path):
+    host = Host({"agents": {"defaults": {"models": {"anthropic/*": {"agentRuntime": {"id": "openclaw"}}}}}})
+    run(state.SetupState(), host, tmp_path, methods={"anthropic": "cli"})
+    assert host.doc["agents"]["defaults"]["models"] == {"anthropic/*": {"agentRuntime": {"id": "openclaw"}}}
+    pins = _pins(host.doc)
+    assert pins and all(aid.startswith("kit-role-") for aid in pins)
+    for aid, models in pins.items():
+        primary = host.doc["agents"]["entries"][aid]["model"]["primary"]
+        assert models == {primary: {"agentRuntime": {"id": "claude-cli"}}}, aid
+
+
+def test_a_role_on_claude_runs_through_claude_code_when_it_is_signed_in_even_with_an_api_key_in_openclaw(tmp_path):
     host = Host()
+    run(state.SetupState(), host, tmp_path, methods={"anthropic": "api_key"}, cli_runtimes=("claude-cli",))
+    pins = _pins(host.doc)
+    assert pins and {r["agentRuntime"]["id"] for m in pins.values() for r in m.values()} == {"claude-cli"}
+
+
+def test_without_a_cli_sign_in_a_role_keeps_openclaws_own_route(tmp_path):
+    host = Host()
+    run(state.SetupState(), host, tmp_path, methods={"anthropic": "api_key"})
+    assert _pins(host.doc) == {}
+
+
+def test_an_operator_pin_on_a_role_agent_is_kept(tmp_path):
+    host = Host()
+    run(state.SetupState(), host, tmp_path, methods={"anthropic": "cli"})
+    aid, models = next(iter(_pins(host.doc).items()))
+    ref = next(iter(models))
+    host.doc["agents"]["entries"][aid]["models"] = {ref: {"agentRuntime": {"id": "mine"}}}
     s = state.SetupState()
     run(s, host, tmp_path, methods={"anthropic": "cli"})
-    models = host.doc["agents"]["defaults"]["models"]
-    assert models["anthropic/claude-sonnet-5-5"] == {"agentRuntime": {"id": "claude-cli"}}
-    host2 = Host({"agents": {"defaults": {"models": {"anthropic/claude-sonnet-5-5": {"agentRuntime": {"id": "mine"}}}}}})
-    run(state.SetupState(), host2, tmp_path / "b", methods={"anthropic": "cli"})
-    assert host2.doc["agents"]["defaults"]["models"]["anthropic/claude-sonnet-5-5"] == {"agentRuntime": {"id": "mine"}}
+    assert host.doc["agents"]["entries"][aid]["models"] == {ref: {"agentRuntime": {"id": "mine"}}}
 
 
 def test_without_a_provider_answer_nothing_is_written(tmp_path):

@@ -40,7 +40,8 @@ SHORT = {
     "crossplane-upjet-maintainer": "crossplane",
 }
 DOMAIN_SHORT = {"dart-flutter": "flutter", "api-platform": "api"}
-# Providers that sign in through a CLI backend run their models through that runtime (catalog entry, fill-only).
+# Providers that sign in through a CLI backend run their models through that runtime: a pin in the role agent's OWN
+# `models` map (fill-only), never in `agents.defaults.models`, so the operator's agents keep the runtime they have.
 RUNTIME_OF_PROVIDER = {"anthropic": "claude-cli", "openai": "codex"}
 
 
@@ -119,9 +120,27 @@ def _get(doc: Any, *keys: str) -> Any:
     return cur
 
 
-def _entry(agent: RoleAgent, workspace: Path) -> dict[str, Any]:
+def runtime_for(agent: RoleAgent, methods: Mapping[str, str], cli_runtimes: Iterable[str] = ()) -> str:
+    """The CLI runtime a role agent runs its model through, or "" for OpenClaw's own route of that provider.
+
+    A provider OpenClaw signs in through a CLI backend uses it; so does a runtime in `cli_runtimes`, the CLIs the
+    operator has signed in (Claude Code: the kit team runs on the operator's CLIs, ADR-0015)."""
+    provider = providers_mod.provider_of_ref(agent["model"])
+    runtime = RUNTIME_OF_PROVIDER.get(provider) or ""
+    if runtime and (methods.get(provider) == "cli" or runtime in set(cli_runtimes)):
+        return runtime
+    return ""
+
+
+def _pin(runtime: str) -> dict[str, Any]:
+    return {"agentRuntime": {"id": runtime}}
+
+
+def _entry(agent: RoleAgent, workspace: Path, runtime: str = "") -> dict[str, Any]:
     entry: dict[str, Any] = {"name": agent.id, "description": agent["description"][:200], "workspace": str(workspace),
                              "model": {"primary": agent["model"]}, "skills": list(agent["skills"])}
+    if runtime:
+        entry["models"] = {agent["model"]: _pin(runtime)}
     if agent["thinking"]:
         entry["thinkingDefault"] = agent["thinking"]
     if agent.get("role") in roles_policy.REPORT_ROLES:
@@ -130,14 +149,15 @@ def _entry(agent: RoleAgent, workspace: Path) -> dict[str, Any]:
 
 
 def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Mapping[str, Path],
-                recorded: Mapping[str, Any], methods: Mapping[str, str]) -> tuple[dict[str, Any], list[str]]:
+                recorded: Mapping[str, Any], methods: Mapping[str, str],
+                cli_runtimes: Iterable[str] = ()) -> tuple[dict[str, Any], list[str]]:
     """(fill-only patch, ids kept because the operator changed them). Empty patch when nothing is missing.
 
     A new id gets its whole entry. An existing id is updated only when it is a recorded kit id whose live model and
     thinking still equal what the kit last wrote (so a profile change moves it); otherwise it is the operator's and is
-    kept. `agents.defaults.models.<ref>` gains the CLI runtime of a provider that signs in through a CLI backend."""
+    kept. A role whose model runs through a CLI (`runtime_for`) gets that runtime in its own `models` map; a model the
+    kit moves away from loses the pin the kit gave it."""
     entries = _get(doc, "agents", "entries") or {}
-    catalog = _get(doc, "agents", "defaults", "models") or {}
     last = recorded.get("models") or {}
     last_think = recorded.get("thinking") or {}
     patch: dict[str, Any] = {}
@@ -145,8 +165,9 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
     for agent in agents:
         aid = agent.id
         live = entries.get(aid) if isinstance(entries, Mapping) else None
+        runtime = runtime_for(agent, methods, cli_runtimes)
         if not isinstance(live, Mapping):
-            patch.setdefault("agents", {}).setdefault("entries", {})[aid] = _entry(agent, workspaces[aid])
+            patch.setdefault("agents", {}).setdefault("entries", {})[aid] = _entry(agent, workspaces[aid], runtime)
         else:
             live_model = _get(live, "model", "primary")
             live_think = live.get("thinkingDefault", "")
@@ -159,14 +180,19 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
                     ent["thinkingDefault"] = agent["thinking"]
                 elif live_think:
                     ent["thinkingDefault"] = None
+                own = _get(live, "models") or {}
+                old_ref = last.get(aid)
+                if old_ref and old_ref != agent["model"] and _get(own.get(old_ref) or {}, "agentRuntime", "id") \
+                        in RUNTIME_OF_PROVIDER.values():
+                    ent["models"] = {old_ref: None}                 # the pin of a model this agent no longer runs
                 patch.setdefault("agents", {}).setdefault("entries", {})[aid] = ent
             else:
                 kept.append(aid)
-        runtime = RUNTIME_OF_PROVIDER.get(providers_mod.provider_of_ref(agent["model"]))
-        provider = providers_mod.provider_of_ref(agent["model"])
-        if runtime and methods.get(provider) == "cli" and agent["model"] not in catalog:
-            patch.setdefault("agents", {}).setdefault("defaults", {}).setdefault("models", {})[agent["model"]] = {
-                "agentRuntime": {"id": runtime}}
+                continue
+        own = _get(live, "models") or {}
+        if runtime and not _get(own.get(agent["model"]) or {}, "agentRuntime", "id"):
+            ent = patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})
+            ent.setdefault("models", {})[agent["model"]] = _pin(runtime)
     return patch, kept
 
 
@@ -211,7 +237,8 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
               change_records: Callable[[dict, dict, Any, str], list[dict]],
               run_changes: list[dict] | None = None, dry_run: bool = False,
               info: Callable[[str], None] = print, warn: Callable[[str], None] = print,
-              error: Callable[[str], None] = print, env: dict | None = None) -> bool:
+              error: Callable[[str], None] = print, env: dict | None = None,
+              cli_runtimes: Iterable[str] = ()) -> bool:
     """Write (or update, fill-only) the kit-role agents. True when the config changed. Nothing is written in a dry run."""
     o = s.openclaw
     if enabled is None:
@@ -229,7 +256,8 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
         return False
     recorded = copy.deepcopy(o.role_agents_applied) if o.role_agents_applied else {}
     workspaces = {a.id: root / a.id for a in agents}
-    patch, kept = build_patch(agents, doc, workspaces, recorded, methods)
+    cli_runtimes = tuple(cli_runtimes)
+    patch, kept = build_patch(agents, doc, workspaces, recorded, methods, cli_runtimes)
     for aid in kept:
         warn(f"kit-role agent {aid}: your model or thinking setting is kept (the kit changes only values it wrote)")
     entries = _get(doc, "agents", "entries") or {}
@@ -282,12 +310,14 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     for aid in ready:
         ents.setdefault(aid, {})
     live_agents = [a for a in agents if a.id in ready]
-    patch2, _kept = build_patch(live_agents, doc2, workspaces, {**recorded, "created_agent_ids": created}, methods)
+    patch2, _kept = build_patch(live_agents, doc2, workspaces, {**recorded, "created_agent_ids": created}, methods,
+                                cli_runtimes)
     # A freshly registered agent only needs its fields filled: the entry `agents add` made is empty of ours.
     for a in live_agents:
         if a.id in new_ids and a.id in ready:
             patch2.setdefault("agents", {}).setdefault("entries", {})[a.id] = {
-                k: v for k, v in _entry(a, workspaces[a.id]).items() if k != "name"}
+                k: v for k, v in _entry(a, workspaces[a.id], runtime_for(a, methods, cli_runtimes)).items()
+                if k != "name"}
     changed = bool(created and set(created) - set(recorded.get("created_agent_ids") or []))
     if patch2:
         ok, out = apply_patch(patch2)
