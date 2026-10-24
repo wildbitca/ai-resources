@@ -283,6 +283,10 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     created_ws = list(recorded.get("created_workspaces") or [])
     shas = dict(recorded.get("prompt_sha256") or {})
     ready: list[str] = []
+    if new_ids:
+        # each `openclaw agents add` hot-reloads the gateway (~20 s): without a line per agent this looks like a hang
+        info(f"Kit roles: adding {len(new_ids)} agent(s); each one reloads the gateway, about 20 s apiece")
+    added = 0
     for agent in agents:
         aid = agent.id
         ws = workspaces[aid]
@@ -295,6 +299,8 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
         if aid in entries:
             ready.append(aid)
             continue
+        added += 1
+        info(f"  ({added}/{len(new_ids)}) {aid}")
         status = register_agent(aid, ws, agent["model"])
         if status == "added":
             created.append(aid)

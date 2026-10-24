@@ -8,12 +8,13 @@ import pytest
 from ai_resources.setup import ui
 
 _SIGNATURES = {
-    "select": "(message: 'str', choices: 'list[Any]', default: 'Any | None' = None, instruction: 'str' = '') -> 'Any'",
+    "select": "(message: 'str', choices: 'list[Any]', default: 'Any | None' = None, instruction: 'str' = '', "
+              "recommended: 'Any | None' = None) -> 'Any'",
     "checkbox": "(message: 'str', choices: 'list[Any]', default: 'list[Any] | None' = None, "
                 "instruction: 'str' = '') -> 'list[Any]'",
     "text": "(message: 'str', default: 'str' = '', validate: 'Callable[[str], bool | str] | None' = None) -> 'str'",
     "password": "(message: 'str', validate: 'Callable[[str], bool | str] | None' = None) -> 'str'",
-    "confirm": "(message: 'str', default: 'bool' = True) -> 'bool'",
+    "confirm": "(message: 'str', default: 'bool' = True, recommended: 'bool | None' = None) -> 'bool'",
     "section": "(num: 'int', total: 'int', title: 'str') -> 'None'",
     "info": "(msg: 'str') -> 'None'",
     "ok": "(msg: 'str') -> 'None'",

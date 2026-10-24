@@ -104,3 +104,18 @@ on the API. From 2.6.2:
   monthly Claude Platform credits of a Max plan.
 - The lanes restore removes the pins the kit recorded (`runtime_pins_added`); catalog refs an older run recorded are still
   removed.
+
+## Addendum (2.6.3): one question, then the recommended answers
+
+The operator answered dozens of yes/no prompts whose right answer follows from the decisions above. From 2.6.3 setup asks one
+question first: take the recommended answers ("OpenClaw's agents on the Anthropic API, the kit team on Claude Code"), ask
+every question, or start from empty answers. `setup --auto` picks the first without asking.
+
+- In the recommended run every prompt with an answer takes it (the call site's `recommended=`, else its default) and prints
+  one line. A prompt with no answer is still asked, and so is a credential or a hand-over to a tool's own sign-in.
+- The recommended answer moves the `claude` worker to `claude-cli`, and with it every `kit-lane-*` agent still on OpenClaw's
+  API route (a lane an older lanes mode left behind). The operator's agents keep their route.
+- The Google acknowledgement (ADR-0007) is the operator's signature: the recommended run never signs it. Without a valid one
+  Antigravity stays off for that run, said in one line.
+- The runbook B2.1 rule (no orchestrator on haiku) skips `kit-lane-*` agents as it skips `kit-role-*`: a haiku lane runs
+  haiku by design.

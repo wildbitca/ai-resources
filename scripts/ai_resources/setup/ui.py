@@ -72,6 +72,29 @@ def is_assume_yes() -> bool:
     return _ASSUME_YES
 
 
+# --- auto mode -------------------------------------------------------------------
+# The operator answered the one up-front question with "recommended": every prompt that has an answer (its
+# `recommended=` when the call site names one, else its default) takes it and prints one line; a prompt with no
+# answer still asks. Unlike non-interactive, the run stays attended: credentials and hand-overs still work.
+_AUTO = False
+
+
+def set_auto(enabled: bool = True) -> None:
+    global _AUTO
+    _AUTO = enabled
+
+
+def is_auto() -> bool:
+    return _AUTO
+
+
+def _decided(message: str, answer: Any) -> None:
+    label = answer if isinstance(answer, str) else ("yes" if answer is True else "no" if answer is False else
+                                                    ", ".join(map(str, answer)) if isinstance(answer, list) else
+                                                    str(answer))
+    detail(f"{' '.join(str(message).split())[:110]} -> {label}")
+
+
 def stdin_is_a_terminal() -> bool:
     """False when nothing can answer a prompt — a pipe, a CI job, a background run."""
     try:
@@ -1090,8 +1113,13 @@ _QSTYLE = Style(qstyle_rules(no_color())) if _HAS_QUESTIONARY else None
 
 
 def select(message: str, choices: list[Any], default: Any | None = None,
-           instruction: str = "") -> Any:
+           instruction: str = "", recommended: Any | None = None) -> Any:
     """Single-select. choices can be strings or questionary.Choice objects."""
+    if _AUTO and not _NON_INTERACTIVE and (recommended if recommended is not None else default) is not None:
+        pick = recommended if recommended is not None else default
+        title = next((getattr(c, "title", c) for c in choices if getattr(c, "value", c) == pick), pick)
+        _decided(message, clean_text(title) if isinstance(title, str) else pick)
+        return pick
     if _NON_INTERACTIVE:
         if default is not None:
             return default
@@ -1121,6 +1149,9 @@ def checkbox(message: str, choices: list[Any], default: list[Any] | None = None,
              instruction: str = "") -> list[Any]:
     if _NON_INTERACTIVE:
         return list(default or [])
+    if _AUTO and default is not None:
+        _decided(message, list(default))
+        return list(default)
     if not _HAS_QUESTIONARY:
         print(message)
         for i, c in enumerate(choices):
@@ -1163,6 +1194,9 @@ def _edit_hint() -> dict:
 def text(message: str, default: str = "", validate: Callable[[str], bool | str] | None = None) -> str:
     if _NON_INTERACTIVE:
         return default
+    if _AUTO and default:
+        _decided(message, default)
+        return default
     if not _HAS_QUESTIONARY:
         prompt = f"{message}"
         if default:
@@ -1198,9 +1232,13 @@ def password(message: str, validate: Callable[[str], bool | str] | None = None) 
     return _ask(questionary.password(message, validate=validate, style=_QSTYLE, **_edit_hint()))
 
 
-def confirm(message: str, default: bool = True) -> bool:
+def confirm(message: str, default: bool = True, recommended: bool | None = None) -> bool:
     if _NON_INTERACTIVE:
         return default
+    if _AUTO:
+        answer = default if recommended is None else recommended
+        _decided(message, answer)
+        return answer
     if not _HAS_QUESTIONARY:
         suf = "Y/n" if default else "y/N"
         ans = _input(f"{message} [{suf}]: ").strip().lower()

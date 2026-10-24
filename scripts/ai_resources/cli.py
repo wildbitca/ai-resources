@@ -63,6 +63,7 @@ Review lists the answers by name (Sign-in, Team, Tools; a key is never shown or 
 back to that screen and returns to the review; More options holds parallel runs and the OpenClaw questions.
 
 Unattended and preview runs:
+  --auto              take the recommended answer everywhere; only credentials and sign-offs are asked
   --non-interactive   use saved answers, never prompt (a prompt with no default aborts)
   --dry-run           render the targets and print a masked unified diff; nothing is written
 Parallel runs (subscription lanes, ADR-0007, off by default): --lanes enables, --no-lanes clears, --lanes-dry-run
@@ -120,6 +121,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=_SETUP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    p_st.add_argument("--auto", action="store_true",
+                      help="Take the recommended answer to every question (credentials and sign-offs are still asked)")
     p_st.add_argument("--non-interactive", action="store_true",
                       help="Use saved answers without prompting (for CI)")
     p_st.add_argument("--profile", default="",

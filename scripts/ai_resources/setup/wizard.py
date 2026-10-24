@@ -157,6 +157,35 @@ def run(args: argparse.Namespace) -> int:
             # The lock is already released (locked_run is a context manager). The step name and the list of
             # real side effects are read here, inside the scope, before prompt_scope restores them.
             return _report_cancel(e)
+        finally:
+            ui.set_auto(False)
+
+
+RUN_AUTO, RUN_ASK, RUN_FRESH = "auto", "ask", "fresh"
+
+
+def _ask_run_mode(args: argparse.Namespace, is_first: bool) -> "str | None":
+    """The one up-front question (2.6.3): take the recommended answer everywhere, or ask each question.
+
+    Recommended is the design the operator chose (ADR-0016 addendum): OpenClaw's own agents stay on the Anthropic API
+    key, the kit's team (the worker, kit roles, lanes) runs on Claude Code, live config wins over saved answers, and
+    nothing that is the operator's own signature (the Google acknowledgement) or credential is answered for them.
+    `--auto` picks it without asking; `--non-interactive` and a dry run keep their own behaviour."""
+    if getattr(args, "auto", False):
+        ui.set_auto(True)
+        return RUN_AUTO
+    if ui.is_non_interactive():
+        return RUN_ASK
+    choices = [ui.Choice("Recommended: OpenClaw's agents on the Anthropic API, the kit team on Claude Code "
+                         "(no more questions)", value=RUN_AUTO),
+               ui.Choice("Ask me every question", value=RUN_ASK)]
+    if not is_first:
+        choices.append(ui.Choice("Ask me every question, starting from empty answers", value=RUN_FRESH))
+    mode = ui.select("How should setup run?", choices, default=RUN_AUTO)
+    if mode == RUN_AUTO:
+        ui.set_auto(True)
+        ui.detail("Each answer is printed as it is taken; anything only you can answer is still asked.")
+    return mode
 
 
 def _report_cancel(e: BaseException) -> int:
@@ -223,10 +252,13 @@ def _run(args: argparse.Namespace) -> int:
         last = s.last_run or "(unknown)"
         ui.info(f"Previous config detected at {state.state_path()}")
         ui.detail(f"Last run: {last}")
-        if not ui.confirm("Use previous answers as defaults?", default=True):
-            s = state.SetupState()
     else:
         ui.info("First-time setup detected.")
+    run_mode = _ask_run_mode(args, is_first)
+    if run_mode is None:
+        return 130
+    if run_mode == RUN_FRESH:
+        s = state.SetupState()
 
     if s.profile.name in profile_names.ALIASES:
         ui.info(f"Profile {s.profile.name} is now called {profile_names.canonical(s.profile.name)}")
@@ -919,7 +951,9 @@ def _sign_in_rows(s: state.SetupState) -> list[tuple[str, str]]:
         if provs:
             def one(p, m):
                 kind = kinds.get(p, "") if isinstance(kinds, dict) else ""
-                label = _LIVE_LABEL.get(kind) if kind else _METHOD_LABEL.get(m, m)
+                # an OpenClaw provider's key lives in OpenClaw's own auth profile: ANTHROPIC_API_KEY is Claude Code's
+                label = (_METHOD_LABEL["api_key"] if kind == "api_key" else _LIVE_LABEL.get(kind)) if kind else \
+                    _METHOD_LABEL.get(m, m)
                 billed = live_auth.BILLED_LABEL[live_auth.billed_for_kind(kind)] if kind else "unknown"
                 return f"{p}: {label} (billed to: {billed})"
             rows.append((name, "; ".join(one(p, m) for p, m in provs.items())))
@@ -1869,7 +1903,7 @@ def _compose_profile(s: state.SetupState, base_name: str, mode: str | None, sing
         profiles.print_role_diff(before, after, title=f"{base_name} -> composed ({mode})")
     except (FileNotFoundError, RuntimeError):
         pass
-    if not flagged and not ui.confirm("Use this team?", default=False):
+    if not flagged and not ui.confirm("Use this team?", default=False, recommended=True):
         return None
 
     keep = {k: v for k, v in (s.profile.customizations or {}).items() if k not in profiles.KNOWN_ROLES}
@@ -2375,6 +2409,11 @@ def agy_terms_check(s: state.SetupState, roles: list[str], interactive: bool = T
         # why, once per run, and never re-sign it for the operator.
         ui.info("The Google terms text changed since you acknowledged it (it now states the Antigravity terms conflict "
                 "with third-party tools): re-confirm it. The old acknowledgement admits nothing.")
+    if interactive and ui.is_auto() and (not have or not listed):
+        # an acknowledgement is the operator's own signature: the recommended run never signs it for them
+        ui.info("Antigravity: the Google acknowledgement is yours to sign, so it stays off this run. Sign it with "
+                "`ai-resources setup --lanes --lanes-antigravity` (choose \"Ask me every question\").")
+        return False, acks, 0
     if not interactive:
         if not have or not listed:
             ui.error(f"{flag}: no stored valid Google acknowledgement lists a role (hash of the "

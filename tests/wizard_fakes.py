@@ -78,6 +78,10 @@ class Script:
         self.answers = dict(answers)
         for key in [k for k in self.answers if k.startswith("Choose mode")]:
             self.answers.pop(key)           # the question no longer exists (ADR-0015): the answer is dropped
+        if "Use previous answers" in self.answers:   # 2.6.3: the run-mode question replaced it; True keeps answers
+            old = self.answers.pop("Use previous answers")
+            self.answers["How should setup run?"] = ("ask" if old is True else "fresh" if old is False else old)
+        self.answers.setdefault("How should setup run?", "ask")
         if "Model preset" in self.answers:           # the old name of the "Starting team:" question (ADR-0009)
             self.answers["Starting team"] = self.answers.pop("Model preset")
         self.asked: list[str] = []
@@ -105,7 +109,7 @@ class Script:
         s = self
         monkeypatch.setattr(ui, "select", lambda message, choices, default=None, **k: s._pick(message, choices, default))
         monkeypatch.setattr(ui, "checkbox", lambda message, choices, default=None, **k: s._pick(message, choices, default, multi=True))
-        monkeypatch.setattr(ui, "confirm", lambda message, default=True: s._find(message, "confirm"))
+        monkeypatch.setattr(ui, "confirm", lambda message, default=True, **k: s._find(message, "confirm"))
         monkeypatch.setattr(ui, "password", lambda message, **k: s._find(message, "password"))
         monkeypatch.setattr(ui, "text", lambda message, default="", **k: s._find(message, "text"))
         for name in ("info", "detail", "warn", "error", "ok"):

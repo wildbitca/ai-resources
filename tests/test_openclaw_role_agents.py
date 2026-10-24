@@ -68,14 +68,14 @@ def _merge(dst, src):
 
 
 def run(s, host, tmp_path, *, enabled=("anthropic",), dry_run=False, methods=None, warns=None, env=None,
-        cli_runtimes=()):
+        cli_runtimes=(), infos=None):
     ex = balanced()
     return R.configure(
         s, host.doc, config_root=tmp_path / "oc", by_role=ex["by_role"], by_persona={}, ak_path="/kit",
         kit_root=repo_root(), enabled=enabled, catalog=CATALOG, effort_table=effort.table_for_state(_balanced_state()),
         methods=methods or {"anthropic": "api_key"}, apply_patch=host.apply, register_agent=host.register,
         classify=lambda p: host.restart, change_records=lambda *a, **k: host.records.append(a) or [],
-        run_changes=[], dry_run=dry_run, info=lambda m: None, warn=(warns.append if warns is not None else (lambda m: None)),
+        run_changes=[], dry_run=dry_run, info=(infos.append if infos is not None else (lambda m: None)), warn=(warns.append if warns is not None else (lambda m: None)),
         error=lambda m: (_ for _ in ()).throw(AssertionError(m)), env=env if env is not None else {},
         cli_runtimes=cli_runtimes)
 
@@ -281,3 +281,15 @@ def test_report_role_agents_cannot_edit_files_and_writer_roles_can(tmp_path):
     for aid in ("kit-role-verifier", "kit-role-planner", "kit-role-reviewer"):
         assert entries[aid]["tools"] == {"deny": ["write", "edit", "apply_patch"]}, aid
     assert "tools" not in entries["kit-role-implementer"]
+
+
+def test_each_new_agent_is_announced_before_its_slow_registration_and_a_rerun_announces_none(tmp_path):
+    s, host = _balanced_state(), Host()
+    infos: list[str] = []
+    assert run(s, host, tmp_path, infos=infos) is True
+    progress = [m for m in infos if m.lstrip().startswith("(")]
+    assert infos[0].startswith("Kit roles: adding 15 agent(s)")
+    assert len(progress) == 15 and progress[0].strip().startswith("(1/15) kit-role-")
+    again: list[str] = []
+    run(s, host, tmp_path, infos=again)
+    assert not [m for m in again if "adding" in m or m.lstrip().startswith("(")]

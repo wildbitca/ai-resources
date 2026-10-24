@@ -75,12 +75,14 @@ class ScriptedUi:
         for key in sorted(self.answers, key=len, reverse=True):
             if key in message:
                 return self.answers[key]
+        if message == "How should setup run?":    # 2.6.3 up-front question: these tests walk every question
+            return "ask"
         raise AssertionError(f"unscripted question: {message!r}")
 
-    def confirm(self, message, default=True):
+    def confirm(self, message, default=True, recommended=None):
         return self._answer(message)
 
-    def select(self, message, choices, default=None, instruction=""):
+    def select(self, message, choices, default=None, instruction="", recommended=None):
         return self._answer(message)
 
     def text(self, message, default="", validate=None):

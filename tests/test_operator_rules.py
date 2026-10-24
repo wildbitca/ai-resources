@@ -409,3 +409,30 @@ def test_a_secret_added_to_the_file_later_is_rendered_nowhere_and_the_blocks_sta
 def test_a_clean_file_has_nothing_blocked(host):
     rules.create(rules.compose(rules.seed_from_claude_md()))
     assert rules.blocked() == [] and rules.blocked_warning() == "" and rules.block()
+
+
+# --- 2.6.3: the seeded originals are not loaded twice ------------------------------------------------------------------
+
+def test_the_seeded_blocks_leave_claude_md_once_the_rules_block_carries_them(world, monkeypatch):
+    for name in ("section", "info", "detail", "ok"):
+        monkeypatch.setattr(ui, name, lambda *a, **k: None)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    s = mk_state("claude", "openclaw", "agy")
+    wizard._step_operator_rules(s)
+    deferred.run_all(s)
+    render_all(world, s)
+    text = claude.CLAUDE_MD_PATH.read_text(encoding="utf-8")
+    for heading in ("## IDIOMA", "## COMMITS", "## CLICKUP", "## PREGUNTAS", "## CLUSTERS"):
+        assert text.count(heading) == 1, heading
+    assert "## Notas de proyecto" in text                     # not a rule: the operator's own block stays
+    backups = list(claude.CLAUDE_MD_PATH.parent.glob("CLAUDE.md.ai-resources-backup-*"))
+    assert any(b.read_text(encoding="utf-8").count("## COMMITS") == 2 for b in backups)   # the pre-dedupe text
+
+
+def test_a_rule_block_edited_after_the_seed_is_kept():
+    rules.create(rules.compose(rules.seed_from_raw(FIVE)))
+    edited = FIVE.replace("Regla de commits", "Regla de commits EDITADA", 1)
+    raw = "<!-- BEGIN ai-resources -->\n" + rules.block() + "<!-- END ai-resources -->\n" + edited
+    out, gone = rules.drop_rendered_copies(raw)
+    assert len(gone) == 4 and not any("COMMITS" in h for h in gone)
+    assert "EDITADA" in out and out.count("## COMMITS") == 2
