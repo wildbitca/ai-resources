@@ -42,7 +42,7 @@ Never delegate for size or file count alone, split one behavior across test, doc
 
 ## Tasks live with the spec
 
-For `light` and `full` work keep the task ledger next to the spec it implements: `specs/features/<feature>/tasks.md` (template `$AGENT_KIT/templates/tasks.template.md`), or a `## Tasks` section inside a short spec. It is temporal: when the change closes, `knowledge-audit` folds what is durable into the spec or `specs/knowledge/decisions/` and removes the file. Criteria stay in English with a short `source:` link (ticket or message) instead of quotes. `inline` work creates none.
+For `light` and `full` work keep the ledger next to the spec: `specs/features/<feature>/tasks.md` (template `$AGENT_KIT/templates/tasks.template.md`) or a `## Tasks` section of a short spec. It is temporal: at close `knowledge-audit` folds what is durable into the spec or `specs/knowledge/decisions/` and the file is deleted. Criteria are English with a short `source:` link, not quotes. `inline` work creates none. Lifecycle and the optional Engram mirror: [references/task-ledger.md](references/task-ledger.md).
 
 ## Locate the kit (`$AGENT_KIT`)
 
@@ -64,7 +64,7 @@ Workflows and prompts refer to `$AGENT_KIT`, the kit root (`workflows/`, `agents
 
 Run the steps of the workflow YAML in order. For each step:
 
-1. **Agent:** `subagent_type` names the kit role subagent. If `$AGENT_KIT/agents/personas/<role>-<domain>.md` exists, the subagent reads it for domain conventions.
+1. **Agent:** `subagent_type` names the kit role subagent; a step with `execution_hints.inline: true` is done by you, without a spawn, unless a delegation trigger fires. If `$AGENT_KIT/agents/personas/<role>-<domain>.md` exists, the subagent reads it for domain conventions.
 2. **Skills:** each id under `skills:` is `$AGENT_KIT/skills/<id>/SKILL.md`.
 3. **Prompt:** fill the step's `prompt_template` (`{{workspace}}`, `{{domain}}`, `{{user_goal}}`, `{{handoff_file}}`). The subagent has no chat context, so the prompt must contain:
    - the absolute workspace path and the handoff file path;

@@ -53,6 +53,10 @@ After context compaction or reset: `mem_context` first to recover thread before 
 - Subagents **may** `mem_save` significant discoveries or decisions before returning; skip trivial steps.
 - Orchestrator can pass **observation IDs or topic_key** in handoffs (references), not full blobs.
 
+## Task ledger mirror
+
+A `light`/`full` task ledger (`specs/features/<feature>/tasks.md`) may be mirrored with `topic_key` `kit/<feature>/tasks` (two writes, ids and paths only, `capture_prompt: false`). The file is primary and the mirror best effort; see `skills/kit-orchestration/references/task-ledger.md`.
+
 ## Related
 
 - Skill `kit-orchestration` — workflow runs, subagent prompts, handoff file

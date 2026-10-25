@@ -33,7 +33,7 @@ def test_core_points_at_the_reference_and_keeps_the_blocked_summary():
 
 def test_core_size_ceiling_is_a_regression_guard_not_a_cost_claim():
     # Guards against the lanes text creeping back into the always-loaded skill; it measures bytes, not tokens or cost.
-    assert len(CORE.encode("utf-8")) < 12_500
+    assert len(CORE.encode("utf-8")) < 12_700
 
 
 def test_blocked_text_is_exact_and_has_no_fallback():
