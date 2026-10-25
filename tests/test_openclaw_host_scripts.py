@@ -1102,7 +1102,7 @@ def _fake_gcloud(host: "Host", *, ls_error: str = "", ls_rc: int = 0, cp_rc: int
     log.write_text("", encoding="utf-8")
     script = host.bin / "gcloud"
     script.write_text(f"""#!/bin/sh
-echo "ARGV $* | CFG=${{CLOUDSDK_ACTIVE_CONFIG_NAME-unset}} OVR=${{CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE-unset}} ADC=${{GOOGLE_APPLICATION_CREDENTIALS-unset}} EXE=${{GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES-unset}}" >> "{log}"
+echo "ARGV $* | CFG=${{CLOUDSDK_ACTIVE_CONFIG_NAME-unset}} OVR=${{CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE-unset}} ADC=${{GOOGLE_APPLICATION_CREDENTIALS-unset}} EXE=${{GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES-unset}} QP=${{CLOUDSDK_BILLING_QUOTA_PROJECT-unset}}" >> "{log}"
 case "$1 $2" in
   "config get") echo "{account}"; exit 0 ;;
   "storage ls")
@@ -1185,11 +1185,11 @@ def test_a_credential_file_wins_over_the_other_knobs_and_the_agent_identity(host
                                 "k3s-backup@proj.iam.gserviceaccount.com:generateAccessToken"}), encoding="utf-8")
     _uploader_env(host, OPENCLAW_OFFBOX_CRED_FILE=str(cred), OPENCLAW_OFFBOX_GCLOUD_CONFIG="openclaw-backup",
                   OPENCLAW_OFFBOX_IMPERSONATE_SA="other@proj.iam.gserviceaccount.com")
-    r = _run_uploader(host, **HIJACK)
+    r = _run_uploader(host, CLOUDSDK_BILLING_QUOTA_PROJECT="operator-proj", **HIJACK)
     assert r.returncode == 0, r.stderr
     lines = log.read_text(encoding="utf-8").splitlines()
     assert lines and all(f"OVR={cred}" in ln and "CFG=unset" in ln and f"ADC={cred}" in ln and "EXE=1" in ln
-                         for ln in lines)
+                         and "QP=LEGACY" in ln for ln in lines)
     assert not any("--impersonate-service-account" in ln for ln in lines)
     assert "federated_as=k3s-backup@proj.iam.gserviceaccount.com" in r.stdout
 

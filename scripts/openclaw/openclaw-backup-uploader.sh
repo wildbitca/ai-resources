@@ -22,7 +22,10 @@
 #                                   for this script only; setup derives it from the host's agent
 #                                   federation, impersonating the backup service account. It wins
 #                                   over the two knobs above: every CLOUDSDK_* identity variable is
-#                                   removed and gcloud gets this file as its credential override.
+#                                   removed and gcloud gets this file as its credential override,
+#                                   with no quota project (billing/quota_project=LEGACY): a quota
+#                                   project from the active configuration would make Google ask the
+#                                   backup service account for serviceusage.services.use.
 # With all three unset the behaviour is the one described above. OPENCLAW_OFFBOX_LIST_CMD (used by
 # `openclaw status`) is a separate command of yours: it runs under whatever identity IT uses.
 #
@@ -74,7 +77,7 @@ gc() {
       esac
     done < <(compgen -e)
     env "${unset_args[@]}" CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="$GCRED" GOOGLE_APPLICATION_CREDENTIALS="$GCRED" \
-      GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1 gcloud "${args[@]}"
+      GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1 CLOUDSDK_BILLING_QUOTA_PROJECT=LEGACY gcloud "${args[@]}"
   elif [ -n "$GCFG" ]; then
     while IFS= read -r v; do
       case "$v" in
