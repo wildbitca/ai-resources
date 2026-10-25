@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.8.0] — 2026-10-25 — setup runs on its own, and Sentry and Figma share one token
+
+### Changed
+
+- **`ai-resources setup` applies the recommended answer to every question by default.** There is no "How should setup run?" question any more. A first run, or `--fresh`, still walks every step. `--ask` asks every question as before. Credentials and the Google acknowledgement are still asked.
+- **Off-box backups use the host's workload identity federation.** When `OPENCLAW_OFFBOX_BUCKET` is set and the host has an agent WIF credential config (`~/.config/gcloud/agent-wif`), setup writes `~/.config/ai-resources/offbox-wif-cred.json` (0600). That file impersonates the backup service account (`OPENCLAW_OFFBOX_IMPERSONATE_SA`, default `k3s-backup`), and setup points `OPENCLAW_OFFBOX_CRED_FILE` at it. No question is asked. The uploader prefers that credential file over the other identity knobs. An unreadable file fails with a state file. The `roles/iam.workloadIdentityUser` grant goes through GitOps.
+- `ai-resources openclaw status` reuses a clean `openclaw doctor` result if it is under 15 minutes old and `openclaw.json` has not changed since. It prints the result's age. `--fresh-doctor` forces a new run. `openclaw doctor` itself takes over a minute on a busy host.
+
+### Added
+
+- **Shared-token MCP servers (Sentry, Figma).** Each token is stored once in the kit credential file (`~/.config/ai-resources/.env`, 0600), and Claude Code, OpenClaw and agy all get the same `ai-resources mcp-run <server>` stdio entry. No cockpit config holds the secret.
+  - **When setup asks:** setup imports a token already on the host (the shell env or `~/.openclaw/.env`) without a question. It asks for a token only when some cockpit already defines that server, and it asks only once.
+  - **OpenClaw:** the shared entry replaces the hosted OAuth entry (`mcp.sentry.dev`, `mcp.figma.com`) and is restored on teardown. A server the operator defined is left alone.
+  - **agy:** the shared entries are added fill-only, next to engram.
+  - **Packages:** `mcp-run` runs pinned packages through `npx`: `@sentry/mcp-server@0.42.0` and `figma-developer-mcp@0.13.2`.
+
+### Fixed
+
+- Kit role agents in OpenClaw keep their `model` when the shell entry is rewritten, and a same-model role records its primary.
+- Skill links into a vanished Cellar directory, or into an ai-resources checkout, move to the installed kit. A plain `skills` directory elsewhere is still treated as foreign.
+
 ## [2.7.3] — 2026-10-24 — a Slack cost key no longer aborts the OpenClaw step
 
 ### Fixed
