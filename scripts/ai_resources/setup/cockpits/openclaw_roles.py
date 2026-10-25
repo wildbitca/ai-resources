@@ -185,11 +185,15 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
             ours = aid in set(recorded.get("created_agent_ids") or [])
             if _registration_shell(live, agent, workspaces[aid]):
                 # `agents add` ran but the run stopped before the kit's fields landed: finish the kit's own entry
-                ent = {k: v for k, v in _entry(agent, workspaces[aid], runtime).items() if k not in ("name", "model")}
+                # (the model too: `agents add` spells it as a bare string, which `verify` warns about)
+                ent = {k: v for k, v in _entry(agent, workspaces[aid], runtime).items() if k != "name"}
                 patch.setdefault("agents", {}).setdefault("entries", {})[aid] = ent
                 continue
             if live_model == agent["model"] and (live_think or "") == (agent["thinking"] or ""):
-                pass
+                if isinstance(live.get("model"), str):
+                    # same model in the short form `agents add` writes: spell it as the object the kit writes
+                    patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})["model"] = {
+                        "primary": agent["model"]}
             elif ours and live_model == last.get(aid) and (live_think or "") == (last_think.get(aid) or ""):
                 ent = {"model": {"primary": agent["model"]}}
                 if agent["thinking"]:

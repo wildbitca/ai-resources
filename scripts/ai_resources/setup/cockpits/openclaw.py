@@ -1642,6 +1642,10 @@ def _configure_skills(s: state.SetupState, doc: dict, path: Path, written: list[
     targets = [d for d in (_get(doc, "skills", "load", "allowSymlinkTargets") or []) if isinstance(d, str)]
     # An entry the kit added earlier for another real root (the Cellar path moves on every upgrade) is replaced.
     stale = [t for t in o.skills_symlink_targets_added if t != real_root and t in targets]
+    # So is a kit install's skills dir that no longer exists (an older Cellar version the state never recorded):
+    # it can only be the kit's, and it points at nothing.
+    stale += [t for t in targets if t != real_root and t not in stale and not os.path.isdir(t)
+              and _shared._is_kit_skills_dir(Path(t), Path(real_root))]
     new_targets = [t for t in targets if t not in stale]
     new_dirs = list(dirs)
     if scoped not in new_dirs:
@@ -2507,6 +2511,8 @@ def _configure_mcp(s: state.SetupState, doc: dict, path: Path, written: list[Pat
     """Mirror Claude Code's MCP servers when the bot runs on it. True when openclaw.json changed."""
     # Opt-in mode: servers the kit mirrored earlier that the list no longer names are denied per agent, by name.
     scoped = mcp.scope_agents(s, doc, _lanes_apply, include=mcp.include_list(s), dry_run=dry_run)
+    # Shared-token servers (Sentry, Figma) apply whatever the engine: one stored token, no per-client OAuth.
+    scoped = mcp.configure_shared(s, _get(doc, "mcp", "servers") or {}, _openclaw, dry_run=dry_run) or scoped
     if scoped and path not in written:
         written.append(path)
     engine = applied_engine(s) if s.openclaw.engine == "keep" else ENGINES.get(s.openclaw.engine)
@@ -2526,11 +2532,12 @@ def _configure_mcp(s: state.SetupState, doc: dict, path: Path, written: list[Pat
 
 def _teardown_mcp(s: state.SetupState) -> bool:
     """Remove or restore the MCP servers the kit mirrored. True when it finished."""
-    if not s.openclaw.mcp_mirrored and not s.openclaw.mcp_deny_added:
+    if not s.openclaw.mcp_mirrored and not s.openclaw.mcp_deny_added and not s.openclaw.mcp_shared:
         return False
     doc = read_config(config_path())
     servers = _get(doc, "mcp", "servers") or {}
     ok = mcp.teardown(s, servers, _openclaw) if s.openclaw.mcp_mirrored else True
+    ok = (mcp.teardown_shared(s, servers, _openclaw) if s.openclaw.mcp_shared else True) and ok
     if ok and s.openclaw.mcp_deny_added:
         mcp.scope_agents(s, doc, _lanes_apply, include=[])     # nothing is mirrored now: the recorded tokens come out
     return ok
@@ -2833,7 +2840,7 @@ def _unlink_plugin(s: state.SetupState) -> list[str]:
 def teardown(s: state.SetupState) -> list[str]:
     """Put back what the kit overwrote in openclaw.json and the workspace AGENTS.md."""
     if not (s.openclaw.applied or s.openclaw.voice_applied or s.openclaw.mcp_mirrored or s.openclaw.mcp_deny_added
-            or s.openclaw.agent_kit_blocks or s.openclaw.lanes_applied or s.openclaw.role_agents_applied
+            or s.openclaw.mcp_shared or s.openclaw.agent_kit_blocks or s.openclaw.lanes_applied or s.openclaw.role_agents_applied
             or s.openclaw.skills_extra_dirs_added or s.openclaw.skills_symlink_targets_added
             or host_section.applied_any(s.openclaw)
             or s.openclaw.image_deny_added or s.openclaw.image_applied or s.openclaw.image_auth_profile_created):
@@ -2868,7 +2875,7 @@ def teardown(s: state.SetupState) -> list[str]:
     host_ok = host_section.teardown(s, apply_patch=apply_patch, oc=_openclaw, doc=doc) \
         if host_section.applied_any(s.openclaw) else True
     engine_ok = _teardown_engine(s) if s.openclaw.applied else True
-    mcp_ok = _teardown_mcp(s) if (s.openclaw.mcp_mirrored or s.openclaw.mcp_deny_added) else True
+    mcp_ok = _teardown_mcp(s) if (s.openclaw.mcp_mirrored or s.openclaw.mcp_deny_added or s.openclaw.mcp_shared) else True
     voice_ok = _teardown_voice(s) if s.openclaw.voice_applied else True
     # The kit's own image_generate token comes out of tools.deny. A removal that cannot be applied (not hot, a changed
     # list, a rejected patch) keeps its flags so a later teardown can retry; it does not hold the rest of the teardown.

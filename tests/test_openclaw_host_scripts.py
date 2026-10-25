@@ -1177,6 +1177,31 @@ def test_a_named_configuration_removes_every_cloudsdk_variable_but_the_configura
     assert names == {"CLOUDSDK_ACTIVE_CONFIG_NAME"}, names
 
 
+def test_a_credential_file_wins_over_the_other_knobs_and_the_agent_identity(host):
+    log = _fake_gcloud(host)
+    cred = host.home / "offbox-wif-cred.json"
+    cred.write_text(json.dumps({"type": "external_account", "service_account_impersonation_url":
+                                "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
+                                "k3s-backup@proj.iam.gserviceaccount.com:generateAccessToken"}), encoding="utf-8")
+    _uploader_env(host, OPENCLAW_OFFBOX_CRED_FILE=str(cred), OPENCLAW_OFFBOX_GCLOUD_CONFIG="openclaw-backup",
+                  OPENCLAW_OFFBOX_IMPERSONATE_SA="other@proj.iam.gserviceaccount.com")
+    r = _run_uploader(host, **HIJACK)
+    assert r.returncode == 0, r.stderr
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert lines and all(f"OVR={cred}" in ln and "CFG=unset" in ln and f"ADC={cred}" in ln and "EXE=1" in ln
+                         for ln in lines)
+    assert not any("--impersonate-service-account" in ln for ln in lines)
+    assert "federated_as=k3s-backup@proj.iam.gserviceaccount.com" in r.stdout
+
+
+def test_an_unreadable_credential_file_fails_with_a_state_file(host):
+    _fake_gcloud(host)
+    _uploader_env(host, OPENCLAW_OFFBOX_CRED_FILE=str(host.home / "missing.json"))
+    r = _run_uploader(host)
+    assert r.returncode == 1 and "not readable" in r.stderr
+    assert _state_file(host)["outcome"] == "failed"
+
+
 def test_the_impersonation_knob_adds_the_flag_to_every_call(host):
     log = _fake_gcloud(host)
     _uploader_env(host, OPENCLAW_OFFBOX_IMPERSONATE_SA="k3s-backup@proj.iam.gserviceaccount.com")

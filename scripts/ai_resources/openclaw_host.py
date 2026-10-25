@@ -279,7 +279,7 @@ _ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*\Z")   # \Z, never `$`: `$` also matches
 KIT_ENV_KEYS = frozenset({
     "OPENCLAW_OWNER_TELEGRAM_ID", "OPENCLAW_BACKUP_DIR", "OPENCLAW_PUBLIC_DOMAIN", "OPENCLAW_POD_CIDR",
     "OPENCLAW_NARRATION", "OPENCLAW_GUARD", "OPENCLAW_GRACEFUL_RESTART", "OPENCLAW_RESOURCE_GUARDS",
-    "OPENCLAW_OFFBOX_GCLOUD_CONFIG", "OPENCLAW_OFFBOX_IMPERSONATE_SA"})
+    "OPENCLAW_OFFBOX_GCLOUD_CONFIG", "OPENCLAW_OFFBOX_IMPERSONATE_SA", "OPENCLAW_OFFBOX_CRED_FILE"})
 # No space: the file is sourced by bash, so `KEY=a /path/cmd` would run /path/cmd.
 _ENV_SAFE_VALUE = re.compile(r"^[A-Za-z0-9_@%+=:,./~-]*\Z")
 
@@ -3689,7 +3689,7 @@ def openclaw_rules_report() -> dict:
 def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
                    host_env_path: Path | None = None, config_path: Path | None = None,
                    now: float | None = None, run_doctor: bool = True, probe_offbox: bool = True,
-                   selection=None) -> dict:
+                   selection=None, doctor_max_age: float = 0) -> dict:
     """Everything `status` prints, as data. Read-only: it never repairs, and sets the two
     environment variables `systemctl --user` needs from a bare shell, which is the manual step
     everyone forgets."""
@@ -3773,12 +3773,44 @@ def collect_status(runner: Runner = default_runner, *, home: Path | None = None,
     if not run_doctor:
         report["doctor"] = {"ran": False, "status": "skipped"}
         return report
+    cache = home / ".openclaw" / "state" / DOCTOR_CACHE_NAME
+    cached = _cached_doctor(cache, config_path or home / ".openclaw" / "openclaw.json", doctor_max_age,
+                            time.time() if now is None else now)
+    if cached is not None:
+        report["doctor"] = cached
+        return report
     rc, doctor = runner([oc, "doctor", "--non-interactive"], env=env, timeout=DOCTOR_TIMEOUT)
     noise, signal = filter_doctor_warnings(doctor) if rc == 0 or doctor else ([], [])
     status = "ok" if rc == 0 else "missing" if rc == 127 else "timeout" if rc == 124 else "failed"
     report["doctor"] = {"ran": rc == 0, "status": status, "rc": rc, "bin": oc,
                         "noise": len(noise), "signal": signal}
+    if doctor_max_age > 0 and status == "ok":
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            write_file_atomically(cache, json.dumps({**report["doctor"], "at": time.time() if now is None else now}),
+                                  mode=0o600)
+        except OSError:
+            pass   # a cache that cannot be written only costs the next status another doctor run
     return report
+
+
+# `openclaw doctor` takes over a minute on a busy host (2026.10.5: ~70 s); `status` reuses a clean result this young.
+DOCTOR_CACHE_NAME = "ai-resources-status-doctor.json"
+DOCTOR_CACHE_MAX_AGE = 900
+
+
+def _cached_doctor(cache: Path, config: Path, max_age: float, now: float) -> dict | None:
+    """The last doctor result when it is younger than `max_age` and openclaw.json has not changed since; else None."""
+    if max_age <= 0:
+        return None
+    try:
+        doc = json.loads(cache.read_text(encoding="utf-8"))
+        at = float(doc.pop("at"))
+        if not (0 <= now - at < max_age) or (config.is_file() and config.stat().st_mtime > at):
+            return None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return {**doc, "cached_age": int(now - at)} if isinstance(doc.get("signal"), list) else None
 
 
 JOURNAL_FINDING_MAX_HOSTS = 5
@@ -3951,7 +3983,8 @@ def render_status(report: dict) -> str:
     elif d.get("status") == "failed":
         lines.append(f"doctor      failed (rc={d.get('rc')})")
     elif not d["signal"]:
-        lines.append(f"doctor      clean ({d['noise']} known-noise warning(s) filtered, T30)")
+        age = f"; from {d['cached_age'] // 60} min ago, --fresh-doctor re-runs it" if "cached_age" in d else ""
+        lines.append(f"doctor      clean ({d['noise']} known-noise warning(s) filtered, T30{age})")
     else:
         lines.append(f"doctor      {len(d['signal'])} warning(s) not in the known-noise catalogue:")
         lines += [f"  {w}" for w in d["signal"]]
@@ -4584,6 +4617,56 @@ OFFBOX_PROTECTED_CONFIGS = ("default", "claude-ro")
 _GCLOUD_UNSET = ("", "(unset)")
 
 
+# A host whose user manager exports a workload identity federation credential (an `external_account` config whose
+# subject token comes from a local executable) can back up with NO login and NO key: the same federation, pointed at
+# the backup service account instead of the read-only agent one. The kit derives that config file once; the
+# `roles/iam.workloadIdentityUser` binding of the host's federated principal on the service account is the infra step.
+OFFBOX_WIF_CRED_PATH = Path.home() / ".config" / "ai-resources" / "offbox-wif-cred.json"
+_WIF_ENV_VARS = ("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", "GOOGLE_APPLICATION_CREDENTIALS")
+_WIF_DEFAULT_SOURCE = Path.home() / ".config" / "gcloud" / "agent-wif" / "cred-config.json"
+_IMPERSONATION_URL = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{sa}:generateAccessToken"
+
+
+def _wif_source(env: "dict[str, str] | None" = None, default: Path | None = None) -> "tuple[Path, dict] | None":
+    """The host's executable-sourced external_account config, from the exported variables or the default path."""
+    env = os.environ if env is None else env
+    candidates = [Path(env[v]) for v in _WIF_ENV_VARS if env.get(v)] + [default or _WIF_DEFAULT_SOURCE]
+    for path in candidates:
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(doc, dict) and doc.get("type") == "external_account"
+                and isinstance(doc.get("credential_source"), dict) and doc["credential_source"].get("executable")):
+            return path, doc
+    return None
+
+
+def offbox_wif_cred(sa: str, *, env: "dict[str, str] | None" = None, source: Path | None = None,
+                    target: Path | None = None, dry_run: bool = False) -> "tuple[str, Path | None]":
+    """Derive the uploader's credential file from the host's federation config, impersonating `sa`.
+
+    Returns (outcome, path): "absent" (no federation on this host, nothing written), "same" (the file already
+    matches), "written" (created or refreshed; nothing when dry_run). The file holds no secret: the subject token
+    is still minted by the host's executable on every call."""
+    found = _wif_source(env, source)
+    if found is None or not _OFFBOX_SA_RE.match(sa):
+        return "absent", None
+    _, doc = found
+    target = target or OFFBOX_WIF_CRED_PATH
+    derived = dict(doc, service_account_impersonation_url=_IMPERSONATION_URL.format(sa=sa))
+    text = json.dumps(derived, indent=2, sort_keys=True) + "\n"
+    try:
+        if target.read_text(encoding="utf-8") == text:
+            return "same", target
+    except OSError:
+        pass
+    if not dry_run:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_file_atomically(target, text, mode=0o600)
+    return "written", target
+
+
 def _gcloud_value(runner: Runner, *args: str) -> str:
     rc, text = runner(["gcloud", *args], timeout=30)
     value = text.strip().splitlines()[-1].strip() if rc == 0 and text.strip() else ""
@@ -5005,7 +5088,10 @@ def cmd_agent_new(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace, runner: Runner | None = None) -> int:
     kw = {"runner": runner} if runner is not None else {}
     report = collect_status(run_doctor=not getattr(args, "no_doctor", False),
-                            selection=recorded_selection(), **kw)
+                            selection=recorded_selection(),
+                            # A stubbed runner (tests) never reads or writes the host's cache.
+                            doctor_max_age=0 if getattr(args, "fresh_doctor", False) or runner is not None
+                            else DOCTOR_CACHE_MAX_AGE, **kw)
     print(render_status(report))
     # Journal findings (egress TLS refusals, a failed close that lost completions): outside the sections too.
     # Only for a real report, so a stubbed status never reads the host journal.
@@ -5155,6 +5241,8 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_st = verbs.add_parser("status", help="One-screen host status (never repairs)")
     p_st.add_argument("--no-doctor", action="store_true",
                       help="Skip the `openclaw doctor` probe (the slow one; answers in about a second)")
+    p_st.add_argument("--fresh-doctor", dest="fresh_doctor", action="store_true",
+                      help="Run `openclaw doctor` even when a clean result under 15 minutes old is cached")
     p_st.set_defaults(func=cmd_status)
 
     p_bs = verbs.add_parser("bootstrap", help="Bring a host to the documented state, idempotently")

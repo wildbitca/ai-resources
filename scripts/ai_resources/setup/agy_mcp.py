@@ -4,6 +4,7 @@ agy loads every server in this file into each session, so each one adds its tool
 to only print a hint. ADR-0014 lets it keep the file lean, on confirmation, without ever removing what is there:
 
 - the kit's own entry is `engram`, written only if absent (fill-only) after one confirm;
+- shared-token servers (`ai-resources mcp-run`, 2.8.0) whose token is stored are added with engram, without a question;
 - other servers are opt-in: a multiselect (default none) over the Claude Code user-level servers that are plain stdio
   commands with no environment values and no secret-looking argument (nothing secret is copied into this file); each
   chosen one is written only if absent;
@@ -24,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .. import billing
+from .. import billing, shared_mcp
 from . import ui
 from .cockpits import _shared
 
@@ -135,7 +136,8 @@ def agy_in_use(s) -> bool:
     return "agy" in selected or s.openclaw.engine == "antigravity" or team_view.agy_lanes_on(s.profile.lanes)
 
 
-def plan(s, *, dry_run: bool = False, path: Path | None = None, candidates: dict[str, dict] | None = None) -> dict:
+def plan(s, *, dry_run: bool = False, path: Path | None = None, candidates: dict[str, dict] | None = None,
+         shared: dict[str, dict] | None = None) -> dict:
     """The asking half (ADR-0016 D6): the servers the operator wants added, `{}` when none. Nothing is written. Never
     headless, never in a dry run (those only say what a terminal run would offer)."""
     from . import hygiene
@@ -148,10 +150,12 @@ def plan(s, *, dry_run: bool = False, path: Path | None = None, candidates: dict
         return {}
     have = servers_of(doc)
     missing_engram = KIT_SERVER not in have
+    shared = {n: d for n, d in (shared_mcp.entries() if shared is None else shared).items() if n not in have}
     cands = portable_candidates() if candidates is None else candidates
-    offers = {n: d for n, d in cands.items() if n not in have and n not in s.tracking.agy_mcp_added}
+    offers = {n: d for n, d in cands.items()
+              if n not in have and n not in shared and n not in s.tracking.agy_mcp_added}
     if hygiene.is_headless() or dry_run:
-        if missing_engram or offers:
+        if missing_engram or offers or shared:
             ui.detail(("DRY RUN: " if dry_run else "") + f"agy loads every server in {path} into each session; "
                       "run setup in a terminal to add `engram` and pick any others (default none).")
         return {}
@@ -159,6 +163,7 @@ def plan(s, *, dry_run: bool = False, path: Path | None = None, candidates: dict
     if missing_engram and ui.confirm(f"Add the engram MCP server to {path} (agy)? Nothing already in the file is "
                                      "changed or removed.", default=True):
         additions.update(_shared.mcp_engram_block())
+    additions.update(shared)    # shared-token servers: the operator stored the token, so no further question
     if offers:
         chosen = ui.checkbox("Also add these Claude Code MCP servers to agy? Each one loads its tool schemas into every "
                              "agy session; leave empty to add none.", [ui.Choice(n, value=n) for n in sorted(offers)],

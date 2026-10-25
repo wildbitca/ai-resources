@@ -222,7 +222,8 @@ def test_a_role_whose_model_is_a_bare_string_still_gets_its_claude_cli_pin(tmp_p
     patch, kept = openclaw_roles.build_patch([_role()], doc, {"kit-role-reviewer": tmp_path}, recorded,
                                              {"anthropic": "api_key"}, ("claude-cli",))
     assert kept == []
-    assert patch == {"agents": {"entries": {"kit-role-reviewer": {"models": {SONNET: CLI}}}}}
+    # the bare string is also respelled as the object form, which clears verify's warning
+    assert patch == {"agents": {"entries": {"kit-role-reviewer": {"model": {"primary": SONNET}, "models": {SONNET: CLI}}}}}
 
 
 def test_a_bare_string_role_the_kit_wrote_follows_a_profile_change(tmp_path):
@@ -245,7 +246,7 @@ def test_the_bare_entry_agents_add_left_behind_gets_the_kits_fields(tmp_path):
     assert kept == []
     ent = patch["agents"]["entries"]["kit-role-reviewer"]
     assert ent["thinkingDefault"] == "medium" and ent["models"] == {SONNET: CLI} and ent["description"] == "d"
-    assert "model" not in ent and "name" not in ent
+    assert ent["model"] == {"primary": SONNET} and "name" not in ent
 
 
 def test_an_entry_the_operator_shaped_is_not_a_shell(tmp_path):

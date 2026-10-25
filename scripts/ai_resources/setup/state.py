@@ -189,6 +189,8 @@ class InstallTracking:
     # Round 3 (ADR-0015 S3): the `effort:` value the kit last wrote into each Claude subagent file ({name: level}). A file
     # whose `effort:` differs from this record was edited by the operator: the value is kept (fill-only) and listed.
     subagent_effort: dict[str, str] = field(default_factory=dict)
+    # 2.8.0: shared-MCP servers whose token setup asked for once (stored or skipped); never asked again.
+    shared_mcp_asked: list[str] = field(default_factory=list)
 
 
 IMAGE_STATE_DEFAULTS: dict[str, Any] = {
@@ -260,6 +262,8 @@ class OpenClawState:
     mcp: str = ""
     mcp_skipped: list[str] = field(default_factory=list)
     mcp_mirrored: dict[str, Any] = field(default_factory=dict)
+    # Shared-token servers (`ai-resources mcp-run`), same record shape as `mcp_mirrored`.
+    mcp_shared: dict[str, Any] = field(default_factory=dict)
     # Per-agent `tools.deny` tokens (`<server>__*`) the kit added for mirrored servers outside the opt-in list:
     # {agent id: [tokens]}. Only these are ever removed again (an operator's own token stays).
     mcp_deny_added: dict[str, list[str]] = field(default_factory=dict)
@@ -456,7 +460,7 @@ def _to_dict(obj: Any) -> Any:
             doc["openclaw"].pop("slack_cost_changes", None)        # additive field: absent until the writer ran
         if isinstance(obj, SetupState) and isinstance(doc.get("tracking"), dict):
             for key in ("hygiene_disabled", "claude_md_migrations", "persona_domains_active", "agy_mcp_added",
-                        "subagent_effort"):
+                        "subagent_effort", "shared_mcp_asked"):
                 if not doc["tracking"].get(key):
                     doc["tracking"].pop(key, None)         # round 2 (ADR-0014): absent until the writer ran
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
@@ -468,6 +472,9 @@ def _to_dict(obj: Any) -> Any:
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
                 and not doc["openclaw"].get("mcp_deny_added"):
             doc["openclaw"].pop("mcp_deny_added", None)            # additive field: absent until the opt-in scoping ran
+        if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
+                and not doc["openclaw"].get("mcp_shared"):
+            doc["openclaw"].pop("mcp_shared", None)                # 2.8.0: absent until a shared token was stored
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
                 and not doc["openclaw"].get("lanes_applied"):
             doc["openclaw"].pop("lanes_applied", None)
