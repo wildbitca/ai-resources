@@ -18,6 +18,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 - Plan sizing check (adoption plan wave 4): `ai-resources plan-check <plan-or-tasks.md>` and a `validate_kit.py` pass reject a missing or self-contradicting `## Sizing` block (unknown mode, inline with a risk item or a spawn budget, a risk item without a verifier, writers in `light`). `/kit-plan` asks the plan writer to run it and to return `task_ids` and `spec_ids`; `/kit-implement` takes `tasks_path`, `task_ids` and `spec_ids`, hands work over by reference (or the request verbatim with no plan), adds RED, PRESERVE, differential and commit rules to the writer prompt, makes the sign-off verifier run authorized examples in a scratch copy with one verdict per `S#`, and gives `light` one correction round (`full` keeps two).
 - `skills/kit-orchestration/SKILL.md` core stays about 12.4 KB with the new pointers; its size ceiling test moves from 12,500 to 12,700 bytes.
 
+### Added
+
+- Balanced credit policy (ADR-0017). Setup now offers, one confirm per path, the SAFE subset on a host that already routes to a `google/*` model: `agents.defaults.utilityModel` -> `google/gemini-3.8-flash`, a `flash` alias entry, and the Gemini API credit as the first fallback of `kit-lane-agy-gemini38flashhigh` (then Haiku). The heartbeat is not moved. `openclaw_cost_migrations.balanced_credit_proposals`, `setup/lanes_render.LANE_API_FALLBACKS`.
+- `templates/ai-usage/credit_alert.py`: the 80% credit alert of the usage report (`AI_USAGE_CREDIT_ALERT_PCT` overrides the threshold), copied next to the host's `ai-usage-report.sh`.
+
 ## [2.8.4] — 2026-10-25 — setup no longer signs agy out
 
 ### Fixed
