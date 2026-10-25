@@ -213,6 +213,11 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # creates watchdog.off, and both paths are resolved from the real HOME at import time.
     from ai_resources import openclaw_host
     monkeypatch.setattr(openclaw_host, "HOST_ENV_PATH", root / "openclaw" / "kit-host.env", raising=False)
+    # 2.8.0: the shared-MCP token step looks for sentry/figma in the real ~/.claude.json and ~/.openclaw/openclaw.json
+    # (and the token in ~/.openclaw/.env); a test that wants either passes it in.
+    from ai_resources import shared_mcp
+    monkeypatch.setattr(shared_mcp, "in_use_here", lambda: set(), raising=False)
+    monkeypatch.setattr(shared_mcp, "_found_elsewhere", lambda var, openclaw_env=None: "", raising=False)
     monkeypatch.setattr(openclaw_host, "WATCHDOG_OFF", root / "openclaw" / "watchdog.off", raising=False)
     # ADR-0004: the graceful restart's state, lock and snapshots live under ~/.openclaw too.
     monkeypatch.setattr(openclaw_host, "STATE_PATH", root / "openclaw" / "health-restart.state", raising=False)

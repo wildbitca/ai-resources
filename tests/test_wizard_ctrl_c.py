@@ -56,7 +56,7 @@ def host(monkeypatch, tmp_path):
 
 def _args(**kw):
     ns = dict(dry_run=False, yes=False, non_interactive=False, profile="", lanes=False, no_lanes=False,
-              lanes_dry_run=False, lanes_orchestrator=[], allow_unverified=False)
+              lanes_dry_run=False, lanes_orchestrator=[], allow_unverified=False, ask=True)
     ns.update(kw)
     return argparse.Namespace(**ns)
 
@@ -89,7 +89,7 @@ def test_cancel_at_resume_confirm(host, capsys):
     state.state_path().parent.mkdir(parents=True, exist_ok=True)
     state.state_path().write_text(yaml.safe_dump(state._to_dict(s)), encoding="utf-8")
     before = _snapshot(host.home)
-    rc, _ = _drive(host, {"Use previous answers": ABORT})
+    rc, _ = _drive(host, {"Claude Code sign-in": ABORT})   # no up-front run-mode question since 2.8.0
     _assert_clean_cancel(rc, capsys, host, before)
 
 

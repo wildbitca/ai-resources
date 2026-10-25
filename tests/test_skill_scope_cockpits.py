@@ -145,6 +145,18 @@ def test_a_moved_kit_root_replaces_only_the_entry_the_kit_added(kit, tmp_path, m
     assert fake.patches[-1][1] == ["skills.load.allowSymlinkTargets"]            # a list replace, said explicitly
 
 
+def test_a_vanished_cellar_skills_dir_the_state_never_recorded_is_dropped(kit, tmp_path, monkeypatch):
+    gone = "/home/linuxbrew/.linuxbrew/Cellar/ai-resources/0.0.1-gone/libexec/skills"
+    live_other = tmp_path / "Cellar" / "ai-resources" / "9.9.9" / "libexec" / "skills"
+    live_other.mkdir(parents=True)                       # a kit dir that still exists is not ours to judge
+    s = state.SetupState()
+    fake = FakeOC({"skills": {"load": {"allowSymlinkTargets": ["/operator", gone, str(live_other)]}}})
+    run_skills(s, fake, kit, tmp_path, monkeypatch)
+    assert fake.doc["skills"]["load"]["allowSymlinkTargets"] == [
+        "/operator", str(live_other), os.path.realpath(kit / "skills")]
+    assert fake.patches[-1][1] == ["skills.load.allowSymlinkTargets"]
+
+
 def test_a_dry_run_writes_nothing(kit, tmp_path, monkeypatch):
     s, fake = state.SetupState(), FakeOC()
     changed, written = run_skills(s, fake, kit, tmp_path, monkeypatch, dry_run=True)

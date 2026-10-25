@@ -194,3 +194,25 @@ def test_scope_for_is_the_one_rule_for_every_cockpit():
         assert skill_scope.scope_for(cockpit, ids, env={}) == base
     assert "flutter-bloc" not in base and "flutter-bloc" in skill_scope.scope_for("openclaw", ids, env={"AI_RESOURCES_SKILLS": "flutter"})
     assert skill_scope.scope_for("agy", ids, env={"AI_RESOURCES_SKILLS": "all"}) is None
+
+
+def test_links_into_an_ai_resources_checkout_move_to_the_installed_kit(kit, tmp_path):
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts" / "ai_resources").mkdir(parents=True)
+    (checkout / "skills-index.json").write_text("{}")
+    (checkout / "skills" / "flutter-bloc").mkdir(parents=True)
+    links = tmp_path / "links"
+    links.mkdir()
+    (links / "flutter-bloc").symlink_to(checkout / "skills" / "flutter-bloc", target_is_directory=True)
+    res = _shared.sync_skill_links(links, kit, include={"workflow-bugfix"})
+    assert res["removed"] == ["flutter-bloc"] and _names(links) == {"workflow-bugfix"}
+
+
+def test_a_plain_skills_dir_elsewhere_is_still_foreign(kit, tmp_path):
+    other = tmp_path / "proj" / "skills" / "flutter-bloc"
+    other.mkdir(parents=True)
+    links = tmp_path / "links"
+    links.mkdir()
+    (links / "flutter-bloc").symlink_to(other, target_is_directory=True)
+    res = _shared.sync_skill_links(links, kit, include={"workflow-bugfix"})
+    assert res["removed"] == [] and res["skipped"] == [] and (links / "flutter-bloc").is_symlink()

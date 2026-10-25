@@ -838,3 +838,31 @@ def test_status_lists_the_prefixes_where_the_kit_is_stricter(env, monkeypatch):
     lines = _openclaw_line(host.render_status(collect(env, Canned())))
     assert len(lines) == 2
     assert "kit keeps restart-required: mcp.apps (installed OpenClaw says hot)" in lines[1]
+
+
+def test_a_clean_doctor_result_is_reused_until_it_ages_or_the_config_changes(env):
+    calls = []
+
+    class Counting(Canned):
+        def __call__(self, args, **kw):
+            if args[1:2] == ["doctor"]:
+                calls.append(args)
+            return super().__call__(args, **kw)
+
+    canned = Counting(doctor=doctor_text("doctor_noise_only.txt"))
+    cfg = env.home / ".openclaw" / "openclaw.json"
+    run = lambda now: host.collect_status(canned, home=env.home, host_env_path=env.hostenv, now=now,  # noqa: E731
+                                          doctor_max_age=900)
+    first = run(NOW)["doctor"]
+    assert first["status"] == "ok" and len(calls) == 1
+    second = run(NOW + 60)["doctor"]
+    assert len(calls) == 1 and second["cached_age"] == 60 and second["signal"] == first["signal"]
+    assert "from 1 min ago" in host.render_status({**run(NOW + 60), "doctor": second})
+    run(NOW + 901)
+    assert len(calls) == 2                                   # aged out
+    if cfg.is_file():
+        os.utime(cfg, (NOW + 1000, NOW + 1000))
+        run(NOW + 1001)
+        assert len(calls) == 3                               # openclaw.json changed after the cached run
+    host.collect_status(canned, home=env.home, host_env_path=env.hostenv, now=NOW + 1002)
+    assert len(calls) == 4                                   # no max age: always a fresh run

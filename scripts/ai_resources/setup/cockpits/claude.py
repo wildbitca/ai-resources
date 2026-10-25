@@ -1187,6 +1187,13 @@ def configure(ctx: dict) -> list[Path]:
         del settings_patch["apiKeyHelper"]
         ui.info("Claude Code: your existing apiKeyHelper was kept (change the sign-in to replace it).")
 
+    # Shared-token MCP servers (Sentry, Figma): a same-named server the operator defined is left as it is.
+    from ... import shared_mcp
+    held_mcp = existing.get("mcpServers") if isinstance(existing.get("mcpServers"), dict) else {}
+    for name, spec in shared_mcp.entries().items():
+        if name not in held_mcp or shared_mcp.is_shared_entry(held_mcp[name]):
+            settings_patch["mcpServers"][name] = spec
+
     # Record env keys that teardown must remove.
     # Always include the known multi-model-only keys regardless of whether they were
     # pre-existing (older installs may have written them before tracking existed).

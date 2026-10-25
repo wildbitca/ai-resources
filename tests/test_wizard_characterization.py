@@ -29,7 +29,7 @@ class _Quiet:
 
 def _args(**kw):
     ns = dict(dry_run=False, yes=False, non_interactive=False, profile="", lanes=False, no_lanes=False,
-              lanes_dry_run=False, lanes_orchestrator=[], allow_unverified=False)
+              lanes_dry_run=False, lanes_orchestrator=[], allow_unverified=False, ask=True)
     ns.update(kw)
     return argparse.Namespace(**ns)
 
@@ -146,7 +146,6 @@ PATHS = {
 
 _CLI_TEAM_TRANSCRIPT = [
     'banner',
-    'select: How should setup run?',
     'section 1/5 Your tools',
     'section 2/5 Main tool',
     'section 2/5 Sign-in',
@@ -175,7 +174,6 @@ EXPECTED = {
     "cli-team-subscription": _CLI_TEAM_TRANSCRIPT,
     "backend-cli-flag": [
         'banner',
-        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -198,7 +196,6 @@ EXPECTED = {
     ],
     "dry-run": [
         'banner',
-        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -218,7 +215,6 @@ EXPECTED = {
     ],
     "lanes-dry-run": [
         'banner',
-        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -251,7 +247,6 @@ EXPECTED = {
     ],
     "lanes-with-stored-ack": [
         'banner',
-        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -274,7 +269,6 @@ EXPECTED = {
     ],
     "no-lanes": [
         'banner',
-        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -313,7 +307,6 @@ EXPECTED = {
     ],
     "saved-litellm-migrated": [
         'banner',
-        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -334,7 +327,6 @@ EXPECTED = {
     ],
     "saved-openrouter-migrated": [
         'banner',
-        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',
@@ -355,7 +347,6 @@ EXPECTED = {
     ],
     "single-model": [
         'banner',
-        'select: How should setup run?',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
         'section 2/5 Sign-in',

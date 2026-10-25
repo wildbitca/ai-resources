@@ -316,7 +316,8 @@ def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path],
         return False
 
     _configure_env(o, dry_run=dry_run)
-    _configure_offbox_identity(o, dry_run=dry_run)
+    if not _configure_offbox_wif(o, dry_run=dry_run):
+        _configure_offbox_identity(o, dry_run=dry_run)
     _configure_hooks(s, ak_path, dry_run=dry_run)
     _configure_units(o, dry_run=dry_run)
     changed = _configure_config(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
@@ -354,6 +355,32 @@ def _configure_env(o: state.OpenClawState, *, dry_run: bool) -> None:
         o.host_env_created = True
     host.write_host_env(todo)
     ui.ok(f"{host.HOST_ENV_PATH} updated ({', '.join(sorted(todo))})")
+
+
+def _configure_offbox_wif(o: state.OpenClawState, *, dry_run: bool) -> bool:
+    """No question: on a host with an off-box bucket and a federated identity, the uploader gets its own credential
+    file (the same federation, impersonating the backup service account) and `OPENCLAW_OFFBOX_CRED_FILE` points at
+    it. True when the uploader is on that credential, so the named gcloud configuration is not needed."""
+    current = host.read_host_env()
+    if not current.get("OPENCLAW_OFFBOX_BUCKET"):
+        return False
+    mine = str(host.OFFBOX_WIF_CRED_PATH)
+    if current.get("OPENCLAW_OFFBOX_CRED_FILE") not in (None, "", mine):
+        return True                                   # the operator's own credential file: theirs to keep
+    sa = current.get("OPENCLAW_OFFBOX_IMPERSONATE_SA") or host.OFFBOX_SA_DEFAULT
+    outcome, path = host.offbox_wif_cred(sa, dry_run=dry_run)
+    if outcome == "absent":
+        return False
+    if dry_run:
+        ui.detail(f"Would derive the off-box uploader credential {mine} (federated, as {sa})")
+        return True
+    if current.get("OPENCLAW_OFFBOX_CRED_FILE") != mine:
+        o.host_env_previous.setdefault("OPENCLAW_OFFBOX_CRED_FILE", current.get("OPENCLAW_OFFBOX_CRED_FILE"))
+        host.write_host_env({"OPENCLAW_OFFBOX_CRED_FILE": mine})
+    if outcome == "written" or current.get("OPENCLAW_OFFBOX_CRED_FILE") != mine:
+        ui.ok(f"Off-box uploader: federated credential as {sa} ({mine}); the host's principal needs "
+              "roles/iam.workloadIdentityUser on it (an infra step)")
+    return True
 
 
 def _configure_offbox_identity(o: state.OpenClawState, *, dry_run: bool) -> None:
@@ -1617,6 +1644,8 @@ def teardown(s: state.SetupState, *, apply_patch: Callable[..., tuple[bool, str]
         if stuck or nonstring:
             ok = False
         else:
+            if not host.read_host_env().get("OPENCLAW_OFFBOX_CRED_FILE"):
+                host.OFFBOX_WIF_CRED_PATH.unlink(missing_ok=True)     # derived by the kit; nothing points at it now
             if o.host_env_created and not host.read_host_env():
                 host.HOST_ENV_PATH.unlink(missing_ok=True)
             o.host_env_previous, o.host_env_created = {}, False

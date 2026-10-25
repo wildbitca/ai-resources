@@ -162,13 +162,17 @@ def _link_target(link: Path) -> Path:
 
 
 def _is_kit_skills_dir(d: Path, skills_root: Path) -> bool:
-    """True for the current kit skills dir or a Homebrew install of this kit (any version)."""
+    """True for the current kit skills dir, a Homebrew install of this kit (any version), or the skills dir of an
+    ai-resources checkout (a developer's earlier links point there; setup moves them to the installed kit)."""
     if d == skills_root:
         return True
     p = d.parts
-    return p[-2:] == ("libexec", "skills") and (
+    if p[-2:] == ("libexec", "skills") and (
         p[-5:-3] == ("Cellar", "ai-resources") or p[-4:-2] == ("opt", "ai-resources")
-    )
+    ):
+        return True
+    return d.name == "skills" and (d.parent / "skills-index.json").is_file() and (
+        d.parent / "scripts" / "ai_resources").is_dir()
 
 
 def sync_skill_links(links_dir: Path, skills_root: Path, *, dry_run: bool = False,

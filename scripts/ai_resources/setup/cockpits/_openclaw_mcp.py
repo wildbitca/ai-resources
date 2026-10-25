@@ -42,6 +42,17 @@ Runner = Callable[..., tuple[int, str]]
 CONNECTORS = {"claude.ai ClickUp": ("clickup", "https://mcp.clickup.com/mcp")}
 # Declared by the engine step (see openclaw.build_patch), which owns its snapshot.
 MANAGED_ELSEWHERE = {"engram": "declared by the kit's engine setup"}
+# The hosted OAuth endpoint each shared-token server stands in for: an entry pointing there is replaced (and restored on
+# teardown), since its per-client browser sign-in is what the shared token avoids.
+SHARED_HOSTED = {"sentry": "mcp.sentry.dev", "figma": "mcp.figma.com"}
+
+
+
+def managed_elsewhere() -> dict[str, str]:
+    """MANAGED_ELSEWHERE plus each shared-token server whose token is stored (configure_shared writes those)."""
+    from ... import shared_mcp
+    return {**MANAGED_ELSEWHERE, **{n: "shared-token server (ai-resources mcp-run)" for n in shared_mcp.configured()}}
+
 
 REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|"
@@ -313,6 +324,7 @@ def plan(sources: list[Source], servers: dict, mirrored: dict, include: list[str
     """
     items: list[Item] = []
     seen: dict[str, str] = {}
+    managed = managed_elsewhere()
     for src in sources:
         item = Item(src.name, src.kind, src.origin, "skip")
         items.append(item)
@@ -320,11 +332,11 @@ def plan(sources: list[Source], servers: dict, mirrored: dict, include: list[str
             item.reason = f"same name as the server from {seen[src.name]}"
             continue
         seen[src.name] = src.origin
-        if include is not None and src.name not in include and src.name not in MANAGED_ELSEWHERE:
+        if include is not None and src.name not in include and src.name not in managed:
             item.reason = f"not in the MCP opt-in list ({INCLUDE_ENV})"
             continue
-        if src.name in MANAGED_ELSEWHERE:
-            item.reason = MANAGED_ELSEWHERE[src.name]
+        if src.name in managed:
+            item.reason = managed[src.name]
             continue
         if src.kind == "connector":
             item.reason = "claude.ai connector with no public MCP endpoint; cannot be mirrored"
@@ -371,7 +383,8 @@ def unlisted_mirrored(s: state.SetupState, include: list[str] | None) -> list[st
     They stay configured in OpenClaw (removing one is the confirmed teardown); each agent is told not to load them."""
     if include is None:
         return []
-    return sorted(n for n in s.openclaw.mcp_mirrored if n not in include and n not in MANAGED_ELSEWHERE)
+    managed = managed_elsewhere()
+    return sorted(n for n in s.openclaw.mcp_mirrored if n not in include and n not in managed)
 
 
 def deny_tokens(names: list[str]) -> list[str]:
@@ -500,6 +513,71 @@ def teardown(s: state.SetupState, servers: dict, run: Runner) -> bool:
             ui.error(f"OpenClaw MCP servers teardown failed: {ui.safe_excerpt(out, 400, tail=True)}")
             return False
     s.openclaw.mcp_mirrored = {}
+    return True
+
+
+# --- shared-token servers (ai-resources mcp-run) --------------------------------------------
+
+def _is_hosted(name: str, spec: Any) -> bool:
+    return isinstance(spec, dict) and isinstance(spec.get("url"), str) \
+        and urlsplit(spec["url"]).hostname == SHARED_HOSTED.get(name)
+
+
+def configure_shared(s: state.SetupState, servers: dict, run: Runner, *, wanted: dict | None = None,
+                     dry_run: bool = False) -> bool:
+    """Point OpenClaw at the shared-token servers whose token is stored. True when openclaw.json changed.
+
+    Written when absent, when it is the hosted OAuth entry it replaces, or while it still holds what the kit wrote;
+    any other definition the operator made is left alone. Each write is recorded for teardown."""
+    from ... import shared_mcp
+    wanted = shared_mcp.entries() if wanted is None else wanted
+    recorded = s.openclaw.mcp_shared
+    patch: dict[str, Any] = {}
+    for name, entry in wanted.items():
+        current, record = servers.get(name), recorded.get(name)
+        if record is not None and not _host._strict_equal(current, record.get("applied")):
+            ui.detail(f"MCP {name}: changed in OpenClaw by hand since the kit wrote it; left alone")
+        elif _host._strict_equal(current, entry):
+            recorded.setdefault(name, {"previous": current, "applied": entry})
+        elif (record is not None or current is None or shared_mcp.is_shared_entry(current) or _is_hosted(name, current)
+              or _host._strict_equal(current, (s.openclaw.mcp_mirrored.get(name) or {}).get("applied"))):
+            patch[name] = entry
+        else:
+            ui.detail(f"MCP {name}: already defined in OpenClaw with different settings; left alone")
+    if not patch:
+        return False
+    rc, out = _patch(run, patch, dry_run=dry_run)
+    if rc != 0:
+        ui.error(f"OpenClaw rejected the shared MCP servers patch: {ui.safe_excerpt(out, 400, tail=True)}")
+        return False
+    if dry_run:
+        return False
+    for name, entry in patch.items():
+        # A server the mirror wrote earlier hands its record over: teardown restores what was there before either.
+        mirrored = s.openclaw.mcp_mirrored.pop(name, None)
+        previous = recorded[name]["previous"] if name in recorded else (
+            mirrored["previous"] if mirrored and _host._strict_equal(servers.get(name), mirrored.get("applied"))
+            else servers.get(name))
+        recorded[name] = {"previous": previous, "applied": entry}
+    ui.ok(f"OpenClaw MCP servers → shared token: {', '.join(sorted(patch))}")
+    return True
+
+
+def teardown_shared(s: state.SetupState, servers: dict, run: Runner) -> bool:
+    """Put back what each shared-token server replaced (an OAuth entry, or nothing)."""
+    patch: dict[str, Any] = {}
+    for name, record in s.openclaw.mcp_shared.items():
+        current = servers.get(name)
+        if not _host._strict_equal(current, record.get("applied")):
+            ui.warn(f"OpenClaw MCP {name}: changed by hand since the kit wrote it; left as it is.")
+        elif not _host._strict_equal(current, record.get("previous")):
+            patch[name] = record.get("previous")
+    if patch:
+        rc, out = _patch(run, patch)
+        if rc != 0:
+            ui.error(f"OpenClaw shared MCP servers teardown failed: {ui.safe_excerpt(out, 400, tail=True)}")
+            return False
+    s.openclaw.mcp_shared = {}
     return True
 
 

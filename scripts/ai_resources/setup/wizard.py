@@ -165,27 +165,23 @@ RUN_AUTO, RUN_ASK, RUN_FRESH = "auto", "ask", "fresh"
 
 
 def _ask_run_mode(args: argparse.Namespace, is_first: bool) -> "str | None":
-    """The one up-front question (2.6.3): take the recommended answer everywhere, or ask each question.
+    """How setup runs. Since 2.8.0 the recommended run is the default and nothing is asked up front: every prompt
+    with an answer takes it and prints it. `--ask` asks each question, `--fresh` asks each question from empty
+    answers. `--auto` is kept (it is now the default); `--non-interactive` keeps its own behaviour.
 
     Recommended is the design the operator chose (ADR-0016 addendum): OpenClaw's own agents stay on the Anthropic API
     key, the kit's team (the worker, kit roles, lanes) runs on Claude Code, live config wins over saved answers, and
-    nothing that is the operator's own signature (the Google acknowledgement) or credential is answered for them.
-    `--auto` picks it without asking; `--non-interactive` and a dry run keep their own behaviour."""
-    if getattr(args, "auto", False):
-        ui.set_auto(True)
-        return RUN_AUTO
-    if ui.is_non_interactive():
+    nothing that is the operator's own signature (the Google acknowledgement) or credential is answered for them."""
+    if getattr(args, "fresh", False) and not is_first:
+        return RUN_FRESH
+    if getattr(args, "ask", False) or getattr(args, "fresh", False):
         return RUN_ASK
-    choices = [ui.Choice("Recommended: OpenClaw's agents on the Anthropic API, the kit team on Claude Code "
-                         "(no more questions)", value=RUN_AUTO),
-               ui.Choice("Ask me every question", value=RUN_ASK)]
-    if not is_first:
-        choices.append(ui.Choice("Ask me every question, starting from empty answers", value=RUN_FRESH))
-    mode = ui.select("How should setup run?", choices, default=RUN_AUTO)
-    if mode == RUN_AUTO:
-        ui.set_auto(True)
-        ui.detail("Each answer is printed as it is taken; anything only you can answer is still asked.")
-    return mode
+    if ui.is_non_interactive() and not getattr(args, "auto", False):
+        return RUN_ASK
+    ui.set_auto(True)
+    ui.detail("Taking the recommended answers (each is printed; credentials and sign-offs are still asked). "
+              "Run with --ask to answer every question.")
+    return RUN_AUTO
 
 
 def _report_cancel(e: BaseException) -> int:
@@ -491,6 +487,11 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
         from . import agy_mcp, hygiene
         return ("agy MCP servers", "") if (hygiene.is_headless() or not agy_mcp.agy_in_use(c.s)) else None
 
+    def shared_mcp_skip(c):
+        """Nothing to show once every shared-MCP token is stored or was asked for once."""
+        from .. import shared_mcp
+        return ("Shared MCP tokens", "") if not shared_mcp.pending(c.s) else None
+
     return [
         S("tools", 1, "Your tools", lambda c: _step2_cockpits(c.s), rewindable=False),
         S("cockpit", 1, "Main tool", lambda c: _step_cockpit_choice(c.s, dry_run=c.dry_run), back=True,
@@ -505,6 +506,7 @@ def _build_steps(dry_run: bool) -> list[flow.StepSpec]:
           skip=preset_done, edit_label="Role assignment"),
         S("lanes", 6, "Parallel runs", lambda c: _step_lanes(c.s, c.args, dry_run=c.dry_run),
           back=True, edit_label="Parallel runs"),
+        S("shared_mcp", 7, "Shared MCP tokens", lambda c: _step_shared_mcp(c.s, c.dry_run), skip=shared_mcp_skip),
         S("cockpits", 7, "Tool configuration", lambda c: _step7_cockpit_config(c.s, dry_run=c.dry_run),
           back=True, skip=tool_config_done, edit_label="OpenClaw"),
         S("audio", 7, "Audio", lambda c: _step_audio(c.s), back=True, skip=audio_skip, edit_label="Audio"),
@@ -2233,6 +2235,13 @@ def _step_hygiene(s: state.SetupState, dry_run: bool = False) -> int:
             run=lambda: hygiene.apply(s, chosen)))
     else:
         deferred.discard(s, "hygiene")
+    return 0
+
+
+def _step_shared_mcp(s: state.SetupState, dry_run: bool = False) -> int:
+    """Store the Sentry and Figma tokens once for every cockpit (shared_mcp.py); a token on the host is imported."""
+    from .. import shared_mcp
+    shared_mcp.collect(s, dry_run=dry_run)
     return 0
 
 

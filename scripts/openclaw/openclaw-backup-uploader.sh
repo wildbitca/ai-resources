@@ -18,7 +18,12 @@
 #   OPENCLAW_OFFBOX_IMPERSONATE_SA  a service account to impersonate on every gcloud call
 #                                   (--impersonate-service-account). The caller needs
 #                                   roles/iam.serviceAccountTokenCreator on it: an infra step.
-# With both unset the behaviour is the one described above. OPENCLAW_OFFBOX_LIST_CMD (used by
+#   OPENCLAW_OFFBOX_CRED_FILE       an external_account (workload identity federation) config file
+#                                   for this script only; setup derives it from the host's agent
+#                                   federation, impersonating the backup service account. It wins
+#                                   over the two knobs above: every CLOUDSDK_* identity variable is
+#                                   removed and gcloud gets this file as its credential override.
+# With all three unset the behaviour is the one described above. OPENCLAW_OFFBOX_LIST_CMD (used by
 # `openclaw status`) is a separate command of yours: it runs under whatever identity IT uses.
 #
 # EVERY RUN LEAVES A STATE FILE
@@ -43,6 +48,11 @@ set -euo pipefail
 BUCKET="$OPENCLAW_OFFBOX_BUCKET"
 GCFG="${OPENCLAW_OFFBOX_GCLOUD_CONFIG:-}"
 GSA="${OPENCLAW_OFFBOX_IMPERSONATE_SA:-}"
+GCRED="${OPENCLAW_OFFBOX_CRED_FILE:-}"
+if [ -n "$GCRED" ]; then
+  GCFG=""   # the credential file decides the identity (and its impersonation) on its own
+  GSA=""
+fi
 STATE_FILE="${OPENCLAW_OFFBOX_STATE:-$HOME/.openclaw/state/offbox-last.json}"
 
 # gc <gcloud args...>: gcloud under the identity this script is configured for. With a named
@@ -56,7 +66,16 @@ gc() {
   if [ -n "$GSA" ]; then
     args+=("--impersonate-service-account=$GSA")
   fi
-  if [ -n "$GCFG" ]; then
+  if [ -n "$GCRED" ]; then
+    while IFS= read -r v; do
+      case "$v" in
+        CLOUDSDK_CONFIG|CLOUDSDK_PYTHON|CLOUDSDK_PYTHON_SITEPACKAGES) ;;
+        CLOUDSDK_*) unset_args+=(-u "$v") ;;
+      esac
+    done < <(compgen -e)
+    env "${unset_args[@]}" CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="$GCRED" GOOGLE_APPLICATION_CREDENTIALS="$GCRED" \
+      GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1 gcloud "${args[@]}"
+  elif [ -n "$GCFG" ]; then
     while IFS= read -r v; do
       case "$v" in
         CLOUDSDK_ACTIVE_CONFIG_NAME|CLOUDSDK_CONFIG|CLOUDSDK_PYTHON|CLOUDSDK_PYTHON_SITEPACKAGES) ;;
@@ -77,6 +96,11 @@ json_esc() {
 # overrides it) the credential file the environment forces on gcloud.
 identity() {
   local acct s
+  if [ -n "$GCRED" ]; then
+    acct=$(grep -o 'serviceAccounts/[^:"]*' "$GCRED" 2>/dev/null | head -n 1 | sed 's#serviceAccounts/##' || true)
+    printf 'credential_file=%s federated_as=%s' "$GCRED" "${acct:-unknown}"
+    return 0
+  fi
   acct=$(gc config get account 2>/dev/null | head -n 1 || true)
   # gcloud prints "(unset)" for a configuration that has no account: that is "no account", not a name.
   [ "$acct" = "(unset)" ] && acct=""
@@ -132,6 +156,10 @@ fail() {
   notify "openclaw-backup-uploader failed on $(hostname): $1" || true
   exit 1
 }
+
+if [ -n "$GCRED" ] && [ ! -r "$GCRED" ]; then
+  fail "OPENCLAW_OFFBOX_CRED_FILE=$GCRED is not readable (re-run ai-resources setup)"
+fi
 
 # hint_for <gcloud error text>: what the operator can do about the class of failure.
 hint_for() {

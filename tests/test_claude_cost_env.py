@@ -89,3 +89,15 @@ def test_the_state_file_round_trips_the_migration_ids():
     s.tracking.cost_migrations_applied.append("x")
     back = state._from_dict(state.SetupState, state._to_dict(s))
     assert back.tracking.cost_migrations_applied == ["x"]
+
+
+def test_a_stored_shared_mcp_token_adds_its_launcher_but_an_operator_server_of_that_name_stays(home):
+    from ai_resources import shared_mcp
+    shared_mcp.store_token("SENTRY_ACCESS_TOKEN", "sntrys_" + "y" * 30)
+    shared_mcp.store_token("FIGMA_API_KEY", "figd_" + "z" * 30)
+    mine = {"command": "my-figma", "args": []}
+    (home / "settings.json").write_text(json.dumps({"mcpServers": {"figma": mine}}))
+    _setup()
+    servers = json.loads((home / "settings.json").read_text())["mcpServers"]
+    assert shared_mcp.is_shared_entry(servers["sentry"]) and "sntrys_" not in json.dumps(servers)
+    assert servers["figma"] == mine and "engram" in servers

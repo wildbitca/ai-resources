@@ -6,7 +6,7 @@ import sys
 
 from . import __version__
 from .generate import cmd_generate
-from . import daemon, doctor, executors_cmd, audit, models_cmd, openclaw_host, verify, lanes_cmd
+from . import daemon, doctor, executors_cmd, audit, models_cmd, openclaw_host, shared_mcp, verify, lanes_cmd
 from .setup import flow, wizard
 from .orchestrator import cli as orchestrator_cli
 
@@ -63,7 +63,8 @@ Review lists the answers by name (Sign-in, Team, Tools; a key is never shown or 
 back to that screen and returns to the review; More options holds parallel runs and the OpenClaw questions.
 
 Unattended and preview runs:
-  --auto              take the recommended answer everywhere; only credentials and sign-offs are asked
+  (default)           take the recommended answer everywhere; only credentials and sign-offs are asked
+  --ask               ask every question; --fresh also starts from empty answers
   --non-interactive   use saved answers, never prompt (a prompt with no default aborts)
   --dry-run           render the targets and print a masked unified diff; nothing is written
 Parallel runs (subscription lanes, ADR-0007, off by default): --lanes enables, --no-lanes clears, --lanes-dry-run
@@ -122,7 +123,12 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_st.add_argument("--auto", action="store_true",
-                      help="Take the recommended answer to every question (credentials and sign-offs are still asked)")
+                      help="Take the recommended answer to every question (the default since 2.8.0; credentials "
+                           "and sign-offs are still asked)")
+    p_st.add_argument("--ask", action="store_true",
+                      help="Ask every question instead of taking the recommended answers")
+    p_st.add_argument("--fresh", action="store_true",
+                      help="Ask every question, starting from empty answers")
     p_st.add_argument("--non-interactive", action="store_true",
                       help="Use saved answers without prompting (for CI)")
     p_st.add_argument("--profile", default="",
@@ -196,6 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
     openclaw_host.add_subparser(sub)
     models_cmd.add_subparser(sub)
     lanes_cmd.add_subparser(sub)
+    shared_mcp.add_subparser(sub)
     orchestrator_cli.add_subparser(sub)
 
     return ap
