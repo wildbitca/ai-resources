@@ -118,3 +118,53 @@ def test_implement_full_keeps_three_lenses_and_signoff(tmp_path):
 def test_implement_without_size_classifies_once_and_defaults_to_full(tmp_path):
     labels, result = run(IMPL_JS, tmp_path, {"goal": "g", "plan_path": "p.md"}, IMPL_RESPONSES)
     assert labels[0] == "classify" and result["size"] == "full" and "sign-off" in labels
+
+
+# --- by-reference handoff and the correction budget ---------------------------------------------------------------
+
+def run_calls(script, tmp_path, args, responses):
+    cfg = tmp_path / "cfg.json"
+    cfg.write_text(json.dumps({"args": args, "responses": responses}))
+    out = subprocess.run(["node", str(HARNESS), str(script), str(cfg)], capture_output=True, text=True, check=True, timeout=60)
+    data = json.loads(out.stdout)
+    return {c["label"]: c["prompt"] for c in data["calls"]}, [c["label"] for c in data["calls"]], data["result"]
+
+
+LEDGER_ARGS = {"goal": "g", "size": "light", "plan_path": ".agent-output/planner/x-plan.md",
+               "tasks_path": "specs/features/x/tasks.md", "task_ids": ["T1", "T2"], "spec_ids": ["S1", "S2"]}
+
+
+def test_implement_hands_work_over_by_reference_not_by_paraphrase(tmp_path):
+    prompts, _, result = run_calls(IMPL_JS, tmp_path, LEDGER_ARGS, IMPL_RESPONSES)
+    p = prompts["implement"]
+    assert "Work by reference: specs/features/x/tasks.md and .agent-output/planner/x-plan.md - T1, T2, S1, S2" in p
+    assert '"## Log"' in p and "Report the ids you covered" in p
+    assert "RED per requested rule" in p and "PRESERVE" in p and "mktemp -d" in p and "Never push or merge" in p
+    assert result["tasks_path"] == "specs/features/x/tasks.md"
+
+
+def test_implement_without_a_plan_passes_the_request_verbatim(tmp_path):
+    prompts, _, _ = run_calls(IMPL_JS, tmp_path, {"goal": "rename the flag", "size": "light"}, IMPL_RESPONSES)
+    assert 'verbatim: "rename the flag"' in prompts["implement"] and "Work by reference" not in prompts["implement"]
+
+
+def test_signoff_runs_authorized_examples_in_a_scratch_copy_with_a_verdict_per_id(tmp_path):
+    prompts, _, _ = run_calls(IMPL_JS, tmp_path, {**LEDGER_ARGS, "risk_items": ["3: contract"]}, IMPL_RESPONSES)
+    p = prompts["sign-off"]
+    assert "mktemp -d" in p and "every authorized example" in p and "one verdict per criterion or S# id" in p
+    assert "Ledger: specs/features/x/tasks.md - S1, S2" in p
+
+
+def test_light_gets_one_correction_round_and_full_keeps_two(tmp_path):
+    failing = {"passed": False, "command": "pytest", "failures": ["t::a"]}
+    for size, rounds in (("light", 1), ("full", 2)):
+        _, labels, _ = run_calls(IMPL_JS, tmp_path, {"goal": "g", "size": size}, {**IMPL_RESPONSES, "test-gate": failing, "fix-tests": IMPL})
+        assert sum(1 for label in labels if label.startswith("fix-tests")) == rounds, size
+
+
+def test_plan_asks_for_ids_and_the_sizing_check_and_passes_them_on(tmp_path):
+    plan = {**PLAN, "tasks_path": "specs/features/x/tasks.md", "task_ids": ["T1"], "spec_ids": ["S1"]}
+    prompts, _, result = run_calls(PLAN_JS, tmp_path, {"goal": "g", "size": "light"}, {**PLAN_RESPONSES, "write-plan": plan})
+    assert "task_ids" in prompts["write-plan"] and "ai-resources plan-check" in prompts["write-plan"]
+    assert result["task_ids"] == ["T1"] and result["spec_ids"] == ["S1"]
+    assert '"tasks_path":"specs/features/x/tasks.md"' in result["next"] and '"task_ids":["T1"]' in result["next"]

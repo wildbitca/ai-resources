@@ -12,7 +12,7 @@ export const meta = {
   ],
 }
 
-// args: {plan_path, goal, kind, size?, risk_items?, acceptance_criteria?, security_critical?} or a plain goal string
+// args: {plan_path, tasks_path?, task_ids?, spec_ids?, goal, kind, size?, risk_items?, acceptance_criteria?, security_critical?} or a plain goal string
 // size is inline | light | full (also --inline/--light/--full in the goal). /kit-plan passes it on; without one a single
 // call classifies the task, and a failed classification means full (the whole loop). See skills/kit-orchestration "Task size".
 const SIZES = ['inline', 'light', 'full']
@@ -24,17 +24,25 @@ let size = SIZES.includes(input.size) ? input.size : (sizeFlag ? sizeFlag[1] : n
 let riskItems = Array.isArray(input.risk_items) ? input.risk_items : []
 const kind = input.kind || 'feature'
 const planPath = input.plan_path || input.plan || ''
+const tasksPath = input.tasks_path || ''
+const taskIds = Array.isArray(input.task_ids) ? input.task_ids : []
+const specIds = Array.isArray(input.spec_ids) ? input.spec_ids : []
 const criteria = input.acceptance_criteria || []
 const securityCritical = input.security_critical !== false
-const MAX_TEST_ROUNDS = 2
+const MAX_TEST_ROUNDS_FULL = 2
 
 if (!goal && !planPath) {
   return { error: 'Give a plan path or a goal: /kit-implement with {"plan_path": "..."}.' }
 }
 
-const planRef = planPath
-  ? `Read the approved plan at ${planPath} and follow it. Do not widen its scope.`
-  : `There is no plan file. Keep the change minimal and focused on the goal.`
+// By reference: the locator plus the ids, never a paraphrase of the requirement. The task ledger, when there is one,
+// carries the criteria; the plan file carries the steps.
+const ids = [...taskIds, ...specIds].join(', ')
+const planRef = (tasksPath || planPath)
+  ? `Work by reference: ${[tasksPath, planPath].filter(Boolean).join(' and ')}${ids ? ` - ${ids}` : ''}. ` +
+    `Read ${tasksPath ? 'the ledger until its "## Log" and ' : ''}the approved plan and follow it; do not widen its scope. ` +
+    `Report the ids you covered in covered.`
+  : `There is no plan file. The user's request, verbatim: "${goal}". Keep the change minimal and focused on it.`
 
 const IMPL_SCHEMA = {
   type: 'object',
@@ -45,6 +53,9 @@ const IMPL_SCHEMA = {
     tests_added: { type: 'array', items: { type: 'string' } },
     commands_run: { type: 'array', items: { type: 'string' } },
     deviations: { type: 'array', items: { type: 'string' } },
+    covered: { type: 'array', items: { type: 'string' } },
+    commits: { type: 'array', items: { type: 'string' } },
+    risk: { type: 'string' },
     blocked: { type: 'boolean' },
     block_reason: { type: 'string' },
   },
@@ -101,6 +112,7 @@ const SIGNOFF_SCHEMA = {
     gaps: { type: 'array', items: { type: 'string' } },
     evidence: { type: 'array', items: { type: 'string' } },
     manual_checks: { type: 'array', items: { type: 'string' } },
+    verdicts: { type: 'array', items: { type: 'object', required: ['id', 'verdict'], properties: { id: { type: 'string' }, verdict: { type: 'string', enum: ['pass', 'fail', 'not_run'] }, command: { type: 'string' }, observed: { type: 'string' } } } },
   },
 }
 
@@ -139,7 +151,7 @@ if (size === 'inline') {
     size,
     status: 'inline',
     plan_path: planPath || null,
-    next: `Inline: no subagents were started. Make the change in this session: write the focused test first, run it, then the suite once. Use --light or --full to run the writer and review loop.`,
+    next: `Inline: no subagents were started. Make the change in this session: write the focused test first (RED per requested rule, PRESERVE for touched behaviour), run it, then the suite once. Use --light or --full to run the writer and review loop.`,
   }
 }
 
@@ -149,13 +161,16 @@ log(`Implementing (${kind}): ${goal || planPath}`)
 const impl = await agent(
   `Goal (${kind}): ${goal}\n${planRef}\n\n` +
   `You are the only writer in this run. Work step by step:\n` +
-  `- Write or update tests for the behaviour you are changing, and watch them fail before you make them pass.\n` +
+  `- RED per requested rule: one failing test per rule or criterion, watched failing before the fix, and no other cases.\n` +
+  `- PRESERVE: for each existing command, function or output you touch, one test that pins its current behaviour and passes before and after (skip it when a test already covers it, and name that test).\n` +
+  `- Differential check: for behaviour that already shipped, run the same input on the base revision and on your change in a scratch copy made with mktemp -d, outside the workspace, and remove it after; an unrequested difference is a defect or a deviation.\n` +
+  `- One commit per logical unit (about 400 changed lines at most); a unit that touches a named risk item (${riskItems.length ? riskItems.join('; ') : 'none'}) gets its own commit. Record the commit ids and, when a ledger exists, put them on its tasks. Never push or merge.\n` +
   `- Keep each step small; run the project's lint/typecheck and the tests for the area as you go. Do not run the full suite ` +
   `after each step: the Test phase runs it once.\n` +
   `- Never weaken or delete an existing assertion to make a suite pass. If a test is wrong, say so in deviations.\n` +
   `- If the plan turns out to be wrong, follow the goal, record what you changed in deviations, and continue.\n` +
   `- Stop and set blocked only if the work cannot proceed without a decision.\n\n` +
-  `Report the files you changed, the tests you added, and the exact commands you ran.`,
+  `Report the files you changed, the tests you added, the exact commands you ran, the ids you covered, the commits, and risk as "item N (reason)" or "none".`,
   { label: 'implement', phase: 'Implement', agentType: 'implementer', schema: IMPL_SCHEMA },
 )
 
@@ -174,6 +189,8 @@ let test = await agent(
   { label: 'test-gate', phase: 'Test', agentType: 'tester', schema: TEST_SCHEMA },
 )
 
+// One correction batch and one recheck, except in full mode, which keeps the earlier two rounds.
+const MAX_TEST_ROUNDS = size === 'full' ? MAX_TEST_ROUNDS_FULL : 1
 let testRounds = 0
 while (test && !test.passed && (test.failures || []).length && testRounds < MAX_TEST_ROUNDS) {
   testRounds += 1
@@ -289,9 +306,13 @@ const runSignoff = size === 'full' || riskItems.length > 0
 const signoff = !runSignoff ? null : await agent(
   `Goal (${kind}): ${goal}\n${planPath ? `Plan: ${planPath} — read its acceptance criteria.\n` : ''}` +
   (criteria.length ? `Acceptance criteria:\n- ${criteria.join('\n- ')}\n` : '') +
-  `\nCheck the work against those criteria using evidence you can produce yourself: run the project's tests and ` +
-  `lint, read the diff, run the commands the plan names. Report each criterion as met or not, with the evidence ` +
-  `(command and result, or file:line). List anything only a human can check as manual_checks. ` +
+  (tasksPath ? `Ledger: ${tasksPath}${specIds.length ? ` - ${specIds.join(', ')}` : ''}; read its Specs section.\n` : '') +
+  `\nCheck the work against those criteria using evidence you can produce yourself: read the diff and run the commands ` +
+  `the plan or spec names as examples (not the whole suite: the test gate ran it), in a scratch copy made with mktemp -d, ` +
+  `outside the workspace, leaving no new file in it${riskItems.length ? ` (a risk item is named, so run every authorized example)` : ''}. ` +
+  `Compare with the base revision before calling a failure a regression: a defect that also exists at the base, or an out-of-domain value, ` +
+  `is an advisory; one that reproduces with realistic input and not at the base, a silently ignored explicit option, or an unrequested output change is a blocker. ` +
+  `Return one verdict per criterion or S# id (pass, fail or not_run) with the command and the observed result; list anything only a human can check as manual_checks. ` +
   `Be skeptical: report a gap rather than assuming. Do not modify any file.`,
   { label: 'sign-off', phase: 'Sign off', agentType: 'verifier', schema: SIGNOFF_SCHEMA },
 )
@@ -300,7 +321,8 @@ return {
   goal,
   kind,
   plan_path: planPath || null,
-    size,
+  tasks_path: tasksPath || null,
+  size,
   risk_items: riskItems,
   // A finding that was never verified cannot count as cleared: a blocker past the cap keeps the run open.
   status: (runSignoff ? signoff && signoff.met : true) && testsGreen && !blockers.length && !unverifiedBlockers.length

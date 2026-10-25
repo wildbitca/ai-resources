@@ -71,6 +71,8 @@ const PLAN_SCHEMA = {
     security_critical: { type: 'boolean' },
     open_questions: { type: 'array', items: { type: 'string' } },
     tasks_path: { type: 'string' },
+    task_ids: { type: 'array', items: { type: 'string' } },
+    spec_ids: { type: 'array', items: { type: 'string' } },
   },
 }
 
@@ -239,6 +241,8 @@ const plan = await agent(
   `- Number acceptance criteria S1, S2, ... and tasks T1, T2, ... (each task names the S ids it covers) so later steps refer to them by id\n\n` +
   `If the project has a specs/ directory, also write the temporal task ledger to specs/features/<feature>/tasks.md from $AGENT_KIT/templates/tasks.template.md ` +
   `(acceptance criteria in English with a short source reference, not verbatim quotes) and set tasks_path; it is removed when the change closes.\n` +
+  `Return task_ids (T1, ...) and spec_ids (S1, ...) so the implementer is handed work by reference, never by paraphrase. ` +
+  `When the command exists, run \`ai-resources plan-check\` on the plan file and fix what it reports about the Sizing block.\n` +
   `Then return the path and a short summary. Write only that file; change no source file.`,
   { label: 'write-plan', phase: 'Plan', agentType: 'planner', schema: PLAN_SCHEMA },
 )
@@ -254,6 +258,8 @@ return {
   risk_items: sizing.risk_items,
   plan_path: plan.plan_path,
   tasks_path: plan.tasks_path || null,
+  task_ids: plan.task_ids || [],
+  spec_ids: plan.spec_ids || [],
   summary: plan.summary,
   acceptance_criteria: plan.acceptance_criteria,
   requires_tests: plan.requires_tests,
@@ -261,5 +267,5 @@ return {
   open_questions: plan.open_questions || [],
   judged: { winner: winnerIndex + 1, scores: totals, scored: judged },
   context_gaps: readLenses.filter(l => !findings.some(f => f.lens === l.label)).map(l => l.label),
-  next: `Review the plan, then run /kit-implement with ${JSON.stringify({ plan_path: plan.plan_path, goal, kind, size, risk_items: sizing.risk_items })}`,
+  next: `Review the plan, then run /kit-implement with ${JSON.stringify({ plan_path: plan.plan_path, tasks_path: plan.tasks_path || undefined, task_ids: plan.task_ids || [], spec_ids: plan.spec_ids || [], goal, kind, size, risk_items: sizing.risk_items })}`,
 }

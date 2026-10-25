@@ -9,7 +9,7 @@ const src = fs.readFileSync(script, 'utf8').replace(/^export const meta/m, 'cons
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 const calls = []
 const agent = async (prompt, opts = {}) => {
-  calls.push({ label: opts.label, agentType: opts.agentType || null })
+  calls.push({ label: opts.label, agentType: opts.agentType || null, prompt })
   const key = Object.keys(cfg.responses || {}).find(k => (opts.label || '').startsWith(k))
   return key ? cfg.responses[key] : null
 }
