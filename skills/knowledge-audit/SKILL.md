@@ -32,6 +32,8 @@ description: "SDD closure + full specs/knowledge sync: relink, merge into canoni
 | `$AGENT_KIT/workflows/cross-domain-backend-infra.workflow.yaml` | end of **`verify`**                                                       |
 | `$AGENT_KIT/workflows/security-devsecops.workflow.yaml`         | end of **`report`** (after copy to `specs/knowledge/searchable/` if used) |
 
+**Temporal task ledgers.** A change run in `light` or `full` mode may keep `specs/features/<feature>/tasks.md` (or a `## Tasks` section in the spec; template `$AGENT_KIT/templates/tasks.template.md`). At closure, in the same run: fold what is durable (accepted `S#` criteria that became `RULE-*` / `TS-*`, decisions, rejected options) into the spec or `specs/knowledge/decisions/`, copy the actual Sizing line into the session summary, then `git rm` the ledger. A ledger left behind after its change closed is stale knowledge; list it in the output. Never fold open tasks: an unfinished change keeps its ledger.
+
 Orchestrators and one-shot agents: load this file, then **execute** the steps below in repo root. Do not only summarize. Extended patterns: `references/audit-detail.md`.
 
 ## Steps

@@ -27,10 +27,37 @@ and Verifier.
 2. **Handoff points:** Explicitly state after which steps to hand off to Tester (run tests) or Verifier (validate against criteria). Do not leave "run tests" or "verify" implicit.
 3. **No code:** Do not write application source, tests, or config edits. At most, list file paths, function names, or **project test commands** as strings for the Implementer to run.
 4. **Scope control:** If the request is large, break it into phases and plan one phase at a time; hand off after each phase so context stays bounded.
-5. **BDD-driven acceptance criteria:** When specs exist for the feature area (specs/features/{feature}/spec.md with status != stub), derive acceptance criteria from the spec's BDD Test Scenarios. Reference specific scenario IDs (e.g. "TS-PET-001 must pass"). When no spec exists, write acceptance
+5. **Size before you plan.** Fill the Sizing block below from a bounded read (about 3 calls) before drafting. Counts of files or tests never decide the mode. If the mode is `inline`, say so and write no plan file; do not hand off to further roles.
+6. **BDD-driven acceptance criteria:** When specs exist for the feature area (specs/features/{feature}/spec.md with status != stub), derive acceptance criteria from the spec's BDD Test Scenarios. Reference specific scenario IDs (e.g. "TS-PET-001 must pass"). When no spec exists, write acceptance
    criteria as Given/When/Then statements that can be promoted to spec scenarios later.
 
 ---
+
+## Sizing
+
+| Input | Question |
+|---|---|
+| U | Is the outcome specified, and do I know what and where to change, with no open product or design decision? If no: ask one question or map once, then re-evaluate. |
+| R | Which risk items apply (1 data or irreversible effects, 2 security, 3 contracts others consume, 4 concurrency, 5 delivery or environment, 6 no test would catch a regression), or `none`? |
+| S | Resume test: if the session stopped now, could someone finish from the request and `git diff`? |
+| F | Forecast authored changed lines, additions plus deletions, generated files excluded, rounded to 10. |
+| N | Independent units (disjoint edit surfaces; one behavior with its code, tests and docs). |
+
+Decide top to bottom; the first match wins. `H` is a flag, not a size.
+
+| Mode | Condition | Route |
+|---|---|---|
+| `inline` | U and S, N = 1 | work in the session, no plan file, 0 spawns |
+| `light` | not S (or R not empty), N < 2 or each unit about 100 lines or less | `tasks.md` from `$AGENT_KIT/templates/tasks.template.md`, one draft, tests once |
+| `full` | N >= 2 independent units each over about 100 lines, or the user wants separate deliverables | today's plan loop; one writer per unit |
+
+An R item adds one independent verifier and a `Risk: item N` line; it never adds ceremony. If F is over about 400, slice into reviewable commits; do not reclassify for line count. Priority is business value and separate from size. Emit this block at the top of the plan and in `tasks.md`:
+
+```markdown
+## Sizing
+- mode: light | resume_test: fail (sessions) | risk_items: none
+- forecast: lines~120 units=1 surfaces=[...] | route: inline | verification: self | spawn_budget: 0
+```
 
 ## Workflow
 
