@@ -50,6 +50,56 @@ UTILITY_MODEL_ID = "cost-utility-model"
 UTILITY_MODEL_PATH = ("agents", "defaults", "utilityModel")
 
 
+# Balanced credit policy (docs/decisions/0017-balanced-credit-policy.md): the SAFE subset. Heartbeat stays on Haiku until a
+# Gemini tool-calling run is verified. Proposed only on a host that already uses Google models, one confirm per path.
+BALANCED_UTILITY_ID = "credit-utility-gemini-flash"
+BALANCED_ALIAS_ID = "credit-gemini-flash-alias"
+BALANCED_LANE_ID_PREFIX = "credit-lane-fallbacks:"
+GEMINI_FLASH_ALIAS_PATH = ("agents", "defaults", "models", "google/gemini-3.8-flash")
+
+
+def uses_google(doc: dict) -> bool:
+    """True when the live config already routes something to a `google/*` model (the host has the Google provider)."""
+    return '"google/' in json.dumps(doc, default=str)
+
+
+def balanced_credit_proposals(doc: dict, *, applied=(), keep=frozenset(), force=frozenset()) -> list[Proposal]:
+    from .setup import lanes_render as lr
+    done = set(applied or ())
+    out: list[Proposal] = []
+    if not uses_google(doc):
+        return out
+    flash = lr.GEMINI_FLASH_REF
+
+    def ok(mid, path):
+        return mid not in done and not _covered(path, keep) and not _covered(path, force)
+
+    old, had = _get(doc, UTILITY_MODEL_PATH)
+    if had and old != flash and ok(BALANCED_UTILITY_ID, UTILITY_MODEL_PATH):
+        out.append(Proposal(BALANCED_UTILITY_ID, UTILITY_MODEL_PATH, old, flash,
+                            "titles and summaries are tool-less: the Google credit pays for them",
+                            snippet=f"openclaw config set agents.defaults.utilityModel {flash}"))
+    old, had = _get(doc, GEMINI_FLASH_ALIAS_PATH)
+    if not had and ok(BALANCED_ALIAS_ID, GEMINI_FLASH_ALIAS_PATH):
+        out.append(Proposal(BALANCED_ALIAS_ID, GEMINI_FLASH_ALIAS_PATH, None, {"alias": "flash"},
+                            "registers the Gemini route under a short alias", had=False,
+                            snippet='openclaw config patch with {"agents":{"defaults":{"models":{"google/gemini-3.8-flash":{"alias":"flash"}}}}}'))
+    entries = (doc.get("agents") or {}).get("entries") or {}
+    for aid in sorted(entries):
+        cfg = entries[aid]
+        model = cfg.get("model") if isinstance(cfg, dict) else None
+        primary = _primary(model)
+        want = lr.lane_api_fallbacks(aid, primary)
+        path = ("agents", "entries", aid, "model", "fallbacks")
+        old, had = _get(doc, path)
+        if want and old != want and ok(BALANCED_LANE_ID_PREFIX + aid, path):
+            out.append(Proposal(BALANCED_LANE_ID_PREFIX + aid, path, old if had else None, want,
+                                "an exhausted Antigravity quota falls back to the Gemini API credit before Anthropic",
+                                replace=True, had=had,
+                                snippet=f"openclaw config set {'.'.join(path)} '{json.dumps(want)}'"))
+    return out
+
+
 def _is_opus(ref: object) -> bool:
     return isinstance(ref, str) and "opus" in ref.lower()
 
@@ -96,15 +146,18 @@ def _covered(path: tuple[str, ...], entries) -> bool:
 
 
 def proposals(doc: dict, *, applied=(), keep=frozenset(), force=frozenset(), heartbeat_off: bool = False,
-              utility_model: str = "") -> list[Proposal]:
+              utility_model: str = "", balanced_credit: bool = False) -> list[Proposal]:
     """The migrations still worth proposing for `doc`. A path in `keep` is skipped; one already in `force` is left to
     the normal forced fill (it is applied without a second question).
 
     `heartbeat_off` is the operator's answer to the wizard question (default No: the 2h isolated light heartbeat stays);
     `utility_model` is a model ref a probe VERIFIED works with this host's key (never a guessed id): it is proposed only
-    when the configured utilityModel is set, differs, and a verified replacement exists."""
+    when the configured utilityModel is set, differs, and a verified replacement exists. `balanced_credit` adds the
+    balanced credit policy's safe subset (see `balanced_credit_proposals`)."""
     done = set(applied or ())
     out: list[Proposal] = []
+    if balanced_credit:
+        out.extend(balanced_credit_proposals(doc, applied=applied, keep=keep, force=force))
     for mid, path, new, why in VALUE_MIGRATIONS:
         old, had = _get(doc, path)
         if mid in done or not had or old == new or _covered(path, keep) or _covered(path, force):

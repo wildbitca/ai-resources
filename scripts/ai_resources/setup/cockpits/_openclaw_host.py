@@ -877,7 +877,7 @@ def _offer_cost_migrations(o: state.OpenClawState, doc: dict, path: Path, writte
     verified = "" if dry_run else _probe_utility_model(o, doc, oc)
     props = cost_migrations.proposals(doc, applied=o.cost_migrations_applied, keep=overrides["keep"],
                                       force=overrides["force"], heartbeat_off=bool(getattr(o, "host_heartbeat_off", False)),
-                                      utility_model=verified)
+                                      utility_model=verified, balanced_credit=True)
     if not props:
         return False
     ui.info("Lean cost values that differ from what this host has set (nothing is replaced without your confirm):")

@@ -65,6 +65,22 @@ def codex_status() -> dict[str, Any]:
         path = ""
     summary = f"codex: {path} (lane held)" if path else "codex: not installed (lane held)"
     return {"installed": bool(path), "path": path, "held": backend_held(CODEX_BACKEND), "summary": summary}
+# Balanced credit policy (docs/decisions/0017-balanced-credit-policy.md): when an agy lane's Antigravity quota is exhausted,
+# its turn falls back to the paid Gemini API (the Google credit) before the Anthropic API. Keyed by the lane's model id.
+GEMINI_FLASH_REF = "google/gemini-3.8-flash"
+LANE_API_FALLBACKS: dict[str, tuple[str, ...]] = {
+    "gemini-3.8-flash-high": (GEMINI_FLASH_REF, "anthropic/claude-haiku-5-5"),
+}
+
+
+def lane_api_fallbacks(agent_id: str, primary: str) -> list[str]:
+    """The API fallback chain for a `kit-lane-agy-*` agent whose primary is `agy-cli-lane/<model>`; [] for any other
+    agent or an unknown model. Pure: it names refs only, no credential."""
+    if not str(agent_id).startswith(AGENT_PREFIX + "agy-"):
+        return []
+    return list(LANE_API_FALLBACKS.get(_strip(primary), ()))
+
+
 HELD_FLAG_REASON = "held: --lanes-antigravity is off"
 HELD_NO_ACK_REASON = "held: no valid Google acknowledgement (missing, stale text or no account)"
 HELD_ROLE_REASON = "held: the Google acknowledgement does not list {role}"
