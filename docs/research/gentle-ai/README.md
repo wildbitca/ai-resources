@@ -1,6 +1,6 @@
 # gentle-ai study (ODD, context economy, sizing, adoption plan)
 
-Research only. Nothing in the kit was changed except these documents. Date: 2026-10-25.
+Research and its adoption. Studies 1-3 are research only; the plan in study 4 is **implemented in waves 1-5** on branch `openclaw/claude-gentle-ai-odd-study` (status, measurements, closed decisions and calibration in sections 10-15 of study 4). Date: 2026-10-25.
 
 | Doc | What it answers |
 |---|---|
