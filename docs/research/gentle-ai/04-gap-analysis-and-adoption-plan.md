@@ -1,9 +1,15 @@
 # Study 4: Gap analysis and adoption plan
 
-Status: research and proposal. **Nothing is implemented**; no kit file outside `docs/research/gentle-ai/` was changed. Date: 2026-10-25. Index: [README](README.md).
+Status: research and proposal; **Wave 1 is implemented** (see section 10) with the owner decisions of section 6 applied. Waves 2-5 are not. Date: 2026-10-25. Index: [README](README.md).
 Labels: **[V]** verified from code/doc, **[M]** measured, **[I]** inferred or proposed. Gentle-ai paths: `Gentleman-Programming/gentle-ai@5ee1ac7`. `kit:` paths: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec` (2.8.4). Tests and scripts named below were not run for this study.
 
 Inputs: [Study 1](01-odd-workflow-deep-dive.md) (ODD rules), [Study 2](02-token-context-economy.md) (measurements), [Study 3](03-size-effort-estimation.md) (rubric).
+
+## Owner decisions (2026-10-25, override the recommendations below)
+
+1. **Durable task document reuses `specs/`; no `odd/tasks/`.** Tasks live next to the spec they implement: `specs/features/<feature>/tasks.md` (template `templates/tasks.template.md`), or a `## Tasks` section inside a short spec. The ledger is **temporal**: created for a `light`/`full` change and removed when it closes, after `knowledge-audit` folds what is durable (accepted criteria that became `RULE-*`/`TS-*`, decisions, rejected options) into the spec or `specs/knowledge/decisions/`. Fit with the existing machinery: `specs/features/` stays the canonical truth; `specs/knowledge/` stays the working-evidence area; `tasks.md` is a third, shorter-lived artifact whose closure rule is the same SDD closure `knowledge-audit` already enforces ("data a medias" is the anti-pattern it prevents), so no new lifecycle is invented. `inline` work creates none. Repositories without `specs/` keep only the plan file under `.agent-output/`.
+2. **No verbatim-quote rule.** Acceptance criteria stay in English; each carries a short `source:` reference (ticket or message link) instead of a quote. G14 and Q2 are closed this way, and the language conflict (R-LANG) disappears.
+3. **Size gating is on by default, in three modes.** `inline` (zero subagents), `light`, `full`; `/kit-plan` and `/kit-implement` classify (one call) or accept `--inline`, `--light`, `--full` / `{"size": ...}`. Delegation needs a named reason, handoff is by reference (locator + `T#`/`S#` ids), and the verifier runs authorized spec examples by risk. Q3 is closed as "gated by default, `--full` restores today's behavior".
 
 ## 0. Executive summary
 
@@ -39,7 +45,7 @@ Legend: **Adopt** = take as is. **Adapt** = take the rule, change the form. **Sk
 | G1 | Classify with the resume test before anything else; counts never decide (`routing.go:82-88`) | No classifier; workflow by kind; planner has no sizing (Study 3 section 3) [V] | **Adapt** | `kit-orchestration`: new "Task size" section (~1 KB). `planner.md`: Sizing block (Study 3 4.5). Handoff: optional `class`/`route` | Model judgment drifts; mitigated at the script level in G7 | S, ~120 lines |
 | G2 | Delegate only for a named reason; none by default; route declared (`routing.go:116-133`, `1731-...` S1) | One sentence, "Decide by task shape, not by step or file count" (`kit:skills/kit-orchestration/SKILL.md:197-199`) [V] | **Adapt** | Replace that section with a short "Delegation triggers" table (ask, mapping, writer-by-reason, verifier-by-risk, long-session); add `route` + `reason` to the handoff notes | Collides with an explicitly invoked workflow (the user chose its steps) - keep: invoking a workflow is the authorization; the gate applies to the *default front door* and to `/kit-*` suggestions | S, ~80 lines |
 | G3 | Handoff by reference, never paraphrase; verbatim request when no doc; workers report covered `S#` (`routing.go:73`) | Artifacts by path (`handoff.md.template:12`), but the requirement travels as a paraphrase: step prompt is built from `{{user_goal}}`, "the goal, constraints, and relevant spec paths" (`kit-orchestration/SKILL.md`, "Running a step" item 3) [V] | **Adopt** | Prompt rule: pass locator + task ids + spec ids; read until the Log; report covered ids; with no doc pass the user's request verbatim. Handoff front matter: **optional** `spec_ref`, `task_ids`, `spec_ids` | New keys touch the handoff contract (item 3 risk) | S+H, ~90 lines incl. tests |
-| G4 | One feature doc with fixed order Specs / Tasks / Log, `S#` quoting user strings verbatim, `L1` = original request, change rewrites only the affected spec (`routing.go:68,158`; example `odd/tasks/odd-spec-by-reference.md`) | Handoff = ephemeral workflow state, deleted at the end ("When task DONE: DELETE the handoff file"); `templates/feature-spec.template.md` = heavy REQ/RULE/TS product spec [V] | **Adapt** | New `templates/odd-task.template.md` + `workflows/odd.workflow.yaml` (generates `workflow-odd`). Keep it separate from the handoff (durable requirement ledger vs ephemeral run state); `refs.spec` in the handoff points to it | Third document type; people stop writing it. Keep to M-or-larger tasks only | M+H, ~300 lines |
+| G4 | **Revised by owner decision 1:** the doc is `specs/features/<feature>/tasks.md`, temporal, folded by `knowledge-audit` at closure (template in W1); no `odd/tasks/`. Original: one feature doc with fixed order Specs / Tasks / Log, `S#` quoting user strings verbatim, `L1` = original request, change rewrites only the affected spec (`routing.go:68,158`; example `odd/tasks/odd-spec-by-reference.md`) | Handoff = ephemeral workflow state, deleted at the end ("When task DONE: DELETE the handoff file"); `templates/feature-spec.template.md` = heavy REQ/RULE/TS product spec [V] | **Adapt** | New `templates/odd-task.template.md` + `workflows/odd.workflow.yaml` (generates `workflow-odd`). Keep it separate from the handoff (durable requirement ledger vs ephemeral run state); `refs.spec` in the handoff points to it | Third document type; people stop writing it. Keep to M-or-larger tasks only | M+H, ~300 lines |
 | G5 | Authorize first: read-only unless the request authorizes change; one clarification on ambiguity (`routing.go:62-64`) | Plan is shown before code-writing steps ("Before the first step" item 5); outward actions need confirmation (AGENTS.md); no general read-only-by-default rule [V] | **Adapt** | One bullet at the top of "Before the first step": read-only requests (investigate, explain, compare, propose) produce no writes and no writer delegation | Over-asking; limit to one clarification | S, ~10 lines |
 | G6 | Verifier runs the spec's authorized examples in a `mktemp -d` scratch copy, against a baseline, verdict per `S#`, severity rules (`odd-orchestrator-sections.md:13-24`) | `verifier.md` out of scope "running tests (Tester does that)", "Rely on Tester's report" (`kit:agents/roles/verifier.md:20,52`); **but** `kit-implement.js:232-238` tells the sign-off verifier to "run the project's tests and lint ... run the commands the plan names" [V] | **Adapt** | Align the role file with the script: verifier may run *authorized spec example commands* (not the full suite) in a scratch copy, compares with baseline, reports per criterion/`S#`, never edits. Keep independence | Duplicates the tester; bounded by "examples only" and the baseline rule | S, ~60 lines |
 | G7 | Verify by risk: passive = readback, medium = writer self-verification, high = one independent verifier at feature end; one correction batch, one recheck (`odd-orchestrator-sections.md:13-24`) | `/kit-implement` always: 3 lenses + up to 16 skeptics + fix + sign-off; test fix rounds <= 2 (`kit-implement.js:22,153-232`) [V] | **Adapt** | Gate the lenses and skeptics on `class`/`H`: XS/S none; M one combined lens; L or H all three + skeptics. Sign-off stays. Bounded correction already exists (rounds <= 2); make it "one batch, one recheck" | Less review coverage on M; tell the user which lenses ran | M+H, ~250 lines JS + tests |
@@ -49,7 +55,7 @@ Legend: **Adopt** = take as is. **Adapt** = take the rule, change the form. **Sk
 | G11 | Core + on-demand modules (`orchestrator_modules.go`) | `kit-orchestration` 21,735 B always loaded; lines 49-148 (14,070 B) are lanes/backends for 2 of 19 workflows [M] | **Adopt (technique)** | Move "Choosing a backend" + "Lane steps" to `references/backends-and-lanes.md`; core keeps a pointer line per step type: "when a step has `backend: openclaw-agent` or `lane`, read ...". Update `test_kit_orchestration_backend_doc.py` | Models skip the pointer; the post-step checks are safety text - keep a 3-line summary of the Blocked result in the core | S+H(tests), ~60 lines moved/edited |
 | G12 | Pass skill paths, not summaries; registry index; `skill_resolution` feedback (`docs/skill-registry.md`) | Prompts carry `SKILL.md` paths (`kit-orchestration/SKILL.md`, step 3); `skills-index.json` (141 entries) [V] | **Skip** (already aligned) | State "paths, never summaries" in the delegation section (one line) | - | in G2 |
 | G13 | Capable vs small prompt variants (`orchestrator.go:151-185`) | One prompt per role; Haiku budget check 100k [V] | **Skip for now** | Revisit only if the audit shows Haiku roles above the budget or high cost | - | - |
-| G14 | Specs and L1 quote the user verbatim "in the user's language" (`routing.go:158`) | All artifacts in English (managed AGENTS.md, IDIOMA) [V] | **Needs your decision** | Proposed: spec prose in English; verbatim quotes allowed as *quoted evidence* with a language tag, e.g. `> (es, verbatim) ...` | Without a rule, either the verbatim guarantee or the English rule breaks | S, ~10 lines once decided |
+| G14 | Specs and L1 quote the user verbatim "in the user's language" (`routing.go:158`) | All artifacts in English (managed AGENTS.md, IDIOMA) [V] | **Skip (owner decision 2)** | Criteria in English with a short `source:` reference (ticket or message link); no verbatim quotes | None: the English rule stays whole | done in W1 |
 | G15 | Work-unit commits ~400 lines, high-risk unit alone, record commit per task, push/PR/merge are the user's (`routing.go:73,174`) | `finishing-a-development-branch`, `common-git-collaboration`; merge to base by default in worktree workflows (`handoff.md.template` `git_integration`) [V] | **Adapt (light)** | Add "high-risk unit gets its own commit" and "record the commit id per task in the doc". Do not adopt the delivery-strategy matrix | Conflicts with `merge_to_base` default; keep ours | S, ~15 lines |
 | G16 | No self-pause; hedging is not a stop; one **Needs your decision** result (`routing.go:74-78`) | Blocked/Return_to_step with 3 attempts (`kit-orchestration/SKILL.md:46`) [V] | **Adapt** | Add the "Needs your decision" phrase as the terminal state after the 3 attempts | Low | S, ~8 lines |
 | G17 | Sub-agent launch dedupe (`generic/orchestrator.md`) | Not stated [V] | **Adopt** | One sentence in G2: never emit the same `(step, goal)` spawn twice in a turn | None | in G2 |
@@ -127,7 +133,7 @@ Not a copy of gentle-ai's protocol. A short YAML workflow whose steps are the *d
 
 Template skeleton (`templates/odd-task.template.md`): exactly the shape in Study 1 section 4.1, with the language note from G14 and a "Sizing" block.
 
-Location of the document is a decision (section 6, Q1): repository-tracked `odd/tasks/` (gentle-ai's choice, discoverable, reviewed in PRs) vs `specs/tasks/` (fits our `specs/` convention) vs `.agent-output/` (ephemeral).
+Location of the document was decided (section 6, Q1): `specs/features/<feature>/tasks.md`, temporal. `workflow-odd` (W3) writes and closes that file; it does not introduce a new directory.
 
 ### 3.5 Verifier change (G6), proposed text delta for `agents/roles/verifier.md`
 
@@ -198,7 +204,7 @@ ODD bundles authorization, tracking, delivery slicing, RDD, skill registry, pers
 
 ### R-LANG
 
-Verbatim quoting vs English-only (G14). Needs a decision before `workflow-odd` is written.
+Closed by owner decision 2: no verbatim quotes, English criteria with a `source:` reference.
 
 ## 5. What this plan deliberately does not do
 
@@ -207,15 +213,13 @@ Verbatim quoting vs English-only (G14). Needs a decision before `workflow-odd` i
 - No change to ClickUp conventions. Size and priority stay separate; priority is still asked when unknown.
 - No rewrite of the 141 skills, no summary skills.
 
-## 6. Decisions I need from you
+## 6. Decisions (answered 2026-10-25)
 
-| # | Question | Options | My recommendation |
-|---|---|---|---|
-| Q1 | Where does the durable task document live? | `odd/tasks/<feature>.md` in each repo; `specs/tasks/<feature>.md`; `.agent-output/` (ephemeral) | `odd/tasks/` for tracked repos (compatible with gentle-ai tooling and PR review); `.agent-output/` for non-repo or scratch work |
-| Q2 | Language of verbatim quotes | English-only (translate and keep the original in a quote); spec prose English + verbatim quotes tagged with their language | Second option |
-| Q3 | Should `/kit-plan` and `/kit-implement` become size-gated by default? | gated by default; opt-in flag `--lean`; keep as is and add a separate lean path | Gated by default, with `--full` to force today's behavior (reversible, one flag) |
-
-(Per the global question rule these should be asked with buttons; I have no question tool in this subagent session, so they are listed for the requester to relay.)
+| # | Question | Decision |
+|---|---|---|
+| Q1 | Where does the durable task document live? | `specs/features/<feature>/tasks.md` (or a `## Tasks` section of a short spec), **temporal**: created for the change, folded into the spec by `knowledge-audit` and deleted at closure. No `odd/tasks/`. |
+| Q2 | Language of verbatim quotes | No verbatim-quote rule. English criteria with a short `source:` reference. |
+| Q3 | Size-gate `/kit-plan` and `/kit-implement` by default? | Yes, three modes (`inline`, `light`, `full`) with `--inline`, `--light`, `--full` overrides; `--full` restores the old loop. |
 
 ## 7. Measurement plan (ADR-0013 rule: no claim without before/after)
 
@@ -232,7 +236,7 @@ Effort uses Study 3 classes; forecast lines include tests. "H" = touches a contr
 | Wave | Contents | Class | Forecast lines | Spawns | Verification |
 |---|---|---|---|---|---|
 | **W0** | Answer Q1-Q3; trace the generator of the OpenClaw block; verify `mem_current_project` in a managed worktree; take the baseline snapshot | XS | 0 | 0 | the answers recorded in an ADR stub |
-| **W1** (docs/prompts only) | G1, G2, G5, G9, G12, G16, G17 into `kit-orchestration`; G11 split of lanes to `references/backends-and-lanes.md`; update `test_kit_orchestration_backend_doc.py`; G20 ceiling | S+H (test contract) | ~250 | 0 | `scripts/run-tests.sh`; `python3 scripts/validate_kit.py` |
+| **W1** (docs/prompts only, **done**, section 10) | G1, G2, G5, G9, G12, G16, G17 into `kit-orchestration`; G11 split of lanes to `references/backends-and-lanes.md`; update `test_kit_orchestration_backend_doc.py`; G20 ceiling | S+H (test contract) | ~250 | 0 | `scripts/run-tests.sh`; `python3 scripts/validate_kit.py` |
 | **W2** (roles, templates) | G6 verifier, G8 implementer/tester, G3 handoff optional keys (+hook/test updates), G15 commit rule | M+H (G3 is item 3) | ~250 | 0-1 (one verifier for G3) | role-template tests; hook tests; validator |
 | **W3** (`workflow-odd`) | G4 YAML + template + `generate` + `skill_scope` placement + `skills-index.json`; G10 Engram convention + rule line | M+H | ~300 | 0 | `generate` idempotence; `validate_kit`; new tests |
 | **W4** (scripts) | G7 + Classify phase in `kit-plan.js`/`kit-implement.js`, `--full` flag, tests with `orchestrator_fakes.py` | M+H | ~350 | 0-1 | script tests; one live dry run on a scratch repo |
@@ -245,9 +249,9 @@ Total forecast: ~1,150 changed lines, six commit groups, no required parallel wr
 ## 9. Acceptance criteria for "adoption done" (draft)
 
 - A small task (class XS/S) in an OpenClaw `claude` worker completes with 0 subagent calls and no durable artifacts, and the Sizing block is stated in the reply.
-- A class M task creates one task doc whose `## Specs` quote the request, whose `## Tasks` carry commit ids, and whose `## Log` starts with the original request.
+- A `light` or `full` task creates one temporal `specs/features/<feature>/tasks.md` whose `## Specs` carry a `source:` link, whose `## Tasks` carry commit ids and whose `## Log` starts with the original request link; `knowledge-audit` folds and removes it at closure.
 - A handoff from the planner to the implementer contains a locator + `T#` + `S#` and no paraphrase of the requirement.
-- The verifier's report contains one verdict per `S#`, produced by running at least one authorized example in a `mktemp -d` scratch copy; the workspace has no new file.
+- The verifier's report contains one verdict per `S#`, produced by running authorized examples (all of them when a risk item is named) in a `mktemp -d` scratch copy; the workspace has no new file.
 - `kit-orchestration/SKILL.md` core < 11 KB; lanes reference present; all existing tests pass; `validate_kit.py` passes.
 - `audit compare` shows spawns per small change reduced vs the baseline, with n >= 5 per class.
 - No edit to the managed block beyond the agreed three-line pointer, and a fresh `ai-resources setup` run keeps it.
