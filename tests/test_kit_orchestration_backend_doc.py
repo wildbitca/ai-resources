@@ -9,7 +9,9 @@ from __future__ import annotations
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SKILL = (REPO / "skills" / "kit-orchestration" / "SKILL.md").read_text(encoding="utf-8")
+CORE = (REPO / "skills" / "kit-orchestration" / "SKILL.md").read_text(encoding="utf-8")
+# The backend and lane procedure lives in an on-demand reference; the core keeps a pointer and a summary.
+SKILL = CORE + "\n" + (REPO / "skills" / "kit-orchestration" / "references" / "backends-and-lanes.md").read_text(encoding="utf-8")
 HANDOFF_REF = (REPO / "skills" / "kit-orchestration" / "references" / "handoff.md").read_text(encoding="utf-8")
 
 BLOCKED = (
@@ -20,7 +22,18 @@ BLOCKED = (
 
 def test_section_exists():
     assert "## Choosing a backend" in SKILL
-    assert SKILL.index("## Running a step") < SKILL.index("## Choosing a backend") < SKILL.index("## Parallel groups")
+    assert CORE.index("## Running a step") < CORE.index("## Backends and lanes") < CORE.index("## Parallel groups")
+
+
+def test_core_points_at_the_reference_and_keeps_the_blocked_summary():
+    assert "references/backends-and-lanes.md" in CORE
+    assert "## Choosing a backend" not in CORE and "## Lane steps" not in CORE
+    assert "do not fall back to `claude-code`" in CORE and "Return_to_step" in CORE
+
+
+def test_core_size_ceiling_is_a_regression_guard_not_a_cost_claim():
+    # Guards against the lanes text creeping back into the always-loaded skill; it measures bytes, not tokens or cost.
+    assert len(CORE.encode("utf-8")) < 12_500
 
 
 def test_blocked_text_is_exact_and_has_no_fallback():
@@ -74,11 +87,13 @@ def test_parallel_groups_and_handoff_reference_mention_openclaw_members():
 
 
 def _lane_section() -> str:
-    return SKILL[SKILL.index("## Lane steps"):SKILL.index("## Parallel groups")]
+    ref = SKILL[SKILL.index("# Backends and lanes"):]
+    return ref[ref.index("## Lane steps"):]
 
 
 def test_lane_section_sits_between_backend_and_parallel_groups():
-    assert SKILL.index("## Choosing a backend") < SKILL.index("## Lane steps") < SKILL.index("## Parallel groups")
+    ref = SKILL[SKILL.index("# Backends and lanes"):]
+    assert ref.index("## Choosing a backend") < ref.index("## Lane steps")
 
 
 def test_lane_precedence_table_block_and_soft_fallback():
