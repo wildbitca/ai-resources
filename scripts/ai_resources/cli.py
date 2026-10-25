@@ -87,6 +87,11 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return wizard.run(args)
 
 
+def cmd_plan_check(args: argparse.Namespace) -> int:
+    from . import plan_sizing
+    return plan_sizing.main(list(args.files))
+
+
 def cmd_version(args: argparse.Namespace) -> int:
     print(f"ai-resources {__version__}")
     return 0
@@ -113,6 +118,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_gen.add_argument("--skip-vendor", action="store_true",
                        help="Only rebuild skills-index.json")
     p_gen.set_defaults(func=cmd_generate)
+
+    # plan-check
+    p_pc = sub.add_parser("plan-check", help="Check the Sizing block of a plan or tasks.md")
+    p_pc.add_argument("files", nargs="+", help="plan or tasks.md files")
+    p_pc.set_defaults(func=cmd_plan_check)
 
     # setup (the new wizard)
     p_st = sub.add_parser(

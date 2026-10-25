@@ -521,6 +521,18 @@ def check_workflow_scripts() -> None:
             fail("scripts", f"{rel}: phase('{title}') has no entry in meta.phases")
 
 
+def check_plan_sizing() -> None:
+    """The shipped Sizing examples (tasks template, planner role) must pass the plan-sizing checker."""
+    from ai_resources import plan_sizing
+    for rel in ("templates/tasks.template.md", "agents/roles/planner.md"):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        if rel.endswith("planner.md"):
+            # the role file documents the block inside a fenced example after a prose table of the same name
+            text = text[text.index("```markdown"):]
+        for problem in plan_sizing.problems(text):
+            fail("plan-sizing", f"{rel}: {problem}")
+
+
 def check_hooks() -> None:
     for hook in sorted((ROOT / "hooks").glob("*.py")):
         result = subprocess.run([sys.executable, "-m", "py_compile", str(hook)],
@@ -664,6 +676,7 @@ def main() -> int:
     check_haiku_budget()
     check_role_effort(role_names)
     check_workflow_scripts()
+    check_plan_sizing()
     check_hooks()
     check_references()
     check_plugin_manifest(role_names)
