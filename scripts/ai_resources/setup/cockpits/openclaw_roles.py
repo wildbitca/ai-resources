@@ -137,6 +137,31 @@ def _pin(runtime: str) -> dict[str, Any]:
     return {"agentRuntime": {"id": runtime}}
 
 
+# Report roles read and never edit files. The ones that need no shell either lose exec and process too: the claude-cli
+# runtime turns tools.deny into Claude Code's --disallowedTools (bash is exec), so this removes Bash for them. OpenClaw's
+# sandbox does not reach a CLI runtime (Claude Code owns its own sandboxing), so tool policy is the lever here.
+REPORT_DENY = ("write", "edit", "apply_patch")
+NO_EXEC_DENY = ("exec", "process")
+NO_EXEC_ROLES = frozenset({"explore", "planner", "software-architect"})
+# tools.deny lists an earlier kit wrote: an entry still carrying one of them is moved to today's list.
+PREVIOUS_DENIES = (list(REPORT_DENY),)
+
+
+def deny_for(role: str) -> list[str]:
+    if role not in roles_policy.REPORT_ROLES:
+        return []
+    return list(REPORT_DENY) + (list(NO_EXEC_DENY) if role in NO_EXEC_ROLES else [])
+
+
+def _tools_patch(live: Mapping[str, Any], agent: RoleAgent) -> "list[str] | None":
+    """Today's deny list when the live entry still carries one an earlier kit wrote; None otherwise (the operator's)."""
+    want = deny_for(agent.get("role", ""))
+    have = _get(live, "tools", "deny")
+    if want and isinstance(have, list) and have != want and have in PREVIOUS_DENIES:
+        return want
+    return None
+
+
 def _entry(agent: RoleAgent, workspace: Path, runtime: str = "") -> dict[str, Any]:
     entry: dict[str, Any] = {"name": agent.id, "description": agent["description"][:200], "workspace": str(workspace),
                              "model": {"primary": agent["model"]}, "skills": list(agent["skills"])}
@@ -144,8 +169,9 @@ def _entry(agent: RoleAgent, workspace: Path, runtime: str = "") -> dict[str, An
         entry["models"] = {agent["model"]: _pin(runtime)}
     if agent["thinking"]:
         entry["thinkingDefault"] = agent["thinking"]
-    if agent.get("role") in roles_policy.REPORT_ROLES:
-        entry["tools"] = {"deny": ["write", "edit", "apply_patch"]}      # report roles read; they never edit files
+    deny = deny_for(agent.get("role", ""))
+    if deny:
+        entry["tools"] = {"deny": deny}
     return entry
 
 
@@ -213,6 +239,9 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
         if runtime and not _get(own.get(agent["model"]) or {}, "agentRuntime", "id"):
             ent = patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})
             ent.setdefault("models", {})[agent["model"]] = _pin(runtime)
+        deny = _tools_patch(live, agent) if isinstance(live, Mapping) else None
+        if deny is not None:
+            patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})["tools"] = {"deny": deny}
     return patch, kept
 
 
