@@ -346,5 +346,17 @@ The wave 1 exemption removed `node` from `HOST_BINARIES` for every test carrying
 - **Managed block growth** is 209 B per OpenClaw workspace and reaches hosts only through `ai-resources setup`; until then the pointer line is absent and everything else still works.
 - **The sign-off prompt now asks the verifier to run examples**, which adds shell work to that role; its independence rule (a family different from the writer's) is unchanged.
 - **Engram mirror conflicts** surface as `judgment_required`; the convention says to resolve silently, which depends on the model following it.
-- **51 pre-existing test failures** on the base also fail here; they are not related to this branch (section 16).
+- **52 pre-existing test failures** on the base also fail here, the identical set; they are not related to this branch (section 16).
+
+## 16. Test results
+
+Full suite, `python -m pytest -m "not timing" tests/` plus the `timing` pass, in the `kit-test` virtualenv, base tree `ac89fe9` (a detached worktree under `~/.openclaw/scratch/odd/base-tree`) against this branch at its final commit. [M]
+
+| | Base `ac89fe9` | This branch |
+|---|---|---|
+| Main pass | 52 failed, 10,033 passed, 19 skipped | 52 failed, 10,080 passed, 19 skipped |
+| Timing pass | 221 passed | 221 passed |
+| Failing tests only in one side | - | none (`comm` of the two sorted lists is empty) |
+
+The 52 failures are the same on both sides: `test_openclaw_doctor_drain` (25), `test_openclaw_config_watch` (12), `test_openclaw_restart_gate` (7), `test_openclaw_host_wizard` (3) and one each in `test_state_merge`, `test_setup_idempotence_round4`, `test_openclaw_team_resilience`, `test_openclaw_journal_hostile` and `test_openclaw_cost_migrations`; they concern the host's OpenClaw setup and watch paths, not this work. The owner's brief counted 51; in this environment the base fails 52, so one of them is probably environment- or timing-sensitive. The branch adds 47 passing tests and `validate_kit.py` passes (142 skills, 15 roles, 25 personas, 20 workflows). A first full run of this branch failed two tests the branch had introduced (the workflow count in `test_orchestrator_workflows.py` and the committed repo `AGENTS.md` block, which must match the renderer after the new bullet); both were fixed in a later commit and the run above is the second one.
 
