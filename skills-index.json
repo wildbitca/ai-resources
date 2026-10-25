@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "generated_at": "2026-10-22T16:40:23.411843+00:00",
+  "generated_at": "2026-10-25T20:36:07.886405+00:00",
   "skills_root": "skills",
-  "count": 141,
+  "count": 142,
   "skills": [
     {
       "id": "changelog-best-practices",
@@ -1367,6 +1367,14 @@
       "path": "skills/workflow-merge-and-document/SKILL.md",
       "name": "workflow-merge-and-document",
       "description": "User asks to merge a branch and write docs, SDD specs, or handoff documents. Includes 'merge + document', 'merge and write specs/docs', 'merge and update SDD'. Runs the kit workflow 'merge-and-document': Merge feature branch to develop and write/update SDD specs. Delegates all heavy work to cheap models.",
+      "triggers": [],
+      "globs": []
+    },
+    {
+      "id": "workflow-odd",
+      "path": "skills/workflow-odd/SKILL.md",
+      "name": "workflow-odd",
+      "description": "User asks for one concrete change and wants the least delegation that is still safe (a fix, a small feature, a rename, a config or doc change), or says 'odd', 'size it first' or 'keep it light'. Runs the kit workflow 'odd': Size-gated delivery for one change. Classify (inline, light, full), keep a temporal tasks ledger next to the spec, implement inline unless a delegation trigger fires, verify by risk, close by folding the ledger into the spec.",
       "triggers": [],
       "globs": []
     },

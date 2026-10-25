@@ -87,6 +87,7 @@ Steps may include an `execution_hints` block with **optional** metadata that run
 | Hint field       | Type   | Description                                                                                 |
 |------------------|--------|---------------------------------------------------------------------------------------------|
 | `parallel_group` | string | Steps sharing the same group name CAN run concurrently when the runtime supports it.        |
+| `inline`         | bool   | `true`: the agent holding the plan performs the step itself and delegates only when a "Delegation triggers" row of `kit-orchestration` fires. Ignored by runtimes that always dispatch (the orchestrator CLI dispatches every step). |
 
 ### How runtimes interpret hints
 
