@@ -454,3 +454,13 @@ def _agy_gate_waiver_off(request, monkeypatch):
     except Exception:
         return
     monkeypatch.setattr(agy_lane_gates, "WAIVED_BY_OPERATOR", frozenset())
+
+
+@pytest.fixture(autouse=True)
+def _ui_auto_off():
+    # Auto mode is a module global: a test that reaches the wizard's run-mode question without its `finally`
+    # would leave it on, and every later prompt in that worker would take its default instead of asking.
+    from ai_resources.setup import ui
+    ui.set_auto(False)
+    yield
+    ui.set_auto(False)
