@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Fixed
+
+- Setup no longer signs agy out. Every apply deleted `~/.gemini/antigravity-cli/antigravity-oauth-token`, which is where agy keeps its session over SSH or without a secret service, so the agy lanes failed until the next manual login. Each cockpit owns its sign-in; setup leaves this one alone.
+
 ## [2.8.3] — 2026-10-25 — setup reads the OpenClaw config again when another node is first on PATH
 
 ### Fixed

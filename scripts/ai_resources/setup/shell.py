@@ -170,21 +170,14 @@ def sync_openclaw_systemd_env(
 
 
 def purge_stale_credentials(strategy: str, *, dry_run: bool = False) -> List[str]:
-    """Purge conflicting or obsolete tokens depending on the chosen strategy."""
-    purged: List[str] = []
+    """Purge conflicting or obsolete tokens depending on the chosen strategy.
 
-    # If using API keys or Vertex, purge Antigravity OAuth tokens that cause interactive hangs
-    if strategy in ("vertex", "google_ai_studio", "hybrid_direct"):
-        agy_token = Path("~/.gemini/antigravity-cli/antigravity-oauth-token").expanduser()
-        if agy_token.exists():
-            if not dry_run:
-                try:
-                    agy_token.unlink()
-                    purged.append(str(agy_token))
-                except OSError as e:
-                    ui.warn(f"Could not remove {agy_token}: {e}")
-            else:
-                purged.append(f"(would remove) {agy_token}")
+    It never touches the Antigravity OAuth token (~/.gemini/antigravity-cli/antigravity-oauth-token).
+    Every cockpit owns its own sign-in, and agy keeps its session in that file when it runs over SSH
+    or without a secret service. Deleting it here signed agy out on every setup run, which broke the
+    agy lanes until the operator logged in again (2026-10-25).
+    """
+    purged: List[str] = []
 
     # If strategy is purely Vertex, remove ANTHROPIC_API_KEY from shell env to let ADC / WIF take precedence
     if strategy == "vertex":

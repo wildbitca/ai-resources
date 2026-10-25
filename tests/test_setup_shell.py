@@ -79,7 +79,7 @@ def test_sync_openclaw_systemd_env(tmp_path, monkeypatch):
     assert "OLD_KEY" not in content
 
 
-def test_purge_stale_credentials(tmp_path, monkeypatch):
+def test_setup_keeps_the_agy_sign_in(tmp_path, monkeypatch):
     gemini_dir = tmp_path / ".gemini" / "antigravity-cli"
     gemini_dir.mkdir(parents=True)
     token_file = gemini_dir / "antigravity-oauth-token"
@@ -87,6 +87,7 @@ def test_purge_stale_credentials(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Path, "expanduser", lambda p: token_file if "antigravity-oauth-token" in str(p) else p)
 
-    purged = shell.purge_stale_credentials("google_ai_studio", dry_run=False)
-    assert not token_file.exists()
-    assert str(token_file) in purged
+    for strategy in ("vertex", "google_ai_studio", "hybrid_direct"):
+        purged = shell.purge_stale_credentials(strategy, dry_run=False)
+        assert token_file.exists(), strategy
+        assert str(token_file) not in purged
