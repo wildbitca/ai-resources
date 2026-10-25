@@ -278,9 +278,24 @@ def test_report_role_agents_cannot_edit_files_and_writer_roles_can(tmp_path):
     host = Host()
     assert run(state.SetupState(), host, tmp_path) is True
     entries = host.doc["agents"]["entries"]
-    for aid in ("kit-role-verifier", "kit-role-planner", "kit-role-reviewer"):
+    for aid in ("kit-role-verifier", "kit-role-reviewer", "kit-role-security"):
         assert entries[aid]["tools"] == {"deny": ["write", "edit", "apply_patch"]}, aid
+    for aid in ("kit-role-planner", "kit-role-architect", "kit-role-explore"):
+        assert entries[aid]["tools"] == {"deny": ["write", "edit", "apply_patch", "exec", "process"]}, aid
     assert "tools" not in entries["kit-role-implementer"]
+
+
+def test_an_earlier_kit_deny_list_moves_to_the_no_exec_one_and_an_operator_list_is_kept(tmp_path):
+    host = Host()
+    assert run(state.SetupState(), host, tmp_path) is True
+    entries = host.doc["agents"]["entries"]
+    entries["kit-role-planner"]["tools"] = {"deny": ["write", "edit", "apply_patch"]}      # what 2.8.1 wrote
+    entries["kit-role-architect"]["tools"] = {"deny": ["write"]}                           # the operator's
+    entries["kit-role-reviewer"]["tools"] = {"deny": ["write", "edit", "apply_patch"]}     # already today's list
+    assert run(state.SetupState(), host, tmp_path) is True
+    assert entries["kit-role-planner"]["tools"] == {"deny": ["write", "edit", "apply_patch", "exec", "process"]}
+    assert entries["kit-role-architect"]["tools"] == {"deny": ["write"]}
+    assert entries["kit-role-reviewer"]["tools"] == {"deny": ["write", "edit", "apply_patch"]}
 
 
 def test_each_new_agent_is_announced_before_its_slow_registration_and_a_rerun_announces_none(tmp_path):

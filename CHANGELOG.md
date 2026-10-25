@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.8.2] — 2026-10-25 — planning and exploring roles run without a shell
+
+### Changed
+- The OpenClaw `kit-role-planner`, `kit-role-architect` and `kit-role-explore` agents now also deny `exec` and
+  `process`: the claude-cli runtime turns `tools.deny` into Claude Code's disallowed tools, so they lose Bash. The
+  reviewer, verifier and security agents keep their shell (they run git and tests) and still cannot edit files.
+- Setup moves an entry that still carries the 2.8.1 deny list to today's one; a deny list the operator changed is kept.
+
 ## [2.8.1] — 2026-10-25 — the off-box upload works under workload identity federation
 
 ### Fixed
