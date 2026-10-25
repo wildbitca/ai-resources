@@ -108,6 +108,7 @@ Every kit role subagent working on a workflow ends its final message with this b
 - Files touched: paths, one per line
 - Commands run: one per line, or "none"
 - Specs/docs read: paths, or "none"
+- Covered: `T#`/`S#` ids, only when the prompt handed work by reference
 
 ## Routing
 - Next recommended: step id, or "none"
@@ -127,8 +128,9 @@ Code, logs and stack traces go in the handoff or under `.agent-output/`, never i
 ## Finishing
 
 1. When the verify step passes, merge the branch or open a PR if the user prefers (skill `finishing-a-development-branch`).
-2. Delete the handoff file and any leftover `parallel-group.json`.
-3. Tell the user the outcome, the changed paths, and anything left open — briefly.
+2. A unit with a risk item gets its own commit; record the commit id on its task in `tasks.md`. Never push or merge on your own.
+3. Delete the handoff file and any leftover `parallel-group.json`.
+4. Tell the user the outcome, the changed paths, and anything left open — briefly.
 
 ## Outside a workflow
 

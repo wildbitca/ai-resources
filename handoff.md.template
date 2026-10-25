@@ -15,6 +15,7 @@ refs:                   # paths written by steps, not the content
   test_report: ""
   review: ""
   security: ""
+  spec: ""              # optional: path to specs/features/<feature>/tasks.md or the spec the step works from
 verdicts:               # pending until the owning step reports
   architect: pending    # yes | no | pending
   code_review: pending  # APPROVED | REQUIRES_CHANGES | pending
@@ -23,6 +24,11 @@ verdicts:               # pending until the owning step reports
 next: ""                # step id to run next, or none
 docs_updated: ""        # paths written by the document step, or none
 git_integration: none   # merge_to_base | none | pending_human
+# Optional by-reference keys: omit them or leave them empty; no hook or check requires them.
+task_ids: []            # e.g. [T2]; ids in the tasks.md named by refs.spec
+spec_ids: []            # e.g. [S3, S4] or [RULE-AUTH-001]
+class: ""               # XS | S | M | L, from the planner's Sizing block
+route: ""               # inline | explorer | writers (the reason goes in the notes)
 ---
 
 <!-- The front matter above is authoritative: steps read it and the orchestrator joins parallel
@@ -68,6 +74,7 @@ git_integration: none   # merge_to_base | none | pending_human
 **Security_audit:** (PASS | CONDITIONAL | FAIL | N/A)
 **Spec_refs:** (list of spec paths read or modified in this step)
 **Requirements_preserved:** (key constraints from specs that downstream steps must respect)
+**Covered:** (optional: `T#`/`S#` ids this step covered, when the prompt handed work by reference)
 **Engram_refs:** (Engram topic keys for detailed context, if available)
 **Requires_tests:** (yes | no)
 **Security_critical_feature:** (yes | no)

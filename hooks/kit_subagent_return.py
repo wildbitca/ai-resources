@@ -111,7 +111,7 @@ def main() -> int:
     sys.stderr.write(
         f"Before stopping, end your final message with the kit return block (missing: {', '.join(missing)}):\n"
         "## Result (Status, Executive summary, Summary, Handoff)\n"
-        "## Artifacts (Files touched, Commands run, Specs/docs read)\n"
+        "## Artifacts (Files touched, Commands run, Specs/docs read; optional Covered: T#/S# ids)\n"
         "## Routing (Next recommended, Blocked, Risks)\n"
         "Update the handoff file first if you have not. Full format: the kit-orchestration skill.\n"
     )

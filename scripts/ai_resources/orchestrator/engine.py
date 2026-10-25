@@ -32,7 +32,9 @@ from .workflow_loader import CHECKER_ROLES, READ_ONLY_ROLES, VERIFIER_ROLE, WRIT
 
 MAX_RETURNS = 3
 HANDOFF_KEYS = ("workflow", "step", "status", "blocked", "return_to_step", "block_reason", "domain", "requires_tests",
-                "security_critical", "refs", "verdicts", "next", "docs_updated", "git_integration")
+                "security_critical", "refs", "verdicts", "next", "docs_updated", "git_integration",
+                "task_ids", "spec_ids", "class", "route")  # the last four are optional: rendered only when set
+SIZE_CLASSES = ("XS", "S", "M", "L")
 TERMINAL = limits.FINISHED
 Clock = Callable[[], float]
 
@@ -88,6 +90,22 @@ def agent_for(role: str, domain: str, kit_root: Path) -> str:
     return openclaw_roles.agent_id_for(role)
 
 
+def _ids(value: str) -> list[str]:
+    """`T2, S3-S4` or `[T2, S3]` -> ['T2', 'S3-S4']; at most 40 short tokens."""
+    return [t for t in re.split(r"[\s,;\[\]]+", value) if t][:40]
+
+
+def _by_reference(handoff: Mapping[str, Any]) -> str:
+    """One prompt line that hands the work over by locator and ids; empty when the run carries none."""
+    spec = (handoff.get("refs") or {}).get("spec") or ""
+    tasks, specs = handoff.get("task_ids") or [], handoff.get("spec_ids") or []
+    if not (spec or tasks or specs):
+        return ""
+    ids = ", ".join([*tasks, *specs])
+    return (f"Work by reference: {spec or 'the plan'}{' - ' + ids if ids else ''}. Read it until \"## Log\"; do not rely on a "
+            "paraphrase. Report the ids you covered as `Covered: T#, S#`.\n")
+
+
 def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Path, handoff_file: str) -> str:
     """Everything the child needs: it has no chat context, no subagent definitions and does not write the handoff."""
     cwd = str(run.get("cwd") or run.get("workspace"))
@@ -113,6 +131,7 @@ def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Pat
         "Read these first:\n" + "\n".join(reads) + "\n"
         "Rules: one writer per run; only the verifier signs a run off; never call the native AskUserQuestion; never sleep "
         "or poll in a loop (run long work in the background and read its output with short calls).\n"
+        f"{_by_reference(run.get('handoff') or {})}"
         "Where the instructions below say to update the handoff file, put those fields in your return block instead.\n"
         "End your final reply with exactly this block:\n"
         "Status: success | partial | blocked\n"
@@ -176,6 +195,15 @@ class Engine:
             verdicts["security"] = rep.get("security_audit")
         if rep.get("architect_approval"):
             verdicts["architect"] = rep.get("architect_approval")
+        if rep.get("spec_ref"):
+            refs["spec"] = rep.get("spec_ref")
+        for key in ("task_ids", "spec_ids"):
+            if rep.get(key):
+                h[key] = _ids(rep.get(key))
+        if rep.get("class").upper() in SIZE_CLASSES:
+            h["class"] = rep.get("class").upper()
+        if rep.get("route"):
+            h["route"] = rep.get("route")
         if rep.get("requires_tests"):
             h["requires_tests"] = rep.get("requires_tests")
         if rep.get("security_critical_feature"):
