@@ -255,3 +255,17 @@ Total forecast: ~1,150 changed lines, six commit groups, no required parallel wr
 - `kit-orchestration/SKILL.md` core < 11 KB; lanes reference present; all existing tests pass; `validate_kit.py` passes.
 - `audit compare` shows spawns per small change reduced vs the baseline, with n >= 5 per class.
 - No edit to the managed block beyond the agreed three-line pointer, and a fresh `ai-resources setup` run keeps it.
+
+## 10. Wave 1 result (implemented 2026-10-25)
+
+Branch `openclaw/claude-gentle-ai-odd-study`. [M] = measured.
+
+| Item | Before | After |
+|---|---|---|
+| `skills/kit-orchestration/SKILL.md` (always loaded) [M] | 21,758 B | 12,110 B (-9,648 B, -44%); target was < 11 KB, missed by about 1.1 KB because the Task size, Delegation and Tasks sections add about 4.4 KB |
+| `references/backends-and-lanes.md` (on demand) [M] | n/a | 14,266 B, read only for `openclaw-agent` and `lane` steps |
+| `planner.md` / `verifier.md` [M] | 5,481 / 5,379 B | 7,425 / 6,091 B |
+| `/kit-plan` agent calls [M, test harness] | 9 | `inline` 0 (explicit) or 1 (classified); `light` 3 (+1 classify); `full` 9 (+1 classify) |
+| `/kit-implement` agent calls [M, test harness, clean run] | 6 | `inline` 0; `light` 3 (4 with a risk item); `full` 6 |
+
+Closed gaps: G1, G2, G3 (prompt level), G5, G6, G9, G11, G12, G14 (skipped by decision), G16, G17, G20, and G7 in its minimal form. `audit snapshot before-wave1` is stored; a before/after cost claim needs real runs on the new kit, so none is made yet.
