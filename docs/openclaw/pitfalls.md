@@ -1133,6 +1133,11 @@ operator to approve, it just no longer rewrites skill files unsupervised every 7
 was doing on every kit host without anyone choosing it (`toolsAllow` for that job is
 `["ls","read","write","edit","apply_patch","exec","process"]`).
 
+**Changed (2.8.3): the kit writes `"off"`.** OpenClaw removed the proposal flow: the schema allows only `"off"` and
+`"auto"`, rejects `"propose"` (*"Invalid input (allowed: "off", "auto")"*), and `openclaw doctor --fix` migrates
+`"propose"` to `"off"`. `"off"` stops the review job the same way; `/learn` and operator-prompted skill creation still
+work.
+
 Setup only writes the key **when the host left it unset** and the kit manages that host's OpenClaw: an
 operator who authored a mode owns that decision, including `auto` and the failing job that comes with it,
 and a host the kit does not configure is never touched.
@@ -1142,7 +1147,7 @@ and a host the kit does not configure is never touched.
 already ran the kit: `_configure_engine` returns early for `engine == "keep"`, the saved answer on every
 re-run, so that patch was never rebuilt. If you move this logic, keep it off the engine path.
 
-**Applies immediately, no restart.** `openclaw config set skills.workshop.autonomous.mode propose` answers
+**Applies immediately, no restart.** `openclaw config set skills.workshop.autonomous.mode off` answers
 *"Change will apply without restarting the gateway"*, and the review jobs vanish from `cron list` within
 seconds.
 

@@ -291,8 +291,11 @@ def config_path() -> Path:
     if env:
         return Path(env).expanduser()
     rc, out = _openclaw(["config", "file"], timeout=60)
-    if rc == 0 and out:
-        return Path(out.splitlines()[-1].strip()).expanduser()
+    # Only a line that is a path: the output carries stderr too, and a launcher notice there (openclaw re-running itself
+    # under another node, "openclaw: Retrying with ...") would otherwise be read as the path, and the config as empty.
+    paths = [ln.strip() for ln in out.splitlines() if ln.strip().startswith(("/", "~"))] if rc == 0 else []
+    if paths:
+        return Path(paths[-1]).expanduser()
     return CONFIG_ROOT / "openclaw.json"
 
 
@@ -2455,7 +2458,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
     return True
 
 
-WORKSHOP_MODE = "propose"
+WORKSHOP_MODE = "off"
 
 
 def _configure_skill_workshop(s: state.SetupState, doc: dict, path: Path, written: list[Path], *,
@@ -2478,9 +2481,10 @@ def _configure_skill_workshop(s: state.SetupState, doc: dict, path: Path, writte
     system-owned, so `cron edit`/`cron disable` refuse it, and the monitor never auto-disables it.
     See docs/openclaw/pitfalls.md T34.
 
-    "propose" keeps the Workshop's value — proposals still get captured for the operator to
-    approve — and stops the per-agent review job from being registered at all (`workshopEnabled`
-    in the monitor is `mode === "auto"`).
+    "off" stops the per-agent review job from being registered at all (`workshopEnabled` in the
+    monitor is `mode === "auto"`); `/learn` and operator-prompted skill creation still work. The kit
+    wrote "propose" until OpenClaw removed the proposal flow: the schema now allows only "off" and
+    "auto", rejects "propose", and `openclaw doctor --fix` migrates "propose" to "off".
 
     ONLY WHEN UNSET. An operator who authored a mode owns that decision, including "auto" and the
     failing job that comes with it. Setup fixes the silent default, never a stated choice.

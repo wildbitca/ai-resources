@@ -1198,7 +1198,7 @@ def test_setup_authors_the_workshop_mode_when_the_host_left_it_unset(jarvis):
 
     patches = [p for p in rec.patches() if p and "skills" in p]
     assert len(patches) == 1
-    assert patches[0]["skills"]["workshop"]["autonomous"]["mode"] == "propose"
+    assert patches[0]["skills"]["workshop"]["autonomous"]["mode"] == "off"   # the schema allows only "off" and "auto"
 
 
 def test_the_workshop_mode_is_not_written_on_a_host_the_kit_does_not_manage(jarvis):
@@ -1241,7 +1241,7 @@ def test_the_workshop_mode_reaches_a_host_whose_engine_is_kept(jarvis):
 
     patches = [p for p in rec.patches() if p and "skills" in p]
     assert len(patches) == 1, "a kept engine must still get the Workshop mode"
-    assert patches[0]["skills"]["workshop"]["autonomous"]["mode"] == "propose"
+    assert patches[0]["skills"]["workshop"]["autonomous"]["mode"] == "off"
 
 
 # --- engines from the recorded selection (plan v2, S11) -------------------------------------------
@@ -1335,3 +1335,19 @@ def test_the_live_config_probes_fail_the_way_they_always_did_on_an_unreadable_fi
     monkeypatch.setattr(openclaw, "config_path", lambda: p)
     assert openclaw._patch_changes_a_leaf({"a": 1}, None) is True      # fail open: send it
     assert _REAL_LIVE_RELOAD_MODE() == "off"                           # fail closed: it may well say `off`
+
+
+def test_the_config_path_skips_a_launcher_notice_in_the_output(monkeypatch, tmp_path):
+    """REGRESSION. With an older node first on PATH, openclaw re-runs itself under a newer one and says so on stderr,
+    after the path. Taking the last line as the path made setup read an empty config and act on it."""
+    cfg = tmp_path / "openclaw.json"
+    monkeypatch.delenv("OPENCLAW_CONFIG_PATH", raising=False)
+    notice = 'openclaw: Retrying with "/opt/node/bin/node" (PATH; current Node failed runtime admission).'
+    monkeypatch.setattr(openclaw, "_openclaw", lambda args, **kw: (0, f"{cfg}\n{notice}"))
+    assert openclaw.config_path() == cfg
+
+
+def test_the_config_path_falls_back_when_the_output_has_no_path(monkeypatch):
+    monkeypatch.delenv("OPENCLAW_CONFIG_PATH", raising=False)
+    monkeypatch.setattr(openclaw, "_openclaw", lambda args, **kw: (0, "openclaw: Retrying with node"))
+    assert openclaw.config_path() == openclaw.CONFIG_ROOT / "openclaw.json"
