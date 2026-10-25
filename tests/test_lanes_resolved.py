@@ -130,7 +130,7 @@ def test_a_second_member_is_refused_for_checker_roles():
     assert lanes_render.validate_block({"second": {"code-reviewer": ["claude-code"]}}) == []
 
 
-SKILL = Path(__file__).resolve().parents[1] / "skills" / "kit-orchestration" / "SKILL.md"
+SKILL = Path(__file__).resolve().parents[1] / "skills" / "kit-orchestration" / "references" / "backends-and-lanes.md"
 SKILL_WORDING = (
     "Dispatch what its `resolved:` section says for the role",
     "only when that fallback is recorded in `resolved:` with its reason",
@@ -213,7 +213,7 @@ def test_n2_an_agent_missing_from_the_table_is_refused(env):
 
 def test_n4_every_prepare_example_in_the_docs_passes_the_lane():
     root = Path(__file__).resolve().parents[1]
-    for rel in ("docs/openclaw/runbook.md", "skills/kit-orchestration/SKILL.md"):
+    for rel in ("docs/openclaw/runbook.md", "skills/kit-orchestration/SKILL.md", "skills/kit-orchestration/references/backends-and-lanes.md"):
         for n, line in enumerate((root / rel).read_text().splitlines(), 1):
             if "lanes prepare" in line and ("--attempt" in line or "--reenter" in line or "--step" in line):
                 assert "--lane" in line, f"{rel}:{n}: {line.strip()}"
