@@ -22,7 +22,7 @@ def pytest_configure(config):
     from basetemp_default import apply_default
     apply_default(config)
     config.addinivalue_line("markers", "timing: asserts on wall-clock time; runs in the serial pass of scripts/run-tests.sh")
-    config.addinivalue_line("markers", "node_scripts: runs node on a repo workflow script through tests/kit_script_harness.mjs; the one host binary the guard lets through for such a test")
+    config.addinivalue_line("markers", "node_scripts: runs node on a repo workflow script through tests/kit_script_harness.mjs; the guard lets through only that harness invocation (see _allow_node_harness)")
     config.addinivalue_line("markers", "agy_waiver: sees the shipped operator waiver of the Antigravity gates")
 
 
@@ -133,11 +133,30 @@ def host_binary_refused(args, env, allowed_roots, executable=None) -> str | None
     return _words_refused([os.fsdecode(a) for a in args], env, allowed_roots)
 
 
+def _allow_node_harness(monkeypatch):
+    """Let exactly `node tests/kit_script_harness.mjs <repo workflow script> <config>` run, and no other node call.
+
+    The harness only reads the script and the config and prints JSON (no install, no network); `node -e`, another
+    script or a different argument count stay refused, so the guard keeps meaning for every other test."""
+    import os
+    real = host_binary_refused
+    harness = str(_REPO / "tests" / "kit_script_harness.mjs")
+    scripts = str(_REPO / "workflows" / "scripts") + os.sep
+
+    def guarded(args, env, allowed_roots, executable=None):
+        if (isinstance(args, (list, tuple)) and len(args) == 4 and executable is None
+                and os.path.basename(os.fsdecode(args[0])) == "node" and os.fsdecode(args[1]) == harness
+                and os.path.realpath(os.fsdecode(args[2])).startswith(scripts)):
+            return None
+        return real(args, env, allowed_roots, executable)
+
+    monkeypatch.setitem(globals(), "host_binary_refused", guarded)
+
+
 @pytest.fixture(autouse=True)
 def _no_host_binaries(request, tmp_path_factory, monkeypatch):
     if request.node.get_closest_marker("node_scripts"):
-        # A pure script run, no installs and no network: lets the workflow-script harness execute `node` and nothing else.
-        monkeypatch.setitem(globals(), "HOST_BINARIES", HOST_BINARIES - {"node"})
+        _allow_node_harness(monkeypatch)
     import errno
     import os
     import subprocess
