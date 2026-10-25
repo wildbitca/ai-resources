@@ -1511,6 +1511,25 @@ environment-only unit drop-in cannot fix it. Two optional knobs in `~/.openclaw/
 With both unset the uploader behaves as before. `OPENCLAW_OFFBOX_LIST_CMD` (read by `status`) is a separate
 command of yours and keeps whatever identity it uses.
 
+**Workload identity federation (2.8.0, the default on a host with an agent WIF config).** When `OPENCLAW_OFFBOX_BUCKET`
+is set and `~/.config/gcloud/agent-wif` exists, setup writes `~/.config/ai-resources/offbox-wif-cred.json` (0600) without
+asking. It is an external-account credential config that impersonates the backup service account
+(`OPENCLAW_OFFBOX_IMPERSONATE_SA`, default `k3s-backup@wildbit-iac.iam.gserviceaccount.com`), and setup points
+`OPENCLAW_OFFBOX_CRED_FILE` at it in `~/.openclaw/kit-host.env`. That knob wins over the two above:
+
+| Knob | Effect |
+|---|---|
+| `OPENCLAW_OFFBOX_CRED_FILE` | every gcloud call runs with `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` and `GOOGLE_APPLICATION_CREDENTIALS` set to the file, `GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1`, and `CLOUDSDK_BILLING_QUOTA_PROJECT=LEGACY`; an unreadable file fails with a state file, never falls back to another identity |
+
+- **Why the quota project is `LEGACY` (2.8.1).** gcloud otherwise sends the active configuration's
+  `billing/quota_project` (on this host `wildbit-iac`, from `claude-ro`) and the federated service account then needs
+  `serviceusage.services.use` on that project: `HTTPError 403 ... does not have serviceusage.services.use access`.
+  `LEGACY` bills the resource's own project, which needs no extra role.
+- **Infra step, not done by the kit.** The service account needs `roles/iam.workloadIdentityUser` for the host's
+  federated principal; it goes through GitOps (`org-gitops`), like every IAM grant.
+- **Test it.** `systemctl --user start openclaw-backup-uploader.service`, then read
+  `~/.openclaw/state/offbox-last.json`: `outcome: ok` and the newest daily under `newest_offbox`.
+
 **Create the configuration (opt-in).** `ai-resources openclaw offbox-identity --dry-run` prints the exact commands;
 `ai-resources openclaw offbox-identity` applies them after a confirmation (the confirmation flag skips the question) and `--remove` deletes
 only the configuration the kit created, only while it still matches. Setup offers the same step, default No, once

@@ -32,6 +32,7 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 | Command | Purpose |
 |---------|---------|
 | `ai-resources setup` | Guided setup in five phases (Tools, Cockpit, Team, Audio, More; the Cockpit and Audio phases ask nothing unless OpenClaw is one of your tools). The screens are **Your tools** (every coding CLI is a tool; installed ones are found for you, tick a missing one to install it), **Sign-in** (each ticked tool shows what it reports live and asks keep or change; change hands the terminal to the tool's own flow: `claude auth login`, `openclaw configure --section model`, `agy`; the kit only adds an `apiKeyHelper` for Claude Code and never stores a key; there is no global team question and no gateway, ADR-0016), **Your team** (a starting team: Balanced, Performance, Low cost or Custom, with who does what) and **Review** (the answers, who runs each role and who is billed in separate columns, Apply, Change tools, Change sign-in, Change team, More options; every write the wizard queued is listed under *Will write* and happens only at Apply). Headers read `[n/5]` with a five-phase progress rail; `Ctrl-B` goes back where nothing changed yet, `Ctrl-C`/`Ctrl-D` cancel. `--dry-run` previews; `NO_COLOR` selects plain ASCII output. `ai-resources setup --help` lists the keys. |
+| `ai-resources setup --ask` / `--fresh` | Since 2.8.0 setup takes the recommended answer to every question it has one for and prints one line per answer; credentials, a hand-over to a tool's own sign-in and the Google acknowledgement are still asked. A first run walks every step. `--ask` asks every question; `--fresh` asks every question starting from empty answers. `--auto` is accepted and is the default. |
 | `ai-resources setup --backend ...` | **Deprecated** (ADR-0015): the gateway is no longer offered. Any value (`cli`, `litellm`, `openrouter`) pre-fills Claude Code's subscription sign-in, prints a deprecation note and skips that question. |
 | `ai-resources orchestrate ...`, `ai-resources workflows {list,show}` | The native team orchestrator engine (ADR-0015): `start`, `next`, `report`, `approve`, `cancel`, `resume`, `status`, `cost`, all with `--json`. It never dispatches; the OpenClaw plugin does (`/equipo`, `/workflow run|status|approve|cancel|resume|cost`). See [docs/orchestration.md](docs/orchestration.md#native-team-orchestrator-openclaw). |
 | `ai-resources setup --yes` | Say yes, for this run only, to installing the missing ones of Claude Code, Antigravity (`agy`) and OpenClaw. No other tool is installed by `--yes`; the tool list on a terminal offers every missing tool. |
@@ -39,6 +40,7 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 | `ai-resources setup --lanes` / `--no-lanes` / `--lanes-dry-run` | Enable, clear or preview subscription lanes (ADR-0007; off by default). |
 | `ai-resources setup --non-interactive` | Re-apply saved answers without prompting (useful in CI or scripted re-runs). |
 | `ai-resources setup --profile <name>` | Skip the preset and profile prompts and use the named profile directly. |
+| `ai-resources mcp-run <sentry\|figma>` | Start a shared-token MCP server (see [Shared-token MCP servers](#shared-token-mcp-servers)). Cockpits run it; you do not. |
 | `ai-resources doctor` | Full health check across config, credentials, gateway, cockpits, smoke tests. |
 | `ai-resources verify` | Read-only check that setup left every configured tooling in the expected state (`--json`, `--cockpit ID`); exits 1 only on an error-level finding. Setup ends by running it. |
 | `ai-resources executors show` | Display current role → model mapping. |
@@ -288,6 +290,29 @@ Project scaffolding templates:
 | OpenClaw | confirmed migrations for the workboard plugin and the main heartbeat (restart-class keys wait for `ai-resources openclaw apply-pending`), an opt-in utility-model probe, and a Haiku route for Slack notification channels |
 
 Not kit-controllable, so documented and never written: OpenClaw completion announcements (only `announceTimeoutMs`, a timeout, exists), the engram SessionStart payload and its server-side `mem_judge`, the remaining prepaid credit (use `credits.json`), and hooks inside OpenClaw `claude-cli` children.
+
+## Shared-token MCP servers
+
+Sentry and Figma host MCP endpoints that need a browser OAuth sign-in per client, so Claude Code, OpenClaw and agy would
+each sign in on their own. Since 2.8.0 the kit stores one personal token per service, once, in its credential file
+`~/.config/ai-resources/.env` (mode 0600; never in setup state, never printed) and registers the same stdio entry in every
+cockpit:
+
+```json
+{"command": "ai-resources", "args": ["mcp-run", "sentry"]}
+```
+
+`ai-resources mcp-run <name>` reads the token and runs the pinned upstream server with it in its environment
+(`@sentry/mcp-server@0.42.0` with `SENTRY_ACCESS_TOKEN`, `figma-developer-mcp@0.13.2 --stdio` with `FIGMA_API_KEY`). No
+cockpit config holds the secret.
+
+- **When setup asks.** A token already on the host (exported in the shell, or in `~/.openclaw/.env`) is imported without a
+  question. Setup asks for a token only when some cockpit already defines that server, and asks once for all cockpits.
+- **OpenClaw.** The shared entry replaces the hosted OAuth entry (`mcp.sentry.dev`, `mcp.figma.com`) and teardown puts it
+  back. A server the operator defined some other way is left alone.
+- **agy.** The entries are added fill-only to `~/.gemini/config/mcp_config.json`, next to engram.
+- Code: `scripts/ai_resources/shared_mcp.py`; OpenClaw side `configure_shared()` in
+  `scripts/ai_resources/setup/cockpits/_openclaw_mcp.py`.
 
 ## Orchestration Overview
 

@@ -119,3 +119,12 @@ every question, or start from empty answers. `setup --auto` picks the first with
   Antigravity stays off for that run, said in one line.
 - The runbook B2.1 rule (no orchestrator on haiku) skips `kit-lane-*` agents as it skips `kit-role-*`: a haiku lane runs
   haiku by design.
+
+## Addendum (2.8.0): the recommended answers are the default
+
+The 2.6.3 question ("How should setup run?") is gone. Every run except the first takes the recommended answers, as
+`setup --auto` did; the first run, and `--fresh`, walk every step. `--ask` asks every question. What the recommended run
+still asks is unchanged: credentials, a hand-over to a tool's own sign-in, and the Google acknowledgement, which the kit
+never signs. A feature added to setup ships with a recommended answer so that a re-run applies it without a question.
+`--non-interactive` (saved answers, never prompt) is unchanged and is what a run without a terminal uses.
+

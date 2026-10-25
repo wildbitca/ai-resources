@@ -1830,6 +1830,48 @@ the probe verified.
 
 **How to catch it.** `ai-resources doctor --probe-utility-model`.
 
+## T54 — A kit role on the `claude-cli` runtime is limited by tool policy, never by OpenClaw's sandbox *(added 2026-10-25; 2.8.2)*
+
+**Symptom.** A sandbox setting on a `kit-role-*` agent (`sandbox.mode`, a read-only workspace) changes nothing: the role still
+runs every Bash command Claude Code allows.
+
+**Cause.** All fifteen kit roles pin `agentRuntime: {id: "claude-cli"}`. OpenClaw's sandbox wraps its own embedded runtime only;
+for a CLI backend "Claude Code owns cwd, PATH, environment, and sandboxing" (OpenClaw `docs/gateway/cli-backends.md`). What
+does reach Claude Code is tool policy: the backend runs with `toolAvailabilityEnforcement: "execution-args"` and turns
+`tools.deny` into Claude Code's disallowed tools through its native tool map (`read`, `grep`→`read`, `write`, `edit`,
+`bash`→`exec`, `webfetch`→`web_fetch`, `websearch`→`web_search`). So denying `exec` removes Bash.
+
+**What the kit writes** (`scripts/ai_resources/setup/cockpits/openclaw_roles.py`, `deny_for()`):
+
+| Roles | `tools.deny` |
+|---|---|
+| `planner`, `software-architect`, `explore` | `write`, `edit`, `apply_patch`, `exec`, `process` (no edits, no shell) |
+| `code-reviewer`, `verifier`, `security-auditor` | `write`, `edit`, `apply_patch` (no edits; they keep a shell for git and tests) |
+| every other role | nothing |
+
+An entry that still carries the 2.8.1 list (`write`, `edit`, `apply_patch`) on a no-shell role is moved to today's list; a list
+the operator changed is kept. `agents.entries` is a hot-reload key, so the change is live without a restart.
+
+**What to do** when a role with a shell must be narrowed further: OpenClaw's exec policy (`tools.exec.security: allowlist`,
+`openclaw exec-policy show --agent <id>`) applies to the commands of a CLI backend too. The kit does not write it.
+
+## T55 — `openclaw config file` can print a launcher notice after the path *(added 2026-10-25; 2.8.3)*
+
+**Symptom.** Setup behaves as if every OpenClaw setting were unset, for example it offers a value the host already has, and
+OpenClaw rejects the patch.
+
+**Cause.** OpenClaw 2026.10.7 needs node 26.12.1 or later. With an older node first on PATH (fnm's default), `openclaw` re-runs
+itself under a newer one and prints `openclaw: Retrying with "<node>" (PATH; current Node failed runtime admission).` on
+stderr. The kit's `_openclaw()` returns stdout and stderr together, and up to 2.8.2 `config_path()` took the last line as the
+path, so `read_config()` found no file and returned `{}`.
+
+**What the kit does (2.8.3).** `config_path()` takes the last line that is a path (starts with `/` or `~`) and falls back to
+`~/.openclaw/openclaw.json`. The node order on PATH is the host's: the gateway unit uses linuxbrew's `opt/node`, so only
+interactive shells hit the notice.
+
+**How to catch it.** `openclaw config file 2>&1 >/dev/null` prints the notice; compare a setup run's view of a key with
+`openclaw config get <key>`.
+
 
 ---
 
