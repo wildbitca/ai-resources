@@ -389,13 +389,19 @@ _OPEN_QUOTE_LINES = ["${A}", "x ${A} y", "some ${VAR:-default} text ${OTHER} her
 
 
 @pytest.mark.parametrize("line", _OPEN_QUOTE_LINES)
-def test_an_open_quote_over_many_expansion_lines_is_read_in_time_and_keeps_its_verdict(tmp_path, guard, line):
+def test_an_open_quote_over_many_expansion_lines_is_read_in_time_and_keeps_its_verdict(tmp_path, guard, line,
+                                                                                        monkeypatch):
     benign = _open_quote_class(line)
-    start = time.perf_counter()
+    # The full analysis takes 1.4 to 2.7 s of CPU here, close enough to the 4 s default that a shared CI runner under
+    # xdist crosses it on wall-clock time. The in-process read runs under the 8 s cap and is measured in CPU time, so
+    # it asserts the parser finishes on this input; the hook runs below with its default deadline.
+    monkeypatch.setenv("KIT_GUARD_DEADLINE_S", str(guard._DEADLINE_MAX_S))
+    start = time.process_time()
     assert guard.decide(benign) is None
-    parsed_in = time.perf_counter() - start
+    parsed_in = time.process_time() - start
     assert guard._last_deadline_fired is False, "the deadline must not fire on realistic input"
-    assert parsed_in < 10, f"{line!r}: {parsed_in:.1f}s for {len(benign)} bytes"
+    assert parsed_in < guard._DEADLINE_MAX_S, f"{line!r}: {parsed_in:.1f}s of CPU for {len(benign)} bytes"
+    monkeypatch.delenv("KIT_GUARD_DEADLINE_S")
     rc, elapsed = _hook(tmp_path, benign)
     assert (rc, elapsed < 10) == (0, True), f"{line!r}: {elapsed:.1f}s"
     rc, elapsed = _hook(tmp_path, benign + "\n" + GW)
