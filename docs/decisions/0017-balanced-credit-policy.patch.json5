@@ -1,0 +1,16 @@
+// ADR-0017 safe subset, as applied to the live host with `openclaw config patch` (hot reload, no restart).
+// Reproducible from the kit: openclaw_cost_migrations.balanced_credit_proposals (setup offers each path, one confirm each).
+// Objects merge, arrays replace whole (so the lane fallback list is written in full). Heartbeat is NOT moved.
+{
+  agents: {
+    defaults: {
+      utilityModel: "google/gemini-3.8-flash",
+      models: { "google/gemini-3.8-flash": { alias: "flash" } },
+    },
+    entries: {
+      "kit-lane-agy-gemini38flashhigh": {
+        model: { fallbacks: ["google/gemini-3.8-flash", "anthropic/claude-haiku-5-5"] },
+      },
+    },
+  },
+}
