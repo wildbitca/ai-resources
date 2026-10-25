@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.8.3] — 2026-10-25 — setup reads the OpenClaw config again when another node is first on PATH
+
+### Fixed
+- Setup took the last output line of `openclaw config file` as the config path. With an older node first on PATH,
+  openclaw re-runs itself under a newer one and prints a notice after the path, so setup read an empty config and
+  acted as if every OpenClaw setting were unset. It now takes the last line that is a path.
+- The Skill Workshop mode the kit authors on an unset host is `"off"`: OpenClaw removed the proposal flow and its
+  schema rejects `"propose"`, so the patch was declined.
+
 ## [2.8.2] — 2026-10-25 — planning and exploring roles run without a shell
 
 ### Changed
