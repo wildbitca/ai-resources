@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [2.8.1] — 2026-10-25 — the off-box upload works under workload identity federation
+
+### Fixed
+
+- **Off-box backup uploader:** with a federated credential file (`OPENCLAW_OFFBOX_CRED_FILE`), gcloud no longer
+  inherits the quota project of the operator's active configuration. That quota project made Google ask the backup
+  service account for `serviceusage.services.use`, so every upload failed with HTTP 403. gcloud now runs with
+  `billing/quota_project=LEGACY` for that identity.
+
 ## [2.8.0] — 2026-10-25 — setup runs on its own, and Sentry and Figma share one token
 
 ### Changed
