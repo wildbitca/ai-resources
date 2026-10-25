@@ -420,7 +420,7 @@ ai-resources setup --no-lanes                            # clear lanes.yaml and 
   `--lanes` without a stored acknowledgement refuses. `--allow-unverified` implies nothing.
 - **Kit-only landing path.** `ai-resources lanes prepare | verify | integrate | land | count` is the only way a lane
   writer's work reaches the run tree; each lane writer works in its own per-attempt worktree and no agent merges or
-  lands. The procedure is in `skills/kit-orchestration/SKILL.md` ("Lane steps").
+  lands. The procedure is in `skills/kit-orchestration/references/backends-and-lanes.md` ("Lane steps").
 - **Checker independence.** The verifier and security auditor never run a model family that a writer in the run
   uses; resolution refuses it and `lanes prepare` re-checks it at dispatch.
 - **Drift.** When a role's model changes (`models update`, an alias moving) the lane agent is marked `stale`, the

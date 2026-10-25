@@ -328,7 +328,7 @@ work between roles in the handoff file, and delegate code to the `claude` worker
 A workflow step can also run its role on another OpenClaw agent with `backend: openclaw-agent` and an
 `agentId`; only an OpenClaw-run orchestrator that has `sessions_spawn` can dispatch it, and anywhere else the
 step is Blocked. See [ADR-0005](decisions/0005-cross-provider-role-dispatch.md) and the "Choosing a backend"
-section of the `kit-orchestration` skill.
+section of `skills/kit-orchestration/references/backends-and-lanes.md` (loaded on demand by the `kit-orchestration` skill).
 
 Rules the writer keeps (decided for 1.9.7):
 

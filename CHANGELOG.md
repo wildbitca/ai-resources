@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Changed
+
+- Task-size gating (adoption plan wave 1, `docs/research/gentle-ai/04-gap-analysis-and-adoption-plan.md`). `kit-orchestration` gains "Authorize first", "Task size" (`inline` / `light` / `full`, risk items, `--inline` / `--light` / `--full`), "Delegation triggers" (no subagent without a named reason, handoff by reference) and "Tasks live with the spec" (temporal `specs/features/<feature>/tasks.md`, folded by `knowledge-audit` at closure; template `templates/tasks.template.md`). `/kit-plan` and `/kit-implement` classify once (or take `size`) and run fewer phases for `inline` and `light`; `--full` keeps the old loop. The planner role gains the Sizing rubric; the verifier may run authorized spec examples in a `mktemp -d` scratch copy, matching what `/kit-implement` already asked of it.
+- `skills/kit-orchestration/SKILL.md` drops from 21,758 to about 12 KB: backend and lane procedure moved to `references/backends-and-lanes.md`, read only for `openclaw-agent` and `lane` steps.
+
 ## [2.8.4] — 2026-10-25 — setup no longer signs agy out
 
 ### Fixed
