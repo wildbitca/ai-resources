@@ -22,6 +22,7 @@ def pytest_configure(config):
     from basetemp_default import apply_default
     apply_default(config)
     config.addinivalue_line("markers", "timing: asserts on wall-clock time; runs in the serial pass of scripts/run-tests.sh")
+    config.addinivalue_line("markers", "node_scripts: runs node on a repo workflow script through tests/kit_script_harness.mjs; the one host binary the guard lets through for such a test")
     config.addinivalue_line("markers", "agy_waiver: sees the shipped operator waiver of the Antigravity gates")
 
 
@@ -133,7 +134,10 @@ def host_binary_refused(args, env, allowed_roots, executable=None) -> str | None
 
 
 @pytest.fixture(autouse=True)
-def _no_host_binaries(tmp_path_factory, monkeypatch):
+def _no_host_binaries(request, tmp_path_factory, monkeypatch):
+    if request.node.get_closest_marker("node_scripts"):
+        # A pure script run, no installs and no network: lets the workflow-script harness execute `node` and nothing else.
+        monkeypatch.setitem(globals(), "HOST_BINARIES", HOST_BINARIES - {"node"})
     import errno
     import os
     import subprocess

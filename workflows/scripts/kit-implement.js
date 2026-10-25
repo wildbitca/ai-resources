@@ -5,16 +5,23 @@ export const meta = {
   phases: [
     { title: 'Implement', detail: 'one writer applies the plan with tests' },
     { title: 'Test', detail: 'full suite as a gate, with a bounded fix loop' },
-    { title: 'Review', detail: 'correctness, security and test-integrity lenses in parallel' },
+    { title: 'Review', detail: 'correctness, security and test-integrity lenses in parallel (light: one combined lens)' },
     { title: 'Verify findings', detail: 'a skeptic tries to refute each finding' },
     { title: 'Fix', detail: 'the writer applies the confirmed findings' },
-    { title: 'Sign off', detail: 'acceptance criteria checked against evidence' },
+    { title: 'Sign off', detail: 'acceptance criteria checked against evidence (light: only when a risk item applies)' },
   ],
 }
 
-// args: {plan_path, goal, kind, acceptance_criteria?, security_critical?} or a plain goal string
+// args: {plan_path, goal, kind, size?, risk_items?, acceptance_criteria?, security_critical?} or a plain goal string
+// size is inline | light | full (also --inline/--light/--full in the goal). /kit-plan passes it on; without one a single
+// call classifies the task, and a failed classification means full (the whole loop). See skills/kit-orchestration "Task size".
+const SIZES = ['inline', 'light', 'full']
 const input = typeof args === 'string' ? { goal: args } : (args || {})
-const goal = input.goal || input.task || ''
+const rawGoal = input.goal || input.task || ''
+const sizeFlag = /(?:^|\s)--(inline|light|full)(?=\s|$)/.exec(rawGoal)
+const goal = rawGoal.replace(/(?:^|\s)--(inline|light|full)(?=\s|$)/g, ' ').trim()
+let size = SIZES.includes(input.size) ? input.size : (sizeFlag ? sizeFlag[1] : null)
+let riskItems = Array.isArray(input.risk_items) ? input.risk_items : []
 const kind = input.kind || 'feature'
 const planPath = input.plan_path || input.plan || ''
 const criteria = input.acceptance_criteria || []
@@ -97,6 +104,45 @@ const SIGNOFF_SCHEMA = {
   },
 }
 
+const SIZE_SCHEMA = {
+  type: 'object',
+  required: ['mode', 'reason'],
+  properties: {
+    mode: { type: 'string', enum: SIZES },
+    reason: { type: 'string' },
+    risk_items: { type: 'array', items: { type: 'string' } },
+  },
+}
+
+if (!size) {
+  const sized = await agent(
+    `Goal (${kind}): ${goal}\n${planPath ? `Plan: ${planPath}\n` : ''}\n` +
+    `Classify the task size from a bounded read (about 3 tool calls). Do not change any file. Counts of files or tests never decide.\n` +
+    `- inline: change and place are clear, the resume test passes, one unit.\n` +
+    `- light: the resume test fails or a risk item applies, but it is one unit.\n` +
+    `- full: two or more independent units, each over about 100 changed lines, or separate deliverables.\n` +
+    `Risk items: 1 data or irreversible effects; 2 security; 3 contracts others consume; 4 concurrency; ` +
+    `5 delivery or environment; 6 no test would catch a regression. List them with a reason in risk_items, or leave it empty.`,
+    { label: 'classify', phase: 'Implement', agentType: 'explore', schema: SIZE_SCHEMA },
+  )
+  size = sized && SIZES.includes(sized.mode) ? sized.mode : 'full'
+  if (sized && Array.isArray(sized.risk_items)) riskItems = sized.risk_items
+}
+// A named risk item takes a task out of the inline path; it adds a verifier, not a bigger loop.
+if (size === 'inline' && riskItems.length) size = 'light'
+log(`Size: ${size}${riskItems.length ? ` (risk items: ${riskItems.join('; ')})` : ''}`)
+
+if (size === 'inline') {
+  return {
+    goal,
+    kind,
+    size,
+    status: 'inline',
+    plan_path: planPath || null,
+    next: `Inline: no subagents were started. Make the change in this session: write the focused test first, run it, then the suite once. Use --light or --full to run the writer and review loop.`,
+  }
+}
+
 phase('Implement')
 log(`Implementing (${kind}): ${goal || planPath}`)
 
@@ -172,7 +218,16 @@ const REVIEW_LENSES = [
   },
 ]
 
-const reviews = (await parallel(REVIEW_LENSES.map(lens => () =>
+// light: one combined lens (correctness plus test integrity; security too when a risk item names it) instead of three.
+const securityRisk = riskItems.some(item => /(^|\D)2(\D|$)|security/i.test(String(item)))
+const activeLenses = size === 'light'
+  ? [{
+      key: 'combined',
+      agentType: 'code-reviewer',
+      prompt: REVIEW_LENSES.filter(l => l.key !== 'security' || securityRisk).map(l => `${l.key}: ${l.prompt}`).join('\n\n'),
+    }]
+  : REVIEW_LENSES
+const reviews = (await parallel(activeLenses.map(lens => () =>
   agent(
     `Goal (${kind}): ${goal}\n${planPath ? `Plan: ${planPath}\n` : ''}Files changed: ${changed}\n` +
     `The change is every commit on this branch that the default branch lacks, plus uncommitted work: read it with ` +
@@ -229,7 +284,9 @@ if (blockers.length) {
 }
 
 phase('Sign off')
-const signoff = await agent(
+// light: the independent verifier runs only when a risk item names a reason for it; full always runs it.
+const runSignoff = size === 'full' || riskItems.length > 0
+const signoff = !runSignoff ? null : await agent(
   `Goal (${kind}): ${goal}\n${planPath ? `Plan: ${planPath} — read its acceptance criteria.\n` : ''}` +
   (criteria.length ? `Acceptance criteria:\n- ${criteria.join('\n- ')}\n` : '') +
   `\nCheck the work against those criteria using evidence you can produce yourself: run the project's tests and ` +
@@ -243,8 +300,10 @@ return {
   goal,
   kind,
   plan_path: planPath || null,
+    size,
+  risk_items: riskItems,
   // A finding that was never verified cannot count as cleared: a blocker past the cap keeps the run open.
-  status: signoff && signoff.met && testsGreen && !blockers.length && !unverifiedBlockers.length
+  status: (runSignoff ? signoff && signoff.met : true) && testsGreen && !blockers.length && !unverifiedBlockers.length
     ? 'done'
     : 'needs-attention',
   implementation: {
@@ -259,7 +318,7 @@ return {
     unverified: unverified.map(f => ({ severity: f.severity, lens: f.lens, title: f.title, file: f.file })),
     confirmed: verified.map(f => ({ severity: f.severity, lens: f.lens, title: f.title, file: f.file, why: f.why })),
     fixed: fixResult ? fixResult.files_changed : [],
-    security_reviewed: securityCritical,
+    security_reviewed: securityCritical && (size === 'full' || securityRisk),
   },
   sign_off: signoff || null,
   next: unverifiedBlockers.length
