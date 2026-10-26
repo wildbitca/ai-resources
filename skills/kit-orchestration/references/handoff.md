@@ -2,7 +2,22 @@
 
 One handoff file per workflow run: `<repo>/.agent-output/handoff-<scope>.md`, created from `$AGENT_KIT/handoff.md.template`.
 
-The file starts with YAML front matter holding the state a step needs to read (`workflow`, `step`, `status`, `blocked`, `return_to_step`, `block_reason`, `domain`, `requires_tests`, `security_critical`, `refs`, `verdicts`, `next`, `docs_updated`, `git_integration`), plus the **optional** by-reference keys `refs.spec`, `task_ids`, `spec_ids`, `class` and `route` (absent or empty is valid; hooks and the post-step check must never require them), followed by the human-readable notes. Update both: the front matter is what the next step and the join of a parallel group read.
+The file starts with YAML front matter holding the state a step needs to read (`workflow`, `step`, `status`, `blocked`, `return_to_step`, `block_reason`, `domain`, `requires_tests`, `security_critical`, `refs`, `verdicts`, `next`, `docs_updated`, `git_integration`), plus the **optional** by-reference keys `refs.spec`, `task_ids`, `spec_ids`, `class`, `scorecard` and `route` (absent or empty is valid; hooks and the post-step check must never require them), followed by the human-readable notes. Update both: the front matter is what the next step and the join of a parallel group read.
+
+## The `scorecard` key
+
+Written by code, not by hand: `ai-resources scorecard '<json scores>' --handoff <file>` records the task scorecard (creating the file from the template when it is missing), and `ai-resources scorecard escalate|gate ... --handoff <file>` appends each escalation. Value: the mode (`LITE` | `STANDARD` | `FULL`), then the six 0-3 scores in a short form, then any bump or escalation, e.g. `STANDARD res1 blast1 risk0 unc2 ver1 spr0 -> FULL (tests failed 2 times)`.
+
+| Abbreviation | Dimension |
+|---|---|
+| `res` | resumability |
+| `blast` | blast_radius |
+| `risk` | risk |
+| `unc` | uncertainty |
+| `ver` | verifiability |
+| `spr` | spread |
+
+A LITE card has no handoff file (nothing is delegated), so the printed card in the reply is its record; an escalation out of LITE does create the file. Which parts are enforced by code: `references/scorecard.md`, "Code-enforced versus instruction".
 
 ## Scope (file name)
 

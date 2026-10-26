@@ -28,7 +28,7 @@ git_integration: none   # merge_to_base | none | pending_human
 task_ids: []            # e.g. [T2]; ids in the tasks.md named by refs.spec
 spec_ids: []            # e.g. [S3, S4] or [RULE-AUTH-001]
 class: ""               # XS | S | M | L, from the planner's Sizing block
-scorecard: ""         # optional: LITE | STANDARD | FULL plus the six 0-3 scores, e.g. "STANDARD r1 b1 k0 u2 v1 s0"; escalations append "-> FULL (reason)"
+scorecard: ""           # optional, written by `ai-resources scorecard ... --handoff`: MODE then six 0-3 scores, e.g. "STANDARD res1 blast1 risk0 unc2 ver1 spr0"; res=resumability blast=blast_radius risk=risk unc=uncertainty ver=verifiability spr=spread; escalations append "-> FULL (reason)"
 route: ""               # inline | explorer | writers (the reason goes in the notes)
 ---
 
