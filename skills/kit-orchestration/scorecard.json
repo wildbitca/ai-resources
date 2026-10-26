@@ -1,0 +1,31 @@
+{
+  "dimensions": ["resumability", "blast_radius", "risk", "uncertainty", "verifiability", "spread"],
+  "lite": {"max_total": 3, "max_risk": 0, "max_uncertainty": 1, "max_resumability": 1},
+  "full": {"min_total": 10, "min_risk": 3, "min_extras": 3},
+  "base": {
+    "lite": [],
+    "standard": ["implementer", "tester", "verifier"],
+    "full": ["planner", "software-architect", "implementer", "tester", "code-reviewer", "security-auditor", "verifier"]
+  },
+  "triggers": {
+    "planner": {"resumability": 2},
+    "software-architect": {"uncertainty": 2, "spread": 2},
+    "code-reviewer": {"blast_radius": 2},
+    "security-auditor": {"risk": 2}
+  },
+  "escalation": {
+    "lite": {"standard": {"failures": 2, "diff_lines": 150}, "full": {"failures": 4, "diff_lines": 400}},
+    "standard": {"full": {"failures": 2, "diff_lines": 400}}
+  },
+  "tiers": {
+    "explore": "fast",
+    "tester": "fast",
+    "implementer": "balanced",
+    "doc-writer": "balanced",
+    "planner": "strong",
+    "software-architect": "strong",
+    "code-reviewer": "strong",
+    "security-auditor": "strong",
+    "verifier": "strong"
+  }
+}

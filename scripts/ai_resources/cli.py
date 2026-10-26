@@ -92,6 +92,11 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
     return plan_sizing.main(list(args.files))
 
 
+def cmd_scorecard(args: argparse.Namespace) -> int:
+    from . import scorecard
+    return scorecard.main(list(args.args))
+
+
 def cmd_version(args: argparse.Namespace) -> int:
     print(f"ai-resources {__version__}")
     return 0
@@ -123,6 +128,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_pc = sub.add_parser("plan-check", help="Check the Sizing block of a plan or tasks.md")
     p_pc.add_argument("files", nargs="+", help="plan or tasks.md files")
     p_pc.set_defaults(func=cmd_plan_check)
+
+    # scorecard
+    p_sc = sub.add_parser("scorecard", help="Map six 0-3 scores to a mode and roster, or compute an escalation")
+    p_sc.add_argument("args", nargs="+", help="'<json scores>' or: escalate <mode> <failures> <diff_lines>")
+    p_sc.set_defaults(func=cmd_scorecard)
 
     # setup (the new wizard)
     p_st = sub.add_parser(
