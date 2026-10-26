@@ -166,7 +166,7 @@ if (!size) {
     `Set found to false when the block or the mode is missing. Do not classify and do not change any file.`,
     { label: 'read-sizing', phase: 'Implement', agentType: 'explore', schema: SIZING_SCHEMA },
   )
-  size = sized && sized.found && SIZES.includes(sized.mode) ? sized.mode : 'full'
+  size = sized && sized.found && SIZES.includes(sized.mode) ? sized.mode : 'light'
   if (sized && sized.found) {
     if (Array.isArray(sized.risk_items) && !riskItems.length) riskItems = sized.risk_items
     forecast.lines = forecast.lines ?? sized.forecast_lines

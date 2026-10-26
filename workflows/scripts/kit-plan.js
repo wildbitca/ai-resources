@@ -12,7 +12,7 @@ export const meta = {
 
 // args: a goal string, or {goal, kind: 'feature'|'bugfix'|'refactor', constraints, size: 'inline'|'light'|'full'}
 // A goal may carry --inline, --light or --full; an explicit size skips the classifier. Without one, a single
-// cheap call classifies the task (see skills/kit-orchestration "Task size"); a failed classification means full.
+// cheap call classifies the task (see skills/kit-orchestration "Task size"); a failed classification means light.
 // This is the only place that classifies: /kit-implement reads the size from the plan's ## Sizing block or from the
 // size passed on, and never classifies again. The run ledger (ai-resources runs) advises, it never decides.
 const SIZES = ['inline', 'light', 'full']
@@ -137,9 +137,9 @@ if (!size) {
     `When the command is missing or fails, skip it silently.`,
     { label: 'classify', phase: 'Understand', agentType: 'explore', schema: SIZE_SCHEMA },
   )
-  size = sized && SIZES.includes(sized.mode) ? sized.mode : 'full'
+  size = sized && SIZES.includes(sized.mode) ? sized.mode : 'light'
   startEpoch = sized && Number.isFinite(sized.started_at) ? sized.started_at : undefined
-  sizing = sized ? { ...sized, risk_items: sized.risk_items || [] } : { reason: 'classification failed, defaulting to full', risk_items: [] }
+  sizing = sized ? { ...sized, risk_items: sized.risk_items || [] } : { reason: 'classification failed, defaulting to light', risk_items: [] }
   // A named risk item takes a task out of the inline path; it adds a verifier, not a bigger plan.
   if (size === 'inline' && sizing.risk_items.length) size = 'light'
 }
@@ -283,5 +283,5 @@ return {
   open_questions: plan.open_questions || [],
   judged: { winner: winnerIndex + 1, scores: totals, scored: judged },
   context_gaps: readLenses.filter(l => !findings.some(f => f.lens === l.label)).map(l => l.label),
-  next: `Review the plan, then run /kit-implement with ${JSON.stringify({ plan_path: plan.plan_path, tasks_path: plan.tasks_path || undefined, task_ids: plan.task_ids || [], spec_ids: plan.spec_ids || [], goal, kind, size, risk_items: sizing.risk_items, start: startEpoch, estimated: sizing.suggested_mode || size, forced, forecast_lines: sizing.forecast_lines, units: sizing.units, files: sizing.files })}`,
+  next: `Run /kit-implement now with ${JSON.stringify({ plan_path: plan.plan_path, tasks_path: plan.tasks_path || undefined, task_ids: plan.task_ids || [], spec_ids: plan.spec_ids || [], goal, kind, size, risk_items: sizing.risk_items, start: startEpoch, estimated: sizing.suggested_mode || size, forced, forecast_lines: sizing.forecast_lines, units: sizing.units, files: sizing.files })}`,
 }

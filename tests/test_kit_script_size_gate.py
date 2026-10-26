@@ -72,9 +72,9 @@ def test_plan_full_keeps_the_whole_loop(tmp_path):
     assert result["size"] == "full" and result["judged"]["scored"] is True
 
 
-def test_plan_failed_classifier_falls_back_to_full(tmp_path):
+def test_plan_failed_classifier_falls_back_to_light(tmp_path):
     labels, result = run(PLAN_JS, tmp_path, {"goal": "g"}, PLAN_RESPONSES)
-    assert labels[0] == "classify" and len(labels) == 10 and result["size"] == "full"
+    assert labels[0] == "classify" and len(labels) == 4 and result["size"] == "light"
 
 
 def test_plan_classify_prompt_treats_the_ledger_suggestion_as_a_hint(tmp_path):
@@ -128,9 +128,9 @@ def test_implement_never_classifies_it_reads_the_plan_sizing_block(tmp_path):
     assert "classify" not in labels and labels[0] == "read-sizing" and result["size"] == "light"
 
 
-def test_implement_with_an_unreadable_sizing_block_keeps_the_full_default(tmp_path):
+def test_implement_with_an_unreadable_sizing_block_falls_back_to_light(tmp_path):
     labels, result = run(IMPL_JS, tmp_path, {"goal": "g", "plan_path": "p.md"}, IMPL_RESPONSES)
-    assert labels[0] == "read-sizing" and result["size"] == "full" and "sign-off" in labels
+    assert labels[0] == "read-sizing" and result["size"] == "light"
 
 
 def test_implement_with_a_size_passed_on_spawns_no_sizing_call(tmp_path):
