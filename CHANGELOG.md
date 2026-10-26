@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+### Added
+
+- Automatic team sizing: a six-dimension scorecard (resumability, blast radius, risk, uncertainty, verifiability, spread; 0-3 each) maps deterministically to LITE / STANDARD / FULL, a role roster with model tiers, and escalation thresholds (never a silent downgrade). Rules in `skills/kit-orchestration/scorecard.json`, logic in `ai_resources.scorecard` and the `ai-resources scorecard` command, embedded in `/kit-plan` and `/kit-implement` (which no longer need a mode; `--inline|--lite`, `--light|--standard`, `--full` still override). `handoff.md.template` gains the optional `scorecard` key. Regression fixtures in `evals/scorecard/cases.json`, tests in `tests/test_scorecard.py`.
+
 ### Changed
 
 - `workflow-odd` is folded into `/kit-plan` and `/kit-implement` and removed (`workflows/odd.workflow.yaml`, `skills/workflow-odd/`, its index entry, `tests/test_workflow_odd.py`): one classifier, no duplicated logic. Plan is always the first step and classification happens once, in `/kit-plan`, which now also asks `ai-resources runs suggest` for a hint (never a decision) and passes `start`, `estimated`, `forced` and the forecast on to `/kit-implement`. `/kit-implement` no longer classifies: it takes the size from its arguments or reads the plan's `## Sizing` block (an unreadable block still means `full`), and with neither a plan nor a size it stops and points at `/kit-plan`, because workflow scripts cannot import a shared module. It also runs mid-run `runs reassess` (files over twice the estimate, a sensitive area, a trivial task), counts verifier gaps as rework (`runs reassess <mode> --verifier-fail`) and appends the run with `runs record`; each degrades silently when `ai-resources runs` is missing. The managed-block pointer now reads `/kit-plan --inline`. Counts: 141 skills, 19 workflows.

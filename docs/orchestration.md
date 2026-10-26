@@ -244,6 +244,20 @@ graph LR
     style DOC fill:#ede7f6
 ```
 
+## Task scorecard (automatic team sizing)
+
+The orchestrator never asks the user to pick a mode. Before multi-step work it scores six dimensions 0-3 (higher = more ceremony) from the request and a bounded repo read, and a fixed rule maps them to a team:
+
+| Mode | Roster | Handoff |
+|---|---|---|
+| LITE | none, inline; tests still mandatory | no |
+| STANDARD | implementer, tester, verifier + triggered roles | only with `planner` |
+| FULL | planner, software-architect, implementer, tester, code-reviewer, security-auditor, verifier | yes |
+
+Triggers: `planner` if resumability >= 2; `software-architect` if uncertainty >= 2 or spread >= 2; `code-reviewer` if blast radius >= 2; `security-auditor` if risk >= 2. FULL when total >= 10, risk is 3, or three roles trigger. A LITE run escalates to STANDARD when tests fail twice or the diff reaches 150 lines (FULL at 4 failures / 400 lines); STANDARD escalates to FULL at 2 failures / 400 lines (failures counted within the current mode). Runs never downgrade.
+
+Try it: `ai-resources scorecard '{"resumability":1,"blast_radius":1,"risk":0,"uncertainty":2,"verifiability":1,"spread":0}'` and `ai-resources scorecard escalate lite 2 0`. The rules are data (`skills/kit-orchestration/scorecard.json`); `evals/scorecard/cases.json` holds sample requests with expected mode and roster, run by `tests/test_scorecard.py`. Change a threshold there, update the cases, and the JS copies in `workflows/scripts/` must match (a test enforces it).
+
 ## Skill Discovery Flow
 
 When no workflow matches (ad-hoc tasks), the agent discovers skills dynamically:

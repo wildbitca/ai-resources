@@ -7,25 +7,23 @@ description: "How to run an ai-resources workflow: resolve each step's agent, pe
 
 ## Prefer the deterministic loop for code changes
 
-For a feature, bugfix or refactor that is not `inline`, run the kit's workflow scripts instead of driving the steps by hand: `/kit-plan <goal>` (readers map the code; the plan file is written for approval) then `/kit-implement` with `{"plan_path": "…", "goal": "…", "kind": "feature|bugfix|refactor"}`. Both read the mode from "Task size" (default: classified, one call; override with `--inline`, `--light`, `--full`). A script cannot ask the user mid-run, which is why approval sits between the two. Use the YAML workflows when a run needs judgement in the middle, when the task is not a code change, or when scripts are unavailable.
+For a feature, bugfix or refactor that is not `inline`, run the workflow scripts: `/kit-plan <goal>` (readers map the code; the plan file is written for approval) then `/kit-implement` with `{"plan_path": "…", "goal": "…", "kind": "feature|bugfix|refactor"}`. Both score first (below) and take the mode from the card; scripts cannot ask mid-run, hence approval between them. Use the YAML workflows for mid-run judgement, non-code tasks or when scripts are unavailable.
 
 ## Authorize first
 
 Investigate, explain, compare and propose requests are read-only: no writes, no writer delegation. Writing starts when the request or an approved plan asks for a change; invoking a workflow or `/kit-implement` authorizes the steps it names. On a real ambiguity ask one question, then proceed.
 
+## Scorecard
+
+Before multi-step work score 0-3 (higher = more ceremony) from the request and ~3 cheap reads (diff stat, files named, a grep): `resumability` (3 = a cold session could not finish from request + `git diff`), `blast_radius`, `risk`, `uncertainty`, `verifiability`, `spread`. `ai-resources scorecard '<json>'` maps them by rule ([scorecard.json](scorecard.json)): **LITE** inline, no handoff; **STANDARD** implementer, tester, verifier plus triggered roles; **FULL** all seven roles plus handoff. Triggers: planner (resumability >= 2), architect (uncertainty or spread >= 2), code-reviewer (blast_radius >= 2), security-auditor (risk >= 2). Tests are mandatory in every mode. Print the card (scores, mode, roster with tiers, rationale) first and copy it to the handoff `scorecard` key. Escalate when tests fail twice or the diff passes 150 lines; never downgrade silently. Anchors, tiers, thresholds: [references/scorecard.md](references/scorecard.md).
+
 ## Task size
 
-Classify before the first spawn, from a bounded read (~3 calls). File or test counts never decide; the **resume test** does: if the session stopped now, could someone finish from the request and `git diff` alone?
-
-| Mode | When | Route | Spawns |
-|---|---|---|---|
-| `inline` | change and place are clear, resume test passes, one unit | work in this session; focused test, then the suite once; no plan file | 0 |
-| `light` | resume test fails or a risk item applies, but one unit | `tasks.md` (below), one plan draft, one combined review lens, a verifier only for a risk item | 0-2 |
-| `full` | 2+ independent units, disjoint surfaces, each over ~100 lines; or separate deliverables | 3-reader / 3-draft / judged plan, three lenses, skeptics, sign-off | as the loop |
+Mode names map LITE=`inline`, STANDARD=`light`, FULL=`full` (the plan's `## Sizing` block and the scripts use these). The resume test: if the session stopped now, could someone finish from the request and `git diff` alone?
 
 Risk items (one adds a `Risks: item N` line and one independent verifier, nothing bigger): 1 data or irreversible effects; 2 security; 3 contracts others consume (APIs, CLI flags, config, handoff keys, hooks, workflow YAML); 4 concurrency; 5 delivery or environment (installers, CI/CD, dependencies, gateway config); 6 no test would catch a regression. Size is not priority; never infer one from the other.
 
-`/kit-plan` and `/kit-implement` apply this by default. The user overrides it per run with `--inline`, `--light` or `--full` (or `{"size": "inline|light|full"}`); `--full` restores the whole loop. State the mode and a one-line reason in the reply. Re-evaluate once after a question or mapping resolves; if actual size passes twice the forecast, change the route, never the acceptance criteria. The Sizing block is in `agents/roles/planner.md`. Every run is measured: `ai-resources runs suggest|record|report` ([run-ledger](references/run-ledger.md)); history advises only after 5 similar runs, your flag wins.
+`/kit-plan` and `/kit-implement` score first; nobody picks a mode. The user overrides it per run with `--inline`, `--light` or `--full` (or `{"size": "inline|light|full"}`); `--full` restores the whole loop. Invalid or out-of-range scores mean FULL; no scores at all because the classifier failed means light. State the mode and a one-line reason in the reply. Re-evaluate once after a question or mapping resolves; if actual size passes twice the forecast, change the route, never the acceptance criteria. The Sizing block is in `agents/roles/planner.md`. Every run is measured: `ai-resources runs suggest|record|report` ([run-ledger](references/run-ledger.md)); history advises only after 5 similar runs, your flag wins.
 
 ## Delegation triggers
 
@@ -54,6 +52,7 @@ Workflows and prompts refer to `$AGENT_KIT`, the kit root (`workflows/`, `agents
 
 ## Before the first step
 
+0. Print the scorecard; it sets mode and roster (LITE: stop here, work inline).
 1. Read `specs/PROJECT.md` when it exists (Intent, Technologies, spec index).
 2. Detect the domain with [references/domains.md](references/domains.md). If it is ambiguous, ask the user once.
 3. For workflows that change code (feature, bugfix, refactor, cross-domain), work in a git worktree on `feature/<name>` or `fix/<name>` (skill `using-git-worktrees`).

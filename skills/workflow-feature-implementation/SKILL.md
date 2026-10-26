@@ -33,3 +33,5 @@ Domain-agnostic feature workflow. research → plan → architect → implement 
 ## Deterministic alternative
 
 `/kit-plan <goal>` then `/kit-implement` runs this loop as workflow scripts: one writer, a test gate, parallel review lenses and findings verified before they are fixed. Prefer it unless a step needs judgement mid-run (workflow scripts cannot ask the user anything until they finish).
+
+Score first: before the first step run the scorecard (`kit-orchestration`, "Scorecard"); it picks LITE, STANDARD or FULL and the roster, so this workflow's roles run only when the scorecard names them. Tests are mandatory in every mode.

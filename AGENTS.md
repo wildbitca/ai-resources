@@ -9,7 +9,7 @@ Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upg
 - Workflows are the `workflow-*` skills (feature, bugfix, refactor, incident response, ...). Pick one by reading each skill's description, which is its trigger. Definitions live in `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec/workflows/`.
 - Work as a team with the kit roles rather than in one head: `planner`, `software-architect`, `implementer`, `tester`, `code-reviewer`, `security-auditor`, `verifier`, `doc-writer`. `/kit-plan <goal>` then `/kit-implement` drive that loop.
 - Never sign off your own work: only the `verifier` confirms acceptance criteria.
-- Size first: classify a change `inline`, `light` or `full` (`kit-orchestration`, "Task size"; flags `--inline`, `--light`, `--full`) and delegate only for a named reason; one concrete change: `/kit-plan --inline`.
+- Size first: the orchestrator scores the task (`kit-orchestration`, "Scorecard") into LITE, STANDARD or FULL and prints it; no mode to pick (override: `--inline`, `--light`, `--full`); one concrete change: `/kit-plan --inline`.
 - Hand work between roles through the handoff file: `handoff.md` at the repo root (or `.agent-output/handoff.md`); the shape is `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec/handoff.md.template`.
 
 ## Long-running commands never block a tool call
