@@ -1,6 +1,6 @@
 {
   "dimensions": ["resumability", "blast_radius", "risk", "uncertainty", "verifiability", "spread"],
-  "lite": {"max_total": 3, "max_risk": 0, "max_uncertainty": 1, "max_resumability": 1},
+  "lite": {"max_total": 3, "max_risk": 0, "max_uncertainty": 1, "max_resumability": 1, "max_verifiability": 2},
   "full": {"min_total": 10, "min_risk": 3, "min_extras": 3},
   "base": {
     "lite": [],

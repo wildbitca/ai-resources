@@ -131,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # scorecard
     p_sc = sub.add_parser("scorecard", help="Map six 0-3 scores to a mode and roster, or compute an escalation")
-    p_sc.add_argument("args", nargs="+", help="'<json scores>' or: escalate <mode> <failures> <diff_lines>")
+    p_sc.add_argument("args", nargs=argparse.REMAINDER, help="'<json scores>' | escalate <mode> <failures> <diff_lines> | gate <mode> [--failures N] [--base REF]")
     p_sc.set_defaults(func=cmd_scorecard)
 
     # setup (the new wizard)
