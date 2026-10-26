@@ -27,6 +27,7 @@ steps:
       1. Authorize: a request to investigate, explain, compare or propose is read-only; stop after the answer and write nothing. Ask one question only when the request is ambiguous about authorizing a change.
       2. Map with at most 3 lookups (more than ~5 lookups or ~10k tokens of evidence: one read-only explore). Never explore files you will read anyway.
       3. Classify with the resume test and the six risk items of $AGENT_KIT/skills/kit-orchestration/SKILL.md "Task size". Honor --inline, --light, --full if the goal carries one. State the Sizing block in the reply.
+         When `ai-resources runs` exists, note the start time (`date +%s`) and run `ai-resources runs suggest --kind <feature|bugfix|refactor|docs|config> --files N --lines F --units U [--risk 3,5] [--force inline|light|full]`; its mode is a recommendation (heuristic until 5 similar runs exist, then history), you may differ and say why. $AGENT_KIT/skills/kit-orchestration/references/run-ledger.md has the rest.
       4. For light or full: create specs/features/<feature>/tasks.md from $AGENT_KIT/templates/tasks.template.md (English criteria, each with a short source: link; no quotes). Then the best-effort Engram mirror of $AGENT_KIT/skills/kit-orchestration/references/task-ledger.md.
       5. Update {{handoff_file}} (Spec_ref, Task_ids, Spec_ids, Class, Route, Next assigned role=implementer).
       If you have concern or blockage, set Blocked: true, Return_to_step: classify, Block_reason: [reason] in {{handoff_file}}.
@@ -46,6 +47,7 @@ steps:
       Do the work inline. Delegate only when a Delegation triggers row of kit-orchestration fires (two or more independent units over ~100 changed lines each with disjoint edit surfaces, or a near-full context); record route and reason in the ledger.
       Follow the implementer role rules: RED per requested rule, PRESERVE test per touched command, differential check, one commit per unit (a risk item gets its own), commit id on each T#.
       End with `Risks: item N (reason)` or `Risks: none`, and `Covered: T#, S#`.
+      If more files change than estimated (over 2x), a sensitive area appears, or the task turns out trivial, run `ai-resources runs reassess <mode> [--files-estimated N --files-actual M] [--sensitive] [--trivial]` and tell the user the advice; change the mode only with a stated reason, any direction.
       Update {{handoff_file}} (Next assigned role=verifier). Never push, open a PR or merge.
   - id: verify
     subagent_type: verifier
@@ -62,7 +64,7 @@ steps:
       Workspace: {{workspace}}. Domain: {{domain}}.
       Skill common-protocol-enforcement is read only when an independent verifier runs.
       Verify by risk (kit-orchestration "Task size"): no risk item and mode inline or light = read the diff and run the proof command of each S# yourself; a named risk item or mode full = one independent verifier (a different model family than the writer, ADR-0007) runs the authorized spec examples in a scratch copy made with mktemp -d, outside the workspace.
-      Report one verdict per S# with the command and the observed result. One correction batch, one recheck.
+      Report one verdict per S# with the command and the observed result. One correction batch, one recheck. Count each GAPS verdict as one rework; after the first, run `ai-resources runs reassess <mode> --verifier-fail` and report the advice.
       Update {{handoff_file}} (verification=PASS or GAPS, Blocked and Return_to_step=implement when GAPS).
   - id: close
     subagent_type: doc-writer
@@ -77,5 +79,6 @@ steps:
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       For light or full: READ $AGENT_KIT/skills/knowledge-audit/SKILL.md, fold what is durable from the ledger (criteria that became RULE-*/TS-*, decisions, rejected options) into the spec or specs/knowledge/decisions/, fill "Sizing (actual)", update the Engram mirror to closed (task-ledger.md), then delete the ledger. For inline: nothing to fold.
+      Append the run: `ai-resources runs record --mode <final> --estimated <suggested> --outcome pass|gaps|abandoned --agents <spawned> --steps <steps run> --rework <GAPS count> --kind <kind> --lines <changed> --units <n> --files <n> [--risk ..] [--forced] [--escalations inline>light] --start <epoch from classify>` (skip silently when the command is missing).
       Report to the user: outcome, changed paths, failed or pending checks, next step. Merge or PR only if the user prefers (skill finishing-a-development-branch).
       When task DONE: DELETE {{handoff_file}}. No pending handoffs, zombies, or orphans.

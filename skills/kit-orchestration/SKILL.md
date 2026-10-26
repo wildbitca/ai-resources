@@ -25,7 +25,7 @@ Classify before the first spawn, from a bounded read (~3 calls). File or test co
 
 Risk items (one adds a `Risks: item N` line and one independent verifier, nothing bigger): 1 data or irreversible effects; 2 security; 3 contracts others consume (APIs, CLI flags, config, handoff keys, hooks, workflow YAML); 4 concurrency; 5 delivery or environment (installers, CI/CD, dependencies, gateway config); 6 no test would catch a regression. Size is not priority; never infer one from the other.
 
-`/kit-plan` and `/kit-implement` apply this by default. The user overrides it per run with `--inline`, `--light` or `--full` (or `{"size": "inline|light|full"}`); `--full` restores the whole loop. State the mode and a one-line reason in the reply. Re-evaluate once after a question or mapping resolves; if actual size passes twice the forecast, change the route, never the acceptance criteria. The Sizing block is in `agents/roles/planner.md`.
+`/kit-plan` and `/kit-implement` apply this by default. The user overrides it per run with `--inline`, `--light` or `--full` (or `{"size": "inline|light|full"}`); `--full` restores the whole loop. State the mode and a one-line reason in the reply. Re-evaluate once after a question or mapping resolves; if actual size passes twice the forecast, change the route, never the acceptance criteria. The Sizing block is in `agents/roles/planner.md`. Every run is measured: `ai-resources runs suggest|record|report` ([run-ledger](references/run-ledger.md)); history advises only after 5 similar runs, your flag wins.
 
 ## Delegation triggers
 
