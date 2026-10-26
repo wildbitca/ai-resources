@@ -252,7 +252,7 @@ Total forecast: ~1,150 changed lines, six commit groups, no required parallel wr
 - [Met by the dry run for creation and ids; the fold-and-delete at close is the `close` step of `workflow-odd` and was not exercised] A `light` or `full` task creates one temporal `specs/features/<feature>/tasks.md` whose `## Specs` carry a `source:` link, whose `## Tasks` carry commit ids and whose `## Log` starts with the original request link; `knowledge-audit` folds and removes it at closure.
 - [Met in the scripts and the engine prompt, tested] A handoff from the planner to the implementer contains a locator + `T#` + `S#` and no paraphrase of the requirement.
 - [Prompt and schema in place; behavior needs a real run] The verifier's report contains one verdict per `S#`, produced by running authorized examples (all of them when a risk item is named) in a `mktemp -d` scratch copy; the workspace has no new file.
-- [Partly met: core 12,454 B against the 11 KB target, ceiling test at 12,700 B; the rest is met] `kit-orchestration/SKILL.md` core < 11 KB; lanes reference present; all existing tests pass; `validate_kit.py` passes.
+- [Partly met: core 12,620 B against the 11 KB target, ceiling test at 12,700 B; the rest is met] `kit-orchestration/SKILL.md` core < 11 KB; lanes reference present; all existing tests pass; `validate_kit.py` passes.
 - [Not measurable until the branch is installed; see section 11] `audit compare` shows spawns per small change reduced vs the baseline, with n >= 5 per class.
 - [Met: one 209-byte bullet; a real `setup` run was deliberately not done on this host] No edit to the managed block beyond the agreed three-line pointer, and a fresh `ai-resources setup` run keeps it.
 
@@ -403,6 +403,12 @@ Each child made 5-9 calls and re-read that prefix from cache on every one. Compu
 ### Decision
 
 The numbers support the existing direction (do not spawn for a one-unit, two-file change) and do not support a lower floor for risky work; they are one task. Thresholds stay as shipped. The ledger and the calibration report decide any change after at least 5 runs per mode, and the owner approves it.
+
+### G21 applied (2026-10-26)
+
+Config change on the host, backup `~/.openclaw/openclaw.json.bak-20261026T130907Z`: `tools.subagents.tools.deny` = `clickup__*`, `sentry__*`, `supabase__*`, `image_generate`, `music_generate`, `video_generate`, `skill_workshop`, `memory_search`, `memory_get`. Engram, read, write, edit, exec and process stay. Scope is sub-agents only, so the main agent keeps its tools.
+
+Measured with one trivial `claude` child (task: reply OK): first call 50,618 prompt tokens against 91,233 before (-44%) [M, n = 1, cold cache so all of it is cache creation]. The remaining prefix is the base prompt, AGENTS.md, the user CLAUDE.md, the skills listing and the remaining tool schemas. Rollback: restore the backup file. A further cut would need the skills listing or the engram tools narrowed, which was not done.
 
 ### Status: study closed (2026-10-26)
 
