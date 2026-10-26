@@ -158,9 +158,9 @@ def test_new_flag_names_override_the_scorecard(tmp_path):
 @pytest.mark.node_scripts
 def test_implement_lite_card_still_requires_tests_and_spawns_nothing(tmp_path):
     case = CASES[0]
-    responses = {**IMPL_RESPONSES, "classify": {"reason": "r", "scores": case["scores"]}}
-    labels, result = run(IMPL_JS, tmp_path, {"goal": "g"}, responses)
-    assert labels == ["classify"] and result["status"] == "inline" and "Tests are mandatory" in result["next"]
+    responses = {**IMPL_RESPONSES, "read-sizing": {"found": True, "reason": "r", "scores": case["scores"]}}
+    labels, result = run(IMPL_JS, tmp_path, {"goal": "g", "plan_path": "p.md"}, responses)
+    assert labels == ["read-sizing"] and result["status"] == "inline" and "Tests are mandatory" in result["next"]
 
 
 @needs_node

@@ -95,10 +95,15 @@ def test_d2_cli_prints_and_records_the_bump(tmp_path, capsys):
     assert "bumped" in _key(path)
 
 
-@pytest.mark.parametrize("script,responses,args", [(PLAN_JS, PLAN_RESPONSES, {"goal": "g"}), (IMPL_JS, IMPL_RESPONSES, {"goal": "g"})])
+# /kit-plan classifies; /kit-implement reads the scores the plan recorded in its Sizing block (it never classifies).
+SCRIPT_CASES = [(PLAN_JS, PLAN_RESPONSES, {"goal": "g"}, "classify", {}),
+                (IMPL_JS, IMPL_RESPONSES, {"goal": "g", "plan_path": "p.md"}, "read-sizing", {"found": True})]
+
+
+@pytest.mark.parametrize("script,responses,args,key,extra", SCRIPT_CASES)
 @needs_node
-def test_d2_scripts_record_effective_mode_and_reason(tmp_path, script, responses, args):
-    responses = {**responses, "classify": {"reason": "r", "scores": LITE_SCORES, "risk_items": ["2: security"]}}
+def test_d2_scripts_record_effective_mode_and_reason(tmp_path, script, responses, args, key, extra):
+    responses = {**responses, key: {"reason": "r", "scores": LITE_SCORES, "risk_items": ["2: security"], **extra}}
     _, result = run(script, tmp_path, args, responses)
     card = result["scorecard"]
     assert result["size"] == "light" and card["mode"] == "standard" and card["scored_mode"] == "lite"
@@ -175,7 +180,7 @@ def test_d4_passing_second_round_still_gets_a_rerun_after_escalation(tmp_path):
 # --- D5: every workflow skill and YAML scores first ------------------------------------------------------------
 def test_d5_every_workflow_skill_scores_first():
     skills = sorted((REPO / "skills").glob("workflow-*/SKILL.md"))
-    assert len(skills) >= 20
+    assert len(skills) >= 19  # workflow-odd was folded into /kit-plan and /kit-implement
     for skill in skills:
         text = skill.read_text(encoding="utf-8")
         assert "Score first" in text and '"Scorecard"' in text, skill
@@ -185,8 +190,7 @@ def test_d5_no_workflow_yaml_classifies_with_the_old_task_size():
     for yaml_file in (REPO / "workflows").glob("*.yaml"):
         text = yaml_file.read_text(encoding="utf-8")
         assert 'Classify with the resume test' not in text, yaml_file
-    odd = (REPO / "workflows" / "odd.workflow.yaml").read_text(encoding="utf-8")
-    assert "Score first" in odd and '"Scorecard"' in odd
+    assert not (REPO / "workflows" / "odd.workflow.yaml").exists()  # folded into /kit-plan and /kit-implement
 
 
 def test_d5_generated_skills_are_in_sync_with_the_generator():
@@ -225,15 +229,23 @@ def test_d6_cli_invalid_scores_print_a_full_card(capsys):
     assert cli.main(["scorecard"]) == 2  # usage errors still fail
 
 
-@pytest.mark.parametrize("script,responses", [(PLAN_JS, PLAN_RESPONSES), (IMPL_JS, IMPL_RESPONSES)])
+@pytest.mark.parametrize("script,responses,args,key,extra", SCRIPT_CASES)
 @needs_node
-def test_d6_scripts_bare_legacy_mode_with_invalid_scores_is_full(tmp_path, script, responses):
+def test_d6_scripts_bare_legacy_mode_with_invalid_scores_is_full(tmp_path, script, responses, args, key, extra):
     for scores in ({**ZERO, "risk": 9}, {}, "x"):
-        resp = {**responses, "classify": {"mode": "inline", "reason": "r", "scores": scores}}
-        labels, result = run(script, tmp_path, {"goal": "g"}, resp)
+        resp = {**responses, key: {"mode": "inline", "reason": "r", "scores": scores, **extra}}
+        labels, result = run(script, tmp_path, args, resp)
         assert result["size"] == "full", scores
-    ok = run(script, tmp_path, {"goal": "g"}, {**responses, "classify": {"mode": "inline", "reason": "r"}})[1]
+    ok = run(script, tmp_path, args, {**responses, key: {"mode": "inline", "reason": "r", **extra}})[1]
     assert ok["size"] == "inline"  # no scores at all: the legacy mode still works
+
+
+@pytest.mark.parametrize("script,responses,args,key,extra", SCRIPT_CASES)
+@needs_node
+def test_d6_scripts_no_scores_and_no_answer_is_light_not_full(tmp_path, script, responses, args, key, extra):
+    # Decision: invalid scores are FULL, but a classifier that failed or answered nothing keeps main's light default.
+    resp = {k: v for k, v in responses.items() if k != key}
+    assert run(script, tmp_path, args, resp)[1]["size"] == "light"
 
 
 def test_d6_docs_state_the_fallback():
