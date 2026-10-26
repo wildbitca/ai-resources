@@ -360,3 +360,46 @@ Full suite, `python -m pytest -m "not timing" tests/` plus the `timing` pass, in
 
 The 52 failures are the same on both sides: `test_openclaw_doctor_drain` (25), `test_openclaw_config_watch` (12), `test_openclaw_restart_gate` (7), `test_openclaw_host_wizard` (3) and one each in `test_state_merge`, `test_setup_idempotence_round4`, `test_openclaw_team_resilience`, `test_openclaw_journal_hostile` and `test_openclaw_cost_migrations`; they concern the host's OpenClaw setup and watch paths, not this work. The owner's brief counted 51; in this environment the base fails 52, so one of them is probably environment- or timing-sensitive. The branch adds 47 passing tests and `validate_kit.py` passes (142 skills, 15 roles, 25 personas, 20 workflows). A first full run of this branch failed two tests the branch had introduced (the workflow count in `test_orchestrator_workflows.py` and the committed repo `AGENTS.md` block, which must match the renderer after the new bullet); both were fixed in a later commit and the run above is the second one.
 
+
+## 17. Adaptive sizing: the run ledger and one measured experiment (2026-10-26)
+
+[V] = verified by a command; [M] = measured; [I] = inferred.
+
+### What telemetry exists today, and what does not
+
+| Source | Gives | Gap |
+|---|---|---|
+| `audit_sources` transcripts (Claude Code JSONL, OpenClaw events) [V] | per call: time, session, model, prompt/cache/output tokens, so tokens and API-equivalent USD for any window or session id | no notion of "a workflow run", of its size, or of a verifier sending work back; a window also catches concurrent sessions (an upper bound) |
+| `orchestrate` run store (`state.json`, `orchestrate cost`) [V] | steps, agents, `returns` (send-backs), start and end, cost by role | exists only for runs the Python engine drives; no run has ever been stored on this host (`~/.local/state/ai-resources/runs` is absent), and inline `workflow-odd` runs never reach it |
+| `subagents list` (OpenClaw tool) [V] | runtime and a `totalTokens` per child | `totalTokens` is the last prompt size, not the sum of the child's calls (a child with 5 calls printed 94,591), so it understates cost |
+| Engram [V] | free-text memories | MCP only, no Python reader, nothing structured |
+| ai-usage report | host-level usage and credit alerts | not per run |
+
+Decision: a small append-only ledger (`ai-resources runs`, `scripts/ai_resources/run_ledger.py`) that the closing step of `workflow-odd` fills, with tokens and USD joined from the transcripts by time window and session ids, and structure joined from `state.json` when a run came from the engine (`--from-run`). Nothing in OpenClaw core changes. Not measurable: tokens per step of an inline run (one session), and a child that reports no session id.
+
+### Experiment: same task, `/equipo`-style full workflow against `workflow-odd` inline
+
+Task (both arms, scratch clones of this tree): add `--mode` and `--outcome` filters to `ai-resources runs list` with one test. Both arms produced a passing 11-test file (15 and 17 changed lines in two files).
+
+Arm A emulates `/equipo` (`feature-implementation`): I acted as the runtime and spawned its nine steps one at a time as isolated child sessions (`research, plan, architect, implement, test, review, security, verify, document`), each given its real prompt template. The chat command and the orchestrator CLI could not be driven from this session, so this is an emulation of the dispatch with the real step prompts, not a run of the plugin. A mistaken extra spawn (step 2 started twice) was cancelled after one call and is excluded from the figures below. Arm B is the `odd` route done inline by the session that already held the context.
+
+| | A: full, 9 spawned steps | B: odd, inline |
+|---|---|---|
+| Wall time [M] | 254 s | 10 s |
+| Model calls [M] | 59 | 2 |
+| Prompt tokens (fresh + cache) [M] | 5,551,725 | 396,532 |
+| Output tokens [M] | 18,742 | 1,416 |
+| API-equivalent USD [M] | 2.09 | 0.06 |
+| Rework / outcome | 0 / pass | 0 / pass |
+
+Ratios: 35x USD, 14x prompt tokens, 25x wall time. Caveats, all real: n = 1 per arm, so these are anecdotes, not a calibration; the full arm wall time includes the load of a concurrently running test suite; B is the marginal cost of a session that already held context (a cold `odd` would add one child spawn, about the 0.2 USD of a single full-arm step); the parent's own orchestration calls in arm A are not attributed; the nine steps were run with a "be economical" instruction, so a real `/equipo` run on this task may cost more, not less.
+
+### G21 follow-up: the fixed context per spawn, measured
+
+Every child's first call carried 91,226-91,242 prompt tokens (nine children, a spread of 16 tokens) before reading its task [M]. That is twice the 46,492 median recorded for OpenClaw `claude-cli` children in section 11, so the fixed prefix of a child spawned from this agent is larger than that cohort's median [M]; the cohorts differ (this agent's workspace instructions and tool listing), so the two numbers are not a trend.
+
+Each child made 5-9 calls and re-read that prefix from cache on every one. Computed from the figures above, 59 calls x about 91.2k = 5.38M of the 5.55M prompt tokens (97%) are the repeated fixed prefix; the task-specific part is about 3% [I, arithmetic on measured values]. Cached reads are cheap per token, which is why the full arm costs 35x rather than 100x, but the prefix is what a spawn costs before it does any work. Scoping which tools and skills OpenClaw children list is still the lever, still a live configuration change under ADR-0011/0013, and still not done here; the ledger will show its effect, because `first_call_ctx` per child is in the transcripts.
+
+### Decision
+
+The numbers support the existing direction (do not spawn for a one-unit, two-file change) and do not support a lower floor for risky work; they are one task. Thresholds stay as shipped. The ledger and the calibration report decide any change after at least 5 runs per mode, and the owner approves it.

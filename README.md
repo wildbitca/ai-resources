@@ -53,6 +53,7 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 | `ai-resources daemon {start,stop,status,logs,update}` | Manage local LiteLLM container. |
 | `ai-resources audit` | Cost report from gateway logs. |
 | `ai-resources generate` | Regenerate skills index, import vendor skills. |
+| `ai-resources runs suggest\|reassess\|record\|list\|report` | Run ledger: recommend `inline`/`light`/`full` from heuristics, then from past runs once 5 similar ones exist; mid-run advice; per-mode cost-against-quality report with threshold proposals (text only, the owner approves). |
 | `ai-resources version` | Print version. |
 
 ### First run
