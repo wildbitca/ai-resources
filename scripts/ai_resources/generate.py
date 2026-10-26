@@ -226,6 +226,15 @@ WORKFLOW_SCRIPTS: dict[str, str] = {
 }
 
 
+# Every workflow starts with the scorecard: the mode and roster come from the card, not from the workflow's own roles.
+SCORE_FIRST = (
+    "**Score first.** Before step 1 score the task with the `kit-orchestration` \"Scorecard\" "
+    "(`ai-resources scorecard '<json>'`): the card picks LITE, STANDARD or FULL and the roster, so this "
+    "workflow's roles run only when the card names them (LITE works inline, no handoff). Tests are mandatory "
+    "in every mode; scores that are missing or invalid mean FULL."
+)
+
+
 def _step_backend_label(step: dict, integrating_writer: str = "implementer") -> str:
     """`claude-code`, `openclaw-agent (<agentId>)`, or the `lane` label (never an agent id: ADR-0007)."""
     backend = str(step.get("backend") or "claude-code")
@@ -277,6 +286,7 @@ def _workflow_skill_md(filename: str, doc: dict) -> str:
         f"# Workflow: {name}\n\n"
         f"{summary}\n\n"
         "**Goal:** $ARGUMENTS\n\n"
+        f"{SCORE_FIRST}\n\n"
         "1. Load the `kit-orchestration` skill: it defines how to run steps, the handoff file, "
         "parallel groups, and the subagent return format.\n"
         f"2. Read the full definition at `$AGENT_KIT/workflows/{filename}` (`kit-orchestration` "
