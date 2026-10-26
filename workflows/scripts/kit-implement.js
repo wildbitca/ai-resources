@@ -15,7 +15,7 @@ export const meta = {
 // args: {plan_path, tasks_path?, task_ids?, spec_ids?, goal, kind, size?, risk_items?, acceptance_criteria?, security_critical?} or a plain goal string
 // size is inline | light | full (also --inline/--light/--full in the goal). This script never classifies: /kit-plan does,
 // once. The size comes from the args, else from the plan's "## Sizing" block (read, not re-decided); an unreadable block
-// means full (the whole loop). With neither a plan nor a size the run stops and points at /kit-plan, because workflow
+// means light; scores in the block that are invalid or out of range mean full (the whole loop). With neither a plan nor a size the run stops and points at /kit-plan, because workflow
 // scripts cannot import a shared classifier. See skills/kit-orchestration "Task size".
 const SIZES = ['inline', 'light', 'full']
 let agents = 0
