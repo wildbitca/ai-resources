@@ -22,12 +22,58 @@ let agents = 0
 let steps = 0
 const spawn = (prompt, opts) => { agents += 1; return agent(prompt, opts) }
 const enter = name => { steps += 1; phase(name) }
+const SCORECARD = {"dimensions":["resumability","blast_radius","risk","uncertainty","verifiability","spread"],"lite":{"max_total":3,"max_risk":0,"max_uncertainty":1,"max_resumability":1},"full":{"min_total":10,"min_risk":3,"min_extras":3},"base":{"lite":[],"standard":["implementer","tester","verifier"],"full":["planner","software-architect","implementer","tester","code-reviewer","security-auditor","verifier"]},"triggers":{"planner":{"resumability":2},"software-architect":{"uncertainty":2,"spread":2},"code-reviewer":{"blast_radius":2},"security-auditor":{"risk":2}},"escalation":{"lite":{"standard":{"failures":2,"diff_lines":150},"full":{"failures":4,"diff_lines":400}},"standard":{"full":{"failures":2,"diff_lines":400}}},"tiers":{"explore":"fast","tester":"fast","implementer":"balanced","doc-writer":"balanced","planner":"strong","software-architect":"strong","code-reviewer":"strong","security-auditor":"strong","verifier":"strong"}}
+
+// Deterministic mapping from the six 0-3 scores to a mode (skills/kit-orchestration "Scorecard"). lite/standard/full
+// are inline/light/full here. Returns null for an invalid card, which the caller treats as a failed classification.
+const MODE_TO_SIZE = { lite: 'inline', standard: 'light', full: 'full' }
+const SIZE_ORDER = ['inline', 'light', 'full']
+const scoreCard = scores => {
+  if (!scores || typeof scores !== 'object') return null
+  const s = {}
+  for (const d of SCORECARD.dimensions) {
+    if (!Number.isInteger(scores[d]) || scores[d] < 0 || scores[d] > 3) return null
+    s[d] = scores[d]
+  }
+  const total = SCORECARD.dimensions.reduce((a, d) => a + s[d], 0)
+  const fires = cond => Object.entries(cond).some(([d, t]) => s[d] >= t)
+  const extras = Object.entries(SCORECARD.triggers).filter(([r, c]) => fires(c) && !SCORECARD.base.standard.includes(r)).map(([r]) => r)
+  const L = SCORECARD.lite, F = SCORECARD.full
+  let mode = 'standard'
+  if (total >= F.min_total || s.risk >= F.min_risk || extras.length >= F.min_extras) mode = 'full'
+  else if (!extras.length && total <= L.max_total && s.risk <= L.max_risk && s.uncertainty <= L.max_uncertainty && s.resumability <= L.max_resumability) mode = 'lite'
+  let roster = []
+  if (mode === 'full') roster = [...SCORECARD.base.full]
+  else if (mode === 'standard') {
+    roster = [...SCORECARD.base.standard, ...extras].sort((a, b) => SCORECARD.base.full.indexOf(a) - SCORECARD.base.full.indexOf(b))
+  }
+  const tiers = Object.fromEntries(roster.map(r => [r, SCORECARD.tiers[r]]))
+  return { mode, size: MODE_TO_SIZE[mode], total, scores: s, roster, tiers, handoff: mode === 'full' || roster.includes('planner') }
+}
+// Escalation never lowers the size: tests failing twice or a growing diff move lite -> standard -> full.
+const escalateSize = (current, failures, diffLines) => {
+  const mode = Object.keys(MODE_TO_SIZE).find(m => MODE_TO_SIZE[m] === current)
+  let best = current
+  for (const [target, lim] of Object.entries(SCORECARD.escalation[mode] || {})) {
+    if ((failures >= lim.failures || diffLines >= lim.diff_lines) && SIZE_ORDER.indexOf(MODE_TO_SIZE[target]) > SIZE_ORDER.indexOf(best)) best = MODE_TO_SIZE[target]
+  }
+  return best
+}
+const SCORES_SCHEMA = {
+  type: 'object',
+  description: 'Six integer scores 0-3; higher means more ceremony: resumability (3 = a cold session cannot resume from request + git diff), blast_radius (files/modules), risk (auth, secrets, money, data migration, infra, public API), uncertainty (unknown cause or design choices), verifiability (3 = no existing tests cover it), spread (backend + infra + mobile).',
+  required: SCORECARD.dimensions,
+  properties: Object.fromEntries(SCORECARD.dimensions.map(d => [d, { type: 'integer', minimum: 0, maximum: 3 }])),
+}
+const FLAG_SIZE = { inline: 'inline', lite: 'inline', light: 'light', standard: 'light', full: 'full' }
+const FLAG_RE = /(?:^|\s)--(inline|lite|light|standard|full)(?=\s|$)/
 const input = typeof args === 'string' ? { goal: args } : (args || {})
 let startEpoch = Number.isFinite(input.start) ? input.start : undefined
 const rawGoal = input.goal || input.task || ''
-const sizeFlag = /(?:^|\s)--(inline|light|full)(?=\s|$)/.exec(rawGoal)
-const goal = rawGoal.replace(/(?:^|\s)--(inline|light|full)(?=\s|$)/g, ' ').trim()
-let size = SIZES.includes(input.size) ? input.size : (sizeFlag ? sizeFlag[1] : null)
+const sizeFlag = FLAG_RE.exec(rawGoal)
+const goal = rawGoal.replace(new RegExp(FLAG_RE.source, 'g'), ' ').trim()
+let size = (Object.hasOwn(FLAG_SIZE, input.size) ? FLAG_SIZE[input.size] : null) || (sizeFlag ? FLAG_SIZE[sizeFlag[1]] : null)
+let scorecard = input.scorecard && typeof input.scorecard === 'object' ? input.scorecard : null
 let riskItems = Array.isArray(input.risk_items) ? input.risk_items : []
 const kind = input.kind || 'feature'
 const planPath = input.plan_path || input.plan || ''
@@ -62,6 +108,7 @@ const IMPL_SCHEMA = {
     deviations: { type: 'array', items: { type: 'string' } },
     covered: { type: 'array', items: { type: 'string' } },
     commits: { type: 'array', items: { type: 'string' } },
+    diff_lines: { type: 'integer', description: 'approximate changed lines (added plus removed) in the working tree against the base' },
     risk: { type: 'string' },
     started_at: { type: 'integer' },
     changed_lines: { type: 'integer' },
@@ -132,6 +179,7 @@ const SIZING_SCHEMA = {
   required: ['found'],
   properties: {
     found: { type: 'boolean' },
+    scores: SCORES_SCHEMA,
     mode: { type: 'string', enum: SIZES },
     risk_items: { type: 'array', items: { type: 'string' } },
     forecast_lines: { type: 'integer' },
@@ -162,11 +210,16 @@ if (!size && !planPath) {
 if (!size) {
   // A plan without a size: read the Sizing block the plan starts with. This reads a decision, it does not make one.
   const sized = await spawn(
-    `Read ${planPath} and report its "## Sizing" block: mode (inline, light or full), risk_items, forecast lines, units and files. ` +
+    `Read ${planPath} and report its "## Sizing" block: scores (the six 0-3 integers, when recorded), mode (inline, light or full), risk_items, forecast lines, units and files. ` +
     `Set found to false when the block or the mode is missing. Do not classify and do not change any file.`,
     { label: 'read-sizing', phase: 'Implement', agentType: 'explore', schema: SIZING_SCHEMA },
   )
-  size = sized && sized.found && SIZES.includes(sized.mode) ? sized.mode : 'light'
+  // Scores recorded in the plan decide through the same mapping /kit-plan used. Scores that are present but invalid or
+  // out of range mean full; a missing or unreadable block means light.
+  scorecard = sized && sized.found ? scoreCard(sized.scores) : null
+  if (scorecard) size = scorecard.size
+  else if (sized && sized.found && sized.scores !== undefined && sized.scores !== null) size = 'full'
+  else size = sized && sized.found && SIZES.includes(sized.mode) ? sized.mode : 'light'
   if (sized && sized.found) {
     if (Array.isArray(sized.risk_items) && !riskItems.length) riskItems = sized.risk_items
     forecast.lines = forecast.lines ?? sized.forecast_lines
@@ -178,16 +231,19 @@ const estimated = SIZES.includes(input.estimated) ? input.estimated : size
 // A named risk item takes a task out of the inline path; it adds a verifier, not a bigger loop.
 if (size === 'inline' && riskItems.length) size = 'light'
 log(`Size: ${size}${riskItems.length ? ` (risk items: ${riskItems.join('; ')})` : ''}`)
+if (scorecard && scorecard.scores) log(`Scorecard: ${JSON.stringify(scorecard.scores)} -> ${String(scorecard.mode || '').toUpperCase()}; roster: ${(scorecard.roster || []).join(', ') || 'none'}`)
+let escalatedFrom = null
 
 if (size === 'inline') {
   return {
     goal,
     kind,
     size,
+    scorecard,
     status: 'inline',
     plan_path: planPath || null,
     start: startEpoch,
-    next: `Inline: no subagents were started. Make the change in this session: write the focused test first (RED per requested rule, PRESERVE for touched behaviour), run it, then the suite once. Use --light or --full to run the writer and review loop. ` +
+    next: `Inline: no subagents were started. Make the change in this session: write the focused test first (RED per requested rule, PRESERVE for touched behaviour), run it, then the suite once. Tests are mandatory in this mode too. Escalate to --light or --full, never silently downgrade, when the tests fail twice or the diff grows past ${SCORECARD.escalation.lite.standard.diff_lines} lines. ` +
       `At the end, when \`ai-resources runs\` exists, append the run: \`ai-resources runs record --mode inline --estimated ${estimated} --outcome pass|gaps|abandoned --agents 0 --kind ${kind}${startEpoch ? ` --start ${startEpoch}` : ''}\` plus --lines, --units, --files and --risk (skip silently when the command is missing).`,
   }
 }
@@ -228,6 +284,10 @@ if (change && SIZES.includes(change.to) && change.to !== size && change.reason) 
 }
 if (impl.reassess_advice) log(`Reassess: ${impl.reassess_advice}`)
 
+// Escalation: a growing diff moves the run up; it never moves down.
+const grew = escalateSize(size, 0, impl.diff_lines || 0)
+if (grew !== size) { escalatedFrom = escalatedFrom || size; escalations.push(`${size}>${grew}`); size = grew; log(`Escalated ${escalatedFrom} -> ${size}: diff of ${impl.diff_lines} lines`) }
+
 enter('Test')
 let test = await spawn(
   `Run this project's full test suite and its lint/typecheck, exactly as the project documents them ` +
@@ -239,7 +299,7 @@ let test = await spawn(
 )
 
 // One correction batch and one recheck, except in full mode, which keeps the earlier two rounds.
-const MAX_TEST_ROUNDS = size === 'full' ? MAX_TEST_ROUNDS_FULL : 1
+let MAX_TEST_ROUNDS = size === 'full' ? MAX_TEST_ROUNDS_FULL : 1
 let testRounds = 0
 while (test && !test.passed && (test.failures || []).length && testRounds < MAX_TEST_ROUNDS) {
   testRounds += 1
@@ -257,6 +317,11 @@ while (test && !test.passed && (test.failures || []).length && testRounds < MAX_
   )
 }
 
+// Tests that failed twice (the gate and its recheck) escalate to the full loop.
+if (test && !test.passed && testRounds >= 1) {
+  const up = escalateSize(size, testRounds + 1, 0)
+  if (up !== size) { escalatedFrom = escalatedFrom || size; size = up; log(`Escalated ${escalatedFrom} -> ${size}: tests failed ${testRounds + 1} times`) }
+}
 const testsGreen = !!(test && test.passed)
 if (!testsGreen) log('Suite is not green — reviewing anyway and reporting it')
 
@@ -400,6 +465,8 @@ return {
   plan_path: planPath || null,
   tasks_path: tasksPath || null,
   size,
+  scorecard,
+  escalated_from: escalatedFrom,
   risk_items: riskItems,
   // A finding that was never verified cannot count as cleared: a blocker past the cap keeps the run open.
   status: finalStatus,

@@ -3,7 +3,7 @@ export const meta = {
   description: 'Understand the code, draft plans from three angles, judge them, and write one plan for review',
   whenToUse: 'Before implementing a feature, bugfix or refactor with the ai-resources kit. Stop here for approval, then run /kit-implement.',
   phases: [
-    { title: 'Understand', detail: 'classify the size (inline | light | full), then readers: code, specs, tests and risk' },
+    { title: 'Understand', detail: 'score the task and pick the mode (lite | standard | full), then readers: code, specs, tests and risk' },
     { title: 'Draft', detail: 'three independent plans from different angles (light: one)' },
     { title: 'Judge', detail: 'two judges score the drafts (light: skipped)' },
     { title: 'Plan', detail: 'synthesize the winner into one plan file' },
@@ -16,13 +16,58 @@ export const meta = {
 // This is the only place that classifies: /kit-implement reads the size from the plan's ## Sizing block or from the
 // size passed on, and never classifies again. The run ledger (ai-resources runs) advises, it never decides.
 const SIZES = ['inline', 'light', 'full']
+const SCORECARD = {"dimensions":["resumability","blast_radius","risk","uncertainty","verifiability","spread"],"lite":{"max_total":3,"max_risk":0,"max_uncertainty":1,"max_resumability":1},"full":{"min_total":10,"min_risk":3,"min_extras":3},"base":{"lite":[],"standard":["implementer","tester","verifier"],"full":["planner","software-architect","implementer","tester","code-reviewer","security-auditor","verifier"]},"triggers":{"planner":{"resumability":2},"software-architect":{"uncertainty":2,"spread":2},"code-reviewer":{"blast_radius":2},"security-auditor":{"risk":2}},"escalation":{"lite":{"standard":{"failures":2,"diff_lines":150},"full":{"failures":4,"diff_lines":400}},"standard":{"full":{"failures":2,"diff_lines":400}}},"tiers":{"explore":"fast","tester":"fast","implementer":"balanced","doc-writer":"balanced","planner":"strong","software-architect":"strong","code-reviewer":"strong","security-auditor":"strong","verifier":"strong"}}
+
+// Deterministic mapping from the six 0-3 scores to a mode (skills/kit-orchestration "Scorecard"). lite/standard/full
+// are inline/light/full here. Returns null for an invalid card, which the caller treats as a failed classification.
+const MODE_TO_SIZE = { lite: 'inline', standard: 'light', full: 'full' }
+const SIZE_ORDER = ['inline', 'light', 'full']
+const scoreCard = scores => {
+  if (!scores || typeof scores !== 'object') return null
+  const s = {}
+  for (const d of SCORECARD.dimensions) {
+    if (!Number.isInteger(scores[d]) || scores[d] < 0 || scores[d] > 3) return null
+    s[d] = scores[d]
+  }
+  const total = SCORECARD.dimensions.reduce((a, d) => a + s[d], 0)
+  const fires = cond => Object.entries(cond).some(([d, t]) => s[d] >= t)
+  const extras = Object.entries(SCORECARD.triggers).filter(([r, c]) => fires(c) && !SCORECARD.base.standard.includes(r)).map(([r]) => r)
+  const L = SCORECARD.lite, F = SCORECARD.full
+  let mode = 'standard'
+  if (total >= F.min_total || s.risk >= F.min_risk || extras.length >= F.min_extras) mode = 'full'
+  else if (!extras.length && total <= L.max_total && s.risk <= L.max_risk && s.uncertainty <= L.max_uncertainty && s.resumability <= L.max_resumability) mode = 'lite'
+  let roster = []
+  if (mode === 'full') roster = [...SCORECARD.base.full]
+  else if (mode === 'standard') {
+    roster = [...SCORECARD.base.standard, ...extras].sort((a, b) => SCORECARD.base.full.indexOf(a) - SCORECARD.base.full.indexOf(b))
+  }
+  const tiers = Object.fromEntries(roster.map(r => [r, SCORECARD.tiers[r]]))
+  return { mode, size: MODE_TO_SIZE[mode], total, scores: s, roster, tiers, handoff: mode === 'full' || roster.includes('planner') }
+}
+// Escalation never lowers the size: tests failing twice or a growing diff move lite -> standard -> full.
+const escalateSize = (current, failures, diffLines) => {
+  const mode = Object.keys(MODE_TO_SIZE).find(m => MODE_TO_SIZE[m] === current)
+  let best = current
+  for (const [target, lim] of Object.entries(SCORECARD.escalation[mode] || {})) {
+    if ((failures >= lim.failures || diffLines >= lim.diff_lines) && SIZE_ORDER.indexOf(MODE_TO_SIZE[target]) > SIZE_ORDER.indexOf(best)) best = MODE_TO_SIZE[target]
+  }
+  return best
+}
+const SCORES_SCHEMA = {
+  type: 'object',
+  description: 'Six integer scores 0-3; higher means more ceremony: resumability (3 = a cold session cannot resume from request + git diff), blast_radius (files/modules), risk (auth, secrets, money, data migration, infra, public API), uncertainty (unknown cause or design choices), verifiability (3 = no existing tests cover it), spread (backend + infra + mobile).',
+  required: SCORECARD.dimensions,
+  properties: Object.fromEntries(SCORECARD.dimensions.map(d => [d, { type: 'integer', minimum: 0, maximum: 3 }])),
+}
+const FLAG_SIZE = { inline: 'inline', lite: 'inline', light: 'light', standard: 'light', full: 'full' }
+const FLAG_RE = /(?:^|\s)--(inline|lite|light|standard|full)(?=\s|$)/
 const input = typeof args === 'string' ? { goal: args } : (args || {})
 const rawGoal = input.goal || input.task || ''
-const sizeFlag = /(?:^|\s)--(inline|light|full)(?=\s|$)/.exec(rawGoal)
-const goal = rawGoal.replace(/(?:^|\s)--(inline|light|full)(?=\s|$)/g, ' ').trim()
+const sizeFlag = FLAG_RE.exec(rawGoal)
+const goal = rawGoal.replace(new RegExp(FLAG_RE.source, 'g'), ' ').trim()
 const kind = input.kind || 'feature'
 const constraints = input.constraints || ''
-const explicitSize = SIZES.includes(input.size) ? input.size : (sizeFlag ? sizeFlag[1] : null)
+const explicitSize = (Object.hasOwn(FLAG_SIZE, input.size) ? FLAG_SIZE[input.size] : null) || (sizeFlag ? FLAG_SIZE[sizeFlag[1]] : null)
 
 if (!goal) {
   return { error: 'No goal given. Run /kit-plan with what you want planned.' }
@@ -80,8 +125,9 @@ const PLAN_SCHEMA = {
 
 const SIZE_SCHEMA = {
   type: 'object',
-  required: ['mode', 'reason'],
+  required: ['reason'],
   properties: {
+    scores: SCORES_SCHEMA,
     mode: { type: 'string', enum: SIZES },
     reason: { type: 'string' },
     resume_test: { type: 'string', enum: ['pass', 'fail'] },
@@ -122,34 +168,41 @@ let size = explicitSize
 let startEpoch
 let sizing = { reason: explicitSize ? 'set by the caller' : '', risk_items: [] }
 const forced = !!explicitSize
+let scorecard = null
 if (!size) {
   const sized = await agent(
     `Goal (${kind}): ${goal}\n${constraints ? `Constraints: ${constraints}\n` : ''}\n` +
-    `Classify the task size from a bounded read (about 3 tool calls). Do not change any file. Counts of files or tests never decide.\n` +
-    `- inline: the change and its place are clear, the resume test passes (if the session stopped now, someone could finish from the request and git diff), one unit.\n` +
-    `- light: the resume test fails or a risk item applies, but it is one unit (or units of about 100 changed lines or less).\n` +
-    `- full: two or more independent units with disjoint edit surfaces, each over about 100 changed lines, or the user wants separate deliverables.\n` +
-    `Risk items: 1 data or irreversible effects; 2 security; 3 contracts others consume (APIs, CLI flags, config, handoff keys, hooks, workflow YAML); ` +
-    `4 concurrency; 5 delivery or environment; 6 no test would catch a regression. List the item numbers with a reason in risk_items, or leave it empty.\n` +
+    `Fill the task scorecard from a bounded read (about 3 tool calls: git diff/stat, the files the request names, a grep). Do not change any file. ` +
+    `Return one integer 0-3 per dimension in scores (higher means more ceremony): resumability (3: a cold session could not finish from the request and git diff alone), ` +
+    `blast_radius (files and modules touched), risk (auth, secrets, money, data migration, infra, public API), uncertainty (unknown root cause or open design choices), ` +
+    `verifiability (3: no existing test would catch a regression), spread (backend plus infra plus mobile). ` +
+    `Also give a one-line reason and, when a risk applies, list it in risk_items (1 data or irreversible effects; 2 security; 3 contracts others consume; 4 concurrency; 5 delivery or environment; 6 no test would catch a regression).\n` +
     `First run \`date +%s\` and report it as started_at (skip it when the shell is unavailable). Report forecast_lines (changed lines), units and files as your estimate. Then, only when the command exists and the numbers came out of your read, ` +
     `run \`ai-resources runs suggest --kind ${kind} --files N --lines F --units U [--risk 3,5]\` and put its mode in suggested_mode. ` +
-    `It is a hint from past runs, never a decision: the resume test and the risk items decide, and you may differ from it (say why in reason). ` +
+    `It is a hint from past runs, never a decision: the scores and the risk items decide, and you may differ from it (say why in reason). ` +
     `When the command is missing or fails, skip it silently.`,
     { label: 'classify', phase: 'Understand', agentType: 'explore', schema: SIZE_SCHEMA },
   )
-  size = sized && SIZES.includes(sized.mode) ? sized.mode : 'light'
+  scorecard = sized ? scoreCard(sized.scores) : null
+  // A valid scorecard decides. Scores that were given but are invalid or out of range mean the whole loop (full);
+  // a bare legacy mode is honoured; no answer at all (a failed classifier) means light.
+  if (scorecard) size = scorecard.size
+  else if (sized && sized.scores !== undefined) size = 'full'
+  else size = sized && SIZES.includes(sized.mode) ? sized.mode : 'light'
   startEpoch = sized && Number.isFinite(sized.started_at) ? sized.started_at : undefined
   sizing = sized ? { ...sized, risk_items: sized.risk_items || [] } : { reason: 'classification failed, defaulting to light', risk_items: [] }
   // A named risk item takes a task out of the inline path; it adds a verifier, not a bigger plan.
   if (size === 'inline' && sizing.risk_items.length) size = 'light'
 }
 log(`Size: ${size}${sizing.reason ? ` — ${sizing.reason}` : ''}`)
+if (scorecard) log(`Scorecard: ${JSON.stringify(scorecard.scores)} total ${scorecard.total} -> ${scorecard.mode.toUpperCase()}; roster: ${scorecard.roster.join(', ') || 'none'}; handoff: ${scorecard.handoff ? 'yes' : 'no'}`)
 
 if (size === 'inline') {
   return {
     goal,
     kind,
     size,
+    scorecard,
     risk_items: sizing.risk_items,
     reason: sizing.reason,
     plan_path: null,
@@ -243,8 +296,8 @@ const plan = await agent(
     : size === 'light' ? `Use the single draft as the base.\n`
     : `The judges returned no usable scores. Use draft 1 as the base and weigh the others yourself.\n`) +
   (grafts.length ? `Graft these ideas from the other drafts where they fit:\n- ${grafts.join('\n- ')}\n` : '') +
-  `\nTask size: ${size}${sizing.risk_items.length ? `; risk items: ${sizing.risk_items.join('; ')}` : '; no risk items'}. ` +
-  `Start the plan with a "## Sizing" block (mode, resume_test, risk_items, forecast lines and units, route, verification, spawn_budget).\n` +
+  `\nTask size: ${size}${scorecard ? ` (scorecard ${scorecard.mode.toUpperCase()}, total ${scorecard.total}: ${JSON.stringify(scorecard.scores)}; roster ${scorecard.roster.join(', ') || 'none'})` : ''}${sizing.risk_items.length ? `; risk items: ${sizing.risk_items.join('; ')}` : '; no risk items'}. ` +
+  `Start the plan with a "## Sizing" block (scores when the task was scored, mode, resume_test, risk_items, forecast lines and units, route, verification, spawn_budget).\n` +
   `Write the final plan to .agent-output/planner/<slug>-plan.md (create the directory if needed) with:\n` +
   `- Goal and scope, plus what is explicitly out of scope\n` +
   `- Numbered steps, each with the files it touches and how to verify it: the tests for those files, never the full suite per step ` +
@@ -270,6 +323,7 @@ return {
   goal,
   kind,
   size,
+  scorecard,
   risk_items: sizing.risk_items,
   start: startEpoch,
   plan_path: plan.plan_path,
@@ -283,5 +337,5 @@ return {
   open_questions: plan.open_questions || [],
   judged: { winner: winnerIndex + 1, scores: totals, scored: judged },
   context_gaps: readLenses.filter(l => !findings.some(f => f.lens === l.label)).map(l => l.label),
-  next: `Run /kit-implement now with ${JSON.stringify({ plan_path: plan.plan_path, tasks_path: plan.tasks_path || undefined, task_ids: plan.task_ids || [], spec_ids: plan.spec_ids || [], goal, kind, size, risk_items: sizing.risk_items, start: startEpoch, estimated: sizing.suggested_mode || size, forced, forecast_lines: sizing.forecast_lines, units: sizing.units, files: sizing.files })}`,
+  next: `Run /kit-implement now with ${JSON.stringify({ plan_path: plan.plan_path, tasks_path: plan.tasks_path || undefined, task_ids: plan.task_ids || [], spec_ids: plan.spec_ids || [], goal, kind, size, scorecard: scorecard || undefined, risk_items: sizing.risk_items, start: startEpoch, estimated: sizing.suggested_mode || size, forced, forecast_lines: sizing.forecast_lines, units: sizing.units, files: sizing.files })}`,
 }
