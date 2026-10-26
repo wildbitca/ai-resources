@@ -16,12 +16,18 @@ export const meta = {
 // This is the only place that classifies: /kit-implement reads the size from the plan's ## Sizing block or from the
 // size passed on, and never classifies again. The run ledger (ai-resources runs) advises, it never decides.
 const SIZES = ['inline', 'light', 'full']
-const SCORECARD = {"dimensions":["resumability","blast_radius","risk","uncertainty","verifiability","spread"],"lite":{"max_total":3,"max_risk":0,"max_uncertainty":1,"max_resumability":1},"full":{"min_total":10,"min_risk":3,"min_extras":3},"base":{"lite":[],"standard":["implementer","tester","verifier"],"full":["planner","software-architect","implementer","tester","code-reviewer","security-auditor","verifier"]},"triggers":{"planner":{"resumability":2},"software-architect":{"uncertainty":2,"spread":2},"code-reviewer":{"blast_radius":2},"security-auditor":{"risk":2}},"escalation":{"lite":{"standard":{"failures":2,"diff_lines":150},"full":{"failures":4,"diff_lines":400}},"standard":{"full":{"failures":2,"diff_lines":400}}},"tiers":{"explore":"fast","tester":"fast","implementer":"balanced","doc-writer":"balanced","planner":"strong","software-architect":"strong","code-reviewer":"strong","security-auditor":"strong","verifier":"strong"}}
+const SCORECARD = {"dimensions":["resumability","blast_radius","risk","uncertainty","verifiability","spread"],"lite":{"max_total":3,"max_risk":0,"max_uncertainty":1,"max_resumability":1,"max_verifiability":2},"full":{"min_total":10,"min_risk":3,"min_extras":3},"base":{"lite":[],"standard":["implementer","tester","verifier"],"full":["planner","software-architect","implementer","tester","code-reviewer","security-auditor","verifier"]},"triggers":{"planner":{"resumability":2},"software-architect":{"uncertainty":2,"spread":2},"code-reviewer":{"blast_radius":2},"security-auditor":{"risk":2}},"escalation":{"lite":{"standard":{"failures":2,"diff_lines":150},"full":{"failures":4,"diff_lines":400}},"standard":{"full":{"failures":2,"diff_lines":400}}},"tiers":{"explore":"fast","tester":"fast","implementer":"balanced","doc-writer":"balanced","planner":"strong","software-architect":"strong","code-reviewer":"strong","security-auditor":"strong","verifier":"strong"}}
 
 // Deterministic mapping from the six 0-3 scores to a mode (skills/kit-orchestration "Scorecard"). lite/standard/full
 // are inline/light/full here. Returns null for an invalid card, which the caller treats as a failed classification.
 const MODE_TO_SIZE = { lite: 'inline', standard: 'light', full: 'full' }
 const SIZE_ORDER = ['inline', 'light', 'full']
+const extrasOf = s => Object.entries(SCORECARD.triggers).filter(([r, c]) => Object.entries(c).some(([d, t]) => s[d] >= t) && !SCORECARD.base.standard.includes(r)).map(([r]) => r)
+const rosterFor = (mode, extras) => {
+  if (mode === 'full') return [...SCORECARD.base.full]
+  if (mode === 'lite') return []
+  return [...SCORECARD.base.standard, ...extras].sort((a, b) => SCORECARD.base.full.indexOf(a) - SCORECARD.base.full.indexOf(b))
+}
 const scoreCard = scores => {
   if (!scores || typeof scores !== 'object') return null
   const s = {}
@@ -30,20 +36,31 @@ const scoreCard = scores => {
     s[d] = scores[d]
   }
   const total = SCORECARD.dimensions.reduce((a, d) => a + s[d], 0)
-  const fires = cond => Object.entries(cond).some(([d, t]) => s[d] >= t)
-  const extras = Object.entries(SCORECARD.triggers).filter(([r, c]) => fires(c) && !SCORECARD.base.standard.includes(r)).map(([r]) => r)
+  const extras = extrasOf(s)
   const L = SCORECARD.lite, F = SCORECARD.full
   let mode = 'standard'
   if (total >= F.min_total || s.risk >= F.min_risk || extras.length >= F.min_extras) mode = 'full'
-  else if (!extras.length && total <= L.max_total && s.risk <= L.max_risk && s.uncertainty <= L.max_uncertainty && s.resumability <= L.max_resumability) mode = 'lite'
-  let roster = []
-  if (mode === 'full') roster = [...SCORECARD.base.full]
-  else if (mode === 'standard') {
-    roster = [...SCORECARD.base.standard, ...extras].sort((a, b) => SCORECARD.base.full.indexOf(a) - SCORECARD.base.full.indexOf(b))
-  }
+  else if (!extras.length && total <= L.max_total && s.risk <= L.max_risk && s.uncertainty <= L.max_uncertainty && s.resumability <= L.max_resumability && s.verifiability <= (L.max_verifiability ?? 3)) mode = 'lite'
+  const roster = rosterFor(mode, extras)
   const tiers = Object.fromEntries(roster.map(r => [r, SCORECARD.tiers[r]]))
-  return { mode, size: MODE_TO_SIZE[mode], total, scores: s, roster, tiers, handoff: mode === 'full' || roster.includes('planner') }
+  return { mode, scored_mode: mode, bump_reason: null, escalations: [], size: MODE_TO_SIZE[mode], total, scores: s, roster, tiers, handoff: mode === 'full' || roster.includes('planner') }
 }
+// A bump (a named risk item) or an escalation moves the card to a new size and records why: `mode`, `size`, `roster`
+// and `tiers` describe what actually runs, `scored_mode` what the scores said.
+const retarget = (card, size, reason, kind) => {
+  if (!card) return card
+  const mode = Object.keys(MODE_TO_SIZE).find(m => MODE_TO_SIZE[m] === size)
+  const roster = rosterFor(mode, mode === 'standard' ? extrasOf(card.scores || {}) : [])
+  const moved = { ...card, mode, size, roster, tiers: Object.fromEntries(roster.map(r => [r, SCORECARD.tiers[r]])), handoff: mode === 'full' || roster.includes('planner') }
+  if (kind === 'bump') moved.bump_reason = reason
+  else moved.escalations = [...(card.escalations || []), { from: card.mode, to: mode, reason }]
+  return moved
+}
+const ABBREV = { resumability: 'res', blast_radius: 'blast', risk: 'risk', uncertainty: 'unc', verifiability: 'ver', spread: 'spr' }
+// The one-line form for the handoff front matter key `scorecard` (same as ai_resources.scorecard.compact plus escalations).
+const cardLine = card => !card ? '' : [card.mode.toUpperCase(), ...Object.entries(card.scores || {}).map(([d, v]) => `${ABBREV[d]}${v}`),
+  ...(card.bump_reason ? [`(scored ${card.scored_mode.toUpperCase()}, bumped: ${card.bump_reason})`] : []),
+  ...(card.escalations || []).map(e => `-> ${e.to.toUpperCase()} (${e.reason})`)].join(' ')
 // Escalation never lowers the size: tests failing twice or a growing diff move lite -> standard -> full.
 const escalateSize = (current, failures, diffLines) => {
   const mode = Object.keys(MODE_TO_SIZE).find(m => MODE_TO_SIZE[m] === current)
@@ -187,15 +204,19 @@ if (!size) {
   // A valid scorecard decides. Scores that were given but are invalid or out of range mean the whole loop (full);
   // a bare legacy mode is honoured; no answer at all (a failed classifier) means light.
   if (scorecard) size = scorecard.size
-  else if (sized && sized.scores !== undefined) size = 'full'
+  else if (sized && sized.scores !== undefined && sized.scores !== null) size = 'full'
   else size = sized && SIZES.includes(sized.mode) ? sized.mode : 'light'
   startEpoch = sized && Number.isFinite(sized.started_at) ? sized.started_at : undefined
   sizing = sized ? { ...sized, risk_items: sized.risk_items || [] } : { reason: 'classification failed, defaulting to light', risk_items: [] }
   // A named risk item takes a task out of the inline path; it adds a verifier, not a bigger plan.
-  if (size === 'inline' && sizing.risk_items.length) size = 'light'
+  if (size === 'inline' && sizing.risk_items.length) {
+    size = 'light'
+    sizing.bump_reason = `risk items named: ${sizing.risk_items.join('; ')}`
+    scorecard = retarget(scorecard, 'light', sizing.bump_reason, 'bump')
+  }
 }
 log(`Size: ${size}${sizing.reason ? ` — ${sizing.reason}` : ''}`)
-if (scorecard) log(`Scorecard: ${JSON.stringify(scorecard.scores)} total ${scorecard.total} -> ${scorecard.mode.toUpperCase()}; roster: ${scorecard.roster.join(', ') || 'none'}; handoff: ${scorecard.handoff ? 'yes' : 'no'}`)
+if (scorecard) log(`Scorecard: ${JSON.stringify(scorecard.scores)} total ${scorecard.total} -> ${scorecard.mode.toUpperCase()}${scorecard.bump_reason ? ` (scored ${scorecard.scored_mode.toUpperCase()}, bumped: ${scorecard.bump_reason})` : ''}; roster: ${scorecard.roster.join(', ') || 'none'}; handoff: ${scorecard.handoff ? 'yes' : 'no'}`)
 
 if (size === 'inline') {
   return {
@@ -203,6 +224,8 @@ if (size === 'inline') {
     kind,
     size,
     scorecard,
+    scorecard_line: cardLine(scorecard),
+    bump_reason: sizing.bump_reason || null,
     risk_items: sizing.risk_items,
     reason: sizing.reason,
     plan_path: null,
@@ -324,6 +347,8 @@ return {
   kind,
   size,
   scorecard,
+  scorecard_line: cardLine(scorecard),
+  bump_reason: sizing.bump_reason || null,
   risk_items: sizing.risk_items,
   start: startEpoch,
   plan_path: plan.plan_path,

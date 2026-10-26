@@ -209,9 +209,16 @@ def test_signoff_runs_authorized_examples_in_a_scratch_copy_with_a_verdict_per_i
 
 def test_light_gets_one_correction_round_and_full_keeps_two(tmp_path):
     failing = {"passed": False, "command": "pytest", "failures": ["t::a"]}
-    for size, rounds in (("light", 1), ("full", 2)):
-        _, labels, _ = run_calls(IMPL_JS, tmp_path, {"goal": "g", "size": size}, {**IMPL_RESPONSES, "test-gate": failing, "fix-tests": IMPL})
-        assert sum(1 for label in labels if label.startswith("fix-tests")) == rounds, size
+    # light: one correction round, and its recheck passes, so the run stays light
+    _, labels, result = run_calls(IMPL_JS, tmp_path, {"goal": "g", "size": "light"},
+                                  {"test-gate:": TEST_OK, **IMPL_RESPONSES, "test-gate": failing, "fix-tests": IMPL})
+    assert sum(1 for label in labels if label.startswith("fix-tests")) == 1 and result["size"] == "light"
+    # full keeps two rounds
+    _, labels, _ = run_calls(IMPL_JS, tmp_path, {"goal": "g", "size": "full"}, {**IMPL_RESPONSES, "test-gate": failing, "fix-tests": IMPL})
+    assert sum(1 for label in labels if label.startswith("fix-tests")) == 2
+    # a light run whose recheck fails too escalates to full and then gets full's second round (scorecard escalation)
+    _, labels, result = run_calls(IMPL_JS, tmp_path, {"goal": "g", "size": "light"}, {**IMPL_RESPONSES, "test-gate": failing, "fix-tests": IMPL})
+    assert sum(1 for label in labels if label.startswith("fix-tests")) == 2 and result["size"] == "full"
 
 
 def test_plan_asks_for_ids_and_the_sizing_check_and_passes_them_on(tmp_path):

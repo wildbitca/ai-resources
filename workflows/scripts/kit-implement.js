@@ -22,12 +22,18 @@ let agents = 0
 let steps = 0
 const spawn = (prompt, opts) => { agents += 1; return agent(prompt, opts) }
 const enter = name => { steps += 1; phase(name) }
-const SCORECARD = {"dimensions":["resumability","blast_radius","risk","uncertainty","verifiability","spread"],"lite":{"max_total":3,"max_risk":0,"max_uncertainty":1,"max_resumability":1},"full":{"min_total":10,"min_risk":3,"min_extras":3},"base":{"lite":[],"standard":["implementer","tester","verifier"],"full":["planner","software-architect","implementer","tester","code-reviewer","security-auditor","verifier"]},"triggers":{"planner":{"resumability":2},"software-architect":{"uncertainty":2,"spread":2},"code-reviewer":{"blast_radius":2},"security-auditor":{"risk":2}},"escalation":{"lite":{"standard":{"failures":2,"diff_lines":150},"full":{"failures":4,"diff_lines":400}},"standard":{"full":{"failures":2,"diff_lines":400}}},"tiers":{"explore":"fast","tester":"fast","implementer":"balanced","doc-writer":"balanced","planner":"strong","software-architect":"strong","code-reviewer":"strong","security-auditor":"strong","verifier":"strong"}}
+const SCORECARD = {"dimensions":["resumability","blast_radius","risk","uncertainty","verifiability","spread"],"lite":{"max_total":3,"max_risk":0,"max_uncertainty":1,"max_resumability":1,"max_verifiability":2},"full":{"min_total":10,"min_risk":3,"min_extras":3},"base":{"lite":[],"standard":["implementer","tester","verifier"],"full":["planner","software-architect","implementer","tester","code-reviewer","security-auditor","verifier"]},"triggers":{"planner":{"resumability":2},"software-architect":{"uncertainty":2,"spread":2},"code-reviewer":{"blast_radius":2},"security-auditor":{"risk":2}},"escalation":{"lite":{"standard":{"failures":2,"diff_lines":150},"full":{"failures":4,"diff_lines":400}},"standard":{"full":{"failures":2,"diff_lines":400}}},"tiers":{"explore":"fast","tester":"fast","implementer":"balanced","doc-writer":"balanced","planner":"strong","software-architect":"strong","code-reviewer":"strong","security-auditor":"strong","verifier":"strong"}}
 
 // Deterministic mapping from the six 0-3 scores to a mode (skills/kit-orchestration "Scorecard"). lite/standard/full
 // are inline/light/full here. Returns null for an invalid card, which the caller treats as a failed classification.
 const MODE_TO_SIZE = { lite: 'inline', standard: 'light', full: 'full' }
 const SIZE_ORDER = ['inline', 'light', 'full']
+const extrasOf = s => Object.entries(SCORECARD.triggers).filter(([r, c]) => Object.entries(c).some(([d, t]) => s[d] >= t) && !SCORECARD.base.standard.includes(r)).map(([r]) => r)
+const rosterFor = (mode, extras) => {
+  if (mode === 'full') return [...SCORECARD.base.full]
+  if (mode === 'lite') return []
+  return [...SCORECARD.base.standard, ...extras].sort((a, b) => SCORECARD.base.full.indexOf(a) - SCORECARD.base.full.indexOf(b))
+}
 const scoreCard = scores => {
   if (!scores || typeof scores !== 'object') return null
   const s = {}
@@ -36,20 +42,31 @@ const scoreCard = scores => {
     s[d] = scores[d]
   }
   const total = SCORECARD.dimensions.reduce((a, d) => a + s[d], 0)
-  const fires = cond => Object.entries(cond).some(([d, t]) => s[d] >= t)
-  const extras = Object.entries(SCORECARD.triggers).filter(([r, c]) => fires(c) && !SCORECARD.base.standard.includes(r)).map(([r]) => r)
+  const extras = extrasOf(s)
   const L = SCORECARD.lite, F = SCORECARD.full
   let mode = 'standard'
   if (total >= F.min_total || s.risk >= F.min_risk || extras.length >= F.min_extras) mode = 'full'
-  else if (!extras.length && total <= L.max_total && s.risk <= L.max_risk && s.uncertainty <= L.max_uncertainty && s.resumability <= L.max_resumability) mode = 'lite'
-  let roster = []
-  if (mode === 'full') roster = [...SCORECARD.base.full]
-  else if (mode === 'standard') {
-    roster = [...SCORECARD.base.standard, ...extras].sort((a, b) => SCORECARD.base.full.indexOf(a) - SCORECARD.base.full.indexOf(b))
-  }
+  else if (!extras.length && total <= L.max_total && s.risk <= L.max_risk && s.uncertainty <= L.max_uncertainty && s.resumability <= L.max_resumability && s.verifiability <= (L.max_verifiability ?? 3)) mode = 'lite'
+  const roster = rosterFor(mode, extras)
   const tiers = Object.fromEntries(roster.map(r => [r, SCORECARD.tiers[r]]))
-  return { mode, size: MODE_TO_SIZE[mode], total, scores: s, roster, tiers, handoff: mode === 'full' || roster.includes('planner') }
+  return { mode, scored_mode: mode, bump_reason: null, escalations: [], size: MODE_TO_SIZE[mode], total, scores: s, roster, tiers, handoff: mode === 'full' || roster.includes('planner') }
 }
+// A bump (a named risk item) or an escalation moves the card to a new size and records why: `mode`, `size`, `roster`
+// and `tiers` describe what actually runs, `scored_mode` what the scores said.
+const retarget = (card, size, reason, kind) => {
+  if (!card) return card
+  const mode = Object.keys(MODE_TO_SIZE).find(m => MODE_TO_SIZE[m] === size)
+  const roster = rosterFor(mode, mode === 'standard' ? extrasOf(card.scores || {}) : [])
+  const moved = { ...card, mode, size, roster, tiers: Object.fromEntries(roster.map(r => [r, SCORECARD.tiers[r]])), handoff: mode === 'full' || roster.includes('planner') }
+  if (kind === 'bump') moved.bump_reason = reason
+  else moved.escalations = [...(card.escalations || []), { from: card.mode, to: mode, reason }]
+  return moved
+}
+const ABBREV = { resumability: 'res', blast_radius: 'blast', risk: 'risk', uncertainty: 'unc', verifiability: 'ver', spread: 'spr' }
+// The one-line form for the handoff front matter key `scorecard` (same as ai_resources.scorecard.compact plus escalations).
+const cardLine = card => !card ? '' : [card.mode.toUpperCase(), ...Object.entries(card.scores || {}).map(([d, v]) => `${ABBREV[d]}${v}`),
+  ...(card.bump_reason ? [`(scored ${card.scored_mode.toUpperCase()}, bumped: ${card.bump_reason})`] : []),
+  ...(card.escalations || []).map(e => `-> ${e.to.toUpperCase()} (${e.reason})`)].join(' ')
 // Escalation never lowers the size: tests failing twice or a growing diff move lite -> standard -> full.
 const escalateSize = (current, failures, diffLines) => {
   const mode = Object.keys(MODE_TO_SIZE).find(m => MODE_TO_SIZE[m] === current)
@@ -229,10 +246,32 @@ if (!size) {
 }
 const estimated = SIZES.includes(input.estimated) ? input.estimated : size
 // A named risk item takes a task out of the inline path; it adds a verifier, not a bigger loop.
-if (size === 'inline' && riskItems.length) size = 'light'
+let bumpReason = null
+if (size === 'inline' && riskItems.length) {
+  size = 'light'
+  bumpReason = `risk items named: ${riskItems.join('; ')}`
+  scorecard = retarget(scorecard, 'light', bumpReason, 'bump')
+}
 log(`Size: ${size}${riskItems.length ? ` (risk items: ${riskItems.join('; ')})` : ''}`)
-if (scorecard && scorecard.scores) log(`Scorecard: ${JSON.stringify(scorecard.scores)} -> ${String(scorecard.mode || '').toUpperCase()}; roster: ${(scorecard.roster || []).join(', ') || 'none'}`)
+if (scorecard && scorecard.scores) log(`Scorecard: ${JSON.stringify(scorecard.scores)} -> ${String(scorecard.mode || '').toUpperCase()}${bumpReason ? ` (scored ${scorecard.scored_mode.toUpperCase()}, bumped: ${bumpReason})` : ''}; roster: ${(scorecard.roster || []).join(', ') || 'none'}`)
 let escalatedFrom = null
+// Move up, never down: record the new mode on the card, say why, and keep the run's size in step with it.
+const moveUp = (to, reason) => {
+  escalatedFrom = escalatedFrom || size
+  log(`Escalated ${size} -> ${to}: ${reason}`)
+  scorecard = retarget(scorecard, to, reason, 'escalation')
+  size = to
+}
+
+// LITE ran inline in the caller's session, so this script only learns how it went when it is called again with the
+// observed numbers ({"size": "inline", "failures": N, "diff_lines": N}); those escalate in code, the same table as
+// `ai-resources scorecard gate`. Without them the run stays inline.
+if (size === 'inline') {
+  const seenFailures = Number.isInteger(input.failures) ? input.failures : 0
+  const seenLines = Number.isInteger(input.diff_lines) ? input.diff_lines : 0
+  const up = escalateSize('inline', seenFailures, seenLines)
+  if (up !== 'inline') moveUp(up, `${seenFailures} failed test round(s), diff of ${seenLines} lines`)
+}
 
 if (size === 'inline') {
   return {
@@ -240,10 +279,13 @@ if (size === 'inline') {
     kind,
     size,
     scorecard,
+    scorecard_line: cardLine(scorecard),
+    bump_reason: bumpReason,
+    escalations: [],
     status: 'inline',
     plan_path: planPath || null,
     start: startEpoch,
-    next: `Inline: no subagents were started. Make the change in this session: write the focused test first (RED per requested rule, PRESERVE for touched behaviour), run it, then the suite once. Tests are mandatory in this mode too. Escalate to --light or --full, never silently downgrade, when the tests fail twice or the diff grows past ${SCORECARD.escalation.lite.standard.diff_lines} lines. ` +
+    next: `Inline: no subagents were started. Make the change in this session: write the focused test first (RED per requested rule, PRESERVE for touched behaviour), run it, then the suite once. Tests are mandatory in this mode too. Escalation is enforced by code where the numbers exist: after the change run \`ai-resources scorecard gate lite --failures <failed test rounds> --base <ref>\` (it measures the diff itself) or call /kit-implement again with {"size":"inline","failures":N,"diff_lines":N}; tests failing ${SCORECARD.escalation.lite.standard.failures}+ times or ${SCORECARD.escalation.lite.standard.diff_lines}+ changed lines move it to light, ${SCORECARD.escalation.lite.full.failures}+ failures or ${SCORECARD.escalation.lite.full.diff_lines}+ lines to full. Never downgrade silently. ` +
       `At the end, when \`ai-resources runs\` exists, append the run: \`ai-resources runs record --mode inline --estimated ${estimated} --outcome pass|gaps|abandoned --agents 0 --kind ${kind}${startEpoch ? ` --start ${startEpoch}` : ''}\` plus --lines, --units, --files and --risk (skip silently when the command is missing).`,
   }
 }
@@ -286,7 +328,7 @@ if (impl.reassess_advice) log(`Reassess: ${impl.reassess_advice}`)
 
 // Escalation: a growing diff moves the run up; it never moves down.
 const grew = escalateSize(size, 0, impl.diff_lines || 0)
-if (grew !== size) { escalatedFrom = escalatedFrom || size; escalations.push(`${size}>${grew}`); size = grew; log(`Escalated ${escalatedFrom} -> ${size}: diff of ${impl.diff_lines} lines`) }
+if (grew !== size) { escalations.push(`${size}>${grew}`); moveUp(grew, `diff of ${impl.diff_lines} lines`) }
 
 enter('Test')
 let test = await spawn(
@@ -299,11 +341,13 @@ let test = await spawn(
 )
 
 // One correction batch and one recheck, except in full mode, which keeps the earlier two rounds.
-let MAX_TEST_ROUNDS = size === 'full' ? MAX_TEST_ROUNDS_FULL : 1
+// The limit is recomputed from the current size each time round, so a run that escalates to full mid-loop gets
+// full's extra round.
+const maxTestRounds = () => size === 'full' ? MAX_TEST_ROUNDS_FULL : 1
 let testRounds = 0
-while (test && !test.passed && (test.failures || []).length && testRounds < MAX_TEST_ROUNDS) {
+while (test && !test.passed && (test.failures || []).length && testRounds < maxTestRounds()) {
   testRounds += 1
-  log(`Test failures, fix round ${testRounds}/${MAX_TEST_ROUNDS}`)
+  log(`Test failures, fix round ${testRounds}/${maxTestRounds()}`)
   const fix = await spawn(
     `The suite fails after your change. Command: ${test.command}\nFailures:\n- ${test.failures.join('\n- ')}\n\n` +
     `Fix the cause, not the symptom: do not delete, skip or weaken assertions to get green. ` +
@@ -315,12 +359,11 @@ while (test && !test.passed && (test.failures || []).length && testRounds < MAX_
     `Re-run the full suite and lint/typecheck (${test.command}) and report the result. Do not modify any file.`,
     { label: `test-gate:${testRounds + 1}`, phase: 'Test', agentType: 'tester', schema: TEST_SCHEMA },
   )
-}
-
-// Tests that failed twice (the gate and its recheck) escalate to the full loop.
-if (test && !test.passed && testRounds >= 1) {
-  const up = escalateSize(size, testRounds + 1, 0)
-  if (up !== size) { escalatedFrom = escalatedFrom || size; size = up; log(`Escalated ${escalatedFrom} -> ${size}: tests failed ${testRounds + 1} times`) }
+  // Tests that failed twice (the gate and its recheck) escalate to the full loop before the limit is read again.
+  if (test && !test.passed) {
+    const up = escalateSize(size, testRounds + 1, 0)
+    if (up !== size) moveUp(up, `tests failed ${testRounds + 1} times`)
+  }
 }
 const testsGreen = !!(test && test.passed)
 if (!testsGreen) log('Suite is not green — reviewing anyway and reporting it')
@@ -466,6 +509,9 @@ return {
   tasks_path: tasksPath || null,
   size,
   scorecard,
+  scorecard_line: cardLine(scorecard),
+  bump_reason: bumpReason,
+  escalations: scorecard ? scorecard.escalations : (escalatedFrom ? [{ from: escalatedFrom, to: size }] : []),
   escalated_from: escalatedFrom,
   risk_items: riskItems,
   // A finding that was never verified cannot count as cleared: a blocker past the cap keeps the run open.
