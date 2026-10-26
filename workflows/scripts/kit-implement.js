@@ -13,10 +13,17 @@ export const meta = {
 }
 
 // args: {plan_path, tasks_path?, task_ids?, spec_ids?, goal, kind, size?, risk_items?, acceptance_criteria?, security_critical?} or a plain goal string
-// size is inline | light | full (also --inline/--light/--full in the goal). /kit-plan passes it on; without one a single
-// call classifies the task, and a failed classification means full (the whole loop). See skills/kit-orchestration "Task size".
+// size is inline | light | full (also --inline/--light/--full in the goal). This script never classifies: /kit-plan does,
+// once. The size comes from the args, else from the plan's "## Sizing" block (read, not re-decided); an unreadable block
+// means full (the whole loop). With neither a plan nor a size the run stops and points at /kit-plan, because workflow
+// scripts cannot import a shared classifier. See skills/kit-orchestration "Task size".
 const SIZES = ['inline', 'light', 'full']
+let agents = 0
+let steps = 0
+const spawn = (prompt, opts) => { agents += 1; return agent(prompt, opts) }
+const enter = name => { steps += 1; phase(name) }
 const input = typeof args === 'string' ? { goal: args } : (args || {})
+let startEpoch = Number.isFinite(input.start) ? input.start : undefined
 const rawGoal = input.goal || input.task || ''
 const sizeFlag = /(?:^|\s)--(inline|light|full)(?=\s|$)/.exec(rawGoal)
 const goal = rawGoal.replace(/(?:^|\s)--(inline|light|full)(?=\s|$)/g, ' ').trim()
@@ -56,6 +63,10 @@ const IMPL_SCHEMA = {
     covered: { type: 'array', items: { type: 'string' } },
     commits: { type: 'array', items: { type: 'string' } },
     risk: { type: 'string' },
+    started_at: { type: 'integer' },
+    changed_lines: { type: 'integer' },
+    reassess_advice: { type: 'string' },
+    mode_change: { type: 'object', required: ['to', 'reason'], properties: { to: { type: 'string', enum: SIZES }, reason: { type: 'string' } } },
     blocked: { type: 'boolean' },
     block_reason: { type: 'string' },
   },
@@ -116,30 +127,54 @@ const SIGNOFF_SCHEMA = {
   },
 }
 
-const SIZE_SCHEMA = {
+const SIZING_SCHEMA = {
   type: 'object',
-  required: ['mode', 'reason'],
+  required: ['found'],
   properties: {
+    found: { type: 'boolean' },
     mode: { type: 'string', enum: SIZES },
-    reason: { type: 'string' },
     risk_items: { type: 'array', items: { type: 'string' } },
+    forecast_lines: { type: 'integer' },
+    units: { type: 'integer' },
+    files: { type: 'integer' },
   },
 }
 
-if (!size) {
-  const sized = await agent(
-    `Goal (${kind}): ${goal}\n${planPath ? `Plan: ${planPath}\n` : ''}\n` +
-    `Classify the task size from a bounded read (about 3 tool calls). Do not change any file. Counts of files or tests never decide.\n` +
-    `- inline: change and place are clear, the resume test passes, one unit.\n` +
-    `- light: the resume test fails or a risk item applies, but it is one unit.\n` +
-    `- full: two or more independent units, each over about 100 changed lines, or separate deliverables.\n` +
-    `Risk items: 1 data or irreversible effects; 2 security; 3 contracts others consume; 4 concurrency; ` +
-    `5 delivery or environment; 6 no test would catch a regression. List them with a reason in risk_items, or leave it empty.`,
-    { label: 'classify', phase: 'Implement', agentType: 'explore', schema: SIZE_SCHEMA },
-  )
-  size = sized && SIZES.includes(sized.mode) ? sized.mode : 'full'
-  if (sized && Array.isArray(sized.risk_items)) riskItems = sized.risk_items
+const REASSESS_SCHEMA = {
+  type: 'object',
+  required: ['advice'],
+  properties: { advice: { type: 'string' } },
 }
+
+const escalations = []
+const forecast = { lines: input.forecast_lines, units: input.units, files: input.files }
+
+if (!size && !planPath) {
+  // No classifier lives here: /kit-plan owns it. Stopping beats a second copy of the prompt that would drift.
+  return {
+    goal,
+    kind,
+    status: 'needs-plan',
+    next: `Classify first: run /kit-plan ${JSON.stringify(goal)} (add --inline for a change that needs no plan file), then /kit-implement with what it returns.`,
+  }
+}
+
+if (!size) {
+  // A plan without a size: read the Sizing block the plan starts with. This reads a decision, it does not make one.
+  const sized = await spawn(
+    `Read ${planPath} and report its "## Sizing" block: mode (inline, light or full), risk_items, forecast lines, units and files. ` +
+    `Set found to false when the block or the mode is missing. Do not classify and do not change any file.`,
+    { label: 'read-sizing', phase: 'Implement', agentType: 'explore', schema: SIZING_SCHEMA },
+  )
+  size = sized && sized.found && SIZES.includes(sized.mode) ? sized.mode : 'full'
+  if (sized && sized.found) {
+    if (Array.isArray(sized.risk_items) && !riskItems.length) riskItems = sized.risk_items
+    forecast.lines = forecast.lines ?? sized.forecast_lines
+    forecast.units = forecast.units ?? sized.units
+    forecast.files = forecast.files ?? sized.files
+  }
+}
+const estimated = SIZES.includes(input.estimated) ? input.estimated : size
 // A named risk item takes a task out of the inline path; it adds a verifier, not a bigger loop.
 if (size === 'inline' && riskItems.length) size = 'light'
 log(`Size: ${size}${riskItems.length ? ` (risk items: ${riskItems.join('; ')})` : ''}`)
@@ -151,14 +186,16 @@ if (size === 'inline') {
     size,
     status: 'inline',
     plan_path: planPath || null,
-    next: `Inline: no subagents were started. Make the change in this session: write the focused test first (RED per requested rule, PRESERVE for touched behaviour), run it, then the suite once. Use --light or --full to run the writer and review loop.`,
+    start: startEpoch,
+    next: `Inline: no subagents were started. Make the change in this session: write the focused test first (RED per requested rule, PRESERVE for touched behaviour), run it, then the suite once. Use --light or --full to run the writer and review loop. ` +
+      `At the end, when \`ai-resources runs\` exists, append the run: \`ai-resources runs record --mode inline --estimated ${estimated} --outcome pass|gaps|abandoned --agents 0 --kind ${kind}${startEpoch ? ` --start ${startEpoch}` : ''}\` plus --lines, --units, --files and --risk (skip silently when the command is missing).`,
   }
 }
 
-phase('Implement')
+enter('Implement')
 log(`Implementing (${kind}): ${goal || planPath}`)
 
-const impl = await agent(
+const impl = await spawn(
   `Goal (${kind}): ${goal}\n${planRef}\n\n` +
   `You are the only writer in this run. Work step by step:\n` +
   `- RED per requested rule: one failing test per rule or criterion, watched failing before the fix, and no other cases.\n` +
@@ -169,8 +206,11 @@ const impl = await agent(
   `after each step: the Test phase runs it once.\n` +
   `- Never weaken or delete an existing assertion to make a suite pass. If a test is wrong, say so in deviations.\n` +
   `- If the plan turns out to be wrong, follow the goal, record what you changed in deviations, and continue.\n` +
-  `- Stop and set blocked only if the work cannot proceed without a decision.\n\n` +
-  `Report the files you changed, the tests you added, the exact commands you ran, the ids you covered, the commits, and risk as "item N (reason)" or "none".`,
+  `- Stop and set blocked only if the work cannot proceed without a decision.\n` +
+  `- Reassess the size (now ${size}${forecast.files ? `, about ${forecast.files} files estimated` : ''}) when more than twice the estimated files change, a sensitive area appears, or the task turns out trivial: ` +
+  `when \`ai-resources runs\` exists, run \`ai-resources runs reassess ${size} [--files-estimated N --files-actual M] [--sensitive] [--trivial]\`, put its advice in reassess_advice, ` +
+  `and set mode_change {to, reason} only when you change the mode with a stated reason (any direction). The advice is a recommendation, never an order; skip silently when the command is missing.\n\n` +
+  `When \`ai-resources runs\` exists and no start time was passed on, first run \`date +%s\` and report it as started_at. Report the files you changed, the tests you added, the exact commands you ran, the ids you covered, the commits, and risk as "item N (reason)" or "none".`,
   { label: 'implement', phase: 'Implement', agentType: 'implementer', schema: IMPL_SCHEMA },
 )
 
@@ -179,8 +219,17 @@ if (impl.blocked) {
   return { status: 'blocked', reason: impl.block_reason || 'implementation blocked', files_changed: impl.files_changed }
 }
 
-phase('Test')
-let test = await agent(
+if (startEpoch === undefined && Number.isFinite(impl.started_at)) startEpoch = impl.started_at
+const change = impl.mode_change
+if (change && SIZES.includes(change.to) && change.to !== size && change.reason) {
+  escalations.push(`${size}>${change.to}`)
+  log(`Mode ${size} -> ${change.to}: ${change.reason}`)
+  size = change.to
+}
+if (impl.reassess_advice) log(`Reassess: ${impl.reassess_advice}`)
+
+enter('Test')
+let test = await spawn(
   `Run this project's full test suite and its lint/typecheck, exactly as the project documents them ` +
   `(package.json scripts, Makefile, CI config, or the kit's _domain-commands.yaml).\n` +
   `Report the command you used, whether everything passed, which failures come from the change just made ` +
@@ -195,14 +244,14 @@ let testRounds = 0
 while (test && !test.passed && (test.failures || []).length && testRounds < MAX_TEST_ROUNDS) {
   testRounds += 1
   log(`Test failures, fix round ${testRounds}/${MAX_TEST_ROUNDS}`)
-  const fix = await agent(
+  const fix = await spawn(
     `The suite fails after your change. Command: ${test.command}\nFailures:\n- ${test.failures.join('\n- ')}\n\n` +
     `Fix the cause, not the symptom: do not delete, skip or weaken assertions to get green. ` +
     `If a failure is unrelated to this change, leave it and say so in deviations.`,
     { label: `fix-tests:${testRounds}`, phase: 'Test', agentType: 'implementer', schema: IMPL_SCHEMA },
   )
   if (!fix) break
-  test = await agent(
+  test = await spawn(
     `Re-run the full suite and lint/typecheck (${test.command}) and report the result. Do not modify any file.`,
     { label: `test-gate:${testRounds + 1}`, phase: 'Test', agentType: 'tester', schema: TEST_SCHEMA },
   )
@@ -211,7 +260,7 @@ while (test && !test.passed && (test.failures || []).length && testRounds < MAX_
 const testsGreen = !!(test && test.passed)
 if (!testsGreen) log('Suite is not green — reviewing anyway and reporting it')
 
-phase('Review')
+enter('Review')
 const changed = (impl.files_changed || []).join(', ') || 'the working tree changes'
 const REVIEW_LENSES = [
   {
@@ -245,7 +294,7 @@ const activeLenses = size === 'light'
     }]
   : REVIEW_LENSES
 const reviews = (await parallel(activeLenses.map(lens => () =>
-  agent(
+  spawn(
     `Goal (${kind}): ${goal}\n${planPath ? `Plan: ${planPath}\n` : ''}Files changed: ${changed}\n` +
     `The change is every commit on this branch that the default branch lacks, plus uncommitted work: read it with ` +
     `git diff $(git merge-base HEAD origin/HEAD 2>/dev/null || git merge-base HEAD main), and git diff --staged, ` +
@@ -268,10 +317,10 @@ const dropped = unverified.length
 log(`${allFound.length} finding(s) from ${reviews.length} lenses` +
   (dropped ? ` — verifying the ${VERIFY_CAP} most severe, ${dropped} not verified (reported as unverified)` : ''))
 
-phase('Verify findings')
+enter('Verify findings')
 const verified = found.length
   ? (await parallel(found.map((f, i) => () =>
-      agent(
+      spawn(
         `A reviewer (${f.lens} lens) claims this about the current change:\n\n` +
         `${f.title}\nFile: ${f.file}${f.line ? `:${f.line}` : ''}\nSeverity: ${f.severity}\n${f.detail}\n\n` +
         `Try to refute it. Read the code and the diff. It is refuted if the code already handles the case, ` +
@@ -285,10 +334,10 @@ const verified = found.length
 const blockers = verified.filter(f => f.severity !== 'minor')
 log(`${verified.length} finding(s) survived (${blockers.length} blocking)`)
 
-phase('Fix')
+enter('Fix')
 let fixResult = null
 if (blockers.length) {
-  fixResult = await agent(
+  fixResult = await spawn(
     `These review findings survived independent verification. Fix them:\n\n` +
     blockers.map((f, i) =>
       `${i + 1}. [${f.severity}/${f.lens}] ${f.title} — ${f.file}${f.line ? `:${f.line}` : ''}\n   ${f.detail}` +
@@ -300,10 +349,10 @@ if (blockers.length) {
   )
 }
 
-phase('Sign off')
+enter('Sign off')
 // light: the independent verifier runs only when a risk item names a reason for it; full always runs it.
 const runSignoff = size === 'full' || riskItems.length > 0
-const signoff = !runSignoff ? null : await agent(
+const signoff = !runSignoff ? null : await spawn(
   `Goal (${kind}): ${goal}\n${planPath ? `Plan: ${planPath} — read its acceptance criteria.\n` : ''}` +
   (criteria.length ? `Acceptance criteria:\n- ${criteria.join('\n- ')}\n` : '') +
   (tasksPath ? `Ledger: ${tasksPath}${specIds.length ? ` - ${specIds.join(', ')}` : ''}; read its Specs section.\n` : '') +
@@ -317,6 +366,34 @@ const signoff = !runSignoff ? null : await agent(
   { label: 'sign-off', phase: 'Sign off', agentType: 'verifier', schema: SIGNOFF_SCHEMA },
 )
 
+// Each GAPS verdict is one rework; the first one asks the ledger for advice and reports it (a recommendation only).
+const rework = signoff && !signoff.met ? 1 : 0
+let reassessAdvice = impl.reassess_advice || null
+if (rework) {
+  const adv = await spawn(
+    `The independent verifier found gaps. When \`ai-resources runs\` exists, run \`ai-resources runs reassess ${size} --verifier-fail\` and report its advice. ` +
+    `Skip silently (advice: "unavailable") when the command is missing. Do not change any file.`,
+    { label: 'reassess:verifier-fail', phase: 'Sign off', agentType: 'explore', schema: REASSESS_SCHEMA },
+  )
+  if (adv && adv.advice) reassessAdvice = adv.advice
+}
+
+const finalStatus = (runSignoff ? signoff && signoff.met : true) && testsGreen && !blockers.length && !unverifiedBlockers.length
+  ? 'done'
+  : 'needs-attention'
+
+// Append the run to the ledger. Best effort: a missing command or a failed write never fails the run.
+const linesChanged = impl.changed_lines ?? forecast.lines
+await spawn(
+  `When \`ai-resources runs\` exists, run: ai-resources runs record --mode ${size} --estimated ${estimated} ` +
+  `--outcome ${finalStatus === 'done' ? 'pass' : 'gaps'} --agents ${agents} --steps ${steps} --rework ${rework} --kind ${kind} ` +
+  `${linesChanged ? `--lines ${linesChanged} ` : ''}${forecast.units ? `--units ${forecast.units} ` : ''}` +
+  `--files ${(impl.files_changed || []).length}${riskItems.length ? ` --risk ${riskItems.map(r => String(r).match(/\d+/)?.[0]).filter(Boolean).join(',')}` : ''}` +
+  `${input.forced ? ' --forced' : ''}${escalations.length ? ` --escalations ${escalations.join(',')}` : ''}${startEpoch ? ` --start ${startEpoch}` : ''}. ` +
+  `If the command is missing or fails, stop silently. Do not change any other file.`,
+  { label: 'record-run', phase: 'Sign off', agentType: 'explore', schema: REASSESS_SCHEMA },
+)
+
 return {
   goal,
   kind,
@@ -325,9 +402,10 @@ return {
   size,
   risk_items: riskItems,
   // A finding that was never verified cannot count as cleared: a blocker past the cap keeps the run open.
-  status: (runSignoff ? signoff && signoff.met : true) && testsGreen && !blockers.length && !unverifiedBlockers.length
-    ? 'done'
-    : 'needs-attention',
+  status: finalStatus,
+  rework,
+  escalations,
+  reassess_advice: reassessAdvice,
   implementation: {
     summary: impl.summary,
     files_changed: impl.files_changed,

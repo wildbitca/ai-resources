@@ -17,7 +17,7 @@ NAMES = [w["file"].removesuffix(".workflow.yaml") for w in wl.list_workflows()]
 
 
 def test_every_workflow_file_is_listed():
-    assert len(NAMES) == 20 and "feature-lanes" in NAMES and "odd" in NAMES
+    assert len(NAMES) == 19 and "feature-lanes" in NAMES and "odd" not in NAMES
 
 
 @pytest.mark.parametrize("name", NAMES)

@@ -77,12 +77,19 @@ def test_plan_failed_classifier_falls_back_to_full(tmp_path):
     assert labels[0] == "classify" and len(labels) == 10 and result["size"] == "full"
 
 
+def test_plan_classify_prompt_treats_the_ledger_suggestion_as_a_hint(tmp_path):
+    prompts, _, _ = run_calls(PLAN_JS, tmp_path, {"goal": "g"}, {**PLAN_RESPONSES, "classify": {"mode": "light", "reason": "r"}})
+    p = prompts["classify"]
+    assert "ai-resources runs suggest --kind feature" in p and "never a decision" in p and "skip it silently" in p
+
+
 def test_plan_next_hands_the_size_to_implement(tmp_path):
-    _, result = run(PLAN_JS, tmp_path, {"goal": "g", "size": "light"}, PLAN_RESPONSES)
-    assert '"size":"light"' in result["next"]
+    _, result = run(PLAN_JS, tmp_path, {"goal": "g"}, {**PLAN_RESPONSES, "classify": {"mode": "light", "reason": "r", "started_at": 1700000000}})
+    assert '"size":"light"' in result["next"] and '"start":1700000000' in result["next"]
 
 
-IMPL_RESPONSES = {"implement": IMPL, "test-gate": TEST_OK, "review": NO_FINDINGS, "sign-off": SIGNOFF}
+IMPL_RESPONSES = {"implement": IMPL, "test-gate": TEST_OK, "review": NO_FINDINGS, "sign-off": SIGNOFF,
+                  "record-run": {"advice": "recorded"}, "reassess": {"advice": "keep"}}
 
 
 def test_implement_inline_spawns_nothing(tmp_path):
@@ -92,13 +99,13 @@ def test_implement_inline_spawns_nothing(tmp_path):
 
 def test_implement_light_without_risk_has_one_lens_and_no_signoff(tmp_path):
     labels, result = run(IMPL_JS, tmp_path, {"goal": "g", "size": "light"}, IMPL_RESPONSES)
-    assert labels == ["implement", "test-gate", "review:combined"]
+    assert labels == ["implement", "test-gate", "review:combined", "record-run"]
     assert result["status"] == "done" and result["sign_off"] is None
 
 
 def test_implement_light_with_risk_adds_the_independent_verifier(tmp_path):
     labels, result = run(IMPL_JS, tmp_path, {"goal": "g", "size": "light", "risk_items": ["3: contract"]}, IMPL_RESPONSES)
-    assert labels == ["implement", "test-gate", "review:combined", "sign-off"]
+    assert labels == ["implement", "test-gate", "review:combined", "sign-off", "record-run"]
     assert result["sign_off"]["met"] is True
 
 
@@ -111,13 +118,58 @@ def test_implement_light_security_risk_keeps_the_security_prompt(tmp_path):
 
 def test_implement_full_keeps_three_lenses_and_signoff(tmp_path):
     labels, result = run(IMPL_JS, tmp_path, {"goal": "g", "size": "full"}, IMPL_RESPONSES)
-    assert labels == ["implement", "test-gate", "review:correctness", "review:security", "review:test-integrity", "sign-off"]
+    assert labels == ["implement", "test-gate", "review:correctness", "review:security", "review:test-integrity", "sign-off", "record-run"]
     assert result["status"] == "done"
 
 
-def test_implement_without_size_classifies_once_and_defaults_to_full(tmp_path):
+def test_implement_never_classifies_it_reads_the_plan_sizing_block(tmp_path):
+    sizing = {"found": True, "mode": "light", "risk_items": [], "forecast_lines": 40, "units": 1, "files": 2}
+    labels, result = run(IMPL_JS, tmp_path, {"goal": "g", "plan_path": "p.md"}, {**IMPL_RESPONSES, "read-sizing": sizing})
+    assert "classify" not in labels and labels[0] == "read-sizing" and result["size"] == "light"
+
+
+def test_implement_with_an_unreadable_sizing_block_keeps_the_full_default(tmp_path):
     labels, result = run(IMPL_JS, tmp_path, {"goal": "g", "plan_path": "p.md"}, IMPL_RESPONSES)
-    assert labels[0] == "classify" and result["size"] == "full" and "sign-off" in labels
+    assert labels[0] == "read-sizing" and result["size"] == "full" and "sign-off" in labels
+
+
+def test_implement_with_a_size_passed_on_spawns_no_sizing_call(tmp_path):
+    labels, _ = run(IMPL_JS, tmp_path, {"goal": "g", "plan_path": "p.md", "size": "light"}, IMPL_RESPONSES)
+    assert "read-sizing" not in labels and "classify" not in labels
+
+
+def test_implement_with_no_plan_and_no_size_points_at_kit_plan(tmp_path):
+    labels, result = run(IMPL_JS, tmp_path, {"goal": "g"}, IMPL_RESPONSES)
+    assert labels == [] and result["status"] == "needs-plan" and "/kit-plan" in result["next"]
+
+
+def test_implement_inline_hint_carries_the_ledger_record_command(tmp_path):
+    _, result = run(IMPL_JS, tmp_path, {"goal": "g", "size": "inline"}, IMPL_RESPONSES)
+    assert "no subagents were started" in result["next"] and "ai-resources runs record --mode inline" in result["next"]
+
+
+def test_implement_records_the_run_with_the_flag_contract(tmp_path):
+    args = {"goal": "g", "size": "light", "estimated": "inline", "start": 1700000000, "units": 1, "forecast_lines": 30,
+            "risk_items": ["3: contract"], "forced": True}
+    prompts, labels, _ = run_calls(IMPL_JS, tmp_path, args, IMPL_RESPONSES)
+    p = prompts["record-run"]
+    for part in ("ai-resources runs record --mode light", "--estimated inline", "--outcome pass", "--agents 4", "--rework 0",
+                 "--kind feature", "--risk 3", "--forced", "--start 1700000000"):
+        assert part in p, part
+
+
+def test_a_verifier_fail_counts_one_rework_and_asks_for_advice(tmp_path):
+    gaps = {"met": False, "gaps": ["S1"], "evidence": []}
+    prompts, labels, result = run_calls(IMPL_JS, tmp_path, {"goal": "g", "size": "full"}, {**IMPL_RESPONSES, "sign-off": gaps})
+    assert "reassess:verifier-fail" in labels and "--verifier-fail" in prompts["reassess:verifier-fail"]
+    assert result["rework"] == 1 and result["status"] == "needs-attention" and "--rework 1" in prompts["record-run"]
+
+
+def test_a_stated_mode_change_is_applied_and_recorded_as_an_escalation(tmp_path):
+    impl = {**IMPL, "mode_change": {"to": "full", "reason": "a sensitive area appeared"}}
+    prompts, _, result = run_calls(IMPL_JS, tmp_path, {"goal": "g", "size": "light"}, {**IMPL_RESPONSES, "implement": impl})
+    assert result["size"] == "full" and result["escalations"] == ["light>full"] and "--escalations light>full" in prompts["record-run"]
+    assert "ai-resources runs reassess" in prompts["implement"]
 
 
 # --- by-reference handoff and the correction budget ---------------------------------------------------------------

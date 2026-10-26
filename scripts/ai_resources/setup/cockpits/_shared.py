@@ -791,7 +791,7 @@ def openclaw_agent_kit_md(ak_path: str, *, delegates: bool = True) -> str:
         "`verifier`, `doc-writer`. `/kit-plan <goal>` then `/kit-implement` drive that loop.\n"
         "- Never sign off your own work: only the `verifier` confirms acceptance criteria.\n"
         "- Size first: classify a change `inline`, `light` or `full` (`kit-orchestration`, \"Task size\"; flags "
-        "`--inline`, `--light`, `--full`) and delegate only for a named reason; one concrete change: `workflow-odd`.\n"
+        "`--inline`, `--light`, `--full`) and delegate only for a named reason; one concrete change: `/kit-plan --inline`.\n"
         "- Hand work between roles through the handoff file: `handoff.md` at the repo root (or "
         f"`.agent-output/handoff.md`); the shape is `{ak_path}/handoff.md.template`.\n"
     )

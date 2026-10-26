@@ -1,6 +1,6 @@
 # Run ledger: measured, adaptive sizing
 
-Read this only when a workflow step tells you to (`workflow-odd` classify and close) or the owner asks for the calibration report. It adds measurement to "Task size"; it changes no rule by itself.
+Read this only when a workflow step tells you to (`/kit-plan` classifies, `/kit-implement` reassesses and closes) or the owner asks for the calibration report. It adds measurement to "Task size"; it changes no rule by itself.
 
 ## What is recorded
 

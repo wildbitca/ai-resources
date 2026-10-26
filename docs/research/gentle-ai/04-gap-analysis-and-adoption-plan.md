@@ -413,3 +413,5 @@ Measured with one trivial `claude` child (task: reply OK): first call 50,618 pro
 ### Status: study closed (2026-10-26)
 
 No further paid experiments. Calibration now comes from the run ledger fed by ordinary `workflow-odd` runs; the first report is due after at least 5 runs per mode, and any threshold change needs owner approval. The one open item is G21 (scope what OpenClaw children list), which needs a live config change and its own before/after.
+
+> Note (2026-10-26): `workflow-odd` was folded into the `/kit-plan` and `/kit-implement` commands and removed; the sizing and ledger behaviour described above now lives there.

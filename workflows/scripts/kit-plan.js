@@ -13,6 +13,8 @@ export const meta = {
 // args: a goal string, or {goal, kind: 'feature'|'bugfix'|'refactor', constraints, size: 'inline'|'light'|'full'}
 // A goal may carry --inline, --light or --full; an explicit size skips the classifier. Without one, a single
 // cheap call classifies the task (see skills/kit-orchestration "Task size"); a failed classification means full.
+// This is the only place that classifies: /kit-implement reads the size from the plan's ## Sizing block or from the
+// size passed on, and never classifies again. The run ledger (ai-resources runs) advises, it never decides.
 const SIZES = ['inline', 'light', 'full']
 const input = typeof args === 'string' ? { goal: args } : (args || {})
 const rawGoal = input.goal || input.task || ''
@@ -86,6 +88,9 @@ const SIZE_SCHEMA = {
     risk_items: { type: 'array', items: { type: 'string' } },
     forecast_lines: { type: 'integer' },
     units: { type: 'integer' },
+    files: { type: 'integer' },
+    started_at: { type: 'integer' },
+    suggested_mode: { type: 'string', enum: SIZES },
   },
 }
 
@@ -114,7 +119,9 @@ phase('Understand')
 log(`Planning (${kind}): ${goal}`)
 
 let size = explicitSize
+let startEpoch
 let sizing = { reason: explicitSize ? 'set by the caller' : '', risk_items: [] }
+const forced = !!explicitSize
 if (!size) {
   const sized = await agent(
     `Goal (${kind}): ${goal}\n${constraints ? `Constraints: ${constraints}\n` : ''}\n` +
@@ -123,10 +130,15 @@ if (!size) {
     `- light: the resume test fails or a risk item applies, but it is one unit (or units of about 100 changed lines or less).\n` +
     `- full: two or more independent units with disjoint edit surfaces, each over about 100 changed lines, or the user wants separate deliverables.\n` +
     `Risk items: 1 data or irreversible effects; 2 security; 3 contracts others consume (APIs, CLI flags, config, handoff keys, hooks, workflow YAML); ` +
-    `4 concurrency; 5 delivery or environment; 6 no test would catch a regression. List the item numbers with a reason in risk_items, or leave it empty.`,
+    `4 concurrency; 5 delivery or environment; 6 no test would catch a regression. List the item numbers with a reason in risk_items, or leave it empty.\n` +
+    `First run \`date +%s\` and report it as started_at (skip it when the shell is unavailable). Report forecast_lines (changed lines), units and files as your estimate. Then, only when the command exists and the numbers came out of your read, ` +
+    `run \`ai-resources runs suggest --kind ${kind} --files N --lines F --units U [--risk 3,5]\` and put its mode in suggested_mode. ` +
+    `It is a hint from past runs, never a decision: the resume test and the risk items decide, and you may differ from it (say why in reason). ` +
+    `When the command is missing or fails, skip it silently.`,
     { label: 'classify', phase: 'Understand', agentType: 'explore', schema: SIZE_SCHEMA },
   )
   size = sized && SIZES.includes(sized.mode) ? sized.mode : 'full'
+  startEpoch = sized && Number.isFinite(sized.started_at) ? sized.started_at : undefined
   sizing = sized ? { ...sized, risk_items: sized.risk_items || [] } : { reason: 'classification failed, defaulting to full', risk_items: [] }
   // A named risk item takes a task out of the inline path; it adds a verifier, not a bigger plan.
   if (size === 'inline' && sizing.risk_items.length) size = 'light'
@@ -141,7 +153,10 @@ if (size === 'inline') {
     risk_items: sizing.risk_items,
     reason: sizing.reason,
     plan_path: null,
-    next: `Inline: no plan file and no further subagents. Make the change in this session, run the focused test then the suite once. Re-run with --light or --full to force a plan.`,
+    start: startEpoch,
+    estimated: sizing.suggested_mode || size,
+    next: `Inline: no plan file and no further subagents. Make the change in this session, run the focused test then the suite once. Re-run with --light or --full to force a plan. ` +
+      `At the end, when \`ai-resources runs\` exists, append the run: \`ai-resources runs record --mode ${size} --estimated ${sizing.suggested_mode || size} --outcome pass|gaps|abandoned --agents 0 --kind ${kind}${startEpoch ? ` --start ${startEpoch}` : ''}\` plus --lines, --units, --files and --risk (skip silently when the command is missing).`,
   }
 }
 
@@ -256,6 +271,7 @@ return {
   kind,
   size,
   risk_items: sizing.risk_items,
+  start: startEpoch,
   plan_path: plan.plan_path,
   tasks_path: plan.tasks_path || null,
   task_ids: plan.task_ids || [],
@@ -267,5 +283,5 @@ return {
   open_questions: plan.open_questions || [],
   judged: { winner: winnerIndex + 1, scores: totals, scored: judged },
   context_gaps: readLenses.filter(l => !findings.some(f => f.lens === l.label)).map(l => l.label),
-  next: `Review the plan, then run /kit-implement with ${JSON.stringify({ plan_path: plan.plan_path, tasks_path: plan.tasks_path || undefined, task_ids: plan.task_ids || [], spec_ids: plan.spec_ids || [], goal, kind, size, risk_items: sizing.risk_items })}`,
+  next: `Review the plan, then run /kit-implement with ${JSON.stringify({ plan_path: plan.plan_path, tasks_path: plan.tasks_path || undefined, task_ids: plan.task_ids || [], spec_ids: plan.spec_ids || [], goal, kind, size, risk_items: sizing.risk_items, start: startEpoch, estimated: sizing.suggested_mode || size, forced, forecast_lines: sizing.forecast_lines, units: sizing.units, files: sizing.files })}`,
 }

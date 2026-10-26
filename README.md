@@ -160,7 +160,7 @@ Each skill is a self-contained module with a `SKILL.md` file containing YAML fro
 
 Workflow YAML files define multi-phase execution pipelines. Each phase specifies a subagent type and the skills it should load. `ai-resources generate` exposes each workflow as a `workflow-<name>` skill whose description is the workflow's trigger, so agents pick workflows through native skill discovery; the `kit-orchestration` skill explains how to run them. See [Orchestration Guide](docs/orchestration.md) for diagrams.
 
-Workflows: `feature-implementation`, `bugfix`, `refactor`, `explore-and-plan`, `cross-domain-backend-infra`, `merge-and-document`, `release-dart-flutter`, `security-devsecops`, `dependency-audit`, `ci-debug`, `incident-response`, `infra-triage`, `k8s-debug`, `log-triage`, `db-investigation`, `cloud-ops`, `odd` (size-gated delivery for one change: classify, implement inline, verify by risk, close).
+Workflows: `feature-implementation`, `bugfix`, `refactor`, `explore-and-plan`, `cross-domain-backend-infra`, `merge-and-document`, `release-dart-flutter`, `security-devsecops`, `dependency-audit`, `ci-debug`, `incident-response`, `infra-triage`, `k8s-debug`, `log-triage`, `db-investigation`, `cloud-ops`.
 
 ### Deterministic core loop (`workflows/scripts/`)
 
@@ -169,7 +169,7 @@ Feature, bugfix and refactor work also ships as two [dynamic workflow](https://c
 | Command | What it runs |
 |---------|--------------|
 | `/kit-plan <goal>` | Classifies the size once (`inline`, `light` or `full`; `--inline`, `--light`, `--full` skip the call). `inline`: no subagents, no plan file. `light`: one reader, one draft, one plan file. `full`: parallel readers (code, specs, tests and risk) → three planners with different biases → two judges → one plan file for you to approve. A plan carries a `## Sizing` block (`ai-resources plan-check` verifies it) and, for `light`/`full`, a temporal `specs/features/<feature>/tasks.md` |
-| `/kit-implement` | Hands work over by reference (ledger path, `T#`, `S#`). `inline`: no subagents. `light`: one writer with TDD (RED per requested rule, PRESERVE for touched behaviour) → test gate with one correction round → one combined review lens → a skeptic per finding → fix → sign-off only when a risk item names it. `full`: the whole loop: three review lenses, two correction rounds, and a verifier that runs authorized spec examples in a scratch copy and returns a verdict per `S#` |
+| `/kit-implement` | Never classifies: takes `size` from `/kit-plan` or reads the plan's `## Sizing` block (with neither, it points at `/kit-plan`). Reassesses mid-run, counts verifier gaps as rework and appends the run to the ledger (`ai-resources runs`, silent when missing). Hands work over by reference (ledger path, `T#`, `S#`). `inline`: no subagents. `light`: one writer with TDD (RED per requested rule, PRESERVE for touched behaviour) → test gate with one correction round → one combined review lens → a skeptic per finding → fix → sign-off only when a risk item names it. `full`: the whole loop: three review lenses, two correction rounds, and a verifier that runs authorized spec examples in a scratch copy and returns a verdict per `S#` |
 
 The script holds the ordering, retries and fan-out, so they don't depend on the model following prose. A script can't ask you anything while it runs, which is why approval sits between the two commands.
 
