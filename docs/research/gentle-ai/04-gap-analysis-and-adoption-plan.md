@@ -403,3 +403,7 @@ Each child made 5-9 calls and re-read that prefix from cache on every one. Compu
 ### Decision
 
 The numbers support the existing direction (do not spawn for a one-unit, two-file change) and do not support a lower floor for risky work; they are one task. Thresholds stay as shipped. The ledger and the calibration report decide any change after at least 5 runs per mode, and the owner approves it.
+
+### Status: study closed (2026-10-26)
+
+No further paid experiments. Calibration now comes from the run ledger fed by ordinary `workflow-odd` runs; the first report is due after at least 5 runs per mode, and any threshold change needs owner approval. The one open item is G21 (scope what OpenClaw children list), which needs a live config change and its own before/after.
