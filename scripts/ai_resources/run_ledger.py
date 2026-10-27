@@ -276,6 +276,16 @@ def format_report(rep: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def summary_line(history: list[dict[str, Any]]) -> str:
+    """One line of the scorecard calibration (the weekly doctor summary): runs per mode with the median tokens."""
+    if not history:
+        return "runs: none recorded yet"
+    modes = calibrate(history)["modes"]
+    return f"runs: {len(history)} recorded; " + ", ".join(
+        f"{m} n={s['n']}" + (f" tok~{int(s['tokens_median']):,}" if s["tokens_median"] is not None else "")
+        for m, s in modes.items() if s["n"])
+
+
 # -- CLI ----------------------------------------------------------------------------------------------------------
 def _features(args: argparse.Namespace) -> dict[str, Any]:
     return {"kind": args.kind, "files": args.files, "lines": args.lines, "units": args.units,

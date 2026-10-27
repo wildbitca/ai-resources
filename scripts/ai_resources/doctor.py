@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 from typing import Any, Callable
 
 from . import billing, verify
 from .setup import state, detection, credentials, litellm, providers, smoke, ui
+
+WEEK_S = 7 * 86400
 
 
 def _check_antigravity_quota(s: state.SetupState) -> int:
@@ -175,6 +178,42 @@ def _check_pool_usage() -> int:
             (ui.warn if "at or above 80%" in line else ui.detail)(line)
     except Exception as e:  # noqa: BLE001 - a reader must never break the doctor
         ui.detail(f"Pool usage skipped ({e.__class__.__name__}).")
+    return 0
+
+
+def _check_matrix_actual() -> int:
+    """Doctor sub-check 4g3 (ADR-0019 D7): the dispatch ledger of the last 7 days against the routing matrix. A dispatch
+    that ran outside its role's primary with no recorded fallback cause is an issue; a spill with a cause is shown."""
+    from . import dispatch_ledger
+    try:
+        sm = dispatch_ledger.summarize(dispatch_ledger.load(since=time.time() - WEEK_S))
+    except Exception as e:  # noqa: BLE001 - a reader must never break the doctor
+        ui.detail(f"Matrix actual-vs-plan skipped ({e.__class__.__name__}).")
+        return 0
+    for d in sm["deviations"]:
+        ui.warn(f"{d['role']} ran {d['cell']} (matrix primary {d['primary']}) with no recorded fallback cause "
+                f"[{d['ts']}, run {d['run_id'] or '-'}]")
+    if not sm["deviations"]:
+        ui.ok("Matrix actual: every dispatch of the last 7 days ran on its primary or has a recorded fallback cause"
+              if sm["dispatches"] else "Matrix actual: no dispatches in the last 7 days")
+    return len(sm["deviations"])
+
+
+def _check_weekly_summary() -> int:
+    """Doctor sub-check 4g4 (ADR-0019 D7): the week in a few lines. Pool usage and the credit ledger come from their own
+    modules, the dispatch aggregation from the dispatch ledger, the run line from the run ledger (sizing scorecard)."""
+    from . import credits, dispatch_ledger, pool_usage, run_ledger
+    ui.info("Weekly summary (last 7 days)")
+    for label, make in (("pools", lambda: [ln for ln in pool_usage.lines(pool_usage.snapshot()) if not ln.startswith("route now")]),
+                        ("credits", credits.lines),
+                        ("dispatches", lambda: dispatch_ledger.summary_lines(
+                            dispatch_ledger.summarize(dispatch_ledger.load(since=time.time() - WEEK_S)))),
+                        ("runs", lambda: [run_ledger.summary_line(run_ledger.load())])):
+        try:
+            for line in make():
+                ui.detail(line)
+        except Exception as e:  # noqa: BLE001 - a summary must never break the doctor
+            ui.detail(f"{label}: skipped ({e.__class__.__name__}).")
     return 0
 
 
@@ -453,6 +492,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     issues += _check_credit_ledger(args)
     issues += _check_billing()
     issues += _check_pool_usage()
+    issues += _check_matrix_actual()
+    issues += _check_weekly_summary()
     issues += _check_keys(s, args)
     issues += _check_poll_share()
     issues += _check_vendor_pins()

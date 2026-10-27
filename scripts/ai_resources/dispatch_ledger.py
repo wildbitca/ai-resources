@@ -104,6 +104,47 @@ def actuals(run_id: str, path: Path | None = None) -> dict[str, Any]:
             "measured": "dispatch ledger", "rework": sum(1 for r in done if r["outcome"] != "ok")}
 
 
+def summarize(rows: Iterable[dict[str, Any]], profile_doc: dict[str, Any] | None = None) -> dict[str, Any]:
+    """ACTUAL against the MATRIX (ADR-0019 D7), the one aggregation behind `doctor` and `dispatch list --summary`.
+
+    Per pool and per role: dispatches, tokens, fallbacks. A deviation is a dispatch whose `backend:model` is neither the
+    role's primary nor a rung of the checker ladder (a checker has no fixed primary) and that carries no
+    `fallback_cause`: that is a role that ran outside the matrix for no recorded reason. A spill WITH a cause is fine.
+    Blocked dispatches ran nowhere and are not counted."""
+    table = routing.merged(profile_doc)
+    pools: dict[str, dict[str, int]] = {}
+    roles: dict[str, dict[str, int]] = {}
+    causes: dict[str, int] = {}
+    deviations: list[dict[str, Any]] = []
+    for r in rows:
+        if not r.get("backend"):
+            continue
+        cell, tokens, cause = f"{r['backend']}:{r['model']}", r["tokens_in"] + r["tokens_out"], r["fallback_cause"]
+        role = table.get(r["role"])
+        for bucket, key in ((pools, r["pool"] or "unknown"), (roles, r["role"])):
+            b = bucket.setdefault(key, {"dispatches": 0, "tokens": 0, "fallbacks": 0})
+            b["dispatches"] += 1
+            b["tokens"] += tokens
+            b["fallbacks"] += bool(cause)
+        if cause:
+            causes[cause] = causes.get(cause, 0) + 1
+        elif role and cell != role.primary and not (role.checker and cell in routing.CHECKER_LADDER):
+            deviations.append({"ts": r["ts"], "role": r["role"], "cell": cell, "primary": role.primary, "run_id": r["run_id"]})
+    return {"dispatches": sum(p["dispatches"] for p in pools.values()), "pools": pools, "roles": roles,
+            "causes": causes, "deviations": deviations}
+
+
+def summary_lines(sm: dict[str, Any], top: int = 5) -> list[str]:
+    """One line per pool, the busiest roles, the fallback causes. Deviations are printed by the caller (they are alerts)."""
+    if not sm["dispatches"]:
+        return ["no dispatches recorded in this window"]
+    out = [f"{p}: {v['dispatches']} dispatches, {v['tokens']:,} tokens, {v['fallbacks']} fallbacks" for p, v in sorted(sm["pools"].items())]
+    busiest = sorted(sm["roles"].items(), key=lambda kv: (-kv[1]["tokens"], -kv[1]["dispatches"], kv[0]))[:top]
+    out.append("top roles: " + ", ".join(f"{r} {v['dispatches']}x/{v['tokens']:,}t" for r, v in busiest))
+    out.append("fallbacks by cause: " + (", ".join(f"{c} {n}" for c, n in sorted(sm["causes"].items())) or "none"))
+    return out
+
+
 def tokens_between(start: float, end: float, sessions: Iterable[str] = ()) -> tuple[int, int]:
     """(input, output) tokens of the audit transcripts in the window, through the run ledger's own measurement."""
     from . import audit_snapshot
@@ -146,6 +187,11 @@ def cmd_list(args: argparse.Namespace) -> int:
     except ValueError as e:
         print(f"dispatch: bad --since: {e}", file=sys.stderr)
         return 2
+    if args.summary:
+        sm = summarize(rows)
+        print("\n".join(summary_lines(sm) + [f"DEVIATION {d['role']} ran {d['cell']} (primary {d['primary']}) with no fallback cause"
+                                             for d in sm["deviations"]]))
+        return 1 if sm["deviations"] else 0
     for r in rows[-args.last:] if args.last else rows:
         print(json.dumps(r, sort_keys=True))
     return 0
@@ -174,4 +220,5 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     li.add_argument("--run")
     li.add_argument("--since", help="2h | 3d | 45m | an ISO date")
     li.add_argument("--last", type=int, default=0, help="only the last N rows")
+    li.add_argument("--summary", action="store_true", help="per pool/role actuals against the matrix; exit 1 on an uncaused deviation")
     li.set_defaults(func=cmd_list)

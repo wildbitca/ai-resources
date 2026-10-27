@@ -78,7 +78,7 @@ def test_inactive_backends_name_the_cause(monkeypatch):
 def test_route_skips_an_agy_primary_with_a_recorded_cause_when_agy_is_inactive(monkeypatch, capsys, active, cell, cause):
     monkeypatch.setattr(detection, "agy_active", lambda: active)
     monkeypatch.setattr(detection, "codex_active", lambda: False)
-    ns = argparse.Namespace(role="explore", usage_file=None, writers="", unavailable=[], json=True)
+    ns = argparse.Namespace(role="explore", usage_file=None, writers="", unavailable=[], json=True, run=None, record=False, step=None)
     monkeypatch.setattr(route_cmd.pool_usage, "usage_map", lambda snap: {})
     monkeypatch.setattr(route_cmd.pool_usage, "snapshot", lambda: None)
     assert route_cmd.cmd_route(ns) == 0
