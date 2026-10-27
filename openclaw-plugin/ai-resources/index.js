@@ -352,106 +352,73 @@ export function makeEquipoCommandHandler(api) {
   };
 }
 
-// --- /lanes status cockpit command (ADR-0012) ---------------------------------------
+// --- /lanes: the role matrix (ADR-0019) ---------------------------------------------
 
 /**
- * Parses rendered lanes.yaml summary without external dependencies.
+ * Parses the `routing.matrix` of a rendered lanes.yaml without external dependencies:
+ *   routing: / matrix: / <role>: / class, primary: {cell, pool}, fallback: [- cell, pool]
  * @param {string} content
  */
 export function parseLanesSummary(content) {
-  const lines = (content || "").split("\n");
-  let mode = "unknown";
   const roles = {};
-  let currentSection = null;
-  let currentRole = null;
-  let inResolvedRoles = false;
-  let inFallbacks = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  let mode = "unknown";
+  let inMatrix = false;
+  let role = null;
+  let part = null;
+  for (const line of (content || "").split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
-
     const indent = line.search(/\S/);
-
     if (indent === 0) {
-      const match = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
-      if (match) {
-        currentSection = match[1];
-        if (currentSection === "mode") mode = match[2].trim();
-        inResolvedRoles = false;
-        currentRole = null;
-      }
+      const top = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
+      if (top && top[1] === "mode") mode = top[2].trim();
+      inMatrix = false;
+      role = null;
       continue;
     }
-
-    if (currentSection === "resolved") {
-      if (indent === 2 && trimmed.startsWith("roles:")) {
-        inResolvedRoles = true;
-        continue;
-      }
-      if (inResolvedRoles) {
-        if (indent === 4 && trimmed.endsWith(":")) {
-          currentRole = trimmed.slice(0, -1);
-          roles[currentRole] = { lane: "", model: "", fallbacks: [], reason: "" };
-          inFallbacks = false;
-          continue;
-        }
-        if (currentRole && indent >= 6) {
-          if (trimmed.startsWith("fallbacks:")) {
-            inFallbacks = true;
-            continue;
-          }
-          if (trimmed.startsWith("evidence:") || trimmed.startsWith("effort:")) {
-            inFallbacks = false;
-            continue;
-          }
-          if (inFallbacks) {
-            if (trimmed.startsWith("- lane:")) {
-              const fbLane = trimmed.replace("- lane:", "").trim().replace(/^['"]|['"]$/g, "");
-              roles[currentRole].fallbacks.push({ lane: fbLane, model: "" });
-            } else if (trimmed.startsWith("model:") && roles[currentRole].fallbacks.length > 0) {
-              const fbModel = trimmed.replace("model:", "").trim().replace(/^['"]|['"]$/g, "");
-              roles[currentRole].fallbacks[roles[currentRole].fallbacks.length - 1].model = fbModel;
-            }
-            continue;
-          }
-
-          const m = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
-          if (m) {
-            const key = m[1];
-            const val = m[2].trim().replace(/^['"]|['"]$/g, "");
-            if (key === "lane") roles[currentRole].lane = val;
-            if (key === "model") roles[currentRole].model = val;
-            if (key === "reason") roles[currentRole].reason = val;
-          }
-        }
-      }
+    if (indent === 2) {
+      inMatrix = trimmed === "matrix:";
+      role = null;
+      continue;
+    }
+    if (!inMatrix) continue;
+    if (indent === 4 && trimmed.endsWith(":")) {
+      role = trimmed.slice(0, -1);
+      roles[role] = { klass: "", primary: "", fallbacks: [] };
+      part = null;
+      continue;
+    }
+    if (!role || indent < 6) continue;
+    const kv = trimmed.replace(/^- /, "").match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
+    if (!kv) continue;
+    const val = kv[2].trim().replace(/^['"]|['"]$/g, "");
+    if (indent === 6 && !trimmed.startsWith("- ")) {
+      part = kv[1];
+      if (kv[1] === "class") roles[role].klass = val;
+    } else if (kv[1] === "cell") {
+      if (part === "primary") roles[role].primary = val;
+      else if (part === "fallback") roles[role].fallbacks.push(val);
     }
   }
   return { mode, roles };
 }
 
 /**
- * Formats a lanes summary object into markdown suitable for chat output.
- * @param {{mode: string, roles: Record<string, {lane: string, model: string, fallbacks: Array<{lane: string, model: string}>}>}} summary
+ * Formats the matrix as a markdown table: Role | Primary | Fallback.
+ * @param {{mode: string, roles: Record<string, {klass: string, primary: string, fallbacks: string[]}>}} summary
  * @param {string} lanesPath
  */
 export function formatLanesMarkdown(summary, lanesPath) {
   if (!summary || !summary.roles || Object.keys(summary.roles).length === 0) {
-    return `### 🚦 ai-resources: Subscription Lanes\n\nNo resolved lanes found in \`${lanesPath}\`.\nRun \`ai-resources setup --lanes\` to resolve subscription lanes.`;
+    return `### 🚦 ai-resources: Role matrix\n\nNo role matrix found in \`${lanesPath}\`.\nRun \`ai-resources setup\` to render it, or \`ai-resources route <role>\` to resolve one role.`;
   }
-  let md = `### 🚦 ai-resources: Subscription Lanes\n`;
+  let md = `### 🚦 ai-resources: Role matrix\n`;
   md += `**Mode:** \`${summary.mode || "unknown"}\` | **Config:** \`${lanesPath}\`\n\n`;
-  md += `| Role | Active Lane | Model | Fallbacks |\n`;
-  md += `| :--- | :--- | :--- | :--- |\n`;
+  md += `| Role | Primary | Fallback |\n`;
+  md += `| :--- | :--- | :--- |\n`;
   for (const [role, info] of Object.entries(summary.roles)) {
-    const laneShort = (info.lane || "").replace("openclaw-agent:", "");
-    const modelShort = (info.model || "").replace("agy-cli-lane/", "");
-    const fbText = info.fallbacks && info.fallbacks.length > 0
-      ? info.fallbacks.map((f) => `\`${(f.lane || "").replace("openclaw-agent:", "")}\``).join(", ")
-      : "—";
-    md += `| **${role}** | \`${laneShort}\` | \`${modelShort}\` | ${fbText} |\n`;
+    const fb = info.fallbacks && info.fallbacks.length > 0 ? info.fallbacks.map((f) => `\`${f}\``).join(", ") : "—";
+    md += `| **${role}** | \`${info.primary}\` | ${fb} |\n`;
   }
   return md;
 }
@@ -460,7 +427,7 @@ export function buildLanesCommand(name, handler) {
   return {
     name,
     nativeNames: { default: name },
-    description: "Display subscription lanes status and model assignments directly in chat.",
+    description: "Display the role matrix (primary and fallback per role) directly in chat.",
     acceptsArgs: true,
     requireAuth: true,
     handler,
@@ -477,7 +444,7 @@ export function makeLanesCommandHandler(api) {
     try {
       if (!fs.existsSync(lanesPath)) {
         return {
-          text: `ℹ️ **ai-resources lanes**: No configuration found at \`${lanesPath}\`.\nRun \`ai-resources setup --lanes\` to configure subscription lanes.`,
+          text: `ℹ️ **ai-resources lanes**: No configuration found at \`${lanesPath}\`.\nRun \`ai-resources setup\` to render the role matrix.`,
           continueAgent: false,
         };
       }

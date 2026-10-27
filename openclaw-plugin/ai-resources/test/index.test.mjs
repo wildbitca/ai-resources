@@ -434,54 +434,53 @@ test("buildLanesCommand matches OpenClawPluginCommandDefinition contract", () =>
   assert.equal(cmd.handler, handler);
 });
 
-test("parseLanesSummary parses mode, roles, and fallbacks cleanly", () => {
-  const yamlSample = `
-mode: single-model
-resolved:
-  roles:
+const MATRIX_SAMPLE = `mode: single-model
+generated_from: scoring.routing
+routing:
+  matrix:
     planner:
-      lane: claude-code
-      model: sonnet
-      reason: single candidate
-      fallbacks: []
+      class: team-write
+      primary:
+        cell: claude-code:sonnet
+        pool: claude-subscription
+      fallback:
+      - cell: agy:gemini-4-argon-high
+        pool: agy-gemini
     explore:
-      lane: openclaw-agent:kit-lane-agy-gemini38flashhigh
-      model: agy-cli-lane/gemini-3.8-flash-high
-      reason: pinned
-      fallbacks:
-      - lane: claude-code
-        model: haiku
+      class: team-read
+      primary:
+        cell: agy:gemini-3.8-flash-high
+        pool: agy-gemini
+      fallback:
+      - cell: claude-code:haiku
+        pool: claude-subscription
+      - cell: anthropic-api:claude-haiku-5-5
+        pool: anthropic-api
+  balancing:
+    spill_at: 0.85
 `;
-  const summary = parseLanesSummary(yamlSample);
-  assert.equal(summary.mode, "single-model");
-  assert.equal(summary.roles.planner.lane, "claude-code");
-  assert.equal(summary.roles.planner.model, "sonnet");
-  assert.deepEqual(summary.roles.planner.fallbacks, []);
 
-  assert.equal(summary.roles.explore.lane, "openclaw-agent:kit-lane-agy-gemini38flashhigh");
-  assert.equal(summary.roles.explore.model, "agy-cli-lane/gemini-3.8-flash-high");
-  assert.equal(summary.roles.explore.fallbacks.length, 1);
-  assert.equal(summary.roles.explore.fallbacks[0].lane, "claude-code");
-  assert.equal(summary.roles.explore.fallbacks[0].model, "haiku");
+test("parseLanesSummary parses mode, primary and the ordered fallbacks of the role matrix", () => {
+  const summary = parseLanesSummary(MATRIX_SAMPLE);
+  assert.equal(summary.mode, "single-model");
+  assert.deepEqual(Object.keys(summary.roles), ["planner", "explore"]);
+  assert.equal(summary.roles.planner.klass, "team-write");
+  assert.equal(summary.roles.planner.primary, "claude-code:sonnet");
+  assert.deepEqual(summary.roles.planner.fallbacks, ["agy:gemini-4-argon-high"]);
+  assert.equal(summary.roles.explore.primary, "agy:gemini-3.8-flash-high");
+  assert.deepEqual(summary.roles.explore.fallbacks, ["claude-code:haiku", "anthropic-api:claude-haiku-5-5"]);
 });
 
-test("formatLanesMarkdown renders markdown table with formatted lanes and fallbacks", () => {
-  const summary = {
-    mode: "single-model",
-    roles: {
-      planner: { lane: "claude-code", model: "sonnet", fallbacks: [] },
-      explore: {
-        lane: "openclaw-agent:kit-lane-agy-gemini38flashhigh",
-        model: "agy-cli-lane/gemini-3.8-flash-high",
-        fallbacks: [{ lane: "claude-code", model: "haiku" }],
-      },
-    },
-  };
-  const md = formatLanesMarkdown(summary, "/fake/lanes.yaml");
-  assert.match(md, /### 🚦 ai-resources: Subscription Lanes/);
+test("parseLanesSummary ignores the old resolved-lanes shape", () => {
+  assert.deepEqual(parseLanesSummary("mode: single-model\nresolved:\n  roles:\n    planner:\n      lane: claude-code\n").roles, {});
+});
+
+test("formatLanesMarkdown renders a Role | Primary | Fallback table", () => {
+  const md = formatLanesMarkdown(parseLanesSummary(MATRIX_SAMPLE), "/fake/lanes.yaml");
+  assert.match(md, /### 🚦 ai-resources: Role matrix/);
   assert.match(md, /\*\*Mode:\*\* `single-model`/);
-  assert.match(md, /\|\s+\*\*planner\*\*\s+\|\s+`claude-code`\s+\|\s+`sonnet`\s+\|\s+—\s+\|/);
-  assert.match(md, /\|\s+\*\*explore\*\*\s+\|\s+`kit-lane-agy-gemini38flashhigh`\s+\|\s+`gemini-3.8-flash-high`\s+\|\s+`claude-code`\s+\|/);
+  assert.match(md, /\|\s+\*\*planner\*\*\s+\|\s+`claude-code:sonnet`\s+\|\s+`agy:gemini-4-argon-high`\s+\|/);
+  assert.match(md, /\|\s+\*\*explore\*\*\s+\|\s+`agy:gemini-3.8-flash-high`\s+\|\s+`claude-code:haiku`, `anthropic-api:claude-haiku-5-5`\s+\|/);
 });
 
 test("makeLanesCommandHandler returns message when lanes file does not exist", async () => {
@@ -494,22 +493,15 @@ test("makeLanesCommandHandler returns message when lanes file does not exist", a
 test("makeLanesCommandHandler reads custom lanesConfigPath if provided", async () => {
   const fsModule = await import("node:fs");
   const tmpPath = path.join(HERE, "fixtures", "tmp-lanes.yaml");
-  const yamlContent = `mode: multi-model
-resolved:
-  roles:
-    implementer:
-      lane: claude-code
-      model: sonnet
-      fallbacks: []
-`;
+  const yamlContent = MATRIX_SAMPLE.replace("single-model", "multi-model");
   fsModule.writeFileSync(tmpPath, yamlContent, "utf8");
   try {
     const handler = makeLanesCommandHandler({ pluginConfig: { lanesConfigPath: tmpPath } });
     const res = await handler({});
     assert.equal(res.continueAgent, false);
-    assert.match(res.text, /Subscription Lanes/);
+    assert.match(res.text, /Role matrix/);
     assert.match(res.text, /multi-model/);
-    assert.match(res.text, /implementer/);
+    assert.match(res.text, /planner/);
   } finally {
     if (fsModule.existsSync(tmpPath)) fsModule.unlinkSync(tmpPath);
   }
