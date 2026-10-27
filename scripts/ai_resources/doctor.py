@@ -141,6 +141,51 @@ def _check_mcp_children(*, runner: "Callable[..., tuple[int, str]] | None" = Non
     return 1
 
 
+def _check_credit_ledger(args: argparse.Namespace) -> int:
+    """Doctor sub-check 4g0: run the collector (measured spend per prepaid pool from the machine's own usage records) and
+    rewrite `~/.config/ai-resources/credits.json`. Neither provider exposes a balance API, so `remaining` is declared
+    minus measured and says so. A failure is a detail line: money bookkeeping never fails the doctor."""
+    if getattr(args, "no_collect", False):
+        return 0
+    try:
+        from . import credits
+        credits.collect()
+    except Exception as e:  # noqa: BLE001 - a collector must never break the doctor
+        ui.detail(f"Credit ledger not refreshed ({e.__class__.__name__}).")
+    return 0
+
+
+def _check_keys(s: state.SetupState, args: argparse.Namespace) -> int:
+    """Doctor sub-check 4k: probe the Gemini and Anthropic keys held in `gateway.systemd.env` AND in the OpenClaw auth
+    profile with one free `models.list` call each. A rejected env key beside a working profile key is rewritten from the
+    profile (backup first, 0600, the value never printed) and the gateway restart that applies it goes through the
+    existing drained reconcile. Reports `gemini key: env ok / profile ok`, `... / mismatch fixed`. Returns the number of
+    keys left rejected."""
+    from . import key_check
+    try:
+        results = key_check.check(fix=not getattr(args, "no_fix_keys", False))
+    except Exception as e:  # noqa: BLE001 - a probe must never break the doctor
+        ui.detail(f"Key check skipped ({e.__class__.__name__}).")
+        return 0
+    issues = 0
+    for r in results:
+        if r.env == key_check.ERROR or r.profile == key_check.ERROR:
+            ui.detail(r.line() + " (no answer from the provider; nothing changed)")
+        elif r.problem:
+            ui.warn(r.line())
+            issues += 1
+        elif r.fixed:
+            ui.ok(r.line())
+            ui.detail(f"Backup of the env file: {r.backup}")
+        else:
+            ui.ok(r.line()) if (r.env, r.profile) == (key_check.OK, key_check.OK) else ui.detail(r.line())
+    if key_check.restart_owed(results) and _openclaw_present(s):
+        deferred = key_check.restart_gateway(out=ui.info)
+        if deferred:
+            ui.warn(deferred)
+    return issues
+
+
 def _check_billing() -> int:
     """Doctor sub-check 4g (ADR-0014 D2): how Claude Code is billed, the quota and the manual credit file.
 
@@ -446,8 +491,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     issues += _check_antigravity_lane(s)
 
     # 4g. Billing mode, quota and the manual credit file; 4h. the poll-turn share of the newest snapshot.
+    issues += _check_credit_ledger(args)
     issues += _check_billing()
     issues += _check_pool_usage()
+    issues += _check_keys(s, args)
     issues += _check_poll_share()
     issues += _check_vendor_pins()
     issues += _check_openclaw_cost(s, args)
@@ -510,6 +557,10 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("doctor", help="Run full health check across all components")
     p.add_argument("--probe-utility-model", dest="probe_utility_model", action="store_true",
                    help="Also check that OpenClaw's utilityModel works with your key (one tiny model turn, billed)")
+    p.add_argument("--no-fix-keys", dest="no_fix_keys", action="store_true",
+                   help="Only report a rejected gateway-env key; do not rewrite it from the working profile key")
+    p.add_argument("--no-collect", dest="no_collect", action="store_true",
+                   help="Do not refresh the credit ledger (credits.json) from the local usage records")
     p.add_argument("--skip-smoke", action="store_true",
                    help="Don't run live API round-trips (saves a few tokens)")
     p.set_defaults(func=cmd_doctor)

@@ -2254,7 +2254,7 @@ def _reconcile_gateway(s: state.SetupState, ak_path: str, *, dry_run: bool) -> N
         return
     stable = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
     outcome = openclaw_reconcile.reconcile(openclaw_host.default_runner, plugin_dir=stable, stale_reason=stale_reason,
-                                           dry_run=dry_run, out=ui.info)
+                                           dry_run=dry_run, out=ui.info, check_env=True)
     if not outcome.reasons:
         return
     if dry_run:
@@ -2300,7 +2300,7 @@ def hardening_dry_run_lines(s: state.SetupState, ak_path: str) -> list[str]:
                      f"(room for {openclaw_host.lane_headroom(openclaw_host.wanted_memory_high(env))} lane runs)")
     stable = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
     lines += openclaw_reconcile.reconcile(openclaw_host.default_runner, plugin_dir=stable,
-                                          stale_reason=stale_reason, dry_run=True).lines
+                                          stale_reason=stale_reason, dry_run=True, check_env=True).lines
     return lines
 
 

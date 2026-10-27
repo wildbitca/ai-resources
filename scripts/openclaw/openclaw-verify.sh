@@ -3,7 +3,8 @@
 #
 # Two uses: by hand after a change, and as a monitor's condition (`--notify`, from the daily
 # timer). Exits 0 when EVERYTHING is fine and 1 as soon as anything fails, and says what.
-# It changes nothing: it only reads.
+# It changes nothing except one file: check 10 refreshes the credit ledger (credits.json, 0600) from the machine's own
+# usage records, so the 80% alert is computed from today's numbers.
 #
 # Checks 1-4 and 9 run everywhere. Checks 5-8 need infrastructure a generic host does not have
 # (an ingress, an OTLP receiver, an Alloy config, Flux) and are OFF until the matching
@@ -111,6 +112,19 @@ detail = "all %d registered" % len(expected) if not missing else "missing: " + "
 print(f"  [{'ok' if not missing else 'FAIL'}] {'hooks':<34} {detail}")
 sys.exit(1 if missing else 0)
 PY
+
+  # 10. Credit ledger: refresh ~/.config/ai-resources/credits.json (declared - measured spend per prepaid API pool) and
+  #     fail when a pool has spent 80% of the credit the operator declared. Neither provider has a balance API.
+  if command -v ai-resources >/dev/null 2>&1; then
+    credit_out="$(timeout 240 ai-resources credits collect --check --quiet 2>&1)"; credit_rc=$?
+    if [ "$credit_rc" -eq 3 ]; then
+      bad "credit ledger" "$(printf "%s" "$credit_out" | grep '^ALERT' | sed 's/^ALERT //' | tr '\n' ' ')"
+    elif [ "$credit_rc" -ne 0 ]; then
+      bad "credit ledger" "collector failed (exit $credit_rc)"
+    else
+      ok "credit ledger" "refreshed, no pool at 80%"
+    fi
+  fi
 }
 
 if [ "$notify_mode" = yes ]; then

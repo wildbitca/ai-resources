@@ -5272,7 +5272,7 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
         ak = str(kit_root())
         outcome = openclaw_reconcile.reconcile(
             default_runner, plugin_dir=str(Path(ak) / "openclaw-plugin" / "ai-resources"),
-            stale_reason=cockpit.stale_reason, dry_run=args.dry_run, out=print)
+            stale_reason=cockpit.stale_reason, dry_run=args.dry_run, out=print, check_env=True)
         if not outcome.reasons:
             print("nothing to reconcile: the gateway runs the plugin on disk and its MCP children are under the threshold")
             return EXIT_OK

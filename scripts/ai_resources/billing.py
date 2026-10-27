@@ -8,7 +8,8 @@ Sources:
 - auth mode: `~/.claude.json` `oauthAccount.billingType` (`prepaid`, or a subscription type).
 - quota: the statusline rate-limit cache (`~/.cache/ai-resources/claude-rate-limits.json`, or
   `AI_RESOURCES_CLAUDE_SIDECAR`), the same file the lane headroom reader uses.
-- credit: a manual file `~/.config/ai-resources/credits.json` (mode 0600, no secrets):
+- credit: `~/.config/ai-resources/credits.json` (mode 0600, no secrets). The `pools` section is the ledger written by
+  `credits.collect` (declared opening credit, measured spend, remaining; see credits.py). The flat keys are the manual form:
   `{"prepaid_usd": 12.5, "promo_usd": 5, "promo_expires": "YYYY-MM-DD", "updated": "YYYY-MM-DD"}`. No local source holds the
   remaining credit, so absent means "unknown" and an `updated` older than `CREDIT_STALE_DAYS` means "stale".
 """
@@ -143,7 +144,7 @@ def credit(path: Path | None = None, today: date | None = None) -> dict:
     today = today or date.today()
     p = Path(path) if path else credits_path()
     out: dict = {"state": UNKNOWN, "prepaid_usd": None, "promo_usd": None, "promo_expires": None, "updated": None,
-                 "age_days": None, "days_to_expiry": None, "mode_ok": True}
+                 "age_days": None, "days_to_expiry": None, "mode_ok": True, "pools": {}}
     if not p.is_file():
         return out
     try:
@@ -155,10 +156,11 @@ def credit(path: Path | None = None, today: date | None = None) -> dict:
         out["state"] = "invalid"
         return out
     out["prepaid_usd"], out["promo_usd"] = _num(doc.get("prepaid_usd")), _num(doc.get("promo_usd"))
+    out["pools"] = doc["pools"] if isinstance(doc.get("pools"), dict) else {}
     expires, updated = _date(doc.get("promo_expires")), _date(doc.get("updated"))
     out["promo_expires"] = expires.isoformat() if expires else None
     out["updated"] = updated.isoformat() if updated else None
-    if out["prepaid_usd"] is None and out["promo_usd"] is None and expires is None:
+    if out["prepaid_usd"] is None and out["promo_usd"] is None and expires is None and not out["pools"]:
         out["state"] = "invalid"
         return out
     if expires:
@@ -220,7 +222,11 @@ def alerts_for(snap: dict) -> list[Alert]:
             out.append(Alert("credit_stale", "info", "credits.json is stale"
                              + (f" (updated {age} day(s) ago)" if age is not None else " (no `updated` date)")
                              + "; refresh it to keep the credit alerts accurate."))
-    elif c.get("state") == "invalid":
+    if c.get("state") in ("known", "stale") and c.get("pools"):
+        from . import credits
+        for code, severity, message in credits.alerts_from({p: v for p, v in c["pools"].items() if p in credits.POOLS}):
+            out.append(Alert(code, severity, message))
+    if c.get("state") == "invalid":
         out.append(Alert("credit_invalid", "info", "credits.json is not in the documented shape; credit is unknown."))
     if c.get("state") != UNKNOWN and not c.get("mode_ok", True):
         out.append(Alert("credit_mode", "info", "credits.json should be mode 0600."))
@@ -251,7 +257,11 @@ def summary_lines(snap: dict | None = None) -> list[str]:
             parts.append(f"prepaid ${c['prepaid_usd']:.2f}")
         if c.get("promo_usd") is not None:
             parts.append(f"promo ${c['promo_usd']:.2f}" + (f" until {c['promo_expires']}" if c.get("promo_expires") else ""))
-        lines.append("credit: " + ", ".join(parts) + (" (stale)" if c["state"] == "stale" else ""))
+        if parts:
+            lines.append("credit: " + ", ".join(parts) + (" (stale)" if c["state"] == "stale" else ""))
+        if c.get("pools"):
+            from . import credits
+            lines.extend("credit " + ln for ln in credits.lines())
     else:
         lines.append("credit: unknown (no ~/.config/ai-resources/credits.json)" if c.get("state") == UNKNOWN
                      else "credit: unknown (credits.json is not in the documented shape)")

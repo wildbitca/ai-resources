@@ -96,6 +96,29 @@ def lanes_findings(s: state.SetupState) -> list[Finding]:
     return out
 
 
+def credit_findings() -> list[Finding]:
+    """The credit ledger's 80% alert as warnings (read-only, no network): a pool that has spent 80% of the credit the
+    operator declared is a warning about money, not a defect of the install."""
+    try:
+        from . import credits
+        return [Finding("warn", "credits", message, "`ai-resources credits show`") for _c, _s, message in credits.alerts()]
+    except Exception:  # noqa: BLE001 - bookkeeping must not take verify down
+        return []
+
+
+def key_findings() -> list[Finding]:
+    """`verify --live`: the Gemini and Anthropic keys (gateway env and OpenClaw profile), probed with a free models.list
+    call and never repaired here. A rejected key is an error; no answer from the provider is not a finding."""
+    try:
+        from . import key_check
+        results = key_check.check(fix=False)
+    except Exception:  # noqa: BLE001
+        return []
+    return [Finding("error" if r.problem else "ok", "keys", "live: " + r.line(),
+                    "`ai-resources keys` repairs a rejected env key from the working profile key" if r.problem else "")
+            for r in results if key_check.ERROR not in (r.env, r.profile)]
+
+
 def live_findings(s: state.SetupState) -> list[Finding]:
     """`verify --live`: the RUNNING system against what setup claims (gateway health, the plugin the gateway runs,
     hooks, lane agents, MCP children, the off-box credential). Needs OpenClaw; one `error` finding when its check
@@ -226,8 +249,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if not args.cockpit and state.lanes_enabled(s):
         ids.append("lanes")
     findings = run_all(s, ids)
+    findings += credit_findings()
     if getattr(args, "live", False):
         findings += live_findings(s)
+        findings += key_findings()
     if args.json:
         for f in ordered(findings):
             print(json.dumps(asdict(f), ensure_ascii=False))

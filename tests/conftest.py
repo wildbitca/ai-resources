@@ -388,7 +388,13 @@ def _isolate_home_derived_paths(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(billing, "credits_path", lambda: root / "config" / "ai-resources" / "credits.json")
     monkeypatch.setattr(billing, "sidecar_path", lambda: root / "cache" / "claude-rate-limits.json")
     monkeypatch.setattr(billing, "sidecar_candidates", lambda: [root / "cache" / "claude-rate-limits.json"])
-    from ai_resources import audit_snapshot
+    from ai_resources import audit_snapshot, credits, key_check
+    # The credit collector and the key check read OpenClaw's agents, Claude's transcripts, the gateway env file and the
+    # state store, and the key check calls two providers: scratch paths, and no network, in every test.
+    monkeypatch.setattr(credits, "agents_dir", lambda: root / "home" / ".openclaw" / "agents")
+    monkeypatch.setattr(credits, "claude_project_roots", lambda: [])
+    monkeypatch.setattr(key_check, "openclaw_dir", lambda: root / "home" / ".openclaw")
+    monkeypatch.setattr(key_check, "_default_http", lambda url, headers: 0)
     monkeypatch.setattr(audit_snapshot, "openclaw_json_path", lambda home=None: (home or root / "home") / ".openclaw" / "openclaw.json")
 
 

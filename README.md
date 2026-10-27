@@ -283,7 +283,7 @@ Project scaffolding templates:
 | Measure before and after | `ai-resources audit snapshot before`, `ai-resources setup`, `ai-resources audit snapshot after`, `ai-resources audit compare before after` (API-equivalent estimates; no saving is claimed without it) |
 | Cost report, machine-readable | `ai-resources audit --json` (add `--billing-only` to read no transcript); the text report also prints the global CLAUDE.md weight (`~N tokens (estimate)`) and the share of Haiku calls above 100k |
 | Billing, quota, credit | `ai-resources doctor` and `audit` show the auth mode (subscription or prepaid), the 5 h and weekly quota, and warn when prepaid, weekly >= 100%, or 5 h >= 90% |
-| Credit left | a manual file `~/.config/ai-resources/credits.json`, mode 0600, no secrets: `{"prepaid_usd": 12.5, "promo_usd": 5, "promo_expires": "2026-12-01", "updated": "2026-10-22"}`. Absent means "unknown", older than 7 days means "stale". Alerts: promo expiring within 7 days, balance below `AI_RESOURCES_CREDIT_LOW_USD` (default 10) |
+| Credit left | a manual file `~/.config/ai-resources/credits.json`, mode 0600, no secrets: `{"prepaid_usd": 12.5, "promo_usd": 5, "promo_expires": "2026-12-01", "updated": "2026-10-22"}`. Absent means "unknown", older than 7 days means "stale". `ai-resources credits collect` (run by doctor and the daily verify timer) adds a `pools` ledger: per prepaid API pool the declared opening credit (`ai-resources credits set <pool> <usd>`), the spend measured from OpenClaw transcripts (list-price estimate) and the remaining; a pool at 80% of its declared credit alerts in doctor, verify and the timer. Alerts: promo expiring within 7 days, balance below `AI_RESOURCES_CREDIT_LOW_USD` (default 10) |
 | Poll turns | the sleep guard hook, and an alert when poll turns exceed 5% of the cost (`AI_RESOURCES_POLL_SHARE_ALERT` overrides) |
 | Unused tools | setup offers, one by one and default No, to disable user-level MCP servers and plugins with no call in 30 days; `ai-resources setup --restore-hygiene` puts them back |
 | Global CLAUDE.md | setup offers to move heavy blocks of your own content to a skill or a rule, verbatim, with a backup; `ai-resources setup --restore-claude-md` re-inlines them (refuses if you edited the destination) |
@@ -291,7 +291,7 @@ Project scaffolding templates:
 | agy MCP file | setup can add `engram` and servers you pick to `~/.gemini/config/mcp_config.json`, fill-only with a backup; `ai-resources setup --restore-agy-mcp` takes them back |
 | OpenClaw | confirmed migrations for the workboard plugin and the main heartbeat (restart-class keys wait for `ai-resources openclaw apply-pending`), an opt-in utility-model probe, and a Haiku route for Slack notification channels |
 
-Not kit-controllable, so documented and never written: OpenClaw completion announcements (only `announceTimeoutMs`, a timeout, exists), the engram SessionStart payload and its server-side `mem_judge`, the remaining prepaid credit (use `credits.json`), and hooks inside OpenClaw `claude-cli` children.
+Not kit-controllable, so documented and never written: OpenClaw completion announcements (only `announceTimeoutMs`, a timeout, exists), the engram SessionStart payload and its server-side `mem_judge`, the remaining prepaid credit (no provider exposes a balance API; the `credits.json` ledger keeps declared minus measured spend), and hooks inside OpenClaw `claude-cli` children.
 
 ## Shared-token MCP servers
 

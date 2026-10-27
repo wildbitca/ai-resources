@@ -6,7 +6,7 @@ import sys
 
 from . import __version__
 from .generate import cmd_generate
-from . import daemon, doctor, executors_cmd, audit, models_cmd, openclaw_host, shared_mcp, verify, lanes_cmd, run_ledger
+from . import credits, key_check, daemon, doctor, executors_cmd, audit, models_cmd, openclaw_host, shared_mcp, verify, lanes_cmd, run_ledger
 from .setup import flow, wizard
 from .orchestrator import cli as orchestrator_cli
 
@@ -232,6 +232,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Show the proposed lane table and write nothing")
     p_st.add_argument("--lanes-orchestrator", dest="lanes_orchestrator", action="append", default=[], metavar="ID",
                       help="Agent id that receives the lane ids in subagents.allowAgents (repeatable)")
+    p_st.add_argument("--credit-anthropic-usd", dest="credit_anthropic_usd", type=float, default=None, metavar="USD",
+                      help="Opening credit of the Anthropic API pool, recorded once (also AI_RESOURCES_CREDIT_ANTHROPIC_USD)")
+    p_st.add_argument("--credit-gemini-usd", dest="credit_gemini_usd", type=float, default=None, metavar="USD",
+                      help="Opening credit of the Gemini API pool, recorded once (also AI_RESOURCES_CREDIT_GEMINI_USD)")
     p_st.add_argument("--restore-hygiene", dest="restore_hygiene", action="store_true",
                       help="Put back every MCP server and plugin the hygiene step disabled, then exit")
     p_st.add_argument("--restore-claude-md", dest="restore_claude_md", action="store_true",
@@ -250,6 +254,8 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_subparser(sub)
     executors_cmd.add_subparser(sub)
     audit.add_subparser(sub)
+    credits.add_subparser(sub)
+    key_check.add_subparser(sub)
     openclaw_host.add_subparser(sub)
     models_cmd.add_subparser(sub)
     lanes_cmd.add_subparser(sub)

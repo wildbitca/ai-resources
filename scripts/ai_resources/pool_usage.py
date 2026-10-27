@@ -1,6 +1,7 @@
 """Live per-pool usage for the four pools the routing matrix balances (ADR-0018). Read-only and tolerant.
 
-Max subscription and AI Pro quota come from the readers `scoring.headroom_sources` already owns (status-line sidecar,
+The credit ledger `~/.config/ai-resources/credits.json` (credits.py: declared minus measured) wins when it holds a
+declared amount for the pool. Max subscription and AI Pro quota come from the readers `scoring.headroom_sources` already owns (status-line sidecar,
 quota block, kit counters). The two credit pools need a spend feed: `~/.cache/ai-resources/api-spend.json`, shape
 `{"anthropic-api": {"used_usd": 12.3}, "gemini-api": {"used_usd": 1.2}}`, with the credit total from
 `ANTHROPIC_API_CREDITS_USD` / `GOOGLE_API_CREDITS_USD` (ADR-0017 defaults 200 and 10). Without a feed the pool reads
@@ -31,6 +32,17 @@ def spend_path(home: str | Path | None = None) -> Path:
     return (Path(home) if home else Path.home()) / ".cache" / "ai-resources" / "api-spend.json"
 
 
+def _ledger_entry(pool: str) -> "dict[str, float] | None":
+    """The declared credit and measured spend of the credit ledger (credits.py), when both are there."""
+    try:
+        from . import credits
+        e = credits.pool_summary().get(pool) or {}
+        declared, used = credits._usd(e.get("declared_usd")), credits._usd(e.get("measured_usd"))
+    except Exception:  # noqa: BLE001 - a reader must never break the caller
+        return None
+    return {"declared_usd": declared, "measured_usd": used} if declared is not None and used is not None else None
+
+
 def _credit(pool: str, env: Mapping[str, str], home: str | Path | None) -> dict[str, Any]:
     name, default = CREDIT_ENV[pool]
     try:
@@ -39,6 +51,12 @@ def _credit(pool: str, env: Mapping[str, str], home: str | Path | None) -> dict[
         total = default
     out: dict[str, Any] = {"used_fraction": None, "detail": f"credit ${total:,.2f}", "source": "none",
                            "total_usd": total}
+    ledger = _ledger_entry(pool)
+    if ledger is not None:
+        declared, used = ledger["declared_usd"], ledger["measured_usd"]
+        out.update(used_fraction=min(max(used / declared, 0.0), 1.0) if declared > 0 else None, source="credits.json",
+                   total_usd=declared, detail=f"${used:,.2f} of ${declared:,.2f} (measured, estimate)")
+        return out
     if total <= 0:
         out["detail"] = "no credit configured (0)"
         return out

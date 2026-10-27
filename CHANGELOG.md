@@ -24,6 +24,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 - feat(openclaw): MemoryHigh is sized to the host (55 % of RAM, 12G..24G; `OPENCLAW_MEMORY_HIGH` overrides) instead of a fixed 12G.
 - feat(hooks): `kit_sleep_guard` also refuses sleeps that add up above 30 s in one command and `while`/`until` wait loops; the OpenClaw AGENTS.md polling rules say one blocking wait per job (`awaitResults`).
 - feat(setup): `--dry-run` shows the hooks to register, the off-box credential, MemoryHigh and the owed restart.
+- feat(credits): credit ledger in `~/.config/ai-resources/credits.json` (0600, atomic): per prepaid pool (`anthropic-api`, `gemini-api`) the declared opening credit and date (recorded once by setup from `--credit-anthropic-usd` / `--credit-gemini-usd`, `AI_RESOURCES_CREDIT_ANTHROPIC_USD` / `_GEMINI_USD` or the amount already in the file; the recommended run never asks and leaves `declared: unknown`; `ai-resources credits set <pool> <usd>`), the measured spend (OpenClaw per-agent transcripts for provider `anthropic` / `google`, priced with the audit's list prices, an estimate) and `remaining = declared - measured`. The Max pool is tokens only, no USD. Neither provider exposes a balance API; the ledger says so. `ai-resources credits [show|collect|set]`; doctor refreshes it; the daily verify timer runs `credits collect --check`; an 80 % alert reaches `doctor`, `verify` and the verify timer.
+- feat(keys): `ai-resources keys` and doctor sub-check 4k probe the Gemini and Anthropic keys in `gateway.systemd.env` AND in the OpenClaw auth profile with one free `models.list` call each and report `gemini key: env ok / profile ok / mismatch fixed`, never a value. A rejected env key beside a working profile key is rewritten from the profile (backup first, 0600, atomic); the restart that applies it is the existing drained reconcile, which now also owes a restart whenever `gateway.systemd.env` is newer than the running gateway (`env-changed`). `verify --live` reports a rejected key.
+- fix(setup): `gateway.systemd.env` is not rewritten (mtime kept) when its content is unchanged.
+- test: the stale-plugin doctor tests ignore the new pool-usage lines; the sizing golden no longer depends on the CPython wording of a `TypeError`; the setup-idempotence run allows the read-only live probes; the recommended-run Google acknowledgement test follows ADR-0018.
 - chore: remove unused `locate_reload_plan_dist`, `utc_iso`, `apply_defaults`.
 
 ### Removed
@@ -33,7 +37,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 ### Operator notes
 
 - Run `ai-resources setup` yourself after `brew upgrade`; it performs one drained restart for the stale plugin code and the MCP-children overflow.
-- `GEMINI_API_KEY` in `gateway.systemd.env` is rejected by Google (HTTP 401); the `google:default` profile key works. Replace the env value with the profile key.
+- `GEMINI_API_KEY` in `gateway.systemd.env` was rejected by Google (HTTP 401) while the `google:default` profile key works: `ai-resources keys` (also doctor and setup) rewrites the env entry from the profile key, keeping a backup, and the next idle `ai-resources openclaw reconcile` restarts the gateway to load it.
+- Declare the opening credit once per pool: `ai-resources credits set anthropic-api <usd>` and `... gemini-api <usd>`; until then the ledger shows `declared: unknown` and measured spend only.
 
 ## [3.0.0] — 2026-10-27 — delegation has to pay for itself, inter-agent text is untrusted, the ledger does not move
 

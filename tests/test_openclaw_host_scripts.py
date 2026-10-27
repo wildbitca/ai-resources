@@ -113,6 +113,7 @@ case "{name} $1 $2" in
   "loginctl show-user"*) echo yes; exit 0 ;;
   "openclaw health "*) exit "$(cat "{self.bin}/health-rc" 2>/dev/null || echo 0)" ;;
   "ai-resources models"*) cat "{self.bin}/models-out" 2>/dev/null; exit "$(cat "{self.bin}/models-rc" 2>/dev/null || echo 0)" ;;
+  "ai-resources credits"*) cat "{self.bin}/credits-out" 2>/dev/null; exit "$(cat "{self.bin}/credits-rc" 2>/dev/null || echo 0)" ;;
   "ai-resources openclaw busy"*) exit "$(cat "{self.bin}/busy-rc" 2>/dev/null || echo 0)" ;;
   "ai-resources openclaw pressure") cat "{self.bin}/pressure-out" 2>/dev/null; exit 0 ;;
   "ai-resources openclaw graceful-restart") cat "{self.bin}/graceful-out" 2>/dev/null; exit "$(cat "{self.bin}/graceful-rc" 2>/dev/null || echo 0)" ;;
@@ -448,6 +449,20 @@ def test_verify_with_every_optional_check_off_runs_only_the_generic_ones(host):
     for absent in ("OTLP", "tool_input", "flux", "http"):
         assert absent not in r.stdout
     assert not any(c.startswith(("kubectl", "flux", "curl")) for c in host.calls())
+
+
+def test_verify_refreshes_the_credit_ledger_and_fails_on_an_80_percent_alert(host):
+    host.fresh_backup()
+    host.settings(['python3 "/k/hooks/kit_handoff_guard.py"'])
+    ok = host.run("openclaw-verify.sh")
+    assert ok.returncode == 0 and "credit ledger" in ok.stdout and "no pool at 80%" in ok.stdout
+    assert any(c.startswith("ai-resources credits collect --check") for c in host.calls())
+    (host.bin / "credits-rc").write_text("3")
+    (host.bin / "credits-out").write_text("ALERT anthropic-api: 85% of the declared $100.00 credit is spent\n")
+    bad = host.run("openclaw-verify.sh")
+    assert bad.returncode == 1 and "[FAIL] credit ledger" in bad.stdout and "anthropic-api: 85%" in bad.stdout
+    (host.bin / "credits-rc").write_text("1")
+    assert "collector failed (exit 1)" in host.run("openclaw-verify.sh").stdout
 
 
 def test_verify_expects_the_hooks_the_host_env_says_are_enabled(host):

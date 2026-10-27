@@ -151,6 +151,11 @@ def sync_openclaw_systemd_env(
 
     if dry_run:
         return env_path
+    try:
+        if env_path.read_text(encoding="utf-8") == content:
+            return env_path        # unchanged: do not touch the mtime, a newer file than the gateway owes it a restart
+    except OSError:
+        pass
 
     fd, tmp = tempfile.mkstemp(prefix=".gateway.systemd.env.", suffix=".tmp", dir=env_path.parent)
     try:

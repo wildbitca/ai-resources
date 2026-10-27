@@ -6,7 +6,9 @@ them:
 * it runs older kit plugin code than the kit on disk (`stale_reason`: path, version or time);
 * its cgroup holds more MCP server children than `MCP_CHILD_WARN` (per-session engram / supabase stacks that
   nothing evicted: 216 against a threshold of 24 on the 2026-10-27 host);
-* a restart-required plugin version is recorded as pending.
+* a restart-required plugin version is recorded as pending;
+* the caller passes `extra_reasons` for a change only a restart applies (a key rewritten in gateway.systemd.env by
+  `key_check`).
 
 `reconcile` is used by `ai-resources setup`, by `ai-resources openclaw reconcile` and, read-only, by
 `verify --live`. It never restarts on its own initiative: it asks `openclaw_host.drained_window` (restart lock,
@@ -36,7 +38,7 @@ RECONCILE_COMMAND = "ai-resources openclaw reconcile"
 
 
 class Reason(NamedTuple):
-    kind: str          # "plugin-stale" | "mcp-overflow"
+    kind: str          # "plugin-stale" | "mcp-overflow" | "env-changed"
     text: str
 
 
@@ -120,7 +122,8 @@ def reconcile(runner: Runner, *, plugin_dir: str, stale_reason: Callable[..., "s
               dry_run: bool = False, drained: "Callable[..., int] | None" = None,
               cgroup_root: Path | None = None, proc_root: Path | None = None,
               self_cgroup_path: "Path | str | None" = None, sleep: Callable[[float], None] = time.sleep,
-              out: "Callable[[str], None] | None" = None, **window: object) -> Outcome:
+              out: "Callable[[str], None] | None" = None, extra_reasons: "list[Reason] | None" = None,
+              check_env: bool = False, **window: object) -> Outcome:
     """Decide, and when something is owed do ONE drained restart. Idempotent: a clean gateway is a no-op.
 
     The window refuses (never forces) when a maintenance window is open, another restart holds the lock, agent
@@ -136,6 +139,12 @@ def reconcile(runner: Runner, *, plugin_dir: str, stale_reason: Callable[..., "s
 
     reasons = restart_reasons(plugin_dir=plugin_dir, stale_reason=stale_reason,
                               mcp_counts=gateway_mcp_children(runner, cgroup_root=cgroup_root, proc_root=proc_root))
+    if check_env:
+        from . import key_check
+        why = key_check.env_newer_than_gateway(host.gateway_started_at())
+        if why:
+            reasons.append(Reason("env-changed", why))
+    reasons += list(extra_reasons or [])      # e.g. "env-changed": a rewritten gateway.systemd.env is read at start
     if not reasons:
         return Outcome(0, [], False, False, lines)
     for r in reasons:

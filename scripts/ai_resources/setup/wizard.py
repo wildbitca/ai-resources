@@ -111,6 +111,7 @@ _PRESET = ""
 # not ask for and never mentioned it.
 _REQUESTED_PROFILE = ""
 _ASSUME_YES = False          # `setup --yes`: the explicit yes to the tool-install offer (kit 2.2, E1)
+_CREDIT_FLAGS: dict = {}     # `setup --credit-anthropic-usd / --credit-gemini-usd`: the opening credit per pool
 _DRY_RUN = False             # `setup --dry-run`: no installer is offered or run (kit 2.2c, 3b)
 # `setup --compose ...` (ADR-0006): the composition flags of this run; empty values mean "not given".
 _COMPOSE: dict[str, Any] = {}
@@ -140,7 +141,9 @@ def run(args: argparse.Namespace) -> int:
     """Main wizard entry point: the whole run holds the setup-state lock (load -> modify -> save), so a second
     `setup`, an `apply-pending` or a teardown cannot overwrite what this one records. A dry run writes nothing
     and takes no lock."""
-    global _ASSUME_YES, _DRY_RUN, _COMPOSE
+    global _ASSUME_YES, _DRY_RUN, _COMPOSE, _CREDIT_FLAGS
+    _CREDIT_FLAGS = {pool: v for pool, v in (("anthropic-api", getattr(args, "credit_anthropic_usd", None)),
+                                             ("gemini-api", getattr(args, "credit_gemini_usd", None))) if v is not None}
     _ASSUME_YES = bool(getattr(args, "yes", False))
     ui.set_assume_yes(_ASSUME_YES)
     _DRY_RUN = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
@@ -2275,6 +2278,41 @@ def _operator_rules_targets(s: state.SetupState) -> str:
     return ", ".join(names)
 
 
+def _credits_and_keys(s: state.SetupState) -> None:
+    """Apply-time bookkeeping about money, safe to repeat and silent when there is nothing to say (no wizard screen).
+
+    Credit ledger (credits.py): the opening credit of each prepaid API pool is recorded ONCE (flag, then env var, then the
+    amount already in credits.json; the recommended run never asks and leaves `declared: unknown`; `--ask` asks), then
+    the measured spend is collected. Key check (key_check.py): the gateway-env key and the OpenClaw profile key of Gemini
+    and Anthropic are probed with a free models.list call and a rejected env key is rewritten from the working profile
+    key; the restart that applies it is the drained reconcile the OpenClaw step runs at its end."""
+    from .. import credits, key_check
+
+    def ask(pool: str):
+        raw = ui.text(f"Opening credit of the {pool} pool in USD (blank: unknown)", default="")
+        try:
+            return float(raw) if (raw or "").strip() else None
+        except ValueError:
+            return None
+
+    try:
+        auto = ui.is_auto() or ui.is_non_interactive() or not ui.stdin_is_a_terminal()
+        for pool, what in credits.record_opening(flags=_CREDIT_FLAGS, auto=auto, ask=None if auto else ask).items():
+            if what.startswith("declared $"):
+                ui.ok(f"credit {pool}: {what}")
+        credits.collect()
+    except Exception as e:  # noqa: BLE001 - bookkeeping never fails setup
+        ui.detail(f"Credit ledger not refreshed ({e.__class__.__name__}).")
+    try:
+        for r in key_check.check(fix=True):
+            if r.problem or r.fixed or (r.env, r.profile) == (key_check.OK, key_check.OK):
+                (ui.warn if r.problem else ui.ok)(r.line())
+            if r.backup:
+                ui.detail(f"Backup of the env file: {r.backup}")
+    except Exception as e:  # noqa: BLE001
+        ui.detail(f"Key check skipped ({e.__class__.__name__}).")
+
+
 def _step_operator_rules(s: state.SetupState, dry_run: bool = False) -> int:
     """One operator-rules file, rendered into every selected cockpit (ADR-0016 D4). With the file present the step is silent
     and only queues the refresh of the managed blocks; without it, the rules found in CLAUDE.md are shown and the file is
@@ -2921,6 +2959,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
         _section(9, "Apply")
     ui.console().print()
     _run_deferred(s)
+    _credits_and_keys(s)
     ui.info("Generating configuration files...")
 
     # Build the final executors dict
