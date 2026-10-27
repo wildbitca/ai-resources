@@ -10,20 +10,20 @@ from ai_resources.orchestrator import engine as eng
 from ai_resources.orchestrator import workflow_loader as wl
 from ai_resources.setup import role_render
 from ai_resources.setup.cockpits import openclaw_roles
-from orchestrator_fakes import Clock, Runner, dispatches
+from orchestrator_fakes import Clock, dispatches
 from ai_resources.orchestrator.state import RunStore
 
 NAMES = [w["file"].removesuffix(".workflow.yaml") for w in wl.list_workflows()]
 
 
 def test_every_workflow_file_is_listed():
-    assert len(NAMES) == 19 and "feature-lanes" in NAMES and "odd" not in NAMES
+    assert len(NAMES) == 18 and "feature-cross-provider" in NAMES and "odd" not in NAMES
 
 
 @pytest.mark.parametrize("name", NAMES)
 def test_the_workflow_loads_starts_and_hands_out_its_first_step(name, tmp_path):
     wf = wl.load(name)
-    e = eng.Engine(RunStore(tmp_path / "runs"), clock=Clock(), runner=Runner(tmp_path))
+    e = eng.Engine(RunStore(tmp_path / "runs"), clock=Clock(), claims_root=tmp_path / "claims")
     run = e.start(wf, "a goal", "/work/repo", run_id="t1")
     assert run["status"] == "running" and run["failure"] == ""
     res = e.next("t1")
@@ -53,8 +53,6 @@ def test_the_read_only_groups_of_the_shipped_workflows_run_in_parallel_and_the_r
     assert [(g[0].id, len(g)) for g in feature.groups() if len(g) > 1] == [("review", 2)]
     infra = wl.load("infra-triage")
     assert all(s.group == "" for s in infra.steps) and infra.notes
-    lanes = wl.load("feature-lanes")
-    assert [(g[0].id, len(g)) for g in lanes.groups() if len(g) > 1] == []
 
 
 def test_the_first_writer_gate_of_each_workflow_is_never_a_read_only_step():
@@ -76,9 +74,9 @@ def test_workflows_run_by_other_writing_roles_are_gated(name):
 
 def test_workflow_parameters_are_filled_from_params_or_point_at_the_goal(tmp_path):
     wf = wl.load("ci-debug")
-    e = eng.Engine(RunStore(tmp_path / "runs"), clock=Clock(), runner=Runner(tmp_path))
+    e = eng.Engine(RunStore(tmp_path / "runs"), clock=Clock(), claims_root=tmp_path / "claims")
     e.start(wf, "why is CI red", "/work/repo", run_id="p1", params={"ci_run_url": "https://ci.example/run/7"})
     prompt = dispatches(e.next("p1"))[0]["prompt"]
     assert "https://ci.example/run/7" in prompt and "{{ci_run_url}}" not in prompt
-    e.start(wf, "why is CI red", "/work/repo", run_id="p2")
+    e.start(wf, "why is CI red", "/work/other", run_id="p2")
     assert "<ci_run_url: see the goal>" in dispatches(e.next("p2"))[0]["prompt"]

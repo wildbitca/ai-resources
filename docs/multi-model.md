@@ -393,7 +393,7 @@ runs (off by default). Ticking Antigravity on "Your tools" is the interactive op
 the Claude parallel runs on.
 
 A lane is a place a role can run: Claude Code, or an OpenClaw agent (`kit-lane-*`) on the Claude CLI backend, so a
-role can use the Claude subscription login in its own process with its own worktree. Lanes are a separate pass
+role can use the Claude subscription login in its own process. Lanes are a separate pass
 after the model choice (ADR-0007): they never change which model a role uses, only where it runs. They are
 **disabled on a fresh install** and without a flag; a claude-cli lane draws on the same Claude subscription pool, so
 it buys isolation and parallelism, not quota.
@@ -409,11 +409,8 @@ ai-resources setup --no-lanes                            # clear lanes.yaml and 
   and their ids in `subagents.allowAgents` of the named orchestrators. Setup never spawns a session.
 - **No acknowledgement.** The Anthropic and Google acknowledgements were removed (ADR-0019): `--lanes` asks for the
   orchestrator ids only. `--allow-unverified` implies nothing.
-- **Kit-only landing path.** `ai-resources lanes prepare | verify | integrate | land | count` is the only way a lane
-  writer's work reaches the run tree; each lane writer works in its own per-attempt worktree and no agent merges or
-  lands. The procedure is in `skills/kit-orchestration/references/backends-and-lanes.md` ("Lane steps").
 - **Checker independence.** The verifier and security auditor never run a model family that a writer in the run
-  uses; resolution refuses it and `lanes prepare` re-checks it at dispatch.
+  uses; the resolver blocks a checker with no independent rung (`ai-resources route`) and the engine re-checks it per run.
 - **Drift.** When a role's model changes (`models update`, an alias moving) the lane agent is marked `stale`, the
   lanes pass refuses it, and `status`, `verify` and `models update` print a warning; re-run `setup --lanes`.
 - **Profile.** `balanced` (successor of the legacy preset `subscription-claude-55`, which keeps its own Claude-only team) declares a lane table; compose never emits a lane.
@@ -431,17 +428,10 @@ the matrix says:
 - **Egress.** Repository content, diffs, test output and MCP results of every role on an agy cell go to Google.
 - **Placement follows the matrix and live pool usage.** `lanes.yaml` carries the routing matrix only (role -> primary
   -> fallback chain, ADR-0019); a pool at or above 85% hands its work to the role's fallback. There are no static weights.
-- **Best model first.** A candidate on the role's exact model (tier 1) beats a same-family other version (tier 2);
-  tier 2 serves a writer only when no tier-1 candidate is admissible and is never taken by a checker. A candidate
-  listed in the profile's `lanes.pins.<role>` ranks first for that non-checker role only. `effective_ids` come from
-  `model_pins.effective()` and can lag Claude Code's own alias resolution.
 - **Shared `~/.gemini` or a kit-owned agy home** (`~/.local/share/ai-resources/agy-home/`, never created by setup
   until V12 is proven): see the runbook.
-- **Cost and breaker.** About 50k tokens per step. A per-pool circuit breaker, fed only by `lanes verify
-  --spawn-error <file>` (what the orchestrator witnessed, never the child's report), refuses further lanes on an
-  exhausted pool for the rest of the run. There are no pool caps by default, and never on checkers.
-- **Symmetric controls.** The extended tripwire list, the `crontab -l` and user-timer snapshots, bootstrap files and
-  the run-pinned `lanes.yaml` hash apply to every lane.
+- **Write scope.** Teams share the checkout. A run claims the paths it writes (`scope_guard`, `--param write_scope=`), an overlapping claim by another live run waits queued, and out-of-scope paths of a finished step are logged. Agy and Claude are treated alike.
+
 
 Operations: [openclaw runbook](openclaw/runbook.md#subscription-lanes). Team rules:
 [team-composition.md](team-composition.md#lanes-pass).

@@ -1,79 +1,24 @@
-"""Role policy shared by the lanes pass, the lane kit commands and `scripts/validate_kit.py` (ADR-0007).
+"""Role sets, the model-family normaliser and the write-scope helpers (ADR-0007, ADR-0019).
 
-Pure data and pure helpers: no I/O, no imports from the rest of the package, so the standalone
-validator can load it without the scoring or setup code.
-
-The table says what a role MAY do on a lane, never where it runs. There is no backend column: lanes
-are peers and a role is ineligible only where a mechanism (a write contract) is missing.
+Pure data and pure helpers: no I/O, no imports from the rest of the package, so the standalone validator can load it
+without the scoring or setup code. The sets say what a role MAY do, never where it runs: the routing matrix decides that.
 """
 from __future__ import annotations
 
 import re
 from typing import Iterable
 
-REPORT = "report"
-SCOPE = "scope"
-INTEGRATING = "integrating"
-CONTRACTS = (REPORT, SCOPE, INTEGRATING)
-
-# Roles that only read the run tree and write their step-scoped report.
+# Roles that only read the tree and write their step-scoped report (a role property, not a backend restriction).
 REPORT_ROLES = frozenset({"explore", "planner", "software-architect", "code-reviewer",
                           "security-auditor", "verifier"})
-# Writer roles that may take a `write_scope` (own worktree, declared disjoint scope).
+# Writer roles besides the implementer: a run that has one claims a write scope (`scope_guard`).
 SCOPE_ROLES = frozenset({"tester", "doc-writer", "generalPurpose", "package-upgrade",
                          "crashlytics-fixer", "sentry-fixer", "terraform-maintainer",
                          "crossplane-upjet-maintainer"})
-DEFAULT_INTEGRATING_WRITER = "implementer"
+# Roles that may run on an explicit `openclaw-agent` step with a warning (they run commands or write files).
+WARNED_ROLES = frozenset({"tester", "doc-writer"})
 # Checker roles: independent of every writer by model family (ADR-0007 section 8).
 CHECKER_ROLES = frozenset({"verifier", "security-auditor"})
-
-# Which write contracts a role may hold on a lane step. A role absent from this table is ineligible
-# (there is no contract to enforce).
-LANE_ELIGIBILITY: dict[str, tuple[str, ...]] = {
-    **{role: (REPORT,) for role in REPORT_ROLES},
-    "tester": (REPORT, SCOPE),
-    "doc-writer": (REPORT, SCOPE),
-    "package-upgrade": (REPORT, SCOPE, INTEGRATING),
-    "generalPurpose": (REPORT, SCOPE, INTEGRATING),
-    "crashlytics-fixer": (REPORT, SCOPE, INTEGRATING),
-    "sentry-fixer": (REPORT, SCOPE, INTEGRATING),
-    "terraform-maintainer": (REPORT, SCOPE, INTEGRATING),
-    "crossplane-upjet-maintainer": (REPORT, SCOPE, INTEGRATING),
-    DEFAULT_INTEGRATING_WRITER: (REPORT, INTEGRATING),
-}
-
-# Explicit `openclaw-agent` steps (ADR-0005): the sets validate_kit used to hold literally.
-EXPLICIT_READ_ONLY_ROLES = REPORT_ROLES
-EXPLICIT_WARNED_ROLES = frozenset({"tester", "doc-writer"})
-
-# Repo-relative paths no lane contract may write. The handoff file and other steps' `.agent-output/`
-# files are run-specific and added by the kit command.
-LANE_WRITE_FORBIDDEN = (".git", ".gitmodules", ".gitattributes", ".githooks/", ".claude/",
-                        ".cursor/", ".openclaw/")
-# A `write_scope` may additionally never sit in `.agent-output/` (step reports are allowed on their own).
-SCOPE_FORBIDDEN = LANE_WRITE_FORBIDDEN + (".agent-output/", "handoff.md")
-# Host files whose change fails a lane step's verify, on every lane (symmetric, ADR-0007 section 11). The
-# first row is the phase 2 set; the second row is the persistence channels into the operator's other agents.
-TRIPWIRE_PATHS = ("~/.openclaw/openclaw.json", "~/.claude/settings.json", "~/.claude/hooks/",
-                  "~/.config/ai-resources/", "~/.bashrc", "~/.bash_profile", "~/.profile",
-                  "~/.zshrc", "~/.zprofile", "~/.zshenv",
-                  "~/.claude/CLAUDE.md", "~/.claude/agents/", "~/.claude/skills/", "~/.agents/",
-                  "~/.gitconfig", "~/.config/git/", "~/.ssh/", "~/.config/systemd/user/")
-# Tripwires hashed by metadata (name, size, mtime, link target) instead of content: a directory of binaries.
-TRIPWIRE_STAT_PATHS = ("~/.local/bin/",)
-# The OpenClaw automation/cron store is located by the isolated harness (P3-S0) and recorded as evidence. Until
-# then it is None and no path is guessed: a wrong path would only add false failures.
-OPENCLAW_CRON_STORE_PATH: str | None = None
-# Exact tolerance list: changes here never fail a contract.
-TOLERANCE_LIST = ("IDENTITY.md", "SOUL.md", "USER.md", ".pytest_cache/", "__pycache__/")
-# OpenClaw bootstrap files: tolerated only while untracked (a commit adding one fails verify, both lanes).
-BOOTSTRAP_FILES = ("IDENTITY.md", "SOUL.md", "USER.md")
-# A commit message matching any of these is an assistant attribution (case-insensitive, multiline).
-ATTRIBUTION_PATTERNS = (
-    r"^\s*co-authored-by:",
-    r"^.*generated\s+(?:with|by)\b.*(?:claude|anthropic|gemini|antigravity|google|openclaw|codex|openai|agy)",
-    "\U0001F916",
-)
 
 _PROVIDER_PREFIXES = frozenset({"anthropic", "claude-cli", "claude-kit", "google", "vertex", "agy",
                                 "agy-cli", "agy-cli-lane", "antigravity", "openrouter"})
@@ -112,64 +57,6 @@ def model_family(ref: object) -> str | None:
         variants = [t for t in tokens[1:] if t in _GEMINI_VARIANTS]
         return f"gemini-{variants[0]}" if variants else None
     return None
-
-
-def role_of(name: str, roles: Iterable[str] | None = None) -> str | None:
-    """A role name, or the role a `<role>-<domain>` persona belongs to (longest prefix match)."""
-    known = set(roles) if roles is not None else set(LANE_ELIGIBILITY)
-    if name in known:
-        return name
-    best = [r for r in known if name.startswith(f"{r}-")]
-    return max(best, key=len) if best else None
-
-
-def lane_eligible(role: object) -> bool:
-    return isinstance(role, str) and role in LANE_ELIGIBILITY
-
-
-def contracts_for(role: object) -> tuple[str, ...]:
-    return LANE_ELIGIBILITY.get(role, ()) if isinstance(role, str) else ()
-
-
-def default_contract(role: str, *, has_scope: bool = False, integrating: bool = False) -> str:
-    """The contract a step runs under: integrating, scope (with a scope) or report."""
-    if integrating:
-        return INTEGRATING
-    if has_scope:
-        return SCOPE
-    return REPORT
-
-
-def scope_problems(path: object, forbidden: Iterable[str] = SCOPE_FORBIDDEN) -> list[str]:
-    """Why a `write_scope` entry is invalid; empty when it is acceptable."""
-    if not isinstance(path, str) or not path.strip():
-        return ["must be a non-empty string"]
-    if path != path.strip():
-        return ["has leading or trailing whitespace"]
-    problems: list[str] = []
-    if "\\" in path or "\x00" in path:
-        problems.append("contains a backslash or NUL")
-    if path.startswith("/") or path.startswith("~") or re.match(r"^[A-Za-z]:", path):
-        problems.append("must be relative to the repository")
-    if any(ch in path for ch in "*?[]{}"):
-        problems.append("must not contain a glob (only a trailing '/' marks a directory)")
-    body = path[:-1] if path.endswith("/") else path
-    parts = body.split("/") if body else []
-    if not parts or body in {".", ""}:
-        problems.append("must name a path below the repository root, not '.'")
-    if ".." in parts:
-        problems.append("must not contain '..'")
-    if any(p in ("", ".") for p in parts):
-        problems.append("is not normalised ('//' or '.' components)")
-    if problems:
-        return problems
-    comp = tuple(parts)
-    for f in forbidden:
-        fcomp = tuple(f.rstrip("/").split("/"))
-        if comp[: len(fcomp)] == fcomp or fcomp[: len(comp)] == comp:
-            problems.append(f"overlaps the forbidden path '{f}'")
-            break
-    return problems
 
 
 def scopes_overlap(a: str, b: str) -> bool:

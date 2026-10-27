@@ -85,7 +85,7 @@ def render_doc(lanes: Mapping[str, Any], mode: str) -> dict[str, Any]:
 
 
 def doc_digest(payload: Mapping[str, Any]) -> str:
-    """The digest of a `lanes.yaml` document: every key except `digest` itself (`lanes prepare` recomputes it)."""
+    """The digest of a `lanes.yaml` document: every key except `digest` itself."""
     body = {k: v for k, v in payload.items() if k != "digest"}
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -217,7 +217,5 @@ def routing_doc(s: "state.SetupState") -> dict[str, Any]:
 
 
 def lane_roles(profile_doc: Mapping[str, Any] | None = None) -> list[str]:
-    """The lane-eligible team roles of the matrix, sorted: the roles an acknowledgement lists."""
-    from .. import roles_policy
-    return sorted(r.name for r in scoring_routing.merged(profile_doc).values()
-                  if r.kind == "team" and roles_policy.lane_eligible(r.name))
+    """The team roles of the matrix, sorted."""
+    return sorted(r.name for r in scoring_routing.merged(profile_doc).values() if r.kind == "team")

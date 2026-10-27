@@ -340,7 +340,7 @@ work between roles in the handoff file, and delegate code to the `claude` worker
 A workflow step can also run its role on another OpenClaw agent with `backend: openclaw-agent` and an
 `agentId`; only an OpenClaw-run orchestrator that has `sessions_spawn` can dispatch it, and anywhere else the
 step is Blocked. See [ADR-0005](decisions/0005-cross-provider-role-dispatch.md) and the "Choosing a backend"
-section of `skills/kit-orchestration/references/backends-and-lanes.md` (loaded on demand by the `kit-orchestration` skill).
+section of `skills/kit-orchestration/references/backends.md` (loaded on demand by the `kit-orchestration` skill).
 
 Rules the writer keeps (decided for 1.9.7):
 
@@ -534,7 +534,7 @@ OpenClaw can run a kit workflow as a team without a Claude Code parent (ADR-0015
 | Runtime | The `ai-resources` OpenClaw plugin. `/equipo <goal>` and `/workflow run|status|approve|cancel|resume|cost` call the engine through `execFile` (an argv array, no shell), dispatch with `api.runtime.subagent.run({ deliver: true })` to the `kit-role-<role>` agent, wait with one blocking call per attempt raced by a per-role timer, and report back. |
 
 ```text
-start --workflow W --goal G      -> run registered (queued behind maxTeams, or running with its own worktree + branch)
+start --workflow W --goal G      -> run registered (queued behind maxTeams, or running in the workspace under its write-scope claim)
 next RUN                         -> actions: dispatch(role, agent, cwd, timeout, prompt) | ask(approval) | notice | wait | done | failed
 report RUN STEP --reply-file -   -> the role's reply (return block), or --timeout, or --error; returns the next actions
 approve | cancel | resume | status | cost
@@ -547,7 +547,7 @@ the 4th fails the run; a `READY` from any role but the verifier is rejected; the
 the models are known, in a different model family than every writer (fail closed), and in a different session where the
 runtime reports one; the plan is approved by the operator before the first step that writes; each role has a timeout
 (planner 1200 s, implementer 9000 s, tester 2700 s, verifier 1800 s, others 1800 s, configurable); at most `maxTeams` (2)
-teams work at once and the rest wait in a FIFO queue; every team has its own worktree and branch; one writer per run.
+teams work at once and the rest wait in a FIFO queue; teams share the checkout and a run that writes holds a write-scope claim (`--param write_scope=`), so overlapping teams queue instead of colliding.
 There is no spend cap: provider limits are the brake, and `orchestrate cost RUN` reports the API-equivalent estimate per role.
 
 State lives under `$XDG_STATE_HOME/ai-resources/runs/<run>/{state.json,handoff.md}` (atomic writes, one lock per run, never

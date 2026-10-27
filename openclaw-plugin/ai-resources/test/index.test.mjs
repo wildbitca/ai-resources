@@ -578,7 +578,7 @@ test("makeWorkflowCommandHandler list returns formatted table of workflows", asy
   assert.equal(res.continueAgent, false);
   assert.match(res.text, /### 📋 ai-resources: Available Workflows/);
   assert.match(res.text, /explore-and-plan/);
-  assert.match(res.text, /feature-lanes/);
+  assert.match(res.text, /feature-cross-provider/);
 });
 
 test("makeWorkflowCommandHandler info displays detailed pipeline for valid workflow", async () => {

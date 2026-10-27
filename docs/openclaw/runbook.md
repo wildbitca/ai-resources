@@ -191,22 +191,7 @@ id you added later stays), deletes the catalog entries the kit added (and the `m
 it), and, after confirmation, runs `openclaw agents delete <id> --force` for ids the kit created. It removes only
 workspaces recorded as created, only `kit-lane-*` directories that are real (not symlinks) and lie under the
 recorded workspace root, and refuses anything else with a message. An agent that existed before setup is never
-deleted. `--no-lanes --lanes-dry-run` changes nothing. Landed commits stay; un-landed lane branches and run ledgers
-under `$XDG_STATE_HOME/ai-resources/lanes/` are left for you.
-
-**Recovering a BLOCKED integration.** `lanes integrate` blocked the step because the scope branch conflicts with the
-integration branch. The merge was aborted inside the integration worktree and the run tree is untouched, so there
-is nothing to reset.
-
-1. Read the paths named in the Block and the step report.
-2. Do not merge or reset by hand. Discard the failed attempt's worktree with `openclaw worktrees remove <id>`
-   (`openclaw worktrees list` shows it) and start the integrating step again as a new attempt
-   (`lanes prepare --attempt <n+1> --lane <resolved lane>`): the integrating writer resolves the overlap in its own worktree.
-3. Run `lanes verify`, the Verifier step and `lanes land` with the `--expect` value the last command printed.
-4. If `land` says `base <sha> is not run HEAD <sha>`, the run tree moved: re-enter the step
-   (`lanes prepare --reenter --lane <resolved lane>`) so the integration branch is rebuilt from the current HEAD.
-5. After three failed attempts the step stops; the ledger under `$XDG_STATE_HOME/ai-resources/lanes/<run-id>/` is the
-   evidence.
+deleted. `--no-lanes --lanes-dry-run` changes nothing.
 
 ### Antigravity (agy) in the routing matrix (ADR-0019)
 
@@ -219,14 +204,8 @@ skipped with the recorded cause `agy-missing` (the role runs on its fallback); `
 **Prerequisites (operator-owned).** agy installed and logged in; `plugins.entries.ai-resources.config.agyBin` an
 absolute path (a relative or missing path skips the agy agents with "run setup in a drained window").
 
-**Do not use agy interactively during a lane run.** The shared `~/.gemini` state and `~/.local/bin/` are tripwires on
-every lane; interactive agy use (or an updater rewriting the binary) fails every in-flight step, naming the path.
-
 **Agy home.** The kit-owned home is `~/.local/share/ai-resources/agy-home/` (0700). Teardown removes it only after an
 explicit confirm and never copies it into evidence backups.
-
-**A tripped breaker.** A tripped pool is refused for the rest of the run (`lanes prepare` names the breaker entry);
-start a new run after the quota resets.
 
 **What teardown cannot undo.** Data already sent to Google; agy conversation and memory state in a shared
 `~/.gemini`; `trustedFolders.json` entries; quota consumed; any account-level ToS consequence; files a skip-permissions

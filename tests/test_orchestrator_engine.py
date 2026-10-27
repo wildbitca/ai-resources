@@ -5,7 +5,7 @@ import pytest
 
 from ai_resources.orchestrator import engine as eng
 from ai_resources.orchestrator import limits, workflow_loader as wl
-from orchestrator_fakes import (FLOW, MODELS, OK, Clock, Runner, dispatches, drive_to, finish, make, reply, write_flow)
+from orchestrator_fakes import (FLOW, MODELS, OK, Clock, dispatches, drive_to, finish, make, reply, write_flow)
 
 
 def start(e, wf, **kw):
@@ -14,12 +14,12 @@ def start(e, wf, **kw):
 
 
 def test_the_first_step_is_dispatched_with_everything_the_child_needs(tmp_path):
-    e, wf, runner = make(tmp_path)
+    e, wf, _ = make(tmp_path)
     run = start(e, wf, domain="")
-    assert run["status"] == "running" and run["worktree"]["branch"].startswith("openclaw/team-")
+    assert run["status"] == "running"
     [d] = dispatches(e.next(run["id"]))
     assert (d["step"], d["role"], d["agent"], d["attempt"]) == ("plan", "planner", "kit-role-planner", 1)
-    assert d["cwd"] == run["worktree"]["path"] and d["timeout_s"] == 1200 and not d["parallel"]
+    assert d["cwd"] == "/work/repo" and d["timeout_s"] == 1200 and not d["parallel"]
     assert d["handoff_file"].endswith("handoff.md") and run["id"] in d["handoff_file"]
     p = d["prompt"]
     assert "agents/roles/planner.md" in p and "skills/common-system-design/SKILL.md" in p
@@ -52,7 +52,7 @@ def test_the_plan_approval_pauses_until_approve_and_cancel_ends_it(tmp_path):
     e.approve(run["id"])
     with pytest.raises(eng.EngineError):
         e.approve(run["id"])
-    other = start(e, wf, run_id="r-2")
+    e.start(wf, "another", "/work/other", models=MODELS, run_id="r-2")
     finish(e, "r-2", dispatches(e.next("r-2"))[0])
     assert e.cancel("r-2")["status"] == "cancelled"
     assert e.next("r-2")["actions"][0]["type"] == "cancelled"
@@ -241,12 +241,12 @@ def test_a_dispatch_error_counts_like_a_blocked_attempt(tmp_path):
 
 
 def test_a_process_killed_mid_run_resumes_at_the_same_step_with_the_same_attempt(tmp_path):
-    e, wf, runner = make(tmp_path)
+    e, wf, claims = make(tmp_path)
     run = start(e, wf)
     res = drive_to(e, run["id"], "implement", wf)
     [d] = dispatches(res)
     # a new process: a new engine over the same store
-    e2 = eng.Engine(e.store, clock=Clock(), runner=runner)
+    e2 = eng.Engine(e.store, clock=Clock(), claims_root=claims)
     assert e2.next(run["id"])["actions"][0]["type"] == "wait"                    # not handed out twice by accident
     res2 = e2.resume(run["id"])
     [d2] = dispatches(res2)
@@ -257,10 +257,10 @@ def test_a_process_killed_mid_run_resumes_at_the_same_step_with_the_same_attempt
 
 
 def test_resume_all_resumes_running_runs_and_starts_promotions(tmp_path):
-    e, wf, runner = make(tmp_path)
+    e, wf, claims = make(tmp_path)
     a = start(e, wf, run_id="a-1")
     e.next("a-1")
-    out = eng.Engine(e.store, clock=Clock(), runner=runner).resume_all()
+    out = eng.Engine(e.store, clock=Clock(), claims_root=claims).resume_all()
     assert [r["run"] for r in out] == ["a-1"] and dispatches(out[0])[0]["step"] == "plan"
 
 
@@ -312,19 +312,10 @@ def test_a_duplicate_report_is_ignored(tmp_path):
     assert again.get("ignored") == "already reported"
 
 
-def test_a_non_git_workspace_gets_no_worktree_and_says_so(tmp_path):
-    e, wf, runner = make(tmp_path, git=False)
-    run = start(e, wf)
-    assert run["worktree"] is None and run["cwd"] == "/work/repo"
-    assert any("not a git checkout" in n for n in run["independence"]["notes"])
-    assert not any(c[:3] == ["openclaw", "worktrees", "create"] for c in runner.calls)
-
-
 def test_the_real_feature_workflow_runs_end_to_end_with_a_fake_dispatcher(tmp_path):
     from ai_resources.orchestrator.state import RunStore
     store = RunStore(tmp_path / "runs")
-    runner = Runner(tmp_path)
-    e = eng.Engine(store, clock=Clock(), runner=runner)
+    e = eng.Engine(store, clock=Clock(), claims_root=tmp_path / "claims")
     wf = wl.load("feature-implementation")
     run = e.start(wf, "ship it", "/work/repo", models=MODELS)
     res = e.next(run["id"])

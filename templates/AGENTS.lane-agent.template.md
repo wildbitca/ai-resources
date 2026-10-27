@@ -9,12 +9,10 @@ you at a time, with a working directory (`cwd`) and a step contract. You do that
 
 ## Hard rules
 
-- Work only in the `cwd` you were given. Never touch the run tree, another worktree or this workspace's
-  parents.
-- Never merge, land, reset, clean or rebase. Never touch git config, hooks or any ref other than the
-  branch of your own worktree. The kit commands (`ai-resources lanes ...`) are the only path that
-  integrates or lands work, and the orchestrator runs them, not you.
-- Never write the handoff file and never write another step's `.agent-output/` files.
+- Work only in the `cwd` you were given and inside the write scope the step names. Never touch this
+  workspace's parents.
+- Never reset, clean, rebase or force-push. Never touch git config or hooks.
+- Never write the handoff file and never write another run's or step's `.agent-output/` files.
 - End the step with a step-scoped report that carries the handoff fields you would have set (goal
   reached, changes made, unresolved risks, next role). The orchestrator joins them into the handoff.
 - Commit messages carry no assistant attribution: no `Co-Authored-By` trailer for an assistant, no
@@ -25,8 +23,8 @@ you at a time, with a working directory (`cwd`) and a step contract. You do that
 
 - OpenClaw starts Claude Code with `--setting-sources user`, so project-level `CLAUDE.md` files are invisible to
   this agent; this file and the user-level config are the only rules that reach you (T02).
-- Commits (T11): commit only inside the worktree you were given, on its own branch, with no assistant
-  attribution in the message.
+- Commits (T11): commit only inside the `cwd` you were given, with no assistant attribution in the
+  message.
 - Role definitions you may be asked to act as: planner, software-architect, implementer, tester, verifier,
   doc-writer. Work to the role the step names; the orchestrator, not you, decides who verifies.
 - Step-scoped output goes under `.agent-output/<role>/<step-id>*` and nowhere else. Durable documentation is

@@ -1,9 +1,8 @@
 """Load a kit workflow (`workflows/*.workflow.yaml`, see WORKFLOW_CONTRACT.md) into the shape the engine runs.
 
 Only what the engine needs is read: ordered steps, the role of each, its skills, parallel groups, the step a concern
-returns to and the prompt template. `backend: lane` and `openclaw-agent` steps are dispatched like any other step to the
-role's `kit-role-*` agent: the lanes ledger and `lanes land` machinery belong to the Claude Code lane flow (ADR-0007)
-and are not used here (one writer per run, teams parallel only across their own worktrees).
+returns to and the prompt template. `openclaw-agent` steps are dispatched like any other step to the role's `kit-role-*`
+agent; teams share the checkout and are kept apart by their write-scope claims (`scope_guard`).
 """
 from __future__ import annotations
 
@@ -151,7 +150,7 @@ def _build(doc: dict[str, Any], path: Path) -> Workflow:
 
 
 def load(name_or_path: str, kit_root: Path | None = None) -> Workflow:
-    """A workflow by file path, by file stem (`feature-lanes`) or by its `name:` (`feature-implementation`)."""
+    """A workflow by file path, by file stem (`feature-cross-provider`) or by its `name:` (`feature-implementation`)."""
     candidate = Path(name_or_path)
     if candidate.suffix in (".yaml", ".yml") and candidate.is_file():
         return _build(_read(candidate), candidate)

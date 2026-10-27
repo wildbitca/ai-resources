@@ -1,7 +1,6 @@
-"""Fakes for the orchestrator tests: a clock, a git/openclaw runner, a workflow file and canned replies."""
+"""Fakes for the orchestrator tests: a clock, a workflow file and canned replies."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from ai_resources.orchestrator import engine as eng
@@ -65,44 +64,17 @@ class Clock:
         return self.t
 
 
-class Runner:
-    """Answers the git probe and `openclaw worktrees create/remove`; records every call."""
-
-    def __init__(self, root: Path, git=True, fail_create=False):
-        self.root, self.git, self.fail_create = root, git, fail_create
-        self.calls: list[list[str]] = []
-        self.created: list[str] = []
-
-    def __call__(self, argv, cwd=None):
-        argv = [str(a) for a in argv]
-        self.calls.append(argv)
-        if argv[:1] == ["git"] and "rev-parse" in argv:
-            return (0, "true\n", "") if self.git else (128, "", "not a git repository")
-        if argv[:3] == ["openclaw", "worktrees", "create"]:
-            if self.fail_create:
-                return 1, "", "no space left"
-            name = argv[argv.index("--name") + 1]
-            path = self.root / "worktrees" / name
-            path.mkdir(parents=True, exist_ok=True)
-            self.created.append(name)
-            return 0, json.dumps({"worktree": {"id": f"wt-{name}", "path": str(path), "branch": f"openclaw/{name}"}}), ""
-        if argv[:3] == ["openclaw", "worktrees", "remove"]:
-            return 0, "", ""
-        return 1, "", "unexpected command"
-
-
 def write_flow(tmp_path: Path, text: str = FLOW) -> Path:
     p = tmp_path / "demo.workflow.yaml"
     p.write_text(text)
     return p
 
 
-def make(tmp_path, *, git=True, text: str = FLOW):
-    store = RunStore(tmp_path / "runs")
-    runner = Runner(tmp_path, git=git)
-    e = eng.Engine(store, clock=Clock(), runner=runner)
-    wf = wl.load(str(write_flow(tmp_path, text)))
-    return e, wf, runner
+def make(tmp_path, *, text: str = FLOW):
+    """The engine, the demo workflow and the claims directory (write-scope claims never touch the host state)."""
+    claims = tmp_path / "claims"
+    e = eng.Engine(RunStore(tmp_path / "runs"), clock=Clock(), claims_root=claims)
+    return e, wl.load(str(write_flow(tmp_path, text))), claims
 
 
 MODELS = {"planner": "sonnet", "implementer": "sonnet", "tester": "haiku", "code-reviewer": "sonnet",

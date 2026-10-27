@@ -2,7 +2,7 @@
 
 The seam with the runtime is narrow and deliberate:
 
-* `start` registers a run (queued behind `maxTeams` teams, or running with its own worktree and branch);
+* `start` registers a run (queued behind `maxTeams` teams, or running in the workspace under its write-scope claim);
 * `next` returns the ACTIONS a runtime must perform (dispatch role R with prompt P in directory W within T seconds; ask
   the operator to approve the plan; wait; stop). It dispatches nothing itself and never sleeps or polls;
 * `report` feeds a finished action back (a reply, a timeout or an error) and returns the next actions;
@@ -24,9 +24,9 @@ from typing import Any, Callable, Iterable, Mapping
 
 import yaml
 
-from .. import domains, ledger, repo_root, roles_policy
+from .. import domains, ledger, repo_root, roles_policy, scope_guard
 from ..setup.cockpits import openclaw_roles
-from . import limits, reply as reply_mod, untrusted, worktree as worktree_mod
+from . import limits, reply as reply_mod, untrusted
 from .state import RunStore, StateError, new_run_id
 from .workflow_loader import CHECKER_ROLES, READ_ONLY_ROLES, VERIFIER_ROLE, WRITER_ROLES, Step, Workflow, WorkflowError
 
@@ -148,11 +148,11 @@ def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Pat
 
 class Engine:
     def __init__(self, store: RunStore | None = None, *, kit_root: Path | None = None, clock: Clock = time.time,
-                 runner: Callable[..., Any] | None = None):
+                 claims_root: Path | None = None):
         self.store = store or RunStore()
         self.kit_root = kit_root or repo_root()
         self.clock = clock
-        self.runner = runner
+        self.claims_root = claims_root
 
     # -- persistence ----------------------------------------------------------------------------------------------
     def _load(self, run_id: str) -> dict[str, Any]:
@@ -214,7 +214,7 @@ class Engine:
     # -- start / admission ----------------------------------------------------------------------------------------
     def start(self, wf: Workflow, goal: str, workspace: str, *, domain: str = "", run_id: str = "",
               models: Mapping[str, Any] | None = None, role_timeouts: Mapping[str, Any] | None = None,
-              max_teams: int = limits.DEFAULT_MAX_TEAMS, base_ref: str = "HEAD", use_worktree: bool = True,
+              max_teams: int = limits.DEFAULT_MAX_TEAMS,
               params: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Register a run. It runs now when a team slot is free, else it is queued (FIFO)."""
         if not goal.strip():
@@ -228,8 +228,7 @@ class Engine:
             "id": rid, "workflow": wf.name, "workflow_file": wf.path, "goal": goal.strip()[:2000],
             "workspace": str(workspace), "cwd": str(workspace), "domain": domain, "status": "queued",
             "created_at": now, "queued_at": now, "started_at": 0, "finished_at": 0, "updated_at": now,
-            "max_teams": limits.clamp_max_teams(max_teams), "base_ref": base_ref, "use_worktree": bool(use_worktree),
-            "worktree": None, "params": {str(k): str(v)[:500] for k, v in (params or {}).items()},
+            "max_teams": limits.clamp_max_teams(max_teams), "scope": self._scope_of(wf, params or {}), "params": {str(k): str(v)[:500] for k, v in (params or {}).items()},
             "models": {k: str(v) for k, v in (models or {}).items() if v},
             "role_timeouts": {k: v for k, v in (role_timeouts or {}).items()},
             "workflow_steps": _wf_to_state(wf), "order": [s.id for s in wf.steps], "steps": steps, "returns": {},
@@ -252,7 +251,7 @@ class Engine:
                 run["finished_at"] = now
                 _event(run, "failed", "", problem, now)
             elif limits.admit(runs, run["max_teams"]) == "running":
-                self._activate(run, now)
+                self._activate(run, now)               # a held write scope leaves it queued, with the holder in the events
             else:
                 _event(run, "queued", "", f"behind {len(limits.queue_order(runs))} queued run(s)", now)
             self.store.save(run)
@@ -287,22 +286,32 @@ class Engine:
                      " (plus a distinct session when the runtime reports one)")
         return ""
 
-    def _activate(self, run: dict[str, Any], now: float) -> None:
-        """A run gets its team slot: worktree and branch first (a failure fails the run, not the process)."""
+    @staticmethod
+    def _scope_of(wf: Workflow, params: Mapping[str, Any]) -> list[str]:
+        """What the run will write: the `write_scope` parameter (comma-separated paths), else the whole checkout when a
+        step of the workflow writes, else nothing (a read-only team claims no scope)."""
+        declared = [p.strip() for p in str(params.get("write_scope") or "").split(",") if p.strip()]
+        if declared:
+            return declared
+        return [scope_guard.ROOT] if any(s.role not in READ_ONLY_ROLES for s in wf.steps) else []
+
+    def _live(self, run_id: str) -> bool:
+        try:
+            return self.store.load(run_id).get("status") in limits.ACTIVE
+        except StateError:
+            return False
+
+    def _activate(self, run: dict[str, Any], now: float) -> bool:
+        """A run gets its team slot once its write scope is free; False leaves it queued behind the run that holds the scope."""
+        conflicts = scope_guard.claim(run["workspace"], run["id"], run.get("scope") or [], self._live, self.claims_root) \
+            if run.get("scope") else []
+        if conflicts:
+            _event(run, "queued", "", f"write scope held by {'; '.join(conflicts)[:200]}", now)
+            return False
         run["status"] = "running"
         run["started_at"] = now
-        if run.get("use_worktree"):
-            try:
-                rec = worktree_mod.create(run["id"], run["workspace"], run.get("base_ref") or "HEAD", self.runner)
-            except Exception as e:  # noqa: BLE001 - lanes_cmd raises its own error type; any failure fails this run only
-                run["status"], run["failure"], run["finished_at"] = "failed", f"could not create the team worktree: {e}", now
-                _event(run, "failed", "", run["failure"], now)
-                return
-            if rec is None:
-                run["independence"]["notes"].append("the workspace is not a git checkout: the team works in place")
-            else:
-                run["worktree"], run["cwd"] = rec, rec["path"]
         _event(run, "started", "", f"cwd {run['cwd']}", now)
+        return True
 
     def _promote(self) -> list[str]:
         """Queued runs that now fit, oldest first. Returns their ids."""
@@ -316,9 +325,10 @@ class Engine:
                     run = self._load(rid)
                     if run["status"] != "queued":
                         continue
-                    self._activate(run, self.clock())
+                    started = self._activate(run, self.clock())
                     self._save(run)
-                    promoted.append(rid)
+                    if started:
+                        promoted.append(rid)
         return promoted
 
     # -- the actions ----------------------------------------------------------------------------------------------
@@ -639,7 +649,6 @@ class Engine:
             "id": run["id"], "workflow": run["workflow"], "status": run["status"], "goal": run.get("goal", "")[:120],
             "step": next((sid for sid in run["order"] if run["steps"][sid]["state"] != "done"), ""),
             "done": sum(1 for s in run["steps"].values() if s["state"] == "done"), "total": len(run["order"]),
-            "worktree": (run.get("worktree") or {}).get("path", ""), "branch": (run.get("worktree") or {}).get("branch", ""),
             "failure": run.get("failure", "")}
         if detail:
             out.update({"steps": {sid: {k: run["steps"][sid].get(k) for k in ("role", "state", "attempt", "result", "reason",

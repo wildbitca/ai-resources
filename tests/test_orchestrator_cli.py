@@ -9,14 +9,13 @@ from ai_resources import cli
 from ai_resources.orchestrator import cli as ocli
 from ai_resources.orchestrator import engine as eng
 from ai_resources.orchestrator.state import RunStore
-from orchestrator_fakes import Clock, FLOW, OK, Runner, write_flow
+from orchestrator_fakes import Clock, FLOW, OK, write_flow
 
 
 @pytest.fixture
 def harness(tmp_path, monkeypatch, capsys):
-    runner = Runner(tmp_path)
     store = RunStore(tmp_path / "runs")
-    monkeypatch.setattr(ocli, "ENGINE_FACTORY", lambda args: eng.Engine(store, clock=Clock(), runner=runner))
+    monkeypatch.setattr(ocli, "ENGINE_FACTORY", lambda args: eng.Engine(store, clock=Clock(), claims_root=tmp_path / "claims"))
     wf = write_flow(tmp_path)
     ex = tmp_path / "executors.yaml"
     ex.write_text("by_role:\n  planner: {model: sonnet}\n  implementer: {model: sonnet}\n  tester: {model: haiku}\n"
@@ -27,23 +26,22 @@ def harness(tmp_path, monkeypatch, capsys):
         out = capsys.readouterr().out
         assert rc == code, (rc, out)
         return json.loads(out) if out.strip().startswith("{") else out
-    return type("H", (), {"call": staticmethod(call), "wf": str(wf), "ex": str(ex), "tmp": tmp_path, "store": store,
-                          "runner": runner})
+    return type("H", (), {"call": staticmethod(call), "wf": str(wf), "ex": str(ex), "tmp": tmp_path, "store": store})
 
 
 def start(h, **kw):
-    argv = ["orchestrate", "start", "--workflow", h.wf, "--goal", "add a thing", "--workspace", "/work/repo",
+    argv = ["orchestrate", "start", "--workflow", h.wf, "--goal", "add a thing", "--workspace", kw.pop("workspace", "/work/repo"),
             "--executors", h.ex, "--json"]
     for k, v in kw.items():
         argv += [f"--{k.replace('_', '-')}", str(v)]
     return h.call(*argv)
 
 
-def test_start_returns_the_run_its_worktree_and_the_first_dispatch(harness):
+def test_start_returns_the_run_and_the_first_dispatch_in_the_workspace(harness):
     out = start(harness, run_id="r-1")
-    assert out["run"] == "r-1" and out["status"] == "running" and out["branch"].startswith("openclaw/team-")
+    assert out["run"] == "r-1" and out["status"] == "running" and "worktree" not in out
     [a] = out["actions"]
-    assert a["type"] == "dispatch" and a["agent"] == "kit-role-planner" and a["cwd"] == out["worktree"]
+    assert a["type"] == "dispatch" and a["agent"] == "kit-role-planner" and a["cwd"] == "/work/repo"
 
 
 def test_the_full_cycle_over_the_cli(harness):
@@ -79,7 +77,7 @@ def test_resume_and_status_and_cancel(harness):
 
 def test_the_third_team_is_queued_and_promoted_when_a_slot_frees(harness):
     for rid in ("a", "b", "c"):
-        start(harness, run_id=rid, max_teams=2)
+        start(harness, run_id=rid, max_teams=2, workspace=f"/work/{rid}")
     assert harness.call("orchestrate", "next", "c", "--json")["actions"][0]["kind"] == "queued"
     out = harness.call("orchestrate", "cancel", "a", "--json")
     assert out["promoted"] == ["c"]
@@ -110,14 +108,14 @@ def test_role_timeouts_and_models_reach_the_run(harness):
     bad = harness.call("orchestrate", "start", "--workflow", harness.wf, "--goal", "g", "--role-timeouts", "[1]", "--json",
                        code=2)
     assert bad["code"] == "usage"
-    failed = start(harness, run_id="r-2", executors=str(harness.tmp / "missing.yaml"))
+    failed = start(harness, run_id="r-2", workspace="/work/other", executors=str(harness.tmp / "missing.yaml"))
     assert failed["status"] == "running"             # unknown models are allowed with the limitation recorded
 
 
 def test_workflows_list_and_show_json(harness):
     lst = harness.call("workflows", "list", "--json")
     names = {w["name"] for w in lst["workflows"]}
-    assert {"feature-implementation", "feature-lanes", "refactor"} <= names
+    assert {"feature-implementation", "refactor"} <= names
     show = harness.call("workflows", "show", "feature-implementation", "--json")
     assert show["approval_before"] == "implement" and show["steps"][0]["id"] == "research"
     assert any(s["group"] == "post-test" for s in show["steps"])

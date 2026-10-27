@@ -27,11 +27,7 @@ KNOWN_VIOLATIONS: dict[str, str] = {
     "claude-inherit": "every role is `inherit`: the family is unknown (Q-1)",
 }
 
-WRITERS = tuple(sorted(
-    r for r in roles_policy.LANE_ELIGIBILITY
-    if r not in roles_policy.CHECKER_ROLES
-    and (roles_policy.SCOPE in roles_policy.contracts_for(r) or roles_policy.INTEGRATING in roles_policy.contracts_for(r))
-))
+WRITERS = tuple(sorted(roles_policy.SCOPE_ROLES | {"implementer"}))
 
 
 def normalise(ref: str) -> str | None:

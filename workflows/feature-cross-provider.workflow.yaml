@@ -16,7 +16,7 @@
 #   - This example uses explicit `openclaw-agent` steps (ADR-0005): the implementer stays on Claude Code.
 #     For `backend: lane` steps, where the setup lanes table decides where a role runs and the kit
 #     (`ai-resources lanes ...`) is the only landing path, see ADR-0007 and the "Lane steps" section of
-#     skills/kit-orchestration/references/backends-and-lanes.md.
+#     skills/kit-orchestration/references/backends.md.
 #
 # Flow: research (explore) → plan → architect → implement → test → (review ‖ security) → verify → document
 # handoff_file: .agent-output/handoff-<branch>.md. DELETE when DONE.

@@ -310,16 +310,6 @@ def previous_generation_pins(monkeypatch):
     pin_previous_generation(monkeypatch)
 
 
-@pytest.fixture(autouse=True)
-def _no_host_command_snapshots(monkeypatch):
-    """`lanes` snapshots `crontab -l` and the user timer list: tests never run the host's own commands."""
-    try:
-        from ai_resources import lanes_cmd
-    except Exception:
-        return
-    monkeypatch.setattr(lanes_cmd, "SNAPSHOT_RUNNER", lambda argv: (127, "", ""), raising=False)
-
-
 EXTRA_TOOL_DETECTORS = (("detect_cursor_agent", "Cursor Agent CLI"), ("detect_gemini_cli", "Gemini CLI"),
                         ("detect_codex", "Codex CLI"), ("detect_aider", "Aider"),
                         ("detect_copilot", "GitHub Copilot CLI"), ("detect_continue", "Continue.dev CLI"),

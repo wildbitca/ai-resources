@@ -33,10 +33,9 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DESCRIPTION_LIMIT = 1024  # Claude Code truncates description + when_to_use at 1536 chars
 VERIFIER_DOC_SKILL = "knowledge-audit"
 
-# Per-step backend (ADR 0005, ADR 0007). `claude-code` is the default and today's behaviour: a kit role
-# subagent. `openclaw-agent` hands the role to another OpenClaw agent through `sessions_spawn`. `lane`
-# is resolved at dispatch from the setup lanes table and runs under the kit's lane commands.
-BACKENDS = {"claude-code", "openclaw-agent", "lane"}
+# Per-step backend (ADR 0005). `claude-code` is the default and today's behaviour: a kit role
+# subagent. `openclaw-agent` hands the role to another OpenClaw agent through `sessions_spawn`.
+BACKENDS = {"claude-code", "openclaw-agent"}
 DEFAULT_BACKEND = "claude-code"
 # A leading alphanumeric keeps a flag-like value out; the cap bounds the length.
 AGENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -44,8 +43,8 @@ AGENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 # Read-only roles may run on another agent; tester and doc-writer run commands or write files,
 # so they pass with a warning (the post-step check detects a violation, it cannot prevent one)
 # and are never parallel members.
-OPENCLAW_READ_ONLY_ROLES = set(roles_policy.EXPLICIT_READ_ONLY_ROLES)
-OPENCLAW_WARNED_ROLES = set(roles_policy.EXPLICIT_WARNED_ROLES)
+OPENCLAW_READ_ONLY_ROLES = set(roles_policy.REPORT_ROLES)
+OPENCLAW_WARNED_ROLES = set(roles_policy.WARNED_ROLES)
 OPENCLAW_ALLOWED_ROLES = OPENCLAW_READ_ONLY_ROLES | OPENCLAW_WARNED_ROLES
 
 failures: list[str] = []
@@ -122,10 +121,6 @@ def check_step_backend(step: dict, where: str) -> None:
     if backend != "openclaw-agent":
         if has_agent:
             fail("workflows", f"{where}: agentId is only valid with backend 'openclaw-agent'")
-        if backend == "lane" and not roles_policy.lane_eligible(step.get("subagent_type")):
-            fail("workflows", f"{where}: role '{step.get('subagent_type')}' is not eligible on 'lane' "
-                              f"(no write contract declared; known: "
-                              f"{', '.join(sorted(roles_policy.LANE_ELIGIBILITY))})")
         return
     agent_id = step.get("agentId")
     if not isinstance(agent_id, str) or not AGENT_ID_RE.fullmatch(agent_id):
@@ -138,167 +133,6 @@ def check_step_backend(step: dict, where: str) -> None:
     elif role not in OPENCLAW_READ_ONLY_ROLES:
         fail("workflows", f"{where}: role '{role}' cannot run on 'openclaw-agent' "
                           f"(one writer per run; allowed: {', '.join(sorted(OPENCLAW_ALLOWED_ROLES))})")
-
-
-def _as_id_list(value) -> list | None:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list) and all(isinstance(v, str) for v in value):
-        return list(value)
-    return None
-
-
-def check_lane_workflow(rel, doc: dict, steps: list, groups: dict) -> None:
-    """ADR-0007: `lane` steps, scope writers, the integrating writer and the verifier chain."""
-    def f(where: str, message: str) -> None:
-        fail("workflows", f"{where}: {message}")
-
-    integrating_writer = roles_policy.DEFAULT_INTEGRATING_WRITER
-    if "integrating_writer" in doc:
-        value = doc["integrating_writer"]
-        if not isinstance(value, str) or roles_policy.INTEGRATING not in roles_policy.contracts_for(value):
-            able = sorted(r for r, c in roles_policy.LANE_ELIGIBILITY.items() if roles_policy.INTEGRATING in c)
-            f(str(rel), f"integrating_writer must be one role that may integrate, one per workflow "
-                        f"(got {value!r}; allowed: {', '.join(able)})")
-        else:
-            integrating_writer = value
-
-    index = {s.get("id"): i for i, s in enumerate(steps)}
-    by_id = {s.get("id"): s for s in steps}
-
-    def is_lane(step: dict) -> bool:
-        return step.get("backend") == "lane"
-
-    def has_scope(step: dict) -> bool:
-        return "write_scope" in step
-
-    def is_integrating(step: dict) -> bool:
-        return (is_lane(step) and step.get("subagent_type") == integrating_writer and not has_scope(step))
-
-    scope_steps: list[dict] = []
-    for step in steps:
-        sid = step.get("id", "?")
-        where = f"{rel}:{sid}"
-        role = step.get("subagent_type")
-        hints = step.get("execution_hints") or {}
-        if "write_scope" in step:
-            if not is_lane(step):
-                f(where, "write_scope is only valid with backend 'lane'")
-            elif role not in roles_policy.SCOPE_ROLES:
-                f(where, f"write_scope is not valid for role '{role}' "
-                         f"(scope writers: {', '.join(sorted(roles_policy.SCOPE_ROLES))})")
-            else:
-                scope = step["write_scope"]
-                if not isinstance(scope, list) or not scope:
-                    f(where, "write_scope must be a non-empty list of repository-relative paths")
-                else:
-                    ok = True
-                    seen: set = set()
-                    for path in scope:
-                        problems = roles_policy.scope_problems(path)
-                        if problems:
-                            f(where, f"write_scope entry {path!r} {'; '.join(problems)}")
-                            ok = False
-                        elif path in seen:
-                            f(where, f"write_scope entry {path!r} is listed twice")
-                            ok = False
-                        seen.add(path)
-                    if ok:
-                        scope_steps.append(step)
-        if "integrates" in step:
-            targets = _as_id_list(step["integrates"])
-            if not is_lane(step):
-                f(where, "integrates is only valid with backend 'lane'")
-            elif role != integrating_writer:
-                f(where, f"integrates is only valid on the integrating writer step "
-                         f"(integrating_writer is '{integrating_writer}', this step is '{role}')")
-            elif not targets:
-                f(where, "integrates must name one or more scope step ids")
-            else:
-                for target in targets:
-                    ref = by_id.get(target)
-                    if ref is None:
-                        f(where, f"integrates names '{target}', which is not a step in this workflow")
-                    elif index[target] >= index[sid]:
-                        f(where, f"integrates names '{target}', which does not run before this step")
-                    elif not (is_lane(ref) and has_scope(ref)):
-                        f(where, f"integrates names '{target}', which is not a lane step with a write_scope")
-        if "verifies" in step:
-            targets = _as_id_list(step["verifies"])
-            if role != "verifier":
-                f(where, "verifies is only valid on a verifier step")
-            elif not targets:
-                f(where, "verifies must name one or more step ids")
-            else:
-                for target in targets:
-                    if target not in index:
-                        f(where, f"verifies names '{target}', which is not a step in this workflow")
-                    elif index[target] >= index[sid]:
-                        f(where, f"verifies names '{target}', which does not run before this step")
-        if "lane_member" in hints:
-            f(where, "lane_member is no longer supported (second members were removed)")
-        if is_lane(step) and "Update {{handoff_file}}" in str(step.get("prompt_template", "")):
-            f(where, "lane children never write the handoff: the orchestrator joins the step-scoped report")
-        if is_integrating(step) and hints.get("parallel_group"):
-            f(f"{rel}:{hints['parallel_group']}:{sid}",
-              f"the integrating writer step '{sid}' is never a parallel member")
-
-    for group, members in groups.items():
-        if not any(is_lane(m) for m in members):
-            continue
-        where = f"{rel}:{group}"
-        for member in members:
-            sid = member.get("id")
-            role = member.get("subagent_type")
-            if (not is_lane(member) and member.get("backend", DEFAULT_BACKEND) == "claude-code"
-                    and role not in roles_policy.REPORT_ROLES):
-                f(f"{where}:{sid}", f"a claude-code writer step ('{role}') may not share a parallel group "
-                                    f"with a 'lane' step")
-        lane_members = [m for m in members if is_lane(m)]
-        for member in lane_members:
-            if member.get("subagent_type") in roles_policy.CHECKER_ROLES and len(lane_members) > 1:
-                f(f"{where}:{member.get('id')}",
-                  f"checker lane step ('{member.get('subagent_type')}') may not share a parallel group with "
-                  f"another 'lane' step: the shared report directory cannot attribute a write before verify; "
-                  f"a checker may share a group with claude-code or non-lane steps")
-        scoped = [m for m in members if is_lane(m) and has_scope(m) and isinstance(m.get("write_scope"), list)]
-        for i, left in enumerate(scoped):
-            for right in scoped[i + 1:]:
-                for a in left["write_scope"]:
-                    for b in right["write_scope"]:
-                        if (isinstance(a, str) and isinstance(b, str) and not roles_policy.scope_problems(a)
-                                and not roles_policy.scope_problems(b) and roles_policy.scopes_overlap(a, b)):
-                            f(where, f"write scopes of '{left.get('id')}' ({a}) and '{right.get('id')}' ({b}) "
-                                     f"overlap; parallel scope writers need disjoint scopes")
-
-    def verifiers_of(target: str, after: int) -> list[dict]:
-        out = []
-        for s in steps:
-            names = _as_id_list(s.get("verifies")) or []
-            if s.get("subagent_type") == "verifier" and target in names and index[s.get("id")] > after:
-                out.append(s)
-        return out
-
-    for step in scope_steps:
-        sid = step.get("id")
-        where = f"{rel}:{sid}"
-        vs = verifiers_of(sid, index[sid])
-        if not vs:
-            f(where, "a write_scope step needs a following verifier step that names it in 'verifies'")
-            continue
-        first_verifier = min(index[v["id"]] for v in vs)
-        integrators = [s for s in steps if is_lane(s) and sid in (_as_id_list(s.get("integrates")) or [])
-                       and s.get("subagent_type") == integrating_writer]
-        if not integrators:
-            f(where, f"a write_scope step needs an integrating step ('{integrating_writer}', lane) whose "
-                     f"'integrates' names it")
-            continue
-        for integ in integrators:
-            iid = integ.get("id")
-            if index[iid] <= first_verifier:
-                f(f"{rel}:{iid}", f"the integrating step must run after the verifier of '{sid}'")
-            if not verifiers_of(iid, index[iid]):
-                f(f"{rel}:{iid}", "an integrating step needs a following verifier step that names it in 'verifies'")
 
 
 def check_skill_scope(skill_ids: set[str], role_names: set[str]) -> None:
@@ -436,7 +270,6 @@ def check_workflows(skill_ids: set[str], role_names: set[str]) -> None:
             group = (step.get("execution_hints") or {}).get("parallel_group")
             if group:
                 groups.setdefault(group, []).append(step)
-        check_lane_workflow(rel, doc, steps, groups)
         for group, members in groups.items():
             where = f"{rel}:{group}"
             if len({m.get("entry_criteria") for m in members}) > 1:

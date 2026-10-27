@@ -41,7 +41,7 @@ to point it back at the Antigravity catalog or remove it; it never changes it si
 
 `/equipo <goal>` on OpenClaw runs the `feature-implementation` workflow as a team: research, plan, architect, implement, test,
 review and security in parallel, verify, document. Defaults that keep it cheap and safe: 2 teams at once (the rest queue), each
-team in its own worktree, one writer per run, the verifier on its own agent and model family, the plan approved by you before
+team holding a write-scope claim on the shared checkout, the verifier on its own agent and model family, the plan approved by you before
 the first writer, timeouts per role and at most 3 returns to a step. Watch it with `/workflow status` and read what it cost
 with `/workflow cost <run>`.
 

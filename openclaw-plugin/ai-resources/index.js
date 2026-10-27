@@ -707,7 +707,7 @@ export function makeWorkflowCommandHandler(api) {
     if (subcmd === "info") {
       if (!targetId) {
         return {
-          text: "⚠️ **Usage**: `/workflow info <workflow-id>` (e.g. `/workflow info feature-lanes`)",
+          text: "⚠️ **Usage**: `/workflow info <workflow-id>` (e.g. `/workflow info feature-cross-provider`)",
           continueAgent: false,
         };
       }
