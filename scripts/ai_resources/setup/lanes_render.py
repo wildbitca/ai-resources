@@ -2,8 +2,8 @@
 
 `~/.config/ai-resources/lanes.yaml` is generated purely from `scoring.routing.ROLES` (plus the profile's `routing:`
 overrides): the role matrix, the spill rule, a digest and the Google acknowledgement. It carries no agents, candidates
-or resolved table. It is written only when lanes are enabled, in both modes, and re-rendered by the fan-out artifact
-(`model_rerender.LanesArtifact`). Nothing here opens `openclaw.json`.
+or resolved table. It is written only when lanes are enabled, in both modes, and does not depend on model ids (a model
+move re-renders nothing). Nothing here opens `openclaw.json`.
 
 Pure helpers first; the one file writer (`sync_file`) is the only function with side effects, and it backs the file
 up before writing it.
