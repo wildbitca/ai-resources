@@ -18,9 +18,9 @@ default path, use six words:
 | Gateway | **No longer offered** (ADR-0015). A gateway installed earlier keeps running and is never removed by setup; a saved `advanced` answer is migrated to the tools' own sign-in, shown once as old -> new. |
 
 Plain phrases stand in for the internal names: "Sign-in" is the per-tool *cockpit auth* (it replaced the old "How should they work?" *mode* question in ADR-0015), "Parallel runs" are the
-*subscription lanes*, "Start at login" is the
+*routing overrides*, "Start at login" is the
 *lifecycle*, "API keys" are the *credentials*. The old words stay where they are exact: state keys (`mode`, `backend`,
-`cli_team`, `profile`, `lanes`, `lane_acks`, `cockpits`), CLI flags, file names (`executors.yaml`, `lanes.yaml`), the
+`cli_team`, `profile`, `lanes`, `cockpits`), CLI flags, file names (`executors.yaml`, `lanes.yaml`), the
 ADRs, `doctor` and `verify` output, and the internal sections of this guide below. Design:
 [ADR-0009](decisions/0009-setup-tools-how-team.md).
 
@@ -85,7 +85,7 @@ by the kit. Claude Code: its own sign-in (`claude auth status`); change hands th
 `apiKeyHelper` command or 0600 file path into `settings.json` (the key is never read or stored), or keeps Vertex AI's project and
 region. OpenClaw: the providers each agent can use, read from OpenClaw's own auth store (`openclaw models status` and `models auth
 list`); change hands the terminal to `openclaw configure --section model`. Antigravity: whether a Google account state is present;
-change hands the terminal to `agy`. The terms check stays where its lanes are enabled. Cursor: managed in Cursor, nothing asked.
+change hands the terminal to `agy`. Cursor: managed in Cursor, nothing asked.
 After a handover the live state is read again and that is what is recorded. The kit stores kind and method names and provider
 ids, never a key. A native flow is never started in `--non-interactive`, `--dry-run` or by a test. There is no team question and
 no gateway question; a saved "As a team / Each on its own / Advanced" answer is migrated once (see
@@ -95,8 +95,7 @@ question is not asked.
 **Screen 3, Your team.** One question, *Starting team*: Balanced (recommended), Performance, Low cost or Custom.
 Choosing it is the confirmation; the role table and a team table (which tool takes which roles) are shown with it.
 Writing code always stays with Claude Code. Antigravity shows roles only when it is ticked, Codex shows "no roles yet"
-and is never a choice. Custom opens the model and role questions of earlier kits unchanged. If Antigravity is ticked, a
-terms check follows (see [the Antigravity lane](#the-antigravity-lane-adr-0007-section-11-phase-3-closed)).
+and is never a choice. Custom opens the model and role questions of earlier kits unchanged.
 
 **Screen 4, Review.** The answers by name (Sign-in, Team, Tools, Will write) and the choices *Apply*, *Change tools*,
 *Change sign-in*, *Change team*, *More options...* and *Cancel*. A *Change* jumps back to that screen with your answers as
@@ -141,15 +140,14 @@ in with an API key or Vertex AI. A saved answer migrates once, fill-only, and th
 | Advanced (LiteLLM, OpenRouter) | `subscription` | providers by `api_key` | `google_account` |
 
 A gateway installed on a host stays as it is (no teardown, no removal); a gateway-only profile is replaced by `balanced`
-and the run says so. Your team starts from `balanced`, and the subscription lanes ([below](#subscription-lanes)) are reached
-from Review > More options > Parallel runs: Antigravity stays opt-in and gated, and the Codex lane stays held. The
+and the run says so. Your team starts from `balanced`; placement follows the routing matrix ([below](#dispatch-every-step-is-routed-adr-0019)). The
 `cli_team` key is absent from a state that never chose a team, so older files are unchanged.
 
 ### Where Gemini shows
 
 Gemini models come through Antigravity (`agy`), a subscription CLI with its own login, so they are not in the "pick
 models from my accounts" list, which is built from API credentials. With `agy` installed, the Custom list prints an
-"Antigravity (agy, subscription)" group of informational rows (`lane, opt-in`); it asks for no key and cannot be picked as an API model. On "Your team", the team table has an
+"Antigravity (agy, subscription)" group of informational rows; it asks for no key and cannot be picked as an API model. On "Your team", the team table has an
 Antigravity row: untick = "off", ticked = the roles it takes as PRIMARY in the routing matrix (`scoring/routing.py`, ADR-0019)and "sends repo content to
 Google". Without `agy`, setup says so in one line. There is no terms check, flag or gate (ADR-0019): an agy cell runs
 when agy is installed and signed in, and is otherwise skipped with the cause `agy-missing`; nothing is written to agy.
@@ -252,7 +250,7 @@ service, so `ai-resources daemon` has nothing to manage and says so.
 | `all-gemini` | multi-model, either gateway | Every role on Gemini. Cheapest. |
 | `cost-optimized` | multi-model, either gateway | Aggressively biased toward Flash and Haiku. |
 | `claude-native` | single-model | Each role picks a Claude alias. No gateway. The default for single-model and for a Claude-only host with no gateway. |
-| `subscription-claude-55` | single-model | Legacy: the Claude-only Balanced as it shipped before ADR-0010 S6 (no Gemini candidates). Kept so a host saved under this name keeps its team; new setups use `balanced`. |
+| `subscription-claude-55` | single-model | Legacy: the Claude-only Balanced as it shipped before ADR-0010 S6 (no Gemini). Kept so a host saved under this name keeps its team; new setups use `balanced`. |
 | `claude-inherit` | single-model | Every role inherits the session model. |
 | `gateway/performance` | multi-model, either gateway | The Performance starting team for the gateway modes. Claude only, valid in every compatibility cell without `--allow-unverified`: Opus for the planner, architect, reviewer, security auditor and verifier, Sonnet for every writer. Costs more than `balanced-claude-55`. |
 | `gateway/low-cost` | multi-model, either gateway | The Low cost starting team for LiteLLM. Claude only and verified: Haiku for reading and mechanical roles, Sonnet for the planner, architect, code, review and verification, Opus only for security. Replaces `cost-optimized` as the preset because that profile names Google models the Claude cockpit has not verified. |
@@ -297,7 +295,7 @@ Gemini over Antigravity as the PRIMARY of `explore`, `code-reviewer`, `doc-write
 Gemini; the planner, architect, implementer and the fixers have a Claude primary. On OpenRouter (`gateway/balanced`)
 explore, tester and doc-writer run on `google/gemini-3.7-flash` with a Claude fallback and everything else on Claude.
 
-What you see for Gemini, from one set of lines (`setup/team_view.py`), and the table says the real provider and lane of
+What you see for Gemini, from one set of lines (`setup/team_view.py`), and the table says the real provider of
 every role:
 
 | Row | Gemini line |
@@ -357,83 +355,32 @@ generation and the audit fixes below (message-id dedupe, subagent transcripts); 
 gateway. With no gateway use single-model mode and `claude-native`: each role picks a Claude alias and Claude Code
 needs nothing else.
 
-### Opt-in: cross-family planner, explore and reviewer (fields exist, live behaviour NOT VERIFIED)
+### Dispatch: every step is routed (ADR-0019)
 
-An optional layer for a team that wants a second model family on the roles where a different set of blind spots
-helps: `explore`, `planner` and `code-reviewer`. It is a workflow choice, not a profile: those steps carry
-`backend: openclaw-agent` and an `agentId` (ADR-0005, `workflows/feature-cross-provider.workflow.yaml`), and the
-model is whatever that OpenClaw agent runs.
+A workflow step resolves its role through the routing matrix, not through a hard-coded runtime:
+`ai-resources route <role> --run $RUN` returns the cell (`backend:model`, pool), the fallback chain and any cause, and the result
+picks the dispatcher: the Task tool (Claude cell, Claude Code), `sessions_spawn` of the role's `kit-role-*` OpenClaw agent
+(`main` and every channel agent may spawn every role), or `ai-resources agy run --role <role>` for an agy cell from a Claude
+Code session. A step may still pin `backend: claude-code | openclaw-agent (+ agentId) | agy`; the example is
+`workflows/feature-cross-provider.workflow.yaml`. A route that cannot run in the current runtime is `Blocked: <cause>`, never a
+silent switch to Claude Code.
 
-- The model is set per **agent**, not per step: there is no `model` field on a step. Point `agentId` at an agent
-  configured on the model you want.
-- For explicit `openclaw-agent` steps (ADR-0005), write-capable roles are rejected by the validator and the
-  implementer stays on Claude Code; `tester` and `doc-writer` pass with a warning. For `backend: lane` steps the
-  ADR-0007 invariant applies instead: one landing path, the kit; any role may run on any lane. See
-  "Subscription lanes" below.
-- A Gemini 3.8 Flash agent draws on a separate quota pool from the Claude one (Antigravity's Gemini pool and its
-  Claude and GPT pool are separate; see the quota section below), so it spares the Claude quota.
-- A reviewer from another model family has different blind spots. That is reasoning, not a measurement: the
-  evaluation that would decide it (recall and precision of reviewer candidates on seeded defects, from the
-  `ai-resources audit` cost breakdown) has not been run, and no `by_role` entry changes on its account.
-  `ai-resources audit --all-projects --openclaw` now reports the API-equivalent cost per model, agent and origin, and
-  `ai-resources audit snapshot` / `compare` give the before/after deltas such an evaluation needs (ADR-0013).
-- agy model labels (`gemini-3.8-flash-low`, `model_pins.AGY_STATIC`) are **not** API ids and must not be mixed up
-  with the `google/gemini-*` ids of `measured-best`: the first run through an agy-backed agent, the second through
-  a gateway.
+- **One primary, one chain per role.** The fallback fires only when the pool is exhausted (quota text, usage at `spill_at` 85%)
+  or the model does not respond; OpenClaw applies it through `model.fallbacks`, and every fallback is recorded with its cause
+  (`ai-resources dispatch record|list`).
+- **Checker independence is dynamic.** The verifier and security auditor use the cheapest adequate model of a family that wrote
+  none of the run (the dispatch ledger holds the writer families); no independent family blocks with `no-independent-checker`.
+- **Antigravity is a peer backend.** An agy cell runs whenever the matrix assigns it and agy is installed and signed in
+  (otherwise it is skipped with the cause `agy-missing`); it may write in the checkout. There is no flag, acknowledgement or
+  gate. Repository content of every role on an agy cell goes to Google. Process flags are facts recorded in ADR-0007 section 11.
+- **Teams share the checkout.** A run claims the paths it writes (`scope_guard`, `--param write_scope=`); an overlapping claim by
+  another live run waits queued, and out-of-scope paths of a finished step are logged, not trusted away. Agy and Claude are alike.
+- **`setup --lanes` / `--no-lanes`** record or clear the routing overrides (`lanes.yaml`, the matrix only); on by default.
+  `models update` marks drift and `verify` warns.
+- agy model labels (`gemini-3.8-flash-low`, `model_pins.AGY_STATIC`) are **not** API ids and must not be mixed up with the
+  `google/gemini-*` ids: the first run through `agy`, the second through an API key.
 
-Status: the step fields, the validator and the example workflow ship; the live behaviour of `sessions_spawn`
-with an explicit `cwd`, completion signalling and an agy-backed agent have not been run on a host (the ADR's
-verification tables are empty). Treat the layer as unusable until they are.
-
-## Subscription lanes
-
-Reachable from "As a team" (see [Choosing the mode](#choosing-the-mode)) as well as from "Each on its own". In the
-wizard they are called **parallel runs**: not asked on the default path, they are Review > More options > Parallel
-runs (off by default). Ticking Antigravity on "Your tools" is the interactive opt-in for its lane and does not switch
-the Claude parallel runs on.
-
-A lane is a place a role can run: Claude Code, or an OpenClaw agent (`kit-lane-*`) on the Claude CLI backend, so a
-role can use the Claude subscription login in its own process. Lanes are a separate pass
-after the model choice (ADR-0007): they never change which model a role uses, only where it runs. They are
-**disabled on a fresh install** and without a flag; a claude-cli lane draws on the same Claude subscription pool, so
-it buys isolation and parallelism, not quota.
-
-```sh
-ai-resources setup --lanes --lanes-orchestrator main     # propose the table, write
-ai-resources setup --lanes --lanes-dry-run               # show the proposed table, write nothing
-ai-resources setup --no-lanes                            # clear lanes.yaml and the lane agents the kit created
-```
-
-- **What is written.** `~/.config/ai-resources/lanes.yaml` (rendered, setup-owned, both modes; `executors.yaml` is
-  byte-identical with and without lanes), and, operator-run only, the `kit-lane-*` agents, their catalog entries
-  and their ids in `subagents.allowAgents` of the named orchestrators. Setup never spawns a session.
-- **No acknowledgement.** The Anthropic and Google acknowledgements were removed (ADR-0019): `--lanes` asks for the
-  orchestrator ids only. `--allow-unverified` implies nothing.
-- **Checker independence.** The verifier and security auditor never run a model family that a writer in the run
-  uses; the resolver blocks a checker with no independent rung (`ai-resources route`) and the engine re-checks it per run.
-- **Drift.** When a role's model changes (`models update`, an alias moving) the lane agent is marked `stale`, the
-  lanes pass refuses it, and `status`, `verify` and `models update` print a warning; re-run `setup --lanes`.
-- **Profile.** `balanced` (successor of the legacy preset `subscription-claude-55`, which keeps its own Claude-only team) declares a lane table; compose never emits a lane.
-
-### Antigravity in the lanes (ADR-0019)
-
-Antigravity (`agy`) is a peer backend, `agy-cli-lane`, under the same contracts, kit commands and ledger as a claude-cli
-lane. It runs whenever the routing matrix assigns it a cell and it is installed and signed in; there is no
-`--lanes-antigravity` flag, no Google acknowledgement and no gate (the flags, `ACK_TEXT`, `agy_lane_gates` and the evidence
-record were removed). A cell whose agy is missing is skipped with the recorded cause `agy-missing`. What is facts, whatever
-the matrix says:
-
-- **Process flags** across `claude-cli`, `claude-kit`, `agy-cli`, `agy-cli-lane` are recorded as facts in ADR-0007
-  section 11; an agy child runs with `--dangerously-skip-permissions` (a full shell).
-- **Egress.** Repository content, diffs, test output and MCP results of every role on an agy cell go to Google.
-- **Placement follows the matrix and live pool usage.** `lanes.yaml` carries the routing matrix only (role -> primary
-  -> fallback chain, ADR-0019); a pool at or above 85% hands its work to the role's fallback. There are no static weights.
-- **Shared `~/.gemini` or a kit-owned agy home** (`~/.local/share/ai-resources/agy-home/`, never created by setup
-  until V12 is proven): see the runbook.
-- **Write scope.** Teams share the checkout. A run claims the paths it writes (`scope_guard`, `--param write_scope=`), an overlapping claim by another live run waits queued, and out-of-scope paths of a finished step are logged. Agy and Claude are treated alike.
-
-
-Operations: [openclaw runbook](openclaw/runbook.md#subscription-lanes).
+Operations: [openclaw runbook](openclaw/runbook.md).
 
 ## Editing the mapping
 

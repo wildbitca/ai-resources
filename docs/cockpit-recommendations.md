@@ -9,11 +9,11 @@ API-equivalent estimates; on a subscription you spend quota, not dollars ([valid
 
 | Question | Answer | Why |
 |---|---|---|
-| Starting team | **Balanced** | Haiku for explore, tester, doc-writer and package-upgrade; Sonnet for planner, architect, implementer and reviewer; Opus only for the verifier and the security auditor. The checkers are independent of the writers. |
+| Starting team | **Balanced** | Haiku for explore, tester, doc-writer and package-upgrade; Sonnet for planner, architect, implementer and reviewer; the verifier and the security auditor take the cheapest adequate model of a family that did not write the run (Opus only as the ceiling). |
 | Claude Code sign-in | **Your subscription** when you have one; an API key only when you want per-token billing and its limits | Setup shows what Claude Code itself reports and asks keep or change; change hands the terminal to `claude auth login`. An API key counts only when `ANTHROPIC_API_KEY` or an `apiKeyHelper` is live; the kit stores a helper path or command, never a key. Vertex AI keeps only the project and region. |
 | Skills | Leave `AI_RESOURCES_SKILLS` unset; add a domain (`flutter`, `symfony`, ...) only for the stacks you use | Every listed skill costs prompt tokens in every session; the lean list is the same for every cockpit. |
 | Effort | Keep the profile's `role_effort` | planner, architect, verifier and security-auditor high; implementer and reviewer medium; explore, tester and docs low. |
-| Parallel runs | Off unless you need them | They add Claude Code lanes and, with Antigravity, a terms acknowledgement. |
+| Parallel runs | Off unless you need them | They record the routing overrides (`lanes.yaml`); placement follows the role matrix either way. |
 | OpenClaw providers | Sign in only to the providers you really use | Setup reads which providers OpenClaw reports usable; routing, fallbacks and the 15 role agents are limited to them. A role whose provider is not usable runs on the cheapest usable one and the review says so. |
 | OpenClaw sign-in per provider | **CLI backend** for a provider you have a subscription for (Claude Code, Codex); **API key** otherwise | Change it with `openclaw configure --section model`: setup hands the terminal over only on your explicit choice, and the kit never sees a credential. |
 
@@ -31,9 +31,8 @@ fill-only and hot: nothing restarts the gateway. A new kit plugin version is rec
 `ai-resources openclaw apply-pending` from a terminal when the gateway is idle.
 
 **Antigravity (agy).** Signs in with your Google account. Setup adds `engram` to its MCP file only when absent (with a backup)
-and a lean role list to `GEMINI.md`. Its lanes stay behind the terms acknowledgement and the proven gates of ADR-0007. A
-`kit-lane-agy-*` agent that runs a Claude model on the API is reported, and setup offers (per agent, with your confirmation)
-to point it back at the Antigravity catalog or remove it; it never changes it silently.
+and a lean role list to `GEMINI.md`. It runs whenever the routing matrix assigns it a role and it is installed and signed in
+(`ai-resources route <role>` says where a role runs; `ai-resources agy run` calls it from Claude Code).
 
 **Cursor.** Sign-in is managed in Cursor; setup asks nothing and writes its instruction file and MCP entry as before.
 

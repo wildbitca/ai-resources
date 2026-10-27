@@ -32,12 +32,16 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 | Command | Purpose |
 |---------|---------|
 | `ai-resources setup` | Guided setup in five phases (Tools, Cockpit, Team, Audio, More; the Cockpit and Audio phases ask nothing unless OpenClaw is one of your tools). The screens are **Your tools** (every coding CLI is a tool; installed ones are found for you, tick a missing one to install it), **Sign-in** (each ticked tool shows what it reports live and asks keep or change; change hands the terminal to the tool's own flow: `claude auth login`, `openclaw configure --section model`, `agy`; the kit only adds an `apiKeyHelper` for Claude Code and never stores a key; there is no global team question and no gateway, ADR-0016), **Your team** (a starting team: Balanced, Performance, Low cost or Custom, with who does what) and **Review** (the answers, who runs each role and who is billed in separate columns, Apply, Change tools, Change sign-in, Change team, More options; every write the wizard queued is listed under *Will write* and happens only at Apply). Headers read `[n/5]` with a five-phase progress rail; `Ctrl-B` goes back where nothing changed yet, `Ctrl-C`/`Ctrl-D` cancel. `--dry-run` previews; `NO_COLOR` selects plain ASCII output. `ai-resources setup --help` lists the keys. |
-| `ai-resources setup --ask` / `--fresh` | Since 2.8.0 setup takes the recommended answer to every question it has one for and prints one line per answer; credentials, a hand-over to a tool's own sign-in and the Google acknowledgement are still asked. A first run walks every step. `--ask` asks every question; `--fresh` asks every question starting from empty answers. `--auto` is accepted and is the default. |
+| `ai-resources setup --ask` / `--fresh` | Since 2.8.0 setup takes the recommended answer to every question it has one for and prints one line per answer; credentials and a hand-over to a tool's own sign-in are still asked. A first run walks every step. `--ask` asks every question; `--fresh` asks every question starting from empty answers. `--auto` is accepted and is the default. |
 | `ai-resources setup --backend ...` | **Deprecated** (ADR-0015): the gateway is no longer offered. Any value (`cli`, `litellm`, `openrouter`) pre-fills Claude Code's subscription sign-in, prints a deprecation note and skips that question. |
 | `ai-resources orchestrate ...`, `ai-resources workflows {list,show}` | The native team orchestrator engine (ADR-0015): `start`, `next`, `report`, `approve`, `cancel`, `resume`, `status`, `cost`, all with `--json`. It never dispatches; the OpenClaw plugin does (`/equipo`, `/workflow run|status|approve|cancel|resume|cost`). See [docs/orchestration.md](docs/orchestration.md#native-team-orchestrator-openclaw). |
 | `ai-resources setup --yes` | Say yes, for this run only, to installing the missing ones of Claude Code, Antigravity (`agy`) and OpenClaw. No other tool is installed by `--yes`; the tool list on a terminal offers every missing tool. |
 | `ai-resources setup --dry-run` | Preview all generated configs as a masked unified diff and run smoke tests without writing anything to disk. |
-| `ai-resources setup --lanes` / `--no-lanes` / `--lanes-dry-run` | Enable, clear or preview subscription lanes (ADR-0007; off by default). |
+| `ai-resources setup --lanes` / `--no-lanes` | Record or clear the routing overrides (`lanes.yaml`, the role matrix; on by default). |
+| `ai-resources route <role> [--run R] [--record --step S]` | Where a role runs now: cell, pool, fallback chain and cause, from the matrix, live pool usage and the run's writer families (ADR-0019). |
+| `ai-resources agy run --role <role> [--run R --step S] --prompt-file F` | Run an agy cell from a Claude Code session and return the report contract (exit 75 + cause on quota, timeout or missing agy). |
+| `ai-resources dispatch record\|list [--run R] [--since 2h]` | The dispatch ledger: one row per dispatch (role, pool, model, tokens, duration, outcome, fallback cause). |
+| `ai-resources acceptance` | Per-role live calls and fault injection against the matrix (coming in 3.2.0, P7). |
 | `ai-resources setup --non-interactive` | Re-apply saved answers without prompting (useful in CI or scripted re-runs). |
 | `ai-resources setup --profile <name>` | Skip the preset and profile prompts and use the named profile directly. |
 | `ai-resources mcp-run <sentry\|figma>` | Start a shared-token MCP server (see [Shared-token MCP servers](#shared-token-mcp-servers)). Cockpits run it; you do not. |
@@ -179,7 +183,7 @@ Profiles define the role → model mapping for kit subagents. Setup offers the p
 
 | Profile | Mode | Strategy |
 |---------|------|----------|
-| `balanced`, `performance`, `low-cost` | single-model | The three starting teams of "Your team" on every row without a gateway (Claude aliases, a lane table; Balanced also names Gemini over Antigravity, held until the gates are proven) |
+| `balanced`, `performance`, `low-cost` | single-model | The three starting teams of "Your team" on every row without a gateway (Claude aliases; Balanced also places roles on Antigravity per the routing matrix) |
 | `claude-native` | single-model | Claude aliases per role (kept for saved setups; its preset is Balanced) |
 | `claude-inherit` | single-model | Every role inherits the session model |
 

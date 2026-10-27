@@ -149,57 +149,35 @@ never stop the gateway from a session it launched (check `OPENCLAW_CLI`); never 
 `~/.openclaw/openclaw.json` (`openclaw config set|patch --dry-run` first); whoever creates
 `~/.openclaw/watchdog.off` removes it; update with `openclaw update`, never `npm i -g`.
 
-## Subscription lanes
+## Routed team: kit-role agents and the matrix (ADR-0019)
 
-Operator-run only, with an explicit confirm. Lanes are off until you enable them (ADR-0007); setup never spawns a
-session and never restarts the gateway.
-
-**Setup.**
-
-```bash
-ai-resources setup --lanes --lanes-orchestrator <agent-id> --lanes-dry-run   # table and patch, nothing written
-ai-resources setup --lanes --lanes-orchestrator <agent-id>                   # enable
-```
-
-`--lanes-orchestrator` is repeatable and names the only agents whose `subagents.allowAgents` receive the
-`kit-lane-*` ids (`agents.defaults` is never touched). Setup writes `~/.config/ai-resources/lanes.yaml`, creates the
-lane agents with `openclaw agents add` under `~/.openclaw/kit-lanes/<agent id>/` (never `/tmp`), fills catalog
-entries that are absent and records `verify_capability` per orchestrator from its static tool grants. Keys that
-need a restart are listed and deferred; the kit does not restart a live gateway.
-
-**No acknowledgement.** `--lanes` asks for the orchestrator ids and nothing else (ADR-0019 removed the Anthropic and
-Google acknowledgements); a non-interactive `--lanes` enables with the ids it was given.
-
-**Checks.** `ai-resources verify --cockpit openclaw` and `ai-resources models status` warn when `lanes.yaml` is
-missing, stale or a lane agent's model differs from its role's model; re-run `setup --lanes` to fix.
-
-**MCP scoping.** Every `kit-lane-*` agent is written with `tools.deny: ["bundle-mcp"]`, so a lane child is expected to stop
-spawning the operator's whole `mcp.servers` set (the supabase/engram process pile-up; proven only by the isolated merge gate). To give one role an
-extra server, add a `mcp:` map to the profile `lanes:` block, e.g. `mcp: {implementer: [engram]}`, and re-run
-`setup --lanes`: the named servers stay available and the other configured ones are denied by name (`bundle-mcp` is not denied in that mode, so bundle-provided servers outside `mcp.servers` stay loaded). `verify --cockpit
-openclaw` warns on a lane agent that lost the deny; `explain` shows `[mcp: ...]` for opted-in roles. Teardown removes
-only the tokens the kit recorded. Check on a host: run one lane turn and count `pgrep -fc supabase` before and after.
-
-**Teardown.**
+`main` and every channel agent can `sessions_spawn` every role: setup merges `claude` and the `kit-role-*` ids into each
+orchestrator's `subagents.allowAgents` (set difference on teardown) and raises, never lowers, the spawn limits. Each
+`kit-role-<role>` agent carries the matrix primary as `model.primary` and the chain as `model.fallbacks`; the fallback fires
+only on pool exhaustion or no response. Setup never spawns a session and never restarts the gateway; a dry run
+(`ai-resources setup --dry-run`) prints agents added or changed, `allowAgents`, limits and any retired `kit-lane-*` agent.
 
 ```bash
-ai-resources setup --no-lanes
+ai-resources route <role> --run $RUN          # where the role runs now (pool usage, writer families)
+ai-resources agy run --role <role> ...        # an agy cell from a Claude Code session
+ai-resources dispatch list --since 2h         # what actually ran (doctor compares it with the matrix)
+ai-resources setup --lanes / --no-lanes       # record or clear the routing overrides (lanes.yaml, the matrix only)
 ```
 
-It clears the state and removes `lanes.yaml`, takes the `kit-lane-*` ids out of `allowAgents` by set difference (an
-id you added later stays), deletes the catalog entries the kit added (and the `models` container if the kit created
-it), and, after confirmation, runs `openclaw agents delete <id> --force` for ids the kit created. It removes only
-workspaces recorded as created, only `kit-lane-*` directories that are real (not symlinks) and lie under the
-recorded workspace root, and refuses anything else with a message. An agent that existed before setup is never
-deleted. `--no-lanes --lanes-dry-run` changes nothing.
+**Retired `kit-lane-*` agents.** The by-model lane agents are removed only when setup created them and nothing references them;
+every other one is kept with the reason printed.
 
-### Antigravity (agy) in the routing matrix (ADR-0019)
+**MCP scoping.** `kit-role-*` agents are written with `tools.deny: ["bundle-mcp"]` and the stdio MCP servers are denied by exact
+token (`OPENCLAW_MCP_DENY_AGENTS`), so a child does not spawn the operator's whole `mcp.servers` set (the supabase/engram
+process pile-up). Check on a host: run one role turn and count `pgrep -fc supabase` before and after.
+
+### Antigravity (agy) in the routing matrix
 
 agy has the same standing as Claude Code: whenever the matrix assigns an agy cell to a role and agy is installed and
 signed in (`detection.agy_active`: the binary exists and a Google account state is present under `~/.gemini`), the cell
-runs. There is no flag, no Google acknowledgement, no gate G0-G7 and no evidence record. A cell whose tool is missing is
-skipped with the recorded cause `agy-missing` (the role runs on its fallback); `ai-resources route <role>` and
-`ai-resources doctor` say so. Codex is the same kind of optional pool (`codex`, cause `codex-missing`), in no default cell.
+runs. A cell whose tool is missing is skipped with the recorded cause `agy-missing` (the role runs on its fallback);
+`ai-resources route <role>` and `ai-resources doctor` say so. Codex is the same kind of optional pool (`codex`, cause
+`codex-missing`), in no default cell.
 
 **Prerequisites (operator-owned).** agy installed and logged in; `plugins.entries.ai-resources.config.agyBin` an
 absolute path (a relative or missing path skips the agy agents with "run setup in a drained window").
@@ -209,8 +187,7 @@ explicit confirm and never copies it into evidence backups.
 
 **What teardown cannot undo.** Data already sent to Google; agy conversation and memory state in a shared
 `~/.gemini`; `trustedFolders.json` entries; quota consumed; any account-level ToS consequence; files a skip-permissions
-shell wrote outside the repo and the tripwire list; OAuth credentials in a kit-owned agy home unless you confirm
-their removal.
+shell wrote outside the repo; OAuth credentials in a kit-owned agy home unless you confirm their removal.
 
 ## Lean cost defaults (ADR-0013)
 
@@ -238,12 +215,11 @@ runs print `openclaw config set` commands instead. `assert_channels_safe` still 
 
 **MCP mirror is opt-in.** A new install mirrors no Claude Code MCP server into OpenClaw: list the ones you want in
 `~/.openclaw/kit-host.env` as `OPENCLAW_MCP_SERVERS=engram,clickup`. An install that already mirrors keeps doing so.
-In opt-in mode a mirrored server that is no longer listed is denied per non-lane agent by exact token (`<server>__*`, never the global `tools.deny`); a lane agent denies the unlisted servers by name through `lanes.mcp`. See pitfall T50.
+In opt-in mode a mirrored server that is no longer listed is denied per agent by exact token (`<server>__*`, never the global `tools.deny`). See pitfall T50.
 
 **Printed, never written:** `tools.profile` (ADR-0011) and the removal of an entry from agy's `mcp_config.json`.
 **Offered as confirmed migrations since ADR-0014:** `plugins.entries.workboard.enabled=false` and the main heartbeat
-(see "Round 2" below). **Reported, never repointed:** a `kit-lane-agy-*` agent whose primary is an Anthropic model
-(ADR-0007 section 11 keeps agy lanes closed).
+(see "Round 2" below). 
 
 **Measure it.** `ai-resources audit snapshot before`, apply, use the bot for a few days, `ai-resources audit snapshot after`,
 then `ai-resources audit compare before after`.
@@ -296,7 +272,7 @@ for that route and runs nothing. Check with `openclaw models auth list`.
 
 **`disable`, in detail.** `config patch` replaces arrays, so setup reads the live `tools.deny`, appends `image_generate` and
 sends the whole list with `--replace-path tools.deny` after a dry run and a re-read; your entries keep their bytes and their
-order. Scope is global: it also applies to kit lane agents and to your own agents ("affects all agents"). It never writes
+order. Scope is global: it also applies to the kit-role agents and to your own agents ("affects all agents"). It never writes
 `group:media` (which would also remove `view_image`, `tts`, `pdf`, `music_generate` and `video_generate`), `*`, `tools.allow`
 or any `agents.entries.*` path. An entry that already covers the tool (`image_generate` in any case, `group:media`,
 `group:openclaw`, `*`, or an `*` wildcard such as `image*`; matched the way OpenClaw does, trimmed and lowercased, nothing
@@ -1264,11 +1240,11 @@ What `ai-resources setup` now does about a gateway that runs stale code or carri
 | Item | Behaviour |
 |---|---|
 | Restart owed | `ai-resources openclaw reconcile [--dry-run]` (setup runs the same function at its end). A restart is owed when the gateway runs older kit plugin code than the disk (rule `path`, `version` or `time`) or its cgroup holds more than 24 MCP server children (engram, supabase). It is ONE drained window: restart lock, `watchdog.off` held and removed on every exit path (an exception, SIGTERM and SIGINT included), the strict busy probe, the T29 refusal. A refusal is recorded as pending and printed; the next run resumes. A clean gateway is a no-op. |
-| Live checks | `ai-resources verify --live` (also printed after a restart): `openclaw health`; the plugin version the gateway runs against the disk; every kit hook registered in `~/.claude/settings.json` (incl. the `StopFailure` quota signal, and the narration hook when host narration is on); lane agents present and their backend loaded; MCP child count; the off-box credential file exists with mode 0600. |
-| MCP children | Setup denies the stdio MCP servers (a `command`, not a `url`) to the agents matching `OPENCLAW_MCP_DENY_AGENTS` in `kit-host.env` (default `kit-role-*`; comma separated globs; lane agents keep `bundle-mcp` denied). Fill-only and recorded, so teardown removes exactly what was added. Children that already exist go with the drained restart. |
+| Live checks | `ai-resources verify --live` (also printed after a restart): `openclaw health`; the plugin version the gateway runs against the disk; every kit hook registered in `~/.claude/settings.json` (incl. the `StopFailure` quota signal, and the narration hook when host narration is on); `kit-role-*` agents present and their backend loaded; MCP child count; the off-box credential file exists with mode 0600. |
+| MCP children | Setup denies the stdio MCP servers (a `command`, not a `url`) to the agents matching `OPENCLAW_MCP_DENY_AGENTS` in `kit-host.env` (default `kit-role-*`; comma separated globs). Fill-only and recorded, so teardown removes exactly what was added. Children that already exist go with the drained restart. |
 | Reload rules via a shim | An agent session puts `~/.openclaw/tmp/agent-cli/openclaw` first on PATH. The kit skips it, follows it to the package it executes, then tries the other `openclaw` on PATH and the Homebrew `node_modules`; if none is readable every key stays restart-required and the reason names the shim. Units are rendered with the real binary. |
 | Off-box credential | With `OPENCLAW_OFFBOX_BUCKET` set, setup regenerates `offbox-wif-cred.json` (0600) from `~/.config/gcloud/agent-wif` and starts `openclaw-backup-uploader.service` with `--no-block`, then reads `offbox-last.json`. |
-| MemoryHigh | Sized to the host: 55 % of RAM in whole GiB, between 12G and 24G (a 30 GB host gets 16G, room for about 6 lane runs at ~2 GiB each next to the gateway's ~3 GiB). `OPENCLAW_MEMORY_HIGH` in `kit-host.env` overrides. `ai-resources openclaw bootstrap` applies it with `set-property`. |
+| MemoryHigh | Sized to the host: 55 % of RAM in whole GiB, between 12G and 24G (a 30 GB host gets 16G, room for about 6 role runs at ~2 GiB each next to the gateway's ~3 GiB). `OPENCLAW_MEMORY_HIGH` in `kit-host.env` overrides. `ai-resources openclaw bootstrap` applies it with `set-property`. |
 | Polling | `kit_sleep_guard` refuses a `sleep` above 30 s, sleeps that add up above 30 s in one command, and any `while`/`until` loop that sleeps. The AGENTS.md rules say: one blocking wait per job (`awaitResults`), never a poll loop. |
 
 ## Run doctor without killing the gateway

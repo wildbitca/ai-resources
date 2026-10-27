@@ -1775,11 +1775,10 @@ after listing fewer servers, an agent still loads one that is no longer listed.
 `~/.openclaw/kit-host.env` (`OPENCLAW_MCP_SERVERS=engram,clickup`; an empty value means none). An install that already
 mirrors keeps its servers. `engram` is declared by the engine setup (`MANAGED_ELSEWHERE`) and is never mirrored, listed or
 denied by this module. In opt-in mode, a server the kit mirrored earlier that is no longer listed stays configured (removing
-it is the confirmed teardown) but each non-lane agent in `agents.entries` gets the exact token `<server>__*` in its own
+it is the confirmed teardown) but each agent in `agents.entries` gets the exact token `<server>__*` in its own
 `tools.deny`: fill-only, the whole list sent with `--replace-path` (`config patch` unions lists), recorded in state
 (`openclaw.mcp_deny_added`) so only the kit's tokens are ever removed, and taken out again when the server is listed or on
-teardown. The global `tools.deny` is never written for this (ADR-0011). Lane agents are scoped by `lanes.mcp` through
-`openclaw_lanes.mcp_deny`. Agents that exist only through `agents.defaults` (no entry) are not touched: add an entry or deny the token by hand.
+teardown. The global `tools.deny` is never written for this (ADR-0011). Agents that exist only through `agents.defaults` (no entry) are not touched: add an entry or deny the token by hand.
 
 **What to do.** Set the list, re-run `ai-resources setup`, and check `openclaw config get agents.entries.<id>.tools.deny`.
 

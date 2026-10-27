@@ -30,12 +30,26 @@ override) and `tests/test_matrix_equality.py` fails when one of them drifts:
 
 | Artifact | Generator |
 |---|---|
-| `~/.config/ai-resources/lanes.yaml` (`routing.matrix`, digest, Google ack) | `setup/lanes_render.py` |
+| `~/.config/ai-resources/lanes.yaml` (`routing.matrix`, digest) | `setup/lanes_render.py` |
 | `agents/roles/*.md` marked `model:` block (Claude Code hosts the role on its first Max cell) | `ai-resources generate` (`generate._sync_role_models`) |
 | OpenClaw `kit-role-*` agents: `model.primary` + `model.fallbacks`, Max cells pinned to the `claude-cli` runtime, agy cells as `agy-cli-lane/<slug>` | `setup/cockpits/openclaw_roles.py` |
 | the setup role table | `routing.table_rows` |
 
 Never edit a generated block by hand.
+
+## Dispatch
+
+Every workflow step resolves its role here before it runs (D6, ADR-0019):
+
+| Command | Does |
+|---|---|
+| `ai-resources route <role> [--run R] [--record --step S] [--refresh] [--json]` | Resolve the role now: cell, pool, fallback chain, cause. `--run` reads the writer families of the run from the dispatch ledger (a checker takes the cheapest family that did not write); `--record` appends the decision |
+| `ai-resources agy run --role <role> [--run R --step S] --prompt-file F` | Run an agy cell from a Claude Code session (no `sessions_spawn`); returns the report contract, exit 75 + cause + next cell on quota/timeout/empty/missing |
+| `ai-resources dispatch record\|list [--run R] [--since 2h]` | The dispatch ledger (`dispatches.jsonl`): role, pool, backend, model, tokens, duration, outcome, fallback cause, writer families |
+
+The fallback fires only on pool exhaustion or no response, always with a recorded cause; a route that cannot run is
+`Blocked: <cause>`. `ai-resources doctor` compares the ledger with the matrix per pool and role. `ai-resources acceptance`
+(per-role live calls and fault injection) is coming in P7 of 3.2.0.
 
 ## Balancing
 
