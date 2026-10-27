@@ -846,7 +846,7 @@ def doctor(runner: Runner = default_runner, *, force: bool = False, dry_run: boo
            health_timeout: float = 120, health_interval: float = 5,
            sleep: Callable[[float], None] = time.sleep, marker: Marker | None = None,
            openclaw_bin: str | None = None, out: Callable[[str], None] = print,
-           self_cgroup_path: Path | str = "/proc/self/cgroup") -> int:
+           self_cgroup_path: Path | str | None = None) -> int:
     """`openclaw doctor --fix`, the only safe way, implemented once.
 
     `doctor --fix` stops the gateway and re-inspects the stopped unit; if a child (claude,
@@ -941,7 +941,7 @@ def drained_window(action: Callable[[], bool], *, runner: Runner = default_runne
                    health_timeout: float = 120, health_interval: float = 5,
                    sleep: Callable[[float], None] = time.sleep, marker: Marker | None = None,
                    openclaw_bin: str | None = None, out: Callable[[str], None] = print,
-                   skip_message: str = "", self_cgroup_path: Path | str = "/proc/self/cgroup",
+                   skip_message: str = "", self_cgroup_path: Path | str | None = None,
                    lock_path: Path | None = None) -> int:
     """The one maintenance window (T01), shared by `doctor` and the kit's restart-required config applies.
 
@@ -4287,7 +4287,7 @@ def graceful_restart(*, reason: str = "manual", dry_run: bool = False, classific
                      runner: Runner = default_runner, knobs: dict[str, str] | None = None,
                      marker: Marker | None = None, state_path: Path | None = None, lock_path: Path | None = None,
                      snapshot_root: Path | None = None, cgroup_root: Path = CGROUP_ROOT,
-                     proc_root: Path = PROC_ROOT, self_cgroup_path: Path | str = "/proc/self/cgroup",
+                     proc_root: Path = PROC_ROOT, self_cgroup_path: Path | str | None = None,
                      now: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep,
                      openclaw_bin: str | None = None, out: Callable[[str], None] = print,
                      clock: Callable[[], float] = time.monotonic) -> dict:
