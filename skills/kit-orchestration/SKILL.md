@@ -15,7 +15,7 @@ Investigate, explain, compare and propose requests are read-only: no writes, no 
 
 ## Scorecard
 
-Before multi-step work score 0-3 from the request and ~3 reads: `resumability` (3 = a cold session could not finish from request + `git diff`), `blast_radius`, `risk`, `uncertainty`, `verifiability`, `spread`. `ai-resources scorecard '<json>'` maps them: **LITE** inline, no handoff; **STANDARD** implementer, tester, verifier plus triggered roles; **FULL** all seven roles plus handoff.. Tests are mandatory in every mode. Invalid scores mean FULL; no scores and no answer mean light. `verifiability` 3 is not LITE. Escalate at 2 failed rounds or 150 diff lines; never downgrade. Triggers, tiers, size spellings, what code enforces: [references/scorecard.md](references/scorecard.md).
+Before multi-step work score 0-3 from the request and ~3 reads: `resumability` (3 = a cold session could not finish from request + `git diff`), `blast_radius`, `risk`, `uncertainty`, `verifiability`, `spread`. `ai-resources scorecard '<json>'` maps them: **LITE** inline, no handoff; **STANDARD** implementer, tester, verifier plus triggered roles; **FULL** all seven roles plus handoff. Tests are mandatory in every mode. Invalid scores mean FULL; no scores and no answer mean light. `verifiability` 3 is not LITE. Escalate at 2 failed rounds or 150 diff lines; never downgrade. Triggers, tiers, size spellings, what code enforces: [references/scorecard.md](references/scorecard.md).
 
 ## Task size
 

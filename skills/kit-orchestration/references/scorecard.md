@@ -31,7 +31,7 @@ Role triggers (they add to STANDARD; any firing also rules out LITE): `planner` 
 
 **Model tiers per role**, when the runtime can choose a model per subagent: `fast` (cheap) for `explore` and `tester` (reading, running suites); `balanced` for `implementer` and `doc-writer`; `strong` for `planner`, `software-architect`, `code-reviewer`, `security-auditor`, `verifier` (judgement). A runtime without per-role models ignores the tier; the roster is unchanged.
 
-**Escalation, never a silent downgrade.** A run may move up, never down, and says so when it does:
+**Escalation, never a silent downgrade.** A run may move up, never down, and says so when it does. Failed rounds are counted within the current mode; `--full` restores the whole loop (all seven roles plus handoff) whatever the scorecard says:
 
 | From | To | When (either) |
 |---|---|---|
