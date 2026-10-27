@@ -16,7 +16,7 @@ from typing import Any, Mapping
 
 from ..setup import compat, profiles
 from . import db as scores_db
-from . import detect, explain, headroom as hr, headroom_sources
+from . import detect, explain, headroom as hr, headroom_sources, quota_signal
 from .compose import Composition, ComposeInput, MODES, compose
 from .gate import make_gate
 
@@ -175,6 +175,7 @@ def read_live(db: scores_db.ScoresDB, live: tuple[str, ...], reader_deps: Mappin
               now_epoch: int | None) -> dict[str, hr.HeadroomReading]:
     deps = dict(reader_deps or {})
     deps.setdefault("claude_sidecar_path", default_sidecar_path())
+    deps.setdefault("quota_blocks_path", quota_signal.default_path())
     out: dict[str, hr.HeadroomReading] = {}
     for pid in live:
         pool = db.pool(pid)

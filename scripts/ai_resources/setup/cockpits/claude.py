@@ -89,7 +89,7 @@ def detect():
 
 NATIVE_MODELS = ("inherit", "opus", "sonnet", "haiku", "fable", "opusplan")
 KIT_HOOK_SCRIPTS = ("kit_session_start.py", "kit_subagent_return.py", "kit_handoff_guard.py", "agy_evidence_guard.py",
-                    "kit_sleep_guard.py")
+                    "kit_sleep_guard.py", "kit_quota_signal.py")
 # Opt-in hooks that only make sense on a host running OpenClaw. They are installed by the
 # OpenClaw cockpit's host section, never by the always-on kit merge below, so a machine
 # without OpenClaw never gets them (`hooks/hooks.json` still lists them for the plugin route,
@@ -138,6 +138,8 @@ def _kit_hooks(ak_path: str) -> dict[str, list[dict]]:
                        entry("agy_evidence_guard.py", "Write|Edit|MultiEdit|NotebookEdit|Bash"),
                        # ADR-0014 D7: a Bash `sleep` longer than 30 s is refused (polling is the costliest wait).
                        entry("kit_sleep_guard.py", "Bash")],
+        # Provider quota block (rate limit, billing cap): recorded for the headroom reader. Fire-and-forget.
+        "StopFailure": [entry("kit_quota_signal.py", "rate_limit|billing_error")],
     }
 
 

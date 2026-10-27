@@ -236,6 +236,7 @@ Installed into `~/.claude/settings.json` by setup (your own hooks are kept):
 - `kit_session_start.py` (SessionStart) — reports in-progress or stale `.agent-output/handoff-*.md` files
 - `kit_subagent_return.py` (SubagentStop) — during a workflow, sends a kit role subagent back if it did not end with the return block
 - `kit_handoff_guard.py` (PreToolUse) — while `.agent-output/parallel-group.json` exists, blocks subagents from writing the shared handoff
+- `kit_quota_signal.py` (StopFailure, matcher `rate_limit|billing_error`) — records a provider quota block in `~/.cache/ai-resources/quota-blocks.json` so the headroom reader sees the Claude pool as exhausted until the limit lifts; fire-and-forget, silent, stdlib only. Claude Code's payload has the error type and free text but no structured reset time, so a reset is used only when the text states one, else a 15-minute assumed window is recorded as such (`quota-block:...:assumed-ttl`). The signal is positive-only: no block, no file or no hook means "unknown", never "headroom"
 - `kit_sleep_guard.py` (PreToolUse, Bash) — refuses a `sleep` longer than 30 seconds (exit 2) and points at `run_in_background` and Monitor; fail-open, stdlib only (ADR-0014)
 
 ### Install as a Claude Code plugin

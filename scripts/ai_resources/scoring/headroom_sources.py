@@ -7,7 +7,9 @@ exception, a timeout, an HTTP error or a missing field becomes `unknown` with th
 Readers run only for pools the operator opted into (`read_for_pool`), and never from detection.
 
 What each pool can offer (usage research, 2026-10-13):
-    claude-subscription  an EXISTING status-line sidecar JSON (`rate_limits.five_hour|seven_day`), Pro/Max only
+    claude-subscription  an EXISTING status-line sidecar JSON (`rate_limits.five_hour|seven_day`), Pro/Max only; plus a live
+                         quota-block signal from the StopFailure hook (a rate limit or billing cap just hit: used 1.0 until
+                         it lifts), see quota_signal.py. The signal is positive-only: no block is "unknown", not "headroom"
     openrouter           GET /api/v1/key (`limit`, `limit_remaining`, `limit_reset`)
     vertex-claude        Cloud Quotas / Monitoring (the quota page usage may be inaccurate)
     anthropic-api, gemini-api, agy-*, codex-subscription, deepseek-api, openai-api: no reader (unknown)
@@ -20,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from . import headroom as hr
+from . import quota_signal
 from .headroom import HeadroomReading, UNKNOWN, KNOWN
 
 Fetch = Callable[..., Any]
@@ -76,6 +79,35 @@ def read_claude_sidecar(path: str | Path | None, now_epoch: int | None = None,
         return HeadroomReading(pool_id=pool_id, state=KNOWN, used_fraction=min(max(best[0] / 100.0, 0.0), 1.0),
                                resets_at=best[1], source="statusline-sidecar", read_at=written)
     return _safe(pool_id, go)
+
+
+def read_quota_block(path: str | Path | None, now_epoch: int | None = None,
+                     pool_id: str = "claude-subscription") -> HeadroomReading:
+    """A live quota block recorded by hooks/kit_quota_signal.py: the pool is exhausted until `resets_at`.
+
+    Positive-only. No file, no block for the pool or an expired block is `unknown` (source says which), because the
+    absence of a block is not evidence of headroom, and a machine without the hook has no signal at all."""
+    def go() -> HeadroomReading:
+        if not path:
+            return _unknown(pool_id, "quota-block:no-path")
+        if not Path(path).is_file():
+            return _unknown(pool_id, "quota-block:signal-unavailable")
+        now = now_epoch if now_epoch is not None else int(__import__("time").time())
+        block = quota_signal.active_block(path, pool_id, now)
+        if block is None:
+            return _unknown(pool_id, "quota-block:none-active")
+        why = "details" if block.get("reset_source") == "details" else "assumed-ttl"
+        return HeadroomReading(pool_id=pool_id, state=KNOWN, used_fraction=1.0, resets_at=int(block["resets_at"]),
+                               source=f"quota-block:{block.get('error', 'unknown')}:{why}", read_at=int(block["observed_at"]))
+    return _safe(pool_id, go)
+
+
+def read_claude_pool(deps: Mapping[str, Any], now_epoch: int | None = None, pool_id: str = "claude-subscription") -> HeadroomReading:
+    """The status-line reading, overridden by an active quota block (a hit limit beats a percentage written earlier)."""
+    block = read_quota_block(deps.get("quota_blocks_path"), now_epoch, pool_id)
+    if block.state == KNOWN:
+        return block
+    return read_claude_sidecar(deps.get("claude_sidecar_path"), now_epoch, pool_id)
 
 
 def read_openrouter_key(fetch: Fetch | None, now_epoch: int | None = None,
@@ -143,7 +175,7 @@ def read_for_pool(pool: Mapping[str, Any], opted_in: bool, deps: Mapping[str, An
     deps = deps or {}
     source = pool.get("headroom_source")
     if source == "statusline-sidecar":
-        return read_claude_sidecar(deps.get("claude_sidecar_path"), now_epoch, pid)
+        return read_claude_pool(deps, now_epoch, pid)
     if source == "openrouter-key":
         return read_openrouter_key(deps.get("openrouter_fetch"), now_epoch, pid)
     if source == "vertex-quotas":
@@ -166,6 +198,7 @@ def default_lane_deps(home: str | Path | None = None) -> dict[str, Any]:
     sidecar = os.environ.get("AI_RESOURCES_CLAUDE_SIDECAR")
     counters = os.environ.get("AI_RESOURCES_USAGE_COUNTERS")
     return {"claude_sidecar_path": Path(sidecar) if sidecar else base / ".cache" / "ai-resources" / "claude-rate-limits.json",
+            "quota_blocks_path": quota_signal.default_path(home),
             "kit_counters_path": Path(counters) if counters else base / ".cache" / "ai-resources" / "usage-counters.json"}
 
 
@@ -262,7 +295,7 @@ def lane_weights(pool_ids: Any = LANE_POOLS, deps: Mapping[str, Any] | None = No
     out: dict[str, float] = {}
     for pid in sorted({str(p) for p in pool_ids}):
         if pid == "claude-subscription":
-            reading = read_claude_sidecar(deps.get("claude_sidecar_path"), now_epoch, pid)
+            reading = read_claude_pool(deps, now_epoch, pid)
         else:
             reading = read_kit_counters(deps.get("kit_counters_path"), pid, now_epoch)
         eff = hr.effective_weight(float(static.get(pid, hr.DEFAULT_WEIGHT)), reading, now_epoch)
