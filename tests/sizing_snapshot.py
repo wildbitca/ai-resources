@@ -158,7 +158,7 @@ def cli_snapshot():
 
 # --- node surface -----------------------------------------------------------------------------------------------
 
-def run_js(script, args, responses):
+def run_js(script, args, responses, raw=False):
     with tempfile.TemporaryDirectory() as td:
         cfg = Path(td) / "cfg.json"
         cfg.write_text(json.dumps({"args": args, "responses": responses}))
@@ -166,7 +166,8 @@ def run_js(script, args, responses):
     if p.returncode != 0:
         return {"crash": p.stderr.strip().splitlines()[-1] if p.stderr.strip() else "?"}
     data = json.loads(p.stdout)
-    calls = [{"label": c["label"], "agentType": c["agentType"], "sha": hashlib.sha256(c["prompt"].encode()).hexdigest()[:16], "len": len(c["prompt"])}
+    calls = [{"label": c["label"], "agentType": c["agentType"], "sha": hashlib.sha256(c["prompt"].encode()).hexdigest()[:16], "len": len(c["prompt"]),
+              **({"prompt": c["prompt"]} if raw else {})}
              for c in data["calls"]]
     return {"calls": calls, "result": data["result"]}
 

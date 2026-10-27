@@ -26,7 +26,7 @@ import yaml
 
 from .. import domains, repo_root, roles_policy
 from ..setup.cockpits import openclaw_roles
-from . import limits, reply as reply_mod, worktree as worktree_mod
+from . import limits, reply as reply_mod, untrusted, worktree as worktree_mod
 from .state import RunStore, StateError, new_run_id
 from .workflow_loader import CHECKER_ROLES, READ_ONLY_ROLES, VERIFIER_ROLE, WRITER_ROLES, Step, Workflow, WorkflowError
 
@@ -413,8 +413,17 @@ class Engine:
                 raise EngineError(f"unknown step {step_id!r}", "unknown-step")
             st = run["steps"][step_id]
             if st["state"] == "done" and run["status"] in ("running", "awaiting_approval"):
-                return {"run": run_id, "status": run["status"], "actions": self._actions(run), "promoted": [],
-                        "ignored": "already reported"}
+                out = {"run": run_id, "status": run["status"], "actions": self._actions(run), "promoted": [],
+                       "ignored": "already reported"}
+                # An identical repeat is idempotent; a second report that differs from the accepted one is refused and
+                # flagged (the first stays authoritative, and the second text is kept nowhere, only counted).
+                seen = st.get("report_digest")
+                if text.strip() and seen and untrusted.fingerprint(text) != seen:
+                    st["refused_reports"] = st.get("refused_reports", 0) + 1
+                    _event(run, "report-refused", step_id, "a different second report for a step already reported", self.clock())
+                    self._save(run)
+                    out.update({"ignored": "refused: a different report for a step already reported", "refused": True})
+                return out
             if run["status"] != "running":
                 raise EngineError(f"run {run_id} is {run['status']}, not running", "not-running")
             if st["state"] != "running":
@@ -426,6 +435,8 @@ class Engine:
                 st["agent"] = agent[:120]
             outcome = self._judge(run, step, text, timeout=timeout, error=error)
             self._apply(run, step, outcome)
+            if st["state"] == "done" and text.strip():
+                st["report_digest"] = untrusted.fingerprint(text)
             actions = self._actions(run)
             terminal = run["status"] in TERMINAL
             self._save(run)
@@ -454,7 +465,8 @@ class Engine:
                 return {"ok": False, "result": "rejected", "target": step.id, "reply": rep, "reason": problem}
         if rep.blocked or rep.blocking_verdict:
             reason = rep.reason or (f"verdict {rep.verdict_word}" if rep.verdict_word else "blocked")
-            return {"ok": False, "result": "blocked", "target": target, "reply": rep, "reason": reason}
+            return {"ok": False, "result": "blocked", "target": target, "reply": rep, "reason": reason,
+                    "untrusted": bool(rep.reason)}
         return {"ok": True, "result": "ok", "reply": rep, "reason": ""}
 
     def _verifier_problem(self, run: dict[str, Any], step: Step, st: Mapping[str, Any], rep: reply_mod.Reply) -> str:
@@ -494,9 +506,11 @@ class Engine:
             return
         st["state"] = "blocked"
         _event(run, "step-blocked", step.id, f"{outcome['result']}: {outcome['reason']}", now)
-        run["handoff"].update({"blocked": True, "return_to_step": outcome["target"], "block_reason": outcome["reason"],
+        # A reason the agent wrote reaches the next agent through the handoff, so it travels between the UNTRUSTED markers.
+        shown = untrusted.wrap(outcome["reason"], step.id) if outcome.get("untrusted") else outcome["reason"]
+        run["handoff"].update({"blocked": True, "return_to_step": outcome["target"], "block_reason": shown,
                                "status": "blocked"})
-        outcome_for_join = {"target": outcome["target"], "reason": outcome["reason"]}
+        outcome_for_join = {"target": outcome["target"], "reason": outcome["reason"], "untrusted": bool(outcome.get("untrusted"))}
         st["return"] = outcome_for_join
         group = [s for s in _steps_of(run) if s.group and s.group == step.group] if step.group else [step]
         self._join_group_if_ready(run, group)
@@ -510,13 +524,14 @@ class Engine:
             return
         first = blocked[0]
         ret = run["steps"][first.id].get("return") or {"target": first.id, "reason": "blocked"}
-        self._return_to(run, ret["target"], ret["reason"], blocked_step=first.id)
+        self._return_to(run, ret["target"], ret["reason"], blocked_step=first.id, untrusted_reason=bool(ret.get("untrusted")))
 
-    def _return_to(self, run: dict[str, Any], target: str, reason: str, *, blocked_step: str) -> None:
+    def _return_to(self, run: dict[str, Any], target: str, reason: str, *, blocked_step: str,
+                   untrusted_reason: bool = False) -> None:
         run["returns"][target] = run["returns"].get(target, 0) + 1
         if run["returns"][target] > MAX_RETURNS:
             self._fail(run, f"step {target} was returned to {MAX_RETURNS} times already; stopping at the retry cap "
-                            f"(last reason: {reason})")
+                            f"(last reason: {untrusted.wrap(reason, blocked_step) if untrusted_reason else reason})")
             return
         order = run["order"]
         gate = run["approval"]["before"]

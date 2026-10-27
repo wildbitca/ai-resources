@@ -10,6 +10,7 @@
     "layers": ["resumability", "divisibility", "reason"],
     "min_units": 2
   },
+  "untrusted": {"begin": "<<<UNTRUSTED", "end": "UNTRUSTED>>>", "limit": 600},
   "base": {
     "lite": [],
     "standard": ["implementer", "tester", "verifier"],
