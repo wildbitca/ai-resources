@@ -179,31 +179,11 @@ steps:
     exit_criteria: Code review approved or changes requested
     handoff_to: security
     on_concern_return_to: implement
-    execution_hints:
-      parallel_group: review
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Review the diff of the integration tip against Requirements_preserved and audit the test diff: assertions deleted or weakened, tests skipped, tests that cannot fail. Report only defects you can point at in the diff; an empty list is a valid result.
       End the report with Code_review_verdict: APPROVED | REQUIRES_CHANGES and Block_reason: [corrections] (only if REQUIRES_CHANGES).
       Write the report to .agent-output/code-reviewer/review.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: implement, Block_reason: [reason].
-  - id: review-second
-    subagent_type: code-reviewer
-    backend: lane
-    skills:
-      - common-code-review
-      - common-security-standards
-    entry_criteria: Integration verified
-    exit_criteria: Second review approved or changes requested
-    handoff_to: security
-    on_concern_return_to: implement
-    execution_hints:
-      parallel_group: review
-      lane_member: second
-    prompt_template: |
-      Workspace: {{workspace}}. Domain: {{domain}}.
-      You are the second, independent reviewer of the same diff; do not read the other member's report. Report only defects you can point at in the diff.
-      End the report with Code_review_verdict: APPROVED | REQUIRES_CHANGES and Block_reason: [corrections] (only if REQUIRES_CHANGES).
-      Write the report to .agent-output/code-reviewer/review-second.md and end it with the handoff fields you would have set; never edit {{handoff_file}}. If blocked, end the report with Blocked: true, Return_to_step: implement, Block_reason: [reason].
   - id: security
     subagent_type: security-auditor
     backend: lane

@@ -41,11 +41,9 @@ def _profile(monkeypatch):
         for role in ("tester", "doc-writer"):
             lanes["roles"][role] = ["claude-cli:sonnet", "agy:claude-sonnet-5-5", "claude-code"]
         lanes["roles"]["implementer"] = ["claude-cli:sonnet", "agy:claude-sonnet-5-5", "claude-code"]
-        lanes["second"]["code-reviewer"] = ["agy:claude-sonnet-5-5", "claude-cli:sonnet"]
+        lanes["roles"]["code-reviewer"] = ["agy:claude-sonnet-5-5", "claude-cli:sonnet"]
         # ADR-0010 S6: Balanced pins its Gemini candidates; this fixture swaps them for Claude ones, so the pins go.
         lanes.pop("pins", None)
-        for role in ("planner", "software-architect"):
-            lanes["second"].pop(role, None)
         lanes["roles"]["explore"] = ["claude-cli:haiku", "claude-code"]
         return doc
     monkeypatch.setattr(profiles, "load_profile", load)
@@ -260,17 +258,6 @@ def test_the_gates_stay_not_proven_and_the_candidates_stay_held(monkeypatch):
     assert not _agy_part(s)["agents"] and _agy_part(s)["held"]
 
 
-def test_codex_row_never_selectable(monkeypatch):
-    assert lanes_render.CODEX_LANE_ADR_ACCEPTED is False
-    monkeypatch.setattr(detection, "agy_installed", lambda: True)
-    s = _s()
-    s.cockpits["codex"] = state.CockpitState(installed=True)
-    s.profile.customizations = {"__targets__": {"selected": ["claude", "codex", "agy"]}}
-    rows = {r[0]: r for r in wizard._team_rows(s, profiles.load_profile(PROFILE), [("planner", "x", "y")])}
-    assert rows["Codex CLI"][2] == "-" and "no roles yet" in rows["Codex CLI"][1]
-    Ui(monkeypatch)
-    wizard._step_lanes(s, _args())
-    assert not any(a["backend"] == "codex" for a in (s.profile.lanes or {}).get("agents", {}).values())
 
 
 # --- the team table ----------------------------------------------------------------------------------------------
@@ -281,7 +268,7 @@ def test_the_team_table_shows_antigravity_roles_only_when_ticked(monkeypatch):
     on = {r[0]: r for r in wizard._team_rows(_s(), base, rows)}
     off = {r[0]: r for r in wizard._team_rows(_s(ticked=("claude",)), base, rows)}
     assert on["Antigravity"][2].startswith("in team") and "sends repo content to Google" in on["Antigravity"][1]
-    assert "implementer" not in on["Antigravity"][1] and "tester" in on["Antigravity"][1]
+    assert "implementer" in on["Antigravity"][1] and "tester" in on["Antigravity"][1]   # D3: no role is barred from agy
     assert off["Antigravity"][2] == "off" and "tester" not in off["Antigravity"][1]
     assert on["Claude Code"][1] == "planner"
 

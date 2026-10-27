@@ -186,13 +186,13 @@ def test_rendered_lanes_yaml_stale_flag_is_honoured_by_the_loader():
     cands = {r: c["candidates"] for r, c in doc["roles"].items()}
     acks = {"anthropic": {"roles": sorted(cands)}}
     table = scoring_lanes.resolve_lanes({"implementer": {"model": "sonnet"}}, doc["agents"],
-                                        {"implementer": cands["implementer"]}, doc["second"], acks=acks)
+                                        {"implementer": cands["implementer"]}, acks=acks)
     assert table.roles["implementer"].ref == "claude-code"
     fresh = yaml.safe_load(lanes_render.dumps(
         lanes_render.render_doc(s.profile.lanes, {"implementer": {"model": "sonnet"}}, s.mode)))
     assert "stale" not in fresh["agents"]["kit-lane-cli-sonnet55"]
     t2 = scoring_lanes.resolve_lanes({"implementer": {"model": "sonnet"}}, fresh["agents"],
-                                     {"implementer": cands["implementer"]}, fresh["second"], acks=acks)
+                                     {"implementer": cands["implementer"]}, acks=acks)
     assert t2.roles["implementer"].ref.startswith("openclaw-agent:kit-lane-cli-sonnet55")
 
 

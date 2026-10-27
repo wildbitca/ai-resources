@@ -1,7 +1,7 @@
 """Lane resolution (ADR-0007): where each role runs, decided after the model choice.
 
 Pure and deterministic: no I/O, no clock, no dataset access. The caller precomputes what it needs
-(`usage_verdicts` from `gate.usage_gate`, effective headroom `weights`) and passes it in. Compose never
+(`usage_verdicts` from `gate.usage_gate`) and passes it in. Compose never
 emits a lane and a lane never moves the model or the band: a candidate is admitted when it runs the
 role's own model, or when the operator pinned another model (`pins`, per role and per candidate).
 With `effective_ids` the tier rule ("best model first", ADR-0007 section 11 amendment) separates the exact
@@ -14,9 +14,8 @@ Rules, in order (plan section 5):
 4. pick by least projected pressure among admitted candidates (they all run the same model, so
    headroom is the only thing that separates them); ties by candidate order, then agent id;
 5. optional pool caps for writer and non-checker roles; checkers are never capped;
-6. second members, resolved the same way;
-7. checker independence by model family on the models that can actually run (hard);
-8. only declared ids; the digest covers every input that can change the table.
+6. checker independence by model family on the models that can actually run (hard);
+7. only declared ids; the digest covers every input that can change the table.
 """
 from __future__ import annotations
 
@@ -32,15 +31,11 @@ CLAUDE_CODE = "claude-code"
 OPENCLAW_AGENT = "openclaw-agent"
 CLAUDE_CLI = "claude-cli"
 AGY_BACKENDS = frozenset({"agy-cli", "agy-cli-lane"})
-CODEX_CLI = "codex-cli"
-CODEX_POOL = "codex-subscription"
-KNOWN_BACKENDS = frozenset({CLAUDE_CLI, CODEX_CLI}) | AGY_BACKENDS
+KNOWN_BACKENDS = frozenset({CLAUDE_CLI}) | AGY_BACKENDS
 
 CLAUDE_POOL = "claude-subscription"
 AGY_CLAUDE_POOL = "agy-claude-gpt"
 AGY_GEMINI_POOL = "agy-gemini"
-AGY_STATIC_WEIGHT = 0.7
-STATIC_WEIGHTS = {AGY_CLAUDE_POOL: AGY_STATIC_WEIGHT, AGY_GEMINI_POOL: AGY_STATIC_WEIGHT}
 
 MODES = ("single-model", "multi-model")
 ADR_AGY = "ADR-0006 section 4 / ADR-0007"
@@ -91,7 +86,6 @@ class Why:
 @dataclass(frozen=True)
 class LaneTable:
     roles: dict[str, Lane]
-    second: dict[str, Lane]
     agents: dict[str, LaneAgent]
     why: tuple[Why, ...]
     digest: str
@@ -99,12 +93,11 @@ class LaneTable:
     blocked: dict[str, str] = field(default_factory=dict)      # role -> reason (checker, nothing admissible)
 
     def to_lanes(self) -> dict[str, Any]:
-        """The rendered shape: `{agents, roles, second}`; `by_role` is never touched."""
+        """The rendered shape: `{agents, roles}`; `by_role` is never touched."""
         return {
             "agents": {i: {"backend": a.backend, "model": a.model, "pool": a.pool, **({"stale": True} if a.stale else {})}
                        for i, a in sorted(self.agents.items())},
             "roles": {r: {"lane": ln.ref} for r, ln in sorted(self.roles.items())},
-            "second": {r: {"lane": ln.ref} for r, ln in sorted(self.second.items())},
         }
 
 
@@ -123,8 +116,6 @@ def agy_pool_for(model: str) -> str | None:
 def pool_of_agent(agent: LaneAgent) -> str:
     if agent.backend == CLAUDE_CLI:
         return CLAUDE_POOL
-    if agent.backend == CODEX_CLI:
-        return CODEX_POOL
     pool = agy_pool_for(agent.model)
     if pool is None:
         raise LaneError(f"lane agent {agent.id}: cannot map model {agent.model!r} to an agy pool")
@@ -265,8 +256,6 @@ def _acked(acks: Mapping[str, Any], account: str, role: str) -> bool:
 def resolve_lanes(by_role: Mapping[str, Any],
                   agents: Mapping[str, Any],
                   candidates: Mapping[str, Sequence[str]],
-                  second_candidates: Mapping[str, Sequence[str]] | None = None,
-                  weights: Mapping[str, float] | None = None,
                   usage_verdicts: Mapping[str, Any] | None = None,
                   gates: Mapping[str, Any] | None = None,
                   acks: Mapping[str, Any] | None = None,
@@ -279,8 +268,6 @@ def resolve_lanes(by_role: Mapping[str, Any],
                   pins: Mapping[str, Sequence[str]] | None = None) -> LaneTable:
     if mode not in MODES:
         raise LaneError(f"unknown mode {mode!r} (expected one of {', '.join(MODES)})")
-    second_candidates = second_candidates or {}
-    weights = dict(weights or {})
     usage_verdicts = usage_verdicts or {}
     gates = gates or {}
     acks = acks or {}
@@ -291,36 +278,25 @@ def resolve_lanes(by_role: Mapping[str, Any],
     agent_map = {k: _as_agent(v, k) for k, v in sorted(agents.items())}
 
     # input validation: ineligible role / undeclared ids are errors, an unknown role is not
-    for source in (candidates, second_candidates):
-        for role, refs in source.items():
-            for ref in refs:
-                backend, agent_id = _parse_ref(ref)
-                if backend == OPENCLAW_AGENT and agent_id not in agent_map:
-                    raise LaneError(f"role {role}: lane {ref!r} names an agent that is not declared")
-    for role in second_candidates:
-        if role not in roles_policy.REPORT_ROLES:
-            raise LaneError(f"role {role}: only report-contract roles take a second member")
-        if role in roles_policy.CHECKER_ROLES:
-            raise LaneError(f"role {role}: a checker role never takes a second member")
+    for role, refs in candidates.items():
+        for ref in refs:
+            backend, agent_id = _parse_ref(ref)
+            if backend == OPENCLAW_AGENT and agent_id not in agent_map:
+                raise LaneError(f"role {role}: lane {ref!r} names an agent that is not declared")
     for role, refs in pins.items():
         if role in roles_policy.CHECKER_ROLES and refs:
             raise LaneError(f"role {role}: a checker takes no operator pin (it never runs a different model)")
-        known = set(candidates.get(role, ())) | set(second_candidates.get(role, ()))
+        known = set(candidates.get(role, ()))
         for ref in refs:
             if ref not in known:
                 raise LaneError(f"role {role}: pin {ref!r} is not one of the role's candidates")
 
     why: list[Why] = []
     roles_out: dict[str, Lane] = {}
-    second_out: dict[str, Lane] = {}
     models_out: dict[str, str] = {}
-    second_models: dict[str, str] = {}
     blocked: dict[str, str] = {}
     load: dict[str, float] = {}
     capped_count: dict[str, int] = {}
-
-    def weight_of(pool: str) -> float:
-        return float(weights.get(pool, STATIC_WEIGHTS.get(pool, headroom.DEFAULT_WEIGHT)))
 
     PIN, TIER1, TIER2 = 0, 1, 2
 
@@ -350,29 +326,12 @@ def resolve_lanes(by_role: Mapping[str, Any],
                          f"{effective_ids.get(role_model, role_model)}: same family, other version "
                          f"(writer fallback, tier 2)")
         if listed and not checker:
-            klass = PIN if (idx == 0 and weight_of(agent.pool) > headroom.EPSILON) else TIER1
+            klass = PIN if (idx == 0 and headroom.DEFAULT_WEIGHT > headroom.EPSILON) else TIER1
         if agent.stale:
             return False, f"{agent.id} is stale (model drift); re-run `ai-resources setup --lanes`", agent.pool, agent.model, klass
         if agent.backend == CLAUDE_CLI:
             if not _acked(acks, "anthropic", role):
                 return False, f"no Anthropic acknowledgement lists role {role}", agent.pool, agent.model, klass
-            allowed, reason = _verdict(usage_verdicts, agent.pool)
-            if usage_verdicts and not allowed and agent.pool in usage_verdicts:
-                return False, f"pool {agent.pool} is not dispatchable: {reason}", agent.pool, agent.model, klass
-        elif agent.backend == CODEX_CLI:
-            missing = []
-            if role not in roles_policy.REPORT_ROLES:
-                return False, (f"{agent.id}: the Codex lane is read-only (report roles); "
-                               f"role {role} may write"), agent.pool, agent.model, klass
-            if not gates.get("codex_flag"):
-                missing.append("--lanes-codex flag")
-            if not gates.get("adr_0007_codex_accepted"):
-                missing.append("ADR-0007 Codex section Accepted")
-            if not _acked(acks, "openai", role):
-                missing.append(f"an OpenAI acknowledgement listing {role}")
-            if missing:
-                return False, (f"{agent.pool} is held; open only with {', '.join(missing)} "
-                               f"(ADR-0007 FU-2)"), agent.pool, agent.model, klass
             allowed, reason = _verdict(usage_verdicts, agent.pool)
             if usage_verdicts and not allowed and agent.pool in usage_verdicts:
                 return False, f"pool {agent.pool} is not dispatchable: {reason}", agent.pool, agent.model, klass
@@ -412,7 +371,7 @@ def resolve_lanes(by_role: Mapping[str, Any],
             if (not checker) and cap is not None and capped_count.get(pool, 0) >= cap:
                 rejected.append(f"{ref}: cap reached on {pool} ({cap})")
                 continue
-            w = weight_of(pool)
+            w = headroom.DEFAULT_WEIGHT
             p = headroom.pressure(load.get(pool, 0.0), rl, w)
             admitted.append((p, idx, ref, pool, model, reason, klass))
         if not admitted:
@@ -448,7 +407,7 @@ def resolve_lanes(by_role: Mapping[str, Any],
         if role_model != agent.model and _same_model(role_model, agent.model):
             notes.append(f"lane agent pinned {agent.model}; alias may resolve newer")
 
-    ordered = sorted(set(by_role) | set(candidates) | set(second_candidates),
+    ordered = sorted(set(by_role) | set(candidates),
                      key=lambda r: (r in roles_policy.CHECKER_ROLES, r))
     for role in ordered:
         checker = role in roles_policy.CHECKER_ROLES
@@ -490,39 +449,14 @@ def resolve_lanes(by_role: Mapping[str, Any],
             capped_count[pool] = capped_count.get(pool, 0) + 1
         why.append(Why(role, ref, pool, "; ".join(notes) if notes else "single candidate"))
 
-    # second members (report-contract roles only)
-    for role in sorted(second_candidates):
-        role_model = _model_of(by_role, role)
-        refs = list(second_candidates[role])
-        checker = role in roles_policy.CHECKER_ROLES
-        if not role_model or not refs or role in blocked:
-            continue
-        ref, pool, model, notes = pick(role, role_model, refs, checker=checker)
-        if ref is None:
-            why.append(Why(role, "second", "", "no admissible second member: " + "; ".join(notes)))
-            continue
-        primary = roles_out.get(role)
-        if primary is not None and primary.ref == ref and models_out.get(role) == model:
-            why.append(Why(role, ref, pool, "second member equals the primary in lane and model: adds nothing"))
-            continue
-        note_version_drift(role_model, ref, notes)
-        second_out[role] = lane_of(ref)
-        second_models[role] = model
-        load[pool] = load.get(pool, 0.0) + float(role_loads.get(role, 1.0))
-        if not checker:
-            capped_count[pool] = capped_count.get(pool, 0) + 1
-        why.append(Why(role, f"second:{ref}", pool, "; ".join(notes) if notes else "second member"))
-
-    if agent_map or candidates or second_candidates:
-        _check_independence(by_role, models_out, second_models, mode, default_fallbacks)
+    if agent_map or candidates:
+        _check_independence(by_role, models_out, mode, default_fallbacks)
 
     digest = _digest({
         "by_role": {r: {"model": c.get("model"), "fallbacks": list(c.get("fallbacks") or [])}
                     for r, c in sorted(by_role.items()) if isinstance(c, Mapping)},
         "agents": {i: [a.backend, a.model, a.pool, a.stale] for i, a in sorted(agent_map.items())},
         "candidates": {r: list(v) for r, v in sorted(candidates.items())},
-        "second": {r: list(v) for r, v in sorted(second_candidates.items())},
-        "weights": {k: float(v) for k, v in sorted(weights.items())},
         "verdicts": {p: list(_verdict(usage_verdicts, p)) for p in sorted(usage_verdicts)},
         "gates": {k: bool(v) for k, v in sorted(gates.items())},
         "acks": {a: {"roles": sorted((v or {}).get("roles") or ()), "text_sha256": (v or {}).get("text_sha256", "")}
@@ -535,13 +469,12 @@ def resolve_lanes(by_role: Mapping[str, Any],
            if effective_ids is not None else {}),
         **({"pins": {r: list(v) for r, v in sorted(pins.items()) if v}} if any(pins.values()) else {}),
     })
-    return LaneTable(roles=roles_out, second=second_out, agents=agent_map,
+    return LaneTable(roles=roles_out, agents=agent_map,
                      why=tuple(sorted(why, key=lambda w: (w.role, w.lane, w.text))), digest=digest,
                      models=models_out, blocked=blocked)
 
 
-def _check_independence(by_role: Mapping[str, Any], models_out: Mapping[str, str],
-                        second_models: Mapping[str, str], mode: str,
+def _check_independence(by_role: Mapping[str, Any], models_out: Mapping[str, str], mode: str,
                         default_fallbacks: Sequence[str]) -> None:
     """Hard rule: no checker can run a model family a writer can run (single-model: primaries only)."""
     union = fallback_union(by_role)
@@ -550,8 +483,6 @@ def _check_independence(by_role: Mapping[str, Any], models_out: Mapping[str, str
         primaries = []
         if role in models_out:
             primaries.append(models_out[role])
-        if role in second_models:
-            primaries.append(second_models[role])
         out: list[tuple[str, str]] = []
         for p in primaries:
             out.extend(runnable_models(p, union, mode, default_fallbacks))

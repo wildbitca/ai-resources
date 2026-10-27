@@ -64,11 +64,8 @@ def _get(doc: Any, *keys: str) -> Any:
 # `writable_backends()`, when every phase 3 gate (agy_lane_gates G0..G7) is proven: G4 (V9) unproven keeps the
 # lane out of the writer, exactly as the plan's stop rule says.
 WRITABLE_BACKENDS = frozenset({CLAUDE_CLI})
-# The agent runtime a catalog entry names per backend. `codex-cli` is the PROPOSED shape, recorded for the
-# day the Codex lane is accepted: it is not written (not in WRITABLE_BACKENDS) and is not verified against a
-# live OpenClaw (ADR-0007 FU-2, "not proven").
-CATALOG_SHAPES = {CLAUDE_CLI: {"agentRuntime": {"id": CLAUDE_CLI}},
-                  "codex-cli": {"agentRuntime": {"id": "codex-cli"}}}
+# The agent runtime a catalog entry names per backend.
+CATALOG_SHAPES = {CLAUDE_CLI: {"agentRuntime": {"id": CLAUDE_CLI}}}
 AGY_BACKEND = agy_lane_gates.AGY_LANE_BACKEND
 HELD_BACKEND_REASON = "held: backend {backend} is not writable in this version"
 HELD_AGY_BIN_REASON = ("held: agy binary not configured for the kit plugin (plugins.entries.ai-resources."

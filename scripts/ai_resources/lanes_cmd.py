@@ -822,16 +822,10 @@ def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
     if blocked:
         raise Refused([f"role {role} is blocked: {blocked}"])
     _admit_lane(doc, lane, role)
-    if a.second:
-        entry = (resolved.get("second") or {}).get(role)
-        if not entry:
-            raise Refused([f"role {role} has no resolved second member"])
-        fallbacks = []
-    else:
-        entry = (resolved.get("roles") or {}).get(role)
-        if not entry:                                        # a role the table does not name runs on claude-code
-            entry = {"lane": "claude-code", "reason": "role not in the table: claude-code"}
-        fallbacks = list(entry.get("fallbacks") or [])
+    entry = (resolved.get("roles") or {}).get(role)
+    if not entry:                                            # a role the table does not name runs on claude-code
+        entry = {"lane": "claude-code", "reason": "role not in the table: claude-code"}
+    fallbacks = list(entry.get("fallbacks") or [])
     table_sha = _sha(path.read_bytes())
     pool_of = lambda ref: _pool_of_lane(doc, ref)       # noqa: E731
     base = {"digest": doc["digest"], "table_sha256": table_sha, "resolved_pool": pool_of(str(entry.get("lane")))}
@@ -1468,7 +1462,6 @@ def _populate(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--lane", default="", help="The lane the step runs on: claude-code or the lane agent id "
                                               "(required once lanes.yaml exists; must be the resolved lane "
                                               "or a recorded fallback)")
-    p.add_argument("--second", action="store_true", help="The step is the optional second member of its role")
     p.add_argument("--attempt", type=int, default=1)
     p.add_argument("--reenter", action="store_true", help="Re-entering the step through on_concern_return_to")
     p.add_argument("--scope", nargs="*", default=[], help="write_scope paths (scope contract)")

@@ -54,7 +54,7 @@ def test_the_read_only_groups_of_the_shipped_workflows_run_in_parallel_and_the_r
     infra = wl.load("infra-triage")
     assert all(s.group == "" for s in infra.steps) and infra.notes
     lanes = wl.load("feature-lanes")
-    assert [(g[0].id, len(g)) for g in lanes.groups() if len(g) > 1] == [("review", 2)]
+    assert [(g[0].id, len(g)) for g in lanes.groups() if len(g) > 1] == []
 
 
 def test_the_first_writer_gate_of_each_workflow_is_never_a_read_only_step():

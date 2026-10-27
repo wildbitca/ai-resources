@@ -35,8 +35,8 @@ def test_the_lanes_example_is_a_lane_workflow_with_a_verified_landing_chain():
         g = (s.get("execution_hints") or {}).get("parallel_group")
         if g:
             groups.setdefault(g, set()).add(s["id"])
-    assert groups == {"scope-writers": {"tests", "docs"}, "review": {"review", "review-second"}}
-    assert steps["review-second"]["execution_hints"]["lane_member"] == "second"
+    assert groups == {"scope-writers": {"tests", "docs"}}
+    assert "review-second" not in steps
     for sid in ("verify-tests", "verify-docs", "verify-implement", "verify-final", "security"):
         assert not (steps[sid].get("execution_hints") or {}).get("parallel_group")
         assert steps[sid]["backend"] == "lane"

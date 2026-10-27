@@ -281,8 +281,6 @@ def _step_backend_label(step: dict, integrating_writer: str = "implementer") -> 
             label += ", write scope: " + ", ".join(str(p) for p in scope)
         elif step.get("subagent_type") == integrating_writer:
             label += ", integrating writer"
-        if (step.get("execution_hints") or {}).get("lane_member") == "second":
-            label += ", second member"
         return label
     return backend
 

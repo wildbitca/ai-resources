@@ -177,9 +177,8 @@ def _preset_agy_slugs(root: Path) -> set[str]:
         except (OSError, yaml.YAMLError):
             raise RecordError(f"cannot read preset profile {path.name}")
         block = doc.get("lanes") or {}
-        for key in ("roles", "second"):
-            for cands in (block.get(key) or {}).values():
-                slugs |= {c[4:] for c in cands or () if isinstance(c, str) and c.startswith("agy:")}
+        for cands in (block.get("roles") or {}).values():
+            slugs |= {c[4:] for c in cands or () if isinstance(c, str) and c.startswith("agy:")}
     return slugs
 
 

@@ -188,7 +188,6 @@ def read_for_pool(pool: Mapping[str, Any], opted_in: bool, deps: Mapping[str, An
 
 # --- lane placement (ADR-0007 OQ-4, FU-5) ----------------------------------------------------------
 
-LANE_POOLS = ("claude-subscription", "agy-claude-gpt", "agy-gemini", "codex-subscription")
 
 
 def default_lane_deps(home: str | Path | None = None) -> dict[str, Any]:
@@ -279,26 +278,3 @@ def sync_live_usage_caches(home: str | Path | None = None, timeout: int = 15) ->
             summary["errors"]["agy"] = str(exc)
 
     return summary
-
-
-def lane_weights(pool_ids: Any = LANE_POOLS, deps: Mapping[str, Any] | None = None, now_epoch: int | None = None,
-                 static: Mapping[str, float] | None = None) -> dict[str, float]:
-    """Effective weights for lane placement, only for pools with a fresh measured reading.
-
-    The Claude pool is read from the status-line sidecar; every other pool from the kit counters file. A pool
-    with no reading, an unreadable file or a stale reading is OMITTED, so the resolver falls back to its
-    static weight (and a reader that fails never raises). Pure over its inputs: same files and `now_epoch`,
-    same result, rounded so the digest is stable. Never a network call and never a paid API."""
-    deps = deps if deps is not None else default_lane_deps()
-    from .lanes import STATIC_WEIGHTS
-    static = {**STATIC_WEIGHTS, **(static or {})}
-    out: dict[str, float] = {}
-    for pid in sorted({str(p) for p in pool_ids}):
-        if pid == "claude-subscription":
-            reading = read_claude_pool(deps, now_epoch, pid)
-        else:
-            reading = read_kit_counters(deps.get("kit_counters_path"), pid, now_epoch)
-        eff = hr.effective_weight(float(static.get(pid, hr.DEFAULT_WEIGHT)), reading, now_epoch)
-        if eff.basis == "live":
-            out[pid] = round(eff.weight, 6)
-    return out

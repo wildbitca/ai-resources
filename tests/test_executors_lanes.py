@@ -43,7 +43,7 @@ def test_profile_block_validates_and_names_no_agent_id():
     ({"roles": {"nope": ["claude-code"]}}, "not lane-eligible"),
     ({"roles": {"implementer": ["kit-lane-cli-sonnet55"]}}, "bad candidate"),
     ({"roles": {"implementer": []}}, "non-empty"),
-    ({"second": {"implementer": ["claude-code"]}}, "report-contract"),
+    ({"second": {"implementer": ["claude-code"]}}, "unknown key"),
     ({"agents": {}}, "unknown key"),
 ])
 def test_invalid_blocks_are_rejected(block, needle):
@@ -294,7 +294,6 @@ def _phase_two_state():
         "roles": {"implementer": {"candidates": ["openclaw-agent:kit-lane-cli-sonnet55", "claude-code"]},
                   "tester": {"candidates": ["openclaw-agent:kit-lane-cli-sonnet55", "claude-code"]},
                   "verifier": {"candidates": ["openclaw-agent:kit-lane-cli-opus55", "claude-code"]}},
-        "second": {"planner": ["openclaw-agent:kit-lane-cli-opus55"]},
         "orchestrators": ["main"]}
     s.profile.lane_acks = {"anthropic": lanes_render.make_ack(
         "anthropic", ["implementer", "tester", "verifier", "doc-writer", "planner"], "2026-01-01T00:00:00Z")}

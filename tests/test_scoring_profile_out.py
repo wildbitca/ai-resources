@@ -68,7 +68,7 @@ def test_customizations_are_byte_identical_with_and_without_a_lanes_table():
                                 acks={"anthropic": {"roles": ["implementer"]}})
     out = profile_out.to_lanes(table)
     assert json.dumps(profile_out.to_customizations(comp), sort_keys=True) == before
-    assert set(out) == {"agents", "roles", "second"}
+    assert set(out) == {"agents", "roles"}
     assert out["roles"]["implementer"] == {"lane": f"openclaw-agent:{agent.id}"}
     assert out["agents"][agent.id]["pool"] == "claude-subscription"
     assert by_role == {"implementer": {"model": "sonnet"}}          # by_role never gains lane keys

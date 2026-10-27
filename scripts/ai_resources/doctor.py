@@ -62,7 +62,7 @@ def _balanced_agy_roles() -> list[str]:
         block = profiles.load_profile("balanced", "single-model").get("lanes") or {}
     except (FileNotFoundError, RuntimeError):
         return []
-    found = {role for key in ("roles", "second") for role, cands in (block.get(key) or {}).items()
+    found = {role for role, cands in (block.get("roles") or {}).items()
              for c in cands or () if isinstance(c, str) and c.startswith("agy:gemini-")}
     return [r for r in profiles.KNOWN_ROLES if r in found]
 

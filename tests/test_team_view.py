@@ -9,12 +9,10 @@ import agy_evidence_fakes as fk
 from ai_resources import agy_gate_evidence as ev
 from ai_resources.setup import lanes_render, profiles, state, team_view, ui, wizard
 
-BALANCED_ROLES = ["explore", "code-reviewer", "planner", "software-architect"]
+BALANCED_ROLES = ["explore", "code-reviewer"]
 GEMINI_CELLS = {
     "explore (lane)": "google gemini-3.8-flash-high via Antigravity",
-    "code-reviewer (second)": "google gemini-4-argon-high via Antigravity",
-    "planner (second)": "google gemini-4-argon-high via Antigravity",
-    "software-architect (second)": "google gemini-4-argon-high via Antigravity",
+    "code-reviewer (lane)": "google gemini-4-argon-high via Antigravity",
 }
 NEXT = "run the probe window, then ai-resources lanes gates record"
 
@@ -54,7 +52,7 @@ def mix_for(**kw):
 
 # --- AC-S10a ---------------------------------------------------------------------------------------------------------
 
-def test_cli_balanced_ticked_and_acknowledged_without_a_record_holds_four_gemini_cells_and_says_what_next(monkeypatch,
+def test_cli_balanced_ticked_and_acknowledged_without_a_record_holds_both_gemini_cells_and_says_what_next(monkeypatch,
                                                                                                           tmp_path):
     fk.use(monkeypatch, fk.make_root(tmp_path))
     _doc, _rows, mix, lane_rows = mix_for(ticked=True, acks=ack(BALANCED_ROLES + ["verifier"]))
@@ -68,19 +66,13 @@ def test_cli_balanced_ticked_and_acknowledged_without_a_record_holds_four_gemini
 
 # --- AC-S10b ---------------------------------------------------------------------------------------------------------
 
-def test_with_a_valid_record_and_the_acknowledgement_the_four_cells_are_on_and_writers_stay_on_claude(monkeypatch,
+def test_with_a_valid_record_and_the_acknowledgement_both_cells_are_on_and_writers_stay_on_claude(monkeypatch,
                                                                                                     tmp_path):
     root = fk.make_root(tmp_path)
     fk.use(monkeypatch, root)
     fk.write(root, fk.valid_doc(root))
     _doc, rows, mix, lane_rows = mix_for(ticked=True, acks=ack(BALANCED_ROLES))
-    # ADR-0010 C5: only the code-reviewer second has a dispatching workflow step; the planner and architect seconds
-    # are display-only and must never read "on".
-    display_only = {"planner (second)", "software-architect (second)"}
-    assert cells(lane_rows) == {role: f"{text} ({'display-only' if role in display_only else 'on'})"
-                                for role, text in GEMINI_CELLS.items()}
-    assert not any(cells(lane_rows)[r].endswith("(on)") for r in display_only)
-    assert {r: s for r, s in mix.states.items() if r in display_only} == {r: "display-only" for r in display_only}
+    assert cells(lane_rows) == {role: f"{text} (on)" for role, text in GEMINI_CELLS.items()}
     assert "unconfirmed" not in " ".join(cells(lane_rows).values())
     assert mix.lines == () and mix.held == () and mix.next_action == ""
     assert "google" in mix.active
@@ -98,20 +90,20 @@ def test_with_agy_not_ticked_the_line_says_so_and_no_cell_reads_on(monkeypatch, 
     fk.write(root, fk.valid_doc(root))                                  # even a valid record does not switch it on
     _doc, _rows, mix, lane_rows = mix_for(ticked=False, acks=ack(BALANCED_ROLES))
     assert mix.lines == ("Gemini not active: Antigravity not selected",)
-    assert all(text.endswith("(off)") for text in cells(lane_rows).values()) and len(cells(lane_rows)) == 4
+    assert all(text.endswith("(off)") for text in cells(lane_rows).values()) and len(cells(lane_rows)) == len(GEMINI_CELLS)
     assert "google" not in mix.active
 
 
-def test_an_acknowledgement_that_misses_planner_holds_only_planner_and_names_the_fix(monkeypatch, tmp_path):
+def test_an_acknowledgement_that_misses_code_reviewer_holds_only_it_and_names_the_fix(monkeypatch, tmp_path):
     root = fk.make_root(tmp_path)
     fk.use(monkeypatch, root)
     fk.write(root, fk.valid_doc(root))
-    _doc, _rows, mix, lane_rows = mix_for(ticked=True, acks=ack(["explore", "code-reviewer", "software-architect"]))
-    assert cells(lane_rows)["planner (second)"].endswith("(held)")
+    _doc, _rows, mix, lane_rows = mix_for(ticked=True, acks=ack(["explore"]))
+    assert cells(lane_rows)["code-reviewer (lane)"].endswith("(held)")
     assert cells(lane_rows)["explore (lane)"].endswith("(on)")
-    assert mix.lines == ("Gemini held: the Google acknowledgement does not list planner. Next: "
-                         "extend the Google acknowledgement to: planner",)
-    assert [role for role, _w in mix.held] == ["planner"]
+    assert mix.lines == ("Gemini held: the Google acknowledgement does not list code-reviewer. Next: "
+                         "extend the Google acknowledgement to: code-reviewer",)
+    assert [role for role, _w in mix.held] == ["code-reviewer"]
 
 
 # --- AC-S10d: OpenRouter ---------------------------------------------------------------------------------------------
@@ -157,14 +149,15 @@ def test_the_single_and_legacy_litellm_rows_print_their_degrade_lines():
     assert team_view.provider_mix(legacy, lrows, row="litellm").active == ("anthropic",)
 
 
-# --- the tools table and the seconds ------------------------------------------------------------------------------------
+# --- the tools table ------------------------------------------------------------------------------------
 
-def test_role_lane_rows_list_the_seconds_of_every_report_role_and_the_real_provider():
+def test_role_lane_rows_list_the_agy_lanes_and_the_real_provider():
     doc = balanced()
     lane_rows = team_view.role_lane_rows(base_rows(doc), doc, row="cli", ticked=True, acks=None)
     names = [r.role for r in lane_rows]
-    for second in ("code-reviewer (second)", "planner (second)", "software-architect (second)"):
-        assert second in names
+    for lane in ("explore (lane)", "code-reviewer (lane)"):
+        assert lane in names
+    assert not any("(second)" in n for n in names)
     assert next(r for r in lane_rows if r.role == "implementer").provider == "anthropic"
     assert all(r.provider != "-" for r in lane_rows)
 
@@ -172,7 +165,7 @@ def test_role_lane_rows_list_the_seconds_of_every_report_role_and_the_real_provi
 def test_the_wrappers_in_the_wizard_still_answer(monkeypatch):
     doc = balanced()
     assert wizard._agy_team_roles(doc) == team_view.agy_team_roles(doc)
-    assert any("planner (second opinion): gemini-4-argon-high [unconfirmed slug]" == e for e in wizard._agy_team_roles(doc))
+    assert any("code-reviewer: gemini-4-argon-high [unconfirmed slug]" == e for e in wizard._agy_team_roles(doc))
     assert wizard._agy_lanes_on(types.SimpleNamespace(profile=types.SimpleNamespace(lanes=None))) is False
     s = state.SetupState()
     s.profile.lanes = {"agents": {"a": {"backend": "agy-cli-lane"}}}
@@ -219,51 +212,13 @@ def test_markup_in_a_model_or_lane_is_escaped(capsys):
     assert "[bold red]role[/]" in out and "[red]lane[/red]" in out and "[link=http://x]m[/link]" in out
 
 
-def test_display_only_seconds_keep_held_and_off_and_do_not_activate_google_alone(monkeypatch, tmp_path):
-    root = fk.make_root(tmp_path)
-    fk.use(monkeypatch, root)
-    fk.write(root, fk.valid_doc(root))
-    ack_ = ack(BALANCED_ROLES)
-    assert team_view.member_state("planner", ticked=True, acks=ack_, kind="second")[0] == "display-only"
-    assert team_view.member_state("software-architect", ticked=False, acks=ack_, kind="second")[0] == "off"
-    assert team_view.member_state("planner", ticked=True, acks=None, kind="second")[0] == "held"
-    assert team_view.member_state("code-reviewer", ticked=True, acks=ack_, kind="second")[0] != "display-only"
 
 
-# --- ADR-0010 advisories: the display-only set follows the workflow, and display-only members never activate Google ---
-
-def _dispatched_second_roles():
-    import pathlib
-    import yaml
-    path = pathlib.Path(__file__).resolve().parents[1] / "workflows" / "feature-lanes.workflow.yaml"
-    steps = yaml.safe_load(path.read_text())["steps"]
-    return {s["subagent_type"] for s in steps if (s.get("execution_hints") or {}).get("lane_member") == "second"}
 
 
-def test_display_only_seconds_are_derived_from_the_feature_lanes_workflow():
-    dispatched = _dispatched_second_roles()
-    assert dispatched, "the workflow must keep at least one step with lane_member: second"
-    declared = {role for kind, role, _c in team_view.agy_members(balanced()) if kind == "second"}
-    assert team_view.DISPLAY_ONLY_SECONDS == frozenset(declared - dispatched)
-    assert not team_view.DISPLAY_ONLY_SECONDS & dispatched
 
 
-def test_only_display_only_gemini_members_ticked_does_not_report_google_active(monkeypatch, tmp_path):
-    root = fk.make_root(tmp_path)
-    fk.use(monkeypatch, root)
-    fk.write(root, fk.valid_doc(root))                         # a valid record: nothing is held
-    display_only = sorted(team_view.DISPLAY_ONLY_SECONDS)
-    doc = balanced()
-    doc = {**doc, "lanes": {**doc["lanes"], "roles": {}, "second": {r: doc["lanes"]["second"][r] for r in display_only}}}
-    rows = base_rows(doc)
-    mix = team_view.provider_mix(doc, rows, row="cli", ticked=True, acks=ack(BALANCED_ROLES))
-    assert set(mix.states.values()) == {"display-only"} and len(mix.states) == len(display_only)
-    assert "google" in mix.declared and "google" not in mix.active
-    assert mix.held == () and mix.lines == ()
-    # and the same team with a dispatching member added does activate it
-    full = balanced()
-    assert "google" in team_view.provider_mix(full, base_rows(full), row="cli", ticked=True,
-                                              acks=ack(BALANCED_ROLES)).active
+
 
 
 # --- ADR-0016 D3 (AC-4): no host overlay, absent evidence is held ------------------------------------------------------
@@ -276,7 +231,7 @@ def test_the_kit_default_root_without_a_record_holds_every_agy_member_and_never_
     assert ev.load().status == "absent"
     _doc, _rows, mix, lane_rows = mix_for(ticked=True, acks=ack(BALANCED_ROLES + ["verifier"]))
     texts = list(cells(lane_rows).values())
-    assert len(texts) == 4 and all(t.endswith("(held)") for t in texts)
+    assert len(texts) == len(GEMINI_CELLS) and all(t.endswith("(held)") for t in texts)
     assert not any("(on)" in t for t in texts)
     assert {role for role, _why in mix.held} == set(BALANCED_ROLES)
     assert all("gates not proven" in why for _role, why in mix.held)

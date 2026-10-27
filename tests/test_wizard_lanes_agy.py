@@ -41,11 +41,9 @@ def _env(monkeypatch):
         for role in ("verifier", "security-auditor"):
             lanes["roles"][role] = ["claude-code", "claude-cli:opus", "agy:claude-opus-5-5"]
         lanes["roles"]["planner"] = ["claude-code"]
-        lanes["second"]["code-reviewer"] = ["agy:claude-sonnet-5-5", "claude-cli:sonnet"]
+        lanes["roles"]["code-reviewer"] = ["agy:claude-sonnet-5-5", "claude-cli:sonnet"]
         # ADR-0010 S6: Balanced pins its Gemini candidates; this fixture swaps them for Claude ones, so the pins go.
         lanes.pop("pins", None)
-        for role in ("planner", "software-architect"):
-            lanes["second"].pop(role, None)
         lanes["roles"]["explore"] = ["claude-cli:haiku", "claude-code"]
         return doc
     monkeypatch.setattr(profiles, "load_profile", load)
@@ -60,7 +58,7 @@ def _s():
 
 def _anthropic(s):
     doc = profiles.load_profile(PROFILE)
-    roles = sorted(set(doc["lanes"]["roles"]) | set(doc["lanes"]["second"]))
+    roles = sorted(doc["lanes"]["roles"])
     return {"anthropic": lanes_render.make_ack("anthropic", roles, "2026-10-16")}
 
 
@@ -196,7 +194,7 @@ def test_no_lanes_antigravity_clears_the_gate_and_the_agy_agents_but_keeps_claud
     lanes = s.profile.lanes
     assert "gates" not in lanes
     assert all(a["backend"] == "claude-cli" for a in lanes["agents"].values()) and lanes["agents"]
-    assert "kit-lane-agy-sonnet55" not in repr(lanes["roles"]) + repr(lanes["second"])
+    assert "kit-lane-agy-sonnet55" not in repr(lanes["roles"])
     assert lanes["orchestrators"] == ["main"]
     assert "google" in s.profile.lane_acks                      # the ack stays as a record
 

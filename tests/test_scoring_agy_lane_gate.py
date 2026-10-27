@@ -30,10 +30,10 @@ def ref(a):
     return f"openclaw-agent:{a.id}"
 
 
-def resolve(by_role, agents=(), candidates=None, second=None, **kw):
+def resolve(by_role, agents=(), candidates=None, **kw):
     kw.setdefault("acks", copy.deepcopy(fk.OPEN_ACKS))
     kw.setdefault("gates", dict(fk.OPEN_GATES))
-    return L.resolve_lanes(by_role, {a.id: a for a in agents}, candidates or {}, second or {}, **kw)
+    return L.resolve_lanes(by_role, {a.id: a for a in agents}, candidates or {}, **kw)
 
 
 # --- AC3.1: closed unless flag + ack + ADR ---------------------------------------------------------------
@@ -95,31 +95,8 @@ def test_a_pinned_gemini_writer_with_an_opus_verifier_is_valid():
     assert t.roles["verifier"].ref == "claude-code"
 
 
-# --- AC3.6: weights ----------------------------------------------------------------------------------------
-
-def test_pure_resolver_with_explicit_weights_moves_a_checker_to_agy_only_when_claude_is_scarce():
-    """The 0.3 weight is passed by the test: no production source sets it (plan 7 item 5a)."""
-    by_role = {"security-auditor": {"model": "opus"}}
-    cands = {"security-auditor": ["claude-code", ref(CLI_OPUS), ref(AGY_OPUS)]}
-    agents = [CLI_OPUS, AGY_OPUS]
-    scarce = resolve(by_role, agents, cands, weights={"claude-subscription": 0.3, "agy-claude-gpt": 1.0},
-                     effective_ids=EFFECTIVE)
-    assert scarce.roles["security-auditor"].ref == ref(AGY_OPUS)
-    ample = resolve(by_role, agents, cands, weights={"claude-subscription": 1.0, "agy-claude-gpt": 0.7},
-                    effective_ids=EFFECTIVE)
-    assert ample.roles["security-auditor"].ref == "claude-code"
-    equal = resolve(by_role, agents, cands, weights={"claude-subscription": 1.0, "agy-claude-gpt": 1.0},
-                    effective_ids=EFFECTIVE)
-    assert equal.roles["security-auditor"].ref == "claude-code"      # candidate order
 
 
-def test_production_static_weights_place_same_model_roles_by_count_in_sorted_role_order():
-    """Pinned behaviour (plan C6): claude 1.0 and agy 0.7 balance by role count, not by quota."""
-    by_role = {r: {"model": "sonnet"} for r in ("tester", "doc-writer", "implementer")}
-    cands = {r: ["claude-code", ref(AGY_SONNET)] for r in by_role}
-    t = resolve(by_role, [AGY_SONNET], cands, effective_ids=EFFECTIVE)
-    assert {r: ln.ref for r, ln in t.roles.items()} == {
-        "doc-writer": "claude-code", "implementer": ref(AGY_SONNET), "tester": "claude-code"}
 
 
 def test_a_checker_with_no_admissible_tier_one_candidate_is_blocked_never_substituted():
@@ -132,11 +109,10 @@ def test_a_checker_with_no_admissible_tier_one_candidate_is_blocked_never_substi
 
 # --- AC3.7: tier rule and pins ----------------------------------------------------------------------------
 
-def test_tier_one_beats_tier_two_whatever_the_headroom():
+def test_tier_one_beats_tier_two():
     by_role = {"implementer": {"model": "sonnet"}}
     cands = {"implementer": ["claude-code", ref(AGY_SONNET46)]}
-    t = resolve(by_role, [AGY_SONNET46], cands, effective_ids=EFFECTIVE,
-                weights={"claude-subscription": 0.3, "agy-claude-gpt": 1.0})
+    t = resolve(by_role, [AGY_SONNET46], cands, effective_ids=EFFECTIVE)
     assert t.roles["implementer"].ref == "claude-code"
 
 
@@ -182,11 +158,6 @@ def test_the_legacy_global_pin_flag_keeps_its_meaning_for_old_callers():
     assert t.roles["implementer"].ref == ref(AGY_GEMINI)
 
 
-def test_second_for_a_checker_is_refused():
-    for role in ("verifier", "security-auditor"):
-        with pytest.raises(L.LaneError):
-            resolve({role: {"model": "opus"}}, [AGY_OPUS], {role: ["claude-code"]}, {role: [ref(AGY_OPUS)]},
-                    effective_ids=EFFECTIVE)
 
 
 AGY_GPT_OSS = L.LaneAgent("kit-lane-agy-gptoss", "agy-cli-lane", "agy-cli-lane/gpt-oss-120b-medium",
@@ -282,7 +253,7 @@ def _surfaces(label, monkeypatch):
     lanes = {"agents": {sonnet.id: {"backend": sonnet.backend, "model": sonnet.model, "pool": sonnet.pool},
                         opus.id: {"backend": opus.backend, "model": opus.model, "pool": opus.pool}},
              "roles": {r: {"candidates": [ref(opus if r == "verifier" else sonnet)]} for r in ROLES9},
-             "second": {}, "orchestrators": [], "verify_capability": {}, "pool_caps": {},
+             "orchestrators": [], "verify_capability": {}, "pool_caps": {},
              "max_remote_concurrency": 2, "workspace_root": ""}
     acks = {"anthropic": lanes_render.make_ack("anthropic", ROLES9, "2026-10-16")}
     if label == "agy-cli-lane":

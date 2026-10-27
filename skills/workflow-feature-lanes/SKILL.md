@@ -31,8 +31,7 @@ Feature workflow on subscription lanes. Every role is a lane step resolved from 
 | `verify-docs` | `verifier` | lane (resolved at dispatch from the setup lanes table) | — |
 | `implement` | `implementer` | lane (resolved at dispatch from the setup lanes table), integrating writer | — |
 | `verify-implement` | `verifier` | lane (resolved at dispatch from the setup lanes table) | — |
-| `review` | `code-reviewer` | lane (resolved at dispatch from the setup lanes table) | review |
-| `review-second` | `code-reviewer` | lane (resolved at dispatch from the setup lanes table), second member | review |
+| `review` | `code-reviewer` | lane (resolved at dispatch from the setup lanes table) | — |
 | `security` | `security-auditor` | lane (resolved at dispatch from the setup lanes table) | — |
 | `verify-final` | `verifier` | lane (resolved at dispatch from the setup lanes table) | — |
 | `document` | `doc-writer` | claude-code | — |

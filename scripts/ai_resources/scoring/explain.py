@@ -76,7 +76,6 @@ def lane_column(lanes: Any) -> dict[str, str] | None:
     roles = getattr(lanes, "roles", None)
     if roles is not None:
         out = {r: ln.ref for r, ln in roles.items()}
-        out.update({r: f"{out.get(r, '-')} + second {ln.ref}" for r, ln in getattr(lanes, "second", {}).items()})
         for r, why in getattr(lanes, "blocked", {}).items():
             out[r] = "BLOCKED"
         return out

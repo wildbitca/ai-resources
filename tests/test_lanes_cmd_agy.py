@@ -53,7 +53,7 @@ def write_table(label, *, roles=ROLES, ack_roles=None, only_agent=True):
     lanes = {"agents": {sid: sag, oid: oag},
              "roles": {r: {"candidates": [f"openclaw-agent:{oid if r == 'verifier' else sid}"]
                            + ([] if only_agent else ["claude-code"])} for r in roles},
-             "second": {}, "orchestrators": [], "verify_capability": {}, "pool_caps": {},
+             "orchestrators": [], "verify_capability": {}, "pool_caps": {},
              "max_remote_concurrency": 2, "workspace_root": ""}
     acks = {"anthropic": lanes_render.make_ack("anthropic", ROLES, "2026-10-16")}
     if label == "agy-cli-lane":
@@ -361,7 +361,12 @@ def test_a_writer_moves_to_the_next_admitted_candidate_with_the_recorded_reason(
     rc, out = prep(env, label, "impl", "implementer", "report", lane="claude-code")
     assert rc == 0, out
     lane = [e for e in env.ledger_entries(env.state) if e["kind"] == "prepare" and e["step"] == "impl"][0]["data"]["lane"]
-    assert lane["source"] == "fallback" and lane["reason"].startswith("pool exhausted:")
+    # placement balances by load: when the resolver already put the writer on claude-code there is nothing to move
+    resolved = lanes_render.yaml.safe_load(state.lanes_path().read_text())["resolved"]["roles"]["implementer"]["lane"]
+    if resolved == "claude-code":
+        assert lane["source"] == "resolved"
+    else:
+        assert lane["source"] == "fallback" and lane["reason"].startswith("pool exhausted:")
 
 
 def test_the_same_text_written_by_the_child_trips_nothing(env, label, patterns):

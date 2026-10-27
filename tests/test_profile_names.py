@@ -42,7 +42,8 @@ def _after_adr_0010_fixes(doc: dict) -> dict:
     doc = copy.deepcopy(doc)
     for cands_by_role in ((doc.get("lanes") or {}).get("roles") or {}, ):
         for role, cands in list(cands_by_role.items()):
-            cands_by_role[role] = [c for c in cands if c != "agy:claude-sonnet-5-5"]
+            if role != "code-reviewer":          # the Gemini review lane keeps its Claude-over-agy member (ADR-0019)
+                cands_by_role[role] = [c for c in cands if c != "agy:claude-sonnet-5-5"]
     for role, spec in (doc.get("by_role") or {}).items():
         if isinstance(spec, dict) and spec.get("model") == "anthropic/claude-opus-5.5":
             spec.pop("fallbacks", None)

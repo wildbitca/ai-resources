@@ -66,7 +66,6 @@ The dispatch procedure, the child prompt, waiting and retries are in the **`kit-
 | `write_scope` | `lane` step of a scope-capable role | Path prefixes the step may write, in its own per-attempt worktree. Relative, normalised, no `..`, no glob, not `.`, never under `.git`, `.claude/`, `.cursor/`, `.openclaw/`, `.githooks/`, `.agent-output/` or the handoff file |
 | `integrates` | the integrating writer's `lane` step | Scope step ids the kit merges (`lanes integrate`) into that step's integration worktree; each must run earlier and carry a `write_scope` |
 | `verifies` | `verifier` step | Step ids the verifier checks; a Verifier verdict counts only through this step's own verify record bound to `<step-id>@<sha>` |
-| `execution_hints.lane_member: second` | `lane` step of a report-contract role in a parallel group | The parallel second member of that role (for example a second code-reviewer) |
 
 Validation rules:
 
@@ -74,7 +73,6 @@ Validation rules:
 - Parallel scope writers need pairwise disjoint scopes. A `claude-code` writer step may not share a parallel group with a `lane` step; a `claude-code` report-contract role may.
 - A `verifier` or `security-auditor` `lane` step is never a parallel member together with another `lane` step: the shared report directory cannot attribute a write before verify, so `lanes verify` also fails a checker verified with `--in-flight` steps. A checker `lane` step may share a group with `claude-code` or non-lane steps.
 - Every `write_scope` step is followed by a `verifier` step that names it in `verifies`, then by an integrating step whose `integrates` names it, then by a `verifier` step that names the integrating step. The kit refuses `integrate` and `land` without those verdicts.
-- `lane_member: second` is only valid for report-contract roles, in a parallel group that also holds a primary member of the same role.
 
 **Handoff contract for lane steps.** Lane children never write `{{handoff_file}}` (a prompt that says `Update {{handoff_file}}` on a `lane` step is rejected). Every lane step, sequential or parallel, ends its step-scoped report (`.agent-output/<role>/<step-id>.md`) with the handoff fields it would have set, and the orchestrator joins them into the handoff front matter, exactly as for parallel members (rule 4 below). A Verifier report carries one line `Verdict: PASS`, `Verdict: FAIL` or `Verdict: REQUIRES_CHANGES`.
 

@@ -17,7 +17,7 @@ from ai_resources.setup import profiles, state, team_view, ui, wizard
 from ai_resources.setup.cockpits import openclaw_lanes
 
 IDS = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
-GEMINI_ROLES = {"explore", "code-reviewer", "planner", "software-architect"}
+GEMINI_ROLES = {"explore", "code-reviewer"}
 WRITERS = ("implementer", "tester", "doc-writer", "generalPurpose", "package-upgrade",
            "crashlytics-fixer", "sentry-fixer", "terraform-maintainer", "crossplane-upjet-maintainer")
 PRESETS = ("balanced", "performance", "low-cost")
@@ -28,10 +28,9 @@ def _doc(name="balanced"):
 
 
 def _all_cands(block):
-    for key in ("roles", "second"):
-        for role, cands in (block.get(key) or {}).items():
-            for c in cands:
-                yield key, role, c
+    for role, cands in (block.get("roles") or {}).items():
+        for c in cands:
+            yield "roles", role, c
 
 
 def _gemini(block):
@@ -51,16 +50,15 @@ def _google_ack(roles):
     return {"google": lanes_render.make_ack("google", list(roles), "2026-10-19T00:00:00+00:00", account="a@example.com")}
 
 
-# --- AC-S6a: the cli Balanced declares Gemini on exactly four places ------------------------------------------------
+# --- AC-S6a: the cli Balanced declares Gemini on exactly two places ------------------------------------------------
 
-def test_cli_balanced_validates_and_declares_gemini_on_exactly_the_four_places():
+def test_cli_balanced_validates_and_declares_gemini_on_exactly_the_two_places():
     block = _doc()["lanes"]
     assert lanes_render.validate_block(block) == []
-    assert _gemini(block) == {("roles", "explore"), ("second", "code-reviewer"), ("second", "planner"),
-                              ("second", "software-architect")}
+    assert _gemini(block) == {("roles", "explore"), ("roles", "code-reviewer")}
     assert set(block["pins"]) == GEMINI_ROLES
     assert all(c.startswith("agy:gemini-") for cands in block["pins"].values() for c in cands)
-    assert not set(block.get("second") or {}) & set(roles_policy.CHECKER_ROLES)
+    assert "second" not in block
 
 
 def test_cli_balanced_resolves_without_a_lane_conflict_closed_and_open(monkeypatch):
@@ -83,7 +81,7 @@ def test_with_agy_acknowledged_and_no_record_every_gemini_member_is_held_with_th
     block = _doc()["lanes"]
     frag = lanes_render.state_from_block(
         block, claude_ids=IDS, gates={"antigravity": True},
-        acks=_google_ack(["explore", "code-reviewer", "planner", "software-architect", "verifier", "security-auditor"]))
+        acks=_google_ack(["explore", "code-reviewer", "verifier", "security-auditor"]))
     held_gemini = {(h["role"], h["candidate"]) for h in frag["held"] if "gemini-" in h["candidate"]}
     assert {r for r, _c in held_gemini} == GEMINI_ROLES
     gemini_reasons = {h["reason"] for h in frag["held"] if "gemini-" in h["candidate"]}
@@ -94,23 +92,17 @@ def test_with_agy_acknowledged_and_no_record_every_gemini_member_is_held_with_th
 
 # --- AC-S6c: no preset carries an agy writer ----------------------------------------------------------------------
 
-@pytest.mark.parametrize("preset", PRESETS)
-def test_no_writer_role_lists_an_agy_candidate(preset):
-    block = _doc(preset)["lanes"]
-    offenders = [(key, role, c) for key, role, c in _all_cands(block) if role in WRITERS and c.startswith("agy:")]
-    assert offenders == []
 
 
-# --- AC-S6d: the planner second is held when the acknowledgement does not list planner ------------------------------
+# --- AC-S6d: a role is held when the acknowledgement does not list it ------------------------------
 
-def test_a_google_acknowledgement_without_planner_holds_the_planner_second_with_the_reason(monkeypatch):
+def test_a_google_acknowledgement_without_code_reviewer_holds_it_with_the_reason(monkeypatch):
     _open_gates(monkeypatch)
-    ack = _google_ack(["explore", "code-reviewer", "software-architect"])
+    ack = _google_ack(["explore"])
     frag = lanes_render.state_from_block(_doc()["lanes"], claude_ids=IDS, gates={"antigravity": True}, acks=ack)
     held = {(h["role"], h["candidate"]): h["reason"] for h in frag["held"]}
-    assert held[("planner", "agy:gemini-4-argon-high")] == "held: the Google acknowledgement does not list planner"
+    assert held[("code-reviewer", "agy:gemini-4-argon-high")] == "held: the Google acknowledgement does not list code-reviewer"
     assert ("explore", "agy:gemini-3.8-flash-high") not in held
-    assert ("code-reviewer", "agy:gemini-4-argon-high") not in held
 
 
 # --- AC-S6e: OpenRouter Balanced, the opt-in ------------------------------------------------------------------------

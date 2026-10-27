@@ -1,7 +1,7 @@
 """Phase 3 gates G0..G7 of the Antigravity lane (ADR-0007 section 11, plan `subscription-lanes-phase3-plan.md`).
 
 `GATES` and `EVIDENCE` are literals: pure data that nobody edits by hand (ADR-0010: the gate symbols `GATES`,
-`EVIDENCE`, `AGY_LANE_ADR_ACCEPTED`, `CODEX_LANE_ADR_ACCEPTED`, `WRITABLE_BACKENDS` and
+`EVIDENCE`, `AGY_LANE_ADR_ACCEPTED`, `WRITABLE_BACKENDS` and
 `model_pins.AGY_LANE_MODELS_CONFIRMED` never change by hand). A gate that is not `proven` keeps the agy lane closed
 everywhere it matters: admission in setup (`lanes_render.agy_admission`), the OpenClaw writer
 (`openclaw_lanes.writable_backends`) and `lanes prepare --lane` (`lanes_cmd._admit_lane`). The checks fail closed with a

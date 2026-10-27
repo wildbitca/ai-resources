@@ -53,7 +53,6 @@ def test_lane_candidates_follow_the_new_table():
     assert "claude-cli:haiku" in lanes["roles"]["tester"] and "claude-cli:haiku" in lanes["roles"]["doc-writer"]
     assert "claude-cli:sonnet" in lanes["roles"]["software-architect"]
     assert "claude-cli:opus" not in lanes["roles"]["software-architect"]
-    assert "claude-cli:opus" not in lanes["second"]["software-architect"]
     assert "claude-cli:opus" in lanes["roles"]["verifier"] and "claude-cli:opus" in lanes["roles"]["security-auditor"]
 
 

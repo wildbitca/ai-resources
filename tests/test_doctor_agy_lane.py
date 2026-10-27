@@ -68,7 +68,7 @@ def test_without_a_record_doctor_says_0_of_8_and_names_the_record_command(lines,
     assert "evidence record: absent" in text
     assert "ai-resources lanes gates record" in text
     assert "Claude Code x Google via OpenRouter: unverified" in text
-    assert "Google acknowledgement: none stored" in text and "planner" in text
+    assert "Google acknowledgement: none stored" in text and "code-reviewer" in text
     assert not [n for n, _m in lines if n in ("warn", "error")]
     assert not any(str(a[0]).endswith(('agy', 'openclaw')) for a in no_process if isinstance(a, list))
 
@@ -109,12 +109,12 @@ def test_a_valid_committed_record_prints_8_of_8_the_record_sha_and_a_verified_ce
 def test_the_acknowledgement_that_misses_balanced_roles_is_named(lines, no_process, monkeypatch, tmp_path):
     fk.use(monkeypatch, fk.make_root(tmp_path))
     s = state.SetupState()
-    s.profile.lane_acks = {"google": lanes_render.make_ack("google", ["explore", "code-reviewer"],
+    s.profile.lane_acks = {"google": lanes_render.make_ack("google", ["explore"],
                                                           "2026-10-19T00:00:00+00:00", account="a@example.com")}
     doctor._check_antigravity_lane(s)
     text = _text(lines)
-    assert "Balanced also uses: planner, software-architect" in text
-    assert "extend the Google acknowledgement to: planner, software-architect" not in text   # held gates come first
+    assert "Balanced also uses: code-reviewer" in text
+    assert "extend the Google acknowledgement to: code-reviewer" not in text   # held gates come first
     assert "probe window" in text
 
 

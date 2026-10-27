@@ -756,12 +756,9 @@ def _preset_bypassed(args: argparse.Namespace) -> bool:
 
 def _team_rows(s: state.SetupState, base: dict, rows: list) -> list[tuple[str, str, str]]:
     """The team table of screen 3 (see `team_view.tool_rows`)."""
-    from . import lanes_render
     members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
     return team_view.tool_rows(
-        members, base, rows, cli_row=_preset_key(s) == "cli", agy_installed=detection.agy_installed(),
-        codex_selected="codex" in members or bool(s.cockpits.get("codex") and s.cockpits["codex"].installed),
-        codex_held=not lanes_render.CODEX_LANE_ADR_ACCEPTED)
+        members, base, rows, cli_row=_preset_key(s) == "cli", agy_installed=detection.agy_installed())
 
 
 def _show_team_table(s: state.SetupState, base: dict, rows: list) -> None:
@@ -2414,14 +2411,10 @@ def _current_by_role(s: state.SetupState) -> dict:
 
 
 def _agy_roles_of(doc: dict) -> list[str]:
-    """Roles the profile gives an agy candidate (roles and second members), sorted."""
+    """Roles the profile gives an agy candidate, sorted."""
     block = doc.get("lanes") or {}
-    out = set()
-    for key in ("roles", "second"):
-        for role, cands in (block.get(key) or {}).items():
-            if any(isinstance(c, str) and c.startswith("agy:") for c in cands or ()):
-                out.add(role)
-    return sorted(out)
+    return sorted({role for role, cands in (block.get("roles") or {}).items()
+                   if any(isinstance(c, str) and c.startswith("agy:") for c in cands or ())})
 
 
 def _drop_agy(lanes: dict) -> dict:
@@ -2432,8 +2425,6 @@ def _drop_agy(lanes: dict) -> dict:
     out["agents"] = {a: ag for a, ag in (lanes.get("agents") or {}).items() if a not in agy}
     out["roles"] = {r: {**(c or {}), "candidates": [x for x in (c or {}).get("candidates") or [] if x not in refs]}
                     for r, c in (lanes.get("roles") or {}).items()}
-    second = {r: [x for x in (c or []) if x not in refs] for r, c in (lanes.get("second") or {}).items()}
-    out["second"] = {r: c for r, c in second.items() if c}
     return out
 
 
@@ -2519,7 +2510,7 @@ def _without_claude_cli(doc: dict) -> dict:
     ticking Antigravity alone proposes, so it does not switch the Claude parallel runs on (ADR-0009)."""
     out = copy.deepcopy(doc)
     block = out.get("lanes") or {}
-    for key in ("roles", "second", "pins"):
+    for key in ("roles", "pins"):
         for role, cands in list((block.get(key) or {}).items()):
             block[key][role] = [c for c in (cands or ()) if not (isinstance(c, str) and c.startswith("claude-cli:"))]
     return out
@@ -2641,8 +2632,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         if not os.environ.get("PYTEST_CURRENT_TEST"):
             headroom_sources.sync_live_usage_caches()
         proposal = lanes_render.propose(doc, _current_by_role(s), s.mode, orchestrators=orchestrators,
-                                        acks=acks, gates={"antigravity": agy_on},
-                                        headroom=headroom_sources.lane_weights(now_epoch=int(time.time())))
+                                        acks=acks, gates={"antigravity": agy_on})
     except lanes_render.LanesBlockError as e:
         ui.error(f"--lanes: {e}")
         return 2
@@ -2656,7 +2646,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     if not team_only:
         ui.info("Subscription lanes proposed (candidate order is the tie-break, not a rank):")
     for role in ([] if team_only else roles):
-        cands = (proposal["roles"].get(role) or {}).get("candidates") or proposal["second"].get(role) or []
+        cands = (proposal["roles"].get(role) or {}).get("candidates") or []
         ui.detail(f"  {role}: {', '.join(cands)}")
     for h in ([] if team_only else (proposal.get("held") or [])):
         # held candidates are the default of a fresh install (the agy lane is off): shown, not warned
@@ -2668,7 +2658,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
     # on none), never a role whose every candidate is an agy lane
     agy_only = {r for r in agy_roles
                 if not any(c.startswith("claude-cli:") or c == "claude-code"
-                           for key in ("roles", "second") for c in ((doc.get("lanes") or {}).get(key) or {}).get(r, ()))}
+                           for c in ((doc.get("lanes") or {}).get("roles") or {}).get(r, ()))}
     anth_roles = [r for r in roles if r not in agy_only]
     if not team_only and not lanes_render.acked(acks, "anthropic", anth_roles):
         if ui.is_non_interactive():

@@ -26,12 +26,12 @@ def agents_of(*items):
     return {a.id: a for a in items}
 
 
-def resolve(by_role=None, agents=(), candidates=None, second=None, **kw):
+def resolve(by_role=None, agents=(), candidates=None, **kw):
     kw.setdefault("usage_verdicts", fk.lane_usage_verdicts())
     kw.setdefault("acks", copy.deepcopy(fk.OPEN_ACKS))
     kw.setdefault("gates", dict(fk.OPEN_GATES))
     return L.resolve_lanes(by_role if by_role is not None else fk.lane_by_role(), agents_of(*agents),
-                           candidates or {}, second or {}, **kw)
+                           candidates or {}, **kw)
 
 
 # (a) -----------------------------------------------------------------------------------------------
@@ -41,7 +41,7 @@ def test_no_agents_everything_is_claude_code():
     table = resolve(by_role)
     assert set(table.roles) == set(by_role)
     assert all(lane.ref == "claude-code" for lane in table.roles.values())
-    assert table.second == {} and table.agents == {} and table.blocked == {}
+    assert table.agents == {} and table.blocked == {}
     assert all(table.models[r] == c["model"] for r, c in by_role.items())
 
 
@@ -86,25 +86,8 @@ def test_ties_between_agents_use_candidate_order():
     assert t2.roles["tester"].agentId == CLI_SONNET.id
 
 
-def test_pressure_prefers_the_less_loaded_pool_and_equal_pressure_follows_order():
-    by_role = {"security-auditor": {"model": "opus"}}
-    cands = {"security-auditor": ["claude-code", ref(AGY_OPUS)]}
-    scarce = resolve(by_role, [AGY_OPUS], cands, weights={"claude-subscription": 0.3})
-    assert scarce.roles["security-auditor"].ref == ref(AGY_OPUS)
-    ample = resolve(by_role, [AGY_OPUS], cands, weights={"claude-subscription": 1.0})
-    assert ample.roles["security-auditor"].ref == "claude-code"
-    equal = resolve(by_role, [AGY_OPUS], cands, weights={"claude-subscription": 0.7})
-    assert equal.roles["security-auditor"].ref == "claude-code"
-    swapped = resolve(by_role, [AGY_OPUS], {"security-auditor": [ref(AGY_OPUS), "claude-code"]},
-                      weights={"claude-subscription": 0.7})
-    assert swapped.roles["security-auditor"].ref == ref(AGY_OPUS)
 
 
-def test_load_balances_roles_across_pools():
-    by_role = {"tester": {"model": "sonnet"}, "doc-writer": {"model": "sonnet"}}
-    cands = {r: ["claude-code", ref(AGY_SONNET)] for r in by_role}
-    table = resolve(by_role, [AGY_SONNET], cands, weights={"claude-subscription": 0.7, "agy-claude-gpt": 0.7})
-    assert {table.roles["doc-writer"].ref, table.roles["tester"].ref} == {"claude-code", ref(AGY_SONNET)}
 
 
 # (e) / (f) ----------------------------------------------------------------------------------------
@@ -222,7 +205,7 @@ def test_a_lane_never_moves_the_model():
     assert any(ln.agentId for ln in table.roles.values()), "no role landed on a lane agent"
     for role, cfg in by_role.items():
         assert rp.model_family(table.models[role]) == rp.model_family(cfg["model"])
-    assert set(table.to_lanes()) == {"agents", "roles", "second"}
+    assert set(table.to_lanes()) == {"agents", "roles"}
 
 
 def test_a_pinned_other_model_needs_the_pin_flag_and_is_labelled():
@@ -267,10 +250,8 @@ def test_digest_changes_with_every_input():
         "agent model": resolve(by_role, [L.LaneAgent(CLI_SONNET.id, "claude-cli", "anthropic/claude-sonnet-5-6")], cands),
         "stale": resolve(by_role, [L.LaneAgent(CLI_SONNET.id, "claude-cli", CLI_SONNET.model, stale=True)], cands),
         "candidates": resolve(by_role, [CLI_SONNET], {"tester": ["claude-code", ref(CLI_SONNET)]}),
-        "second": resolve(by_role, [CLI_SONNET], cands, second={"code-reviewer": ["claude-code"]}),
         "caps": resolve(by_role, [CLI_SONNET], cands, pool_caps={"claude-subscription": 3}),
         "mode": resolve(by_role, [CLI_SONNET], cands, mode="multi-model"),
-        "weights": resolve(by_role, [CLI_SONNET], cands, weights={"claude-subscription": 0.3}),
         "by_role": resolve({**by_role, "tester": {"model": "sonnet", "fallbacks": ["haiku"]}}, [CLI_SONNET], cands),
         "gates": resolve(by_role, [CLI_SONNET], cands, gates={"antigravity_flag": False}),
     }
@@ -301,9 +282,6 @@ def test_pool_mismatch_and_unknown_mode_are_lane_errors():
         resolve({}, [], {}, mode="hybrid")
 
 
-def test_second_member_for_a_writer_only_role_is_an_error():
-    with pytest.raises(L.LaneError, match="report-contract"):
-        resolve({"tester": {"model": "sonnet"}}, [CLI_SONNET], {}, second={"tester": [ref(CLI_SONNET)]})
 
 
 def test_stale_agent_is_refused():
@@ -337,31 +315,8 @@ def test_checker_with_no_admissible_candidate_is_blocked_with_the_reason():
     assert any(w.lane == "blocked" for w in table.why)
 
 
-def test_checker_second_candidate_on_the_same_model_is_the_availability_fallback():
-    by_role = {"security-auditor": {"model": "opus"}}
-    cands = {"security-auditor": ["claude-code", ref(AGY_OPUS)]}
-    scarce = resolve(by_role, [AGY_OPUS], cands, weights={"claude-subscription": 0.3},
-                     pool_caps={"claude-subscription": 0})
-    assert scarce.roles["security-auditor"].ref == ref(AGY_OPUS)
-    assert scarce.models["security-auditor"] == AGY_OPUS.model
-    assert rp.model_family(scarce.models["security-auditor"]) == "opus"
-    unlisted = copy.deepcopy(fk.OPEN_ACKS)
-    unlisted["google"]["roles"] = []
-    closed = resolve(by_role, [AGY_OPUS], cands, weights={"claude-subscription": 0.3}, acks=unlisted)
-    assert closed.roles["security-auditor"].ref == "claude-code"
 
 
-# second members ------------------------------------------------------------------------------------
-
-def test_second_member_resolves_and_equal_to_primary_adds_nothing():
-    by_role = {"code-reviewer": {"model": "sonnet"}}
-    table = resolve(by_role, [AGY_SONNET], {"code-reviewer": ["claude-code"]},
-                    second={"code-reviewer": [ref(AGY_SONNET)]})
-    assert table.roles["code-reviewer"].ref == "claude-code"
-    assert table.second["code-reviewer"].ref == ref(AGY_SONNET)
-    same = resolve(by_role, [AGY_SONNET], {"code-reviewer": ["claude-code"]}, second={"code-reviewer": ["claude-code"]})
-    assert "code-reviewer" not in same.second
-    assert any("adds nothing" in w.text for w in same.why)
 
 
 def test_fallback_union_matches_the_litellm_renderer():

@@ -28,7 +28,7 @@ def _lanes(candidates=(f"openclaw-agent:{AGENT}", "claude-code")):
     return {"agents": {AGENT: {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5",
                                "pool": "claude-subscription"}},
             "roles": {"implementer": {"candidates": list(candidates)}},
-            "second": {}, "orchestrators": [], "verify_capability": {}, "pool_caps": {},
+            "orchestrators": [], "verify_capability": {}, "pool_caps": {},
             "max_remote_concurrency": 2, "workspace_root": ""}
 
 
@@ -122,12 +122,6 @@ def test_without_lanes_yaml_prepare_needs_no_lane(env):
     assert "lane" not in env.ledger_entries(env.state)[0]["data"]
 
 
-def test_a_second_member_is_refused_for_checker_roles():
-    problems = lanes_render.validate_block({"second": {"verifier": ["claude-code"]}})
-    assert any("checker role never takes a second member" in p for p in problems), problems
-    with pytest.raises(scoring_lanes.LaneError, match="checker"):
-        scoring_lanes.resolve_lanes({"verifier": {"model": "opus"}}, {}, {}, {"verifier": ["claude-code"]})
-    assert lanes_render.validate_block({"second": {"code-reviewer": ["claude-code"]}}) == []
 
 
 SKILL = Path(__file__).resolve().parents[1] / "skills" / "kit-orchestration" / "references" / "backends-and-lanes.md"
@@ -233,21 +227,17 @@ def test_g7_a_symlink_into_tmp_is_refused(tmp_path, monkeypatch):
         lanes_cmd.state_root()
 
 
-@pytest.mark.parametrize("where", ["resolved", "fallback", "second"])
+@pytest.mark.parametrize("where", ["resolved", "fallback"])
 def test_e1_an_entry_without_a_model_is_refused_not_skipped(env, where):
     lanes = _lanes()
-    lanes["second"] = {"code-reviewer": [f"openclaw-agent:{AGENT}"]}
     doc = _write(lanes)
     res = doc["resolved"]
     if where == "resolved":
         res["roles"]["implementer"].pop("model")
         args, role, extra = ("--lane", AGENT), "implementer", ()
-    elif where == "fallback":
+    else:
         res["roles"]["implementer"]["fallbacks"][0].pop("model")
         args, role, extra = ("--lane", "claude-code"), "implementer", ()
-    else:
-        res["second"]["code-reviewer"].pop("model")
-        args, role, extra = ("--lane", AGENT), "code-reviewer", ("--second",)
     doc["digest"] = lanes_render.doc_digest(doc)
     state.lanes_path().write_text(lanes_render.dumps(doc))
     rc, out = env.run("prepare", "--step", "s", "--role", role, "--contract", "report", "--model", "opus",

@@ -16,8 +16,7 @@ from test_openclaw_lanes_setup import LANES, _run, _s, host  # noqa: F401
 ADR = Path(__file__).resolve().parents[1] / "docs" / "decisions" / "0007-subscription-lanes.md"
 IDS = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
 BLOCK = {"roles": {"implementer": ["claude-cli:sonnet", "agy:gemini-3.8-flash-low"],
-                   "explore": ["agy:gemini-3.8-flash-low"]},
-         "second": {"code-reviewer": ["agy:gemini-3.1-pro-low"]}}
+                   "explore": ["agy:gemini-3.8-flash-low"], "code-reviewer": ["agy:gemini-3.1-pro-low"]}}
 
 
 def _section_status() -> str:
@@ -57,7 +56,7 @@ def test_agy_candidates_are_held_with_a_recorded_reason_and_never_become_agents(
     assert all(a["backend"] == "claude-cli" for a in frag["agents"].values())
     assert frag["roles"]["implementer"]["candidates"] == ["openclaw-agent:kit-lane-cli-sonnet55"]
     assert frag["roles"]["explore"]["candidates"] == []
-    assert "code-reviewer" not in frag["second"]
+    assert frag["roles"]["code-reviewer"]["candidates"] == []
     reasons = {(h["role"], h["candidate"]): h["reason"] for h in frag["held"]}
     assert reasons[("implementer", "agy:gemini-3.8-flash-low")] == "held: Antigravity lane not accepted"
     assert len(frag["held"]) == 3

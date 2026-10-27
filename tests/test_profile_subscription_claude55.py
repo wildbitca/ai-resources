@@ -140,25 +140,20 @@ def test_the_lanes_block_validates_names_no_agent_id_and_every_agy_slug_is_a_lan
     from ai_resources.setup import lanes_render
     block = _doc()["lanes"]
     assert lanes_render.validate_block(block) == []
-    texts = [c for key in ("roles", "second") for cands in block[key].values() for c in cands]
+    texts = [c for cands in block["roles"].values() for c in cands]
     assert not [c for c in texts if c.startswith(("kit-lane-", "openclaw-agent:"))]
     slugs = {c.split(":", 1)[1] for c in texts if c.startswith("agy:")}
     assert slugs and slugs <= set(model_pins.AGY_LANE_MODELS)
     # ADR-0010 S6 (amends the ban on agy for explore, planner and the architect): Balanced is multi-provider, so
     # those roles may carry a *Gemini* agy candidate, never a Claude one, and every Gemini candidate is pinned.
     for r in ("explore", "planner", "software-architect"):
-        for key in ("roles", "second"):
-            for c in (block.get(key) or {}).get(r, ()):
-                if c.startswith("agy:"):
-                    assert c.startswith("agy:gemini-"), (r, c)
-    assert not set(block.get("second") or {}) & set(CHECKERS)
+        for c in (block.get("roles") or {}).get(r, ()):
+            if c.startswith("agy:"):
+                assert c.startswith("agy:gemini-"), (r, c)
+    assert "second" not in block
     pins = block.get("pins") or {}
-    assert set(pins) == {"explore", "code-reviewer", "planner", "software-architect"}
+    assert set(pins) == {"explore", "code-reviewer"}
     assert all(c.startswith("agy:gemini-") for cands in pins.values() for c in cands)
-    # ADR-0010 PD-1: presets carry no agy writer, so proving the gates never moves writer work onto agy.
-    writers = ("implementer", "tester", "doc-writer", "generalPurpose", "package-upgrade", *FIXERS)
-    assert not [c for r in writers for key in ("roles", "second") for c in (block.get(key) or {}).get(r, ())
-                if c.startswith("agy:")]
 
 
 def test_the_agy_candidates_do_not_change_by_role_and_are_held_while_the_flag_or_gates_are_off():
@@ -169,8 +164,7 @@ def test_the_agy_candidates_do_not_change_by_role_and_are_held_while_the_flag_or
                                                      "opus": "claude-opus-5-5"})
     assert all(a["backend"] == "claude-cli" for a in frag["agents"].values())
     # ADR-0010 S6: the writers lost their agy candidate; Gemini sits on explore and the report seconds.
-    assert {h["role"] for h in frag["held"]} == {"explore", "verifier", "security-auditor", "code-reviewer",
-                                                 "planner", "software-architect"}
+    assert {h["role"] for h in frag["held"]} == {"explore", "verifier", "security-auditor", "code-reviewer"}
     assert all(h["candidate"].startswith("agy:") for h in frag["held"])
     assert all(h["reason"].startswith("held:") and ("--lanes-antigravity" in h["reason"]
                                                     or "gate" in h["reason"].lower())

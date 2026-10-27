@@ -41,9 +41,7 @@ def _env(monkeypatch):
             lanes["roles"]["tester"] = ["claude-cli:sonnet", "agy:claude-sonnet-5-5", "claude-code"]
             lanes["roles"]["explore"] = ["claude-cli:haiku", "claude-code"]
             lanes.pop("pins", None)
-            for role in ("planner", "software-architect"):
-                lanes["second"].pop(role, None)
-            lanes["second"]["code-reviewer"] = ["agy:claude-sonnet-5-5", "claude-cli:sonnet"]
+            lanes["roles"]["code-reviewer"] = ["agy:claude-sonnet-5-5", "claude-cli:sonnet"]
         return doc
     monkeypatch.setattr(profiles, "load_profile", load)
     return asked
@@ -87,7 +85,7 @@ def test_auto_keeps_the_account_already_on_file_and_is_idempotent():
 def test_auto_keeps_claude_parallel_runs_that_have_an_anthropic_ack():
     s = _s()
     doc = profiles.load_profile(PROFILE)
-    roles = sorted(set(doc["lanes"]["roles"]) | set(doc["lanes"]["second"]))
+    roles = sorted(doc["lanes"]["roles"])
     s.profile.lane_acks = {"anthropic": lanes_render.make_ack("anthropic", roles, "2026-10-16")}
     s.profile.lanes = {"agents": {"kit-lane-cli-sonnet55": {"backend": "claude-cli",
                                                             "model": "anthropic/claude-sonnet-5-5",

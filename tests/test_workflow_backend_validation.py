@@ -435,21 +435,13 @@ def test_integrates_needs_the_integrating_writer_role(vk):
     assert any("integrates" in f for f in failures), failures
 
 
-def test_lane_member_second_only_for_report_roles_in_a_group(vk):
+def test_lane_member_second_is_no_longer_supported(vk):
     hint = "execution_hints:\n  parallel_group: g\n"
     sec = "execution_hints:\n  parallel_group: g\n  lane_member: second\n"
-    ok = _lane("code-reviewer", "r1", hint) + _lane("code-reviewer", "r2", sec)
-    failures, _ = _run_doc(vk, ok)
+    failures, _ = _run_doc(vk, _lane("code-reviewer", "r1", hint) + _lane("code-reviewer", "r2", sec))
+    assert any("lane_member" in f for f in failures), failures
+    failures, _ = _run_doc(vk, _lane("code-reviewer", "r1", hint) + _lane("code-reviewer", "r2", hint))
     assert failures == [], failures
-    writer = _lane("tester", "w1", hint) + _lane("tester", "w2", sec)
-    failures, _ = _run_doc(vk, writer)
-    assert any("lane_member" in f for f in failures), failures
-    alone = _lane("code-reviewer", "r2", "execution_hints:\n  lane_member: second\n")
-    failures, _ = _run_doc(vk, alone)
-    assert any("lane_member" in f for f in failures), failures
-    bad_value = _lane("code-reviewer", "r2", "execution_hints:\n  parallel_group: g\n  lane_member: third\n")
-    failures, _ = _run_doc(vk, _lane("code-reviewer", "r1", hint) + bad_value)
-    assert any("lane_member" in f for f in failures), failures
 
 
 def test_lane_steps_never_write_the_handoff(vk):

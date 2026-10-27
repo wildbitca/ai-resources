@@ -236,17 +236,7 @@ def check_lane_workflow(rel, doc: dict, steps: list, groups: dict) -> None:
                     elif index[target] >= index[sid]:
                         f(where, f"verifies names '{target}', which does not run before this step")
         if "lane_member" in hints:
-            group = hints.get("parallel_group")
-            if hints["lane_member"] != "second":
-                f(where, f"lane_member must be 'second' (got {hints['lane_member']!r})")
-            elif not is_lane(step):
-                f(where, "lane_member is only valid on a 'lane' step")
-            elif role not in roles_policy.REPORT_ROLES:
-                f(where, f"lane_member is only valid for report-contract roles; '{role}' writes files")
-            elif not group:
-                f(where, "lane_member needs execution_hints.parallel_group")
-            elif not any(m is not step and m.get("subagent_type") == role for m in groups.get(group, ())):
-                f(where, f"lane_member 'second' needs a primary member of role '{role}' in group '{group}'")
+            f(where, "lane_member is no longer supported (second members were removed)")
         if is_lane(step) and "Update {{handoff_file}}" in str(step.get("prompt_template", "")):
             f(where, "lane children never write the handoff: the orchestrator joins the step-scoped report")
         if is_integrating(step) and hints.get("parallel_group"):

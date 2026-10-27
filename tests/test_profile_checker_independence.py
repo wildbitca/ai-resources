@@ -2,7 +2,7 @@
 
 A checker (verifier, security-auditor) must never be able to run a model family that a writer can run. The
 families a role can run come from `by_role`, its fallbacks, the profile-wide `defaults.fallbacks` (the LiteLLM
-per-model fallback union plus `default_fallbacks`) and the lane candidates and seconds of a `lanes:` block.
+per-model fallback union plus `default_fallbacks`) and the lane candidates of a `lanes:` block.
 
 `KNOWN_VIOLATIONS` is measured at baseline and is shrink-only: the test fails when a listed profile now
 passes, and when an unlisted profile fails.
@@ -49,11 +49,10 @@ def normalise(ref: str) -> str | None:
 def _lane_refs(doc: dict, role: str) -> list[str]:
     lanes = doc.get("lanes") or {}
     refs: list[str] = []
-    for table in ("roles", "second"):
-        for ref in (lanes.get(table) or {}).get(role) or []:
-            n = normalise(str(ref))
-            if n:
-                refs.append(n)
+    for ref in (lanes.get("roles") or {}).get(role) or []:
+        n = normalise(str(ref))
+        if n:
+            refs.append(n)
     return refs
 
 
@@ -129,12 +128,11 @@ def test_lanes_static_resolution_independence(path):
     doc = _load(path)
     by_role = doc["by_role"]
     models = {r: str(c["model"]) for r, c in by_role.items() if isinstance(c, dict) and c.get("model")}
-    second: dict[str, str] = {}
     mode = doc.get("mode", "multi-model")
     default_fallbacks = (doc.get("defaults") or {}).get("fallbacks") or []
     name = _name(path)
     try:
-        scoring_lanes._check_independence(by_role, models, second, mode, default_fallbacks)
+        scoring_lanes._check_independence(by_role, models, mode, default_fallbacks)
     except scoring_lanes.LaneConflict:
         assert name in KNOWN_VIOLATIONS, f"{name} fails static lane independence"
 

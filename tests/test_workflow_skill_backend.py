@@ -63,11 +63,11 @@ def test_integrating_writer_label_follows_the_workflow_level_role():
     assert f"| `build` | `generalPurpose` | {LANE}, integrating writer | — |" in _rows(md)
 
 
-def test_second_member_label_and_no_agent_id_ever():
+def test_lane_label_and_no_agent_id_ever():
     step = {"id": "r2", "subagent_type": "code-reviewer", "backend": "lane",
-            "execution_hints": {"parallel_group": "g", "lane_member": "second"}}
+            "execution_hints": {"parallel_group": "g"}}
     md = generate._workflow_skill_md("t.workflow.yaml", _doc([step]))
-    assert f"| `r2` | `code-reviewer` | {LANE}, second member | g |" in _rows(md)
+    assert f"| `r2` | `code-reviewer` | {LANE} | g |" in _rows(md)
     assert "kit-lane" not in md and "agentId" not in md
 
 

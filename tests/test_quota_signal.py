@@ -96,7 +96,6 @@ def test_the_claude_pool_prefers_a_live_block_over_an_older_percentage(tmp_path)
     sidecar.write_text(json.dumps({"rate_limits": {"five_hour": {"used_percentage": 20, "resets_at": NOW + 3600}}}), encoding="utf-8")
     deps = {"claude_sidecar_path": sidecar, "quota_blocks_path": _block_file(tmp_path)}
     assert hs.read_for_pool({"id": "claude-subscription", "headroom_source": "statusline-sidecar"}, True, deps, NOW + 30).used_fraction == 1.0
-    assert hs.lane_weights(["claude-subscription"], deps, NOW + 30) == {"claude-subscription": hr.EPSILON}
     after = NOW + qs.DEFAULT_TTL_S + 1
     assert hs.read_for_pool({"id": "claude-subscription", "headroom_source": "statusline-sidecar"}, True, deps, after).used_fraction == 0.2
     assert hs.read_for_pool({"id": "claude-subscription", "headroom_source": "statusline-sidecar"}, False, deps, NOW).source == "not-requested"

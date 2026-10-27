@@ -81,10 +81,6 @@ lanes:
     software-architect: [claude-code, claude-cli:opus]
     verifier:           [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
     security-auditor:   [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
-  second:
-    # Gemini is the different-family second opinion on the review (ADR-0007 section 11 accepts Google egress for
-    # the code-reviewer second pass). It is pinned because it is not the role's family; the pin and the candidate
-    # stay held until --lanes-antigravity, a Google acknowledgement and the gates G0-G7 are all proven.
     code-reviewer:      ["agy:gemini-3.8-flash-high", "agy:claude-sonnet-5-5", claude-cli:sonnet]
   pins:
     code-reviewer:      ["agy:gemini-3.8-flash-high"]

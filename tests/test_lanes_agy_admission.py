@@ -80,7 +80,6 @@ def test_each_closed_gate_keeps_every_agy_agent_out_of_state_and_lanes_yaml(prov
     assert reasons and all(c["why"] in r for r in reasons.values()), reasons
     doc = lr.render_doc({**lanes, "gates": {"antigravity": c["flag"]}}, BY_ROLE, "single-model", c["acks"])
     assert not has_agy(doc["agents"]) and not has_agy(doc["resolved"]["roles"]) \
-        and not has_agy(doc["resolved"]["second"])
 
 
 def test_with_the_gates_open_the_agent_is_in_state_lanes_yaml_and_resolved(proven):
@@ -125,7 +124,7 @@ def test_the_admission_predicate_holds_an_agent_a_state_from_an_older_kit_still_
                                      "pool": "agy-claude-gpt"},
                         "kit-lane-cli-sonnet55": {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5",
                                                   "pool": "claude-subscription"}},
-             "roles": {"tester": {"candidates": [f"openclaw-agent:{SONNET_ID}"]}}, "second": {}}
+             "roles": {"tester": {"candidates": [f"openclaw-agent:{SONNET_ID}"]}}}
     stale = {"google": {**ack(["tester"])["google"], "text_sha256": "1" * 64}}
     held = lr.agy_admission(lanes, {"antigravity": True}, stale)
     assert set(held) == {SONNET_ID} and "no valid Google acknowledgement" in held[SONNET_ID]
@@ -164,7 +163,7 @@ def test_the_render_path_passes_effective_ids_valid_acks_and_never_the_global_pi
         return real(*a, **kw)
     monkeypatch.setattr(scoring_lanes, "resolve_lanes", spy)
     acks = {**ack(["tester"]), "google": {**ack(["tester"])["google"], "text_sha256": "3" * 64}}
-    lanes = {"agents": {}, "roles": {"tester": {"candidates": ["claude-code"]}}, "second": {}}
+    lanes = {"agents": {}, "roles": {"tester": {"candidates": ["claude-code"]}}}
     lr.render_doc(lanes, BY_ROLE, "single-model", acks)
     lr.propose({"lanes": {"roles": {"tester": ["claude-code"]}}}, BY_ROLE, "single-model")
     assert seen
@@ -178,10 +177,10 @@ def test_a_phase_two_state_renders_the_same_keys_without_gate_or_ack_fields():
     lanes = {"agents": {"kit-lane-cli-sonnet55": {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5",
                                                   "pool": "claude-subscription"}},
              "roles": {"tester": {"candidates": ["openclaw-agent:kit-lane-cli-sonnet55", "claude-code"]}},
-             "second": {}}
+            }
     doc = lr.render_doc(lanes, BY_ROLE, "single-model", {"anthropic": lr.make_ack("anthropic", ["tester"], "d")})
     # ADR-0018: every lanes.yaml carries the routing matrix; the gate and ack fields still appear only when they exist
-    assert list(doc) == ["mode", "agents", "roles", "second", "resolved", "routing", "digest"]
+    assert list(doc) == ["mode", "agents", "roles", "resolved", "routing", "digest"]
 
 
 # --- version drift (plan 5.7) ---------------------------------------------------------------------------------
@@ -192,7 +191,7 @@ def test_a_lane_agent_that_is_now_tier_two_is_named_in_the_drift_warnings():
                         "kit-lane-cli-sonnet55": {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5",
                                                   "pool": "claude-subscription"}},
              "roles": {"implementer": {"candidates": ["openclaw-agent:kit-lane-cli-sonnet46",
-                                                      "openclaw-agent:kit-lane-cli-sonnet55"]}}, "second": {}}
+                                                      "openclaw-agent:kit-lane-cli-sonnet55"]}}}
     got = lr.version_drift(lanes, BY_ROLE, IDS)
     assert [d["agent"] for d in got] == ["kit-lane-cli-sonnet46"]
     text = lr.drift_warnings(lanes, BY_ROLE)

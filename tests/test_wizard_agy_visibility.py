@@ -162,16 +162,16 @@ def test_as_a_team_with_agy_ticked_adds_an_antigravity_row_with_unconfirmed_slug
     assert roles_policy.DEFAULT_INTEGRATING_WRITER not in roles          # writing stays on Claude Code
     # the entries are exactly the agy candidates of the profile's lanes block, minus the writer role
     doc = profiles.load_profile(wizard.preset_profile(s, preset), "single-model")
-    want = {c.split(":", 1)[1] for key in ("roles", "second") for role, cs in doc["lanes"][key].items()
+    want = {c.split(":", 1)[1] for role, cs in doc["lanes"]["roles"].items()
             for c in cs if c.startswith("agy:") and role != roles_policy.DEFAULT_INTEGRATING_WRITER}
     assert {e.split(": ")[1].split(" ")[0].rstrip(".") for e in roles.split(" - sends")[0].split("; ")} == want
 
 
 @pytest.mark.parametrize("preset", ("performance", "low-cost"))
-def test_performance_and_low_cost_show_gemini_as_the_code_review_second_opinion(monkeypatch, preset):
+def test_performance_and_low_cost_show_gemini_on_the_code_reviewer(monkeypatch, preset):
     _, _, teams, _ = run_preset(monkeypatch, "cli", preset, True, ticked=True)
     entries = [e for e in agy_row(teams)[1].split(" - sends")[0].split("; ") if "gemini" in e]
-    assert entries and all(e.startswith("code-reviewer (second opinion)") for e in entries)
+    assert entries and all(e.startswith("code-reviewer:") for e in entries)
 
 
 @pytest.mark.parametrize("key", ["single", "litellm", "openrouter"])
@@ -200,16 +200,6 @@ def test_as_a_team_with_agy_installed_but_not_ticked_says_it_is_off_once(monkeyp
     assert len([r for _t, rs in teams for r in rs if r[0] == "Antigravity"]) == 1
 
 
-def test_the_codex_row_has_no_roles_and_no_tick(monkeypatch):
-    agy(monkeypatch, True)
-    teams = []
-    monkeypatch.setattr(ui, "team_table", lambda rows, title="": teams.append(rows))
-    s = make_state("cli")
-    s.cockpits["codex"] = state.CockpitState(installed=True)
-    Script(**{ASK: "balanced"}).install(monkeypatch)
-    wizard._step_preset(s, preset_args())
-    row = next(r for r in teams[0] if r[0] == "Codex CLI")
-    assert row[2] == "-" and "no roles yet" in row[1] and lanes_render.CODEX_LANE_ADR_ACCEPTED is False
 
 
 def test_the_question_stays_four_choices_with_agy_installed(monkeypatch):
@@ -224,18 +214,17 @@ def test_the_question_stays_four_choices_with_agy_installed(monkeypatch):
 # --- profiles and the gates -------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("name", ["subscription-performance", "subscription-economy"])
-def test_the_gemini_second_opinion_is_declared_valid_pinned_and_held_while_the_gates_are_open(name):
+def test_the_gemini_code_reviewer_is_declared_valid_pinned_and_held_while_the_gates_are_open(name):
     doc = profiles.load_profile(name)
     block = doc["lanes"]
     assert lanes_render.validate_block(block) == []
-    gem = [c for c in block["second"]["code-reviewer"] if c.startswith("agy:gemini-")]
+    gem = [c for c in block["roles"]["code-reviewer"] if c.startswith("agy:gemini-")]
     assert gem and gem[0][4:] in model_pins.AGY_LANE_MODELS
     assert set(block["pins"]) == {"code-reviewer"} and gem[0] in block["pins"]["code-reviewer"]
     # no Gemini on a role that writes, a checker or a role without Google egress acceptance
-    for key in ("roles", "second"):
-        for role, cs in block[key].items():
-            if any("gemini" in c for c in cs):
-                assert key == "second" and role == "code-reviewer"
+    for role, cs in block["roles"].items():
+        if any("gemini" in c for c in cs):
+            assert role == "code-reviewer"
     frag = lanes_render.state_from_block(block, claude_ids={"haiku": "claude-haiku-5-5",
                                          "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"})
     assert not [a for a in frag["agents"].values() if a["backend"] != "claude-cli"]
