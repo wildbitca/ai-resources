@@ -18,7 +18,7 @@ default path, use six words:
 | Gateway | **No longer offered** (ADR-0015). A gateway installed earlier keeps running and is never removed by setup; a saved `advanced` answer is migrated to the tools' own sign-in, shown once as old -> new. |
 
 Plain phrases stand in for the internal names: "Sign-in" is the per-tool *cockpit auth* (it replaced the old "How should they work?" *mode* question in ADR-0015), "Parallel runs" are the
-*subscription lanes*, "Terms check" is the *acknowledgement* (the stored text is unchanged), "Start at login" is the
+*subscription lanes*, "Start at login" is the
 *lifecycle*, "API keys" are the *credentials*. The old words stay where they are exact: state keys (`mode`, `backend`,
 `cli_team`, `profile`, `lanes`, `lane_acks`, `cockpits`), CLI flags, file names (`executors.yaml`, `lanes.yaml`), the
 ADRs, `doctor` and `verify` output, and the internal sections of this guide below. Design:
@@ -68,12 +68,12 @@ header counts screens (`[2/4]`), the rail counts the ten steps:
 **Screen 1, Your tools.** One list for every tool, one order (installed first, then alphabetical). Tick the tools the
 kit should use; ticking a missing one installs it, unticking never uninstalls. Claude Code is in the same list with a
 "recommended to start" label, no special position and no special tick. Antigravity is never ticked on its own: its row
-says it sends repo content to Google and that a terms check comes next. Installed is not signed in: sign-in is not
+says it sends repo content to Google. Installed is not signed in: sign-in is not
 checked.
 
 ```
 ? Tick the tools the kit should use. Ticking a missing tool installs it; unticking never uninstalls.
-    [ ] Antigravity CLI (agy)  installed v1.4  sends repo content to Google; terms check next
+    [ ] Antigravity CLI (agy)  installed v1.4  sends repo content to Google
     [x] Claude Code  installed v2.1.300  recommended to start
     [x] Codex CLI  installed v0.163
     [ ] Aider  not installed  curl -LsSf https://aider.chat/install.sh | sh
@@ -149,11 +149,10 @@ from Review > More options > Parallel runs: Antigravity stays opt-in and gated, 
 
 Gemini models come through Antigravity (`agy`), a subscription CLI with its own login, so they are not in the "pick
 models from my accounts" list, which is built from API credentials. With `agy` installed, the Custom list prints an
-"Antigravity (agy, subscription)" group of informational rows (`lane, opt-in`, plus `unconfirmed slug` until a V5 run
-confirms the slugs); it asks for no key and cannot be picked as an API model. On "Your team", the team table has an
-Antigravity row: untick = "off", ticked = the roles it takes as PRIMARY in the routing matrix (`scoring/routing.py`, ADR-0019), each slug labelled `[unconfirmed slug]` while unconfirmed, and "sends repo content to
-Google; terms check next". Without `agy`, setup says so in one line. The terms check (Google acknowledgement, gates
-G0-G7) is the same one `--lanes-antigravity` opens; nothing is written to agy.
+"Antigravity (agy, subscription)" group of informational rows (`lane, opt-in`); it asks for no key and cannot be picked as an API model. On "Your team", the team table has an
+Antigravity row: untick = "off", ticked = the roles it takes as PRIMARY in the routing matrix (`scoring/routing.py`, ADR-0019)and "sends repo content to
+Google". Without `agy`, setup says so in one line. There is no terms check, flag or gate (ADR-0019): an agy cell runs
+when agy is installed and signed in, and is otherwise skipped with the cause `agy-missing`; nothing is written to agy.
 
 ## Mental model
 
@@ -297,17 +296,14 @@ Gemini over Antigravity as the PRIMARY of `explore`, `code-reviewer`, `doc-write
 `generalPurpose` (the routing matrix, ADR-0019; Antigravity may write). The verifier and the security-auditor take no
 Gemini; the planner, architect, implementer and the fixers have a Claude primary. On OpenRouter (`gateway/balanced`)
 explore, tester and doc-writer run on `google/gemini-3.7-flash` with a Claude fallback and everything else on Claude.
-Adding the planner and the software-architect to the Google acknowledgement is a re-sign of that role list (ADR-0007
-section 9): an acknowledgement stored without them is asked again through the "Extend the Google acknowledgement to"
-prompt (default No); the acknowledgement text itself is unchanged.
 
 What you see for Gemini, from one set of lines (`setup/team_view.py`), and the table says the real provider and lane of
 every role:
 
 | Row | Gemini line |
 |---|---|
-| As a team, Antigravity ticked and acknowledged, gates not proven | `Gemini held: Antigravity gates 0/8 proven (G6, G7 partial). Next: run the probe window, then ai-resources lanes gates record`; the cells read `google <slug> via Antigravity [unconfirmed slug] (held)` |
-| As a team, gates proven and the roles acknowledged | the cells read `google <slug> via Antigravity (on)`, no tag, no held line; writers stay on Claude Code |
+| As a team, Antigravity ticked, agy missing or not signed in | `Gemini skipped: agy not installed or not signed in (agy-missing). Next: install agy and sign in (run `agy`), then re-run setup`; the cells read `google <slug> via Antigravity (held)` |
+| As a team, Antigravity ticked and agy installed and signed in | the cells read `google <slug> via Antigravity (on)`, no held line |
 | As a team, Antigravity not ticked | `Gemini not active: Antigravity not selected` |
 | Each on its own | `Gemini not active: 'Each on its own' runs Claude Code only (choose 'As a team' with Antigravity, or OpenRouter)` |
 | OpenRouter, opt-in declined | `Gemini held on OpenRouter: Claude Code x Google not verified; explore, tester, doc-writer use the session model` |
@@ -315,9 +311,7 @@ every role:
 
 The OpenRouter opt-in is asked once in Review (`Use Gemini on explore, tester and doc-writer through OpenRouter (not yet
 verified with Claude Code)?`, default No, never answered for you, not by `--yes`); Yes records `profile.allow_unverified`.
-A new user's Antigravity tick starts off, and a saved tick is restored only when a valid stored Google acknowledgement
-exists. The one operator action that turns the Antigravity cells on is the probe window plus
-`ai-resources lanes gates record` and its commit ([runbook](openclaw/runbook.md#the-probe-window-and-the-one-record-command-adr-0010-n3)).
+Antigravity is ticked by default when installed, like any other tool; a saved tick is restored.
 
 **Channels.** When OpenClaw is a tool, setup lists the channel accounts OpenClaw reports (`openclaw channels list --all
 --json`, read-only) and you untick the ones that should be off; the default always comes from the current listing and no
@@ -405,7 +399,7 @@ after the model choice (ADR-0007): they never change which model a role uses, on
 it buys isolation and parallelism, not quota.
 
 ```sh
-ai-resources setup --lanes --lanes-orchestrator main     # propose the table, sign the acknowledgement, write
+ai-resources setup --lanes --lanes-orchestrator main     # propose the table, write
 ai-resources setup --lanes --lanes-dry-run               # show the proposed table, write nothing
 ai-resources setup --no-lanes                            # clear lanes.yaml and the lane agents the kit created
 ```
@@ -413,9 +407,8 @@ ai-resources setup --no-lanes                            # clear lanes.yaml and 
 - **What is written.** `~/.config/ai-resources/lanes.yaml` (rendered, setup-owned, both modes; `executors.yaml` is
   byte-identical with and without lanes), and, operator-run only, the `kit-lane-*` agents, their catalog entries
   and their ids in `subagents.allowAgents` of the named orchestrators. Setup never spawns a session.
-- **Acknowledgement.** One per account and role list: sharing one Claude login between the orchestrator and lane
-  children is a grey zone of the Anthropic terms, and non-interactive use may be billed differently. Non-interactive
-  `--lanes` without a stored acknowledgement refuses. `--allow-unverified` implies nothing.
+- **No acknowledgement.** The Anthropic and Google acknowledgements were removed (ADR-0019): `--lanes` asks for the
+  orchestrator ids only. `--allow-unverified` implies nothing.
 - **Kit-only landing path.** `ai-resources lanes prepare | verify | integrate | land | count` is the only way a lane
   writer's work reaches the run tree; each lane writer works in its own per-attempt worktree and no agent merges or
   lands. The procedure is in `skills/kit-orchestration/references/backends-and-lanes.md` ("Lane steps").
@@ -425,43 +418,17 @@ ai-resources setup --no-lanes                            # clear lanes.yaml and 
   lanes pass refuses it, and `status`, `verify` and `models update` print a warning; re-run `setup --lanes`.
 - **Profile.** `balanced` (successor of the legacy preset `subscription-claude-55`, which keeps its own Claude-only team) declares a lane table; compose never emits a lane.
 
-### The Antigravity lane (ADR-0007 section 11, phase 3; closed)
+### Antigravity in the lanes (ADR-0019)
 
-Antigravity (`agy`) is a peer lane backend, `agy-cli-lane`, under the same contracts, kit commands, ledger and
-gates as a claude-cli lane. It is **off on a fresh install and stays closed** until all of these hold; each one is
-an enforced check that fails closed with a message, not prose:
-
-```sh
-ai-resources setup --lanes --lanes-antigravity --lanes-orchestrator main   # sign the Google acknowledgement
-ai-resources setup --no-lanes-antigravity                                  # close it again; claude-cli lanes stay
-```
-
-Interactively there is a second way in (ADR-0009): **tick Antigravity on "Your tools"**. The tool is never ticked on
-its own, even when installed. Ticking it opens the same Google terms check after "Your team" (the text of
-`lanes_render.ACK_TEXT['google']` verbatim, the account named, the roles ticked with the implementer unticked) and an
-accept stores the same `lane_acks['google']` and the Antigravity gate as the flag. A decline, an empty account, Ctrl-B
-or Ctrl-C unticks the tool and stores nothing; unticking a tool that was on closes the gate again (like
-`--no-lanes-antigravity`). It does not turn the Claude parallel runs on. Unattended runs, `--yes` and the flags behave
-as before: `--non-interactive --lanes-antigravity` without a valid stored acknowledgement still exits 2. The gates
-below still decide whether anything is admitted.
-
-- ADR-0007 section 11 is Accepted (`lanes_render.AGY_LANE_ADR_ACCEPTED`, pinned to the ADR's status line);
-- `--lanes-antigravity` is on (persisted as `lanes.gates.antigravity`);
-- a **valid Google acknowledgement** lists the role: one per Google account, the account is named, its stored hash
-  equals the current text (a text change means re-signing), the implementer is unticked by default (a default is not
-  a ban); per-account role sets: the Anthropic acknowledgement covers the roles that run on a claude-cli lane, the
-  Google one only the roles with an agy candidate;
-- every phase 3 gate G0-G7 is proven (`scripts/ai_resources/agy_lane_gates.py`). **Not proven today:** G0 (the
-  phase 2 merge gate), G1 (V5, the `agy models` slugs; `model_pins.AGY_LANE_MODELS` holds unconfirmed candidates),
-  G2 (V6, sandbox), G3 (V7, tool and MCP surface), G4 (V9, agy workspace and cwd) and G5 (V12, agy home); G6 and G7
-  are partial. They run only through the isolated probe harness in an operator-announced window.
-
-Until then no agy agent reaches state, `lanes.yaml`, `openclaw.json` or `allowAgents`, and `WRITABLE_BACKENDS` stays
-`{claude-cli}`. What is facts today, whatever the gates say:
+Antigravity (`agy`) is a peer backend, `agy-cli-lane`, under the same contracts, kit commands and ledger as a claude-cli
+lane. It runs whenever the routing matrix assigns it a cell and it is installed and signed in; there is no
+`--lanes-antigravity` flag, no Google acknowledgement and no gate (the flags, `ACK_TEXT`, `agy_lane_gates` and the evidence
+record were removed). A cell whose agy is missing is skipped with the recorded cause `agy-missing`. What is facts, whatever
+the matrix says:
 
 - **Process flags** across `claude-cli`, `claude-kit`, `agy-cli`, `agy-cli-lane` are recorded as facts in ADR-0007
   section 11; an agy child runs with `--dangerously-skip-permissions` (a full shell).
-- **Egress.** Repository content, diffs, test output and MCP results of every acknowledged role go to Google.
+- **Egress.** Repository content, diffs, test output and MCP results of every role on an agy cell go to Google.
 - **Placement follows the matrix and live pool usage.** `lanes.yaml` carries the routing matrix only (role -> primary
   -> fallback chain, ADR-0019); a pool at or above 85% hands its work to the role's fallback. There are no static weights.
 - **Best model first.** A candidate on the role's exact model (tier 1) beats a same-family other version (tier 2);

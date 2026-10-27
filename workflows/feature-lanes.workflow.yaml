@@ -2,8 +2,7 @@
 # `backend: lane` step names a role, never an agent: at dispatch the orchestrator reads the setup lanes table
 # (`~/.config/ai-resources/lanes.yaml`, its `resolved:` section), passes the lane it names to
 # `ai-resources lanes prepare --lane`, and the kit commands are the only landing path. The lane may be Claude Code,
-# a claude-cli lane agent or, once the Antigravity lane is open (`--lanes-antigravity`, a signed Google-account
-# acknowledgement and every phase 3 gate proven), an agy lane agent. The models stay the roles' own (`by_role`).
+# a claude-cli lane agent or, when the matrix assigns it and agy is installed and signed in, an agy lane agent. The models stay the roles' own (`by_role`).
 #
 # Read before using:
 #   - There is no `model` field and no agent id: the lanes table decides where a role runs. An absent table or
