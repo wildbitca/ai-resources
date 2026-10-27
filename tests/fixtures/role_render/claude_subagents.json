@@ -39,7 +39,7 @@
   "tester-dart-flutter": "405bda48d13bbe7cd6444e1647544262ae9a01972c4f43cebf2346f9c6919dc3",
   "tester-devops": "01bcb248eccb012397c7923ab19308137e9495171c581785294737b491a36026",
   "tester-symfony": "83449730e4fa96972d200704eb19e24e3f8c8ff5bcb483db72c88e2f7b4789ad",
-  "verifier": "005299e43945c4502626998cf55d9a1368b496d5b7dee4a14ee3c08ba02a6536"
+  "verifier": "9418c96a191da3d8db7d4e617bc289a933dbb986ce5bdab4ff294aee7ca0ea8c"
  },
  "lean": {
   "code-reviewer": "1f022ac6b16c09a843a6db460ed1140d6259f18bc307d1f79844e2d61723893b",
@@ -56,7 +56,7 @@
   "software-architect": "fe289652a13ce8d6df1daaf0b11140533eedd3331b2eedbe04468a15047f3d8d",
   "terraform-maintainer": "08ec619504bebf49350c366831acfebab53e0a290fc20b8781c60cfec15b894f",
   "tester": "e50becf2168d665efcc2636e2a1880adbb37d81f4fdfc06ae86e8c91b4524773",
-  "verifier": "005299e43945c4502626998cf55d9a1368b496d5b7dee4a14ee3c08ba02a6536"
+  "verifier": "9418c96a191da3d8db7d4e617bc289a933dbb986ce5bdab4ff294aee7ca0ea8c"
  },
  "symfony": {
   "code-reviewer": "1f022ac6b16c09a843a6db460ed1140d6259f18bc307d1f79844e2d61723893b",
@@ -78,6 +78,6 @@
   "terraform-maintainer": "08ec619504bebf49350c366831acfebab53e0a290fc20b8781c60cfec15b894f",
   "tester": "e50becf2168d665efcc2636e2a1880adbb37d81f4fdfc06ae86e8c91b4524773",
   "tester-symfony": "83449730e4fa96972d200704eb19e24e3f8c8ff5bcb483db72c88e2f7b4789ad",
-  "verifier": "005299e43945c4502626998cf55d9a1368b496d5b7dee4a14ee3c08ba02a6536"
+  "verifier": "9418c96a191da3d8db7d4e617bc289a933dbb986ce5bdab4ff294aee7ca0ea8c"
  }
 }

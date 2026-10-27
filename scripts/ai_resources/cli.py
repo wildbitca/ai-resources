@@ -102,6 +102,11 @@ def cmd_covered_check(args: argparse.Namespace) -> int:
     return ledger.covered_main(["--handed", args.handed, "--covered", args.covered, *(["--ledger", args.ledger] if args.ledger else [])])
 
 
+def cmd_readonly(args: argparse.Namespace) -> int:
+    from . import readonly
+    return readonly.main(list(args.args))
+
+
 def cmd_scorecard(args: argparse.Namespace) -> int:
     from . import scorecard
     return scorecard.main(list(args.args))
@@ -149,6 +154,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_cc.add_argument("--covered", required=True, help="the worker's Covered: value")
     p_cc.add_argument("--ledger", help="tasks.md, to expand a handed T# into the S# it covers")
     p_cc.set_defaults(func=cmd_covered_check)
+
+    # readonly
+    p_ro = sub.add_parser("readonly", help="Turn the read-only lock (enforced by the handoff guard hook) on or off")
+    p_ro.add_argument("args", nargs=argparse.REMAINDER, help="on [--reason TEXT] | off | status [--dir PATH]")
+    p_ro.set_defaults(func=cmd_readonly)
 
     # scorecard
     p_sc = sub.add_parser("scorecard", help="Map six 0-3 scores to a mode and roster, or compute an escalation")

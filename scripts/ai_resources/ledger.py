@@ -122,6 +122,33 @@ def covered_problems(covered: str, handed: set[str], ledger: str | None = None) 
     return out
 
 
+SPEC_VERDICTS = ("pass", "fail", "not_run")
+_SPEC_ID = re.compile(r"(?:S\d+|RULE-[A-Z0-9][A-Z0-9-]*|TS-[A-Z0-9][A-Z0-9-]*)")
+_VERDICT = re.compile(r"(" + _SPEC_ID.pattern + r")\s*[=:]\s*([A-Za-z_]+)")
+
+
+def parse_spec_verdicts(text: str) -> dict[str, str]:
+    """`S1=pass, S2=fail (reason), RULE-A-1: not_run` -> {id: verdict}; the last entry for an id wins, values are lowercased."""
+    return {m.group(1): m.group(2).lower() for m in _VERDICT.finditer(text or "")}
+
+
+def spec_verdict_problems(handed: set[str], verdicts: dict[str, str], word: str = "") -> list[str]:
+    """What is wrong with a verifier's per-spec verdicts: an id with no verdict, a value outside `SPEC_VERDICTS`, or a `fail`
+    beside an overall PASS. Only spec ids (S#, RULE-*, TS-*) count; task ids are not verified one by one."""
+    spec_ids = sorted(i for i in handed if _SPEC_ID.fullmatch(i))
+    out = []
+    missing = [i for i in spec_ids if i not in verdicts]
+    if missing:
+        out.append(f"the verifier gave no verdict for: {', '.join(missing)} (Spec_verdicts: S1=pass, S2=fail, ...)")
+    bad = sorted(f"{i}={v}" for i, v in verdicts.items() if v not in SPEC_VERDICTS)
+    if bad:
+        out.append(f"Spec_verdicts values must be pass, fail or not_run: {', '.join(bad)}")
+    failed = sorted(i for i, v in verdicts.items() if v == "fail")
+    if failed and word.upper() in ("PASS", "PASSED", "APPROVED", "OK", "SUCCESS", "YES"):
+        out.append(f"the verdict is {word.upper()} but {', '.join(failed)} failed")
+    return out
+
+
 def covered_value(message: str) -> str:
     """The text of the `Covered:` field of a return block, or an empty string."""
     m = re.search(r"^[ \t>*_-]*Covered\**:\**[ \t]*(.*)$", message or "", re.M | re.I)

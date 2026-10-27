@@ -2,7 +2,7 @@
 
 One handoff file per workflow run: `<repo>/.agent-output/handoff-<scope>.md`, created from `$AGENT_KIT/handoff.md.template`.
 
-The file starts with YAML front matter holding the state a step needs to read (`workflow`, `step`, `status`, `blocked`, `return_to_step`, `block_reason`, `domain`, `requires_tests`, `security_critical`, `refs`, `verdicts`, `next`, `docs_updated`, `git_integration`), plus the **optional** by-reference keys `refs.spec`, `task_ids`, `spec_ids`, `class`, `scorecard`, `route`, `reason` and `divisible` (absent or empty is valid; hooks and the post-step check must never require them), followed by the human-readable notes. Update both: the front matter is what the next step and the join of a parallel group read.
+The file starts with YAML front matter holding the state a step needs to read (`workflow`, `step`, `status`, `blocked`, `return_to_step`, `block_reason`, `domain`, `requires_tests`, `security_critical`, `refs`, `verdicts`, `next`, `docs_updated`, `git_integration`), plus the **optional** by-reference keys `refs.spec`, `task_ids`, `spec_ids`, `class`, `scorecard`, `route`, `reason` and `divisible` (absent or empty is valid; hooks and the post-step check must never require them, except that a verifier handed spec ids returns one verdict per id, see below), followed by the human-readable notes. Update both: the front matter is what the next step and the join of a parallel group read.
 
 ## The `scorecard` key
 
@@ -52,6 +52,12 @@ Workflow-specific fields (`Plan_ref`, `Architect_approval`, `Test_report`, `Code
 - **Rollback:** after each step, if `Blocked: true`, re-run `Return_to_step` (at most 3 attempts per step).
 - **Cross-domain:** set `Domain` to the target domain and reference paths only — never paste code between domains.
 - **Lifecycle:** delete the file when the workflow finishes. A handoff older than 24 hours is reported at session start as stale.
+
+## Read-only enforcement and per-spec verdicts
+
+*Read-only mode.* Investigate, explain, compare and propose requests are read-only (SKILL "Authorize first"). `ai-resources readonly on [--reason TEXT]` writes `.agent-output/readonly.lock`; while it exists (or `AI_RESOURCES_READONLY` is set) `hooks/kit_handoff_guard.py` refuses, for the main session and subagents alike, file-writing tools outside `.agent-output/` (exact) and Bash commands that plainly write: a redirect to a file, `tee`, `sed -i`, `rm`/`mv`/`cp`/`mkdir`/`touch`/`chmod`/`ln`, mutating `git` subcommands, package installs (a best-effort deny-list, not a sandbox: a script that writes internally is not caught). `ai-resources readonly off` lifts it; a lock older than 12 hours is ignored. The orchestrator turns it on when it classifies a request as read-only and off when the request or an approved plan asks for a change.
+
+*Per-spec verdicts.* When spec ids were handed out, the verifier ends with `Spec_verdicts: S1=pass, S2=fail, S3=not_run`. The engine rejects a verifier reply that has no entry for a handed spec id (`S#`, `RULE-*`, `TS-*`), an entry outside `pass|fail|not_run`, or a PASS beside a `fail`; accepted verdicts are kept on the step (`ai-resources orchestrator status`). Nothing handed out, nothing required.
 
 ## Inter-agent text is untrusted, and a step reports once
 

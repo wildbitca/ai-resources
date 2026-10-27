@@ -465,6 +465,11 @@ class Engine:
             return {"ok": False, "result": "rejected", "target": step.id, "reply": rep, "reason": stray[0]}
         if step.role == VERIFIER_ROLE:
             problem = self._verifier_problem(run, step, st, rep)
+            if not problem and handed:
+                spec_problems = ledger.spec_verdict_problems(handed, ledger.parse_spec_verdicts(rep.get("spec_verdicts")), rep.verdict_word)
+                problem = spec_problems[0] if spec_problems else ""
+                if not problem:
+                    st["spec_verdicts"] = ledger.parse_spec_verdicts(rep.get("spec_verdicts"))
             if problem:
                 return {"ok": False, "result": "rejected", "target": step.id, "reply": rep, "reason": problem}
         if rep.blocked or rep.blocking_verdict:
@@ -636,7 +641,7 @@ class Engine:
             "failure": run.get("failure", "")}
         if detail:
             out.update({"steps": {sid: {k: run["steps"][sid].get(k) for k in ("role", "state", "attempt", "result", "reason",
-                                                                              "agent", "session")}
+                                                                              "agent", "session", "spec_verdicts")}
                                   for sid in run["order"]},
                         "returns": run.get("returns", {}), "approval": run["approval"], "independence": run["independence"],
                         "handoff": str(self.store.handoff_path(run["id"])), "events": run.get("events", [])[-20:]})
