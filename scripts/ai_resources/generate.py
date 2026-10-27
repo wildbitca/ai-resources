@@ -231,7 +231,7 @@ SCORE_FIRST = (
     "**Score first.** Before step 1 score the task with the `kit-orchestration` \"Scorecard\" "
     "(`ai-resources scorecard '<json>'`): the card picks LITE, STANDARD or FULL and the roster, so this "
     "workflow's roles run only when the card names them (LITE works inline, no handoff). Tests are mandatory "
-    "in every mode; scores that are missing or invalid mean FULL."
+    "in every mode; invalid scores mean FULL, and no scores plus no classifier answer mean light."
 )
 
 

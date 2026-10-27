@@ -249,8 +249,10 @@ def test_d6_scripts_no_scores_and_no_answer_is_light_not_full(tmp_path, script, 
 
 
 def test_d6_docs_state_the_fallback():
-    assert "Invalid or missing scores mean FULL" in SKILL
-    assert "Invalid scores mean FULL" in (REPO / "skills" / "kit-orchestration" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Invalid scores mean FULL; no scores plus no classifier answer mean light" in SKILL
+    assert "Invalid or missing" not in SKILL
+    core = (REPO / "skills" / "kit-orchestration" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Invalid scores mean FULL" in core and "no scores and no answer mean light" in core
 
 
 # --- D7: the LITE threshold ----------------------------------------------------------------------------------------
