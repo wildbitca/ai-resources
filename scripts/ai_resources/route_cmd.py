@@ -20,7 +20,7 @@ def cmd_route(args: argparse.Namespace) -> int:
         if args.usage_file:
             usage = {p: (None if v is None else float(v)) for p, v in json.loads(Path(args.usage_file).read_text("utf-8")).items()}
         else:
-            if args.refresh:
+            if getattr(args, "refresh", False):
                 pool_usage.sync_caches()
             usage = pool_usage.usage_map(pool_usage.snapshot())
         writers = [w for w in (args.writers or "").split(",") if w.strip()]

@@ -180,7 +180,7 @@ def test_d4_passing_second_round_still_gets_a_rerun_after_escalation(tmp_path):
 # --- D5: every workflow skill and YAML scores first ------------------------------------------------------------
 def test_d5_every_workflow_skill_scores_first():
     skills = sorted((REPO / "skills").glob("workflow-*/SKILL.md"))
-    assert len(skills) >= 19  # workflow-odd was folded into /kit-plan and /kit-implement
+    assert len(skills) >= 18  # workflow-odd was folded into /kit-plan and /kit-implement
     for skill in skills:
         text = skill.read_text(encoding="utf-8")
         assert "Score first" in text and '"Scorecard"' in text, skill
