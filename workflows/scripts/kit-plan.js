@@ -80,14 +80,6 @@ const bumpForRisk = (size, card, items) => {
 const cardLine = card => !card ? '' : [card.mode.toUpperCase(), ...Object.entries(card.scores || {}).map(([d, v]) => `${SCORECARD.abbrev[d]}${v}`),
   ...(card.bump_reason ? [`(scored ${card.scored_mode.toUpperCase()}, bumped: ${card.bump_reason})`] : []),
   ...(card.escalations || []).map(e => `-> ${e.to.toUpperCase()} (${e.reason})`)].join(' ')
-// Escalation never lowers the size: tests failing twice or a growing diff move lite -> standard -> full.
-const escalateSize = (current, failures, diffLines) => {
-  let best = current
-  for (const [target, lim] of Object.entries(SCORECARD.escalation[modeOf(current)] || {})) {
-    if ((failures >= lim.failures || diffLines >= lim.diff_lines) && SIZES.indexOf(MODE_TO_SIZE[target]) > SIZES.indexOf(best)) best = MODE_TO_SIZE[target]
-  }
-  return best
-}
 const SCORES_SCHEMA = {
   type: 'object',
   description: 'Six integer scores 0-3; higher means more ceremony: resumability (3 = a cold session cannot resume from request + git diff), blast_radius (files/modules), risk (auth, secrets, money, data migration, infra, public API), uncertainty (unknown cause or design choices), verifiability (3 = no existing tests cover it), spread (backend + infra + mobile).',

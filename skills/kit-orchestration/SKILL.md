@@ -15,15 +15,11 @@ Investigate, explain, compare and propose requests are read-only: no writes, no 
 
 ## Scorecard
 
-Before multi-step work score 0-3 from the request and ~3 reads: `resumability` (3 = a cold session could not finish from request + `git diff`), `blast_radius`, `risk`, `uncertainty`, `verifiability`, `spread`. `ai-resources scorecard '<json>'` maps them: **LITE** inline, no handoff; **STANDARD** implementer, tester, verifier plus triggered roles; **FULL** all seven roles plus handoff. Triggers: planner (resumability >= 2), architect (uncertainty or spread >= 2), code-reviewer (blast_radius >= 2), security-auditor (risk >= 2). Print the card first (`--handoff PATH` records it). Tests are mandatory in every mode. Invalid scores mean FULL; no scores and no answer mean light. `verifiability` 3 is not LITE. Escalate at 2 failed rounds or 150 diff lines; never downgrade. Rules and tiers: [references/scorecard.md](references/scorecard.md).
+Before multi-step work score 0-3 from the request and ~3 reads: `resumability` (3 = a cold session could not finish from request + `git diff`), `blast_radius`, `risk`, `uncertainty`, `verifiability`, `spread`. `ai-resources scorecard '<json>'` maps them: **LITE** inline, no handoff; **STANDARD** implementer, tester, verifier plus triggered roles; **FULL** all seven roles plus handoff.. Tests are mandatory in every mode. Invalid scores mean FULL; no scores and no answer mean light. `verifiability` 3 is not LITE. Escalate at 2 failed rounds or 150 diff lines; never downgrade. Triggers, tiers, size spellings, what code enforces: [references/scorecard.md](references/scorecard.md).
 
 ## Task size
 
-Mode names map LITE=`inline`, STANDARD=`light`, FULL=`full` (as in the plan's Sizing block). Resume test: could someone finish from the request and `git diff` alone?
-
-Risk items (one adds a `Risks: item N` line and one independent verifier, nothing bigger): 1 data or irreversible effects; 2 security; 3 contracts others consume (APIs, CLI flags, config, handoff keys, hooks, workflow YAML); 4 concurrency; 5 delivery or environment (installers, CI/CD, dependencies, gateway config); 6 no test would catch a regression. Size is not priority; never infer one from the other.
-
-`/kit-plan` and `/kit-implement` score first; nobody picks a mode. Override per run with `--inline`, `--light` or `--full` (or `{"size"}`); `--full` restores the whole loop. No classifier answer means light. State the mode and why. Re-evaluate once after a question or mapping resolves; if actual size passes twice the forecast, change the route, not the acceptance criteria. The Sizing block is in `agents/roles/planner.md`. Runs are measured (`ai-resources runs`, [run-ledger](references/run-ledger.md)); history advises only after 5 similar runs, your flag wins.
+LITE=`inline`, STANDARD=`light`, FULL=`full` (the plan's Sizing block is in `agents/roles/planner.md`). `/kit-plan` and `/kit-implement` score first; nobody picks a mode; `--inline`, `--light` or `--full` (or `{"size"}`) overrides one run; state the mode and why. Risk items (six, listed in the reference): one adds a `Risks: item N` line and one independent verifier, nothing bigger. Re-evaluate once after a question or mapping resolves; if actual size passes twice the forecast, change the route, not the acceptance criteria. Runs are measured (`ai-resources runs`, [run-ledger](references/run-ledger.md)); history advises only after 5 similar runs, your flag wins.
 
 ## Delegation triggers
 
@@ -52,7 +48,7 @@ Workflows and prompts refer to `$AGENT_KIT`, the kit root (`workflows/`, `agents
 
 ## Before the first step
 
-0. Print the scorecard (LITE: work inline, stop here).
+0. Print the scorecard first, `--handoff PATH` records it (LITE: work inline, stop here).
 1. Read `specs/PROJECT.md` when it exists (Intent, Technologies, spec index).
 2. Detect the domain with [references/domains.md](references/domains.md). If it is ambiguous, ask the user once.
 3. For workflows that change code (feature, bugfix, refactor, cross-domain), work in a git worktree on `feature/<name>` or `fix/<name>` (skill `using-git-worktrees`).

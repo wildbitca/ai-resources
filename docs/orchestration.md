@@ -248,15 +248,9 @@ graph LR
 
 The orchestrator never asks the user to pick a mode. Before multi-step work it scores six dimensions 0-3 (higher = more ceremony) from the request and a bounded repo read, and a fixed rule maps them to a team:
 
-| Mode | Roster | Handoff |
-|---|---|---|
-| LITE (total <= 3, risk 0, uncertainty <= 1, resumability <= 1, verifiability <= 2, no trigger) | none, inline; tests still mandatory | no |
-| STANDARD | implementer, tester, verifier + triggered roles | only with `planner` |
-| FULL | planner, software-architect, implementer, tester, code-reviewer, security-auditor, verifier | yes |
+The mode table (LITE / STANDARD / FULL thresholds, rosters, handoff), the role triggers, the model tiers, the escalation table, the size spellings and the split between what code enforces and what is instruction are stated once, in `skills/kit-orchestration/references/scorecard.md`. In short: a LITE run escalates when tests fail twice or the diff grows, a run never downgrades, invalid scores mean FULL, and the escalation and handoff record are code (`ai-resources scorecard gate lite --failures 2 --base main --handoff .agent-output/handoff.md`).
 
-Triggers: `planner` if resumability >= 2; `software-architect` if uncertainty >= 2 or spread >= 2; `code-reviewer` if blast radius >= 2; `security-auditor` if risk >= 2. FULL when total >= 10, risk is 3, or three roles trigger. A LITE run escalates to STANDARD when tests fail twice or the diff reaches 150 lines (FULL at 4 failures / 400 lines); STANDARD escalates to FULL at 2 failures / 400 lines (failures counted within the current mode). Runs never downgrade. A lone `verifiability` 3 is never LITE (nothing would catch a regression, so it gets a tester and a verifier); invalid scores mean FULL. Escalation and the handoff record are code: `ai-resources scorecard gate lite --failures 2 --base main --handoff .agent-output/handoff.md`, and `/kit-implement` recomputes its test-round limit when it escalates. `references/scorecard.md` lists what is code-enforced and what is instruction.
-
-Try it: `ai-resources scorecard '{"resumability":1,"blast_radius":1,"risk":0,"uncertainty":2,"verifiability":1,"spread":0}'` and `ai-resources scorecard escalate lite 2 0`. The rules are data (`skills/kit-orchestration/scorecard.json`); `evals/scorecard/cases.json` holds 12 sample requests (3 LITE, 5 STANDARD, 4 FULL) with expected mode and roster, run by `tests/test_scorecard.py`. Change a threshold there, update the cases, and the JS copies in `workflows/scripts/` must match (a test enforces it).
+Try it: `ai-resources scorecard '{"resumability":1,"blast_radius":1,"risk":0,"uncertainty":2,"verifiability":1,"spread":0}'` and `ai-resources scorecard escalate lite 2 0`. The rules are data (`skills/kit-orchestration/scorecard.json`); `evals/scorecard/cases.json` holds 12 sample requests (3 LITE, 5 STANDARD, 4 FULL) with expected mode and roster, run by `tests/test_scorecard.py`. Change a threshold there, update the cases and run `ai-resources generate`: it pastes the rules into the sizing block of both scripts in `workflows/scripts/` (a test fails when they are stale).
 
 ## Skill Discovery Flow
 
