@@ -3,6 +3,10 @@ name: package-upgrade
 role: package-upgrade
 description: Upgrades dependencies across ecosystems using the package-upgrade-review skill pattern—version discovery, config updates, changelog-driven code alignment, batched rollouts.
 model: inherit
+# ai-resources:routing begin (generated from scoring/routing.py; do not edit)
+# route: agy:gemini-3.8-flash-high [agy-gemini] -> claude-code:haiku [claude-subscription]
+model: haiku
+# ai-resources:routing end
 ---
 
 # Package upgrade specialist

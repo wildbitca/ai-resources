@@ -391,7 +391,7 @@ def test_ai_resources_setup_run_twice_in_a_scratch_home_has_zero_diff_and_no_new
     assert (sub["maxConcurrent"], sub["maxChildrenPerAgent"], sub["maxSpawnDepth"], sub["runTimeoutSeconds"]) == (3, 3, 2, 7200)
     roles = {i: e for i, e in live["agents"]["entries"].items() if i.startswith("kit-role-")}
     assert len(roles) == 15 and roles["kit-role-planner"]["thinkingDefault"] == "high"      # kit-role agents
-    assert roles["kit-role-tester"]["model"]["primary"] == "anthropic/claude-haiku-5-5"      # provider routing (balanced)
+    assert roles["kit-role-tester"]["model"]["primary"] == "anthropic/claude-sonnet-5-5"     # agy not admitted: matrix fallback
     assert live["plugins"]["entries"]["ai-resources"]["config"]["enableOrchestrator"] is True
     assert [e for e in s1.openclaw.host_restart_pending if e["op"] == "plugin"]              # plugin pending
     assert (h / ".openclaw" / "kit-host.env").is_file()

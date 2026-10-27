@@ -3,6 +3,10 @@ role: verifier
 name: verifier
 description: Validates work against plan acceptance criteria and project no-go zones; only role that may mark done; skeptical gap reporting.
 focus: validate against acceptance criteria, mark done only if satisfied, skeptical validator
+# ai-resources:routing begin (generated from scoring/routing.py; do not edit)
+# route: checker ladder: claude-code:sonnet [claude-subscription] -> claude-code:opus [claude-subscription] -> agy:claude-opus-5-5 [agy-claude-gpt]
+model: sonnet
+# ai-resources:routing end
 ---
 
 # Verifier agent

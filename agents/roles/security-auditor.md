@@ -2,6 +2,10 @@
 name: security-auditor
 description: Security audit, SAST, DAST, vulnerability scanning following DevSecOps methodology.
 model: inherit
+# ai-resources:routing begin (generated from scoring/routing.py; do not edit)
+# route: checker ladder: claude-code:sonnet [claude-subscription] -> claude-code:opus [claude-subscription] -> agy:claude-opus-5-5 [agy-claude-gpt]
+model: sonnet
+# ai-resources:routing end
 ---
 
 # Agent: Security Auditor

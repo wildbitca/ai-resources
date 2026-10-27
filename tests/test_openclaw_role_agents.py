@@ -1,4 +1,4 @@
-"""One OpenClaw agent per kit role (ADR-0015 S8, acceptance 10): the profile's models, enabled providers only."""
+"""One OpenClaw agent per kit role (ADR-0015 S8, acceptance 10): model and fallbacks of its row in the routing matrix."""
 from __future__ import annotations
 
 import copy
@@ -24,7 +24,7 @@ def balanced():
 
 def build(enabled=("anthropic",), env=None, **kw):
     ex = balanced()
-    return R.build_agents(repo_root(), ex["by_role"], enabled=enabled, catalog=CATALOG,
+    return R.build_agents(repo_root(), enabled=enabled, catalog=CATALOG,
                           effort_table=effort.table_for_state(_balanced_state()), ak_path="/kit",
                           by_persona=ex.get("by_persona"), env=env if env is not None else {}, effective=EFFECTIVE, **kw)
 
@@ -68,29 +68,47 @@ def _merge(dst, src):
 
 
 def run(s, host, tmp_path, *, enabled=("anthropic",), dry_run=False, methods=None, warns=None, env=None,
-        cli_runtimes=(), infos=None):
-    ex = balanced()
+        cli_runtimes=(), infos=None, profile_doc=None, agy_ok=None):
     return R.configure(
-        s, host.doc, config_root=tmp_path / "oc", by_role=ex["by_role"], by_persona={}, ak_path="/kit",
+        s, host.doc, config_root=tmp_path / "oc", profile_doc=profile_doc, by_persona={}, ak_path="/kit",
         kit_root=repo_root(), enabled=enabled, catalog=CATALOG, effort_table=effort.table_for_state(_balanced_state()),
         methods=methods or {"anthropic": "api_key"}, apply_patch=host.apply, register_agent=host.register,
         classify=lambda p: host.restart, change_records=lambda *a, **k: host.records.append(a) or [],
         run_changes=[], dry_run=dry_run, info=(infos.append if infos is not None else (lambda m: None)), warn=(warns.append if warns is not None else (lambda m: None)),
         error=lambda m: (_ for _ in ()).throw(AssertionError(m)), env=env if env is not None else {},
-        cli_runtimes=cli_runtimes)
+        cli_runtimes=cli_runtimes, agy_ok=agy_ok)
 
 
-def test_fifteen_role_agents_carry_the_profile_models_and_the_mapped_thinking():
+def test_fifteen_role_agents_carry_the_matrix_primary_and_fallbacks_and_the_mapped_thinking():
     agents, fell = build()
     assert len(agents) == 15 and fell == []
     by = {a["role"]: a for a in agents}
     assert by["planner"]["model"] == "anthropic/claude-sonnet-5-5" and by["planner"]["thinking"] == "high"
-    assert by["verifier"]["model"] == "anthropic/claude-opus-5-5" and by["verifier"]["thinking"] == "high"
-    assert by["explore"]["model"] == "anthropic/claude-haiku-5-5" and by["explore"]["thinking"] == "low"
+    assert by["planner"]["fallbacks"] == ["agy-cli-lane/gemini-4-argon-high"]
+    # checkers: the dispatcher picks per run; the agent starts at the cheapest rung and keeps the rest as fallbacks
+    assert by["verifier"]["model"] == "anthropic/claude-sonnet-5-5" and by["verifier"]["thinking"] == "high"
+    assert by["verifier"]["fallbacks"] == ["anthropic/claude-opus-5-5", "agy-cli-lane/claude-opus-5-5"]
+    # agy primaries (D4): the Antigravity slug first, the Max cell as the recorded fallback
+    assert by["explore"]["model"] == "agy-cli-lane/gemini-3.8-flash-high" and by["explore"]["thinking"] == "low"
+    assert by["explore"]["fallbacks"] == ["anthropic/claude-haiku-5-5"]
+    assert by["tester"]["model"] == "agy-cli-lane/gemini-4-argon-high" and by["tester"]["thinking"] == "low"
     assert by["implementer"]["thinking"] == "medium"
-    prof = balanced()["by_role"]
-    for role, agent in by.items():
-        assert P.role_provider(prof[role]) == "anthropic" and agent["model"].startswith("anthropic/")
+    assert by["implementer"]["model"] == "anthropic/claude-sonnet-5-5"
+
+
+def test_a_profile_routing_override_moves_the_agent_chain():
+    agents, _ = build(profile_doc={"routing": {"explore": {"primary": "claude-code:opus", "fallback": ["claude-code:haiku"]}}})
+    explore = next(a for a in agents if a["role"] == "explore")
+    assert explore["model"] == "anthropic/claude-opus-5-5" and explore["fallbacks"] == ["anthropic/claude-haiku-5-5"]
+
+
+def test_an_agy_cell_that_is_not_admitted_leaves_the_chain_and_is_reported():
+    agents, fell = build(agy_ok=lambda role: False)
+    by = {a["role"]: a for a in agents}
+    assert by["explore"]["model"] == "anthropic/claude-haiku-5-5" and by["explore"]["fallbacks"] == []
+    assert by["planner"]["model"] == "anthropic/claude-sonnet-5-5" and by["planner"]["fallbacks"] == []
+    assert not any("agy-cli-lane" in ref for a in agents for ref in [a["model"], *a["fallbacks"]])
+    assert {r for r, want, _t in fell} >= {"explore", "tester", "planner", "verifier"} and all(w == "agy" for _r, w, _t in fell)
 
 
 def test_ids_are_valid_openclaw_agent_ids_and_unique():
@@ -115,10 +133,9 @@ def test_each_agent_has_scoped_skills_and_its_prompt():
     assert "/kit" in by["verifier"]["prompt"] and "$AGENT_KIT/" not in by["verifier"]["prompt"]
 
 
-def test_a_role_whose_provider_is_not_enabled_runs_on_the_cheapest_enabled_one():
+def test_the_matrix_is_not_restricted_by_the_enabled_providers_only_personas_are():
     agents, fell = build(enabled=("openai",))
-    assert {a["model"] for a in agents} == {"openai/gpt-5.5-mini"}
-    assert len(fell) == 15 and all(want == "anthropic" for _r, want, _t in fell)
+    assert fell == [] and {a["model"] for a in agents if a["role"] == "planner"} == {"anthropic/claude-sonnet-5-5"}
 
 
 def test_setup_writes_fifteen_agents_once_and_a_rerun_is_a_zero_diff(tmp_path):
@@ -145,13 +162,12 @@ def test_a_profile_change_moves_the_kit_value_but_an_operator_edit_is_kept(tmp_p
     host = Host()
     s = state.SetupState()
     run(s, host, tmp_path)
-    host.doc["agents"]["entries"]["kit-role-verifier"]["model"]["primary"] = "anthropic/claude-sonnet-5-5"   # operator
+    host.doc["agents"]["entries"]["kit-role-verifier"]["model"]["primary"] = "anthropic/claude-opus-5-5"     # operator
     host.doc["agents"]["entries"]["kit-role-planner"]["thinkingDefault"] = "low"                          # operator
     warns: list[str] = []
-    ex = balanced()
-    ex["by_role"]["explore"]["model"] = "sonnet"                                                           # profile moved
+    moved = {"routing": {"explore": {"primary": "claude-code:sonnet"}}}                                    # profile moved
     R_configure = R.configure
-    R_configure(s, host.doc, config_root=tmp_path / "oc", by_role=ex["by_role"], by_persona={}, ak_path="/kit",
+    R_configure(s, host.doc, config_root=tmp_path / "oc", profile_doc=moved, by_persona={}, ak_path="/kit",
                 kit_root=repo_root(), enabled=("anthropic",), catalog=CATALOG,
                 effort_table=effort.table_for_state(_balanced_state()), methods={"anthropic": "api_key"},
                 apply_patch=host.apply, register_agent=host.register, classify=lambda p: [],
@@ -159,7 +175,7 @@ def test_a_profile_change_moves_the_kit_value_but_an_operator_edit_is_kept(tmp_p
                 error=lambda m: (_ for _ in ()).throw(AssertionError(m)), env={})
     entries = host.doc["agents"]["entries"]
     assert entries["kit-role-explore"]["model"]["primary"].startswith("anthropic/claude-sonnet")      # followed the profile
-    assert entries["kit-role-verifier"]["model"]["primary"] == "anthropic/claude-sonnet-5-5"          # kept
+    assert entries["kit-role-verifier"]["model"]["primary"] == "anthropic/claude-opus-5-5"            # kept
     assert entries["kit-role-planner"]["thinkingDefault"] == "low"
     assert any("kit-role-verifier" in w for w in warns) and any("kit-role-planner" in w for w in warns)
 
@@ -175,8 +191,10 @@ def test_a_cli_provider_gets_its_runtime_in_each_role_agent_and_never_in_the_sha
     pins = _pins(host.doc)
     assert pins and all(aid.startswith("kit-role-") for aid in pins)
     for aid, models in pins.items():
-        primary = host.doc["agents"]["entries"][aid]["model"]["primary"]
-        assert models == {primary: {"agentRuntime": {"id": "claude-cli"}}}, aid
+        model = host.doc["agents"]["entries"][aid]["model"]
+        chain = [model["primary"], *model.get("fallbacks", [])]
+        # every Max cell of the chain runs through claude-cli; an Antigravity ref is never pinned
+        assert models == {r: {"agentRuntime": {"id": "claude-cli"}} for r in chain if r.startswith("anthropic/")}, aid
 
 
 def test_a_role_on_claude_runs_through_claude_code_when_it_is_signed_in_even_with_an_api_key_in_openclaw(tmp_path):
@@ -308,3 +326,29 @@ def test_each_new_agent_is_announced_before_its_slow_registration_and_a_rerun_an
     again: list[str] = []
     run(s, host, tmp_path, infos=again)
     assert not [m for m in again if "adding" in m or m.lstrip().startswith("(")]
+
+
+def test_the_written_entry_has_the_native_model_object_with_fallbacks(tmp_path):
+    host = Host()
+    run(state.SetupState(), host, tmp_path)
+    entries = host.doc["agents"]["entries"]
+    assert entries["kit-role-explore"]["model"] == {"primary": "agy-cli-lane/gemini-3.8-flash-high",
+                                                    "fallbacks": ["anthropic/claude-haiku-5-5"]}
+    assert entries["kit-role-implementer"]["model"] == {"primary": "anthropic/claude-sonnet-5-5",
+                                                        "fallbacks": ["agy-cli-lane/gemini-4-argon-high"]}
+    stub = host.doc["models"]["providers"]["agy-cli-lane"]
+    assert {m["id"] for m in stub["models"]} == {"gemini-3.8-flash-high", "gemini-4-argon-high", "claude-opus-5-5"}
+
+
+def test_an_agent_the_kit_wrote_without_fallbacks_gains_them_and_an_operator_chain_is_kept(tmp_path):
+    host = Host()
+    s = state.SetupState()
+    run(s, host, tmp_path)
+    entries = host.doc["agents"]["entries"]
+    last = s.openclaw.role_agents_applied
+    entries["kit-role-planner"]["model"] = {"primary": "anthropic/claude-sonnet-5-5"}          # what an older kit wrote
+    last["fallbacks"].pop("kit-role-planner")
+    entries["kit-role-reviewer"]["model"]["fallbacks"] = ["anthropic/claude-opus-5-5"]         # the operator's chain
+    run(s, host, tmp_path)
+    assert entries["kit-role-planner"]["model"]["fallbacks"] == ["agy-cli-lane/gemini-4-argon-high"]
+    assert entries["kit-role-reviewer"]["model"]["fallbacks"] == ["anthropic/claude-opus-5-5"]

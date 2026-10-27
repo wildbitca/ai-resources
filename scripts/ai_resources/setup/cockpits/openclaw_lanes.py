@@ -27,6 +27,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from ... import agy_lane_gates
+from .openclaw_agy import (AGY_BACKEND, AGY_HOME_PARTS, AGY_TOOL_DENY, STUB_API, STUB_API_KEY, STUB_BASE_URL,  # noqa: F401
+                           STUB_PROVIDER, LanesWriteError, agy_home_path, agy_home_wanted, agy_slug,
+                           ensure_agy_home, remove_agy_home, stub_models as _stub_models, stub_patch_for_slugs)
 from .. import state, ui
 from ..live_openclaw import _primary
 
@@ -47,10 +50,6 @@ def _matches_exec(pattern: str) -> bool:
     return any(fnmatch.fnmatchcase(n, p) for n in _EXEC_NAMES)
 
 
-class LanesWriteError(RuntimeError):
-    """The lanes patch could not be built or applied."""
-
-
 def _get(doc: Any, *keys: str) -> Any:
     cur = doc
     for k in keys:
@@ -66,17 +65,9 @@ def _get(doc: Any, *keys: str) -> Any:
 WRITABLE_BACKENDS = frozenset({CLAUDE_CLI})
 # The agent runtime a catalog entry names per backend.
 CATALOG_SHAPES = {CLAUDE_CLI: {"agentRuntime": {"id": CLAUDE_CLI}}}
-AGY_BACKEND = agy_lane_gates.AGY_LANE_BACKEND
 HELD_BACKEND_REASON = "held: backend {backend} is not writable in this version"
 HELD_AGY_BIN_REASON = ("held: agy binary not configured for the kit plugin (plugins.entries.ai-resources."
                        "config.agyBin must be an absolute path); run setup in a drained window")
-STUB_PROVIDER = "agy-cli-lane"
-STUB_BASE_URL = "http://127.0.0.1:9/"
-STUB_API = "openai-completions"          # the schema value is not proven (isolated run pending): see ADR-0007 11
-STUB_API_KEY = "kit-lane-agy-placeholder"      # a constant, never a credential
-# The OpenClaw tool names an agy lane child must not hold: the plan's minimum until V7 enumerates them.
-AGY_TOOL_DENY = ("message", "sessions_spawn", "cron")
-AGY_HOME_PARTS = agy_lane_gates.AGY_HOME_PARTS
 
 
 def writable_backends() -> frozenset:
@@ -127,43 +118,6 @@ def kit_agent_ids(lanes: Mapping[str, Any], *, gates: Mapping[str, Any] | None =
     held = held_agents(lanes, gates=gates, acks=acks, doc=doc)
     return sorted(a for a in (lanes.get("agents") or {})
                   if isinstance(a, str) and a.startswith(PREFIX) and a not in held)
-
-
-agy_home_path = agy_lane_gates.agy_home_path
-
-
-def agy_home_wanted() -> bool:
-    """True only when V12 (G5) is proven: the kit-owned home may then be created."""
-    return agy_lane_gates.gate_proven("G5")
-
-
-def ensure_agy_home(path: Path) -> dict[str, Any]:
-    """Create the kit-owned agy home (0700); never under /tmp or through a symlink."""
-    resolved = path.resolve()
-    if resolved == Path("/tmp") or Path("/tmp") in resolved.parents:
-        raise LanesWriteError(f"the agy home never lives under /tmp: {resolved}")
-    if path.is_symlink():
-        raise LanesWriteError(f"the agy home is a symlink: {path}")
-    existed = path.exists()
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    import os
-    os.chmod(path, 0o700)
-    return {"path": str(path), "created": not existed}
-
-
-def remove_agy_home(record: Mapping[str, Any], *, confirm: Callable[[str], bool],
-                    remove_dir: Callable[[Path], None] | None = None) -> bool:
-    """Remove the agy home only when the kit created it, it is the kit-owned name and the operator confirms."""
-    path = Path(str(record.get("path") or ""))
-    if not record.get("created") or tuple(path.parts[-len(AGY_HOME_PARTS):]) != AGY_HOME_PARTS:
-        return False
-    if path.is_symlink() or not path.is_dir():
-        return False
-    if not confirm(f"Remove the kit-owned agy home {path} (it holds the lane's agy login)?"):
-        return False
-    import shutil
-    (remove_dir or (lambda p: shutil.rmtree(p, ignore_errors=True)))(path)
-    return True
 
 
 def workspace_root(lanes: Mapping[str, Any], config_root: Path) -> Path:
@@ -295,11 +249,6 @@ def agy_primary_drift_findings(doc: Mapping[str, Any]) -> list[str]:
             for aid, ref in agy_primary_drift(doc)]
 
 
-def _stub_models(doc: Mapping[str, Any]) -> set[str]:
-    return {str(m.get("id")) for m in (_get(doc, "models", "providers", STUB_PROVIDER, "models") or [])
-            if isinstance(m, Mapping) and m.get("id")}
-
-
 def agy_drift_proposals(doc: Mapping[str, Any], *, google_acknowledged: bool,
                         lanes: Mapping[str, Any] | None = None) -> list[dict[str, str]]:
     """One proposal per drifted agy lane (ADR-0015 D2b, operator answer 3). Pure: nothing is changed here.
@@ -405,30 +354,9 @@ def mcp_scope_findings(lanes: Mapping[str, Any], doc: Mapping[str, Any],
     return out
 
 
-def agy_slug(agent: Mapping[str, Any]) -> str:
-    model = str(agent.get("model") or "")
-    return model.split("/", 1)[1] if model.startswith(f"{STUB_PROVIDER}/") else model
-
-
 def _stub_patch(agents: Mapping[str, Any], wanted: list[str], doc: Mapping[str, Any]) -> dict[str, Any] | None:
-    """The `models.providers.agy-cli-lane` stub for the admitted agy agents (fill-only), or None.
-
-    ADR-0005 finding 1: `sessions_spawn` refuses `Unknown model` without a catalog entry. The key is the
-    placeholder constant; an existing provider entry keeps every operator value and only gains missing models.
-    """
-    slugs = [agy_slug(agents[a]) for a in wanted if agents[a].get("backend") == AGY_BACKEND]
-    if not slugs:
-        return None
-    current = _get(doc, "models", "providers", STUB_PROVIDER)
-    if not isinstance(current, Mapping):
-        return {"baseUrl": STUB_BASE_URL, "api": STUB_API, "apiKey": STUB_API_KEY,
-                "models": [{"id": s, "name": s} for s in sorted(set(slugs))]}
-    have = [m for m in (current.get("models") or []) if isinstance(m, Mapping)]
-    have_ids = {m.get("id") for m in have}
-    missing = [s for s in sorted(set(slugs)) if s not in have_ids]
-    if not missing:
-        return None
-    return {"models": have + [{"id": s, "name": s} for s in missing]}
+    """The agy stub for the admitted agy agents (the plumbing lives in `openclaw_agy`)."""
+    return stub_patch_for_slugs([agy_slug(agents[a]) for a in wanted if agents[a].get("backend") == AGY_BACKEND], doc)
 
 
 def build_patch(lanes: Mapping[str, Any], doc: Mapping[str, Any], workspaces: Mapping[str, Path], *,

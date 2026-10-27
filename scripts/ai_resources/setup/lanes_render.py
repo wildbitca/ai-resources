@@ -331,6 +331,28 @@ def lanes_state(profile_doc: Mapping[str, Any], *, orchestrators: Any = (),
     return out
 
 
+def routing_doc(s: "state.SetupState") -> dict[str, Any]:
+    """`{"routing": overrides}` for this state, or `{}`: the lanes record's own overrides when lanes are enabled, else the
+    saved profile's. The single reader every generator of the matrix (lanes.yaml, kit-role agents, setup tables) uses."""
+    lanes = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
+    if lanes.get("routing"):
+        return {"routing": lanes["routing"]}
+    try:
+        from . import profiles
+        mode = "multi-model" if s.mode == "multi-model" else "single-model"
+        doc = profiles.load_profile(profiles.saved_or_recommended(s.profile.name, s.backend), mode)
+    except Exception:  # noqa: BLE001 - a missing profile means the default matrix
+        return {}
+    return {"routing": doc["routing"]} if doc.get("routing") else {}
+
+
+def agy_admitted(s: "state.SetupState", role: str) -> bool:
+    """True when the Antigravity lane is admitted for `role` in this state (flag, Google acknowledgement listing the
+    role, gates): the one question the kit-role writer asks before it puts an `agy:` cell in an agent's chain."""
+    gates = (s.profile.lanes or {}).get("gates") if isinstance(s.profile.lanes, dict) else None
+    return agy_role_reason(role, gates, s.profile.lane_acks) is None
+
+
 def lane_roles(profile_doc: Mapping[str, Any] | None = None) -> list[str]:
     """The lane-eligible team roles of the matrix, sorted: the roles an acknowledgement lists."""
     from .. import roles_policy

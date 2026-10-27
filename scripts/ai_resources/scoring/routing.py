@@ -268,17 +268,47 @@ def table_lines(profile_doc: Mapping[str, Any] | None = None) -> list[str]:
 
 _OPENCLAW_CLAUDE = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
 _OPENCLAW_PROVIDER = {"agy": "agy-cli-lane", "gemini-api": "google", "anthropic-api": "anthropic"}
+CLAUDE_CLI_RUNTIME = "claude-cli"      # OpenClaw agent runtime that runs a Claude cell on the Max subscription
 
 
-def cell_to_openclaw_ref(cell: str) -> str:
-    """The OpenClaw model ref of a cell (`claude-code:sonnet` -> `anthropic/claude-sonnet-5-5`)."""
+def cell_to_openclaw_ref(cell: str, effective: Mapping[str, str] | None = None) -> str:
+    """The OpenClaw model ref of a cell (`claude-code:sonnet` -> `anthropic/claude-sonnet-5-5`).
+
+    `effective` maps a Claude alias to the id the host runs now (`model_pins.effective()`); without it the shipped
+    ids above apply, so this stays pure."""
     bad = validate_cell(cell)
     if bad:
         raise RoutingError(bad)
     backend, _, model = cell.partition(":")
     if backend in ("claude-code", "claude-cli"):
-        return f"anthropic/{_OPENCLAW_CLAUDE.get(model, model) or _OPENCLAW_CLAUDE['sonnet']}"
+        alias = model or "sonnet"
+        bare = (effective or {}).get(alias) or _OPENCLAW_CLAUDE.get(alias, alias)
+        return f"anthropic/{bare}"
     return f"{_OPENCLAW_PROVIDER[backend]}/{model}"
+
+
+def runtime_of_cell(cell: str) -> str:
+    """The OpenClaw agent runtime a cell must be pinned to: `claude-cli` for the Max cells (so a kit-role agent never
+    bills the Anthropic API), "" for every other backend."""
+    return CLAUDE_CLI_RUNTIME if cell.partition(":")[0] in ("claude-code", "claude-cli") else ""
+
+
+def claude_alias(cell: str) -> str:
+    """The Claude Code `model:` word of a Max cell (`claude-code:sonnet` -> `sonnet`; bare `claude-code` -> `inherit`)."""
+    backend, _, model = cell.partition(":")
+    return model if backend in ("claude-code", "claude-cli") and model else "inherit"
+
+
+def openclaw_chain(role: Role, effective: Mapping[str, str] | None = None) -> tuple[str, tuple[str, ...]]:
+    """`(primary ref, fallback refs)` of a role for an OpenClaw agent, duplicates and repeats of the primary removed.
+    A dynamic checker (no fixed primary) takes the first ladder rung as primary and the rest as fallbacks: OpenClaw
+    cannot know the run's writer families, so the dispatcher overrides per spawn (`routing.resolve`)."""
+    refs: list[str] = []
+    for cell in role.chain:
+        ref = cell_to_openclaw_ref(cell, effective)
+        if ref not in refs:
+            refs.append(ref)
+    return refs[0], tuple(refs[1:])
 
 
 @dataclass(frozen=True)

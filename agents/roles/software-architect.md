@@ -4,6 +4,10 @@ name: software-architect
 description: Designs and validates software architecture; proposes layers, patterns, key interfaces, and module structure before implementation; reviews planner output for architectural consistency.
 focus: architecture design, layer definition, pattern selection, SOLID application, separation of concerns, dependency direction, scalability, decision records, diagrams
 model: strong
+# ai-resources:routing begin (generated from scoring/routing.py; do not edit)
+# route: claude-code:sonnet [claude-subscription] -> agy:gemini-4-argon-high [agy-gemini]
+model: sonnet
+# ai-resources:routing end
 ---
 
 # Software architect agent

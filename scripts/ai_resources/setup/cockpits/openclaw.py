@@ -1713,7 +1713,7 @@ def _teardown_skills(s: state.SetupState) -> bool:
 def _configure_roles(ctx: dict, s: state.SetupState, doc: dict, ak_path: str, *, dry_run: bool,
                      run_changes: list[dict]) -> bool:
     """One `kit-role-*` agent per kit role (ADR-0015 S8). Only when the operator chose OpenClaw's providers."""
-    from .. import cockpit_auth, effort as effort_mod
+    from .. import cockpit_auth, effort as effort_mod, lanes_render
     enabled = role_providers(s)
     if enabled is None:
         return False
@@ -1727,12 +1727,13 @@ def _configure_roles(ctx: dict, s: state.SetupState, doc: dict, ak_path: str, *,
         return True if ui.is_non_interactive() else bool(ui.confirm(msg, default=True))
     catalog = providers_mod.discover_providers(_openclaw).models if not ui.is_non_interactive() else {}
     return openclaw_roles.configure(
-        s, doc, config_root=CONFIG_ROOT, by_role=executors.get("by_role") or {},
+        s, doc, config_root=CONFIG_ROOT, profile_doc=lanes_render.routing_doc(s),
         by_persona=executors.get("by_persona") or {}, ak_path=ak_path, kit_root=repo_root(), enabled=enabled,
         catalog=catalog, effort_table=effort_mod.table_for_state(s), methods=cockpit_auth.providers(s),
         apply_patch=_lanes_apply, register_agent=_lanes_register, classify=_lanes_classify,
         change_records=openclaw_host.change_records, run_changes=run_changes, dry_run=dry_run,
-        info=ui.info, warn=ui.warn, error=ui.error, cli_runtimes=cli_runtimes)
+        info=ui.info, warn=ui.warn, error=ui.error, cli_runtimes=cli_runtimes,
+        agy_ok=lambda role: lanes_render.agy_admitted(s, role))
 
 
 def _configure_agy_drift(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:

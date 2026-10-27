@@ -3,6 +3,10 @@ role: doc-writer
 name: doc-writer
 description: Writes and updates documentation artifacts — SDD specs, PROJECT.md entries, ADRs, postmortems — from research and handoff refs; never changes application code.
 focus: documentation from verified sources, spec/ADR updates, postmortems, no code changes
+# ai-resources:routing begin (generated from scoring/routing.py; do not edit)
+# route: agy:gemini-3.8-flash-high [agy-gemini] -> claude-code:haiku [claude-subscription]
+model: haiku
+# ai-resources:routing end
 ---
 
 # Doc-writer agent

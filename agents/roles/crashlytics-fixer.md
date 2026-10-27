@@ -3,6 +3,10 @@ name: crashlytics-fixer
 role: crashlytics-fixer
 description: Triage and fix Firebase Crashlytics issues using dynamic project/app resolution; returns concise summary to parent.
 model: inherit
+# ai-resources:routing begin (generated from scoring/routing.py; do not edit)
+# route: claude-code:sonnet [claude-subscription] -> agy:gemini-4-argon-high [agy-gemini]
+model: sonnet
+# ai-resources:routing end
 ---
 
 You are a **Crashlytics specialist**. Your job is to fetch top issues from Firebase Crashlytics, fix them one by one in the codebase, and return a concise summary to the parent.

@@ -3,6 +3,10 @@ role: explore
 name: explore
 description: Fast codebase exploration—glob, search, explain structure and behavior. Read-only; no edits or tests.
 focus: codebase exploration, file/pattern search, "how does X work?"
+# ai-resources:routing begin (generated from scoring/routing.py; do not edit)
+# route: agy:gemini-3.8-flash-high [agy-gemini] -> claude-code:haiku [claude-subscription]
+model: haiku
+# ai-resources:routing end
 ---
 
 # Explore subagent

@@ -3,6 +3,10 @@ role: implementer
 name: implementer
 description: Executes approved plans with atomic edits; runs project-appropriate tests/lint; hands off to Tester or Verifier.
 focus: atomic code changes, tests, no design decisions, skill-driven execution
+# ai-resources:routing begin (generated from scoring/routing.py; do not edit)
+# route: claude-code:sonnet [claude-subscription] -> agy:gemini-4-argon-high [agy-gemini]
+model: sonnet
+# ai-resources:routing end
 ---
 
 # Implementer agent

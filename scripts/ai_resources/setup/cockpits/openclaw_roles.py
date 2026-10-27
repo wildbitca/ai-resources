@@ -4,7 +4,8 @@
 orchestrator dispatches to. Each carries:
 
 * the role prompt (`role_render.RoleSpec.prompt`) as the AGENTS.md of its own workspace under `<config>/kit-roles/<id>/`,
-* the model the profile gives the role, restricted to the providers the operator enabled (`_openclaw_providers.route_roles`),
+* the model of the role's row in the routing matrix (`scoring.routing`, ADR-0019): `model.primary` and the ordered
+  `model.fallbacks` of its chain, every Max cell pinned to the `claude-cli` runtime,
 * `thinkingDefault` from the effort table (`setup/effort.py`),
 * a `skills` allowlist (the role's `skill_scope.ROLE_SKILLS` plus `kit-orchestration`).
 
@@ -18,6 +19,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -25,8 +27,10 @@ from .. import effort as effort_mod
 from .. import role_render, state, ui
 from ..live_openclaw import _primary
 from ... import model_pins, roles_policy, skill_scope
+from ...scoring import routing
 from . import _openclaw_providers as providers_mod
 from . import _shared
+from . import openclaw_agy
 
 PREFIX = "kit-role-"
 ROOT_DIR = "kit-roles"
@@ -83,33 +87,60 @@ def resolve_ref(model: Any, effective: Mapping[str, str] | None = None) -> str:
     return f"{prov}/{model}" if prov else model
 
 
-def build_agents(kit_root: Path, by_role: Mapping[str, Any], *, enabled: Iterable[str] | None,
+def build_agents(kit_root: Path, *, profile_doc: Mapping[str, Any] | None = None, enabled: Iterable[str] | None,
                  catalog: Mapping[str, Iterable[str]] | None, effort_table: Mapping[str, str] | None,
                  ak_path: str, by_persona: Mapping[str, Any] | None = None, env: dict | None = None,
-                 effective: Mapping[str, str] | None = None
+                 effective: Mapping[str, str] | None = None,
+                 agy_ok: Callable[[str], bool] | None = None
                  ) -> tuple[list[RoleAgent], list[tuple[str, str, str]]]:
-    """(agents, [(role, wanted provider, fallback ref)]) for the 15 roles and the active persona domains. Pure."""
+    """(agents, [(role, wanted provider, fallback ref)]) for the 15 roles and the active persona domains. Pure.
+
+    The model of a role is its row in the routing matrix (`profile_doc` carries the profile's `routing:` overrides):
+    `model` is the primary ref, `fallbacks` the rest of the chain. `agy_ok(role)` says whether the Antigravity lane is
+    admitted for a role (flag, Google acknowledgement, gates); when it is not, the agy cells leave that role's chain
+    and the role is reported in the second list, never silently. A persona agent takes the model its persona gives in
+    `by_persona`, else its base role's chain."""
     specs = role_render.load_specs(kit_root, env=env)
-    resolved = {r: resolve_ref(spec, effective) for r, spec in by_role.items()}
-    routed, fell = providers_mod.route_roles({r: ref for r, ref in resolved.items() if ref}, enabled, catalog)
-    persona_refs = {p: resolve_ref(spec, effective) for p, spec in (by_persona or {}).items()}
+    table = routing.merged(profile_doc)
+    eff = effective if effective is not None else model_pins.effective()
+    fell: list[tuple[str, str, str]] = []
+    chains: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for name, row in table.items():
+        if row.kind != "team":
+            continue
+        if agy_ok is not None and not agy_ok(name) and any(c.startswith("agy:") for c in row.chain):
+            kept = tuple(c for c in row.chain if not c.startswith("agy:"))
+            if not kept:
+                continue                                          # nothing left to run on: the role is not written
+            row = replace(row, primary=kept[0], fallback=kept[1:])
+            fell.append((name, "agy", routing.cell_to_openclaw_ref(kept[0], eff)))
+        chains[name] = routing.openclaw_chain(row, eff)
+    persona_refs = {p: resolve_ref(spec, eff) for p, spec in (by_persona or {}).items()}
     out: list[RoleAgent] = []
     for spec in specs:
-        ref = persona_refs.get(spec.name) or routed.get(spec.base) or ""
+        base = chains.get(spec.base)
+        ref, fallbacks = base if base else ("", ())
         if spec.is_persona and persona_refs.get(spec.name):
-            ref = providers_mod.route_roles({spec.name: ref}, enabled, catalog)[0].get(spec.name, ref)
+            ref, fallbacks = providers_mod.route_roles({spec.name: persona_refs[spec.name]}, enabled, catalog)[0].get(
+                spec.name, persona_refs[spec.name]), ()
         if not ref:
-            continue                                              # a role the profile does not map is not written
+            continue                                              # a role the matrix does not map is not written
         domain = spec.name[len(spec.base) + 1:] if spec.is_persona else ""
         level = (effort_table or {}).get(spec.base)
         prompt = spec.prompt(lambda b: b.replace("$AGENT_KIT", ak_path), _shared.kit_context_block(ak_path))
         out.append(RoleAgent(
             id=agent_id_for(spec.base, domain), role=spec.base, name=spec.name, domain=domain,
-            description=" ".join(spec.description.split()), model=ref,
+            description=" ".join(spec.description.split()), model=ref, fallbacks=list(fallbacks),
             thinking=effort_mod.for_cockpit(level, "openclaw") if level else "",
             skills=sorted(set(spec.skills) | set(ALWAYS_SKILLS)),
             prompt=prompt, prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest()))
     return out, fell
+
+
+def _fallbacks_of(model: Any) -> list[str]:
+    """The `fallbacks` of an agent's `model` value (the bare-string form has none)."""
+    fb = model.get("fallbacks") if isinstance(model, Mapping) else None
+    return [str(x) for x in fb] if isinstance(fb, list) else []
 
 
 def _get(doc: Any, *keys: str) -> Any:
@@ -137,6 +168,17 @@ def _pin(runtime: str) -> dict[str, Any]:
     return {"agentRuntime": {"id": runtime}}
 
 
+def pins_for(agent: RoleAgent, methods: Mapping[str, str], cli_runtimes: Iterable[str] = ()) -> dict[str, str]:
+    """{ref: runtime} for every Max cell of the agent's chain (primary and fallbacks): they run through `claude-cli`
+    so a kit-role agent never bills the Anthropic API. Same sign-in rule as `runtime_for`."""
+    out: dict[str, str] = {}
+    for ref in [agent["model"], *agent.get("fallbacks", [])]:
+        rt = runtime_for(RoleAgent(model=ref), methods, cli_runtimes)
+        if rt:
+            out[ref] = rt
+    return out
+
+
 # Report roles read and never edit files. The ones that need no shell either lose exec and process too: the claude-cli
 # runtime turns tools.deny into Claude Code's --disallowedTools (bash is exec), so this removes Bash for them. OpenClaw's
 # sandbox does not reach a CLI runtime (Claude Code owns its own sandboxing), so tool policy is the lever here.
@@ -162,11 +204,19 @@ def _tools_patch(live: Mapping[str, Any], agent: RoleAgent) -> "list[str] | None
     return None
 
 
-def _entry(agent: RoleAgent, workspace: Path, runtime: str = "") -> dict[str, Any]:
+def _model_value(agent: RoleAgent) -> dict[str, Any]:
+    """`{"primary", "fallbacks"?}`: the native OpenClaw model object of the agent's matrix row."""
+    out: dict[str, Any] = {"primary": agent["model"]}
+    if agent.get("fallbacks"):
+        out["fallbacks"] = list(agent["fallbacks"])
+    return out
+
+
+def _entry(agent: RoleAgent, workspace: Path, pins: Mapping[str, str] | None = None) -> dict[str, Any]:
     entry: dict[str, Any] = {"name": agent.id, "description": agent["description"][:200], "workspace": str(workspace),
-                             "model": {"primary": agent["model"]}, "skills": list(agent["skills"])}
-    if runtime:
-        entry["models"] = {agent["model"]: _pin(runtime)}
+                             "model": _model_value(agent), "skills": list(agent["skills"])}
+    if pins:
+        entry["models"] = {ref: _pin(rt) for ref, rt in pins.items()}
     if agent["thinking"]:
         entry["thinkingDefault"] = agent["thinking"]
     deny = deny_for(agent.get("role", ""))
@@ -190,59 +240,73 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
                 cli_runtimes: Iterable[str] = ()) -> tuple[dict[str, Any], list[str]]:
     """(fill-only patch, ids kept because the operator changed them). Empty patch when nothing is missing.
 
-    A new id gets its whole entry. An existing id is updated only when it is a recorded kit id whose live model and
-    thinking still equal what the kit last wrote (so a profile change moves it); otherwise it is the operator's and is
-    kept. The bare entry `agents add` leaves when a run stops early is the kit's and gets its fields. A role whose model runs through a CLI (`runtime_for`) gets that runtime in its own `models` map; a model the
-    kit moves away from loses the pin the kit gave it."""
+    A new id gets its whole entry. An existing id is updated only when it is a recorded kit id whose live model,
+    fallbacks and thinking still equal what the kit last wrote (so a matrix or profile change moves it); otherwise it is
+    the operator's and is kept. The bare entry `agents add` leaves when a run stops early is the kit's and gets its
+    fields. Every Max cell of the chain (`pins_for`) gets the `claude-cli` runtime in the agent's own `models` map; a
+    model the kit moves away from loses the pin the kit gave it."""
     entries = _get(doc, "agents", "entries") or {}
     last = recorded.get("models") or {}
+    last_fb = recorded.get("fallbacks") or {}
     last_think = recorded.get("thinking") or {}
     patch: dict[str, Any] = {}
     kept: list[str] = []
     for agent in agents:
         aid = agent.id
         live = entries.get(aid) if isinstance(entries, Mapping) else None
-        runtime = runtime_for(agent, methods, cli_runtimes)
+        pins = pins_for(agent, methods, cli_runtimes)
+        want_fb = list(agent.get("fallbacks") or [])
         if not isinstance(live, Mapping):
-            patch.setdefault("agents", {}).setdefault("entries", {})[aid] = _entry(agent, workspaces[aid], runtime)
+            patch.setdefault("agents", {}).setdefault("entries", {})[aid] = _entry(agent, workspaces[aid], pins)
         else:
             live_model = _primary(live.get("model"))   # OpenClaw also takes the bare-string form
+            live_fb = _fallbacks_of(live.get("model"))
             live_think = live.get("thinkingDefault", "")
             ours = aid in set(recorded.get("created_agent_ids") or [])
             if _registration_shell(live, agent, workspaces[aid]):
                 # `agents add` ran but the run stopped before the kit's fields landed: finish the kit's own entry
                 # (the model too: `agents add` spells it as a bare string, which `verify` warns about)
-                ent = {k: v for k, v in _entry(agent, workspaces[aid], runtime).items() if k != "name"}
+                ent = {k: v for k, v in _entry(agent, workspaces[aid], pins).items() if k != "name"}
                 patch.setdefault("agents", {}).setdefault("entries", {})[aid] = ent
                 continue
             if live_model == agent["model"] and (live_think or "") == (agent["thinking"] or ""):
-                if isinstance(live.get("model"), str):
-                    # same model in the short form `agents add` writes: spell it as the object the kit writes
-                    patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})["model"] = {
-                        "primary": agent["model"]}
+                if isinstance(live.get("model"), str) or (live_fb != want_fb and ours
+                                                          and live_fb == list(last_fb.get(aid) or [])):
+                    # same primary in the short form `agents add` writes, or a chain the kit wrote earlier that the
+                    # matrix has since changed: spell the object the kit writes now
+                    patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})["model"] = \
+                        _model_value(agent)
             elif ours and live_model == last.get(aid) and (live_think or "") == (last_think.get(aid) or ""):
-                ent = {"model": {"primary": agent["model"]}}
+                ent = {"model": _model_value(agent)}
                 if agent["thinking"]:
                     ent["thinkingDefault"] = agent["thinking"]
                 elif live_think:
                     ent["thinkingDefault"] = None
                 own = _get(live, "models") or {}
                 old_ref = last.get(aid)
-                if old_ref and old_ref != agent["model"] and _get(own.get(old_ref) or {}, "agentRuntime", "id") \
-                        in RUNTIME_OF_PROVIDER.values():
+                if old_ref and old_ref != agent["model"] and old_ref not in pins \
+                        and _get(own.get(old_ref) or {}, "agentRuntime", "id") in RUNTIME_OF_PROVIDER.values():
                     ent["models"] = {old_ref: None}                 # the pin of a model this agent no longer runs
                 patch.setdefault("agents", {}).setdefault("entries", {})[aid] = ent
             else:
                 kept.append(aid)
                 continue
         own = _get(live, "models") or {}
-        if runtime and not _get(own.get(agent["model"]) or {}, "agentRuntime", "id"):
-            ent = patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})
-            ent.setdefault("models", {})[agent["model"]] = _pin(runtime)
+        for ref, runtime in pins.items():
+            if not _get(own.get(ref) or {}, "agentRuntime", "id"):
+                ent = patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})
+                ent.setdefault("models", {})[ref] = _pin(runtime)
         deny = _tools_patch(live, agent) if isinstance(live, Mapping) else None
         if deny is not None:
             patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})["tools"] = {"deny": deny}
     return patch, kept
+
+
+def agy_stub_patch(agents: Iterable[RoleAgent], doc: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The `models.providers.agy-cli-lane` stub for the agy refs in the agents' chains (fill-only), or None."""
+    slugs = [ref.split("/", 1)[1] for a in agents for ref in [a["model"], *a.get("fallbacks", [])]
+             if openclaw_agy.is_agy_ref(ref)]
+    return openclaw_agy.stub_patch_for_slugs(slugs, doc)
 
 
 def workspace_root(config_root: Path) -> Path:
@@ -277,7 +341,7 @@ def _write_prompt(workspace: Path, agent: RoleAgent, recorded_sha: str | None) -
 
 
 def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Path,
-              by_role: Mapping[str, Any], by_persona: Mapping[str, Any] | None, ak_path: str, kit_root: Path,
+              profile_doc: Mapping[str, Any] | None, by_persona: Mapping[str, Any] | None, ak_path: str, kit_root: Path,
               enabled: Iterable[str] | None, catalog: Mapping[str, Iterable[str]] | None,
               effort_table: Mapping[str, str] | None, methods: Mapping[str, str],
               apply_patch: Callable[..., "tuple[bool, str]"],
@@ -287,17 +351,19 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
               run_changes: list[dict] | None = None, dry_run: bool = False,
               info: Callable[[str], None] = print, warn: Callable[[str], None] = print,
               error: Callable[[str], None] = print, env: dict | None = None,
-              cli_runtimes: Iterable[str] = ()) -> bool:
+              cli_runtimes: Iterable[str] = (), agy_ok: Callable[[str], bool] | None = None) -> bool:
     """Write (or update, fill-only) the kit-role agents. True when the config changed. Nothing is written in a dry run."""
     o = s.openclaw
     if enabled is None:
         return False                          # the operator never chose providers: the kit routes nothing here
-    agents, fell = build_agents(kit_root, by_role, enabled=enabled, catalog=catalog, effort_table=effort_table,
-                                ak_path=ak_path, by_persona=by_persona, env=env)
+    agents, fell = build_agents(kit_root, profile_doc=profile_doc, enabled=enabled, catalog=catalog,
+                                effort_table=effort_table, ak_path=ak_path, by_persona=by_persona, env=env,
+                                agy_ok=agy_ok)
     if not agents:
         return False
     for role, want, ref in fell:
-        warn(f"kit-role {role}: provider {want} is not enabled; it runs on {ref}")
+        warn(f"kit-role {role}: provider {want} is not available; it runs on {ref} (recorded fallback cause: "
+             f"{'agy-missing' if want == 'agy' else 'provider-disabled'})")
     try:
         root = workspace_root(config_root)
     except RuntimeError as e:
@@ -307,6 +373,9 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     workspaces = {a.id: root / a.id for a in agents}
     cli_runtimes = tuple(cli_runtimes)
     patch, kept = build_patch(agents, doc, workspaces, recorded, methods, cli_runtimes)
+    stub = agy_stub_patch(agents, doc)
+    if stub:
+        patch.setdefault("models", {}).setdefault("providers", {})[openclaw_agy.STUB_PROVIDER] = stub
     for aid in kept:
         warn(f"kit-role agent {aid}: your model or thinking setting is kept (the kit changes only values it wrote)")
     entries = _get(doc, "agents", "entries") or {}
@@ -367,11 +436,14 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     live_agents = [a for a in agents if a.id in ready]
     patch2, _kept = build_patch(live_agents, doc2, workspaces, {**recorded, "created_agent_ids": created}, methods,
                                 cli_runtimes)
+    stub2 = agy_stub_patch(live_agents, doc2)
+    if stub2:
+        patch2.setdefault("models", {}).setdefault("providers", {})[openclaw_agy.STUB_PROVIDER] = stub2
     # A freshly registered agent only needs its fields filled: the entry `agents add` made is empty of ours.
     for a in live_agents:
         if a.id in new_ids and a.id in ready:
             patch2.setdefault("agents", {}).setdefault("entries", {})[a.id] = {
-                k: v for k, v in _entry(a, workspaces[a.id], runtime_for(a, methods, cli_runtimes)).items()
+                k: v for k, v in _entry(a, workspaces[a.id], pins_for(a, methods, cli_runtimes)).items()
                 if k != "name"}
     changed = bool(created and set(created) - set(recorded.get("created_agent_ids") or []))
     if patch2:
@@ -384,11 +456,13 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
                 run_changes.extend(change_records(dict(doc2), patch2, None, "roles"))
             models = dict(recorded.get("models") or {})
             thinking = dict(recorded.get("thinking") or {})
+            fallbacks = dict(recorded.get("fallbacks") or {})
             for a in live_agents:
                 if a.id in ready:
                     models[a.id] = a["model"]
                     thinking[a.id] = a["thinking"]
-            recorded["models"], recorded["thinking"] = models, thinking
+                    fallbacks[a.id] = list(a.get("fallbacks") or [])
+            recorded["models"], recorded["thinking"], recorded["fallbacks"] = models, thinking, fallbacks
             cat = sorted(set(recorded.get("catalog_added") or [])
                          | set(((patch2.get("agents") or {}).get("defaults") or {}).get("models") or {}))
             recorded["catalog_added"] = cat
@@ -397,10 +471,12 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     else:
         models = dict(recorded.get("models") or {})
         thinking = dict(recorded.get("thinking") or {})
+        fallbacks = dict(recorded.get("fallbacks") or {})
         for a in live_agents:
             models.setdefault(a.id, a["model"])
             thinking.setdefault(a.id, a["thinking"])
-        recorded["models"], recorded["thinking"] = models, thinking
+            fallbacks.setdefault(a.id, list(a.get("fallbacks") or []))
+        recorded["models"], recorded["thinking"], recorded["fallbacks"] = models, thinking, fallbacks
     recorded["created_agent_ids"] = sorted(set(created))
     recorded["created_workspaces"] = sorted(set(created_ws))
     recorded["prompt_sha256"] = shas

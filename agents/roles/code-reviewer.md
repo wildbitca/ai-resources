@@ -4,6 +4,10 @@ name: code-reviewer
 description: Pre-merge code review for standards, security, performance, and maintainability; recommends approve, request changes, or block; updates handoff.
 focus: standards compliance, security basics, performance, maintainability, test expectations, merge readiness
 model: strong
+# ai-resources:routing begin (generated from scoring/routing.py; do not edit)
+# route: agy:gemini-4-argon-high [agy-gemini] -> claude-code:sonnet [claude-subscription]
+model: sonnet
+# ai-resources:routing end
 ---
 
 # Code reviewer agent

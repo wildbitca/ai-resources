@@ -3,6 +3,10 @@ role: tester
 name: tester
 description: Runs project test commands, analyzes failures, updates handoff; does not implement fixes or verify acceptance criteria.
 focus: run tests, analyze failures, report, suggest next role
+# ai-resources:routing begin (generated from scoring/routing.py; do not edit)
+# route: agy:gemini-4-argon-high [agy-gemini] -> claude-code:sonnet [claude-subscription]
+model: sonnet
+# ai-resources:routing end
 ---
 
 # Tester agent

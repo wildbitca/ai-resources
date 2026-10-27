@@ -579,6 +579,55 @@ def _sync_plugin_agents() -> None:
     print(f"plugin.json: agents synced ({len(agents)} roles)")
 
 
+ROUTING_BEGIN = "# ai-resources:routing begin (generated from scoring/routing.py; do not edit)"
+ROUTING_END = "# ai-resources:routing end"
+_ROUTING_BLOCK = re.compile(rf"^{re.escape(ROUTING_BEGIN)}\n.*?^{re.escape(ROUTING_END)}\n", re.S | re.M)
+
+
+def role_model_block(role: str, profile_doc: dict | None = None) -> str | None:
+    """The marked frontmatter block of `agents/roles/<role>.md`: the matrix row as a comment and the Claude Code
+    `model:` the role runs with when a Claude Code session hosts it (first Max cell of its chain; Claude Code cannot run
+    an Antigravity cell, which `ai-resources route` / `agy run` reach instead). None for a role the matrix lacks."""
+    from .scoring import routing
+    row = routing.merged(profile_doc).get(role)
+    if row is None or row.kind != "team":
+        return None
+    chain = " -> ".join(f"{c} [{routing.pool_of(c)}]" for c in row.chain)
+    claude = next((c for c in row.chain if routing.runtime_of_cell(c)), "claude-code")
+    return (f"{ROUTING_BEGIN}\n# route: {'checker ladder: ' if row.checker and row.primary is None else ''}{chain}\n"
+            f"model: {routing.claude_alias(claude)}\n{ROUTING_END}\n")
+
+
+def apply_role_model_block(text: str, block: str) -> str:
+    """`text` (a role file) with its marked routing block replaced, or inserted before the frontmatter's closing fence."""
+    if _ROUTING_BLOCK.search(text):
+        return _ROUTING_BLOCK.sub(lambda _m: block, text, count=1)
+    end = text.find("\n---", 3)
+    if not text.startswith("---") or end == -1:
+        return text
+    return text[:end + 1] + block + text[end + 1:]
+
+
+def _sync_role_models(profile_doc: dict | None = None) -> int:
+    """Write the marked routing block of every `agents/roles/*.md` from `scoring.routing.ROLES`; returns files changed."""
+    roles_dir = repo_root() / "agents" / "roles"
+    if not roles_dir.is_dir():
+        return 0
+    changed = 0
+    for path in sorted(roles_dir.glob("*.md")):
+        block = role_model_block(path.stem, profile_doc)
+        if block is None:
+            continue
+        old = path.read_text(encoding="utf-8")
+        new = apply_role_model_block(old, block)
+        if new != old:
+            path.write_text(new, encoding="utf-8")
+            changed += 1
+    if changed:
+        print(f"agents/roles: routing block synced ({changed} roles)")
+    return changed
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     """Vendor-sync (unless --skip-vendor), generate workflow skills, rebuild skills-index.json."""
     if not getattr(args, "skip_vendor", False):
@@ -592,6 +641,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     rc = _sync_workflow_scripts()
     if rc != 0:
         return rc
+    _sync_role_models()
     _sync_plugin_agents()
     print("==> skills-index.json", file=sys.stderr)
     return _build_index()

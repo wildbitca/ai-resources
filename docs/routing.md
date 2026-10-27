@@ -23,6 +23,20 @@ routing:
     explore: { primary: "claude-cli:haiku" }
 ```
 
+## Generated from the matrix
+
+`scoring/routing.py` `ROLES` is the only table. These artifacts are generated from it (and from the profile's `routing:`
+override) and `tests/test_matrix_equality.py` fails when one of them drifts:
+
+| Artifact | Generator |
+|---|---|
+| `~/.config/ai-resources/lanes.yaml` (`routing.matrix`, digest, Google ack) | `setup/lanes_render.py` |
+| `agents/roles/*.md` marked `model:` block (Claude Code hosts the role on its first Max cell) | `ai-resources generate` (`generate._sync_role_models`) |
+| OpenClaw `kit-role-*` agents: `model.primary` + `model.fallbacks`, Max cells pinned to the `claude-cli` runtime, agy cells as `agy-cli-lane/<slug>` | `setup/cockpits/openclaw_roles.py` |
+| the setup role table | `routing.table_rows` |
+
+Never edit a generated block by hand.
+
 ## Balancing
 
 `routing.choose_pool(class, usage)`: the first pool of the class under 85% used serves it; unknown counts as available; if all
