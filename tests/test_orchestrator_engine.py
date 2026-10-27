@@ -200,18 +200,50 @@ def test_a_missing_session_id_is_recorded_as_a_limitation_not_a_failure(tmp_path
     assert any("no session id" in n for n in notes)
 
 
-def test_a_checker_family_equal_to_a_writer_fails_the_run_at_start(tmp_path):
+def test_the_checker_takes_the_cheapest_rung_of_a_family_that_did_not_write(tmp_path):
     e, wf, _ = make(tmp_path)
-    run = e.start(wf, "g", "/w", models={**MODELS, "verifier": "sonnet"})
-    assert run["status"] == "failed" and "not independent of writer" in run["failure"]
-    run2 = e.start(wf, "g", "/w", models={**MODELS, "verifier": "mystery-model"}, run_id="r2")
-    assert run2["status"] == "failed" and "unknown family" in run2["failure"]
+    run = e.start(wf, "g", "/w", models=MODELS)                      # writers on sonnet and haiku: the checker goes to opus
+    assert run["status"] == "running" and "verifier on claude-code:opus" in " ".join(run["independence"]["notes"])
+    run2 = e.start(wf, "g", "/w", models={"implementer": "haiku", "tester": "haiku", "planner": "haiku"}, run_id="r2")
+    assert "verifier on claude-code:sonnet" in " ".join(run2["independence"]["notes"])
 
 
-def test_unknown_models_are_allowed_with_the_limitation_recorded(tmp_path):
+def test_a_checker_with_no_independent_rung_fails_the_run_at_start(tmp_path):
     e, wf, _ = make(tmp_path)
-    run = e.start(wf, "g", "/w")
-    assert run["status"] == "running" and any("model families unknown" in n for n in run["independence"]["notes"])
+    run = e.start(wf, "g", "/w", models={**MODELS, "implementer": "opus", "tester": "sonnet"})
+    assert run["status"] == "failed" and "no independent checker for" in run["failure"]
+    assert "writer families: opus, sonnet" in run["failure"]
+
+
+def test_the_checker_is_independent_of_the_families_the_dispatch_ledger_recorded(tmp_path):
+    from ai_resources import dispatch_ledger
+    e, wf, _ = make(tmp_path)
+    dispatch_ledger.record("implementer", "ok", run_id="r-led", step="implement", cell="claude-code:opus")
+    run = e.start(wf, "g", "/w", run_id="r-led")                     # the matrix puts the writers on sonnet; the ledger adds opus
+    assert run["status"] == "failed" and "no independent checker" in run["failure"]
+
+
+def test_every_step_writes_a_pending_row_and_a_finished_row_to_the_dispatch_ledger(tmp_path):
+    from ai_resources import dispatch_ledger
+    e, wf, _ = make(tmp_path)
+    run = start(e, wf)
+    finish(e, run["id"], dispatches(e.next(run["id"]))[0])
+    rows = dispatch_ledger.load(run["id"])
+    assert [(r["role"], r["step"], r["outcome"]) for r in rows] == [("planner", "plan", "pending"), ("planner", "plan", "ok")]
+    assert rows[0]["backend"] == "claude-code" and rows[0]["pool"] == "claude-subscription" and rows[0]["family"] == "sonnet"
+
+
+def test_a_timeout_or_a_quota_error_is_recorded_with_its_cause_and_the_matrix_primary(tmp_path):
+    from ai_resources import dispatch_ledger
+    e, wf, _ = make(tmp_path)
+    run = start(e, wf)
+    e.next(run["id"])
+    e.report(run["id"], "plan", timeout=True)
+    e.next(run["id"])
+    e.report(run["id"], "plan", error="You hit your limit, resets 5pm")
+    rows = [r for r in dispatch_ledger.load(run["id"]) if r["outcome"] != "pending"]
+    assert [(r["outcome"], r["fallback_cause"]) for r in rows] == [("fail", "timeout"), ("fail", "pool-exhausted")]
+    assert rows[0]["fallback_from"] == "claude-code:sonnet"
 
 
 def test_a_timeout_is_a_blocked_outcome_and_retries_the_same_step(tmp_path):

@@ -24,7 +24,8 @@ from typing import Any, Callable, Iterable, Mapping
 
 import yaml
 
-from .. import domains, ledger, repo_root, roles_policy, scope_guard
+from .. import dispatch_ledger, domains, ledger, repo_root, roles_policy, scope_guard
+from ..scoring import routing
 from ..setup.cockpits import openclaw_roles
 from . import limits, reply as reply_mod, untrusted
 from .state import RunStore, StateError, new_run_id
@@ -78,10 +79,6 @@ def _event(run: dict[str, Any], kind: str, step: str = "", text: str = "", now: 
     run.setdefault("events", []).append({"t": round(now, 3), "type": kind, "step": step, "text": text[:300]})
 
 
-def family_of(ref: Any) -> str | None:
-    return roles_policy.model_family(ref)
-
-
 def agent_for(role: str, domain: str, kit_root: Path) -> str:
     """The `kit-role-*` agent a role runs on; the persona agent when the run's domain has an active persona."""
     if domain and domain in domains.DOMAINS and domain in domains.active_domains() \
@@ -128,8 +125,6 @@ def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Pat
     # Workflow-specific parameters ({{ci_run_url}}, {{provider}}, ...): the run's `params`, else "take it from the goal".
     template = re.sub(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}",
                       lambda m: str((run.get("params") or {}).get(m.group(1)) or f"<{m.group(1)}: see the goal>"), template)
-    verdict = "Verdict: <PASS | REQUIRES_CHANGES | FAIL>\n" if step.role in ("verifier", "code-reviewer", "security-auditor",
-                                                                              "tester", "software-architect") else ""
     return (
         f"You are the {step.role} of an orchestrated team run ({run['id']}, step {step.id}, attempt {attempt}).\n"
         f"Working directory (stay inside it): {cwd}\n"
@@ -142,11 +137,7 @@ def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Pat
         f"{_by_reference(run.get('handoff') or {})}"
         "Where the instructions below say to update the handoff file, put those fields in your return block instead.\n"
         "End your final reply with exactly this block:\n"
-        "Status: success | partial | blocked\n"
-        "Blocked: true | false\n"
-        "Return_to_step: <step id, only when Blocked is true>\n"
-        "Block_reason: <short reason, only when Blocked is true>\n"
-        f"{verdict}\n"
+        f"{reply_mod.return_block(step.role)}\n"
         "--- step instructions ---\n"
         f"{template}\n")
 
@@ -266,32 +257,47 @@ class Engine:
             self.store.write_handoff(rid, self._render_handoff(run))
         return run
 
+    def _writer_families(self, run: Mapping[str, Any]) -> list[str]:
+        """The families that write this run: the model a writer role is pinned to, else the one the matrix gives it, plus the
+        families the dispatch ledger recorded for the run (ADR-0019 D4: checkers are independent of what actually wrote)."""
+        steps, models = _steps_of(run), run.get("models") or {}
+        roles = {s.role for s in steps if s.role in WRITER_ROLES or s.role in roles_policy.SCOPE_ROLES}
+        refs = [models.get(r) or self._route(r).model for r in sorted(roles)]
+        return sorted({roles_policy.model_family(m) or str(m) for m in refs if m} | set(self._ledger(dispatch_ledger.writer_families, run["id"], default=[])))
+
+    @staticmethod
+    def _route(role: str, writers: Iterable[str] = ()) -> routing.Route:
+        try:
+            return routing.resolve(role, {}, writers)
+        except routing.RoutingError:                  # a role the matrix does not name: nothing to resolve
+            return routing.Route(role, None, "", (), "no routing", blocked=True)
+
+    @staticmethod
+    def _ledger(fn: Callable[..., Any], *a: Any, default: Any = None, **kw: Any) -> Any:
+        """Dispatch-ledger access never breaks a run: an unwritable or volatile ledger is skipped (the run state is the record)."""
+        try:
+            return fn(*a, **kw)
+        except (OSError, RuntimeError, ValueError, KeyError):
+            return default
+
     def _independence_problem(self, run: dict[str, Any]) -> str:
-        """Fail closed on a checker whose model family is unknown or equals a writer's; unverifiable when models are unknown."""
-        steps = _steps_of(run)
-        models = run["models"]
-        checker_roles = {s.role for s in steps if s.role in CHECKER_ROLES}
-        writer_roles = {s.role for s in steps if s.role in WRITER_ROLES or s.role in roles_policy.SCOPE_ROLES}
-        notes = run["independence"]["notes"]
-        if not checker_roles:
+        """Resolve each checker through the matrix against the run's writer families (`routing.resolve`); a checker with no
+        independent rung fails the run at start, with the reason the resolver gives."""
+        checkers = sorted({s.role for s in _steps_of(run) if s.role in CHECKER_ROLES})
+        if not checkers:
             return ""
-        known = all(models.get(r) for r in checker_roles) and all(models.get(r) for r in writer_roles)
-        if not models or not known:
-            notes.append("model families unknown for some roles; independence rests on distinct agent ids "
-                         "and, where the runtime reports one, a distinct session")
-            return ""
-        w_fams = {r: family_of(models[r]) for r in writer_roles}
-        for c in sorted(checker_roles):
-            cf = family_of(models[c])
-            if cf is None:
-                return f"checker {c} runs on a model of unknown family ({models[c]}); independence cannot be shown"
-            for w, wf_ in w_fams.items():
-                if wf_ is None or wf_ == cf:
-                    return (f"checker {c} ({models[c]}, family {cf}) is not independent of writer {w} "
-                            f"({models[w]}, family {wf_})")
+        families = self._writer_families(run)
+        chosen = {}
+        for c in checkers:
+            route = self._route(c, families)
+            if route.blocked:
+                return f"no independent checker for {c}: {route.reason} (writer families: {', '.join(families) or 'none'})"
+            chosen[c] = route.cell
         run["independence"]["mode"] = "agent-model"
-        notes.append("verifier independence: distinct agent id and model family"
-                     " (plus a distinct session when the runtime reports one)")
+        run["independence"]["notes"].append(
+            "verifier independence: " + ", ".join(f"{c} on {cell}" for c, cell in chosen.items())
+            + f", not a writer family ({', '.join(families) or 'none'}); distinct agent id"
+            " (plus a distinct session when the runtime reports one)")
         return ""
 
     @staticmethod
@@ -381,6 +387,7 @@ class Engine:
                     st["state"], st["attempt"], st["started_at"] = "running", st["attempt"] + 1, self.clock()
                     st["agent"] = agent_for(s.role, run.get("domain") or "", self.kit_root)
                     _event(run, "dispatch", s.id, f"attempt {st['attempt']}", self.clock())
+                    self._record(run, s, "pending")
                     out.append(self._dispatch(run, s))
                 elif st["state"] == "running":
                     out.append({"type": "wait", "run": run["id"], "step": s.id, "text": "waiting for this step's report"})
@@ -397,6 +404,18 @@ class Engine:
                 "text": f"The plan is ready ({refs.get('plan') or 'see the handoff'}). Approve it to let "
                         f"{run['approval']['before']} start writing, or cancel the run.",
                 "options": ["approve", "cancel"], "handoff": str(self.store.handoff_path(run["id"]))}
+
+    def _record(self, run: Mapping[str, Any], step: Step, outcome: str, *, cause: str = "") -> None:
+        """One dispatch-ledger row for a step starting (`pending`) or finishing. The engine only records: the retry on a
+        quota or timeout is OpenClaw's native `model.fallbacks`, so the row names the cause and the matrix primary."""
+        st = run["steps"][step.id]
+        families = self._writer_families(run)
+        route = self._route(step.role, families)
+        primary = routing.merged().get(step.role)
+        self._ledger(dispatch_ledger.record, step.role, outcome, run_id=run["id"], step=step.id, cell=route.cell or "",
+                     fallback_from=(primary.primary or "") if cause and primary else "", fallback_cause=cause,
+                     duration_s=max(0.0, self.clock() - st["started_at"]) if outcome != "pending" else 0.0,
+                     writer_families=families, extra={"attempt": st["attempt"]})
 
     def _dispatch(self, run: dict[str, Any], step: Step) -> dict[str, Any]:
         st = run["steps"][step.id]
@@ -417,7 +436,8 @@ class Engine:
                    if (s.role in WRITER_ROLES or s.role in roles_policy.SCOPE_ROLES) and run["steps"][s.id]["agent"]}
         if verifier in writers:
             return f"verifier agent {verifier} is also a writer's agent"
-        return ""
+        route = self._route(step.role, self._writer_families(run))        # what really wrote so far, from the ledger
+        return f"no independent checker for {step.role}: {route.reason}" if route.blocked else ""
 
     # -- report ---------------------------------------------------------------------------------------------------
     def report(self, run_id: str, step_id: str, *, text: str = "", session: str = "", agent: str = "",
@@ -468,10 +488,11 @@ class Engine:
         if timeout:
             limit = limits.role_timeout(step.role, run.get("role_timeouts"))
             return {"ok": False, "result": "timeout", "target": step.id, "reason": f"timed out after {limit} s",
-                    "reply": reply_mod.Reply()}
+                    "reply": reply_mod.Reply(), "cause": "timeout"}
         if error:
+            quota = routing.classify_quota(error, routing.pool_of(self._route(step.role).cell or ""))
             return {"ok": False, "result": "error", "target": step.id, "reason": f"the dispatch failed: {error[:200]}",
-                    "reply": reply_mod.Reply()}
+                    "reply": reply_mod.Reply(), "cause": "pool-exhausted" if quota else ""}
         rep = reply_mod.parse(text)
         target = rep.return_to if rep.return_to in run["steps"] else (step.return_to or step.id)
         if step.role != VERIFIER_ROLE and rep.signoff:
@@ -529,6 +550,8 @@ class Engine:
         shown = untrusted.wrap(outcome["reason"], step.id) if outcome.get("untrusted") else outcome["reason"]
         st["reason"] = shown
         self._merge_handoff(run, step, outcome["reply"])
+        self._record(run, step, "ok" if outcome["ok"] else "blocked" if outcome["result"] == "blocked" else "fail",
+                     cause=outcome.get("cause", ""))
         if outcome["ok"]:
             st["state"] = "done"
             _event(run, "step-done", step.id, "", now)
