@@ -322,6 +322,8 @@ const change = impl.mode_change
 if (change && SIZES.includes(change.to) && change.to !== size && change.reason) {
   escalations.push(`${size}>${change.to}`)
   log(`Mode ${size} -> ${change.to}: ${change.reason}`)
+  // Any direction: the card (mode, roster, line) follows the new size, and the ledger record reads `size`.
+  scorecard = retarget(scorecard, change.to, change.reason, 'escalation')
   size = change.to
 }
 if (impl.reassess_advice) log(`Reassess: ${impl.reassess_advice}`)

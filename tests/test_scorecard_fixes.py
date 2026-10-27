@@ -279,3 +279,50 @@ def test_fixture_split_matches_the_docs():
     assert split == {"lite": 3, "standard": 5, "full": 4} and len(CASES) == 12
     docs = (REPO / "docs" / "orchestration.md").read_text(encoding="utf-8")
     assert "12 sample requests (3 LITE, 5 STANDARD, 4 FULL)" in docs
+
+
+# --- D8: a reassess mode_change moves the scorecard card, roster, line and ledger record together ---------------
+STANDARD_SCORES = {**ZERO, "resumability": 2, "uncertainty": 2}
+FULL_SCORES = {**ZERO, "risk": 3}
+SIZE_OF = {"standard": "light", "full": "full"}
+
+
+def _changed(to):
+    return {**IMPL_RESPONSES["implement"], "mode_change": {"to": to, "reason": "reassessed"}}
+
+
+@needs_node
+@pytest.mark.parametrize("scores,start,to", [(STANDARD_SCORES, "light", "full"), (FULL_SCORES, "full", "light")],
+                         ids=["up", "down"])
+def test_d8_mode_change_with_a_card_retargets_card_roster_line_and_ledger(tmp_path, scores, start, to):
+    import test_kit_script_size_gate as gate
+    card = scorecard.score(scores)
+    prompts, _, result = gate.run_calls(IMPL_JS, tmp_path, {"goal": "g", "size": start, "scorecard": card},
+                                        {**IMPL_RESPONSES, "implement": _changed(to)})
+    new_mode = "full" if to == "full" else "standard"
+    got = result["scorecard"]
+    assert result["size"] == to and got["mode"] == new_mode and got["size"] == to
+    assert got["scored_mode"] == card["mode"]
+    assert got["roster"] == (RULES["base"]["full"] if new_mode == "full" else got["roster"])
+    assert got["handoff"] == (new_mode == "full" or "planner" in got["roster"])
+    assert got["escalations"] and got["escalations"][-1]["to"] == new_mode
+    assert result["scorecard_line"].startswith(new_mode.upper()) and f"-> {new_mode.upper()} (reassessed)" in result["scorecard_line"]
+    assert f"--mode {to}" in prompts["record-run"] and f"--escalations {start}>{to}" in prompts["record-run"]
+
+
+@needs_node
+@pytest.mark.parametrize("start,to", [("light", "full"), ("full", "light")])
+def test_d8_mode_change_without_a_card_moves_size_and_ledger(tmp_path, start, to):
+    import test_kit_script_size_gate as gate
+    prompts, _, result = gate.run_calls(IMPL_JS, tmp_path, {"goal": "g", "size": start}, {**IMPL_RESPONSES, "implement": _changed(to)})
+    assert result["size"] == to and result["scorecard"] is None and result["scorecard_line"] == ""
+    assert f"--mode {to}" in prompts["record-run"] and f"--escalations {start}>{to}" in prompts["record-run"]
+
+
+@needs_node
+def test_d8_mode_change_with_a_card_from_the_sizing_block(tmp_path):
+    import test_kit_script_size_gate as gate
+    responses = {**IMPL_RESPONSES, "implement": _changed("full"), "read-sizing": {"found": True, "reason": "r", "scores": STANDARD_SCORES}}
+    prompts, _, result = gate.run_calls(IMPL_JS, tmp_path, {"goal": "g", "plan_path": "p.md"}, responses)
+    assert result["size"] == "full" and result["scorecard"]["mode"] == "full" and result["scorecard"]["roster"] == RULES["base"]["full"]
+    assert result["scorecard_line"].startswith("FULL") and "--mode full" in prompts["record-run"]
