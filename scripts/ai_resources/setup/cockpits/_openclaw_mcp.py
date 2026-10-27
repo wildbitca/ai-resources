@@ -392,10 +392,31 @@ def deny_tokens(names: list[str]) -> list[str]:
     return sorted({f"{_lanes.safe_server_name(n)}__*" for n in names})
 
 
-def scope_patch(doc: Mapping[str, Any], desired: list[str], recorded: Mapping[str, list[str]]) -> dict[str, Any]:
+def stdio_servers(doc: Mapping[str, Any]) -> list[str]:
+    """Configured MCP servers that start a process per session (a `command`, not a `url`): the ones that pile up
+    in the gateway cgroup (216 engram/supabase children against a threshold of 24, 2026-10-27)."""
+    servers = (doc.get("mcp") or {}).get("servers") if isinstance(doc.get("mcp"), Mapping) else None
+    return sorted(n for n, spec in (servers or {}).items()
+                  if isinstance(n, str) and isinstance(spec, Mapping) and spec.get("command"))
+
+
+def role_scope(doc: Mapping[str, Any], globs: list[str]) -> dict[str, list[str]]:
+    """Agent id -> the whole-server deny tokens of every stdio MCP server, for the agents matching `globs`
+    (kit-host.env `OPENCLAW_MCP_DENY_AGENTS`, default `kit-role-*`). Lane agents are scoped by `lanes.mcp`."""
+    import fnmatch
+    tokens = deny_tokens(stdio_servers(doc))
+    entries = ((doc.get("agents") or {}).get("entries") or {}) if isinstance(doc.get("agents"), Mapping) else {}
+    if not tokens:
+        return {}
+    return {aid: tokens for aid in entries
+            if isinstance(aid, str) and not aid.startswith(_lanes.PREFIX) and any(fnmatch.fnmatchcase(aid, g) for g in globs)}
+
+
+def scope_patch(doc: Mapping[str, Any], desired: list[str], recorded: Mapping[str, list[str]],
+                per_agent: Mapping[str, list[str]] | None = None) -> dict[str, Any]:
     """The fill-only per-agent `tools.deny` patch. Lane agents are skipped (`openclaw_lanes.mcp_deny` scopes them);
     an operator token is kept; only tokens the kit recorded earlier and no longer wants are dropped.
-    The global `tools.deny` is never in this patch (ADR-0011)."""
+    `per_agent` adds tokens for single agents (`role_scope`). The global `tools.deny` is never in this patch (ADR-0011)."""
     entries = ((doc.get("agents") or {}).get("entries") or {}) if isinstance(doc.get("agents"), Mapping) else {}
     out: dict[str, Any] = {}
     for aid, entry in sorted(entries.items()):
@@ -404,8 +425,9 @@ def scope_patch(doc: Mapping[str, Any], desired: list[str], recorded: Mapping[st
         tools = entry.get("tools")
         current = [t for t in ((tools.get("deny") if isinstance(tools, Mapping) else None) or []) if isinstance(t, str)]
         prev = set(recorded.get(aid) or [])
-        stale = [t for t in current if t in prev and t not in desired]
-        missing = [t for t in desired if t not in current]
+        wanted = list(desired) + [t for t in (per_agent or {}).get(aid, []) if t not in desired]
+        stale = [t for t in current if t in prev and t not in wanted]
+        missing = [t for t in wanted if t not in current]
         if stale or missing:
             merged = [t for t in current if t not in stale] + missing
             out[aid] = {"tools": {"deny": merged or None}}
@@ -413,11 +435,14 @@ def scope_patch(doc: Mapping[str, Any], desired: list[str], recorded: Mapping[st
 
 
 def scope_agents(s: state.SetupState, doc: Mapping[str, Any], apply_patch: Callable[..., tuple[bool, str]], *,
-                 include: list[str] | None, dry_run: bool = False) -> bool:
-    """Deny the mirrored-but-unlisted servers per agent by name and record what was added. True when the file changed."""
+                 include: list[str] | None, dry_run: bool = False, roles: bool = True) -> bool:
+    """Deny the mirrored-but-unlisted servers per agent by name, and every stdio server for the agents that must
+    not accumulate them (`roles`, see `role_scope`), and record what was added. True when the file changed."""
     desired = deny_tokens(unlisted_mirrored(s, include))
     recorded = s.openclaw.mcp_deny_added
-    patch = scope_patch(doc, desired, recorded)
+    from ... import openclaw_reconcile
+    per_agent = role_scope(doc, openclaw_reconcile.deny_agent_globs()) if roles else {}
+    patch = scope_patch(doc, desired, recorded, per_agent)
     if not patch or dry_run:
         return False
     entries = doc["agents"]["entries"]

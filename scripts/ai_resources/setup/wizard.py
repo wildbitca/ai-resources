@@ -2821,6 +2821,23 @@ def _apply_image_dry_run(s: state.SetupState) -> None:
     _openclaw_cockpit.dry_run_image(s)
 
 
+def _apply_hardening_dry_run(s: state.SetupState) -> None:
+    """The host-level work of a real run, under `--dry-run`: hooks to register, the off-box credential, MemoryHigh and
+    the one drained gateway restart (R5/R7). Words only; nothing is stopped, written or signed in."""
+    if "openclaw" not in _members_of(s) and "claude" not in _members_of(s):
+        return
+    from .cockpits import openclaw as _openclaw_cockpit
+    try:
+        lines = _openclaw_cockpit.hardening_dry_run_lines(s, str(_shared.stable_kit_root(repo_root())))
+    except Exception as e:  # noqa: BLE001 - a preview never takes the dry run down
+        lines = [f"host preview skipped ({type(e).__name__})"]
+    if lines:
+        ui.console().print()
+        ui.info("Host changes a real run would make")
+        for line in lines:
+            ui.info(line)
+
+
 _PREV_STATE: "state.SetupState | None" = None
 """The setup state as the previous run saved it (set by `_run`); None outside a run."""
 
@@ -3304,6 +3321,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
     _print_plan_table(s)
     _apply_channel_changes(s, dry_run=True)
     _apply_image_dry_run(s)
+    _apply_hardening_dry_run(s)
     for line in deferred.dry_run_lines(s):
         ui.info(line)
 

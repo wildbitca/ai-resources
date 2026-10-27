@@ -454,7 +454,8 @@ def unavailable(version: str | None, reason: str) -> RuleSet:
 
 def _locate_dist(package_json) -> "tuple[object | None, str]":
     if package_json is None:
-        return None, "the openclaw package was not found next to the openclaw on PATH"
+        return None, ("the openclaw package was not found next to the openclaw on PATH (a per-session shim under "
+                      "~/.openclaw/tmp is skipped) nor under the Homebrew node_modules")
     try:
         found = sorted((package_json.parent / "dist").glob("config-reload-plan-*.mjs"))
     except OSError as e:
@@ -464,11 +465,6 @@ def _locate_dist(package_json) -> "tuple[object | None, str]":
     if len(found) > 1:
         return None, "several dist/config-reload-plan-*.mjs files in the installed package"
     return found[0], ""
-
-
-def locate_reload_plan_dist(package_json) -> "object | None":
-    """`<package dir>/dist/config-reload-plan-*.mjs` when there is exactly one, else None."""
-    return _locate_dist(package_json)[0]
 
 
 # dist path -> ((mtime_ns, size), parsed rules or None); an in-place upgrade changes mtime or size.
@@ -606,6 +602,9 @@ _VERSION_CACHE: dict[int, tuple[object, str | None]] = {}
 _VERSION_RE = r"\b(\d{4}\.\d+\.\d+)\b"
 
 
+BREW_PREFIXES = ("/home/linuxbrew/.linuxbrew", "/opt/homebrew", "/usr/local")
+
+
 def locate_package_json() -> "Path | None":
     """The `package.json` next to the `openclaw` entry point the PATH resolves, or None.
 
@@ -614,12 +613,29 @@ def locate_package_json() -> "Path | None":
     """
     import os
     from pathlib import Path
+    from . import openclaw_host
     from .setup import detection
     found = detection._which_extra("openclaw")      # PATH first, then Homebrew / npm-global / fnm bins
     if not found:
         return None
-    pj = Path(os.path.realpath(found)).parent / "package.json"
-    return pj if pj.is_file() else None
+    if not openclaw_host.is_openclaw_shim(found):
+        pj = Path(os.path.realpath(found)).parent / "package.json"
+        return pj if pj.is_file() else None
+    # An agent session puts a shim script first on PATH (~/.openclaw/tmp/agent-cli/openclaw) with no package.json
+    # beside it. Follow the shim to the package it executes; else take another non-shim `openclaw` on PATH, else
+    # the Homebrew install: the rules stay readable and the real binary is the one that is read (R5).
+    pkg = openclaw_host.shim_target_package(found)
+    if pkg is not None:
+        return pkg / "package.json"
+    for cand in openclaw_host.real_openclaw_candidates():
+        pj = Path(os.path.realpath(cand)).parent / "package.json"
+        if pj.is_file() and _version_from_package_json(pj):
+            return pj
+    for prefix in (os.environ.get("HOMEBREW_PREFIX", ""), *BREW_PREFIXES):
+        pj = Path(prefix) / "lib" / "node_modules" / "openclaw" / "package.json" if prefix else None
+        if pj is not None and pj.is_file() and _version_from_package_json(pj):
+            return pj
+    return None
 
 
 # The name read_installed_version calls; the test suite replaces THIS name (conftest).

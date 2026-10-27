@@ -1342,6 +1342,20 @@ systemctl --user start openclaw-gateway.service
 Without the pause file the watchdog brings it up within 2 min in the middle of your
 manoeuvre. And the other way round: leave the file behind and nobody is watching.
 
+## Hardening: one drained restart, live checks, MCP children (3.1.0)
+
+What `ai-resources setup` now does about a gateway that runs stale code or carries too many MCP children:
+
+| Item | Behaviour |
+|---|---|
+| Restart owed | `ai-resources openclaw reconcile [--dry-run]` (setup runs the same function at its end). A restart is owed when the gateway runs older kit plugin code than the disk (rule `path`, `version` or `time`) or its cgroup holds more than 24 MCP server children (engram, supabase). It is ONE drained window: restart lock, `watchdog.off` held and removed on every exit path (an exception, SIGTERM and SIGINT included), the strict busy probe, the T29 refusal. A refusal is recorded as pending and printed; the next run resumes. A clean gateway is a no-op. |
+| Live checks | `ai-resources verify --live` (also printed after a restart): `openclaw health`; the plugin version the gateway runs against the disk; every kit hook registered in `~/.claude/settings.json` (incl. the `StopFailure` quota signal, and the narration hook when host narration is on); lane agents present and their backend loaded; MCP child count; the off-box credential file exists with mode 0600. |
+| MCP children | Setup denies the stdio MCP servers (a `command`, not a `url`) to the agents matching `OPENCLAW_MCP_DENY_AGENTS` in `kit-host.env` (default `kit-role-*`; comma separated globs; lane agents keep `bundle-mcp` denied). Fill-only and recorded, so teardown removes exactly what was added. Children that already exist go with the drained restart. |
+| Reload rules via a shim | An agent session puts `~/.openclaw/tmp/agent-cli/openclaw` first on PATH. The kit skips it, follows it to the package it executes, then tries the other `openclaw` on PATH and the Homebrew `node_modules`; if none is readable every key stays restart-required and the reason names the shim. Units are rendered with the real binary. |
+| Off-box credential | With `OPENCLAW_OFFBOX_BUCKET` set, setup regenerates `offbox-wif-cred.json` (0600) from `~/.config/gcloud/agent-wif` and starts `openclaw-backup-uploader.service` with `--no-block`, then reads `offbox-last.json`. |
+| MemoryHigh | Sized to the host: 55 % of RAM in whole GiB, between 12G and 24G (a 30 GB host gets 16G, room for about 6 lane runs at ~2 GiB each next to the gateway's ~3 GiB). `OPENCLAW_MEMORY_HIGH` in `kit-host.env` overrides. `ai-resources openclaw bootstrap` applies it with `set-property`. |
+| Polling | `kit_sleep_guard` refuses a `sleep` above 30 s, sleeps that add up above 30 s in one command, and any `while`/`until` loop that sleeps. The AGENTS.md rules say: one blocking wait per job (`awaitResults`), never a poll loop. |
+
 ## Run doctor without killing the gateway
 
 **[kit]** `ai-resources openclaw doctor` (add `--dry-run` to see the sequence, `--cleanup-sessions` to

@@ -32,6 +32,12 @@ from ai_resources.setup.cockpits import _openclaw_voice as voice  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _sixteen_gib_host(monkeypatch):
+    """The recommended MemoryHigh follows the host's RAM; these tests pin the 12G a 16 GiB host gets."""
+    monkeypatch.setattr(host, "host_mem_total_bytes", lambda *a, **k: 16 * 1024 ** 3)
+
+
+@pytest.fixture(autouse=True)
 def _a_terminal(monkeypatch):
     """The interactive path of `tools.offer` needs a real terminal (2.2d, 6d); pytest's stdin is not one."""
     monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)

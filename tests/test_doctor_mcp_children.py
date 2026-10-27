@@ -43,7 +43,7 @@ def test_counts_children_by_server(tmp_path):
     assert counts == {"supabase": 2, "engram": 1}
 
 
-def test_warns_above_threshold_with_the_restart_remedy_and_kills_nothing(tmp_path, monkeypatch):
+def test_warns_above_threshold_with_the_drained_restart_remedy_and_kills_nothing(tmp_path, monkeypatch):
     out = _capture(monkeypatch)
     cg, proc = _tree(tmp_path, ["node supabase-mcp"] * 5)
     n = doctor._check_mcp_children(runner=_runner("/user.slice/openclaw-gateway.service"),
@@ -51,8 +51,7 @@ def test_warns_above_threshold_with_the_restart_remedy_and_kills_nothing(tmp_pat
     assert n == 1
     assert any("5" in w and "supabase" in w for w in out["warn"])
     text = " ".join(out["detail"])
-    assert "systemctl --user restart openclaw-gateway.service" in text
-    assert "not proven" in text.lower()
+    assert "ai-resources openclaw reconcile" in text and "drained restart" in text
 
 
 def test_below_threshold_is_quiet(tmp_path, monkeypatch):

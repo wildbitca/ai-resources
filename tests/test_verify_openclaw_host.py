@@ -17,6 +17,12 @@ from ai_resources.setup.cockpits import _openclaw_host as section
 NOW = 1_800_000_000.0
 
 
+@pytest.fixture(autouse=True)
+def _sixteen_gib_host(monkeypatch):
+    """The recommended MemoryHigh follows the host's RAM; these tests pin the 12G a 16 GiB host gets."""
+    monkeypatch.setattr(host, "host_mem_total_bytes", lambda *a, **k: 16 * 1024 ** 3)
+
+
 class HostRunner:
     def __init__(self, *, active="active", enabled="enabled", health_rc=0, timers_enabled=True,
                  ss="LISTEN 0 511 127.0.0.1:18789 0.0.0.0:*\n", timeout_on=()):

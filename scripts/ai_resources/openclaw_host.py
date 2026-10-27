@@ -211,15 +211,53 @@ def kit_root() -> Path:
     return _shared.stable_kit_root(repo_root())
 
 
+SHIM_DIR_PARTS = (".openclaw", "tmp")      # ~/.openclaw/tmp/agent-cli/openclaw: a per-session wrapper, not the install
+
+
+def is_openclaw_shim(path: "str | os.PathLike") -> bool:
+    """True for a wrapper script an agent session put on PATH (under ~/.openclaw/tmp), not the installed CLI.
+
+    The shim `exec`s node on the real entry point, so it works as a command but has no `package.json` beside it
+    and lives in a scratch directory: a unit or a rules reader must never be pointed at it (R5)."""
+    try:
+        parts = Path(os.path.abspath(path)).parts
+    except (OSError, ValueError):
+        return False
+    return any(parts[i:i + 2] == SHIM_DIR_PARTS for i in range(len(parts) - 1))
+
+
+def shim_target_package(shim: "str | os.PathLike") -> "Path | None":
+    """The package directory a shim script executes (`.../node_modules/openclaw`), None when it cannot be told."""
+    try:
+        text = Path(shim).read_text(encoding="utf-8", errors="replace")[:4096]
+    except OSError:
+        return None
+    for token in re.findall(r"[^\s'\"]+", text):
+        if token.endswith(("/dist/index.js", "/openclaw.mjs")) and token.startswith("/"):
+            root = Path(token).parent.parent if token.endswith("/dist/index.js") else Path(token).parent
+            if (root / "package.json").is_file():
+                return root
+    return None
+
+
+def real_openclaw_candidates(path_env: str | None = None) -> list[str]:
+    """Every `openclaw` executable the PATH names, shims dropped, then the Homebrew locations."""
+    found: list[str] = []
+    for d in (os.environ.get("PATH", "") if path_env is None else path_env).split(os.pathsep):
+        cand = os.path.join(d, "openclaw") if d else ""
+        if cand and os.access(cand, os.X_OK) and os.path.isfile(cand) and not is_openclaw_shim(cand):
+            found.append(cand)
+    found += [c for c in BREW_OPENCLAW_FALLBACKS if os.path.exists(c) and c not in found]
+    return found
+
+
 def resolve_openclaw_bin() -> str:
-    """Absolute path of `openclaw`, resolved at render time so a unit never depends on a login PATH."""
-    found = shutil.which("openclaw")
-    if found:
-        return found
-    for candidate in BREW_OPENCLAW_FALLBACKS:
-        if os.path.exists(candidate):
-            return candidate
-    return "openclaw"
+    """Absolute path of the installed `openclaw`, resolved at render time so a unit never depends on a login PATH
+    and never points at an agent session's shim."""
+    real = real_openclaw_candidates()
+    if real:
+        return real[0]
+    return shutil.which("openclaw") or "openclaw"
 
 
 # --- host env file ----------------------------------------------------------------------------
@@ -636,6 +674,37 @@ def _release_termination(previous: set[int] | None) -> None:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
+class terminate_as_exit:
+    """Within a `with` block SIGTERM and SIGINT raise (`SystemExit(128+n)`, `KeyboardInterrupt`) instead of
+    killing the process, so every `finally` runs: what systemd sends at TimeoutStopSec, and Ctrl-C.
+    Main thread only (elsewhere it is a no-op); the previous handlers come back on exit. SIGKILL cannot be
+    caught: a stale marker is reclaimed by `Marker.reclaim_stale`."""
+
+    def __init__(self) -> None:
+        self._previous: dict[int, object] = {}
+
+    def __enter__(self) -> "terminate_as_exit":
+        import signal
+        import threading
+        if threading.current_thread() is not threading.main_thread():
+            return self
+
+        def _raise(signum, _frame):
+            if signum == signal.SIGINT:
+                raise KeyboardInterrupt
+            raise SystemExit(128 + signum)
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            self._previous[sig] = signal.signal(sig, _raise)
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        import signal
+        for sig, handler in self._previous.items():
+            signal.signal(sig, handler)  # type: ignore[arg-type]
+        self._previous.clear()
+
+
 class Marker:
     """The `watchdog.off` file: while it exists the watchdog leaves the gateway alone.
 
@@ -1009,17 +1078,39 @@ def _drained_window_locked(action: Callable[[], bool], *, runner: Runner, force:
                                 if busy is None else f"{busy} agent run(s) are in flight") + "; nothing was stopped")
             return EXIT_REFUSED_BUSY
 
+    with terminate_as_exit():
+        # SIGTERM / SIGINT become SystemExit / KeyboardInterrupt for the whole window, so the `finally` below
+        # (marker removed, unit started again) runs on EVERY exit path, a signal mid-action included (R5).
+        # Exclusive create: a window that appeared since the check above (the operator's) is not ours to take.
+        # Signals are held from the create until the body's `try` is entered: no gap in which a marker exists and
+        # nothing will remove it.
+        held = _hold_termination()
+        try:
+            exclusive = getattr(marker, "acquire", None)
+            if force or exclusive is None:
+                marker.touch()
+            elif not exclusive():
+                out(f"refusing: {marker.path} appeared while the window was being opened, so another maintenance "
+                    "window is open; nothing was stopped.")
+                _release_termination(held)
+                return EXIT_REFUSED
+        except BaseException:
+            _release_termination(held)
+            raise
+        return _drained_window_body(action, runner=runner, marker=marker, env=env, oc=oc, sysctl=sysctl, out=out,
+                                    drain_timeout=drain_timeout, drain_interval=drain_interval,
+                                    health_timeout=health_timeout, health_interval=health_interval, sleep=sleep,
+                                    skip_message=skip_message, held=held)
+
+
+def _drained_window_body(action: Callable[[], bool], *, runner: Runner, marker: Marker, env: dict, oc: str,
+                         sysctl: list[str], out: Callable[[str], None], drain_timeout: float, drain_interval: float,
+                         health_timeout: float, health_interval: float, sleep: Callable[[float], None],
+                         skip_message: str, held: "set[int] | None" = None) -> int:
     drained = action_ok = False
     code = EXIT_OK
-    # Exclusive create: a window that appeared since the check above (the operator's) is not ours to take.
-    exclusive = getattr(marker, "acquire", None)
-    if force or exclusive is None:
-        marker.touch()
-    elif not exclusive():
-        out(f"refusing: {marker.path} appeared while the window was being opened, so another maintenance window "
-            "is open; nothing was stopped.")
-        return EXIT_REFUSED
     try:
+        _release_termination(held)      # a signal that arrived since the marker was created is delivered here
         # TimeoutStopSec=330 on the gateway unit: allow for it.
         runner(sysctl + ["stop", GATEWAY_UNIT], env=env, timeout=400)
         polls = max(1, int(drain_timeout // drain_interval))
@@ -1035,8 +1126,14 @@ def _drained_window_locked(action: Callable[[], bool], *, runner: Runner, force:
         elif skip_message:
             out(skip_message)
     finally:
-        marker.remove()
-        runner(sysctl + ["start", GATEWAY_UNIT], env=env, timeout=120)
+        # The two things a window must always do, held back from a second signal; the health poll after them is
+        # a report and may be cut short.
+        held = _hold_termination()
+        try:
+            marker.remove()
+            runner(sysctl + ["start", GATEWAY_UNIT], env=env, timeout=120)
+        finally:
+            _release_termination(held)
         healthy = poll_health(runner, oc, env=env, timeout=health_timeout, interval=health_interval, sleep=sleep)
         out(f"healthy={'yes' if healthy else 'no'}")
         if not healthy:
@@ -3099,6 +3196,54 @@ def _step_backup_dirs(c: _Ctx) -> StepResult:
     return StepResult("backup-dirs", "changed" if r[0] == 0 else "failed", r[1][-200:])
 
 
+GIB = 1024 ** 3
+MEMORY_HIGH_MIN_GIB, MEMORY_HIGH_MAX_GIB, MEMORY_HIGH_SHARE = 12, 24, 0.55
+# What one lane run costs the cgroup: its `claude` / `agy` worker and the tools it starts. A measured ballpark that
+# `lane_headroom` turns into "how many lanes fit", so the number is explainable, not magic.
+LANE_RUN_GIB = 2.0
+GATEWAY_BASE_GIB = 3.0
+
+
+def host_mem_total_bytes(path: str = "/proc/meminfo") -> "int | None":
+    try:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def recommended_memory_high(mem_total: "int | None" = None) -> str:
+    """MemoryHigh for the gateway unit, sized to the host: 55 % of RAM, whole GiB, 12G..24G (R7-6).
+
+    A fixed 12G on a 30 GB host left the gateway cgroup at its throttle with a handful of lane runs (the cgroup
+    sat at 12.1 GiB of 12 on 2026-10-27): the throttle then stops the gateway's own event loop (T41). The floor
+    keeps the 12G the kit always used on a small host; the ceiling keeps the host's other work out of swap."""
+    total = host_mem_total_bytes() if mem_total is None else mem_total
+    if not total:
+        return f"{MEMORY_HIGH_MIN_GIB}G"
+    gib = int(total * MEMORY_HIGH_SHARE // GIB)
+    return f"{max(MEMORY_HIGH_MIN_GIB, min(MEMORY_HIGH_MAX_GIB, gib))}G"
+
+
+def wanted_memory_high(env: "dict[str, str] | None" = None, mem_total: "int | None" = None) -> str:
+    """`OPENCLAW_MEMORY_HIGH` in kit-host.env when it is a valid size, else the host-sized recommendation."""
+    raw = ((read_host_env() if env is None else env).get("OPENCLAW_MEMORY_HIGH") or "").strip()
+    if raw:
+        try:
+            _bytes(raw)
+            return raw.upper()
+        except ValueError:
+            pass
+    return recommended_memory_high(mem_total)
+
+
+def lane_headroom(memory_high: str) -> int:
+    """How many concurrent lane runs fit under `memory_high` next to the gateway's own footprint."""
+    return max(0, int((_bytes(memory_high) / GIB - GATEWAY_BASE_GIB) // LANE_RUN_GIB))
+
+
 def _step_memory_high(c: _Ctx) -> StepResult:
     want = _bytes(c.memory_high)
     rc, cur = c.run(["systemctl", "--user", "show", GATEWAY_UNIT, "-p", "MemoryHigh", "--value"])
@@ -3149,7 +3294,7 @@ _STEP_FUNCS = {"node": _step_node, "openclaw": _step_openclaw, "single-copy": _s
 
 
 def bootstrap(runner: Runner = default_runner, *, dry_run: bool = False, only: str | None = None,
-              upgrade: bool = False, memory_high: str = "12G", backup_dir: str | None = None,
+              upgrade: bool = False, memory_high: str | None = None, backup_dir: str | None = None,
               confirm: Callable[[str, str], bool] = lambda step, what: False,
               home: Path | None = None, host_env_path: Path | None = None,
               sleep: Callable[[float], None] = time.sleep, health_wait: float = 60,
@@ -3169,7 +3314,7 @@ def bootstrap(runner: Runner = default_runner, *, dry_run: bool = False, only: s
     env.setdefault("USER", os.environ.get("USER", ""))
     env_file = read_host_env(host_env_path)
     ctx = _Ctx(runner, dry_run=dry_run, confirm=confirm, home=home or Path.home(), upgrade=upgrade,
-               memory_high=memory_high,
+               memory_high=memory_high or wanted_memory_high(env_file),
                backup_dir=backup_dir or env_file.get("OPENCLAW_BACKUP_DIR", "/srv/openclaw-backups"),
                host_env_path=host_env_path, sleep=sleep, health_wait=health_wait,
                node_bin=_node_bin(runner, env), env=env, unit_dir=unit_dir)
@@ -4667,6 +4812,49 @@ def offbox_wif_cred(sa: str, *, env: "dict[str, str] | None" = None, source: Pat
     return "written", target
 
 
+OFFBOX_UPLOADER_UNIT = "openclaw-backup-uploader.service"
+
+
+def offbox_uploader_run(runner: Runner, *, home: "Path | None" = None, wait_s: float = 45.0, interval: float = 3.0,
+                        sleep: Callable[[float], None] = time.sleep,
+                        clock: Callable[[], float] = time.time) -> tuple[str, str]:
+    """Start the off-box uploader once and read what it reports: ("absent" | "ok" | "failed" | "pending", detail).
+
+    `start --no-block` (a oneshot unit would otherwise hold this call for the whole upload, T39) and then short
+    reads of the state file the uploader writes, for at most `wait_s`. "pending" means it was started and has not
+    reported yet: the next `verify` reads the result. This is the owner's own backup job, the same one the timer
+    runs and `verify` tells them to start by hand."""
+    home = home or Path.home()
+    env = systemd_env()
+    rc, _ = runner(["systemctl", "--user", "cat", OFFBOX_UPLOADER_UNIT], env=env, timeout=15)
+    if rc != 0:
+        return "absent", f"{OFFBOX_UPLOADER_UNIT} is not installed (run `ai-resources openclaw install-units`)"
+    started = clock()
+    rc, out = runner(["systemctl", "--user", "start", "--no-block", OFFBOX_UPLOADER_UNIT], env=env, timeout=30)
+    if rc != 0:
+        return "failed", f"could not start {OFFBOX_UPLOADER_UNIT}: {out.strip()[-150:]}"
+    deadline = clock() + wait_s
+    hostenv = read_host_env()
+    while True:
+        st = offbox_uploader_state(home, hostenv, clock())
+        at = _iso_epoch(st.get("at", "")) if st.get("reported") else None
+        if at is not None and at >= started - 1:
+            if st.get("outcome") == "ok":
+                return "ok", f"uploaded; the newest off-box daily is {st.get('age_hours') or 0:.0f}h old"
+            return "failed", st.get("reason") or "the uploader reported a failure"
+        if clock() >= deadline:
+            return "pending", f"{OFFBOX_UPLOADER_UNIT} started; it has not reported yet (see `ai-resources verify`)"
+        sleep(interval)
+
+
+def _iso_epoch(text: str) -> "float | None":
+    import datetime as _dt
+    try:
+        return _dt.datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 def _gcloud_value(runner: Runner, *args: str) -> str:
     rc, text = runner(["gcloud", *args], timeout=30)
     value = text.strip().splitlines()[-1].strip() if rc == 0 and text.strip() else ""
@@ -5069,6 +5257,47 @@ def _cmd_apply_pending(args: argparse.Namespace) -> int:
     return rc
 
 
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    """`reconcile`: one drained restart when the gateway runs older plugin code than the disk or carries an MCP-child
+    overflow (what setup does at its end). Exit 0 nothing owed or done, 1 deferred or incomplete. Idempotent."""
+    from . import openclaw_reconcile
+    from .setup import state as setup_state
+    from .setup.cockpits import openclaw as cockpit
+
+    def run() -> int:
+        if setup_state.save_would_refuse():
+            print(setup_state.refusal_text())
+            return 1
+        s = setup_state.load()
+        ak = str(kit_root())
+        outcome = openclaw_reconcile.reconcile(
+            default_runner, plugin_dir=str(Path(ak) / "openclaw-plugin" / "ai-resources"),
+            stale_reason=cockpit.stale_reason, dry_run=args.dry_run, out=print)
+        if not outcome.reasons:
+            print("nothing to reconcile: the gateway runs the plugin on disk and its MCP children are under the threshold")
+            return EXIT_OK
+        if args.dry_run:
+            return EXIT_OK
+        if outcome.restarted:
+            s.openclaw.gateway_restart_pending = {}
+            version = cockpit.plugin_version(ak)
+            if version:
+                s.openclaw.plugin_version_seen = version
+            s.openclaw.host_restart_pending = [e for e in s.openclaw.host_restart_pending if e.get("op") != "plugin"]
+            setup_state.save(s)
+            findings = cockpit.live_findings(s, ak)
+            for f in findings:
+                print(f"{f.level.upper():5} {f.message}")
+            return 1 if any(f.level == "error" for f in findings) else EXIT_OK
+        return 1
+
+    try:
+        return setup_state.locked_run(run)
+    except setup_state.StateCorrupt:
+        print(setup_state.refusal_text())
+        return 1
+
+
 def cmd_agent_new(args: argparse.Namespace) -> int:
     try:
         res = agent_new(args.agent_id, args.workspace, kind=args.kind or None, force=args.force,
@@ -5203,6 +5432,11 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_busy.add_argument("--json", action="store_true", help="Print {busy, probe_ok} as JSON")
     p_busy.set_defaults(func=cmd_busy)
 
+    p_rc = verbs.add_parser("reconcile", help="One drained restart when the gateway runs older plugin code than the "
+                                              "disk or carries an MCP-child overflow (refuses while turns run)")
+    p_rc.add_argument("--dry-run", action="store_true", help="Say what is owed and what the restart would do; stop nothing")
+    p_rc.set_defaults(func=cmd_reconcile)
+
     p_ap = verbs.add_parser("apply-pending",
                             help="Apply the restart-required config setup deferred, inside a drained window (only when idle)")
     p_ap.add_argument("--yes", action="store_true", help="Do not ask for confirmation (it still refuses while busy)")
@@ -5249,7 +5483,9 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p_bs.add_argument("--dry-run", action="store_true", help="Report what would change; touch nothing")
     p_bs.add_argument("--only", default="", choices=["", *BOOTSTRAP_STEPS], help="Run a single step")
     p_bs.add_argument("--upgrade", action="store_true", help="Reinstall the latest openclaw even if one is present")
-    p_bs.add_argument("--memory-high", default="12G", help="MemoryHigh for the gateway unit (default 12G)")
+    p_bs.add_argument("--memory-high", default=None,
+                      help="MemoryHigh for the gateway unit (default: 55%% of host RAM, 12G..24G; "
+                           "OPENCLAW_MEMORY_HIGH in kit-host.env overrides)")
     p_bs.add_argument("--yes", action="store_true",
                       help="Make every change without asking (otherwise each one asks on a terminal, default No, "
                            "and an unattended run changes nothing)")

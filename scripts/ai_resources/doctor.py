@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -109,32 +108,12 @@ def _check_antigravity_lane(s: state.SetupState) -> int:
     return issues
 
 
-# MCP children under the gateway unit (ADR-0007 OQ-5 follow-up FU-1). Read-only: nothing is ever killed.
-MCP_CHILD_WARN = 24
-_MCP_SERVERS = ("supabase", "engram")
-_MCP_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(" + "|".join(_MCP_SERVERS) + r")(?![A-Za-z0-9])")
+# MCP children under the gateway unit (ADR-0007 OQ-5 follow-up FU-1). Read-only: nothing is ever killed. The count
+# and the threshold live in `openclaw_reconcile`, which is also what clears an overflow (a drained restart).
+from . import openclaw_reconcile as _reconcile  # noqa: E402
 
-
-def count_mcp_children(control_group: str, *, cgroup_root: Path | None = None,
-                       proc_root: Path | None = None) -> dict[str, int]:
-    """Processes in the unit's cgroup tree whose command line names a known MCP server, per server."""
-    from . import openclaw_host
-    cgroup_root = cgroup_root or openclaw_host.CGROUP_ROOT
-    proc_root = proc_root or openclaw_host.PROC_ROOT
-    unit_dir = cgroup_root / control_group.lstrip("/")
-    counts: dict[str, int] = {}
-    for pid in openclaw_host._unit_pids(unit_dir, None):
-        try:
-            raw = (proc_root / str(pid) / "cmdline").read_bytes()
-        except OSError:
-            continue
-        cmd = raw.replace(b"\0", b" ").decode("utf-8", "replace")
-        if not cmd.strip().split(" ")[0] or "openclaw-gateway" in cmd.split(" ")[0]:
-            continue
-        m = _MCP_RE.search(cmd)
-        if m:
-            counts[m.group(1).lower()] = counts.get(m.group(1).lower(), 0) + 1
-    return dict(sorted(counts.items()))
+MCP_CHILD_WARN = _reconcile.MCP_CHILD_WARN
+count_mcp_children = _reconcile.count_mcp_children
 
 
 def _check_mcp_children(*, runner: "Callable[..., tuple[int, str]] | None" = None,
@@ -142,24 +121,13 @@ def _check_mcp_children(*, runner: "Callable[..., tuple[int, str]] | None" = Non
                         threshold: int = MCP_CHILD_WARN) -> int:
     """Doctor sub-check 4e. Returns the number of new issues (0 or 1); never raises, never kills a process.
 
-    `tools.deny: ["bundle-mcp"]` on the kit-lane agents is expected to stop new lane children from loading
-    MCP servers, but its effect on live children is NOT proven (only the isolated merge gate can show it)."""
+    The kit scopes the kit-lane and kit-role agents (`tools.deny`) so they stop loading stdio MCP servers; children
+    that already exist are cleared by the drained restart `ai-resources openclaw reconcile` (setup runs it too)."""
     from . import openclaw_host
     run = runner or openclaw_host.default_runner
-    try:
-        rc, out = run(["systemctl", "--user", "show", openclaw_host.GATEWAY_UNIT, "-p", "ControlGroup"],
-                      timeout=10)
-        cg = ""
-        for line in (out or "").splitlines():
-            k, _, v = line.partition("=")
-            if rc == 0 and k.strip() == "ControlGroup":
-                cg = v.strip()
-        if not cg:
-            ui.detail("MCP children: gateway unit not running or systemd unavailable; skipped.")
-            return 0
-        counts = count_mcp_children(cg, cgroup_root=cgroup_root, proc_root=proc_root)
-    except Exception as e:  # noqa: BLE001 - a read-only probe never fails doctor
-        ui.detail(f"MCP children: could not be counted ({type(e).__name__}); skipped.")
+    counts = _reconcile.gateway_mcp_children(run, cgroup_root=cgroup_root, proc_root=proc_root)
+    if counts is None:
+        ui.detail("MCP children: gateway unit not running, systemd unavailable or unreadable; skipped.")
         return 0
     total = sum(counts.values())
     if total <= threshold:
@@ -168,10 +136,8 @@ def _check_mcp_children(*, runner: "Callable[..., tuple[int, str]] | None" = Non
     per = ", ".join(f"{k} {v}" for k, v in counts.items())
     ui.warn(f"{total} MCP server child processes under {openclaw_host.GATEWAY_UNIT} ({per}); "
             f"warn threshold {threshold}.")
-    ui.detail("Remedy (operator, when no turn is running): systemctl --user restart "
-              f"{openclaw_host.GATEWAY_UNIT}  -- doctor does not kill or restart anything.")
-    ui.detail("The kit scopes kit-lane-* agents with tools.deny bundle-mcp; its effect on already running "
-              "children is not proven (isolated merge gate only).")
+    ui.detail(f"Remedy (when no turn is running): `{_reconcile.RECONCILE_COMMAND}` -- a drained restart that "
+              "refuses while agent turns are in flight; doctor itself does not kill or restart anything.")
     return 1
 
 

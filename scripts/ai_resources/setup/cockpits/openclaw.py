@@ -77,7 +77,7 @@ from . import _openclaw_host as host_section
 from . import openclaw_lanes
 from . import openclaw_roles
 from . import _agy_quota
-from ... import model_pins, openclaw_host, openclaw_reload_rules, openclaw_slack_cost, openclaw_tool_policy
+from ... import model_pins, openclaw_host, openclaw_reconcile, openclaw_reload_rules, openclaw_slack_cost, openclaw_tool_policy
 
 
 NAME = "OpenClaw"
@@ -1426,7 +1426,10 @@ def configure(ctx: dict) -> list[Path]:
     cs = s.cockpits.get(ID) or state.CockpitState()
     cs.installed = True
     cs.version = ctx.get("detected_version", cs.version)
-    cs.binary_path = ctx.get("detected_path", cs.binary_path)
+    detected = ctx.get("detected_path", cs.binary_path)
+    # an agent session's shim (~/.openclaw/tmp/agent-cli/openclaw) is not the install: record the real binary
+    cs.binary_path = openclaw_host.resolve_openclaw_bin() if detected and openclaw_host.is_openclaw_shim(detected) \
+        else detected
     cs.config_root = str(CONFIG_ROOT)
 
     path = config_path()
@@ -1484,15 +1487,20 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
                                      run_changes=run_changes)
     plugin_changed = _configure_orchestrator_plugin(ctx, s, doc if dry_run else read_config(path), path, ak_path,
                                                     dry_run=dry_run, run_changes=run_changes)
+    # The role agents exist only now: scope their stdio MCP servers in the same run (a second run is a no-op).
+    scope_changed = mcp.scope_agents(s, doc if dry_run else read_config(path), _lanes_apply,
+                                     include=mcp.include_list(s), dry_run=dry_run)
     drift_changed = _configure_agy_drift(s, doc if dry_run else read_config(path), dry_run=dry_run,
                                          run_changes=run_changes)
     worker_changed = _configure_worker_runtime(s, doc if dry_run else read_config(path), dry_run=dry_run,
                                                run_changes=run_changes)
     changed = (engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
                or lanes_changed or roles_changed or drift_changed or worker_changed or skills_changed
-               or plugin_changed)
+               or plugin_changed or scope_changed)
     if not dry_run and run_changes:
         host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
+    # After every writer: one drained restart clears a stale plugin and an MCP-child overflow together (R5/R7).
+    _reconcile_gateway(s, ak_path, dry_run=dry_run)
     # The kit block in every agent workspace does not depend on the engine, on the host section's
     # answers or on openclaw.json having changed: it is refreshed on every run (B1, v1.9.7).
     # Re-read: the kit-role agents added above are not in the snapshot taken before the writers ran, and a block
@@ -2007,11 +2015,11 @@ def plugin_is_stale(plugin_dir: str, runner=None) -> bool:
 
 
 def stale_reason(plugin_dir: str, runner=None) -> str | None:
-    """Which rule says the gateway runs older plugin code than the kit has on disk: "path", "time",
-    or None when neither does. The two need different words for the operator: on "time" the paths
+    """Which rule says the gateway runs older plugin code than the kit has on disk: "path", "version", "time",
+    or None when none does. The two need different words for the operator: on "time" the paths
     are identical, so a message about an older directory sends them comparing equal strings.
 
-    Two rules, either one is enough:
+    Three rules, either one is enough (the third, "version", is described at its check):
 
       * PATH: the runtime root is not the expected plugin dir. `brew upgrade` moves the kit into
         a new Cellar directory, so a gateway holding the old versioned path answers `Unknown CLI
@@ -2032,7 +2040,8 @@ def stale_reason(plugin_dir: str, runner=None) -> str | None:
     so a developer running setup from a checkout gets a restart (behind the busy guard) after
     such a change. `brew pin` also trips it; see `_installed_at`.
     """
-    root = (plugin_runtime().get("rootDir") or "").strip()
+    runtime = plugin_runtime()
+    root = (runtime.get("rootDir") or "").strip()
     if not root:
         return None
     try:
@@ -2041,6 +2050,12 @@ def stale_reason(plugin_dir: str, runner=None) -> str | None:
     except OSError:
         if root != plugin_dir:
             return "path"
+    # VERSION: the gateway loaded 1.1.0 and the disk has another. The paths are equal through the opt/ link, and
+    # the time rule needs a readable start time; the version the gateway reports needs neither (R5).
+    running = str(runtime.get("packageVersion") or runtime.get("version") or "").strip()
+    on_disk = plugin_version(str(Path(plugin_dir).parents[1])) if running else ""
+    if running and on_disk and running != on_disk:
+        return "version"
     # An explicit runner is the caller's fake (verify threads its own): it must never reach the live unit.
     started = openclaw_host.gateway_started_at(runner) if runner else _gateway_started_at()
     if started is None:
@@ -2225,6 +2240,137 @@ def _record_deferred_restart(s: state.SetupState, deferred: RestartDeferred) -> 
              "gateway still runs the old plugin and the agy-cli backend is not registered. "
              f"Finish with `{RESTART_COMMAND}` once the turns have ended; "
              "`ai-resources openclaw status` shows this until it is done.")
+
+
+def _reconcile_gateway(s: state.SetupState, ak_path: str, *, dry_run: bool) -> None:
+    """The gateway restarts when it runs older plugin code than the disk or carries an MCP-child overflow.
+
+    ONE drained window (`openclaw_reconcile.reconcile`): the restart lock, `watchdog.off` on every exit path
+    (SIGTERM and SIGINT included), the busy probe and the T29 refusal are `drained_window`'s. A refusal is
+    recorded as pending, loudly, and the next run resumes; a clean gateway makes this a no-op (idempotent).
+    After a restart the live checks are printed, so "setup finished" is never claimed from the config alone."""
+    o = s.openclaw
+    if not (o.host or o.plugin_linked or o.antigravity_applied):
+        return
+    stable = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
+    outcome = openclaw_reconcile.reconcile(openclaw_host.default_runner, plugin_dir=stable, stale_reason=stale_reason,
+                                           dry_run=dry_run, out=ui.info)
+    if not outcome.reasons:
+        return
+    if dry_run:
+        return
+    if outcome.deferred or outcome.code:
+        o.gateway_restart_pending = {
+            "reason": "; ".join(r.text for r in outcome.reasons), "command": openclaw_reconcile.RECONCILE_COMMAND,
+            "main_pid": _gateway_main_pid(), "since": datetime.now(timezone.utc).isoformat()}
+        ui.error("OpenClaw setup is NOT complete: the gateway restart was "
+                 + ("deferred" if outcome.deferred else f"not completed (exit {outcome.code})")
+                 + f". Finish with `{openclaw_reconcile.RECONCILE_COMMAND}`; `ai-resources openclaw status` shows "
+                   "this until it is done.")
+        return
+    o.gateway_restart_pending = {}
+    version = plugin_version(ak_path)
+    if version:
+        o.plugin_version_seen = version
+    o.host_restart_pending = [e for e in o.host_restart_pending if e.get("op") != "plugin"]
+    ui.ok("OpenClaw gateway restarted in a drained window.")
+    for f in live_findings(s, ak_path):
+        (ui.ok if f.level == "ok" else ui.warn if f.level == "warn" else ui.error)(f.message)
+
+
+def hardening_dry_run_lines(s: state.SetupState, ak_path: str) -> list[str]:
+    """What a real run would do about the hooks, the off-box credential, MemoryHigh and the gateway restart, in words.
+    Reads only (a file, `systemctl show`, `openclaw plugins inspect`); a clean host returns []."""
+    o = s.openclaw
+    lines: list[str] = []
+    claude_installed = (s.cockpits.get("claude") or state.CockpitState()).installed
+    if claude_installed:
+        missing = openclaw_reconcile.hooks_missing(ak_path, team=bool(o.host_narration) and o.host,
+                                                   guard=bool(o.host_guard) and o.host)
+        lines += [f"~/.claude/settings.json: would register hook {m.replace(':', ' -> ')}" for m in missing]
+    if o.host:
+        env = openclaw_host.read_host_env()
+        if env.get("OPENCLAW_OFFBOX_BUCKET"):
+            sa = env.get("OPENCLAW_OFFBOX_IMPERSONATE_SA") or openclaw_host.OFFBOX_SA_DEFAULT
+            outcome, target = openclaw_host.offbox_wif_cred(sa, dry_run=True)
+            if outcome == "written":
+                lines.append(f"off-box uploader: would write {target} (0600, federated as {sa}) and start "
+                             f"{openclaw_host.OFFBOX_UPLOADER_UNIT}")
+        lines.append(f"gateway MemoryHigh: {openclaw_host.wanted_memory_high(env)} "
+                     f"(room for {openclaw_host.lane_headroom(openclaw_host.wanted_memory_high(env))} lane runs)")
+    stable = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
+    lines += openclaw_reconcile.reconcile(openclaw_host.default_runner, plugin_dir=stable,
+                                          stale_reason=stale_reason, dry_run=True).lines
+    return lines
+
+
+def live_findings(s: state.SetupState, ak_path: str, runner=None) -> list:
+    """What `ai-resources verify --live` and the end of a restart check against the RUNNING system, not the files:
+    the gateway answers `openclaw health`; the plugin it runs is the one on disk (same version, not stale); the
+    kit's hooks are registered; the lane agents exist and their backend is loaded; the MCP children are under the
+    threshold; the off-box credential file exists with mode 0600. Read-only."""
+    from ...verify import Finding as F
+    o = s.openclaw
+    out: list = []
+    who = ID
+    oc = (lambda argv, **kw: runner([*argv], **kw)) if runner else None
+    rc, _ = (oc(["openclaw", "health"], timeout=45) if oc else _openclaw(["health"], timeout=45))
+    out.append(F("ok", who, "live: the gateway answers `openclaw health`") if rc == 0 else
+               F("error", who, "live: the gateway does not answer `openclaw health`",
+                 "`ai-resources openclaw doctor` (drain, fix, start, health)"))
+    stable = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
+    plugin = plugin_runtime()
+    disk = plugin_version(ak_path)
+    if plugin.get("status") != "loaded":
+        out.append(F("error", who, f"live: the kit plugin is {plugin.get('status') or 'unreadable'} in the gateway",
+                     f"`{openclaw_reconcile.RECONCILE_COMMAND}`"))
+    else:
+        running = str(plugin.get("packageVersion") or plugin.get("version") or "")
+        why = stale_reason(stable, runner)
+        if why or (disk and running and running != disk):
+            out.append(F("error", who, f"live: the gateway runs kit plugin {running or '?'} but the disk has {disk or '?'}"
+                         + (f" ({why} rule)" if why else ""), f"`{openclaw_reconcile.RECONCILE_COMMAND}`"))
+        else:
+            out.append(F("ok", who, f"live: the gateway runs the kit plugin {running or disk} that is on disk"))
+    team, guard = bool(o.host_narration), bool(o.host_guard)
+    missing = openclaw_reconcile.hooks_missing(ak_path, team=team and o.host_hooks_applied,
+                                               guard=guard and o.host_hooks_applied)
+    out.append(F("ok", who, "live: every kit hook is registered in ~/.claude/settings.json") if not missing else
+               F("error", who, "live: hooks missing from ~/.claude/settings.json: " + ", ".join(missing),
+                 "re-run `ai-resources setup`"))
+    if state.lanes_enabled(s):
+        lanes = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
+        doc = read_config(config_path())
+        have = set(((doc.get("agents") or {}).get("entries") or {}))
+        ids = openclaw_lanes.kit_agent_ids(lanes, doc=doc)
+        gone = [a for a in ids if a not in have]
+        agy = [a for a in ids if (lanes.get("agents") or {}).get(a, {}).get("backend") == openclaw_lanes.AGY_BACKEND]
+        if gone:
+            out.append(F("error", who, "live: lane agents missing from the gateway config: " + ", ".join(gone),
+                         "re-run `ai-resources setup --lanes`"))
+        elif agy and not backend_registered("agy-cli-lane"):
+            out.append(F("error", who, "live: the agy lane backend is not loaded by the gateway",
+                         f"`{openclaw_reconcile.RECONCILE_COMMAND}`"))
+        else:
+            out.append(F("ok", who, f"live: {len(ids)} lane agent(s) present and their backend is loaded"))
+    counts = openclaw_reconcile.gateway_mcp_children(runner or openclaw_host.default_runner)
+    if counts is not None and openclaw_reconcile.mcp_overflow(counts):
+        out.append(F("warn", who, f"live: {sum(counts.values())} MCP server children under the gateway "
+                     f"(threshold {openclaw_reconcile.MCP_CHILD_WARN})", f"`{openclaw_reconcile.RECONCILE_COMMAND}`"))
+    elif counts is not None:
+        out.append(F("ok", who, f"live: {sum(counts.values())} MCP server children under the gateway"))
+    env = openclaw_host.read_host_env()
+    cred = env.get("OPENCLAW_OFFBOX_CRED_FILE")
+    if env.get("OPENCLAW_OFFBOX_BUCKET") and cred:
+        try:
+            mode = os.stat(cred).st_mode & 0o777
+            out.append(F("ok", who, "live: the off-box credential file exists (0600)") if mode == 0o600 else
+                       F("error", who, f"live: the off-box credential file has mode {mode:o}, not 600",
+                         "re-run `ai-resources setup`"))
+        except OSError:
+            out.append(F("error", who, "live: the off-box credential file named by OPENCLAW_OFFBOX_CRED_FILE is "
+                         "missing", "re-run `ai-resources setup` (it regenerates it from the host's federation)"))
+    return out
 
 
 def pending_restart_findings(o: state.OpenClawState, main_pid=None) -> list:
@@ -2543,7 +2689,7 @@ def _teardown_mcp(s: state.SetupState) -> bool:
     ok = mcp.teardown(s, servers, _openclaw) if s.openclaw.mcp_mirrored else True
     ok = (mcp.teardown_shared(s, servers, _openclaw) if s.openclaw.mcp_shared else True) and ok
     if ok and s.openclaw.mcp_deny_added:
-        mcp.scope_agents(s, doc, _lanes_apply, include=[])     # nothing is mirrored now: the recorded tokens come out
+        mcp.scope_agents(s, doc, _lanes_apply, include=[], roles=False)     # nothing is mirrored now: the recorded tokens come out
     return ok
 
 

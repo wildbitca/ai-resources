@@ -96,6 +96,20 @@ def lanes_findings(s: state.SetupState) -> list[Finding]:
     return out
 
 
+def live_findings(s: state.SetupState) -> list[Finding]:
+    """`verify --live`: the RUNNING system against what setup claims (gateway health, the plugin the gateway runs,
+    hooks, lane agents, MCP children, the off-box credential). Needs OpenClaw; one `error` finding when its check
+    cannot run. Read-only, but it asks the live gateway, so it is opt-in and slower than the file checks."""
+    if not ((s.cockpits.get("openclaw") and s.cockpits["openclaw"].installed) or s.openclaw.host):
+        return [Finding("ok", "live", "no OpenClaw on this machine; the live checks were skipped")]
+    try:
+        from .openclaw_host import kit_root
+        from .setup.cockpits import openclaw as cockpit
+        return cockpit.live_findings(s, str(kit_root()))
+    except Exception as e:  # noqa: BLE001 - the live probe must not take verify down
+        return [Finding("error", "live", f"the live checks failed to run: {type(e).__name__}: {e}")]
+
+
 def _instruction_file(mod: Any) -> Path | None:
     for attr in _INSTRUCTION_ATTRS:
         value = getattr(mod, attr, None)
@@ -212,6 +226,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if not args.cockpit and state.lanes_enabled(s):
         ids.append("lanes")
     findings = run_all(s, ids)
+    if getattr(args, "live", False):
+        findings += live_findings(s)
     if args.json:
         for f in ordered(findings):
             print(json.dumps(asdict(f), ensure_ascii=False))
@@ -234,4 +250,7 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
     p.add_argument("--json", action="store_true", help="One JSON object per finding (level, cockpit, message, remedy)")
     p.add_argument("--cockpit", action="append", default=[], metavar="ID",
                    help="Check only this cockpit (repeatable); default: every configured one")
+    p.add_argument("--live", action="store_true",
+                   help="Also check the running system: gateway health, the plugin it runs against the disk, hooks, "
+                        "lane agents, MCP children, the off-box credential")
     p.set_defaults(func=cmd_verify)

@@ -25,6 +25,12 @@ Environment=PATH=/usr/bin:/bin
 MEMORY_12G = str(12 * 1024 ** 3)
 
 
+@pytest.fixture(autouse=True)
+def _sixteen_gib_host(monkeypatch):
+    """The recommended MemoryHigh follows the host's RAM; these tests pin the 12G a 16 GiB host gets."""
+    monkeypatch.setattr(host, "host_mem_total_bytes", lambda *a, **k: 16 * 1024 ** 3)
+
+
 class HostSim:
     """A host that is fully correct until a test breaks one thing."""
 

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -471,7 +471,3 @@ def read_journal_signals(runner: Runner, unit: str = UNIT) -> dict:
     if rc != 0:
         return {"available": False, "tls_hosts": [], "completions": 0, "close_failed": 0}
     return {"available": True, **parse_journal_signals((out or "")[:JOURNAL_SIGNAL_BYTES])}
-
-
-def utc_iso(epoch: float) -> str:
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

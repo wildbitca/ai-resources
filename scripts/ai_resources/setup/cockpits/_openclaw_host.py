@@ -96,20 +96,6 @@ def _values(o: state.OpenClawState) -> dict[str, str]:
 
 # --- the questions ----------------------------------------------------------------------------------------
 
-def apply_defaults(s: state.SetupState, doc: dict | None = None) -> None:
-    """Apply recommended host defaults without interrogating the operator."""
-    o = s.openclaw
-    env = host.read_host_env()
-    o.host_operator_id = (o.host_operator_id or env.get("OPENCLAW_OWNER_TELEGRAM_ID", "")).strip()
-    o.host_backup_dir = (o.host_backup_dir or env.get("OPENCLAW_BACKUP_DIR", "/srv/openclaw-backups")).strip()
-    o.host_domain = (o.host_domain or env.get("OPENCLAW_PUBLIC_DOMAIN", "")).strip()
-    o.host_pod_cidr = (o.host_pod_cidr or env.get("OPENCLAW_POD_CIDR", "")).strip()
-    o.host_graceful_restart = o.host_graceful_restart or env.get("OPENCLAW_GRACEFUL_RESTART") or "on"
-    o.host_resource_guards = o.host_resource_guards or env.get("OPENCLAW_RESOURCE_GUARDS") or "on"
-    if not o.host_narration and env.get("OPENCLAW_NARRATION"):
-        o.host_narration = env["OPENCLAW_NARRATION"]
-
-
 def is_telegram_active(s: state.SetupState | state.OpenClawState, doc: dict | None = None) -> bool:
     """Whether Telegram is active: either selected in channels step, or enabled in config."""
     o = s.openclaw if hasattr(s, "openclaw") else s
@@ -380,7 +366,18 @@ def _configure_offbox_wif(o: state.OpenClawState, *, dry_run: bool) -> bool:
     if outcome == "written" or current.get("OPENCLAW_OFFBOX_CRED_FILE") != mine:
         ui.ok(f"Off-box uploader: federated credential as {sa} ({mine}); the host's principal needs "
               "roles/iam.workloadIdentityUser on it (an infra step)")
+    _validate_offbox_uploader(outcome == "written")
     return True
+
+
+def _validate_offbox_uploader(cred_changed: bool) -> None:
+    """Run the uploader once when its credential just changed or its last run failed, and say what it reported."""
+    state = host.offbox_uploader_state(Path.home(), host.read_host_env(), time.time())
+    if not (cred_changed or (state.get("reported") and state.get("outcome") != "ok")):
+        return
+    status, detail = host.offbox_uploader_run(_runner())
+    (ui.ok if status == "ok" else ui.warn if status in ("pending", "absent") else ui.error)(
+        f"Off-box uploader: {detail}")
 
 
 def _configure_offbox_identity(o: state.OpenClawState, *, dry_run: bool) -> None:
@@ -2089,7 +2086,7 @@ def _resource_findings(o: state.OpenClawState, runner, report: dict) -> list:
                      env=host.systemd_env())
     live = cur.strip()
     if rc == 0 and live:
-        want = host._bytes("12G")
+        want = host._bytes(host.wanted_memory_high())
         if live.isdigit() and int(live) != want:
             out.append(Finding("warn", who, f"MemoryHigh is {int(live) / 1024 ** 3:.1f} GiB, not setup's "
                                             f"{want / 1024 ** 3:.0f} GiB",
