@@ -55,7 +55,7 @@ A pure module (`scoring/lanes.py`) runs after the model choice. `compose.py`, `g
 | openclaw-agent on agy, Claude model | agy-claude-gpt | static (no live signal today) |
 | openclaw-agent on agy, Gemini model | agy-gemini | static (no live signal today) |
 
-The agy pools have `routes: []`; `lanes.py` maps them directly and the dataset is not changed. Lanes are peers: no permanent role ban on any lane; a role is ineligible only where a mechanism is missing. Headroom and evidence decide placement (least projected pressure, ties by candidate order then id); the profile's table is the default. The claude-cli and agy lanes get the same handoff contract, the same `ai-resources lanes` commands, the same worktree and scope rules and the same gates. The off-by-default state on a fresh install is part of the decision: lanes are disabled on a fresh install of the kit, `subscription-claude-55` declares a lane table, and setup enables it for the operator with the one-time account acknowledgement.
+The agy pools have `routes: []`; `lanes.py` maps them directly and the dataset is not changed. Lanes are peers: no permanent role ban on any lane; a role is ineligible only where a mechanism is missing. Headroom and evidence decide placement (least projected pressure, ties by candidate order then id); the profile's table is the default. The claude-cli and agy lanes get the same handoff contract, the same `ai-resources lanes` commands, the same worktree and scope rules and the same gates. ~~The off-by-default state on a fresh install is part of the decision~~ (superseded for the Antigravity lane by ADR-0018; the claude-cli lanes keep it): lanes are disabled on a fresh install of the kit, `subscription-claude-55` declares a lane table, and setup enables it for the operator with the one-time account acknowledgement.
 
 ### 5. Eligibility, contracts and the forbidden list
 
@@ -111,6 +111,8 @@ Operator-run only, with an explicit confirm. A lanes patch builder sits beside t
 ### 11. Antigravity lane
 
 **Status**: Accepted
+
+**Superseded in part by [ADR-0018](0018-routing-matrix-and-pool-balancing.md) (2026-10-27)**: the lane is no longer "opt-in and OFF by default", gates G0-G7 are waived by the operator as admission preconditions, and the recommended setup run turns it on. Still in force: the Google acknowledgement, writers on Claude Code, checker independence, G5 off. Items 1, 2, 4-6 and 9-11 below remain the risk record; items stating "off by default", "closed until its gates are proven" and "Status ... the lane stays closed" (items 12 and the opening paragraphs) are obsolete.
 
 Accepted by the operator (bitgandtter@wildbit.dev) on 2026-10-16, as an explicit decision in the phase 3
 implementation session. The acceptance is necessary and not sufficient: the lane stays opt-in and OFF by default,

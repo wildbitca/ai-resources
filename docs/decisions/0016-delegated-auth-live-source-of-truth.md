@@ -8,6 +8,7 @@ Plan: `.agent-output/planner/setup-round4-delegated-auth-plan.md` (section 9 car
 cockpit as the source of the sign-in) and the D2 provider question (the kit collecting API keys for OpenClaw providers).
 **Constraint, not amended**: [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md). Setup never restarts the live
 gateway, never calls it, and never runs a restart-required change. Tests never run the real `openclaw`, `claude` or `agy`.
+**Amended by [ADR-0018](0018-routing-matrix-and-pool-balancing.md)** (2026-10-27): the recommended run no longer leaves the Google acknowledgement for the operator to sign; it records it under the operator waiver. D1 to D3 (delegated auth, live state) are unchanged.
 **Does not amend**: [ADR-0001](0001-model-pins-and-auto-update.md) (fill-only), gates G0-G7, the gate record file and the ack
 hash algorithm of [ADR-0007](0007-subscription-lanes.md) section 11 and [ADR-0010](0010-setup-five-phases-channels-team.md).
 

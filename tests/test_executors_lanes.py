@@ -302,7 +302,7 @@ def _phase_two_state():
 
 
 def test_a_phase_two_state_rerenders_byte_identical_to_the_post_b1_baseline():
-    # The fixture was rendered by the last phase 2 commit (a513e6b, before any phase 3 change) from this exact
+    # The fixture was rendered from this exact (ADR-0018 regenerated it to add the `routing:` section; the rest is byte-identical to a513e6b)
     # state, digest included. A changed value, nested field or digest drift fails this byte comparison.
     by_role = {"implementer": {"model": "sonnet"}, "tester": {"model": "sonnet"}, "doc-writer": {"model": "sonnet"},
                "planner": {"model": "opus"}, "verifier": {"model": "opus"}}

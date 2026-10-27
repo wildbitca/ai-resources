@@ -180,7 +180,8 @@ def test_a_phase_two_state_renders_the_same_keys_without_gate_or_ack_fields():
              "roles": {"tester": {"candidates": ["openclaw-agent:kit-lane-cli-sonnet55", "claude-code"]}},
              "second": {}}
     doc = lr.render_doc(lanes, BY_ROLE, "single-model", {"anthropic": lr.make_ack("anthropic", ["tester"], "d")})
-    assert list(doc) == ["mode", "agents", "roles", "second", "resolved", "digest"]
+    # ADR-0018: every lanes.yaml carries the routing matrix; the gate and ack fields still appear only when they exist
+    assert list(doc) == ["mode", "agents", "roles", "second", "resolved", "routing", "digest"]
 
 
 # --- version drift (plan 5.7) ---------------------------------------------------------------------------------

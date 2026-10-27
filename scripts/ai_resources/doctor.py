@@ -195,6 +195,19 @@ def _check_billing() -> int:
     return 0
 
 
+def _check_pool_usage() -> int:
+    """Doctor sub-check 4g2 (ADR-0018): usage of the four pools the routing matrix balances. Read-only; a pool with no
+    reading is `unknown`, never zero. A pool at or above 80% is a warning about spend, not a defect (exit code intact)."""
+    try:
+        from . import pool_usage
+        snap = pool_usage.snapshot()
+        for line in pool_usage.lines(snap):
+            (ui.warn if "at or above 80%" in line else ui.detail)(line)
+    except Exception as e:  # noqa: BLE001 - a reader must never break the doctor
+        ui.detail(f"Pool usage skipped ({e.__class__.__name__}).")
+    return 0
+
+
 def _check_poll_share() -> int:
     """Doctor sub-check 4h: the poll-turn cost share of the newest cost snapshot (ADR-0014 D7). Reads a file only."""
     from . import audit, audit_snapshot
@@ -468,6 +481,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     # 4g. Billing mode, quota and the manual credit file; 4h. the poll-turn share of the newest snapshot.
     issues += _check_billing()
+    issues += _check_pool_usage()
     issues += _check_poll_share()
     issues += _check_vendor_pins()
     issues += _check_openclaw_cost(s, args)

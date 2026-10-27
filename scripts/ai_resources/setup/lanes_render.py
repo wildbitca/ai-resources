@@ -20,6 +20,7 @@ from typing import Any, Mapping
 
 from .. import agy_lane_gates, model_pins, roles_policy
 from ..scoring import lanes as scoring_lanes
+from ..scoring import routing as scoring_routing
 from . import state
 
 try:
@@ -81,6 +82,10 @@ def lane_api_fallbacks(agent_id: str, primary: str) -> list[str]:
     return list(LANE_API_FALLBACKS.get(_strip(primary), ()))
 
 
+# ADR-0018: the operator waived gates G0-G7 and the "off by default" state of the Antigravity lane (2026-10-27) and keeps
+# the Google acknowledgement; the recommended run records it for this account.
+OPERATOR_WAIVER_ACCOUNT = "bitgandtter@wildbit.dev"
+WAIVER_REF = "docs/decisions/0018-routing-matrix-and-pool-balancing.md#operator-waiver"
 HELD_FLAG_REASON = "held: --lanes-antigravity is off"
 HELD_NO_ACK_REASON = "held: no valid Google acknowledgement (missing, stale text or no account)"
 HELD_ROLE_REASON = "held: the Google acknowledgement does not list {role}"
@@ -481,6 +486,8 @@ def render_doc(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: str,
                                       "text_sha256": str(google.get("text_sha256") or ""),
                                       "account": str(google.get("account") or "")}}
     payload["resolved"] = resolve_table(lanes, by_role, mode, acks, every)
+    # ADR-0018: the single routing matrix and the balancing policy, machine-readable next to the resolved table.
+    payload["routing"] = scoring_routing.render_section({"routing": lanes.get("routing")} if lanes.get("routing") else None)
     return {**payload, "digest": doc_digest(payload)}
 
 
@@ -758,6 +765,9 @@ def propose(profile_doc: Mapping[str, Any], by_role: Mapping[str, Any], mode: st
     meta = _role_meta(profile_doc, set(frag["roles"]) | set(frag["second"]))
     if meta:
         out["role_meta"] = meta
+    if profile_doc.get("routing"):
+        scoring_routing.merged(profile_doc)      # fail early on a malformed override
+        out["routing"] = profile_doc["routing"]
     if flag:
         out["gates"] = {"antigravity": True}
     if headroom:

@@ -63,4 +63,165 @@ resolved:
       model: anthropic/claude-opus-5-5
       reason: lane agent pinned anthropic/claude-opus-5-5; alias may resolve newer
   blocked: {}
-digest: 46e84abbd6fb9a24c0338e992be48ff4c4661e18fab1f88cd10e88143ff31c3d
+routing:
+  matrix:
+    chat:
+      channel-agents:
+        class: chat
+        primary:
+          cell: anthropic-api:claude-sonnet-5-5
+          pool: anthropic-api
+        secondary:
+          cell: anthropic-api:claude-haiku-5-5
+          pool: anthropic-api
+      explore:
+        class: chat-light
+        primary:
+          cell: gemini-api:gemini-3.8-flash
+          pool: gemini-api
+        secondary:
+          cell: anthropic-api:claude-haiku-5-5
+          pool: anthropic-api
+      heartbeat:
+        class: chat-light
+        primary:
+          cell: anthropic-api:claude-haiku-5-5
+          pool: anthropic-api
+        secondary:
+          cell: gemini-api:gemini-3.8-flash
+          pool: gemini-api
+        gated: Gemini tool-calling through OpenClaw is unproven; heartbeat stays on
+          Haiku
+      main:
+        class: chat
+        primary:
+          cell: anthropic-api:claude-sonnet-5-5
+          pool: anthropic-api
+        secondary:
+          cell: anthropic-api:claude-haiku-5-5
+          pool: anthropic-api
+      summarization:
+        class: chat-light
+        primary:
+          cell: gemini-api:gemini-3.8-flash
+          pool: gemini-api
+        secondary:
+          cell: anthropic-api:claude-haiku-5-5
+          pool: anthropic-api
+      utility:
+        class: chat-light
+        primary:
+          cell: gemini-api:gemini-3.8-flash
+          pool: gemini-api
+        secondary:
+          cell: anthropic-api:claude-haiku-5-5
+          pool: anthropic-api
+    team:
+      code-reviewer:
+        class: team-read
+        primary:
+          cell: agy:gemini-4-argon-high
+          pool: agy-gemini
+        secondary:
+          cell: claude-code:sonnet
+          pool: claude-subscription
+      doc-writer:
+        class: team-write
+        primary:
+          cell: claude-code:haiku
+          pool: claude-subscription
+        secondary:
+          cell: claude-cli:haiku
+          pool: claude-subscription
+      explore:
+        class: team-read
+        primary:
+          cell: agy:gemini-3.8-flash-high
+          pool: agy-gemini
+        secondary:
+          cell: claude-cli:haiku
+          pool: claude-subscription
+      generalPurpose:
+        class: team-write
+        primary:
+          cell: claude-code:sonnet
+          pool: claude-subscription
+        secondary:
+          cell: claude-cli:sonnet
+          pool: claude-subscription
+      implementer:
+        class: team-write
+        primary:
+          cell: claude-code:sonnet
+          pool: claude-subscription
+        secondary:
+          cell: claude-cli:sonnet
+          pool: claude-subscription
+      package-upgrade:
+        class: team-write
+        primary:
+          cell: claude-code:haiku
+          pool: claude-subscription
+        secondary:
+          cell: claude-cli:haiku
+          pool: claude-subscription
+      planner:
+        class: team-plan
+        primary:
+          cell: claude-code:sonnet
+          pool: claude-subscription
+        secondary:
+          cell: agy:gemini-4-argon-high
+          pool: agy-gemini
+      security-auditor:
+        class: team-check
+        primary:
+          cell: claude-code:opus
+          pool: claude-subscription
+        secondary:
+          cell: agy:claude-opus-5-5
+          pool: agy-claude-gpt
+      software-architect:
+        class: team-plan
+        primary:
+          cell: claude-code:sonnet
+          pool: claude-subscription
+        secondary:
+          cell: agy:gemini-4-argon-high
+          pool: agy-gemini
+      tester:
+        class: team-write
+        primary:
+          cell: claude-code:haiku
+          pool: claude-subscription
+        secondary:
+          cell: claude-cli:haiku
+          pool: claude-subscription
+      verifier:
+        class: team-check
+        primary:
+          cell: claude-code:opus
+          pool: claude-subscription
+        secondary:
+          cell: agy:claude-opus-5-5
+          pool: agy-claude-gpt
+  balancing:
+    spill_at: 0.85
+    classes:
+      chat:
+      - anthropic-api
+      chat-light:
+      - gemini-api
+      - anthropic-api
+      team-check:
+      - claude-subscription
+      - agy-claude-gpt
+      team-plan:
+      - claude-subscription
+      - agy-gemini
+      team-read:
+      - agy-gemini
+      - claude-subscription
+      team-write:
+      - claude-subscription
+digest: e98439e7bdbd27144b9f1c4af544bb4943d6380a99091d0ad5ed233789a641ce

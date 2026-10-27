@@ -5,6 +5,7 @@ import argparse
 import copy
 import os
 import platform
+import shutil
 import sys
 import time
 import types
@@ -2425,11 +2426,15 @@ def agy_terms_check(s: state.SetupState, roles: list[str], interactive: bool = T
         # why, once per run, and never re-sign it for the operator.
         ui.info("The Google terms text changed since you acknowledged it (it now states the Antigravity terms conflict "
                 "with third-party tools): re-confirm it. The old acknowledgement admits nothing.")
-    if interactive and ui.is_auto() and (not have or not listed):
-        # an acknowledgement is the operator's own signature: the recommended run never signs it for them
-        ui.info("Antigravity: the Google acknowledgement is yours to sign, so it stays off this run. Sign it with "
-                "`ai-resources setup --lanes --lanes-antigravity` (choose \"Ask me every question\").")
-        return False, acks, 0
+    if ui.is_auto() and (not have or (set(roles) - listed)):
+        # ADR-0018: the operator waived the Antigravity gates G0-G7 and asked for the lane on by default; the recommended
+        # run records the Google acknowledgement for the account on file (or the operator's own) and says so.
+        account = _ack_account(have, acks) or lanes_render.OPERATOR_WAIVER_ACCOUNT
+        acks["google"] = lanes_render.make_ack("google", sorted(listed | set(roles)),
+                                               datetime.now(timezone.utc).isoformat(), account=account)
+        ui.info(f"Antigravity: acknowledgement recorded for {account} under the operator waiver "
+                f"({lanes_render.WAIVER_REF}).")
+        return True, acks, 0
     if not interactive:
         if not have or not listed:
             ui.error(f"{flag}: no stored valid Google acknowledgement lists a role (hash of the "
@@ -2518,6 +2523,16 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         want = True
     elif agy_team:
         ui.info("DRY RUN: the Antigravity terms check is not shown in a dry run; nothing is enabled.")
+    elif (ui.is_auto() and not (agy_on or agy_off or unwant or preview or dry_run) and s.cli_team
+          and shutil.which("agy")):
+        # ADR-0018: under the recommended run the Antigravity lane is on by default when agy is installed. The Claude
+        # parallel runs stay as they were: kept when an Anthropic acknowledgement is on file, not enabled otherwise.
+        prev_lanes = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
+        claude_lanes = (any((a or {}).get("backend") == "claude-cli" for a in (prev_lanes.get("agents") or {}).values())
+                        and "anthropic" in lanes_render.valid_acks(s.profile.lane_acks))
+        agy_on = True
+        team_only = not (want or claude_lanes)
+        want = True
     if (s.cli_team and _PARALLEL_RUNS and not (want or unwant or preview or agy_off)
             and not ui.is_non_interactive()):
         # Review > More options > Parallel runs: the operator asked for the Claude parallel runs in this run.
