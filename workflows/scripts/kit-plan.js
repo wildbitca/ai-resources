@@ -53,12 +53,14 @@ const scoreCard = scores => {
 }
 // The one place that turns a classifier answer (or the plan's Sizing block) into a size:
 // valid scores decide; scores given but invalid mean full, even beside a bare mode; with no scores at all a bare mode
-// from SIZES is honoured; no answer (a failed classifier) or an unusable mode means light.
+// in any spelling of SCORECARD.size_flags is honoured (the legacy `lite` means inline here exactly as in the Python
+// scorecard and the --lite flag); no answer (a failed classifier) or an unusable mode means light.
 const resolveSize = answer => {
   const scorecard = answer ? scoreCard(answer.scores) : null
   if (scorecard) return { scorecard, size: scorecard.size }
   if (answer && answer.scores != null) return { scorecard: null, size: 'full' }
-  return { scorecard: null, size: answer && SIZES.includes(answer.mode) ? answer.mode : 'light' }
+  const bare = answer && Object.hasOwn(SCORECARD.size_flags, answer.mode) ? SCORECARD.size_flags[answer.mode] : null
+  return { scorecard: null, size: bare || 'light' }
 }
 // A bump (a named risk item) or an escalation moves the card to a new size and records why: `mode`, `size`, `roster`
 // and `tiers` describe what actually runs, `scored_mode` what the scores said.
