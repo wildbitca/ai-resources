@@ -17,6 +17,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import signal
 import subprocess
 import sys
 import time
@@ -345,14 +346,17 @@ def test_parent_alive_tells_alive_dead_and_unknown_apart(watch_mod, tmp_path):
     assert watch_mod.parent_alive(0) is None
     assert watch_mod.parent_alive(_dead_pid()) is False
     assert watch_mod.parent_alive(os.getpid()) is False, "a live process that is not claude is not the parent"
+    # A script named claude, not a symlink to the interpreter: the host-binary guard resolves symlinks, and the
+    # interpreter lives outside the test's own roots. The kernel names the process after the script ("claude").
     claude = tmp_path / "claude"
-    claude.symlink_to(sys.executable)
-    proc = _REAL_POPEN([str(claude), "-c", "import time; time.sleep(60)"])
+    claude.write_text("#!/bin/sh\nsleep 60\n", encoding="utf-8")
+    claude.chmod(0o755)
+    proc = _REAL_POPEN([str(claude)], start_new_session=True)
     try:
         time.sleep(0.3)
         assert watch_mod.parent_alive(proc.pid) is True
     finally:
-        proc.kill()
+        os.killpg(proc.pid, signal.SIGKILL)
         proc.wait()
 
 

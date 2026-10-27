@@ -126,10 +126,20 @@ def test_a_timeout_kills_the_whole_process_group_and_returns_promptly(tmp_path):
     assert rc == 124 and _time.monotonic() - start < 15
     pid = int(pidfile.read_text())
     deadline = _time.monotonic() + 5
-    while _time.monotonic() < deadline:
+    def _running(p):
+        # A killed process stays a zombie until its parent reaps it; under a subreaper that is not init (an agent
+        # sandbox, a gateway cgroup) that can take long, and it is dead all the same.
         try:
-            _os.kill(pid, 0)
+            _os.kill(p, 0)
         except ProcessLookupError:
+            return False
+        try:
+            return pathlib.Path(f"/proc/{p}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+        except FileNotFoundError:
+            return pathlib.Path("/proc/self/stat").exists() is False    # no procfs: kill(0) alone decides
+
+    while _time.monotonic() < deadline:
+        if not _running(pid):
             break
         _time.sleep(0.1)
     else:

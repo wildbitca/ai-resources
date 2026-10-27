@@ -348,6 +348,17 @@ def _agy_not_installed_by_default(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _not_an_openclaw_spawned_session(monkeypatch):
+    """Whether the suite itself runs inside an OpenClaw session must not decide its outcome.
+
+    `hygiene.is_headless` treats OPENCLAW_CLI=1 (set for every process an OpenClaw agent spawns) as "nothing can
+    answer a prompt", so setup skipped its interactive steps and the scripted-wizard tests failed there. A test
+    that wants the headless path sets the variable (or patches `is_headless`) itself.
+    """
+    monkeypatch.delenv("OPENCLAW_CLI", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_assume_yes():
     """`wizard.run` stores `--yes` in ui._ASSUME_YES (and a test may set it directly): no test may leak it to the next."""
     yield
