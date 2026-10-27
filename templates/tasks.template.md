@@ -24,7 +24,7 @@ Each task names the spec ids it covers. Hand work off by these ids and this file
 - [ ] **T1** (covers S1) <what to change, files> - commit: <sha when done>
 
 ## Log
-- L1 <date>: original request link and any change of scope, one line each. A change rewrites only the affected `S#`.
+- L1 <date>: original request link and any change of scope, one line each. The log is append-only and an existing `S#` is never edited: a change of scope appends one `L#` line and, when a criterion changes, a new `S#` that says `supersedes S3`. `ai-resources ledger-check <this file>` enforces both against the committed version.
 
 ## Sizing (actual, filled at close)
 - lines: +0/-0=0 | spawns: 0 | commits: 0 | reclassified: no

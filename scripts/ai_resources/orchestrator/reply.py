@@ -17,7 +17,7 @@ KEYS = ("blocked", "return_to_step", "block_reason", "verdict", "status", "plan_
         "architect_approval", "architecture_design_ref", "test_report", "code_review_verdict", "security_audit",
         "requires_tests", "security_critical_feature", "next", "changes_made",
         # optional by-reference keys (all absent in a plain run)
-        "spec_ref", "task_ids", "spec_ids", "class", "route")
+        "spec_ref", "task_ids", "spec_ids", "class", "route", "covered")
 
 # What a verdict word means to the engine.
 BLOCKING_VERDICTS = frozenset({"FAIL", "FAILED", "REQUIRES_CHANGES", "REQUEST_CHANGES", "CHANGES_REQUESTED", "BLOCK",

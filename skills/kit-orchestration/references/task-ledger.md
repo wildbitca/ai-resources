@@ -5,8 +5,8 @@ Read this only for `light` and `full` work that creates `specs/features/<feature
 ## Lifecycle (temporal)
 
 1. **Create** when the size is `light` or `full`: Sizing block, `## Specs` (`S#`, English, each with a short `source:` link), `## Tasks` (`T#` naming the `S#` it covers), `## Log` (`L1` = link to the original request). A repository without `specs/` keeps only the plan under `.agent-output/`.
-2. **Work by reference:** pass the file path, the `T#` and the `S#`; the worker reads until `## Log` and reports the ids it covered. Record the commit id on each `T#` when it lands.
-3. **Change of scope:** append one `L#` line and rewrite only the affected `S#`.
+2. **Work by reference:** pass the file path, the `T#` and the `S#`; the worker reads until `## Log` and reports the ids it covered; `Covered:` may name only ids that were handed out (`ai-resources covered-check --handed T2,S3 --covered S3 [--ledger tasks.md]`, the orchestrator engine and the SubagentStop hook apply it; nothing handed out, nothing checked). Record the commit id on each `T#` when it lands.
+3. **Change of scope:** append one `L#` line; never edit an existing `S#` or an earlier `L#` (the ids are literal text that workers were handed). When a criterion changes, add a new `S#` that says `supersedes S3` and let new tasks cover it. `ai-resources ledger-check tasks.md` fails when the `## Log` is not an append-only continuation of the committed one or an `S#` was rewritten or removed.
 4. **Close:** run `knowledge-audit`: accepted criteria that became `RULE-*`/`TS-*`, decisions and rejected options go to the spec or `specs/knowledge/decisions/`; fill `## Sizing (actual)`; then delete `tasks.md`. A ledger that survives its change is an orphan.
 
 ## Engram mirror (best effort, file first)

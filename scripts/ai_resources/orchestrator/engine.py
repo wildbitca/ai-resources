@@ -24,7 +24,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 import yaml
 
-from .. import domains, repo_root, roles_policy
+from .. import domains, ledger, repo_root, roles_policy
 from ..setup.cockpits import openclaw_roles
 from . import limits, reply as reply_mod, untrusted, worktree as worktree_mod
 from .state import RunStore, StateError, new_run_id
@@ -459,6 +459,10 @@ class Engine:
             return {"ok": False, "result": "rejected", "target": step.id, "reply": rep,
                     "reason": f"only the verifier signs a run off; {step.role} replied "
                               f"{sorted(rep.words() & reply_mod.SIGNOFF_WORDS)[0]}"}
+        handed = ledger.handed_ids((run.get("handoff") or {}).get("task_ids"), (run.get("handoff") or {}).get("spec_ids"))
+        stray = ledger.covered_problems(rep.get("covered"), handed) if rep.get("covered") else []
+        if stray:
+            return {"ok": False, "result": "rejected", "target": step.id, "reply": rep, "reason": stray[0]}
         if step.role == VERIFIER_ROLE:
             problem = self._verifier_problem(run, step, st, rep)
             if problem:

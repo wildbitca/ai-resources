@@ -73,6 +73,22 @@ def _last_assistant_text(transcript: str | None) -> str | None:
     return None
 
 
+def _covered_check(prompt: str | None, message: str) -> int:
+    """`Covered:` may name only the T#/S#/RULE-/TS- ids the prompt handed out; no ids handed or no Covered means no check."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    try:
+        from ai_resources import ledger
+    except ImportError:
+        return 0
+    covered = ledger.covered_value(message)
+    handed = ledger.ids_in(prompt or "")
+    stray = ledger.covered_problems(covered, handed) if covered and handed else []
+    if not stray:
+        return 0
+    sys.stderr.write(f"{stray[0]}. Correct the `Covered:` line to the ids you were given ({', '.join(sorted(handed)[:12])}).\n")
+    return 2
+
+
 def main() -> int:
     try:
         data = json.load(sys.stdin)
@@ -107,7 +123,7 @@ def main() -> int:
 
     missing = [h for h in REQUIRED_HEADINGS if h not in message]
     if not missing:
-        return 0
+        return _covered_check(prompt, message)
     sys.stderr.write(
         f"Before stopping, end your final message with the kit return block (missing: {', '.join(missing)}):\n"
         "## Result (Status, Executive summary, Summary, Handoff)\n"

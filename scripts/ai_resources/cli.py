@@ -92,6 +92,16 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
     return plan_sizing.main(list(args.files))
 
 
+def cmd_ledger_check(args: argparse.Namespace) -> int:
+    from . import ledger
+    return ledger.check_main([args.file, *(["--against", args.against] if args.against else [])])
+
+
+def cmd_covered_check(args: argparse.Namespace) -> int:
+    from . import ledger
+    return ledger.covered_main(["--handed", args.handed, "--covered", args.covered, *(["--ledger", args.ledger] if args.ledger else [])])
+
+
 def cmd_scorecard(args: argparse.Namespace) -> int:
     from . import scorecard
     return scorecard.main(list(args.args))
@@ -128,6 +138,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_pc = sub.add_parser("plan-check", help="Check the Sizing block of a plan or tasks.md")
     p_pc.add_argument("files", nargs="+", help="plan or tasks.md files")
     p_pc.set_defaults(func=cmd_plan_check)
+
+    # ledger-check / covered-check
+    p_lc = sub.add_parser("ledger-check", help="Check that tasks.md keeps its Log append-only and its S# text literal")
+    p_lc.add_argument("file", help="tasks.md")
+    p_lc.add_argument("--against", help="earlier version to compare with (default: the committed one)")
+    p_lc.set_defaults(func=cmd_ledger_check)
+    p_cc = sub.add_parser("covered-check", help="Check that a worker's Covered ids were handed to it")
+    p_cc.add_argument("--handed", required=True, help="ids handed to the worker, e.g. 'T2,S3'")
+    p_cc.add_argument("--covered", required=True, help="the worker's Covered: value")
+    p_cc.add_argument("--ledger", help="tasks.md, to expand a handed T# into the S# it covers")
+    p_cc.set_defaults(func=cmd_covered_check)
 
     # scorecard
     p_sc = sub.add_parser("scorecard", help="Map six 0-3 scores to a mode and roster, or compute an escalation")
