@@ -151,3 +151,45 @@ def test_parse_stream_folds_text_deltas_when_the_result_has_no_response():
         {"result": {"status": "SUCCESS", "usage": {"input_tokens": 1, "output_tokens": 2}}}))
     got = agy_run.parse_stream(out + "\nnot json")
     assert (got["text"], got["tokens_in"], got["tokens_out"], got["error"]) == ("hello", 1, 2, "")
+
+
+def test_a_bad_run_id_is_refused_before_anything_is_written(box, capsys):
+    for bad in ("../../x", "a/b", "..", "a b", "x" * 81):
+        rc, doc, _ = run(capsys, box, "--role", "explore", "--prompt", "look", "--run", bad)
+        assert rc == 2 and "bad --run" in doc["error"], bad
+    assert not (box.repo / ".agent-output").exists() and not box.log.exists()
+
+
+def test_the_report_is_never_written_through_a_planted_symlink(box, capsys, tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep\n")
+    run_dir = box.repo / ".agent-output" / "r9" / "explore"
+    run_dir.mkdir(parents=True)
+    (run_dir / "report.md").symlink_to(victim)
+    rc, doc, _ = run(capsys, box, "--role", "explore", "--prompt", "look", "--run", "r9")
+    assert rc == 2 and "error" in doc and victim.read_text() == "keep\n"
+
+
+def test_a_symlinked_output_dir_that_leaves_the_checkout_is_refused(box, capsys, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (box.repo / ".agent-output").symlink_to(elsewhere)
+    rc, doc, _ = run(capsys, box, "--role", "explore", "--prompt", "look", "--run", "r10")
+    assert rc == 2 and "outside" in doc["refused"] and not any(elsewhere.iterdir())
+
+
+def test_agy_stderr_is_scrubbed_before_it_leaves(box, capsys, monkeypatch):
+    monkeypatch.setenv("FAKE_AGY_MODE", "leak")
+    rc, doc, err = run(capsys, box, "--role", "explore", "--prompt", "look", "--run", "r11")
+    assert rc == 1 and "auth failed" in doc["error"]
+    for secret in ("ghp_AAAA", "Bearer abc", "sk-ant-bbbb"):
+        assert secret not in doc["error"] and secret not in err
+
+
+def test_a_checker_of_an_engine_run_with_a_writer_but_no_recorded_writer_is_blocked_with_a_cause(box, capsys):
+    from ai_resources.orchestrator.state import RunStore
+    store = RunStore()
+    store.save({"id": "r12", "status": "running", "workflow_steps": [{"id": "impl", "role": "implementer"}, {"id": "v", "role": "verifier"}]})
+    rc, doc, _ = run(capsys, box, "--role", "verifier", "--prompt", "check", "--run", "r12")
+    assert rc == 3 and doc["blocked"] and doc["cause"] == "no-independent-checker"
+    assert not box.log.exists()                                   # agy never ran

@@ -265,3 +265,10 @@ def test_a_case_that_crashes_is_a_fail_row_not_a_crash(env):
     boom = acc.Case("x.boom", "route", lambda e: 1 / 0)
     r = acc.run_case(boom, env)
     assert r.status == acc.FAIL and "ZeroDivisionError" in r.reason
+
+
+@pytest.mark.parametrize("secret", ["ghp_" + "a" * 36, "github_pat_" + "B" * 30, "xoxb-1234567890-abcdef", "ya29.a0AfH6SMB-x_y",
+                                    "1//0gAbCdEfGhIjKlMnOpQrStUv", "sk-ant-api03-abcdefghij", "AIza" + "c" * 35, "Bearer abc.def"])
+def test_scrub_hides_every_known_token_shape(secret):
+    from ai_resources import acceptance
+    assert acceptance.scrub(f"failed with {secret} in the header") == "failed with *** in the header"

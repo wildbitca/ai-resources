@@ -25,6 +25,9 @@ emit(event="init", conversation_id="c-1")
 if mode == "crash":
     print("boom: unexpected", file=sys.stderr)
     sys.exit(3)
+if mode == "leak":
+    print("auth failed: ghp_" + "A" * 30 + " and Bearer abc.def and sk-ant-" + "b" * 20, file=sys.stderr)
+    sys.exit(3)
 if mode == "quota":
     emit(result={"status": "ERROR", "response": "", "error": {"message": "You've hit your limit, resets 5pm"}})
     sys.exit(1)

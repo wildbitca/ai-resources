@@ -17,6 +17,7 @@ import fcntl
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
@@ -132,3 +133,13 @@ def violations(changed: Iterable[str], scopes: Iterable[str], run_id: str = "") 
         return []
     own = f".agent-output/{run_id}/" if run_id else ""
     return [p for p in changed if not roles_policy.path_in_scope(p, scopes) and not (own and p.startswith(own))]
+
+
+def changed_paths(cwd: str) -> set[str] | None:
+    """Repo-relative paths git reports as modified or untracked; None outside a git checkout."""
+    try:
+        p = subprocess.run(["git", "-C", cwd, "status", "--porcelain", "-uall", "--no-renames"], capture_output=True,
+                           text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {line[3:].strip().strip('"') for line in p.stdout.splitlines() if len(line) > 3} if p.returncode == 0 else None

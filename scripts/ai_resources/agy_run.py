@@ -28,6 +28,7 @@ from . import dispatch_ledger, pool_usage, scope_guard
 from .orchestrator import limits, reply as reply_mod
 from .orchestrator.state import RunStore, StateError
 from .scoring import routing
+from .scrub import scrub
 
 EXIT_FALLBACK = 75
 DEFAULT_TIMEOUT = 1800
@@ -72,15 +73,6 @@ def parse_stream(out: str) -> dict[str, Any]:
     return res
 
 
-def _changed(cwd: str) -> set[str] | None:
-    """Repo-relative paths git reports as modified or untracked; None outside a git checkout."""
-    try:
-        p = subprocess.run(["git", "-C", cwd, "status", "--porcelain", "-uall", "--no-renames"], capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return {line[3:].strip().strip('"') for line in p.stdout.splitlines() if len(line) > 3} if p.returncode == 0 else None
-
-
 def _live(run_id: str) -> bool:
     """Whether the run is an active engine run (a claim's holder process is judged by `scope_guard` itself)."""
     try:
@@ -117,7 +109,9 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     if not (prompt or "").strip():
         return 2, {"error": "a prompt is required (--prompt or --prompt-file)"}
     run_id = args.run or f"agy-{os.getpid()}"
-    writers = dispatch_ledger.writer_families(args.run) if args.run else []
+    if not dispatch_ledger.valid_run_id(run_id):
+        return 2, {"error": "bad --run: use letters, digits, '.', '_' or '-' (at most 80), no '..'"}
+    writers = dispatch_ledger.run_writers(args.run, args.role) if args.run else []
     try:
         route = routing.resolve(args.role, _usage(args.usage_file), writers)
         role = routing.merged()[args.role]
@@ -151,11 +145,15 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             return 2, {**doc, "refused": f"write scope held by {'; '.join(conflicts)}"}
         took = True
     run_dir = f".agent-output/{run_id}/{args.role}"
+    out_root = Path(cwd, ".agent-output").resolve()
+    if not (out_root.is_relative_to(Path(cwd)) and Path(cwd, run_dir).resolve().is_relative_to(out_root)):
+        # a symlinked .agent-output must not lead out of the checkout
+        return 2, {**doc, "refused": f"{run_dir} resolves outside {out_root}"}
     Path(cwd, run_dir).mkdir(parents=True, exist_ok=True)
     full = (f"{prompt.rstrip()}\n\nWorking directory (stay inside it): {cwd}\n"
             f"Write your report and scratch files under {run_dir}/ (this run's own directory).\n"
             f"End your final reply with exactly this block:\n{reply_mod.return_block(args.role)}")
-    before = _changed(cwd)
+    before = scope_guard.changed_paths(cwd)
     try:
         out, err, rc = _run_agy(argv_for(binary, route.model, full), cwd, args.timeout)
     finally:
@@ -172,13 +170,15 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         return finish(EXIT_FALLBACK, "fail", "pool-exhausted", **tokens)      # a quota message returned as the answer
     if failure:
         code, d = finish(1, "fail", **tokens)
-        return code, {**d, "error": failure[:500]}
+        return code, {**d, "error": scrub(failure)[:500]}
     if not got["text"]:
         return finish(EXIT_FALLBACK, "fail", "empty", **tokens)
 
     report = Path(cwd, run_dir, "report.md")
-    report.write_text(got["text"] + "\n", encoding="utf-8")
-    after = _changed(cwd)
+    fd = os.open(report, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)       # never through a planted symlink
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(got["text"] + "\n")
+    after = scope_guard.changed_paths(cwd)
     stray = scope_guard.violations(sorted((after or set()) - (before or set())), scopes, run_id) if after is not None else []
     rep = reply_mod.parse(got["text"])
     code, d = finish(0, "ok", **tokens, extra={"scope_violations": stray} if stray else None)
@@ -191,7 +191,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         code, doc = run(args)
     except (OSError, ValueError) as e:
-        code, doc = 2, {"error": str(e)}
+        code, doc = 2, {"error": scrub(str(e))}
     if args.json:
         print(json.dumps(doc, indent=2))
     elif code == 0:

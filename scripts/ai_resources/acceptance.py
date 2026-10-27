@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, NamedTuple
 
 from . import dispatch_ledger
+from . import scrub as _scrub
 from .scoring import routing
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
@@ -44,7 +45,6 @@ SCHEMA = 1
 PROMPT = "Reply with exactly: pong"
 AGY_PROMPT = "Reply with exactly: pong. Do not use any tool and do not create any file."
 CALL_TIMEOUT_S = 120
-_SECRET = re.compile(r"(sk-[A-Za-z0-9_-]{8,}|AIza[0-9A-Za-z_-]{20,}|ya29\.[\w-]+|Bearer\s+\S+|eyJ[\w-]{20,}\.[\w.-]*)")
 _UNAUTH = re.compile(r"(?i)not logged in|/login|unauthori[sz]ed|\b401\b|invalid api key|no api key|no credentials|"
                      r"not signed in|authenticat|missing .*api.?key|no auth")
 
@@ -115,8 +115,7 @@ def case(id: str, group: str, **kw: Any) -> Callable:
     return reg
 
 
-def scrub(text: Any) -> str:
-    return _SECRET.sub("***", str(text))
+scrub = _scrub.scrub
 
 
 def _json_from(text: str) -> dict:
@@ -402,7 +401,7 @@ def _fam(cell: str | None) -> str | None:
 @case("checker.gemini-haiku-writers", "checker")
 def _checker_cheap(env: Env) -> Result:
     for checker in ("verifier", "security-auditor"):
-        for writers in (["gemini"], ["haiku"], ["gemini", "haiku"]):
+        for writers in (["gemini-3.8-flash"], ["haiku"], ["gemini-3.8-flash", "haiku"]):
             r = routing.resolve(checker, {}, writers)
             if r.blocked or _fam(r.cell) != "sonnet":
                 return bad(f"{checker} with writers {writers} resolved to {r.cell}; expected a sonnet checker")
@@ -424,7 +423,7 @@ def _checker_sonnet(env: Env) -> Result:
 
 @case("checker.never-weaker", "checker")
 def _checker_never_weaker(env: Env) -> Result:
-    families = ["gemini", "haiku", "sonnet", "opus"]
+    families = ["gemini-3.8-flash", "haiku", "sonnet", "opus"]
     for checker in ("verifier", "security-auditor"):
         for i in range(len(families) + 1):
             for j in range(i, len(families) + 1):
