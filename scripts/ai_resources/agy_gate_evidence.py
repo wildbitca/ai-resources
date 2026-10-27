@@ -176,9 +176,8 @@ def _preset_agy_slugs(root: Path) -> set[str]:
             doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         except (OSError, yaml.YAMLError):
             raise RecordError(f"cannot read preset profile {path.name}")
-        block = doc.get("lanes") or {}
-        for cands in (block.get("roles") or {}).values():
-            slugs |= {c[4:] for c in cands or () if isinstance(c, str) and c.startswith("agy:")}
+        from .scoring import routing
+        slugs |= {c[4:] for r in routing.merged(doc).values() for c in r.chain if c.startswith("agy:")}
     return slugs
 
 

@@ -1,8 +1,8 @@
 """ADR-0010 S1: checker independence over every shipped profile.
 
 A checker (verifier, security-auditor) must never be able to run a model family that a writer can run. The
-families a role can run come from `by_role`, its fallbacks, the profile-wide `defaults.fallbacks` (the LiteLLM
-per-model fallback union plus `default_fallbacks`) and the lane candidates of a `lanes:` block.
+families a role can run come from `by_role`, its fallbacks and the profile-wide `defaults.fallbacks` (the LiteLLM
+per-model fallback union plus `default_fallbacks`). Lane checkers are chosen dynamically (`routing.resolve`).
 
 `KNOWN_VIOLATIONS` is measured at baseline and is shrink-only: the test fails when a listed profile now
 passes, and when an unlisted profile fails.
@@ -17,7 +17,6 @@ import pytest
 import yaml
 
 from ai_resources import roles_policy
-from ai_resources.scoring import lanes as scoring_lanes
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 PROFILES = sorted(p for p in (REPO / "profiles").rglob("*.yaml"))
@@ -46,18 +45,23 @@ def normalise(ref: str) -> str | None:
     return ref
 
 
-def _lane_refs(doc: dict, role: str) -> list[str]:
-    lanes = doc.get("lanes") or {}
-    refs: list[str] = []
-    for ref in (lanes.get("roles") or {}).get(role) or []:
-        n = normalise(str(ref))
-        if n:
-            refs.append(n)
-    return refs
+def fallback_union(by_role: dict) -> dict:
+    """The LiteLLM per-model fallback union (`setup/litellm.py`): primary -> [(fallback, declaring role)]."""
+    out: dict = {}
+    for role in sorted(by_role):
+        cfg = by_role[role]
+        fbs = cfg.get("fallbacks") if isinstance(cfg, dict) else None
+        if not (fbs and cfg.get("model")):
+            continue
+        entry = out.setdefault(str(cfg["model"]), [])
+        for fb in fbs:
+            if all(fb != seen for seen, _ in entry):
+                entry.append((str(fb), role))
+    return out
 
 
 def runnable(doc: dict, role: str) -> list[str]:
-    """Every model ref a role can run, in the sense of the LiteLLM fallback union plus the lane candidates."""
+    """Every model ref a role can run, in the sense of the LiteLLM fallback union."""
     by_role = doc.get("by_role") or {}
     mode = doc.get("mode", "multi-model")
     default_fallbacks = (doc.get("defaults") or {}).get("fallbacks") or []
@@ -66,10 +70,9 @@ def runnable(doc: dict, role: str) -> list[str]:
         return []
     out = [str(cfg["model"])]
     if mode == "multi-model":
-        union = scoring_lanes.fallback_union(by_role)
+        union = fallback_union(by_role)
         out += [fb for fb, _ in union.get(str(cfg["model"]), ())]
         out += [str(fb) for fb in default_fallbacks]
-    out += _lane_refs(doc, role)
     return out
 
 
@@ -122,21 +125,6 @@ def test_known_violations_name_real_profiles():
     assert set(KNOWN_VIOLATIONS) <= names
 
 
-@pytest.mark.parametrize("path", [p for p in _with_roles(PROFILES) if (_load(p).get("lanes") or {})], ids=_name)
-def test_lanes_static_resolution_independence(path):
-    """The kit's own static resolution (`_check_independence`) agrees on every profile with a lanes block."""
-    doc = _load(path)
-    by_role = doc["by_role"]
-    models = {r: str(c["model"]) for r, c in by_role.items() if isinstance(c, dict) and c.get("model")}
-    mode = doc.get("mode", "multi-model")
-    default_fallbacks = (doc.get("defaults") or {}).get("fallbacks") or []
-    name = _name(path)
-    try:
-        scoring_lanes._check_independence(by_role, models, mode, default_fallbacks)
-    except scoring_lanes.LaneConflict:
-        assert name in KNOWN_VIOLATIONS, f"{name} fails static lane independence"
-
-
 def test_agy_slug_trap():
     assert roles_policy.model_family("agy:gemini-3.8-flash-high") is None
     assert roles_policy.model_family(normalise("agy:gemini-3.8-flash-high")) == "gemini-flash"
@@ -180,13 +168,4 @@ def test_per_model_fallback_union_is_found():
 
 def test_unknown_family_checker_fails_closed():
     doc = {"mode": "single-model", "by_role": {"implementer": {"model": "sonnet"}, "verifier": {"model": "inherit"}}}
-    assert violations(doc)
-
-
-def test_lane_candidate_family_is_counted():
-    doc = {
-        "mode": "single-model",
-        "by_role": {"implementer": {"model": "sonnet"}, "verifier": {"model": "opus"}},
-        "lanes": {"roles": {"implementer": ["claude-cli:sonnet", "agy:claude-opus-5-5"]}},
-    }
     assert violations(doc)

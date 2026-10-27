@@ -9,7 +9,7 @@ import dataclasses
 import pytest
 
 from ai_resources import agy_lane_gates as gates_mod
-from ai_resources.setup import lanes_render, profiles, state, ui, wizard
+from ai_resources.setup import detection, lanes_render, profiles, state, ui, wizard
 
 PROFILE = "subscription-claude-55"
 
@@ -27,23 +27,11 @@ def _args(**kw):
 def _env(monkeypatch):
     monkeypatch.setattr(ui, "is_non_interactive", lambda: True)
     monkeypatch.setattr(ui, "is_auto", lambda: True)
-    monkeypatch.setattr(wizard.shutil, "which", lambda name, *a, **k: "/usr/bin/agy" if name == "agy" else None)
+    monkeypatch.setattr(detection, "agy_installed", lambda: True)
     asked = []
     for fn in ("confirm", "text", "checkbox", "select"):
         monkeypatch.setattr(ui, fn, lambda *a, _fn=fn, **k: asked.append(_fn))
     monkeypatch.setattr(wizard, "_ASKED", asked, raising=False)
-    real = profiles.load_profile
-
-    def load(name, mode=None):
-        doc = copy.deepcopy(real(name, mode))
-        lanes = doc.get("lanes")
-        if lanes:
-            lanes["roles"]["tester"] = ["claude-cli:sonnet", "agy:claude-sonnet-5-5", "claude-code"]
-            lanes["roles"]["explore"] = ["claude-cli:haiku", "claude-code"]
-            lanes.pop("pins", None)
-            lanes["roles"]["code-reviewer"] = ["agy:claude-sonnet-5-5", "claude-cli:sonnet"]
-        return doc
-    monkeypatch.setattr(profiles, "load_profile", load)
     return asked
 
 
@@ -55,21 +43,31 @@ def _s():
     return s
 
 
-def _agy_agents(s):
-    return [a for a in (s.profile.lanes or {}).get("agents", {}).values() if a["backend"] != "claude-cli"]
-
-
 def test_auto_turns_the_agy_lane_on_signs_the_waiver_ack_and_asks_nothing(_env):
     s = _s()
     assert wizard._step_lanes(s, _args()) == 0
-    assert _agy_agents(s)
     assert s.profile.lanes["gates"] == {"antigravity": True}
     google = s.profile.lane_acks["google"]
     assert google["account"] == lanes_render.OPERATOR_WAIVER_ACCOUNT and google["roles"]
     assert lanes_render.valid_acks(s.profile.lane_acks).get("google")
     assert _env == []
     # no Anthropic acknowledgement on file: the Claude parallel runs are not switched on by this
-    assert not any(a["backend"] == "claude-cli" for a in s.profile.lanes["agents"].values())
+    assert set(s.profile.lanes) == {"orchestrators", "gates"}
+
+
+def test_auto_re_records_a_stale_ack_text_for_the_account_already_on_file(_env):
+    """ADR-0018 waiver + ADR-0019: the ack text changed (v2 drops the static weights), so every stored hash is stale; the
+    recommended run re-records the acknowledgement for the SAME account, asks nothing and never re-signs for another."""
+    s = _s()
+    old = lanes_render.make_ack("google", ["tester"], "2026-10-16", account="me@example.test")
+    old["text_sha256"] = "0" * 64                                   # signed against the previous text
+    s.profile.lane_acks = {"google": old}
+    assert not lanes_render.valid_acks(s.profile.lane_acks)
+    assert wizard._step_lanes(s, _args()) == 0
+    google = s.profile.lane_acks["google"]
+    assert google["account"] == "me@example.test" and set(google["roles"]) >= set(lanes_render.agy_roles())
+    assert lanes_render.valid_acks(s.profile.lane_acks).get("google")
+    assert _env == []
 
 
 def test_auto_keeps_the_account_already_on_file_and_is_idempotent():
@@ -84,26 +82,22 @@ def test_auto_keeps_the_account_already_on_file_and_is_idempotent():
 
 def test_auto_keeps_claude_parallel_runs_that_have_an_anthropic_ack():
     s = _s()
-    doc = profiles.load_profile(PROFILE)
-    roles = sorted(doc["lanes"]["roles"])
-    s.profile.lane_acks = {"anthropic": lanes_render.make_ack("anthropic", roles, "2026-10-16")}
-    s.profile.lanes = {"agents": {"kit-lane-cli-sonnet55": {"backend": "claude-cli",
-                                                            "model": "anthropic/claude-sonnet-5-5",
-                                                            "pool": "claude-subscription"}}}
+    s.profile.lane_acks = {"anthropic": lanes_render.make_ack("anthropic", lanes_render.lane_roles(), "2026-10-16")}
+    s.profile.lanes = {"orchestrators": ["main"]}
     assert wizard._step_lanes(s, _args()) == 0
-    backends = {a["backend"] for a in s.profile.lanes["agents"].values()}
-    assert "claude-cli" in backends and len(backends) > 1
+    assert "anthropic" in lanes_render.valid_acks(s.profile.lane_acks)
+    assert s.profile.lanes["gates"] == {"antigravity": True} and s.profile.lanes["orchestrators"] == ["main"]
 
 
 def test_opt_out_flag_and_missing_binary_and_no_auto_keep_it_off(monkeypatch):
     s = _s()
     assert wizard._step_lanes(s, _args(no_lanes_antigravity=True)) == 0
-    assert not _agy_agents(s)
-    monkeypatch.setattr(wizard.shutil, "which", lambda *a, **k: None)
+    assert not (s.profile.lanes or {}).get("gates")
+    monkeypatch.setattr(detection, "agy_installed", lambda: False)
     s = _s()
     assert wizard._step_lanes(s, _args()) == 0
-    assert not _agy_agents(s) and s.profile.lanes is None
-    monkeypatch.setattr(wizard.shutil, "which", lambda name, *a, **k: "/usr/bin/agy")
+    assert s.profile.lanes is None
+    monkeypatch.setattr(detection, "agy_installed", lambda: True)
     monkeypatch.setattr(ui, "is_auto", lambda: False)
     s = _s()
     assert wizard._step_lanes(s, _args()) == 0

@@ -222,7 +222,7 @@ def _acks(valid=True):
 
 def _lanes_state(ack=None, on=True):
     s = _s()
-    s.profile.lanes = {"agents": {"kit-lane-agy-x": {"backend": agy_lane_gates.AGY_LANE_BACKEND}}} if on else {"agents": {}}
+    s.profile.lanes = {"gates": {"antigravity": True}} if on else {"orchestrators": []}
     s.profile.lane_acks = ack
     return s
 

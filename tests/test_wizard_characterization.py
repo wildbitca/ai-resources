@@ -101,8 +101,7 @@ def _saved(mode="multi-model", backend="litellm", profile="", acks=False):
         s.profile.name = profile
         if acks:
             from ai_resources.setup import lanes_render, profiles
-            roles = lanes_render.lane_roles(lanes_render.propose(
-                profiles.load_profile(profile), lanes_render.current_by_role(s), s.mode))
+            roles = lanes_render.lane_roles(profiles.load_profile(profile))
             s.profile.lane_acks = {"anthropic": lanes_render.make_ack("anthropic", roles, "2026-10-15")}
         return s
     return make

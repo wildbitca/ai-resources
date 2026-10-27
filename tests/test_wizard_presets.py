@@ -179,11 +179,9 @@ def test_the_new_profiles_keep_checkers_independent_of_writers(name):
 def test_the_new_subscription_profiles_propose_lanes_without_a_conflict(name):
     from ai_resources.setup import lanes_render
     doc = profiles.load_profile(name)
-    assert lanes_render.validate_block(doc["lanes"]) == []
-    by_role = profiles.to_executors(doc)["by_role"]
-    proposal = lanes_render.propose(doc, by_role, "single-model", claude_ids={
-        "haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"})
-    assert proposal["roles"]
+    assert "lanes" not in doc
+    assert lanes_render.lanes_state(doc, orchestrators=["main"]) == {"orchestrators": ["main"]}
+    assert lanes_render.lane_roles(doc)
 
 
 def test_performance_costs_more_than_balanced_and_economy_less_on_the_subscription_team():

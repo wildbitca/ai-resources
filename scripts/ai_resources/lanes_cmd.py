@@ -713,53 +713,38 @@ def _tree(ctx: Ctx) -> Path:
 
 
 def _normalise_lane(lane: str) -> str:
-    return f"openclaw-agent:{lane}" if lane.startswith("kit-lane-") else lane
+    """A lane is a matrix cell (`backend[:model]`, e.g. `claude-code:sonnet`, `agy:gemini-4-argon-high`); the bare
+    `claude-code` is the off switch and always allowed."""
+    bad = routing.validate_cell(lane)
+    if bad:
+        raise Refused([f"lane {lane!r}: {bad}"])
+    return lane
 
 
 def _admit_lane(doc: dict, lane: str, role: str = "") -> None:
-    """Re-apply the hold and the admission when binding: the digest is integrity, not authentication, so a
-    table whose digest was recomputed after adding an agent is still refused here."""
-    from .setup import lanes_render
-    from .setup.cockpits import openclaw_lanes
-    if lane == "claude-code":
+    """Re-apply the Antigravity admission when binding: the digest is integrity, not authentication, so a table
+    whose digest was recomputed is still refused here. A Google acknowledgement lists the role (egress consent); the
+    scope contract is verification, not distrust (ADR-0019 D3)."""
+    if not lane.startswith("agy:"):
         return
-    aid = lane.split(":", 1)[1] if lane.startswith("openclaw-agent:") else ""
-    agent = (doc.get("agents") or {}).get(aid)
-    if not aid.startswith("kit-lane-") or not isinstance(agent, dict):
-        raise Refused([f"lane {lane} is not an admitted kit lane agent of the table"])
-    backend = agent.get("backend")
-    writable = backend in openclaw_lanes.writable_backends()
-    if lanes_render.backend_held(backend or ""):
-        writable = False
-    if not writable:
-        raise Refused([f"lane {lane}: agent is not admitted, backend {backend} is not writable in this version"])
-    if agent.get("stale"):
-        raise Refused([f"lane {lane}: agent is stale (model drift); re-run `ai-resources setup --lanes`"])
-    if backend != "claude-cli":
-        # An agy lane opens only with the flag, a Google acknowledgement listing the role and every phase 3 gate.
-        # The table's digest is integrity, not authentication: a forged table that lists the agent is refused here.
-        from . import agy_lane_gates
-        google = ((doc.get("acks") or {}).get("google") or {})
-        missing = []
-        if not (doc.get("gates") or {}).get("antigravity"):
-            missing.append("--lanes-antigravity is off in the table")
-        if role not in (google.get("roles") or ()):
-            missing.append(f"the Google acknowledgement does not list {role or 'the role'}")
-        why = agy_lane_gates.refusal()
-        if why:
-            missing.append(why)
-        if missing:
-            raise Refused([f"lane {lane}: Antigravity lane closed: " + "; ".join(missing)])
+    from . import agy_lane_gates
+    google = ((doc.get("acks") or {}).get("google") or {})
+    missing = []
+    if role not in (google.get("roles") or ()):
+        missing.append(f"the Google acknowledgement does not list {role or 'the role'}")
+    why = agy_lane_gates.refusal()
+    if why:
+        missing.append(why)
+    if missing:
+        raise Refused([f"lane {lane}: Antigravity lane closed: " + "; ".join(missing)])
 
 
-def _check_model(role: str, lane: str, declared: str, entry: dict) -> None:
-    """The declared --model must be the model the bound lane resolved to: same family and, when both are
-    concrete refs, the same ref (vendor prefix ignored). An alias matches by family."""
-    if "model" not in entry:
-        raise Refused([f"lanes.yaml lacks the model of {lane}: re-run `ai-resources setup --lanes`"])
-    resolved_model = entry.get("model")
+def _check_model(role: str, lane: str, declared: str) -> None:
+    """The declared --model must be the model of the bound lane cell: same family and, when both are concrete
+    refs, the same ref (vendor prefix ignored). An alias matches by family."""
+    resolved_model = lane.partition(":")[2]
     if not resolved_model:
-        return                                   # the role has no model in by_role: nothing to compare with
+        return                                   # the bare claude-code cell names no model: nothing to compare with
     fam_d, fam_r = rp.model_family(declared), rp.model_family(str(resolved_model))
     strip = lambda r: re.sub(r"^(?:anthropic|claude-cli|claude-kit)/", "", str(r))      # noqa: E731
     concrete = lambda r: rp.model_family(r) is not None and strip(r) not in ("haiku", "sonnet", "opus")  # noqa: E731
@@ -771,29 +756,20 @@ def _check_model(role: str, lane: str, declared: str, entry: dict) -> None:
                        f"(resolved: {resolved_model})"])
 
 
-def _pool_of_lane(doc: dict, lane: str) -> str:
-    """The quota pool a lane draws on (claude-code draws the claude subscription)."""
-    if lane == "claude-code" or not lane.startswith("openclaw-agent:"):
-        return "claude-subscription"
-    agent = (doc.get("agents") or {}).get(lane.split(":", 1)[1]) or {}
-    return str(agent.get("pool") or "")
-
-
-def _agy_evidence(doc: dict, lane: str) -> dict:
+def _agy_evidence(lane: str) -> dict:
     """The phase 3 gate statuses recorded in the ledger when the lane is an agy lane (not proven is a fact)."""
-    agent = (doc.get("agents") or {}).get(lane.split(":", 1)[1] if lane.startswith("openclaw-agent:") else "") or {}
-    if agent.get("backend") in (None, "claude-cli"):
+    if not lane.startswith("agy:"):
         return {}
     from . import agy_lane_gates
     return {"agy_gates": agy_lane_gates.status_table()}
 
 
 def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
-    """Bind a prepare to the lane `lanes.yaml` resolved for the role (ADR-0007 §1, B1).
+    """Bind a prepare to a cell of the role's row in `lanes.yaml` (the routing matrix, ADR-0019).
 
     None when no `lanes.yaml` exists (lanes are not enabled: `--lane` is optional). When it exists, `--lane`
-    is mandatory and must be the resolved lane or one of its recorded fallbacks; the choice and its reason
-    are written to the ledger. The file's digest must match its content (an edited table is refused).
+    is mandatory and must be the role's primary cell, one of its fallback cells or `claude-code`; the choice is
+    written to the ledger. The file's digest must match its content (an edited table is refused).
     """
     from .setup import lanes_render, state as setup_state
     path = setup_state.lanes_path()
@@ -810,35 +786,27 @@ def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
         raise LaneCmdError(f"cannot parse {path}: {exc}")
     if not isinstance(doc, dict) or doc.get("digest") != lanes_render.doc_digest(doc):
         raise Refused([f"{path} does not match its digest: re-run `ai-resources setup --lanes`"])
-    resolved = doc.get("resolved")
-    if not isinstance(resolved, dict) or resolved.get("error"):
-        raise Refused([f"{path} carries no usable resolved table"
-                       f"{': ' + str(resolved.get('error')) if isinstance(resolved, dict) else ''}"])
+    matrix = (doc.get("routing") or {}).get("matrix")
+    if not isinstance(matrix, dict):
+        raise Refused([f"{path} carries no routing matrix: re-run `ai-resources setup --lanes`"])
     if not a.lane:
-        raise Refused([f"{path} exists: --lane <claude-code|openclaw-agent:<id>> is required "
-                       f"(the lane `resolved:` names for role {role})"])
+        raise Refused([f"{path} exists: --lane <cell> is required (the primary of role {role} in its matrix row)"])
     lane = _normalise_lane(a.lane)
-    blocked = (resolved.get("blocked") or {}).get(role)
-    if blocked:
-        raise Refused([f"role {role} is blocked: {blocked}"])
+    row = matrix.get(role) or {}
+    primary = str((row.get("primary") or {}).get("cell") or "claude-code")
+    fallbacks = [str(f.get("cell")) for f in row.get("fallback") or []]
     _admit_lane(doc, lane, role)
-    entry = (resolved.get("roles") or {}).get(role)
-    if not entry:                                            # a role the table does not name runs on claude-code
-        entry = {"lane": "claude-code", "reason": "role not in the table: claude-code"}
-    fallbacks = list(entry.get("fallbacks") or [])
     table_sha = _sha(path.read_bytes())
-    pool_of = lambda ref: _pool_of_lane(doc, ref)       # noqa: E731
-    base = {"digest": doc["digest"], "table_sha256": table_sha, "resolved_pool": pool_of(str(entry.get("lane")))}
-    if lane == entry.get("lane"):
-        _check_model(role, lane, a.model, entry)
-        return {"lane": lane, "source": "resolved", "reason": str(entry.get("reason", "")),
-                "pool": pool_of(lane), **base, **_agy_evidence(doc, lane)}
-    for fb in fallbacks:
-        if fb.get("lane") == lane:
-            _check_model(role, lane, a.model, fb)
-            return {"lane": lane, "source": "fallback", "reason": str(fb.get("reason", "")),
-                    "pool": pool_of(lane), **base, **_agy_evidence(doc, lane)}
-    raise Refused([f"lane {lane} is neither the resolved lane ({entry.get('lane')}) nor a recorded fallback "
+    base = {"digest": doc["digest"], "table_sha256": table_sha, "resolved_pool": routing.pool_of(primary)}
+    if lane == primary:
+        _check_model(role, lane, a.model)
+        return {"lane": lane, "source": "resolved", "reason": "matrix primary", "pool": routing.pool_of(lane),
+                **base, **_agy_evidence(lane)}
+    if lane in fallbacks or lane == "claude-code":
+        _check_model(role, lane, a.model)
+        return {"lane": lane, "source": "fallback", "reason": "matrix fallback", "pool": routing.pool_of(lane),
+                **base, **_agy_evidence(lane)}
+    raise Refused([f"lane {lane} is neither the matrix primary ({primary}) nor a fallback ({', '.join(fallbacks) or '-'}) "
                    f"for role {role}"])
 
 

@@ -88,13 +88,11 @@ def test_every_known_role_is_present_and_defaults_have_no_fallbacks():
 
 def test_no_effort_backend_agent_or_lanes_keys():
     doc = _doc()
-    # P2-S3: the profile may carry a `lanes:` block; it must validate and name no agent id.
-    assert not ({"backend", "agentId", "effort"} & set(doc))
+    # ADR-0019: the role -> backend table is the routing matrix, not a profile `lanes:` block.
+    assert not ({"backend", "agentId", "effort", "lanes"} & set(doc))
     for cfg in doc["by_role"].values():
         assert not ({"backend", "lanes", "agentId", "effort"} & set(cfg))
-    from ai_resources.setup import lanes_render
-    assert lanes_render.validate_block(doc.get("lanes")) == []
-    assert "kit-lane-" not in str(doc["lanes"])
+    assert "kit-lane-" not in str(doc)
 
 
 def test_single_model_render_path_builds_every_role():
@@ -135,40 +133,12 @@ def test_recommended_profile_stays_balanced():
 
 # --- ADR-0007 phase 3: the Antigravity candidates ----------------------------------------------------------
 
-def test_the_lanes_block_validates_names_no_agent_id_and_every_agy_slug_is_a_lane_slug():
+def test_the_profile_models_do_not_change_and_the_matrix_agy_slugs_are_lane_slugs():
     from ai_resources import model_pins
-    from ai_resources.setup import lanes_render
-    block = _doc()["lanes"]
-    assert lanes_render.validate_block(block) == []
-    texts = [c for cands in block["roles"].values() for c in cands]
-    assert not [c for c in texts if c.startswith(("kit-lane-", "openclaw-agent:"))]
-    slugs = {c.split(":", 1)[1] for c in texts if c.startswith("agy:")}
-    assert slugs and slugs <= set(model_pins.AGY_LANE_MODELS)
-    # ADR-0010 S6 (amends the ban on agy for explore, planner and the architect): Balanced is multi-provider, so
-    # those roles may carry a *Gemini* agy candidate, never a Claude one, and every Gemini candidate is pinned.
-    for r in ("explore", "planner", "software-architect"):
-        for c in (block.get("roles") or {}).get(r, ()):
-            if c.startswith("agy:"):
-                assert c.startswith("agy:gemini-"), (r, c)
-    assert "second" not in block
-    pins = block.get("pins") or {}
-    assert set(pins) == {"explore", "code-reviewer"}
-    assert all(c.startswith("agy:gemini-") for cands in pins.values() for c in cands)
-
-
-def test_the_agy_candidates_do_not_change_by_role_and_are_held_while_the_flag_or_gates_are_off():
-    from ai_resources.setup import lanes_render
+    from ai_resources.scoring import routing
     assert {r: c["model"] for r, c in _doc()["by_role"].items()} == {r: m for r, (m, _) in EXPECTED.items()}
-    frag = lanes_render.state_from_block(_doc()["lanes"],
-                                         claude_ids={"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5",
-                                                     "opus": "claude-opus-5-5"})
-    assert all(a["backend"] == "claude-cli" for a in frag["agents"].values())
-    # ADR-0010 S6: the writers lost their agy candidate; Gemini sits on explore and the report seconds.
-    assert {h["role"] for h in frag["held"]} == {"explore", "verifier", "security-auditor", "code-reviewer"}
-    assert all(h["candidate"].startswith("agy:") for h in frag["held"])
-    assert all(h["reason"].startswith("held:") and ("--lanes-antigravity" in h["reason"]
-                                                    or "gate" in h["reason"].lower())
-               for h in frag["held"]), frag["held"]
+    slugs = {c.split(":", 1)[1] for r in routing.merged(_doc()).values() for c in r.chain if c.startswith("agy:")}
+    assert slugs and slugs <= set(model_pins.AGY_LANE_MODELS)
 
 
 def test_role_effort_is_a_positive_map_of_allowed_levels():

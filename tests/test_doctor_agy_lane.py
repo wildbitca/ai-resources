@@ -113,7 +113,9 @@ def test_the_acknowledgement_that_misses_balanced_roles_is_named(lines, no_proce
                                                           "2026-10-19T00:00:00+00:00", account="a@example.com")}
     doctor._check_antigravity_lane(s)
     text = _text(lines)
-    assert "Balanced also uses: code-reviewer" in text
+    line = next(l for l in text.splitlines() if "Balanced also uses:" in l)
+    used = set(line.split("Balanced also uses:", 1)[1].split("\n")[0].replace(" ", "").split(","))
+    assert {"code-reviewer", "doc-writer", "tester"} <= used and "explore" not in used
     assert "extend the Google acknowledgement to: code-reviewer" not in text   # held gates come first
     assert "probe window" in text
 

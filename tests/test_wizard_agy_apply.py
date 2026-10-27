@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import types
 
-from ai_resources.setup import state, wizard
+from ai_resources.setup import lanes_render, profiles, state, wizard
 from ai_resources.setup.cockpits import gemini
 
-from test_lanes_wiring import _lanes_state
 from wizard_fakes import Script
+
+
+def _lanes_state():
+    s = state.SetupState()
+    s.profile.name = "subscription-claude-55"
+    s.profile.lanes = lanes_render.lanes_state(profiles.load_profile("subscription-claude-55"), orchestrators=["main"])
+    return s
 
 
 def test_an_agy_tick_runs_the_agy_writer(monkeypatch):

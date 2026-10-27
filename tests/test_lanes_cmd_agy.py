@@ -22,12 +22,8 @@ from ai_resources.setup import lanes_render, state
 from test_lanes_cmd import RUN, env, sh  # noqa: F401
 
 LABELS = {
-    "claude-cli": ("kit-lane-cli-sonnet55", "kit-lane-cli-opus55",
-                   {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5", "pool": "claude-subscription"},
-                   {"backend": "claude-cli", "model": "anthropic/claude-opus-5-5", "pool": "claude-subscription"}),
-    "agy-cli-lane": ("kit-lane-agy-sonnet55", "kit-lane-agy-opus55",
-                     {"backend": "agy-cli-lane", "model": "agy-cli-lane/claude-sonnet-5-5", "pool": "agy-claude-gpt"},
-                     {"backend": "agy-cli-lane", "model": "agy-cli-lane/claude-opus-5-5", "pool": "agy-claude-gpt"}),
+    "claude-cli": ("claude-code:sonnet", "claude-code:opus"),
+    "agy-cli-lane": ("agy:claude-sonnet-5-5", "agy:claude-opus-5-5"),
 }
 BY_ROLE = {"implementer": {"model": "sonnet"}, "tester": {"model": "sonnet"}, "doc-writer": {"model": "sonnet"},
            "verifier": {"model": "opus"}}
@@ -49,18 +45,15 @@ def label(request):
 
 
 def write_table(label, *, roles=ROLES, ack_roles=None, only_agent=True):
-    sid, oid, sag, oag = LABELS[label]
-    lanes = {"agents": {sid: sag, oid: oag},
-             "roles": {r: {"candidates": [f"openclaw-agent:{oid if r == 'verifier' else sid}"]
-                           + ([] if only_agent else ["claude-code"])} for r in roles},
-             "orchestrators": [], "verify_capability": {}, "pool_caps": {},
-             "max_remote_concurrency": 2, "workspace_root": ""}
+    sid, oid = LABELS[label]
+    lanes = {"orchestrators": [],
+             "routing": {r: {"primary": oid if r == "verifier" else sid,
+                             **({} if only_agent else {"fallback": ["claude-code"]})} for r in roles}}
     acks = {"anthropic": lanes_render.make_ack("anthropic", ROLES, "2026-10-16")}
     if label == "agy-cli-lane":
-        lanes["gates"] = {"antigravity": True}
         acks["google"] = lanes_render.make_ack("google", ack_roles if ack_roles is not None else ROLES,
                                                "2026-10-16", account="op@example.test")
-    doc = lanes_render.render_doc(lanes, BY_ROLE, "single-model", acks)
+    doc = lanes_render.render_doc(lanes, "single-model", acks)
     path = state.lanes_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(lanes_render.dumps(doc))
@@ -68,7 +61,7 @@ def write_table(label, *, roles=ROLES, ack_roles=None, only_agent=True):
 
 
 def lane_id(label, role):
-    sid, oid, *_ = LABELS[label]
+    sid, oid = LABELS[label]
     return oid if role == "verifier" else sid
 
 
@@ -234,7 +227,7 @@ def _rewrite_resolved(label):
     path = state.lanes_path()
     import yaml
     doc = yaml.safe_load(path.read_text())
-    doc["resolved"]["roles"]["implementer"]["reason"] = "forged"
+    doc["routing"]["matrix"]["implementer"]["note"] = "forged"
     doc["digest"] = lanes_render.doc_digest(doc)
     path.write_text(lanes_render.dumps(doc))
 
@@ -294,23 +287,22 @@ def test_a_forged_table_that_lists_an_agy_agent_is_refused_without_the_flag_or_g
     unproven = {g.id: g for g in gates_mod.GATES}
     monkeypatch.setattr(gates_mod, "EVIDENCE", unproven)         # evidence back to not proven; HOME stays redirected
     rc, out = prep(env, "agy-cli-lane", "impl", "implementer", "report")
-    assert rc == 1 and any("not writable" in r for r in out["reasons"]), out
+    assert rc == 1 and any("gates not proven" in r for r in out["reasons"]), out
     assert state.lanes_path().is_relative_to(env.tmp)
 
 
-def test_a_forged_table_without_the_flag_or_the_role_in_its_google_ack_is_refused_even_when_writable(env):
+def test_a_forged_table_without_the_role_in_its_google_ack_is_refused_even_when_proven(env):
     import yaml
     doc = write_table("agy-cli-lane")
     path = state.lanes_path()
     forged = yaml.safe_load(path.read_text())
-    forged["gates"] = {"antigravity": False}
     forged["acks"]["google"]["roles"] = ["doc-writer"]
     forged["digest"] = lanes_render.doc_digest(forged)
     path.write_text(lanes_render.dumps(forged))
     rc, out = prep(env, "agy-cli-lane", "impl", "implementer", "report")
     assert rc == 1, out
     text = " ".join(out["reasons"])
-    assert "--lanes-antigravity is off" in text and "does not list implementer" in text
+    assert "does not list implementer" in text
 
 
 # --- the circuit breaker (7.1, C5) ----------------------------------------------------------------------------
@@ -344,7 +336,7 @@ def _trip(env, label, *, text=QUOTA):
 
 def test_a_spawn_error_with_the_recorded_text_trips_the_pool_and_refuses_the_lane_for_the_run(env, label, patterns):
     rc, out = _trip(env, label)
-    assert rc == 0 and out["breaker"]["pool"] == LABELS[label][2]["pool"], out
+    assert rc == 0 and out["breaker"]["pool"] == routing.pool_of(LABELS[label][0]), out
     breakers = [e for e in env.ledger_entries(env.state) if e["kind"] == "breaker"]
     assert len(breakers) == 1 and breakers[0]["data"]["evidence_sha256"]
     rc, out = prep(env, label, "impl", "implementer", "report")
@@ -358,12 +350,7 @@ def test_a_writer_moves_to_the_next_admitted_candidate_with_the_recorded_reason(
     rc, out = prep(env, label, "impl", "implementer", "report", lane="claude-code")
     assert rc == 0, out
     lane = [e for e in env.ledger_entries(env.state) if e["kind"] == "prepare" and e["step"] == "impl"][0]["data"]["lane"]
-    # placement balances by load: when the resolver already put the writer on claude-code there is nothing to move
-    resolved = lanes_render.yaml.safe_load(state.lanes_path().read_text())["resolved"]["roles"]["implementer"]["lane"]
-    if resolved == "claude-code":
-        assert lane["source"] == "resolved"
-    else:
-        assert lane["source"] == "fallback" and lane["reason"].startswith("pool exhausted:")
+    assert lane["source"] == "fallback" and lane["reason"].startswith("pool exhausted:")
 
 
 def test_the_same_text_written_by_the_child_trips_nothing(env, label, patterns):

@@ -64,36 +64,24 @@ def run_all(s: state.SetupState, cockpit_ids: list[str] | None = None,
 
 
 def lanes_findings(s: state.SetupState) -> list[Finding]:
-    """Subscription lanes (ADR-0007): drift warnings and the state of `lanes.yaml`. Read-only; [] without lanes.
+    """The state of `lanes.yaml` (generated from the routing matrix, ADR-0019). Read-only; [] without lanes.
     Never opens openclaw.json."""
     if not state.lanes_enabled(s):
         return []
     from .setup import lanes_render
     try:
-        by_role = lanes_render.current_by_role(s)
-        want = lanes_render.expected_text(s, by_role)
+        want = lanes_render.expected_text(s)
     except Exception as e:  # noqa: BLE001 - verification must never take the wizard down
         return [Finding("warn", "lanes", f"the lanes table could not be checked: {type(e).__name__}: {e}")]
-    out = [Finding("warn", "lanes", w, "re-run `ai-resources setup --lanes`")
-           for w in lanes_render.drift_warnings(s.profile.lanes, by_role)]
-    lanes = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
-    if (lanes.get("gates") or {}).get("antigravity"):
-        # the operator opened the Antigravity lane: say which candidates are still held, and why
-        for h in lanes.get("held") or []:
-            out.append(Finding("warn", "lanes", f"{h.get('role')}: {h.get('candidate')} {h.get('reason')}",
-                               "tick the role in the Google acknowledgement: `ai-resources setup --lanes "
-                               "--lanes-antigravity` from a terminal"))
     path = state.lanes_path()
     have = path.read_text(encoding="utf-8") if path.is_file() else None
     if have is None:
-        out.append(Finding("warn", "lanes", f"{path} is missing although lanes are enabled",
-                           "re-run `ai-resources setup --lanes`"))
-    elif have != want:
-        out.append(Finding("warn", "lanes", f"{path} is out of date with the setup state",
-                           "re-run `ai-resources setup --lanes`"))
-    elif not out:
-        out.append(Finding("ok", "lanes", f"lanes.yaml matches the setup state ({path})"))
-    return out
+        return [Finding("warn", "lanes", f"{path} is missing although lanes are enabled",
+                        "re-run `ai-resources setup --lanes`")]
+    if have != want:
+        return [Finding("warn", "lanes", f"{path} is out of date with the setup state",
+                        "re-run `ai-resources setup --lanes`")]
+    return [Finding("ok", "lanes", f"lanes.yaml matches the setup state ({path})")]
 
 
 def credit_findings() -> list[Finding]:

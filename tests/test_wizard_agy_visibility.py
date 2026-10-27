@@ -159,18 +159,11 @@ def test_as_a_team_with_agy_ticked_adds_an_antigravity_row_with_unconfirmed_slug
     assert status.startswith("in team") and "terms check next" in status
     assert "sends repo content to Google" in roles and "[unconfirmed slug]" in roles
     assert script.asked == [f"select: {ASK}"]
-    # the entries are exactly the agy candidates of the profile's lanes block
+    # the entries are exactly the agy cells of the routing matrix
+    from ai_resources.setup import team_view
     doc = profiles.load_profile(wizard.preset_profile(s, preset), "single-model")
-    want = {c.split(":", 1)[1] for role, cs in doc["lanes"]["roles"].items()
-            for c in cs if c.startswith("agy:")}
+    want = {c.split(":", 1)[1] for _role, c in team_view.agy_candidates(doc)}
     assert {e.split(": ")[1].split(" ")[0].rstrip(".") for e in roles.split(" - sends")[0].split("; ")} == want
-
-
-@pytest.mark.parametrize("preset", ("performance", "low-cost"))
-def test_performance_and_low_cost_show_gemini_on_the_code_reviewer(monkeypatch, preset):
-    _, _, teams, _ = run_preset(monkeypatch, "cli", preset, True, ticked=True)
-    entries = [e for e in agy_row(teams)[1].split(" - sends")[0].split("; ") if "gemini" in e]
-    assert entries and all(e.startswith("code-reviewer:") for e in entries)
 
 
 @pytest.mark.parametrize("key", ["single", "litellm", "openrouter"])
@@ -211,24 +204,6 @@ def test_the_question_stays_four_choices_with_agy_installed(monkeypatch):
 
 
 # --- profiles and the gates -------------------------------------------------------------------------------
-
-@pytest.mark.parametrize("name", ["subscription-performance", "subscription-economy"])
-def test_the_gemini_code_reviewer_is_declared_valid_pinned_and_held_while_the_gates_are_open(name):
-    doc = profiles.load_profile(name)
-    block = doc["lanes"]
-    assert lanes_render.validate_block(block) == []
-    gem = [c for c in block["roles"]["code-reviewer"] if c.startswith("agy:gemini-")]
-    assert gem and gem[0][4:] in model_pins.AGY_LANE_MODELS
-    assert set(block["pins"]) == {"code-reviewer"} and gem[0] in block["pins"]["code-reviewer"]
-    # no Gemini on a role that writes, a checker or a role without Google egress acceptance
-    for role, cs in block["roles"].items():
-        if any("gemini" in c for c in cs):
-            assert role == "code-reviewer"
-    frag = lanes_render.state_from_block(block, claude_ids={"haiku": "claude-haiku-5-5",
-                                         "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"})
-    assert not [a for a in frag["agents"].values() if a["backend"] != "claude-cli"]
-    assert any(h["candidate"] == gem[0] and h["reason"].startswith("held:") for h in frag["held"])
-
 
 def test_a_fresh_install_keeps_lanes_off_and_agy_not_writable(monkeypatch):
     s, shown, _, _ = run_preset(monkeypatch, "cli", "performance", True)

@@ -166,13 +166,13 @@ def test_cell_to_openclaw_ref(cell, ref):
 
 
 def test_lanes_yaml_carries_the_routing_section_and_it_moves_the_digest():
-    lanes = {"agents": {}, "roles": {}, "second": {}}
-    a = lanes_render.render_doc(lanes, {}, "single-model")
+    lanes = {"orchestrators": []}
+    a = lanes_render.render_doc(lanes, "single-model")
     m = a["routing"]["matrix"]
     assert m["explore"]["primary"] == {"cell": "agy:gemini-3.8-flash-high", "pool": routing.POOL_AGY_GEMINI}
     assert m["explore"]["fallback"] == [{"cell": "claude-code:haiku", "pool": routing.POOL_MAX}]
     assert m["verifier"]["checker"] and m["verifier"]["primary"]["cell"] == routing.CHECKER_LADDER[0]
     assert a["routing"]["balancing"]["spill_at"] == routing.SPILL_AT
-    b = lanes_render.render_doc({**lanes, "routing": {"explore": {"primary": "claude-cli:haiku"}}}, {}, "single-model")
+    b = lanes_render.render_doc({**lanes, "routing": {"explore": {"primary": "claude-cli:haiku"}}}, "single-model")
     assert a["digest"] != b["digest"]
     assert lanes_render.doc_digest(dict(a)) == a["digest"]

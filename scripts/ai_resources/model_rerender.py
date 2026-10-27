@@ -199,50 +199,6 @@ class ExecutorsArtifact(_FileArtifact):
         profiles.write_executors(new, self.path)
 
 
-class LanesArtifact(_FileArtifact):
-    """`~/.config/ai-resources/lanes.yaml`: the setup-owned lanes table (ADR-0007), both modes.
-
-    Registered like every other re-render artifact: backed up before the write, restored from its own
-    backup when a later artifact fails. It is re-rendered only when the table has lanes and a moved id
-    changes what it says (a lane agent becoming stale). It never opens `openclaw.json`.
-    """
-    id = "lanes"
-
-    def __init__(self, path: Path, *, state: Any, by_role: Callable[[], dict]):
-        super().__init__(path)
-        self._state, self._by_role = state, by_role
-
-    def _want(self, mapping: dict[str, str]) -> str | None:
-        from .setup import lanes_render, state as setup_state
-        if not setup_state.lanes_enabled(self._state):
-            return None                      # no lanes: nothing is read, nothing is rendered
-        by_role = self._by_role()
-        if mapping:
-            by_role, _ = substitute(by_role, mapping)
-        return lanes_render.expected_text(self._state, by_role)
-
-    def affected(self, change: Change, ctx: Ctx) -> bool:
-        mapping = substitution(change.slots)
-        if not mapping:
-            return False
-        want = self._want(mapping)
-        return want is not None and want != self._text()
-
-    def render(self, change: Change, ctx: Ctx) -> dict:
-        payload = backup_file(self.path, ctx.extras.get("backup_dir"), self.id)
-        try:
-            want = self._want(substitution(change.slots))
-            if want is not None:
-                _atomic_write(self.path, want)
-        except Exception as e:  # noqa: BLE001 - leave the file as it was, then report
-            try:
-                restore_file(payload)
-            except ArtifactError as re_:
-                raise ArtifactError(f"{self.id}: {e}; {re_}") from e
-            raise ArtifactError(f"{self.id}: {e}") from e
-        return payload
-
-
 class AiderConfArtifact(_FileArtifact):
     """`~/.aider.conf.yml`: the model, architect-model and weak-model values only; every other key
     (including the gateway key already in the file) is rewritten exactly as it was."""
@@ -436,7 +392,7 @@ def mode_is_multi(ctx: Ctx) -> bool:
 
 def build(*, state, selection, detected: list[str], home: Path | None = None) -> list[Artifact]:
     """The artifacts for this host, with the plan table attached through `extras` by the caller."""
-    from .setup import litellm, profiles, lanes_render, state as setup_state
+    from .setup import litellm, profiles, state as setup_state
     from .setup.cockpits import aider, claude, _shared
     from . import repo_root
 
@@ -470,8 +426,6 @@ def build(*, state, selection, detected: list[str], home: Path | None = None) ->
             write_configs=litellm.write_configs, restart=litellm.restart_service,
             healthy=lambda: litellm.wait_for_health(url, max_attempts=60, delay=1.0),
             running=lambda: litellm.health_check(url), enabled=litellm_ours),
-        LanesArtifact(setup_state.lanes_path(), state=state,
-                      by_role=lambda: lanes_render.current_by_role(state)),
         ClaudeSubagentsArtifact(claude.AGENTS_DIR, render_subagents, executors, enabled=multi),
         ClaudeSettingsArtifact(claude.SETTINGS_PATH, enabled=lambda ctx: mode == "multi-model" and backend == "openrouter"),
         AiderConfArtifact(aider.CONF_PATH, enabled=multi),

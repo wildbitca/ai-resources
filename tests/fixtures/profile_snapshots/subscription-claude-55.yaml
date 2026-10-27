@@ -67,20 +67,5 @@ by_role:
 
 by_persona: {}
 
-# Subscription lanes (ADR-0007): candidate lists per role, never an agent id. Dispatch resolves them
-# from the setup lanes table; the order is the tie-break, not a rank. A fresh install enables none.
-lanes:
-  # Antigravity candidates (ADR-0007 section 11) come last: the order is a tie-break only, never a rank, and an
-  # agy candidate is admitted only with --lanes-antigravity, a Google acknowledgement listing the role and every
-  # phase 3 gate proven. The slugs are unconfirmed candidates until V5 runs. Explore, planner and the architect
-  # have no agy candidate. The implementer's agy candidate is listed; its Google-ack box is unticked by default.
-  roles:
-    explore:            [claude-cli:haiku, claude-code]
-    implementer:        [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
-    tester:             [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
-    doc-writer:         [claude-cli:sonnet, claude-code, "agy:claude-sonnet-5-5"]
-    planner:            [claude-code, claude-cli:sonnet]
-    software-architect: [claude-code, claude-cli:opus]
-    verifier:           [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
-    security-auditor:   [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
-    code-reviewer:      ["agy:claude-sonnet-5-5", claude-cli:sonnet]
+# Which backend runs each role (Claude Code or Antigravity) is the routing matrix in scoring/routing.py (ADR-0019);
+# an optional top-level `routing: {role: {primary, fallback}}` block overrides single cells.

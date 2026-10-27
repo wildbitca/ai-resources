@@ -48,14 +48,6 @@ def test_no_role_falls_back_to_opus_and_haiku_roles_fall_back_only_to_sonnet():
         assert set(by_role[role].get("fallbacks") or []) <= {"sonnet"}, role
 
 
-def test_lane_candidates_follow_the_new_table():
-    lanes = _balanced()["lanes"]
-    assert "claude-cli:haiku" in lanes["roles"]["tester"] and "claude-cli:haiku" in lanes["roles"]["doc-writer"]
-    assert "claude-cli:sonnet" in lanes["roles"]["software-architect"]
-    assert "claude-cli:opus" not in lanes["roles"]["software-architect"]
-    assert "claude-cli:opus" in lanes["roles"]["verifier"] and "claude-cli:opus" in lanes["roles"]["security-auditor"]
-
-
 def test_no_new_profile_nothing_renamed_and_the_recommendation_is_unchanged():
     assert profile_names.PRESET_IDS == ("balanced", "performance", "low-cost")
     assert not (REPO / "profiles" / "pro-lowcost.yaml").exists()

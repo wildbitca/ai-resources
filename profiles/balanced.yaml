@@ -30,8 +30,8 @@ description: |
   reference, and `balanced-claude-55` remains the recommended profile.
 
 # Per-role evidence tag and effort (ADR-0007 FU-3, FU-4). The map is `role_effort`, never `effort`:
-# the profile keeps no `effort` key (tests/test_profile_subscription_claude55.py): read-only metadata copied into `lanes.yaml`
-# `resolved:`. They never move a role to another model or lane.
+# the profile keeps no `effort` key (tests/test_profile_subscription_claude55.py): read-only metadata of the profile.
+# They never move a role to another model or lane.
 evidence:
   tag: study-based
   label: INFERRED
@@ -81,24 +81,5 @@ by_role:
 
 by_persona: {}
 
-# Subscription lanes (ADR-0007): candidate lists per role, never an agent id. Dispatch resolves them
-# from the setup lanes table; the order is the tie-break, not a rank. A fresh install enables none.
-#
-# Balanced is multi-provider (ADR-0010 PD-1, ADR-0019): Claude on the planning and writing roles, plus Gemini over the
-# Antigravity lane on the roles that read a lot and where a different family helps: explore and the code-reviewer.
-# Every Gemini candidate is pinned (it is not the role's family) and admitted with --lanes-antigravity and a Google
-# acknowledgement that lists the role. The verifier and the security-auditor take no Gemini (checker rule, rule 017).
-lanes:
-  roles:
-    explore:            ["agy:gemini-3.8-flash-high", claude-cli:haiku, claude-code]
-    implementer:        [claude-cli:sonnet, claude-code]
-    tester:             [claude-cli:haiku, claude-code]
-    doc-writer:         [claude-cli:haiku, claude-code]
-    planner:            [claude-code, claude-cli:sonnet]
-    software-architect: [claude-code, claude-cli:sonnet]
-    verifier:           [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
-    security-auditor:   [claude-code, claude-cli:opus, "agy:claude-opus-5-5"]
-    code-reviewer:      ["agy:gemini-4-argon-high", claude-cli:sonnet]
-  pins:
-    explore:            ["agy:gemini-3.8-flash-high"]
-    code-reviewer:      ["agy:gemini-4-argon-high"]
+# Which backend runs each role (Claude Code or Antigravity) is the routing matrix in scoring/routing.py (ADR-0019);
+# an optional top-level `routing: {role: {primary, fallback}}` block overrides single cells.

@@ -58,19 +58,13 @@ def test_subscription_claude_55_is_not_an_alias_because_balanced_diverged():
 
 
 def _provider_paths(doc: dict) -> set[str]:
-    """Every provider or data path a profile can reach: the by_role model providers and the lane candidates' family
-    (`agy:gemini-...` is a Google path, `agy:claude-...` an Anthropic one over Antigravity)."""
+    """Every provider or data path a profile can reach: the by_role model providers. The Antigravity paths are the
+    routing matrix (ADR-0019), the same for every profile, so they cannot tell two profiles apart."""
     out: set[str] = set()
     for spec in (doc.get("by_role") or {}).values():
         model = spec.get("model") if isinstance(spec, dict) else spec
         if isinstance(model, str) and "/" in model:
             out.add(model.split("/", 1)[0])
-    lanes = doc.get("lanes") or {}
-    for table in (lanes.get("roles") or {}, lanes.get("second") or {}):
-        for cands in table.values():
-            for c in cands:
-                if isinstance(c, str) and c.startswith("agy:"):
-                    out.add("agy-" + c.split(":", 1)[1].split("-", 1)[0])
     return out
 
 
@@ -82,7 +76,7 @@ def _alias_admissible(old: dict, new: dict) -> bool:
 def test_the_alias_rule_rejects_subscription_claude_55_for_balanced():
     old = _frozen("subscription-claude-55")
     new = profiles.load_profile("balanced", "single-model")
-    assert "agy-gemini" in _provider_paths(new) - _provider_paths(old)
+    assert _team(_after_adr_0010_fixes(old)) != _team(new)
     assert not _alias_admissible(old, new)
 
 

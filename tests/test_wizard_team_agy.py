@@ -13,6 +13,7 @@ import pytest
 
 from ai_resources import agy_lane_gates as gates_mod
 from ai_resources import roles_policy
+from ai_resources.scoring import routing
 from ai_resources.setup import detection, lanes_render, profiles, state, ui, wizard
 from ai_resources.setup.cockpits import openclaw_lanes
 
@@ -29,22 +30,17 @@ def _args(**kw):
 
 @pytest.fixture(autouse=True)
 def _profile(monkeypatch):
-    """A profile with Antigravity candidates on the roles ADR-0007 section 11 accepts (as in test_wizard_lanes_agy)."""
     monkeypatch.setattr(lanes_render, "AGY_LANE_ADR_ACCEPTED", True)
+
+
+def _no_agy_profile(monkeypatch):
+    """A profile whose routing overrides put no role on Antigravity (primary or fallback)."""
     real = profiles.load_profile
 
     def load(name, mode=None):
         doc = copy.deepcopy(real(name, mode))
-        lanes = doc.get("lanes")
-        if not lanes:
-            return doc
-        for role in ("tester", "doc-writer"):
-            lanes["roles"][role] = ["claude-cli:sonnet", "agy:claude-sonnet-5-5", "claude-code"]
-        lanes["roles"]["implementer"] = ["claude-cli:sonnet", "agy:claude-sonnet-5-5", "claude-code"]
-        lanes["roles"]["code-reviewer"] = ["agy:claude-sonnet-5-5", "claude-cli:sonnet"]
-        # ADR-0010 S6: Balanced pins its Gemini candidates; this fixture swaps them for Claude ones, so the pins go.
-        lanes.pop("pins", None)
-        lanes["roles"]["explore"] = ["claude-cli:haiku", "claude-code"]
+        doc["routing"] = {r: {"primary": "claude-code:opus" if r in roles_policy.CHECKER_ROLES else "claude-code:sonnet",
+                              "fallback": ["claude-code:haiku"]} for r in routing.ROLES if routing.ROLES[r].kind == "team"}
         return doc
     monkeypatch.setattr(profiles, "load_profile", load)
 
@@ -91,10 +87,7 @@ class Ui:
 
 
 def _agy_part(s):
-    lanes = s.profile.lanes or {}
-    return {"agents": {a: v for a, v in (lanes.get("agents") or {}).items() if v["backend"] != "claude-cli"},
-            "gates": lanes.get("gates"),
-            "held": [h for h in (lanes.get("held") or []) if h["candidate"].startswith("agy:")]}
+    return {"gates": (s.profile.lanes or {}).get("gates")}
 
 
 # --- the tick is the opt-in ---------------------------------------------------------------------------------
@@ -114,7 +107,7 @@ def test_ticking_it_does_not_switch_the_claude_parallel_runs_on(monkeypatch):
     u = Ui(monkeypatch)
     s = _s()
     wizard._step_lanes(s, _args())
-    assert not any(a["backend"] == "claude-cli" for a in s.profile.lanes["agents"].values())
+    assert set(s.profile.lanes) == {"orchestrators", "gates"}
     assert "anthropic" not in s.profile.lane_acks
     assert not any("Anthropic" in m or "Acknowledge for these roles" in m for m in u.warned + u.asked)
 
@@ -208,19 +201,19 @@ def test_unticking_a_tool_that_was_on_closes_the_gate_and_keeps_the_record(monke
     _prove_gates(monkeypatch)
     s = _s()
     wizard._step_lanes(s, _args())
-    assert s.profile.lanes["gates"] == {"antigravity": True} and _agy_part(s)["agents"]
+    assert s.profile.lanes["gates"] == {"antigravity": True}
     Ui(monkeypatch)
     s.profile.customizations = {"__targets__": {"selected": ["claude"]}}
     s._tool_members_this_run = ["claude"]
     assert wizard._step_lanes(s, _args()) == 0
-    assert "gates" not in s.profile.lanes and not _agy_part(s)["agents"]
+    assert "gates" not in s.profile.lanes
     assert "google" in s.profile.lane_acks
 
 
 def test_a_team_that_gives_antigravity_no_role_unticks_it_without_a_question(monkeypatch):
     u = Ui(monkeypatch)
+    _no_agy_profile(monkeypatch)
     s = _s()
-    s.profile.name = "claude-native"                          # no lanes block: no Antigravity candidate
     assert wizard._step_lanes(s, _args()) == 0
     assert u.warned == [] and u.asked == [] and s.profile.lanes is None and s.profile.lane_acks is None
     assert "agy" not in s.profile.customizations["__targets__"]["selected"]
@@ -242,21 +235,17 @@ def test_agy_may_take_a_writer_role(monkeypatch):
     Ui(monkeypatch)
     s = _s()
     wizard._step_lanes(s, _args())
-    implementer = s.profile.lanes["roles"]["implementer"]["candidates"]
-    agy_ids = {a for a, v in s.profile.lanes["agents"].items() if v["backend"] != "claude-cli"}
-    assert agy_ids and any(c.split(":", 1)[-1] in agy_ids for c in implementer if c.startswith("openclaw-agent"))
-    assert "implementer" in s.profile.lane_acks["google"]["roles"]
+    roles = s.profile.lane_acks["google"]["roles"]
+    assert {"implementer", "tester", "doc-writer"} <= set(roles)       # a writer primary and a writer fallback
 
 
-def test_the_gates_stay_not_proven_and_the_candidates_stay_held(monkeypatch):
+def test_the_gates_stay_not_proven_and_the_gate_flag_alone_admits_nothing(monkeypatch):
     Ui(monkeypatch)
     s = _s()
     wizard._step_lanes(s, _args())
     assert gates_mod.refusal()                       # NOT PROVEN: the real evidence table is untouched
     assert openclaw_lanes.AGY_BACKEND not in openclaw_lanes.writable_backends()
-    assert not _agy_part(s)["agents"] and _agy_part(s)["held"]
-
-
+    assert _agy_part(s)["gates"] == {"antigravity": True}
 
 
 # --- the team table ----------------------------------------------------------------------------------------------
@@ -267,7 +256,7 @@ def test_the_team_table_shows_antigravity_roles_only_when_ticked(monkeypatch):
     on = {r[0]: r for r in wizard._team_rows(_s(), base, rows)}
     off = {r[0]: r for r in wizard._team_rows(_s(ticked=("claude",)), base, rows)}
     assert on["Antigravity"][2].startswith("in team") and "sends repo content to Google" in on["Antigravity"][1]
-    assert "implementer" in on["Antigravity"][1] and "tester" in on["Antigravity"][1]   # D3: no role is barred from agy
+    assert "doc-writer" in on["Antigravity"][1] and "tester" in on["Antigravity"][1]   # D3: writers may take agy
     assert off["Antigravity"][2] == "off" and "tester" not in off["Antigravity"][1]
     assert on["Claude Code"][1] == "planner"
 

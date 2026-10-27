@@ -244,7 +244,7 @@ def test_a_stored_acknowledgement_for_changed_terms_text_drops_flash_low(monkeyp
     from ai_resources.setup.cockpits import openclaw
     monkeypatch.setattr(agy_lane_gates, "refusal", lambda evidence=None: None)
     s = _s(_google(["explore"]))
-    s.profile.lanes = {"agents": {"kit-lane-agy-x": {"backend": agy_lane_gates.AGY_LANE_BACKEND}}}
+    s.profile.lanes = {"gates": {"antigravity": True}}
     assert openclaw.agy_flash_low_reason(s) is None
     monkeypatch.setitem(lanes_render.ACK_TEXT, "google", lanes_render.ACK_TEXT["google"] + " (changed)")
     assert openclaw.agy_flash_low_reason(s) == lanes_render.HELD_NO_ACK_REASON

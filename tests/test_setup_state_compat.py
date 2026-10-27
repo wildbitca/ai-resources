@@ -59,7 +59,10 @@ def _seed(name):
     shutil.copy(FIX / f"{name}.yaml", state.state_path())
 
 
-@pytest.mark.parametrize("name", NAMES)
+OLD_LANES = ("cli_lanes_anthropic_ack", "cli_lanes_google_ack")      # pre-3.2 `profile.lanes` shape (ADR-0019 migration)
+
+
+@pytest.mark.parametrize("name", [n for n in NAMES if n not in OLD_LANES])
 def test_load_then_save_is_byte_equal(home, name):
     _seed(name)
     before = state.state_path().read_text(encoding="utf-8")
@@ -164,3 +167,32 @@ def test_the_migration_fills_only_the_declared_sign_in_surface(home, name):
     moved = sorted(k for k in set(want) | set(got) if want.get(k) != got.get(k))
     allowed = ("cockpit_auth", "cli_team", "cli_team_api", "mode")
     assert all(any(k == a or k.startswith(a + ".") for a in allowed) for k in moved), moved
+
+
+@pytest.mark.parametrize("name", OLD_LANES)
+def test_an_old_lanes_shape_loads_migrates_one_way_and_is_then_stable(home, name):
+    """ADR-0019: `profile.lanes` agents/roles/second/held/... are dropped on load; orchestrators, routing and the gate
+    stay, the acknowledgements are untouched, and a second load/save changes nothing."""
+    import yaml
+    _seed(name)
+    old = yaml.safe_load(state.state_path().read_text(encoding="utf-8"))["profile"]
+    assert "agents" in old["lanes"] or "roles" in old["lanes"]
+    loaded = state.load()
+    lanes = loaded.profile.lanes
+    assert set(lanes) <= set(state.LANES_KEPT_KEYS) and state.lanes_enabled(loaded)
+    assert lanes["orchestrators"] == (old["lanes"].get("orchestrators") or [])
+    assert (lanes.get("gates") or None) == (old["lanes"].get("gates") or None)
+    assert loaded.profile.lane_acks == old["lane_acks"]
+    state.save(loaded)
+    once = _LAST_RUN.sub("", state.state_path().read_text(encoding="utf-8"))
+    state.save(state.load())
+    assert _LAST_RUN.sub("", state.state_path().read_text(encoding="utf-8")) == once
+
+
+def test_migrate_lanes_is_a_no_op_on_the_matrix_shape_and_on_nothing():
+    p = state.ProfileState()
+    assert state.migrate_lanes(p) is False and p.lanes is None
+    p.lanes = {"orchestrators": ["main"], "gates": {"antigravity": True}}
+    assert state.migrate_lanes(p) is False
+    p.lanes = {"agents": {"a": {}}, "roles": {"x": {}}, "second": {}, "held": [], "pool_caps": {}}
+    assert state.migrate_lanes(p) is True and p.lanes == {"orchestrators": []}

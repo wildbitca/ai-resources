@@ -58,12 +58,13 @@ def _check_antigravity_quota(s: state.SetupState) -> int:
 def _balanced_agy_roles() -> list[str]:
     """The roles the shipped Balanced starting team would hand to Antigravity (its Gemini members), in role order."""
     from .setup import profiles
+    from .scoring import routing
     try:
-        block = profiles.load_profile("balanced", "single-model").get("lanes") or {}
+        doc = profiles.load_profile("balanced", "single-model")
     except (FileNotFoundError, RuntimeError):
         return []
-    found = {role for role, cands in (block.get("roles") or {}).items()
-             for c in cands or () if isinstance(c, str) and c.startswith("agy:gemini-")}
+    found = {r.name for r in routing.merged(doc).values() if r.kind == "team"
+             and (r.primary or "").startswith("agy:gemini-")}
     return [r for r in profiles.KNOWN_ROLES if r in found]
 
 

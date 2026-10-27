@@ -12,12 +12,13 @@ import pytest
 from ai_resources import agy_lane_gates as gates_mod
 from ai_resources import model_accounts as ma
 from ai_resources import roles_policy
+from ai_resources.scoring import routing
 from ai_resources.setup import compat, lanes_render
 from ai_resources.setup import profiles, state, team_view, ui, wizard
 from ai_resources.setup.cockpits import openclaw_lanes
 
 IDS = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
-GEMINI_ROLES = {"explore", "code-reviewer"}
+GEMINI_ROLES = {"explore", "code-reviewer", "doc-writer", "tester", "package-upgrade", "generalPurpose"}
 WRITERS = ("implementer", "tester", "doc-writer", "generalPurpose", "package-upgrade",
            "crashlytics-fixer", "sentry-fixer", "terraform-maintainer", "crossplane-upjet-maintainer")
 PRESETS = ("balanced", "performance", "low-cost")
@@ -27,14 +28,10 @@ def _doc(name="balanced"):
     return profiles.load_profile(name, "single-model")
 
 
-def _all_cands(block):
-    for role, cands in (block.get("roles") or {}).items():
-        for c in cands:
-            yield "roles", role, c
-
-
-def _gemini(block):
-    return {(key, role) for key, role, c in _all_cands(block) if c.startswith("agy:gemini-")}
+def _gemini_cells(doc):
+    """role -> Gemini cells of the role's chain in the routing matrix (ADR-0019)."""
+    return {r.name: [c for c in r.chain if c.startswith("agy:gemini-")] for r in routing.merged(doc).values()
+            if r.kind == "team"}
 
 
 def _by_role(doc):
@@ -50,59 +47,19 @@ def _google_ack(roles):
     return {"google": lanes_render.make_ack("google", list(roles), "2026-10-19T00:00:00+00:00", account="a@example.com")}
 
 
-# --- AC-S6a: the cli Balanced declares Gemini on exactly two places ------------------------------------------------
+# --- AC-S6a: the matrix gives Gemini the read/doc/test roles ---------------------------------------------------------
 
-def test_cli_balanced_validates_and_declares_gemini_on_exactly_the_two_places():
-    block = _doc()["lanes"]
-    assert lanes_render.validate_block(block) == []
-    assert _gemini(block) == {("roles", "explore"), ("roles", "code-reviewer")}
-    assert set(block["pins"]) == GEMINI_ROLES
-    assert all(c.startswith("agy:gemini-") for cands in block["pins"].values() for c in cands)
-    assert "second" not in block
-
-
-def test_cli_balanced_resolves_without_a_lane_conflict_closed_and_open(monkeypatch):
+def test_balanced_carries_no_lanes_block_and_the_matrix_declares_gemini_primaries():
     doc = _doc()
-    by_role = _by_role(doc)
-    closed = lanes_render.propose(doc, by_role, "single-model", claude_ids=IDS)
-    assert closed["held"] and all(h["candidate"].startswith("agy:") for h in closed["held"])
-    _open_gates(monkeypatch)
-    roles = sorted(set(roles_policy.LANE_ELIGIBILITY) - {"implementer"})
-    opened = lanes_render.propose(doc, by_role, "single-model", claude_ids=IDS, acks=_google_ack(roles),
-                                  gates={"antigravity": True})
-    assert not opened.get("held") or all("Antigravity" not in h["reason"] for h in opened["held"])
+    assert "lanes" not in doc
+    cells = _gemini_cells(doc)
+    assert {r for r in cells if (routing.merged(doc)[r].primary or "").startswith("agy:gemini-")} == GEMINI_ROLES
+    assert not [r for r in roles_policy.CHECKER_ROLES if cells[r]]          # checkers hold no Gemini cell
 
 
-# --- AC-S6b: held while the gates are closed ----------------------------------------------------------------------
-
-def test_with_agy_acknowledged_and_no_record_every_gemini_member_is_held_with_the_gate_refusal():
-    from ai_resources import agy_lane_gates
-    assert not agy_lane_gates.all_proven()
-    block = _doc()["lanes"]
-    frag = lanes_render.state_from_block(
-        block, claude_ids=IDS, gates={"antigravity": True},
-        acks=_google_ack(["explore", "code-reviewer", "verifier", "security-auditor"]))
-    held_gemini = {(h["role"], h["candidate"]) for h in frag["held"] if "gemini-" in h["candidate"]}
-    assert {r for r, _c in held_gemini} == GEMINI_ROLES
-    gemini_reasons = {h["reason"] for h in frag["held"] if "gemini-" in h["candidate"]}
-    assert gemini_reasons == {agy_lane_gates.refusal()}
-    assert all(a["backend"] == "claude-cli" for a in frag["agents"].values())
-    assert openclaw_lanes.writable_backends() == {"claude-cli"}
-
-
-# --- AC-S6c: no preset carries an agy writer ----------------------------------------------------------------------
-
-
-
-# --- AC-S6d: a role is held when the acknowledgement does not list it ------------------------------
-
-def test_a_google_acknowledgement_without_code_reviewer_holds_it_with_the_reason(monkeypatch):
-    _open_gates(monkeypatch)
-    ack = _google_ack(["explore"])
-    frag = lanes_render.state_from_block(_doc()["lanes"], claude_ids=IDS, gates={"antigravity": True}, acks=ack)
-    held = {(h["role"], h["candidate"]): h["reason"] for h in frag["held"]}
-    assert held[("code-reviewer", "agy:gemini-4-argon-high")] == "held: the Google acknowledgement does not list code-reviewer"
-    assert ("explore", "agy:gemini-3.8-flash-high") not in held
+def test_balanced_state_fragment_is_the_matrix_override_only():
+    frag = lanes_render.lanes_state(_doc(), orchestrators=["main"], gates={"antigravity": True})
+    assert frag == {"orchestrators": ["main"], "gates": {"antigravity": True}}
 
 
 # --- AC-S6e: OpenRouter Balanced, the opt-in ------------------------------------------------------------------------
@@ -266,7 +223,8 @@ def _declared_providers(row):
     name = wizard.PRESET_PROFILES[row]["balanced"]
     doc = profiles.load_profile(name, "single-model" if row in ("cli", "single") else "multi-model")
     refs = [c["model"] for c in doc["by_role"].values()]
-    refs += [c[4:] for _k, _r, c in _all_cands(doc.get("lanes") or {}) if c.startswith("agy:")]
+    if row == "cli":
+        refs += [c[4:] for cells in _gemini_cells(doc).values() for c in cells]
     out = set()
     for ref in refs:
         if ref.startswith("gemini-"):

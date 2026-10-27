@@ -151,8 +151,7 @@ Gemini models come through Antigravity (`agy`), a subscription CLI with its own 
 models from my accounts" list, which is built from API credentials. With `agy` installed, the Custom list prints an
 "Antigravity (agy, subscription)" group of informational rows (`lane, opt-in`, plus `unconfirmed slug` until a V5 run
 confirms the slugs); it asks for no key and cannot be picked as an API model. On "Your team", the team table has an
-Antigravity row: untick = "off", ticked = the roles it would take (Performance and Low cost add Gemini as the
-code-review second opinion), each slug labelled `[unconfirmed slug]` while unconfirmed, and "sends repo content to
+Antigravity row: untick = "off", ticked = the roles it takes as PRIMARY in the routing matrix (`scoring/routing.py`, ADR-0019), each slug labelled `[unconfirmed slug]` while unconfirmed, and "sends repo content to
 Google; terms check next". Without `agy`, setup says so in one line. The terms check (Google acknowledgement, gates
 G0-G7) is the same one `--lanes-antigravity` opens; nothing is written to agy.
 
@@ -294,10 +293,9 @@ the question only opens on Balanced for them.
 
 **Balanced is multi-provider (ADR-0010).** Checkers never share a family with a writer, in every shipped profile
 (the verifier and security-auditor run on Opus with no fallback onto a writer's family). On the CLI row Balanced adds
-Gemini over Antigravity on `explore` and on the second opinions of the `code-reviewer`, the `planner` and the
-`software-architect` (the planner and architect seconds are display-only: no workflow step dispatches them yet). The
-verifier and the security-auditor take no Gemini; the implementer, tester, doc-writer, generalPurpose, package-upgrade and
-the fixers stay on Claude: no preset lists an agy candidate on a writer role. On OpenRouter (`gateway/balanced`)
+Gemini over Antigravity as the PRIMARY of `explore`, `code-reviewer`, `doc-writer`, `tester`, `package-upgrade` and
+`generalPurpose` (the routing matrix, ADR-0019; Antigravity may write). The verifier and the security-auditor take no
+Gemini; the planner, architect, implementer and the fixers have a Claude primary. On OpenRouter (`gateway/balanced`)
 explore, tester and doc-writer run on `google/gemini-3.7-flash` with a Claude fallback and everything else on Claude.
 Adding the planner and the software-architect to the Google acknowledgement is a re-sign of that role list (ADR-0007
 section 9): an acknowledgement stored without them is asked again through the "Extend the Google acknowledgement to"
@@ -464,8 +462,8 @@ Until then no agy agent reaches state, `lanes.yaml`, `openclaw.json` or `allowAg
 - **Process flags** across `claude-cli`, `claude-kit`, `agy-cli`, `agy-cli-lane` are recorded as facts in ADR-0007
   section 11; an agy child runs with `--dangerously-skip-permissions` (a full shell).
 - **Egress.** Repository content, diffs, test output and MCP results of every acknowledged role go to Google.
-- **Placement is by role count, not by quota.** The `resolved:` table uses static weights (claude 1.0, agy 0.7), so
-  it balances by role count in sorted role order. A live headroom source for the agy pools does not exist.
+- **Placement follows the matrix and live pool usage.** `lanes.yaml` carries the routing matrix only (role -> primary
+  -> fallback chain, ADR-0019); a pool at or above 85% hands its work to the role's fallback. There are no static weights.
 - **Best model first.** A candidate on the role's exact model (tier 1) beats a same-family other version (tier 2);
   tier 2 serves a writer only when no tier-1 candidate is admissible and is never taken by a checker. A candidate
   listed in the profile's `lanes.pins.<role>` ranks first for that non-checker role only. `effective_ids` come from

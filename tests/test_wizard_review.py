@@ -77,12 +77,12 @@ def _team_state(*members):
     return s
 
 
-def test_the_parallel_runs_row_appears_only_with_a_claude_lane():
-    """Ticking Antigravity records its own lane table; that is not the Claude parallel runs and must not read as such."""
+def test_the_parallel_runs_row_appears_only_with_an_anthropic_ack():
+    """Ticking Antigravity records its own gate and Google ack; that is not the Claude parallel runs."""
     s = _team_state()
-    s.profile.lanes = {"agents": {"kit-lane-agy-x": {"backend": "agy-cli-lane"}}, "roles": {}}
+    s.profile.lanes = {"orchestrators": [], "gates": {"antigravity": True}}
     assert "Parallel runs" not in dict(wizard._review_rows(s))
-    s.profile.lanes["agents"]["kit-lane-cli-x"] = {"backend": "claude-cli"}
+    s.profile.lane_acks = {"anthropic": {"roles": ["implementer"]}}
     assert dict(wizard._review_rows(s))["Parallel runs"] == "on"
 
 

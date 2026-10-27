@@ -6,7 +6,6 @@ import json
 
 import pytest
 
-from ai_resources.setup import lanes_render
 from ai_resources.setup.cockpits import openclaw_lanes
 from test_openclaw_lanes_setup import BASE, LANES, OPUS, SONNET, FakeOpenClaw, _run, _s, host  # noqa: F401
 
@@ -92,22 +91,6 @@ def test_scope_findings_flag_a_lane_agent_that_is_not_scoped(host):
     doc["agents"]["entries"][SONNET_ID]["tools"]["deny"] = []
     msgs = openclaw_lanes.mcp_scope_findings(LANES, doc)
     assert len(msgs) == 1 and SONNET_ID in msgs[0]
-
-
-def test_profile_block_mcp_key_validates_and_maps_to_agents():
-    block = {"roles": {"implementer": ["claude-cli:sonnet"]}, "mcp": {"implementer": ["engram"]}}
-    assert lanes_render.validate_block(block) == []
-    frag = lanes_render.state_from_block(block, claude_ids={"sonnet": "claude-sonnet-5-5"})
-    (aid,) = frag["agents"]
-    assert frag["agents"][aid]["mcp_servers"] == ["engram"]
-    assert frag["mcp"] == {"implementer": ["engram"]}
-    assert "mcp: engram" in lanes_render.explain_lanes(frag)["implementer"]
-
-
-@pytest.mark.parametrize("bad", [{"implementer": "engram"}, {"nope-role": ["x"]}, ["engram"]])
-def test_profile_block_mcp_rejects_bad_shapes(bad):
-    block = {"roles": {"implementer": ["claude-cli:sonnet"]}, "mcp": bad}
-    assert lanes_render.validate_block(block)
 
 
 # --- loosening / bookkeeping across runs --------------------------------------------------------------

@@ -34,11 +34,3 @@ def provenance(comp: Composition) -> dict[str, Any]:
         "headroom": {p.pool_id: {"state": p.state, "source": p.source, "basis": p.basis,
                                  "static_weight": p.static_weight} for p in comp.pools},
     }
-
-
-def to_lanes(table: Any) -> dict[str, Any]:
-    """The lanes pass output (ADR-0007): `{agents, roles, second}`, a separate block from `by_role`.
-
-    `by_role` and `to_customizations` never gain lane keys: compose never emits a lane.
-    """
-    return table.to_lanes()

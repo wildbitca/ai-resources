@@ -1,12 +1,12 @@
-"""Subscription lanes: the setup-owned table and its `lanes.yaml` rendering (ADR-0007, plan 4.1-4.2).
+"""Subscription lanes: the setup-owned state fragment and the `lanes.yaml` rendering (ADR-0007, ADR-0019).
 
-`ProfileState.lanes` is the WHAT. `~/.config/ai-resources/lanes.yaml` is a rendered artifact written
-only when lanes are non-empty, in single-model and in multi-model mode, and by no `models ...` command
-except through the fan-out re-render artifact (`model_rerender.LanesArtifact`), which re-renders it so a
-moved pinned id marks lane agents stale. `executors.yaml` is not changed by any of this. Nothing here opens `openclaw.json`.
+`~/.config/ai-resources/lanes.yaml` is generated purely from `scoring.routing.ROLES` (plus the profile's `routing:`
+overrides): the role matrix, the spill rule, a digest and the Google acknowledgement. It carries no agents, candidates
+or resolved table. It is written only when lanes are enabled, in both modes, and re-rendered by the fan-out artifact
+(`model_rerender.LanesArtifact`). Nothing here opens `openclaw.json`.
 
-Pure helpers first (profile block -> state, drift, rendering); the one file writer (`sync_file`) is the
-only function with side effects, and it backs the file up before writing it.
+Pure helpers first; the one file writer (`sync_file`) is the only function with side effects, and it backs the file
+up before writing it.
 """
 from __future__ import annotations
 
@@ -18,8 +18,7 @@ import stat
 from pathlib import Path
 from typing import Any, Mapping
 
-from .. import agy_lane_gates, model_pins, roles_policy
-from ..scoring import lanes as scoring_lanes
+from .. import agy_lane_gates
 from ..scoring import routing as scoring_routing
 from . import state
 
@@ -28,8 +27,8 @@ try:
 except ImportError:  # pragma: no cover - handled by ui.require_deps()
     yaml = None  # type: ignore
 
-CLAUDE_CODE = scoring_lanes.CLAUDE_CODE
-CLAUDE_CLI = scoring_lanes.CLAUDE_CLI
+CLAUDE_CODE = "claude-code"
+CLAUDE_CLI = "claude-cli"
 AGENT_PREFIX = "kit-lane-"
 # ADR-0007 §11 (Antigravity lane): while it is not Accepted, every `agy:` candidate is held (fail closed).
 # tests/test_lanes_agy_hold.py pins this constant to the exact status line of §11 in both directions.
@@ -69,7 +68,6 @@ HELD_FLAG_REASON = "held: --lanes-antigravity is off"
 HELD_NO_ACK_REASON = "held: no valid Google acknowledgement (missing, stale text or no account)"
 HELD_ROLE_REASON = "held: the Google acknowledgement does not list {role}"
 AGY_BACKEND = agy_lane_gates.AGY_LANE_BACKEND
-_ALIASES = ("haiku", "sonnet", "opus")
 _VENDOR = re.compile(r"^(?:anthropic|claude-cli|claude-kit|agy-cli-lane)/")
 
 
@@ -96,77 +94,6 @@ def agent_id_for(backend: str, model: str) -> str:
 
 def _strip(ref: str) -> str:
     return _VENDOR.sub("", str(ref))
-
-
-# --- profile block -> state fragment ---------------------------------------------------------------------
-
-def validate_block(block: Any) -> list[str]:
-    """Problems with a profile `lanes:` block ([] when it validates). It names roles and candidate lists
-    only: `claude-code`, `claude-cli:<alias|id>` or `agy:<model>`; never an agent id."""
-    if block is None:
-        return []
-    if not isinstance(block, Mapping):
-        return ["lanes: must be a mapping"]
-    problems: list[str] = []
-    for key in block:
-        if key not in ("roles", "mcp", "pins"):
-            problems.append(f"lanes.{key}: unknown key (expected roles, mcp, pins)")
-    for key in ("roles",):
-        section = block.get(key) or {}
-        if not isinstance(section, Mapping):
-            problems.append(f"lanes.{key}: must be a mapping of role -> candidate list")
-            continue
-        for role, cands in section.items():
-            if not roles_policy.lane_eligible(role):
-                problems.append(f"lanes.{key}.{role}: role is not lane-eligible")
-            if not isinstance(cands, list) or not cands:
-                problems.append(f"lanes.{key}.{role}: must be a non-empty list")
-                continue
-            for c in cands:
-                if not isinstance(c, str) or not _candidate(c):
-                    problems.append(f"lanes.{key}.{role}: bad candidate {c!r} "
-                                    "(expected claude-code, claude-cli:<model> or agy:<model>)")
-                elif c.startswith("agy:") and c[4:] not in model_pins.AGY_LANE_MODELS:
-                    problems.append(f"lanes.{key}.{role}: agy slug {c[4:]!r} is not in AGY_LANE_MODELS "
-                                    f"({', '.join(model_pins.AGY_LANE_MODELS)})")
-                elif c.startswith(AGENT_PREFIX) or c.startswith("openclaw-agent:"):
-                    problems.append(f"lanes.{key}.{role}: a profile never names an agent id ({c!r})")
-    pins = block.get("pins")
-    if pins is not None:
-        if not isinstance(pins, Mapping):
-            problems.append("lanes.pins: must be a mapping of role -> candidate list")
-        else:
-            for role, cands in pins.items():
-                listed = set((block.get("roles") or {}).get(role) or [])
-                if role in roles_policy.CHECKER_ROLES:
-                    problems.append(f"lanes.pins.{role}: a checker takes no operator pin")
-                if not isinstance(cands, list) or not cands:
-                    problems.append(f"lanes.pins.{role}: must be a non-empty list")
-                    continue
-                for c in cands:
-                    if c not in listed:
-                        problems.append(f"lanes.pins.{role}: {c!r} is not one of the role's candidates")
-    mcp = block.get("mcp")
-    if mcp is not None:
-        if not isinstance(mcp, Mapping):
-            problems.append("lanes.mcp: must be a mapping of role -> list of MCP server names")
-        else:
-            known = set(block.get("roles") or {})
-            for role, names in mcp.items():
-                if role not in known:
-                    problems.append(f"lanes.mcp.{role}: role is not named under lanes.roles")
-                if not isinstance(names, list) or not all(isinstance(n, str) and n for n in names):
-                    problems.append(f"lanes.mcp.{role}: must be a list of MCP server names")
-    return problems
-
-
-def _candidate(text: str) -> tuple[str, str] | None:
-    if text == CLAUDE_CODE:
-        return CLAUDE_CODE, ""
-    m = re.match(r"^(claude-cli|agy):([A-Za-z0-9._/-]+)$", text)
-    if m:
-        return (CLAUDE_CLI if m.group(1) == "claude-cli" else AGY_BACKEND), m.group(2)
-    return None
 
 
 def valid_acks(acks: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -207,6 +134,11 @@ def backend_role_reason(backend: str, role: str, gates: Mapping[str, Any] | None
     return agy_role_reason(role, gates, acks)
 
 
+def lane_refs(lanes: Mapping[str, Any]) -> dict[str, list[str]]:
+    """role -> every lane ref an old-shape state names for it (empty for the matrix shape)."""
+    return {role: list((cfg or {}).get("candidates") or []) for role, cfg in (lanes.get("roles") or {}).items()}
+
+
 def agy_admission(lanes: Mapping[str, Any], gates: Mapping[str, Any] | None,
                   acks: Mapping[str, Any] | None) -> dict[str, str]:
     """Agent id -> reason, for every non-claude-cli agent of a state `lanes` table that is not admitted.
@@ -228,218 +160,20 @@ def agy_admission(lanes: Mapping[str, Any], gates: Mapping[str, Any] | None,
     return out
 
 
-def _agent_id_of(text: str, ids: Mapping[str, str]) -> str | None:
-    """The kit agent id a profile candidate text maps to (None for claude-code or an invalid text)."""
-    parsed = _candidate(text)
-    if parsed is None or parsed[0] == CLAUDE_CODE:
-        return None
-    backend, model = parsed
-    if backend == CLAUDE_CLI:
-        bare = ids.get(model, model) if model in _ALIASES else model
-        return agent_id_for(backend, model_pins.openclaw_ref(bare))
-    return agent_id_for(backend, f"{AGY_BACKEND}/{model}")
-
-
-def state_from_block(block: Mapping[str, Any] | None, *, claude_ids: Mapping[str, str] | None = None,
-                     gates: Mapping[str, Any] | None = None,
-                     acks: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """The `ProfileState.lanes` fragment (`agents`, `roles`) a profile block proposes.
-
-    `claude_ids` maps an alias to the effective Claude id (default `model_pins.effective()`). An agy candidate
-    enters state only when `agy_role_reason` admits it; otherwise it is recorded in `held` with the reason.
-    """
-    problems = validate_block(block)
-    if problems:
-        raise LanesBlockError("; ".join(problems))
-    ids = dict(claude_ids or model_pins.effective())
-    agents: dict[str, Any] = {}
-    held: list[dict[str, str]] = []
-    current_role = [""]
-
-    def lane_ref(text: str) -> str | None:
-        backend, model = _candidate(text)  # type: ignore[misc]
-        if backend == CLAUDE_CODE:
-            return CLAUDE_CODE
-        why = backend_role_reason(backend, current_role[0], gates, acks)
-        if why:
-            held.append({"role": current_role[0], "candidate": text, "reason": why})
-            return None
-        if backend == CLAUDE_CLI:
-            bare = ids.get(model, model) if model in _ALIASES else model
-            ref = model_pins.openclaw_ref(bare)
-        else:
-            ref = f"{AGY_BACKEND}/{model}"
-        aid = agent_id_for(backend, ref)
-        agents.setdefault(aid, {"backend": backend, "model": ref,
-                                "pool": scoring_lanes.pool_of_agent(scoring_lanes.LaneAgent(aid, backend, ref))})
-        return f"openclaw-agent:{aid}"
-
-    def refs_of(role: str, cands: list[str]) -> list[str]:
-        current_role[0] = role
-        return [r for r in (lane_ref(c) for c in cands) if r is not None]
-
-    roles = {r: {"candidates": refs_of(r, cands)}
-             for r, cands in sorted(((block or {}).get("roles") or {}).items())}
-    out: dict[str, Any] = {"agents": dict(sorted(agents.items())), "roles": roles}
-    if held:
-        out["held"] = held
-    pins = {r: list(c) for r, c in sorted(((block or {}).get("pins") or {}).items()) if c}
-    if pins:
-        out["pins"] = pins
-    # Explicit per-role opt-in for extra MCP servers (ADR-0007 OQ-5). Lane agents are MCP-scoped by default;
-    # an agent serving several roles gets the union of their opt-ins.
-    mcp = {r: sorted({str(n) for n in names}) for r, names in sorted(((block or {}).get("mcp") or {}).items())}
-    if mcp:
-        for role, names in mcp.items():
-            refs = list((roles.get(role) or {}).get("candidates") or [])
-            for ref in refs:
-                aid = ref.split(":", 1)[1] if ref.startswith("openclaw-agent:") else None
-                if aid in agents:
-                    agents[aid]["mcp_servers"] = sorted(set(agents[aid].get("mcp_servers") or []) | set(names))
-        out["mcp"] = mcp
-    return out
-
-
-# --- drift -----------------------------------------------------------------------------------------------
-
-def _model_of(by_role: Mapping[str, Any], role: str) -> str:
-    cfg = by_role.get(role)
-    return str(cfg.get("model") or "") if isinstance(cfg, Mapping) else ""
-
-
-def _differs(role_model: str, agent_model: str) -> bool:
-    """By family for an alias role, by exact ref (vendor prefix ignored) otherwise."""
-    if role_model in _ALIASES:
-        return roles_policy.model_family(role_model) != roles_policy.model_family(agent_model)
-    return _strip(role_model) != _strip(agent_model)
-
-
-def lane_refs(lanes: Mapping[str, Any]) -> dict[str, list[str]]:
-    """role -> every lane ref the state names for it."""
-    return {role: list((cfg or {}).get("candidates") or []) for role, cfg in (lanes.get("roles") or {}).items()}
-
-
-def explain_lanes(lanes: Mapping[str, Any] | None) -> dict[str, str] | None:
-    """role -> text for the explain Lane column, from the state's table; None without a table (the output
-    is then byte-identical to the one printed before lanes existed)."""
-    if not isinstance(lanes, Mapping) or not lanes.get("roles"):
-        return None
-    out: dict[str, str] = {}
-    for role, cfg in sorted((lanes.get("roles") or {}).items()):
-        out[role] = " > ".join((cfg or {}).get("candidates") or []) or "-"
-    for role, names in sorted((lanes.get("mcp") or {}).items()):
-        if names:
-            out[role] = f"{out.get(role, '-')} [mcp: {', '.join(names)}]"
-    for h in lanes.get("held") or []:
-        role = h.get("role", "")
-        out[role] = f"{out.get(role, '-')} [{h.get('candidate')} {h.get('reason')}]"
-    return out
-
-
-def drift(lanes: Mapping[str, Any] | None, by_role: Mapping[str, Any]) -> list[dict[str, str]]:
-    """The lane agents whose model differs from the model of a role that names them."""
-    found: dict[str, dict[str, str]] = {}
-    if not isinstance(lanes, Mapping):
-        return []
-    agents = lanes.get("agents") or {}
-    ids = model_pins.effective()
-    pinned: dict[str, set[str]] = {}
-    for r, texts in (lanes.get("pins") or {}).items():
-        pinned[r] = {f"openclaw-agent:{aid}" for aid in (_agent_id_of(str(x), ids) for x in texts or ()) if aid}
-    for role, refs in sorted(lane_refs(lanes).items()):
-        role_model = _model_of(by_role, role)
-        if not role_model:
-            continue
-        for ref in refs:
-            if not isinstance(ref, str) or not ref.startswith("openclaw-agent:"):
-                continue
-            if ref in pinned.get(role, set()):
-                continue
-            aid = ref.split(":", 1)[1]
-            agent = agents.get(aid)
-            if not isinstance(agent, Mapping) or aid in found:
-                continue
-            if _differs(role_model, str(agent.get("model", ""))):
-                found[aid] = {"agent": aid, "agent_model": str(agent.get("model", "")),
-                              "role": role, "role_model": role_model}
-    return [found[k] for k in sorted(found)]
-
-
-def version_drift(lanes: Mapping[str, Any] | None, by_role: Mapping[str, Any],
-                  ids: Mapping[str, str] | None = None) -> list[dict[str, str]]:
-    """Lane agents that are now tier 2 for a role they name: the same family, another version (ADR-0007
-    section 11 amendment). They are not stale; they are used only as a writer fallback, never for a checker."""
-    if not isinstance(lanes, Mapping):
-        return []
-    eff = dict(ids or model_pins.effective())
-    agents = lanes.get("agents") or {}
-    found: dict[str, dict[str, str]] = {}
-    for role, refs in sorted(lane_refs(lanes).items()):
-        role_model = _model_of(by_role, role)
-        if not role_model:
-            continue
-        for ref in refs:
-            aid = ref.split(":", 1)[1] if isinstance(ref, str) and ref.startswith("openclaw-agent:") else None
-            agent = agents.get(aid) if aid else None
-            if not isinstance(agent, Mapping) or aid in found:
-                continue
-            model = str(agent.get("model", ""))
-            if scoring_lanes.version_tier(role_model, model, eff) == 2:
-                found[aid] = {"agent": aid, "agent_model": scoring_lanes._bare(model), "role": role,
-                              "role_model": scoring_lanes._bare(eff.get(role_model, role_model))}
-    return [found[k] for k in sorted(found)]
-
-
-def drift_warnings(lanes: Mapping[str, Any] | None, by_role: Mapping[str, Any]) -> list[str]:
-    out = [f"lane agent {d['agent']} model {d['agent_model']} differs from role model {d['role_model']} "
-           f"(role {d['role']}); re-run `ai-resources setup --lanes`" for d in drift(lanes, by_role)]
-    out += [f"lane agent {d['agent']} runs {d['agent_model']}; role model is {d['role_model']} (role {d['role']}); "
-            f"it is used only as a writer fallback and never for a checker"
-            for d in version_drift(lanes, by_role)]
-    return out
-
-
 # --- the rendered document -------------------------------------------------------------------------------
 
-def render_doc(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: str,
-               acks: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """The `lanes.yaml` document: `{mode, agents, roles, digest}`.
+def render_doc(lanes: Mapping[str, Any], mode: str, acks: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """The `lanes.yaml` document: `{mode, generated_from, routing, acks?, digest}`, a pure function of the matrix.
 
-    Stale agents (model drift) are marked `stale: true` and the digest covers every agent model ref.
-    The table itself is resolved by `scoring.lanes.resolve_lanes` at dispatch time; this file carries
-    the declared candidates in order, which is what dispatch reads.
-    """
-    stale = {d["agent"] for d in drift(lanes, by_role)}
-    agents: dict[str, Any] = {}
-    held = set(agy_admission(lanes, lanes.get("gates"), acks))
-    every: dict[str, Any] = {}
-    for aid, agent in sorted((lanes.get("agents") or {}).items()):
-        entry = {"backend": agent.get("backend", ""), "model": agent.get("model", ""),
-                 "pool": agent.get("pool", "")}
-        if aid in stale or agent.get("stale"):
-            entry["stale"] = True
-        every[aid] = entry
-        if aid not in held:                # a held agy agent from a hand-edited state never reaches lanes.yaml
-            agents[aid] = entry
-    def _live(refs: Any) -> list[str]:
-        return [r for r in (refs or []) if not (isinstance(r, str) and r.startswith("openclaw-agent:")
-                                                and r.split(":", 1)[1] in held)]
-
-    roles = {r: {"candidates": _live((c or {}).get("candidates"))}
-             for r, c in sorted((lanes.get("roles") or {}).items())}
-    payload: dict[str, Any] = {"mode": mode, "agents": agents, "roles": roles}
-    # Gate and Google-ack fields appear only when an agy gate or a Google ack exists: a phase 2 install's
-    # lanes.yaml stays byte-identical.
-    google = (acks or {}).get("google")
-    if (lanes.get("gates") or {}).get("antigravity") or isinstance(google, Mapping):
-        payload["gates"] = {"antigravity": bool((lanes.get("gates") or {}).get("antigravity"))}
-    if isinstance(google, Mapping):
+    `routing` is `scoring.routing.render_section` over the profile's `routing:` overrides (kept in the lanes state);
+    the Google acknowledgement (egress consent, ADR-0007 s11) travels under `acks`. Nothing else is derived."""
+    payload: dict[str, Any] = {"mode": mode, "generated_from": "scoring.routing"}
+    payload["routing"] = scoring_routing.render_section({"routing": lanes.get("routing")} if lanes.get("routing") else None)
+    google = valid_acks(acks).get("google")
+    if google is not None:
         payload["acks"] = {"google": {"roles": sorted(google.get("roles") or ()),
                                       "text_sha256": str(google.get("text_sha256") or ""),
                                       "account": str(google.get("account") or "")}}
-    payload["resolved"] = resolve_table(lanes, by_role, mode, acks, every)
-    # ADR-0018: the single routing matrix and the balancing policy, machine-readable next to the resolved table.
-    payload["routing"] = scoring_routing.render_section({"routing": lanes.get("routing")} if lanes.get("routing") else None)
     return {**payload, "digest": doc_digest(payload)}
 
 
@@ -449,76 +183,10 @@ def doc_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def _meta_of(lanes: Mapping[str, Any], role: str) -> dict[str, Any]:
-    meta = (lanes.get("role_meta") or {}).get(role) if isinstance(lanes.get("role_meta"), Mapping) else None
-    return {k: v for k, v in meta.items() if k in ("evidence", "effort")} if isinstance(meta, Mapping) else {}
-
-
-def resolve_table(lanes: Mapping[str, Any], by_role: Mapping[str, Any], mode: str,
-                  acks: Mapping[str, Any] | None, agents: Mapping[str, Any]) -> dict[str, Any]:
-    """The resolver's choice per role, computed at setup / re-render time (ADR-0007 §1, OQ-4).
-
-    `roles.<role>`: `{lane, model, reason, fallbacks: [{lane, reason}]}`; `blocked.<role>`: the reason a checker has no admissible lane. `fallbacks` are the other
-    candidates the resolver admits on their own, in declared order, plus `claude-code` for non-checker roles
-    (the off switch): the only lanes `lanes prepare --lane` accepts besides the resolved one. Agy agents are
-    held while the Antigravity section is not accepted. A resolver error is recorded, never raised.
-    """
-    gates_in = lanes.get("gates") or {}
-    held_reasons = agy_admission({**dict(lanes), "agents": dict(agents)}, gates_in, acks)
-    held_ids = set(held_reasons)
-    usable = {aid: dict(a) for aid, a in agents.items() if aid not in held_ids}
-
-    def keep(refs: list[str]) -> list[str]:
-        return [r for r in refs if not (r.startswith("openclaw-agent:") and r.split(":", 1)[1] not in usable)]
-
-    candidates = {r: keep(list((c or {}).get("candidates") or [])) for r, c in (lanes.get("roles") or {}).items()}
-    caps = dict(lanes.get("pool_caps") or {})
-    ids = model_pins.effective()
-    pins: dict[str, list[str]] = {}
-    for role, texts in (lanes.get("pins") or {}).items():
-        refs = [f"openclaw-agent:{aid}" for aid in (_agent_id_of(str(x), ids) for x in texts or ()) if aid]
-        keep_refs = set(candidates.get(role, ()))
-        pins[role] = [r for r in refs if r in keep_refs and role not in roles_policy.CHECKER_ROLES]
-    gates = {"antigravity_flag": bool(gates_in.get("antigravity")), "adr_0007_agy_accepted": AGY_LANE_ADR_ACCEPTED}
-    kw = dict(acks=valid_acks(acks), pool_caps=caps, mode=mode, gates=gates,
-              effective_ids=ids, pins={r: v for r, v in pins.items() if v})
-    try:
-        table = scoring_lanes.resolve_lanes(by_role, usable, candidates, **kw)
-        out: dict[str, Any] = {"roles": {}, "blocked": dict(sorted(table.blocked.items()))}
-        for role in sorted(candidates):
-            lane = table.roles.get(role)
-            if lane is None:
-                continue
-            why = "; ".join(w.text for w in table.why if w.role == role)
-            fallbacks: list[dict[str, str]] = []
-            for ref in candidates[role]:
-                if ref == lane.ref:
-                    continue
-                one_pins = {role: [p for p in pins.get(role, ()) if p == ref]} if ref in pins.get(role, ()) else {}
-                one = scoring_lanes.resolve_lanes(by_role, usable, {role: [ref]}, **{**kw, "pins": one_pins})
-                if role in one.blocked or one.roles.get(role) is None or one.roles[role].ref != ref:
-                    continue
-                fallbacks.append({"lane": ref, "model": one.models.get(role, ""),
-                                  "reason": "admitted candidate, declared order: use only when "
-                                            "the resolved lane is unavailable or capped"})
-            if role not in roles_policy.CHECKER_ROLES and lane.ref != CLAUDE_CODE and not any(
-                    f["lane"] == CLAUDE_CODE for f in fallbacks):
-                fallbacks.append({"lane": CLAUDE_CODE, "model": str((by_role.get(role) or {}).get("model") or ""),
-                                  "reason": "the off switch"})
-            out["roles"][role] = {"lane": lane.ref, "model": table.models.get(role, ""),
-                                  "reason": why or "single candidate", "fallbacks": fallbacks,
-                                  **_meta_of(lanes, role)}
-    except (scoring_lanes.LaneError, scoring_lanes.LaneConflict) as exc:
-        return {"error": str(exc), "roles": {}, "blocked": {}}
-    if held_reasons:
-        out["held"] = dict(sorted(held_reasons.items()))
-    return out
-
-
 def dumps(doc: Mapping[str, Any]) -> str:
     if yaml is None:
         raise RuntimeError("PyYAML required to write lanes.yaml")
-    return ("# Rendered by `ai-resources setup` (ADR-0007). Do not edit: setup re-renders it.\n"
+    return ("# Generated from scoring.routing by `ai-resources setup` (ADR-0019). Do not edit: setup re-renders it.\n"
             + yaml.safe_dump(dict(doc), default_flow_style=False, sort_keys=False))
 
 
@@ -538,34 +206,11 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
-def current_by_role(s: "state.SetupState") -> dict[str, Any]:
-    """The role -> model map the state resolves to now, never read from `lanes.yaml` and never from
-    `openclaw.json`. Multi-model reads `executors.yaml` when it exists."""
-    from . import profiles
-    if s.mode == "multi-model":
-        path = state.executors_path()
-        if path.is_file() and yaml is not None:
-            try:
-                doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-                if isinstance(doc, dict):
-                    return dict(doc.get("by_role") or {})
-            except (OSError, yaml.YAMLError):
-                pass
-        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name, s.backend), "multi-model")
-        if s.profile.customized and s.profile.customizations:
-            base = profiles.merge_customizations(
-                base, {k: v for k, v in s.profile.customizations.items() if k in profiles.KNOWN_ROLES})
-        return dict(profiles.to_executors(base, s.backend).get("by_role") or {})
-    from .wizard import _single_model_executors
-    return dict(_single_model_executors(s).get("by_role") or {})
-
-
-def expected_text(s: "state.SetupState", by_role: Mapping[str, Any] | None = None) -> str | None:
+def expected_text(s: "state.SetupState") -> str | None:
     """The `lanes.yaml` text for this state, or None when there are no lanes."""
     if not state.lanes_enabled(s):
         return None
-    by_role = current_by_role(s) if by_role is None else by_role
-    return dumps(render_doc(s.profile.lanes, by_role, s.mode, s.profile.lane_acks))
+    return dumps(render_doc(s.profile.lanes, s.mode, s.profile.lane_acks))
 
 
 def backup(path: Path, backup_dir: Path | None) -> dict[str, Any]:
@@ -598,8 +243,7 @@ def restore(payload: Mapping[str, Any]) -> None:
         path.unlink(missing_ok=True)
 
 
-def sync_file(s: "state.SetupState", *, by_role: Mapping[str, Any] | None = None,
-              backup_dir: Path | None = None) -> dict[str, Any]:
+def sync_file(s: "state.SetupState", *, backup_dir: Path | None = None) -> dict[str, Any]:
     """Make `lanes.yaml` match the state, tracking it in `tracking.config_files_written`.
 
     Lanes non-empty -> render (backed up first); lanes empty -> remove the file and drop the tracking
@@ -607,7 +251,7 @@ def sync_file(s: "state.SetupState", *, by_role: Mapping[str, Any] | None = None
     Never reads or writes `openclaw.json`.
     """
     path = state.lanes_path()
-    text = expected_text(s, by_role)
+    text = expected_text(s)
     tracked = s.tracking.config_files_written
     if text is None:
         payload = None
@@ -659,82 +303,45 @@ ACK_TEXT = {
         "`crontab`, `systemd-run --user`, `curl` and engram's on-disk store; the kit detects only the cron "
         "store, `crontab -l`, the user timer list and unit files. If the kit's agy home override is the HOME "
         "variable, the child also loses its git identity, `PATH` shims and `~/.ssh`; without an override the "
-        "shared `~/.gemini` state feeds your later interactive agy sessions. Placement uses static weights "
-        "(claude 1.0, agy 0.7): it balances by role count in sorted role order, not by quota. The spawn itself is "
+        "shared `~/.gemini` state feeds your later interactive agy sessions. Placement follows the "
+        "routing matrix and live pool usage (a pool at 85% hands its work to the role's fallback), not a role count. "
+        "The spawn itself is "
         "not gated per role by the kit: an agent admitted for one listed role can be spawned for any "
         "task, and only `lanes prepare --lane` refuses a role not listed, so a step that skipped `prepare` has "
         "already sent its repository content to Google. Do not use agy interactively during a lane run. A lane "
-        "on this account is admitted only for the roles listed below."),
+        "on this account is admitted only for the roles listed below. [acknowledgement text v2]"),
 }
 
 
-def propose(profile_doc: Mapping[str, Any], by_role: Mapping[str, Any], mode: str, *,
-            orchestrators: Any = (), acks: Mapping[str, Any] | None = None,
-            claude_ids: Mapping[str, str] | None = None,
-            gates: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """The `ProfileState.lanes` a profile proposes, checked with the pure resolver.
+def lanes_state(profile_doc: Mapping[str, Any], *, orchestrators: Any = (),
+                gates: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """The `ProfileState.lanes` fragment a profile proposes: orchestrators, the profile's `routing:` overrides and the
+    Antigravity flag. The role table itself is never stored: it is `scoring.routing.ROLES` (+ overrides) every time.
 
-    Raises `LanesBlockError` (no or malformed block), `scoring.lanes.LaneError` or
-    `scoring.lanes.LaneConflict` (a checker could run a writer's family: single-model primaries, or the
-    multi-model LiteLLM union). Nothing is written.
-    """
-    block = profile_doc.get("lanes")
-    if not block:
-        raise LanesBlockError("the profile declares no lanes")
-    frag = state_from_block(block, claude_ids=claude_ids, gates=gates, acks=acks)
-    candidates = {r: list(c.get("candidates") or []) for r, c in frag["roles"].items()}
-    ids = dict(claude_ids or model_pins.effective())
-    pins: dict[str, list[str]] = {}
-    for role, texts in (frag.get("pins") or {}).items():
-        refs = [f"openclaw-agent:{aid}" for aid in (_agent_id_of(str(x), ids) for x in texts) if aid]
-        keep_refs = set(candidates.get(role, ()))
-        pins[role] = [r for r in refs if r in keep_refs]
-    flag = bool((gates or {}).get("antigravity"))
-    scoring_lanes.resolve_lanes(by_role, frag["agents"], candidates,
-                                acks=valid_acks(acks), mode=mode, effective_ids=ids,
-                                gates={"antigravity_flag": flag, "adr_0007_agy_accepted": AGY_LANE_ADR_ACCEPTED},
-                                pins={r: v for r, v in pins.items() if v})
-    out = {**frag, "orchestrators": sorted({str(o) for o in orchestrators}), "verify_capability": {},
-           "pool_caps": {}, "max_remote_concurrency": 2, "workspace_root": ""}
-    meta = _role_meta(profile_doc, set(frag["roles"]))
-    if meta:
-        out["role_meta"] = meta
+    Raises `LanesBlockError` for a malformed `routing:` block. Nothing is written."""
+    out: dict[str, Any] = {"orchestrators": sorted({str(o) for o in orchestrators})}
     if profile_doc.get("routing"):
-        scoring_routing.merged(profile_doc)      # fail early on a malformed override
+        try:
+            scoring_routing.merged(profile_doc)      # fail early on a malformed override
+        except scoring_routing.RoutingError as exc:
+            raise LanesBlockError(str(exc)) from exc
         out["routing"] = profile_doc["routing"]
-    if flag:
+    if (gates or {}).get("antigravity"):
         out["gates"] = {"antigravity": True}
     return out
 
 
-def _role_meta(profile_doc: Mapping[str, Any], roles: set[str]) -> dict[str, dict[str, Any]]:
-    """Read-only per-role metadata a profile declares: the evidence tag (`evidence:`) and `role_effort:`.
-
-    Where the profile has a `role_effort:` map every lane role gets a value (unlisted roles: `default`). Neither
-    ever changes routing; both only travel into `lanes.yaml resolved:` for the operator."""
-    ev = profile_doc.get("evidence")
-    ev_out: dict[str, str] = {}
-    if isinstance(ev, Mapping):
-        for k in ("tag", "label", "confidence", "source"):
-            if isinstance(ev.get(k), str) and ev.get(k):
-                ev_out[k] = str(ev[k])
-    effort = profile_doc.get("role_effort")
-    effort = effort if isinstance(effort, Mapping) else None
-    out: dict[str, dict[str, Any]] = {}
-    for role in sorted(roles):
-        entry: dict[str, Any] = {}
-        if ev_out:
-            entry["evidence"] = dict(ev_out)
-        if effort is not None:
-            entry["effort"] = str(effort.get(role) or "default")
-        if entry:
-            out[role] = entry
-    return out
+def lane_roles(profile_doc: Mapping[str, Any] | None = None) -> list[str]:
+    """The lane-eligible team roles of the matrix, sorted: the roles an acknowledgement lists."""
+    from .. import roles_policy
+    return sorted(r.name for r in scoring_routing.merged(profile_doc).values()
+                  if r.kind == "team" and roles_policy.lane_eligible(r.name))
 
 
-def lane_roles(lanes: Mapping[str, Any]) -> list[str]:
-    """Every role the table names, sorted."""
-    return sorted(lane_refs(lanes))
+def agy_roles(profile_doc: Mapping[str, Any] | None = None) -> list[str]:
+    """The roles whose chain (primary or fallback) names an Antigravity cell, sorted."""
+    return sorted(r.name for r in scoring_routing.merged(profile_doc).values()
+                  if r.kind == "team" and any(c.startswith("agy:") for c in r.chain))
 
 
 def make_ack(provider: str, roles: list[str], now: str, *, account: str = "") -> dict[str, Any]:

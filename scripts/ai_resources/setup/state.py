@@ -112,9 +112,8 @@ class ProfileState:
     # keeps the unverified ids that setup wrote instead of gating them back to `inherit`.
     allow_unverified: bool = False
     # Subscription lanes (ADR-0007, WHAT not HOW). None until the operator enables them; then
-    # {agents, roles, second, orchestrators, verify_capability, pool_caps, max_remote_concurrency,
-    # workspace_root}. Both fields are additive: absent from the file while empty, so an old file
-    # round-trips byte-identically.
+    # {orchestrators, routing?, gates?} (ADR-0019: the role table is the matrix, never stored; an older shape is
+    # migrated on load by `migrate_lanes`). Both fields are additive: absent from the file while empty.
     lanes: Any = None
     # {anthropic?: Ack, google?: Ack}, Ack = {date, text_sha256, text, roles}.
     lane_acks: Any = None
@@ -692,6 +691,7 @@ def load() -> SetupState:
         _corrupt_notice = backup or "(no backup could be written)"
         return SetupState()
     loaded = _from_dict(SetupState, data)
+    migrate_lanes(loaded.profile)
     loaded.tracking.install_tools_answer = None      # 2.2b: a saved install answer is never replayed
     return loaded
 
@@ -969,10 +969,29 @@ def locked_run(fn, *, out=print, enabled: bool = True):
         return 1
 
 
+# Keys of the matrix-shaped `profile.lanes` (ADR-0019): the role table is `scoring.routing.ROLES`, never stored.
+LANES_KEPT_KEYS = ("orchestrators", "routing", "gates")
+
+
+def migrate_lanes(profile: "ProfileState") -> bool:
+    """One-way migration of the pre-3.2 `profile.lanes` shape (agents, roles.candidates, second, held, pins, mcp,
+    role_meta, verify_capability, pool_caps, ...). Keeps `orchestrators`, `routing` and `gates` (and `lane_acks`, which
+    lives beside it); drops the rest. A migrated table stays enabled. Returns True when it changed anything."""
+    lanes = getattr(profile, "lanes", None)
+    if not isinstance(lanes, dict) or not lanes:
+        return False
+    if all(k in LANES_KEPT_KEYS for k in lanes):
+        return False
+    kept = {k: lanes[k] for k in LANES_KEPT_KEYS if lanes.get(k)}
+    kept.setdefault("orchestrators", [])
+    profile.lanes = kept
+    return True
+
+
 def lanes_enabled(s: "SetupState") -> bool:
-    """True when the state holds a non-empty lanes table (a fresh install never does)."""
+    """True when the state holds a lanes table (a fresh install never does)."""
     lanes = getattr(getattr(s, "profile", None), "lanes", None)
-    return isinstance(lanes, dict) and bool(lanes.get("agents") or lanes.get("roles"))
+    return isinstance(lanes, dict) and bool(lanes)
 
 
 def is_first_run() -> bool:

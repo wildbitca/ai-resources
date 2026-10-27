@@ -7,7 +7,7 @@ The decision is [ADR-0018](decisions/0018-routing-matrix-and-pool-balancing.md);
 | Pool | What drains it |
 |---|---|
 | `claude-subscription` | Claude Code on Max: writers, planners, checkers |
-| `agy-gemini`, `agy-claude-gpt` | Antigravity on AI Pro: explore, code review, second opinions, same-model checker fallback |
+| `agy-gemini`, `agy-claude-gpt` | Antigravity on AI Pro: explore, code review, doc, test and upgrade work, checker-ladder fallback |
 | `anthropic-api` | OpenClaw chat agents (`main`, channel agents) and the Haiku fallback |
 | `gemini-api` | utility, summarization, bulk explore on `google/gemini-3.8-flash` |
 

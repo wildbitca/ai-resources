@@ -29,8 +29,7 @@ def _s():
 
 
 def _acks(s):
-    roles = lanes_render.lane_roles(lanes_render.propose(profiles.load_profile(PROFILE),
-                                                        lanes_render.current_by_role(s), s.mode))
+    roles = lanes_render.lane_roles(profiles.load_profile(PROFILE))
     return {"anthropic": lanes_render.make_ack("anthropic", roles, "2026-10-15")}
 
 
@@ -60,7 +59,7 @@ def test_non_interactive_lanes_with_a_stored_ack_enables():
     assert wizard._step_lanes(s, _args(lanes=True, lanes_orchestrator=["main"])) == 0
     assert state.lanes_enabled(s)
     assert s.profile.lanes["orchestrators"] == ["main"]
-    assert "kit-lane-cli-sonnet55" in s.profile.lanes["agents"]
+    assert set(s.profile.lanes) == {"orchestrators"}            # the role table is the matrix, never stored
 
 
 def test_ack_that_misses_a_role_is_not_enough():
@@ -81,7 +80,7 @@ def test_interactive_enable_shows_the_ack_once_and_stores_it(monkeypatch):
     assert wizard._step_lanes(s, _args(lanes=True)) == 0
     ack = s.profile.lane_acks["anthropic"]
     assert shown == [lanes_render.ACK_TEXT["anthropic"]] and ack["text"] == shown[0]
-    assert set(ack["roles"]) == set(lanes_render.lane_roles(s.profile.lanes))
+    assert set(ack["roles"]) == set(lanes_render.lane_roles(profiles.load_profile(PROFILE)))
     assert s.profile.lanes["orchestrators"] == ["main"]
     for key in ("date", "text_sha256", "text", "roles"):
         assert ack[key]
@@ -121,26 +120,16 @@ def test_lanes_and_no_lanes_contradict():
     assert wizard._step_lanes(_s(), _args(lanes=True, no_lanes=True)) == 2
 
 
-def test_profile_without_a_lanes_block_is_refused():
-    s = state.SetupState()
-    s.mode = "multi-model"
-    s.profile.name = "balanced-claude-55"
-    assert wizard._step_lanes(s, _args(lanes=True, lanes_orchestrator=["main"])) == 2
-
-
-def test_multi_model_union_intersection_refuses_with_the_lane_conflict(monkeypatch):
-    doc = {"name": "x", "mode": "multi-model",
-           "by_role": {"implementer": {"model": "claude-sonnet-5-5", "fallbacks": ["claude-opus-5-5"]},
-                       "verifier": {"model": "claude-opus-5-5"}},
-           "lanes": {"roles": {"implementer": ["claude-cli:claude-sonnet-5-5"]}}}
+def test_malformed_profile_routing_override_is_refused(monkeypatch):
+    doc = {"name": "x", "mode": "multi-model", "by_role": {"implementer": {"model": "sonnet"}},
+           "routing": {"implementer": {"primary": "nonsense:model"}}}
     monkeypatch.setattr(profiles, "load_profile", lambda name, mode=None: doc)
     s = state.SetupState()
     s.mode, s.profile.name = "multi-model", "x"
-    monkeypatch.setattr(lanes_render, "current_by_role", lambda st: doc["by_role"])
     errors = []
     monkeypatch.setattr(ui, "error", lambda m: errors.append(m))
     assert wizard._step_lanes(s, _args(lanes=True, lanes_orchestrator=["main"])) == 2
-    assert any("LaneConflict" in e for e in errors)
+    assert any("routing.implementer" in e for e in errors)
     assert s.profile.lanes is None
 
 

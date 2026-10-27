@@ -9,11 +9,10 @@ import agy_evidence_fakes as fk
 from ai_resources import agy_gate_evidence as ev
 from ai_resources.setup import lanes_render, profiles, state, team_view, ui, wizard
 
-BALANCED_ROLES = ["explore", "code-reviewer"]
-GEMINI_CELLS = {
-    "explore (lane)": "google gemini-3.8-flash-high via Antigravity",
-    "code-reviewer (lane)": "google gemini-4-argon-high via Antigravity",
-}
+# Every role whose PRIMARY is a Gemini cell in the routing matrix (ADR-0019).
+_GEMINI = [(role, cell.split(":", 1)[1]) for role, cell in team_view.agy_candidates({}) if cell.startswith("agy:gemini-")]
+BALANCED_ROLES = sorted({role for role, _slug in _GEMINI})
+GEMINI_CELLS = {f"{role} (lane)": f"google {slug} via Antigravity" for role, slug in _GEMINI}
 NEXT = "run the probe window, then ai-resources lanes gates record"
 
 
@@ -66,7 +65,7 @@ def test_cli_balanced_ticked_and_acknowledged_without_a_record_holds_both_gemini
 
 # --- AC-S10b ---------------------------------------------------------------------------------------------------------
 
-def test_with_a_valid_record_and_the_acknowledgement_both_cells_are_on_and_writers_stay_on_claude(monkeypatch,
+def test_with_a_valid_record_and_the_acknowledgement_both_cells_are_on_and_agy_writes_where_the_matrix_says(monkeypatch,
                                                                                                     tmp_path):
     root = fk.make_root(tmp_path)
     fk.use(monkeypatch, root)
@@ -76,10 +75,10 @@ def test_with_a_valid_record_and_the_acknowledgement_both_cells_are_on_and_write
     assert "unconfirmed" not in " ".join(cells(lane_rows).values())
     assert mix.lines == () and mix.held == () and mix.next_action == ""
     assert "google" in mix.active
-    writers = {r.role: r.lane for r in lane_rows if r.role in ("implementer", "tester", "doc-writer")}
-    assert writers == {"implementer": "Claude Code", "tester": "Claude Code", "doc-writer": "Claude Code"}
-    assert not [r for r in lane_rows if r.role.split(" ")[0] in ("implementer", "tester", "doc-writer")
-                and r.provider == "google"]
+    # agy may write (ADR-0019 D3): tester and doc-writer have agy primaries, the implementer keeps Claude Code
+    by = {r.role.split(" ")[0]: r for r in lane_rows}
+    assert by["implementer"].lane == "Claude Code" and by["implementer"].provider != "google"
+    assert by["tester"].provider == "google" and by["doc-writer"].provider == "google"
 
 
 # --- AC-S10c ---------------------------------------------------------------------------------------------------------
@@ -98,7 +97,7 @@ def test_an_acknowledgement_that_misses_code_reviewer_holds_only_it_and_names_th
     root = fk.make_root(tmp_path)
     fk.use(monkeypatch, root)
     fk.write(root, fk.valid_doc(root))
-    _doc, _rows, mix, lane_rows = mix_for(ticked=True, acks=ack(["explore"]))
+    _doc, _rows, mix, lane_rows = mix_for(ticked=True, acks=ack([r for r in BALANCED_ROLES if r != "code-reviewer"]))
     assert cells(lane_rows)["code-reviewer (lane)"].endswith("(held)")
     assert cells(lane_rows)["explore (lane)"].endswith("(on)")
     assert mix.lines == ("Gemini held: the Google acknowledgement does not list code-reviewer. Next: "
@@ -168,7 +167,7 @@ def test_the_wrappers_in_the_wizard_still_answer(monkeypatch):
     assert any("code-reviewer: gemini-4-argon-high [unconfirmed slug]" == e for e in wizard._agy_team_roles(doc))
     assert wizard._agy_lanes_on(types.SimpleNamespace(profile=types.SimpleNamespace(lanes=None))) is False
     s = state.SetupState()
-    s.profile.lanes = {"agents": {"a": {"backend": "agy-cli-lane"}}}
+    s.profile.lanes = {"gates": {"antigravity": True}}
     assert wizard._agy_lanes_on(s) is True
 
 

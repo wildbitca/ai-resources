@@ -116,15 +116,17 @@ class ProviderMix:
 
 
 def agy_candidates(doc: Mapping[str, Any]) -> list[tuple[str, str]]:
-    """`[(role, candidate)]` for every Antigravity candidate the profile's lanes block names (any role may take one)."""
-    return [(role, c) for role, cands in ((doc.get("lanes") or {}).get("roles") or {}).items() for c in cands or ()
-            if isinstance(c, str) and c.startswith("agy:")]
+    """`[(role, cell)]` for every team role whose PRIMARY cell is on Antigravity in the routing matrix (with the
+    profile's `routing:` overrides). A role that only falls back to Antigravity is not an Antigravity member here;
+    the Google acknowledgement still lists it (`lanes_render.agy_roles`)."""
+    from ..scoring import routing
+    return [(r.name, r.primary) for r in routing.merged(doc).values()
+            if r.kind == "team" and r.primary and r.primary.startswith("agy:")]
 
 
 def agy_lanes_on(lanes: Mapping[str, Any] | None) -> bool:
-    """True when the saved lanes table holds an Antigravity lane agent (a fresh install never does)."""
-    agents = (lanes or {}).get("agents") or {}
-    return any((a or {}).get("backend") == agy_lane_gates.AGY_LANE_BACKEND for a in agents.values())
+    """True when the saved lanes record has the Antigravity gate open (a fresh install never does)."""
+    return bool(((lanes or {}).get("gates") or {}).get("antigravity"))
 
 
 def gemini_members(doc: Mapping[str, Any]) -> list[tuple[str, str]]:
