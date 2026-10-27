@@ -6,6 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.1.0] — 2026-10-27 — one routing matrix across four pools, a setup that survives restarts
+
+### Added
+
+- feat(routing): one routing matrix (role -> primary -> secondary) in `scoring/routing.py`, rendered into `lanes.yaml` under `routing:`; Claude Code (Max) and Antigravity (AI Pro) are primary routes, chat agents use Anthropic credits and light work uses Gemini credits (ADR-0018).
+- feat(routing): consumption-balancing policy (`routing.choose_pool`, spill at 85%) so Balanced distributes work across the four pools.
+- feat(doctor): `pool_usage.py` and doctor sub-check 4g2 show usage per pool and where each class of work runs now; read-only, `unknown` instead of zero, never prints a key.
+- feat(setup): the recommended run turns the Antigravity lane on by default when `agy` is installed and records the Google acknowledgement under the operator waiver of gates G0-G7; `--no-lanes-antigravity` still opts out.
+- docs: ADR-0018; ADR-0007 section 11, ADR-0009 decision 8, ADR-0016 and ADR-0017 marked superseded where it applies; `docs/routing.md`.
+- fix(openclaw): the drained window (`doctor`, `apply-pending`, setup's restart) turns SIGTERM and SIGINT into exits, so `watchdog.off` is removed and the gateway started again on every exit path, a signal mid-action included; the create-to-try gap is closed by holding the signals from the marker create until the `try` is entered.
+- feat(openclaw): `ai-resources openclaw reconcile [--dry-run]`, run at the end of `ai-resources setup`: ONE drained restart (lock, marker guard, busy probe, T29 refusal) when the gateway runs older kit plugin code than the disk (new `version` rule next to `path` and `time`) or its cgroup holds more than 24 MCP children; a refusal is recorded as pending; a clean gateway and a second run are no-ops.
+- feat(verify): `ai-resources verify --live` reads the RUNNING system: gateway health, plugin version against the disk, kit hooks (StopFailure quota signal, narration hook), lane agents and backend, MCP children, off-box credential file mode.
+- fix(openclaw): the reload rules are read through the `~/.openclaw/tmp/agent-cli/openclaw` shim (followed to its package, then other PATH hits, then the Homebrew node_modules); units are rendered with the real binary, never the shim; if nothing is readable the reason names the shim.
+- fix(setup): the off-box uploader credential is regenerated (0600) from the host federation and `openclaw-backup-uploader.service` is started (`--no-block`) and its report read.
+- feat(setup): stdio MCP servers are denied (fill-only, recorded) to agents matching `OPENCLAW_MCP_DENY_AGENTS` (default `kit-role-*`) in the same run that creates them.
+- feat(openclaw): MemoryHigh is sized to the host (55 % of RAM, 12G..24G; `OPENCLAW_MEMORY_HIGH` overrides) instead of a fixed 12G.
+- feat(hooks): `kit_sleep_guard` also refuses sleeps that add up above 30 s in one command and `while`/`until` wait loops; the OpenClaw AGENTS.md polling rules say one blocking wait per job (`awaitResults`).
+- feat(setup): `--dry-run` shows the hooks to register, the off-box credential, MemoryHigh and the owed restart.
+- chore: remove unused `locate_reload_plan_dist`, `utc_iso`, `apply_defaults`.
+
+### Removed
+
+- Unused `locate_reload_plan_dist`, `utc_iso`, `apply_defaults`; ADR-0007 section 11, ADR-0009 decision 8, ADR-0016 and ADR-0017 routing text marked superseded by ADR-0018.
+
+### Operator notes
+
+- Run `ai-resources setup` yourself after `brew upgrade`; it performs one drained restart for the stale plugin code and the MCP-children overflow.
+- `GEMINI_API_KEY` in `gateway.systemd.env` is rejected by Google (HTTP 401); the `google:default` profile key works. Replace the env value with the profile key.
+
 ## [3.0.0] — 2026-10-27 — delegation has to pay for itself, inter-agent text is untrusted, the ledger does not move
 
 Major version: `plan-check` now rejects a plan that delegates without a named reason, and the scorecard rules file, the handoff template and the hook set grew (migration notes at the end).
