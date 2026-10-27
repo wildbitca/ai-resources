@@ -8,13 +8,17 @@ One line per finished run in `~/.local/state/ai-resources/run-ledger.jsonl` (app
 
 Tokens and USD are API-equivalent and an upper bound: the window also catches any other session running at that time. Pass `--session <id>` (repeatable) when the session ids are known to price exactly those. Not measurable without touching OpenClaw core: tokens per step of an inline run, and the fixed prefix of a child that reported no session id. Engram has no Python reader, so it is not a source.
 
+## Dispatch ledger
+
+Per-dispatch rows (role, pool, backend, model, family, tokens, duration, outcome, fallback cause, run id, writer families) live in `dispatches.jsonl` next to this ledger, written by `ai-resources route --record`, `agy run`, the orchestrator and `ai-resources dispatch record|list [--run R] [--since 2h]`. `runs record --from-dispatches RUN` fills `steps`, `agents`, tokens and `rework` from those rows instead of by hand; doctor compares them with the matrix (role ran outside its primary without a recorded cause is an alert). This file stays the per-run sizing record.
+
 ## Commands
 
 | Command | Use |
 |---|---|
 | `ai-resources runs suggest --kind K --files N --lines F --units U [--risk 3,5] [--ambiguous] [--resume-fail] [--separate] [--force MODE]` | Recommend `inline`, `light` or `full`, with `basis` (`heuristic`, `history`, `forced`) and the number of similar runs |
 | `ai-resources runs reassess MODE [--verifier-fail] [--files-estimated N --files-actual M] [--sensitive] [--trivial]` | Mid-run advice; each signal moves one step, any direction, no floor or ceiling |
-| `ai-resources runs record --mode M --outcome O --agents A --steps S --rework R ... --start EPOCH` | Append one record (`--from-run ID` reads steps, agents, rework and wall time from an orchestrator run) |
+| `ai-resources runs record --mode M --outcome O --agents A --steps S --rework R ... --start EPOCH` | Append one record (`--from-run ID` reads them from an orchestrator run, `--from-dispatches RUN` from the dispatch ledger) |
 | `ai-resources runs list` / `report [--json]` | Last records / cost against quality per mode, with proposals |
 
 ## Rules

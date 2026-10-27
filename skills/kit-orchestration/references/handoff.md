@@ -1,7 +1,7 @@
 # Handoff file
 
-One handoff file per workflow run: `<repo>/.agent-output/handoff-<scope>.md`, created from `$AGENT_KIT/handoff.md.template`.
-Every run also owns `<repo>/.agent-output/<run>/` (`{{run_dir}}`): reports go in `<run>/<role>/`, never in a path another run can use. `<run>` is the orchestrator's run id, or `<workflow>-<yyyymmddThhmmss>-<pid>` when no orchestrator assigns one; a second team on the same repository gets its own.
+One handoff file per run: `<repo>/.agent-output/<run>/handoff.md`, created from `$AGENT_KIT/handoff.md.template`.
+Every run owns `<repo>/.agent-output/<run>/` (`{{run_dir}}`): the handoff and the reports (`<run>/<role>/`) never sit in a path another run can use. `<run>` is the orchestrator's run id, or `<workflow>-<yyyymmddThhmmss>-<pid>` when no orchestrator assigns one; a second team on the same repository gets its own.
 
 The file starts with YAML front matter holding the state a step needs to read (`workflow`, `step`, `status`, `blocked`, `return_to_step`, `block_reason`, `domain`, `requires_tests`, `security_critical`, `refs`, `verdicts`, `next`, `docs_updated`, `git_integration`), plus the **optional** by-reference keys `refs.spec`, `task_ids`, `spec_ids`, `class`, `scorecard`, `route`, `reason` and `divisible` (absent or empty is valid; hooks and the post-step check must never require them, except that a verifier handed spec ids returns one verdict per id, see below), followed by the human-readable notes. Update both: the front matter is what the next step and the join of a parallel group read.
 
@@ -19,12 +19,6 @@ Written by code, not by hand: `ai-resources scorecard '<json scores>' --handoff 
 | `spr` | spread |
 
 A LITE card has no handoff file (nothing is delegated), so the printed card in the reply is its record; an escalation out of LITE does create the file. Which parts are enforced by code: `references/scorecard.md`, "Code-enforced versus instruction".
-
-## Scope (file name)
-
-- With a worktree: the branch name with `/` replaced by `-` — `handoff-feature-auth.md`.
-- Without a worktree: the workflow name — `handoff-release-dart-flutter.md`.
-- Fallback: `.agent-output/handoff.md`.
 
 ## Core fields
 
@@ -49,7 +43,7 @@ Workflow-specific fields (`Plan_ref`, `Architect_approval`, `Test_report`, `Code
 ## Rules
 
 - **Who writes:** the step that is running. Steps in a parallel group never write it; the orchestrator joins their report fields afterwards.
-- **`openclaw-agent` children:** they follow the same rules (read the handoff on start, report on completion), but nothing enforces them: only a sequential step writes the handoff, a parallel member writes `.agent-output/<run>/<role>/` only, and the orchestrator's post-step check (skill `kit-orchestration`, "Choosing a backend") validates the front matter before advancing. Dispatch evidence goes in the notes, never in new front-matter keys.
+- **Spawned children** (`sessions_spawn`, `agy run`): they follow the same rules (read the handoff on start, report on completion), but nothing enforces them: only a sequential step writes the handoff, a parallel member writes `.agent-output/<run>/<role>/` only, and the orchestrator's post-step check (skill `kit-orchestration`, `references/backends.md`) validates the front matter before advancing. Dispatch evidence goes in the notes, never in new front-matter keys.
 - **Rollback:** after each step, if `Blocked: true`, re-run `Return_to_step` (at most 3 attempts per step).
 - **Cross-domain:** set `Domain` to the target domain and reference paths only — never paste code between domains.
 - **Lifecycle:** delete the file when the workflow finishes. A handoff older than 24 hours is reported at session start as stale.

@@ -1,4 +1,4 @@
-"""The kit-orchestration skill documents the `openclaw-agent` dispatch procedure (ADR 0005).
+"""The kit-orchestration skill documents the routed dispatch procedure (ADR 0005, decision D6).
 
 These are text-contract checks: an LLM orchestrator follows the skill, so the pieces a
 verifier relies on (the exact Blocked text, the post-step check, the retry rename) must not
@@ -14,21 +14,19 @@ CORE = (REPO / "skills" / "kit-orchestration" / "SKILL.md").read_text(encoding="
 SKILL = CORE + "\n" + (REPO / "skills" / "kit-orchestration" / "references" / "backends.md").read_text(encoding="utf-8")
 HANDOFF_REF = (REPO / "skills" / "kit-orchestration" / "references" / "handoff.md").read_text(encoding="utf-8")
 
-BLOCKED = (
-    "Block_reason: openclaw-agent step <id> (agentId=<x>) needs sessions_spawn in an OpenClaw-run "
-    "orchestrator; missing: sessions_spawn tool in this session"
-)
+BLOCKED = "Block_reason: <role> step <id>: <cause from route / agy run>"
 
 
 def test_section_exists():
-    assert "## Choosing a backend" in SKILL
+    assert "## Dispatch: the matrix decides" in SKILL
     assert CORE.index("## Running a step") < CORE.index("## Backends") < CORE.index("## Parallel groups")
 
 
 def test_core_points_at_the_reference_and_keeps_the_blocked_summary():
     assert "references/backends.md" in CORE
     assert "## Choosing a backend" not in CORE
-    assert "do not fall back to `claude-code`" in CORE and "Return_to_step" in CORE
+    assert "no silent switch to `claude-code`" in CORE and "Return_to_step" in CORE
+    assert "ai-resources route <role> --run $RUN" in CORE and "ai-resources agy run" in CORE
 
 
 def test_core_size_ceiling_is_a_regression_guard_not_a_cost_claim():
@@ -36,10 +34,19 @@ def test_core_size_ceiling_is_a_regression_guard_not_a_cost_claim():
     assert len(CORE.encode("utf-8")) < 12_700
 
 
-def test_blocked_text_is_exact_and_has_no_fallback():
+def test_blocked_text_is_exact_and_has_no_soft_fallback():
     assert BLOCKED in SKILL
     assert "Return_to_step: <id>" in SKILL
-    assert "do not fall back to `claude-code`" in SKILL
+    assert "no silent switch to `claude-code`" in SKILL
+    for gone in ("lane unavailable", "second opinion", "(second)", "candidates", "display-only"):
+        assert gone not in SKILL, gone
+
+
+def test_dispatch_table_names_all_three_runtimes_and_the_fallback_rule():
+    assert "Task tool" in SKILL and "sessions_spawn agentId=kit-role-<role>" in SKILL
+    assert "ai-resources agy run --role <role>" in SKILL
+    assert "pool is exhausted" in SKILL and "does not respond" in SKILL
+    assert "no-independent-checker" in SKILL
 
 
 def test_prompt_contract_and_waiting_rules():
@@ -62,16 +69,10 @@ def test_post_step_check_lists_four_checks():
     assert "git -C <worktree> status --porcelain" in section
 
 
-def test_example_team_states_models_as_agent_properties_and_rule_017():
-    assert "agy-flash" in SKILL and "agy-pro" in SKILL
-    assert "rules/017-multimodel-routing.mdc" in SKILL
-    assert "external prerequisite" in SKILL
-
-
-def test_parallel_groups_and_handoff_reference_mention_openclaw_members():
+def test_parallel_groups_and_handoff_reference_mention_spawned_members():
     parallel = SKILL[SKILL.index("## Parallel groups"):SKILL.index("## Subagent return format")]
-    assert "openclaw-agent" in parallel
-    assert "openclaw-agent" in HANDOFF_REF
+    assert "sessions_spawn" in parallel and "agy run" in parallel
+    assert "agy run" in HANDOFF_REF
 
 
 def test_lane_flow_is_gone_and_the_write_scope_claim_is_taught():
