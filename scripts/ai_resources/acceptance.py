@@ -606,9 +606,14 @@ def _plugin(env: Env) -> Result:
         return bad(f"the kit plugin is {plugin.get('status') or 'unreadable'} in the gateway")
     running = str(plugin.get("packageVersion") or plugin.get("version") or "")
     why = cp.stale_reason(stable, env.runner)
-    if why or (disk and running and running != disk):
-        return bad(f"the gateway runs kit plugin {running or '?'} but the disk has {disk or '?'}" + (f" ({why} rule)" if why else ""),
-                   stale=why)
+    if why:
+        root = str(plugin.get("rootDir") or "?")
+        detail = {"path": f"the running plugin dir is {root} but the expected one is {stable}",
+                  "version": f"the running version is {running or '?'} and the disk has {disk or '?'}"}.get(
+            why, f"the gateway process started before the kit on disk was installed (running {running or '?'}, disk {disk or '?'})")
+        return bad(f"the gateway runs older kit plugin code than the disk ({why} rule): {detail}", stale=why)
+    if disk and running and running != disk:
+        return bad(f"the running version is {running} but the disk has {disk} (version rule)", stale="version")
     return ok(f"the gateway runs the kit plugin {running or disk} that is on disk")
 
 
