@@ -199,6 +199,16 @@ def _check_matrix_actual() -> int:
     return len(sm["deviations"])
 
 
+def _check_gemini_tools() -> int:
+    """Doctor sub-check 4g3b (ADR-0019 D8): the heartbeat gating verdict `ai-resources acceptance` left (a small json under
+    ~/.cache/ai-resources). Read-only; the kit never edits the OpenClaw config for it."""
+    from . import acceptance
+    line = acceptance.gemini_verdict_line()
+    (ui.ok if "PASSED" in line else ui.info)(line or "Gemini tool-calling is unproven (`ai-resources acceptance --group gemini-tools`); "
+                                              "the heartbeat stays on Haiku")
+    return 0
+
+
 def _check_weekly_summary() -> int:
     """Doctor sub-check 4g4 (ADR-0019 D7): the week in a few lines. Pool usage and the credit ledger come from their own
     modules, the dispatch aggregation from the dispatch ledger, the run line from the run ledger (sizing scorecard)."""
@@ -493,6 +503,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     issues += _check_billing()
     issues += _check_pool_usage()
     issues += _check_matrix_actual()
+    issues += _check_gemini_tools()
     issues += _check_weekly_summary()
     issues += _check_keys(s, args)
     issues += _check_poll_share()

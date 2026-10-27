@@ -48,8 +48,10 @@ Every workflow step resolves its role here before it runs (D6, ADR-0019):
 | `ai-resources dispatch record\|list [--run R] [--since 2h]` | The dispatch ledger (`dispatches.jsonl`): role, pool, backend, model, tokens, duration, outcome, fallback cause, writer families |
 
 The fallback fires only on pool exhaustion or no response, always with a recorded cause; a route that cannot run is
-`Blocked: <cause>`. `ai-resources doctor` compares the ledger with the matrix per pool and role. `ai-resources acceptance`
-(per-role live calls and fault injection) is coming in P7 of 3.2.0.
+`Blocked: <cause>`. `ai-resources doctor` compares the ledger with the matrix per pool and role. `ai-resources acceptance` proves it:
+one minimal real call per distinct cell asserts the model and pool that answered equal the matrix, injected faults (pool at 85%,
+bad key, timeout, agy missing, quota text) fire the fallback exactly once with its cause, and `--operator` lists the cases that
+kill turns with the exact command (never run). `ai-resources verify --live` runs its `setup-live` group.
 
 ## Balancing
 

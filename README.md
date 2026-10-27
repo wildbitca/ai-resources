@@ -41,7 +41,7 @@ The formula is in **`Formula/ai-resources.rb`**. It declares **`python@3.12`**; 
 | `ai-resources route <role> [--run R] [--record --step S]` | Where a role runs now: cell, pool, fallback chain and cause, from the matrix, live pool usage and the run's writer families (ADR-0019). |
 | `ai-resources agy run --role <role> [--run R --step S] --prompt-file F` | Run an agy cell from a Claude Code session and return the report contract (exit 75 + cause on quota, timeout or missing agy). |
 | `ai-resources dispatch record\|list [--run R] [--since 2h]` | The dispatch ledger: one row per dispatch (role, pool, model, tokens, duration, outcome, fallback cause). |
-| `ai-resources acceptance` | Per-role live calls and fault injection against the matrix (coming in 3.2.0, P7). |
+| `ai-resources acceptance` | One row per case (PASS/FAIL/SKIP): per-role minimal live calls against the matrix, fault injection, checker independence, spawn wiring, Gemini tool-calling, agy writes and the setup/live checks `verify --live` shares. `--group`, `--json`, `--list`, `--dry-run`, `--offline`, `--operator`. |
 | `ai-resources setup --non-interactive` | Re-apply saved answers without prompting (useful in CI or scripted re-runs). |
 | `ai-resources setup --profile <name>` | Skip the preset and profile prompts and use the named profile directly. |
 | `ai-resources mcp-run <sentry\|figma>` | Start a shared-token MCP server (see [Shared-token MCP servers](#shared-token-mcp-servers)). Cockpits run it; you do not. |
