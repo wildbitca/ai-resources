@@ -74,7 +74,7 @@ from . import _openclaw_voice as voice
 from . import _openclaw_image as image
 from . import _openclaw_providers as providers_mod
 from . import _openclaw_host as host_section
-from . import openclaw_lanes
+from . import openclaw_orchestration
 from . import openclaw_roles
 from . import _agy_quota
 from ... import model_pins, openclaw_host, openclaw_reconcile, openclaw_reload_rules, openclaw_slack_cost, openclaw_tool_policy
@@ -380,7 +380,7 @@ AGY_MCP_HINT = ("agy loads every server in ~/.gemini/config/mcp_config.json into
 
 def _is_kit_agent(name: Any) -> bool:
     """A lane or role agent the kit wrote: the engine's model rewrites never touch it (ADR-0007, ADR-0015 S8)."""
-    return str(name).startswith(("kit-lane-", openclaw_roles.PREFIX))
+    return openclaw_orchestration.is_kit_agent(name)
 
 
 def _fallbacks_for(primary_ref: str, engine_id: str, *, flash_low: bool = True,
@@ -1461,26 +1461,25 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     host_changed = host_section.configure(s, doc, ak_path, written, dry_run=dry_run,
                                           apply_patch=apply_patch, oc=_openclaw, config_path=path,
                                           run_changes=run_changes)
-    # The engine/host patches above may have rewritten arrays the lanes writer also owns (allowAgents; a
-    # `config patch` replaces arrays), so lanes must be computed from the live config, not the snapshot.
+    # The engine/host patches above may have rewritten arrays the orchestration wiring also owns (allowAgents), so
+    # the wiring below is computed from the live config, not the snapshot.
     if not dry_run:
         doc = read_config(path)
-    lanes_changed = _configure_lanes(s, doc, dry_run=dry_run, run_changes=run_changes)
     skills_changed = _configure_skills(s, doc if dry_run else read_config(path), path, written, ak_path,
                                        dry_run=dry_run, run_changes=run_changes)
     roles_changed = _configure_roles(ctx, s, doc if dry_run else read_config(path), ak_path, dry_run=dry_run,
                                      run_changes=run_changes)
+    orchestration_changed = _configure_orchestration(ctx, s, doc if dry_run else read_config(path), dry_run=dry_run,
+                                                     run_changes=run_changes)
     plugin_changed = _configure_orchestrator_plugin(ctx, s, doc if dry_run else read_config(path), path, ak_path,
                                                     dry_run=dry_run, run_changes=run_changes)
     # The role agents exist only now: scope their stdio MCP servers in the same run (a second run is a no-op).
     scope_changed = mcp.scope_agents(s, doc if dry_run else read_config(path), _lanes_apply,
                                      include=mcp.include_list(s), dry_run=dry_run)
-    drift_changed = _configure_agy_drift(s, doc if dry_run else read_config(path), dry_run=dry_run,
-                                         run_changes=run_changes)
     worker_changed = _configure_worker_runtime(s, doc if dry_run else read_config(path), dry_run=dry_run,
                                                run_changes=run_changes)
     changed = (engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
-               or lanes_changed or roles_changed or drift_changed or worker_changed or skills_changed
+               or roles_changed or orchestration_changed or worker_changed or skills_changed
                or plugin_changed or scope_changed)
     if not dry_run and run_changes:
         host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
@@ -1528,21 +1527,23 @@ def _lanes_register(agent_id: str, workspace: Path, model: str) -> str:
     return str(res.get("registered") or "failed: not registered")
 
 
-def _configure_lanes(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:
-    """Subscription lanes (ADR-0007): lane agents, catalog entries and scoped allowAgents. Operator-run only."""
-    if not (state.lanes_enabled(s) or s.openclaw.lanes_applied):
+def _configure_orchestration(ctx: dict, s: state.SetupState, doc: dict, *, dry_run: bool,
+                             run_changes: list[dict]) -> bool:
+    """OpenClaw as the orchestrator (ADR-0019 D1, C1): `main` and every channel agent may spawn `claude` and each
+    `kit-role-*` agent, the spawn limits are raised to a generous floor (never lowered), and the by-model `kit-lane-*`
+    agents setup created and nothing uses are retired. Only once the kit-role agents are written."""
+    if enabled_providers(s) is None:
         return False
-    def confirm(msg: str) -> bool:
-        return True if ui.is_non_interactive() else bool(ui.confirm(msg, default=True))
-    return openclaw_lanes.configure(
-        s, doc, config_root=CONFIG_ROOT, apply_patch=_lanes_apply, register_agent=_lanes_register,
-        classify=_lanes_classify, change_records=openclaw_host.change_records, run_changes=run_changes,
-        dry_run=dry_run, info=ui.info, warn=ui.warn, error=ui.error, confirm=confirm,
-        delete_agent=lambda aid: _openclaw(["agents", "delete", aid, "--force"]),
-        teardown_fn=lambda st, d: _teardown_lanes(st, d))
+    referenced = openclaw_orchestration.live_referenced(
+        doc, s.openclaw.lanes_applied or {}, state_dir=CONFIG_ROOT / "agents", runner=_openclaw)
+    return openclaw_orchestration.configure(
+        s, doc, kit_ids=ctx.get("kit_role_ids") or (), referenced=referenced, apply_patch=_lanes_apply,
+        classify=_lanes_classify, delete_agent=lambda aid: _openclaw(["agents", "delete", aid, "--force"]),
+        change_records=openclaw_host.change_records, run_changes=run_changes, dry_run=dry_run,
+        info=ui.info, warn=ui.warn, error=ui.error)
 
 
-ORCHESTRATOR_PLUGIN_KEYS = {"enableOrchestrator": True, "maxTeams": 2}
+ORCHESTRATOR_PLUGIN_KEYS = {"enableOrchestrator": True, "maxTeams": openclaw_orchestration.MAX_TEAMS}
 
 
 def plugin_version(ak_path: str) -> str:
@@ -1593,7 +1594,8 @@ def _configure_orchestrator_plugin(ctx: dict, s: state.SetupState, doc: dict, pa
             return False
     live = (_get(doc, "plugins", "entries", PLUGIN_ID, "config") or {})
     wanted = {"kitRoot": ak_path, "python3Bin": shutil.which("python3") or "", **ORCHESTRATOR_PLUGIN_KEYS}
-    fill = {k: v for k, v in wanted.items() if v not in ("", None) and k not in live}
+    fill = {k: v for k, v in wanted.items() if v not in ("", None)
+            and (k not in live or (k == "maxTeams" and live[k] == openclaw_orchestration.OLD_MAX_TEAMS))}
     if fill:
         patch = {"plugins": {"entries": {PLUGIN_ID: {"config": fill}}}}
         ok, out = _apply_hot(patch)
@@ -1718,21 +1720,7 @@ def _configure_roles(ctx: dict, s: state.SetupState, doc: dict, ak_path: str, *,
         apply_patch=_lanes_apply, register_agent=_lanes_register, classify=_lanes_classify,
         change_records=openclaw_host.change_records, run_changes=run_changes, dry_run=dry_run,
         info=ui.info, warn=ui.warn, error=ui.error, cli_runtimes=cli_runtimes,
-        agy_ok=lambda _role: detection.agy_active())
-
-
-def _configure_agy_drift(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:
-    """The confirmed migration of agy lanes that run on the Anthropic API (ADR-0015 D2b). Never silent, never unattended."""
-    if not openclaw_lanes.agy_primary_drift(doc):
-        return False
-    interactive = not ui.is_non_interactive()
-    applied = openclaw_lanes.migrate_agy_drift(
-        doc, lanes=s.profile.lanes or {}, apply_patch=_lanes_apply, classify=_lanes_classify,
-        confirm=lambda m: bool(ui.confirm(m, default=False)), delete_agent=lambda aid: _openclaw(
-            ["agents", "delete", aid, "--force"]),
-        change_records=openclaw_host.change_records, run_changes=run_changes, interactive=interactive,
-        dry_run=dry_run, info=ui.info, warn=ui.warn, error=ui.error)
-    return bool(applied)
+        agy_ok=lambda _role: detection.agy_active(), planned_ids=ctx.setdefault("kit_role_ids", []))
 
 
 WORKER_AGENT = "claude"
@@ -1794,75 +1782,22 @@ def worker_runtime_patch(refs: list[str]) -> dict:
     return kit_runtime_patch({WORKER_AGENT: refs})
 
 
-def kit_api_agents(doc: dict) -> dict[str, list[str]]:
-    """{agent id: Anthropic refs on OpenClaw's API route} for the worker and every `kit-lane-*` agent. Pure.
-
-    A kit lane the current lanes.yaml no longer lists (left by an older lanes mode) keeps running, billed per token
-    on the API key: it is kit work, so it belongs on the Claude sign-in with the worker. The operator's agents are
-    never listed."""
-    entries = _get(doc, "agents", "entries") or {}
-    ids = [WORKER_AGENT] + sorted(a for a in entries if isinstance(a, str) and a.startswith(openclaw_lanes.PREFIX))
-    out = {aid: worker_api_refs(doc, aid) for aid in ids}
-    return {aid: refs for aid, refs in out.items() if refs}
-
-
-_CLI_LANE_ID = re.compile(r"^kit-lane-cli-(haiku|sonnet|opus)(\d)(\d)$")
-
-
-def lane_primary_repairs(doc: dict) -> dict[str, str]:
-    """{kit-lane-cli agent id: the Anthropic ref its id names} for a lane whose primary drifted to another one. Pure.
-
-    A claude-cli lane is named after the model it runs (`kit-lane-cli-haiku55` runs `anthropic/claude-haiku-5-5`).
-    Before 2.6.3 the B2.1 "no orchestrator on haiku" rule rewrote the haiku lane's primary to sonnet; this puts it
-    back. A primary off the Anthropic route (an operator's own choice) is left alone."""
-    out: dict[str, str] = {}
-    for aid, entry in (_get(doc, "agents", "entries") or {}).items():
-        m = _CLI_LANE_ID.match(aid) if isinstance(aid, str) else None
-        model = entry.get("model") if isinstance(entry, dict) else None
-        if not m or not isinstance(model, dict):
-            continue
-        wanted = f"anthropic/claude-{m.group(1)}-{m.group(2)}-{m.group(3)}"
-        primary = model.get("primary")
-        if isinstance(primary, str) and primary.startswith("anthropic/") and primary != wanted:
-            out[aid] = wanted
-    return out
-
-
-def kit_runtime_patch(by_agent: dict[str, list[str]], primaries: dict[str, str] | None = None) -> dict:
-    """The fill-only patch that pins claude-cli on each agent's own `models` map for its refs; nothing shared.
-
-    `primaries` ({agent id: ref}) also sets those agents' primary (see `lane_primary_repairs`)."""
-    entries: dict = {}
-    for aid, refs in by_agent.items():
-        entries[aid] = {"models": {r: {"agentRuntime": {"id": "claude-cli"}} for r in refs}}
-    for aid, ref in (primaries or {}).items():
-        ent = entries.setdefault(aid, {})
-        ent["model"] = {"primary": ref}
-        ent.setdefault("models", {}).setdefault(ref, {"agentRuntime": {"id": "claude-cli"}})
-    return {"agents": {"entries": entries}}
+def kit_runtime_patch(by_agent: dict[str, list[str]]) -> dict:
+    """The fill-only patch that pins claude-cli on each agent's own `models` map for its refs; nothing shared."""
+    return {"agents": {"entries": {aid: {"models": {r: {"agentRuntime": {"id": "claude-cli"}} for r in refs}}
+                                   for aid, refs in by_agent.items()}}}
 
 
 def _configure_worker_runtime(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:
     """Offer to run the `claude` worker through Claude Code (ADR-0016 addendum). Asked, default No; never unattended.
 
     The operator's agents keep their route (the API key, where the Claude Platform credits of a Max plan apply); the
-    work they hand to the worker then runs on the Claude sign-in, like the kit roles and the claude-cli lanes."""
-    by_agent = kit_api_agents(doc)
-    primaries = lane_primary_repairs(doc)
-    if not (by_agent or primaries) or "claude-cli" not in kit_cli_runtimes(s):
+    work they hand to the worker then runs on the Claude sign-in, like the kit roles."""
+    refs = worker_api_refs(doc)
+    if not refs or "claude-cli" not in kit_cli_runtimes(s):
         return False
-    refs = by_agent.get(WORKER_AGENT) or []
-    lanes = sorted(set(by_agent) - {WORKER_AGENT} | set(primaries))
-    parts = []
-    if refs:
-        parts.append(f"OpenClaw's `{WORKER_AGENT}` worker (the agent your agents hand code work to) runs "
-                     f"{', '.join(refs)}")
-    if lanes:
-        parts.append(f"{len(lanes)} kit lane(s) ({', '.join(lanes)}) run Claude")
-    line = " and ".join(parts) + " on OpenClaw's own Anthropic route (an API key is billed per token)."
-    if primaries:
-        line += " " + "; ".join(f"{a} runs {_get(doc, 'agents', 'entries', a, 'model', 'primary')}, not the {r} its "
-                                f"name says (it goes back)" for a, r in sorted(primaries.items())) + "."
+    line = (f"OpenClaw's `{WORKER_AGENT}` worker (the agent your agents hand code work to) runs {', '.join(refs)} "
+            "on OpenClaw's own Anthropic route (an API key is billed per token).")
     if dry_run:
         ui.info(line + " Dry run: setup would offer to run it through Claude Code (claude-cli, your Claude sign-in).")
         return False
@@ -1870,11 +1805,11 @@ def _configure_worker_runtime(s: state.SetupState, doc: dict, *, dry_run: bool, 
         ui.info(line + " Run `ai-resources setup` from a terminal to move it to Claude Code.")
         return False
     ui.info(line)
-    if not ui.confirm("Run them through Claude Code instead (claude-cli, billed to your Claude sign-in)? "
+    if not ui.confirm("Run it through Claude Code instead (claude-cli, billed to your Claude sign-in)? "
                       "Your other agents keep their route.", default=False, recommended=True):
         ui.info("Worker: left as it is.")
         return False
-    patch = kit_runtime_patch(by_agent, primaries)
+    patch = kit_runtime_patch({WORKER_AGENT: refs})
     restart = _lanes_classify(patch)
     if restart:
         ui.warn("Worker runtime keys need a gateway restart and were NOT written (the kit never restarts a live "
@@ -1887,7 +1822,7 @@ def _configure_worker_runtime(s: state.SetupState, doc: dict, *, dry_run: bool, 
         ui.error(f"OpenClaw rejected the worker runtime patch: {ui.safe_excerpt(out, 300, tail=True)}")
         return False
     run_changes.extend(openclaw_host.change_records(dict(doc), patch, None, "worker"))
-    ui.info(f"{', '.join(f'`{a}`' for a in patch['agents']['entries'])}: run through Claude Code (claude-cli) from the next session.")
+    ui.info(f"`{WORKER_AGENT}`: runs through Claude Code (claude-cli) from the next session.")
     return True
 
 
@@ -1901,14 +1836,26 @@ def _teardown_roles(s: state.SetupState, doc: dict) -> bool:
                                    info=ui.info, error=ui.error)
 
 
-def _teardown_lanes(s: state.SetupState, doc: dict) -> bool:
-    """Remove only the kit lane ids (set difference on allowAgents; `agents delete` for created ids)."""
-    if not s.openclaw.lanes_applied:
+def _teardown_orchestration(s: state.SetupState, doc: dict) -> bool:
+    """Take back the wiring: the ids setup added to `allowAgents` (set difference) and the limits it raised, where the
+    live value is still the one it set. A kit-lane agent kept as used is the operator's now: only the record goes."""
+    o = s.openclaw
+    s_lanes_left = bool(o.lanes_applied)
+    o.lanes_applied = {}
+    applied = o.role_agents_applied or {}
+    keys = ("allow_agents_added", "allow_agents_absent", "limits_prev", "limits_set")
+    if not any(applied.get(k) for k in keys):
         return True
-    def confirm(msg: str) -> bool:
-        return True if ui.is_non_interactive() else bool(ui.confirm(msg, default=True))
-    return openclaw_lanes.teardown(s, doc, config_root=CONFIG_ROOT, apply_patch=_lanes_apply, oc=_openclaw, confirm=confirm,
-                                   info=ui.info, error=ui.error)
+    frag = openclaw_orchestration.restore_fragment(applied, doc)
+    if frag:
+        ok, out = _lanes_apply(frag, replace_paths=openclaw_orchestration.allow_paths(frag) or None)
+        if not ok:
+            ui.error(f"OpenClaw orchestration teardown failed: {ui.safe_excerpt(out, 300, tail=True)}")
+            return False
+    o.role_agents_applied = {k: v for k, v in applied.items() if k not in keys}
+    if s_lanes_left:
+        ui.info("Kit-lane agents still in use were left in place; setup no longer tracks them.")
+    return True
 
 
 def plugin_runtime() -> dict:
@@ -2322,21 +2269,19 @@ def live_findings(s: state.SetupState, ak_path: str, runner=None) -> list:
     out.append(F("ok", who, "live: every kit hook is registered in ~/.claude/settings.json") if not missing else
                F("error", who, "live: hooks missing from ~/.claude/settings.json: " + ", ".join(missing),
                  "re-run `ai-resources setup`"))
-    if state.lanes_enabled(s):
-        lanes = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
-        doc = read_config(config_path())
-        have = set(((doc.get("agents") or {}).get("entries") or {}))
-        ids = openclaw_lanes.kit_agent_ids(lanes, doc=doc)
-        gone = [a for a in ids if a not in have]
-        agy = [a for a in ids if (lanes.get("agents") or {}).get(a, {}).get("backend") == openclaw_lanes.AGY_BACKEND]
-        if gone:
-            out.append(F("error", who, "live: lane agents missing from the gateway config: " + ", ".join(gone),
-                         "re-run `ai-resources setup --lanes`"))
-        elif agy and not backend_registered("agy-cli-lane"):
-            out.append(F("error", who, "live: the agy lane backend is not loaded by the gateway",
-                         f"`{openclaw_reconcile.RECONCILE_COMMAND}`"))
+    doc = read_config(config_path())
+    ids = openclaw_orchestration.kit_role_ids(doc)
+    if ids:
+        orchs = openclaw_orchestration.orchestrator_ids(doc, (s.profile.lanes or {}).get("orchestrators") or [])
+        short = {o_: [i for i in ids if i not in ((_get(doc, "agents", "entries", o_, "subagents", "allowAgents")) or [])]
+                 for o_ in orchs}
+        short = {o_: m for o_, m in short.items() if m and "*" not in (
+            _get(doc, "agents", "entries", o_, "subagents", "allowAgents") or [])}
+        if short:
+            out.append(F("warn", who, "live: " + "; ".join(f"{o_} cannot spawn {', '.join(m)}" for o_, m in sorted(short.items())),
+                         "re-run `ai-resources setup` (never edit openclaw.json by hand)"))
         else:
-            out.append(F("ok", who, f"live: {len(ids)} lane agent(s) present and their backend is loaded"))
+            out.append(F("ok", who, f"live: {len(orchs)} orchestrator agent(s) may spawn all {len(ids)} kit-role agents"))
     counts = openclaw_reconcile.gateway_mcp_children(runner or openclaw_host.default_runner)
     if counts is not None and openclaw_reconcile.mcp_overflow(counts):
         out.append(F("warn", who, f"live: {sum(counts.values())} MCP server children under the gateway "
@@ -2993,15 +2938,14 @@ def teardown(s: state.SetupState) -> list[str]:
             s.openclaw.antigravity_applied = False
         return removed
     doc = read_config(config_path())
-    # Reverse order of configure(): the lanes writer ran after the host section, so it is undone first.
+    # Reverse order of configure(): the wiring ran after the role agents, so it is undone first.
     skills_ok = _teardown_skills(s)
-    had_roles = bool(s.openclaw.role_agents_applied)
-    roles_ok = _teardown_roles(s, doc) if had_roles else True
+    had_roles = bool(s.openclaw.role_agents_applied or s.openclaw.lanes_applied)
+    wiring_ok = _teardown_orchestration(s, doc) if had_roles else True
     if had_roles:
         doc = read_config(config_path())
-    had_lanes = bool(s.openclaw.lanes_applied)
-    lanes_ok = _teardown_lanes(s, doc) if had_lanes else True
-    if had_lanes:
+    roles_ok = _teardown_roles(s, doc) if (had_roles and wiring_ok) else wiring_ok
+    if had_roles:
         doc = read_config(config_path())
     host_ok = host_section.teardown(s, apply_patch=apply_patch, oc=_openclaw, doc=doc) \
         if host_section.applied_any(s.openclaw) else True
@@ -3015,7 +2959,7 @@ def teardown(s: state.SetupState) -> list[str]:
     if s.openclaw.image_deny_added:
         _remove_image_deny(s)
     removed: list[str] = []
-    if not (engine_ok and mcp_ok and voice_ok and host_ok and lanes_ok and roles_ok and skills_ok):
+    if not (engine_ok and mcp_ok and voice_ok and host_ok and roles_ok and skills_ok):
         return removed
     removed.append(str(config_path()))
 
@@ -3032,7 +2976,6 @@ def teardown(s: state.SetupState) -> list[str]:
     # Restart-required keys the teardown could not write without restarting a live gateway stay owed:
     # `ai-resources openclaw apply-pending` still has to find them (ADR-0003).
     pending = s.openclaw.host_restart_pending
-    left_lanes = s.openclaw.lanes_applied          # lane agents the operator declined to delete stay recorded
     left_roles = s.openclaw.role_agents_applied    # the same for kit-role agents
     # What a retry still owes. The sign-out offer (`image_auth_profile_created`) rides with a model restore that failed:
     # `_teardown_image` returns before the offer then, and a later teardown must still make it.
@@ -3043,7 +2986,6 @@ def teardown(s: state.SetupState) -> list[str]:
                    or (k == "image_auth_profile_created" and s.openclaw.image_auth_profile_created))}
     s.openclaw = state.OpenClawState()
     s.openclaw.host_restart_pending = pending
-    s.openclaw.lanes_applied = left_lanes
     s.openclaw.role_agents_applied = left_roles
     for k, v in left_image.items():
         setattr(s.openclaw, k, v)
@@ -3212,12 +3154,6 @@ def verify(ctx: dict) -> list:
                 out.append(F("warn", ID, f"agent {aid} spells its model as a string ({raw}); the short form is legal "
                              "and the kit reads both",
                              f"openclaw config set agents.entries.{aid}.model.primary {raw}"))
-        for msg in openclaw_lanes.agy_primary_drift_findings(doc):
-            out.append(F("warn", ID, msg, "no kit action; see ADR-0019"))
-        lanes = s.profile.lanes
-        if state.lanes_enabled(s) and isinstance(lanes, dict):
-            for msg in openclaw_lanes.mcp_scope_findings(lanes, doc):
-                out.append(F("warn", ID, msg, "re-run `ai-resources setup --lanes` (never edit openclaw.json by hand)"))
         bindings = doc.get("bindings")
         if isinstance(bindings, list) and any(_is_catch_all(b) for b in bindings):
             if _is_catch_all(bindings[-1]):

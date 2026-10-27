@@ -12,7 +12,7 @@ import pytest
 
 from ai_resources.setup import state
 from ai_resources.setup.cockpits import openclaw as cockpit
-from ai_resources.setup.cockpits import openclaw_lanes, openclaw_roles
+from ai_resources.setup.cockpits import openclaw_roles
 
 SONNET, OPUS, HAIKU = "anthropic/claude-sonnet-5-5", "anthropic/claude-opus-5-5", "anthropic/claude-haiku-5-5"
 API = {"agentRuntime": {"id": "openclaw"}}
@@ -125,21 +125,6 @@ def test_a_restart_class_key_is_deferred_not_written(oc, monkeypatch):
     assert oc.applied == []
 
 
-# --- lanes: the restore removes the pins the kit added -----------------------------------------------------------------
-
-def test_the_lanes_restore_removes_only_the_runtime_pins_the_kit_added():
-    doc = {"agents": {"entries": {
-        "kit-lane-cli-sonnet55": {"models": {SONNET: CLI, OPUS: {"agentRuntime": {"id": "mine"}}}},
-    }}}
-    patch, _ = openclaw_lanes.restore_fragment({"runtime_pins_added": {"kit-lane-cli-sonnet55": [SONNET]}}, doc)
-    assert patch == {"agents": {"entries": {"kit-lane-cli-sonnet55": {"models": {SONNET: None}}}}}
-
-
-def test_runtime_pins_fill_only_what_the_agent_does_not_pin_itself():
-    entry = {"models": {OPUS: {"agentRuntime": {"id": "mine"}}, HAIKU: {"alias": "h"}}}
-    assert openclaw_lanes.runtime_pins(entry, [SONNET, OPUS, HAIKU, ""], CLI) == {SONNET: CLI, HAIKU: CLI}
-
-
 # --- roles: a model the kit moves away from loses the kit's pin --------------------------------------------------------
 
 def test_a_role_that_changes_model_drops_the_old_pin_and_pins_the_new_one(tmp_path):
@@ -157,24 +142,15 @@ def test_a_role_that_changes_model_drops_the_old_pin_and_pins_the_new_one(tmp_pa
     assert "defaults" not in patch["agents"]
 
 
-# --- 2.6.3: orphan kit lanes move with the worker; the recommended run answers yes ---------------------------------
+# --- the one question pins the worker; kit-lane agents are no longer touched (ADR-0019) ---------------------------
 
-def test_a_kit_lane_on_the_api_route_moves_with_the_worker_and_the_operators_agents_do_not():
-    doc = _doc()
-    doc["agents"]["entries"]["kit-lane-cli-haiku55"] = {"model": {"primary": HAIKU}}
-    doc["agents"]["entries"]["kit-lane-agy-flash"] = {"model": {"primary": "agy-cli/gemini-4-flash"}}
-    assert cockpit.kit_api_agents(doc) == {"claude": [SONNET, OPUS, HAIKU], "kit-lane-cli-haiku55": [HAIKU]}
-    assert cockpit.kit_runtime_patch({"kit-lane-cli-haiku55": [HAIKU]}) == {
-        "agents": {"entries": {"kit-lane-cli-haiku55": {"models": {HAIKU: CLI}}}}}
-
-
-def test_the_one_question_pins_the_worker_and_the_orphan_lanes_together(oc, monkeypatch):
+def test_the_one_question_pins_the_worker_and_leaves_kit_lane_agents_alone(oc, monkeypatch):
     monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False, **k: True)
     doc = _doc()
     doc["agents"]["entries"]["kit-lane-cli-haiku55"] = {"model": {"primary": HAIKU}}
     assert cockpit._configure_worker_runtime(_state(), doc, dry_run=False, run_changes=[]) is True
-    assert oc.applied == [cockpit.kit_runtime_patch({"claude": [SONNET, OPUS, HAIKU],
-                                                     "kit-lane-cli-haiku55": [HAIKU]})]
+    assert oc.applied == [cockpit.kit_runtime_patch({"claude": [SONNET, OPUS, HAIKU]})]
+    assert not hasattr(cockpit, "kit_api_agents") and not hasattr(cockpit, "lane_primary_repairs")
 
 
 def test_the_recommended_run_moves_the_worker_without_asking(oc, monkeypatch):
@@ -185,27 +161,6 @@ def test_the_recommended_run_moves_the_worker_without_asking(oc, monkeypatch):
     finally:
         cockpit.ui.set_auto(False)
     assert oc.applied == [cockpit.worker_runtime_patch([SONNET, OPUS, HAIKU])]
-
-
-# --- 2.6.4: a claude-cli lane whose primary drifted goes back to the model its id names ------------------------------
-
-def test_a_cli_lane_moved_off_the_model_its_id_names_goes_back():
-    doc = _doc()
-    doc["agents"]["entries"]["kit-lane-cli-haiku55"] = {"model": {"primary": SONNET, "fallbacks": [SONNET]}}
-    doc["agents"]["entries"]["kit-lane-cli-opus55"] = {"model": {"primary": OPUS}}
-    doc["agents"]["entries"]["kit-lane-cli-sonnet55"] = {"model": {"primary": "agy-cli-lane/gemini-4-argon-high"}}
-    assert cockpit.lane_primary_repairs(doc) == {"kit-lane-cli-haiku55": HAIKU}
-
-
-def test_the_repair_rides_the_one_question_and_pins_the_restored_ref(oc, monkeypatch):
-    monkeypatch.setattr(cockpit.ui, "confirm", lambda m, default=False, **k: True)
-    doc = _doc()
-    doc["agents"]["entries"]["kit-lane-cli-haiku55"] = {"model": {"primary": SONNET, "fallbacks": [SONNET]}}
-    assert cockpit._configure_worker_runtime(_state(), doc, dry_run=False, run_changes=[]) is True
-    lane = oc.applied[0]["agents"]["entries"]["kit-lane-cli-haiku55"]
-    assert lane["model"] == {"primary": HAIKU}
-    assert lane["models"] == {SONNET: CLI, HAIKU: CLI}
-    assert "main" not in oc.applied[0]["agents"]["entries"]
 
 
 # --- 2.6.5: a role spelled as a bare model string is the kit's, not the operator's ---------------------------------
@@ -223,7 +178,8 @@ def test_a_role_whose_model_is_a_bare_string_still_gets_its_claude_cli_pin(tmp_p
                                              {"anthropic": "api_key"}, ("claude-cli",))
     assert kept == []
     # the bare string is also respelled as the object form, which clears verify's warning
-    assert patch == {"agents": {"entries": {"kit-role-reviewer": {"model": {"primary": SONNET}, "models": {SONNET: CLI}}}}}
+    assert patch == {"agents": {"entries": {"kit-role-reviewer": {"model": {"primary": SONNET}, "models": {SONNET: CLI},
+                                                                  "tools": {"deny": ["bundle-mcp"]}}}}}
 
 
 def test_a_bare_string_role_the_kit_wrote_follows_a_profile_change(tmp_path):

@@ -195,8 +195,9 @@ def _probe(argv: list[str], timeout: int) -> dict[str, Any]:
 
 
 def _write(path: Path, doc: Mapping[str, Any]) -> None:
+    from .openclaw_host import write_file_atomically       # unique temp file: concurrent teams never tear a cache
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    write_file_atomically(path, json.dumps(doc, indent=2))
 
 
 def sync_caches(home: str | Path | None = None, timeout: int = 15) -> dict[str, Any]:

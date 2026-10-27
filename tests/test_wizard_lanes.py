@@ -11,7 +11,7 @@ PROFILE = "subscription-claude-55"
 
 
 def _args(**kw):
-    ns = dict(lanes=False, no_lanes=False, lanes_dry_run=False, lanes_orchestrator=[], allow_unverified=False)
+    ns = dict(lanes=False, no_lanes=False, allow_unverified=False)
     ns.update(kw)
     return argparse.Namespace(**ns)
 
@@ -42,27 +42,27 @@ def test_allow_unverified_does_not_imply_lanes():
     assert s.profile.lanes is None
 
 
-def test_non_interactive_lanes_enables_with_the_named_orchestrator_and_asks_nothing():
+def test_non_interactive_lanes_enables_and_asks_nothing():
     s = _s()
-    assert wizard._step_lanes(s, _args(lanes=True, lanes_orchestrator=["main"])) == 0
+    assert wizard._step_lanes(s, _args(lanes=True)) == 0
     assert state.lanes_enabled(s)
-    assert set(s.profile.lanes) == {"orchestrators"} and s.profile.lanes["orchestrators"] == ["main"]   # the role table is the matrix
+    assert set(s.profile.lanes) == {"orchestrators"} and s.profile.lanes["orchestrators"] == []   # the role table is the matrix; the orchestrators are found in the OpenClaw config
 
 
-def test_interactive_enable_asks_only_for_the_orchestrator_and_shows_no_acknowledgement(monkeypatch):
+def test_interactive_enable_asks_nothing_and_shows_no_acknowledgement(monkeypatch):
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
     warned, confirmed = [], []
     monkeypatch.setattr(ui, "warn", warned.append)
     monkeypatch.setattr(ui, "confirm", lambda *a, **k: confirmed.append(a) or True)
-    monkeypatch.setattr(ui, "text", lambda *a, **k: "main")
+    monkeypatch.setattr(ui, "text", lambda *a, **k: pytest.fail("the orchestrators are no longer asked"))
     s = _s()
     assert wizard._step_lanes(s, _args(lanes=True)) == 0
-    assert s.profile.lanes["orchestrators"] == ["main"] and warned == [] and confirmed == []
+    assert state.lanes_enabled(s) and warned == [] and confirmed == []
 
 
 def test_no_lanes_clears_the_table_and_the_file_follows_on_apply():
     s = _s()
-    wizard._step_lanes(s, _args(lanes=True, lanes_orchestrator=["main"]))
+    wizard._step_lanes(s, _args(lanes=True))
     lanes_render.sync_file(s)
     assert state.lanes_path().is_file()
     assert wizard._step_lanes(s, _args(no_lanes=True)) == 0
@@ -72,9 +72,9 @@ def test_no_lanes_clears_the_table_and_the_file_follows_on_apply():
     assert str(state.lanes_path()) not in s.tracking.config_files_written
 
 
-def test_lanes_dry_run_enables_nothing():
+def test_a_dry_run_enables_nothing():
     s = _s()
-    assert wizard._step_lanes(s, _args(lanes_dry_run=True, lanes_orchestrator=["main"])) == 0
+    assert wizard._step_lanes(s, _args(lanes=True), dry_run=True) == 0
     assert s.profile.lanes is None
 
 
@@ -90,14 +90,16 @@ def test_malformed_profile_routing_override_is_refused(monkeypatch):
     s.mode, s.profile.name = "multi-model", "x"
     errors = []
     monkeypatch.setattr(ui, "error", lambda m: errors.append(m))
-    assert wizard._step_lanes(s, _args(lanes=True, lanes_orchestrator=["main"])) == 2
+    assert wizard._step_lanes(s, _args(lanes=True)) == 2
     assert any("routing.implementer" in e for e in errors)
     assert s.profile.lanes is None
 
 
 def test_cli_exposes_the_lane_flags():
     from ai_resources import cli
-    ns = cli.build_parser().parse_args(["setup", "--lanes", "--lanes-orchestrator", "a", "--lanes-orchestrator", "b",
-                                        "--lanes-dry-run"])
-    assert ns.lanes and ns.lanes_dry_run and ns.lanes_orchestrator == ["a", "b"] and not ns.no_lanes
+    ns = cli.build_parser().parse_args(["setup", "--lanes"])
+    assert ns.lanes and not ns.no_lanes
     assert cli.build_parser().parse_args(["setup", "--no-lanes"]).no_lanes
+    for gone in ("--lanes-orchestrator", "--lanes-dry-run"):
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args(["setup", gone, "x"] if "orch" in gone else ["setup", gone])

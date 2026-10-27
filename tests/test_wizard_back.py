@@ -76,15 +76,13 @@ def test_back_is_refused_once_the_sign_in_handed_the_terminal_to_claude(monkeypa
     assert handed == [["claude", "auth", "login"]]                                 # and the native flow ran once
 
 
-def test_back_inside_the_lanes_step_returns_to_the_profile_and_stores_nothing_until_the_second_pass(monkeypatch, tmp_path):
+def test_the_lanes_step_asks_no_orchestrator_question(monkeypatch, tmp_path):
     home = host_env(monkeypatch, tmp_path)
-    script = Script(**_single(**{"Orchestrator agent id": Seq(BACK, "main")}))
+    script = Script(**_single())
     script.install(monkeypatch)
-    rc = wizard.run(_args(lanes=True))
-    assert rc == 0
-    assert len([m for m in script.asked if "How should kit subagents pick" in m]) == 2
-    assert len([m for m in script.asked if "Orchestrator agent id" in m]) == 2
-    assert state.load().profile.lanes == {"orchestrators": ["main"]}          # recorded by the second pass only
+    assert wizard.run(_args(lanes=True)) == 0
+    assert not [m for m in script.asked if "Orchestrator agent id" in m]
+    assert state.load().profile.lanes == {"orchestrators": []}          # the orchestrators are found in the OpenClaw config
     assert "lane_acks" not in state.state_path().read_text(encoding="utf-8")
 
 

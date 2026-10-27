@@ -30,6 +30,6 @@ def test_assigned_then_echoed_detail_is_masked():
     assert offenders == []
 
 
-def test_the_lanes_module_masks_what_it_echoes():
-    from ai_resources.setup.cockpits import openclaw_lanes
-    assert hasattr(openclaw_lanes, "ui")
+def test_the_orchestration_module_masks_what_it_echoes():
+    from ai_resources.setup.cockpits import openclaw_orchestration
+    assert hasattr(openclaw_orchestration, "ui")

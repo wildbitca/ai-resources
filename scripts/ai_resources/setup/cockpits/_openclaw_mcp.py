@@ -33,7 +33,7 @@ from typing import Any, Callable, Mapping
 from urllib.parse import parse_qsl, urlsplit
 
 from .. import state, ui
-from . import openclaw_lanes as _lanes
+from . import openclaw_orchestration as _orch
 from ... import openclaw_host as _host
 
 Runner = Callable[..., tuple[int, str]]
@@ -389,7 +389,7 @@ def unlisted_mirrored(s: state.SetupState, include: list[str] | None) -> list[st
 
 def deny_tokens(names: list[str]) -> list[str]:
     """OpenClaw's whole-server denial tokens: exact `<model-facing server name>__*`, never a broad glob."""
-    return sorted({f"{_lanes.safe_server_name(n)}__*" for n in names})
+    return sorted({f"{_orch.safe_server_name(n)}__*" for n in names})
 
 
 def stdio_servers(doc: Mapping[str, Any]) -> list[str]:
@@ -402,25 +402,25 @@ def stdio_servers(doc: Mapping[str, Any]) -> list[str]:
 
 def role_scope(doc: Mapping[str, Any], globs: list[str]) -> dict[str, list[str]]:
     """Agent id -> the whole-server deny tokens of every stdio MCP server, for the agents matching `globs`
-    (kit-host.env `OPENCLAW_MCP_DENY_AGENTS`, default `kit-role-*`). Lane agents are scoped by `lanes.mcp`."""
+    (kit-host.env `OPENCLAW_MCP_DENY_AGENTS`, default `kit-role-*`)."""
     import fnmatch
     tokens = deny_tokens(stdio_servers(doc))
     entries = ((doc.get("agents") or {}).get("entries") or {}) if isinstance(doc.get("agents"), Mapping) else {}
     if not tokens:
         return {}
     return {aid: tokens for aid in entries
-            if isinstance(aid, str) and not aid.startswith(_lanes.PREFIX) and any(fnmatch.fnmatchcase(aid, g) for g in globs)}
+            if isinstance(aid, str) and not aid.startswith(_orch.LANE_PREFIX) and any(fnmatch.fnmatchcase(aid, g) for g in globs)}
 
 
 def scope_patch(doc: Mapping[str, Any], desired: list[str], recorded: Mapping[str, list[str]],
                 per_agent: Mapping[str, list[str]] | None = None) -> dict[str, Any]:
-    """The fill-only per-agent `tools.deny` patch. Lane agents are skipped (`openclaw_lanes.mcp_deny` scopes them);
+    """The fill-only per-agent `tools.deny` patch. Kit-lane agents (kept, in use) are skipped;
     an operator token is kept; only tokens the kit recorded earlier and no longer wants are dropped.
     `per_agent` adds tokens for single agents (`role_scope`). The global `tools.deny` is never in this patch (ADR-0011)."""
     entries = ((doc.get("agents") or {}).get("entries") or {}) if isinstance(doc.get("agents"), Mapping) else {}
     out: dict[str, Any] = {}
     for aid, entry in sorted(entries.items()):
-        if not isinstance(aid, str) or aid.startswith(_lanes.PREFIX) or not isinstance(entry, Mapping):
+        if not isinstance(aid, str) or aid.startswith(_orch.LANE_PREFIX) or not isinstance(entry, Mapping):
             continue
         tools = entry.get("tools")
         current = [t for t in ((tools.get("deny") if isinstance(tools, Mapping) else None) or []) if isinstance(t, str)]

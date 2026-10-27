@@ -116,18 +116,6 @@ def test_cancel_at_the_role_profile_question(host, capsys):
     assert any(m.startswith("select: How should kit subagents pick") for m in script.asked)
 
 
-def test_cancel_at_the_lanes_orchestrator_prompt(host, capsys):
-    before = _snapshot(host.home)
-    rc, script = _drive(host, {"Choose mode": "single-model", "Model preset": "custom", "How do you want to choose models": "profile",
-                               "How should kit subagents pick": "subscription-claude-55",
-                               "Orchestrator agent id": ABORT},
-                        _args(lanes=True))
-    _assert_clean_cancel(rc, capsys, host, before, step="Your team - parallel runs")
-    assert any(m.startswith("text: Orchestrator agent id") for m in script.asked)
-    assert not (state.config_root() / "backups" / "lanes").exists()
-    assert not state.lanes_path().exists()
-
-
 def test_bare_keyboard_interrupt_names_the_step(host, capsys):
     """prompt_scope restores the section on exit, so the name must be read before the scope ends."""
     before = _snapshot(host.home)

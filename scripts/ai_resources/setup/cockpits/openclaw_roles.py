@@ -185,23 +185,41 @@ def pins_for(agent: RoleAgent, methods: Mapping[str, str], cli_runtimes: Iterabl
 REPORT_DENY = ("write", "edit", "apply_patch")
 NO_EXEC_DENY = ("exec", "process")
 NO_EXEC_ROLES = frozenset({"explore", "planner", "software-architect"})
+# A worker that needs no MCP server never loads one: `bundle-mcp` keeps the per-session engram/supabase stacks (the
+# children that pile up in the gateway cgroup, `openclaw_reconcile.MCP_CHILD_WARN`) from starting at all. No role
+# declares an MCP need today. Same for a Claude and an agy primary: no backend-specific tool deny (ADR-0019 O1).
+BUNDLE_MCP = "bundle-mcp"
+MCP_ROLES: frozenset[str] = frozenset()
 # tools.deny lists an earlier kit wrote: an entry still carrying one of them is moved to today's list.
 PREVIOUS_DENIES = (list(REPORT_DENY),)
 
 
-def deny_for(role: str) -> list[str]:
+def report_deny_for(role: str) -> list[str]:
+    """The tools a read-only role loses: explore, the reviewers and the other report roles never edit (a role property,
+    `roles_policy.REPORT_ROLES`); planner, architect and explore lose the shell too."""
     if role not in roles_policy.REPORT_ROLES:
         return []
     return list(REPORT_DENY) + (list(NO_EXEC_DENY) if role in NO_EXEC_ROLES else [])
 
 
+def deny_for(role: str) -> list[str]:
+    return report_deny_for(role) + ([] if role in MCP_ROLES else [BUNDLE_MCP])
+
+
 def _tools_patch(live: Mapping[str, Any], agent: RoleAgent) -> "list[str] | None":
-    """Today's deny list when the live entry still carries one an earlier kit wrote; None otherwise (the operator's)."""
-    want = deny_for(agent.get("role", ""))
+    """The `tools.deny` list to write, or None when the live one is already right. Fill-only: an entry an earlier kit
+    wrote moves to today's report list; `bundle-mcp` is added where missing; every other token (the operator's, the
+    per-server engram/supabase denials of the MCP scoping) is kept."""
+    role = agent.get("role", "")
     have = _get(live, "tools", "deny")
-    if want and isinstance(have, list) and have != want and have in PREVIOUS_DENIES:
-        return want
-    return None
+    have = [t for t in have if isinstance(t, str)] if isinstance(have, list) else []
+    target = list(have)
+    want = report_deny_for(role)
+    if want and have in PREVIOUS_DENIES and have != want:
+        target = list(want)
+    if role not in MCP_ROLES and BUNDLE_MCP not in target:
+        target.append(BUNDLE_MCP)
+    return target if target != have else None
 
 
 def _model_value(agent: RoleAgent) -> dict[str, Any]:
@@ -290,6 +308,10 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
                 patch.setdefault("agents", {}).setdefault("entries", {})[aid] = ent
             else:
                 kept.append(aid)
+                denied = _tools_patch(live, agent) if ours else None    # the guard is the kit's on an agent it created
+                if denied is not None:
+                    patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})["tools"] = \
+                        {"deny": denied}
                 continue
         own = _get(live, "models") or {}
         for ref, runtime in pins.items():
@@ -351,7 +373,8 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
               run_changes: list[dict] | None = None, dry_run: bool = False,
               info: Callable[[str], None] = print, warn: Callable[[str], None] = print,
               error: Callable[[str], None] = print, env: dict | None = None,
-              cli_runtimes: Iterable[str] = (), agy_ok: Callable[[str], bool] | None = None) -> bool:
+              cli_runtimes: Iterable[str] = (), agy_ok: Callable[[str], bool] | None = None,
+              planned_ids: list[str] | None = None) -> bool:
     """Write (or update, fill-only) the kit-role agents. True when the config changed. Nothing is written in a dry run."""
     o = s.openclaw
     if enabled is None:
@@ -361,6 +384,8 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
                                 agy_ok=agy_ok)
     if not agents:
         return False
+    if planned_ids is not None:
+        planned_ids[:] = sorted({a.id for a in agents})      # the ids the orchestrators are wired to, dry run included
     for role, want, ref in fell:
         warn(f"kit-role {role}: provider {want} is not available; it runs on {ref} (recorded fallback cause: "
              f"{'agy-missing' if want == 'agy' else 'provider-disabled'})")
@@ -381,7 +406,10 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     entries = _get(doc, "agents", "entries") or {}
     new_ids = [a.id for a in agents if a.id not in entries]
     if dry_run:
-        info(f"Kit roles (dry run): {len(new_ids)} new agent(s), "
+        changed_ids = sorted(a for a in ((patch.get("agents") or {}).get("entries") or {}) if a not in new_ids)
+        info(f"Kit roles (dry run): agents added {len(new_ids)}"
+             + (f" ({', '.join(new_ids)})" if new_ids else "") + f"; changed {len(changed_ids)}"
+             + (f" ({', '.join(changed_ids)})" if changed_ids else "") + "; removed 0; "
              f"{len(_leaf_count(patch))} config value(s) to fill")
         return False
     if patch:

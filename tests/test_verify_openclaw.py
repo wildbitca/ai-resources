@@ -189,34 +189,6 @@ def test_an_unreadable_config_is_a_warn_and_the_host_checks_still_run(sim, scrip
 
 
 
-# --- MCP scope warning for kit lane agents ------------------------------------------------------------
-
-def _lane_state(enabled):
-    s = _state()
-    if enabled:
-        s.profile.lanes = {"agents": {"kit-lane-x": {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5"}},
-                           "roles": {}}
-    return s
-
-
-def _unscoped_doc(sim):
-    _edit(sim, lambda d: d.setdefault("agents", {}).setdefault("entries", {}).__setitem__(
-        "kit-lane-x", {"name": "kit-lane-x", "tools": {"deny": []}}))
-
-
-def test_verify_warns_once_for_an_unscoped_lane_agent_when_lanes_are_enabled(sim, script):
-    _unscoped_doc(sim)
-    found = _verify(_lane_state(True))
-    hits = [f for f in found if f.level == "warn" and "kit-lane-x" in f.message and "mcp" in f.message.lower()]
-    assert len(hits) == 1, [f.message for f in found]
-
-
-def test_verify_is_quiet_about_lane_mcp_scope_when_lanes_are_disabled(sim, script):
-    _unscoped_doc(sim)
-    found = _verify(_lane_state(False))
-    assert not [f for f in found if "kit-lane-x" in f.message]
-
-
 # --- image generation (ADR-0011, plan I12): read-only lines ---------------------------------------------------------------------
 
 def _image_lines(found):

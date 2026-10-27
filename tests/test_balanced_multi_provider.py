@@ -14,7 +14,6 @@ from ai_resources import roles_policy
 from ai_resources.scoring import routing
 from ai_resources.setup import compat, lanes_render
 from ai_resources.setup import profiles, state, team_view, ui, wizard
-from ai_resources.setup.cockpits import openclaw_lanes
 
 IDS = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
 GEMINI_ROLES = {"explore", "code-reviewer", "doc-writer", "tester", "package-upgrade", "generalPurpose"}

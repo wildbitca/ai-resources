@@ -67,8 +67,8 @@ Unattended and preview runs:
   --ask               ask every question; --fresh also starts from empty answers
   --non-interactive   use saved answers, never prompt (a prompt with no default aborts)
   --dry-run           render the targets and print a masked unified diff; nothing is written
-Parallel runs (subscription lanes, ADR-0007, off by default): --lanes enables, --no-lanes clears, --lanes-dry-run
-shows the proposed table and writes nothing, --lanes-orchestrator ID names the dispatching agent.
+Routing record (the role matrix, ADR-0019): on by default under the recommended run; --lanes records it, --no-lanes clears
+it. --dry-run prints the OpenClaw changes (agents added/changed, allowAgents, limits, kit-lane migration).
 
 Output: NO_COLOR (set and non-empty) or a non-UTF-8 stream selects ASCII glyphs and no colour.
 """
@@ -207,14 +207,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_st.add_argument("--allow-unverified", dest="allow_unverified", action="store_true",
                       help="Also configure compatibility cells that are not verified end to end (labelled)")
     p_st.add_argument("--lanes", action="store_true",
-                      help="Enable subscription lanes (ADR-0007): propose the profile's lane table and "
-                           "write lanes.yaml and the OpenClaw lane agents")
+                      help="Record the routing overrides of the profile and write lanes.yaml (on by default under --auto)")
     p_st.add_argument("--no-lanes", dest="no_lanes", action="store_true",
-                      help="Clear subscription lanes: remove lanes.yaml and the lane agents the kit created")
-    p_st.add_argument("--lanes-dry-run", dest="lanes_dry_run", action="store_true",
-                      help="Show the proposed lane table and write nothing")
-    p_st.add_argument("--lanes-orchestrator", dest="lanes_orchestrator", action="append", default=[], metavar="ID",
-                      help="Agent id that receives the lane ids in subagents.allowAgents (repeatable)")
+                      help="Clear the routing record: remove lanes.yaml")
     p_st.add_argument("--credit-anthropic-usd", dest="credit_anthropic_usd", type=float, default=None, metavar="USD",
                       help="Opening credit of the Anthropic API pool, recorded once (also AI_RESOURCES_CREDIT_ANTHROPIC_USD)")
     p_st.add_argument("--credit-gemini-usd", dest="credit_gemini_usd", type=float, default=None, metavar="USD",

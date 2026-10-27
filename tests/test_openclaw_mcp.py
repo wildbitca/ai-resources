@@ -631,7 +631,7 @@ def test_unlisted_mirrored_servers_are_denied_per_agent_by_exact_name():
     entries = apply.patches[0]["agents"]["entries"]
     assert entries["main"]["tools"]["deny"] == ["exec", "clickup__*", "stripe__*"]
     assert entries["worker"]["tools"]["deny"] == ["clickup__*", "stripe__*"]
-    assert "kit-lane-claude" not in entries, "lane agents are scoped by openclaw_lanes.mcp_deny"
+    assert "kit-lane-claude" not in entries, "kept kit-lane agents are not scoped here"
     assert sorted(apply.replace_paths) == ["agents.entries.main.tools.deny", "agents.entries.worker.tools.deny"]
     assert "tools" not in apply.patches[0], "the global tools.deny is never written (ADR-0011)"
     assert not any("engram" in t for e in entries.values() for t in e["tools"]["deny"])

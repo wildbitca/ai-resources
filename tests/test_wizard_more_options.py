@@ -133,12 +133,13 @@ def test_the_default_path_never_asks_about_parallel_runs(monkeypatch):
     assert asked == [] and s.profile.lanes is None
 
 
-def test_parallel_runs_from_more_options_ask_the_orchestrator_only(monkeypatch):
+def test_parallel_runs_from_more_options_ask_nothing(monkeypatch):
     s = _team()
     monkeypatch.setattr(wizard, "_PARALLEL_RUNS", True)
-    Script(**{"Orchestrator agent id": "main"}).install(monkeypatch)
+    script = Script()
+    script.install(monkeypatch)
     assert wizard._step_lanes(s, _args()) == 0
-    assert s.profile.lanes["orchestrators"] == ["main"]
+    assert not script.asked and state.lanes_enabled(s)
 
 
 def test_unattended_runs_never_get_parallel_runs_from_the_menu(monkeypatch):

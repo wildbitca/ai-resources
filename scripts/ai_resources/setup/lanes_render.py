@@ -26,54 +26,12 @@ try:
 except ImportError:  # pragma: no cover - handled by ui.require_deps()
     yaml = None  # type: ignore
 
-CLAUDE_CODE = "claude-code"
-CLAUDE_CLI = "claude-cli"
-AGENT_PREFIX = "kit-lane-"
-# Balanced credit policy (docs/decisions/0017-balanced-credit-policy.md): when an agy lane's Antigravity quota is exhausted,
-# its turn falls back to the paid Gemini API (the Google credit) before the Anthropic API. Keyed by the lane's model id.
-GEMINI_FLASH_REF = "google/gemini-3.8-flash"
-LANE_API_FALLBACKS: dict[str, tuple[str, ...]] = {
-    "gemini-3.8-flash-high": (GEMINI_FLASH_REF, "anthropic/claude-haiku-5-5"),
-}
-
-
-def lane_api_fallbacks(agent_id: str, primary: str) -> list[str]:
-    """The API fallback chain for a `kit-lane-agy-*` agent whose primary is `agy-cli-lane/<model>`; [] for any other
-    agent or an unknown model. Pure: it names refs only, no credential."""
-    if not str(agent_id).startswith(AGENT_PREFIX + "agy-"):
-        return []
-    return list(LANE_API_FALLBACKS.get(_strip(primary), ()))
-
-
-_VENDOR = re.compile(r"^(?:anthropic|claude-cli|claude-kit|agy-cli-lane)/")
+GEMINI_FLASH_REF = "google/gemini-3.8-flash"      # the utility model of the balanced credit policy (ADR-0017)
 
 
 class LanesBlockError(ValueError):
     """The profile's `lanes:` block is malformed."""
 
-
-# --- ids and refs ----------------------------------------------------------------------------------------
-
-def _compact(model_id: str) -> str:
-    """`claude-sonnet-5-5` -> `sonnet55`; any other id: lowercase alphanumerics."""
-    m = re.match(r"^claude-([a-z]+)-(\d+)(?:-(\d+))?$", model_id)
-    if m:
-        return f"{m.group(1)}{m.group(2)}{m.group(3) or ''}"
-    return re.sub(r"[^a-z0-9]+", "", model_id.lower())
-
-
-def agent_id_for(backend: str, model: str) -> str:
-    """`kit-lane-cli-sonnet55` for claude-cli, `kit-lane-agy-<model>` for an agy backend."""
-    bare = _VENDOR.sub("", model)
-    kind = "cli" if backend == CLAUDE_CLI else "agy"
-    return f"{AGENT_PREFIX}{kind}-{_compact(bare)}"
-
-
-def _strip(ref: str) -> str:
-    return _VENDOR.sub("", str(ref))
-
-
-# --- the rendered document -------------------------------------------------------------------------------
 
 def render_doc(lanes: Mapping[str, Any], mode: str) -> dict[str, Any]:
     """The `lanes.yaml` document: `{mode, generated_from, routing, digest}`, a pure function of the matrix.
@@ -100,17 +58,9 @@ def dumps(doc: Mapping[str, Any]) -> str:
 # --- the writer (backup before write, restore from its own backup) ---------------------------------------
 
 def _atomic_write(path: Path, text: str) -> None:
+    from ..openclaw_host import write_file_atomically       # unique temp file: two setups never tear lanes.yaml
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.unlink(missing_ok=True)
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    write_file_atomically(path, text, mode=0o600)
 
 
 def expected_text(s: "state.SetupState") -> str | None:

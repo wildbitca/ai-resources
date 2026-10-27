@@ -70,7 +70,7 @@ def test_a_new_install_links_the_plugin_fills_its_config_and_records_exactly_one
     assert fake.cli == [["plugins", "install", "--link", "--force", "--accept-capabilities",
                          fake.kit + "/openclaw-plugin/ai-resources"]]
     cfg = fake.doc["plugins"]["entries"][oc.PLUGIN_ID]["config"]
-    assert cfg["enableOrchestrator"] is True and cfg["maxTeams"] == 2 and cfg["kitRoot"] == fake.kit
+    assert cfg["enableOrchestrator"] is True and cfg["maxTeams"] == 16 and cfg["kitRoot"] == fake.kit
     pending = [e for e in s.openclaw.host_restart_pending if e["op"] == "plugin"]
     assert len(pending) == 1 and pending[0]["version"] == "1.1.0" and pending[0]["path"] == "plugins.entries.ai-resources"
     assert s.openclaw.plugin_version_seen == "1.1.0" and s.openclaw.plugin_linked is True

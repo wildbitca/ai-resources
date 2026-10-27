@@ -636,9 +636,6 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
     applied = _configure_config_fill(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
                                      run_changes=run_changes)
     if o.host_config:
-        from . import openclaw_lanes
-        for msg in openclaw_lanes.agy_primary_drift_findings(doc):      # shown early, before any question
-            ui.warn(msg)
         for name in cost_migrations.opus_fallback_agents(doc):
             ui.warn(f"{name}: an Opus fallback sits behind a non-Opus primary, so a failed turn escalates to the most "
                     "expensive model. The cost migration below offers to remove it.")

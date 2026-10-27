@@ -292,7 +292,8 @@ def record(handoff: Path | str, value: str, *, append: bool = False) -> str:
     line = f"scorecard: {json.dumps(stored)}"
     head = _KEY.sub(lambda _m: line, m.group(1)) if cur else m.group(1) + "\n" + line
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{head}\n---\n{text[m.end():]}", encoding="utf-8")
+    from .openclaw_host import write_file_atomically       # unique temp file: two runs scoring one file never tear it
+    write_file_atomically(path, f"---\n{head}\n---\n{text[m.end():]}")
     return stored
 
 

@@ -107,7 +107,7 @@ SINGLE = {"Claude Code sign-in": "keep", "Model preset": "custom", "How do you w
           "How should kit subagents pick": _first, "Configure detected cockpits": lambda v: list(v),
           "Apply this?": _first}
 SUB = "subscription-claude-55"
-LANES_ANSWERS = {**SINGLE, "Use previous answers": True, "How should kit subagents pick": lambda v: SUB, "Orchestrator agent id": "main"}
+LANES_ANSWERS = {**SINGLE, "Use previous answers": True, "How should kit subagents pick": lambda v: SUB}
 CLI_TEAM = {"Claude Code sign-in": "keep", "Model preset": "balanced", "Use this?": True,
             "Enable subscription lanes?": False, "Configure detected cockpits": lambda v: list(v),
             "Apply this?": _first}
@@ -127,7 +127,7 @@ PATHS = {
                               seed=_saved("single-model", profile=SUB)),
     "lanes-non-interactive": dict(args=_args(lanes=True, non_interactive=True),
                                   seed=_saved("single-model", profile=SUB)),
-    "lanes-dry-run": dict(args=_args(lanes_dry_run=True), answers=LANES_ANSWERS),
+    "lanes-dry-run": dict(args=_args(lanes=True, dry_run=True), answers=LANES_ANSWERS),
     "no-lanes": dict(args=_args(no_lanes=True), answers=SINGLE),
     "non-tty-guard": dict(args=_args(), answers={}, tty=False),
     # S1 of the setup simplification (ADR-0009): the subscription path as it is today (six questions), `--backend cli`
@@ -221,7 +221,6 @@ EXPECTED = {
         'section 3/5 Your team - roles',
         'select: How should kit subagents pick their Claude model?',
         'section 3/5 Your team - parallel runs',
-        'text: Orchestrator agent id(s) that may dispatch lane agents (comma-separated)',
         'section 4/5 Audio',
         'info: Skipped (voice notes need OpenClaw, which is not one of your tools).',
         'section 5/5 Review',
@@ -256,7 +255,6 @@ EXPECTED = {
         'section 3/5 Your team - roles',
         'select: How should kit subagents pick their Claude model?',
         'section 3/5 Your team - parallel runs',
-        'text: Orchestrator agent id(s) that may dispatch lane agents (comma-separated)',
         'section 4/5 Audio',
         'info: Skipped (voice notes need OpenClaw, which is not one of your tools).',
         'section 5/5 Review',

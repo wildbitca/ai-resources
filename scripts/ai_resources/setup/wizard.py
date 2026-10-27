@@ -146,7 +146,7 @@ def run(args: argparse.Namespace) -> int:
                                              ("gemini-api", getattr(args, "credit_gemini_usd", None))) if v is not None}
     _ASSUME_YES = bool(getattr(args, "yes", False))
     ui.set_assume_yes(_ASSUME_YES)
-    _DRY_RUN = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
+    _DRY_RUN = bool(getattr(args, "dry_run", False))
     _ALLOW_UNVERIFIED = bool(getattr(args, "allow_unverified", False))
     if _DRY_RUN and _ASSUME_YES:
         ui.info("DRY RUN: --yes installs nothing in a dry run; no installer is offered or run.")
@@ -205,7 +205,7 @@ def _run(args: argparse.Namespace) -> int:
     _PRESET = ""
     _PARALLEL_RUNS = _OPEN_OPENCLAW = _OPEN_LIFECYCLE = False
     _AUTH_PREFILLED.clear()
-    dry_run = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
+    dry_run = bool(getattr(args, "dry_run", False))
 
     # Both flags were declared in the CLI and never read, so they accepted input
     # and changed nothing. Non-interactive makes every prompt answer with its
@@ -2225,44 +2225,39 @@ def _untick(s: state.SetupState, tool: str) -> None:
 def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool = False) -> int:
     """Enable, keep or clear the routing record (lanes). Disabled on a fresh install and without a flag.
 
-    `--lanes` records the profile's `routing:` overrides and asks for the orchestrator ids (OQ-7); `--no-lanes` clears
-    the record (the OpenClaw writer and `lanes.yaml` follow on apply). Ticking Antigravity on the first screen, or the
-    recommended run with agy installed, records it with the default orchestrators and asks nothing: agy has the same
-    standing as Claude Code, so there is no acknowledgement, flag or gate. Whether an agy cell runs is decided where
-    the matrix is resolved (agy installed and signed in, `detection.agy_active`); an inactive cell is skipped with a
-    recorded cause."""
+    `--lanes` records the profile's `routing:` overrides; `--no-lanes` clears the record (`lanes.yaml` follows on apply).
+    The recommended run (`--auto`) and ticking Antigravity on the first screen record it and ask nothing: the
+    orchestrators are every OpenClaw channel agent, found in the config when the OpenClaw writer runs (ADR-0019 D1). Agy
+    has the same standing as Claude Code; whether an agy cell runs is decided where the matrix is resolved (agy
+    installed and signed in, `detection.agy_active`); an inactive cell is skipped with a recorded cause."""
     want = bool(getattr(args, "lanes", False))
     unwant = bool(getattr(args, "no_lanes", False))
-    preview = bool(getattr(args, "lanes_dry_run", False))
     listed = getattr(s, "_tool_members_this_run", None) is not None and not ui.is_non_interactive()
     agy_team = listed and s.cli_team and "agy" in _members_of(s) and not unwant
     team_only = False
-    if agy_team and not (preview or dry_run):
+    if agy_team and not dry_run:
         team_only = not (want or state.lanes_enabled(s))
         want = True
     elif agy_team:
         ui.info("DRY RUN: nothing is enabled in a dry run.")
-    elif (ui.is_auto() and not (unwant or preview or dry_run) and s.cli_team and detection.agy_installed()):
-        # ADR-0018: under the recommended run the routing record is on by default when agy is installed.
+    elif ui.is_auto() and not (unwant or dry_run) and s.cli_team:
+        # ADR-0019 D10: under the recommended run the routing record is on by default.
         team_only = not (want or state.lanes_enabled(s))
         want = True
-    if (s.cli_team and _PARALLEL_RUNS and not (want or unwant or preview) and not ui.is_non_interactive()):
+    if (s.cli_team and _PARALLEL_RUNS and not (want or unwant) and not ui.is_non_interactive()):
         # Review > More options > Parallel runs: the operator asked for the Claude parallel runs in this run.
         want = True
     if want and unwant:
         ui.error("--lanes and --no-lanes contradict each other")
         return 2
-    if not team_only and (want or unwant or preview):
+    if not team_only and (want or unwant):
         _section(6, "Your team - parallel runs")
-    if unwant and preview:
-        ui.info("Dry run: lanes stay as they are; nothing was cleared or written.")
-        return 0
     if unwant:
         if s.profile.lanes:
             ui.info("Subscription lanes: cleared (lanes.yaml and the OpenClaw lane agents are removed on apply).")
         s.profile.lanes = None
         return 0
-    if not (want or preview):
+    if not want:
         return 0
     name = profiles.saved_or_recommended(s.profile.name, s.backend) if s.mode == "multi-model" else (
         s.profile.name or _single_default_profile(s))
@@ -2277,16 +2272,9 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         ui.error(f"--lanes: {e}")
         return 2
     prev = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
-    orchestrators = list(getattr(args, "lanes_orchestrator", None) or prev.get("orchestrators") or [])
-    if team_only:
-        orchestrators = orchestrators or ["claude", "main"]
-    elif not orchestrators and not ui.is_non_interactive():
-        raw = ui.text("Orchestrator agent id(s) that may dispatch lane agents (comma-separated)",
-                      default="claude, main")
-        orchestrators = [o.strip() for o in (raw or "").split(",") if o.strip()]
     from . import lanes_render
     try:
-        proposal = lanes_render.lanes_state(doc, orchestrators=orchestrators)
+        proposal = lanes_render.lanes_state(doc, orchestrators=list(prev.get("orchestrators") or []))
     except lanes_render.LanesBlockError as e:
         ui.error(f"--lanes: {e}")
         return 2
@@ -2296,7 +2284,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         for role, primary, fallback in scoring_routing.table_rows(doc):
             if role in roles:
                 ui.detail(f"  {role}: {primary} -> {fallback}")
-    if preview or dry_run:
+    if dry_run:
         ui.info("Dry run: nothing was enabled or written.")
         return 0
     s.profile.lanes = proposal

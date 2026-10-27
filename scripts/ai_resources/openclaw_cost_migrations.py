@@ -54,7 +54,6 @@ UTILITY_MODEL_PATH = ("agents", "defaults", "utilityModel")
 # Gemini tool-calling run is verified. Proposed only on a host that already uses Google models, one confirm per path.
 BALANCED_UTILITY_ID = "credit-utility-gemini-flash"
 BALANCED_ALIAS_ID = "credit-gemini-flash-alias"
-BALANCED_LANE_ID_PREFIX = "credit-lane-fallbacks:"
 GEMINI_FLASH_ALIAS_PATH = ("agents", "defaults", "models", "google/gemini-3.8-flash")
 
 
@@ -84,19 +83,6 @@ def balanced_credit_proposals(doc: dict, *, applied=(), keep=frozenset(), force=
         out.append(Proposal(BALANCED_ALIAS_ID, GEMINI_FLASH_ALIAS_PATH, None, {"alias": "flash"},
                             "registers the Gemini route under a short alias", had=False,
                             snippet='openclaw config patch with {"agents":{"defaults":{"models":{"google/gemini-3.8-flash":{"alias":"flash"}}}}}'))
-    entries = (doc.get("agents") or {}).get("entries") or {}
-    for aid in sorted(entries):
-        cfg = entries[aid]
-        model = cfg.get("model") if isinstance(cfg, dict) else None
-        primary = _primary(model)
-        want = lr.lane_api_fallbacks(aid, primary)
-        path = ("agents", "entries", aid, "model", "fallbacks")
-        old, had = _get(doc, path)
-        if want and old != want and ok(BALANCED_LANE_ID_PREFIX + aid, path):
-            out.append(Proposal(BALANCED_LANE_ID_PREFIX + aid, path, old if had else None, want,
-                                "an exhausted Antigravity quota falls back to the Gemini API credit before Anthropic",
-                                replace=True, had=had,
-                                snippet=f"openclaw config set {'.'.join(path)} '{json.dumps(want)}'"))
     return out
 
 

@@ -116,23 +116,10 @@ def restore_file(payload: dict) -> None:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    """Write `text` to a temp file next to `path` and swap it in. The file keeps the permission bits of the one
-    it replaces; a new file is created 0600 (these files can carry a gateway key)."""
-    try:
-        mode = stat.S_IMODE(path.stat().st_mode)
-    except OSError:
-        mode = 0o600
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.unlink(missing_ok=True)
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-            os.fchmod(fh.fileno(), mode)
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    """Swap `text` in through a unique temp file (`openclaw_host.write_file_atomically`). The file keeps the permission
+    bits of the one it replaces; a new file is created 0600 (these files can carry a gateway key)."""
+    from .openclaw_host import write_file_atomically
+    write_file_atomically(path, text, mode=None if path.exists() else 0o600)
 
 
 class _FileArtifact(Artifact):

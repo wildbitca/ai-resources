@@ -2061,7 +2061,7 @@ PROFILE_PATH_NAME = Path("profiles") / "openclaw-host.json5"
 # Entries whose model belongs to the engine section (the antigravity worker agent).
 ENGINE_OWNED_ENTRIES = ("claude",)
 KIT_ROLE_PREFIX = "kit-role-"      # the agents `setup` writes per kit role (openclaw_roles.PREFIX)
-KIT_LANE_PREFIX = "kit-lane-"      # the subscription lane agents (openclaw_lanes.PREFIX): a haiku lane runs haiku by design
+KIT_LANE_PREFIX = "kit-lane-"      # the subscription lane agents (openclaw_orchestration.LANE_PREFIX): kept ones run the model they name
 # A dict with these keys is one value (a SecretRef), not a subtree to merge into.
 _ATOMIC_KEYS = {"source", "id"}
 _HOST_MARKERS = ("HOME", "DOMAIN", "POD_CIDR")

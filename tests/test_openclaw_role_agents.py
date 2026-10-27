@@ -297,10 +297,10 @@ def test_report_role_agents_cannot_edit_files_and_writer_roles_can(tmp_path):
     assert run(state.SetupState(), host, tmp_path) is True
     entries = host.doc["agents"]["entries"]
     for aid in ("kit-role-verifier", "kit-role-reviewer", "kit-role-security"):
-        assert entries[aid]["tools"] == {"deny": ["write", "edit", "apply_patch"]}, aid
+        assert entries[aid]["tools"] == {"deny": ["write", "edit", "apply_patch", "bundle-mcp"]}, aid
     for aid in ("kit-role-planner", "kit-role-architect", "kit-role-explore"):
-        assert entries[aid]["tools"] == {"deny": ["write", "edit", "apply_patch", "exec", "process"]}, aid
-    assert "tools" not in entries["kit-role-implementer"]
+        assert entries[aid]["tools"] == {"deny": ["write", "edit", "apply_patch", "exec", "process", "bundle-mcp"]}, aid
+    assert entries["kit-role-implementer"]["tools"] == {"deny": ["bundle-mcp"]}      # no MCP need: the resource guard only
 
 
 def test_an_earlier_kit_deny_list_moves_to_the_no_exec_one_and_an_operator_list_is_kept(tmp_path):
@@ -311,9 +311,9 @@ def test_an_earlier_kit_deny_list_moves_to_the_no_exec_one_and_an_operator_list_
     entries["kit-role-architect"]["tools"] = {"deny": ["write"]}                           # the operator's
     entries["kit-role-reviewer"]["tools"] = {"deny": ["write", "edit", "apply_patch"]}     # already today's list
     assert run(state.SetupState(), host, tmp_path) is True
-    assert entries["kit-role-planner"]["tools"] == {"deny": ["write", "edit", "apply_patch", "exec", "process"]}
-    assert entries["kit-role-architect"]["tools"] == {"deny": ["write"]}
-    assert entries["kit-role-reviewer"]["tools"] == {"deny": ["write", "edit", "apply_patch"]}
+    assert entries["kit-role-planner"]["tools"] == {"deny": ["write", "edit", "apply_patch", "exec", "process", "bundle-mcp"]}
+    assert entries["kit-role-architect"]["tools"] == {"deny": ["write", "bundle-mcp"]}          # the operator's token is kept
+    assert entries["kit-role-reviewer"]["tools"] == {"deny": ["write", "edit", "apply_patch", "bundle-mcp"]}
 
 
 def test_each_new_agent_is_announced_before_its_slow_registration_and_a_rerun_announces_none(tmp_path):

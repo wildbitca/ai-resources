@@ -362,13 +362,15 @@ class OpenClawState:
     # nothing). Teardown deletes only a configuration recorded here that still matches.
     host_offbox_identity: bool = False
     host_offbox_config_created: dict[str, str] = field(default_factory=dict)
-    # What the lanes writer created (ADR-0007), so teardown removes exactly that and nothing else:
-    # {created_agent_ids, created_workspaces, allow_agents_added: {orchestrator: [ids]},
-    #  allow_agents_absent: [orchestrator], catalog_added: [model refs], deferred: [paths]}.
+    # Legacy (before 3.2): the by-model `kit-lane-*` agents the old lanes writer created. Only `migrate_kit_lanes`
+    # (setup/cockpits/openclaw_orchestration.py) reads it: it removes the ones nothing uses and keeps the record of the
+    # rest so a later run can retire them. {created_agent_ids, created_workspaces, workspace_root, allow_agents_added}.
     # Additive: absent from the file while empty.
     lanes_applied: dict[str, Any] = field(default_factory=dict)
     # Round 3 (ADR-0015 S8): the kit-role-* agents setup wrote, so a rerun updates only what it wrote and teardown removes
-    # only that: {created_agent_ids, created_workspaces, workspace_root, models, thinking, prompt_sha256, catalog_added}.
+    # only that: {created_agent_ids, created_workspaces, workspace_root, models, thinking, fallbacks, prompt_sha256,
+    # catalog_added} and, from the orchestration wiring (ADR-0019 D1): {allow_agents_added: {orchestrator: [ids]},
+    # allow_agents_absent: [orchestrator], limits_prev: {key: old}, limits_set: {key: new}}.
     # Additive: absent from the file while empty.
     role_agents_applied: dict[str, Any] = field(default_factory=dict)
     # Round 3 (ADR-0015 S9): the entries the kit added to `skills.load.extraDirs` and `skills.load.allowSymlinkTargets`

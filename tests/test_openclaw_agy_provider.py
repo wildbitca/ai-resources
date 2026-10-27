@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from ai_resources.setup.cockpits import openclaw_agy as A
-from ai_resources.setup.cockpits import openclaw_lanes as L
 from ai_resources.setup.cockpits import openclaw_roles as R
 
 
@@ -21,7 +20,6 @@ def test_an_existing_provider_only_gains_the_missing_models_and_keeps_operator_v
 
 def test_agy_refs_are_recognised_and_slugs_read_back():
     assert A.is_agy_ref("agy-cli-lane/gemini-4-argon-high") and not A.is_agy_ref("anthropic/claude-sonnet-5-5")
-    assert A.agy_slug({"model": "agy-cli-lane/x"}) == "x" and A.agy_slug({"model": "y"}) == "y"
 
 
 def test_the_role_writer_adds_the_stub_for_the_slugs_of_every_chain():
@@ -31,6 +29,7 @@ def test_the_role_writer_adds_the_stub_for_the_slugs_of_every_chain():
     assert [m["id"] for m in stub["models"]] == ["s1", "s2"]
 
 
-def test_the_kit_lane_module_still_exposes_the_moved_names_until_it_goes():
-    assert L.STUB_PROVIDER == A.STUB_PROVIDER and L.AGY_TOOL_DENY == A.AGY_TOOL_DENY
-    assert L.LanesWriteError is A.LanesWriteError and L.ensure_agy_home is A.ensure_agy_home
+def test_an_agy_primary_has_no_agy_only_tool_deny():
+    """ADR-0019 O1: agy holds the same tools as Claude whenever the matrix assigns it (the old message/sessions_spawn/cron
+    deny is gone, and no tool-deny constant or agy-home helper is left in the provider module)."""
+    assert not [n for n in dir(A) if "DENY" in n or "home" in n.lower()]

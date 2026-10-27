@@ -80,7 +80,7 @@ def _check_mcp_children(*, runner: "Callable[..., tuple[int, str]] | None" = Non
                         threshold: int = MCP_CHILD_WARN) -> int:
     """Doctor sub-check 4e. Returns the number of new issues (0 or 1); never raises, never kills a process.
 
-    The kit scopes the kit-lane and kit-role agents (`tools.deny`) so they stop loading stdio MCP servers; children
+    The kit denies `bundle-mcp` on the kit-role agents (`tools.deny`) so they stop loading stdio MCP servers; children
     that already exist are cleared by the drained restart `ai-resources openclaw reconcile` (setup runs it too)."""
     from . import openclaw_host
     run = runner or openclaw_host.default_runner
@@ -442,8 +442,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if s.openclaw.antigravity_applied:
         issues += _check_antigravity_quota(s)
 
-    # 4e. MCP server children under the gateway unit (only on a host that enabled subscription lanes).
-    if state.lanes_enabled(s):
+    # 4e. MCP server children under the gateway unit (only on a host where setup wrote the kit-role agents).
+    if s.openclaw.role_agents_applied or state.lanes_enabled(s):
         issues += _check_mcp_children()
 
     # 4f. Antigravity: installed and signed in (the one condition for an agy cell), quota.
