@@ -23,8 +23,10 @@ Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upg
 
 ## Waiting without polling
 
-- Every poll turn re-reads the whole context: wait with one blocking call, or poll no more often than every 60-120 s.
-- No `process(poll)`, `sleep` or `sessions_yield` loops at short intervals; check a background job's output file with one short read per phase.
+- Every poll turn re-reads the whole context (poll turns were 21 % of the spend): wait with ONE blocking call per job, or poll no more often than every 60-120 s.
+- One wait per background job: `exec` or `agents_wait` with `awaitResults: true` blocks until it finishes; otherwise end the turn and let the completion event wake you.
+- No `process(poll)`, `sleep` or `sessions_yield` loops at short intervals; `process(poll)` with `timeout` is the one allowed wait, at most once per phase, then one short read of the output file.
+- Where hooks run, `kit_sleep_guard` refuses a `sleep` above 30 s, sleeps that add up above 30 s and any `while`/`until` wait loop.
 
 ## Worktrees
 
@@ -82,7 +84,7 @@ Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upg
 
 ## Polling guard (Claude Code, ADR-0014)
 
-- `ai-resources setup` registers `hooks/kit_sleep_guard.py` as a PreToolUse hook on Bash: a `sleep` longer than 30 seconds is refused with exit 2. Wait with `run_in_background` and one read, or the Monitor tool.
+- `ai-resources setup` registers `hooks/kit_sleep_guard.py` as a PreToolUse hook on Bash: a `sleep` longer than 30 seconds, sleeps that add up above 30 seconds and any `while`/`until` wait loop are refused with exit 2. Wait with `run_in_background` and one read, or the Monitor tool.
 - The hook does not fire inside OpenClaw `claude-cli` children (ADR-0005, ADR-0007 section 9); the "Waiting without polling" rules above are the guard there.
 - `ai-resources audit` and `ai-resources doctor` alert when poll turns exceed 5% of the estimated cost (`AI_RESOURCES_POLL_SHARE_ALERT` overrides the threshold).
 

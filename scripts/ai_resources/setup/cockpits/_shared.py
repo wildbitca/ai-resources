@@ -668,10 +668,14 @@ OPENCLAW_LONG_RUNNING_MD = (
 OPENCLAW_POLLING_HEADING = "## Waiting without polling"
 OPENCLAW_POLLING_MD = (
     f"\n{OPENCLAW_POLLING_HEADING}\n\n"
-    "- Every poll turn re-reads the whole context: wait with one blocking call, or poll no more often than every "
-    "60-120 s.\n"
-    "- No `process(poll)`, `sleep` or `sessions_yield` loops at short intervals; check a background job's output "
-    "file with one short read per phase.\n"
+    "- Every poll turn re-reads the whole context (poll turns were 21 % of the spend): wait with ONE blocking call "
+    "per job, or poll no more often than every 60-120 s.\n"
+    "- One wait per background job: `exec` or `agents_wait` with `awaitResults: true` blocks until it finishes; "
+    "otherwise end the turn and let the completion event wake you.\n"
+    "- No `process(poll)`, `sleep` or `sessions_yield` loops at short intervals; `process(poll)` with `timeout` is "
+    "the one allowed wait, at most once per phase, then one short read of the output file.\n"
+    "- Where hooks run, `kit_sleep_guard` refuses a `sleep` above 30 s, sleeps that add up above 30 s and any "
+    "`while`/`until` wait loop.\n"
 )
 
 

@@ -51,3 +51,21 @@ def longest_sleep_seconds(text: str) -> float | None:
     """The longest literal sleep in the text, or None when there is none."""
     known = [s for s in sleeps(text) if s is not None]
     return max(known) if known else None
+
+
+_WAIT_LOOP = re.compile(r"(?:^|[;&|(){}\n`]|\bthen\s+|\bdo\s+)[ \t]*(?:while|until)\b[^\n]*?(?:;|\n)\s*do\b(.*?)\bdone\b",
+                        re.DOTALL | re.MULTILINE)
+
+
+def total_sleep_seconds(text: str) -> float | None:
+    """The literal sleeps of one command added up (they run one after the other), None when there is none."""
+    known = [s for s in sleeps(text) if s is not None]
+    return sum(known) if known else None
+
+
+def has_wait_loop(text: str) -> bool:
+    """True when a `while` / `until` loop whose body sleeps (at command position) is in the command: an open-ended
+    wait inside one tool call. A `for` loop over a fixed list is bounded and is left alone."""
+    if not isinstance(text, str):
+        return False
+    return any(has_sleep(m.group(1)) for m in _WAIT_LOOP.finditer(text))
