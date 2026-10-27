@@ -99,3 +99,13 @@ def parse(text: str) -> Reply:
         if key in KEYS:
             out[key] = " ".join(m.group(2).split())[:MAX_VALUE]
     return Reply(out)
+
+
+def return_block(role: str) -> str:
+    """The block a role ends its reply with (the report contract that `parse` reads), as prompt text."""
+    verdict = "Verdict: <PASS | REQUIRES_CHANGES | FAIL>\n" if role in ("verifier", "code-reviewer", "security-auditor",
+                                                                      "tester", "software-architect") else ""
+    return ("Status: success | partial | blocked\n"
+            "Blocked: true | false\n"
+            "Return_to_step: <step id, only when Blocked is true>\n"
+            "Block_reason: <short reason, only when Blocked is true>\n" + verdict)

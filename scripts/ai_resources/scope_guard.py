@@ -68,6 +68,22 @@ def claim(workspace: str, run_id: str, scopes: Iterable[str], live: Callable[[st
         return conflicts
 
 
+def held(workspace: str, run_id: str, root: Path | None = None) -> list[str]:
+    """The scopes `run_id` currently claims on `workspace` (empty when it holds none)."""
+    with _locked(workspace, root) as path:
+        return _read(path).get(run_id, [])
+
+
+def release(workspace: str, run_id: str, root: Path | None = None) -> None:
+    """Drop `run_id`'s claim: for a one-shot caller (`agy run`) that took it for a single step."""
+    with _locked(workspace, root) as path:
+        claims = _read(path)
+        if claims.pop(run_id, None) is not None:
+            tmp = path.with_suffix(f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(claims, sort_keys=True), encoding="utf-8")
+            os.replace(tmp, path)
+
+
 def violations(changed: Iterable[str], scopes: Iterable[str], run_id: str = "") -> list[str]:
     """The `changed` repo-relative paths outside the claim; the run's own `.agent-output/<run>/` is always allowed."""
     scopes = list(scopes)
