@@ -230,8 +230,8 @@ WORKFLOW_SCRIPTS: dict[str, str] = {
 SCORE_FIRST = (
     "**Score first.** Before step 1 score the task with the `kit-orchestration` \"Scorecard\" "
     "(`ai-resources scorecard '<json>'`): the card picks LITE, STANDARD or FULL and the roster, so this "
-    "workflow's roles run only when the card names them (LITE works inline, no handoff). The skill also holds "
-    "the fallbacks (invalid scores mean FULL) and the rule that tests are mandatory in every mode."
+    "workflow's roles run only when the card names them (LITE works inline, no handoff); the skill holds the "
+    "fallbacks and the tests rule."
 )
 
 
