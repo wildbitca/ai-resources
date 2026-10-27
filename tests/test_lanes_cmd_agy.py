@@ -7,7 +7,6 @@ under tmp_path, HOME redirected. The attribution forms and the quota texts are S
 """
 from __future__ import annotations
 
-import dataclasses
 import hashlib
 import json
 from pathlib import Path
@@ -17,7 +16,7 @@ import pytest
 from ai_resources.scoring import routing
 
 import lane_symmetry as sym
-from ai_resources import agy_lane_gates as gates_mod, lanes_cmd, roles_policy as rp
+from ai_resources import lanes_cmd, roles_policy as rp
 from ai_resources.setup import lanes_render, state
 from test_lanes_cmd import RUN, env, sh  # noqa: F401
 
@@ -33,10 +32,6 @@ ROLES = ["implementer", "tester", "doc-writer", "verifier"]
 @pytest.fixture(autouse=True)
 def _open(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
-    monkeypatch.setattr(lanes_render, "AGY_LANE_ADR_ACCEPTED", True)
-    monkeypatch.setattr(gates_mod, "EVIDENCE",
-                        {g.id: dataclasses.replace(g, status=gates_mod.PROVEN, evidence="test-fixture")
-                         for g in gates_mod.GATES})
 
 
 @pytest.fixture(params=sorted(LABELS))
@@ -44,16 +39,12 @@ def label(request):
     return request.param
 
 
-def write_table(label, *, roles=ROLES, ack_roles=None, only_agent=True):
+def write_table(label, *, roles=ROLES, only_agent=True):
     sid, oid = LABELS[label]
     lanes = {"orchestrators": [],
              "routing": {r: {"primary": oid if r == "verifier" else sid,
                              **({} if only_agent else {"fallback": ["claude-code"]})} for r in roles}}
-    acks = {"anthropic": lanes_render.make_ack("anthropic", ROLES, "2026-10-16")}
-    if label == "agy-cli-lane":
-        acks["google"] = lanes_render.make_ack("google", ack_roles if ack_roles is not None else ROLES,
-                                               "2026-10-16", account="op@example.test")
-    doc = lanes_render.render_doc(lanes, "single-model", acks)
+    doc = lanes_render.render_doc(lanes, "single-model")
     path = state.lanes_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(lanes_render.dumps(doc))
@@ -259,50 +250,6 @@ def test_a_table_entry_after_the_witnessed_head_carries_no_authority(env, label)
     genesis = "0" * 64
     rc, out = prep(env, label, "impl3", "implementer", "report", expect_head=genesis, run="run3")
     assert rc == 0, out                                        # an empty witnessed chain: nothing pinned yet
-
-
-# --- prepare --lane and the acknowledgement ------------------------------------------------------------------
-
-def test_a_lane_for_a_role_the_acknowledgement_does_not_list_is_refused(env, label):
-    # the agy table lists only the tester; claude-cli's Anthropic ack is not in lanes.yaml, so the resolved
-    # table decides: the unlisted role has no admitted lane agent in `resolved:` either way
-    write_table(label, ack_roles=["tester"])
-    rc, out = prep(env, label, "impl", "implementer", "report")
-    if label == "agy-cli-lane":
-        assert rc == 1 and out["reasons"], out
-    else:
-        assert rc == 0, out
-
-
-def test_an_agy_lane_prepare_records_the_gate_statuses_in_the_ledger(env):
-    write_table("agy-cli-lane")
-    rc, out = prep(env, "agy-cli-lane", "impl", "implementer", "report")
-    assert rc == 0, out
-    entry = env.ledger_entries(env.state)[0]["data"]["lane"]
-    assert set(entry["agy_gates"]) == {f"G{i}" for i in range(8)}
-
-
-def test_a_forged_table_that_lists_an_agy_agent_is_refused_without_the_flag_or_gates(env, monkeypatch):
-    write_table("agy-cli-lane")
-    unproven = {g.id: g for g in gates_mod.GATES}
-    monkeypatch.setattr(gates_mod, "EVIDENCE", unproven)         # evidence back to not proven; HOME stays redirected
-    rc, out = prep(env, "agy-cli-lane", "impl", "implementer", "report")
-    assert rc == 1 and any("gates not proven" in r for r in out["reasons"]), out
-    assert state.lanes_path().is_relative_to(env.tmp)
-
-
-def test_a_forged_table_without_the_role_in_its_google_ack_is_refused_even_when_proven(env):
-    import yaml
-    doc = write_table("agy-cli-lane")
-    path = state.lanes_path()
-    forged = yaml.safe_load(path.read_text())
-    forged["acks"]["google"]["roles"] = ["doc-writer"]
-    forged["digest"] = lanes_render.doc_digest(forged)
-    path.write_text(lanes_render.dumps(forged))
-    rc, out = prep(env, "agy-cli-lane", "impl", "implementer", "report")
-    assert rc == 1, out
-    text = " ".join(out["reasons"])
-    assert "does not list implementer" in text
 
 
 # --- the circuit breaker (7.1, C5) ----------------------------------------------------------------------------

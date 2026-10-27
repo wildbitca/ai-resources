@@ -24,10 +24,10 @@ def _state(mode="single-model", *, with_lanes=True):
 
 # --- profile -> state fragment -----------------------------------------------------------------------------
 
-def test_lanes_state_keeps_orchestrators_routing_and_gate_only():
+def test_lanes_state_keeps_orchestrators_and_routing_only():
     doc = {"routing": {"explore": {"primary": "claude-code:haiku"}}}
-    frag = lanes_render.lanes_state(doc, orchestrators=["main", "claude", "main"], gates={"antigravity": True})
-    assert frag == {"orchestrators": ["claude", "main"], "routing": doc["routing"], "gates": {"antigravity": True}}
+    frag = lanes_render.lanes_state(doc, orchestrators=["main", "claude", "main"])
+    assert frag == {"orchestrators": ["claude", "main"], "routing": doc["routing"]}
     assert lanes_render.lanes_state({}, orchestrators=[]) == {"orchestrators": []}
 
 
@@ -36,12 +36,9 @@ def test_malformed_routing_override_is_a_block_error():
         lanes_render.lanes_state({"routing": {"nope": {"primary": "claude-code"}}})
 
 
-def test_lane_roles_and_agy_roles_come_from_the_matrix():
+def test_lane_roles_come_from_the_matrix():
     roles = lanes_render.lane_roles()
     assert "implementer" in roles and "main" not in roles
-    agy = lanes_render.agy_roles()
-    assert {"explore", "code-reviewer", "tester", "planner"} <= set(agy)
-    assert "verifier" in agy and "main" not in agy                # the checker ladder reaches agy:claude-opus-5-5
 
 
 # --- the writer ------------------------------------------------------------------------------------------
@@ -127,23 +124,6 @@ def test_render_paths_never_open_openclaw_json(monkeypatch):
     monkeypatch.setattr(builtins, "open", spy)
     lanes_render.sync_file(_state())
     assert not [p for p in seen if p.endswith("openclaw.json")]
-
-
-# --- the Google acknowledgement under acks -----------------------------------------------------------------
-
-def test_google_ack_travels_under_acks_and_a_stale_one_is_dropped():
-    s = _state()
-    s.profile.lane_acks = {"google": lanes_render.make_ack("google", ["explore"], "2026-01-01T00:00:00Z",
-                                                           account="a@example.dev")}
-    doc = lanes_render.render_doc(s.profile.lanes, s.mode, s.profile.lane_acks)
-    assert doc["acks"]["google"]["roles"] == ["explore"] and doc["acks"]["google"]["account"] == "a@example.dev"
-    s.profile.lane_acks["google"]["text_sha256"] = "0" * 64              # signed against an older text
-    assert "acks" not in lanes_render.render_doc(s.profile.lanes, s.mode, s.profile.lane_acks)
-
-
-def test_ack_text_has_no_static_weights_and_carries_its_version():
-    assert "static weights" not in lanes_render.ACK_TEXT["google"]
-    assert "[acknowledgement text v2]" in lanes_render.ACK_TEXT["google"]
 
 
 # --- verify ----------------------------------------------------------------------------------------------

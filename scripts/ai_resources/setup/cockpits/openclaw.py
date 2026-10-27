@@ -378,21 +378,6 @@ AGY_MCP_HINT = ("agy loads every server in ~/.gemini/config/mcp_config.json into
                 "confirm (with a backup) but never removes or edits an entry of yours.")
 
 
-def agy_flash_low_reason(s) -> str | None:
-    """Why `gemini-3.8-flash-low` may not sit in a fallback chain, or None when it may (ADR-0014 D3.4). It is a Google
-    model, so it needs what an agy lane needs: the lane flag, a valid Google acknowledgement for the current text, and
-    gates G0-G7 proven. Fail closed, same order as `lanes_render.agy_role_reason`; the gates themselves are untouched."""
-    from .. import lanes_render, team_view
-    from ... import agy_lane_gates
-    if not lanes_render.AGY_LANE_ADR_ACCEPTED:
-        return lanes_render.HELD_AGY_REASON
-    if not team_view.agy_lanes_on(s.profile.lanes):
-        return lanes_render.HELD_FLAG_REASON
-    if lanes_render.valid_acks(s.profile.lane_acks).get("google") is None:
-        return lanes_render.HELD_NO_ACK_REASON
-    return agy_lane_gates.refusal()
-
-
 def _is_kit_agent(name: Any) -> bool:
     """A lane or role agent the kit wrote: the engine's model rewrites never touch it (ADR-0007, ADR-0015 S8)."""
     return str(name).startswith(("kit-lane-", openclaw_roles.PREFIX))
@@ -1733,18 +1718,16 @@ def _configure_roles(ctx: dict, s: state.SetupState, doc: dict, ak_path: str, *,
         apply_patch=_lanes_apply, register_agent=_lanes_register, classify=_lanes_classify,
         change_records=openclaw_host.change_records, run_changes=run_changes, dry_run=dry_run,
         info=ui.info, warn=ui.warn, error=ui.error, cli_runtimes=cli_runtimes,
-        agy_ok=lambda role: lanes_render.agy_admitted(s, role))
+        agy_ok=lambda _role: detection.agy_active())
 
 
 def _configure_agy_drift(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:
     """The confirmed migration of agy lanes that run on the Anthropic API (ADR-0015 D2b). Never silent, never unattended."""
-    from .. import lanes_render
     if not openclaw_lanes.agy_primary_drift(doc):
         return False
-    acked = lanes_render.valid_acks(s.profile.lane_acks).get("google") is not None
     interactive = not ui.is_non_interactive()
     applied = openclaw_lanes.migrate_agy_drift(
-        doc, google_acknowledged=acked, lanes=s.profile.lanes or {}, apply_patch=_lanes_apply, classify=_lanes_classify,
+        doc, lanes=s.profile.lanes or {}, apply_patch=_lanes_apply, classify=_lanes_classify,
         confirm=lambda m: bool(ui.confirm(m, default=False)), delete_agent=lambda aid: _openclaw(
             ["agents", "delete", aid, "--force"]),
         change_records=openclaw_host.change_records, run_changes=run_changes, interactive=interactive,
@@ -2515,10 +2498,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
         else:
             ui.warn("OpenClaw reports no usable provider: no fallbacks are written and your current ones stay. "
                     f"Sign in with `{' '.join(CONFIGURE_ARGV)}`.")
-    flash_low_why = agy_flash_low_reason(s)
-    if has_lanes and flash_low_why:
-        ui.info(f"Fallback chain: gemini-3.8-flash-low is left out ({flash_low_why}).")
-    patch_kwargs["flash_low"] = flash_low_why is None
+    patch_kwargs["flash_low"] = detection.agy_active()     # a Google fallback needs agy installed and signed in
     if engine.id == "antigravity":
         # Not plain shutil.which: both official installers default to ~/.local/bin,
         # which a non-login systemd/service unit's PATH may not see. detect_agy()
@@ -3233,10 +3213,10 @@ def verify(ctx: dict) -> list:
                              "and the kit reads both",
                              f"openclaw config set agents.entries.{aid}.model.primary {raw}"))
         for msg in openclaw_lanes.agy_primary_drift_findings(doc):
-            out.append(F("warn", ID, msg, "no kit action; see ADR-0007 section 11"))
+            out.append(F("warn", ID, msg, "no kit action; see ADR-0019"))
         lanes = s.profile.lanes
         if state.lanes_enabled(s) and isinstance(lanes, dict):
-            for msg in openclaw_lanes.mcp_scope_findings(lanes, doc, s.profile.lane_acks):
+            for msg in openclaw_lanes.mcp_scope_findings(lanes, doc):
                 out.append(F("warn", ID, msg, "re-run `ai-resources setup --lanes` (never edit openclaw.json by hand)"))
         bindings = doc.get("bindings")
         if isinstance(bindings, list) and any(_is_catch_all(b) for b in bindings):

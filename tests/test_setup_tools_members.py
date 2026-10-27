@@ -121,7 +121,7 @@ def test_antigravity_is_not_ticked_unless_the_caller_says_so_and_says_where_the_
     rig, *_ = _offer(monkeypatch, installed=("agy", "claude"), default=("claude",))
     rows = {c.value: c for c in rig.rows}
     assert "agy" not in rig.asked[0][2] and "claude" in rig.asked[0][2]
-    assert "sends repo content to Google; terms check next" in rows["agy"].title
+    assert "sends repo content to Google" in rows["agy"].title
 
 
 def test_enter_on_the_defaults_installs_nothing(monkeypatch):
@@ -209,9 +209,9 @@ def _wizard_step(monkeypatch, tmp_path, *, offer, saved=None, installed=None):
     return s
 
 
-def test_enter_on_three_installed_tools_selects_them_all_except_antigravity(monkeypatch, tmp_path):
+def test_enter_on_three_installed_tools_selects_them_all(monkeypatch, tmp_path):
     s = _wizard_step(monkeypatch, tmp_path, offer=lambda *a, **k: [])
-    assert s.profile.customizations["__targets__"]["selected"] == ["claude", "codex"]
+    assert s.profile.customizations["__targets__"]["selected"] == ["agy", "claude", "codex"]
 
 
 def test_ticks_from_the_list_become_the_targets(monkeypatch, tmp_path):

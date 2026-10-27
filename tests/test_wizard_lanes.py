@@ -1,4 +1,4 @@
-"""The wizard's lane step (ADR-0007, plan P2-S6): disabled by default, explicit enable, acknowledgement."""
+"""The wizard's lane step (ADR-0007, plan P2-S6): disabled by default, explicit enable; no acknowledgement (ADR-0019)."""
 from __future__ import annotations
 
 import argparse
@@ -28,11 +28,6 @@ def _s():
     return s
 
 
-def _acks(s):
-    roles = lanes_render.lane_roles(profiles.load_profile(PROFILE))
-    return {"anthropic": lanes_render.make_ack("anthropic", roles, "2026-10-15")}
-
-
 def test_fresh_install_no_flags_leaves_lanes_disabled():
     s = _s()
     before = state._to_dict(s)
@@ -47,58 +42,26 @@ def test_allow_unverified_does_not_imply_lanes():
     assert s.profile.lanes is None
 
 
-def test_non_interactive_lanes_without_a_stored_ack_refuses():
+def test_non_interactive_lanes_enables_with_the_named_orchestrator_and_asks_nothing():
     s = _s()
-    assert wizard._step_lanes(s, _args(lanes=True, lanes_orchestrator=["main"])) == 2
-    assert s.profile.lanes is None
-
-
-def test_non_interactive_lanes_with_a_stored_ack_enables():
-    s = _s()
-    s.profile.lane_acks = _acks(s)
     assert wizard._step_lanes(s, _args(lanes=True, lanes_orchestrator=["main"])) == 0
     assert state.lanes_enabled(s)
-    assert s.profile.lanes["orchestrators"] == ["main"]
-    assert set(s.profile.lanes) == {"orchestrators"}            # the role table is the matrix, never stored
+    assert set(s.profile.lanes) == {"orchestrators"} and s.profile.lanes["orchestrators"] == ["main"]   # the role table is the matrix
 
 
-def test_ack_that_misses_a_role_is_not_enough():
-    s = _s()
-    acks = _acks(s)
-    acks["anthropic"]["roles"] = ["implementer"]
-    s.profile.lane_acks = acks
-    assert wizard._step_lanes(s, _args(lanes=True, lanes_orchestrator=["main"])) == 2
-
-
-def test_interactive_enable_shows_the_ack_once_and_stores_it(monkeypatch):
+def test_interactive_enable_asks_only_for_the_orchestrator_and_shows_no_acknowledgement(monkeypatch):
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
-    shown = []
-    monkeypatch.setattr(ui, "warn", lambda m: shown.append(m))
-    monkeypatch.setattr(ui, "confirm", lambda *a, **k: True)
+    warned, confirmed = [], []
+    monkeypatch.setattr(ui, "warn", warned.append)
+    monkeypatch.setattr(ui, "confirm", lambda *a, **k: confirmed.append(a) or True)
     monkeypatch.setattr(ui, "text", lambda *a, **k: "main")
     s = _s()
     assert wizard._step_lanes(s, _args(lanes=True)) == 0
-    ack = s.profile.lane_acks["anthropic"]
-    assert shown == [lanes_render.ACK_TEXT["anthropic"]] and ack["text"] == shown[0]
-    assert set(ack["roles"]) == set(lanes_render.lane_roles(profiles.load_profile(PROFILE)))
-    assert s.profile.lanes["orchestrators"] == ["main"]
-    for key in ("date", "text_sha256", "text", "roles"):
-        assert ack[key]
-
-
-def test_declining_the_ack_leaves_lanes_disabled(monkeypatch):
-    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(ui, "warn", lambda m: None)
-    monkeypatch.setattr(ui, "confirm", lambda *a, **k: False)
-    monkeypatch.setattr(ui, "text", lambda *a, **k: "main")
-    s = _s()
-    assert wizard._step_lanes(s, _args(lanes=True)) == 0
-    assert s.profile.lanes is None and not s.profile.lane_acks
+    assert s.profile.lanes["orchestrators"] == ["main"] and warned == [] and confirmed == []
 
 
 def test_no_lanes_clears_the_table_and_the_file_follows_on_apply():
     s = _s()
-    s.profile.lane_acks = _acks(s)
     wizard._step_lanes(s, _args(lanes=True, lanes_orchestrator=["main"]))
     lanes_render.sync_file(s)
     assert state.lanes_path().is_file()
@@ -111,7 +74,6 @@ def test_no_lanes_clears_the_table_and_the_file_follows_on_apply():
 
 def test_lanes_dry_run_enables_nothing():
     s = _s()
-    s.profile.lane_acks = _acks(s)
     assert wizard._step_lanes(s, _args(lanes_dry_run=True, lanes_orchestrator=["main"])) == 0
     assert s.profile.lanes is None
 

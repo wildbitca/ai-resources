@@ -94,15 +94,11 @@ def _first(values):
     return values[0]
 
 
-def _saved(mode="multi-model", backend="litellm", profile="", acks=False):
+def _saved(mode="multi-model", backend="litellm", profile=""):
     def make():
         s = state.SetupState()
         s.mode, s.backend = mode, backend
         s.profile.name = profile
-        if acks:
-            from ai_resources.setup import lanes_render, profiles
-            roles = lanes_render.lane_roles(profiles.load_profile(profile))
-            s.profile.lane_acks = {"anthropic": lanes_render.make_ack("anthropic", roles, "2026-10-15")}
         return s
     return make
 
@@ -111,7 +107,7 @@ SINGLE = {"Claude Code sign-in": "keep", "Model preset": "custom", "How do you w
           "How should kit subagents pick": _first, "Configure detected cockpits": lambda v: list(v),
           "Apply this?": _first}
 SUB = "subscription-claude-55"
-LANES_ANSWERS = {**SINGLE, "Use previous answers": True, "Acknowledge for these roles?": True, "How should kit subagents pick": lambda v: SUB, "Orchestrator agent id": "main"}
+LANES_ANSWERS = {**SINGLE, "Use previous answers": True, "How should kit subagents pick": lambda v: SUB, "Orchestrator agent id": "main"}
 CLI_TEAM = {"Claude Code sign-in": "keep", "Model preset": "balanced", "Use this?": True,
             "Enable subscription lanes?": False, "Configure detected cockpits": lambda v: list(v),
             "Apply this?": _first}
@@ -127,10 +123,10 @@ PATHS = {
     "non-interactive-saved-state": dict(args=_args(non_interactive=True),
                                         seed=_saved("multi-model", "openrouter", "balanced-claude-55")),
     "dry-run": dict(args=_args(dry_run=True), answers=SINGLE),
-    "lanes-with-stored-ack": dict(args=_args(lanes=True), answers=LANES_ANSWERS,
-                                  seed=_saved("single-model", profile=SUB, acks=True)),
-    "lanes-non-interactive-without-ack": dict(args=_args(lanes=True, non_interactive=True),
-                                              seed=_saved("single-model", profile=SUB)),
+    "lanes-interactive": dict(args=_args(lanes=True), answers=LANES_ANSWERS,
+                              seed=_saved("single-model", profile=SUB)),
+    "lanes-non-interactive": dict(args=_args(lanes=True, non_interactive=True),
+                                  seed=_saved("single-model", profile=SUB)),
     "lanes-dry-run": dict(args=_args(lanes_dry_run=True), answers=LANES_ANSWERS),
     "no-lanes": dict(args=_args(no_lanes=True), answers=SINGLE),
     "non-tty-guard": dict(args=_args(), answers={}, tty=False),
@@ -166,8 +162,8 @@ _CLI_TEAM_TRANSCRIPT = [
 #   and 8 of the old gateway path (gateway, providers, API keys, start at login) no longer exist, so a saved gateway state
 #   (the two "-migrated" paths) goes through the same questions as any other and prints no gateway line.
 # - `--backend` is deprecated: it answers Claude Code's sign-in with the subscription, so that question is not asked.
-# - "lanes-with-stored-ack" no longer asks the acknowledgement again: `_step6_single_model_profile` used to rebuild
-#   `s.profile`, which dropped a stored `lane_acks` before the lanes step read it; ADR-0009 S7 keeps the profile.
+# - "lanes-interactive" / "lanes-non-interactive": the lanes step asks only for the orchestrator (no acknowledgement,
+#   ADR-0019), so a non-interactive `--lanes` enables without a stored one.
 # - The preset question opens step 6 (answered Custom here, so the earlier questions follow unchanged).
 EXPECTED = {
     "cli-team-subscription": _CLI_TEAM_TRANSCRIPT,
@@ -233,7 +229,7 @@ EXPECTED = {
         'apply dry_run=True',
         'rc=0',
     ],
-    "lanes-non-interactive-without-ack": [
+    "lanes-non-interactive": [
         'banner',
         'section 1/5 Your tools',
         'section 2/5 Main tool',
@@ -241,10 +237,13 @@ EXPECTED = {
         'section 3/5 Your team - roles',
         'select: How should kit subagents pick their Claude model?',
         'section 3/5 Your team - parallel runs',
-        'error: --lanes: no stored Anthropic acknowledgement lists every lane role; run `ai-resources setup --lanes` from a terminal to sign it',
-        'rc=2',
+        'section 4/5 Audio',
+        'info: Skipped (voice notes need OpenClaw, which is not one of your tools).',
+        'apply dry_run=False',
+        'verify',
+        'rc=0',
     ],
-    "lanes-with-stored-ack": [
+    "lanes-interactive": [
         'banner',
         'section 1/5 Your tools',
         'section 2/5 Main tool',

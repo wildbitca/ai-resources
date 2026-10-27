@@ -172,7 +172,7 @@ def test_the_migration_fills_only_the_declared_sign_in_surface(home, name):
 @pytest.mark.parametrize("name", OLD_LANES)
 def test_an_old_lanes_shape_loads_migrates_one_way_and_is_then_stable(home, name):
     """ADR-0019: `profile.lanes` agents/roles/second/held/... are dropped on load; orchestrators, routing and the gate
-    stay, the acknowledgements are untouched, and a second load/save changes nothing."""
+    stay, and a second load/save changes nothing; `gates` and `lane_acks` are dropped (ADR-0019 O1)."""
     import yaml
     _seed(name)
     old = yaml.safe_load(state.state_path().read_text(encoding="utf-8"))["profile"]
@@ -181,8 +181,7 @@ def test_an_old_lanes_shape_loads_migrates_one_way_and_is_then_stable(home, name
     lanes = loaded.profile.lanes
     assert set(lanes) <= set(state.LANES_KEPT_KEYS) and state.lanes_enabled(loaded)
     assert lanes["orchestrators"] == (old["lanes"].get("orchestrators") or [])
-    assert (lanes.get("gates") or None) == (old["lanes"].get("gates") or None)
-    assert loaded.profile.lane_acks == old["lane_acks"]
+    assert "gates" not in lanes and not hasattr(loaded.profile, "lane_acks")
     state.save(loaded)
     once = _LAST_RUN.sub("", state.state_path().read_text(encoding="utf-8"))
     state.save(state.load())
@@ -192,7 +191,9 @@ def test_an_old_lanes_shape_loads_migrates_one_way_and_is_then_stable(home, name
 def test_migrate_lanes_is_a_no_op_on_the_matrix_shape_and_on_nothing():
     p = state.ProfileState()
     assert state.migrate_lanes(p) is False and p.lanes is None
-    p.lanes = {"orchestrators": ["main"], "gates": {"antigravity": True}}
+    p.lanes = {"orchestrators": ["main"], "routing": {"explore": {"primary": "claude-code:haiku"}}}
     assert state.migrate_lanes(p) is False
+    p.lanes = {"orchestrators": ["main"], "gates": {"antigravity": True}}
+    assert state.migrate_lanes(p) is True and p.lanes == {"orchestrators": ["main"]}
     p.lanes = {"agents": {"a": {}}, "roles": {"x": {}}, "second": {}, "held": [], "pool_caps": {}}
     assert state.migrate_lanes(p) is True and p.lanes == {"orchestrators": []}

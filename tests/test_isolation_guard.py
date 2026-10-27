@@ -32,7 +32,7 @@ def _is_operators_tree(p) -> bool:
 
 
 def _paths():
-    from ai_resources import agy_gate_evidence, model_pins
+    from ai_resources import model_pins
     from ai_resources.setup import agy_mcp, live_auth
     from ai_resources.setup.cockpits import claude, gemini
     from ai_resources.setup.cockpits import openclaw as oc
@@ -57,12 +57,6 @@ def _paths():
 def test_no_resolved_setup_path_is_under_the_operators_real_trees():
     bad = {k: str(v) for k, v in _paths().items() if _is_operators_tree(v)}
     assert not bad, f"paths that reach the operator's real HOME during a test: {bad}"
-
-
-def test_the_gate_record_module_has_no_host_overlay_at_all():
-    from ai_resources import agy_gate_evidence as record_module
-    assert not hasattr(record_module, "HOST_OVERLAY_ENABLED")
-    assert not hasattr(record_module, "_host_default_record")
 
 
 def test_the_live_runner_never_runs_a_real_binary():

@@ -5,8 +5,7 @@ import yaml
 
 from ai_resources.setup import state
 
-LANES = {"orchestrators": ["main"], "routing": {"explore": {"primary": "claude-code:haiku"}},
-         "gates": {"antigravity": True}}
+LANES = {"orchestrators": ["main"], "routing": {"explore": {"primary": "claude-code:haiku"}}}
 OLD_LANES = {                                    # the pre-3.2 shape (ADR-0019 migrates it on load)
     "agents": {"kit-lane-cli-sonnet55": {"backend": "claude-cli", "model": "anthropic/claude-sonnet-5-5",
                                          "pool": "claude-subscription"}},
@@ -33,7 +32,7 @@ def test_old_state_file_round_trips_byte_identically(tmp_path, monkeypatch):
     assert "lanes" not in doc["profile"] and "lane_acks" not in doc["profile"]
     assert "lanes_applied" not in doc["openclaw"]
     loaded = state.load()
-    assert loaded.profile.lanes is None and loaded.profile.lane_acks is None
+    assert loaded.profile.lanes is None
     assert loaded.openclaw.lanes_applied == {}
     state.save(loaded)
     again = yaml.safe_load((tmp_path / "setup-state.yaml").read_text())
@@ -41,16 +40,15 @@ def test_old_state_file_round_trips_byte_identically(tmp_path, monkeypatch):
     assert again == doc
 
 
-def test_lanes_acks_and_applied_round_trip(tmp_path, monkeypatch):
+def test_lanes_and_applied_round_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "state_path", lambda: tmp_path / "setup-state.yaml")
     s = state.SetupState()
     s.profile.lanes = LANES
-    s.profile.lane_acks = ACKS
     s.openclaw.lanes_applied = {"created_agent_ids": ["kit-lane-cli-sonnet55"],
                                 "allow_agents_added": {"main": ["kit-lane-cli-sonnet55"]}}
     state.save(s)
     back = state.load()
-    assert back.profile.lanes == LANES and back.profile.lane_acks == ACKS
+    assert back.profile.lanes == LANES
     assert back.openclaw.lanes_applied["created_agent_ids"] == ["kit-lane-cli-sonnet55"]
     assert state.lanes_enabled(back)
 
@@ -59,10 +57,17 @@ def test_the_old_lanes_shape_is_migrated_on_load_and_old_files_still_load(tmp_pa
     monkeypatch.setattr(state, "state_path", lambda: tmp_path / "setup-state.yaml")
     s = state.SetupState()
     s.profile.lanes = OLD_LANES
-    s.profile.lane_acks = ACKS
-    state.save(s)                                  # an old kit wrote exactly this
+    state.save(s)
+    path = tmp_path / "setup-state.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["profile"]["lane_acks"] = ACKS             # an old kit wrote the acknowledgements beside the lanes
+    path.write_text(yaml.safe_dump(doc))
     back = state.load()
-    assert back.profile.lanes == LANES and back.profile.lane_acks == ACKS and state.lanes_enabled(back)
+    assert back.profile.lanes == LANES and state.lanes_enabled(back)       # gates dropped, routing kept
+    assert not hasattr(back.profile, "lane_acks")
+    state.save(back)
+    saved = yaml.safe_load(path.read_text())["profile"]
+    assert "lane_acks" not in saved and "gates" not in saved["lanes"]       # gone from the file after the next save
 
 
 def test_empty_lanes_are_not_enabled():

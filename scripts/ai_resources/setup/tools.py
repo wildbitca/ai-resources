@@ -485,7 +485,7 @@ MEMBERS_TITLE = ("Tick the tools the kit should use. Ticking a missing tool inst
 MEMBERS_HINT = "Installed is not signed in: sign-in is not checked. Enter with the defaults installs nothing."
 NOTES = {
     "claude": "recommended to start",
-    "agy": "sends repo content to Google; terms check next",
+    "agy": "Gemini models; sends repo content to Google",
 }
 
 

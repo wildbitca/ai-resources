@@ -2,7 +2,7 @@
 
 A kit-role agent whose matrix primary is `agy:<slug>` runs `agy-cli-lane/<slug>`. OpenClaw refuses an unknown model, so the
 config needs the catalog stub `models.providers.agy-cli-lane` listing the slugs, the agent denies the tools an agy child
-must not hold, and (once G5 is proven) the child gets a kit-owned agy home. This module owns exactly that and nothing
+must not hold, and the child gets a kit-owned agy home. This module owns exactly that and nothing
 about which agents exist: that is the routing matrix (`openclaw_roles`).
 """
 from __future__ import annotations
@@ -12,17 +12,21 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from ... import agy_lane_gates
 
-AGY_BACKEND = agy_lane_gates.AGY_LANE_BACKEND
+AGY_BACKEND = "agy-cli-lane"
 STUB_PROVIDER = "agy-cli-lane"
 STUB_BASE_URL = "http://127.0.0.1:9/"
 STUB_API = "openai-completions"          # the schema value is not proven (isolated run pending): see ADR-0007 11
 STUB_API_KEY = "kit-lane-agy-placeholder"      # a constant, never a credential
 # The OpenClaw tool names an agy child must not hold: the plan's minimum until V7 enumerates them.
 AGY_TOOL_DENY = ("message", "sessions_spawn", "cron")
-AGY_HOME_PARTS = agy_lane_gates.AGY_HOME_PARTS
-agy_home_path = agy_lane_gates.agy_home_path
+AGY_HOME_PARTS = (".local", "share", "ai-resources", "agy-home")
+
+
+def agy_home_path() -> Path:
+    """The kit-owned agy home the lane uses. Only a path: nothing here creates it, and it is never under /tmp,
+    `workspace_root` or `~/.openclaw/kit-lanes/`."""
+    return Path.home().joinpath(*AGY_HOME_PARTS)
 
 
 class LanesWriteError(RuntimeError):
@@ -69,11 +73,6 @@ def stub_patch_for_slugs(slugs: list[str], doc: Mapping[str, Any]) -> dict[str, 
     if not missing:
         return None
     return {"models": have + [{"id": s, "name": s} for s in missing]}
-
-
-def agy_home_wanted() -> bool:
-    """True only when V12 (G5) is proven: the kit-owned home may then be created."""
-    return agy_lane_gates.gate_proven("G5")
 
 
 def ensure_agy_home(path: Path) -> dict[str, Any]:

@@ -3,8 +3,17 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from ai_resources import cli
 from ai_resources.scoring import routing
+from ai_resources.setup import detection
+
+
+@pytest.fixture(autouse=True)
+def _agy_signed_in(monkeypatch):
+    monkeypatch.setattr(detection, "agy_active", lambda: True)       # the host's agy/codex state never reaches a test
+    monkeypatch.setattr(detection, "codex_active", lambda: False)
 
 
 def _run(capsys, *argv):

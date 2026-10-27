@@ -9,8 +9,7 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any, Mapping, NamedTuple, Sequence
 
-from .. import agy_lane_gates, model_pins, roles_policy
-from . import lanes_render, profiles
+from . import detection, profiles
 
 
 def _vendor(cfg: Mapping[str, Any]) -> str:
@@ -65,24 +64,6 @@ def degrade_unrouted(executors: Mapping[str, Any], providers: Mapping[str, Any] 
     return out, lines
 
 
-def next_action(*, gates_on: bool, record_status: str, agy_ticked: bool, missing_roles: list[str],
-                acked: bool = True) -> str:
-    """The single next step for the operator, in the order the lane opens: sign-in and terms, then the probe window and
-    its record, then a commit. "" when nothing is left. One source for the team view, doctor and `lanes gates`.
-    With the gates waived by the operator (ADR-0007 section 11), `gates_on` is true and the signature is what is left."""
-    if gates_on and not acked:
-        return "sign the Google acknowledgement: ai-resources setup --lanes --lanes-antigravity"
-    if gates_on and not missing_roles:
-        return ""
-    if record_status == "invalid":
-        return "fix or restore the evidence record, then commit it"
-    if not gates_on:
-        return "run the probe window, then ai-resources lanes gates record"
-    if not agy_ticked:
-        return "tick Antigravity in ai-resources setup and sign the Google acknowledgement"
-    return "extend the Google acknowledgement to: " + ", ".join(missing_roles)
-
-
 # --- the team as the operator sees it ------------------------------------------------------------------------------
 
 ROWS = ("cli", "single", "openrouter", "litellm")
@@ -90,6 +71,8 @@ ON, HELD, OFF = "on", "held", "off"
 LINE_SINGLE = ("Gemini not active: 'Each on its own' runs Claude Code only "
                "(choose 'As a team' with Antigravity, or OpenRouter)")
 LINE_LITELLM = "Gemini not active: LiteLLM is legacy; choose OpenRouter for Gemini"
+CAUSE_MISSING = "agy-missing"
+NEXT_AGY = "install agy and sign in (run `agy`), then re-run setup"
 LINE_NOT_SELECTED = "Gemini not active: Antigravity not selected"
 
 
@@ -118,45 +101,32 @@ class ProviderMix:
 def agy_candidates(doc: Mapping[str, Any]) -> list[tuple[str, str]]:
     """`[(role, cell)]` for every team role whose PRIMARY cell is on Antigravity in the routing matrix (with the
     profile's `routing:` overrides). A role that only falls back to Antigravity is not an Antigravity member here;
-    the Google acknowledgement still lists it (`lanes_render.agy_roles`)."""
+    it still runs there when the primary is unavailable."""
     from ..scoring import routing
     return [(r.name, r.primary) for r in routing.merged(doc).values()
             if r.kind == "team" and r.primary and r.primary.startswith("agy:")]
-
-
-def agy_lanes_on(lanes: Mapping[str, Any] | None) -> bool:
-    """True when the saved lanes record has the Antigravity gate open (a fresh install never does)."""
-    return bool(((lanes or {}).get("gates") or {}).get("antigravity"))
 
 
 def gemini_members(doc: Mapping[str, Any]) -> list[tuple[str, str]]:
     return [m for m in agy_candidates(doc) if m[1].startswith("agy:gemini-")]
 
 
-def member_state(role: str, *, ticked: bool, acks: Mapping[str, Any] | None) -> tuple[str, str]:
-    """`(on | held | off, reason)` for an Antigravity member of `role`, by the same admission rule lanes use."""
+def member_state(role: str, *, ticked: bool) -> tuple[str, str]:
+    """`(on | held | off, reason)` for an Antigravity member of `role`: on when agy is installed and signed in."""
     if not ticked:
         return OFF, "Antigravity not selected"
-    why = lanes_render.agy_role_reason(role, {"antigravity": True}, acks)
-    return (HELD, why) if why is not None else (ON, "")
+    return (ON, "") if detection.agy_active() else (HELD, CAUSE_MISSING)
 
 
 def agy_team_roles(doc: Mapping[str, Any]) -> list[str]:
-    """What Antigravity would take in this starting team: one entry per member with its model slug, labelled while
-    the slug is unconfirmed. Display only: nothing here reaches the state."""
-    out = []
-    for role, cand in agy_candidates(doc):
-        slug = cand[4:]
-        tag = "" if model_pins.agy_slug_confirmed(slug) else " [unconfirmed slug]"
-        out.append(f"{role}: {slug}{tag}")
-    return out
+    """What Antigravity would take in this starting team: one entry per member with its model slug. Display only."""
+    return [f"{role}: {cand[4:]}" for role, cand in agy_candidates(doc)]
 
 
 def cell_text(cand: str, state: str) -> str:
     slug = cand[4:]
     provider = profiles.vendor_of(slug)
-    tag = "" if model_pins.agy_slug_confirmed(slug) else " [unconfirmed slug]"
-    return f"{provider} {slug} via Antigravity{tag} ({state})"
+    return f"{provider} {slug} via Antigravity ({state})"
 
 
 BILLED_LABEL = {"subscription": "subscription", "api_per_token": "API per token", "google_plan": "Google plan",
@@ -165,7 +135,7 @@ GATEWAY_BILLED = {"openrouter": "API per token (OpenRouter)", "litellm": "API pe
 
 
 def role_lane_rows(base_rows: Sequence[tuple[str, str, str]], doc: Mapping[str, Any], *, row: str, ticked: bool,
-                   acks: Mapping[str, Any] | None, allow_unverified: bool = False,
+                   allow_unverified: bool = False,
                    cell_verified: bool = False, claude_billed: str = "unknown",
                    effort: Mapping[str, str] | None = None) -> list[LaneRow]:
     """The team table: a line per role with its real provider, model, where it runs ("Runs in") and who is billed
@@ -180,7 +150,7 @@ def role_lane_rows(base_rows: Sequence[tuple[str, str, str]], doc: Mapping[str, 
         out.append(LaneRow(role, vendor, model, lane, billed, (effort or {}).get(role, "")))
     if row == "cli":
         for role, cand in agy_candidates(doc):
-            state, _why = member_state(role, ticked=ticked, acks=acks)
+            state, _why = member_state(role, ticked=ticked)
             out.append(LaneRow(f"{role} (lane)", profiles.vendor_of(cand[4:]), cand[4:], cell_text(cand, state),
                                BILLED_LABEL["google_plan"], ""))
     return out
@@ -197,14 +167,14 @@ class RoleRow(NamedTuple):
 
 def review_role_rows(base_rows: Sequence[tuple[str, str, str]], doc: Mapping[str, Any], *, selected: Sequence[str],
                      claude_billed: str, openclaw_models: Mapping[str, str], openclaw_billed: Mapping[str, str],
-                     acks: Mapping[str, Any] | None, claude_effort: Mapping[str, str] | None = None,
+                     claude_effort: Mapping[str, str] | None = None,
                      openclaw_effort: Mapping[str, str] | None = None) -> list[RoleRow]:
     """The Review table: for every role, where it runs and who is billed, per selected cockpit. Pure.
 
     - Claude Code subagent: model from the team, billing from Claude Code's live sign-in.
     - OpenClaw kit-role agent: the model the kit-role agent has (live, else planned), billing of THAT model's provider from
       what OpenClaw reports ("unknown" for a provider it does not report).
-    - agy: every Antigravity member; "held" in Runs in while the gates are not proven (never "on" by default).
+    - agy: every Antigravity member; "held" in Runs in while agy is not installed and signed in.
     Nothing is guessed: a missing fact reads "unknown"."""
     out: list[RoleRow] = []
     if "claude" in selected:
@@ -220,22 +190,14 @@ def review_role_rows(base_rows: Sequence[tuple[str, str, str]], doc: Mapping[str
                                (openclaw_effort or {}).get(role, "default")))
     if "agy" in selected:
         for role, cand in agy_candidates(doc):
-            state, _why = member_state(role, ticked=True, acks=acks)
+            state, _why = member_state(role, ticked=True)
             runs = {ON: "agy", HELD: "agy (held)", OFF: "agy (off)"}[state]
             out.append(RoleRow(f"{role} (lane)", runs, BILLED_LABEL["google_plan"], cand[4:], "-"))
     return out
 
 
-def _gate_summary() -> str:
-    info = agy_lane_gates.summary()
-    text = f"Antigravity gates {len(info['proven'])}/{info['total']} proven"
-    if info["partial"]:
-        text += f" ({', '.join(info['partial'])} partial)"
-    return text
-
-
 def provider_mix(doc: Mapping[str, Any], base_rows: Sequence[tuple[str, str, str]], *, row: str, ticked: bool = False,
-                 acks: Mapping[str, Any] | None = None, allow_unverified: bool = False, cell_verified: bool = False,
+                 allow_unverified: bool = False, cell_verified: bool = False,
                  enabled_providers: Sequence[str] = ()) -> ProviderMix:
     """The single source of the held, degrade and next-action lines for a starting team on `row`."""
     vendors = {v for _r, v, _m in base_rows if v and v != "-"}
@@ -250,25 +212,16 @@ def provider_mix(doc: Mapping[str, Any], base_rows: Sequence[tuple[str, str, str
         members = gemini_members(doc)
         if members:
             declared.add("google")
-            record = agy_lane_gates.record_status()
-            missing: list[str] = []
             for role, _cand in members:
-                state, why = member_state(role, ticked=ticked, acks=acks)
+                state, why = member_state(role, ticked=ticked)
                 states[f"{role} (lane)"] = state
                 if state == HELD:
                     held.append((role, why))
-                    if why.startswith("held: the Google acknowledgement does not list"):
-                        missing.append(role)
             if not ticked:
                 lines.append(LINE_NOT_SELECTED)
             elif held:
-                gates_on = agy_lane_gates.all_proven()
-                from . import lanes_render as _lr
-                next_step = next_action(gates_on=gates_on, record_status=record.status, agy_ticked=True,
-                                        missing_roles=sorted(set(missing)),
-                                        acked=_lr.valid_acks(acks).get("google") is not None)
-                reason = (_gate_summary() if not gates_on else held[0][1].removeprefix("held: "))
-                lines.append(f"Gemini held: {reason}. Next: {next_step}")
+                next_step = NEXT_AGY
+                lines.append(f"Gemini skipped: agy not installed or not signed in ({CAUSE_MISSING}). Next: {next_step}")
             elif ON in states.values():
                 active.add("google")
     elif row == "single":
@@ -297,8 +250,7 @@ def tool_rows(members: Sequence[str], doc: Mapping[str, Any], rows: Sequence[tup
     if cli_row and agy_installed:
         if "agy" in members:
             listed = "; ".join(agy_team_roles(doc)) or "no role in this starting team"
-            out.append(("Antigravity", f"{listed} - sends repo content to Google; terms check next",
-                        "in team, terms check next"))
+            out.append(("Antigravity", listed, "in team"))
         else:
             out.append(("Antigravity", "not ticked on Your tools: no roles", "off"))
     return out

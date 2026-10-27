@@ -133,12 +133,12 @@ def test_the_default_path_never_asks_about_parallel_runs(monkeypatch):
     assert asked == [] and s.profile.lanes is None
 
 
-def test_parallel_runs_from_more_options_ask_the_orchestrator_and_the_terms_check(monkeypatch):
+def test_parallel_runs_from_more_options_ask_the_orchestrator_only(monkeypatch):
     s = _team()
     monkeypatch.setattr(wizard, "_PARALLEL_RUNS", True)
-    Script(**{"Orchestrator agent id": "main", "Acknowledge for these roles?": True}).install(monkeypatch)
+    Script(**{"Orchestrator agent id": "main"}).install(monkeypatch)
     assert wizard._step_lanes(s, _args()) == 0
-    assert s.profile.lanes["orchestrators"] == ["main"] and "anthropic" in s.profile.lane_acks
+    assert s.profile.lanes["orchestrators"] == ["main"]
 
 
 def test_unattended_runs_never_get_parallel_runs_from_the_menu(monkeypatch):
@@ -151,7 +151,7 @@ def test_unattended_runs_never_get_parallel_runs_from_the_menu(monkeypatch):
 @pytest.mark.parametrize("flags", [dict(lanes=True), dict(no_lanes=True), dict(lanes_dry_run=True)])
 def test_the_lane_flags_behave_as_before(monkeypatch, flags):
     s = _team()
-    Script(**{"Orchestrator agent id": "main", "Acknowledge for these roles?": True}).install(monkeypatch)
+    Script(**{"Orchestrator agent id": "main"}).install(monkeypatch)
     assert wizard._step_lanes(s, _args(lanes_orchestrator=["main"], **flags), dry_run=bool(flags.get("lanes_dry_run"))) == 0
     assert (s.profile.lanes is None) == bool(flags.get("no_lanes") or flags.get("lanes_dry_run"))
 
@@ -228,12 +228,12 @@ def test_more_options_openclaw_asks_the_openclaw_questions_once(monkeypatch, tmp
     assert [m for m in script.asked if "Apply this?" in m].__len__() == 2
 
 
-# --- Antigravity is never ticked on its own --------------------------------------------------------------------
-def test_agy_saved_in_targets_with_the_lanes_cleared_is_not_pre_ticked():
+# --- Antigravity is a tool like any other ----------------------------------------------------------------------
+def test_agy_saved_in_targets_stays_ticked_whatever_the_lanes_record_says():
     s = _team("claude", "agy")
     s.profile.lanes = None
     det = {c: types.SimpleNamespace(installed=True) for c in ("claude", "agy")}
-    assert wizard._default_members(s, det) == ["claude"]
+    assert wizard._default_members(s, det) == ["claude", "agy"]
 
 
 # --- a Change / More options jump that would re-run a locked step is refused -------------------------------------

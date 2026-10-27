@@ -342,11 +342,11 @@ def _saved_team(key="cli"):
     s.profile = state.ProfileState(
         name="balanced", customized=True, composed={"mode": "uniform"},
         customizations={"planner": {"model": "opus"}, "__targets__": {"selected": ["claude"]}},
-        lanes={"agents": {}, "roles": {}}, lane_acks={"anthropic": {"roles": ["tester"]}})
+        lanes={"orchestrators": ["main"]})
     return s
 
 
-def test_the_custom_path_keeps_a_saved_team_its_lanes_and_acks_when_the_profile_is_unchanged(monkeypatch):
+def test_the_custom_path_keeps_a_saved_team_and_its_lanes_when_the_profile_is_unchanged(monkeypatch):
     """AC10 (ADR-0009): Custom is preselected for a saved customized or composed team and Apply leaves it as it was
     (the single-model profile step used to rebuild the profile and drop all of it)."""
     s = _saved_team()
@@ -356,12 +356,12 @@ def test_the_custom_path_keeps_a_saved_team_its_lanes_and_acks_when_the_profile_
     assert state._to_dict(s)["profile"] == before
 
 
-def test_choosing_another_profile_starts_clean_but_keeps_the_acks_and_the_ticked_tools(monkeypatch):
+def test_choosing_another_profile_starts_clean_but_keeps_the_ticked_tools(monkeypatch):
     s = _saved_team()
     Script(**{"How should kit subagents pick": lambda v: "claude-native"}).install(monkeypatch)
     assert wizard._step6_single_model_profile(s) == 0
     assert s.profile.name == "claude-native" and s.profile.customized is False and s.profile.composed is None
-    assert s.profile.lanes is None and s.profile.lane_acks == {"anthropic": {"roles": ["tester"]}}
+    assert s.profile.lanes is None
     assert s.profile.customizations == {"__targets__": {"selected": ["claude"]}}
 
 

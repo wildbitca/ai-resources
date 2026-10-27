@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import pool_usage
 from .scoring import routing
+from .setup import detection
 
 
 def cmd_route(args: argparse.Namespace) -> int:
@@ -21,7 +22,8 @@ def cmd_route(args: argparse.Namespace) -> int:
         else:
             usage = pool_usage.usage_map(pool_usage.snapshot())
         writers = [w for w in (args.writers or "").split(",") if w.strip()]
-        unavailable = dict(u.split("=", 1) for u in args.unavailable or [])
+        # an optional backend (agy, codex) that is not installed and signed in is skipped with its recorded cause
+        unavailable = {**detection.inactive_backends(), **dict(u.split("=", 1) for u in args.unavailable or [])}
         route = routing.resolve(args.role, usage, writers, unavailable)
     except (OSError, ValueError, routing.RoutingError) as e:
         print(f"route: {e}", file=sys.stderr)

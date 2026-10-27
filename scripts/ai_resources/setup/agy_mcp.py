@@ -131,9 +131,8 @@ def remove_recorded(path: Path, tracking) -> list[str]:
 
 
 def agy_in_use(s) -> bool:
-    from . import team_view
     selected = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
-    return "agy" in selected or s.openclaw.engine == "antigravity" or team_view.agy_lanes_on(s.profile.lanes)
+    return "agy" in selected or s.openclaw.engine == "antigravity"
 
 
 def plan(s, *, dry_run: bool = False, path: Path | None = None, candidates: dict[str, dict] | None = None,

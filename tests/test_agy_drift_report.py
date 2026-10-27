@@ -4,7 +4,6 @@ The report changes nothing. ADR-0015 added the confirmed migration (`migrate_agy
 the report's wording says so instead of "the kit does not repoint it"."""
 from __future__ import annotations
 
-from ai_resources import agy_lane_gates
 from ai_resources.setup.cockpits import openclaw_lanes as ol
 
 DOC = {"agents": {"entries": {
@@ -18,14 +17,8 @@ DOC = {"agents": {"entries": {
 def test_an_agy_lane_on_an_anthropic_primary_is_reported_and_others_are_not():
     assert [a for a, _ in ol.agy_primary_drift(DOC)] == ["kit-lane-agy-gemini4argonhigh", "kit-lane-agy-opus55"]
     msgs = ol.agy_primary_drift_findings(DOC)
-    assert len(msgs) == 2 and all("never changes it silently" in m and "ADR-0007" in m and "confirmation" in m
+    assert len(msgs) == 2 and all("never changes it silently" in m and "confirmation" in m
                                   for m in msgs)
-
-
-def test_the_report_does_not_change_the_lane_gates():
-    before = agy_lane_gates.all_proven()
-    ol.agy_primary_drift_findings(DOC)
-    assert agy_lane_gates.all_proven() == before
 
 
 def test_the_report_never_modifies_the_config_it_reads():

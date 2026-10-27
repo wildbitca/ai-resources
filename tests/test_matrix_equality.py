@@ -128,7 +128,6 @@ def test_the_setup_table_rows_equal_the_matrix():
 def test_the_team_view_reads_the_same_primaries():
     assert dict(team_view.agy_candidates({})) == {r.name: r.primary for r in routing.ROLES.values()
                                                   if r.kind == "team" and (r.primary or "").startswith("agy:")}
-    assert set(lanes_render.agy_roles()) >= set(dict(team_view.agy_candidates({})))
 
 
 def test_the_d4_assignments():

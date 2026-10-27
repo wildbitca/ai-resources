@@ -721,24 +721,6 @@ def _normalise_lane(lane: str) -> str:
     return lane
 
 
-def _admit_lane(doc: dict, lane: str, role: str = "") -> None:
-    """Re-apply the Antigravity admission when binding: the digest is integrity, not authentication, so a table
-    whose digest was recomputed is still refused here. A Google acknowledgement lists the role (egress consent); the
-    scope contract is verification, not distrust (ADR-0019 D3)."""
-    if not lane.startswith("agy:"):
-        return
-    from . import agy_lane_gates
-    google = ((doc.get("acks") or {}).get("google") or {})
-    missing = []
-    if role not in (google.get("roles") or ()):
-        missing.append(f"the Google acknowledgement does not list {role or 'the role'}")
-    why = agy_lane_gates.refusal()
-    if why:
-        missing.append(why)
-    if missing:
-        raise Refused([f"lane {lane}: Antigravity lane closed: " + "; ".join(missing)])
-
-
 def _check_model(role: str, lane: str, declared: str) -> None:
     """The declared --model must be the model of the bound lane cell: same family and, when both are concrete
     refs, the same ref (vendor prefix ignored). An alias matches by family."""
@@ -754,14 +736,6 @@ def _check_model(role: str, lane: str, declared: str) -> None:
     if bad:
         raise Refused([f"--model {declared!r} is not the model of lane {lane} for role {role} "
                        f"(resolved: {resolved_model})"])
-
-
-def _agy_evidence(lane: str) -> dict:
-    """The phase 3 gate statuses recorded in the ledger when the lane is an agy lane (not proven is a fact)."""
-    if not lane.startswith("agy:"):
-        return {}
-    from . import agy_lane_gates
-    return {"agy_gates": agy_lane_gates.status_table()}
 
 
 def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
@@ -795,17 +769,16 @@ def _lane_binding(role: str, a: argparse.Namespace) -> dict | None:
     row = matrix.get(role) or {}
     primary = str((row.get("primary") or {}).get("cell") or "claude-code")
     fallbacks = [str(f.get("cell")) for f in row.get("fallback") or []]
-    _admit_lane(doc, lane, role)
     table_sha = _sha(path.read_bytes())
     base = {"digest": doc["digest"], "table_sha256": table_sha, "resolved_pool": routing.pool_of(primary)}
     if lane == primary:
         _check_model(role, lane, a.model)
         return {"lane": lane, "source": "resolved", "reason": "matrix primary", "pool": routing.pool_of(lane),
-                **base, **_agy_evidence(lane)}
+                **base}
     if lane in fallbacks or lane == "claude-code":
         _check_model(role, lane, a.model)
         return {"lane": lane, "source": "fallback", "reason": "matrix fallback", "pool": routing.pool_of(lane),
-                **base, **_agy_evidence(lane)}
+                **base}
     raise Refused([f"lane {lane} is neither the matrix primary ({primary}) nor a fallback ({', '.join(fallbacks) or '-'}) "
                    f"for role {role}"])
 
@@ -1469,13 +1442,6 @@ def _populate(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--expect", required=True)
     p.set_defaults(lanes_func=cmd_land)
 
-    p = sub.add_parser("gates", help="Antigravity gates: status (read-only), or `gates record --run-dir DIR`")
-    gp = p.add_subparsers(dest="gates_action")
-    rp_ = gp.add_parser("record", help="Write the evidence record from a probe window (terminal only, typed attestation)")
-    rp_.add_argument("--run-dir", dest="run_dir", required=True, help="The probe window directory (named by its UTC stamp)")
-    rp_.add_argument("--yes", action="store_true", help="Refused: every stage needs its typed attestation")
-    p.set_defaults(lanes_func=None)
-
     p = sub.add_parser("count", help="Count a dispatch against a pool (retries included)")
     _common(p)
     p.add_argument("--pool", required=True)
@@ -1483,176 +1449,6 @@ def _populate(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--step", default="")
     p.add_argument("--cap", type=int, default=None)
     p.set_defaults(lanes_func=cmd_count)
-
-
-# ---------------------------------------------------------------------------------------------
-# Antigravity gates: status and the evidence record (ADR-0010 PD-7)
-
-ATTEST = {"G0": "PASS merge-gate", "G1": "PASS V5", "G2": "PASS V6", "G3": "PASS V7", "G4": "PASS V9",
-          "G5": "PASS V12", "G6": "PASS operator", "G7": "APPROVE G7"}
-CELL_ATTEST = "PASS cell claude/google/openrouter"
-
-
-def cmd_gates_status(out: Callable[[str], None] = print) -> int:
-    """Read-only: the gate table, the record state, who last touched the record. Runs nothing and writes nothing."""
-    from . import agy_gate_evidence as ev
-    from . import agy_lane_gates as gates
-    table = gates.status_table()
-    out(gates.summary_line())
-    for g in gates.GATES:
-        row = table[g.id]
-        out(f"  {g.id}  {row['status']:<10} {g.name}" + (f"  [{row['evidence']}]" if row["evidence"] else ""))
-    record = gates.record_status()
-    if record.status == "valid" and record.commit:
-        out(f"  record last touched by commit {record.commit[:8]}, author {record.author}")
-    elif record.status == "invalid":
-        out(f"  evidence file invalid: {record.reason}")
-    out(f"  record file: {ev.RECORD_REL}")
-    return EXIT_OK
-
-
-def _build_manifest(run_dir: Path) -> list[dict]:
-    """`[{relpath, sha256}]` of the regular files under `run_dir`. A symlink, a special file or too many files
-    refuses: the listing has to describe exactly what the operator looked at."""
-    from . import agy_gate_evidence as ev
-    listing: list[dict] = []
-    for root, dirs, files in os.walk(run_dir, followlinks=False):
-        for name in sorted(dirs):
-            if (Path(root) / name).is_symlink():
-                raise Refused([f"{Path(root, name)} is a symlink: the run directory must hold regular files only"])
-        for name in sorted(files):
-            path = Path(root) / name
-            st = os.lstat(path)
-            if not stat.S_ISREG(st.st_mode):
-                raise Refused([f"{path} is not a regular file: the run directory must hold regular files only"])
-            h = hashlib.sha256()
-            with open(path, "rb") as fh:
-                for chunk in iter(lambda: fh.read(1 << 20), b""):
-                    h.update(chunk)
-            listing.append({"relpath": path.relative_to(run_dir).as_posix(), "sha256": h.hexdigest()})
-            if len(listing) > ev.MAX_MANIFEST_FILES:
-                raise Refused([f"the run directory has more than {ev.MAX_MANIFEST_FILES} files"])
-    if not listing:
-        raise Refused(["the run directory is empty"])
-    return sorted(listing, key=lambda i: i["relpath"])
-
-
-def cmd_gates_record(a: argparse.Namespace, *, ask: Callable[[str], str] | None = None, tty: bool | None = None,
-                     root: Path | None = None, now: Callable[[], Any] | None = None,
-                     out: Callable[[str], None] = print) -> int:
-    """Write the evidence record from a probe window, after a typed attestation per stage.
-
-    Refuses: `--yes`, a non-TTY or piped stdin/stdout, a kit root that is not a git work tree, a run directory that is
-    not a plain directory named by its UTC stamp. It never runs `agy` or `openclaw`, never touches the network and never
-    commits: it prints the commit command. Nothing is written unless at least one stage is attested and the result
-    validates through the same loader the lane gates read."""
-    import getpass
-    from datetime import datetime, timezone
-    from . import agy_gate_evidence as ev
-    from . import agy_lane_gates as gates
-
-    def refuse(reason: str) -> int:
-        out(f"refused: {reason}")
-        return EXIT_FAIL
-
-    if getattr(a, "yes", False):
-        return refuse("--yes is not accepted: every stage needs its typed attestation")
-    is_tty = (sys.stdin.isatty() and sys.stdout.isatty()) if tty is None else tty
-    if not is_tty:
-        return refuse("record needs a terminal (stdin and stdout must be a TTY); it never reads piped answers")
-    root = root or ev.kit_root()
-    if not ev.is_git_root(root):
-        return refuse(f"{root} is not a git work tree: the record is committed, so it needs one")
-    given = Path(a.run_dir)
-    if given.is_symlink() or not given.is_dir():
-        return refuse(f"{given} is not a plain directory")
-    run_dir = given.resolve()
-    run_id = run_dir.name
-    if not re.fullmatch(r"\d{8}T\d{6}Z", run_id):
-        return refuse(f"the run directory must be named by its UTC stamp (20261101T101010Z), not {run_id!r}")
-    try:
-        listing = _build_manifest(run_dir)
-    except Refused as exc:
-        return refuse("; ".join(exc.reasons))
-    digest = ev.manifest_digest(listing)
-    ask = ask or input
-    stamp = (now() if now else datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    who = (os.environ.get("USER") or getpass.getuser() or "operator")[:120]
-    out(f"Run {run_id}: {len(listing)} files, manifest {digest[:12]}. Type the exact attestation to record a stage; "
-        "anything else (or Enter) leaves it unproven.")
-    entries: list[dict] = []
-    for g in gates.GATES:
-        out(f"\n{g.id}  {g.name}  ({g.verification or 'operator'})")
-        if g.id == "G7":
-            from .setup import lanes_render
-            out(lanes_render.ACK_TEXT["google"])
-            out(f"sha256 of this text: {ev.ack_text_sha256()}")
-        if ask(f'Type "{ATTEST[g.id]}" to record {g.id}: ').strip() != ATTEST[g.id]:
-            out(f"{g.id}: not attested; it stays {gates.EVIDENCE[g.id].status}.")
-            continue
-        entry = {"id": g.id, "status": gates.PROVEN, "verification": g.verification, "run_id": run_id,
-                 "manifest_sha256": digest, "recorded_at": stamp, "recorded_by": who}
-        if g.id == "G0":
-            entry["anchor"] = ask("Heading of ADR-0007 Evidence that records the merge gate (it must contain "
-                                  f"{run_id}): ").strip()
-        elif g.id == "G1":
-            entry["confirmed_slugs"] = [x.strip() for x in ask("Slugs V5 confirmed (comma separated): ").split(",")
-                                        if x.strip()]
-        elif g.id == "G6":
-            raw = ask("Measured cost per step, tokens (a positive integer): ").strip()
-            if not raw.isdigit():
-                return refuse("G6 needs a positive integer")
-            entry["cost_per_step_tokens"] = int(raw)
-        elif g.id == "G7":
-            entry["ack_text_sha256"] = ev.ack_text_sha256()
-        entries.append(entry)
-    cells: dict = {}
-    if ask(f'Type "{CELL_ATTEST}" if the Claude Code Gemini tool-call probe through OpenRouter passed (Enter to skip): '
-           ).strip() == CELL_ATTEST:
-        cells["claude/google/openrouter"] = {"run_id": run_id, "manifest_sha256": digest, "recorded_at": stamp,
-                                             "recorded_by": who}
-    if not entries and not cells:
-        return refuse("nothing was attested; nothing was written")
-    doc: dict = {"schema": ev.SCHEMA, "generator": ev.GENERATOR, "run_id": run_id, "manifest": listing,
-                 "gates": entries}
-    if cells:
-        doc["cells"] = cells
-    doc["seal"] = ev.seal_of(doc)
-    data = (json.dumps(doc, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    try:
-        ev.validate(data, root)
-    except ev.RecordError as exc:
-        return refuse(f"the record would be invalid ({exc}); nothing was written")
-    target = ev.record_path(root)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.parent / f".{target.name}.tmp-{os.getpid()}"
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, target)
-    finally:
-        if tmp.exists():
-            tmp.unlink()
-    ev.clear_cache()
-    checked = ev.load(root, check_git=False)
-    if checked.status != "valid":
-        target.unlink(missing_ok=True)
-        ev.clear_cache()
-        return refuse(f"the written record did not validate ({checked.reason}); it was removed")
-    ids = ", ".join(e["id"] for e in entries) or "cell"
-    out(f"\nWrote {ev.RECORD_REL} ({ids}). Review it, then commit it yourself (nothing was committed):")
-    out(f'  git add {ev.RECORD_REL} && git commit -m "evidence: Antigravity gates {ids} from run {run_id}"')
-    out("Until that commit, the lane stays held: the loader reads a record only when it is tracked and equal to HEAD.")
-    return EXIT_OK
-
-
-def run_gates(args: argparse.Namespace) -> int:
-    if getattr(args, "gates_action", None) == "record":
-        return cmd_gates_record(args)
-    return cmd_gates_status()
 
 
 def add_subparser(sub: argparse._SubParsersAction) -> None:
@@ -1663,8 +1459,6 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
 
 
 def run(args: argparse.Namespace, runner: Runner | None = None) -> int:
-    if (getattr(args, "lanes_action", None) or getattr(args, "action", None)) == "gates":
-        return run_gates(args)
     runner = runner or default_runner
     try:
         run_id = _check_id(args.run, "run id")

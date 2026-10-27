@@ -88,10 +88,7 @@ def test_every_shipped_alias_is_admissible_under_the_rule(old, new):
 
 @pytest.mark.parametrize("old,new", sorted(profile_names.ALIASES.items()))
 def test_an_old_name_and_its_new_name_resolve_to_the_same_runtime_team(old, new):
-    """AC-S4a. The gates are closed in the shipped tree, so the lanes block is read as declared. The old side is the
-    frozen pre-rename file, not a second read of the new one."""
-    from ai_resources import agy_lane_gates
-    assert not agy_lane_gates.all_proven()
+    """AC-S4a. The old side is the frozen pre-rename file, not a second read of the new one."""
     mode = "multi-model" if new.startswith("gateway/") else "single-model"
     frozen = _after_adr_0010_fixes(_frozen(old))
     now = profiles.load_profile(old)

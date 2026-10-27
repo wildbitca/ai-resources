@@ -76,19 +76,16 @@ def test_back_is_refused_once_the_sign_in_handed_the_terminal_to_claude(monkeypa
     assert handed == [["claude", "auth", "login"]]                                 # and the native flow ran once
 
 
-def test_back_inside_the_lanes_step_returns_to_the_profile_and_stores_nothing(monkeypatch, tmp_path):
+def test_back_inside_the_lanes_step_returns_to_the_profile_and_stores_nothing_until_the_second_pass(monkeypatch, tmp_path):
     home = host_env(monkeypatch, tmp_path)
-    before = _snapshot(home)
-    script = Script(**_single(**{"Orchestrator agent id": Seq(BACK, "main"),
-                                 "Acknowledge for these roles?": False}))
+    script = Script(**_single(**{"Orchestrator agent id": Seq(BACK, "main")}))
     script.install(monkeypatch)
     rc = wizard.run(_args(lanes=True))
     assert rc == 0
     assert len([m for m in script.asked if "How should kit subagents pick" in m]) == 2
-    assert not state.lanes_path().exists()
-    assert set(_snapshot(home)) - set(before) == {str(state.state_path())}   # only the final state save
+    assert len([m for m in script.asked if "Orchestrator agent id" in m]) == 2
+    assert state.load().profile.lanes == {"orchestrators": ["main"]}          # recorded by the second pass only
     assert "lane_acks" not in state.state_path().read_text(encoding="utf-8")
-    assert len([m for m in script.asked if "Acknowledge for these roles?" in m]) == 1
 
 
 def test_non_interactive_never_raises_goback_and_never_attaches_a_binding(monkeypatch, tmp_path):

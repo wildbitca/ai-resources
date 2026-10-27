@@ -196,6 +196,29 @@ def agy_installed() -> bool:
     return bool(_which_extra("agy"))
 
 
+def agy_active() -> bool:
+    """agy is usable: installed AND a Google account state is present (presence only, nothing read). The one
+    admission test for an agy cell of the matrix; there is no flag, acknowledgement or gate behind it."""
+    from . import live_auth
+    return agy_installed() and live_auth.read_agy() is not live_auth.NO_AUTH
+
+
+def codex_active() -> bool:
+    """Codex is an OPTIONAL pool: active only when the binary is found and `~/.codex/auth.json` exists (presence only)."""
+    return bool(_which_extra("codex")) and (Path.home() / ".codex" / "auth.json").is_file()
+
+
+def inactive_backends() -> dict[str, str]:
+    """`{backend: cause}` for every optional matrix backend that is not usable here, in the resolver's `unavailable`
+    shape: an inactive cell is skipped with this recorded cause, never silently."""
+    out: dict[str, str] = {}
+    if not agy_active():
+        out["agy"] = "agy-missing"
+    if not codex_active():
+        out["codex"] = "codex-missing"
+    return out
+
+
 def detect_all_cockpits() -> dict[str, Detected]:
     return {
         "claude":   detect_claude_code(),

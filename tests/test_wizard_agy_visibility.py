@@ -11,8 +11,7 @@ import argparse
 import pytest
 
 from ai_resources import roles_policy, model_pins, selection as selection_mod
-from ai_resources import agy_lane_gates
-from ai_resources.setup import detection, lanes_render, model_selection as ms, profiles, state, ui, wizard
+from ai_resources.setup import detection, model_selection as ms, profiles, state, ui, wizard
 from test_wizard_presets import ASK, CONFIRM, KEYS, args as preset_args, make_state
 from test_wizard_model_selection import args as sel_args, host, _state  # noqa: F401 - host is a fixture
 from wizard_fakes import Script, one
@@ -46,18 +45,12 @@ def test_agy_installed_looks_the_binary_up_and_never_runs_it(monkeypatch):
 
 # --- the pure group ---------------------------------------------------------------------------------------
 
-def test_the_group_lists_every_lane_slug_labelled_unconfirmed_lane_opt_in():
+def test_the_group_lists_every_lane_slug_labelled_lane_opt_in():
     rows = ms.agy_group_rows()
     assert [r.slug for r in rows] == list(model_pins.AGY_LANE_MODELS)
     assert any(r.slug.startswith("gemini-") for r in rows)
     for r in rows:
         assert "lane, opt-in" in r.label
-        assert ("unconfirmed slug" in r.label) is (not model_pins.AGY_LANE_MODELS_CONFIRMED)
-
-
-def test_the_unconfirmed_label_follows_the_flag(monkeypatch):
-    monkeypatch.setattr(model_pins, "AGY_LANE_MODELS_CONFIRMED", True)
-    assert all("unconfirmed" not in r.label for r in ms.agy_group_rows())
 
 
 def test_the_group_is_never_a_candidate_nor_a_provider():
@@ -98,7 +91,7 @@ def test_custom_shows_the_agy_group_only_when_installed(host, monkeypatch):
     s, rc, script = custom_run(monkeypatch, host, True)
     text = "\n".join(script.shown)
     assert rc == 0 and GROUP in text and "gemini-3.8-flash-high" in text
-    assert "unconfirmed slug" in text and "lane, opt-in" in text and "Your tools" in text
+    assert "lane, opt-in" in text and "Your tools" in text
     s, rc, script = custom_run(monkeypatch, host, False)
     text = "\n".join(script.shown)
     assert GROUP not in text and "gemini-3.8-flash-high" not in text
@@ -152,18 +145,17 @@ def agy_row(teams):
 
 
 @pytest.mark.parametrize("preset", KEYS)
-def test_as_a_team_with_agy_ticked_adds_an_antigravity_row_with_unconfirmed_slugs(monkeypatch, preset):
+def test_as_a_team_with_agy_ticked_adds_an_antigravity_row(monkeypatch, preset):
     s, shown, teams, script = run_preset(monkeypatch, "cli", preset, True, ticked=True)
     assert len(shown) == 1 and len(teams) == 1
     tool, roles, status = agy_row(teams)
-    assert status.startswith("in team") and "terms check next" in status
-    assert "sends repo content to Google" in roles and "[unconfirmed slug]" in roles
+    assert status == "in team" and "unconfirmed" not in roles
     assert script.asked == [f"select: {ASK}"]
     # the entries are exactly the agy cells of the routing matrix
     from ai_resources.setup import team_view
     doc = profiles.load_profile(wizard.preset_profile(s, preset), "single-model")
     want = {c.split(":", 1)[1] for _role, c in team_view.agy_candidates(doc)}
-    assert {e.split(": ")[1].split(" ")[0].rstrip(".") for e in roles.split(" - sends")[0].split("; ")} == want
+    assert {e.split(": ")[1].split(" ")[0].rstrip(".") for e in roles.split("; ")} == want
 
 
 @pytest.mark.parametrize("key", ["single", "litellm", "openrouter"])
@@ -203,11 +195,8 @@ def test_the_question_stays_four_choices_with_agy_installed(monkeypatch):
     assert seen["values"] == ["balanced", "performance", "low-cost", "custom"]
 
 
-# --- profiles and the gates -------------------------------------------------------------------------------
+# --- profiles ---------------------------------------------------------------------------------------------
 
-def test_a_fresh_install_keeps_lanes_off_and_agy_not_writable(monkeypatch):
+def test_a_fresh_install_keeps_lanes_off(monkeypatch):
     s, shown, _, _ = run_preset(monkeypatch, "cli", "performance", True)
     assert not state.lanes_enabled(s)
-    from ai_resources.setup.cockpits import openclaw_lanes
-    assert agy_lane_gates.AGY_LANE_BACKEND not in openclaw_lanes.writable_backends()
-    assert not agy_lane_gates.all_proven()

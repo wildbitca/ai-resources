@@ -696,11 +696,6 @@ def _pick_candidates(shape: str, cands: dict[str, list], saved: Any = None) -> l
     return out or None
 
 
-def _agy_lanes_on(s: state.SetupState) -> bool:
-    """True when the saved lanes record has the Antigravity gate open (a fresh install never does)."""
-    return team_view.agy_lanes_on(getattr(s.profile, "lanes", None))
-
-
 def _agy_team_roles(doc: dict) -> list[str]:
     """What Antigravity would take in this starting team (display only); see `team_view.agy_team_roles`."""
     return team_view.agy_team_roles(doc)
@@ -713,7 +708,7 @@ def _show_agy_in_custom(s: state.SetupState) -> None:
     if installed:
         for line in model_selection.agy_group_lines():
             ui.detail(line)
-    for line in model_selection.agy_why_lines(installed, _agy_lanes_on(s)):
+    for line in model_selection.agy_why_lines(installed, detection.agy_active()):
         ui.info(line)
 
 
@@ -787,12 +782,10 @@ def _show_legacy_difference(s: state.SetupState, new_name: str, mode: str, backe
 def _team_view_args(s: state.SetupState, base: dict | None = None) -> dict:
     """What the team view needs to know about the host: its row, the ticked tools, the valid acknowledgements and the
     OpenRouter opt-in."""
-    from . import lanes_render
     members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
     from . import effort as effort_mod, live_auth
     table = effort_mod.table_for_state(s)
     return {"row": _preset_key(s), "ticked": "agy" in members,
-            "acks": lanes_render.valid_acks(s.profile.lane_acks),
             "allow_unverified": bool(s.profile.allow_unverified or _COMPOSE.get("allow_unverified")),
             "cell_verified": compat.claude_google_openrouter_verified(),
             "claude_billed": live_auth.billed_for_kind(cockpit_auth.live_kind(s, "claude")),
@@ -975,7 +968,7 @@ def _review_role_rows(s: state.SetupState) -> list:
     """The Review table "Who runs what" (ADR-0016 D5): per role and cockpit, where it runs and who is billed in separate
     columns, with the model and the effort. Inputs are the recorded live kinds, the profile and the OpenClaw config
     (a local read); a fact that is not known reads "unknown". Never raises: a profile that cannot be read shows no table."""
-    from . import effort as effort_mod, live_auth, lanes_render
+    from . import effort as effort_mod, live_auth
     from .cockpits import _openclaw_providers as providers_mod, openclaw as _oc, openclaw_roles
     try:
         selected = [c for c in _selected_tools(s) if c in ("claude", "openclaw", "agy")]
@@ -1004,7 +997,7 @@ def _review_role_rows(s: state.SetupState) -> list:
                 billed["anthropic"] = claude_billed         # a Claude kit role runs through Claude Code (its sign-in)
         return team_view.review_role_rows(
             rows, doc, selected=selected, claude_billed=claude_billed, openclaw_models=models, openclaw_billed=billed,
-            acks=lanes_render.valid_acks(s.profile.lane_acks), claude_effort=claude_effort,
+            claude_effort=claude_effort,
             openclaw_effort=openclaw_effort)
     except Exception:  # noqa: BLE001 - the table is information; it must never stop the review
         return []
@@ -1016,16 +1009,6 @@ def _tools_text(s: state.SetupState) -> str:
     return ", ".join(names) or "none"
 
 
-def _agy_team_suffix(s: state.SetupState) -> str:
-    """Whether the Antigravity members read held or on comes from the gate record (ADR-0016 D3), never from a literal."""
-    from .. import agy_lane_gates
-    if agy_lane_gates.refusal() is not None:
-        return " + Antigravity (held: its gates are not proven)"
-    if _agy_lanes_on(s):
-        return " + Antigravity (on)"
-    return " + Antigravity (terms accepted; its lane is not enabled)"
-
-
 def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     """The review screen's rows from the setup state: Sign-in (one phrase per ticked tool), Team, Tools and what will
     be written."""
@@ -1034,10 +1017,10 @@ def _review_rows(s: state.SetupState) -> list[tuple[str, str]]:
     team = _team_label(s)
     if sel is not None:
         team += " (" + ", ".join(f"{slot}={sl.ref}" for slot, sl in sel.slots.items()) + ")"
-    if "agy" in members and ("google" in (s.profile.lane_acks or {}) or _agy_lanes_on(s)):
-        team += _agy_team_suffix(s)
+    if "agy" in members:
+        team += " + Antigravity (on)" if detection.agy_active() else " + Antigravity (skipped: agy not installed or not signed in)"
     rows = [*_sign_in_rows(s), ("Team", team), ("Tools", _tools_text(s))]
-    if state.lanes_enabled(s) and "anthropic" in (s.profile.lane_acks or {}):
+    if state.lanes_enabled(s):
         rows.append(("Parallel runs", "on"))
     from .cockpits import _openclaw_channels
     for i, line in enumerate(_openclaw_channels.review_lines(s)):
@@ -1343,26 +1326,15 @@ HIDDEN_TOOLS = ("gemini",)
 """Retired tools: never listed by the wizard (an old state that holds one still loads)."""
 
 
-def _agy_tick_restorable(s: state.SetupState) -> bool:
-    """A saved Antigravity tick is restored only when a valid stored Google acknowledgement exists (the text hash of
-    today's text, the account named). A new user, or a saved tick with no valid acknowledgement, starts unticked, so
-    the terms check is never skipped by a leftover choice (ADR-0010 S10)."""
-    from . import lanes_render
-    return "google" in lanes_render.valid_acks(s.profile.lane_acks)
-
-
 def _default_members(s: state.SetupState, detected: dict) -> list[str]:
     """The tools ticked when the screen opens (and the team of a run that cannot ask): the saved or requested
-    selection that is still installed, else every installed tool. Antigravity is the exception: it starts ticked only
-    when it was saved ticked (or the saved lanes hold it) AND a valid Google acknowledgement is stored; a fresh install
-    never opts in on its own."""
+    selection that is still installed, else every installed tool."""
     installed = [cid for cid, det in detected.items() if det.installed]
     saved = (s.profile.customizations.get("__targets__") or {}).get("selected")
-    restorable = _agy_tick_restorable(s)
-    held = [c for c in (saved or []) if c in installed and (c != "agy" or restorable)]
+    held = [c for c in (saved or []) if c in installed]
     if held:
         return held
-    return [cid for cid in installed if cid not in HIDDEN_TOOLS and (cid != "agy" or (_agy_lanes_on(s) and restorable))]
+    return [cid for cid in installed if cid not in HIDDEN_TOOLS]
 
 
 def _step2_cockpits(s: state.SetupState) -> int:
@@ -2117,11 +2089,9 @@ def _step6_single_model_profile(s: state.SetupState) -> int:
         return 130
     _warn_open_checker_profile(chosen)
     if chosen != saved:
-        # A different profile starts clean; the acknowledgements belong to the accounts, not to a profile, and the
-        # tools ticked on the first screen travel along. Keeping the same profile keeps the saved team with it
+        # A different profile starts clean; the tools ticked on the first screen travel along. Keeping the same profile keeps the saved team with it
         # (customizations, composed team, lanes), which a re-run used to drop (ADR-0009).
-        s.profile = _carry_targets(s.profile, state.ProfileState(name=chosen, customized=False,
-                                                                 lane_acks=s.profile.lane_acks))
+        s.profile = _carry_targets(s.profile, state.ProfileState(name=chosen, customized=False))
     if _COMPOSE.get("mode"):
         if _COMPOSE["mode"] != "uniform":
             ui.error("single-model mode offers --compose uniform only (one Claude model for every role); "
@@ -2403,76 +2373,6 @@ def _step_audio(s: state.SetupState) -> int:
 
 
 # --- Subscription lanes: the lane step and lanes.yaml (ADR-0007) --------------------
-def _drop_agy(lanes: dict) -> dict:
-    """The lanes state without the Antigravity gate (the Google acknowledgement record stays)."""
-    return {k: v for k, v in lanes.items() if k != "gates"}
-
-
-def _ack_account(have: dict | None, acks: dict) -> str:
-    """The account the Google prompt proposes: the valid acknowledgement's, else the one a stale acknowledgement named
-    (a text change re-asks the signature, not who signs it)."""
-    stale = acks.get("google") if isinstance(acks.get("google"), dict) else {}
-    return str((have or stale or {}).get("account") or "").strip()
-
-
-def agy_terms_check(s: state.SetupState, roles: list[str], interactive: bool = True, *,
-                   flag: str = "--lanes-antigravity") -> tuple[bool, dict, int]:
-    """The Antigravity (Google) terms check, ADR-0007 section 11: the one place the Google acknowledgement is shown
-    and stored. Returns `(accepted, acks, rc)`; `s` is never modified, the caller stores `acks` when it accepts.
-
-    An acknowledgement stored for the current text that lists a role (and covers `roles`, or whose extension the
-    operator confirms) is kept without asking again. Otherwise the text is shown once, verbatim, the Google account
-    is named and the roles it may run are ticked (the implementer is unticked by default: ticking it is explicit).
-    A decline, an empty account or no role picked is `(False, acks, 0)` and stores nothing; Ctrl-B and Ctrl-C raise
-    `GoBack` / `Cancelled` before anything is stored. Without a prompt (`interactive` False) a missing, stale or
-    empty acknowledgement is `(False, acks, 2)` with the same message the flag has always printed."""
-    from . import lanes_render
-    acks = dict(s.profile.lane_acks or {})
-    have = lanes_render.valid_acks(acks).get("google")
-    listed = set((have or {}).get("roles") or ())
-    if have is None and isinstance(acks.get("google"), dict):
-        # ADR-0016 D3: a stored acknowledgement whose text hash is not the current one is rejected (fail closed). Say
-        # why, once per run, and never re-sign it for the operator.
-        ui.info("The Google terms text changed since you acknowledged it (it now states the Antigravity terms conflict "
-                "with third-party tools): re-confirm it. The old acknowledgement admits nothing.")
-    if ui.is_auto() and (not have or (set(roles) - listed)):
-        # ADR-0018: the operator waived the Antigravity gates G0-G7 and asked for the lane on by default; the recommended
-        # run records the Google acknowledgement for the account on file (or the operator's own) and says so.
-        account = _ack_account(have, acks) or lanes_render.OPERATOR_WAIVER_ACCOUNT
-        acks["google"] = lanes_render.make_ack("google", sorted(listed | set(roles)),
-                                               datetime.now(timezone.utc).isoformat(), account=account)
-        ui.info(f"Antigravity: acknowledgement recorded for {account} under the operator waiver "
-                f"({lanes_render.WAIVER_REF}).")
-        return True, acks, 0
-    if not interactive:
-        if not have or not listed:
-            ui.error(f"{flag}: no stored valid Google acknowledgement lists a role (hash of the "
-                     "current text, account named); run `ai-resources setup --lanes --lanes-antigravity` "
-                     "from a terminal to sign it")
-            return False, acks, 2
-        return True, acks, 0
-    if not (have is None or (set(roles) - listed and ui.confirm(
-            "Extend the Google acknowledgement to: " + ", ".join(sorted(set(roles) - listed)) + "?",
-            default=False))):
-        return True, acks, 0
-    ui.warn(lanes_render.ACK_TEXT["google"])
-    ui.detail("Roles an agy lane may run: " + ", ".join(roles))
-    account = (ui.text("Google account that signs this acknowledgement (one per account)",
-                       default=_ack_account(have, acks)) or "").strip()
-    if not account:
-        ui.error(f"{flag}: the Google account must be named; the Antigravity lane stays closed")
-        return False, acks, 0
-    choices = [ui.Choice(r, value=r) if hasattr(ui, "Choice") else r for r in roles]
-    default = sorted(listed | set(roles))
-    picked = ui.checkbox("Roles acknowledged for this Google account", choices, default=default)
-    if not picked or not ui.confirm("Acknowledge for this Google account and these roles?", default=False):
-        ui.info("Not acknowledged; the Antigravity lane stays closed.")
-        return False, acks, 0
-    acks["google"] = lanes_render.make_ack("google", list(picked), datetime.now(timezone.utc).isoformat(),
-                                           account=account)
-    return True, acks, 0
-
-
 def _members_of(s: state.SetupState) -> list[str]:
     """The tools ticked on the first screen (the stash apply reads)."""
     return list((s.profile.customizations or {}).get("__targets__", {}).get("selected") or [])
@@ -2485,55 +2385,36 @@ def _untick(s: state.SetupState, tool: str) -> None:
 
 
 def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool = False) -> int:
-    """Enable, keep or clear subscription lanes. Disabled on a fresh install and without a flag.
+    """Enable, keep or clear the routing record (lanes). Disabled on a fresh install and without a flag.
 
-    `--lanes` proposes the profile's table, asks for the orchestrator ids (OQ-7) and shows the Anthropic
-    acknowledgement once, every lane-eligible role preselected (OQ-1). A non-interactive `--lanes` without a
-    stored acknowledgement for those roles refuses. `--lanes-antigravity` adds the Antigravity gate: one Google
-    acknowledgement per account (text shown once, the account named, the implementer unticked by default), and a
-    non-interactive run needs a stored valid one listing at least one role. `--no-lanes-antigravity` clears the
-    gate and the agy agents and keeps the claude-cli lanes. `--no-lanes` clears the table (the OpenClaw writer
-    and `lanes.yaml` follow on apply). `--allow-unverified` implies nothing here.
-
-    Ticking Antigravity on the first screen is the interactive opt-in (ADR-0009): the same terms check opens here
-    (`agy_terms_check`), accept stores the Google acknowledgement and the Antigravity gate exactly as
-    `--lanes-antigravity` does, and a decline, an empty account or Ctrl-B unticks the tool and writes nothing.
-    Unticking an Antigravity that was on closes the gate like `--no-lanes-antigravity`. Without the interactive list
-    (unattended, `--yes`, no terminal) only the flags decide, as before."""
-    from . import lanes_render
-    agy_on = bool(getattr(args, "lanes_antigravity", False))
-    agy_off = bool(getattr(args, "no_lanes_antigravity", False))
-    want = bool(getattr(args, "lanes", False)) or agy_on
+    `--lanes` records the profile's `routing:` overrides and asks for the orchestrator ids (OQ-7); `--no-lanes` clears
+    the record (the OpenClaw writer and `lanes.yaml` follow on apply). Ticking Antigravity on the first screen, or the
+    recommended run with agy installed, records it with the default orchestrators and asks nothing: agy has the same
+    standing as Claude Code, so there is no acknowledgement, flag or gate. Whether an agy cell runs is decided where
+    the matrix is resolved (agy installed and signed in, `detection.agy_active`); an inactive cell is skipped with a
+    recorded cause."""
+    want = bool(getattr(args, "lanes", False))
     unwant = bool(getattr(args, "no_lanes", False))
     preview = bool(getattr(args, "lanes_dry_run", False))
     listed = getattr(s, "_tool_members_this_run", None) is not None and not ui.is_non_interactive()
-    agy_team = listed and s.cli_team and "agy" in _members_of(s) and not (agy_off or unwant)
-    if listed and "agy" not in _members_of(s) and _agy_lanes_on(s) and not (agy_on or unwant):
-        agy_off = True                      # unticked on "Your tools": Antigravity is not used any more
+    agy_team = listed and s.cli_team and "agy" in _members_of(s) and not unwant
     team_only = False
     if agy_team and not (preview or dry_run):
-        claude_lanes = state.lanes_enabled(s) and "anthropic" in lanes_render.valid_acks(s.profile.lane_acks)
-        agy_on = True
-        team_only = not (want or claude_lanes)
+        team_only = not (want or state.lanes_enabled(s))
         want = True
     elif agy_team:
-        ui.info("DRY RUN: the Antigravity terms check is not shown in a dry run; nothing is enabled.")
-    elif (ui.is_auto() and not (agy_on or agy_off or unwant or preview or dry_run) and s.cli_team
-          and detection.agy_installed()):
-        # ADR-0018: under the recommended run the Antigravity lane is on by default when agy is installed. The Claude
-        # parallel runs stay as they were: kept when an Anthropic acknowledgement is on file, not enabled otherwise.
-        claude_lanes = state.lanes_enabled(s) and "anthropic" in lanes_render.valid_acks(s.profile.lane_acks)
-        agy_on = True
-        team_only = not (want or claude_lanes)
+        ui.info("DRY RUN: nothing is enabled in a dry run.")
+    elif (ui.is_auto() and not (unwant or preview or dry_run) and s.cli_team and detection.agy_installed()):
+        # ADR-0018: under the recommended run the routing record is on by default when agy is installed.
+        team_only = not (want or state.lanes_enabled(s))
         want = True
-    if (s.cli_team and _PARALLEL_RUNS and not (want or unwant or preview or agy_off)
-            and not ui.is_non_interactive()):
+    if (s.cli_team and _PARALLEL_RUNS and not (want or unwant or preview) and not ui.is_non_interactive()):
         # Review > More options > Parallel runs: the operator asked for the Claude parallel runs in this run.
         want = True
-    if (want and unwant) or (agy_on and agy_off):
-        ui.error("--lanes, --lanes-antigravity, --no-lanes and --no-lanes-antigravity contradict each other")
+    if want and unwant:
+        ui.error("--lanes and --no-lanes contradict each other")
         return 2
-    if not team_only and (want or unwant or preview or agy_off):
+    if not team_only and (want or unwant or preview):
         _section(6, "Your team - parallel runs")
     if unwant and preview:
         ui.info("Dry run: lanes stay as they are; nothing was cleared or written.")
@@ -2542,12 +2423,6 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         if s.profile.lanes:
             ui.info("Subscription lanes: cleared (lanes.yaml and the OpenClaw lane agents are removed on apply).")
         s.profile.lanes = None
-        return 0
-    if agy_off and not want:
-        if isinstance(s.profile.lanes, dict) and not preview:
-            s.profile.lanes = _drop_agy(s.profile.lanes)
-            ui.info("Antigravity lane: gate cleared (agy agents leave lanes.yaml and the OpenClaw config on "
-                    "apply; the claude-cli lanes and the Google acknowledgement record stay).")
         return 0
     if not (want or preview):
         return 0
@@ -2565,68 +2440,27 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         return 2
     prev = s.profile.lanes if isinstance(s.profile.lanes, dict) else {}
     orchestrators = list(getattr(args, "lanes_orchestrator", None) or prev.get("orchestrators") or [])
-
-    def ask_orchestrators() -> list[str]:
-        if not orchestrators and not ui.is_non_interactive():
-            raw = ui.text("Orchestrator agent id(s) that may dispatch lane agents (comma-separated)",
-                          default="claude, main")
-            return [o.strip() for o in (raw or "").split(",") if o.strip()]
-        return orchestrators
-
-    if not team_only:
-        orchestrators = ask_orchestrators()
-    acks = dict(s.profile.lane_acks or {})
-    agy_roles = lanes_render.agy_roles(doc)
-    check_roles = list(agy_roles)
-    if team_only and not check_roles:
-        # ticked, but this team gives Antigravity no role: nothing to ask and nothing to store
-        _untick(s, "agy")
-        ui.info("Antigravity takes no role in this team, so it stays off; pick another starting team to use it.")
-        return 0
-    if agy_on and not (preview or dry_run):
-        # the Google acknowledgement comes before the proposal: an agy candidate enters state only with it
-        agy_on, acks, rc = agy_terms_check(s, check_roles, interactive=not ui.is_non_interactive(),
-                                           flag="--lanes-antigravity")
-        if rc:
-            return rc
-        if team_only:
-            if not agy_on:
-                _untick(s, "agy")
-                ui.info("Antigravity stays off; nothing was stored.")
-                return 0
-            orchestrators = orchestrators or ["claude", "main"]
+    if team_only:
+        orchestrators = orchestrators or ["claude", "main"]
+    elif not orchestrators and not ui.is_non_interactive():
+        raw = ui.text("Orchestrator agent id(s) that may dispatch lane agents (comma-separated)",
+                      default="claude, main")
+        orchestrators = [o.strip() for o in (raw or "").split(",") if o.strip()]
+    from . import lanes_render
     try:
-        proposal = lanes_render.lanes_state(doc, orchestrators=orchestrators, gates={"antigravity": agy_on})
+        proposal = lanes_render.lanes_state(doc, orchestrators=orchestrators)
     except lanes_render.LanesBlockError as e:
         ui.error(f"--lanes: {e}")
         return 2
-    roles = lanes_render.lane_roles(doc)
     if not team_only:
         ui.info("Subscription lanes proposed (the role matrix: primary -> fallback):")
-    if not team_only:
+        roles = lanes_render.lane_roles(doc)
         for role, primary, fallback in scoring_routing.table_rows(doc):
             if role in roles:
                 ui.detail(f"  {role}: {primary} -> {fallback}")
     if preview or dry_run:
         ui.info("Dry run: nothing was enabled or written.")
         return 0
-    # per-account role sets: the Anthropic acknowledgement covers the roles that run on a claude-cli lane (or
-    # on none), never a role whose every candidate is an agy lane
-    merged = scoring_routing.merged(doc)
-    agy_only = {r for r in agy_roles if all(c.startswith("agy:") for c in merged[r].chain)}
-    anth_roles = [r for r in roles if r not in agy_only]
-    if not team_only and not lanes_render.acked(acks, "anthropic", anth_roles):
-        if ui.is_non_interactive():
-            ui.error("--lanes: no stored Anthropic acknowledgement lists every lane role; run `ai-resources "
-                     "setup --lanes` from a terminal to sign it")
-            return 2
-        ui.warn(lanes_render.ACK_TEXT["anthropic"])
-        ui.detail("Roles: " + ", ".join(anth_roles))
-        if not ui.confirm("Acknowledge for these roles?", default=False):
-            ui.info("Not acknowledged; lanes stay disabled.")
-            return 0
-        acks["anthropic"] = lanes_render.make_ack("anthropic", anth_roles, datetime.now(timezone.utc).isoformat())
-    s.profile.lane_acks = acks
     s.profile.lanes = proposal
     return 0
 

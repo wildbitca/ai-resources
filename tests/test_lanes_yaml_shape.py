@@ -22,14 +22,13 @@ def _keys(node):
             yield from _keys(v)
 
 
-def _text(profile="balanced", *, acks=None, override=None):
+def _text(profile="balanced", *, override=None):
     s = state.SetupState()
     s.mode = "single-model"
     doc = profiles.load_profile(profile, "single-model")
     if override:
         doc = {**doc, "routing": override}
-    s.profile.lanes = lanes_render.lanes_state(doc, orchestrators=["main"], gates={"antigravity": True})
-    s.profile.lane_acks = acks
+    s.profile.lanes = lanes_render.lanes_state(doc, orchestrators=["main"])
     return lanes_render.expected_text(s)
 
 
@@ -42,21 +41,15 @@ def test_the_document_has_exactly_the_matrix_keys(profile):
 
 
 def test_no_removed_concept_appears_as_a_key_or_a_word():
-    google = {"google": lanes_render.make_ack("google", ["explore"], "2026-10-27T00:00:00Z", account="a@example.dev")}
-    text = _text(acks=google)
+    text = _text()
     doc = yaml.safe_load(text)
-    assert not FORBIDDEN_KEYS & set(_keys(doc["routing"])) and not FORBIDDEN_KEYS & (set(doc) - {"acks"})
+    assert not FORBIDDEN_KEYS & set(_keys(doc["routing"])) and not FORBIDDEN_KEYS & set(doc)
     low = text.lower()
     assert not [w for w in FORBIDDEN_WORDS if w in low]
 
 
-def test_the_google_ack_is_the_only_optional_section():
-    google = {"google": lanes_render.make_ack("google", ["explore", "tester"], "2026-10-27T00:00:00Z",
-                                              account="a@example.dev")}
-    doc = yaml.safe_load(_text(acks=google))
-    assert set(doc) == {"mode", "generated_from", "routing", "acks", "digest"}
-    assert doc["acks"] == {"google": {"roles": ["explore", "tester"], "account": "a@example.dev",
-                                      "text_sha256": google["google"]["text_sha256"]}}
+def test_no_acknowledgement_section_exists():
+    assert "acks" not in yaml.safe_load(_text()) and "google" not in _text().lower().replace("gemini-api", "")
 
 
 def test_every_role_has_one_primary_and_a_fallback_list_and_a_class():

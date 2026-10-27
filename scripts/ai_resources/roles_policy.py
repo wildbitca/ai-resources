@@ -49,15 +49,12 @@ EXPLICIT_WARNED_ROLES = frozenset({"tester", "doc-writer"})
 # Repo-relative paths no lane contract may write. The handoff file and other steps' `.agent-output/`
 # files are run-specific and added by the kit command.
 LANE_WRITE_FORBIDDEN = (".git", ".gitmodules", ".gitattributes", ".githooks/", ".claude/",
-                        ".cursor/", ".openclaw/", "agy_gate_evidence.json")
-# The committed evidence record of the Antigravity gates (ADR-0010 PD-7), repo-relative. Named in the forbidden list
-# by its file name (the lists match a path component at any depth) and watched as a tripwire below.
-AGY_GATE_EVIDENCE_REL = "scripts/ai_resources/data/agy_gate_evidence.json"
+                        ".cursor/", ".openclaw/")
 # A `write_scope` may additionally never sit in `.agent-output/` (step reports are allowed on their own).
 SCOPE_FORBIDDEN = LANE_WRITE_FORBIDDEN + (".agent-output/", "handoff.md")
 # Host files whose change fails a lane step's verify, on every lane (symmetric, ADR-0007 section 11). The
 # first row is the phase 2 set; the second row is the persistence channels into the operator's other agents.
-TRIPWIRE_PATHS = (AGY_GATE_EVIDENCE_REL, "~/.openclaw/openclaw.json", "~/.claude/settings.json", "~/.claude/hooks/",
+TRIPWIRE_PATHS = ("~/.openclaw/openclaw.json", "~/.claude/settings.json", "~/.claude/hooks/",
                   "~/.config/ai-resources/", "~/.bashrc", "~/.bash_profile", "~/.profile",
                   "~/.zshrc", "~/.zprofile", "~/.zshenv",
                   "~/.claude/CLAUDE.md", "~/.claude/agents/", "~/.claude/skills/", "~/.agents/",

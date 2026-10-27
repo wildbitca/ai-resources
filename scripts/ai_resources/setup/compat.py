@@ -22,7 +22,6 @@ cell Claude Code x Google through OpenRouter may be lifted by a valid committed 
 """
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -212,19 +211,8 @@ def _build() -> tuple[dict, dict, dict]:
 CELLS, ENGINE_CELLS, _ = _build()
 
 
-# The one cell a committed evidence record may lift (ADR-0010 PD-7): Claude Code with Google through OpenRouter. The
-# overlay is read lazily on use, never at import, and only for this key.
-_EVIDENCE_CELLS = {("claude", "google", MULTI_OPENROUTER): "claude/google/openrouter"}
-
-
 def cell(cockpit: str, provider: str, mode_key: str) -> Cell:
-    c = CELLS[(cockpit, provider, mode_key)]
-    evidence_key = _EVIDENCE_CELLS.get((cockpit, provider, mode_key))
-    if evidence_key and not c.verified:
-        from .. import agy_gate_evidence
-        if agy_gate_evidence.cell_verified(evidence_key):
-            return dataclasses.replace(c, verified=True, reason="")
-    return c
+    return CELLS[(cockpit, provider, mode_key)]
 
 
 def mode_key(mode: str, backend: str | None) -> str:

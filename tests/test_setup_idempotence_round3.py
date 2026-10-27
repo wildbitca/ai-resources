@@ -330,12 +330,10 @@ def real_setup(sim, monkeypatch):
     monkeypatch.setattr(ui, "require_deps", lambda: None)
     monkeypatch.setattr(ui, "banner", lambda *a, **k: None)
     monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
-    # a saved state: a valid Google acknowledgement, so agy is configured
+    # a saved state
     s = state.SetupState()
     s.last_run = "2026-01-01T00:00:00+00:00"
     s.profile.name = "balanced"
-    s.profile.lane_acks = {"google": lanes_render.make_ack("google", ["planner"], "2026-01-01T00:00:00+00:00",
-                                                           account="me@example.org")}
     s.openclaw.engine = "keep"
     # the OpenClaw host section as an operator saved it: canonical block (subagent limits, resource guards, heartbeats),
     # env file, guard hook, units and the AGENTS.md templates

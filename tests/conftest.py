@@ -26,7 +26,6 @@ def pytest_configure(config):
     apply_default(config)
     config.addinivalue_line("markers", "timing: asserts on wall-clock time; runs in the serial pass of scripts/run-tests.sh")
     config.addinivalue_line("markers", "node_scripts: runs node on a repo workflow script through tests/kit_script_harness.mjs; the guard lets through only that harness invocation (see _allow_node_harness)")
-    config.addinivalue_line("markers", "agy_waiver: sees the shipped operator waiver of the Antigravity gates")
 
 
 # Host binaries no test may run. One unstubbed configure path ran `npm install -g openclaw@latest` and
@@ -272,9 +271,8 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
                         lambda home=None: _real_plugin_dirs(home) if home is not None else [])
     # And the model pins overlay (~/.config/ai-resources/model-pins.json): a host overlay must never
     # leak into a test, and a test must never write the operator's real one.
-    from ai_resources import agy_gate_evidence, model_pins
+    from ai_resources import model_pins
     monkeypatch.setattr(model_pins, "overlay_path", lambda: root / "model-pins.json")
-    # ADR-0016 D3: the gate-record module has no host overlay any more; there is nothing to switch off.
     # And the restart guard's two systemd reads: an unstubbed `restart_gateway()` would ask the
     # live unit whether agent turns are running, and a busy host would defer a restart a test
     # expects to happen. The guard's own tests pass a fake probe explicitly.
@@ -483,20 +481,6 @@ def _isolate_round4(tmp_path_factory, monkeypatch):
         operator_rules = None
     if operator_rules is not None:
         monkeypatch.setattr(operator_rules, "path", lambda: root / "config" / "ai-resources" / "operator-rules.md")
-
-
-@pytest.fixture(autouse=True)
-def _agy_gate_waiver_off(request, monkeypatch):
-    """The gate machinery (G0..G7, the evidence record, the held messages) is tested with the operator waiver off, so it
-    keeps failing closed when the waiver is withdrawn. A test of the waiver itself is marked `agy_waiver` and sees the
-    shipped `WAIVED_BY_OPERATOR` (ADR-0007 section 11, operator waiver of 2026-10-24)."""
-    if request.node.get_closest_marker("agy_waiver"):
-        return
-    try:
-        from ai_resources import agy_lane_gates
-    except Exception:
-        return
-    monkeypatch.setattr(agy_lane_gates, "WAIVED_BY_OPERATOR", frozenset())
 
 
 @pytest.fixture(autouse=True)

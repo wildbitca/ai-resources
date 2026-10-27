@@ -9,7 +9,6 @@ import pathlib
 
 import pytest
 
-from ai_resources import agy_lane_gates as gates_mod
 from ai_resources import model_accounts as ma
 from ai_resources import roles_policy
 from ai_resources.scoring import routing
@@ -38,15 +37,6 @@ def _by_role(doc):
     return profiles.to_executors(doc)["by_role"]
 
 
-def _open_gates(monkeypatch):
-    monkeypatch.setattr(gates_mod, "EVIDENCE", {g.id: dataclasses.replace(g, status=gates_mod.PROVEN, evidence="fixture")
-                                                for g in gates_mod.GATES})
-
-
-def _google_ack(roles):
-    return {"google": lanes_render.make_ack("google", list(roles), "2026-10-19T00:00:00+00:00", account="a@example.com")}
-
-
 # --- AC-S6a: the matrix gives Gemini the read/doc/test roles ---------------------------------------------------------
 
 def test_balanced_carries_no_lanes_block_and_the_matrix_declares_gemini_primaries():
@@ -58,8 +48,8 @@ def test_balanced_carries_no_lanes_block_and_the_matrix_declares_gemini_primarie
 
 
 def test_balanced_state_fragment_is_the_matrix_override_only():
-    frag = lanes_render.lanes_state(_doc(), orchestrators=["main"], gates={"antigravity": True})
-    assert frag == {"orchestrators": ["main"], "gates": {"antigravity": True}}
+    frag = lanes_render.lanes_state(_doc(), orchestrators=["main"])
+    assert frag == {"orchestrators": ["main"]}
 
 
 # --- AC-S6e: OpenRouter Balanced, the opt-in ------------------------------------------------------------------------

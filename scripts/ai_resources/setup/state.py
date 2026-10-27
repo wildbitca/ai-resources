@@ -112,11 +112,9 @@ class ProfileState:
     # keeps the unverified ids that setup wrote instead of gating them back to `inherit`.
     allow_unverified: bool = False
     # Subscription lanes (ADR-0007, WHAT not HOW). None until the operator enables them; then
-    # {orchestrators, routing?, gates?} (ADR-0019: the role table is the matrix, never stored; an older shape is
-    # migrated on load by `migrate_lanes`). Both fields are additive: absent from the file while empty.
+    # {orchestrators, routing?} (ADR-0019: the role table is the matrix, never stored; an older shape, its `gates` and
+    # the `lane_acks` acknowledgements beside it are dropped on load by `migrate_lanes`). Additive: absent while empty.
     lanes: Any = None
-    # {anthropic?: Ack, google?: Ack}, Ack = {date, text_sha256, text, roles}.
-    lane_acks: Any = None
     # The role -> {model, fallbacks} table of the saved profile as it was last applied (ADR-0014 D1). A profile whose
     # table changed in a kit update shows the old -> new diff once (ADR-0001), then this record is updated. Additive:
     # absent from the file while empty.
@@ -448,7 +446,7 @@ def _to_dict(obj: Any) -> Any:
                 and not doc["tracking"].get("cost_migrations_applied"):
             doc["tracking"].pop("cost_migrations_applied", None)   # additive field: absent until a migration ran
         if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict):
-            for key in ("lanes", "lane_acks", "roles_seen"):   # additive fields: absent until lanes / a table are recorded
+            for key in ("lanes", "roles_seen"):   # additive fields: absent until lanes / a table are recorded
                 if not doc["profile"].get(key):
                     doc["profile"].pop(key, None)
         if isinstance(obj, SetupState) and isinstance(doc.get("openclaw"), dict) \
@@ -970,13 +968,13 @@ def locked_run(fn, *, out=print, enabled: bool = True):
 
 
 # Keys of the matrix-shaped `profile.lanes` (ADR-0019): the role table is `scoring.routing.ROLES`, never stored.
-LANES_KEPT_KEYS = ("orchestrators", "routing", "gates")
+LANES_KEPT_KEYS = ("orchestrators", "routing")
 
 
 def migrate_lanes(profile: "ProfileState") -> bool:
     """One-way migration of the pre-3.2 `profile.lanes` shape (agents, roles.candidates, second, held, pins, mcp,
-    role_meta, verify_capability, pool_caps, ...). Keeps `orchestrators`, `routing` and `gates` (and `lane_acks`, which
-    lives beside it); drops the rest. A migrated table stays enabled. Returns True when it changed anything."""
+    role_meta, verify_capability, pool_caps, gates, ...). Keeps `orchestrators` and `routing`; drops the rest (the
+    `lane_acks` key beside it never loads: the field is gone). A migrated table stays enabled. Returns True when it changed anything."""
     lanes = getattr(profile, "lanes", None)
     if not isinstance(lanes, dict) or not lanes:
         return False

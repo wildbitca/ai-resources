@@ -8,7 +8,7 @@ import json
 import pytest
 
 from ai_resources import selection as sel
-from ai_resources.setup import cockpit_auth, credentials, lanes_render, model_selection as ms, profiles, state, ui, wizard
+from ai_resources.setup import cockpit_auth, credentials, detection, model_selection as ms, profiles, state, ui, wizard
 from wizard_fakes import SENTINEL, Script, Seq, host_env
 
 SUB = "subscription-claude-55"
@@ -77,22 +77,26 @@ def _team_state(*members):
     return s
 
 
-def test_the_parallel_runs_row_appears_only_with_an_anthropic_ack():
-    """Ticking Antigravity records its own gate and Google ack; that is not the Claude parallel runs."""
+def test_the_parallel_runs_row_appears_only_when_the_routing_record_is_enabled():
     s = _team_state()
-    s.profile.lanes = {"orchestrators": [], "gates": {"antigravity": True}}
     assert "Parallel runs" not in dict(wizard._review_rows(s))
-    s.profile.lane_acks = {"anthropic": {"roles": ["implementer"]}}
+    s.profile.lanes = {"orchestrators": []}
     assert dict(wizard._review_rows(s))["Parallel runs"] == "on"
 
 
-def test_the_review_names_the_tools_and_the_team():
+def test_the_review_names_the_tools_and_the_team(monkeypatch):
     rows = dict(wizard._review_rows(_team_state("claude", "codex")))
     assert rows["Tools"] == "Claude Code, Codex CLI" and rows["Team"].startswith("Balanced: ")
     assert rows["Will write"] == "executors.yaml, tool config files"
-    custom = _team_state()
+    custom = _team_state("claude")
     custom.profile.customized = True
     assert dict(wizard._review_rows(custom))["Team"] == f"Custom: {SUB} (customized)"
+    agy = _team_state()                                                      # agy ticked: the review says whether it runs
+    agy.profile.customized = True
+    monkeypatch.setattr(detection, "agy_active", lambda: True)
+    assert dict(wizard._review_rows(agy))["Team"] == f"Custom: {SUB} (customized) + Antigravity (on)"
+    monkeypatch.setattr(detection, "agy_active", lambda: False)
+    assert "Antigravity (skipped: agy not installed or not signed in)" in dict(wizard._review_rows(agy))["Team"]
 
 
 def test_the_review_offers_the_three_changes_and_more_options_after_a_full_pass(review_env, monkeypatch):
@@ -162,7 +166,7 @@ def test_unattended_prints_the_rows_and_offers_no_edit(review_env, monkeypatch):
     assert script.asked == [] and len(review_env) == 1
 
 
-def test_parallel_runs_from_more_options_ask_the_acknowledgement_once(review_env, monkeypatch):
+def test_parallel_runs_from_more_options_ask_the_orchestrator_and_no_acknowledgement(review_env, monkeypatch):
     s = state.SetupState()
     s.mode = "single-model"
     s.last_run = "2026-01-01T00:00:00+00:00"
@@ -175,12 +179,11 @@ def test_parallel_runs_from_more_options_ask_the_acknowledgement_once(review_env
     script = Script(**{"Use previous answers": True, "Claude Code sign-in": "keep",
                        "Model preset": "custom", "How do you want to choose models": "profile",
                        "How should kit subagents pick": lambda v: SUB, "Orchestrator agent id": "main",
-                       "Acknowledge for these roles?": True, "Configure detected cockpits": lambda v: list(v),
+                       "Configure detected cockpits": lambda v: list(v),
                        "Apply this?": Seq(wizard.MORE_OPTIONS, ms.APPLY), "More options": "parallel"})
     script.install(monkeypatch)
     assert wizard.run(_args(lanes=True)) == 0
-    acks = [m for m in script.asked if "Acknowledge for these roles?" in m]
-    assert len(acks) == 1
+    assert not [m for m in script.asked if "Acknowledge" in m]
     proposals = [m for m in script.shown if m.startswith("info: Subscription lanes proposed")]
     assert len(proposals) == 2                       # the lanes step really ran again
 
@@ -379,13 +382,15 @@ def test_claude_with_no_recorded_sign_in_reads_unknown(tmp_path, monkeypatch):
     assert {r.billed_to for r in wizard._review_role_rows(s)} == {"unknown"}
 
 
-def test_agy_members_read_held_without_gate_evidence_and_bill_the_google_plan(tmp_path, monkeypatch):
+def test_agy_members_read_held_with_agy_missing_and_on_when_active_and_bill_the_google_plan(tmp_path, monkeypatch):
+    from ai_resources.setup import detection
     s = _runs_state(tmp_path, monkeypatch, members=("claude", "agy"))
-    s.profile.lane_acks = {"google": lanes_render.make_ack("google", ["explore", "code-reviewer", "planner",
-                                                                     "software-architect"], "2026-10-19", account="a@x.y")}
+    monkeypatch.setattr(detection, "agy_active", lambda: False)
     agy = [r for r in wizard._review_role_rows(s) if r.runs_in.startswith("agy")]
     assert agy and all(r.runs_in == "agy (held)" and r.billed_to == "Google plan" for r in agy)
-    assert not any(r.runs_in == "agy" for r in agy)
+    monkeypatch.setattr(detection, "agy_active", lambda: True)
+    agy = [r for r in wizard._review_role_rows(s) if r.runs_in.startswith("agy")]
+    assert agy and all(r.runs_in == "agy" for r in agy)
 
 
 def test_the_review_screen_prints_the_table_with_its_own_columns(review_env, monkeypatch):

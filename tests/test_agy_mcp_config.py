@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from ai_resources import agy_lane_gates, billing
-from ai_resources.setup import agy_mcp, hygiene, lanes_render, state, ui, wizard
+from ai_resources import billing
+from ai_resources.setup import agy_mcp, hygiene, state, ui, wizard
 from ai_resources.setup.cockpits import _shared, gemini, openclaw
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
@@ -214,30 +214,7 @@ def test_the_hint_no_longer_claims_the_kit_never_writes_the_file():
     assert "engram" in openclaw.AGY_MCP_HINT
 
 
-def _acks(valid=True):
-    text = lanes_render.ACK_TEXT["google"]
-    return {"google": {"date": "2026-10-22", "text_sha256": hashlib.sha256(text.encode()).hexdigest() if valid else "0" * 64,
-                       "text": text, "account": "me@example.com", "roles": ["explore"]}}
-
-
-def _lanes_state(ack=None, on=True):
-    s = _s()
-    s.profile.lanes = {"gates": {"antigravity": True}} if on else {"orchestrators": []}
-    s.profile.lane_acks = ack
-    return s
-
-
-def test_flash_low_needs_the_flag_a_valid_acknowledgement_and_proven_gates(monkeypatch):
-    monkeypatch.setattr(agy_lane_gates, "refusal", lambda evidence=None: None)
-    assert openclaw.agy_flash_low_reason(_lanes_state(_acks())) is None                       # all three hold
-    assert openclaw.agy_flash_low_reason(_lanes_state(_acks(), on=False)) == lanes_render.HELD_FLAG_REASON
-    assert openclaw.agy_flash_low_reason(_lanes_state(None)) == lanes_render.HELD_NO_ACK_REASON
-    assert openclaw.agy_flash_low_reason(_lanes_state(_acks(valid=False))) == lanes_render.HELD_NO_ACK_REASON
-    monkeypatch.setattr(agy_lane_gates, "refusal", lambda evidence=None: "held: gates not proven")
-    assert openclaw.agy_flash_low_reason(_lanes_state(_acks())) == "held: gates not proven"
-
-
-def test_without_the_acknowledgement_no_flash_low_is_written_and_the_other_entries_stay():
+def test_without_flash_low_the_other_entries_stay_and_the_other_entries_stay():
     with_low = openclaw._fallbacks_for("anthropic/claude-sonnet-5-5", "claude-code")
     without = openclaw._fallbacks_for("anthropic/claude-sonnet-5-5", "claude-code", flash_low=False)
     assert openclaw.AGY_ROUTINE_FALLBACK in with_low and openclaw.AGY_ROUTINE_FALLBACK not in without

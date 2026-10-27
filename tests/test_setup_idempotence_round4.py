@@ -132,9 +132,6 @@ def test_two_runs_second_is_a_no_op_and_nothing_leaks(world, monkeypatch, capsys
     text = state.state_path().read_text(encoding="utf-8")
     assert KEY not in text and EMAIL not in text and not re.search(r"sk-[A-Za-z0-9_-]{8,}", text)
     assert cockpit_auth.secret_findings(state._to_dict(state.load())["cockpit_auth"]) == []
-    # D3: no gate evidence, so no agy lane can read "on"
-    from ai_resources import agy_gate_evidence as record_module
-    assert record_module.load().status == "absent"
 
     first = snapshot(world)
     first_state = yaml.safe_load(text)

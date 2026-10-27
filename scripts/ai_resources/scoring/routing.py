@@ -24,6 +24,7 @@ POOL_AGY_GEMINI = "agy-gemini"         # Antigravity, Google AI Pro quota, Gemin
 POOL_AGY_CLAUDE = "agy-claude-gpt"     # Antigravity, Google AI Pro quota, Claude / GPT models
 POOL_ANTHROPIC_API = "anthropic-api"   # prepaid Anthropic API credits
 POOL_GEMINI_API = "gemini-api"         # Gemini API (Google Cloud credit)
+POOL_CODEX = "codex"                   # OPTIONAL pool: active only when Codex is installed and signed in, in no default cell
 
 CREDIT_POOLS = frozenset({POOL_ANTHROPIC_API, POOL_GEMINI_API})
 
@@ -33,12 +34,13 @@ POOLS: dict[str, dict[str, str]] = {
     POOL_AGY_CLAUDE: {"label": "Antigravity (AI Pro quota, Claude/GPT)", "kind": "subscription"},
     POOL_ANTHROPIC_API: {"label": "Anthropic API credits", "kind": "credit"},
     POOL_GEMINI_API: {"label": "Gemini API credits", "kind": "credit"},
+    POOL_CODEX: {"label": "Codex (optional)", "kind": "subscription"},
 }
 
 # backend token -> how its pool is derived
 _BACKEND_POOL = {"claude-code": POOL_MAX, "claude-cli": POOL_MAX, "anthropic-api": POOL_ANTHROPIC_API,
-                 "gemini-api": POOL_GEMINI_API}
-BACKENDS = ("claude-code", "claude-cli", "agy", "anthropic-api", "gemini-api")
+                 "gemini-api": POOL_GEMINI_API, "codex": POOL_CODEX}
+BACKENDS = ("claude-code", "claude-cli", "agy", "anthropic-api", "gemini-api", "codex")
 
 SPILL_AT = 0.85            # a pool at or above this used fraction hands the class to the next pool
 
@@ -52,7 +54,7 @@ def pool_of(cell: str) -> str:
 
 
 # Fallback triggers (ADR-0019): a role's fallback fires ONLY when its pool is exhausted or the model does not answer.
-FALLBACK_CAUSES = ("pool-exhausted", "pool-hot", "timeout", "5xx", "empty", "agy-missing", "key-invalid")
+FALLBACK_CAUSES = ("pool-exhausted", "pool-hot", "timeout", "5xx", "empty", "agy-missing", "codex-missing", "key-invalid")
 
 # Quota-exhaustion texts as the orchestrator witnesses them, for every pool. A child's own report is never an input.
 _COMMON_QUOTA_PATTERNS: tuple[str, ...] = (
@@ -267,7 +269,8 @@ def table_lines(profile_doc: Mapping[str, Any] | None = None) -> list[str]:
 
 
 _OPENCLAW_CLAUDE = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
-_OPENCLAW_PROVIDER = {"agy": "agy-cli-lane", "gemini-api": "google", "anthropic-api": "anthropic"}
+_OPENCLAW_PROVIDER = {"agy": "agy-cli-lane", "gemini-api": "google", "anthropic-api": "anthropic",
+                      "codex": "codex"}
 CLAUDE_CLI_RUNTIME = "claude-cli"      # OpenClaw agent runtime that runs a Claude cell on the Max subscription
 
 

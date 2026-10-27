@@ -11,12 +11,11 @@ What it writes, and only this:
 Setup never spawns a session and never calls the live gateway: `verify_capability` is derived from the
 static config. Teardown removes only what `OpenClawState.lanes_applied` records.
 
-Antigravity (ADR-0007 section 11): an `agy-cli-lane` agent is written only when `writable_backends()` includes
-its backend (every phase 3 gate proven) and `lanes_render.agy_admission` admits it (constant, flag, valid Google
-acknowledgement listing the role) and the kit plugin has an absolute `agyBin`. The writer adds the catalog stub
-`models.providers.agy-cli-lane`, the tool denials and, when G5 is proven, the kit-owned agy home path. A
-previously written agy agent that is no longer admitted is pruned: `allowAgents` ids, deny tokens and the stub
-model leave unconditionally, then `agents delete` and the workspace removal ask for confirmation.
+Antigravity: an `agy-cli-lane` agent is written like any other once the kit plugin has an absolute `agyBin`; there is
+no flag, acknowledgement or gate (ADR-0019). The writer adds the catalog stub `models.providers.agy-cli-lane`, the tool
+denials and the kit-owned agy home path. A previously written agy agent that is no longer wanted is pruned: `allowAgents`
+ids, deny tokens and the stub model leave unconditionally, then `agents delete` and the workspace removal ask for
+confirmation.
 """
 from __future__ import annotations
 
@@ -26,9 +25,8 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from ... import agy_lane_gates
 from .openclaw_agy import (AGY_BACKEND, AGY_HOME_PARTS, AGY_TOOL_DENY, STUB_API, STUB_API_KEY, STUB_BASE_URL,  # noqa: F401
-                           STUB_PROVIDER, LanesWriteError, agy_home_path, agy_home_wanted, agy_slug,
+                           STUB_PROVIDER, LanesWriteError, agy_home_path, agy_slug,
                            ensure_agy_home, remove_agy_home, stub_models as _stub_models, stub_patch_for_slugs)
 from .. import state, ui
 from ..live_openclaw import _primary
@@ -59,22 +57,10 @@ def _get(doc: Any, *keys: str) -> Any:
     return cur
 
 
-# The base set of backends setup writes an agent for. `agy-cli-lane` joins it only through
-# `writable_backends()`, when every phase 3 gate (agy_lane_gates G0..G7) is proven: G4 (V9) unproven keeps the
-# lane out of the writer, exactly as the plan's stop rule says.
-WRITABLE_BACKENDS = frozenset({CLAUDE_CLI})
 # The agent runtime a catalog entry names per backend.
 CATALOG_SHAPES = {CLAUDE_CLI: {"agentRuntime": {"id": CLAUDE_CLI}}}
-HELD_BACKEND_REASON = "held: backend {backend} is not writable in this version"
-HELD_AGY_BIN_REASON = ("held: agy binary not configured for the kit plugin (plugins.entries.ai-resources."
+HELD_AGY_BIN_REASON = ("skipped: agy binary not configured for the kit plugin (plugins.entries.ai-resources."
                        "config.agyBin must be an absolute path); run setup in a drained window")
-
-
-def writable_backends() -> frozenset:
-    """`WRITABLE_BACKENDS`, plus `agy-cli-lane` when every phase 3 gate is proven (fail closed)."""
-    if agy_lane_gates.all_proven():
-        return WRITABLE_BACKENDS | {AGY_BACKEND}
-    return WRITABLE_BACKENDS
 
 
 def _agy_bin_ok(doc: Mapping[str, Any] | None) -> bool:
@@ -82,42 +68,23 @@ def _agy_bin_ok(doc: Mapping[str, Any] | None) -> bool:
     return isinstance(raw, str) and raw.startswith("/")
 
 
-def held_agents(lanes: Mapping[str, Any], *, gates: Mapping[str, Any] | None = None,
-                acks: Mapping[str, Any] | None = None, doc: Mapping[str, Any] | None = None) -> dict[str, str]:
-    """Kit ids in the state the writer does not write, with the reason.
-
-    A backend that is not writable is held. An agy agent must also pass `lanes_render.agy_admission` (so a
-    state written by an older kit, or one whose acknowledgement went stale, is held at write time) and, when
-    the config is known, the plugin must carry an absolute `agyBin`.
-    """
-    from .. import lanes_render
+def skipped_agents(lanes: Mapping[str, Any], doc: Mapping[str, Any] | None = None) -> dict[str, str]:
+    """Kit ids the writer cannot write yet, with the recorded cause: an agy agent while the plugin has no absolute `agyBin`."""
     out: dict[str, str] = {}
-    writable = writable_backends()
-    gates = (lanes.get("gates") or {}) if gates is None else gates
-    admission = lanes_render.agy_admission(lanes, gates, acks)
     for aid, agent in sorted((lanes.get("agents") or {}).items()):
         if not (isinstance(aid, str) and aid.startswith(PREFIX)):
             continue
         backend = (agent or {}).get("backend") if isinstance(agent, Mapping) else None
-        if backend not in writable:
-            why = HELD_BACKEND_REASON.format(backend=backend or "?")
-            if backend == AGY_BACKEND:
-                why += "; " + (agy_lane_gates.refusal() or "")
-            out[aid] = why
-        elif backend != CLAUDE_CLI and aid in admission:
-            out[aid] = admission[aid]
-        elif backend != CLAUDE_CLI and doc is not None and not _agy_bin_ok(doc):
+        if backend != CLAUDE_CLI and doc is not None and not _agy_bin_ok(doc):
             out[aid] = HELD_AGY_BIN_REASON
     return out
 
 
-def kit_agent_ids(lanes: Mapping[str, Any], *, gates: Mapping[str, Any] | None = None,
-                  acks: Mapping[str, Any] | None = None, doc: Mapping[str, Any] | None = None) -> list[str]:
-    """Only kit ids are ever written or removed: an agent not named `kit-lane-*` is never ours, and an agent
-    whose backend is not writable or not admitted is held."""
-    held = held_agents(lanes, gates=gates, acks=acks, doc=doc)
+def kit_agent_ids(lanes: Mapping[str, Any], *, doc: Mapping[str, Any] | None = None) -> list[str]:
+    """Only kit ids are ever written or removed: an agent not named `kit-lane-*` is never ours."""
+    skipped = skipped_agents(lanes, doc)
     return sorted(a for a in (lanes.get("agents") or {})
-                  if isinstance(a, str) and a.startswith(PREFIX) and a not in held)
+                  if isinstance(a, str) and a.startswith(PREFIX) and a not in skipped)
 
 
 def workspace_root(lanes: Mapping[str, Any], config_root: Path) -> Path:
@@ -225,8 +192,7 @@ def agy_primary_drift(doc: Mapping[str, Any]) -> list[tuple[str, str]]:
 
     An agy lane is meant to run on the Antigravity subscription (`agy-cli-lane/*`). One that runs a Claude model
     on the API bills per token (the 2026-10-22 analysis found Opus 5.5 on three of them). The kit only REPORTS this:
-    it never repoints or removes anything by itself (`migrate_agy_drift` does, one confirmed agent at a time), and it
-    leaves the agy lane gates and held agents exactly as they are (ADR-0007 section 11: the gates stay unproven)."""
+    it never repoints or removes anything by itself (`migrate_agy_drift` does, one confirmed agent at a time)."""
     entries = _get(doc, "agents", "entries") or {}
     out: list[tuple[str, str]] = []
     if not isinstance(entries, Mapping):
@@ -244,17 +210,15 @@ def agy_primary_drift(doc: Mapping[str, Any]) -> list[tuple[str, str]]:
 def agy_primary_drift_findings(doc: Mapping[str, Any]) -> list[str]:
     return [f"{aid} is an agy lane but its primary is {ref} on the Anthropic API (billed per token, not the "
             "Antigravity subscription). Setup never changes it silently: it offers to point it back at "
-            "agy-cli-lane/* (needs the ADR-0007 Google terms acknowledgement) or to remove it, one agent at a time, "
-            "after your confirmation. The ADR-0007 gates stay as they are."
+            "agy-cli-lane/* or to remove it, one agent at a time, after your confirmation."
             for aid, ref in agy_primary_drift(doc)]
 
 
-def agy_drift_proposals(doc: Mapping[str, Any], *, google_acknowledged: bool,
-                        lanes: Mapping[str, Any] | None = None) -> list[dict[str, str]]:
+def agy_drift_proposals(doc: Mapping[str, Any], *, lanes: Mapping[str, Any] | None = None) -> list[dict[str, str]]:
     """One proposal per drifted agy lane (ADR-0015 D2b, operator answer 3). Pure: nothing is changed here.
 
-    `repoint` needs a valid Google acknowledgement AND the stub catalog to list the target model
-    (`models.providers.agy-cli-lane`); otherwise the only offer is `remove`. Each proposal says why. The target is the
+    `repoint` needs the stub catalog to list the target model (`models.providers.agy-cli-lane`); otherwise the only
+    offer is `remove`. Each proposal says why. The target is the
     lane's own model in the lanes table (`kit-lane-agy-gemini38flashhigh` -> `gemini-3.8-flash-high`); only a lane the
     table does not know falls back to the slug of the drifted Anthropic ref."""
     table = (lanes or {}).get("agents") or {}
@@ -267,19 +231,16 @@ def agy_drift_proposals(doc: Mapping[str, Any], *, google_acknowledged: bool,
         else:
             slug = ref.split("/", 1)[1] if ref.startswith("anthropic/") else ref
         target = f"{STUB_PROVIDER}/{slug}"
-        if google_acknowledged and slug in known:
+        if slug in known:
             out.append({"id": aid, "action": "repoint", "from": ref, "to": target,
-                        "why": "the Google terms are acknowledged and the Antigravity catalog lists this model"})
-        elif not google_acknowledged:
-            out.append({"id": aid, "action": "remove", "from": ref, "to": "",
-                        "why": "no valid Google acknowledgement, so it cannot be pointed at the subscription"})
+                        "why": "the Antigravity catalog lists this model"})
         else:
             out.append({"id": aid, "action": "remove", "from": ref, "to": "",
                         "why": f"the Antigravity catalog has no {slug}, so there is nothing to point it at"})
     return out
 
 
-def migrate_agy_drift(doc: Mapping[str, Any], *, google_acknowledged: bool, lanes: Mapping[str, Any] | None = None,
+def migrate_agy_drift(doc: Mapping[str, Any], *, lanes: Mapping[str, Any] | None = None,
                       apply_patch: Callable[..., "tuple[bool, str]"], classify: Callable[[dict], list[str]],
                       confirm: Callable[[str], bool], delete_agent: Callable[[str], "tuple[int, str]"],
                       change_records: Callable[[dict, dict, Any, str], list[dict]] | None = None,
@@ -292,7 +253,7 @@ def migrate_agy_drift(doc: Mapping[str, Any], *, google_acknowledged: bool, lane
     `agents.entries.<id>.model.primary`, classified first (a restart-class key is not applied). A removal asks again,
     takes the id out of every `allowAgents` list in the same patch and then runs `agents delete`. Only ids that start
     with `kit-lane-agy-` are ever touched."""
-    proposals = [p for p in agy_drift_proposals(doc, google_acknowledged=google_acknowledged, lanes=lanes)
+    proposals = [p for p in agy_drift_proposals(doc, lanes=lanes)
                  if p["id"].startswith(AGY_AGENT_PREFIX)]
     applied: list[dict[str, str]] = []
     for p in proposals:
@@ -337,12 +298,11 @@ def migrate_agy_drift(doc: Mapping[str, Any], *, google_acknowledged: bool, lane
     return applied
 
 
-def mcp_scope_findings(lanes: Mapping[str, Any], doc: Mapping[str, Any],
-                       acks: Mapping[str, Any] | None = None) -> list[str]:
+def mcp_scope_findings(lanes: Mapping[str, Any], doc: Mapping[str, Any]) -> list[str]:
     """One message per kit lane agent present in `doc` whose `tools.deny` lacks the scoping tokens."""
     entries = _get(doc, "agents", "entries") or {}
     out: list[str] = []
-    for aid in kit_agent_ids(lanes, acks=acks, doc=doc):
+    for aid in kit_agent_ids(lanes, doc=doc):
         entry = entries.get(aid) if isinstance(entries, Mapping) else None
         if not isinstance(entry, Mapping):
             continue
@@ -568,10 +528,8 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
         if o.lanes_applied and teardown_fn is not None:
             return teardown_fn(s, doc, **teardown_kw)
         return False
-    acks = s.profile.lane_acks
-    gates = lanes.get("gates") or {}
-    ids = kit_agent_ids(lanes, gates=gates, acks=acks, doc=doc)
-    for aid, reason in held_agents(lanes, gates=gates, acks=acks, doc=doc).items():
+    ids = kit_agent_ids(lanes, doc=doc)
+    for aid, reason in skipped_agents(lanes, doc).items():
         warn(f"lane agent {aid} not written: {reason}")
     try:
         root = workspace_root(lanes, config_root)
@@ -698,7 +656,7 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
                 if aid in ready and isinstance(ent.get("models"), Mapping):
                     pinned[aid] = sorted(set(pinned.get(aid, [])) | set(ent["models"]))
             applied["runtime_pins_added"] = pinned
-    if agy_home_wanted() and any((lanes["agents"].get(i) or {}).get("backend") == AGY_BACKEND for i in ready):
+    if any((lanes["agents"].get(i) or {}).get("backend") == AGY_BACKEND for i in ready):
         prior = applied.get("agy_home")
         rec = ensure_agy_home(agy_home_path())
         applied["agy_home"] = prior if isinstance(prior, Mapping) and prior.get("created") else rec
