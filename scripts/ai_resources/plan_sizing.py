@@ -5,12 +5,15 @@ verifier (skills/kit-orchestration "Task size"), so a plan that contradicts its 
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
 
 MODES = ("inline", "light", "full")
 REQUIRED = ("mode", "resume_test", "risk_items", "forecast", "route", "verification", "spawn_budget")
+_RULES = json.loads((Path(__file__).resolve().parents[2] / "skills" / "kit-orchestration" / "scorecard.json").read_text(encoding="utf-8"))
+REASONS = tuple(_RULES["delegation"]["reasons"])
 _HEADING = re.compile(r"^##[ \t]+Sizing[ \t]*$", re.M)
 _NEXT_HEADING = re.compile(r"^##[ \t]", re.M)
 _KEY = re.compile(r"^([a-z_]+):[ \t]*(.*)$")
@@ -38,6 +41,35 @@ def _first(value: str) -> str:
     return re.split(r"[\s(]", value.strip(), maxsplit=1)[0].lower() if value.strip() else ""
 
 
+def _delegation_problems(f: dict[str, str], route: str, budget: str) -> list[str]:
+    """Delegating needs a named reason (skills/kit-orchestration "Delegation"); writers also need a divisible plan."""
+    delegating = route in ("explorer", "writers") or (budget.split()[:1] and budget.split()[0].isdigit() and int(budget.split()[0]) > 0)
+    reason = _first(f.get("reason", ""))
+    reason = "" if reason == "none" else reason
+    out = []
+    if delegating and not reason:
+        out.append(f"Sizing: delegating needs a `reason` (one of {', '.join(REASONS)})")
+    elif reason and reason not in REASONS:
+        out.append(f"Sizing: reason `{f['reason']}` is not one of {', '.join(REASONS)}")
+    if route == "writers" and (_first(f.get("divisible", "")) != "yes" or (reason and reason != "parallel-writers-on-disjoint-units")):
+        out.append("Sizing: writers need `divisible: yes` (units that share no state and wait on none) and reason parallel-writers-on-disjoint-units")
+    return out
+
+
+def _resume_problems(f: dict[str, str]) -> list[str]:
+    """`resume_test` and the scorecard `resumability` score describe the same thing: they may not contradict each other."""
+    res = f.get("resumability", "").split()[:1]
+    test = _first(f.get("resume_test", ""))
+    if not res or not res[0].isdigit():
+        return []
+    score = int(res[0])
+    if test == "pass" and score >= _RULES["triggers"]["planner"]["resumability"]:
+        return [f"Sizing: resume_test pass contradicts resumability {score}"]
+    if test == "fail" and score == 0:
+        return ["Sizing: resume_test fail contradicts resumability 0"]
+    return []
+
+
 def problems(text: str) -> list[str]:
     """Why the Sizing block is missing or inconsistent; an empty list means it is usable."""
     f = sizing_fields(text)
@@ -62,6 +94,8 @@ def problems(text: str) -> list[str]:
             out.append("Sizing: inline work has route inline")
     if risks and verification and verification != "verifier":
         out.append("Sizing: a risk item needs `verification: verifier(item N)`")
+    out += _delegation_problems(f, route, budget)
+    out += _resume_problems(f)
     if mode == "light" and route == "writers":
         out.append("Sizing: writers need two or more independent units over about 100 lines each (full)")
     return out

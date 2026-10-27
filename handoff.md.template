@@ -28,8 +28,10 @@ git_integration: none   # merge_to_base | none | pending_human
 task_ids: []            # e.g. [T2]; ids in the tasks.md named by refs.spec
 spec_ids: []            # e.g. [S3, S4] or [RULE-AUTH-001]
 class: ""               # XS | S | M | L, from the planner's Sizing block
-scorecard: ""           # optional, written by `ai-resources scorecard ... --handoff`: MODE then six 0-3 scores, e.g. "STANDARD res1 blast1 risk0 unc2 ver1 spr0"; res=resumability blast=blast_radius risk=risk unc=uncertainty ver=verifiability spr=spread; escalations append "-> FULL (reason)"
-route: ""               # inline | explorer | writers (the reason goes in the notes)
+scorecard: ""           # optional, written by `ai-resources scorecard ... --handoff`: MODE then six 0-3 scores, e.g. "STANDARD res1 blast1 risk0 unc2 ver1 spr0"; res=resumability blast=blast_radius risk=risk unc=uncertainty ver=verifiability spr=spread; escalations append "-> FULL (reason)"; a delegation decision appends "(delegation: <reason|none>, layer <resumability|divisibility|reason>, divisible <yes|no|n/a>, cost <tokens|unavailable>)"
+route: ""               # inline | explorer | writers
+reason: ""              # required to delegate: explore-without-polluting-main-context | parallel-writers-on-disjoint-units | independent-verification
+divisible: ""           # yes | no: units share no state and none waits on another; in doubt, no (one agent)
 ---
 
 <!-- The front matter above is authoritative: steps read it and the orchestrator joins parallel

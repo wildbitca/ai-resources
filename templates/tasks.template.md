@@ -8,6 +8,8 @@
 - risk_items: none       # none | [3: changes handoff front-matter keys read by hooks]
 - forecast: lines~120 units=1 surfaces=[path/a.py, tests/test_a.py]
 - route: inline          # inline | explorer(reason) | writers(N, reason)
+- divisible: no          # yes only when the units share no state and wait on none; in doubt, no (one agent)
+- reason: none           # required to delegate: explore-without-polluting-main-context | parallel-writers-on-disjoint-units | independent-verification
 - verification: self     # self | verifier(item N)
 - spawn_budget: 0
 

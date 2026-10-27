@@ -126,6 +126,121 @@ def bump_for_risk(card: dict, risk_items: list) -> dict:
             "rationale": f"{card['rationale']}; bumped lite -> standard for a named risk item"}
 
 
+# Delegation: every step must pay its token cost with a named reason, and the default is not to delegate. Three layers,
+# cheapest first, and the first that decides stops the rest: (1) resumability, a LITE card works inline; (2) divisibility,
+# the work splits into units that share no state and wait on no one (disjoint files, no `depends_on`), and when it does
+# not, or when in doubt, one agent does it even if it is large; (3) a named reason, one of `delegation.reasons` in
+# scorecard.json. Independent verification is never skipped for security- or merge-touching work. Twin of the delegation
+# block in workflows/scripts/sizing-core.js.inc: change both (tests/test_delegation_parity.py compares them).
+REASON_VERIFY = "independent-verification"
+REASON_WRITERS = "parallel-writers-on-disjoint-units"
+
+
+def _unit_files(unit) -> list[str]:
+    files = unit.get("files") if isinstance(unit, dict) else None
+    return [f.rstrip("/") for f in files if isinstance(f, str) and f] if isinstance(files, list) else []
+
+
+def _overlap(a: str, b: str) -> bool:
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def _unit_name(unit) -> str:
+    return str(unit.get("id", "?"))
+
+
+def divisibility(units, rules: dict | None = None) -> dict:
+    """The cheap heuristic: {divisible, certain, evidence}. Doubtful (certain False) only when a unit lists no files."""
+    min_units = (rules or load_rules())["delegation"]["min_units"]
+    listed = [u for u in units if isinstance(u, dict)] if isinstance(units, list) else []
+    if len(listed) < min_units:
+        return {"divisible": False, "certain": True, "evidence": f"{len(listed)} unit(s), fewer than {min_units}"}
+    for i, a in enumerate(listed):
+        deps = a.get("depends_on") if isinstance(a.get("depends_on"), list) else []
+        waits = [str(d) for d in deps if any(_unit_name(u) == str(d) and u is not a for u in listed)]
+        if waits:
+            return {"divisible": False, "certain": True, "evidence": f"unit {_unit_name(a)} waits on {', '.join(waits)}"}
+        for b in listed[i + 1:]:
+            clash = next((x for x in _unit_files(a) if any(_overlap(x, y) for y in _unit_files(b))), None)
+            if clash:
+                return {"divisible": False, "certain": True, "evidence": f"units {_unit_name(a)} and {_unit_name(b)} share {clash}"}
+    empty = [_unit_name(u) for u in listed if not _unit_files(u)]
+    if empty:
+        return {"divisible": False, "certain": False, "evidence": f"no files listed for unit(s) {', '.join(empty)}"}
+    return {"divisible": True, "certain": True, "evidence": f"{len(listed)} units with disjoint files"}
+
+
+def divisibility_prompt(units) -> str:
+    """The only text a small-model divisibility call receives: the unit list and its files, never the plan."""
+    lines = []
+    for u in units if isinstance(units, list) else []:
+        after = u.get("depends_on") if isinstance(u, dict) and isinstance(u.get("depends_on"), list) and u.get("depends_on") else None
+        lines.append(f"- {_unit_name(u)}: {', '.join(_unit_files(u)) or '(no files listed)'}" + (f" (after {', '.join(map(str, after))})" if after else ""))
+    return ("Decide whether these units of work can be done by separate agents at the same time. They can only if they share no state "
+            "(no common file, schema, config or generated output) and none waits on another. When in doubt answer false. "
+            "Do not read or change any file. Answer with divisible (true or false) and one line of evidence.\n" + "\n".join(lines))
+
+
+def decide_delegation(mode: str, units=None, reason: str | None = None, security_or_merge: bool = False,
+                      model: dict | None = None) -> dict:
+    """The delegation decision for a `mode` (lite|standard|full); `model` is the answer of a divisibility call, if one was made.
+
+    Returns {layer, evidence, divisible, reason, delegate, parallel_writers, verifier, cost_tokens, cost_source}.
+    `cost_tokens` is what the divisibility call cost (None when the runtime did not report it, 0 when no call was made).
+    """
+    rules = load_rules()
+    reasons = rules["delegation"]["reasons"]
+    want = reason if isinstance(reason, str) else None
+    forced = bool(security_or_merge)
+
+    def out(layer, evidence, **o):
+        return {"layer": layer, "evidence": evidence, "divisible": None, "reason": None, "delegate": False,
+                "parallel_writers": False, "verifier": forced or mode != "lite", "cost_tokens": 0, "cost_source": "none", **o}
+
+    def verify_only(evidence, **o):
+        return out("reason", evidence, **{"reason": REASON_VERIFY, "delegate": True, "verifier": True, **o})
+
+    if mode == "lite":
+        if forced:
+            return verify_only("security- or merge-touching work is never verified by its own author")
+        return out("resumability", "LITE: a cold session could finish from the request and git diff")
+    h = divisibility(units, rules)
+    cost = {"cost_tokens": 0, "cost_source": "none"}
+    if not h["certain"]:
+        if isinstance(model, dict):
+            tokens = model.get("tokens")
+            tokens = tokens if isinstance(tokens, (int, float)) and not isinstance(tokens, bool) else None
+            said = model.get("evidence") or ("divisible" if model.get("divisible") is True else "not divisible")
+            h = {"divisible": model.get("divisible") is True, "evidence": f"{h['evidence']}; model: {said}"}
+            cost = {"cost_tokens": tokens, "cost_source": "unavailable" if tokens is None else "model"}
+        else:
+            h = {"divisible": False, "evidence": f"{h['evidence']}; in doubt, one agent"}
+    base = {"divisible": h["divisible"], **cost}
+    if want == REASON_WRITERS and h["divisible"]:
+        return out("reason", h["evidence"], **base, reason=want, delegate=True, parallel_writers=True)
+    if want == REASON_WRITERS:
+        text = f"not divisible ({h['evidence']}): one writer"
+        return verify_only(text, **base) if forced else out("divisibility", text, **base)
+    if want in reasons:
+        return out("reason", f"named reason {want}", **base, reason=want, delegate=True,
+                   verifier=forced or want == REASON_VERIFY or mode != "lite")
+    if forced:
+        return verify_only(f"no usable reason {want if want is not None else '(none)'}; verification is not optional here", **base)
+    return out("reason" if h["divisible"] else "divisibility", f"{'unknown reason ' + want if want else 'no named reason'}: one agent", **base)
+
+
+def with_delegation(card: dict, decision: dict) -> dict:
+    return {**card, "delegation": decision}
+
+
+def delegation_line(d: dict | None) -> str:
+    if not d:
+        return ""
+    div = "n/a" if d["divisible"] is None else "yes" if d["divisible"] else "no"
+    cost = "unavailable" if d["cost_tokens"] is None else d["cost_tokens"]
+    return f" (delegation: {d['reason'] if d['delegate'] else 'none'}, layer {d['layer']}, divisible {div}, cost {cost})"
+
+
 def compact(card: dict) -> str:
     """One-line form for the handoff: `STANDARD res1 blast1 risk0 unc2 ver1 spr0` (see ABBREV)."""
     parts = [card["mode"].upper()]
@@ -135,7 +250,7 @@ def compact(card: dict) -> str:
         parts.append(f"(scored {card['scored_mode'].upper()}, bumped: {card['bump_reason']})")
     if card.get("invalid"):
         parts.append("(invalid scores)")
-    return " ".join(parts)
+    return " ".join(parts) + delegation_line(card.get("delegation"))
 
 
 def diff_lines(base: str | None = None, cwd: str | None = None) -> int:
@@ -207,7 +322,8 @@ def render(card: dict) -> str:
     return (f"## Scorecard\n| dimension | 0-3 |\n|---|---|\n{rows}\n"
             f"- mode: {card['mode'].upper()} | handoff: {'yes' if card['handoff'] else 'no'}\n"
             + (f"- scored {card['scored_mode'].upper()}, effective {card['mode'].upper()}: {card['bump_reason']}\n" if card.get("bump_reason") else "")
-            + f"- roster: {roster}\n- rationale: {card['rationale']}\n")
+            + f"- roster: {roster}\n- rationale: {card['rationale']}\n"
+            + (f"- {delegation_line(card['delegation']).strip()[1:-1]}\n" if card.get("delegation") else ""))
 
 
 def _pop(args: list[str], flag: str) -> str | None:
@@ -222,6 +338,7 @@ def _pop(args: list[str], flag: str) -> str | None:
 
 
 USAGE = ("usage: scorecard '<json scores>' [--risk-item TEXT]... [--handoff PATH]\n"
+         "         [--units JSON] [--delegate-reason R] [--security-or-merge] [--model-answer JSON]\n"
          "       scorecard escalate <mode> <failures> <diff_lines> [--handoff PATH] [--reason TEXT]\n"
          "       scorecard gate <mode> [--failures N] [--diff-lines N | --base REF] [--handoff PATH]")
 
@@ -234,6 +351,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         handoff = _pop(args, "--handoff")
         reason = _pop(args, "--reason")
+        units = _pop(args, "--units")
+        delegate_reason = _pop(args, "--delegate-reason")
+        model_answer = _pop(args, "--model-answer")
+        security_or_merge = "--security-or-merge" in args
+        if security_or_merge:
+            args.remove("--security-or-merge")
         risk_items = []
         while "--risk-item" in args:
             risk_items.append(_pop(args, "--risk-item"))
@@ -255,9 +378,13 @@ def main(argv: list[str] | None = None) -> int:
             except json.JSONDecodeError as e:
                 card = full_card(f"scores are not JSON ({e})")
             card = bump_for_risk(card, risk_items)
+            if units is not None or delegate_reason or security_or_merge or model_answer:
+                card = with_delegation(card, decide_delegation(
+                    card["mode"], json.loads(units) if units else None, delegate_reason, security_or_merge,
+                    json.loads(model_answer) if model_answer else None))
             if card.get("invalid"):
                 print(f"scorecard: {card['rationale']}", file=sys.stderr)
-            if handoff and card["mode"] != "lite":
+            if handoff and (card["mode"] != "lite" or card.get("delegation")):
                 record(handoff, compact(card))
             print(render(card))
     except (ValueError, IndexError) as e:

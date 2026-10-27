@@ -23,7 +23,7 @@ LITE=`inline`, STANDARD=`light`, FULL=`full` (the plan's Sizing block is in `age
 
 ## Delegation triggers
 
-Default is no subagent. Spawn only for a named reason, and write the reason down (`route:` and `reason:` in the handoff notes):
+Default is no subagent; every step pays its token cost with a named reason. Layers, cheapest first, the first that decides stops the rest: (1) resumability (a LITE card works inline); (2) `divisible`: units share no state and wait on none (disjoint files, no dependency); if not, or in doubt, one agent even when large; (3) `reason`, required to delegate: `explore-without-polluting-main-context`, `parallel-writers-on-disjoint-units` or `independent-verification` (never skipped for security- or merge-touching work). Write `route:`, `divisible:`, `reason:` in the Sizing block; the card records the decision ([scorecard reference](references/scorecard.md)).
 
 | Trigger | Fires when | Action |
 |---|---|---|

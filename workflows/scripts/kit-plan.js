@@ -20,7 +20,7 @@ export const meta = {
 // and /kit-implement. Workflow scripts cannot import, so `ai-resources generate` pastes this file (with the rules from
 // skills/kit-orchestration/scorecard.json) between the sizing-core markers of both scripts; edit it here, not there.
 // lite/standard/full are inline/light/full in the scripts (SCORECARD.sizes); SCORECARD.size_flags lists every accepted spelling.
-const SCORECARD = {"dimensions":["resumability","blast_radius","risk","uncertainty","verifiability","spread"],"sizes":{"lite":"inline","standard":"light","full":"full"},"size_flags":{"inline":"inline","lite":"inline","light":"light","standard":"light","full":"full"},"abbrev":{"resumability":"res","blast_radius":"blast","risk":"risk","uncertainty":"unc","verifiability":"ver","spread":"spr"},"lite":{"max_total":3,"max_risk":0,"max_uncertainty":1,"max_resumability":1,"max_verifiability":2},"full":{"min_total":10,"min_risk":3,"min_extras":3},"base":{"lite":[],"standard":["implementer","tester","verifier"],"full":["planner","software-architect","implementer","tester","code-reviewer","security-auditor","verifier"]},"triggers":{"planner":{"resumability":2},"software-architect":{"uncertainty":2,"spread":2},"code-reviewer":{"blast_radius":2},"security-auditor":{"risk":2}},"escalation":{"lite":{"standard":{"failures":2,"diff_lines":150},"full":{"failures":4,"diff_lines":400}},"standard":{"full":{"failures":2,"diff_lines":400}}},"tiers":{"explore":"fast","tester":"fast","implementer":"balanced","doc-writer":"balanced","planner":"strong","software-architect":"strong","code-reviewer":"strong","security-auditor":"strong","verifier":"strong"}}
+const SCORECARD = {"dimensions":["resumability","blast_radius","risk","uncertainty","verifiability","spread"],"sizes":{"lite":"inline","standard":"light","full":"full"},"size_flags":{"inline":"inline","lite":"inline","light":"light","standard":"light","full":"full"},"abbrev":{"resumability":"res","blast_radius":"blast","risk":"risk","uncertainty":"unc","verifiability":"ver","spread":"spr"},"lite":{"max_total":3,"max_risk":0,"max_uncertainty":1,"max_resumability":1,"max_verifiability":2},"full":{"min_total":10,"min_risk":3,"min_extras":3},"delegation":{"reasons":["explore-without-polluting-main-context","parallel-writers-on-disjoint-units","independent-verification"],"layers":["resumability","divisibility","reason"],"min_units":2},"base":{"lite":[],"standard":["implementer","tester","verifier"],"full":["planner","software-architect","implementer","tester","code-reviewer","security-auditor","verifier"]},"triggers":{"planner":{"resumability":2},"software-architect":{"uncertainty":2,"spread":2},"code-reviewer":{"blast_radius":2},"security-auditor":{"risk":2}},"escalation":{"lite":{"standard":{"failures":2,"diff_lines":150},"full":{"failures":4,"diff_lines":400}},"standard":{"full":{"failures":2,"diff_lines":400}}},"tiers":{"explore":"fast","tester":"fast","implementer":"balanced","doc-writer":"balanced","planner":"strong","software-architect":"strong","code-reviewer":"strong","security-auditor":"strong","verifier":"strong"}}
 const MODE_TO_SIZE = SCORECARD.sizes
 const SIZES = Object.values(MODE_TO_SIZE)
 const modeOf = size => Object.keys(MODE_TO_SIZE).find(m => MODE_TO_SIZE[m] === size)
@@ -78,10 +78,71 @@ const bumpForRisk = (size, card, items) => {
   const reason = `risk items named: ${items.join('; ')}`
   return { size: 'light', card: retarget(card, 'light', reason, 'bump'), reason }
 }
+// Delegation: every step must pay its token cost with a named reason, and the default is not to delegate. Three layers,
+// cheapest first, and the first that decides stops the rest: (1) resumability, a LITE card works inline; (2) divisibility,
+// the work splits into units that share no state and wait on no one (disjoint files and no `depends_on`), and when it
+// does not, or when in doubt, one agent does it even if it is large; (3) a named reason, one of DELEGATION.reasons.
+// Independent verification is never skipped for security- or merge-touching work. `divisibility` is the cheap heuristic;
+// only when it is doubtful may the caller make one small-model call (`divisibilityPrompt`, strict `DIVISIBLE_SCHEMA`,
+// units and files only) and pass its answer to `decideDelegation` as `model` with the tokens it cost (null when the
+// runtime does not report them). The decision is recorded on the card by `withDelegation`.
+const DELEGATION = SCORECARD.delegation
+const REASON_VERIFY = 'independent-verification', REASON_WRITERS = 'parallel-writers-on-disjoint-units'
+const unitFiles = u => (Array.isArray(u && u.files) ? u.files : []).filter(f => typeof f === 'string' && f).map(f => f.replace(/\/+$/, ''))
+const pathsOverlap = (a, b) => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
+const unitName = u => String((u && u.id) ?? '?')
+const divisibility = units => {
+  const list = (Array.isArray(units) ? units : []).filter(u => u && typeof u === 'object')
+  if (list.length < DELEGATION.min_units) return { divisible: false, certain: true, evidence: `${list.length} unit(s), fewer than ${DELEGATION.min_units}` }
+  for (let i = 0; i < list.length; i++) {
+    const waits = (Array.isArray(list[i].depends_on) ? list[i].depends_on : []).filter(d => list.some(u => unitName(u) === String(d) && u !== list[i]))
+    if (waits.length) return { divisible: false, certain: true, evidence: `unit ${unitName(list[i])} waits on ${waits.join(', ')}` }
+    for (let j = i + 1; j < list.length; j++) {
+      const clash = unitFiles(list[i]).find(a => unitFiles(list[j]).some(b => pathsOverlap(a, b)))
+      if (clash) return { divisible: false, certain: true, evidence: `units ${unitName(list[i])} and ${unitName(list[j])} share ${clash}` }
+    }
+  }
+  const empty = list.filter(u => !unitFiles(u).length).map(unitName)
+  if (empty.length) return { divisible: false, certain: false, evidence: `no files listed for unit(s) ${empty.join(', ')}` }
+  return { divisible: true, certain: true, evidence: `${list.length} units with disjoint files` }
+}
+const DIVISIBLE_SCHEMA = {
+  type: 'object',
+  required: ['divisible', 'evidence'],
+  properties: { divisible: { type: 'boolean' }, evidence: { type: 'string' } },
+}
+// Only the unit list and its files go in, never the plan.
+const divisibilityPrompt = units => `Decide whether these units of work can be done by separate agents at the same time. They can only if they share no state (no common file, schema, config or generated output) and none waits on another. When in doubt answer false. Do not read or change any file. Answer with divisible (true or false) and one line of evidence.\n` +
+  (Array.isArray(units) ? units : []).map(u => `- ${unitName(u)}: ${unitFiles(u).join(', ') || '(no files listed)'}${Array.isArray(u && u.depends_on) && u.depends_on.length ? ` (after ${u.depends_on.join(', ')})` : ''}`).join('\n')
+// mode is lite|standard|full. opts: units, reason (the one asked for), security_or_merge, model ({divisible, evidence, tokens}).
+const decideDelegation = (mode, opts = {}) => {
+  const want = typeof opts.reason === 'string' ? opts.reason : null
+  const forced = !!opts.security_or_merge
+  const out = (layer, evidence, o = {}) => ({ layer, evidence, divisible: null, reason: null, delegate: false, parallel_writers: false, verifier: forced || mode !== 'lite', cost_tokens: 0, cost_source: 'none', ...o })
+  const verifyOnly = (evidence, o = {}) => out('reason', evidence, { reason: REASON_VERIFY, delegate: true, verifier: true, ...o })
+  if (mode === 'lite') return forced ? verifyOnly('security- or merge-touching work is never verified by its own author') : out('resumability', 'LITE: a cold session could finish from the request and git diff')
+  let h = divisibility(opts.units), cost = { cost_tokens: 0, cost_source: 'none' }
+  if (!h.certain) {
+    const m = opts.model
+    if (m && typeof m === 'object') {
+      const tokens = Number.isFinite(m.tokens) ? m.tokens : null
+      h = { divisible: m.divisible === true, evidence: `${h.evidence}; model: ${m.evidence || (m.divisible === true ? 'divisible' : 'not divisible')}` }
+      cost = { cost_tokens: tokens, cost_source: tokens === null ? 'unavailable' : 'model' }
+    } else h = { divisible: false, evidence: `${h.evidence}; in doubt, one agent` }
+  }
+  const base = { divisible: h.divisible, ...cost }
+  if (want === REASON_WRITERS && h.divisible) return out('reason', h.evidence, { ...base, reason: want, delegate: true, parallel_writers: true })
+  if (want === REASON_WRITERS) return forced ? verifyOnly(`not divisible (${h.evidence}): one writer`, base) : out('divisibility', `not divisible (${h.evidence}): one writer`, base)
+  if (DELEGATION.reasons.includes(want)) return out('reason', `named reason ${want}`, { ...base, reason: want, delegate: true, verifier: forced || want === REASON_VERIFY || mode !== 'lite' })
+  if (forced) return verifyOnly(`no usable reason ${want ?? '(none)'}; verification is not optional here`, base)
+  return out(h.divisible ? 'reason' : 'divisibility', `${want ? `unknown reason ${want}` : 'no named reason'}: one agent`, base)
+}
+const withDelegation = (card, d) => card ? { ...card, delegation: d } : card
+const delegationLine = d => !d ? '' : ` (delegation: ${d.delegate ? d.reason : 'none'}, layer ${d.layer}, divisible ${d.divisible === null ? 'n/a' : d.divisible ? 'yes' : 'no'}, cost ${d.cost_tokens === null ? 'unavailable' : d.cost_tokens})`
 // The one-line form for the handoff front matter key `scorecard` (same as ai_resources.scorecard.compact plus escalations).
 const cardLine = card => !card ? '' : [card.mode.toUpperCase(), ...Object.entries(card.scores || {}).map(([d, v]) => `${SCORECARD.abbrev[d]}${v}`),
   ...(card.bump_reason ? [`(scored ${card.scored_mode.toUpperCase()}, bumped: ${card.bump_reason})`] : []),
-  ...(card.escalations || []).map(e => `-> ${e.to.toUpperCase()} (${e.reason})`)].join(' ')
+  ...(card.escalations || []).map(e => `-> ${e.to.toUpperCase()} (${e.reason})`)].join(' ') + delegationLine(card.delegation)
 const SCORES_SCHEMA = {
   type: 'object',
   description: 'Six integer scores 0-3; higher means more ceremony: resumability (3 = a cold session cannot resume from request + git diff), blast_radius (files/modules), risk (auth, secrets, money, data migration, infra, public API), uncertainty (unknown cause or design choices), verifiability (3 = no existing tests cover it), spread (backend + infra + mobile).',
@@ -329,7 +390,7 @@ const plan = await agent(
     : `The judges returned no usable scores. Use draft 1 as the base and weigh the others yourself.\n`) +
   (grafts.length ? `Graft these ideas from the other drafts where they fit:\n- ${grafts.join('\n- ')}\n` : '') +
   `\nTask size: ${size}${scorecard ? ` (scorecard ${scorecard.mode.toUpperCase()}, total ${scorecard.total}: ${JSON.stringify(scorecard.scores)}; roster ${scorecard.roster.join(', ') || 'none'})` : ''}${sizing.risk_items.length ? `; risk items: ${sizing.risk_items.join('; ')}` : '; no risk items'}. ` +
-  `Start the plan with a "## Sizing" block (scores when the task was scored, mode, resume_test, risk_items, forecast lines and units, route, verification, spawn_budget).\n` +
+  `Start the plan with a "## Sizing" block (scores when the task was scored, mode, resume_test, risk_items, forecast lines and units, route, verification, spawn_budget). Delegation is not the default: a route other than inline needs a reason (one of ${DELEGATION.reasons.join(", ")}) and divisible: yes only when the units share no state and wait on none (list each unit with its files); when in doubt write divisible: no and one agent.\n` +
   `Write the final plan to .agent-output/planner/<slug>-plan.md (create the directory if needed) with:\n` +
   `- Goal and scope, plus what is explicitly out of scope\n` +
   `- Numbered steps, each with the files it touches and how to verify it: the tests for those files, never the full suite per step ` +

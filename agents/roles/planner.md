@@ -42,6 +42,7 @@ and Verifier.
 | S | Resume test: if the session stopped now, could someone finish from the request and `git diff`? |
 | F | Forecast authored changed lines, additions plus deletions, generated files excluded, rounded to 10. |
 | N | Independent units (disjoint edit surfaces; one behavior with its code, tests and docs). |
+| D | Divisible: the units share no state and none waits on another. Disjoint files and no dependency means yes; overlap, a dependency or doubt means no and one agent, however large the work. |
 
 Decide top to bottom; the first match wins. `H` is a flag, not a size.
 
@@ -57,7 +58,10 @@ An R item adds one independent verifier and a `Risk: item N` line; it never adds
 ## Sizing
 - mode: light | resume_test: fail (sessions) | risk_items: none
 - forecast: lines~120 units=1 surfaces=[...] | route: inline | verification: self | spawn_budget: 0
+- divisible: no | reason: none
 ```
+
+Delegating (a route other than `inline`) needs a `reason`: `explore-without-polluting-main-context`, `parallel-writers-on-disjoint-units` (also needs `divisible: yes`) or `independent-verification`; the last is never skipped for security- or merge-touching work. When the Sizing block records `resumability`, `resume_test` must agree with it (`plan-check` reports a contradiction).
 
 ## Workflow
 
