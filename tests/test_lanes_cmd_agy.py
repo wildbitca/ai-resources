@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from ai_resources.scoring import routing
+
 import lane_symmetry as sym
 from ai_resources import agy_lane_gates as gates_mod, lanes_cmd, roles_policy as rp
 from ai_resources.setup import lanes_render, state
@@ -321,7 +323,7 @@ QUOTA = "Error: quota exhausted for model, retry after 5h"
 
 @pytest.fixture
 def patterns(monkeypatch):
-    monkeypatch.setattr(rp, "QUOTA_PATTERNS", {"claude-subscription": (r"quota exhausted",),
+    monkeypatch.setattr(routing, "QUOTA_PATTERNS", {"claude-subscription": (r"quota exhausted",),
                                                "agy-claude-gpt": (r"quota exhausted",), "agy-gemini": ()})
 
 
@@ -402,9 +404,10 @@ def test_a_breaker_after_the_expect_head_is_ignored_and_without_it_is_honoured(e
     assert rc == 1                                              # without --expect-head every entry is honoured
 
 
-def test_the_shipped_pattern_table_is_empty_until_a_probe_run_records_a_text():
-    assert all(not v for v in rp.QUOTA_PATTERNS.values())
-    assert rp.classify_quota(QUOTA, "agy-claude-gpt") is None
+def test_the_shipped_pattern_table_recognises_quota_text_in_every_pool():
+    assert all(v for v in routing.QUOTA_PATTERNS.values())
+    assert routing.classify_quota("You hit your limit; retry after 5h", "agy-claude-gpt")
+    assert routing.classify_quota("all good", "agy-claude-gpt") is None
 
 
 # --- AC3.9: every kit command differs by label only in the allowlisted fields ----------------------------------

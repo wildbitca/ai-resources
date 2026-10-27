@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from . import roles_policy as rp
+from .scoring import routing
 
 Runner = Callable[[list, "str | None"], "tuple[int, str, str]"]
 
@@ -1272,7 +1273,7 @@ def cmd_verify(ctx: Ctx, a: argparse.Namespace) -> tuple[int, dict]:
     pool = str(((prep["data"].get("lane") or {}).get("pool")) or "")
     if spawn_raw is not None and pool:
         # the only input is what the orchestrator witnessed; the child's report and .agent-output are never read
-        pattern = rp.classify_quota(spawn_raw.decode("utf-8", errors="replace"), pool)
+        pattern = routing.classify_quota(spawn_raw.decode("utf-8", errors="replace"), pool)
         if pattern:
             b = ledger.append("breaker", step, role=role, iteration=iteration, attempt=a.attempt,
                               data={"pool": pool, "step": step, "attempt": a.attempt, "reason": "quota-exhausted",

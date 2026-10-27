@@ -6,7 +6,7 @@ import sys
 
 from . import __version__
 from .generate import cmd_generate
-from . import credits, key_check, daemon, doctor, executors_cmd, audit, models_cmd, openclaw_host, shared_mcp, verify, lanes_cmd, run_ledger
+from . import credits, key_check, daemon, doctor, executors_cmd, audit, models_cmd, openclaw_host, shared_mcp, verify, lanes_cmd, run_ledger, route_cmd
 from .setup import flow, wizard
 from .orchestrator import cli as orchestrator_cli
 
@@ -262,6 +262,7 @@ def build_parser() -> argparse.ArgumentParser:
     shared_mcp.add_subparser(sub)
     orchestrator_cli.add_subparser(sub)
     run_ledger.add_subparser(sub)
+    route_cmd.add_subparser(sub)
 
     return ap
 

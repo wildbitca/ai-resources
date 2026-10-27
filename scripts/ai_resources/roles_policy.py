@@ -88,38 +88,6 @@ def gemini_tripwires(benign_writes: Iterable[str] | None = None) -> tuple[str, .
                  if c.rstrip("/") not in written and not c.endswith(GEMINI_CREDENTIAL_NAMES))
 
 
-# Quota-exhaustion error texts as the ORCHESTRATOR witnesses them (the `sessions_spawn` result or the
-# completion the gateway returned), per pool: regex strings, recorded verbatim from a probe run. Empty until a
-# V6/V7 run records one: a guessed pattern would let a malformed text trip or miss the breaker. A child's own
-# report is never an input.
-_COMMON_QUOTA_PATTERNS: tuple[str, ...] = (
-    r"hit your limit",
-    r"usage limit",
-    r"rate[_ -]?limit",
-    r"quota[_ -]?exceeded",
-    r"resource[_ -]?exhausted",
-    r"too many requests",
-    r"\b429\b",
-    r"overloaded_error",
-    r"credit balance is too low",
-    r"out of .*credits",
-)
-
-QUOTA_PATTERNS: dict[str, tuple[str, ...]] = {
-    "claude-subscription": (),
-    "agy-claude-gpt": (),
-    "agy-gemini": (),
-}
-
-
-def classify_quota(text: str, pool: str, patterns: dict[str, tuple[str, ...]] | None = None) -> str | None:
-    """The matching pattern when `text` is a recorded quota-exhaustion error of `pool`, else None."""
-    for pat in (QUOTA_PATTERNS if patterns is None else patterns).get(pool, ()):
-        if re.search(pat, text, re.I | re.M):
-            return pat
-    return None
-
-
 # Exact tolerance list: changes here never fail a contract.
 TOLERANCE_LIST = ("IDENTITY.md", "SOUL.md", "USER.md", ".pytest_cache/", "__pycache__/")
 # OpenClaw bootstrap files: tolerated only while untracked (a commit adding one fails verify, both lanes).
