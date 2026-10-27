@@ -83,10 +83,10 @@ def test_a_read_role_that_writes_is_logged_too(box, capsys, monkeypatch):
     assert rc == 0 and doc["scope_violations"] == ["oops.txt"]
 
 
-def test_a_write_scope_held_by_another_live_run_is_refused(box, capsys):
-    scope_guard.claim(str(box.repo), "agy-1", ["src"], lambda r: True)           # pid 1 is alive
-    rc, doc, _ = run(capsys, box, "--role", "tester", "--prompt", "go", "--scope", "src/deep")
-    assert rc == 2 and "write scope held by agy-1: src" in doc["refused"]
+def test_two_ad_hoc_run_ids_on_one_scope_are_refused_while_the_first_holder_lives(box, capsys):
+    assert scope_guard.claim(str(box.repo), "team-a", ["src"], agy_run._live, holder=True) == []   # the first team's claim
+    rc, doc, _ = run(capsys, box, "--role", "tester", "--prompt", "go", "--scope", "src/deep", "--run", "team-b")
+    assert rc == 2 and "write scope held by team-a: src" in doc["refused"]
 
 
 def test_quota_exits_75_with_the_cause_and_the_next_cell_and_records_it(box, capsys, monkeypatch):

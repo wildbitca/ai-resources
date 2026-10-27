@@ -82,15 +82,7 @@ def _changed(cwd: str) -> set[str] | None:
 
 
 def _live(run_id: str) -> bool:
-    """Whether a claim holder still works: an engine run that is active, or an `agy-<pid>` one-shot whose process lives."""
-    if run_id.startswith("agy-") and run_id[4:].isdigit():
-        try:
-            os.kill(int(run_id[4:]), 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except OSError:                   # EPERM: the process exists
-            return True
+    """Whether the run is an active engine run (a claim's holder process is judged by `scope_guard` itself)."""
     try:
         return RunStore().load(run_id).get("status") in limits.ACTIVE
     except (StateError, OSError):
@@ -154,7 +146,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     scopes = [] if not role.writes else (args.scope or [scope_guard.ROOT])
     took = False
     if scopes and not scope_guard.held(cwd, run_id):
-        conflicts = scope_guard.claim(cwd, run_id, scopes, _live)
+        conflicts = scope_guard.claim(cwd, run_id, scopes, _live, holder=True)
         if conflicts:
             return 2, {**doc, "refused": f"write scope held by {'; '.join(conflicts)}"}
         took = True
