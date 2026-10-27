@@ -274,12 +274,6 @@ def _combine(actions: list[tuple[str, str, bool, str, str]]) -> tuple[str, str, 
     return SKIP, "", False
 
 
-def claude_google_openrouter_verified() -> bool:
-    """Whether Claude Code with Google models through OpenRouter is a verified cell (ADR-0010 S6): the Review opt-in
-    for Gemini on the OpenRouter Balanced profile is asked only while it is not."""
-    return cell("claude", "google", MULTI_OPENROUTER).verified
-
-
 def plan(selection, mode: str, backend: str | None, detected: Iterable[str],
          engine: str | None = None, allow_unverified: bool = False) -> list[CockpitAction]:
     """One CockpitAction per detected cockpit (matrix order), then report-only rows."""

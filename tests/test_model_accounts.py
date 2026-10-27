@@ -36,7 +36,7 @@ def test_sources_are_labelled_per_store():
 def test_the_sentinel_never_reaches_any_rendering():
     got = ma.detect(_deps({"OPENROUTER_API_KEY": SENTINEL}))
     assert SENTINEL in (FIX / "models-status.json").read_text()      # the fixture does carry it
-    blob = ma.to_json(got) + ma.render_text(got) + "\n".join(ma.disagreements(got))
+    blob = "\n".join(ma.disagreements(got)) + str({p: a.as_dict() for p, a in got.items()})
     assert SENTINEL not in blob
 
 

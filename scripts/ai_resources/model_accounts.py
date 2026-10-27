@@ -162,18 +162,6 @@ def disagreements(accounts: dict[str, Account]) -> list[str]:
     return lines
 
 
-def render_text(accounts: dict[str, Account]) -> str:
-    rows = []
-    for pid, acc in accounts.items():
-        state = "credentialed (" + ", ".join(acc.sources) + ")" if acc.credentialed else "no credentials"
-        rows.append(f"{pid}: {state}")
-    return "\n".join(rows)
-
-
-def to_json(accounts: dict[str, Account]) -> str:
-    return json.dumps({p: a.as_dict() for p, a in accounts.items()}, indent=2, sort_keys=True)
-
-
 def default_deps(runner=None) -> Deps:
     """The real wiring: the kit's env file, `openclaw models status --json`, a 1.5 s Ollama probe."""
     from . import openclaw_host

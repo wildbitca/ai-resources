@@ -29,7 +29,7 @@ from . import (
 from . import cockpit_auth, compat, deferred, live_auth, model_selection, profile_names, team_view
 from .cockpits import ALL as ALL_COCKPITS
 from .cockpits import _shared
-from .. import __version__, model_pins, repo_root, roles_policy, selection as selection_mod
+from .. import __version__, model_pins, repo_root, selection as selection_mod
 from ..scoring import routing as scoring_routing
 
 
@@ -2096,12 +2096,6 @@ def _step_audio(s: state.SetupState) -> int:
 def _members_of(s: state.SetupState) -> list[str]:
     """The tools ticked on the first screen (the stash apply reads)."""
     return list((s.profile.customizations or {}).get("__targets__", {}).get("selected") or [])
-
-
-def _untick(s: state.SetupState, tool: str) -> None:
-    sel = (s.profile.customizations or {}).get("__targets__")
-    if isinstance(sel, dict) and tool in (sel.get("selected") or []):
-        sel["selected"] = [t for t in sel["selected"] if t != tool]
 
 
 def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool = False) -> int:

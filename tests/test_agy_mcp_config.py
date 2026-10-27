@@ -1,9 +1,8 @@
 """ADR-0014 D3.4 / AC-16: the agy MCP file holds `engram` by default, opt-in servers only on a pick, merge-preserving,
-fill-only, backed up, recorded, removed by teardown only where it still equals what the kit wrote; Flash-low only with a
-valid Google acknowledgement and proven gates."""
+fill-only, backed up, recorded, removed by teardown only where it still equals what the kit wrote; Flash-low only when agy is active
+(installed and signed in)."""
 from __future__ import annotations
 
-import hashlib
 import json
 import types
 from datetime import datetime, timezone

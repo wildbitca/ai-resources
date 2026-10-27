@@ -29,11 +29,6 @@ def is_agy_ref(ref: Any) -> bool:
     return isinstance(ref, str) and ref.startswith(f"{STUB_PROVIDER}/")
 
 
-def stub_models(doc: Mapping[str, Any]) -> set[str]:
-    return {str(m.get("id")) for m in (_get(doc, "models", "providers", STUB_PROVIDER, "models") or [])
-            if isinstance(m, Mapping) and m.get("id")}
-
-
 def stub_patch_for_slugs(slugs: list[str], doc: Mapping[str, Any]) -> dict[str, Any] | None:
     """The `models.providers.agy-cli-lane` stub for these slugs (fill-only), or None when nothing is missing.
 

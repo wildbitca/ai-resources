@@ -275,12 +275,12 @@ class _StubbedOpenClawCli:
 @pytest.fixture
 def real_setup(sim, monkeypatch):
     """`sim` (test_openclaw_host_wizard) is the scratch OpenClaw host under tmp_path; this adds the Claude Code, agy and
-    state paths inside the same scratch tree, the host detection and a saved state with a valid Google acknowledgement
+    state paths inside the same scratch tree, the host detection and a saved state
     (the run asks for `--cockpits claude,openclaw,gemini`: `gemini` is the registry id of the module that writes the agy
     files, and `--cockpits agy` is refused as an unknown cockpit, see the handoff)."""
     import types
 
-    from ai_resources.setup import detection, lanes_render, tools, ui, wizard
+    from ai_resources.setup import detection, tools, ui, wizard
 
     root = sim.tmp
     home = sim.home

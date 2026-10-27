@@ -8,7 +8,7 @@ import pytest
 from ai_resources.setup.cockpits import openclaw_orchestration as O
 from ai_resources.setup.cockpits import openclaw_roles as R
 
-from orchestration_host import (CHANNEL_AGENTS, LANES, OLD_LIMITS, ORCHESTRATORS, Host, host_doc, kit_agents, run_setup)
+from orchestration_host import (LANES, OLD_LIMITS, ORCHESTRATORS, Host, host_doc, kit_agents, run_setup)
 
 
 @pytest.fixture

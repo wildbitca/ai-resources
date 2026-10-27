@@ -176,35 +176,6 @@ def authenticated_providers(runner: Runner) -> frozenset[str]:
     return frozenset(found)
 
 
-def profile_providers(profile: Mapping[str, Any] | None) -> list[str]:
-    """Providers a kit profile routes roles to (the prefix of each `by_role` model), in order of first use."""
-    out: list[str] = []
-    for spec in ((profile or {}).get("by_role") or {}).values():
-        model = spec.get("model") if isinstance(spec, dict) else spec
-        if not isinstance(model, str) or not model:
-            continue
-        # A single-model profile names Claude aliases and bare ids (`sonnet`, `claude-opus-5-5`); a gateway one `p/m`.
-        if "/" in model:
-            prov = model.split("/", 1)[0]
-        elif model in ("haiku", "sonnet", "opus", "fable", "inherit") or model.startswith("claude"):
-            prov = "anthropic"
-        elif model.startswith("gpt"):
-            prov = "openai"
-        elif model.startswith("gemini"):
-            prov = "google"
-        else:
-            continue
-        if prov and prov not in out:
-            out.append(prov)
-    return out
-
-
-def preselected(discovery: Discovery, authenticated: Iterable[str], profile: Mapping[str, Any] | None = None) -> list[str]:
-    """The providers ticked when the multiselect opens: the authenticated ones, then those the profile uses."""
-    wanted = set(authenticated) | set(profile_providers(profile))
-    return [p for p in discovery.providers if p in wanted]
-
-
 # --- routing restricted to the providers OpenClaw reports usable (ADR-0016 D1; ADR-0015 S7) ----------------------------------------------------------
 
 # The first segment of an OpenClaw model ref -> the provider it bills. A runtime prefix is the CLI backend of its provider.

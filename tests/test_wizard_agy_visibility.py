@@ -10,9 +10,9 @@ import argparse
 
 import pytest
 
-from ai_resources import roles_policy, model_pins, selection as selection_mod
+from ai_resources import model_pins, selection as selection_mod
 from ai_resources.setup import detection, model_selection as ms, profiles, state, ui, wizard
-from test_wizard_presets import ASK, CONFIRM, KEYS, args as preset_args, make_state
+from test_wizard_presets import ASK, KEYS, args as preset_args, make_state
 from test_wizard_model_selection import args as sel_args, host, _state  # noqa: F401 - host is a fixture
 from wizard_fakes import Script, one
 

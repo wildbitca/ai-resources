@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from ai_resources.setup import profiles
 from ai_resources.setup.cockpits import _openclaw_providers as prov
 
 FIX = Path(__file__).parent / "fixtures" / "openclaw"
@@ -45,14 +44,8 @@ def test_twelve_providers_become_chat_providers_only():
     assert d.models["anthropic"][0] == "claude-sonnet-5-5"
 
 
-def test_authenticated_providers_are_preselected_with_the_profile_ones():
-    d = prov.discover_providers(runner())
-    authed = prov.authenticated_providers(runner())
-    assert authed == frozenset({"anthropic", "openai"})
-    balanced = profiles.load_profile("balanced", "single-model")
-    assert prov.profile_providers(balanced) == ["anthropic"]
-    assert prov.preselected(d, authed, balanced) == ["anthropic", "openai"]
-    assert prov.preselected(d, set(), None) == []
+def test_authenticated_providers_come_from_openclaw():
+    assert prov.authenticated_providers(runner()) == frozenset({"anthropic", "openai"})
 
 
 @pytest.mark.parametrize("out", [(1, "openclaw not found on PATH"), (127, ""), (0, "not json at all"), (0, "{"),

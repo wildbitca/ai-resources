@@ -1,1 +1,1 @@
-"""Scored team composition: the scores database, the headroom model and the composition engine (ADR-0006)."""
+"""The scores database and the OpenClaw-side scoring helpers (ADR-0006, superseded in part by ADR-0019: no composition engine)."""

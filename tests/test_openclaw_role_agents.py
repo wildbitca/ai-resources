@@ -9,7 +9,6 @@ import pytest
 
 from ai_resources import repo_root
 from ai_resources.setup import effort, profiles, state
-from ai_resources.setup.cockpits import _openclaw_providers as P
 from ai_resources.setup.cockpits import openclaw_roles as R
 
 EFF = {"explore": "low", "planner": "high", "implementer": "medium", "verifier": "high", "tester": "low"}

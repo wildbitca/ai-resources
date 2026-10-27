@@ -4,7 +4,6 @@ Offline: no network, no agy, no real home. The gates stay closed except where a 
 a monkeypatched `EVIDENCE`; no shipped constant changes."""
 from __future__ import annotations
 
-import dataclasses
 import pathlib
 
 import pytest
@@ -13,7 +12,7 @@ from ai_resources import model_accounts as ma
 from ai_resources import roles_policy
 from ai_resources.scoring import routing
 from ai_resources.setup import compat, lanes_render
-from ai_resources.setup import profiles, state, team_view, ui, wizard
+from ai_resources.setup import profiles, state, team_view, wizard
 
 IDS = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
 GEMINI_ROLES = {"explore", "code-reviewer", "doc-writer", "tester", "package-upgrade", "generalPurpose"}
