@@ -1,5 +1,6 @@
 // ADR-0017 safe subset, as applied to the live host with `openclaw config patch` (hot reload, no restart).
 // Reproducible from the kit: openclaw_cost_migrations.balanced_credit_proposals (setup offers each path, one confirm each).
+// Superseded by ADR-0019: the kit-lane-agy-* entry below was retired with the kit-lane agents (fallbacks now live on kit-role-* from the matrix).
 // Objects merge, arrays replace whole (so the lane fallback list is written in full). Heartbeat is NOT moved.
 {
   agents: {

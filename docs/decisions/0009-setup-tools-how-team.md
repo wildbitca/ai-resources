@@ -5,6 +5,8 @@
 **Decision makers**: operator, planner, implementer. Operator decisions (answered by button and text on 2026-10-17) are cited inline as OD-1 to OD-4.
 **Amends**: [ADR-0008](0008-setup-wizard-tui-on-rich-questionary.md) decision 6 (display only), its "one preset question" addendum ("Use this?") and its "where Gemini shows" addendum (the "enable it in step 6c" wording); [ADR-0007](0007-subscription-lanes.md) section 11 (where the Google terms check can open). ADR-0008 decisions 4 and 12 (installs stay on the first screen, Back refuses to cross them) are unchanged.
 
+> **Superseded by ADR-0019:** decision 8 (agy opt-in, `--lanes-antigravity`, Google terms check) and the team tables; agy is ticked like any installed tool and the Review step is one `Role | Primary | Fallback` table from the matrix.
+
 ## Context
 
 The operator asked (translated): "Claude Code should be treated the same as the others; they are ALL tools; everything depends on what to use, when and in which mode. Simplify the setup so everyone understands it."

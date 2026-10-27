@@ -15,6 +15,8 @@ choice) and [ADR-0009](0009-setup-tools-how-team.md) §2 and §8. The amendment 
 **Related**: [ADR-0011](0011-setup-writes-scoped-tools-deny.md) (the image-generation question in phase 2.1 and its scoped
 `tools.deny` write; Proposed, reviews pending).
 
+> **Superseded by ADR-0019:** the scored-composition step and `--compose` flows, the Gemini split by role (N2) in favour of the matrix, and every agy-lane reference. Phases, channels and presets otherwise stand.
+
 ## Context
 
 `ai-resources setup` asks its questions in the order of its internal steps, the starting-team presets have different

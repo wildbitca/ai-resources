@@ -5,6 +5,8 @@
 **Amended by**: [ADR-0007](0007-subscription-lanes.md) (§4 and §8 scoped to composition; "Output limits" and "Rollback" unaffected for compose; the revisit trigger "the Antigravity FAQ changes" is not met)
 **Decision makers**: planner, implementer, operator (decisions of 2026-10-13 recorded in the plan `.agent-output/planner/scored-team-composition-plan.md`, section 11)
 
+> **Superseded by ADR-0019:** the composition engine (`compose`, `flow`, `explain`, `detect`, `gate`, `headroom`), the score-driven team and the flags `--compose`, `--headroom*`, `--why-json`, `--allow-fable` are removed; roles are fixed in the routing matrix (`routing.ROLES`). The scores database stays as evidence (`scores/`).
+
 ## Context
 
 Setup picks a profile (`balanced-claude-55`, `measured-best`, ...) as a fixed role-to-model table. The operator wants a team proposed from the providers and cockpits that were enabled, in three modes, with a "why" table, and with subscription quota or spend balanced across pools without losing performance.

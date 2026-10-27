@@ -6,6 +6,8 @@ Companion patch: [0017-balanced-credit-policy.patch.json5](0017-balanced-credit-
 **Superseded in routing by [ADR-0018](0018-routing-matrix-and-pool-balancing.md)** (2026-10-27): the order of spend and the verified facts stay; the "SAFE subset only" scope, "agent main and all channel agents stay on Anthropic" as the only chat rule, and the workload map are replaced by the routing matrix and the class-to-pool balancing table. The Gemini key finding there ("env key differs") is now resolved: the env key is the dead one (401), `google:default` is the funded one.
 **Constraint, not amended**: [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md) (no live gateway restart).
 
+> **Superseded by ADR-0019:** the `kit-lane-agy-*` fallback entry in the companion patch and the 'Workload map: Gemini candidates' (candidates are not a concept any more); the order of spend and the verified facts stand.
+
 ## Goal
 
 Spend each paid resource in the right order so no prepaid credit is wasted and out-of-pocket

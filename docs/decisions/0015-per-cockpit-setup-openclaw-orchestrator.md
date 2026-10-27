@@ -11,6 +11,8 @@
 (gates G0-G7, `ACK_TEXT` and `agy_gate_evidence.json` are untouched), [ADR-0013](0013-token-cost-lean-defaults.md),
 [ADR-0014](0014-token-cost-round-2.md).
 
+> **Superseded by ADR-0019:** D2b (`kit-lane-agy-*` agents, Google acknowledgement and drift migration) and the lane parts of D3; OpenClaw agents are per role (`kit-role-*`, model = matrix primary, `model.fallbacks`), orchestrators may spawn them via `allowAgents`.
+
 ## Context
 
 Setup asked one global question ("as a team / each on its own / advanced gateway") and derived every cockpit's auth from it.

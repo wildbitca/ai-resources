@@ -12,6 +12,8 @@ pre-ticked / a recommended run never signs the Google acknowledgement" parts of 
 **Constraint, not amended**: [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md). Nothing here restarts the gateway;
 the Gemini key drift below is reported, and fixed by an operator-run change that takes effect at the next planned restart.
 
+> **Superseded by ADR-0019:** the 'Operator waiver' section, the Google/Anthropic acknowledgements, `--lanes-antigravity`, 'Writers stay on Claude Code', the secondary-per-cell matrix (now one primary + one fallback chain, dynamic checkers), static role-count weights and class pools as the only balancing (primaries are assigned by role class, spill at 0.85 stays).
+
 ## Context
 
 The operator pays for four resources and wants all four used, in proportion, without losing performance:
@@ -155,10 +157,12 @@ now): put the `google:default` key into `gateway.systemd.env` as `GEMINI_API_KEY
 
 ## Unverified
 
-- **Anthropic API direct call.** No `ANTHROPIC_API_KEY` is in the environment and the profile key lives in OpenClaw's auth store, which
-  this stream does not read. The call above went through OpenClaw's provider transport with the profile key; the status (200) and
-  latency come from its transport log, and token counts were not captured.
-- **Gemini tool-calling reliability through OpenClaw.** Not run. Until it is, the heartbeat stays on Haiku and the finops cron stays
-  on the default model (ADR-0017: 189 s and ~10x output tokens on Gemini).
-- **API credit spend.** No spend feed exists; both credit rows are `unknown` and the 80% alert cannot fire from doctor.
+- **Anthropic API direct call.** Proven by the 3.2.0 acceptance route cases (2026-10-27): `main`, `channel-agents` and `heartbeat`
+  call `anthropic/claude-sonnet-5-5` and `claude-haiku-5-5` through `openclaw infer model run`, and the wire `api=anthropic-messages`
+  line of the transport log (not a CLI runtime) decides the pool. The call still uses the profile key in OpenClaw's auth store, not an env key.
+- **Gemini tool-calling reliability through OpenClaw.** Still open. The acceptance case `gemini.tool-call` could not run on this host
+  (`Secret store entry "OPENROUTER_API_KEY" was not found`), so it is SKIP and writes no verdict; the heartbeat stays on Haiku and the finops
+  cron on the default model (ADR-0017: 189 s and ~10x output tokens on Gemini) until it passes.
+- **API credit spend.** A spend feed exists now: the `credits` ledger (`ai-resources credits collect`) and the `pool_usage` credits entry
+  feed doctor, so the 80% alert can fire once a pool has an opening credit and recorded spend. Rows stay `unknown` until then.
 - **Whether the Google Cloud credit applies to the Gemini API** (ADR-0017 unknown, unchanged), and whether unused Anthropic credit expires.

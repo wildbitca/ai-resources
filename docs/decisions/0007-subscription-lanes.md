@@ -5,6 +5,8 @@
 **Decision makers**: planner, implementer, operator (decisions of 2026-10-14 recorded in `.agent-output/planner/subscription-lanes-plan.md`, section 0)
 **Amends**: [ADR-0001](0001-model-pins-and-auto-update.md) (second validated writer), [ADR-0002](0002-provider-agnostic-model-selection.md) §8 (second validated writer; rendered `lanes.yaml`), [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md) (watch record, teardown, classify-before-add, drained path), [ADR-0005](0005-cross-provider-role-dispatch.md) §1, §2, §3, §4 and the writers matrix, §6, §7 and "Security limits", [ADR-0006](0006-scored-team-composition.md) §4, §8, "Output limits", "Rollback" (scoped to composition; the revisit trigger at "What made this Accepted" is not met)
 
+> **Superseded by ADR-0019:** the separate lanes pass, worktree landing and the lanes ledger, `lane_member: second`, the forbidden list, gates G0-G7, the Google/Anthropic acknowledgements, the operator waiver and the `kit-lane-*` agents are removed. agy has the same privileges as claude; checker independence is dynamic from the dispatch ledger. Sections 1-6, 9 and 11 are history.
+
 ## Context
 
 The operator uses subscriptions only (Claude Code, Antigravity), with no paid APIs. Three facts shape the design, each verified in code:

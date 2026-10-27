@@ -12,6 +12,8 @@ gateway, never calls it, and never runs a restart-required change. Tests never r
 **Does not amend**: [ADR-0001](0001-model-pins-and-auto-update.md) (fill-only), gates G0-G7, the gate record file and the ack
 hash algorithm of [ADR-0007](0007-subscription-lanes.md) section 11 and [ADR-0010](0010-setup-five-phases-channels-team.md).
 
+> **Superseded by ADR-0019:** D3 (held agy lanes, `ACK_TEXT`, gate record, `lanes gates record`); agy is active iff the matrix assigns it and `detection.agy_active()`. D1, D2 and D4-D7 stand.
+
 ## Context
 
 Round 3 made setup a collector: it asked for a sign-in method per cockpit, stored the answer, and used the stored answer
