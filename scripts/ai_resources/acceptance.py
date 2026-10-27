@@ -452,7 +452,8 @@ def _spawn_allow(env: Env) -> Result:
     if not ids:
         return skip("no kit-role agents in the OpenClaw config")
     s = env.setup_state()
-    orchs = orch.orchestrator_ids(doc, (s.profile.lanes or {}).get("orchestrators") or [])
+    orchs = orch.orchestrator_ids(doc, (s.profile.lanes or {}).get("orchestrators") or [],
+                                  (s.profile.lanes or {}).get("orchestrators_exclude") or [])
     short = {}
     for o in orchs:
         allow = orch._get(doc, "agents", "entries", o, "subagents", "allowAgents") or []

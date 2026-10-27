@@ -118,6 +118,8 @@ def test_the_orchestrators_are_main_and_every_channel_agent_but_no_kit_agent(age
     doc, _ = host_doc(agents)
     assert O.orchestrator_ids(doc) == sorted(ORCHESTRATORS)
     assert O.orchestrator_ids(doc, ["ghost"]) == sorted(ORCHESTRATORS)          # an id the config lacks is ignored
+    restricted = sorted(ORCHESTRATORS)[0]
+    assert O.orchestrator_ids(doc, [], [restricted, 7]) == sorted(ORCHESTRATORS)[1:]      # a restricted agent can be excluded
 
 
 def test_a_kit_role_agent_the_operator_edited_still_gets_the_resource_guard(agents, tmp_path):

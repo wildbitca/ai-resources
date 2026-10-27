@@ -6,9 +6,10 @@ What it writes, and only this, always through the validated `openclaw config pat
   (an id the operator listed stays; the kit removes only the ids it added). The orchestrators are `main` and every other
   agent that is not a kit agent (the channel agents), plus the ids recorded in the lanes state;
 * `agents.defaults.subagents` spawn limits, RAISED to a generous floor and never lowered: the owner runs many agents and
-  teams (C1), so setup imposes no cap. What keeps many agents from exhausting the gateway is `bundle-mcp` denied on the
-  workers and the MCP child reaper (`openclaw_reconcile.MCP_CHILD_WARN`), sized by measurement (the acceptance run
-  records peak memory), not by a hard agent count. Collisions between teams are prevented where the work happens
+  teams (C1), so setup imposes no cap. What protects the gateway is `bundle-mcp` denied on the `kit-role-*` workers (the
+  `claude` worker keeps MCP, it needs it) and a WARNING at `openclaw_reconcile.MCP_CHILD_WARN` MCP children (doctor and the
+  reconcile pass report it; nothing kills or reaps a child), sized by measurement (the acceptance run records peak
+  memory), not by a hard agent count. Collisions between teams are prevented where the work happens
   (per-run ids and directories, `scope_guard` claims), not by limiting how many run;
 * the retirement of the old by-model `kit-lane-*` agents (`migrate_kit_lanes`): only an agent setup created, that nothing
   references, is removed; anything else is kept and reported with the reason.
@@ -56,13 +57,17 @@ def is_kit_agent(aid: Any) -> bool:
     return isinstance(aid, str) and aid.startswith((LANE_PREFIX, ROLE_PREFIX))
 
 
-def orchestrator_ids(doc: Mapping[str, Any], recorded: Iterable[str] = ()) -> list[str]:
+def orchestrator_ids(doc: Mapping[str, Any], recorded: Iterable[str] = (), exclude: Iterable[str] = ()) -> list[str]:
     """`main` and every channel agent in the config: every agent that is not a kit-role or kit-lane agent, plus the ids
-    the lanes state names (when they exist)."""
+    the lanes state names (when they exist), minus `exclude` (`profile.lanes["orchestrators_exclude"]`).
+
+    Every non-kit agent may spawn every kit role, `claude` included, and those have exec and write: an agent the operator
+    later restricts on purpose (a public-channel agent with exec denied) must be listed in `exclude`, or it could get
+    around its own deny by spawning a worker. Setup does not guess which agents are restricted."""
     entries = _entries(doc)
     ids = {a for a in entries if isinstance(a, str) and not is_kit_agent(a)}
     ids |= {a for a in recorded if isinstance(a, str) and a in entries and not is_kit_agent(a)}
-    return sorted(ids)
+    return sorted(ids - {a for a in exclude if isinstance(a, str)})
 
 
 def kit_role_ids(doc: Mapping[str, Any], planned: Iterable[str] = ()) -> list[str]:
@@ -293,7 +298,7 @@ def configure(s: Any, doc: Mapping[str, Any], *, kit_ids: Iterable[str], referen
     Idempotent: a second run finds nothing to add. A patch that needs a gateway restart is deferred, never applied."""
     o = s.openclaw
     lanes = s.profile.lanes if isinstance(getattr(s.profile, "lanes", None), dict) else {}
-    orchestrators = orchestrator_ids(doc, lanes.get("orchestrators") or [])
+    orchestrators = orchestrator_ids(doc, lanes.get("orchestrators") or [], lanes.get("orchestrators_exclude") or [])
     ids = kit_role_ids(doc, kit_ids)
     plan = plan_changes(doc, ids, orchestrators, o.lanes_applied or {}, referenced)
     if dry_run:

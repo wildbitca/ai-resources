@@ -965,7 +965,7 @@ def locked_run(fn, *, out=print, enabled: bool = True):
 
 
 # Keys of the matrix-shaped `profile.lanes` (ADR-0019): the role table is `scoring.routing.ROLES`, never stored.
-LANES_KEPT_KEYS = ("orchestrators", "routing")
+LANES_KEPT_KEYS = ("orchestrators", "orchestrators_exclude", "routing")
 
 
 def migrate_lanes(profile: "ProfileState") -> bool:
