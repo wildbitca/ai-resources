@@ -120,7 +120,7 @@ KNOWN_MODELS: dict[str, list[str]] = {
     ],
     "openai": [
         # gpt-6.1-sol, gpt-6-sol and gpt-6-luna are listed as current by the OpenAI pricing and Codex docs
-        # (retrieved 2026-10-13); the kit has no dispatch path for them yet (see docs/team-composition.md).
+        # (retrieved 2026-10-13); the kit has no dispatch path for them yet.
         "gpt-6.1-sol",
         "gpt-6-sol",
         "gpt-6-luna",

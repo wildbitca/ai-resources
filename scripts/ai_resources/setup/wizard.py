@@ -114,8 +114,7 @@ _REQUESTED_PROFILE = ""
 _ASSUME_YES = False          # `setup --yes`: the explicit yes to the tool-install offer (kit 2.2, E1)
 _CREDIT_FLAGS: dict = {}     # `setup --credit-anthropic-usd / --credit-gemini-usd`: the opening credit per pool
 _DRY_RUN = False             # `setup --dry-run`: no installer is offered or run (kit 2.2c, 3b)
-# `setup --compose ...` (ADR-0006): the composition flags of this run; empty values mean "not given".
-_COMPOSE: dict[str, Any] = {}
+_ALLOW_UNVERIFIED = False    # `setup --allow-unverified`: also configure compatibility cells that are not verified end to end
 
 # The cockpits step 9 configured, in registry order. Step 10 verifies exactly these: re-deriving
 # the selection from the state would judge toolings the operator never picked, and that noise is
@@ -142,16 +141,13 @@ def run(args: argparse.Namespace) -> int:
     """Main wizard entry point: the whole run holds the setup-state lock (load -> modify -> save), so a second
     `setup`, an `apply-pending` or a teardown cannot overwrite what this one records. A dry run writes nothing
     and takes no lock."""
-    global _ASSUME_YES, _DRY_RUN, _COMPOSE, _CREDIT_FLAGS
+    global _ASSUME_YES, _DRY_RUN, _ALLOW_UNVERIFIED, _CREDIT_FLAGS
     _CREDIT_FLAGS = {pool: v for pool, v in (("anthropic-api", getattr(args, "credit_anthropic_usd", None)),
                                              ("gemini-api", getattr(args, "credit_gemini_usd", None))) if v is not None}
     _ASSUME_YES = bool(getattr(args, "yes", False))
     ui.set_assume_yes(_ASSUME_YES)
     _DRY_RUN = bool(getattr(args, "dry_run", False) or getattr(args, "lanes_dry_run", False))
-    _COMPOSE = {"mode": getattr(args, "compose", "") or "", "headroom": getattr(args, "headroom", "") or "",
-                "live": getattr(args, "headroom_live", "") or "", "why_json": getattr(args, "why_json", "") or "",
-                "allow_fable": bool(getattr(args, "allow_fable", False)),
-                "allow_unverified": bool(getattr(args, "allow_unverified", False))}
+    _ALLOW_UNVERIFIED = bool(getattr(args, "allow_unverified", False))
     if _DRY_RUN and _ASSUME_YES:
         ui.info("DRY RUN: --yes installs nothing in a dry run; no installer is offered or run.")
     with ui.prompt_scope(wizard=True):
@@ -276,9 +272,6 @@ def _run(args: argparse.Namespace) -> int:
     # Model-selection flags are checked before anything is written: a contradiction exits non-zero
     # with zero writes (the same plan table is printed non-interactively).
     rc = _preflight_selection(args, s)
-    if rc != 0:
-        return rc
-    rc = _preflight_compose()
     if rc != 0:
         return rc
 
@@ -728,9 +721,9 @@ def preset_profile(s: state.SetupState, preset: str) -> str:
 
 def _preset_default(s: state.SetupState) -> str:
     """What a saved state means for the question: its preset when the saved profile is one of the presets'
-    profiles, Custom for anything else (a customized, composed or account-picked team, another profile), and
+    profiles, Custom for anything else (a customized or account-picked team, another profile), and
     Balanced for a host that has chosen nothing. A saved choice is never replaced by the default."""
-    if s.get_selection() is not None or s.profile.customized or s.profile.composed:
+    if s.get_selection() is not None or s.profile.customized:
         return "custom"
     if not s.profile.name:
         return "balanced"
@@ -745,9 +738,9 @@ def _preset_default(s: state.SetupState) -> str:
 
 def _preset_bypassed(args: argparse.Namespace) -> bool:
     """The flags path (and an unattended run) never gets the question: --profile, --models, --shape,
-    --providers and --compose already decide, and non-interactive answers from the saved state."""
-    return bool(ui.is_non_interactive() or _REQUESTED_PROFILE or _COMPOSE.get("mode")
-                or any(getattr(args, a, "") for a in ("profile", "models", "shape", "providers", "compose")))
+    --providers already decide, and non-interactive answers from the saved state."""
+    return bool(ui.is_non_interactive() or _REQUESTED_PROFILE
+                or any(getattr(args, a, "") for a in ("profile", "models", "shape", "providers")))
 
 
 def _team_rows(s: state.SetupState, base: dict, rows: list) -> list[tuple[str, str, str]]:
@@ -786,7 +779,7 @@ def _team_view_args(s: state.SetupState, base: dict | None = None) -> dict:
     from . import effort as effort_mod, live_auth
     table = effort_mod.table_for_state(s)
     return {"row": _preset_key(s), "ticked": "agy" in members,
-            "allow_unverified": bool(s.profile.allow_unverified or _COMPOSE.get("allow_unverified")),
+            "allow_unverified": bool(s.profile.allow_unverified or _ALLOW_UNVERIFIED),
             "cell_verified": compat.claude_google_openrouter_verified(),
             "claude_billed": live_auth.billed_for_kind(cockpit_auth.live_kind(s, "claude")),
             "effort": {r: effort_mod.for_cockpit(lv, "claude") for r, lv in table.items()}}
@@ -838,7 +831,6 @@ def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
         targets = (s.profile.customizations or {}).get("__targets__")
         s.set_selection(None)
         s.profile.name = name
-        s.profile.composed = None
         s.profile.customized = False
         s.profile.customizations = {"__targets__": targets} if targets else {}
         ui.console().print()
@@ -910,11 +902,11 @@ _REVIEW_SHOWN = False                        # the review printed the step 9 hea
 
 def _team_label(s: state.SetupState) -> str:
     """The starting team's name for the review: a preset's label when the saved profile is one of the presets', else
-    the profile name, marked when it is customized, composed or picked from accounts."""
+    the profile name, marked when it is customized or picked from accounts."""
     name = s.profile.name or "(default)"
     if s.get_selection() is not None:
         return "Custom: models picked from your accounts"
-    if s.profile.customized or s.profile.composed:
+    if s.profile.customized:
         return f"Custom: {name} (customized)"
     saved = profile_names.canonical(s.profile.name)
     for key, label, _line in PRESET_CHOICES:
@@ -1086,7 +1078,7 @@ def _openrouter_gemini_optin(s: state.SetupState) -> None:
     if s.mode != "multi-model" or s.backend != "openrouter" or compat.claude_google_openrouter_verified():
         return
     roles = _google_roles(s)
-    if not roles or _COMPOSE.get("allow_unverified"):
+    if not roles or _ALLOW_UNVERIFIED:
         return
     if "claude" not in _detected_cockpit_ids(s):
         return
@@ -1764,138 +1756,6 @@ def _step3_remote(s: state.SetupState, dry_run: bool = False) -> int:
     return 0
 
 
-# --- Composed teams (ADR-0006) -----------------------------------------------------------------
-def _preflight_compose() -> int:
-    """Validate the composition flags before anything is written (exit 2 on a contradiction)."""
-    c = _COMPOSE
-    if not (c.get("mode") or c.get("headroom") or c.get("live") or c.get("why_json") or c.get("allow_fable")):
-        return 0
-    from ..scoring import db as scores_db, flow
-    from ..scoring.compose import MODES
-    if c.get("mode") and c["mode"] not in MODES:
-        ui.error(f"--compose must be one of {', '.join(MODES)}, not {c['mode']!r}")
-        return 2
-    try:
-        known = [p["id"] for p in scores_db.load_shipped().get("pools") or ()]
-        flow.parse_headroom(c.get("headroom", ""), known)
-        flow.parse_live(c.get("live", ""), known)
-        if c.get("why_json"):
-            flow.validate_why_json_path(c["why_json"])
-    except (ValueError, OSError) as e:
-        ui.error(str(e))
-        return 2
-    if c.get("mode") == "mixed" and not c.get("allow_unverified"):
-        ui.error(flow.MIXED_REFUSAL)
-        return 2
-    return 0
-
-
-def _compose_profile(s: state.SetupState, base_name: str, mode: str | None, single_model: bool = False) -> int | None:
-    """Propose a team from the scores database and, on acceptance, store it as customizations.
-
-    Returns 0 when a team was stored, a non-zero code on a refusal of a flagged run, and None when the operator
-    declined (the plain profile path then continues). Detection and the engine are read-only; the only host
-    reads are the opt-in headroom readers."""
-    import time
-    from ..scoring import db as scores_db, detect as scoring_detect, explain, flow, profile_out
-    flagged = bool(_COMPOSE.get("mode"))
-    try:
-        db = scores_db.load()
-    except Exception as e:  # noqa: BLE001 - a broken scores file must not take setup down
-        ui.error(f"The scores database could not be read ({type(e).__name__}): {e}")
-        return 1 if flagged else None
-    for problem in db.problems:
-        ui.warn(f"scores overrides: {problem}")
-    deps = scoring_detect.default_deps()
-    inv = scoring_detect.inventory(deps, db)
-    enabled = flow.enabled_providers(s, inv)
-    allow_unverified = bool(_COMPOSE.get("allow_unverified"))
-
-    if mode is None:
-        offered = [("uniform", "uniform — one model for every role"),
-                   ("single-provider", "single-provider — a model per role, all from one provider")]
-        if len(enabled) >= 2 and allow_unverified:
-            offered.append(("mixed", "mixed — balance pools across providers (unverified cells, marked)"))
-        elif len(enabled) >= 2:
-            ui.detail("Mixed mode is offered only with --allow-unverified: no cross-provider cell is verified today.")
-        mode = ui.select("Composition mode:", [ui.Choice(label, value=m) for m, label in offered])
-        if mode is None:
-            return None
-    req = flow.Request(mode=mode, allow_unverified=allow_unverified, allow_fable=bool(_COMPOSE.get("allow_fable")))
-    refusal = flow.check_mode(req, enabled)
-    if refusal:
-        ui.error(refusal)
-        return 2 if flagged else None
-
-    levels = flow.parse_headroom(_COMPOSE.get("headroom", ""))
-    live = set(flow.parse_live(_COMPOSE.get("live", "")))
-    pools = flow.askable_pools(inv, enabled, db)
-    if mode == "mixed" and not flagged:
-        for pool in pools:
-            level = ui.select(f"How much headroom does {pool['id']} ({pool['billing_class']}) have?",
-                              [ui.Choice("ample (1.0)", value="ample"), ui.Choice("normal (0.7)", value="normal"),
-                               ui.Choice("scarce (0.3)", value="scarce")], default=levels.get(pool["id"], "ample"))
-            if level is None:
-                return None
-            levels[pool["id"]] = level
-            if flow.has_live_reader(pool) and ui.confirm(
-                    f"Read live headroom for {pool['id']} now? (read-only, opt-in; unknown falls back to the level)",
-                    default=False):
-                live.add(pool["id"])
-    if not flagged and "anthropic" in enabled and ui.confirm(
-            "Allow Claude Fable 5.1 as a candidate? (needs a Max or Premium seat, or API billing; it bills "
-            "credits on Pro and on claude -p)", default=False):
-        req.allow_fable = True
-    req.headroom, req.live = levels, tuple(sorted(live))
-
-    comp, inp = flow.run(s, req, deps=deps, db=db, now_epoch=int(time.time()), base_name=base_name)
-    for pid in req.live:
-        reading = inp.readings.get(pid)
-        if reading is None or reading.state != "known":
-            ui.info(f"Live headroom for {pid} is unknown ({reading.source if reading else 'no reading'}); "
-                    "the static level is used.")
-    ui.console().print(explain.render_text(comp), markup=False, highlight=False)
-    why = _COMPOSE.get("why_json")
-    if why:
-        if _DRY_RUN:
-            ui.info("DRY RUN: --why-json is not written.")
-        else:
-            flow.write_why_json(flow.validate_why_json_path(why), comp)
-            ui.ok(f"Why table (JSON): {why}")
-    if comp.refused:
-        ui.error(f"No team proposed: {comp.refusal}")
-        return 1 if flagged else None
-
-    overlay = profile_out.to_customizations(comp)
-    if single_model:
-        overlay = flow.to_aliases(overlay)
-    try:
-        base = profiles.load_profile(base_name, "single-model" if single_model else "multi-model")
-        before = profiles.to_executors(base, s.backend)["by_role"]
-        after = profiles.to_executors(profiles.merge_customizations(base, overlay), s.backend)["by_role"]
-        profiles.print_role_diff(before, after, title=f"{base_name} -> composed ({mode})")
-    except (FileNotFoundError, RuntimeError):
-        pass
-    if not flagged and not ui.confirm("Use this team?", default=False, recommended=True):
-        return None
-
-    keep = {k: v for k, v in (s.profile.customizations or {}).items() if k not in profiles.KNOWN_ROLES}
-    s.profile.name = base_name
-    s.profile.customizations = {**keep, **overlay}
-    s.profile.customized = bool(overlay)
-    s.profile.composed = profile_out.provenance(comp)
-    sel = s.get_selection()
-    if sel is not None and (levels or live):
-        sel.headroom = {pid: {"level": levels.get(pid, "ample"), "live": pid in live}
-                        for pid in sorted(set(levels) | live)}
-        s.set_selection(sel)
-    if comp.kept_default:
-        ui.ok(f"{base_name} is within band on every role: no override is written.")
-    else:
-        ui.ok(f"Composed team stored over {base_name} ({len(overlay)} role(s)).")
-    return 0
-
-
 # --- Step 6 — Profile + per-role customization ------------------------------------
 def _note_newer_recommendation(saved: str, recommended: str, backend: str) -> None:
     """Informational only: the saved profile is kept and nothing is written.
@@ -1956,8 +1816,6 @@ def _step6_profile(s: state.SetupState) -> int:
             label += f"  — {desc}"
         choices.append(ui.Choice(label, value=name))
     choices.append(ui.Choice("custom — Configure each role individually", value="__custom__"))
-    choices.append(ui.Choice("compose — Propose a team from the scores database (dated evidence, explained)",
-                             value="__compose__"))
 
     # The default has to exist in `available`, and `available` is now filtered by
     # backend: a LiteLLM profile is not offered under openrouter, nor the reverse.
@@ -1979,21 +1837,10 @@ def _step6_profile(s: state.SetupState) -> int:
             and not _REQUESTED_PROFILE):
         _note_newer_recommendation(saved, preferred, s.backend)
 
-    if _COMPOSE.get("mode"):
-        # `--compose`: the explicit flag path; the base profile is the one a plain run would have used.
-        return _compose_profile(s, _REQUESTED_PROFILE if _REQUESTED_PROFILE in available else default,
-                                _COMPOSE["mode"]) or 0
-
     chosen = ui.select("Choose profile:", choices, default=default)
     if chosen is None:
         return 130
     _warn_open_checker_profile(chosen)
-
-    if chosen == "__compose__":
-        rc = _compose_profile(s, default, None)
-        if rc is not None:
-            return rc
-        chosen = default                       # declined or refused: the plain profile path continues
 
     if chosen == "__custom__":
         # Start from the backend's own recommended profile. Hardcoding
@@ -2004,7 +1851,6 @@ def _step6_profile(s: state.SetupState) -> int:
     base = profiles.load_profile(chosen, "multi-model")
 
     s.profile.name = chosen
-    s.profile.composed = None          # a plain profile replaces any earlier composed team (ADR-0006)
 
     # Show proposed mapping
     executors = profiles.to_executors(base, s.backend)
@@ -2090,16 +1936,8 @@ def _step6_single_model_profile(s: state.SetupState) -> int:
     _warn_open_checker_profile(chosen)
     if chosen != saved:
         # A different profile starts clean; the tools ticked on the first screen travel along. Keeping the same profile keeps the saved team with it
-        # (customizations, composed team, lanes), which a re-run used to drop (ADR-0009).
+        # (customizations, lanes), which a re-run used to drop (ADR-0009).
         s.profile = _carry_targets(s.profile, state.ProfileState(name=chosen, customized=False))
-    if _COMPOSE.get("mode"):
-        if _COMPOSE["mode"] != "uniform":
-            ui.error("single-model mode offers --compose uniform only (one Claude model for every role); "
-                     "the other modes need a gateway and several providers.")
-            return 2
-        rc = _compose_profile(s, chosen, "uniform", single_model=True)
-        if rc:
-            return rc
     ui.role_table(profiles.role_table(_single_model_executors(s)), title=f"Profile: {chosen}")
     return 0
 
@@ -2112,7 +1950,7 @@ def _single_model_executors(s: state.SetupState) -> dict:
     if not base_name:
         return {"by_role": {}}
     base = profiles.load_profile(base_name, "single-model")
-    if s.profile.customized and s.profile.customizations:        # a composed uniform team (ADR-0006)
+    if s.profile.customized and s.profile.customizations:
         base = profiles.merge_customizations(
             base, {k: v for k, v in s.profile.customizations.items() if k in profiles.KNOWN_ROLES})
     return profiles.to_executors(base)
@@ -2824,7 +2662,7 @@ def _step9_apply(s: state.SetupState, dry_run: bool = False) -> int:
                 ctx["openai_base"] = profiles.OPENAI_BASE[s.backend]
             if cid in routes:
                 ctx["route"] = routes[cid]
-            if _COMPOSE.get("allow_unverified"):
+            if _ALLOW_UNVERIFIED:
                 ctx["allow_unverified"] = True
             try:
                 written = mod.configure(ctx)

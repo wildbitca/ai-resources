@@ -60,9 +60,10 @@ def _seed(name):
 
 
 OLD_LANES = ("cli_lanes_anthropic_ack", "cli_lanes_google_ack")      # pre-3.2 `profile.lanes` shape (ADR-0019 migration)
+RETIRED_KEYS = ("composed_team",)                                     # carries the retired `profile.composed` key: dropped on load
 
 
-@pytest.mark.parametrize("name", [n for n in NAMES if n not in OLD_LANES])
+@pytest.mark.parametrize("name", [n for n in NAMES if n not in OLD_LANES + RETIRED_KEYS])
 def test_load_then_save_is_byte_equal(home, name):
     _seed(name)
     before = state.state_path().read_text(encoding="utf-8")
@@ -197,3 +198,11 @@ def test_migrate_lanes_is_a_no_op_on_the_matrix_shape_and_on_nothing():
     assert state.migrate_lanes(p) is True and p.lanes == {"orchestrators": ["main"]}
     p.lanes = {"agents": {"a": {}}, "roles": {"x": {}}, "second": {}, "held": [], "pool_caps": {}}
     assert state.migrate_lanes(p) is True and p.lanes == {"orchestrators": []}
+
+
+def test_the_retired_composed_key_is_dropped_on_load_and_the_rest_is_kept(home):
+    _seed("composed_team")
+    loaded = state.load()
+    assert loaded.profile.name == "subscription-claude-55" and loaded.profile.customizations["planner"]
+    state.save(loaded)
+    assert "composed" not in state.state_path().read_text(encoding="utf-8")

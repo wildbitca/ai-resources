@@ -1,12 +1,10 @@
-"""Characterization of the compat matrix facts that scored team composition is built on (ADR-0006).
+"""Characterization of the compat matrix facts that multi-provider profiles rest on (ADR-0006).
 
 Under the shipped matrix, Anthropic is the only provider with a verified cell that can serve kit roles through
 `by_role`. A multi-provider team is therefore unverified by construction. If a cell is flipped on purpose, this
 test must be updated, and the flip is the signal that a mixed team can be verified.
 
-The antigravity engine cell being CONFIGURE does NOT make it a composition target: the usage-policy gate
-(`scoring/gate.py`, `direct-only`) excludes it because the Antigravity FAQ forbids third-party tools from
-accessing it. The cell is pinned here only so a change to it is noticed.
+The antigravity engine cell is pinned here only so a change to it is noticed.
 """
 from ai_resources import model_pins
 from ai_resources.setup import compat, providers

@@ -105,9 +105,6 @@ class ProfileState:
     name: str = ""
     customized: bool = False
     customizations: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # Provenance of a team proposed by `scoring.compose` (mode, input digest, dataset version, labels, headroom
-    # per pool). None until a composed team is accepted; then it is not written (see `_to_dict`).
-    composed: Any = None
     # The operator's explicit `--allow-unverified` opt-in, persisted so a later re-render (models update/approve)
     # keeps the unverified ids that setup wrote instead of gating them back to `inherit`.
     allow_unverified: bool = False
@@ -437,9 +434,6 @@ def _to_dict(obj: Any) -> Any:
         if isinstance(obj, SetupState) and not doc.get("cockpit_auth"):
             doc.pop("cockpit_auth", None)                  # round 3: absent until a cockpit answered its auth
         if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict) \
-                and doc["profile"].get("composed") is None:
-            doc["profile"].pop("composed", None)       # additive field: absent until a composed team exists
-        if isinstance(obj, SetupState) and isinstance(doc.get("profile"), dict) \
                 and not doc["profile"].get("allow_unverified"):
             doc["profile"].pop("allow_unverified", None)   # additive field: absent until the opt-in is recorded
         if isinstance(obj, SetupState) and isinstance(doc.get("tracking"), dict) \
@@ -690,6 +684,7 @@ def load() -> SetupState:
         return SetupState()
     loaded = _from_dict(SetupState, data)
     migrate_lanes(loaded.profile)
+    loaded.set_selection(loaded.get_selection())     # drops the retired selection.headroom key
     loaded.tracking.install_tools_answer = None      # 2.2b: a saved install answer is never replayed
     return loaded
 

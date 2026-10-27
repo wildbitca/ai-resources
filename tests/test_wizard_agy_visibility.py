@@ -23,7 +23,6 @@ OFF = "Antigravity - off until you tick it on Your tools"
 @pytest.fixture(autouse=True)
 def clean(monkeypatch):
     monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "")
-    monkeypatch.setattr(wizard, "_COMPOSE", {})
     monkeypatch.setattr(wizard, "_PRESET", "")
     monkeypatch.setattr(ui, "section", lambda *a, **k: None)
 

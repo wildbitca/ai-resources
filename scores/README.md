@@ -1,6 +1,6 @@
 # scores/
 
-The kit-shipped model scores database used by `ai-resources setup` to propose a team (ADR-0006).
+The kit-shipped model scores database (ADR-0006): per role and model evidence read by `ai-resources models scores`. Role placement is the routing matrix (`scoring/routing.py`, ADR-0019); no engine composes a team from these scores any more, so the `policy` block is kept as dated data only.
 
 - `model-scores.yaml` is read-only. Edit it only to refresh evidence, with a source and a date per row.
 - User overrides live in `$XDG_CONFIG_HOME/ai-resources/model-scores.yaml` (default `~/.config/ai-resources/`).
@@ -30,7 +30,7 @@ Rules the validator (`scoring/db.validate`, run by `tests/test_scores_schema.py`
 
 ## Evidence labels
 
-`MEASURED-HERE` (this kit's harness, Phase B) > `MEASURED-3P` (a named board, dated) > `VENDOR` > `INFERRED` > `UNKNOWN`. A composed score carries the weakest contributing label.
+`MEASURED-HERE` (this kit's harness, Phase B) > `MEASURED-3P` (a named board, dated) > `VENDOR` > `INFERRED` > `UNKNOWN`. A score derived from several rows carries the weakest contributing label.
 
 ## Seeding rules
 

@@ -186,7 +186,6 @@ def test_the_profile_step_defaults_to_the_subscription_team(monkeypatch):
     monkeypatch.setattr(ui, "role_table", lambda *a, **k: None)
     monkeypatch.setattr(ui, "section", lambda *a, **k: None)
     monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "", raising=False)
-    monkeypatch.setattr(wizard, "_COMPOSE", {}, raising=False)
     assert wizard._step6_single_model_profile(s) == 0
     assert script.defaults["How should kit subagents pick their Claude model?"] == [SUB]
     assert s.profile.name == SUB
@@ -199,7 +198,6 @@ def test_a_plain_single_model_state_still_defaults_to_claude_native(monkeypatch)
     monkeypatch.setattr(ui, "role_table", lambda *a, **k: None)
     monkeypatch.setattr(ui, "section", lambda *a, **k: None)
     monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "", raising=False)
-    monkeypatch.setattr(wizard, "_COMPOSE", {}, raising=False)
     wizard._step6_single_model_profile(s)
     assert script.defaults["How should kit subagents pick their Claude model?"] == [wizard.SINGLE_MODEL_DEFAULT_PROFILE]
 
@@ -422,7 +420,6 @@ def _run_single_profile_step(monkeypatch, pick):
     monkeypatch.setattr(ui, "section", lambda *a, **k: None)
     monkeypatch.setattr(ui, "warn", warnings.append)
     monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "", raising=False)
-    monkeypatch.setattr(wizard, "_COMPOSE", {}, raising=False)
     assert wizard._step6_single_model_profile(s) == 0
     return warnings
 

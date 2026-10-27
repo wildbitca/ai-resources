@@ -142,13 +142,13 @@ provider was down when the change was written; the next reader cannot tell the w
 the outage. Likewise a run whose real-agent checks could not run is **UNVERIFIED**, not green (see "Real-agent tests" in
 `docs/orchestration.md`).
 
-## Composed teams
+## Role routing
 
-- Team composition (`ai-resources setup --compose`, ADR-0006) writes through `executors.yaml` via the profile
-  path (customizations over a profile) and never bypasses `compat.py`: the matrix stays the only verification gate.
-- In composition, `agy` (Antigravity) is direct use only, never an `openclaw-agent` or a dispatch backend, and no
-  composition flag lifts that. The lanes pass is governed by ADR-0007 (`--lanes-antigravity` + a signed
-  Google-account acknowledgement listing the role; never `--allow-unverified`).
+- A role runs where the routing matrix puts it (`scoring/routing.py`, ADR-0019): one primary and one fallback chain
+  per role, overridable per profile. `ai-resources route <role>` prints the live answer and the cause of any fallback.
+- Profile customizations over a profile write through `executors.yaml` and never bypass `compat.py`: the matrix of
+  compatibility cells stays the only verification gate. `agy` (Antigravity) is a plain matrix backend with the same
+  standing as Claude Code; a missing or signed-out agy skips its cell with the recorded cause `agy-missing`.
 
 ## Health check
 

@@ -51,7 +51,6 @@ def args(**kw):
 @pytest.fixture(autouse=True)
 def clean_globals(monkeypatch):
     monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "")
-    monkeypatch.setattr(wizard, "_COMPOSE", {})
     monkeypatch.setattr(wizard, "_PRESET", "")
     monkeypatch.setattr(ui, "section", lambda *a, **k: None)
     monkeypatch.setattr(ui, "role_table", lambda rows, title="": None)
@@ -202,7 +201,7 @@ def test_a_preset_asks_only_the_starting_team(monkeypatch, key, preset):
     assert rc == 0
     assert script.asked == [f"select: {ASK}"]
     assert s.profile.name == TABLE[key][preset]
-    assert s.profile.customized is False and s.profile.composed is None
+    assert s.profile.customized is False
     assert s.get_selection() is None
     assert wizard._PRESET == preset
     assert len(shown) == 1 and shown[0][1], "exactly the resulting role table"
@@ -314,13 +313,10 @@ def test_another_saved_profile_defaults_to_custom(monkeypatch, saved):
     assert default_of(monkeypatch, s) == "custom"
 
 
-def test_a_customized_a_composed_or_a_picked_team_defaults_to_custom(monkeypatch):
+def test_a_customized_or_a_picked_team_defaults_to_custom(monkeypatch):
     s = make_state("litellm")
     s.profile.name, s.profile.customized = "balanced-claude-55", True
     s.profile.customizations = {"planner": {"model": "anthropic/claude-opus-5.5"}}
-    assert default_of(monkeypatch, s) == "custom"
-    s = make_state("litellm")
-    s.profile.name, s.profile.composed = "balanced-claude-55", {"mode": "balanced"}
     assert default_of(monkeypatch, s) == "custom"
     s = make_state("litellm")
     s.set_selection(selection_mod.Selection(shape="single", slots={
@@ -340,14 +336,14 @@ def test_a_saved_customized_profile_survives_choosing_custom(monkeypatch):
 def _saved_team(key="cli"):
     s = make_state(key)
     s.profile = state.ProfileState(
-        name="balanced", customized=True, composed={"mode": "uniform"},
+        name="balanced", customized=True,
         customizations={"planner": {"model": "opus"}, "__targets__": {"selected": ["claude"]}},
         lanes={"orchestrators": ["main"]})
     return s
 
 
 def test_the_custom_path_keeps_a_saved_team_and_its_lanes_when_the_profile_is_unchanged(monkeypatch):
-    """AC10 (ADR-0009): Custom is preselected for a saved customized or composed team and Apply leaves it as it was
+    """AC10 (ADR-0009): Custom is preselected for a saved customized team and Apply leaves it as it was
     (the single-model profile step used to rebuild the profile and drop all of it)."""
     s = _saved_team()
     before = state._to_dict(s)["profile"]
@@ -360,7 +356,7 @@ def test_choosing_another_profile_starts_clean_but_keeps_the_ticked_tools(monkey
     s = _saved_team()
     Script(**{"How should kit subagents pick": lambda v: "claude-native"}).install(monkeypatch)
     assert wizard._step6_single_model_profile(s) == 0
-    assert s.profile.name == "claude-native" and s.profile.customized is False and s.profile.composed is None
+    assert s.profile.name == "claude-native" and s.profile.customized is False
     assert s.profile.lanes is None
     assert s.profile.customizations == {"__targets__": {"selected": ["claude"]}}
 
@@ -369,7 +365,7 @@ def test_choosing_another_profile_starts_clean_but_keeps_the_ticked_tools(monkey
 
 def test_flags_and_non_interactive_never_ask(monkeypatch):
     cases = [dict(a=args(models="x"), ni=False), dict(a=args(shape="single"), ni=False),
-             dict(a=args(providers="google"), ni=False), dict(a=args(compose="balanced"), ni=False),
+             dict(a=args(providers="google"), ni=False),
              dict(a=args(), ni=True)]
     for c in cases:
         s = make_state("litellm")
@@ -388,13 +384,6 @@ def test_profile_flag_still_wins_and_skips_the_question(monkeypatch):
     script.install(monkeypatch)
     assert wizard._step_preset(s, args(profile="quality-first")) == 0
     assert script.asked == [] and s.profile.name == "quality-first"
-
-
-def test_the_compose_mode_global_skips_the_question(monkeypatch):
-    monkeypatch.setattr(wizard, "_COMPOSE", {"mode": "balanced"})
-    script = Script()
-    script.install(monkeypatch)
-    assert wizard._step_preset(make_state("litellm"), args()) == 0 and script.asked == []
 
 
 def test_the_state_file_format_gains_no_field(monkeypatch):

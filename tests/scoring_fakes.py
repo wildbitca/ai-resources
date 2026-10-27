@@ -5,7 +5,6 @@ import copy
 import functools
 
 from ai_resources.scoring import db as scores_db
-from ai_resources.setup import compat
 
 SONNET = "anthropic/claude-sonnet-5.5"
 OPUS = "anthropic/claude-opus-5.5"
@@ -42,16 +41,3 @@ def fixture_doc(rows) -> dict:
     doc = shipped_copy()
     doc["rows"] = list(rows)
     return doc
-
-
-def fixture_db(rows) -> scores_db.ScoresDB:
-    return scores_db.ScoresDB(fixture_doc(rows))
-
-
-def make_input(db, *, mode="mixed", enabled=("anthropic", "google", "openai"), allow_unverified=False,
-               as_of="2026-10-13", mode_key=compat.MULTI_LITELLM, roles=(), **kw):
-    from ai_resources.scoring import gate as gate_mod
-    from ai_resources.scoring.compose import ComposeInput
-    gate = gate_mod.make_gate(db, cockpit="claude", mode_key=mode_key, allow_unverified=allow_unverified)
-    return ComposeInput(db=db, mode=mode, enabled=tuple(enabled), as_of=as_of, gate=gate,
-                        allow_unverified=allow_unverified, roles=tuple(roles), **kw)

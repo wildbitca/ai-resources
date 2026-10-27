@@ -41,7 +41,6 @@ def test_an_empty_custom_model_id_skips_the_role(monkeypatch):
                        "Model for": "__custom__", "Model id for": "   "})
     script.install(monkeypatch)
     monkeypatch.setattr(wizard, "_REQUESTED_PROFILE", "", raising=False)
-    monkeypatch.setattr(wizard, "_COMPOSE", {}, raising=False)
     assert wizard._step6_profile(s) == 0
     assert s.profile.customizations == {}                     # the role was skipped, nothing stored
     assert any("Model id for" in m and "leave empty" in m for m in script.asked)

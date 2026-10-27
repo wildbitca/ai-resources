@@ -320,9 +320,9 @@ choice is saved. Apply turns an unticked account off with `openclaw channels rem
 OpenClaw cockpit, with reload rules that call `channels.<C>` hot, after a fresh listing still shows it on, a per-change
 confirm (default No) and, for Telegram, a second one. The undo is to re-add the account with credentials, yourself; an
 enable is only ever printed. The kit still never patches `channels.*`.
-The question is skipped, and the flags path is unchanged, with `--profile`, `--models`, `--shape`, `--providers`,
-`--compose` or `--non-interactive`. A saved choice is the default of the question and is never replaced: a saved preset
-profile defaults to its preset, and a customized profile, a composed team, a team picked from your accounts or any
+The question is skipped, and the flags path is unchanged, with `--profile`, `--models`, `--shape`, `--providers`
+or `--non-interactive`. A saved choice is the default of the question and is never replaced: a saved preset
+profile defaults to its preset, and a customized profile, a team picked from your accounts or any
 other saved profile defaults to Custom. The state file records only the profile name; it gains no field.
 
 A host that has not chosen a profile is offered `balanced-claude-55` in multi-model mode and `claude-native` in
@@ -433,18 +433,7 @@ the matrix says:
 - **Write scope.** Teams share the checkout. A run claims the paths it writes (`scope_guard`, `--param write_scope=`), an overlapping claim by another live run waits queued, and out-of-scope paths of a finished step are logged. Agy and Claude are treated alike.
 
 
-Operations: [openclaw runbook](openclaw/runbook.md#subscription-lanes). Team rules:
-[team-composition.md](team-composition.md#lanes-pass).
-
-## Composed teams
-
-`ai-resources setup` can propose a team from the dated scores database instead of a fixed profile: step 6 has a
-"compose" choice, and `--compose uniform|single-provider|mixed` does it without prompts. Every pick comes with a
-why table; mixed mode is offered only with `--allow-unverified` and every non-Anthropic cell is marked, because
-no cross-provider compat cell is verified. The result is stored as customizations over `balanced-claude-55` and
-never carries `backend`, `agentId` or a cross-vendor fallback. Flags: `--compose`, `--headroom pool=level,...`,
-`--headroom-live pool,...`, `--why-json PATH`, `--allow-fable`. Antigravity is direct use only and is never
-composed. Details: [team-composition.md](team-composition.md).
+Operations: [openclaw runbook](openclaw/runbook.md#subscription-lanes).
 
 ## Editing the mapping
 

@@ -157,7 +157,6 @@ def test_every_load_profile_call_site_is_accounted_for():
     sites below are the ones that do; any other call must pass the mode."""
     allowed_without_mode = {
         ("setup/cockpits/claude.py", "'claude-native'"),
-        ("scoring/flow.py", "name"),                 # BASELINE_PROFILE / a shipped reference name
         ("setup/profiles.py", "name, mode"),         # load_profile itself
     }
     found = set()
