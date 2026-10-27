@@ -80,7 +80,9 @@ def test_non_interactive_keeps_saved_answers_unless_auto_is_passed(monkeypatch):
         ui.set_non_interactive(False)
 
 
-def test_the_recommended_run_never_signs_the_google_acknowledgement(monkeypatch):
+def test_the_recommended_run_records_the_google_acknowledgement_under_the_waiver_without_asking(monkeypatch):
+    """ADR-0018: the operator waived the Antigravity gates and asked for the lane on by default, so the recommended run
+    records the acknowledgement itself (naming the waiver) and never asks for the Google account."""
     from ai_resources.setup import state
     monkeypatch.setattr(ui, "info", lambda m: None)
     monkeypatch.setattr(ui, "text", lambda *a, **k: pytest.fail("asked for the Google account"))
@@ -89,7 +91,7 @@ def test_the_recommended_run_never_signs_the_google_acknowledgement(monkeypatch)
         ok, acks, rc = wizard.agy_terms_check(state.SetupState(), ["reviewer"], interactive=True)
     finally:
         ui.set_auto(False)
-    assert (ok, rc) == (False, 0) and "google" not in acks
+    assert (ok, rc) == (True, 0) and acks["google"]["roles"] == ["reviewer"]
 
 
 def test_the_review_names_an_openclaw_key_without_claude_codes_env_var():

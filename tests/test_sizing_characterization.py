@@ -8,6 +8,7 @@ and list the cases that moved in the commit message.
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 from pathlib import Path
@@ -33,12 +34,18 @@ def _dump(snap: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _same_python(value):
+    """CPython words the `42 in 42` TypeError differently per version (3.12 "is not iterable", 3.14 "is not a container
+    or iterable"); the golden must not depend on the interpreter that recorded it."""
+    return json.loads(re.sub(r"is not (?:a container or )?iterable", "is not iterable", json.dumps(value)))
+
+
 def _check(section: str, built: dict) -> None:
     if os.environ.get("UPDATE_SIZING_GOLDEN"):
         return
     golden = json.loads(GOLDEN.read_text(encoding="utf-8"))[section]
     assert sorted(built) == sorted(golden), "the set of characterized cases changed"
-    moved = [k for k in golden if built[k] != golden[k]]
+    moved = [k for k in golden if _same_python(built[k]) != _same_python(golden[k])]
     assert not moved, f"{len(moved)} case(s) differ from the golden, first: {moved[0]}\n golden={golden[moved[0]]}\n built ={built[moved[0]]}"
 
 

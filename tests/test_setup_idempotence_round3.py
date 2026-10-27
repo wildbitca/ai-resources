@@ -410,7 +410,13 @@ def test_ai_resources_setup_run_twice_in_a_scratch_home_has_zero_diff_and_no_new
     assert s2.openclaw.host_restart_pending == pending_first       # zero new pending entries
     assert len(sim.oc.real_patches()) == patches_first, sim.oc.real_patches()[patches_first:]   # no config patch sent
     assert not [c for c in sim.cli.calls[calls_first:] if c[:2] in (["agents", "add"], ["plugins", "install"])]
-    assert all(str(argv[0]).startswith("/fake/") for argv in sim.spawned), sim.spawned   # nothing real was spawned
+    # nothing real was spawned: `subprocess.run` is refused above, so a recorded call is a read-only probe that never ran
+    # (the live checks ask `openclaw models status --json` and `systemctl --user show <unit>`)
+    read_only = lambda argv: (  # noqa: E731
+        str(argv[0]).startswith("/fake/")
+        or (pathlib.Path(argv[0]).name == "openclaw" and argv[1:4] == ["models", "status", "--json"])
+        or argv[:3] == ["systemctl", "--user", "show"])
+    assert all(read_only(argv) for argv in sim.spawned), sim.spawned
     # no secret in the kit state or in any scratch file
     assert cockpit_auth.secret_findings(state._to_dict(s2)["cockpit_auth"]) == []
     for rel, digest in second.items():

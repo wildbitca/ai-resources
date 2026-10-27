@@ -33,6 +33,11 @@ PATH_MSG = "OpenClaw is running the ai-resources plugin from an older kit direct
 BACKEND_MSG = "OpenClaw has not loaded the ai-resources plugin (no agy-cli backend)."
 
 
+def plugin_lines(lines):
+    """The stale-plugin findings only: other doctor sections (pool usage, cost notes) also mention OpenClaw."""
+    return [ln for ln in lines if ln in (TIME_MSG, PATH_MSG, BACKEND_MSG) or "gateway restart" in ln]
+
+
 def run_doctor(monkeypatch, tmp_path, *, check=None, loaded=True, linked=False, applied=False,
                stale="time", backend=True, quota=None):
     """Run cmd_doctor against a state and a plugin tree; return (warn/detail lines, backend probes).
@@ -171,7 +176,7 @@ def test_ac3_linked_says_nothing_when_the_runtime_cannot_be_read(monkeypatch, tm
     """No answer from `plugins inspect` is no evidence: a warning must not rest on a guess, even
     when the state file says the kit linked the plugin."""
     lines, probes = run_doctor(monkeypatch, tmp_path, check="linked", loaded=False, linked=True, applied=False)
-    assert not any("OpenClaw" in ln for ln in lines)
+    assert not plugin_lines(lines)
     assert probes == []
 
 
@@ -187,7 +192,7 @@ def test_ac3_the_default_answer_reports_it_too(monkeypatch, tmp_path):
 
 def test_linked_says_nothing_when_the_gateway_does_not_have_the_plugin(monkeypatch, tmp_path):
     lines, probes = run_doctor(monkeypatch, tmp_path, check="linked", loaded=False, applied=False)
-    assert not any("OpenClaw" in ln for ln in lines)
+    assert not plugin_lines(lines)
     assert probes == []
 
 
@@ -198,7 +203,7 @@ def test_ac4_engine_reports_when_antigravity_is_applied(monkeypatch, tmp_path):
 
 def test_ac4_engine_says_nothing_on_an_engine_keep_host(monkeypatch, tmp_path):
     lines, probes = run_doctor(monkeypatch, tmp_path, check="engine", applied=False)
-    assert not any("OpenClaw" in ln for ln in lines)
+    assert not plugin_lines(lines)
     assert probes == []
 
 
@@ -212,7 +217,7 @@ def test_ac4_engine_keeps_the_backend_arm_for_antigravity(monkeypatch, tmp_path)
 @pytest.mark.parametrize("linked", [True, False])
 def test_ac5_off_says_nothing_whatever_the_state(monkeypatch, tmp_path, linked):
     lines, probes = run_doctor(monkeypatch, tmp_path, check="off", linked=linked, applied=True)
-    assert not any("OpenClaw" in ln for ln in lines)
+    assert not plugin_lines(lines)
     assert probes == []
 
 
