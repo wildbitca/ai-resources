@@ -22,11 +22,11 @@ DevSecOps audit — recon, SAST, dependency scan, secret detection, DAST, exploi
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `recon` | `security-auditor` | claude-code | — |
-| `sast` | `security-auditor` | claude-code | — |
-| `dependency-scan` | `security-auditor` | claude-code | — |
-| `secret-detection` | `security-auditor` | claude-code | — |
-| `dast-probe` | `security-auditor` | claude-code | — |
-| `exploit-validation` | `security-auditor` | claude-code | — |
-| `report` | `verifier` | claude-code | — |
-| `document` | `doc-writer` | claude-code | — |
+| `recon` | `security-auditor` | route | — |
+| `sast` | `security-auditor` | route | — |
+| `dependency-scan` | `security-auditor` | route | — |
+| `secret-detection` | `security-auditor` | route | — |
+| `dast-probe` | `security-auditor` | route | — |
+| `exploit-validation` | `security-auditor` | route | — |
+| `report` | `verifier` | route | — |
+| `document` | `doc-writer` | route | — |

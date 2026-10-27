@@ -22,11 +22,11 @@ Structured code refactoring — assess technical debt → plan atomic steps → 
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `assess` | `explore` | claude-code | — |
-| `plan` | `planner` | claude-code | — |
-| `implement` | `implementer` | claude-code | — |
-| `test` | `tester` | claude-code | — |
-| `review` | `code-reviewer` | claude-code | — |
+| `assess` | `explore` | route | — |
+| `plan` | `planner` | route | — |
+| `implement` | `implementer` | route | — |
+| `test` | `tester` | route | — |
+| `review` | `code-reviewer` | route | — |
 
 ## Deterministic alternative
 

@@ -22,15 +22,15 @@ Domain-agnostic feature workflow. research → plan → architect → implement 
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `research` | `generalPurpose` | claude-code | — |
-| `plan` | `planner` | claude-code | — |
-| `architect` | `software-architect` | claude-code | — |
-| `implement` | `implementer` | claude-code | — |
-| `test` | `tester` | claude-code | — |
-| `review` | `code-reviewer` | claude-code | post-test |
-| `security` | `security-auditor` | claude-code | post-test |
-| `verify` | `verifier` | claude-code | — |
-| `document` | `doc-writer` | claude-code | — |
+| `research` | `generalPurpose` | route | — |
+| `plan` | `planner` | route | — |
+| `architect` | `software-architect` | route | — |
+| `implement` | `implementer` | route | — |
+| `test` | `tester` | route | — |
+| `review` | `code-reviewer` | route | post-test |
+| `security` | `security-auditor` | route | post-test |
+| `verify` | `verifier` | route | — |
+| `document` | `doc-writer` | route | — |
 
 ## Deterministic alternative
 

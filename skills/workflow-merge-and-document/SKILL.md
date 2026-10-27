@@ -22,6 +22,6 @@ Merge feature branch to develop and write/update SDD specs. Delegates all heavy 
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `gather-context` | `explore` | claude-code | — |
-| `document` | `doc-writer` | claude-code | — |
-| `merge` | `implementer` | claude-code | — |
+| `gather-context` | `explore` | route | — |
+| `document` | `doc-writer` | route | — |
+| `merge` | `implementer` | route | — |

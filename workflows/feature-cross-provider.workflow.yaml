@@ -1,36 +1,22 @@
-# Worked example: a feature workflow whose planning, research and review steps run on other
-# OpenClaw agents (and so on other providers), while design, implementation, tests, security,
-# verification and documentation stay on Claude Code.
-#
-# Read before using:
-#   - The models belong to the agents, not to this file. There is no `model` field: `agy-flash`
-#     and `agy-pro` are expected to be configured on gemini-flash / gemini-pro (agy labels), and
-#     the Claude Code steps take their model from the role's `by_role` executor.
-#   - `agy-flash` and `agy-pro` are PLACEHOLDER agent ids. Replace them with ids that exist on
-#     your host and are on `subagents.allowAgents` of the orchestrating agent.
-#   - An agy-backed OpenClaw agent is an external prerequisite that this kit does not provide;
-#     any OpenClaw agent works for the mechanism (docs/decisions/0005-cross-provider-role-dispatch.md).
-#   - An `openclaw-agent` step can be dispatched only by an OpenClaw-run orchestrator that has the
-#     `sessions_spawn` tool. Anywhere else the step is Blocked (there is no fallback).
-#   - Illustrative only: rules/017-multimodel-routing.mdc recommends a strong model for review.
-#   - This example uses explicit `openclaw-agent` steps (ADR-0005): the implementer stays on Claude Code.
-#     For `backend: lane` steps, where the setup lanes table decides where a role runs and the kit
-#     (`ai-resources lanes ...`) is the only landing path, see ADR-0007 and the "Lane steps" section of
-#     skills/kit-orchestration/references/backends.md.
+# Worked example: a feature workflow whose planning, research and review steps usually run on a different
+# provider than design, implementation and verification. No step names a backend: every role resolves
+# through the routing matrix (`ai-resources route <role> --run $RUN`), so the provider mix follows the setup
+# matrix and the live pool usage, and the verifier / security-auditor model is chosen to be independent of the
+# families that wrote in this run. A route that cannot run in the current runtime is `Blocked: <cause>`, or
+# runs through `ai-resources agy run` for agy roles (skills/kit-orchestration/references/backends.md).
+# A step may still pin a runtime with `backend: claude-code | openclaw-agent (+ agentId) | agy`.
 #
 # Flow: research (explore) → plan → architect → implement → test → (review ‖ security) → verify → document
 # handoff_file: .agent-output/handoff-<branch>.md. DELETE when DONE.
 # Domain commands: $AGENT_KIT/workflows/_domain-commands.yaml ({{domain}} section)
 name: feature-cross-provider
-description: Feature workflow with a mixed team. research and plan run on other OpenClaw agents, review runs on another agent in parallel with the Claude Code security audit.
+description: Feature workflow for a mixed-provider team. Every step is routed through the matrix; review runs in parallel with the security audit.
 domain: "{{domain}}"
-trigger: User asks to implement a feature and wants part of the team to run on a different OpenClaw agent or provider (explicit request only; the plain feature workflow is the default).
+trigger: User asks to implement a feature and wants the team's provider mix spelled out step by step (explicit request only; the plain feature workflow is the default).
 prerequisites: [ ]
 steps:
   - id: research
     subagent_type: explore
-    backend: openclaw-agent
-    agentId: agy-pro
     skills:
       - common-best-practices
       - common-context-optimization
@@ -47,8 +33,6 @@ steps:
       If blocked, set Blocked: true, Return_to_step: research, Block_reason: [reason].
   - id: plan
     subagent_type: planner
-    backend: openclaw-agent
-    agentId: agy-flash
     skills:
       - common-product-requirements
       - common-system-design
@@ -115,8 +99,6 @@ steps:
       Update {{handoff_file}} (Test_report, Next=post-test group: code-reviewer + security-auditor).
   - id: review
     subagent_type: code-reviewer
-    backend: openclaw-agent
-    agentId: agy-flash
     skills:
       - common-code-review
       - common-security-standards

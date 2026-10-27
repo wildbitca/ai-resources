@@ -22,9 +22,9 @@ Task crossing app (backend) and infra — app → infra → test → review → 
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `app-step` | `implementer` | claude-code | — |
-| `infra-step` | `generalPurpose` | claude-code | — |
-| `test` | `tester` | claude-code | — |
-| `review` | `code-reviewer` | claude-code | — |
-| `verify` | `verifier` | claude-code | — |
-| `document` | `doc-writer` | claude-code | — |
+| `app-step` | `implementer` | route | — |
+| `infra-step` | `generalPurpose` | route | — |
+| `test` | `tester` | route | — |
+| `review` | `code-reviewer` | route | — |
+| `verify` | `verifier` | route | — |
+| `document` | `doc-writer` | route | — |

@@ -22,6 +22,6 @@ Kubernetes cluster debugging and monitoring. Gathers cluster state, diagnoses ro
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `gather` | `explore` | claude-code | — |
-| `diagnose` | `generalPurpose` | claude-code | — |
-| `fix` | `implementer` | claude-code | — |
+| `gather` | `explore` | route | — |
+| `diagnose` | `generalPurpose` | route | — |
+| `fix` | `implementer` | route | — |

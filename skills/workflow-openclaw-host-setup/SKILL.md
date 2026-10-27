@@ -22,7 +22,7 @@ Set up or rebuild an OpenClaw gateway host from the kit. ai-resources setup firs
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `preflight` | `generalPurpose` | claude-code | — |
-| `setup` | `generalPurpose` | claude-code | — |
-| `agents` | `generalPurpose` | claude-code | — |
-| `verify` | `verifier` | claude-code | — |
+| `preflight` | `generalPurpose` | route | — |
+| `setup` | `generalPurpose` | route | — |
+| `agents` | `generalPurpose` | route | — |
+| `verify` | `verifier` | route | — |

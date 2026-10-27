@@ -22,6 +22,6 @@ Diagnose and fix CI/CD pipeline failures. Fetch CI logs → identify failing ste
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `fetch` | `explore` | claude-code | — |
-| `diagnose` | `generalPurpose` | claude-code | — |
-| `fix` | `implementer` | claude-code | — |
+| `fetch` | `explore` | route | — |
+| `diagnose` | `generalPurpose` | route | — |
+| `fix` | `implementer` | route | — |

@@ -1,7 +1,7 @@
 """A mixed-provider team, end to end on fixtures: dispatch fields, setup planning, `models status`, matrix.
 
-A profile puts some roles on a non-Claude provider; the example workflow hands those roles to other OpenClaw
-agents through `backend: openclaw-agent` + `agentId`. This walks that team through the real setup planning
+A profile puts some roles on a non-Claude provider; the example workflow's steps for those roles are pinned to other
+OpenClaw agents with the explicit override `backend: openclaw-agent` + `agentId`. This walks that team through the real setup planning
 (`model_selection.plan_table` / `wizard._step_summary`), the real `models status` verb and `compat`, with fixtures
 and stubs only (no host, no gateway, no network), and asserts the pieces agree:
 
@@ -61,9 +61,15 @@ DETECTED = ["claude", "openclaw", "agy"]
 
 # --- the pieces, read from the real files -------------------------------------------------------------------
 
+# The example workflow routes every step; this team pins three of them to other OpenClaw agents with the explicit
+# `openclaw-agent` override, which is how a step can still name an agent.
+PINNED = {"research": "agy-pro", "plan": "agy-flash", "review": "agy-flash"}
+
+
 def workflow_steps() -> list[dict]:
     doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    return list(doc["steps"])
+    return [{**s, "backend": "openclaw-agent", "agentId": PINNED[s["id"]]} if s["id"] in PINNED else s
+            for s in doc["steps"]]
 
 
 def dispatched(steps: list[dict]) -> dict[str, str]:

@@ -22,6 +22,6 @@ Investigate database performance, schema, data integrity, or migration issues. I
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `inspect` | `explore` | claude-code | — |
-| `analyze` | `generalPurpose` | claude-code | — |
-| `fix` | `implementer` | claude-code | — |
+| `inspect` | `explore` | route | — |
+| `analyze` | `generalPurpose` | route | — |
+| `fix` | `implementer` | route | — |

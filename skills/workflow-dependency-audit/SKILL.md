@@ -22,7 +22,7 @@ Audit dependencies for vulnerabilities and outdated packages, plan upgrades by r
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `audit` | `explore` | claude-code | — |
-| `plan` | `generalPurpose` | claude-code | — |
-| `upgrade` | `implementer` | claude-code | — |
-| `test` | `tester` | claude-code | — |
+| `audit` | `explore` | route | — |
+| `plan` | `generalPurpose` | route | — |
+| `upgrade` | `implementer` | route | — |
+| `test` | `tester` | route | — |

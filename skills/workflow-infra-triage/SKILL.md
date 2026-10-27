@@ -22,11 +22,11 @@ Infrastructure triage and stabilization. Diagnose broken IaC resources, fix prov
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `investigate-cluster` | `generalPurpose` | claude-code | investigate |
-| `investigate-code` | `generalPurpose` | claude-code | investigate |
-| `analyze` | `software-architect` | claude-code | — |
-| `implement` | `implementer` | claude-code | — |
-| `review` | `code-reviewer` | claude-code | post-fix |
-| `monitor` | `generalPurpose` | claude-code | post-fix |
-| `verify` | `verifier` | claude-code | — |
-| `document` | `doc-writer` | claude-code | — |
+| `investigate-cluster` | `generalPurpose` | route | investigate |
+| `investigate-code` | `generalPurpose` | route | investigate |
+| `analyze` | `software-architect` | route | — |
+| `implement` | `implementer` | route | — |
+| `review` | `code-reviewer` | route | post-fix |
+| `monitor` | `generalPurpose` | route | post-fix |
+| `verify` | `verifier` | route | — |
+| `document` | `doc-writer` | route | — |

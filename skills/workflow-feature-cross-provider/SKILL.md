@@ -1,6 +1,6 @@
 ---
 name: workflow-feature-cross-provider
-description: "User asks to implement a feature and wants part of the team to run on a different OpenClaw agent or provider (explicit request only; the plain feature workflow is the default). Runs the kit workflow 'feature-cross-provider': Feature workflow with a mixed team. research and plan run on other OpenClaw agents, review runs on another agent in parallel with the Claude Code security audit."
+description: "User asks to implement a feature and wants the team's provider mix spelled out step by step (explicit request only; the plain feature workflow is the default). Runs the kit workflow 'feature-cross-provider': Feature workflow for a mixed-provider team. Every step is routed through the matrix; review runs in parallel with the security audit."
 argument-hint: "[goal]"
 disable-model-invocation: true
 ---
@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 # Workflow: feature-cross-provider
 
-Feature workflow with a mixed team. research and plan run on other OpenClaw agents, review runs on another agent in parallel with the Claude Code security audit.
+Feature workflow for a mixed-provider team. Every step is routed through the matrix; review runs in parallel with the security audit.
 
 **Goal:** $ARGUMENTS
 
@@ -22,12 +22,12 @@ Feature workflow with a mixed team. research and plan run on other OpenClaw agen
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `research` | `explore` | openclaw-agent (`agy-pro`) | — |
-| `plan` | `planner` | openclaw-agent (`agy-flash`) | — |
-| `architect` | `software-architect` | claude-code | — |
-| `implement` | `implementer` | claude-code | — |
-| `test` | `tester` | claude-code | — |
-| `review` | `code-reviewer` | openclaw-agent (`agy-flash`) | post-test |
-| `security` | `security-auditor` | claude-code | post-test |
-| `verify` | `verifier` | claude-code | — |
-| `document` | `doc-writer` | claude-code | — |
+| `research` | `explore` | route | — |
+| `plan` | `planner` | route | — |
+| `architect` | `software-architect` | route | — |
+| `implement` | `implementer` | route | — |
+| `test` | `tester` | route | — |
+| `review` | `code-reviewer` | route | post-test |
+| `security` | `security-auditor` | route | post-test |
+| `verify` | `verifier` | route | — |
+| `document` | `doc-writer` | route | — |

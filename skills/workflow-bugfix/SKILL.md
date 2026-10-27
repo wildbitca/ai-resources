@@ -22,13 +22,13 @@ Domain-agnostic bugfix workflow. research → explore → implement → test →
 
 | Step | Agent | Backend | Parallel group |
 |------|-------|---------|----------------|
-| `research` | `generalPurpose` | claude-code | — |
-| `explore` | `generalPurpose` | claude-code | — |
-| `implement` | `implementer` | claude-code | — |
-| `test` | `tester` | claude-code | — |
-| `security` | `security-auditor` | claude-code | — |
-| `verify` | `verifier` | claude-code | — |
-| `document` | `doc-writer` | claude-code | — |
+| `research` | `generalPurpose` | route | — |
+| `explore` | `generalPurpose` | route | — |
+| `implement` | `implementer` | route | — |
+| `test` | `tester` | route | — |
+| `security` | `security-auditor` | route | — |
+| `verify` | `verifier` | route | — |
+| `document` | `doc-writer` | route | — |
 
 ## Deterministic alternative
 

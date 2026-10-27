@@ -1,8 +1,9 @@
 """Load a kit workflow (`workflows/*.workflow.yaml`, see WORKFLOW_CONTRACT.md) into the shape the engine runs.
 
 Only what the engine needs is read: ordered steps, the role of each, its skills, parallel groups, the step a concern
-returns to and the prompt template. `openclaw-agent` steps are dispatched like any other step to the role's `kit-role-*`
-agent; teams share the checkout and are kept apart by their write-scope claims (`scope_guard`).
+returns to and the prompt template. `backend` is `route` unless a step overrides it (`claude-code`, `openclaw-agent`,
+`agy`); the engine dispatches every step to the role's `kit-role-*` agent, and teams share the checkout, kept apart by
+their write-scope claims (`scope_guard`).
 """
 from __future__ import annotations
 
@@ -26,6 +27,9 @@ class WorkflowError(ValueError):
     """The workflow cannot be loaded or is inconsistent."""
 
 
+BACKENDS = frozenset({"route", "claude-code", "openclaw-agent", "agy"})
+
+
 @dataclass(frozen=True)
 class Step:
     id: str
@@ -37,7 +41,7 @@ class Step:
     exit_criteria: str = ""
     handoff_to: str = ""
     return_to: str = ""                 # `on_concern_return_to`
-    backend: str = "claude-code"
+    backend: str = "route"
 
 
 @dataclass(frozen=True)
@@ -115,13 +119,16 @@ def _build(doc: dict[str, Any], path: Path) -> Workflow:
         if sid in seen:
             raise WorkflowError(f"{path.name}: duplicate step id {sid!r}")
         seen.add(sid)
+        backend = str(raw.get("backend") or "route")
+        if backend not in BACKENDS:
+            raise WorkflowError(f"{path.name}: step {sid!r} has unknown backend {backend!r} (allowed: {', '.join(sorted(BACKENDS))})")
         hints = raw.get("execution_hints") if isinstance(raw.get("execution_hints"), dict) else {}
         steps.append(Step(
             id=sid, role=role, skills=tuple(str(s) for s in (raw.get("skills") or [])),
             group=str(hints.get("parallel_group") or ""), prompt_template=str(raw.get("prompt_template") or ""),
             entry_criteria=str(raw.get("entry_criteria") or ""), exit_criteria=str(raw.get("exit_criteria") or ""),
             handoff_to=str(raw.get("handoff_to") or ""), return_to=str(raw.get("on_concern_return_to") or ""),
-            backend=str(raw.get("backend") or "claude-code")))
+            backend=backend))
     ids = {s.id for s in steps}
     for s in steps:
         for ref in (s.handoff_to, s.return_to):

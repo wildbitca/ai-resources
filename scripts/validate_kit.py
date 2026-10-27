@@ -33,16 +33,15 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DESCRIPTION_LIMIT = 1024  # Claude Code truncates description + when_to_use at 1536 chars
 VERIFIER_DOC_SKILL = "knowledge-audit"
 
-# Per-step backend (ADR 0005). `claude-code` is the default and today's behaviour: a kit role
-# subagent. `openclaw-agent` hands the role to another OpenClaw agent through `sessions_spawn`.
-BACKENDS = {"claude-code", "openclaw-agent"}
-DEFAULT_BACKEND = "claude-code"
+# Per-step backend. The default is `route`: the role resolves through the routing matrix
+# (`ai-resources route <role>`). `claude-code`, `openclaw-agent` (with an agentId) and `agy` are
+# explicit overrides; there is no `lane`.
+BACKENDS = {"route", "claude-code", "openclaw-agent", "agy"}
+DEFAULT_BACKEND = "route"
 # A leading alphanumeric keeps a flag-like value out; the cap bounds the length.
 AGENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
-# One writer per run: the implementer and every other write-capable role stay on claude-code.
-# Read-only roles may run on another agent; tester and doc-writer run commands or write files,
-# so they pass with a warning (the post-step check detects a violation, it cannot prevent one)
-# and are never parallel members.
+# Read-only roles may run on an explicit openclaw-agent override; tester and doc-writer run
+# commands or write files, so they pass with a warning and are never parallel members.
 OPENCLAW_READ_ONLY_ROLES = set(roles_policy.REPORT_ROLES)
 OPENCLAW_WARNED_ROLES = set(roles_policy.WARNED_ROLES)
 OPENCLAW_ALLOWED_ROLES = OPENCLAW_READ_ONLY_ROLES | OPENCLAW_WARNED_ROLES
