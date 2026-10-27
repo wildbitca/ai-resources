@@ -60,13 +60,10 @@ def problems(rec: dict[str, Any]) -> list[str]:
     return out
 
 
-def append(rec: dict[str, Any], path: Path | None = None) -> Path:
-    bad = problems(rec)
-    if bad:
-        raise ValueError("; ".join(bad))
-    path = path or ledger_path()
+def append_jsonl(path: Path, rec: dict[str, Any]) -> Path:
+    """One JSON line appended atomically under an exclusive flock (shared with the dispatch ledger)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps({"schema": SCHEMA, **rec}, sort_keys=True, ensure_ascii=False) + "\n"
+    line = json.dumps(rec, sort_keys=True, ensure_ascii=False) + "\n"
     with open(path, "a", encoding="utf-8") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         try:
@@ -76,6 +73,13 @@ def append(rec: dict[str, Any], path: Path | None = None) -> Path:
         finally:
             fcntl.flock(fh, fcntl.LOCK_UN)
     return path
+
+
+def append(rec: dict[str, Any], path: Path | None = None) -> Path:
+    bad = problems(rec)
+    if bad:
+        raise ValueError("; ".join(bad))
+    return append_jsonl(path or ledger_path(), {"schema": SCHEMA, **rec})
 
 
 def load(path: Path | None = None) -> list[dict[str, Any]]:
@@ -298,7 +302,12 @@ def cmd_record(args: argparse.Namespace) -> int:
     if args.from_run:
         from .orchestrator.state import RunStore
         rec.update(from_orchestrator(RunStore().load(args.from_run)))
+    if args.from_dispatches:
+        from . import dispatch_ledger          # per-run actuals (tokens, steps, agents, rework) of the dispatch ledger
+        rec.update(dispatch_ledger.actuals(args.from_dispatches))
+        rec.setdefault("run", args.from_dispatches)
     now = time.time()
+    measured_here = rec.get("measured") == "dispatch ledger"
     start = args.start or rec.get("start")
     end = args.end or rec.get("end") or now
     over = {"mode": args.mode, "estimated": args.estimated, "kind": args.kind, "forced": args.forced,
@@ -316,7 +325,7 @@ def cmd_record(args: argparse.Namespace) -> int:
         rec["wall_s"] = max(0, round(end - start))
     rec.setdefault("input", None)
     rec.setdefault("output", None)
-    if start and not args.no_measure:
+    if start and not args.no_measure and not measured_here:
         try:
             from . import audit_snapshot
             usages, _ = audit_snapshot.collect(datetime.fromtimestamp(start, timezone.utc) - timedelta(minutes=1),
@@ -391,6 +400,7 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     c.add_argument("--session", action="append", help="transcript session id to price (repeatable)")
     c.add_argument("--run", help="free label or orchestrator run id")
     c.add_argument("--from-run", help="read steps, agents, rework and wall time from an orchestrator run id")
+    c.add_argument("--from-dispatches", metavar="RUN_ID", help="fill tokens, steps, agents and rework from the dispatch ledger rows of this run")
     c.add_argument("--no-measure", action="store_true", help="skip the audit lookup")
     c.set_defaults(func=cmd_record)
 

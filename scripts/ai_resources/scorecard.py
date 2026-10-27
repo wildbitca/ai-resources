@@ -3,6 +3,10 @@
 Single source of truth for the numbers is skills/kit-orchestration/scorecard.json; the prose is in the
 kit-orchestration skill ("Scorecard"). Pure: no model, no network. The orchestrator scores the dimensions
 (a judgement), this module maps them (a rule), so the same scores always give the same team.
+
+Wiring to the measurements (ADR-0019 D7): this is the run-SIZING scorecard and it stays wired to `run_ledger` (a record per
+run, calibration of the thresholds). The per-dispatch measurements live in `dispatch_ledger`; `runs record --from-dispatches`
+copies a run's actuals (tokens, steps, agents, rework) into the run ledger, so there is one scorecard, not two.
 """
 from __future__ import annotations
 
