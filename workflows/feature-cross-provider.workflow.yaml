@@ -35,14 +35,14 @@ steps:
       - common-best-practices
       - common-context-optimization
     entry_criteria: User goal defined
-    exit_criteria: Research report written under .agent-output/explore/
+    exit_criteria: Research report written under {{run_dir}}/explore/
     handoff_to: plan
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Goal: {{user_goal}}.
       Read-only research: map the code, specs (specs/features/, specs/architecture/) and tests this goal touches.
       Follow the research_guidance from $AGENT_KIT/workflows/_domain-commands.yaml for {{domain}}.
-      Write the findings (summary, file:line refs, existing patterns, open questions) to .agent-output/explore/research.md.
+      Write the findings (summary, file:line refs, existing patterns, open questions) to {{run_dir}}/explore/research.md.
       Update {{handoff_file}} (Research_ref, Spec_refs, Next=planner).
       If blocked, set Blocked: true, Return_to_step: research, Block_reason: [reason].
   - id: plan
@@ -59,7 +59,7 @@ steps:
       Workspace: {{workspace}}. Domain: {{domain}}.
       Goal: {{user_goal}}.
       Read Research_ref and Spec_refs from {{handoff_file}}.
-      Write the plan to .agent-output/planner/plan.md: description, files, steps, checklist, security notes,
+      Write the plan to {{run_dir}}/planner/plan.md: description, files, steps, checklist, security notes,
       Requires_tests, Security_critical_feature. Write acceptance criteria as Given/When/Then, each with the
       exact command that proves it.
       Update {{handoff_file}} (Plan_ref, Requires_tests, Security_critical_feature, Next=software-architect).
@@ -76,7 +76,7 @@ steps:
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}} and Plan_ref. Produce the design (layers, patterns, key interfaces, module structure)
-      in .agent-output/architect/design.md, then validate the plan against it.
+      in {{run_dir}}/architect/design.md, then validate the plan against it.
       Update {{handoff_file}} (Architecture_design_ref, Design_summary).
       If APPROVED: Architect_approval: yes, Next=implementer.
       If REJECTED: Blocked: true, Return_to_step: plan, Block_reason: [specific violations].
@@ -109,7 +109,7 @@ steps:
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}}. You are the gate, not the author. Run the full test and analyze commands from
       $AGENT_KIT/workflows/_domain-commands.yaml ({{domain}} section), separate failures caused by this change
-      from pre-existing ones, and write the report to .agent-output/tester/.
+      from pre-existing ones, and write the report to {{run_dir}}/tester/.
       MANDATORY: all commands must exit 0. If one fails because of this change, set Blocked: true,
       Return_to_step: implement, Block_reason: [failures with details].
       Update {{handoff_file}} (Test_report, Next=post-test group: code-reviewer + security-auditor).
@@ -132,8 +132,8 @@ steps:
       Requirements_preserved and audit the test diff: assertions deleted or weakened, tests skipped, tests that
       cannot fail. Report only defects you can point at in the diff; an empty list is a valid result.
       This step runs concurrently with security: do NOT edit {{handoff_file}}, and change nothing outside
-      .agent-output/code-reviewer/.
-      Write the report in .agent-output/code-reviewer/ ending with these fields:
+      {{run_dir}}/code-reviewer/.
+      Write the report in {{run_dir}}/code-reviewer/ ending with these fields:
         Code_review_verdict: APPROVED | REQUIRES_CHANGES
         Block_reason: [corrections] (only if REQUIRES_CHANGES)
   - id: security
@@ -152,7 +152,7 @@ steps:
       Read {{handoff_file}}. This step runs concurrently with review: do NOT edit {{handoff_file}}.
       If Security_critical_feature: no, return Security_audit: N/A without a scan.
       Otherwise run the methodology from $AGENT_KIT/workflows/security-devsecops.workflow.yaml adapted to {{domain}}.
-      Write the report in .agent-output/security-auditor/ ending with these fields:
+      Write the report in {{run_dir}}/security-auditor/ ending with these fields:
         Security_audit: PASS | CONDITIONAL | FAIL | N/A
         Block_reason: [critical vulnerabilities] (only if FAIL)
   - id: verify

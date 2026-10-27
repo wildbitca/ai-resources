@@ -44,7 +44,7 @@ def runs_root() -> Path:
 def new_run_id(label: str = "run", now: float | None = None) -> str:
     stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime(now if now is not None else time.time()))
     slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:24] or "run"
-    return f"{stamp}-{slug}-{secrets.token_hex(2)}"
+    return f"{stamp}-{slug}-{secrets.token_hex(4)}"            # 32 bits: two teams started in one second never share an id
 
 
 def check_id(run_id: str) -> str:

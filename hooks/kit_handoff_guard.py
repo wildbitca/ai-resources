@@ -141,7 +141,7 @@ def main() -> int:
         return 0
     sys.stderr.write(
         f"{handoff} is locked while parallel group '{info.get('group', '?')}' runs. "
-        "Reading it is fine, but do not write to it: end your own report under .agent-output/<role>/ with the handoff fields; "
+        "Reading it is fine, but do not write to it: end your own report under .agent-output/<run>/<role>/ with the handoff fields; "
         "the orchestrator copies them into the handoff when the group finishes.\n"
     )
     return 2

@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping
 
 DEFAULT_ROLE_TIMEOUTS: dict[str, int] = {"planner": 1200, "implementer": 9000, "tester": 2700, "verifier": 1800}
 DEFAULT_TIMEOUT = 1800
-DEFAULT_MAX_TEAMS = 2
+DEFAULT_MAX_TEAMS = 16
 MIN_TIMEOUT, MAX_TIMEOUT = 30, 86400
 # A run in one of these states holds a team slot; `queued` waits for one; the others have released theirs.
 ACTIVE = frozenset({"running", "awaiting_approval"})

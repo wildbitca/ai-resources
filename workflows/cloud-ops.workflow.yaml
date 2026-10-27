@@ -45,7 +45,7 @@ steps:
       External APIs (use curl with appropriate auth from env):
         curl -H "Authorization: Bearer $API_KEY" https://api.<service>.com/v1/<resource>
 
-      Write all fetched data to .agent-output/cloud-ops/<slug>-data.md:
+      Write all fetched data to {{run_dir}}/cloud-ops/<slug>-data.md:
         - Resource list with key attributes
         - Current status/health
         - Relevant metrics or recent events
@@ -78,12 +78,12 @@ steps:
         5. Security or compliance concerns if visible
 
       If analysis is the final deliverable (no changes needed):
-        Write full report to .agent-output/cloud-ops/<slug>-analysis.md.
+        Write full report to {{run_dir}}/cloud-ops/<slug>-analysis.md.
         Update {{handoff_file}}: Analysis_ref, Action_needed: no, Completed: true.
         DELETE {{handoff_file}} and STOP.
 
       If changes ARE needed:
-        Write analysis + action plan to .agent-output/cloud-ops/<slug>-analysis.md.
+        Write analysis + action plan to {{run_dir}}/cloud-ops/<slug>-analysis.md.
         Update {{handoff_file}}:
           Analysis_ref: path
           Action_plan: [bullet list of changes]
@@ -113,7 +113,7 @@ steps:
         - Query the resource again to confirm expected state
         - Check dependent resources are unaffected
 
-      Document before/after state in .agent-output/cloud-ops/<slug>-result.md.
+      Document before/after state in {{run_dir}}/cloud-ops/<slug>-result.md.
 
       Update {{handoff_file}}:
         Actions_taken: [list]

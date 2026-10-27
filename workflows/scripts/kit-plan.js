@@ -400,7 +400,7 @@ const plan = await agent(
   (grafts.length ? `Graft these ideas from the other drafts where they fit:\n- ${grafts.join('\n- ')}\n` : '') +
   `\nTask size: ${size}${scorecard ? ` (scorecard ${scorecard.mode.toUpperCase()}, total ${scorecard.total}: ${JSON.stringify(scorecard.scores)}; roster ${scorecard.roster.join(', ') || 'none'})` : ''}${sizing.risk_items.length ? `; risk items: ${sizing.risk_items.join('; ')}` : '; no risk items'}. ` +
   `Start the plan with a "## Sizing" block (scores when the task was scored, mode, resume_test, risk_items, forecast lines and units, route, verification, spawn_budget). Delegation is not the default: a route other than inline needs a reason (one of ${DELEGATION.reasons.join(", ")}) and divisible: yes only when the units share no state and wait on none (list each unit with its files); when in doubt write divisible: no and one agent.\n` +
-  `Write the final plan to .agent-output/planner/<slug>-plan.md (create the directory if needed) with:\n` +
+  `Write the final plan to .agent-output/<run>/planner/<slug>-plan.md (create the directory if needed; <run> is this plan run's own id so two plans never share a path) with:\n` +
   `- Goal and scope, plus what is explicitly out of scope\n` +
   `- Numbered steps, each with the files it touches and how to verify it: the tests for those files, never the full suite per step ` +
   `(the full suite runs once, in the Test phase of /kit-implement)\n` +

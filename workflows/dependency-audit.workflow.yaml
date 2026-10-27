@@ -56,7 +56,7 @@ steps:
         - Outdated (minor/patch): nice to update
         - No action: current
 
-      Write full report to .agent-output/deps/<slug>-audit.md:
+      Write full report to {{run_dir}}/deps/<slug>-audit.md:
         | Package | Current | Latest | Severity | CVE | Notes |
 
       Update {{handoff_file}}:
@@ -88,7 +88,7 @@ steps:
 
       If Critical_count > 0: Batch 1 must include those packages regardless of version jump.
 
-      Write plan to .agent-output/deps/<slug>-plan.md.
+      Write plan to {{run_dir}}/deps/<slug>-plan.md.
 
       Update {{handoff_file}}:
         Plan_ref: path
@@ -148,7 +148,7 @@ steps:
         - Determine: is the failure from the upgrade (regression) or pre-existing?
         - For regressions: set Blocked: true, Return_to_step: upgrade, Block_reason: [test + package].
 
-      Write test report to .agent-output/deps/<slug>-test.md.
+      Write test report to {{run_dir}}/deps/<slug>-test.md.
 
       Update {{handoff_file}}:
         Test_ref: path

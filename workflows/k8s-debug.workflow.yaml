@@ -51,14 +51,14 @@ steps:
         kubectl get pvc -n {{namespace}}
         kubectl get hpa -n {{namespace}}
 
-      Write findings to .agent-output/k8s-debug/<slug>-snapshot.md:
+      Write findings to {{run_dir}}/k8s-debug/<slug>-snapshot.md:
         - Symptom summary (what is wrong)
         - Raw command outputs (paste key sections)
         - Resource states (pod statuses, restart counts, conditions)
         - Relevant events (errors, warnings, scale events)
 
       Update {{handoff_file}}:
-        Snapshot_ref: .agent-output/k8s-debug/<slug>-snapshot.md
+        Snapshot_ref: {{run_dir}}/k8s-debug/<slug>-snapshot.md
         Symptoms: [bullet list]
         Fix_needed: yes | no | unknown
         Next: diagnose
@@ -82,12 +82,12 @@ steps:
         4. Immediate mitigation if service is degraded (restart, scale down, rollback).
 
       If diagnosis is complete and NO fix is needed (informational request):
-        Write full analysis to .agent-output/k8s-debug/<slug>-diagnosis.md.
+        Write full analysis to {{run_dir}}/k8s-debug/<slug>-diagnosis.md.
         Update {{handoff_file}}: Diagnosis_ref, Fix_needed: no, Completed: true.
         DELETE {{handoff_file}} and STOP — do not advance to fix.
 
       If fix IS needed:
-        Write diagnosis + recommended fix to .agent-output/k8s-debug/<slug>-diagnosis.md.
+        Write diagnosis + recommended fix to {{run_dir}}/k8s-debug/<slug>-diagnosis.md.
         Update {{handoff_file}}:
           Diagnosis_ref: path
           Recommended_fix: [one-line description]
@@ -117,7 +117,7 @@ steps:
         kubectl get pods -n {{namespace}}
         kubectl get events -n {{namespace}} --sort-by=.lastTimestamp | tail -20
 
-      Document what was changed and the before/after state in .agent-output/k8s-debug/<slug>-fix.md.
+      Document what was changed and the before/after state in {{run_dir}}/k8s-debug/<slug>-fix.md.
 
       Update {{handoff_file}}:
         Fix_applied: [description]

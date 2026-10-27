@@ -49,7 +49,7 @@ steps:
         3. Capture context lines (grep -B2 -A5) for each error
         4. Count occurrences: sort | uniq -c | sort -rn (to find high-frequency errors)
 
-      Write collected logs to .agent-output/log-triage/<slug>-raw.md:
+      Write collected logs to {{run_dir}}/log-triage/<slug>-raw.md:
         - Top error messages by frequency (count + first occurrence)
         - Full context for the top 10 unique errors
         - Timeline of errors (when they started, frequency over time)
@@ -82,7 +82,7 @@ steps:
 
       If a trace ID or user ID was provided, reconstruct the full request journey.
 
-      Write analysis to .agent-output/log-triage/<slug>-analysis.md:
+      Write analysis to {{run_dir}}/log-triage/<slug>-analysis.md:
         ## Summary
         ## Root Cause Hypothesis
         ## Error Timeline

@@ -436,7 +436,7 @@ graph TB
 
 Steps in a parallel group never write this file: each ends its own report with the fields it would have set, and the orchestrator joins them into the front matter once the whole group returns.
 
-A parallel group may mix backends: a member on `openclaw-agent` must be one of the six read-only roles, writes only under `.agent-output/<role>/` and is joined like any other member (see `workflows/WORKFLOW_CONTRACT.md`).
+A parallel group may mix backends: a member on `openclaw-agent` must be one of the six read-only roles, writes only under `.agent-output/<run>/<role>/` and is joined like any other member (see `workflows/WORKFLOW_CONTRACT.md`).
 
 **Lifecycle:** Handoff files are created when a workflow starts and **deleted** when the workflow completes successfully.
 
@@ -546,8 +546,8 @@ the next step, otherwise it runs sequentially; `Blocked` with `Return_to_step` r
 the 4th fails the run; a `READY` from any role but the verifier is rejected; the verifier must run on its own agent and, where
 the models are known, in a different model family than every writer (fail closed), and in a different session where the
 runtime reports one; the plan is approved by the operator before the first step that writes; each role has a timeout
-(planner 1200 s, implementer 9000 s, tester 2700 s, verifier 1800 s, others 1800 s, configurable); at most `maxTeams` (2)
-teams work at once and the rest wait in a FIFO queue; teams share the checkout and a run that writes holds a write-scope claim (`--param write_scope=`), so overlapping teams queue instead of colliding.
+(planner 1200 s, implementer 9000 s, tester 2700 s, verifier 1800 s, others 1800 s, configurable); at most `maxTeams` (16, the plugin's own maximum; not a
+resource cap) teams work at once and the rest wait in a FIFO queue; teams share the checkout and a run that writes holds a write-scope claim (`--param write_scope=`), so overlapping teams queue instead of colliding.
 There is no spend cap: provider limits are the brake, and `orchestrate cost RUN` reports the API-equivalent estimate per role.
 
 State lives under `$XDG_STATE_HOME/ai-resources/runs/<run>/{state.json,handoff.md}` (atomic writes, one lock per run, never
@@ -555,6 +555,17 @@ under `/tmp`). The orchestrator owns the handoff: roles end their reply with the
 gateway restart the plugin calls `resume`, which hands out again the steps that were never reported without counting a retry.
 Installing a new plugin version records ONE pending entry; `ai-resources openclaw apply-pending` reloads it in a drained
 window. Setup never restarts a live gateway for this (ADR-0003).
+
+### OpenClaw as the orchestrator (setup wiring, ADR-0019)
+
+`ai-resources setup --auto` configures OpenClaw as the main cockpit and orchestrator, with no questions:
+
+- one `kit-role-*` agent per role, `model.primary` and `model.fallbacks` from the routing matrix (a Claude primary falls back to agy cells, never to API credits; every Claude cell runs through `claude-cli`);
+- `main` and every other channel agent (and `claude`) get `subagents.allowAgents` = what they had + `claude` + every `kit-role-*` id (fill-only; the operator's entries stay; teardown removes only what setup added);
+- `agents.defaults.subagents` limits are RAISED to a floor (`maxSpawnDepth` 4, `maxChildrenPerAgent` 16, `maxConcurrent` 32) and never lowered: there is no agent cap, because the owner runs many agents and teams. What keeps many agents from exhausting the gateway is `tools.deny: bundle-mcp` on every worker (no per-session engram/supabase stack) and the MCP child reaper (`MCP_CHILD_WARN`, doctor 4e); the sizing is by measurement (the acceptance run records peak gateway memory), not by a count;
+- the by-model `kit-lane-*` agents are retired: removed only when setup created them and nothing references them (no cron job, binding, session, or `allowAgents` entry setup did not add); every other one is kept and reported with the reason.
+
+Teams do not collide, so nothing needs a limit to stay safe: each run has its own run id, handoff file, `.agent-output/<run>/<role>/` directory, session names (`<run>-<step>-a<attempt>`) and write-scope claim (`scope_guard`); shared files (ledger, `lanes.yaml`, caches) are appended under `flock` or replaced through a unique temp file. `setup --dry-run` prints the agents added/changed, the `allowAgents` delta, the limits and the kit-lane migration (removed / kept with reason).
 
 ## Quick Reference
 

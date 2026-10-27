@@ -31,7 +31,7 @@ export function engineCommand({ aiResourcesBin = "", python3 = "python3", kitRoo
 
 /** Plain-object clamp of the plugin config values the engine receives. */
 export function engineOptions(pluginConfig = {}) {
-  const maxTeams = Number.isInteger(pluginConfig.maxTeams) ? Math.min(Math.max(pluginConfig.maxTeams, 1), 16) : 2;
+  const maxTeams = Number.isInteger(pluginConfig.maxTeams) ? Math.min(Math.max(pluginConfig.maxTeams, 1), 16) : 16;
   const timeouts = {};
   for (const [role, secs] of Object.entries(pluginConfig.roleTimeouts || {})) {
     if (Number.isInteger(secs) && secs >= 30 && secs <= 86400) timeouts[role] = secs;

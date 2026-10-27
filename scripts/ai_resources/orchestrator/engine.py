@@ -106,11 +106,17 @@ def _by_reference(handoff: Mapping[str, Any]) -> str:
             "paraphrase. Report the ids you covered as `Covered: T#, S#`.\n")
 
 
+def run_dir_of(run_id: str) -> str:
+    """The run's own output directory, relative to its workspace: `.agent-output/<run id>` (C1: no shared output path)."""
+    return f".agent-output/{run_id}"
+
+
 def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Path, handoff_file: str) -> str:
     """Everything the child needs: it has no chat context, no subagent definitions and does not write the handoff."""
     cwd = str(run.get("cwd") or run.get("workspace"))
     domain = str(run.get("domain") or "")
     kit = str(kit_root)
+    run_dir = run_dir_of(run["id"])
     persona = kit_root / "agents" / "personas" / f"{step.role}-{domain}.md" if domain else None
     reads = [f"- role: {kit}/agents/roles/{step.role}.md"]
     if persona is not None and persona.is_file():
@@ -118,7 +124,7 @@ def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Pat
     reads += [f"- skill: {kit}/skills/{sid}/SKILL.md" for sid in step.skills]
     template = (step.prompt_template or "").replace("{{workspace}}", cwd).replace("{{domain}}", domain) \
         .replace("{{user_goal}}", str(run.get("goal") or "")).replace("{{handoff_file}}", handoff_file) \
-        .replace("$AGENT_KIT", kit)
+        .replace("{{run_dir}}", run_dir).replace("$AGENT_KIT", kit)
     # Workflow-specific parameters ({{ci_run_url}}, {{provider}}, ...): the run's `params`, else "take it from the goal".
     template = re.sub(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}",
                       lambda m: str((run.get("params") or {}).get(m.group(1)) or f"<{m.group(1)}: see the goal>"), template)
@@ -128,6 +134,8 @@ def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Pat
         f"You are the {step.role} of an orchestrated team run ({run['id']}, step {step.id}, attempt {attempt}).\n"
         f"Working directory (stay inside it): {cwd}\n"
         f"Handoff file (read it; the orchestrator owns writes to it - do NOT edit it): {handoff_file}\n"
+        f"Reports and scratch files of this run go under {run_dir}/{step.role}/ (the run's own directory: another team on "
+        "the same repository writes to its own, so never write to a sibling run's directory).\n"
         "Read these first:\n" + "\n".join(reads) + "\n"
         "Rules: one writer per run; only the verifier signs a run off; never call the native AskUserQuestion; never sleep "
         "or poll in a loop (run long work in the background and read its output with short calls).\n"
@@ -396,7 +404,8 @@ class Engine:
         return {"type": "dispatch", "run": run["id"], "step": step.id, "role": step.role, "agent": st["agent"],
                 "attempt": st["attempt"], "cwd": str(run.get("cwd") or run["workspace"]),
                 "timeout_s": limits.role_timeout(step.role, run.get("role_timeouts")),
-                "parallel": bool(step.group), "handoff_file": handoff,
+                "parallel": bool(step.group), "handoff_file": handoff, "run_dir": run_dir_of(run["id"]),
+                "label": f"{run['id']}-{step.id}-a{st['attempt']}",       # unique per run, step and attempt (C1)
                 "prompt": build_prompt(run, step, st["attempt"], self.kit_root, handoff)}
 
     def _independence_gate(self, run: dict[str, Any], step: Step) -> str:

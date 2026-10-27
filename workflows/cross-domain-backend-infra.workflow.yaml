@@ -54,7 +54,7 @@ steps:
         - App layer: project test commands (e.g. flutter test, phpunit, ng test)
         - Infra layer: terraform validate, terraform plan (dry-run), wrangler deploy --dry-run
       MANDATORY: All test/validation commands MUST exit 0.
-      Create report in .agent-output/tester/.
+      Create report in {{run_dir}}/tester/.
       Update {{handoff_file}} (Test_report_ref, Tests_passed: true, Next=code-reviewer).
       If ANY fails: Blocked: true, Return_to_step: infra-step or app-step (based on which layer failed), Block_reason: [failure output].
 
@@ -71,7 +71,7 @@ steps:
       Workspace: {{workspace}}. Domain: {{domain}}.
       Read {{handoff_file}} and changed files across both app and infra layers.
       Review for: cross-layer consistency (env vars, URLs, secrets references match), no hardcoded credentials in infra, proper state management in Terraform/Workers, security of deploy configuration.
-      Report in .agent-output/code-reviewer/.
+      Report in {{run_dir}}/code-reviewer/.
       If APPROVED: update {{handoff_file}} (Code_review_verdict: APPROVED, Next=verifier).
       If REQUIRES_CHANGES: Blocked: true, Return_to_step: app-step or infra-step, Block_reason: [corrections].
 

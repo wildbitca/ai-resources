@@ -44,7 +44,7 @@ steps:
       7. ProviderConfig existence and RBAC (can sub-providers read ProviderConfigs?)
       8. Flux/GitOps reconciliation status
 
-      Write findings to .agent-output/investigator/cluster-state.md.
+      Write findings to {{run_dir}}/investigator/cluster-state.md.
       Runs concurrently with investigate-code: do NOT edit {{handoff_file}}.
       End the findings file with: Cluster_state_ref, Broken_resources (list), Error_summary.
 
@@ -72,7 +72,7 @@ steps:
       If the composition uses Go templating, render the template mentally or with a script
       to verify the YAML output is valid (document separators, indentation, quoting).
 
-      Write findings to .agent-output/investigator/code-review.md.
+      Write findings to {{run_dir}}/investigator/code-review.md.
       Runs concurrently with investigate-cluster: do NOT edit {{handoff_file}}.
       End the findings file with: Code_review_ref, Suspected_issues (list).
 
@@ -85,7 +85,7 @@ steps:
     handoff_to: implement
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}}, .agent-output/investigator/cluster-state.md, .agent-output/investigator/code-review.md.
+      Read {{handoff_file}}, {{run_dir}}/investigator/cluster-state.md, {{run_dir}}/investigator/code-review.md.
 
       ## Step 1 — Architecture Design for the fix
       Before proposing a fix, design the correct structure:
@@ -110,7 +110,7 @@ steps:
       - Test composition template changes with a render script before deploying
       - Fix one thing at a time — don't batch unrelated fixes
 
-      Write plan to .agent-output/architect/fix-plan.md.
+      Write plan to {{run_dir}}/architect/fix-plan.md.
       Update {{handoff_file}} with: Fix_plan_ref, Architecture_design_ref, Root_cause, Blast_radius, Safety_status.
 
   - id: implement
@@ -124,7 +124,7 @@ steps:
     on_concern_return_to: analyze
     prompt_template: |
       Workspace: {{workspace}}. Domain: {{domain}}.
-      Read {{handoff_file}} and .agent-output/architect/fix-plan.md.
+      Read {{handoff_file}} and {{run_dir}}/architect/fix-plan.md.
 
       Execute the fix plan step by step. For each change:
       1. Make the edit
@@ -159,7 +159,7 @@ steps:
       4. Could any change trigger unintended creates/updates/deletes?
       5. Are RBAC permissions minimal and correct?
 
-      Write review to .agent-output/code-reviewer/review.md.
+      Write review to {{run_dir}}/code-reviewer/review.md.
       Runs concurrently with monitor: do NOT edit {{handoff_file}}.
       End the review with: Review_result (approve/block), Review_ref.
 
@@ -185,7 +185,7 @@ steps:
       5. Continue until ALL affected resources are READY or 5 minutes pass
 
       If resources are stuck, document the specific error and remaining count.
-      Write monitoring log to .agent-output/monitor/status.md.
+      Write monitoring log to {{run_dir}}/monitor/status.md.
       Runs concurrently with review: do NOT edit {{handoff_file}}.
       End the monitoring log with: Final_status, Resources_ready, Resources_stuck (if any).
 

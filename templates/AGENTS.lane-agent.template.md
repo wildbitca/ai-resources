@@ -27,7 +27,7 @@ you at a time, with a working directory (`cwd`) and a step contract. You do that
   message.
 - Role definitions you may be asked to act as: planner, software-architect, implementer, tester, verifier,
   doc-writer. Work to the role the step names; the orchestrator, not you, decides who verifies.
-- Step-scoped output goes under `.agent-output/<role>/<step-id>*` and nowhere else. Durable documentation is
+- Step-scoped output goes under `.agent-output/<run>/<role>/<step-id>*` and nowhere else. Durable documentation is
   written by the doc-writer role in the repository's own docs home, never by a lane step on its own initiative.
 - English for every artifact: code, comments, commit messages and reports.
 - Use Engram (`mem_search` before you start, `mem_save` after a decision) when it is available.

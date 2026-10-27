@@ -54,7 +54,7 @@ steps:
         4. Test coverage: does the target code have tests? (run: grep -r "describe\|it(\|test(" <dir>)
         5. Risk assessment: what is the blast radius if we break something?
 
-      Write findings to .agent-output/refactor/<slug>-assessment.md.
+      Write findings to {{run_dir}}/refactor/<slug>-assessment.md.
 
       Update {{handoff_file}}:
         Assessment_ref: path
@@ -84,7 +84,7 @@ steps:
         - If Has_tests is "no", the first step MUST add characterization tests before any refactoring.
         - Each step must have: description + files touched + acceptance criteria (how to verify behavior preserved).
 
-      Write plan to .agent-output/refactor/<slug>-plan.md.
+      Write plan to {{run_dir}}/refactor/<slug>-plan.md.
 
       Update {{handoff_file}}:
         Plan_ref: path
@@ -142,7 +142,7 @@ steps:
         - For regressions: set Blocked: true, Return_to_step: implement, Block_reason: [test + error].
         - For pre-existing failures: document and note as out-of-scope.
 
-      Write test report to .agent-output/refactor/<slug>-test.md.
+      Write test report to {{run_dir}}/refactor/<slug>-test.md.
 
       Update {{handoff_file}}:
         Test_ref: path
@@ -168,7 +168,7 @@ steps:
         5. Are naming and structure consistent with the surrounding codebase?
         6. Test diff audit: no assertion deleted, weakened or skipped to keep the suite green, and characterization tests still assert the old behaviour.
 
-      Write review to .agent-output/refactor/<slug>-review.md.
+      Write review to {{run_dir}}/refactor/<slug>-review.md.
 
       Update {{handoff_file}}:
         Review_verdict: APPROVED | REQUIRES_CHANGES

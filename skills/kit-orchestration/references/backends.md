@@ -22,18 +22,18 @@ Return_to_step: <id>
 - `$AGENT_KIT/agents/roles/<role>.md` and, if it exists, `$AGENT_KIT/agents/personas/<role>-<domain>.md`, to be read first;
 - each skill as `$AGENT_KIT/skills/<id>/SKILL.md`;
 - the goal, the constraints and the domain commands;
-- the write scope: only `.agent-output/<role>/`, plus the handoff for a sequential step only;
+- the write scope: only `.agent-output/<run>/<role>/`, plus the handoff for a sequential step only;
 - the attempt number, the return format above verbatim (some role files have no return block of their own), and the sentinel spec below;
 - a startup self-check: run `git rev-parse --show-toplevel`, and end as `Blocked` if it differs from the given worktree.
 
 The prompt carries no secrets, no environment dumps and no code.
 
-**Waiting (T39).** Every call that waits or polls lasts at most 60 s; never put a wait loop inside one call, and never restart or stop the gateway. The budget per attempt is 20 minutes. Completion is the sentinel `.agent-output/<role>/<step-id>.done` (JSON `{step, attempt, status, finished_at}`, written by the child last), or a terminal session state when a status tool exists. A timed-out child is ended with a session tool if there is one; otherwise the attempt is recorded as lost.
+**Waiting (T39).** Every call that waits or polls lasts at most 60 s; never put a wait loop inside one call, and never restart or stop the gateway. The budget per attempt is 20 minutes. Completion is the sentinel `.agent-output/<run>/<role>/<step-id>.done` (JSON `{step, attempt, status, finished_at}`, written by the child last), or a terminal session state when a status tool exists. A timed-out child is ended with a session tool if there is one; otherwise the attempt is recorded as lost.
 
 **Post-step check.** The Claude Code hooks (`kit_subagent_return`, `kit_handoff_guard`) do not fire for these children, so the orchestrator runs the check itself. The step is complete only if all of these hold:
 
 1. The sentinel (or a terminal state) is present.
-2. `.agent-output/<role>/<step-id>.md` exists and contains `## Result` and `## Routing`.
+2. `.agent-output/<run>/<role>/<step-id>.md` exists and contains `## Result` and `## Routing`.
 3. For a sequential step, the handoff front matter has `step: <id>`, a valid `status` and the keys of `handoff.md.template`. For a parallel member, the handoff sha256 is the same before and after.
 4. For a read-only role, compared with a snapshot taken before the child was spawned: HEAD is unchanged; the sha256 of `$(git rev-parse --git-common-dir)/config`, the worktree config and the hooks directory listing is unchanged; and `git -C <worktree> status --porcelain --ignored` shows no new path outside `.agent-output/`. Always run these git commands with `-c core.fsmonitor=false -c core.hooksPath=/dev/null` before `-C`, so a planted config cannot execute code during the check.
 

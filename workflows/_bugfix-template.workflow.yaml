@@ -81,7 +81,7 @@ steps:
       If the fix touches a rule with BDD scenarios in the spec, verify those scenarios still pass; add any missing edge-case test and update the spec Traceability Matrix.
       Run test + analyze commands from $AGENT_KIT/workflows/_domain-commands.yaml ({{domain}} section).
       MANDATORY: ALL commands MUST exit 0. If any fails, set Blocked: true, Return_to_step: implement, Block_reason: [failures].
-      Create report in .agent-output/tester/.
+      Create report in {{run_dir}}/tester/.
       Update {{handoff_file}} (Test_report, Next=security-auditor).
   - id: security
     subagent_type: security-auditor

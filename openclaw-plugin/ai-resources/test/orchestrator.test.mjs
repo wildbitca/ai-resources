@@ -103,7 +103,7 @@ test("engineCommand prefers the explicit binary, then python + kitRoot, then the
 });
 
 test("engineOptions clamps maxTeams and drops invalid role timeouts", () => {
-  assert.equal(engineOptions({}).maxTeams, 2);
+  assert.equal(engineOptions({}).maxTeams, 16);
   assert.equal(engineOptions({ maxTeams: 99 }).maxTeams, 16);
   assert.equal(engineOptions({ maxTeams: 0 }).maxTeams, 1);
   assert.deepEqual(engineOptions({ roleTimeouts: { planner: 600, bad: 5, worse: "x", huge: 10 ** 9 } }).roleTimeouts, { planner: 600 });
@@ -156,7 +156,7 @@ test("start runs the engine through execFile with an argv array and dispatches t
   assert.deepEqual(startCall.args.slice(0, 3), ["/kit/scripts/kit.py", "orchestrate", "start"]);
   assert.ok(startCall.args.includes(`--goal=${goal}`), "the goal is ONE argv element, never a shell string");
   assert.ok(startCall.args.includes("--workflow=feature-implementation") && startCall.args.includes("--workspace=/srv/app"));
-  assert.ok(startCall.args.includes("--max-teams=2") && startCall.args.at(-1) === "--json");
+  assert.ok(startCall.args.includes("--max-teams=16") && startCall.args.at(-1) === "--json");
   assert.equal(result.run, "r1");
 
   assert.equal(started.length, 1);

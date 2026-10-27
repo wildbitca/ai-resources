@@ -17,7 +17,7 @@
       "lanesConfigPath": { "type": "string", "description": "Absolute path to rendered lanes.yaml." },
       "enableOrchestrator": { "type": "boolean", "description": "Enable native lifecycle team orchestration and cockpit commands." },
       "aiResourcesBin": { "type": "string", "description": "Absolute path to the ai-resources executable that runs the orchestrator engine (default: python3 <kitRoot>/scripts/kit.py)." },
-      "maxTeams": { "type": "integer", "minimum": 1, "maximum": 16, "description": "How many orchestrated teams may work at once; the rest wait in a FIFO queue. Default 2." },
+      "maxTeams": { "type": "integer", "minimum": 1, "maximum": 16, "description": "How many orchestrated teams may work at once; the rest wait in a FIFO queue. Default 16: runs do not collide (own run id, directory and write-scope claim), so the kit imposes no cap." },
       "roleTimeouts": { "type": "object", "description": "Seconds a step of a role may run, e.g. {\"planner\": 1200, \"implementer\": 9000}. Defaults: planner 1200, implementer 9000, tester 2700, verifier 1800, others 1800.", "additionalProperties": { "type": "integer", "minimum": 30, "maximum": 86400 } },
       "runsDir": { "type": "string", "description": "Directory of orchestrator run state. Default: $XDG_STATE_HOME/ai-resources/runs (never under /tmp)." }
     },

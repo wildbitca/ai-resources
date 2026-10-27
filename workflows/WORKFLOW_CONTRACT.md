@@ -72,10 +72,10 @@ Steps may include an `execution_hints` block with **optional** metadata that run
 
 1. **No intra-group dependencies.** Steps in a group share the same `entry_criteria`; no step may require another step of the same group to have finished (e.g. security must not wait for review approval).
 2. **Gates stay sequential.** A step whose failure must stop the others (e.g. `test`) is not part of the group; it runs before it.
-3. **No shared handoff writes.** Concurrent steps must not edit `{{handoff_file}}` (last writer wins). Each writes its own report under `.agent-output/<role>/` and ends it with the handoff fields it would have set.
+3. **No shared handoff writes.** Concurrent steps must not edit `{{handoff_file}}` (last writer wins). Each writes its own report under `{{run_dir}}/<role>/` and ends it with the handoff fields it would have set.
 4. **Join.** After every step in the group has returned, the orchestrator copies those fields into the handoff — into the YAML front matter (`verdicts.*`, `refs.*`, `status`, `step`, `next`), which is the authoritative state; the prose notes below it are commentary. Then it applies rollback: if any step reports a blocking verdict (e.g. `REQUIRES_CHANGES`, `FAIL`), set `blocked: true`, `block_reason` from that report, and `return_to_step` to that step's `on_concern_return_to` before starting the next step.
 
-5. **`openclaw-agent` members.** Only the six read-only roles (`planner`, `explore`, `software-architect`, `code-reviewer`, `security-auditor`, `verifier`) may be parallel members on that backend; a `tester` or `doc-writer` is a gate or a document step and is never one. A member writes only under `.agent-output/<role>/`, and the orchestrator joins it like any other member.
+5. **`openclaw-agent` members.** Only the six read-only roles (`planner`, `explore`, `software-architect`, `code-reviewer`, `security-auditor`, `verifier`) may be parallel members on that backend; a `tester` or `doc-writer` is a gate or a document step and is never one. A member writes only under `{{run_dir}}/<role>/`, and the orchestrator joins it like any other member.
 
 **Example:**
 
@@ -97,6 +97,8 @@ Steps may include an `execution_hints` block with **optional** metadata that run
 `review` and `security` share `post-test`, so a capable runtime runs them concurrently once `test` passes. The `verify` step (no hint) runs after the join.
 
 Handoff files and placeholders (e.g. `{{workspace}}`, `{{handoff_file}}`) are documented in workflow comments and the **`kit-orchestration`** skill (`references/handoff.md`).
+
+`{{run_dir}}` is the run's own output directory, `.agent-output/<run>`: `<run>` is the orchestrator's run id (a session that runs a workflow without the orchestrator uses `<workflow>-<yyyymmddThhmmss>-<pid>`). Two teams on one repository never share a run directory, a handoff file or a write scope (`scope_guard`), so neither can overwrite the other.
 
 See **`workflows/_feature-template.workflow.yaml`** for a full example.
 

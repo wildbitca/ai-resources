@@ -57,7 +57,7 @@ steps:
         Grep the codebase for ORM patterns that indicate N+1:
           grep -r "\.find\|\.findOne\|\.where" --include="*.ts" src/ | grep -v "include\|join\|eager"
 
-      Write all findings to .agent-output/db-investigation/<slug>-inspection.md.
+      Write all findings to {{run_dir}}/db-investigation/<slug>-inspection.md.
 
       Update {{handoff_file}}:
         Inspection_ref: path
@@ -94,7 +94,7 @@ steps:
         - Identify rows violating constraints.
         - Propose: DELETE, UPDATE, or migration to add missing constraints.
 
-      Write analysis to .agent-output/db-investigation/<slug>-analysis.md.
+      Write analysis to {{run_dir}}/db-investigation/<slug>-analysis.md.
 
       If the finding is informational only (no fix needed):
         Set Fix_needed: no in {{handoff_file}}. DELETE {{handoff_file}} and STOP.

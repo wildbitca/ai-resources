@@ -15,9 +15,9 @@ def test_role_timeout_defaults_and_overrides():
         assert limits.role_timeout("planner", {"planner": bad}) == 1200
 
 
-def test_max_teams_is_clamped_and_defaults_to_two():
-    assert limits.DEFAULT_MAX_TEAMS == 2
-    assert [limits.clamp_max_teams(v) for v in (0, -3, 1, 2, "3", "x", None, 99)] == [1, 1, 1, 2, 3, 2, 2, 16]
+def test_max_teams_is_clamped_and_defaults_to_a_generous_value():
+    assert limits.DEFAULT_MAX_TEAMS == 16
+    assert [limits.clamp_max_teams(v) for v in (0, -3, 1, 2, "3", "x", None, 99)] == [1, 1, 1, 2, 3, 16, 16, 16]
 
 
 def test_admission_and_fifo_order():

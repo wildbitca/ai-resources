@@ -45,7 +45,7 @@ steps:
         - The failing step's command (e.g. npm test, cargo build, docker build)
         - The relevant source files if it's a lint/type/test failure
 
-      Write extracted failure to .agent-output/ci-debug/<slug>-failure.md:
+      Write extracted failure to {{run_dir}}/ci-debug/<slug>-failure.md:
         - Failing step name and command
         - Full error output (last 100 lines minimum)
         - Which files/tests are mentioned in the error
@@ -78,7 +78,7 @@ steps:
            - flaky: test is non-deterministic (mark as flaky, don't "fix" the underlying test)
            - infra: CI runner issue, network timeout (retry may resolve)
 
-      Write diagnosis to .agent-output/ci-debug/<slug>-diagnosis.md with:
+      Write diagnosis to {{run_dir}}/ci-debug/<slug>-diagnosis.md with:
         - Root cause (specific)
         - Minimal fix description
         - Files to change

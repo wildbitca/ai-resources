@@ -66,7 +66,7 @@ steps:
       If the spec has status != stub, read its ## Test Scenarios (BDD) section and derive acceptance criteria from specific TS-IDs.
       If the spec is a stub, write acceptance criteria as Given/When/Then so they can be promoted to spec scenarios later.
       Iterate the plan internally at least 2 times: first draft, self-review, refined version.
-      Output: Create plan YYMMDD-NNN.md in .agent-output/planner/ with description, files, steps, checklist, security notes, Requires_tests, Security_critical_feature.
+      Output: Create plan YYMMDD-NNN.md in {{run_dir}}/planner/ with description, files, steps, checklist, security notes, Requires_tests, Security_critical_feature.
       Each phase MUST include: (a) Automated_verification: exact commands + expected exit codes + TS-IDs that must pass, (b) Manual_verification: human-only checklist or "none".
       Save plan also to specs/knowledge/decisions/YYMMDD-{topic}-plan.md.
       Update {{handoff_file}} (Plan_ref, Requires_tests, Security_critical_feature, Requirements_preserved: key constraints from specs + TS-IDs, Next=software-architect).
@@ -85,7 +85,7 @@ steps:
       Read {{handoff_file}}, Plan_ref, Spec_refs, and existing ADRs in specs/architecture/.
 
       ## Step 1 — Design (MANDATORY, do first)
-      Produce an explicit architecture design for this feature. Output in .agent-output/architect/YYMMDD-NNN.md:
+      Produce an explicit architecture design for this feature. Output in {{run_dir}}/architect/YYMMDD-NNN.md:
       - Layer map: which layers this feature touches and what lives in each
       - Pattern selection: which patterns apply (Repository, Service, Factory, Strategy, CQRS, etc.) and why
       - SOLID application: interfaces to invert (DIP), responsibilities to split (SRP), extension points (OCP)
@@ -138,7 +138,7 @@ steps:
       2. Separate failures caused by this change from failures that were already there (check with git stash or the base branch if unsure).
       3. Read Spec_refs. For each [automated] scenario the plan references, confirm a test exists and covers it; add the missing ones, naming test functions after the TS-IDs and adding the header comment `// Validates: TS-{FEAT}-NNN — {title}`.
       4. Update the spec's Traceability Matrix with test file paths and status.
-      5. Create report in .agent-output/tester/ with coverage "{N}/{M} plan scenarios have passing tests" and the commands you ran.
+      5. Create report in {{run_dir}}/tester/ with coverage "{N}/{M} plan scenarios have passing tests" and the commands you ran.
       MANDATORY: ALL test/analyze commands MUST exit 0. If any fails because of this change, set Blocked: true, Return_to_step: implement, Block_reason: [failures with details].
       Update {{handoff_file}} (Test_report, Next=post-test group: code-reviewer + security-auditor).
   - id: review
@@ -159,7 +159,7 @@ steps:
       Audit the test diff as well: assertions deleted or weakened, tests skipped or marked pending, tests that assert implementation detail instead of behaviour, acceptance criteria with no test, tests written so they cannot fail.
       Report only defects you can point at in the diff; an empty list is a valid result.
       This step runs concurrently with security: do NOT edit {{handoff_file}}.
-      Generate report in .agent-output/code-reviewer/ ending with these fields:
+      Generate report in {{run_dir}}/code-reviewer/ ending with these fields:
         Code_review_verdict: APPROVED | REQUIRES_CHANGES
         Block_reason: [corrections] (only if REQUIRES_CHANGES)
   - id: security
@@ -178,7 +178,7 @@ steps:
       Read {{handoff_file}}. This step runs concurrently with review: do NOT edit {{handoff_file}}.
       If Security_critical_feature: no, return Security_audit: N/A without a scan.
       If yes, execute the methodology from $AGENT_KIT/workflows/security-devsecops.workflow.yaml adapted to {{domain}}. Use tools from _domain-commands.yaml security section plus domain-specific tools.
-      Generate report in .agent-output/security-auditor/ ending with these fields:
+      Generate report in {{run_dir}}/security-auditor/ ending with these fields:
         Security_audit: PASS | CONDITIONAL | FAIL | N/A
         Block_reason: [critical vulnerabilities] (only if FAIL)
   - id: verify

@@ -48,7 +48,7 @@ steps:
         - Recent config/env changes
         - Recent dependency updates
 
-      Write ALL raw signals to .agent-output/incident/<slug>-triage.md (do not analyze yet — just facts).
+      Write ALL raw signals to {{run_dir}}/incident/<slug>-triage.md (do not analyze yet — just facts).
 
       Update {{handoff_file}}:
         Triage_ref: path
@@ -79,7 +79,7 @@ steps:
         - Option B (5-30 min): [hotfix] — Risk: medium
         - Option C (> 30 min): [deeper fix] — Risk: low but slow
 
-      Write diagnosis to .agent-output/incident/<slug>-diagnosis.md.
+      Write diagnosis to {{run_dir}}/incident/<slug>-diagnosis.md.
 
       If root cause is an EXTERNAL dependency outage (not fixable by us):
         Set Fix_type: wait, Completed: false in {{handoff_file}} — escalate to user.
@@ -123,7 +123,7 @@ steps:
         - Confirm affected services report healthy
         - Check no new errors introduced
 
-      Write fix details + before/after evidence to .agent-output/incident/<slug>-fix.md.
+      Write fix details + before/after evidence to {{run_dir}}/incident/<slug>-fix.md.
 
       Update {{handoff_file}}:
         Fix_ref: path
@@ -142,7 +142,7 @@ steps:
     prompt_template: |
       Read {{handoff_file}}, Triage_ref, Diagnosis_ref, and Fix_ref.
 
-      Write a postmortem to .agent-output/incident/<slug>-postmortem.md with:
+      Write a postmortem to {{run_dir}}/incident/<slug>-postmortem.md with:
 
         ## Incident Summary
         - Title, severity, affected services, duration, impact (users/requests affected)

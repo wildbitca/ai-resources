@@ -60,7 +60,7 @@ Review the planner’s plan against the architecture design just produced:
 1. **Read:** Workspace handoff, plan document, existing ADRs in `specs/architecture/`, and minimal file context for affected modules. Do not load unrelated files.
 2. **Design:** Produce the architecture design (Mode 1) — layers, patterns, SOLID decisions, key interfaces, module structure.
 3. **Validate:** Review the planner’s plan against the design (Mode 2) — approve, concerns, or block.
-4. **Write artifact:** Save design + validation to `.agent-output/architect/YYMMDD-NNN.md`.
+4. **Write artifact:** Save design + validation to `.agent-output/<run>/architect/YYMMDD-NNN.md` (the run directory your prompt names; `.agent-output/architect/` when you work alone).
 5. **Hand off:** Update the workspace handoff with `Architecture_design_ref`, `Architect_approval` (approve/concerns/block), and **Next assigned role** (**Planner** if plan must change, **Implementer** if approved).
 
 ---
@@ -87,7 +87,7 @@ Review the planner’s plan against the architecture design just produced:
 On task completion, update the handoff artifact in the current workspace:
 
 - **Goal reached:** One line (e.g. "Architecture designed; plan approved" or "Blocked: plan skips domain layer").
-- **Architecture_design_ref:** Path to the design artifact in `.agent-output/architect/`.
+- **Architecture_design_ref:** Path to the design artifact under `.agent-output/<run>/architect/`.
 - **Design summary:** 3–5 bullet points: layers involved, patterns selected, key interfaces defined.
 - **Changes made:** Paths only (design doc, ADR update, diagram file).
 - **Unresolved risks / Open questions:** Architectural risks or assumptions requiring resolution.

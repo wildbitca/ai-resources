@@ -39,7 +39,7 @@ steps:
       2. Identify tech stack, entry points, trust boundaries, data flows, sensitive assets.
       3. Map attack surface: APIs, auth endpoints, file uploads, external integrations, IaC resources, client-side storage.
       4. Classify assets by risk (critical/high/medium/low) using STRIDE.
-      Output: Create threat model YYMMDD-NNN.md in .agent-output/security-auditor/.
+      Output: Create threat model YYMMDD-NNN.md in {{run_dir}}/security-auditor/.
       Contents: tool inventory, attack surface map, threat list (STRIDE), risk classification, prioritized audit targets.
       Update {{handoff_file}} (Threat_model_ref, Audit_targets, Stack_detected, Available_tools, Missing_tools, Next=security-auditor[sast]).
       If blocked, set Blocked: true, Return_to_step: recon, Block_reason: [reason].
@@ -166,12 +166,12 @@ steps:
     on_concern_return_to: exploit-validation
     prompt_template: |
       Workspace: {{workspace}}. Target domain: {{domain}}.
-      Read {{handoff_file}} and all analysis files in .agent-output/security-auditor/.
+      Read {{handoff_file}} and all analysis files in {{run_dir}}/security-auditor/.
       Task: Consolidate the findings and issue the verdict. Check each finding before it reaches the report:
       it names a file:line or an endpoint, and its status comes from exploit-validation (Confirmed Exploitable,
       Confirmed but Mitigated, False Positive, Needs Manual Verification). Drop or downgrade anything unsupported,
       and list the coverage gaps (targets not scanned, tools missing) instead of implying full coverage.
-      Output: YYMMDD-NNN-security-report.md in .agent-output/security-auditor/ with:
+      Output: YYMMDD-NNN-security-report.md in {{run_dir}}/security-auditor/ with:
         - Executive summary with overall verdict (PASS/CONDITIONAL/FAIL)
         - Findings table: ID, severity, CWE, description, component, status, evidence, remediation
         - Statistics: total by severity, false positive rate, coverage percentage, Missing_tools
