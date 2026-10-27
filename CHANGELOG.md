@@ -6,6 +6,56 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.0] — 2026-10-27 — Roles matrix, OpenClaw orchestrator, acceptance
+
+Major internal rewrite of routing, with BREAKING changes (see below). Roles are the unit: one table, `scoring/routing.ROLES`, generates `lanes.yaml`, the Claude Code agent definitions, the OpenClaw `kit-role-*` agents and the setup tables, and `tests/test_matrix_equality.py` pins them. Decisions: [ADR-0019](docs/decisions/0019-roles-matrix-single-source.md).
+
+### Added
+
+- feat(routing): `routing.ROLES` (21 roles: 15 team, 6 chat) with ONE primary and ONE fallback chain per role, `classify_quota` for every pool, `ai-resources route <role> [--run RUN] [--writers] [--usage-file] [--unavailable b=cause] [--record --step S] [--refresh] [--json]`; the fallback fires only on pool exhaustion (quota text or `pool_usage >= spill_at` 0.85) or no response, with the cause recorded; a checker with no independent rung is `blocked` (`no-independent-checker`), never weaker.
+- feat(routing): dynamic checker independence from the dispatch ledger (Sonnet checks Gemini/Haiku-written work, Opus only as the ceiling; INFERRED from Sonnet 59.6 vs Opus 55.4 on untagged security).
+- feat(agy): `ai-resources agy run --role R` calls `agy -p` from a Claude Code session and returns the report contract; quota, timeout, empty answer and a missing binary exit 75 with the cause and the next matrix cell. agy has the same privileges as claude and writes in the checkout.
+- feat(dispatch): `dispatches.jsonl` ledger (role, pool, backend, model, tokens, duration, outcome, fallback cause, run id, writer families) with `ai-resources dispatch record|list [--summary]`; `runs record --from-dispatches RUN`; `doctor` compares actual against the matrix per pool and role and prints a weekly summary.
+- feat(orchestration): `main` and every channel agent may `sessions_spawn` every `kit-role-*` agent (`allowAgents` wired and recorded); spawn limits are raised, never lowered; per-run `.agent-output/<run>/<role>/`, one handoff per team and a write-scope claim (`scope_guard`) keep concurrent teams apart.
+- feat(acceptance): `ai-resources acceptance [--group] [--case] [--json] [--list] [--operator] [--dry-run] [--offline]`: 52 cases in 7 groups (route, fault, checker, spawn, gemini, agy, setup-live) that make one real minimal call per matrix cell and assert the model and pool that answered; operator-run cases are listed with their exact command. `verify --live` is the setup-live subset of the same registry; doctor prints the Gemini tool-calling verdict.
+- feat(setup): one Review table `Role | Primary (backend:model, pool) | Fallback` from the matrix; chat plane on Anthropic API (sonnet, fallback haiku) and Gemini API (flash); heartbeat stays on Haiku until `gemini.tool-call` passes; Codex is an optional pool, off unless detected and authenticated.
+- docs: ADR-0019; ADR-0006/0007/0009/0010/0015/0016/0017/0018 marked superseded where it applies; routing, orchestration and kit-orchestration docs describe routed dispatch.
+
+### Changed
+
+- BREAKING: `lanes.yaml` is `{mode, generated_from, routing, digest}`; the `agents`, `candidates`, `second`, `resolved`, `gates` and `acks` keys are gone. Old state files load and are migrated on the next save (`lane_acks` and `gates` are dropped).
+- BREAKING: the by-model `kit-lane-*` agents are retired and replaced by the per-role `kit-role-*` agents (model = matrix primary plus native `model.fallbacks`). Setup deletes only agents it created that nothing references; any other is kept with `kept: <reason>`.
+- Workflow steps default to `backend: route`; overrides are `claude-code`, `openclaw-agent` (+`agentId`) and `agy`.
+- `explore` on the chat plane is now `explore-bulk`. A role whose cell is skipped (`agy-missing`, `codex-missing`) shows the cell that runs and the cause.
+
+### Removed
+
+- BREAKING: the worktree `lanes` ledger (`lanes` subcommand, `orchestrator/worktree.py`, `backend: lane`, `workflows/feature-lanes`), replaced by `scope_guard.py`.
+- BREAKING: the scoring engine (`compose`, `flow`, `explain`, `detect`, `gate`, `headroom`, `headroom_sources`, `profile_out`, `scoring/lanes.py`) and the flags `--compose`, `--headroom`, `--headroom-live`, `--why-json`, `--allow-fable`.
+- BREAKING: gates G0-G7 and their evidence guard hook, the Google and Anthropic acknowledgements and the operator waiver, `--lanes-antigravity` / `--no-lanes-antigravity`, `--lanes-orchestrator`, `--lanes-dry-run`, the held-lane machinery, `lane_member: second`, display-only rows, static role-count weights, the Gemini write tripwire and the agy report-only role list.
+- Unused leftovers: `model_accounts.render_text` / `to_json`, `_openclaw_providers.preselected` / `profile_providers`, `openclaw_agy.stub_models`, `compat.claude_google_openrouter_verified`, `wizard._untick`, `tests/lane_symmetry.py` and the tests of every removed concept (about 2,900 tests). Net across the release: +6,050 / -19,368 lines in `scripts/` and `tests/` since 3.1.0.
+
+### Fixed
+
+- fix(setup): the acceptance run found the pre-setup defects it exists for: `allowAgents` missing for the kit roles, a gateway plugin path that differs from the disk, 384 MCP children under the gateway, an off-box credential file that does not exist. `ai-resources setup` clears them.
+- fix(acceptance): the pool of an `anthropic-api` / `gemini-api` cell is read from the transport's wire API line, so a CLI runtime cannot pass as API credits.
+
+### Migration notes
+
+1. `brew upgrade ai-resources`
+2. `ai-resources setup` (recommended run; shows the dry-run diff, applies the `allowAgents` wiring, retires unused `kit-lane-*` agents, performs ONE drained restart for the stale plugin and the MCP-children overflow).
+3. `ai-resources acceptance` (add `--operator` to list the cases that kill turns: `setup.sigterm-window`, `setup.real-restart`, `setup.watchdog`, `spawn.from-main`, and run them yourself).
+4. Rename any profile `routing:` override to the new shape `routing: {role: {primary, fallback, class}}`; an API-credit pool is rejected on a team role.
+
+### Unverified (only a real run on the host proves)
+
+- `ai-resources setup` applied on the live gateway, and the `allowAgents` patch applying through `openclaw config patch`.
+- A kit-role spawn from `main` (`spawn.explore-run`, `spawn.from-main`).
+- Native `model.fallbacks` firing under the `claude-cli` runtime pin (needs a forced provider failure).
+- SIGTERM and watchdog behaviour (operator-run cases).
+- Gemini tool-calling through OpenClaw: `gemini.tool-call` is SKIP on this host (`Secret store entry "OPENROUTER_API_KEY" was not found`), so no verdict is written and the heartbeat stays on Haiku.
+- MCP load under many concurrent teams (the memory sample is a measurement, not a cap).
+
 ## [3.1.0] — 2026-10-27 — one routing matrix across four pools, a setup that survives restarts
 
 ### Added
