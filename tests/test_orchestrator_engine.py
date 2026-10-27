@@ -400,3 +400,27 @@ steps:
     run = start(e, wf)
     res = finish(e, run["id"], dispatches(e.next(run["id"]))[0])
     assert res["status"] == "awaiting_approval"
+
+
+def test_the_security_auditor_is_gated_for_independence_like_the_verifier(tmp_path):
+    from ai_resources import dispatch_ledger
+    e, wf, _ = make(tmp_path)
+    run = start(e, wf)
+    [d] = dispatches(drive_to(e, run["id"], "test", wf))
+    dispatch_ledger.record("implementer", "ok", run_id=run["id"], step="implement", cell="claude-code:opus")
+    res = finish(e, run["id"], d, OK + "Verdict: PASS\n")                    # the review/security group is next
+    st = e.status(run["id"])
+    assert st["status"] == "failed" and "no independent checker for" in st["failure"]
+
+
+def test_a_checker_dispatch_carries_the_model_resolved_for_this_run(tmp_path):
+    from ai_resources import model_pins
+    from ai_resources.scoring import routing
+    e, wf, _ = make(tmp_path)
+    run = start(e, wf)
+    [first] = dispatches(e.next(run["id"]))
+    assert "model" not in first                                               # a fixed-primary role keeps OpenClaw's own
+    finish(e, run["id"], first)
+    res = drive_to(e, run["id"], "verify", wf)
+    [d] = dispatches(res)
+    assert d["model"] == routing.cell_to_openclaw_ref("claude-code:opus", model_pins.effective())   # writers are sonnet/haiku

@@ -117,8 +117,18 @@ def test_checker_takes_the_cheapest_rung_of_a_family_that_wrote_nothing():
     assert r.cell is None and r.blocked          # agy:claude-opus is also opus: never silently weaker
 
 
-def test_checker_with_unknown_writer_family_is_independent_of_nothing_known():
-    assert routing.resolve("verifier", writers=["mystery-model"]).cell == "claude-code:sonnet"
+def test_a_writer_of_unknown_family_fails_the_checker_closed():
+    for unknown in ("mystery-model", routing.UNKNOWN_FAMILY):
+        r = routing.resolve("verifier", writers=["gemini-3.8-flash", unknown])
+        assert r.blocked and r.cell is None and r.cause == "no-independent-checker"
+    assert routing.resolve("tester", writers=["mystery-model"]).cell == routing.ROLES["tester"].primary   # not a checker
+
+
+def test_a_down_rung_does_not_mask_the_missing_independence():
+    r = routing.resolve("verifier", writers=["sonnet", "opus"], unavailable={"claude-code": "timeout"})
+    assert r.blocked and r.cause == "no-independent-checker"
+    r = routing.resolve("verifier", {HOT: 0.9, "claude-subscription": 1.0}, writers=["gemini-3.8-flash"])
+    assert r.cause == "pool-hot" or r.cell      # a pool cause stays when independence is not what failed
 
 
 def test_checker_spills_with_a_cause_when_its_rung_is_hot():

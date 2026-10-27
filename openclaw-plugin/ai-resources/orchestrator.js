@@ -181,7 +181,10 @@ export function createOrchestrator(api, options = {}) {
       const sessionKey = stepSessionKey(action);
       let started;
       try {
-        started = await sub.run.call(sub, { sessionKey, message: action.prompt, deliver: true });
+        // A checker's model is resolved per run by the engine (independent of the writers); the agent's static primary is not.
+        const params = { sessionKey, message: action.prompt, deliver: true };
+        if (typeof action.model === "string" && action.model) params.model = action.model;
+        started = await sub.run.call(sub, params);
       } catch (e) {
         return handle(await engine("report", [action.run, action.step, `--error=${String(e.message || e).slice(0, 200)}`]));
       }

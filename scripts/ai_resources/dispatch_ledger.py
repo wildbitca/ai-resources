@@ -55,7 +55,7 @@ def record(role: str, outcome: str, *, run_id: str = "", step: str = "", cell: s
     rec: dict[str, Any] = {
         "ts": datetime.fromtimestamp(time.time() if now is None else now, timezone.utc).isoformat(timespec="seconds"),
         "run_id": run_id, "step": step, "role": role, "pool": pool or routing.pool_of(f"{backend}:{model}"),
-        "backend": backend, "model": model, "family": roles_policy.model_family(model) or "",
+        "backend": backend, "model": model, "family": roles_policy.model_family(model) or (routing.UNKNOWN_FAMILY if model else ""),
         "tokens_in": int(tokens_in or 0), "tokens_out": int(tokens_out or 0), "duration_s": round(float(duration_s or 0), 2),
         "outcome": outcome, "fallback_from": fallback_from, "fallback_cause": fallback_cause or "",
         "writer_families": sorted({str(f) for f in writer_families if f}), **(extra or {})}

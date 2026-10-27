@@ -173,6 +173,23 @@ test("start runs the engine through execFile with an argv array and dispatches t
   assert.equal(timers.timers[0].cleared, true, "the role timer is cleared when the step finishes");
 });
 
+test("a checker's per-run model reaches subagent.run as the model override; a role without one gets none", async () => {
+  const eng = makeEngine({
+    start: () => ({ run: "r1", status: "running", actions: [
+      dispatch({ step: "verify", role: "verifier", agent: "kit-role-verifier", model: "anthropic/claude-opus-5-5", parallel: true }),
+      dispatch({ step: "plan", parallel: true })] }),
+    report: () => ({ run: "r1", status: "running", actions: [{ type: "wait", step: "plan" }] }),
+  });
+  const { api, started } = makeApi();
+  api.orchestratorDeps = { execFile: eng.execFile };
+  await orchestratorFor(api).start("w", "g", {});
+  await settle();
+  const verify = started.find((s) => s.sessionKey.includes("kit-role-verifier"));
+  const plan = started.find((s) => s.sessionKey.includes("kit-role-planner"));
+  assert.equal(verify.model, "anthropic/claude-opus-5-5");
+  assert.equal("model" in plan, false, "OpenClaw's own primary and model.fallbacks apply to a role with a fixed primary");
+});
+
 test("a finished step reports and the next dispatch of the returned actions is started", async () => {
   let reports = 0;
   const eng = makeEngine({

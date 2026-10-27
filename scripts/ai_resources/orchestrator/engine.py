@@ -24,7 +24,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 import yaml
 
-from .. import dispatch_ledger, domains, ledger, repo_root, roles_policy, scope_guard
+from .. import dispatch_ledger, domains, ledger, model_pins, repo_root, roles_policy, scope_guard
 from ..scoring import routing
 from ..setup.cockpits import openclaw_roles
 from . import limits, reply as reply_mod, untrusted
@@ -263,7 +263,7 @@ class Engine:
         steps, models = _steps_of(run), run.get("models") or {}
         roles = {s.role for s in steps if s.role in WRITER_ROLES or s.role in roles_policy.SCOPE_ROLES}
         refs = [models.get(r) or self._route(r).model for r in sorted(roles)]
-        return sorted({roles_policy.model_family(m) or str(m) for m in refs if m} | set(self._ledger(dispatch_ledger.writer_families, run["id"], default=[])))
+        return sorted({roles_policy.model_family(m) or routing.UNKNOWN_FAMILY for m in refs if m} | set(self._ledger(dispatch_ledger.writer_families, run["id"], default=[])))
 
     @staticmethod
     def _route(role: str, writers: Iterable[str] = ()) -> routing.Route:
@@ -420,22 +420,39 @@ class Engine:
     def _dispatch(self, run: dict[str, Any], step: Step) -> dict[str, Any]:
         st = run["steps"][step.id]
         handoff = str(self.store.handoff_path(run["id"]))
+        model = self._checker_model(run, step)
         return {"type": "dispatch", "run": run["id"], "step": step.id, "role": step.role, "agent": st["agent"],
+                **({"model": model} if model else {}),
                 "attempt": st["attempt"], "cwd": str(run.get("cwd") or run["workspace"]),
                 "timeout_s": limits.role_timeout(step.role, run.get("role_timeouts")),
                 "parallel": bool(step.group), "handoff_file": handoff, "run_dir": run_dir_of(run["id"]),
                 "label": f"{run['id']}-{step.id}-a{st['attempt']}",       # unique per run, step and attempt (C1)
                 "prompt": build_prompt(run, step, st["attempt"], self.kit_root, handoff)}
 
+    def _checker_model(self, run: Mapping[str, Any], step: Step) -> str:
+        """The OpenClaw model ref a checker must run on for THIS run (`routing.resolve` against the writer families). The
+        agent's static primary cannot know them, so the plugin passes this as the spawn's model override. Empty for a
+        role with a fixed primary (OpenClaw's own `model.fallbacks` apply) or a route that is blocked."""
+        if step.role not in CHECKER_ROLES:
+            return ""
+        route = self._route(step.role, self._writer_families(run))
+        if route.blocked or not route.cell:
+            return ""
+        try:
+            return routing.cell_to_openclaw_ref(route.cell, model_pins.effective())
+        except routing.RoutingError:
+            return ""
+
     def _independence_gate(self, run: dict[str, Any], step: Step) -> str:
-        """Refuse to hand the verifier out under a violation that can already be seen (the agent id)."""
-        if step.role != VERIFIER_ROLE:
+        """Refuse to hand a checker out under a violation that can already be seen (the agent id, or no independent
+        model left for the writers that ran)."""
+        if step.role not in CHECKER_ROLES:
             return ""
         verifier = agent_for(step.role, run.get("domain") or "", self.kit_root)
         writers = {run["steps"][s.id]["agent"] for s in _steps_of(run)
                    if (s.role in WRITER_ROLES or s.role in roles_policy.SCOPE_ROLES) and run["steps"][s.id]["agent"]}
         if verifier in writers:
-            return f"verifier agent {verifier} is also a writer's agent"
+            return f"{step.role} agent {verifier} is also a writer's agent"
         route = self._route(step.role, self._writer_families(run))        # what really wrote so far, from the ledger
         return f"no independent checker for {step.role}: {route.reason}" if route.blocked else ""
 

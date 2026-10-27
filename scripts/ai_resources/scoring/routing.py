@@ -355,6 +355,9 @@ class Route:
         return (self.cell or "").partition(":")[2]
 
 
+UNKNOWN_FAMILY = "unknown"        # the family recorded for a model `model_family` does not know (never silently dropped)
+
+
 def _family(cell: str) -> str | None:
     return model_family(cell.partition(":")[2])
 
@@ -372,10 +375,15 @@ def resolve(role: str, usage: Mapping[str, float | None] | None = None, writers:
     if role not in table:
         raise RoutingError(f"no routing for role {role!r}")
     r, usage, unavailable = table[role], usage or {}, unavailable or {}
-    families = {model_family(w) or str(w).strip().lower() for w in writers if str(w).strip()}
+    families = {model_family(w) or UNKNOWN_FAMILY for w in writers if str(w).strip()}
     cause: str | None = None
     skipped: list[str] = []
     chain = r.chain
+    unknown_writer = r.checker and UNKNOWN_FAMILY in families        # a writer of unknown family: fail closed
+    if unknown_writer:
+        return Route(role, None, "", (), "a writer of unknown model family: independence cannot be shown",
+                     "no-independent-checker", blocked=True)
+    independence_skip = False
     for i, cell in enumerate(chain):
         pool = pool_of(cell)
         down = unavailable.get(cell) or unavailable.get(cell.partition(":")[0])
@@ -387,9 +395,10 @@ def resolve(role: str, usage: Mapping[str, float | None] | None = None, writers:
             why = f"{pool} at {used * 100:.0f}%"
         elif r.checker and families and (_family(cell) is None or _family(cell) in families):
             skipped.append(f"{cell} shares a family with the writers")
+            independence_skip = True
             continue                      # independence selection, not a fallback: no cause recorded
         else:
             return Route(role, cell, pool, chain[i + 1:], "; ".join(skipped) or "primary available", cause)
         skipped.append(why)
     return Route(role, None, "", (), "; ".join(skipped) or "no route",
-                 cause or "no-independent-checker" if r.checker else cause, blocked=True)
+                 "no-independent-checker" if r.checker and (independence_skip or not cause) else cause, blocked=True)
