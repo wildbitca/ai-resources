@@ -91,14 +91,13 @@ def test_ticking_agy_enables_the_routing_record_without_any_acknowledgement(monk
     warned = []
     monkeypatch.setattr(ui, "warn", warned.append)
     monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(ui, "text", lambda *a, **k: "claude, main")
     monkeypatch.setattr(ui, "confirm", lambda *a, **k: pytest.fail("no confirmation expected"))
     s = state.SetupState()
     s.mode, s.cli_team, s.profile.name = "single-model", True, "subscription-claude-55"
     s.profile.customizations = {"__targets__": {"selected": ["claude", "agy"]}}
     s._tool_members_this_run = ["claude", "agy"]
     assert wizard._step_lanes(s, _args()) == 0
-    assert state.lanes_enabled(s) and s.profile.lanes == {"orchestrators": ["claude", "main"]} and warned == []
+    assert state.lanes_enabled(s) and s.profile.lanes == {"orchestrators": []} and warned == []
 
 
 def test_doctor_reports_one_agy_line_with_the_cause_when_inactive(monkeypatch):

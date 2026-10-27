@@ -17,7 +17,7 @@ def test_setup_help_mentions_the_guided_flow(capsys):
     _help()
     out = capsys.readouterr().out
     for needle in ("10 internal steps", "Ctrl-B", "Ctrl-C", "Ctrl-D", "More options", "--non-interactive",
-                   "--dry-run", "--lanes", "--no-lanes", "--lanes-dry-run", "NO_COLOR"):
+                   "--dry-run", "--lanes", "--no-lanes", "NO_COLOR"):
         assert needle in out, f"setup --help does not mention {needle!r}"
     for step in ("Your tools", "Sign-in", "Your team", "Review", "Change tools", "Change sign-in",
                  "Change team", "Parallel runs", "Low cost"):

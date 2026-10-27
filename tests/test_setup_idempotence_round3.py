@@ -147,7 +147,6 @@ def configure_all(s, scratch):
     oc._configure_roles(ctx, s, scratch.fake.doc, ak, dry_run=False, run_changes=runs)
     oc._configure_orchestrator_plugin(ctx, s, scratch.fake.doc, scratch.oc_root / "openclaw.json", ak, dry_run=False,
                                       run_changes=runs)
-    oc._configure_agy_drift(s, scratch.fake.doc, dry_run=False, run_changes=runs)
 
 
 def snapshot(scratch, s):
@@ -223,7 +222,6 @@ def test_a_dry_run_of_every_openclaw_writer_writes_nothing(scratch):
     oc._configure_skills(s, scratch.fake.doc, scratch.oc_root / "o.json", [], ak, dry_run=True, run_changes=runs)
     oc._configure_roles({"executors": ex}, s, scratch.fake.doc, ak, dry_run=True, run_changes=runs)
     oc._configure_orchestrator_plugin({}, s, scratch.fake.doc, scratch.oc_root / "o.json", ak, dry_run=True, run_changes=runs)
-    oc._configure_agy_drift(s, scratch.fake.doc, dry_run=True, run_changes=runs)
     assert snapshot(scratch, s)["doc"] == before["doc"] and scratch.fake.patches == []
     assert [c for c in scratch.fake.calls if c[:2] in (["agents", "add"], ["plugins", "install"])] == []
     assert s.openclaw.host_restart_pending == []
@@ -386,7 +384,7 @@ def test_ai_resources_setup_run_twice_in_a_scratch_home_has_zero_diff_and_no_new
     assert "## Kit roles" in (h / ".gemini" / "GEMINI.md").read_text()
     live = json.loads(sim.cfg.read_text(encoding="utf-8"))
     sub = live["agents"]["defaults"]["subagents"]                  # host block: subagent limits
-    assert (sub["maxConcurrent"], sub["maxChildrenPerAgent"], sub["maxSpawnDepth"], sub["runTimeoutSeconds"]) == (3, 3, 2, 7200)
+    assert (sub["maxConcurrent"], sub["maxChildrenPerAgent"], sub["maxSpawnDepth"], sub["runTimeoutSeconds"]) == (32, 16, 4, 7200)
     roles = {i: e for i, e in live["agents"]["entries"].items() if i.startswith("kit-role-")}
     assert len(roles) == 15 and roles["kit-role-planner"]["thinkingDefault"] == "high"      # kit-role agents
     assert roles["kit-role-tester"]["model"]["primary"] == "anthropic/claude-sonnet-5-5"     # agy not admitted: matrix fallback
