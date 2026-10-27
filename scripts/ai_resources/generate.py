@@ -584,9 +584,19 @@ def role_model_block(role: str, profile_doc: dict | None = None) -> str | None:
     if row is None or row.kind != "team":
         return None
     chain = " -> ".join(f"{c} [{routing.pool_of(c)}]" for c in row.chain)
-    claude = next((c for c in row.chain if routing.runtime_of_cell(c)), "claude-code")
     return (f"{ROUTING_BEGIN}\n# route: {'checker ladder: ' if row.checker and row.primary is None else ''}{chain}\n"
-            f"model: {routing.claude_alias(claude)}\n{ROUTING_END}\n")
+            f"model: {role_claude_model(role, profile_doc)}\n{ROUTING_END}\n")
+
+
+def role_claude_model(role: str, profile_doc: dict | None = None) -> str | None:
+    """The Claude Code `model:` word a role runs with when a Claude Code session hosts it: the first Max cell of its
+    matrix chain (`inherit` when it has none). None for a role the matrix lacks. The one place this is derived:
+    `agents/roles/*.md` (`generate`) and the installed `~/.claude/agents/*.md` (`setup`) both call it."""
+    from .scoring import routing
+    row = routing.merged(profile_doc).get(role)
+    if row is None or row.kind != "team":
+        return None
+    return routing.claude_alias(next((c for c in row.chain if routing.runtime_of_cell(c)), "claude-code"))
 
 
 def apply_role_model_block(text: str, block: str) -> str:

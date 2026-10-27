@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from ai_resources import generate
 from ai_resources.setup.cockpits import claude
 
 EXECUTORS = {"by_role": {"implementer": {"model": "google/gemini-3.7-flash"}, "planner": {"model": "claude-opus-5"}},
@@ -32,7 +33,7 @@ def test_the_model_line_follows_the_executors(agents):
     rendered = claude.render_subagent_files(EXECUTORS, "/kit", "multi-model")
     assert "model: google/gemini-3.7-flash" in rendered["implementer"]
     assert "model: anthropic/claude-sonnet-5" in rendered["code-reviewer-angular"]
-    assert "model: claude-opus-5" in rendered["planner"]
+    assert f"model: {generate.role_claude_model('planner')}" in rendered["planner"]       # a Claude id: the matrix decides
 
 
 def test_a_persona_inherits_its_roles_model_in_the_render(agents):
@@ -45,12 +46,13 @@ def test_single_model_aliases_render_as_aliases(agents):
     assert "model: sonnet" in rendered["implementer"]
 
 
-def test_strict_single_model_refuses_a_non_native_id(agents):
-    from ai_resources.setup.cockpits import _shared
-    with pytest.raises(_shared.SkipCockpit):
-        claude.render_subagent_files(EXECUTORS, "/kit", "single-model", strict=True)
-    legacy = claude.render_subagent_files(EXECUTORS, "/kit", "single-model", strict=False)
-    assert "model: claude-opus-5" in legacy["planner"] and "gemini" not in legacy["implementer"]   # the legacy fallback
+def test_single_model_writes_the_matrix_model_whatever_the_legacy_by_role_says(agents):
+    """ADR-0019 D2: the installed agents equal the routing matrix; the profile's `by_role` cannot contradict it."""
+    for strict in (True, False):
+        rendered = claude.render_subagent_files(EXECUTORS, "/kit", "single-model", strict=strict)
+        for role in ("planner", "implementer", "tester", "verifier", "security-auditor", "explore"):
+            assert f"\nmodel: {generate.role_claude_model(role)}\n" in rendered[role], (role, strict)
+        assert "gemini" not in rendered["implementer"]
 
 
 def test_a_description_with_quotes_is_escaped_in_the_text():

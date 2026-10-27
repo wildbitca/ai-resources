@@ -73,6 +73,28 @@ def test_the_claude_agent_definition_equals_the_matrix(role):
     assert f"# route: {'checker ladder: ' if row.checker else ''}" in text
 
 
+@pytest.mark.parametrize("mode", ["single-model", "multi-model"])
+def test_the_installed_claude_agents_equal_the_matrix(mode, monkeypatch):
+    """`setup` installs ~/.claude/agents/*.md: a role's model there is the matrix's (one implementation:
+    `generate.role_claude_model`), whatever the legacy `by_role` of the profile says."""
+    from ai_resources.setup.cockpits import claude
+    monkeypatch.delenv("AI_RESOURCES_SKILLS", raising=False)
+    stale = {"by_role": {"tester": {"model": "haiku"}, "verifier": {"model": "opus"}, "security-auditor": {"model": "opus"},
+                         "implementer": {"model": "claude-haiku-5-5"}}}
+    files = claude.render_subagent_files(stale, "/kit", mode)
+    assert sorted(files) == TEAM
+    for role in TEAM:
+        meta, _ = generate.parse_simple_frontmatter(files[role])
+        assert meta["model"] == generate.role_claude_model(role), role
+    assert generate.role_claude_model("tester") == "sonnet" and generate.role_claude_model("verifier") == "sonnet"
+
+
+def test_an_override_reaches_the_installed_claude_agents():
+    from ai_resources.setup.cockpits import claude
+    files = claude.render_subagent_files({}, "/kit", "single-model", routing_doc=OVERRIDE)
+    assert "\nmodel: opus\n" in files["tester"] and "\nmodel: opus\n" in files["verifier"]
+
+
 def test_every_team_role_has_a_claude_agent_file_and_no_other_role_has_one():
     files = sorted(p.stem for p in (repo_root() / "agents" / "roles").glob("*.md"))
     assert files == TEAM

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import model_fanout, model_pins, model_providers
+from .setup import lanes_render
 from .model_fanout import Artifact, ArtifactError, Change, Ctx
 
 # --- id spelling ---------------------------------------------------------------------------------
@@ -402,7 +403,8 @@ def build(*, state, selection, detected: list[str], home: Path | None = None) ->
                                             allow_unverified=allow_unverified,
                                             backend=backend or "litellm",
                                             effort=effort_mod.table_for_state(state),
-                                            recorded_effort=dict(getattr(state.tracking, "subagent_effort", {}) or {}))
+                                            recorded_effort=dict(getattr(state.tracking, "subagent_effort", {}) or {}),
+                                            routing_doc=lanes_render.routing_doc(state))
 
     url = f"http://{state.litellm.local.bind_address}:{state.litellm.local.port}/health/liveliness"
     arts: list[Artifact] = [
