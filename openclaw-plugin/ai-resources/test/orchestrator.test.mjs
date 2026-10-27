@@ -127,7 +127,7 @@ test("formatActions and formatStatus render runs, steps, queue notices and the a
   assert.match(formatActions({ run: "r1", status: "queued", actions: [{ type: "notice", text: "queued: 2 team(s) are working" }] }), /queued: 2 team/);
   const doc = { id: "r1", workflow: "w", status: "awaiting_approval", approval: { state: "pending" }, steps: { plan: { role: "planner", state: "done", attempt: 1, result: "ok" } } };
   assert.match(formatStatus(doc), /\/workflow approve r1/);
-  assert.match(formatStatus({ runs: [{ id: "r1", workflow: "w", status: "running", step: "plan", done: 0, total: 3, branch: "openclaw/x" }], active: 1, max_teams: 2, queued: [] }), /1 active of 2/);
+  assert.match(formatStatus({ runs: [{ id: "r1", workflow: "w", status: "running", step: "plan", done: 0, total: 3 }], active: 1, max_teams: 2, queued: [] }), /1 active of 2/);
   assert.ok(RUN_ID_RE.test("20261023-120000-feature-ab12") && !RUN_ID_RE.test("../x") && !RUN_ID_RE.test("a b"));
 });
 
@@ -140,7 +140,7 @@ test("splitRepoFlag removes --repo from the goal", () => {
 
 test("start runs the engine through execFile with an argv array and dispatches the first step to its role agent", async () => {
   const eng = makeEngine({
-    start: () => ({ run: "r1", status: "running", branch: "openclaw/team-r1", actions: [dispatch()] }),
+    start: () => ({ run: "r1", status: "running", actions: [dispatch()] }),
     report: () => ({ run: "r1", status: "running", actions: [{ type: "wait", step: "plan" }] }),
   });
   const timers = makeTimers();
@@ -337,7 +337,7 @@ test("resumeAll never throws when the engine is unavailable", async () => {
 
 test("/equipo uses the feature workflow through the orchestrator and /workflow status renders the table", async () => {
   const eng = makeEngine({
-    start: (call) => ({ run: "r1", status: "running", branch: "openclaw/team-r1", actions: [dispatch()], _args: call.args }),
+    start: (call) => ({ run: "r1", status: "running", actions: [dispatch()], _args: call.args }),
     report: () => ({ run: "r1", status: "running", actions: [] }),
     status: () => ({ id: "r1", workflow: "feature-implementation", status: "running", steps: { plan: { role: "planner", state: "running", attempt: 1, result: "" } }, approval: { state: "pending" } }),
   });
@@ -346,7 +346,6 @@ test("/equipo uses the feature workflow through the orchestrator and /workflow s
   const equipo = makeEquipoCommandHandler(api);
   const res = await equipo({ args: "add rate limiting --repo /srv/app", sessionKey: "s" });
   assert.match(res.text, /Team started/);
-  assert.match(res.text, /openclaw\/team-r1/);
   const start = eng.calls[0].args;
   assert.ok(start.includes(`--workflow=${EQUIPO_WORKFLOW}`) && start.includes("--goal=add rate limiting") && start.includes("--workspace=/srv/app"));
   const status = await makeWorkflowCommandHandler(api)({ args: "status r1" });

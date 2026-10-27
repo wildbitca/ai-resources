@@ -83,7 +83,7 @@ def _default_engine(args: argparse.Namespace) -> Engine:
     return Engine(RunStore(Path(args.runs_dir) if getattr(args, "runs_dir", "") else None))
 
 
-ENGINE_FACTORY = _default_engine           # tests replace it to inject a runner and a clock
+ENGINE_FACTORY = _default_engine           # tests replace it to inject a clock and a claims directory
 
 
 def _engine(args: argparse.Namespace) -> Engine:

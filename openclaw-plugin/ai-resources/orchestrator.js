@@ -82,9 +82,9 @@ export function formatActions(result) {
 
 export function formatStatus(doc) {
   if (doc.runs) {
-    const rows = doc.runs.map((r) => `| \`${r.id}\` | ${r.workflow} | ${r.status} | ${r.step || "—"} (${r.done}/${r.total}) | ${r.branch || "—"} |`);
+    const rows = doc.runs.map((r) => `| \`${r.id}\` | ${r.workflow} | ${r.status} | ${r.step || "—"} (${r.done}/${r.total}) |`);
     return [`**Teams** (${doc.active} active of ${doc.max_teams}; queued: ${doc.queued.length})`, "",
-      "| Run | Workflow | Status | Step | Branch |", "| :--- | :--- | :--- | :--- | :--- |", ...rows].join("\n");
+      "| Run | Workflow | Status | Step |", "| :--- | :--- | :--- | :--- |", ...rows].join("\n");
   }
   const steps = Object.entries(doc.steps || {}).map(([id, s]) => `| ${id} | ${s.role} | ${s.state} | ${s.attempt} | ${s.result || ""} |`);
   const extra = doc.approval && doc.approval.state === "pending" && doc.status === "awaiting_approval"

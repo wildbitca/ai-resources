@@ -294,9 +294,8 @@ async function orchestratedStart(orch, workflow, rawGoal, ctx) {
   const { goal, workspace } = splitRepoFlag(rawGoal);
   if (!goal) return { text: "⚠️ **Usage**: give the team a goal, e.g. `/equipo add rate limiting to the API --repo /path/to/repo`", continueAgent: false };
   const result = await orch.start(workflow, goal, ctx, { workspace: workspace || (ctx && (ctx.workspaceDir || ctx.cwd)) || "" });
-  const where = result.branch ? `\n**Branch**: \`${result.branch}\` (own worktree)` : "";
   return {
-    text: `👥 **Team started**: \`${workflow}\`\n**Goal**: ${goal}${where}\n${formatActions(result)}\n\nFollow it with \`/workflow status ${result.run}\`.`,
+    text: `👥 **Team started**: \`${workflow}\`\n**Goal**: ${goal}\n${formatActions(result)}\n\nFollow it with \`/workflow status ${result.run}\`.`,
     continueAgent: false,
   };
 }
