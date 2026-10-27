@@ -33,12 +33,20 @@ Major internal rewrite of routing, with BREAKING changes (see below). Roles are 
 - BREAKING: the worktree `lanes` ledger (`lanes` subcommand, `orchestrator/worktree.py`, `backend: lane`, `workflows/feature-lanes`), replaced by `scope_guard.py`.
 - BREAKING: the scoring engine (`compose`, `flow`, `explain`, `detect`, `gate`, `headroom`, `headroom_sources`, `profile_out`, `scoring/lanes.py`) and the flags `--compose`, `--headroom`, `--headroom-live`, `--why-json`, `--allow-fable`.
 - BREAKING: gates G0-G7 and their evidence guard hook, the Google and Anthropic acknowledgements and the operator waiver, `--lanes-antigravity` / `--no-lanes-antigravity`, `--lanes-orchestrator`, `--lanes-dry-run`, the held-lane machinery, `lane_member: second`, display-only rows, static role-count weights, the Gemini write tripwire and the agy report-only role list.
-- Unused leftovers: `model_accounts.render_text` / `to_json`, `_openclaw_providers.preselected` / `profile_providers`, `openclaw_agy.stub_models`, `compat.claude_google_openrouter_verified`, `wizard._untick`, `tests/lane_symmetry.py` and the tests of every removed concept (about 2,900 tests). Net across the release: +6,050 / -19,368 lines in `scripts/` and `tests/` since 3.1.0.
+- Unused leftovers: `model_accounts.render_text` / `to_json`, `_openclaw_providers.preselected` / `profile_providers`, `openclaw_agy.stub_models`, `compat.claude_google_openrouter_verified`, `wizard._untick`, `tests/lane_symmetry.py` and the tests of every removed concept (about 2,900 tests). Net across the release: +6,741 / -19,854 lines in `scripts/` and `tests/` since 3.1.0 (`git diff --shortstat 912edad..HEAD -- scripts tests`).
 
 ### Fixed
 
 - fix(setup): the acceptance run found the pre-setup defects it exists for: `allowAgents` missing for the kit roles, a gateway plugin path that differs from the disk, 384 MCP children under the gateway, an off-box credential file that does not exist. `ai-resources setup` clears them.
 - fix(acceptance): the pool of an `anthropic-api` / `gemini-api` cell is read from the transport's wire API line, so a CLI runtime cannot pass as API credits.
+
+- fix(setup): Claude Code agents are installed with the routing-matrix model, so a profile `routing:` override reaches them and a legacy `by_role` pin does not (tests updated to the matrix).
+- fix(orchestrator): every checker is gated for independence and gets its per-run model; the model actually used is recorded and read-only scope violations are logged on the engine path.
+- fix(scope-guard): an ad-hoc run keeps its claim while its holder process lives.
+- fix(agy-run): `--run` is validated, a symlinked output is refused, agy errors are scrubbed and the secret patterns widened.
+- fix(ledger): private rows are ASCII-only, readers are tolerant, run ids are validated and an unknown writer fails closed.
+- fix(route): `--writers` given as matrix cells (`agy:gemini-4-argon-high`, `claude-code:sonnet`) resolve their family by stripping the backend.
+- fix(acceptance): `setup.plugin-fresh` states which rule tripped (path, version or time) with the running and the disk path or version.
 
 ### Migration notes
 
