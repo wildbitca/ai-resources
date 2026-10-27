@@ -386,6 +386,7 @@ class Engine:
                         return self._actions(run)
                     st["state"], st["attempt"], st["started_at"] = "running", st["attempt"] + 1, self.clock()
                     st["agent"] = agent_for(s.role, run.get("domain") or "", self.kit_root)
+                    st["tree_before"] = self._tree_snapshot(run, s)
                     _event(run, "dispatch", s.id, f"attempt {st['attempt']}", self.clock())
                     self._record(run, s, "pending")
                     out.append(self._dispatch(run, s))
@@ -405,6 +406,23 @@ class Engine:
                         f"{run['approval']['before']} start writing, or cancel the run.",
                 "options": ["approve", "cancel"], "handoff": str(self.store.handoff_path(run["id"]))}
 
+    @staticmethod
+    def _tree_snapshot(run: Mapping[str, Any], step: Step) -> list[str] | None:
+        """`git status` paths before a step whose role is read-only by contract (reports, checkers); None for a writer, outside a
+        git checkout, or when the tree is too dirty to keep in the run state."""
+        if step.role not in READ_ONLY_ROLES and step.role not in CHECKER_ROLES:
+            return None
+        paths = scope_guard.changed_paths(str(run.get("cwd") or run["workspace"]))
+        return sorted(paths) if paths is not None and len(paths) <= 500 else None
+
+    def _scope_violations(self, run: Mapping[str, Any], step: Step) -> list[str]:
+        """What a read-only role changed outside `.agent-output/<run>/` (ADR-0019 M3: logged on the dispatch row, never blocking)."""
+        before = run["steps"][step.id].get("tree_before")
+        if before is None:
+            return []
+        after = scope_guard.changed_paths(str(run.get("cwd") or run["workspace"]))
+        return scope_guard.violations(sorted((after or set()) - set(before)), [], run["id"]) if after is not None else []
+
     def _record(self, run: Mapping[str, Any], step: Step, outcome: str, *, cause: str = "") -> None:
         """One dispatch-ledger row for a step starting (`pending`) or finishing. The engine only records: the retry on a
         quota or timeout is OpenClaw's native `model.fallbacks`, so the row names the cause and the matrix primary."""
@@ -412,10 +430,22 @@ class Engine:
         families = self._writer_families(run)
         route = self._route(step.role, families)
         primary = routing.merged().get(step.role)
-        self._ledger(dispatch_ledger.record, step.role, outcome, run_id=run["id"], step=step.id, cell=route.cell or "",
+        actual = st.get("model_actual") or ""
+        extra: dict[str, Any] = {"attempt": st["attempt"]}
+        if actual:
+            extra["model_actual"] = actual                       # the model the child really ran on, as the runtime reported it
+        elif cause and primary and (primary.writes or step.role in roles_policy.SCOPE_ROLES):
+            # a fallback moved the step and the runtime did not say where: any model of its chain may have written (fail closed)
+            extra["family_candidates"] = sorted({f for c in primary.chain if (f := roles_policy.model_family(c.partition(":")[2]))})
+        if outcome != "pending":
+            stray = self._scope_violations(run, step)
+            if stray:
+                extra["scope_violations"] = stray
+        cell = (route.cell or "") if not actual else f"{route.backend}:{actual.rpartition('/')[2]}"
+        self._ledger(dispatch_ledger.record, step.role, outcome, run_id=run["id"], step=step.id, cell=cell,
                      fallback_from=(primary.primary or "") if cause and primary else "", fallback_cause=cause,
                      duration_s=max(0.0, self.clock() - st["started_at"]) if outcome != "pending" else 0.0,
-                     writer_families=families, extra={"attempt": st["attempt"]})
+                     writer_families=families, extra=extra)
 
     def _dispatch(self, run: dict[str, Any], step: Step) -> dict[str, Any]:
         st = run["steps"][step.id]
@@ -458,8 +488,9 @@ class Engine:
 
     # -- report ---------------------------------------------------------------------------------------------------
     def report(self, run_id: str, step_id: str, *, text: str = "", session: str = "", agent: str = "",
-               timeout: bool = False, error: str = "") -> dict[str, Any]:
-        """A step finished (its reply), timed out or errored. Returns the next actions and any promoted runs."""
+               timeout: bool = False, error: str = "", model: str = "") -> dict[str, Any]:
+        """A step finished (its reply), timed out or errored. Returns the next actions and any promoted runs.
+        `model` is the model the runtime says the child really ran on, when it says (recorded instead of the planned one)."""
         with self.store.locked(run_id):
             run = self._load(run_id)
             if run["status"] in TERMINAL:
@@ -489,6 +520,8 @@ class Engine:
                 st["session"] = session[:120]
             if agent:
                 st["agent"] = agent[:120]
+            if model:
+                st["model_actual"] = model[:120]
             outcome = self._judge(run, step, text, timeout=timeout, error=error)
             self._apply(run, step, outcome)
             if st["state"] == "done" and text.strip():

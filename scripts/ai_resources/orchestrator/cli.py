@@ -109,7 +109,7 @@ def run(args: argparse.Namespace) -> int:
             doc = e.next(args.run)
         elif cmd == "report":
             doc = e.report(args.run, args.step, text=_read_reply(args.reply_file), session=args.session, agent=args.agent,
-                           timeout=args.timeout, error=args.error)
+                           timeout=args.timeout, error=args.error, model=args.model)
         elif cmd == "approve":
             doc = e.approve(args.run)
         elif cmd == "cancel":
@@ -187,6 +187,7 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     r.add_argument("--reply-file", default="", help="File with the role's final reply ('-' for stdin)")
     r.add_argument("--timeout", action="store_true", help="The per-role timeout fired")
     r.add_argument("--error", default="", help="The dispatch failed with this message")
+    r.add_argument("--model", default="", help="The model the child really ran on, when the runtime says")
     common(verbs.add_parser("approve", help="Approve the plan so the first writer may start")).add_argument("run")
     common(verbs.add_parser("cancel", help="Cancel a run and free its team slot")).add_argument("run")
     rs = common(verbs.add_parser("resume", help="Hand out again the steps that were never reported (after a restart)"))

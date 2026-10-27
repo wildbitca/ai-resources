@@ -199,7 +199,9 @@ export function createOrchestrator(api, options = {}) {
         return handle(await engine("report", [action.run, action.step, `--error=${String(outcome.error).slice(0, 200)}`, `--session=${realKey}`]));
       }
       const reply = String(outcome.reply || "").slice(-MAX_REPLY_CHARS);
-      return handle(await engine("report", [action.run, action.step, `--session=${realKey}`, `--agent=${action.agent}`, "--reply-file=-"], { stdin: reply }));
+      // The model the child really ran on, when the runtime says (a native fallback may have moved it off the planned one).
+      const used = typeof outcome.model === "string" && outcome.model ? [`--model=${outcome.model.slice(0, 120)}`] : [];
+      return handle(await engine("report", [action.run, action.step, `--session=${realKey}`, `--agent=${action.agent}`, ...used, "--reply-file=-"], { stdin: reply }));
     } finally {
       inflight.delete(key);
     }
@@ -224,7 +226,7 @@ export function createOrchestrator(api, options = {}) {
           const got = await sub.getSessionMessages.call(sub, { sessionKey, limit: 6 });
           reply = lastAssistantText(got && got.messages);
         }
-        return { reply };
+        return { reply, model: waited && waited.model };
       }
       return { timeout: true };
     })().catch((e) => ({ error: String(e.message || e) }));

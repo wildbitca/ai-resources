@@ -190,6 +190,18 @@ test("a checker's per-run model reaches subagent.run as the model override; a ro
   assert.equal("model" in plan, false, "OpenClaw's own primary and model.fallbacks apply to a role with a fixed primary");
 });
 
+test("the model the runtime says the child ran on is reported to the engine", async () => {
+  const eng = makeEngine({
+    start: () => ({ run: "r1", status: "running", actions: [dispatch()] }),
+    report: () => ({ run: "r1", status: "running", actions: [{ type: "wait", step: "plan" }] }),
+  });
+  const { api } = makeApi({ waits: [{ status: "ok", terminalReply: "Status: success\nBlocked: false\n", model: "anthropic/claude-haiku-5-5" }] });
+  api.orchestratorDeps = { execFile: eng.execFile };
+  await orchestratorFor(api).start("w", "g", {});
+  await settle();
+  assert.ok(eng.calls.find((c) => c.args.includes("report")).args.includes("--model=anthropic/claude-haiku-5-5"));
+});
+
 test("a finished step reports and the next dispatch of the returned actions is started", async () => {
   let reports = 0;
   const eng = makeEngine({

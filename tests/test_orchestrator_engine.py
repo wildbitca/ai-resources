@@ -424,3 +424,45 @@ def test_a_checker_dispatch_carries_the_model_resolved_for_this_run(tmp_path):
     res = drive_to(e, run["id"], "verify", wf)
     [d] = dispatches(res)
     assert d["model"] == routing.cell_to_openclaw_ref("claude-code:opus", model_pins.effective())   # writers are sonnet/haiku
+
+
+def test_the_actual_model_the_runtime_reports_is_what_the_ledger_records(tmp_path):
+    from ai_resources import dispatch_ledger
+    e, wf, _ = make(tmp_path)
+    run = start(e, wf)
+    [d] = dispatches(e.next(run["id"]))
+    e.report(run["id"], "plan", text=OK, session="s", agent=d["agent"], model="anthropic/claude-haiku-5-5")
+    row = [r for r in dispatch_ledger.load(run["id"]) if r["outcome"] == "ok"][0]
+    assert (row["model"], row["family"], row["model_actual"]) == ("claude-haiku-5-5", "haiku", "anthropic/claude-haiku-5-5")
+
+
+def test_a_writer_that_fell_back_to_an_unknown_model_counts_every_family_of_its_chain(tmp_path):
+    from ai_resources import dispatch_ledger
+    from ai_resources.scoring import routing
+    e, wf, _ = make(tmp_path)
+    run = start(e, wf)
+    drive_to(e, run["id"], "implement", wf)
+    e.report(run["id"], "implement", timeout=True)                   # native fallback moved it; the runtime said nothing
+    row = [r for r in dispatch_ledger.load(run["id"]) if r["step"] == "implement" and r["outcome"] == "fail"][0]
+    assert row["fallback_cause"] == "timeout" and row["family_candidates"]
+    chain = routing.ROLES["implementer"].chain
+    assert set(row["family_candidates"]) >= {routing.model_family(c.partition(":")[2]) for c in chain if routing.model_family(c.partition(":")[2])}
+    assert set(row["family_candidates"]) <= set(dispatch_ledger.writer_families(run["id"]))
+
+
+def test_a_read_only_step_that_changes_the_tree_is_logged_on_its_dispatch_row_and_never_blocked(tmp_path):
+    import subprocess
+    from ai_resources import dispatch_ledger
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    e, wf, _ = make(tmp_path)
+    run = e.start(wf, "g", str(repo), models=MODELS)
+    [d] = dispatches(e.next(run["id"]))                              # the planner: read-only by contract
+    (repo / "src.py").write_text("x = 1\n")
+    (repo / ".agent-output" / run["id"]).mkdir(parents=True)
+    (repo / ".agent-output" / run["id"] / "plan.md").write_text("plan\n")      # its own output dir is allowed
+    res = finish(e, run["id"], d)
+    row = [r for r in dispatch_ledger.load(run["id"]) if r["step"] == "plan" and r["outcome"] == "ok"][0]
+    assert row["scope_violations"] == ["src.py"]
+    assert res["status"] in ("running", "awaiting_approval")         # logged, not blocked
