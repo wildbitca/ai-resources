@@ -40,7 +40,7 @@ def cmd_route(args: argparse.Namespace) -> int:
         dispatch_ledger.record(
             route.role, "blocked" if route.blocked else "pending", run_id=args.run or "", step=args.step or "",
             cell=route.cell or "", fallback_from=(primary.primary or "") if route.cause and primary else "",
-            fallback_cause=route.cause or "", writer_families=[routing.model_family(w) or w for w in writers],
+            fallback_cause=route.cause or "", writer_families=[routing.writer_family(w) or w for w in writers],
             extra={"reason": route.reason[:300]} if route.blocked else None)
     doc = {"role": route.role, "cell": route.cell, "backend": route.backend, "model": route.model, "pool": route.pool,
            "fallbacks": list(route.fallbacks), "reason": route.reason, "cause": route.cause, "blocked": route.blocked}

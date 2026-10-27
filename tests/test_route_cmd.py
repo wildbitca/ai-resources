@@ -47,6 +47,21 @@ def test_writers_steer_the_checker(tmp_path, capsys):
     assert json.loads(out.out)["cell"] == "claude-code:opus"
 
 
+def test_writers_given_as_matrix_cells_resolve_their_family(tmp_path, capsys):
+    f = _usage(tmp_path)
+    rc, out = _run(capsys, "verifier", "--usage-file", f, "--writers", "agy:gemini-4-argon-high", "--json")
+    assert rc == 0 and json.loads(out.out)["cell"] == "claude-code:sonnet"
+    rc, out = _run(capsys, "verifier", "--usage-file", f, "--writers", "claude-code:sonnet", "--json")
+    assert rc == 0 and json.loads(out.out)["cell"] == "claude-code:opus"
+    rc, out = _run(capsys, "verifier", "--usage-file", f, "--writers", "agy:claude-opus-5-5,claude-code:sonnet", "--json")
+    assert rc == 3
+
+
+def test_a_writer_of_unknown_family_stays_blocked_even_with_a_backend_prefix(tmp_path, capsys):
+    rc, out = _run(capsys, "verifier", "--usage-file", _usage(tmp_path), "--writers", "agy:mystery-model")
+    assert rc == 3 and "BLOCKED" in out.out
+
+
 def test_blocked_checker_exits_3(tmp_path, capsys):
     rc, out = _run(capsys, "verifier", "--usage-file", _usage(tmp_path), "--writers", "sonnet,opus")
     assert rc == 3 and "BLOCKED" in out.out

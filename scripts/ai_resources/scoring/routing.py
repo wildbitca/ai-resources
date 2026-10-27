@@ -355,6 +355,16 @@ class Route:
         return (self.cell or "").partition(":")[2]
 
 
+def writer_family(ref: object) -> str | None:
+    """Family of a writer given as a model ref, a family or a matrix cell (`agy:gemini-4-argon-high`, `claude-code:sonnet`):
+    a known backend prefix is stripped, then `model_family` decides. None stays unknown (fail closed)."""
+    if isinstance(ref, str):
+        head, sep, rest = ref.strip().partition(":")
+        if sep and head.lower() in BACKENDS:
+            ref = rest
+    return model_family(ref)
+
+
 UNKNOWN_FAMILY = "unknown"        # the family recorded for a model `model_family` does not know (never silently dropped)
 
 
@@ -375,7 +385,7 @@ def resolve(role: str, usage: Mapping[str, float | None] | None = None, writers:
     if role not in table:
         raise RoutingError(f"no routing for role {role!r}")
     r, usage, unavailable = table[role], usage or {}, unavailable or {}
-    families = {model_family(w) or UNKNOWN_FAMILY for w in writers if str(w).strip()}
+    families = {writer_family(w) or UNKNOWN_FAMILY for w in writers if str(w).strip()}
     cause: str | None = None
     skipped: list[str] = []
     chain = r.chain
