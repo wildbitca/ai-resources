@@ -16,6 +16,9 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 
+pytest_plugins = ["real_agent_gate"]
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
     # Before the tmpdir plugin reads the option: a bare run must not fill the /tmp tmpfs.

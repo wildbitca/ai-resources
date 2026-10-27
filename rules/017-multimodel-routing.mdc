@@ -131,6 +131,17 @@ Subagent `model:` values come from a single-model profile chosen in setup:
 inherits the session model). The verifier and the security-auditor never share a model family with a
 writer in any shipped profile (ADR-0010).
 
+## A provider outage never reaches the shared default team
+
+The shared default team is what the kit ships: the `profiles/*.yaml` files, the `balanced` default and the role-to-model
+tables they carry. It states what the kit intends, not what happens to be reachable today. A provider outage, quota block,
+rate limit or missing credential is a runtime condition and is handled where it happens: a local override (the operator's
+`executors.yaml`, a setup choice, an environment variable), a blocked or retried step, or a run that says so. Never commit
+a model swap, a removed role or an `outage`/`temporary` workaround into a shipped profile or the default team because a
+provider was down when the change was written; the next reader cannot tell the workaround from the intent, and it outlives
+the outage. Likewise a run whose real-agent checks could not run is **UNVERIFIED**, not green (see "Real-agent tests" in
+`docs/orchestration.md`).
+
 ## Composed teams
 
 - Team composition (`ai-resources setup --compose`, ADR-0006) writes through `executors.yaml` via the profile

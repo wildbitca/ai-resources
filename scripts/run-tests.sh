@@ -5,6 +5,9 @@
 #   scripts/run-tests.sh                 full suite (PYTHON picks the interpreter, default python3)
 #   scripts/run-tests.sh tests/test_x.py extra pytest arguments pass through to both passes
 #
+# REAL_AGENT=1 also runs the tests marked `real_agent` (they need a live provider). One that cannot run is reported
+# UNVERIFIED, never green, and fails that run (tests/real_agent_gate.py).
+#
 # Without pytest-xdist installed the parallel pass runs in one process; the result is the same, only slower.
 set -euo pipefail
 
@@ -12,6 +15,7 @@ cd "$(dirname "$0")/.."
 PY="${PYTHON:-python3}"
 ARGS=("$@")
 [ ${#ARGS[@]} -eq 0 ] && ARGS=(tests/)
+[ -n "${REAL_AGENT:-}" ] && ARGS+=(--real-agent)
 
 PARALLEL=()
 if "$PY" -c "import xdist" 2>/dev/null; then

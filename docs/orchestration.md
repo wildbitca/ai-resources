@@ -252,6 +252,10 @@ The mode table (LITE / STANDARD / FULL thresholds, rosters, handoff), the role t
 
 Delegation is a separate, ordered decision (resumability, then `divisible`, then a named `reason`; default is one agent), recorded on the card with its evidence and the real token cost of any divisibility call; see "Delegation" in the scorecard reference. Try it: `ai-resources scorecard '{"resumability":1,"blast_radius":1,"risk":0,"uncertainty":2,"verifiability":1,"spread":0}'` and `ai-resources scorecard escalate lite 2 0`. The rules are data (`skills/kit-orchestration/scorecard.json`); `evals/scorecard/cases.json` holds 12 sample requests (3 LITE, 5 STANDARD, 4 FULL) with expected mode and roster, run by `tests/test_scorecard.py`. Change a threshold there, update the cases and run `ai-resources generate`: it pastes the rules into the sizing block of both scripts in `workflows/scripts/` (a test fails when they are stale).
 
+## Real-agent tests and UNVERIFIED
+
+A *real-agent test* needs a live provider or agent runtime to mean anything (a real model call, a CLI agent, a gateway round trip) and is marked `@pytest.mark.real_agent`; tests over a fake dispatcher or a stub script are ordinary tests and are never marked. Without `--real-agent` (or `REAL_AGENT=1 scripts/run-tests.sh`) they are skipped; with it, a test whose provider is down calls `provider_unavailable(reason)` from `tests/real_agent_gate.py`. Either way the run prints `UNVERIFIED: N real-agent test(s) did not run` with the ids and reasons instead of counting them as green, and a run that asked for real agents (`--real-agent`, or `AI_RESOURCES_REQUIRE_REAL_AGENT=1`) fails while any is UNVERIFIED. A provider outage is never fixed by committing a model swap into the shared default team: see rule 017, "A provider outage never reaches the shared default team".
+
 ## Skill Discovery Flow
 
 When no workflow matches (ad-hoc tasks), the agent discovers skills dynamically:
