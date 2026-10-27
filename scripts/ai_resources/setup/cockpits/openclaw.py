@@ -2205,7 +2205,8 @@ def _reconcile_gateway(s: state.SetupState, ak_path: str, *, dry_run: bool) -> N
         o.plugin_version_seen = version
     o.host_restart_pending = [e for e in o.host_restart_pending if e.get("op") != "plugin"]
     ui.ok("OpenClaw gateway restarted in a drained window.")
-    for f in live_findings(s, ak_path):
+    from ...verify import live_findings
+    for f in live_findings(s, ak_path, skip_if_absent=False):
         (ui.ok if f.level == "ok" else ui.warn if f.level == "warn" else ui.error)(f.message)
 
 
@@ -2233,73 +2234,6 @@ def hardening_dry_run_lines(s: state.SetupState, ak_path: str) -> list[str]:
     lines += openclaw_reconcile.reconcile(openclaw_host.default_runner, plugin_dir=stable,
                                           stale_reason=stale_reason, dry_run=True, check_env=True).lines
     return lines
-
-
-def live_findings(s: state.SetupState, ak_path: str, runner=None) -> list:
-    """What `ai-resources verify --live` and the end of a restart check against the RUNNING system, not the files:
-    the gateway answers `openclaw health`; the plugin it runs is the one on disk (same version, not stale); the
-    kit's hooks are registered; the lane agents exist and their backend is loaded; the MCP children are under the
-    threshold; the off-box credential file exists with mode 0600. Read-only."""
-    from ...verify import Finding as F
-    o = s.openclaw
-    out: list = []
-    who = ID
-    oc = (lambda argv, **kw: runner([*argv], **kw)) if runner else None
-    rc, _ = (oc(["openclaw", "health"], timeout=45) if oc else _openclaw(["health"], timeout=45))
-    out.append(F("ok", who, "live: the gateway answers `openclaw health`") if rc == 0 else
-               F("error", who, "live: the gateway does not answer `openclaw health`",
-                 "`ai-resources openclaw doctor` (drain, fix, start, health)"))
-    stable = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
-    plugin = plugin_runtime()
-    disk = plugin_version(ak_path)
-    if plugin.get("status") != "loaded":
-        out.append(F("error", who, f"live: the kit plugin is {plugin.get('status') or 'unreadable'} in the gateway",
-                     f"`{openclaw_reconcile.RECONCILE_COMMAND}`"))
-    else:
-        running = str(plugin.get("packageVersion") or plugin.get("version") or "")
-        why = stale_reason(stable, runner)
-        if why or (disk and running and running != disk):
-            out.append(F("error", who, f"live: the gateway runs kit plugin {running or '?'} but the disk has {disk or '?'}"
-                         + (f" ({why} rule)" if why else ""), f"`{openclaw_reconcile.RECONCILE_COMMAND}`"))
-        else:
-            out.append(F("ok", who, f"live: the gateway runs the kit plugin {running or disk} that is on disk"))
-    team, guard = bool(o.host_narration), bool(o.host_guard)
-    missing = openclaw_reconcile.hooks_missing(ak_path, team=team and o.host_hooks_applied,
-                                               guard=guard and o.host_hooks_applied)
-    out.append(F("ok", who, "live: every kit hook is registered in ~/.claude/settings.json") if not missing else
-               F("error", who, "live: hooks missing from ~/.claude/settings.json: " + ", ".join(missing),
-                 "re-run `ai-resources setup`"))
-    doc = read_config(config_path())
-    ids = openclaw_orchestration.kit_role_ids(doc)
-    if ids:
-        orchs = openclaw_orchestration.orchestrator_ids(doc, (s.profile.lanes or {}).get("orchestrators") or [])
-        short = {o_: [i for i in ids if i not in ((_get(doc, "agents", "entries", o_, "subagents", "allowAgents")) or [])]
-                 for o_ in orchs}
-        short = {o_: m for o_, m in short.items() if m and "*" not in (
-            _get(doc, "agents", "entries", o_, "subagents", "allowAgents") or [])}
-        if short:
-            out.append(F("warn", who, "live: " + "; ".join(f"{o_} cannot spawn {', '.join(m)}" for o_, m in sorted(short.items())),
-                         "re-run `ai-resources setup` (never edit openclaw.json by hand)"))
-        else:
-            out.append(F("ok", who, f"live: {len(orchs)} orchestrator agent(s) may spawn all {len(ids)} kit-role agents"))
-    counts = openclaw_reconcile.gateway_mcp_children(runner or openclaw_host.default_runner)
-    if counts is not None and openclaw_reconcile.mcp_overflow(counts):
-        out.append(F("warn", who, f"live: {sum(counts.values())} MCP server children under the gateway "
-                     f"(threshold {openclaw_reconcile.MCP_CHILD_WARN})", f"`{openclaw_reconcile.RECONCILE_COMMAND}`"))
-    elif counts is not None:
-        out.append(F("ok", who, f"live: {sum(counts.values())} MCP server children under the gateway"))
-    env = openclaw_host.read_host_env()
-    cred = env.get("OPENCLAW_OFFBOX_CRED_FILE")
-    if env.get("OPENCLAW_OFFBOX_BUCKET") and cred:
-        try:
-            mode = os.stat(cred).st_mode & 0o777
-            out.append(F("ok", who, "live: the off-box credential file exists (0600)") if mode == 0o600 else
-                       F("error", who, f"live: the off-box credential file has mode {mode:o}, not 600",
-                         "re-run `ai-resources setup`"))
-        except OSError:
-            out.append(F("error", who, "live: the off-box credential file named by OPENCLAW_OFFBOX_CRED_FILE is "
-                         "missing", "re-run `ai-resources setup` (it regenerates it from the host's federation)"))
-    return out
 
 
 def pending_restart_findings(o: state.OpenClawState, main_pid=None) -> list:

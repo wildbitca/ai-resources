@@ -107,16 +107,19 @@ def key_findings() -> list[Finding]:
             for r in results if key_check.ERROR not in (r.env, r.profile)]
 
 
-def live_findings(s: state.SetupState) -> list[Finding]:
-    """`verify --live`: the RUNNING system against what setup claims (gateway health, the plugin the gateway runs,
-    hooks, lane agents, MCP children, the off-box credential). Needs OpenClaw; one `error` finding when its check
-    cannot run. Read-only, but it asks the live gateway, so it is opt-in and slower than the file checks."""
-    if not ((s.cockpits.get("openclaw") and s.cockpits["openclaw"].installed) or s.openclaw.host):
+def live_findings(s: state.SetupState, ak_path: str | None = None, runner=None, *, skip_if_absent: bool = True) -> list[Finding]:
+    """`verify --live`: the RUNNING system against what setup claims. It runs the acceptance group `setup-live` plus the
+    spawn wiring case (the SAME cases `ai-resources acceptance` runs) and maps each result to a finding: PASS is ok, FAIL is
+    the case's severity with its remedy, SKIP says nothing. Read-only, but it asks the live gateway, so it is opt-in."""
+    if skip_if_absent and not ((s.cockpits.get("openclaw") and s.cockpits["openclaw"].installed) or s.openclaw.host):
         return [Finding("ok", "live", "no OpenClaw on this machine; the live checks were skipped")]
     try:
-        from .openclaw_host import kit_root
-        from .setup.cockpits import openclaw as cockpit
-        return cockpit.live_findings(s, str(kit_root()))
+        from . import acceptance
+        env = acceptance.Env(state=s, ak_path=ak_path or "", runner=runner, offline=True)
+        cases = acceptance.select("setup-live", operator=False) + acceptance.select("spawn", ("spawn.allow",))
+        return [Finding("ok" if r.status == acceptance.PASS else c.severity, "openclaw", "live: " + r.reason,
+                        "" if r.status == acceptance.PASS else c.remedy)
+                for c, r in acceptance.run_cases(cases, env) if r.status != acceptance.SKIP]
     except Exception as e:  # noqa: BLE001 - the live probe must not take verify down
         return [Finding("error", "live", f"the live checks failed to run: {type(e).__name__}: {e}")]
 

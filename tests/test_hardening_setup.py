@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources import openclaw_host as host  # noqa: E402
 from ai_resources import openclaw_reconcile as rec  # noqa: E402
+from ai_resources import openclaw_reload_rules as reload_rules  # noqa: E402
 from ai_resources import verify  # noqa: E402
 from ai_resources.setup import state  # noqa: E402
 from ai_resources.setup.cockpits import claude, openclaw  # noqa: E402
@@ -162,6 +163,10 @@ def live(monkeypatch, tmp_path):
     monkeypatch.setattr(openclaw, "plugin_runtime", lambda: box["plugin"])
     monkeypatch.setattr(openclaw, "stale_reason", lambda *a, **k: box["stale"])
     monkeypatch.setattr(rec, "gateway_mcp_children", lambda *a, **k: box["counts"])
+    monkeypatch.setattr(reload_rules, "current_ruleset", lambda *a, **k: reload_rules.RuleSet("x", "installed", (), "", None, (), 108))
+    from ai_resources import credits
+    monkeypatch.setattr(credits, "ledger_path", lambda: tmp_path / "credits.json")
+    (tmp_path / "credits.json").write_text("{}")
     return box
 
 
@@ -171,7 +176,7 @@ def _levels(findings):
 
 def test_before_setup_the_live_checks_name_every_defect(live):
     live.update(health=0, stale="path", counts={"engram": 57, "supabase": 159})
-    out = openclaw.live_findings(_setup_state(), AK)
+    out = verify.live_findings(_setup_state(), AK, skip_if_absent=False)
     msgs = " | ".join(f.message for f in out if f.level != "ok")
     assert "StopFailure:kit_quota_signal.py" in msgs                 # hooks missing
     assert "off-box credential file" in msgs and "missing" in msgs   # R7-1
@@ -189,7 +194,7 @@ def test_after_setup_and_the_drained_restart_the_live_checks_hold_no_error(live,
     live["cred"].write_text("{}")
     live["cred"].chmod(0o600)
     live.update(stale=None, counts={"engram": 2, "supabase": 1})
-    out = openclaw.live_findings(s, AK)
+    out = verify.live_findings(s, AK, skip_if_absent=False)
     assert "error" not in _levels(out), [f.message for f in out if f.level == "error"]
     assert "warn" not in _levels(out), [f.message for f in out if f.level == "warn"]
     # a second whole run (kit hooks, then the host hooks) leaves the file byte for byte as the first one did
@@ -202,14 +207,14 @@ def test_after_setup_and_the_drained_restart_the_live_checks_hold_no_error(live,
 def test_a_credential_with_loose_permissions_is_an_error(live):
     live["cred"].write_text("{}")
     live["cred"].chmod(0o644)
-    msgs = [f.message for f in openclaw.live_findings(_setup_state(), AK) if f.level == "error"]
+    msgs = [f.message for f in verify.live_findings(_setup_state(), AK, skip_if_absent=False) if f.level == "error"]
     assert any("mode 644" in m for m in msgs)
 
 
 def test_an_unhealthy_gateway_and_an_unloaded_plugin_are_errors(live):
     live.update(health=1)
     live["plugin"] = {"status": "failed"}
-    msgs = [f.message for f in openclaw.live_findings(_setup_state(), AK) if f.level == "error"]
+    msgs = [f.message for f in verify.live_findings(_setup_state(), AK, skip_if_absent=False) if f.level == "error"]
     assert any("does not answer" in m for m in msgs) and any("failed" in m for m in msgs)
 
 
@@ -224,3 +229,54 @@ def test_verify_live_flag_adds_the_live_findings_and_is_off_by_default():
 def test_verify_live_without_openclaw_is_a_quiet_ok():
     out = verify.live_findings(state.SetupState())
     assert [f.level for f in out] == ["ok"]
+
+
+def test_simulated_owner_run_ends_clean_in_doctor_verify_live_and_acceptance(live, tmp_path, monkeypatch):
+    """ADR-0019 D10, as far as a fixture host can prove it: the openclaw document after a `setup --auto` pass (kit-role agents
+    on the matrix, orchestrators wired), hooks registered, the credential written, a healthy dispatch ledger. Doctor's ledger
+    checks, `verify --live` and `acceptance --offline` end with no FAIL/error/warn, and a second setup pass changes nothing.
+    What only a real run proves: the real gateway, the real restart, the live provider calls (see handoff P7)."""
+    import time
+
+    from orchestration_host import Host, host_doc, run_setup
+    from ai_resources import acceptance, dispatch_ledger, doctor, run_ledger
+    from ai_resources.setup import ui
+    from ai_resources.setup.cockpits import _shared
+
+    doc, s = host_doc()
+    h = Host(doc)
+    run_setup(s, h, tmp_path)
+    writes = h.writes()
+    run_setup(s, h, tmp_path)
+    assert h.writes() == writes, "a second pass changes nothing (idempotent)"
+
+    s2 = _setup_state()
+    assert _shared.merge_kit_hooks(claude.SETTINGS_PATH, claude._kit_hooks(AK), claude._is_kit_hook_command)
+    assert claude.install_openclaw_hooks(AK, team=False, guard=True)
+    live["cred"].write_text("{}")
+    live["cred"].chmod(0o600)
+    live.update(stale=None, counts={"engram": 2})
+    monkeypatch.setattr(acceptance, "_openclaw_doc", lambda: h.doc)
+    monkeypatch.setattr(dispatch_ledger, "ledger_path", lambda: tmp_path / "dispatches.jsonl")
+    monkeypatch.setattr(run_ledger, "ledger_path", lambda: tmp_path / "runs.jsonl")
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg"))
+    dispatch_ledger.record("explore", "ok", cell="agy:gemini-3.8-flash-high", run_id="r1", now=time.time() - 60)
+    dispatch_ledger.record("implementer", "ok", cell="claude-code:sonnet", run_id="r1", now=time.time() - 30)
+
+    seen = {"ok": [], "warn": [], "detail": [], "info": []}
+    for k in seen:
+        monkeypatch.setattr(ui, k, seen[k].append)
+    assert doctor._check_matrix_actual() == 0 and doctor._check_gemini_tools() == 0 and not seen["warn"]
+
+    findings = verify.live_findings(s2, AK, skip_if_absent=False)
+    assert {f.level for f in findings} == {"ok"}, [f.message for f in findings if f.level != "ok"]
+    assert any("may spawn all" in f.message for f in findings), "the spawn wiring of the fixture document was checked"
+
+    runner = lambda argv, **kw: (0, "MemoryCurrent=1073741824\nMemoryHigh=12884901888\n")      # noqa: E731
+    env = acceptance.Env(state=s2, ak_path=AK, runner=runner, offline=True, cache=tmp_path / "cache",
+                         which=lambda n: "/fake/" + n)
+    results = acceptance.run_cases(acceptance.select(offline=True, operator=False), env)
+    bad_rows = [(c.id, r.status, r.reason) for c, r in results if r.status == acceptance.FAIL]
+    assert not bad_rows, bad_rows
+    assert {c.id for c, r in results if r.status == acceptance.PASS} >= {"spawn.allow", "setup.hooks", "setup.stopfailure-hook",
+                                                                         "fault.timeout", "setup.idempotent-rerun"}

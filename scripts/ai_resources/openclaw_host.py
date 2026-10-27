@@ -5285,7 +5285,8 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
                 s.openclaw.plugin_version_seen = version
             s.openclaw.host_restart_pending = [e for e in s.openclaw.host_restart_pending if e.get("op") != "plugin"]
             setup_state.save(s)
-            findings = cockpit.live_findings(s, ak)
+            from . import verify
+            findings = verify.live_findings(s, ak, skip_if_absent=False)
             for f in findings:
                 print(f"{f.level.upper():5} {f.message}")
             return 1 if any(f.level == "error" for f in findings) else EXIT_OK
