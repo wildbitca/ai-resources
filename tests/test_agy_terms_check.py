@@ -75,7 +75,7 @@ def test_accept_stores_the_hash_account_roles_and_date_through_make_ack(monkeypa
     text = lanes_render.ACK_TEXT["google"]
     assert ack["text_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest()
     assert ack["text"] == text and ack["account"] == ACCT
-    assert ack["roles"] == sorted(r for r in ROLES if r != roles_policy.DEFAULT_INTEGRATING_WRITER)
+    assert ack["roles"] == sorted(ROLES)
     assert ack["date"].startswith("20")
     assert lanes_render.valid_acks(acks)["google"]["account"] == ACCT
 
@@ -86,11 +86,11 @@ def test_the_google_text_is_shown_verbatim_and_once(monkeypatch):
     assert u.warned.count(lanes_render.ACK_TEXT["google"]) == 1
 
 
-def test_the_implementer_is_not_ticked_by_default(monkeypatch):
+def test_the_implementer_is_ticked_by_default_like_every_role(monkeypatch):
     u = Ui(monkeypatch)
     wizard.agy_terms_check(_s(), ROLES, interactive=True)
     _, offered, default = u.boxes[0]
-    assert roles_policy.DEFAULT_INTEGRATING_WRITER not in default
+    assert roles_policy.DEFAULT_INTEGRATING_WRITER in default
     assert "tester" in default
 
 
@@ -183,7 +183,7 @@ def test_the_other_accounts_acknowledgement_is_kept(monkeypatch):
     assert accepted and acks["anthropic"] == anth["anthropic"] and "google" in acks
 
 
-def test_the_writer_never_moves_to_agy():
+def test_agy_joins_the_writable_backends_only_through_the_gate_check():
     assert roles_policy.DEFAULT_INTEGRATING_WRITER == "implementer"
     assert openclaw_lanes.WRITABLE_BACKENDS == frozenset({"claude-cli"})
     assert openclaw_lanes.AGY_BACKEND not in openclaw_lanes.writable_backends()
@@ -226,13 +226,13 @@ def test_non_interactive_never_accepts_the_extension_and_keeps_the_stored_ack(mo
     assert u.asks == [] and u.warned == [] and u.boxes == []
 
 
-def test_the_checklist_pre_ticks_planner_architect_and_explore_but_not_the_implementer(monkeypatch):
+def test_the_checklist_pre_ticks_every_role_including_the_implementer(monkeypatch):
     for have in (None, _google(["code-reviewer", "explore"])):
         u = Ui(monkeypatch)
         wizard.agy_terms_check(_s(have), NEW_ROLES, interactive=True)
         _, offered, default = u.boxes[0]
         assert {"planner", "software-architect", "explore"} <= set(default)
-        assert roles_policy.DEFAULT_INTEGRATING_WRITER not in default and "implementer" in offered
+        assert roles_policy.DEFAULT_INTEGRATING_WRITER in default and "implementer" in offered
 
 
 # --- ADR-0014 D3.4: Flash-low rides on the same acknowledgement -----------------------------------------------------------

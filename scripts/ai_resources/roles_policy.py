@@ -67,27 +67,6 @@ TRIPWIRE_STAT_PATHS = ("~/.local/bin/",)
 # The OpenClaw automation/cron store is located by the isolated harness (P3-S0) and recorded as evidence. Until
 # then it is None and no path is guessed: a wrong path would only add false failures.
 OPENCLAW_CRON_STORE_PATH: str | None = None
-# `~/.gemini` config files an agy turn might write. Which of them are tripwires is DERIVED from V6/V7 (the files
-# a benign agy turn does not write); nothing is active until that evidence is recorded (G2, G3).
-GEMINI_TRIPWIRE_CANDIDATES = ("~/.gemini/settings.json", "~/.gemini/GEMINI.md", "~/.gemini/trustedFolders.json",
-                              "~/.gemini/config/", "~/.gemini/antigravity-cli/settings.json",
-                              "~/.gemini/antigravity-cli/mcp/")
-# Credential files: never tripwired, never read, never hashed.
-GEMINI_CREDENTIAL_NAMES = ("antigravity-oauth-token", "gemini-credentials.json", "mcp-oauth-tokens.json")
-
-
-def gemini_tripwires(benign_writes: Iterable[str] | None = None) -> tuple[str, ...]:
-    """The `~/.gemini` tripwires derived from a recorded benign agy turn: the candidates that turn did NOT write.
-
-    `None` (no V6/V7 evidence) derives nothing, so no `~/.gemini` file is tripwired by assumption.
-    """
-    if benign_writes is None:
-        return ()
-    written = {w.rstrip("/") for w in benign_writes}
-    return tuple(c for c in GEMINI_TRIPWIRE_CANDIDATES
-                 if c.rstrip("/") not in written and not c.endswith(GEMINI_CREDENTIAL_NAMES))
-
-
 # Exact tolerance list: changes here never fail a contract.
 TOLERANCE_LIST = ("IDENTITY.md", "SOUL.md", "USER.md", ".pytest_cache/", "__pycache__/")
 # OpenClaw bootstrap files: tolerated only while untracked (a commit adding one fails verify, both lanes).

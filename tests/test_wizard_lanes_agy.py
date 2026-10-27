@@ -151,17 +151,17 @@ def _interactive(monkeypatch, *, google=True, anthropic=True, account=ACCT):
     return log
 
 
-def test_interactive_shows_the_google_text_once_with_the_account_prompt_and_unticks_the_implementer(monkeypatch):
+def test_interactive_shows_the_google_text_once_with_the_account_prompt_and_ticks_every_role(monkeypatch):
     log = _interactive(monkeypatch)
     s = _s()
     assert wizard._step_lanes(s, _args(lanes=True, lanes_antigravity=True)) == 0
     assert log["warn"].count(lanes_render.ACK_TEXT["google"]) == 1
     assert any("Google account" in m for m in log["text"])
     (msg, choices, default), = log["checkbox"]
-    assert "implementer" in choices and "implementer" not in default
+    assert "implementer" in choices and "implementer" in default
     assert {"tester", "doc-writer", "verifier", "security-auditor", "code-reviewer"} <= set(default)
     google = s.profile.lane_acks["google"]
-    assert google["account"] == ACCT and "implementer" not in google["roles"]
+    assert google["account"] == ACCT and "implementer" in google["roles"]
     assert lanes_render.valid_acks(s.profile.lane_acks).keys() == {"anthropic", "google"}
     assert s.profile.lanes["gates"] == {"antigravity": True}
 

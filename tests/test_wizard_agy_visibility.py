@@ -159,11 +159,10 @@ def test_as_a_team_with_agy_ticked_adds_an_antigravity_row_with_unconfirmed_slug
     assert status.startswith("in team") and "terms check next" in status
     assert "sends repo content to Google" in roles and "[unconfirmed slug]" in roles
     assert script.asked == [f"select: {ASK}"]
-    assert roles_policy.DEFAULT_INTEGRATING_WRITER not in roles          # writing stays on Claude Code
-    # the entries are exactly the agy candidates of the profile's lanes block, minus the writer role
+    # the entries are exactly the agy candidates of the profile's lanes block
     doc = profiles.load_profile(wizard.preset_profile(s, preset), "single-model")
     want = {c.split(":", 1)[1] for role, cs in doc["lanes"]["roles"].items()
-            for c in cs if c.startswith("agy:") and role != roles_policy.DEFAULT_INTEGRATING_WRITER}
+            for c in cs if c.startswith("agy:")}
     assert {e.split(": ")[1].split(" ")[0].rstrip(".") for e in roles.split(" - sends")[0].split("; ")} == want
 
 

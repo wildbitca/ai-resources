@@ -140,12 +140,9 @@ def test_credentials_and_agy_state_changing_never_fail_a_step(env, label):
     assert rc == 0, out
 
 
-def test_gemini_tripwires_are_derived_from_a_benign_turn_and_none_is_active_without_evidence():
-    assert rp.gemini_tripwires() == ()
+def test_agys_own_state_directory_is_not_a_tripwire():
+    assert not hasattr(rp, "gemini_tripwires")
     assert not any(".gemini" in p for p in rp.TRIPWIRE_PATHS + rp.TRIPWIRE_STAT_PATHS)
-    got = rp.gemini_tripwires({"~/.gemini/settings.json", "~/.gemini/config/"})
-    assert "~/.gemini/settings.json" not in got and "~/.gemini/config/" not in got
-    assert "~/.gemini/GEMINI.md" in got
     assert rp.OPENCLAW_CRON_STORE_PATH is None        # located by the harness, never guessed
 
 

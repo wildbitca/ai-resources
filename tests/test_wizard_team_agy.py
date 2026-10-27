@@ -104,7 +104,7 @@ def test_ticked_and_accepted_stores_the_google_ack_and_opens_the_gate(monkeypatc
     assert wizard._step_lanes(s, _args()) == 0
     assert u.warned.count(lanes_render.ACK_TEXT["google"]) == 1
     google = s.profile.lane_acks["google"]
-    assert google["account"] == ACCT and "implementer" not in google["roles"]
+    assert google["account"] == ACCT and "implementer" in google["roles"]
     assert lanes_render.valid_acks(s.profile.lane_acks).keys() == {"google"}
     assert s.profile.lanes["gates"] == {"antigravity": True}
     assert "agy" in s.profile.customizations["__targets__"]["selected"]
@@ -236,17 +236,16 @@ def test_each_on_its_own_never_opens_the_terms_check(monkeypatch):
     assert "agy" in s.profile.customizations["__targets__"]["selected"]      # still a tool; no lane, no store
 
 
-# --- what ticking can never do ---------------------------------------------------------------------------------
-def test_writer_never_agy(monkeypatch):
+# --- what ticking can do ----------------------------------------------------------------------------------------
+def test_agy_may_take_a_writer_role(monkeypatch):
     _prove_gates(monkeypatch)
     Ui(monkeypatch)
     s = _s()
     wizard._step_lanes(s, _args())
     implementer = s.profile.lanes["roles"]["implementer"]["candidates"]
     agy_ids = {a for a, v in s.profile.lanes["agents"].items() if v["backend"] != "claude-cli"}
-    assert agy_ids and not any(c.split(":", 1)[-1] in agy_ids for c in implementer if c.startswith("openclaw-agent"))
-    assert roles_policy.DEFAULT_INTEGRATING_WRITER == "implementer"
-    assert openclaw_lanes.AGY_BACKEND not in openclaw_lanes.WRITABLE_BACKENDS
+    assert agy_ids and any(c.split(":", 1)[-1] in agy_ids for c in implementer if c.startswith("openclaw-agent"))
+    assert "implementer" in s.profile.lane_acks["google"]["roles"]
 
 
 def test_the_gates_stay_not_proven_and_the_candidates_stay_held(monkeypatch):

@@ -1019,9 +1019,9 @@ def _agy_team_suffix(s: state.SetupState) -> str:
     """Whether the Antigravity members read held or on comes from the gate record (ADR-0016 D3), never from a literal."""
     from .. import agy_lane_gates
     if agy_lane_gates.refusal() is not None:
-        return " + Antigravity (held: its gates are not proven; reviews and checks only once they are)"
+        return " + Antigravity (held: its gates are not proven)"
     if _agy_lanes_on(s):
-        return " + Antigravity (on: reviews and checks only; writing stays on Claude Code)"
+        return " + Antigravity (on)"
     return " + Antigravity (terms accepted; its lane is not enabled)"
 
 
@@ -2483,9 +2483,8 @@ def agy_terms_check(s: state.SetupState, roles: list[str], interactive: bool = T
         ui.error(f"{flag}: the Google account must be named; the Antigravity lane stays closed")
         return False, acks, 0
     choices = [ui.Choice(r, value=r) if hasattr(ui, "Choice") else r for r in roles]
-    default = sorted(listed | {r for r in roles if r != roles_policy.DEFAULT_INTEGRATING_WRITER})
-    picked = ui.checkbox("Roles acknowledged for this Google account (the implementer is "
-                         "unticked by default: tick it explicitly)", choices, default=default)
+    default = sorted(listed | set(roles))
+    picked = ui.checkbox("Roles acknowledged for this Google account", choices, default=default)
     if not picked or not ui.confirm("Acknowledge for this Google account and these roles?", default=False):
         ui.info("Not acknowledged; the Antigravity lane stays closed.")
         return False, acks, 0
@@ -2608,7 +2607,7 @@ def _step_lanes(s: state.SetupState, args: argparse.Namespace, *, dry_run: bool 
         orchestrators = ask_orchestrators()
     acks = dict(s.profile.lane_acks or {})
     agy_roles = _agy_roles_of(doc)
-    check_roles = [r for r in agy_roles if r != roles_policy.DEFAULT_INTEGRATING_WRITER] if team_only else list(agy_roles)
+    check_roles = list(agy_roles)
     if team_only and not check_roles:
         # ticked, but this team gives Antigravity no role: nothing to ask and nothing to store
         _untick(s, "agy")
