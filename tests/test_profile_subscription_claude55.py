@@ -9,7 +9,7 @@ import hashlib
 import pathlib
 import re
 
-from ai_resources import repo_root
+from ai_resources import generate, repo_root
 from ai_resources.setup import profiles
 from ai_resources.setup.cockpits import claude
 
@@ -101,7 +101,8 @@ def test_single_model_render_path_builds_every_role():
     for role in profiles.KNOWN_ROLES:
         assert role in files, role
         m = re.search(r"^model: (.*)$", files[role], re.M)
-        assert m and m.group(1).strip() == _doc()["by_role"][role]["model"], role
+        # ADR-0019 D2: an installed Claude agent runs the routing matrix's model, not the legacy by_role pin
+        assert m and m.group(1).strip() == generate.role_claude_model(role), role
 
 
 def test_checker_families_do_not_intersect_writer_families_and_verifier_differs_from_implementer():

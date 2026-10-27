@@ -119,9 +119,10 @@ def test_claude_cockpit_round_2_second_run_has_zero_diff_and_registers_the_sleep
     agents = {p.stem for p in (root / "agents").glob("*.md")}
     assert "planner-angular" in agents and not {a for a in agents if a.endswith(("-symfony", "-devops", "-dart-flutter"))}
     assert s.tracking.persona_domains_active == ["angular"]
-    # the retuned balanced team reached the subagent files
-    text = (root / "agents" / "tester.md").read_text()
-    assert "model: haiku" in text and "model: sonnet" in (root / "agents" / "software-architect.md").read_text()
+    # the routing matrix (ADR-0019 D2), not the legacy by_role table, reached the subagent files
+    from ai_resources import generate
+    for role in ("tester", "software-architect"):
+        assert f"model: {generate.role_claude_model(role)}" in (root / "agents" / f"{role}.md").read_text(), role
     assert "keep this" in (root / "CLAUDE.md").read_text()
 
 

@@ -164,11 +164,28 @@ def test_no_gemini_id_reaches_a_claude_file_when_the_cell_is_not_via_gateway(tmp
     assert "gemini" not in text
 
 
-def test_a_non_claude_id_that_reaches_single_model_is_a_typed_skip_not_a_file(tmp_path, monkeypatch):
+def test_a_legacy_by_role_pin_never_reaches_a_claude_agent_the_matrix_decides(tmp_path, monkeypatch):
+    # ADR-0019 D2: claude.py ignores the legacy by_role table for matrix roles, so a non-Claude by_role id in single-model
+    # no longer needs a typed skip; the agent files carry the matrix's Claude model and no foreign id.
+    text = _generated_claude_text(tmp_path, monkeypatch, mode="single-model", backend=None, route_selection=_google_only())
+    assert "gemini" not in text
+    assert "model: sonnet" in text
+
+
+def test_a_non_claude_id_that_truly_cannot_install_is_still_a_typed_skip():
     import pytest
-    from ai_resources.setup.cockpits import _shared
+    from ai_resources.setup.cockpits import _shared, claude
     with pytest.raises(_shared.SkipCockpit):
-        _generated_claude_text(tmp_path, monkeypatch, mode="single-model", backend=None, route_selection=_google_only())
+        claude._resolve_model("google/gemini-3.8-flash", {}, "single-model", strict=True)
+
+
+def test_a_profile_routing_override_reaches_the_installed_claude_agents():
+    from ai_resources import generate
+    from ai_resources.setup.cockpits import claude
+    override = {"routing": {"tester": {"primary": "claude-code:opus", "fallback": ["agy:gemini-4-argon-high"]}}}
+    assert generate.role_claude_model("tester", override) == "opus"
+    files = claude.render_subagent_files({}, "/kit", "single-model", routing_doc=override)
+    assert "model: opus" in files["tester"].split("---", 2)[1]
 
 
 def test_a_gemini_id_is_allowed_in_a_claude_file_only_with_the_opt_in_and_a_gateway(tmp_path, monkeypatch):
