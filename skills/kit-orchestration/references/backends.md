@@ -55,3 +55,7 @@ Any failure is one failed attempt. On a failure of check 4, restore and clean on
 **Evidence.** Per dispatch the ledger row (`dispatches.jsonl`) holds role, pool, backend, model, tokens, duration, outcome and fallback cause; in the report and the handoff notes (never in new front-matter keys) record: handle or sessionKey, cwd, attempt, the result of checks 1-4, the report path and, for a parallel member, the handoff hash before and after.
 
 Teams share the checkout: a run that writes holds a write-scope claim (`scope_guard`, `--param write_scope=src/,docs/`; default the whole checkout), a second team on an overlapping scope waits queued, and a finished step's out-of-scope paths are logged, never trusted away. Every run has its own handoff file and `.agent-output/` reports.
+
+## Writers the dispatch ledger did not see
+
+A native Claude Code subagent that writes (the `Task` tool, no `sessions_spawn`, no `agy run`) leaves no dispatch row, so a checker cannot tell what wrote the run. Record it yourself right after it returns: `ai-resources dispatch record --run <run> --role <role> --outcome ok --cell claude-code:<alias>` (add `--cause <cause>` if it ran off its primary). A checker resolved for a run that has a write step but no recorded writer is blocked (`no-independent-checker`), never assumed independent.

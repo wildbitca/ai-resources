@@ -116,6 +116,7 @@ Code, logs and stack traces go in the handoff or under `.agent-output/`, never i
 ## Who writes what
 
 - **Writers edit the checkout.** The implementer (and any other writer role, whichever backend the matrix gives it) edits the run tree in-session, writes the tests for what it changes (test first, watch it fail), inside the write scope its run claimed; reviewers, testers and verifiers only read and run commands.
+- **A native subagent writer leaves no ledger row**: record it with `ai-resources dispatch record` ([references/backends.md](references/backends.md)), or a checker is blocked.
 - **The tester is a gate**, not the test author: it runs the full suite, separates new failures from pre-existing ones, and fills coverage gaps the plan requires.
 - **The reviewer audits the test diff** as well as the code: assertions deleted or weakened, tests skipped, tests that cannot fail.
 - **The verifier checks acceptance criteria against evidence** it produces itself, and reports gaps. Spec, ADR and knowledge updates belong to a separate `document` step (skill `knowledge-audit`), not to the verifier.

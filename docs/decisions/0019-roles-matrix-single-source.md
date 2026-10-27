@@ -65,7 +65,7 @@ detected and authenticated (O3), in no default cell.
 Setup wires `allowAgents` so `main` and every channel agent can `sessions_spawn` every `kit-role-*` agent (recorded in state for
 set-difference teardown). Spawn limits are raised, never lowered or capped (`maxSpawnDepth` 4, children 16, concurrent 32); instead there is
 no collision: per-run ids and `.agent-output/<run>/<role>/` directories, one handoff per team, a flock-protected write-scope claim
-(`scope_guard`, `scopes_overlap`) and atomic ledger appends; the MCP child reaper and `tools.deny bundle-mcp` stay. Sizing is by
+(`scope_guard`, `scopes_overlap`) and atomic ledger appends; `tools.deny bundle-mcp` on the `kit-role-*` workers and the `MCP_CHILD_WARN` warning stay (there is no reaper: nothing kills a child). Sizing is by
 measurement: on this host before `setup`, the gateway ran 384 MCP children and sat at MemoryCurrent ~11.6 GiB of MemoryHigh 12 GiB
 (peak 12292 MiB), which is the overflow `ai-resources openclaw reconcile` owes. The by-model `kit-lane-*` agents are merged into the
 `kit-role-*` agents; `migrate_kit_lanes` removes only agents setup created and that are unused, otherwise reports `kept: <reason>`.
@@ -96,7 +96,7 @@ registry. Cases that kill turns are listed as operator-run with their exact comm
 
 ### 10. Kept (D9)
 The credits ledger and `key_check` env repair, the hooks (StopFailure quota signal, narration, `kit_sleep_guard` one-blocking-wait),
-`openclaw reconcile`, off-box credential regeneration, the MCP child reaper, `scores/` + `scorecard.py`, `quota_signal.py`.
+`openclaw reconcile`, off-box credential regeneration, the MCP child warning (`MCP_CHILD_WARN`), `scores/` + `scorecard.py`, `quota_signal.py`.
 
 ## Unverified / only a real run proves
 Measured on this host before `ai-resources setup` 3.2.0; the owner's real run must prove, then `ai-resources acceptance` end with no FAIL:
@@ -105,8 +105,15 @@ Measured on this host before `ai-resources setup` 3.2.0; the owner's real run mu
 - Native `model.fallbacks` firing under the `claude-cli` runtime pin (needs a forced provider failure on the real gateway).
 - SIGTERM and watchdog behaviour (operator-run cases).
 - Gemini tool-calling through OpenClaw: `gemini.tool-call` is SKIP here (`Secret store entry "OPENROUTER_API_KEY" was not found`); no verdict written.
-- MCP load under many concurrent teams (C1 sizing is a sample, not a limit).
+- MCP load under many concurrent teams (C1 sizing is a sample, not a limit). Measured on this host before `setup`: 384 MCP children under the gateway cgroup. `bundle-mcp` is denied on the `kit-role-*` agents but NOT on the `claude` worker (it needs MCP), so a team that spawns many `claude` children still loads their engram/supabase stacks; only the `MCP_CHILD_WARN` (24) warning reports it.
+- Which model a child really ran on after a native fallback: the plugin forwards `waitForRun().model` when the runtime reports one. When it does not, the ledger row carries `family_candidates` (every family of the role's chain), which a checker treats as a writer.
 
 ## Consequences
 One place to change a route; setup shows one table; the ledger makes drift visible. Cost: the evidence-gated lane model and its
 tests are gone for good, and a reviewer must trust the matrix (INFERRED, not benchmarked per role) until the ledger accumulates data.
+
+### Consequences added by the 3.2.0 review
+- Every non-kit agent (`main` and each channel agent) may spawn every kit role AND the `claude` worker, which have exec and write. An agent restricted on purpose later (for instance a public-channel agent with exec denied) would get around its own deny. Setup does not guess: list such agents in `profile.lanes.orchestrators_exclude` (kept across state migrations) and they are not wired as orchestrators.
+- Read-only roles (report roles and checkers) run with the deny list on claude-cli but with the same privileges on agy (O1). The engine takes a `git status` snapshot before and after each such step and logs any change outside `.agent-output/<run>/` as `scope_violations` on the dispatch row, as `agy run` does. It never blocks; concurrent runs in one checkout can show another run's edits as false positives.
+- `dispatch record` is operator-trusted: any local role can append a row (a wrong role or cell). There is no authentication boundary on the ledger. Rows can only add writer families, which blocks a checker but never weakens one.
+- The dispatch ledger records the model that actually ran when the runtime reports it; on a fallback of unknown model it records every family of the role's chain (fail closed). An unrecognised model family is recorded as `unknown` and a checker is then blocked (`no-independent-checker`).
