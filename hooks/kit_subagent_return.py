@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -82,6 +83,13 @@ def _covered_check(prompt: str | None, message: str) -> int:
         return 0
     covered = ledger.covered_value(message)
     handed = ledger.ids_in(prompt or "")
+    tasks_md = None
+    for ref in re.findall(r"[\w./~-]*tasks\.md", prompt or ""):
+        tasks_md = ledger.ledger_text(ref, os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+        if tasks_md:
+            break
+    if tasks_md:
+        handed |= ledger.handed_ids(sorted(handed), [], tasks_md)
     stray = ledger.covered_problems(covered, handed) if covered and handed else []
     if not stray:
         return 0

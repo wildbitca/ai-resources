@@ -159,3 +159,22 @@ def test_the_return_hook_flags_a_covered_id_the_prompt_never_named(tmp_path):
     none = tmp_path / "n.jsonl"
     none.write_text(json.dumps({"message": {"role": "user", "content": "kit-orchestration: no ids here"}}) + "\n")
     assert _hook({**base, "agent_transcript_path": str(none), "last_assistant_message": block.format(c="S8")}, tmp_path).returncode == 0
+
+
+def test_covered_reads_only_the_leading_id_list():
+    handed = {"T1", "S1"}
+    assert ledger.covered_problems("none (T9 not done)", handed) == []
+    assert ledger.covered_problems("S1; S9 out of scope", handed) == []
+    assert ledger.covered_problems("T1 and S1", handed) == []
+    assert ledger.covered_problems("S1, S9", handed)
+
+
+def test_the_engine_expands_a_handed_task_into_the_specs_it_covers(tmp_path):
+    e, wf, _ = make(tmp_path)
+    run = e.start(wf, "add a thing", "/work/repo", models={})
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(LEDGER, encoding="utf-8")
+    [plan] = dispatches(e.next(run["id"]))
+    [d] = dispatches(finish(e, run["id"], plan, OK + f"Task_ids: T1\nSpec_ref: {tasks}\n") and e.approve(run["id"]))
+    finish(e, run["id"], d, OK + "Covered: T1, S1\n")
+    assert e.status(run["id"])["steps"][d["step"]]["state"] == "done"

@@ -459,7 +459,9 @@ class Engine:
             return {"ok": False, "result": "rejected", "target": step.id, "reply": rep,
                     "reason": f"only the verifier signs a run off; {step.role} replied "
                               f"{sorted(rep.words() & reply_mod.SIGNOFF_WORDS)[0]}"}
-        handed = ledger.handed_ids((run.get("handoff") or {}).get("task_ids"), (run.get("handoff") or {}).get("spec_ids"))
+        h = run.get("handoff") or {}
+        tasks_md = ledger.ledger_text((h.get("refs") or {}).get("spec", ""), run.get("cwd") or run.get("workspace") or ".")
+        handed = ledger.handed_ids(h.get("task_ids"), h.get("spec_ids"), tasks_md)
         stray = ledger.covered_problems(rep.get("covered"), handed) if rep.get("covered") else []
         if stray:
             return {"ok": False, "result": "rejected", "target": step.id, "reply": rep, "reason": stray[0]}
@@ -504,7 +506,9 @@ class Engine:
         st = run["steps"][step.id]
         st["finished_at"] = now
         st["result"] = outcome["result"]
-        st["reason"] = outcome["reason"]
+        # A reason the agent wrote is shown wrapped everywhere it is stored (status, events, handoff).
+        shown = untrusted.wrap(outcome["reason"], step.id) if outcome.get("untrusted") else outcome["reason"]
+        st["reason"] = shown
         self._merge_handoff(run, step, outcome["reply"])
         if outcome["ok"]:
             st["state"] = "done"
@@ -514,9 +518,7 @@ class Engine:
             run["handoff"]["next"] = next((sid for sid in run["order"] if run["steps"][sid]["state"] != "done"), "none")
             return
         st["state"] = "blocked"
-        _event(run, "step-blocked", step.id, f"{outcome['result']}: {outcome['reason']}", now)
-        # A reason the agent wrote reaches the next agent through the handoff, so it travels between the UNTRUSTED markers.
-        shown = untrusted.wrap(outcome["reason"], step.id) if outcome.get("untrusted") else outcome["reason"]
+        _event(run, "step-blocked", step.id, f"{outcome['result']}: {shown}", now)
         run["handoff"].update({"blocked": True, "return_to_step": outcome["target"], "block_reason": shown,
                                "status": "blocked"})
         outcome_for_join = {"target": outcome["target"], "reason": outcome["reason"], "untrusted": bool(outcome.get("untrusted"))}
@@ -554,7 +556,7 @@ class Engine:
                 st.pop("return", None)
         run["handoff"].update({"blocked": False, "return_to_step": "", "block_reason": "", "status": "partial"})
         run["handoff"]["next"] = target
-        _event(run, "returned", target, f"from {blocked_step}: {reason} (return {run['returns'][target]} of {MAX_RETURNS})",
+        _event(run, "returned", target, f"from {blocked_step}: {untrusted.wrap(reason, blocked_step) if untrusted_reason else reason} (return {run['returns'][target]} of {MAX_RETURNS})",
                self.clock())
 
     def _fail(self, run: dict[str, Any], reason: str) -> None:

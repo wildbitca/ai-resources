@@ -204,3 +204,12 @@ def test_eval_cases_expect_these_delegation_decisions(case):
     got = decide(case["mode"], case["delegation"]["input"])
     for key, value in case["delegation"]["expect"].items():
         assert got[key] == value, key
+
+
+@pytest.mark.node_scripts
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_an_inline_security_run_is_told_to_get_an_independent_verifier():
+    out = snap.run_js(snap.IMPL_JS, {"goal": "g", "plan_path": "p.md", "security_or_merge": True},
+                      {**snap.IMPL_RESPONSES, "read-sizing": {"found": True, "scores": SCORES["lite"]}})
+    assert out["result"]["size"] == "inline" and out["result"]["scorecard"]["delegation"]["verifier"] is True
+    assert "independent verifier" in out["result"]["next"]

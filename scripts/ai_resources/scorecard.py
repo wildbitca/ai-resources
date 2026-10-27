@@ -7,6 +7,7 @@ kit-orchestration skill ("Scorecard"). Pure: no model, no network. The orchestra
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 import sys
@@ -131,7 +132,7 @@ def bump_for_risk(card: dict, risk_items: list) -> dict:
 # the work splits into units that share no state and wait on no one (disjoint files, no `depends_on`), and when it does
 # not, or when in doubt, one agent does it even if it is large; (3) a named reason, one of `delegation.reasons` in
 # scorecard.json. Independent verification is never skipped for security- or merge-touching work. Twin of the delegation
-# block in workflows/scripts/sizing-core.js.inc: change both (tests/test_delegation_parity.py compares them).
+# block in workflows/scripts/sizing-core.js.inc: change both (tests/test_delegation.py compares them).
 REASON_VERIFY = "independent-verification"
 REASON_WRITERS = "parallel-writers-on-disjoint-units"
 
@@ -146,7 +147,7 @@ def _overlap(a: str, b: str) -> bool:
 
 
 def _unit_name(unit) -> str:
-    return str(unit.get("id", "?"))
+    return str(unit.get("id") if unit.get("id") is not None else "?")
 
 
 def divisibility(units, rules: dict | None = None) -> dict:
@@ -209,7 +210,7 @@ def decide_delegation(mode: str, units=None, reason: str | None = None, security
     if not h["certain"]:
         if isinstance(model, dict):
             tokens = model.get("tokens")
-            tokens = tokens if isinstance(tokens, (int, float)) and not isinstance(tokens, bool) else None
+            tokens = tokens if isinstance(tokens, (int, float)) and not isinstance(tokens, bool) and math.isfinite(tokens) else None
             said = model.get("evidence") or ("divisible" if model.get("divisible") is True else "not divisible")
             h = {"divisible": model.get("divisible") is True, "evidence": f"{h['evidence']}; model: {said}"}
             cost = {"cost_tokens": tokens, "cost_source": "unavailable" if tokens is None else "model"}

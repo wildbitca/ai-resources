@@ -44,14 +44,24 @@ def _bash_writes(command: str, filename: str) -> bool:
     return any(re.search(p, command) for p in patterns)
 
 
+_CMD = r"(?:^|[|;&(]\s*|&&\s*)(?:sudo\s+)?(?:\w+=\S*\s+)*"       # command position, after any VAR=value prefixes
+_GIT = r"\bgit(?:\s+(?:-[cC]\s+\S+|--?\S+))*\s+"
 _WRITING_BASH = (
-    r"(?:^|[\s;|&(])&?>>?\s*(?!/dev/(?:null|stderr|stdout)\b|&)\S",           # > file, >> file, &> file (not 2>, >&2, ->)
-    r"\btee\b",
-    r"\bsed\b[^|;&]*\s-i",
-    r"(?:^|[|;&(]\s*)(?:sudo\s+)?(?:rm|mv|cp|mkdir|rmdir|touch|truncate|chmod|chown|ln|install|dd)\b",
-    r"\bgit(?:\s+-\S+(?:\s+[/.~]\S*)?)*\s+(?:add|commit|push|merge|rebase|reset|checkout|switch|stash|apply|am|cherry-pick|clean|restore|rm|mv|tag|pull|fetch|worktree)\b",
+    r"(?<![>&-])\d?&?>>?\s*(?!/dev/(?:null|stderr|stdout)\b|&)\S",             # > file, >> file, 2> file, &> file (not 2>&1, ->)
+    _CMD + r"tee\b",
+    r"\bsed\b[^|;&]*\s(?:-i|--in-place)",
+    r"\bperl\b[^|;&]*\s-\w*i",
+    _CMD + r"(?:rm|mv|cp|mkdir|rmdir|touch|truncate|chmod|chown|ln|install|dd)\b",
+    r"\bfind\b[^|;&]*\s(?:-delete|-exec(?:dir)?\s+(?:rm|mv|cp|chmod|chown)\b)",
+    r"\bxargs\b[^|;&]*\s(?:rm|mv|cp|chmod|chown|tee|touch)\b",
+    _GIT + r"(?:add|commit|push|merge|rebase|reset|checkout|switch|apply|am|cherry-pick|clean|restore|rm|mv|pull|fetch)\b",
+    _GIT + r"stash\s+(?:push|save|pop|apply|drop|clear|branch)\b",
+    _GIT + r"worktree\s+(?:add|remove|move|prune|lock|unlock|repair)\b",
+    _GIT + r"tag\s+(?:-[dafsu]\b|[^-\s])",
     r"\b(?:npm|pnpm|yarn|pip3?|brew|apt(?:-get)?)\s+(?:install|add|remove|uninstall|upgrade)\b",
 )
+_QUOTED = re.compile(r"\'[^\']*\'|\"(?:[^\"\\]|\\.)*\"")
+_SAFE_READONLY_CMD = re.compile(r"^\s*ai-resources\s+readonly\s+(?:on|off|status)\b[^;&|<>$`\n]*$")
 READONLY_LOCK_MAX_AGE_HOURS = 12
 
 
@@ -82,9 +92,10 @@ def _readonly_blocks(data: dict, root: Path) -> bool:
         return not (_norm(target, root) + os.sep).startswith(out_dir)
     if tool == "Bash":
         command = str(tool_input.get("command", ""))
-        if re.match(r"\s*ai-resources\s+readonly\b", command):
+        if _SAFE_READONLY_CMD.match(command):
             return False
-        return any(re.search(p, command) for p in _WRITING_BASH)
+        bare = _QUOTED.sub("''", command)          # text inside quotes is an argument, not a command or a redirect
+        return any(re.search(p, bare) for p in _WRITING_BASH)
     return False
 
 

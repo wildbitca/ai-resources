@@ -90,6 +90,19 @@ def expand(token: str) -> list[str]:
     return [token]
 
 
+def leading_ids(text: str) -> str:
+    """The id list at the start of a `Covered:` value: it stops at the first prose word, `(` or `;`."""
+    keep = []
+    for tok in re.split(r"[\s,]+", re.split(r"[(;]", text or "", maxsplit=1)[0].strip()):
+        if not tok:
+            continue
+        if tok.lower() == "and" or ID.fullmatch(tok):
+            keep.append(tok)
+        else:
+            break
+    return " ".join(keep)
+
+
 def ids_in(text: str) -> set[str]:
     return {i for tok in ID.findall(text or "") for i in expand(tok)}
 
@@ -109,7 +122,7 @@ def covered_problems(covered: str, handed: set[str], ledger: str | None = None) 
     """Ids in `Covered:` that were not handed out (and, with a ledger, ids it does not define). Nothing handed: nothing to check."""
     if not handed:
         return []
-    claimed = ids_in(covered)
+    claimed = ids_in(leading_ids(covered))
     out = []
     stray = sorted(claimed - handed)
     if stray:
@@ -147,6 +160,19 @@ def spec_verdict_problems(handed: set[str], verdicts: dict[str, str], word: str 
     if failed and word.upper() in ("PASS", "PASSED", "APPROVED", "OK", "SUCCESS", "YES"):
         out.append(f"the verdict is {word.upper()} but {', '.join(failed)} failed")
     return out
+
+
+def ledger_text(spec_ref: str, *roots: Path) -> str | None:
+    """The tasks.md named by `refs.spec`, when it can be read from one of `roots`; else None."""
+    if not spec_ref:
+        return None
+    for root in roots:
+        p = Path(spec_ref) if Path(spec_ref).is_absolute() else Path(root) / spec_ref
+        try:
+            return p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+    return None
 
 
 def covered_value(message: str) -> str:

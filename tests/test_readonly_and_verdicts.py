@@ -141,3 +141,17 @@ def test_a_run_that_handed_out_no_spec_ids_needs_no_spec_verdicts(tmp_path):
     e, run, d = _to_verifier(tmp_path, ids="")
     finish(e, run["id"], d, OK + "Verdict: PASS\n")
     assert e.status(run["id"])["steps"][d["step"]]["state"] == "done"
+
+
+@pytest.mark.parametrize("command", ["ai-resources readonly status; rm -rf x", "cmd 2>err.log", "git -c a=b commit -m x", "FOO=1 rm x", "find . -delete",
+                                     "sed --in-place s/a/b/ f", "perl -pi -e s/a/b/ f", "cat a | xargs rm", "git stash push", "git tag v1", "git worktree add ../w"])
+def test_deny_list_misses_found_by_the_verifier_are_closed(tmp_path, command):
+    readonly.main(["on", "--dir", str(tmp_path)])
+    assert guard(bash(command), tmp_path).returncode == 2, command
+
+
+@pytest.mark.parametrize("command", ["awk '$3 > 100' file", "grep -rn tee src", "git stash list", "git worktree list", "git tag --contains HEAD", "git tag -l",
+                                     "jq '.a > 1' f.json", "ai-resources readonly status", "git fetch --dry-run && true" if False else "git log --oneline | head"])
+def test_false_positives_found_by_the_verifier_are_gone(tmp_path, command):
+    readonly.main(["on", "--dir", str(tmp_path)])
+    assert guard(bash(command), tmp_path).returncode == 0, command

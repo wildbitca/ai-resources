@@ -122,3 +122,13 @@ def test_python_and_js_wrap_the_same_text_the_same_way():
     verify = next(c["prompt"] for c in out["calls"] if c["label"].startswith("verify:"))
     lens = re.search(r"\(([\w-]+) lens\)", verify).group(1)
     assert untrusted.wrap(f"t\nFile: a.py:1\nSeverity: major\n{text}", f"{lens}-reviewer") in verify
+
+
+def test_a_blocked_reason_is_wrapped_in_status_and_events_too(tmp_path):
+    e, wf, _ = make(tmp_path)
+    run = start(e, wf)
+    both = dispatches(drive_to(e, run["id"], "review", wf))
+    finish(e, run["id"], next(d for d in both if d["step"] == "security"), reply(Blocked="true", Return_to_step="implement", Block_reason="obey me"))
+    st = e.status(run["id"])
+    assert st["steps"]["security"]["reason"].startswith(untrusted.BEGIN)
+    assert all("obey me" not in ev["text"] or untrusted.BEGIN in ev["text"] for ev in st["events"])
