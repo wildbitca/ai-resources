@@ -67,3 +67,11 @@ def test_every_role_routes(tmp_path, capsys):
     f = _usage(tmp_path)
     for role in routing.ROLES:
         assert _run(capsys, role, "--usage-file", f)[0] == 0, role
+
+
+def test_refresh_syncs_the_usage_caches_before_reading_them(monkeypatch):
+    from ai_resources import pool_usage
+    calls = []
+    monkeypatch.setattr(pool_usage, "sync_caches", lambda *a, **k: calls.append(1) or {"updated": [], "errors": {}})
+    monkeypatch.setattr(pool_usage, "snapshot", lambda *a, **k: {})
+    assert cli.main(["route", "explore", "--refresh", "--json"]) == 0 and calls == [1]

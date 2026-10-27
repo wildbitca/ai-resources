@@ -20,6 +20,8 @@ def cmd_route(args: argparse.Namespace) -> int:
         if args.usage_file:
             usage = {p: (None if v is None else float(v)) for p, v in json.loads(Path(args.usage_file).read_text("utf-8")).items()}
         else:
+            if args.refresh:
+                pool_usage.sync_caches()
             usage = pool_usage.usage_map(pool_usage.snapshot())
         writers = [w for w in (args.writers or "").split(",") if w.strip()]
         # an optional backend (agy, codex) that is not installed and signed in is skipped with its recorded cause
@@ -47,6 +49,8 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("role", help="Role name (see `routing.ROLES`)")
     p.add_argument("--writers", help="Comma-separated model refs/families of the run's writers (checkers avoid them)")
     p.add_argument("--usage-file", metavar="FILE", help="JSON {pool: used fraction}; default: live pool usage")
+    p.add_argument("--refresh", action="store_true",
+                   help="Refresh the Max and AI Pro usage first (`claude -p /usage`, `agy -p /usage`; 0 tokens)")
     p.add_argument("--unavailable", action="append", metavar="BACKEND_OR_CELL=CAUSE",
                    help="Mark a backend or cell down with a cause (repeatable), e.g. agy=agy-missing")
     p.add_argument("--json", action="store_true")

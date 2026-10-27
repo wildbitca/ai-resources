@@ -10,8 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ai_resources.scoring import headroom as hr
-from ai_resources.scoring import headroom_sources as hs
+from ai_resources import pool_usage
 from ai_resources.scoring import quota_signal as qs
 
 REPO = Path(__file__).resolve().parents[1]
@@ -72,40 +71,34 @@ def _block_file(tmp_path, **over):
 
 def test_an_active_block_reads_as_an_exhausted_pool_until_it_lifts(tmp_path):
     path = _block_file(tmp_path)
-    r = hs.read_quota_block(path, NOW + 30)
-    assert (r.state, r.used_fraction, r.resets_at) == (hr.KNOWN, 1.0, NOW + qs.DEFAULT_TTL_S)
-    assert r.source == "quota-block:rate_limit:assumed-ttl" and r.read_at == NOW
-    eff = hr.effective_weight(1.0, r, NOW + 30)
-    assert eff.basis == "live" and eff.weight == hr.EPSILON
-    later = hs.read_quota_block(path, NOW + qs.DEFAULT_TTL_S + 1)
-    assert later.state == hr.UNKNOWN and later.source == "quota-block:none-active"
+    assert pool_usage.read_quota_block(path, "claude-subscription", NOW + 30) == (1.0, "quota-block:rate_limit:assumed-ttl")
+    assert pool_usage.read_quota_block(path, "claude-subscription", NOW + qs.DEFAULT_TTL_S + 1) == (None, "quota-block:none-active")
 
 
 def test_signal_unavailable_is_reported_as_unknown_never_as_headroom(tmp_path):
-    assert hs.read_quota_block(tmp_path / "absent.json", NOW).source == "quota-block:signal-unavailable"
-    assert hs.read_quota_block(None, NOW).source == "quota-block:no-path"
+    assert pool_usage.read_quota_block(tmp_path / "absent.json", "claude-subscription", NOW) == (None, "quota-block:signal-unavailable")
+    assert pool_usage.read_quota_block(None, "claude-subscription", NOW) == (None, "quota-block:signal-unavailable")
     empty = tmp_path / "e.json"
     empty.write_text(json.dumps({"version": 1, "blocks": {}}), encoding="utf-8")
-    r = hs.read_quota_block(empty, NOW)
-    assert r.state == hr.UNKNOWN and r.used_fraction is None
-    assert hr.effective_weight(0.7, r, NOW).weight == 0.7, "no signal leaves the static weight alone"
+    assert pool_usage.read_quota_block(empty, "claude-subscription", NOW) == (None, "quota-block:none-active")
 
 
 def test_the_claude_pool_prefers_a_live_block_over_an_older_percentage(tmp_path):
-    sidecar = tmp_path / "rl.json"
-    sidecar.write_text(json.dumps({"rate_limits": {"five_hour": {"used_percentage": 20, "resets_at": NOW + 3600}}}), encoding="utf-8")
-    deps = {"claude_sidecar_path": sidecar, "quota_blocks_path": _block_file(tmp_path)}
-    assert hs.read_for_pool({"id": "claude-subscription", "headroom_source": "statusline-sidecar"}, True, deps, NOW + 30).used_fraction == 1.0
-    after = NOW + qs.DEFAULT_TTL_S + 1
-    assert hs.read_for_pool({"id": "claude-subscription", "headroom_source": "statusline-sidecar"}, True, deps, after).used_fraction == 0.2
-    assert hs.read_for_pool({"id": "claude-subscription", "headroom_source": "statusline-sidecar"}, False, deps, NOW).source == "not-requested"
+    cache = tmp_path / ".cache" / "ai-resources"
+    cache.mkdir(parents=True)
+    (cache / "claude-rate-limits.json").write_text(json.dumps(
+        {"rate_limits": {"five_hour": {"used_percentage": 20, "resets_at": NOW + 3600}}}), encoding="utf-8")
+    qs.record(cache / "quota-blocks.json", "claude-subscription", qs.block_from_payload(DOC_PAYLOAD, NOW), NOW)
+    pool = lambda now: pool_usage.snapshot(now_epoch=now, env={}, home=tmp_path)["claude-subscription"]["used_fraction"]
+    assert pool(NOW + 30) == 1.0
+    assert pool(NOW + qs.DEFAULT_TTL_S + 1) == 0.2
 
 
-def test_default_lane_deps_name_the_sidecar(tmp_path, monkeypatch):
+def test_default_deps_name_the_sidecar(tmp_path, monkeypatch):
     monkeypatch.delenv("AI_RESOURCES_QUOTA_BLOCKS", raising=False)
-    assert hs.default_lane_deps(tmp_path)["quota_blocks_path"] == tmp_path / ".cache" / "ai-resources" / "quota-blocks.json"
+    assert pool_usage.default_deps(tmp_path)["quota_blocks_path"] == tmp_path / ".cache" / "ai-resources" / "quota-blocks.json"
     monkeypatch.setenv("AI_RESOURCES_QUOTA_BLOCKS", str(tmp_path / "x.json"))
-    assert hs.default_lane_deps(tmp_path)["quota_blocks_path"] == tmp_path / "x.json"
+    assert pool_usage.default_deps(tmp_path)["quota_blocks_path"] == tmp_path / "x.json"
 
 
 def _run_hook(payload, path, **env):

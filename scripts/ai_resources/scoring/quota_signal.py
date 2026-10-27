@@ -7,7 +7,7 @@ NO structured reset time in that payload, so `resets_at` is read from the text o
 unknown and the block is assumed to hold for `DEFAULT_TTL_S`, recorded as `reset_source: "assumed-ttl"`, never presented as a
 measured reset.
 
-The hook (hooks/kit_quota_signal.py) writes a small sidecar file; `headroom_sources.read_quota_block` reads it. The signal is
+The hook (hooks/kit_quota_signal.py) writes a small sidecar file; `pool_usage.read_quota_block` reads it. The signal is
 positive-only: a block means the pool is exhausted now, and no block (or no file, or no hook installed) means "unknown", never
 "there is headroom".
 
