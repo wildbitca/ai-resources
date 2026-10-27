@@ -41,7 +41,7 @@ def test_a_subscription_run_reaches_apply_in_four_screens_without_the_old_words(
     monkeypatch.setattr(ui, "section", lambda n, t, title: log.append(f"[{n}/{t}] {title}"))
     monkeypatch.setattr(ui, "review_table", lambda rows, title="": log.extend(f"{k}: {v}" for k, v in rows))
     monkeypatch.setattr(ui, "role_table", lambda rows, title="": log.append(title))
-    monkeypatch.setattr(ui, "team_table", lambda rows, title="": log.extend(" ".join(r) for r in rows))
+    monkeypatch.setattr(ui, "runs_table", lambda rows, title="": log.extend(" ".join(r) for r in rows))
     script = Script(**{"Tick the tools": ["claude", "codex"], "Sign in now": [],
                        "Starting team": "balanced", "Apply this?": ms.APPLY})
     script.install(monkeypatch)

@@ -69,68 +69,6 @@ def test_gateway_balanced_declares_gemini_on_explore_tester_doc_writer_and_keeps
     for r in ("planner", "software-architect", "code-reviewer", "verifier", "security-auditor"):
         assert by_role[r]["model"] == "anthropic/claude-opus-5.5" and not by_role[r].get("fallbacks"), r
     assert doc["defaults"]["fallbacks"] == []
-    assert wizard._google_roles(_or_state()) == ["explore", "tester", "doc-writer"]
-
-
-def test_declined_optin_marks_the_gemini_refs_skip_and_review_names_the_roles(monkeypatch):
-    s = _or_state()
-    infos = []
-    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(ui, "confirm", lambda msg, default=False: (infos.append(("ask", msg, default)) or False))
-    monkeypatch.setattr(ui, "info", lambda m: infos.append(("info", m)))
-    wizard._GEMINI_ASKED.clear()
-    wizard._openrouter_gemini_optin(s)
-    ask = [i for i in infos if i[0] == "ask"]
-    assert len(ask) == 1 and ask[0][2] is False
-    assert ask[0][1] == ("Use Gemini on explore, tester and doc-writer through OpenRouter "
-                         "(not yet verified with Claude Code)?")
-    assert ("info", "Gemini held on OpenRouter: Claude Code x Google not verified; "
-                    "explore, tester, doc-writer use the session model") in infos
-    assert s.profile.allow_unverified is False
-    from ai_resources.selection import Selection, SlotSel
-    sel = Selection(shape="multi-provider", slots={
-        "google:flash": SlotSel(ref="google/gemini-3.7-flash"), "anthropic:opus": SlotSel(ref="anthropic/claude-opus-5.5")})
-    act = compat.plan(sel, "multi-model", "openrouter", ["claude"], allow_unverified=False)[0]
-    assert act.model_refs == ["anthropic/claude-opus-5.5"]
-    assert any("gemini-3.7-flash" in n for n in act.notes)
-
-
-def test_accepted_optin_sets_allow_unverified_and_it_is_saved(monkeypatch, tmp_path):
-    s = _or_state()
-    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(ui, "confirm", lambda msg, default=False: True)
-    wizard._GEMINI_ASKED.clear()
-    wizard._openrouter_gemini_optin(s)
-    assert s.profile.allow_unverified is True
-    assert state._to_dict(s)["profile"]["allow_unverified"] is True
-
-
-def test_the_optin_is_never_answered_for_the_operator(monkeypatch):
-    s = _or_state()
-    asked = []
-    monkeypatch.setattr(ui, "is_non_interactive", lambda: True)
-    monkeypatch.setattr(ui, "confirm", lambda *a, **k: asked.append(a) or True)
-    monkeypatch.setattr(ui, "info", lambda m: None)
-    wizard._GEMINI_ASKED.clear()
-    wizard._openrouter_gemini_optin(s)
-    assert asked == [] and s.profile.allow_unverified is False
-
-
-def test_the_optin_is_skipped_when_the_cell_is_verified_or_there_is_no_google_role(monkeypatch):
-    s = _or_state()
-    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
-    asked = []
-    monkeypatch.setattr(ui, "confirm", lambda *a, **k: asked.append(a) or True)
-    monkeypatch.setattr(compat, "claude_google_openrouter_verified", lambda: True)
-    wizard._GEMINI_ASKED.clear()
-    wizard._openrouter_gemini_optin(s)
-    monkeypatch.undo()
-    other = _or_state()
-    other.profile.name = "gateway/performance"
-    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(ui, "confirm", lambda *a, **k: asked.append(a) or True)
-    wizard._openrouter_gemini_optin(other)
-    assert asked == []
 
 
 def test_gateway_balanced_only_unverified_refs_are_google():

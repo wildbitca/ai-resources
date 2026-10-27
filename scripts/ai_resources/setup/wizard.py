@@ -689,11 +689,6 @@ def _pick_candidates(shape: str, cands: dict[str, list], saved: Any = None) -> l
     return out or None
 
 
-def _agy_team_roles(doc: dict) -> list[str]:
-    """What Antigravity would take in this starting team (display only); see `team_view.agy_team_roles`."""
-    return team_view.agy_team_roles(doc)
-
-
 def _show_agy_in_custom(s: state.SetupState) -> None:
     """The Custom model list: the Antigravity group as informational rows (installed) or the one-line reason
     Gemini is absent. Not a candidate: picking happens in step 6c."""
@@ -743,21 +738,6 @@ def _preset_bypassed(args: argparse.Namespace) -> bool:
                 or any(getattr(args, a, "") for a in ("profile", "models", "shape", "providers")))
 
 
-def _team_rows(s: state.SetupState, base: dict, rows: list) -> list[tuple[str, str, str]]:
-    """The team table of screen 3 (see `team_view.tool_rows`)."""
-    members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
-    return team_view.tool_rows(
-        members, base, rows, cli_row=_preset_key(s) == "cli", agy_installed=detection.agy_installed())
-
-
-def _show_team_table(s: state.SetupState, base: dict, rows: list) -> None:
-    ui.team_table(_team_rows(s, base, rows), title="Who does what")
-    if _preset_key(s) == "cli" and not detection.agy_installed():
-        for line in model_selection.agy_why_lines(False, False):
-            ui.info(line)
-    ui.detail("Writing code always stays with Claude Code (safety rule).")
-
-
 def _show_legacy_difference(s: state.SetupState, new_name: str, mode: str, backend: str | None, rows: list) -> None:
     """A host saved under a profile that predates the preset ids (claude-native, balanced-claude-55,
     openrouter-balanced) keeps its own file until it picks the preset; picking it shows what changes (ADR-0010 N4)."""
@@ -772,29 +752,16 @@ def _show_legacy_difference(s: state.SetupState, new_name: str, mode: str, backe
     profiles.print_role_diff(before, after, title=f"{old} -> {new_name}")
 
 
-def _team_view_args(s: state.SetupState, base: dict | None = None) -> dict:
-    """What the team view needs to know about the host: its row, the ticked tools, the valid acknowledgements and the
-    OpenRouter opt-in."""
-    members = (s.profile.customizations.get("__targets__") or {}).get("selected") or []
-    from . import effort as effort_mod, live_auth
-    table = effort_mod.table_for_state(s)
-    return {"row": _preset_key(s), "ticked": "agy" in members,
-            "allow_unverified": bool(s.profile.allow_unverified or _ALLOW_UNVERIFIED),
-            "cell_verified": compat.claude_google_openrouter_verified(),
-            "claude_billed": live_auth.billed_for_kind(cockpit_auth.live_kind(s, "claude")),
-            "effort": {r: effort_mod.for_cockpit(lv, "claude") for r, lv in table.items()}}
+def _review_table_rows(s: state.SetupState, doc: dict | None = None, *, chat: bool | None = None) -> list:
+    """The one `Role | Primary | Fallback` table: `routing.table_rows` over the profile's matrix, the chat plane only when
+    OpenClaw is selected, a skipped tool (agy, codex) shown as the fallback that runs with its cause."""
+    members = (s.profile.customizations or {}).get("__targets__", {}).get("selected") or []
+    show_chat = "openclaw" in members if chat is None else chat
+    return scoring_routing.table_rows(doc, chat=show_chat, unavailable=detection.inactive_backends())
 
 
-def _show_team(s: state.SetupState, base: dict, rows: list, *, title: str) -> None:
-    """The role table with its real provider and lane, the one held/degrade/next-action line set, and on the CLI row
-    the table of tools (ADR-0010 S10)."""
-    kwargs = _team_view_args(s, base)
-    ui.role_lane_table(team_view.role_lane_rows(rows, base, **kwargs), title=title)
-    mix_kwargs = {k: v for k, v in kwargs.items() if k not in ("claude_billed", "effort")}
-    for line in team_view.provider_mix(base, rows, **mix_kwargs).lines:
-        ui.info(line)
-    if kwargs["row"] == "cli":
-        _show_team_table(s, base, rows)
+def _show_team(s: state.SetupState, base: dict, *, title: str) -> None:
+    ui.runs_table(_review_table_rows(s, base), title=title)
 
 
 def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
@@ -834,7 +801,7 @@ def _step_preset(s: state.SetupState, args: argparse.Namespace) -> int:
         s.profile.customized = False
         s.profile.customizations = {"__targets__": targets} if targets else {}
         ui.console().print()
-        _show_team(s, base, rows, title=f"{label.replace(' (recommended)', '')}: {name}")
+        _show_team(s, base, title=f"{label.replace(' (recommended)', '')}: {name}")
         _PRESET = preset
         return 0
 
@@ -956,45 +923,6 @@ def _sign_in_rows(s: state.SetupState) -> list[tuple[str, str]]:
     return rows or [("Sign-in", "none to ask")]
 
 
-def _review_role_rows(s: state.SetupState) -> list:
-    """The Review table "Who runs what" (ADR-0016 D5): per role and cockpit, where it runs and who is billed in separate
-    columns, with the model and the effort. Inputs are the recorded live kinds, the profile and the OpenClaw config
-    (a local read); a fact that is not known reads "unknown". Never raises: a profile that cannot be read shows no table."""
-    from . import effort as effort_mod, live_auth
-    from .cockpits import _openclaw_providers as providers_mod, openclaw as _oc, openclaw_roles
-    try:
-        selected = [c for c in _selected_tools(s) if c in ("claude", "openclaw", "agy")]
-        if not selected:
-            return []
-        name = profile_names.canonical(s.profile.name) or profiles.RECOMMENDED_PROFILE
-        doc = profiles.load_profile(name, "single-model")
-        rows = profiles.role_table(_single_model_executors(s))
-        claude_billed = live_auth.billed_for_kind(cockpit_auth.live_kind(s, "claude"))
-        table = effort_mod.table_for_state(s)
-        claude_effort = {r: effort_mod.for_cockpit(lv, "claude") for r, lv in table.items()}
-        openclaw_effort = {r: effort_mod.for_cockpit(lv, "openclaw") for r, lv in table.items()}
-        models: dict[str, str] = {}
-        billed: dict[str, str] = {}
-        if "openclaw" in selected:
-            refs = {role: openclaw_roles.resolve_ref(model) for role, _v, model in rows}
-            routed, _fell = providers_mod.route_roles({r: ref for r, ref in refs.items() if ref},
-                                                      _oc.role_providers(s))
-            live = _oc.live_openclaw.live_agents(_oc.read_config(_oc.config_path()))
-            for role, ref in routed.items():
-                aid = openclaw_roles.agent_id_for(role)
-                models[role] = live[aid][0] if aid in live else ref
-            kinds = cockpit_auth.entry(s, "openclaw").get("live") or {}
-            billed = {p: live_auth.billed_for_kind(k) for p, k in kinds.items()} if isinstance(kinds, dict) else {}
-            if "claude-cli" in _oc.kit_cli_runtimes(s):
-                billed["anthropic"] = claude_billed         # a Claude kit role runs through Claude Code (its sign-in)
-        return team_view.review_role_rows(
-            rows, doc, selected=selected, claude_billed=claude_billed, openclaw_models=models, openclaw_billed=billed,
-            claude_effort=claude_effort,
-            openclaw_effort=openclaw_effort)
-    except Exception:  # noqa: BLE001 - the table is information; it must never stop the review
-        return []
-
-
 def _tools_text(s: state.SetupState) -> str:
     targets = (s.profile.customizations or {}).get("__targets__", {}).get("selected") or _detected_cockpit_ids(s)
     names = [tools.TOOLS[c].label if c in tools.TOOLS else c for c in targets]
@@ -1051,56 +979,6 @@ def _forget_tool_answers(s: state.SetupState) -> None:
         s.__dict__.pop(attr, None)
 
 
-# The OpenRouter Gemini opt-in below belongs to the gateway path that ADR-0015 removed from the wizard: nothing calls it
-# any more (a saved gateway state is migrated to single-model before the review). It is kept, with its tests, as the one
-# place that knows the rule if a gateway is ever offered again.
-_GEMINI_ASKED: set[str] = set()     # teams for which Review already asked the OpenRouter Gemini opt-in in this run
-
-
-def _google_roles(s: state.SetupState) -> list[str]:
-    """The roles of this state's profile that run a Google model, in role order."""
-    try:
-        base = profiles.load_profile(profiles.saved_or_recommended(s.profile.name, s.backend), "multi-model")
-    except (FileNotFoundError, RuntimeError):
-        return []
-    if s.profile.customized and s.profile.customizations:
-        base = profiles.merge_customizations(
-            base, {k: v for k, v in s.profile.customizations.items() if k in profiles.KNOWN_ROLES})
-    by_role = base.get("by_role") or {}
-    return [r for r in profiles.KNOWN_ROLES if str((by_role.get(r) or {}).get("model", "")).startswith("google/")]
-
-
-def _openrouter_gemini_optin(s: state.SetupState) -> None:
-    """OpenRouter Balanced declares Gemini, which Claude Code does not verify through OpenRouter yet. The roles that
-    use it would silently run on the session model, so Review asks once (default No, never answered for the operator)
-    and records `profile.allow_unverified` on a Yes; a No names the roles instead. Skipped when the cell is verified,
-    when the flag already allows it, or when the profile has no Google role (ADR-0010 S6b, PD-5)."""
-    if s.mode != "multi-model" or s.backend != "openrouter" or compat.claude_google_openrouter_verified():
-        return
-    roles = _google_roles(s)
-    if not roles or _ALLOW_UNVERIFIED:
-        return
-    if "claude" not in _detected_cockpit_ids(s):
-        return
-    key = profiles.saved_or_recommended(s.profile.name, s.backend) + ("*" if s.profile.customized else "")
-    if key in _GEMINI_ASKED:                     # asked once per team in this run, not again on a return to Review
-        return
-    _GEMINI_ASKED.add(key)
-    rows = [(r, "google", "") for r in roles]
-    held = team_view.provider_mix({}, rows, row="openrouter").lines[0]
-    if ui.is_non_interactive() or _ASSUME_YES:
-        # `--yes` answers the install offer only; this opt-in is never answered for the operator.
-        if not s.profile.allow_unverified:
-            ui.info(held)
-        return
-    pretty = ", ".join(roles[:-1]) + " and " + roles[-1] if len(roles) > 1 else roles[0]
-    if ui.confirm(f"Use Gemini on {pretty} through OpenRouter (not yet verified with Claude Code)?", default=False):
-        s.profile.allow_unverified = True
-    else:
-        s.profile.allow_unverified = False
-        ui.info(held)
-
-
 def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
     """Screen 4, "Review", BEFORE the write: the answers by name, then Apply, Change tools, Change how, Change team,
     More options or Cancel. A Change jumps back to that screen with the current answers as defaults and returns here.
@@ -1114,9 +992,13 @@ def _step_summary(s: state.SetupState, args: argparse.Namespace) -> int:
     _section(9, "Review")
     _REVIEW_SHOWN = True
     ui.review_table(_review_rows(s), title="Your answers")
-    runs = _review_role_rows(s)
-    if runs:
-        ui.runs_table([tuple(r) for r in runs], title="Who runs what")
+    if any(c in ("claude", "openclaw", "agy") for c in _selected_tools(s)):
+        name = profile_names.canonical(s.profile.name) or profiles.RECOMMENDED_PROFILE
+        try:
+            doc = profiles.load_profile(name, "single-model")
+        except (FileNotFoundError, RuntimeError):
+            doc = None
+        ui.runs_table(_review_table_rows(s, doc), title="Who runs what")
     if selection is not None:
         detected = _detected_cockpit_ids(s)
         actions = model_selection.plan_table(selection, s.mode, s.backend, detected,

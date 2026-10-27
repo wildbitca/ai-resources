@@ -339,59 +339,7 @@ def test_image_review_never_shows_a_secret_for_any_route_or_disable(monkeypatch)
         assert "sk-test-SECRET" not in text and "SECRET" not in text, mode
 
 
-# --- ADR-0016 D5 (AC-15): "Who runs what" with separate Runs in and Billed to columns ---------------------------------------
-
-def _runs_state(tmp_path, monkeypatch, *, members=("claude", "openclaw"), openclaw_live=None, live_models=None):
-    cfg = tmp_path / "openclaw.json"
-    entries = {f"kit-role-{k}": {"model": {"primary": v}} for k, v in (live_models or {}).items()}
-    cfg.write_text(json.dumps({"agents": {"entries": entries}}), encoding="utf-8")
-    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(cfg))
-    s = _team_state(*members)
-    cockpit_auth.set_live(s, "claude", "subscription")
-    cockpit_auth.set_method(s, "claude", "subscription")
-    if "openclaw" in members:
-        cockpit_auth.set_providers(s, {"anthropic": "cli", "openai": "api_key"})
-        cockpit_auth.set_provider_live(s, openclaw_live or {"anthropic": "subscription", "openai": "api_key"})
-    return s
-
-
-def test_the_review_table_separates_where_a_role_runs_from_who_is_billed(tmp_path, monkeypatch):
-    s = _runs_state(tmp_path, monkeypatch, live_models={"reviewer": "openai/gpt-5.6-sol"})
-    rows = wizard._review_role_rows(s)
-    assert rows and all(len(r) == 5 for r in rows)
-    claude = [r for r in rows if r.runs_in == "Claude Code subagent"]
-    openclaw = [r for r in rows if r.runs_in == "OpenClaw kit-role agent"]
-    assert claude and openclaw and {r.role for r in claude} == {r.role for r in openclaw}
-    assert {r.billed_to for r in claude} == {"subscription"}
-    reviewer = next(r for r in openclaw if r.role == "code-reviewer")
-    assert reviewer.model == "openai/gpt-5.6-sol" and reviewer.billed_to == "API per token"      # live model, its provider
-    assert all(r.model and r.effort for r in rows)                                                # model and effort everywhere
-
-
-def test_a_provider_openclaw_does_not_report_reads_unknown_never_a_guess(tmp_path, monkeypatch):
-    s = _runs_state(tmp_path, monkeypatch, openclaw_live={"anthropic": "subscription"},
-                    live_models={"reviewer": "openai/gpt-5.6-sol"})
-    reviewer = next(r for r in wizard._review_role_rows(s)
-                    if r.runs_in == "OpenClaw kit-role agent" and r.role == "code-reviewer")
-    assert reviewer.billed_to == "unknown"
-
-
-def test_claude_with_no_recorded_sign_in_reads_unknown(tmp_path, monkeypatch):
-    s = _runs_state(tmp_path, monkeypatch, members=("claude",))
-    s.cockpit_auth.pop("claude")
-    assert {r.billed_to for r in wizard._review_role_rows(s)} == {"unknown"}
-
-
-def test_agy_members_read_held_with_agy_missing_and_on_when_active_and_bill_the_google_plan(tmp_path, monkeypatch):
-    from ai_resources.setup import detection
-    s = _runs_state(tmp_path, monkeypatch, members=("claude", "agy"))
-    monkeypatch.setattr(detection, "agy_active", lambda: False)
-    agy = [r for r in wizard._review_role_rows(s) if r.runs_in.startswith("agy")]
-    assert agy and all(r.runs_in == "agy (held)" and r.billed_to == "Google plan" for r in agy)
-    monkeypatch.setattr(detection, "agy_active", lambda: True)
-    agy = [r for r in wizard._review_role_rows(s) if r.runs_in.startswith("agy")]
-    assert agy and all(r.runs_in == "agy" for r in agy)
-
+# --- the Review table "Who runs what" is the role matrix (tests/test_review_table.py covers its content) ---------------
 
 def test_the_review_screen_prints_the_table_with_its_own_columns(review_env, monkeypatch):
     shown = []
@@ -402,31 +350,5 @@ def test_the_review_screen_prints_the_table_with_its_own_columns(review_env, mon
                        "Configure detected cockpits": lambda v: list(v), "Apply this?": ms.APPLY})
     script.install(monkeypatch)
     assert wizard.run(_args()) == 0
-    assert shown and shown[0][0] == "Who runs what"
-    assert {row[1] for row in shown[0][1]} == {"Claude Code subagent"} and {row[2] for row in shown[0][1]} == {"subscription"}
-
-
-def test_the_table_is_real_columns_in_the_rendered_output(capsys):
-    rich = pytest.importorskip("rich.console")
-    monkeypatch_console = rich.Console(width=200, force_terminal=False, no_color=True, legacy_windows=False, highlight=False)
-    saved = ui._console
-    ui._console = monkeypatch_console
-    try:
-        ui.runs_table([("planner", "OpenClaw kit-role agent", "API per token", "openai/gpt-x", "high")], title="Who runs what")
-    finally:
-        ui._console = saved
-    out = capsys.readouterr().out
-    header = next(line for line in out.splitlines() if "Runs in" in line)
-    assert "Billed to" in header and header.index("Runs in") < header.index("Billed to") < header.index("Model")
-
-
-def test_the_plain_fallback_prints_runs_in_and_billed_to_as_separate_columns(capsys, monkeypatch):
-    monkeypatch.setattr(ui, "_HAS_RICH", False)
-    ui.runs_table([("planner", "OpenClaw kit-role agent", "API per token", "openai/gpt-x", "high")], title="Who runs what")
-    lines = capsys.readouterr().out.splitlines()
-    header = next(line for line in lines if "Runs in" in line)
-    row = next(line for line in lines if line.lstrip().startswith("planner"))
-    assert header.index("Runs in") < header.index("Billed to") < header.index("Model") < header.index("Effort")
-    assert row.index("OpenClaw kit-role agent") == header.index("Runs in")           # the cells line up under the headers
-    assert row.index("API per token") == header.index("Billed to") and row.index("openai/gpt-x") == header.index("Model")
-    assert "Who runs what" in lines[1]
+    assert len(shown) == 1 and shown[0][0] == "Who runs what"
+    assert all(len(row) == 3 for row in shown[0][1])

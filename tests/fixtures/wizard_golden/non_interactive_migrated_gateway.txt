@@ -59,25 +59,25 @@ rc=0
 | Will write | executors.yaml, tool config files |
 +---------------------------------------------------------------------------------------------------------------+
  Who runs what 
-+-------------------------------------------------------------------------------------+
-| Role | Runs in | Billed to | Model | Effort |
-|-----------------------------+----------------------+--------------+--------+--------|
-| explore | Claude Code subagent | subscription | haiku | low |
-| generalPurpose | Claude Code subagent | subscription | sonnet | medium |
-| planner | Claude Code subagent | subscription | sonnet | high |
-| software-architect | Claude Code subagent | subscription | sonnet | high |
-| implementer | Claude Code subagent | subscription | sonnet | medium |
-| tester | Claude Code subagent | subscription | haiku | low |
-| code-reviewer | Claude Code subagent | subscription | sonnet | medium |
-| security-auditor | Claude Code subagent | subscription | opus | high |
-| verifier | Claude Code subagent | subscription | opus | high |
-| doc-writer | Claude Code subagent | subscription | haiku | low |
-| package-upgrade | Claude Code subagent | subscription | haiku | low |
-| crashlytics-fixer | Claude Code subagent | subscription | sonnet | medium |
-| sentry-fixer | Claude Code subagent | subscription | sonnet | medium |
-| terraform-maintainer | Claude Code subagent | subscription | sonnet | medium |
-| crossplane-upjet-maintainer | Claude Code subagent | subscription | sonnet | medium |
-+-------------------------------------------------------------------------------------+
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Role | Primary (backend:model, pool) | Fallback |
+|-----------------------------+------------------------------------------+----------------------------------------------------------------------------------------------------------------------------|
+| code-reviewer | claude-code:sonnet [claude-subscription] | agy-missing: agy:gemini-4-argon-high skipped |
+| crashlytics-fixer | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
+| crossplane-upjet-maintainer | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
+| doc-writer | claude-code:haiku [claude-subscription] | agy-missing: agy:gemini-3.8-flash-high skipped |
+| explore | claude-code:haiku [claude-subscription] | agy-missing: agy:gemini-3.8-flash-high skipped |
+| generalPurpose | claude-code:sonnet [claude-subscription] | agy-missing: agy:gemini-4-argon-high skipped |
+| implementer | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
+| package-upgrade | claude-code:haiku [claude-subscription] | agy-missing: agy:gemini-3.8-flash-high skipped |
+| planner | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
+| security-auditor | per-run checker ladder | claude-code:sonnet [claude-subscription] -> claude-code:opus [claude-subscription] -> agy:claude-opus-5-5 [agy-claude-gpt] |
+| sentry-fixer | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
+| software-architect | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
+| terraform-maintainer | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
+| tester | claude-code:sonnet [claude-subscription] | agy-missing: agy:gemini-4-argon-high skipped |
+| verifier | per-run checker ladder | claude-code:sonnet [claude-subscription] -> claude-code:opus [claude-subscription] -> agy:claude-opus-5-5 [agy-claude-gpt] |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 
  i Summary of what will be configured
  Shape: One model

@@ -10,7 +10,7 @@ import yaml
 
 from ai_resources import generate, repo_root
 from ai_resources.scoring import routing
-from ai_resources.setup import lanes_render, profiles, state, team_view
+from ai_resources.setup import lanes_render, profiles, state
 from ai_resources.setup.cockpits import openclaw_roles as R
 
 EFFECTIVE = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}
@@ -122,12 +122,7 @@ def test_the_setup_table_rows_equal_the_matrix():
             assert fallback == " -> ".join(f"{c} [{routing.pool_of(c)}]" for c in row.chain)
         else:
             assert primary == f"{row.chain[0]} [{routing.pool_of(row.chain[0])}]"
-            assert fallback == (" -> ".join(f"{c} [{routing.pool_of(c)}]" for c in row.chain[1:]) or "-")
-
-
-def test_the_team_view_reads_the_same_primaries():
-    assert dict(team_view.agy_candidates({})) == {r.name: r.primary for r in routing.ROLES.values()
-                                                  if r.kind == "team" and (r.primary or "").startswith("agy:")}
+            assert fallback.startswith(" -> ".join(f"{c} [{routing.pool_of(c)}]" for c in row.chain[1:]) or "-")
 
 
 def test_the_d4_assignments():
@@ -163,9 +158,6 @@ def test_a_profile_override_reaches_lanes_yaml_the_agents_the_claude_files_and_t
     # setup table rows
     rows = {r: (p, f) for r, p, f in routing.table_rows(OVERRIDE)}
     assert rows["tester"][0].startswith("claude-code:opus") and rows["implementer"][0].startswith("agy:gemini-4-argon-high")
-    # team view
-    assert dict(team_view.agy_candidates(OVERRIDE))["implementer"] == "agy:gemini-4-argon-high"
-    assert "tester" not in dict(team_view.agy_candidates(OVERRIDE))
 
 
 def test_the_override_keeps_the_team_rule_no_api_credit_pool_on_a_team_role():

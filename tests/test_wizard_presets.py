@@ -54,15 +54,13 @@ def clean_globals(monkeypatch):
     monkeypatch.setattr(wizard, "_PRESET", "")
     monkeypatch.setattr(ui, "section", lambda *a, **k: None)
     monkeypatch.setattr(ui, "role_table", lambda rows, title="": None)
-    monkeypatch.setattr(ui, "role_lane_table", lambda rows, title="": None)
+    monkeypatch.setattr(ui, "runs_table", lambda rows, title="": None)
 
 
 def drive(monkeypatch, s, answer, a=None, confirm=True, non_interactive=False):
     shown = []
-    # ADR-0010 S10: the team screen shows role_lane_table (role, real provider, model, lane); the first rows are the
-    # profile's own roles, the CLI row appends its Antigravity members after them.
-    monkeypatch.setattr(ui, "role_lane_table", lambda rows, title="": shown.append(
-        (title, [tuple(r)[:3] for r in rows if " (" not in r[0]])))
+    # The team screen shows the one Role | Primary | Fallback table of the routing matrix.
+    monkeypatch.setattr(ui, "runs_table", lambda rows, title="": shown.append((title, [tuple(r) for r in rows])))
     script = Script(**{ASK: answer})
     script.install(monkeypatch, non_interactive=non_interactive)
     rc = wizard._step_preset(s, a or args())
@@ -210,12 +208,12 @@ def test_a_preset_asks_only_the_starting_team(monkeypatch, key, preset):
         assert word not in asked
 
 
-def test_the_role_table_is_the_profiles_own_mapping(monkeypatch):
+def test_the_role_table_is_the_matrix_of_the_profile(monkeypatch):
+    from ai_resources.scoring import routing
     s = make_state("litellm")
     _, _, shown = drive(monkeypatch, s, "performance")
-    want = profiles.role_table(profiles.to_executors(profiles.load_profile("performance-claude-55"), "litellm"))
-    assert {vendor for _r, vendor, _m in want} == {"anthropic"}          # the real provider, never "-"
-    assert shown[0][1] == want
+    doc = profiles.load_profile("performance-claude-55")
+    assert shown[0][1] == routing.table_rows(doc, chat=False, unavailable=wizard.detection.inactive_backends())
 
 
 def test_a_preset_replaces_a_stale_account_selection_and_keeps_the_cockpit_targets(monkeypatch):
@@ -236,19 +234,6 @@ def test_choosing_a_starting_team_is_the_confirmation(monkeypatch):
     assert wizard._step_preset(s, args()) == 0
     assert script.asked == [f"select: {ASK}"] and not any(CONFIRM in m for m in script.asked)
     assert s.profile.name == "gateway/performance" and wizard._PRESET == "performance"
-
-
-def test_the_cli_team_shows_the_team_table_with_the_role_table(monkeypatch):
-    from ai_resources.setup import detection
-    monkeypatch.setattr(detection, "agy_installed", lambda: False)
-    tables = []
-    monkeypatch.setattr(ui, "team_table", lambda rows, title="": tables.append((title, rows)))
-    s = make_state("cli")
-    drive(monkeypatch, s, "balanced")
-    assert len(tables) == 1 and tables[0][1][0][0] == "Claude Code"
-    tables.clear()
-    drive(monkeypatch, make_state("litellm"), "balanced")
-    assert tables == []                      # the gateway rows keep the plain role table
 
 
 def test_ctrl_b_goes_back_and_ctrl_c_cancels(monkeypatch):

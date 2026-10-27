@@ -253,14 +253,36 @@ def choose_pool(work_class: str, usage: Mapping[str, float | None], spill_at: fl
     return pool, f"all pools of {work_class} at or above {spill_at * 100:.0f}%; least used is {used * 100:.0f}%"
 
 
-def table_rows(profile_doc: Mapping[str, Any] | None = None) -> list[tuple[str, str, str]]:
-    """`(role, "primary [pool]", "fallback [pool] -> ...")` rows: the one table docs, setup and doctor print."""
+def _show(cell: str) -> str:
+    return f"{cell} [{pool_of(cell)}]"
+
+
+def table_rows(profile_doc: Mapping[str, Any] | None = None, *, chat: bool = True,
+               unavailable: Mapping[str, str] | None = None) -> list[tuple[str, str, str]]:
+    """`(role, "primary [pool]", "fallback [pool] -> ...")` rows: the one table docs, setup and doctor print.
+
+    `chat=False` leaves the OpenClaw chat plane out. A role whose primary cell is skipped (`unavailable` maps a backend
+    to its cause, as `detection.inactive_backends()` does) shows the cell it runs on instead, and its Fallback column
+    names the cause and the skipped cell, so a fallback is never silent."""
     rows = []
     for name, r in sorted(merged(profile_doc).items(), key=lambda kv: (kv[1].kind, kv[0])):
+        if r.kind == "chat" and not chat:
+            continue
+        if r.checker and r.primary is None:
+            rows.append((name, "per-run checker ladder", " -> ".join(_show(c) for c in r.chain)))
+            continue
         chain = r.chain
-        primary = "per-run checker ladder" if r.checker and r.primary is None else f"{chain[0]} [{pool_of(chain[0])}]"
-        rest = chain[1:] if not (r.checker and r.primary is None) else chain
-        rows.append((name, primary, " -> ".join(f"{c} [{pool_of(c)}]" for c in rest) or "-"))
+        fallback = " -> ".join(_show(c) for c in chain[1:]) or "-"
+        route = resolve(name, unavailable=unavailable, profile_doc=profile_doc) if unavailable else None
+        if route is not None and route.cause and route.cell != chain[0]:
+            used = _show(route.cell) if route.cell else "blocked"
+            rest = " -> ".join(_show(c) for c in route.fallbacks)
+            fallback = f"{route.cause}: {chain[0]} skipped" + (f"; then {rest}" if rest else "")
+            rows.append((name, used, fallback))
+            continue
+        if r.note:
+            fallback += f" (gated: {r.note})"
+        rows.append((name, _show(chain[0]), fallback))
     return rows
 
 

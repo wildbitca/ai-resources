@@ -1,8 +1,8 @@
-"""Where Gemini shows up in setup: the Custom model list and the team table (ADR-0007 section 11, ADR-0009).
+"""Where Gemini shows up in setup: the Custom model list and the review table (ADR-0007 section 11, ADR-0009).
 
 Antigravity (agy) is a subscription CLI, not an API account. Its models are shown as a group that is informational in
-the Custom list and as the Antigravity row of the team table in "As a team"; none of it is a Candidate, a Selection
-slot or a credential prompt, it is off until ticked on "Your tools" and agy never writes. Everything is offline: agy
+the Custom list and as the matrix rows of the review table; none of it is a Candidate, a Selection
+slot or a credential prompt, it is off until ticked on "Your tools". Everything is offline: agy
 detection is faked and agy is never run."""
 from __future__ import annotations
 
@@ -124,9 +124,8 @@ def test_an_installed_agy_changes_nothing_in_the_selection_or_the_plan_table(hos
 
 def run_preset(monkeypatch, key, preset, installed, ticked=False, lanes=None):
     agy(monkeypatch, installed)
-    shown, teams = [], []
-    monkeypatch.setattr(ui, "role_lane_table", lambda rows, title="": shown.append((title, rows)))
-    monkeypatch.setattr(ui, "team_table", lambda rows, title="": teams.append((title, rows)))
+    shown = []
+    monkeypatch.setattr(ui, "runs_table", lambda rows, title="": shown.append((title, rows)))
     s = make_state(key)
     if ticked:
         s.profile.customizations = {"__targets__": {"selected": ["claude", "agy"]}}
@@ -135,54 +134,15 @@ def run_preset(monkeypatch, key, preset, installed, ticked=False, lanes=None):
     script = Script(**{ASK: preset})
     script.install(monkeypatch)
     assert wizard._step_preset(s, preset_args()) == 0
-    return s, shown, teams, script
+    return s, shown, [], script
 
 
-def agy_row(teams):
-    rows = [r for _title, rs in teams for r in rs if r[0] == "Antigravity"]
-    return rows[0] if rows else None
-
-
+@pytest.mark.parametrize("key", ["cli", "single", "litellm", "openrouter"])
 @pytest.mark.parametrize("preset", KEYS)
-def test_as_a_team_with_agy_ticked_adds_an_antigravity_row(monkeypatch, preset):
-    s, shown, teams, script = run_preset(monkeypatch, "cli", preset, True, ticked=True)
-    assert len(shown) == 1 and len(teams) == 1
-    tool, roles, status = agy_row(teams)
-    assert status == "in team" and "unconfirmed" not in roles
-    assert script.asked == [f"select: {ASK}"]
-    # the entries are exactly the agy cells of the routing matrix
-    from ai_resources.setup import team_view
-    doc = profiles.load_profile(wizard.preset_profile(s, preset), "single-model")
-    want = {c.split(":", 1)[1] for _role, c in team_view.agy_candidates(doc)}
-    assert {e.split(": ")[1].split(" ")[0].rstrip(".") for e in roles.split("; ")} == want
-
-
-@pytest.mark.parametrize("key", ["single", "litellm", "openrouter"])
-@pytest.mark.parametrize("preset", KEYS)
-def test_other_modes_never_show_agy_rows(monkeypatch, key, preset):
-    _, shown, teams, script = run_preset(monkeypatch, key, preset, True, ticked=True)
-    assert len(shown) == 1 and teams == []
-    # ADR-0010 S10: the single row says once why Gemini is not active, and that line names Antigravity as the way to it;
-    # no Antigravity row, role or terms text is shown on these rows.
-    rest = [m for m in script.shown if "Gemini not active:" not in m]
-    assert "Antigravity" not in "\n".join(rest)
-
-
-@pytest.mark.parametrize("preset", KEYS)
-def test_as_a_team_without_agy_shows_no_row_and_one_line_saying_why(monkeypatch, preset):
-    _, shown, teams, script = run_preset(monkeypatch, "cli", preset, False)
-    assert len(shown) == 1 and agy_row(teams) is None
-    lines = [m for m in script.shown if "Antigravity (agy) not installed" in m]
-    assert len(lines) == 1 and "Gemini" in lines[0] and "Your tools" in lines[0]
-
-
-def test_as_a_team_with_agy_installed_but_not_ticked_says_it_is_off_once(monkeypatch):
-    _, shown, teams, script = run_preset(monkeypatch, "cli", "performance", True)
-    tool, roles, status = agy_row(teams)
-    assert status == "off" and "not ticked" in roles and "gemini" not in roles
-    assert len([r for _t, rs in teams for r in rs if r[0] == "Antigravity"]) == 1
-
-
+def test_every_row_shows_one_role_table_and_no_antigravity_team_table(monkeypatch, key, preset):
+    _, shown, _, script = run_preset(monkeypatch, key, preset, True, ticked=True)
+    assert len(shown) == 1 and shown[0][1]
+    assert not any("Antigravity" in m for m in script.shown)
 
 
 def test_the_question_stays_four_choices_with_agy_installed(monkeypatch):
