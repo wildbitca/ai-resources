@@ -42,7 +42,20 @@ def problems(rec: dict[str, Any]) -> list[str]:
         out.append(f"fallback_cause must be one of {routing.FALLBACK_CAUSES}")
     if not isinstance(rec.get("writer_families", []), list):
         out.append("writer_families must be a list")
+    for k in ("tokens_in", "tokens_out"):
+        if not isinstance(rec.get(k, 0), int) or isinstance(rec.get(k, 0), bool):
+            out.append(f"{k} must be an integer")
+    if not isinstance(rec.get("duration_s", 0), (int, float)):
+        out.append("duration_s must be a number")
+    if rec.get("run_id") and not valid_run_id(rec["run_id"]):
+        out.append("run_id must be letters, digits, '.', '_' or '-' (at most 80), with no '..'")
     return out
+
+
+def valid_run_id(run_id: str) -> bool:
+    """The engine's own run-id rule (`orchestrator.state.RUN_ID_RE`), so an id is safe in a path and a ledger row."""
+    from .orchestrator import state
+    return isinstance(run_id, str) and bool(state.RUN_ID_RE.match(run_id)) and ".." not in run_id
 
 
 def record(role: str, outcome: str, *, run_id: str = "", step: str = "", cell: str = "", backend: str = "", model: str = "",
@@ -66,31 +79,65 @@ def record(role: str, outcome: str, *, run_id: str = "", step: str = "", cell: s
     return rec
 
 
-def load(run_id: str = "", since: float = 0.0, path: Path | None = None) -> list[dict[str, Any]]:
-    """Rows in file order, optionally of one run and not older than `since` (epoch seconds); torn lines are skipped."""
+def _ts(row: dict[str, Any]) -> float | None:
     try:
-        lines = (path or ledger_path()).read_text(encoding="utf-8").splitlines()
+        return datetime.fromisoformat(row["ts"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def load(run_id: str = "", since: float = 0.0, path: Path | None = None, skipped: list[int] | None = None) -> list[dict[str, Any]]:
+    """Rows in file order, optionally of one run and not older than `since` (epoch seconds). A torn or malformed row is
+    skipped, never fatal and never hiding the others; `skipped` (a one-item list) receives how many were skipped."""
+    try:
+        lines = run_ledger.read_lines(path or ledger_path())
     except OSError:
         return []
-    rows = []
+    rows, bad = [], 0
     for line in lines:
+        if not line.strip():
+            continue
         try:
             row = json.loads(line)
         except ValueError:
+            bad += 1
             continue
-        if not isinstance(row, dict) or problems(row) or (run_id and row.get("run_id") != run_id):
+        if not isinstance(row, dict) or problems(row) or _ts(row) is None:
+            bad += 1
             continue
-        if since and datetime.fromisoformat(row["ts"]).timestamp() < since:
+        if (run_id and row.get("run_id") != run_id) or (since and _ts(row) < since):
             continue
         rows.append(row)
+    if skipped is not None:
+        skipped[:] = [bad]
     return rows
 
 
 def writer_families(run_id: str, path: Path | None = None) -> list[str]:
-    """The model families that wrote this run: rows of writer roles that started or finished fine."""
+    """The model families that wrote this run: rows of writer roles that started or finished fine, and a row that moved to a
+    fallback of unknown model (`family_candidates`: every family of the role's chain may have written)."""
     table = routing.merged()
-    return sorted({r["family"] for r in load(run_id, path=path) if r["family"] and r["outcome"] in ("ok", "pending")
-                   and (table[r["role"]].writes if r["role"] in table else r["role"] in roles_policy.SCOPE_ROLES)})
+    rows = [r for r in load(run_id, path=path) if (r["outcome"] in ("ok", "pending") or r.get("family_candidates"))
+            and (table[r["role"]].writes if r["role"] in table else r["role"] in roles_policy.SCOPE_ROLES)]
+    return sorted({f for r in rows for f in [r["family"], *(r.get("family_candidates") or [])] if f})
+
+
+def run_writers(run_id: str, role: str, path: Path | None = None) -> list[str]:
+    """The writer families a `role` must be independent of in `run_id`, as the ledger records them. A checker of an engine run
+    that has a write step but no recorded writer row gets the `unknown` family (fail closed: it cannot show independence)."""
+    families = writer_families(run_id, path=path)
+    table = routing.merged()
+    if families or role not in table or not table[role].checker:
+        return families
+    from .orchestrator import workflow_loader
+    from .orchestrator.state import RunStore, StateError
+    try:
+        steps = RunStore().load(run_id).get("workflow_steps") or []
+    except (StateError, OSError, ValueError):
+        return families                          # an ad-hoc run id: nothing says a writer exists
+    if any(d.get("role") in workflow_loader.WRITER_ROLES or d.get("role") in roles_policy.SCOPE_ROLES for d in steps):
+        return [routing.UNKNOWN_FAMILY]
+    return families
 
 
 def actuals(run_id: str, path: Path | None = None) -> dict[str, Any]:
@@ -182,6 +229,9 @@ def _since(text: str) -> float:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
+    if args.run and not valid_run_id(args.run):
+        print("dispatch: bad --run", file=sys.stderr)
+        return 2
     try:
         rows = load(args.run or "", _since(args.since) if args.since else 0.0)
     except ValueError as e:

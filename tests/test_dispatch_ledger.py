@@ -108,3 +108,39 @@ def test_route_record_appends_the_decision_with_its_cause(tmp_path, capsys, monk
     usage.write_text(json.dumps({"claude-subscription": 1.0, "agy-claude-gpt": 1.0}))
     rc, _ = _route(capsys, "verifier", "--run", "r8", "--step", "verify", "--record", "--usage-file", str(usage))
     assert rc == 3 and dl.load("r8")[-1]["outcome"] == "blocked"
+
+
+def test_an_unknown_family_is_recorded_as_unknown_and_kept_in_the_writer_families(tmp_path):
+    p = tmp_path / "d.jsonl"
+    r = dl.record("implementer", "ok", run_id="r1", cell="agy:mystery-model", path=p)
+    assert r["family"] == "unknown"
+    assert dl.writer_families("r1", path=p) == ["unknown"]
+    assert dl.record("implementer", "blocked", run_id="r1", path=p)["family"] == ""          # no model: no family to invent
+
+
+def test_a_row_with_a_line_separator_inside_stays_one_row_and_a_bad_row_hides_no_other(tmp_path):
+    p = tmp_path / "d.jsonl"
+    dl.record("implementer", "ok", run_id="r1", step="a\u2028b\u0085c", cell="claude-code:sonnet", path=p)
+    assert len(p.read_text().split("\n")) == 2 and "\u2028" not in p.read_text()           # escaped, one line
+    legacy = json.dumps({**json.loads(p.read_text()), "step": "x\u2028y"}, ensure_ascii=False)
+    broken_ts = json.dumps({**json.loads(p.read_text()), "ts": "not-a-date"})
+    no_tokens = json.dumps({k: v for k, v in json.loads(p.read_text()).items() if k != "tokens_in"} | {"tokens_in": "many"})
+    p.write_text(p.read_text() + legacy + "\n" + broken_ts + "\n" + no_tokens + "\n{torn\n")
+    skipped: list[int] = []
+    rows = dl.load(since=1.0, path=p, skipped=skipped)
+    assert len(rows) == 2 and skipped == [3]                                                # bad ts, bad tokens, torn
+    assert dl.summarize(rows)["dispatches"] == 2                                            # the summary survives
+
+
+def test_a_run_id_must_be_a_safe_name():
+    assert dl.valid_run_id("20261027-120000-feature-ab12") and dl.valid_run_id("acc-pool-1")
+    for bad in ("../x", "a/b", "", "a b", "x" * 81, ".."):
+        assert not dl.valid_run_id(bad), bad
+    with pytest.raises(ValueError):
+        dl.record("tester", "ok", run_id="../../x", path=None)
+
+
+def test_the_ledger_file_is_private(tmp_path):
+    p = tmp_path / "d.jsonl"
+    dl.record("tester", "ok", path=p)
+    assert (p.stat().st_mode & 0o777) == 0o600

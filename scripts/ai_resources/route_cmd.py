@@ -26,7 +26,9 @@ def cmd_route(args: argparse.Namespace) -> int:
             usage = pool_usage.usage_map(pool_usage.snapshot())
         writers = [w for w in (args.writers or "").split(",") if w.strip()]
         if args.run:
-            writers += dispatch_ledger.writer_families(args.run)
+            if not dispatch_ledger.valid_run_id(args.run):
+                raise ValueError("bad --run")
+            writers += dispatch_ledger.run_writers(args.run, args.role)
         # an optional backend (agy, codex) that is not installed and signed in is skipped with its recorded cause
         unavailable = {**detection.inactive_backends(), **dict(u.split("=", 1) for u in args.unavailable or [])}
         route = routing.resolve(args.role, usage, writers, unavailable)

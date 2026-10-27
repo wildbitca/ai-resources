@@ -63,8 +63,9 @@ def problems(rec: dict[str, Any]) -> list[str]:
 def append_jsonl(path: Path, rec: dict[str, Any]) -> Path:
     """One JSON line appended atomically under an exclusive flock (shared with the dispatch ledger)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(rec, sort_keys=True, ensure_ascii=False) + "\n"
-    with open(path, "a", encoding="utf-8") as fh:
+    # ASCII only: U+2028/U+2029/U+0085 would otherwise split a row for `str.splitlines()` (readers split on "\n" only)
+    line = json.dumps(rec, sort_keys=True, ensure_ascii=True) + "\n"
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         try:
             fh.write(line)
@@ -73,6 +74,11 @@ def append_jsonl(path: Path, rec: dict[str, Any]) -> Path:
         finally:
             fcntl.flock(fh, fcntl.LOCK_UN)
     return path
+
+
+def read_lines(path: Path) -> list[str]:
+    """The lines of a JSONL file, split on "\n" only (a legacy row may hold a raw U+2028 inside a string)."""
+    return path.read_text(encoding="utf-8").split("\n")
 
 
 def append(rec: dict[str, Any], path: Path | None = None) -> Path:
@@ -87,7 +93,7 @@ def load(path: Path | None = None) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
     rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in read_lines(path):
         try:
             row = json.loads(line)
         except ValueError:
