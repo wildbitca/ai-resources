@@ -16,8 +16,7 @@ RULES_PATH = Path(__file__).resolve().parents[2] / "skills" / "kit-orchestration
 MODES = ("lite", "standard", "full")
 _ORDER = {m: i for i, m in enumerate(MODES)}
 # Short keys used when a card is recorded in one line (handoff front matter key `scorecard`).
-ABBREV = {"resumability": "res", "blast_radius": "blast", "risk": "risk", "uncertainty": "unc",
-          "verifiability": "ver", "spread": "spr"}
+ABBREV = json.loads(RULES_PATH.read_text(encoding="utf-8"))["abbrev"]
 TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "handoff.md.template"
 
 
@@ -40,6 +39,23 @@ def validate(scores: dict, rules: dict | None = None) -> dict[str, int]:
     return out
 
 
+def _roster(mode: str, extras: list[str], rules: dict) -> list[str]:
+    """The roles a mode runs: none for LITE, the base trio plus `extras` for STANDARD, everyone for FULL."""
+    order = rules["base"]["full"]
+    if mode == "full":
+        return list(order)
+    if mode == "standard":
+        return sorted([*rules["base"]["standard"], *extras], key=order.index)
+    return []
+
+
+def _card(mode: str, roster: list[str], rules: dict, rationale: str, **extra) -> dict:
+    """The card shape every producer returns; `extra` overrides or adds fields (total, scores, invalid...)."""
+    return {"mode": mode, "scored_mode": mode, "bump_reason": None, "total": None, "scores": None, "roster": roster,
+            "handoff": mode == "full" or "planner" in roster, "tiers": {r: rules["tiers"][r] for r in roster},
+            "rationale": rationale, **extra}
+
+
 def _triggered(scores: dict[str, int], rules: dict) -> list[str]:
     return [role for role, cond in rules["triggers"].items() if any(scores[d] >= t for d, t in cond.items())]
 
@@ -59,55 +75,35 @@ def score(scores: dict, rules: dict | None = None) -> dict:
         mode, why = "lite", "small, resumable, no risk"
     else:
         mode, why = "standard", "needs an independent test gate and verifier"
-    if mode == "full":
-        roster = list(rules["base"]["full"])
-    elif mode == "standard":
-        roster = list(rules["base"]["standard"])
-        for role in extras:
-            roster.append(role)
-        order = rules["base"]["full"]
-        roster.sort(key=lambda r: order.index(r))
-    else:
-        roster = []
-    tiers = {r: rules["tiers"][r] for r in roster}
-    return {
-        "mode": mode,
-        "scored_mode": mode,
-        "bump_reason": None,
-        "total": total,
-        "scores": s,
-        "roster": roster,
-        "handoff": mode == "full" or "planner" in roster,
-        "tiers": tiers,
-        "rationale": f"{why}; total {total}/18" + (f"; added {', '.join(extras)}" if mode == "standard" and extras else ""),
-    }
+    rationale = f"{why}; total {total}/18" + (f"; added {', '.join(extras)}" if mode == "standard" and extras else "")
+    return _card(mode, _roster(mode, extras, rules), rules, rationale, total=total, scores=s)
 
 
 def full_card(reason: str) -> dict:
     """The FULL card used when the scores cannot be trusted: the whole loop, never a cheaper guess."""
     rules = load_rules()
-    roster = list(rules["base"]["full"])
-    return {"mode": "full", "scored_mode": "full", "bump_reason": None, "total": None, "scores": None,
-            "roster": roster, "handoff": True, "tiers": {r: rules["tiers"][r] for r in roster},
-            "rationale": f"{reason}; defaulting to FULL", "invalid": True}
+    return _card("full", _roster("full", [], rules), rules, f"{reason}; defaulting to FULL", invalid=True)
+
+
+def mode_of_spelling(name) -> str | None:
+    """A mode for any accepted spelling of a size or mode (`size_flags` in scorecard.json), else None."""
+    rules = load_rules()
+    size = rules["size_flags"].get(name)
+    return next((m for m, sz in rules["sizes"].items() if sz == size), None) if size else None
 
 
 def score_or_full(scores, legacy_mode: str | None = None) -> dict:
     """`score`, except that unusable scores mean FULL (the JS scripts do the same).
 
     Scores that are present but invalid give FULL even when a bare legacy `legacy_mode` comes with them.
-    Only when no scores are given at all is a valid legacy mode honoured (it maps lite/standard/full or the
-    script names inline/light/full); anything else is FULL.
+    Only when no scores are given at all is a valid legacy mode honoured (any spelling in `size_flags`:
+    lite/standard/full or the script names inline/light/full); anything else is FULL.
     """
     if scores is None:
-        alias = {"inline": "lite", "light": "standard"}
-        mode = alias.get(legacy_mode, legacy_mode)
-        if mode in _ORDER:
+        mode = mode_of_spelling(legacy_mode)
+        if mode:
             rules = load_rules()
-            roster = list(rules["base"]["full"]) if mode == "full" else list(rules["base"]["standard"]) if mode == "standard" else []
-            return {"mode": mode, "scored_mode": mode, "bump_reason": None, "total": None, "scores": None, "roster": roster,
-                    "handoff": mode == "full", "tiers": {r: rules["tiers"][r] for r in roster},
-                    "rationale": f"legacy mode {mode} given without scores"}
+            return _card(mode, _roster(mode, [], rules), rules, f"legacy mode {mode} given without scores")
         return full_card("no scores and no valid mode")
     try:
         return score(scores)
@@ -123,7 +119,7 @@ def bump_for_risk(card: dict, risk_items: list) -> dict:
     if card["mode"] != "lite" or not risk_items:
         return card
     rules = load_rules()
-    roster = list(rules["base"]["standard"])
+    roster = _roster("standard", [], rules)
     return {**card, "mode": "standard", "roster": roster, "handoff": False,
             "tiers": {r: rules["tiers"][r] for r in roster},
             "bump_reason": f"risk items named: {'; '.join(str(i) for i in risk_items)}",
@@ -241,17 +237,14 @@ def main(argv: list[str] | None = None) -> int:
         risk_items = []
         while "--risk-item" in args:
             risk_items.append(_pop(args, "--risk-item"))
-        if args[0] == "escalate":
-            mode, failures, lines = args[1], int(args[2]), int(args[3])
-            new = escalate(mode, failures, lines)
-            if handoff and new != mode:
-                record(handoff, f"-> {new.upper()} ({reason or f'{failures} failed test round(s), diff of {lines} lines'})", append=True)
-            print(new)
-        elif args[0] == "gate":
-            mode = args[1]
-            failures = int(_pop(args, "--failures") or 0)
-            lines_arg = _pop(args, "--diff-lines")
-            lines = int(lines_arg) if lines_arg is not None else diff_lines(_pop(args, "--base"))
+        if args[0] in ("escalate", "gate"):
+            if args[0] == "escalate":
+                mode, failures, lines = args[1], int(args[2]), int(args[3])
+            else:
+                mode = args[1]
+                failures = int(_pop(args, "--failures") or 0)
+                lines_arg = _pop(args, "--diff-lines")
+                lines = int(lines_arg) if lines_arg is not None else diff_lines(_pop(args, "--base"))
             new, why = observe(mode, failures, lines)
             if handoff and why:
                 record(handoff, f"-> {new.upper()} ({reason or why})", append=True)

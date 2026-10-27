@@ -1,5 +1,8 @@
 {
   "dimensions": ["resumability", "blast_radius", "risk", "uncertainty", "verifiability", "spread"],
+  "sizes": {"lite": "inline", "standard": "light", "full": "full"},
+  "size_flags": {"inline": "inline", "lite": "inline", "light": "light", "standard": "light", "full": "full"},
+  "abbrev": {"resumability": "res", "blast_radius": "blast", "risk": "risk", "uncertainty": "unc", "verifiability": "ver", "spread": "spr"},
   "lite": {"max_total": 3, "max_risk": 0, "max_uncertainty": 1, "max_resumability": 1, "max_verifiability": 2},
   "full": {"min_total": 10, "min_risk": 3, "min_extras": 3},
   "base": {
