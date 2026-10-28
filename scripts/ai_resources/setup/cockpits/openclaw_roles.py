@@ -232,7 +232,8 @@ def _model_value(agent: RoleAgent) -> dict[str, Any]:
 
 def _entry(agent: RoleAgent, workspace: Path, pins: Mapping[str, str] | None = None) -> dict[str, Any]:
     entry: dict[str, Any] = {"name": agent.id, "description": agent["description"][:200], "workspace": str(workspace),
-                             "model": _model_value(agent), "skills": list(agent["skills"])}
+                             "model": _model_value(agent), "skills": list(agent["skills"]),
+                             "subagents": {"model": _model_value(agent)}}
     if pins:
         entry["models"] = {ref: _pin(rt) for ref, rt in pins.items()}
     if agent["thinking"]:
@@ -321,7 +322,30 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
         deny = _tools_patch(live, agent) if isinstance(live, Mapping) else None
         if deny is not None:
             patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})["tools"] = {"deny": deny}
+    _subagent_models(agents, entries, recorded, kept, patch)
     return patch, kept
+
+
+def _subagent_models(agents: list[RoleAgent], entries: Any, recorded: Mapping[str, Any], kept: list[str],
+                     patch: dict[str, Any]) -> None:
+    """`agents.entries.<kit-role>.subagents.model` = the role's own matrix chain.
+
+    OpenClaw resolves the model of a spawned subagent as `<target>.subagents.model`, then
+    `agents.defaults.subagents.model`, and only then the target agent's own `model`. A host that sets the default (to keep
+    ordinary helpers cheap) would run every `sessions_spawn` of a kit role on that one model: the verifier on Sonnet instead
+    of Opus, explore on Sonnet instead of Haiku. Pinning the role's own chain on its entry makes a spawn land on the model
+    the matrix gives the role. Fill-only: absent, or equal to the chain the kit wrote last time; an operator's value stays."""
+    last, last_fb = recorded.get("models") or {}, recorded.get("fallbacks") or {}
+    for agent in agents:
+        aid = agent.id
+        live = entries.get(aid) if isinstance(entries, Mapping) else None
+        if not isinstance(live, Mapping) or aid in kept:
+            continue                      # a new entry already carries it; an operator-owned one is left alone
+        want = _model_value(agent)
+        have = _get(live, "subagents", "model")
+        mine = have is None or (_primary(have) == last.get(aid) and _fallbacks_of(have) == list(last_fb.get(aid) or []))
+        if have != want and mine:
+            patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {}).setdefault("subagents", {})["model"] = want
 
 
 def agy_stub_patch(agents: Iterable[RoleAgent], doc: Mapping[str, Any]) -> dict[str, Any] | None:

@@ -179,7 +179,30 @@ def test_a_role_whose_model_is_a_bare_string_still_gets_its_claude_cli_pin(tmp_p
     assert kept == []
     # the bare string is also respelled as the object form, which clears verify's warning
     assert patch == {"agents": {"entries": {"kit-role-reviewer": {"model": {"primary": SONNET}, "models": {SONNET: CLI},
-                                                                  "tools": {"deny": ["bundle-mcp"]}}}}}
+                                                                  "tools": {"deny": ["bundle-mcp"]},
+                                                                  "subagents": {"model": {"primary": SONNET}}}}}}
+
+
+def test_a_spawned_kit_role_runs_its_own_matrix_chain_not_the_hosts_default_subagent_model(tmp_path):
+    """`agents.defaults.subagents.model` outranks the target agent's own `model` for a sessions_spawn; the role's entry pins
+    its chain in `subagents.model`, which outranks the default. Fill-only: an operator's own value stays."""
+    role = _role(OPUS)
+    doc = {"agents": {"defaults": {"subagents": {"model": SONNET}},
+                      "entries": {"kit-role-reviewer": {"model": {"primary": OPUS}, "workspace": str(tmp_path),
+                                                        "tools": {"deny": ["bundle-mcp"]}, "models": {OPUS: CLI}}}}}
+    recorded = {"created_agent_ids": ["kit-role-reviewer"], "models": {"kit-role-reviewer": OPUS}, "thinking": {}}
+    patch, _ = openclaw_roles.build_patch([role], doc, {"kit-role-reviewer": tmp_path}, recorded, {"anthropic": "api_key"},
+                                          ("claude-cli",))
+    assert patch["agents"]["entries"]["kit-role-reviewer"]["subagents"] == {"model": {"primary": OPUS}}
+    # already pinned to the chain: nothing to send; pinned by the operator to something else: left alone
+    doc["agents"]["entries"]["kit-role-reviewer"]["subagents"] = {"model": {"primary": OPUS}}
+    assert "subagents" not in (openclaw_roles.build_patch([role], doc, {"kit-role-reviewer": tmp_path}, recorded,
+                                                          {"anthropic": "api_key"}, ("claude-cli",))[0]
+                               .get("agents", {}).get("entries", {}).get("kit-role-reviewer", {}))
+    doc["agents"]["entries"]["kit-role-reviewer"]["subagents"] = {"model": "anthropic/claude-haiku-5-5"}
+    assert "subagents" not in (openclaw_roles.build_patch([role], doc, {"kit-role-reviewer": tmp_path}, recorded,
+                                                          {"anthropic": "api_key"}, ("claude-cli",))[0]
+                               .get("agents", {}).get("entries", {}).get("kit-role-reviewer", {}))
 
 
 def test_a_bare_string_role_the_kit_wrote_follows_a_profile_change(tmp_path):
