@@ -136,7 +136,7 @@ def live_findings(s: state.SetupState, ak_path: str | None = None, runner=None, 
         cases = acceptance.select("setup-live", operator=False) + acceptance.select("spawn", ("spawn.allow",))
         return [Finding("ok" if r.status == acceptance.PASS else c.severity, "openclaw", "live: " + r.reason,
                         "" if r.status == acceptance.PASS else c.remedy)
-                for c, r in acceptance.run_cases(cases, env) if r.status != acceptance.SKIP]
+                for c, r in acceptance.run_cases(cases, env) if r.status not in (acceptance.SKIP, acceptance.NA)]
     except Exception as e:  # noqa: BLE001 - the live probe must not take verify down
         return [Finding("error", "live", f"the live checks failed to run: {type(e).__name__}: {e}")]
 

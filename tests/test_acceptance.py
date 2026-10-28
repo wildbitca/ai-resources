@@ -70,6 +70,7 @@ def test_registry_has_a_case_for_every_d8_bullet_and_every_role():
     assert {"fault.pool-hot", "fault.bad-key", "fault.timeout", "fault.agy-missing", "fault.quota-text"} <= ids
     assert {"checker.gemini-haiku-writers", "checker.sonnet-writer", "checker.never-weaker"} <= ids
     assert {"spawn.allow", "spawn.memory-peak", "spawn.explore-run", "gemini.tool-call", "agy.write-scope"} <= ids
+    assert {"spawn.landed-on-role-agent", "team.main-assumes-21-roles", "team.cross-provider-run", "team.cli-and-api-one-run"} <= ids
     assert {"setup.marker-guard", "setup.restart-lock", "setup.active-turns-defer", "setup.cgroup-t29", "setup.reload-rules",
             "setup.plugin-fresh", "setup.mcp-child-cap", "setup.sigterm-window", "setup.idempotent-rerun", "setup.offbox-regenerate",
             "setup.offbox-cred", "setup.stopfailure-hook", "setup.credits-ledger", "setup.real-restart", "setup.watchdog"} <= ids
@@ -105,8 +106,8 @@ def test_json_document_schema(capsys, env):
     args = argparse.Namespace(operator=False, group="checker", case=None, list=False, dry_run=False, offline=True, json=True, usage_file=None)
     assert acc.cmd_acceptance(args) == 0
     doc = json.loads(capsys.readouterr().out)
-    assert doc["schema"] == 1 and set(doc["summary"]) == {"PASS", "FAIL", "SKIP"}
-    assert all(set(r) == {"id", "group", "status", "reason", "evidence"} and r["status"] in ("PASS", "FAIL", "SKIP") for r in doc["results"])
+    assert doc["schema"] == 1 and set(doc["summary"]) == {"PASS", "FAIL", "SKIP", "N/A"}
+    assert all(set(r) == {"id", "group", "status", "reason", "evidence"} and r["status"] in ("PASS", "FAIL", "SKIP", "N/A") for r in doc["results"])
     assert [r["id"] for r in doc["results"]] == [c.id for c in acc.select("checker")]
 
 
@@ -198,7 +199,8 @@ def test_gemini_tool_call_writes_the_verdict_doctor_reads(env, tmp_path):
     assert doctor._check_gemini_tools.__doc__
 
 
-def test_a_turn_that_cannot_run_is_skip_and_writes_no_verdict(env, tmp_path):
+def test_a_turn_that_cannot_run_is_skip_and_writes_no_verdict(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_run, "agy_bin", lambda: "")
     body = "#!/bin/sh\necho '{\"ok\": false, \"status\": \"error\", \"error\": {\"message\": \"Secret store entry X was not found.\"}}'\nexit 1\n"
     env.bins["openclaw"] = _bin(tmp_path, "openclaw", body)
     r = acc.run_case(next(c for c in acc.CASES if c.id == "gemini.tool-call"), env)
@@ -272,3 +274,147 @@ def test_a_case_that_crashes_is_a_fail_row_not_a_crash(env):
 def test_scrub_hides_every_known_token_shape(secret):
     from ai_resources import acceptance
     assert acceptance.scrub(f"failed with {secret} in the header") == "failed with *** in the header"
+
+
+# --- N/A, the agent-exec guard, and the cross-provider team cases (item 8) ---------------------------------------------------------
+
+GOOGLE_DOC = {"auth": {"profiles": {"google:default": {"provider": "google", "mode": "api_key"}}}}
+
+
+def test_a_host_with_no_gemini_route_is_not_applicable_not_skip(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_run, "agy_bin", lambda: "")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    env.doc = lambda: {"auth": {"profiles": {"anthropic:default": {"provider": "anthropic"}}}, "plugins": {"entries": {}}}
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "gemini.tool-call"), env)
+    assert r.status == acc.NA and "no Gemini route" in r.reason
+
+
+def test_a_removed_providers_dangling_secret_is_a_defect_pointing_at_setup(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_run, "agy_bin", lambda: "")
+    env.doc = lambda: GOOGLE_DOC
+    body = "#!/bin/sh\necho '{\"ok\": false, \"error\": {\"message\": \"Secret store entry OPENROUTER_API_KEY was not found.\"}}'\nexit 1\n"
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", body)
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "gemini.tool-call"), env)
+    assert r.status == acc.FAIL and "ai-resources setup" in r.reason
+
+
+def test_gemini_proof_falls_back_to_the_agy_route(env, tmp_path, monkeypatch):
+    env.doc = lambda: {"auth": {"profiles": {}}, "plugins": {"entries": {}}}
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    writer = AGY.replace("echo '{", 'echo pong > hello.txt\necho \'{', 1)
+    monkeypatch.setenv("AI_RESOURCES_AGY_BIN", _bin(tmp_path, "agy", writer))
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "gemini.tool-call"), env)
+    assert r.status == acc.PASS and "Antigravity" in r.reason
+
+
+def test_the_agent_exec_guard_is_detected_and_never_bypassed(monkeypatch):
+    assert acc.agent_exec_context({"OPENCLAW_SHELL": "exec"}) and acc.agent_exec_context({"OPENCLAW_SUBAGENT_EXEC": "1"})
+    assert not acc.agent_exec_context({"OPENCLAW_SHELL": "interactive"}) and not acc.agent_exec_context({})
+
+
+SESSIONS = json.dumps({"sessions": [{"key": "agent:kit-role-explore:subagent:abc", "sessionId": "4322417d-xx", "status": "done",
+                                    "spawnedBy": "agent:main:slack:channel:c1", "updatedAt": 5, "model": "claude-haiku-5-5",
+                                    "modelProvider": "anthropic"}]})
+
+
+def test_inside_an_agent_session_explore_is_proven_from_the_spawn_the_gateway_recorded(env, tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENCLAW_SHELL", "exec")
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", "#!/bin/sh\necho 'must not run' >&2\nexit 9\n")
+    monkeypatch.setattr(acc, "_spawn_allow", lambda e: acc.ok("wired"))
+    calls = []
+
+    def runner(argv, **kw):
+        calls.append(argv)
+        return (0, SESSIONS) if "sessions" in argv else (1, "")
+    env.runner = runner
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "spawn.explore-run"), env)
+    assert r.status == acc.PASS and "sessions_spawn" in r.reason and "claude-haiku-5-5" in r.reason
+    assert not any(a[1:2] == ["agent"] for a in calls), "`openclaw agent` is never called inside an agent session"
+    assert _calls(env.bins["openclaw"]) == 0
+
+
+def test_without_a_recorded_spawn_the_agent_session_case_says_how_to_make_one(env, tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENCLAW_SHELL", "exec")
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", "#!/bin/sh\nexit 9\n")
+    monkeypatch.setattr(acc, "_spawn_allow", lambda e: acc.ok("wired"))
+    env.runner = lambda argv, **kw: (0, json.dumps({"sessions": []}))
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "spawn.explore-run"), env)
+    assert r.status == acc.SKIP and "sessions_spawn" in r.reason
+
+
+def _fake_doc(**over):
+    from ai_resources.setup.cockpits import openclaw_roles
+    entries = {openclaw_roles.agent_id_for(r): {"model": {"primary": "anthropic/claude-sonnet-5-5"}}
+               for r, row in routing.ROLES.items() if row.kind == "team"}
+    entries["main"] = {"subagents": {"allowAgents": ["*"]}}
+    entries.update(over)
+    return {"agents": {"entries": entries}}
+
+
+def test_main_assumes_all_21_roles_and_catches_a_missing_agent(env, monkeypatch):
+    monkeypatch.setattr(detection, "inactive_backends", lambda: {})
+    kit = str(__import__("pathlib").Path(__file__).resolve().parents[1])
+    env.ak_path = kit
+    env.doc = lambda: _fake_doc()
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "team.main-assumes-21-roles"), env)
+    assert r.status == acc.PASS and r.evidence["roles"] == 21, r.reason
+    doc = _fake_doc()
+    del doc["agents"]["entries"]["kit-role-planner"]
+    env.doc = lambda: doc
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "team.main-assumes-21-roles"), env)
+    assert r.status == acc.FAIL and "planner" in r.reason
+    doc = _fake_doc(main={"subagents": {"allowAgents": ["kit-role-explore"]}})
+    env.doc = lambda: doc
+    assert "may not spawn" in acc.run_case(next(c for c in acc.CASES if c.id == "team.main-assumes-21-roles"), env).reason
+
+
+def test_one_workflow_runs_on_different_providers_with_an_independent_checker(env, monkeypatch):
+    monkeypatch.setattr(detection, "inactive_backends", lambda: {})
+    env.ak_path = str(__import__("pathlib").Path(__file__).resolve().parents[1])
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "team.cross-provider-run"), env)
+    assert r.status == acc.PASS, r.reason
+    b = r.evidence["backends"]
+    assert {"agy", "claude-code"} <= set(b.values()), b
+    assert b["implementer"] == "claude-code" and b["explore"] == "agy"
+    assert "checker" in r.reason
+
+
+def test_a_checker_on_the_writers_family_fails_the_team_case():
+    same = routing.Route("verifier", "claude-code:sonnet", routing.POOL_MAX, (), "x")
+    impl = routing.Route("implementer", "claude-code:sonnet", routing.POOL_MAX, (), "x")
+    r = acc._judge_team({"implementer": impl, "verifier": same, "explore": routing.Route("explore", "agy:gemini-3.8-flash-high", routing.POOL_AGY_GEMINI, (), "x")})
+    assert r.status == acc.FAIL and "family" in r.reason
+
+
+def test_cli_and_api_routes_in_one_run_use_one_ledger_run_id(env, tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_RESOURCES_AGY_BIN", _bin(tmp_path, "agy", AGY))
+    env.bins["claude"] = _bin(tmp_path, "claude", CLAUDE % "claude-sonnet-5-5")
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("anthropic-messages", "anthropic", "claude-sonnet-5-5"))
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "team.cli-and-api-one-run"), env)
+    # the stub answers every infer call as Anthropic, so the Gemini API cell fails its own model check: that is a FAIL naming it
+    assert r.status == acc.FAIL and "utility" in r.reason
+    env.memo.clear()
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("google-generative-ai", "google", "gemini-3.8-flash"))
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "team.cli-and-api-one-run"), env)
+    assert r.status == acc.FAIL and "main" in r.reason
+
+
+DUAL = """#!/bin/sh
+echo x >> "$0.calls"
+case "$*" in
+  *google/*) echo '[log] api=google-generative-ai status=200'
+             echo '{"ok": true, "provider": "google", "model": "gemini-3.8-flash", "attempts": [], "outputs": [{"text": "pong"}]}' ;;
+  *) echo '[log] api=anthropic-messages status=200'
+     echo '{"ok": true, "provider": "anthropic", "model": "claude-sonnet-5-5", "attempts": [], "outputs": [{"text": "pong"}]}' ;;
+esac
+"""
+
+
+def test_cli_and_api_providers_answer_in_the_same_run(env, tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_RESOURCES_AGY_BIN", _bin(tmp_path, "agy", AGY))
+    env.bins["claude"] = _bin(tmp_path, "claude", CLAUDE % "claude-sonnet-5-5")
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", DUAL)
+    r = acc.run_case(next(c for c in acc.CASES if c.id == "team.cli-and-api-one-run"), env)
+    assert r.status == acc.PASS, r.reason
+    assert {"agy", "claude-code", "anthropic-api", "gemini-api"} <= set(r.evidence["backends"])
+    assert {r["pool"] for r in dispatch_ledger.load(env.run_id)} >= {routing.POOL_GEMINI_API, routing.POOL_ANTHROPIC_API}

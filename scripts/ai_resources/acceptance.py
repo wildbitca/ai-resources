@@ -1,13 +1,17 @@
 """`ai-resources acceptance`: the proof that what setup configured actually behaves as designed (ADR-0019 D8).
 
-One registry of cases, one row per case (`id | PASS/FAIL/SKIP | reason`), seven groups:
+One registry of cases, one row per case (`id | PASS/FAIL/SKIP/N/A | reason`), eight groups. `N/A` is a component the
+host does not use (a removed or unconfigured provider): it is not a gap, so it is not a SKIP.
 
 * route         every role resolves through the matrix, ONE minimal real call per distinct (backend, model) cell, and the
                 model/pool the call actually used (the response, or the dispatch row) must equal the matrix cell;
 * fault         injected faults (pool at 0.85, bad key, timeout, agy missing, quota text): the fallback fires exactly once
                 with the recorded cause, offline with fakes;
 * checker       a checker never shares a family with the writers (or is blocked, explicitly);
-* spawn         every `kit-role-*` agent is spawnable from `main` and the channel agents; peak gateway memory is sampled;
+* spawn         every `kit-role-*` agent is spawnable from `main` and the channel agents; peak gateway memory is sampled; a
+                subagent main spawned landed on the right kit-role agent and provider (read from the gateway's own sessions);
+* team          `main` can take each of the 21 roles; one workflow runs its roles on different providers with a checker on
+                another provider than the implementer; CLI and API routes appear together in one run;
 * gemini-tools  a cheap Gemini tool call through OpenClaw decides the heartbeat gating (verdict file, config untouched);
 * agy-write     agy writes a file inside a scratch dir and the scope check is logged;
 * setup-live    the failure/restart/watchdog/live cases of setup. They are thin adapters over the EXISTING checks
@@ -39,8 +43,8 @@ from . import dispatch_ledger
 from . import scrub as _scrub
 from .scoring import routing
 
-PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
-GROUPS = ("route", "fault", "checker", "spawn", "gemini-tools", "agy-write", "setup-live")
+PASS, FAIL, SKIP, NA = "PASS", "FAIL", "SKIP", "N/A"
+GROUPS = ("route", "fault", "checker", "spawn", "team", "gemini-tools", "agy-write", "setup-live")
 SCHEMA = 1
 PROMPT = "Reply with exactly: pong"
 AGY_PROMPT = "Reply with exactly: pong. Do not use any tool and do not create any file."
@@ -67,6 +71,18 @@ def skip(reason: str, **ev: Any) -> Result:
     return Result(SKIP, reason, ev)
 
 
+def na(reason: str, **ev: Any) -> Result:
+    """Not applicable: the component is removed or was never configured on this host. Neither a gap nor a failure."""
+    return Result(NA, reason, ev)
+
+
+def agent_exec_context(environ: "dict[str, str] | None" = None) -> bool:
+    """True inside an agent's shell tool or a subagent's: OpenClaw refuses `openclaw agent` / sessions RPCs there because
+    a CLI call cannot carry the inter-session attribution. The guard is respected, never bypassed."""
+    e = os.environ if environ is None else environ
+    return e.get("OPENCLAW_SHELL") == "exec" or e.get("OPENCLAW_SUBAGENT_EXEC") == "1"
+
+
 @dataclass
 class Env:
     """What a case may use. `runner` (None = the cockpit helpers) and the paths are the seams the tests replace."""
@@ -79,6 +95,13 @@ class Env:
     which: Callable[[str], "str | None"] = shutil.which
     run_id: str = field(default_factory=lambda: f"acceptance-{os.getpid()}")
     memo: dict = field(default_factory=dict)
+    doc: Callable[[], dict] | None = None        # the live openclaw.json (a seam for tests); None = read it through the cockpit
+
+    def openclaw_doc(self) -> dict:
+        if self.doc is not None:
+            return self.doc()
+        from .setup.cockpits import openclaw as cockpit
+        return cockpit.read_config(cockpit.config_path())
 
     def setup_state(self) -> Any:
         if self.state is None:
@@ -491,7 +514,16 @@ def _spawn_memory(env: Env) -> Result:
     return ok("sampled for the MemoryHigh/MCP sizing note (measure, do not cap): " + ", ".join(parts), **sample)
 
 
-@case("spawn.explore-run", "spawn", offline=False, cap="one `openclaw agent --agent <kit-role explore> -m pong` turn (the role's own model)")
+def _kit_role_sessions(env: Env, agent: str, limit: int = 20) -> list[dict]:
+    """The sessions of `agent` that another session spawned (`spawnedBy`), newest first. Read-only (`openclaw sessions`)."""
+    rc, out = _oc(env, ["openclaw", "sessions", "--agent", agent, "--json", "--limit", str(limit)], 60)
+    doc = _json_from(out) if rc == 0 else {}
+    rows = [x for x in (doc.get("sessions") or []) if isinstance(x, dict) and x.get("spawnedBy")]
+    return sorted(rows, key=lambda x: x.get("updatedAt") or 0, reverse=True)
+
+
+@case("spawn.explore-run", "spawn", offline=False, cap="one `openclaw agent --agent <kit-role explore> -m pong` turn (the role's own model); "
+      "inside an agent session no turn is made: the spawn is read from the gateway's own sessions")
 def _spawn_explore(env: Env) -> Result:
     from .setup.cockpits import openclaw_roles
     oc = env.which("openclaw")
@@ -501,12 +533,190 @@ def _spawn_explore(env: Env) -> Result:
     if wired.status != PASS:
         return skip(f"spawn.allow is {wired.status} ({wired.reason[:100]}); fix the wiring first. Command in --operator")
     agent = openclaw_roles.agent_id_for("explore")
+    if agent_exec_context():
+        # `openclaw agent` is refused inside an agent's exec (no inter-session attribution): the case uses sessions_spawn
+        # semantics instead. A subagent that main spawned on this agent is a session the gateway recorded with `spawnedBy`.
+        rows = _kit_role_sessions(env, agent)
+        done = [r for r in rows if r.get("status") == "done"]
+        if done:
+            r = done[0]
+            return ok(f"{agent} answered a sessions_spawn from {r['spawnedBy'].split(':')[1]} (session {r.get('sessionId', '')[:8]}, "
+                      f"{r.get('modelProvider')}/{r.get('model')}); `openclaw agent` is not used inside an agent session",
+                      agent=agent, session=r.get("key"), spawned_by=r.get("spawnedBy"), model=r.get("model"))
+        return skip(f"inside an agent session `openclaw agent` is refused by OpenClaw and {agent} has no finished spawned session yet; "
+                    f"have main call sessions_spawn(agentId=\"{agent}\", task=\"reply pong\") or run the case from an operator terminal")
     before = _memory_sample(env)
     rc, out = _run_tool([oc, "agent", "--agent", agent, "-m", PROMPT, "--json", "--timeout", "90"], timeout=150)
     after = _memory_sample(env)
     if rc != 0 or "pong" not in out.lower():
         return skip(f"{agent} is not reachable: {scrub(out[-160:])}") if _UNAUTH.search(out) else bad(f"{agent} did not answer: {scrub(out[-200:])}")
     return ok(f"{agent} answered through the gateway", agent=agent, memory_before=before, memory_after=after)
+
+
+@case("spawn.landed-on-role-agent", "spawn", severity="warn", remedy="re-run `ai-resources setup` (it rewrites the kit-role agents from the matrix)")
+def _spawn_landed(env: Env) -> Result:
+    """A subagent main spawned on a kit-role agent runs on that agent's own model chain: the gateway's session row names the
+    agent in its key, who spawned it, and the provider/model it used; both must be in the chain the matrix gives the role."""
+    from .setup.cockpits import openclaw_orchestration as orch, openclaw_roles
+    doc = env.openclaw_doc()
+    ids = orch.kit_role_ids(doc)
+    if not ids:
+        return skip("no kit-role agents in the OpenClaw config")
+    by_agent = {openclaw_roles.agent_id_for(r): r for r in routing.ROLES}
+    checked, wrong, unproven = [], [], []
+    for aid in ids:
+        role = by_agent.get(aid)
+        rows = _kit_role_sessions(env, aid, 5) if role else []
+        if not rows:
+            unproven.append(aid)
+            continue
+        row = rows[0]
+        key_agent = str(row.get("key", "")).split(":")[1:2]
+        ref = f"{row.get('modelProvider')}/{row.get('model')}"
+        entry = orch._get(doc, "agents", "entries", aid, "model") or {}
+        chain = [entry] if isinstance(entry, str) else [entry.get("primary"), *(entry.get("fallbacks") or [])]
+        families = {routing.writer_family(str(c)) for c in chain if c}
+        if key_agent != [aid] or (routing.writer_family(ref) not in families and ref not in chain):
+            wrong.append(f"{aid}: session {row.get('key', '')[:40]} ran {ref}, the agent's chain is {', '.join(map(str, chain))}")
+        else:
+            checked.append(aid)
+    if wrong:
+        return bad("; ".join(wrong[:3]), wrong=wrong)
+    if not checked:
+        return skip("no kit-role agent has a spawned session yet; have main call sessions_spawn on one (the check reads the gateway's sessions)")
+    return ok(f"{len(checked)} kit-role agent(s) ran spawned subagents on the right agent and a model of their chain" +
+              (f" ({len(unproven)} not spawned yet)" if unproven else ""), proven=checked, unproven=unproven)
+
+
+# --- team: main assumes the roles, a mixed-provider run, CLI and API together -----------------------------------------------
+
+_API_BACKENDS = ("anthropic-api", "gemini-api")
+
+
+@case("team.main-assumes-21-roles", "team", severity="warn", remedy="re-run `ai-resources setup`")
+def _team_roles(env: Env) -> Result:
+    """OpenClaw `main` can take any of the 21 roles: each resolves through the matrix to a route that is not blocked, a team
+    role has its instruction file and a kit-role agent main may spawn, a chat role runs on an API route main owns."""
+    from .setup import detection
+    from .setup.cockpits import openclaw_orchestration as orch, openclaw_roles
+    kit = Path(env.kit())
+    doc = env.openclaw_doc()
+    live_ids = set(orch.kit_role_ids(doc))
+    allow = orch._get(doc, "agents", "entries", "main", "subagents", "allowAgents") or []
+    problems: list[str] = []
+    for role, row in routing.ROLES.items():
+        route = routing.resolve(role, {}, [], detection.inactive_backends())
+        if route.blocked:
+            problems.append(f"{role}: no route ({route.reason[:60]})")
+            continue
+        if row.kind == "team":
+            if not (kit / "agents" / "roles" / f"{role}.md").is_file():
+                problems.append(f"{role}: no role file agents/roles/{role}.md")
+            aid = openclaw_roles.agent_id_for(role)
+            if live_ids and aid not in live_ids:
+                problems.append(f"{role}: agent {aid} is not registered")
+            elif live_ids and "*" not in allow and aid not in allow:
+                problems.append(f"{role}: main may not spawn {aid}")
+        elif route.backend not in _API_BACKENDS:
+            problems.append(f"{role}: chat role on {route.backend}, expected an API route")
+    if len(routing.ROLES) != 21:
+        problems.append(f"the matrix has {len(routing.ROLES)} roles, expected 21")
+    return bad("; ".join(problems[:4]), problems=problems) if problems else ok(
+        "main can take all 21 roles: 15 team roles (role file, kit-role agent, spawn allowed) and 6 chat roles (API route)", roles=21)
+
+
+def _backend_of(route: "routing.Route") -> str:
+    return "claude-code" if route.backend in ("claude-code", "claude-cli") else route.backend
+
+
+@case("team.cross-provider-run", "team", severity="warn")
+def _team_run(env: Env) -> Result:
+    """One workflow, different providers per role, a checker on another provider than the implementer. Offline: the real engine
+    runs `feature-cross-provider`; a fake runtime answers every dispatch, resolving the role through the matrix against the
+    writers that already wrote in the run (the resolver `ai-resources route` and the engine's checker choice use)."""
+    from .orchestrator import engine as eng, workflow_loader as wl
+    from .orchestrator.state import RunStore
+    from .setup import detection
+    base = env.cache / "acceptance-scratch"
+    base.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="team-", dir=str(base)) as d:
+        root = Path(d)
+        (root / "ws").mkdir()
+        wf = wl.load(str(Path(env.kit()) / "workflows" / "feature-cross-provider.workflow.yaml"))
+        engine = eng.Engine(RunStore(root / "runs"), kit_root=Path(env.kit()), claims_root=root / "claims")
+        run = engine.start(wf, "acceptance: prove the provider mix", str(root / "ws"))
+        if run["status"] == "failed":
+            return bad(f"the run could not start: {run['failure'][:200]}")
+        seen: dict[str, "routing.Route"] = {}
+        writers: list[str] = []
+        res = engine.next(run["id"])
+        for _ in range(80):
+            acts = res["actions"]
+            if any(a["type"] == "ask" for a in acts):
+                res = engine.approve(run["id"])
+                continue
+            dispatches = [a for a in acts if a["type"] == "dispatch"]
+            if not dispatches:
+                break
+            for a in dispatches:
+                role = a["role"]
+                route = routing.resolve(role, {}, writers, detection.inactive_backends())
+                if route.blocked:
+                    return bad(f"{role} is blocked in the run: {route.reason[:120]}")
+                seen[role] = route
+                if role in eng.WRITER_ROLES:
+                    writers.append(route.model)
+                verdict = "Verdict: READY\n" if role == "verifier" else "Verdict: PASS\n" if role in ("tester", "code-reviewer", "security-auditor") else ""
+                res = engine.report(run["id"], a["step"], text="Status: success\nBlocked: false\n" + verdict,
+                                    session=f"acc-{a['step']}", agent=a["agent"], model=a.get("model") or route.model)
+        final = engine.store.load(run["id"])["status"]
+    if final != "completed":
+        return bad(f"the mixed-provider run ended {final}, not completed", status=final)
+    return _judge_team(seen)
+
+
+def _judge_team(seen: "dict[str, routing.Route]") -> Result:
+    backends = {role: _backend_of(r) for role, r in seen.items()}
+    kinds = sorted(set(backends.values()))
+    impl, checker = seen.get("implementer"), seen.get("verifier")
+    problems = []
+    if len(kinds) < 2:
+        problems.append(f"only {kinds} appeared; a mixed team needs at least two providers")
+    if impl and checker and (_backend_of(impl) == _backend_of(checker) and routing.writer_family(impl.model) == routing.writer_family(checker.model)):
+        problems.append("the checker shares the implementer's provider and model family")
+    if impl and checker and routing.writer_family(impl.model) == routing.writer_family(checker.model):
+        problems.append("the checker shares the implementer's model family")
+    return bad("; ".join(problems), backends=backends) if problems else ok(
+        "roles ran on " + " + ".join(kinds) + f"; the checker ({checker.cell if checker else '?'}) is not the implementer's "
+        f"({impl.cell if impl else '?'}) family", backends=backends)
+
+
+@case("team.cli-and-api-one-run", "team", offline=False, severity="warn",
+      cap="one minimal call on each of agy, claude-code, anthropic-api and gemini-api (the same calls route.* makes, reused when they ran)")
+def _team_cli_and_api(env: Env) -> Result:
+    """CLI routes (agy, claude-code) and API routes (anthropic-api, gemini-api) in the same run id: each provider that is signed in
+    here answered a minimal call whose model and pool matched the matrix (and was recorded in the dispatch ledger of the run)."""
+    probes = {"planner": "claude-code", "explore": "agy", "main": "anthropic-api", "utility": "gemini-api"}
+    answered, absent = {}, {}
+    for role, backend in probes.items():
+        r = _route_case(role)(env)
+        if r.status == PASS:
+            answered[backend] = role
+        elif r.status == SKIP:
+            absent[backend] = r.reason[:80]
+        else:
+            return bad(f"{role} on {backend} failed: {r.reason[:160]}")
+    if not answered:
+        return skip("no provider answered here: " + "; ".join(f"{b}: {why}" for b, why in absent.items()))
+    # `_route_case` asserts model AND pool of each answer and writes the dispatch row; a provider counts only when it passed.
+    in_ledger = sorted(answered)
+    cli = [b for b in in_ledger if b in ("agy", "claude-code", "claude-cli")]
+    api = [b for b in in_ledger if b in _API_BACKENDS]
+    if not (cli and api):
+        return skip(f"this run only reached {in_ledger or 'nothing'}; both a CLI and an API provider must be signed in "
+                    "(absent: " + "; ".join(f"{b}: {why}" for b, why in absent.items()) + ")")
+    return ok(f"one run id used CLI ({', '.join(cli)}) and API ({', '.join(api)}) routes together", backends=in_ledger,
+              absent=sorted(absent))
 
 
 # --- gemini tool-calling -----------------------------------------------------------------------------------------------
@@ -527,29 +737,69 @@ def gemini_verdict_line(cache: Path | None = None) -> str:
         return ""
 
 
-@case("gemini.tool-call", "gemini-tools", offline=False, cap="one `openclaw agent exec` turn on google/gemini-3.8-flash with one file-read tool call")
+def _gemini_routes(env: Env) -> "dict[str, bool]":
+    """Which Gemini routes this host really uses: `gemini-api` (a Google auth profile or key in the gateway) and `agy`
+    (Antigravity installed). A route that is not configured is not part of the setup, so its proof is N/A."""
+    from . import agy_run
+    try:
+        doc = env.openclaw_doc()
+    except Exception:  # noqa: BLE001 - an unreadable config is "unknown": the probe itself will tell
+        doc = {}
+    if doc:
+        profiles = ((doc.get("auth") or {}).get("profiles")) or {}
+        api = any(str((p or {}).get("provider")) == "google" for p in profiles.values()) or bool(
+            ((doc.get("plugins") or {}).get("entries") or {}).get("google", {}).get("enabled"))
+    else:
+        api = True
+    return {"gemini-api": api or bool(os.environ.get("GEMINI_API_KEY")), "agy": bool(agy_run.agy_bin())}
+
+
+@case("gemini.tool-call", "gemini-tools", offline=False,
+      cap="one `openclaw agent exec` turn on google/gemini-3.8-flash with one file-read tool call (gemini-api), and the agy.write-scope "
+          "file write when gemini-api is not configured")
 def _gemini_tools(env: Env) -> Result:
+    """Gemini tool-calling, proven on the routes the host actually uses: the Gemini API through OpenClaw (a file-read tool call),
+    else Antigravity's Gemini (the file write of `agy.write-scope`). A provider that is removed or not configured is N/A."""
+    from . import retired
+    routes = _gemini_routes(env)
+    if not any(routes.values()):
+        return na("no Gemini route is configured on this host (no Google auth profile or key, no agy); nothing to prove")
     oc = env.which("openclaw")
-    if not oc:
-        return skip("openclaw is not on PATH")
     model = "google/gemini-3.8-flash"
-    scratch = env.cache / "acceptance-scratch" / "gemini-tools"
-    scratch.mkdir(parents=True, exist_ok=True)
-    token = secrets.token_hex(6)
-    (scratch / "token.txt").write_text(token + "\n")
-    rc, out = _run_tool([oc, "agent", "exec", "--model", model, "--cwd", str(scratch), "--json", "--timeout", "120",
-                         "Use your file reading tool to read token.txt in the working directory and reply with only its exact content."], timeout=180)
-    doc = _json_from(out)
-    if doc and doc.get("ok") is False or (rc != 0 and not doc):
-        # the turn never ran (secret store, auth, gateway): that says nothing about Gemini, so no verdict is written
-        why = scrub(str((doc.get("error") or {}).get("message") if doc else out[-160:]))[:160]
-        return skip(f"OpenClaw could not run the agent turn here ({why}); Gemini tool-calling stays unproven and the heartbeat on Haiku")
-    passed = rc == 0 and token in out
-    env.cache.mkdir(parents=True, exist_ok=True)
-    gemini_verdict_path(env.cache).write_text(json.dumps(
-        {"verdict": "pass" if passed else "fail", "model": model, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
-    return ok(f"{model} called the file tool and returned the token; the heartbeat may move to Gemini") if passed else bad(
-        f"{model} did not return the file content through a tool call (exit {rc}): {scrub(out[-160:])}")
+    if routes["gemini-api"] and oc:
+        scratch = env.cache / "acceptance-scratch" / "gemini-tools"
+        scratch.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(6)
+        (scratch / "token.txt").write_text(token + "\n")
+        rc, out = _run_tool([oc, "agent", "exec", "--model", model, "--cwd", str(scratch), "--json", "--timeout", "120",
+                             "Use your file reading tool to read token.txt in the working directory and reply with only its exact content."], timeout=180)
+        doc = _json_from(out)
+        if doc and doc.get("ok") is False or (rc != 0 and not doc):
+            why = scrub(str((doc.get("error") or {}).get("message") if doc else out[-160:]))[:160]
+            keys = {k for c in retired.RETIRED for k in c.env_keys}
+            if any(k in why for k in keys):
+                # a dangling reference to a component setup retired: a defect of the config, not a Gemini result
+                return bad(f"the agent turn failed on a removed provider's secret ({why}); run `ai-resources setup` (it removes the "
+                           "leftovers of retired components)")
+            if routes["agy"]:
+                return _agy_tool_proof(env, f"the Gemini API turn could not run here ({why[:80]})")
+            return skip(f"OpenClaw could not run the agent turn here ({why}); Gemini tool-calling stays unproven and the heartbeat on Haiku")
+        passed = rc == 0 and token in out
+        env.cache.mkdir(parents=True, exist_ok=True)
+        gemini_verdict_path(env.cache).write_text(json.dumps(
+            {"verdict": "pass" if passed else "fail", "model": model, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
+        return ok(f"{model} called the file tool and returned the token; the heartbeat may move to Gemini", route="gemini-api") if passed else bad(
+            f"{model} did not return the file content through a tool call (exit {rc}): {scrub(out[-160:])}")
+    if routes["agy"]:
+        return _agy_tool_proof(env, "the Gemini API route is not configured" if not routes["gemini-api"] else "openclaw is not on PATH")
+    return skip("openclaw is not on PATH")
+
+
+def _agy_tool_proof(env: Env, why: str) -> Result:
+    r = _agy_write(env)
+    if r.status == PASS:
+        return ok(f"{why}; Antigravity's Gemini called its file tool (agy.write-scope): " + r.reason, route="agy")
+    return r
 
 
 # --- agy writes in a scratch dir ---------------------------------------------------------------------------------------
@@ -856,7 +1106,7 @@ def table(results: list[tuple[Case, Result]]) -> list[str]:
 
 
 def document(results: list[tuple[Case, Result]]) -> dict:
-    counts = {s: sum(r.status == s for _c, r in results) for s in (PASS, FAIL, SKIP)}
+    counts = {s: sum(r.status == s for _c, r in results) for s in (PASS, FAIL, SKIP, NA)}
     return {"schema": SCHEMA, "summary": counts, "results": [
         {"id": c.id, "group": c.group, "status": r.status, "reason": r.reason, "evidence": r.evidence} for c, r in results]}
 
@@ -882,7 +1132,7 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     else:
         print("\n".join(table(results)))
         c = document(results)["summary"]
-        print(f"-- {c[PASS]} PASS, {c[FAIL]} FAIL, {c[SKIP]} SKIP")
+        print(f"-- {c[PASS]} PASS, {c[FAIL]} FAIL, {c[SKIP]} SKIP, {c[NA]} N/A")
     return 1 if any(r.status == FAIL for _c, r in results) else 0
 
 

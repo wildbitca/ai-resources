@@ -127,10 +127,19 @@ installers is stripped of terminal escapes and masked.
 Design: [ADR-0008](decisions/0008-setup-wizard-tui-on-rich-questionary.md), amended by
 [ADR-0009](decisions/0009-setup-tools-how-team.md).
 
+### What `single-model` and `multi-provider` mean
+
+`single-model` was never "one model". It is the internal name for "no LiteLLM/OpenRouter gateway sits in front of the
+models" (a gateway host is `multi-model`). A host with no gateway still runs a team across Claude Code, Antigravity
+(Gemini), the Anthropic API and the Gemini API: that is the routing matrix and `cli_team`, which do not depend on the mode.
+Since 3.2.1 the generated `~/.config/ai-resources/lanes.yaml` says what is true: `mode: multi-provider` for a CLI/API
+team host, `multi-model` for a gateway host and `single-model` only when neither applies. Nothing else reads the label;
+the matrix below it is the same in all three.
+
 ### Choosing the mode
 
 **Since ADR-0015 there is no mode question.** Each tool asks its own sign-in (screen 2) and the old global fields are
-derived from the answers: `mode` is always `single-model`, `cli_team` is on, and `cli_team_api` is on when a tool signs
+derived from the answers: `mode` is always `single-model` (internally: no gateway), `cli_team` is on, and `cli_team_api` is on when a tool signs
 in with an API key or Vertex AI. A saved answer migrates once, fill-only, and the old -> new table is shown once:
 
 | Saved answer | Claude Code | OpenClaw | Antigravity |

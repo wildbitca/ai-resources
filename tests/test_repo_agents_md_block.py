@@ -39,3 +39,15 @@ def test_the_committed_repo_agents_md_block_is_what_the_kit_renders():
     assert span == _rendered(kit_root), (
         "AGENTS.md drifted from the renderer: run `ai-resources setup` and commit the result")
 
+
+
+def test_operator_rules_of_a_host_agents_md_survive_a_block_refresh(tmp_path):
+    """The operator's rules live only in the host workspace AGENTS.md, below the kit block; a setup refresh rewrites the
+    block and keeps every byte outside it, and a second refresh changes nothing."""
+    path = tmp_path / "AGENTS.md"
+    rules = "\n".join(f"- operator rule {n}: keep this exactly" for n in range(147)) + "\n"
+    path.write_text(f"{_shared.MANAGED_BEGIN}\nold block\n{_shared.MANAGED_END}\n\n# Operator policy\n\n{rules}", encoding="utf-8")
+    assert _shared.write_managed_block(path, "new block body\n") is True
+    text = path.read_text(encoding="utf-8")
+    assert text.endswith(f"# Operator policy\n\n{rules}") and "old block" not in text and "new block body" in text
+    assert _shared.write_managed_block(path, "new block body\n") is False and path.read_text(encoding="utf-8") == text

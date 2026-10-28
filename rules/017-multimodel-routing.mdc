@@ -121,7 +121,7 @@ LiteLLM logs every call. Use:
 - `ai-resources audit` — cost breakdown per role/model
 - `ai-resources executors test <role>` — round-trip a single role
 
-## When mode is `single-model`
+## When mode is `single-model` (no gateway; `lanes.yaml` shows `multi-provider` for a CLI/API team host)
 
 Multi-model routing is bypassed. The cockpit talks directly to its native
 provider (e.g. Claude Code → Anthropic) and `executors.yaml` is not used.

@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.1] — 2026-10-28 — Self-maintaining OpenClaw host, Slack alerts, cross-provider proof
+
+Fixes from the 2026-10-28 audit of a live OpenClaw host. `ai-resources setup` on a fresh or drifted host now leaves a clean setup and keeps it clean.
+
+### Fixed
+
+- fix(tests): the suite deleted the operator's real `~/.config/ai-resources/offbox-wif-cred.json` on every full run (the teardown tests unlink the kit-derived credential and `tests/conftest.py` did not redirect `OFFBOX_WIF_CRED_PATH`); this was the root cause of the uploader failures "not readable" on 2026-10-27 and 10-28. The path is now redirected, and a test pins it.
+- fix(offbox): `ai-resources openclaw offbox-cred [--repair]`; `verify`, the timer-run `openclaw-verify.sh` and the `setup.offbox-cred` acceptance case regenerate the kit-derived credential when it is missing (a path the operator named is only checked).
+- fix(host): `lanes.yaml` said `mode: single-model` on a host whose team spans Claude Code, Antigravity, the Anthropic API and the Gemini API. `single-model` only ever meant "no LiteLLM/OpenRouter gateway". A CLI/API team host now renders `mode: multi-provider`; `multi-model` stays for a real gateway.
+- fix(setup): a bare `channels.telegram: {enabled: true}` stub no longer counts as an active Telegram channel.
+
+### Added
+
+- feat(setup): retired components. `scripts/ai_resources/retired.py` is a declarative list (OpenRouter, LiteLLM, Telegram) with in-use guards and an idempotent reconciler that runs in `setup` (and honours `--dry-run`): it removes the auth profile, plugin entries, `channels.telegram`, telegram `bindings[]` and `commands.ownerAllowFrom` entries, the matching env keys and the Telegram token file, backs up what it removed under `~/.config/ai-resources/backups/retired-<stamp>/` (0600, secret values never copied) and keeps catch-all `bindings[]` entries last. The setup state's `backend: litellm` becomes `cli` when no gateway is deployed.
+- feat(alerts): host alerts (watchdog, maintenance, verify, backup guard, health restart, db-fault) go to Slack: `OPENCLAW_NOTIFY_CHANNEL` / `OPENCLAW_NOTIFY_TARGET` in `kit-host.env` (`user:<id>` or `channel:<id>`), filled by setup from `commands.ownerAllowFrom`; Telegram is used only when it is the only configured route. The team narration hook, sender and watcher deliver to Slack (`channel:<id>` targets, `OPENCLAW_NARRATION_TARGET` override).
+- feat(host): `ai-resources openclaw db-fault [--json] [--notify]` detects stuck agent SQLite databases ("reclamation commit checkpoint expired" in the journal) and ingress pressure / dead letters in `openclaw health --json`; the watchdog alerts once per fault and `openclaw-verify.sh` fails on it. It never runs `doctor`.
+- feat(host): the weekly maintenance window retries instead of silently skipping: the timer fires daily at 04:30 and 08:30 UTC, `maintenance.week` records the tries, the first skip of a week is announced, a finished week exits at once.
+- feat(host): setup raises the gateway `MemoryHigh` itself (live `set-property`, never lowers a higher value). Sizing: node `--max-old-space-size=8192` + about 95 MiB per MCP child + the claude/agy workers; 16 GiB is the floor for a team host, 20 GiB (`OPENCLAW_MEMORY_HIGH=20G`) for a heavy one.
+- feat(acceptance): `N/A` status for a component the host does not use; group `team` with `team.main-assumes-21-roles`, `team.cross-provider-run` (the real engine over `feature-cross-provider`, agy + claude-code roles, checker not the implementer's family), `team.cli-and-api-one-run` (agy, claude-code, anthropic-api and gemini-api answer under one run id); `spawn.landed-on-role-agent` reads the gateway's own sessions; `spawn.explore-run` no longer calls `openclaw agent` inside an agent session (OpenClaw refuses it) and proves the spawn from the recorded session; `gemini.tool-call` is proven on the Gemini API or Antigravity route actually used and is N/A when neither is configured.
+
 ## [3.2.0] — 2026-10-27 — Roles matrix, OpenClaw orchestrator, acceptance
 
 Major internal rewrite of routing, with BREAKING changes (see below). Roles are the unit: one table, `scoring/routing.ROLES`, generates `lanes.yaml`, the Claude Code agent definitions, the OpenClaw `kit-role-*` agents and the setup tables, and `tests/test_matrix_equality.py` pins them. Decisions: [ADR-0019](docs/decisions/0019-roles-matrix-single-source.md).

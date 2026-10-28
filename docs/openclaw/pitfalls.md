@@ -825,6 +825,8 @@ That writes into `~/.config/systemd/user.control/openclaw-gateway.service.d/50-M
 directory **doctor does not inspect**. Verified: `MemoryHigh=12884901888` active and doctor still not
 complaining about the unit.
 
+**Since 3.2.1** `ai-resources setup` applies this property itself (raise only; 16G minimum for a team host, 20G heavy, see the runbook) so nobody runs `set-property` by hand.
+
 **How to catch it.** After any resource tweak, `openclaw doctor | grep -A4 "Gateway service config"`.
 
 ---
