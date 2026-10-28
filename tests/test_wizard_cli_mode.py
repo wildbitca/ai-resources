@@ -469,7 +469,9 @@ def test_cockpits_flag_runs_non_interactively_with_each_ticked_cockpit_on_its_ow
     assert wizard.run(_args(non_interactive=True, cockpits="claude,openclaw")) == 0
     # only the two ticked tools asked, each its own question; agy and Cursor were detected but not ticked
     assert asked == ["claude", "openclaw"]
-    assert [c for c in commands if c[:2] != ["config", "file"]] == []          # no sign-in command: path lookups only
+    # no sign-in command: path lookups and the read-only live auth reads (`models status`, `models auth list`)
+    assert [c for c in commands if c[:2] != ["config", "file"] and c[:2] != ["models", "status"]
+            and c[:3] != ["models", "auth", "list"]] == []
     saved = state.load().cockpit_auth
     assert saved["claude"] == {"method": "subscription", "live": "subscription"}   # what Claude Code itself reports (ADR-0016)
     assert saved["openclaw"]["method"] == "cli"                                # OpenClaw's own, a different shape
@@ -490,3 +492,46 @@ def test_the_cockpits_flag_prints_no_deprecation_note_unlike_backend(monkeypatch
     assert wizard._preflight_selection(_args(cockpits="claude,openclaw"), s) == 0
     assert not any("deprecated" in m for m in script.shown)
     assert s.profile.customizations["__targets__"]["selected"] == ["claude", "openclaw"]
+
+
+def test_run_resets_the_per_run_overrides(monkeypatch):
+    """N2: --accept-gates / --verbose / --patch-wait do not outlive the run."""
+    import argparse
+    from ai_resources.setup import patch_retry, ui, wizard
+    ui.clear_skipped()
+    ui.record_skipped("something", "because", "do this")
+    seen = {}
+
+    def fake_run(args):
+        seen["gates"], seen["verbose"] = ui.accept_gates(), ui.is_verbose()
+        return 1
+    monkeypatch.setattr(wizard, "_run", fake_run)
+    monkeypatch.setattr(wizard.state, "locked_run", lambda fn, **k: fn())
+    ui.set_accept_gates(True)
+    ui.set_verbose(True)
+    patch_retry.set_wait_budget(30)
+    wizard.run(argparse.Namespace())
+    assert not ui.accept_gates() and not ui.is_verbose()
+    assert patch_retry._WAIT_OVERRIDE is None
+    ui.clear_skipped()
+
+
+def test_an_aborted_run_still_prints_the_skipped_changes(monkeypatch):
+    """N6: the early non-zero return after the step runner lists what the run had decided to leave."""
+    import argparse
+    from ai_resources.setup import ui, wizard
+    ui.clear_skipped()
+    ui.record_skipped("something", "because", "do this")
+    printed = []
+    monkeypatch.setattr(ui, "print_skipped_summary", lambda: printed.append(1) or True)
+
+    class Failing:
+        def __init__(self, *a, **k): pass
+        def run(self, ctx): return 2
+    monkeypatch.setattr(wizard.flow, "Wizard", Failing)
+    monkeypatch.setattr(wizard, "_ask_run_mode", lambda a, f: wizard.RUN_AUTO)
+    monkeypatch.setattr(wizard, "_preflight_selection", lambda a, s: 0)
+    args = argparse.Namespace(non_interactive=True, dry_run=True, auto=True)
+    assert wizard._run(args) == 2
+    assert printed
+    ui.clear_skipped()

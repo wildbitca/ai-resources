@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -10,6 +11,59 @@ from . import billing, residue, scratch, verify
 from .setup import state, detection, credentials, litellm, providers, smoke, ui
 
 WEEK_S = 7 * 86400
+
+# Who closes an issue. `setup` re-running fixes it; `operator` needs the named command; `history` is a past record
+# that nothing can change (it ages out) and so is listed but never counted as open.
+SETUP = "setup"
+OPERATOR = "operator"
+HISTORY = "history"
+
+
+@dataclass(frozen=True)
+class Issue:
+    """One finding of the doctor: a stable `name`, what is wrong, and who fixes it."""
+    name: str
+    message: str
+    fixed_by: str
+    command: str = ""
+
+    def label(self) -> str:
+        if self.fixed_by == SETUP:
+            return "fixed by: setup"
+        if self.fixed_by == OPERATOR:
+            return f"fixed by: operator ({self.command})" if self.command else "fixed by: operator"
+        return "fixed by: nobody (history; it leaves the 7-day window on its own)"
+
+
+_ISSUES: list[Issue] = []
+
+
+def _flag(name: str, message: str, fixed_by: str, command: str = "") -> int:
+    """Register one issue and return 1, so a check can `return _flag(...)`. `cmd_doctor` clears the list first."""
+    _ISSUES.append(Issue(name, message, fixed_by, command))
+    return 1
+
+
+def _open(issues: list[Issue]) -> list[Issue]:
+    return [i for i in issues if i.fixed_by != HISTORY]
+
+
+def banner_text(issues: list[Issue]) -> tuple[str, str]:
+    """Title and subtitle of the closing banner: only open issues are counted, and `setup` is suggested only when
+    at least one of them is something setup fixes."""
+    open_, history = _open(issues), len(issues) - len(_open(issues))
+    note = f"{history} historical row(s) listed above, nothing to do" if history else ""
+    if not open_:
+        return "✓ Doctor: all checks passed", note
+    parts = []
+    if any(i.fixed_by == SETUP for i in open_):
+        parts.append("Re-run `ai-resources setup` to fix the ones marked setup")
+    cmds = sorted({i.command for i in open_ if i.fixed_by == OPERATOR and i.command})
+    if cmds:
+        parts.append("Operator: " + "; ".join(f"`{c}`" for c in cmds))
+    if note:
+        parts.append(note)
+    return f"⚠ Doctor: {len(open_)} issue(s) open", "\n".join(parts)
 
 
 def _check_antigravity_quota(s: state.SetupState) -> int:
@@ -45,6 +99,7 @@ def _check_antigravity_quota(s: state.SetupState) -> int:
     for severity, message in _agy_quota.report(pools, applied_model=applied_model):
         if severity == "error":
             ui.error(message)
+            _flag("agy-quota-exhausted", message, OPERATOR, _agy_quota.remedy(pools, applied_pool))
             ui.detail(_agy_quota.remedy(pools, applied_pool))
             if applied_pool == _agy_quota.POOL_GEMINI:
                 ui.detail("Voice notes on agy share this same Gemini pool — consider "
@@ -52,6 +107,7 @@ def _check_antigravity_quota(s: state.SetupState) -> int:
             issues += 1
         elif severity == "warn":
             ui.warn(message)
+            _flag("agy-quota-near-limit", message, OPERATOR, "wait for the quota reset or move the role to another pool")
             issues += 1
         else:
             ui.detail(message)
@@ -100,7 +156,8 @@ def _check_mcp_children(*, runner: "Callable[..., tuple[int, str]] | None" = Non
             f"warn threshold {threshold}.")
     ui.detail(f"Remedy (when no turn is running): `{_reconcile.RECONCILE_COMMAND}` -- a drained restart that "
               "refuses while agent turns are in flight; doctor itself does not kill or restart anything.")
-    return 1
+    return _flag("mcp-children", f"{total} MCP server child processes under the gateway unit", SETUP,
+                 _reconcile.RECONCILE_COMMAND)
 
 
 def _check_credit_ledger(args: argparse.Namespace) -> int:
@@ -135,6 +192,8 @@ def _check_keys(s: state.SetupState, args: argparse.Namespace) -> int:
             ui.detail(r.line() + " (no answer from the provider; nothing changed)")
         elif r.problem:
             ui.warn(r.line())
+            _flag("key-rejected", r.line(), OPERATOR,
+                  "replace the rejected key in the gateway env file or the OpenClaw auth profile")
             issues += 1
         elif r.fixed:
             ui.ok(r.line())
@@ -193,6 +252,10 @@ def _check_matrix_actual() -> int:
     for d in sm["deviations"]:
         ui.warn(f"{d['role']} ran {d['cell']} (matrix primary {d['primary']}) with no recorded fallback cause "
                 f"[{d['ts']}, run {d['run_id'] or '-'}]")
+    if sm["deviations"]:
+        # Past records: nothing sets them right, they leave the 7-day window by themselves.
+        _flag("matrix-deviation", f"{len(sm['deviations'])} dispatch(es) of the last 7 days ran off the matrix primary "
+              "with no recorded fallback cause", HISTORY)
     if not sm["deviations"]:
         ui.ok("Matrix actual: every dispatch of the last 7 days ran on its primary or has a recorded fallback cause"
               if sm["dispatches"] else "Matrix actual: no dispatches in the last 7 days")
@@ -323,6 +386,8 @@ def _check_scratch(args: argparse.Namespace, cache_root: Path | None = None) -> 
                    else "would remove" if r["age_s"] >= residue.LEGACY_MIN_AGE_S else f"{r['age_s'] / 86400:.0f}d old, kept until 7d")
             ui.detail(f"{Path(r['path']).name}  {scratch._fmt(r['bytes'])}  [{why}]")
         ui.detail("`ai-resources doctor --fix` lists what it would delete; add `--apply` to delete.")
+        _flag("scratch-legacy-openclaw", f"{len(oc_rows)} entries in legacy ~/.openclaw scratch dirs", OPERATOR,
+              "ai-resources doctor --fix --apply")
         issues += 1
     cache_root = cache_root or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
     ui.detail("Scratch root and legacy ~/.cache scratch")
@@ -342,17 +407,23 @@ def _check_scratch(args: argparse.Namespace, cache_root: Path | None = None) -> 
         left = [r for r in rows if not r["removed"]]
         if left:
             ui.detail("`ai-resources doctor --fix` lists the removable ones (older than 24 h, not in use); add `--apply` to delete.")
+            _flag("scratch-legacy-cache", f"{len(left)} legacy scratch entries under {cache_root}", OPERATOR,
+                  "ai-resources doctor --fix --apply")
             issues += 1
     runs = scratch.entries()
     run_bytes = sum(e["size"] for e in runs)
     if run_bytes > scratch.DEFAULT_CAP_BYTES:
         ui.warn(f"scratch runs weigh {scratch._fmt(run_bytes)} (cap {scratch._fmt(scratch.DEFAULT_CAP_BYTES)})")
         ui.detail("Run `ai-resources scratch prune`.")
+        _flag("scratch-runs-over-cap", f"scratch runs weigh {scratch._fmt(run_bytes)}", OPERATOR,
+              "ai-resources scratch prune")
         issues += 1
     scans = scratch.scan_results_bytes()
     if scans > scratch.SCAN_WARN_BYTES:
         ui.warn(f"security-scan-results weighs {scratch._fmt(scans)} (warn above {scratch._fmt(scratch.SCAN_WARN_BYTES)})")
         ui.detail("Run `ai-resources scratch prune-scans` (keeps the newest 7 runs); the writer should call it at the end of every run.")
+        _flag("scratch-scan-results-large", f"security-scan-results weighs {scratch._fmt(scans)}", OPERATOR,
+              "ai-resources scratch prune-scans")
         issues += 1
     return issues
 
@@ -362,7 +433,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ui.banner("ai-resources doctor", subtitle="Health check across all components")
 
     s = state.load()
-    issues = 0
+    _ISSUES.clear()
 
     # 1. State file present
     ui.section(1, 6, "Configuration state")
@@ -371,7 +442,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ui.detail(f"Mode: {s.mode}" + (" (CLI subscriptions)" if getattr(s, "cli_team", False) else ""))
     else:
         ui.error("setup-state.yaml missing — run `ai-resources setup`")
-        issues += 1
+        _flag("state-missing", "setup-state.yaml missing", SETUP)
 
     # 2. .env file + permissions
     ui.section(2, 6, "Credentials")
@@ -382,7 +453,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ui.ok(f".env present at {env_path} (chmod {mode})")
         else:
             ui.warn(f".env permissions are {mode}, expected 600")
-            issues += 1
+            _flag("env-permissions", f".env permissions are {mode}, expected 600", OPERATOR, f"chmod 600 {env_path}")
         env = credentials.load_env()
         for pid, ps in s.providers.items():
             if not ps.enabled:
@@ -395,27 +466,28 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     ui.ok(f"vertex: GOOGLE_CLOUD_PROJECT set")
                 else:
                     ui.warn(f"vertex: GOOGLE_CLOUD_PROJECT missing")
-                    issues += 1
+                    _flag("vertex-project-missing", "GOOGLE_CLOUD_PROJECT missing", SETUP)
                 continue
             if env.get(prov.primary_env_var):
                 ui.ok(f"{prov.name}: {prov.primary_env_var} set")
             else:
                 ui.warn(f"{prov.name}: {prov.primary_env_var} missing")
-                issues += 1
+                _flag(f"provider-key-missing-{pid}", f"{prov.primary_env_var} missing", SETUP)
         # Under the openrouter backend the gateway credential IS the provider
         # credential, so the provider loop above has already reported it.
         # Repeating the check here printed the line twice and, when the key was
         # missing, counted one problem as two issues.
-        if getattr(s, "backend", "litellm") != "openrouter":
+        # Only a LiteLLM gateway has a master key; single-model mode runs none.
+        if s.mode == "multi-model" and getattr(s, "backend", "litellm") != "openrouter":
             if env.get("LITELLM_MASTER_KEY"):
                 ui.ok("LITELLM_MASTER_KEY set")
             else:
                 ui.warn("LITELLM_MASTER_KEY missing — gateway auth will fail")
-                issues += 1
+                _flag("litellm-master-key", "LITELLM_MASTER_KEY missing", SETUP)
     else:
         ui.warn(f".env not found at {env_path}")
         if s.mode == "multi-model":
-            issues += 1
+            _flag("env-missing", f".env not found at {env_path}", SETUP)
 
     # 3. Gateway
     ui.section(3, 6, "Gateway")
@@ -442,20 +514,20 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 ui.ok(f"litellm v{det.version or '?'}  {det.binary_path}")
             else:
                 ui.error("litellm binary not found in PATH")
-                issues += 1
+                _flag("litellm-binary-missing", "litellm binary not found in PATH", SETUP)
             lc = litellm.lifecycle_path()
             if lc.exists():
                 ui.ok(f"Service file: {lc}")
             else:
                 ui.warn(f"Service file missing: {lc}")
-                issues += 1
+                _flag("litellm-service-file-missing", f"Service file missing: {lc}", SETUP)
         elif litellm.is_container_mode(mode):
             runtime, det = detection.detect_container_runtime()
             if det.installed:
                 ui.ok(f"{runtime} {det.version}")
             else:
                 ui.error("Container runtime unhealthy")
-                issues += 1
+                _flag("container-runtime", "Container runtime unhealthy", OPERATOR, "start the container runtime")
 
         status = litellm.service_status()
         url = f"http://{s.litellm.local.bind_address}:{s.litellm.local.port}"
@@ -464,13 +536,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 ui.ok(f"Gateway healthy at {url}")
             else:
                 ui.warn("Service running but health check failed")
-                issues += 1
+                _flag("gateway-unhealthy", "Service running but health check failed", OPERATOR, "ai-resources daemon restart")
         elif status == "stopped":
             ui.warn("Service stopped — run `ai-resources daemon start`")
-            issues += 1
+            _flag("gateway-stopped", "Service stopped", OPERATOR, "ai-resources daemon start")
         else:
             ui.error(f"Service status: {status}")
-            issues += 1
+            _flag("gateway-status", f"Service status: {status}", OPERATOR, "ai-resources daemon status")
     elif s.litellm.deployment == "remote":
         master = credentials.get_key("LITELLM_MASTER_KEY")
         ok, msg = litellm.validate_remote(s.litellm.remote.url, master)
@@ -478,14 +550,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ui.ok(f"Remote {s.litellm.remote.url} reachable")
         else:
             ui.error(f"Remote unreachable: {msg}")
-            issues += 1
+            _flag("gateway-remote-unreachable", f"Remote unreachable: {msg}", OPERATOR, "check the remote LiteLLM URL and key")
 
     # 4. Cockpits configured
     ui.section(4, 6, "Cockpits")
     configured = [(cid, cs) for cid, cs in s.cockpits.items() if cs.configured]
     if not configured:
         ui.warn("No cockpits configured — run `ai-resources setup`")
-        issues += 1
+        _flag("no-cockpits", "No cockpits configured", SETUP)
     for cid, cs in configured:
         ui.ok(f"{cid}  v{cs.version or '?'}  → {cs.config_root}")
     if configured:
@@ -493,7 +565,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         # error-level finding is an issue: a warning is printed and does not fail the check.
         findings = verify.run_all(s, [cid for cid, _ in configured])
         verify.print_findings(findings, show_ok=False)
-        issues += verify.counts(findings)["error"]
+        for f in findings:
+            if f.level == "error":
+                via_setup = "ai-resources setup" in f.remedy
+                _flag(f"verify-{f.cockpit}", f.message, SETUP if via_setup else OPERATOR,
+                      "" if via_setup else (f.remedy or "see the finding above"))
 
     # 4b. Claude Code OAuth session — informational, not an error
     if s.mode == "multi-model":
@@ -508,7 +584,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     # is rejected. Unlike the LiteLLM path, this does not work as-is.
                     ui.warn("OpenRouter rejects requests that also carry an OAuth login.")
                     ui.detail("Run: claude /logout → new terminal → ai-resources doctor")
-                    issues += 1
+                    _flag("openrouter-oauth-conflict", "OpenRouter rejects requests that also carry an OAuth login",
+                          OPERATOR, "claude /logout")
                 else:
                     ui.detail("Gateway uses allow_requests_on_db_unavailable=true — works as-is.")
                     ui.detail("To switch to API key mode: claude /logout → new terminal → ai-resources doctor")
@@ -533,7 +610,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     else "OpenClaw is running older ai-resources plugin code than the kit on disk "
                          "(restart to load it).")
             ui.detail("Run: openclaw gateway restart")
-            issues += 1
+            _flag("openclaw-plugin-stale", "OpenClaw runs older ai-resources plugin code", OPERATOR,
+                  "openclaw gateway restart")
         elif not s.openclaw.antigravity_applied:
             # Only the antigravity engine needs the agy-cli backend; a host that never asked for
             # it has no defect to report here.
@@ -541,33 +619,34 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         elif not _openclaw_cockpit.backend_registered("agy-cli"):
             ui.warn("OpenClaw has not loaded the ai-resources plugin (no agy-cli backend).")
             ui.detail("Run: openclaw gateway restart")
-            issues += 1
+            _flag("openclaw-plugin-not-loaded", "OpenClaw has not loaded the ai-resources plugin", OPERATOR,
+                  "openclaw gateway restart")
         else:
             ui.ok("OpenClaw runs the kit plugin (agy-cli backend registered)")
 
     # 4d. Antigravity quota: about the engine, not the plugin, so the answer above does not gate it.
     if s.openclaw.antigravity_applied:
-        issues += _check_antigravity_quota(s)
+        _check_antigravity_quota(s)
 
     # 4e. MCP server children under the gateway unit (only on a host where setup wrote the kit-role agents).
     if s.openclaw.role_agents_applied or state.lanes_enabled(s):
-        issues += _check_mcp_children()
+        _check_mcp_children()
 
     # 4f. Antigravity: installed and signed in (the one condition for an agy cell), quota.
-    issues += _check_antigravity_lane(s)
+    _check_antigravity_lane(s)
 
     # 4g. Billing mode, quota and the manual credit file; 4h. the poll-turn share of the newest snapshot.
-    issues += _check_credit_ledger(args)
-    issues += _check_billing()
-    issues += _check_pool_usage()
-    issues += _check_matrix_actual()
-    issues += _check_gemini_tools()
-    issues += _check_weekly_summary()
-    issues += _check_keys(s, args)
-    issues += _check_poll_share()
-    issues += _check_vendor_pins()
-    issues += _check_openclaw_cost(s, args)
-    issues += _check_scratch(args)
+    _check_credit_ledger(args)
+    _check_billing()
+    _check_pool_usage()
+    _check_matrix_actual()
+    _check_gemini_tools()
+    _check_weekly_summary()
+    _check_keys(s, args)
+    _check_poll_share()
+    _check_vendor_pins()
+    _check_openclaw_cost(s, args)
+    _check_scratch(args)
 
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")
@@ -576,7 +655,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         if s.mode == "multi-model":
             ui.error("executors.yaml missing")
-            issues += 1
+            _flag("executors-missing", "executors.yaml missing", SETUP)
         else:
             ui.detail("Skipped (single-model mode)")
 
@@ -609,18 +688,20 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     ui.ok(label)
                 else:
                     ui.warn(f"{label}  ({msg[:80]})")
-                    issues += 1
+                    _flag("smoke-failed", f"{label}: {msg[:80]}", OPERATOR, "ai-resources daemon status")
         except Exception as e:
             ui.warn(f"Smoke tests skipped: {e}")
     else:
         ui.detail("Skipped (--skip-smoke or single-model mode)")
 
     ui.console().print()
-    if issues == 0:
-        ui.banner("✓ Doctor: all checks passed")
-        return 0
-    ui.banner(f"⚠ Doctor: {issues} issue(s) found", subtitle="Re-run `ai-resources setup` to fix")
-    return 1
+    if _ISSUES:
+        ui.info("Issues, by name")
+        for i in _ISSUES:
+            ui.detail(f"{i.name}: {i.message} — {i.label()}")
+    title, subtitle = banner_text(_ISSUES)
+    ui.banner(title, subtitle=subtitle)
+    return 1 if _open(_ISSUES) else 0
 
 
 def add_subparser(sub: argparse._SubParsersAction) -> None:

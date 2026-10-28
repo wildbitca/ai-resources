@@ -1,0 +1,26 @@
+{
+ "agentId": "main",
+ "agentDir": "~/.openclaw/agents/main/agent",
+ "authStatePath": "~/.openclaw/agents/main/agent/openclaw-agent.sqlite",
+ "provider": null,
+ "profiles": [
+  {
+   "id": "agy-cli-lane:default",
+   "provider": "agy-cli-lane",
+   "type": "api_key",
+   "label": "agy-cli-lane:default"
+  },
+  {
+   "id": "anthropic:default",
+   "provider": "anthropic",
+   "type": "api_key",
+   "label": "anthropic:default"
+  },
+  {
+   "id": "google:default",
+   "provider": "google",
+   "type": "api_key",
+   "label": "google:default"
+  }
+ ]
+}

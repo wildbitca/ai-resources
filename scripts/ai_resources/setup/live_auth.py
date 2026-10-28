@@ -180,29 +180,128 @@ def claude_signed_in(auth: LiveAuth) -> bool:
 
 class LiveReading(dict):
     """agent -> provider -> LiveAuth, plus `readable`: whether OpenClaw answered at all. An unreadable OpenClaw (not
-    installed, timed out) says nothing about usability; a readable one with no provider says "nothing is usable"."""
+    installed, timed out, in a maintenance window, output that is not the expected JSON) says nothing about usability;
+    a readable one with no provider says "nothing is usable". `reason` names why it was unreadable; `config_providers`
+    are the providers the config's own `auth.profiles` corroborate."""
     readable: bool = False
+    reason: str = ""
+    config_providers: "set[str]" = set()
 
 
-def read_openclaw(runner: Runner | None = None, agents: list[str] | None = None) -> LiveReading:
+RETRY_BACKOFF_S = (1, 3, 8)
+_MAINTENANCE_MARK = "offline maintenance"
+_CONFIG_MODES = ("api_key", "api-key", "oauth", "token")
+
+
+def extract_json(text: str, expect: "tuple[str, ...]" = ()) -> "dict | None":
+    """The JSON object in `text` that carries the `expect` keys, found by scanning every `{` with `raw_decode`, so banner
+    or warning text before, after or around it does not hide it. With no object that has the keys, the first object (or
+    None when there is none)."""
+    text = text or ""
+    dec = json.JSONDecoder()
+    first: "dict | None" = None
+    i = text.find("{")
+    while i >= 0:
+        try:
+            obj, end = dec.raw_decode(text, i)
+        except ValueError:
+            i = text.find("{", i + 1)
+            continue
+        if isinstance(obj, dict):
+            if expect and all(k in obj for k in expect):
+                return obj
+            if first is None:
+                first = obj
+        i = text.find("{", end)
+    return first
+
+
+def config_providers(profiles: Any) -> "set[str]":
+    """Providers the config's own `auth.profiles` (profile id -> {provider, mode}) lists with a usable mode."""
+    found: set[str] = set()
+    for p in profiles.values() if isinstance(profiles, dict) else []:
+        if isinstance(p, dict) and isinstance(p.get("provider"), str) and p.get("mode") in _CONFIG_MODES:
+            found.add(model_accounts.OPENCLAW_PROVIDER.get(p["provider"], p["provider"]))
+    return found
+
+
+def _config_auth(profiles: Any) -> "dict[str, LiveAuth]":
+    found: dict[str, LiveAuth] = {}
+    for p in profiles.values() if isinstance(profiles, dict) else []:
+        if isinstance(p, dict) and isinstance(p.get("provider"), str) and p.get("mode") in _CONFIG_MODES:
+            found[model_accounts.OPENCLAW_PROVIDER.get(p["provider"], p["provider"])] = _provider_auth(
+                p["provider"], str(p["mode"]))
+    return found
+
+
+def _fetch(argv: "list[str]", expect: "tuple[str, ...]", runner: "Runner | None", sleep: "Callable[[float], None]",
+           retry: bool) -> "tuple[dict | None, str]":
+    """Run one read, retrying a transient failure (maintenance window, timeout, exit 0 with output that is not the
+    expected JSON) with short backoff. Returns (parsed document, "") or (None, why it was unreadable)."""
+    why = ""
+    for attempt in range(len(RETRY_BACKOFF_S) + 1):
+        rc, text = run(argv, runner)
+        doc = extract_json(text, expect) if rc == 0 else None
+        if doc is not None and all(k in doc for k in expect):
+            return doc, ""
+        if rc == 127:
+            return None, "openclaw is not installed"
+        lowered = (text or "").lower()
+        if _MAINTENANCE_MARK in lowered:
+            why, transient = "OpenClaw state is in an offline maintenance window", True
+        elif "timed out" in lowered:
+            why, transient = "the OpenClaw CLI timed out", True
+        elif rc == 0:
+            why, transient = "the OpenClaw CLI answered with output that is not the expected JSON", True
+        else:
+            why, transient = f"the OpenClaw CLI failed (exit {rc})", False
+        if not (transient and retry) or attempt >= len(RETRY_BACKOFF_S):
+            return None, why
+        sleep(RETRY_BACKOFF_S[attempt])
+    return None, why
+
+
+def read_openclaw(runner: Runner | None = None, agents: list[str] | None = None, *,
+                  sleep: "Callable[[float], None] | None" = None,
+                  config_profiles: Any = None) -> LiveReading:
     """OpenClaw's live auth: agent id -> provider id -> LiveAuth, from the local auth store (no gateway call).
 
     `models status --json` gives the provider kinds; `models auth list --json --agent <id>` the per-agent profiles. A
     provider with neither a profile nor an env credential is absent from the result (not usable). Profile ids, labels
     and key material are never read: only the provider and the credential type.
-    """
+
+    A failure (maintenance window, timeout, non-JSON output) is UNREADABLE, never empty; it is retried with short backoff
+    (`RETRY_BACKOFF_S`). `config_profiles` (the config's `auth.profiles`) corroborates: such a provider counts usable when
+    the CLI is unreadable or reports nothing for it."""
+    import time
+    sleep = sleep or time.sleep
     out = LiveReading()
-    rc, text = run(["openclaw", "models", "status", "--json"], runner)
-    out.readable = rc == 0
-    shared = _status_providers(_parse_json(text)) if rc == 0 else {}
+    out.config_providers = config_providers(config_profiles)
+    cfg_auth = _config_auth(config_profiles)
+    reasons: list[str] = []
+    retry = True
+    status, why = _fetch(["openclaw", "models", "status", "--json"], ("auth",), runner, sleep, retry)
+    shared: dict[str, LiveAuth] = {}
+    if status is not None:
+        out.readable = True
+        shared = _status_providers(status)
+    else:
+        reasons.append(why)
+        retry = False                                  # the CLI is down: one attempt per remaining read
     for agent in agents or ["main"]:
         per = dict(shared)
-        rc, text = run(["openclaw", "models", "auth", "list", "--json", "--agent", agent], runner)
-        if rc == 0:
+        doc, why = _fetch(["openclaw", "models", "auth", "list", "--json", "--agent", agent], ("profiles",), runner,
+                          sleep, retry)
+        if doc is not None:
             out.readable = True
-            for prov, auth in _profile_providers(_parse_json(text)).items():
-                per[prov] = auth
+            per.update(_profile_providers(doc))
+        else:
+            reasons.append(why)
+            retry = False
+        for prov, auth in cfg_auth.items():
+            per.setdefault(prov, auth)
         out[agent] = per
+    out.reason = "" if out.readable else "; ".join(dict.fromkeys(r for r in reasons if r))
     return out
 
 

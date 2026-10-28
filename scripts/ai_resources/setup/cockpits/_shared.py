@@ -235,6 +235,22 @@ def ensure_symlink(link: Path, target: Path, *, dry_run: bool = False) -> bool:
     return True
 
 
+def kit_checkout_root(path: Path | str) -> Path | None:
+    """The kit repository checkout that contains `path` (resolved through symlinks), or None.
+
+    A checkout is a directory that holds `scripts/ai_resources/__init__.py` (the kit's own package) beside a
+    `.git`; the kit's AGENTS.md there is hand-maintained and tracked, so setup never writes into it.
+    """
+    try:
+        here = Path(path).expanduser().resolve()
+    except OSError:
+        return None
+    for d in (here, *here.parents):
+        if (d / "scripts" / "ai_resources" / "__init__.py").is_file() and (d / ".git").exists():
+            return d
+    return None
+
+
 MANAGED_BEGIN = ("<!-- BEGIN ai-resources: managed by `ai-resources setup`; "
                  "edits inside this block are overwritten -->")
 MANAGED_END = "<!-- END ai-resources -->"

@@ -11,6 +11,7 @@ No secret is read or printed: the CLI uses its own credentials and the output is
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Callable
@@ -37,15 +38,64 @@ def command(ref: str) -> list[str]:
     return ["infer", "model", "run", "--local", "--model", ref, "--prompt", PROMPT, "--json"]
 
 
+def _answer_text(out: str) -> "str | None":
+    """The model's reply from the CLI's JSON (`outputs[].text`), found even when log lines surround it; None when the
+    output holds no such document. A log line on stderr that happens to contain "OK" is not an answer."""
+    dec = json.JSONDecoder()
+    i = out.find("{")
+    while i >= 0:
+        try:
+            obj, end = dec.raw_decode(out, i)
+        except ValueError:
+            i = out.find("{", i + 1)
+            continue
+        outputs = obj.get("outputs") if isinstance(obj, dict) else None
+        if isinstance(outputs, list):
+            return " ".join(str(o.get("text") or "") for o in outputs if isinstance(o, dict))
+        i = out.find("{", end)
+    return None
+
+
+_SECRET = re.compile(r"\b(?:AIza|sk-|ya29\.)[\w.\-]{8,}|\bAQ\.[\w.\-]*|\boc-[\w\-]{6,}"
+                     r"|\bBearer\s+\S+|\bsk-ant[\w\-]*|\b[A-Za-z0-9_\-]{32,}\b")
+
+
+def _first_error_line(out: str) -> str:
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if line and not line.startswith("[") and "{" not in line[:1]:
+            return _SECRET.sub("<redacted>", line)[:160]
+    return ""
+
+
+def failure_detail(ref: str, rc: int, out: str) -> str:
+    """Why the CLI failed, in words that name the cause and the one command that finishes or shows it."""
+    low = (out or "").lower()
+    if rc == 127:
+        return "the OpenClaw CLI is not installed or not on PATH; install it, then re-run `ai-resources setup`"
+    if "offline maintenance" in low:
+        return ("OpenClaw state is in an offline maintenance window, so the probe could not run; "
+                "re-run `ai-resources setup` when it ends")
+    if "timed out" in low:
+        return f"the probe timed out; run `openclaw infer model run --local --model {ref} --prompt OK --json` to retry"
+    line = _first_error_line(out)
+    cmd = f"openclaw infer model run --local --model {ref} --prompt 'Reply with exactly OK' --json"
+    return (f"the CLI failed (exit {rc}): {line}; run `{cmd}` to see it" if line
+            else f"the CLI failed (exit {rc}) without a message; run `{cmd}` to see it")
+
+
 def classify(ref: str, rc: int, out: str) -> Result:
     text = out or ""
-    if rc == 0 and re.search(r"\bOK\b", text):
+    answer = _answer_text(text) if rc == 0 else None
+    if rc == 0 and re.search(r"\bOK\b", answer if answer is not None else text):
         return Result(ref, "ok")
+    if rc == 127 or "offline maintenance" in text.lower() or "timed out" in text.lower():
+        return Result(ref, "error", failure_detail(ref, rc, text))
     if _INVALID.search(text):
         return Result(ref, "invalid", INVALID_MESSAGE)
     if rc == 0:
         return Result(ref, "error", "the model answered, but not with OK")
-    return Result(ref, "error", "the probe could not tell (the CLI failed)")
+    return Result(ref, "error", failure_detail(ref, rc, text))
 
 
 def probe(ref: str, run: Runner) -> Result:

@@ -26,7 +26,7 @@ from . import (
     tools,
     ui,
 )
-from . import cockpit_auth, compat, deferred, live_auth, model_selection, profile_names, team_view
+from . import cockpit_auth, compat, deferred, live_auth, model_selection, patch_retry, profile_names, team_view
 from .cockpits import ALL as ALL_COCKPITS
 from .cockpits import _shared
 from .. import __version__, model_pins, repo_root, selection as selection_mod
@@ -160,6 +160,10 @@ def run(args: argparse.Namespace) -> int:
             return _report_cancel(e)
         finally:
             ui.set_auto(False)
+            # Per-run overrides must not leak into the next run in this process (tests, the daemon, apply-pending).
+            ui.set_accept_gates(False)
+            ui.set_verbose(False)
+            patch_retry.set_wait_budget(None)
 
 
 RUN_AUTO, RUN_ASK, RUN_FRESH = "auto", "ask", "fresh"
@@ -212,6 +216,11 @@ def _run(args: argparse.Namespace) -> int:
     # saved value; --profile seeds the profile step's default, which that mode
     # then returns. Without a terminal and without the flag the wizard would
     # block forever on the first prompt, so say so instead of hanging.
+    ui.set_accept_gates(bool(getattr(args, "accept_gates", False)))
+    ui.set_verbose(bool(getattr(args, "verbose", False)))
+    ui.clear_skipped()
+    patch_retry.clear_exhausted()
+    patch_retry.set_wait_budget(getattr(args, "patch_wait", None))
     if getattr(args, "non_interactive", False):
         ui.set_non_interactive(True)
     elif not ui.stdin_is_a_terminal():
@@ -230,6 +239,7 @@ def _run(args: argparse.Namespace) -> int:
     global _PREV_STATE
     _PREV_STATE = prev_s
     s = state.load()
+    ui.bind_decisions(s.openclaw.decisions)        # "ask once" memory (3.2.8): written through to the saved state
     corrupt = state.take_corrupt_notice()
     if corrupt:
         # 2.2c (3d): the file could not be read; it was copied aside and is read as empty. Unattended runs stop
@@ -297,6 +307,7 @@ def _run(args: argparse.Namespace) -> int:
         _PREV_STATE = None
         ui.set_progress(0, [])
     if rc != 0:
+        ui.print_skipped_summary()         # an aborted run still lists what it had already decided to leave
         return rc
 
     verify_rc = 0
@@ -307,13 +318,21 @@ def _run(args: argparse.Namespace) -> int:
         state.save(s)
         ui.record_action("saved setup state")
         verify_rc = _step10_verify(s, list(_APPLIED_TARGETS))
-        _print_completion(s)
+        # 3.2.8 (item 2): a config patch OpenClaw kept refusing (offline maintenance) is recorded as pending, the run is
+        # INCOMPLETE (no completion banner) and exits 75. Recorded before the state is saved again below.
+        patch_rc = patch_retry.settle(s.openclaw)
         refused = list(getattr(s.openclaw, "_refused_applies", []))
+        if patch_rc:
+            state.save(s)
+        else:
+            _print_completion(s)
         if refused:
             ui.error("setup is NOT complete: the restart-required key(s) " + "; ".join(refused) + " were requested "
                      "but not applied. They stay pending; run `ai-resources openclaw apply-pending` from "
                      "outside the gateway.")
             verify_rc = verify_rc or 1
+        ui.print_skipped_summary()
+        verify_rc = patch_rc or verify_rc
     return verify_rc   # non-zero when a tooling has an error-level finding or a requested apply was refused
 
 

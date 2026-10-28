@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "capability": "model.run",
+  "transport": "local",
+  "provider": "google",
+  "model": "gemini-3.8-flash",
+  "attempts": [],
+  "outputs": [
+    {
+      "text": "OK",
+      "mediaUrl": null
+    }
+  ]
+}

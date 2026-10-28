@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .. import state, ui
+from .. import patch_retry
 from .. import detection
 from .. import live_auth, live_openclaw, operator_rules
 from ..detection import detect_openclaw
@@ -272,6 +273,22 @@ def _openclaw(args: list[str], stdin: str | None = None, timeout: int = 120) -> 
     except (subprocess.TimeoutExpired, OSError) as e:
         return 1, str(e)
     return r.returncode, (r.stdout + r.stderr).strip()
+
+
+def _openclaw_stdout(args: list[str], timeout: int = 60) -> tuple[int, str]:
+    """Like `_openclaw` for a read that must parse as JSON: on exit 0 only STDOUT is returned, so a banner or warning on
+    stderr cannot sit in front of or inside the document; on a failure both streams are returned (the maintenance-window
+    rejection is on stderr and the reader needs to see it)."""
+    binary = shutil.which("openclaw")
+    if not binary:
+        return 127, "openclaw not found on PATH"
+    try:
+        r = subprocess.run([binary, *args], capture_output=True, text=True, timeout=timeout, cwd=str(Path.home()))
+    except subprocess.TimeoutExpired as e:
+        return 1, f"timed out after {e.timeout} seconds"
+    except OSError as e:
+        return 1, str(e)
+    return r.returncode, (r.stdout if r.returncode == 0 else r.stdout + r.stderr).strip()
 
 
 def _agy(args: list[str], timeout: int = 30) -> tuple[int, str]:
@@ -665,7 +682,12 @@ def apply_patch(patch: dict, *, dry_run: bool = False,
     args = ["config", "patch", "--stdin"] + (["--dry-run"] if dry_run else [])
     for rp in (replace_paths or []):
         args += ["--replace-path", rp]
-    rc, out = _openclaw(args, stdin=json.dumps(patch))
+    # 3.2.8 (item 2): a refusal "OpenClaw state ... is undergoing offline maintenance" is retried inside a bounded
+    # budget and, when it is spent, recorded (patch_retry.settle) so the run is INCOMPLETE; never in the kit's own
+    # drained window (allow_restart), where the gateway is down on purpose.
+    rc, out = patch_retry.send(lambda: _openclaw(args, stdin=json.dumps(patch)), patch=patch,
+                               replace_paths=replace_paths, dry_run=dry_run, retry=not allow_restart,
+                               flags={"slack_cost": slack_cost, "retired": retired})
     return rc == 0, out
 
 
@@ -782,7 +804,8 @@ def _confirm_image_deny() -> bool:
         return False
     return host_section._gate("Add image_generate to OpenClaw's global tools.deny? This turns the tool off for ALL agents "
                               "(live effect on running sessions: NOT PROVEN).",
-                              "Setup removes only this entry on teardown; your own entries are kept.")
+                              "Setup removes only this entry on teardown; your own entries are kept.",
+                              operator_owned=True, how="run setup interactively (--ask) and answer the question")
 
 
 def _apply_image_deny(s: state.SetupState, *, dry_run: bool = False, gate: Any = None) -> DenyResult:
@@ -873,7 +896,8 @@ def _confirm_replace_image(current: Any, new_ref: str) -> bool:
         ui.warn(f"OpenClaw already has an image model ({shown}); kept (a non-interactive run never replaces it).")
         return False
     return host_section._gate(f"Replace your OpenClaw image model {shown} with {new_ref}?",
-                              "Setup puts your value back on teardown.")
+                              "Setup puts your value back on teardown.",
+                              operator_owned=True, how="run setup interactively (--ask) and answer the question")
 
 
 def _image_sign_in(s: state.SetupState, route: Any, *, dry_run: bool) -> bool:
@@ -1490,16 +1514,19 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     changed = (retired_changed or engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
                or roles_changed or orchestration_changed or worker_changed or skills_changed
                or plugin_changed or scope_changed)
-    if not dry_run and run_changes:
-        host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
     # After every writer: one drained restart clears a stale plugin and an MCP-child overflow together (R5/R7).
     _reconcile_gateway(s, ak_path, dry_run=dry_run)
+    # 3.2.8 (item 2): the post-setup watch starts AFTER that drained window has closed. Started before it, the watch's
+    # first tick found watchdog.off and stood down, and the next run's patch met a gateway that was still restarting.
+    if not dry_run and run_changes:
+        host_section.start_config_watch(s, run_changes, config_path=path, baseline=ctx.get("watch_baseline"))
     # The kit block in every agent workspace does not depend on the engine, on the host section's
     # answers or on openclaw.json having changed: it is refreshed on every run (B1, v1.9.7).
     # Re-read: the kit-role agents added above are not in the snapshot taken before the writers ran, and a block
     # missing from their workspaces would only appear on the next run (a second run must be a no-op).
     _configure_workspace_blocks(s, doc if dry_run else read_config(path), ak_path, ctx.get("gateway_url", ""), written,
                                 dry_run=dry_run, force_default=changed)
+    _offer_stale_telegram_cleanup(s, doc if dry_run else read_config(path), dry_run=dry_run)
     if dry_run or not changed:
         return written
 
@@ -1747,6 +1774,7 @@ def _configure_roles(ctx: dict, s: state.SetupState, doc: dict, ak_path: str, *,
     from .. import cockpit_auth, effort as effort_mod, lanes_render
     enabled = role_providers(s)
     if enabled is None:
+        ui.info(_no_providers_note("Kit-role agents", s))
         return False
     if not enabled:
         ui.info("Kit-role agents: not written, OpenClaw reports no usable provider.")
@@ -1887,7 +1915,7 @@ def _teardown_orchestration(s: state.SetupState, doc: dict) -> bool:
     s_lanes_left = bool(o.lanes_applied)
     o.lanes_applied = {}
     applied = o.role_agents_applied or {}
-    keys = ("allow_agents_added", "allow_agents_absent", "limits_prev", "limits_set")
+    keys = ("allow_agents_added", "allow_agents_absent", "limits_prev", "limits_set", "adopted_lanes")
     if not any(applied.get(k) for k in keys):
         return True
     frag = openclaw_orchestration.restore_fragment(applied, doc)
@@ -2371,6 +2399,31 @@ def _register_plugin_and_backends(s: state.SetupState, ak_path: str) -> bool:
     return False
 
 
+def _restore_engine_key(s: state.SetupState) -> str:
+    """The key of the remembered answer to "Restore the engine it replaced?": the engine the kit applied and a digest of
+    what it replaced, so the answer is asked again only when that underlying state changes."""
+    replaced = json.dumps(s.openclaw.previous or {}, sort_keys=True, default=str)
+    return f"restore-engine:{s.openclaw.model or 'engine'}:{hashlib.sha1(replaced.encode()).hexdigest()[:10]}"
+
+
+def _ask_restore_engine(s: state.SetupState) -> bool:
+    """Ask ONCE whether to restore the engine the kit replaced. A remembered answer is not asked again until the engine
+    or what it replaced changes; a non-interactive run never asks (restoring is the operator's choice: it is listed in
+    the skipped-changes summary with the way to answer)."""
+    key = _restore_engine_key(s)
+    known = ui.remembered(key)
+    if known is not None:
+        return known == "yes"
+    if ui.is_non_interactive():
+        ui.record_skipped("restore the OpenClaw engine the kit replaced", "restoring it is your choice",
+                          "run `ai-resources setup --ask`")
+        return False
+    answer = bool(ui.confirm("The kit configured OpenClaw's engine earlier. Restore the engine it replaced?",
+                             default=False))
+    ui.remember(key, "yes" if answer else "no")
+    return answer
+
+
 def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
                       written: list[Path]) -> bool:
     """Point the default agent at the chosen engine. True when openclaw.json changed."""
@@ -2379,9 +2432,7 @@ def _configure_engine(ctx: dict, doc: dict, path: Path, ak_path: str,
     engine = ENGINES.get(s.openclaw.engine or "keep", ENGINES["keep"])
 
     if engine.id == "keep":
-        if s.openclaw.applied and not dry_run and ui.confirm(
-                "The kit configured OpenClaw's engine earlier. Restore the engine it replaced?",
-                default=False):
+        if s.openclaw.applied and not dry_run and _ask_restore_engine(s):
             return _teardown_engine(s)
         ui.info("OpenClaw: engine left unchanged.")
         return False
@@ -2747,6 +2798,12 @@ def _configure_workspace_blocks(s: state.SetupState, doc: dict, ak_path: str, ga
             ui.warn(f"{ws}: workspace directory does not exist, so no kit block was written "
                     f"(agents: {', '.join(a or 'defaults' for a in slot['aids'])})")
             continue
+        if (checkout := _shared.kit_checkout_root(ws)) is not None:
+            # The kit's own AGENTS.md is tracked and hand-maintained: a block written here only dirties the checkout.
+            ui.detail(f"{ws}: workspace is the kit checkout ({checkout}); the kit block is not written into a "
+                      f"tracked repo file, AGENTS.md there stays as committed "
+                      f"(agents: {', '.join(a or 'defaults' for a in slot['aids'])})")
+            continue
         agents_md = ws / "AGENTS.md"
         if dry_run:
             if _write_workspace_block(s, agents_md, ak_path, gateway_url, kit=True,
@@ -2995,6 +3052,69 @@ def _outside_block(text: str) -> str:
     return "".join(lines[:begin] + lines[end + 1:])
 
 
+def _stale_telegram_line_numbers(text: str, known_ids: "set[str]") -> list[int]:
+    """Indexes of the lines OUTSIDE the managed block that name a Telegram group id the live config does not have."""
+    lines = text.splitlines(keepends=True)
+    begin, end = _shared._managed_block_span(lines)
+    skip = range(begin, end + 1) if begin is not None and end is not None else range(0)
+    return [i for i, line in enumerate(lines)
+            if i not in skip and any(m not in known_ids for m in _CHAT_ID.findall(line))]
+
+
+def _offer_stale_telegram_cleanup(s: state.SetupState, doc: dict, *, dry_run: bool) -> bool:
+    """Telegram is not configured but a workspace AGENTS.md still documents its group ids. Offer ONE cleanup of those
+    lines per file and remember the answer. Lines outside the kit block are the operator's own: a non-interactive run
+    leaves them, lists the skip with the way to answer, and never asks. Workspace AGENTS.md files only, never a kit
+    checkout. True when a file changed."""
+    o = s.openclaw
+    if not doc or host_section.is_telegram_active(o, doc):
+        return False
+    known_ids, _ = _known_routing_text(doc)
+    changed = False
+    for ws in _workspace_targets(doc):
+        agents_md = ws / "AGENTS.md"
+        if not ws.is_dir() or _shared.kit_checkout_root(ws) is not None or not agents_md.is_file():
+            continue
+        # A symlinked AGENTS.md points somewhere this cleanup did not look at, and one that resolves into a kit checkout
+        # is the tracked, hand-maintained file: neither is rewritten (the backup/rename would also replace the link).
+        if agents_md.is_symlink() or _shared.kit_checkout_root(agents_md.resolve()) is not None:
+            continue
+        text = agents_md.read_text(encoding="utf-8", errors="replace")
+        hits = _stale_telegram_line_numbers(text, known_ids)
+        key = f"stale-telegram-lines:{agents_md}"
+        if not hits or ui.remembered(key) in ("removed", "kept"):
+            continue
+        if dry_run:
+            ui.detail(f"Would offer to remove {len(hits)} stale Telegram group-id line(s) from {agents_md}")
+            continue
+        if ui.is_non_interactive():
+            ui.record_skipped(f"remove {len(hits)} stale Telegram group-id line(s) from {agents_md}",
+                              "Telegram is not configured and the lines are yours, outside the kit block",
+                              "run `ai-resources setup --ask`")
+            continue
+        if not ui.confirm(f"{agents_md} documents {len(hits)} Telegram group id(s) the live config does not have "
+                          "(Telegram is not configured). Remove those line(s)? The original is backed up.",
+                          default=False):
+            ui.remember(key, "kept")
+            continue
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = agents_md.with_name(f"{agents_md.name}.ai-resources-backup-{stamp}")
+        shutil.copy2(agents_md, backup)                      # keeps the mode and times of the original
+        lines = text.splitlines(keepends=True)
+        kept = "".join(line for i, line in enumerate(lines) if i not in set(hits))
+        tmp = agents_md.with_name(f".{agents_md.name}.ai-resources-{os.getpid()}.tmp")
+        try:
+            tmp.write_text(kept, encoding="utf-8")
+            shutil.copymode(agents_md, tmp)
+            os.replace(tmp, agents_md)
+        finally:
+            tmp.unlink(missing_ok=True)
+        ui.remember(key, "removed")
+        ui.ok(f"{agents_md}: {len(hits)} stale Telegram line(s) removed; original saved as {backup.name}")
+        changed = True
+    return changed
+
+
 def _verify_config_path() -> Path:
     env = os.environ.get("OPENCLAW_CONFIG_PATH")
     if env:
@@ -3022,9 +3142,12 @@ def _verify_workspace_blocks(doc: dict, o: state.OpenClawState, F: Any) -> list:
     """E1: a recorded managed block that is now gone, or duplicated; stale routing docs outside it."""
     out: list = []
     known_ids, known_text = _known_routing_text(doc)
+    # Telegram is not configured (retired): ids that only Telegram routing used are not a live-config mismatch.
+    # `_offer_stale_telegram_cleanup` (setup) handles those lines once.
+    telegram_gone = not host_section.is_telegram_active(o, doc)
     good = 0
     for ws in _workspace_targets(doc):
-        if not ws.is_dir():
+        if not ws.is_dir() or _shared.kit_checkout_root(ws) is not None:
             continue
         agents_md = ws / "AGENTS.md"
         recorded = str(agents_md) in o.agent_kit_blocks or str(agents_md) in o.host_agents_md_written
@@ -3047,9 +3170,9 @@ def _verify_workspace_blocks(doc: dict, o: state.OpenClawState, F: Any) -> list:
                          "re-run `ai-resources setup` (it repairs the marked block; every byte outside "
                          "the markers is kept)"))
         outside = _outside_block(agents_md.read_text(encoding="utf-8", errors="replace"))
-        stale = sorted({m for m in _CHAT_ID.findall(outside) if m not in known_ids})
-        stale += sorted({f"topic {n}" for n in _TOPIC_REF.findall(outside)
-                         if not re.search(rf"(?<![\w-]){n}(?![\w-])", known_text)})
+        stale = [] if telegram_gone else sorted({m for m in _CHAT_ID.findall(outside) if m not in known_ids})
+        stale += [] if telegram_gone else sorted({f"topic {n}" for n in _TOPIC_REF.findall(outside)
+                                                  if not re.search(rf"(?<![\w-]){n}(?![\w-])", known_text)})
         if re.search(rf"^{re.escape(_shared.OPENCLAW_LONG_RUNNING_HEADING)}[ \t]*$", outside, re.MULTILINE):
             out.append(F("warn", "openclaw",
                          f"{agents_md} repeats the kit section "
@@ -3204,6 +3327,17 @@ CONFIGURE_CONFIRM = ("Hand this terminal to `openclaw configure --section model`
                      "maintenance window if OpenClaw asks.")
 
 
+def _no_providers_note(what: str, s: state.SetupState) -> str:
+    """Why a step that needs OpenClaw's providers is skipped when none are recorded: the sign-in was never read, or the
+    read failed (the reason is named); a truly empty reading is `enabled_providers() == []`, handled by the caller."""
+    from .. import cockpit_auth
+    if cockpit_auth.read_status(s) == "unreadable":
+        why = cockpit_auth.read_reason(s) or "no answer"
+        return (f"{what}: not written, OpenClaw's sign-in could not be read ({why}); re-run `ai-resources setup` "
+                "when `openclaw models status --json` answers.")
+    return f"{what}: not written, OpenClaw's sign-in was never read."
+
+
 def _auth_agent_ids(doc: dict) -> list[str]:
     """The agents whose auth store is read: the operator's own, `main` first. Kit lane and role agents inherit."""
     ids = [a for a in live_openclaw._entries(doc) if not a.startswith("kit-")]
@@ -3212,28 +3346,47 @@ def _auth_agent_ids(doc: dict) -> list[str]:
 
 
 def _live_runner(argv: list[str]) -> tuple[int, str]:
-    return _openclaw(list(argv[1:]), timeout=60)
+    return _openclaw_stdout(list(argv[1:]), timeout=60)
 
 
 def read_live_auth(doc: dict) -> dict:
-    """agent -> provider -> LiveAuth, from OpenClaw's own local auth store (read-only, no gateway call)."""
-    return live_auth.read_openclaw(_live_runner, _auth_agent_ids(doc))
+    """agent -> provider -> LiveAuth, from OpenClaw's own local auth store (read-only, no gateway call). The config's own
+    `auth.profiles` corroborates a provider the CLI cannot confirm."""
+    auth = doc.get("auth") if isinstance(doc, dict) else None
+    profiles = auth.get("profiles") if isinstance(auth, dict) else None
+    return live_auth.read_openclaw(_live_runner, _auth_agent_ids(doc), config_profiles=profiles)
 
 
 def _record_openclaw_auth(s: state.SetupState, live: dict) -> None:
     """Record the providers OpenClaw reports usable, per agent (ids and a method name only). An UNREADABLE OpenClaw
-    changes nothing (it says nothing about usability); a readable one with no usable provider is authoritative: the saved
-    providers are dropped and nothing is routed (AC-10)."""
+    says nothing about usability: the saved providers stay and a `none_usable` persisted by an earlier run is cleared
+    (it can only have come from a misread); the providers the config's own `auth.profiles` corroborate are recorded. A
+    readable one with no usable provider and no config corroboration is authoritative: the saved providers are dropped
+    and nothing is routed (AC-10)."""
     from .. import cockpit_auth
-    if not getattr(live, "readable", True):
-        return
+    readable = getattr(live, "readable", True)
+    corroborated = set(getattr(live, "config_providers", None) or ())
     usable = live_auth.usable_providers(live)
-    cockpit_auth.set_none_usable(s, not usable)
-    cockpit_auth.set_agent_providers(s, {a: sorted(live_auth.usable_providers(live, agent=a)) for a in live})
-    if not usable:
+    if not readable:
+        cockpit_auth.set_none_usable(s, False)
+        cockpit_auth.set_read_status(s, "unreadable", getattr(live, "reason", ""))
+        if usable and corroborated:
+            _record_usable(s, live, usable)
+        return
+    empty = not usable and not corroborated
+    cockpit_auth.set_none_usable(s, empty)
+    cockpit_auth.set_read_status(s, "empty" if empty else "ok")
+    if empty:
+        cockpit_auth.set_agent_providers(s, {a: [] for a in live})
         cockpit_auth.set_providers(s, {})
         cockpit_auth.set_provider_live(s, {})
         return
+    _record_usable(s, live, usable)
+
+
+def _record_usable(s: state.SetupState, live: dict, usable: "set[str]") -> None:
+    from .. import cockpit_auth
+    cockpit_auth.set_agent_providers(s, {a: sorted(live_auth.usable_providers(live, agent=a)) for a in live})
     kinds = {}
     for per in live.values():
         for prov, auth in per.items():
@@ -3248,16 +3401,17 @@ def ask_auth(ui_mod, s: state.SetupState, detected=None, dry_run: bool = False) 
 
     Change hands the terminal to OpenClaw's own `openclaw configure --section model` on an explicit choice only, never in
     a non-interactive run or a dry run, then reads the auth again. The kit stores provider ids and method names only. A
-    non-interactive run keeps the saved providers and runs no command."""
+    non-interactive run (the default `--auto`) still READS the live auth (read-only CLI calls, no gateway call) and records
+    it, so the kit-role, routing, fallback and image steps know what is usable; it asks nothing and runs no sign-in."""
     from .. import cockpit_auth
-    if ui_mod.is_non_interactive():
-        if not cockpit_auth.method(s, "openclaw"):
-            cockpit_auth.set_method(s, "openclaw", "cli")
-        return 0
     doc = read_config(config_path())
     live = read_live_auth(doc)
     _show_live_auth(ui_mod, live)
     _record_openclaw_auth(s, live)
+    if ui_mod.is_non_interactive():
+        if not cockpit_auth.method(s, "openclaw"):
+            cockpit_auth.set_method(s, "openclaw", "cli")
+        return 0
     picked = ui_mod.select(AUTH_PROMPT, [ui_mod.Choice("Keep it", value="keep"),
                                          ui_mod.Choice("Change it with OpenClaw's own flow", value="change")],
                            default="keep")
@@ -3277,7 +3431,8 @@ def ask_auth(ui_mod, s: state.SetupState, detected=None, dry_run: bool = False) 
             live = read_live_auth(read_config(config_path()))
             _show_live_auth(ui_mod, live)
             _record_openclaw_auth(s, live)
-    if getattr(live, "readable", True) and not live_auth.usable_providers(live):
+    if getattr(live, "readable", True) and not live_auth.usable_providers(live) \
+            and not getattr(live, "config_providers", None):
         ui_mod.warn("OpenClaw reports no usable provider sign-in: setup makes no routing, fallback, kit-role or image "
                     "change and leaves your current OpenClaw config untouched. "
                     f"Sign in with `{' '.join(CONFIGURE_ARGV)}`.")
@@ -3288,6 +3443,13 @@ def ask_auth(ui_mod, s: state.SetupState, detected=None, dry_run: bool = False) 
 
 def _show_live_auth(ui_mod, live: dict) -> None:
     """One line per distinct set of providers; agents that share a set are listed together. Names only."""
+    if not getattr(live, "readable", True):
+        why = getattr(live, "reason", "") or "no answer"
+        ui_mod.warn(f"could not read OpenClaw auth ({why}); keeping the saved providers")
+        corroborated = sorted(getattr(live, "config_providers", None) or ())
+        if corroborated:
+            ui_mod.info(f"OpenClaw's own config lists a sign-in for: {', '.join(corroborated)}")
+        return
     groups: dict[tuple, list[str]] = {}
     for agent, per in live.items():
         groups.setdefault(tuple(sorted((p, a.billed_to) for p, a in per.items())), []).append(agent)

@@ -194,7 +194,7 @@ def build_patch(accepted: list[Proposal]) -> tuple[dict, list[str]]:
 def change_records(accepted: list[Proposal]) -> list[dict]:
     """Records for the setup state, shaped like the profile's own, so teardown restores the old values."""
     return [{"path": list(p.path), "previous": p.old if p.had else None, "had": p.had,
-             "action": "forced" if p.had else "filled"} for p in accepted]
+             "action": "forced" if p.had else "filled", "written": p.new} for p in accepted]
 
 
 def pending_entries(accepted: list[Proposal], *, at: str, source: str = "setup") -> list[dict]:
@@ -204,3 +204,34 @@ def pending_entries(accepted: list[Proposal], *, at: str, source: str = "setup")
     changed since."""
     return [{"op": "migration", "id": p.id, "path": p.dotted, "value": p.new, "previous": p.old if p.had else None,
              "had": p.had, "replace": p.replace, "source": source, "at": at} for p in accepted]
+
+
+# Values the kit itself is known to have written per dotted path, for records made before `written` was recorded
+# (3.2.7 and older). Empty on purpose: an old record proves only that the kit touched the path, never what it left there.
+KNOWN_KIT_VALUES: dict[str, tuple] = {}
+
+
+def kit_owned(p: Proposal, *, written_paths=(), written_values: dict | None = None,
+              role_agents: dict | None = None) -> bool:
+    """True when applying `p` only undoes something the kit itself wrote (ADR-0023): the value sits at a path the kit
+    recorded in `host_config_changes` (`written_paths`, dotted) AND is still the value the kit recorded writing
+    (`written_values`, dotted path -> value; an operator edit since makes it theirs). A record without the value (older
+    setup) counts only when the live value is a known kit value (`KNOWN_KIT_VALUES`). Or the proposal removes Opus
+    fallbacks that the kit's own role writer recorded for an agent it created (`role_agents` =
+    `OpenClawState.role_agents_applied`).
+
+    An Opus fallback the operator added to an agent, a value they chose, or anything on an agent the kit did not
+    create stays a proposal. Hot, reversible changes only: the caller still classifies the patch with the reload rules."""
+    if p.dotted in set(written_paths or ()):
+        values = written_values or {}
+        if p.dotted in values:
+            return bool(p.had) and p.old == values[p.dotted]
+        return bool(p.had) and p.old in KNOWN_KIT_VALUES.get(p.dotted, ())
+    if p.id.startswith("cost-fallbacks-no-opus:") and role_agents:
+        name = p.id.split(":", 1)[1]
+        if name not in set(role_agents.get("created_agent_ids") or []):
+            return False
+        ours = set((role_agents.get("fallbacks") or {}).get(name) or [])
+        opus_now = [r for r in (p.old or []) if _is_opus(r)] if isinstance(p.old, list) else []
+        return bool(opus_now) and set(opus_now) <= ours
+    return False

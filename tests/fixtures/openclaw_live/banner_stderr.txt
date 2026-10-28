@@ -1,0 +1,2 @@
+[plugins] gateway token not set; using local auth store
+(node:4242) ExperimentalWarning: SQLite is an experimental feature

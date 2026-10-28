@@ -219,3 +219,49 @@ def test_the_snapshot_probe_includes_the_utility_model_only_when_configured(tmp_
     out = audit_snapshot.run_probes("x", run=run, say=said.append, home=home)
     assert out["utility_model"]["ref"] == "anthropic/m" and out["utility_model"]["status"] == "ok"
     assert calls[-1] == ["openclaw", "infer", "model", "run"] and "REAL model calls" in said[0]
+
+
+# --- 3.2.8 item 5(f): the probe names the real cause of a CLI failure ------------------------------------------------
+
+LIVE = __import__("pathlib").Path(__file__).parent / "fixtures" / "openclaw_live"
+STDERR_LOG = ("[provider-transport-fetch] [model-fetch] response provider=google api=google-generative-ai "
+              "model=gemini-3.8-flash status=200 elapsedMs=2112 dispatcher=new contentType=text/event-stream\n")
+
+
+def test_the_real_shaped_success_with_a_stderr_log_line_is_ok():
+    out = STDERR_LOG + (LIVE / "infer_model_run_ok.json").read_text(encoding="utf-8")
+    assert up.classify("google/gemini-3.8-flash", 0, out).status == "ok"
+
+
+def test_an_ok_that_is_only_in_a_log_line_is_not_an_answer():
+    out = STDERR_LOG.replace("status=200", "status=OK") + '{"ok": true, "outputs": [{"text": "Sure"}]}'
+    assert up.classify("m", 0, out).status == "error"
+
+
+def test_a_maintenance_window_is_named_with_the_one_fix_command():
+    msg = (LIVE / "maintenance_rejection.txt").read_text(encoding="utf-8")
+    r = up.classify("google/gemini-3.8-flash", 1, msg)
+    assert r.status == "error" and "maintenance" in r.detail and "ai-resources setup" in r.detail
+
+
+def test_a_timeout_and_a_missing_cli_say_so():
+    assert "timed out" in up.classify("m", 1, "timed out after 120 seconds").detail
+    assert "not installed" in up.classify("m", 127, "openclaw not found on PATH").detail
+
+
+def test_any_other_failure_carries_the_first_error_line_and_the_command_to_see_it():
+    r = up.classify("google/gemini-3.8-flash", 2, "Error: no API key found for provider google\nstack...")
+    assert "no API key found for provider google" in r.detail and "openclaw infer model run --local" in r.detail
+    assert "the probe could not tell" not in r.detail
+
+
+def test_a_secret_shaped_token_in_the_error_line_is_not_echoed():
+    r = up.classify("m", 2, "Error: bad key AIzaSyA1234567890abcdefghijklmnopqrstuvw")
+    assert "AIzaSy" not in r.detail
+
+
+def test_more_secret_shapes_are_redacted_from_the_error_line():
+    from ai_resources import openclaw_utility_probe as probe
+    for secret in ("oc-abc123_DEF-456", "Bearer abcdefghijkl", "AQ.Ab8RN6Jxyz", "sk-ant-api03-abcdef", "AQ.short"):
+        line = probe._first_error_line(f"Error: request failed for {secret} (401)")
+        assert secret.split()[-1] not in line and "<redacted>" in line, secret

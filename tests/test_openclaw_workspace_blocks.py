@@ -365,3 +365,95 @@ def test_rerendering_the_block_leaves_every_byte_outside_the_markers_alone(sim, 
     openclaw._write_workspace_block(s, target, "/kit", "", kit=True, engine_part=False)
     assert target.read_bytes() == first, "a second render changes nothing"
     assert "AskUserQuestion" in target.read_text(encoding="utf-8")
+
+
+# --- the kit checkout is never a write target (3.2.8) ------------------------------------------------------
+
+def _make_kit_checkout(path: Path) -> Path:
+    """The shape of a kit checkout: a git repo with scripts/ai_resources/ in it."""
+    import subprocess
+    (path / "scripts" / "ai_resources").mkdir(parents=True)
+    (path / "scripts" / "ai_resources" / "__init__.py").write_text("", encoding="utf-8")
+    (path / "AGENTS.md").write_text("# The kit's own instructions\n\nHand-maintained.\n", encoding="utf-8")
+    env = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null", "PATH": "/usr/bin:/bin"}
+    for argv in (["init", "-q"], ["add", "-A"],
+                 ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]):
+        subprocess.run(["git", "-C", str(path), *argv], check=True, env=env, capture_output=True)
+    return path
+
+
+def _git_dirty(path: Path) -> str:
+    import subprocess
+    return subprocess.run(["git", "-C", str(path), "status", "--porcelain"], check=True, capture_output=True,
+                          text=True, env={"GIT_CONFIG_GLOBAL": "/dev/null", "PATH": "/usr/bin:/bin"}).stdout
+
+
+def _point_agent_at(sim, aid: str, ws: Path) -> None:
+    doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
+    doc["agents"]["entries"][aid]["workspace"] = str(ws)
+    sim.cfg.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_a_workspace_that_is_the_kit_checkout_is_skipped_and_stays_clean(sim, script, tmp_path):
+    checkout = _make_kit_checkout(tmp_path / "kit-checkout")
+    before = (checkout / "AGENTS.md").read_bytes()
+    _point_agent_at(sim, "docs", checkout)
+    s = _state()
+    _configure(s)
+    _configure(s)
+    assert (checkout / "AGENTS.md").read_bytes() == before
+    assert _git_dirty(checkout) == ""
+    notes = script.messages("detail") + script.messages("ok") + script.messages("warn")
+    assert any("kit checkout" in m and str(checkout) in m for m in notes)
+    assert not any("kit checkout" in m for m in script.messages("warn")), "not alarming"
+    assert str(checkout / "AGENTS.md") not in s.openclaw.agent_kit_blocks
+
+
+def test_a_subdirectory_of_the_kit_checkout_is_skipped_too(sim, script, tmp_path):
+    checkout = _make_kit_checkout(tmp_path / "kit-checkout")
+    sub = checkout / "docs"
+    sub.mkdir()
+    _point_agent_at(sim, "docs", sub)
+    _configure(_state())
+    assert not (sub / "AGENTS.md").exists()
+    assert _git_dirty(checkout) == ""
+
+
+def test_a_symlink_to_the_kit_checkout_is_skipped_by_its_real_path(sim, script, tmp_path):
+    checkout = _make_kit_checkout(tmp_path / "kit-checkout")
+    link = tmp_path / "ws-link"
+    link.symlink_to(checkout)
+    _point_agent_at(sim, "docs", link)
+    _configure(_state())
+    assert _git_dirty(checkout) == ""
+
+
+def test_an_ordinary_git_workspace_gets_the_block_once_and_stays_clean_after_it_is_committed(sim, script, tmp_path):
+    import subprocess
+    repo = tmp_path / "ordinary-repo"
+    repo.mkdir()
+    (repo / "AGENTS.md").write_text(HAND_SHAPED, encoding="utf-8")
+    env = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null", "PATH": "/usr/bin:/bin"}
+    for argv in (["init", "-q"], ["add", "-A"],
+                 ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]):
+        subprocess.run(["git", "-C", str(repo), *argv], check=True, env=env, capture_output=True)
+    _point_agent_at(sim, "docs", repo)
+    s = _state()
+    _configure(s)
+    text = (repo / "AGENTS.md").read_text(encoding="utf-8")
+    assert _pairs(text) == 1 and outside_block(text) == HAND_SHAPED
+    for argv in (["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "block"]):
+        subprocess.run(["git", "-C", str(repo), *argv], check=True, env=env, capture_output=True)
+    _configure(s)
+    _configure(s)
+    assert _git_dirty(repo) == "", "repeated runs never dirty a git working tree"
+
+
+def test_the_verifier_does_not_ask_for_a_rerun_for_a_checkout_workspace(sim, script, tmp_path):
+    checkout = _make_kit_checkout(tmp_path / "kit-checkout")
+    _point_agent_at(sim, "docs", checkout)
+    s = _state()
+    _configure(s)
+    doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
+    findings = openclaw._verify_workspace_blocks(doc, s.openclaw, lambda *a: a)
+    assert not any(str(checkout) in f[2] for f in findings)

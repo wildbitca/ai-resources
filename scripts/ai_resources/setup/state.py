@@ -385,6 +385,14 @@ class OpenClawState:
     # a planned DISABLE. Never written to the file (`_to_dict` always strips both); no schema bump.
     channels_wanted: list[str] = field(default_factory=list)
     channels_seen: list[str] = field(default_factory=list)
+    # 3.2.8: "ask once" memory, key -> answer (e.g. `route:<channel>:<agent>` -> "routed"). `ui.remembered(key)` /
+    # `ui.remember(key, value)` read and write it once the wizard binds it (`ui.bind_decisions`). Never a secret.
+    # Additive: absent from the file while empty.
+    decisions: dict[str, str] = field(default_factory=dict)
+    # 3.2.8: config patches the gateway refused (offline maintenance) and setup could not apply inside its wait budget:
+    # [{"patch": <the patch object>, "source", "at"}]. `ai-resources openclaw apply-pending` and the next setup apply
+    # them. Never holds a secret value the patch does not already carry in the gateway config. Additive.
+    config_patch_pending: list[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -429,6 +437,11 @@ class SetupState:
 def _to_dict(obj: Any) -> Any:
     if hasattr(obj, "__dataclass_fields__"):
         doc = {k: _to_dict(v) for k, v in asdict(obj).items()}
+        _oc = doc.get("openclaw") if isinstance(obj, SetupState) else doc if isinstance(obj, OpenClawState) else None
+        if isinstance(_oc, dict):
+            for _k in ("decisions", "config_patch_pending"):
+                if not _oc.get(_k):
+                    _oc.pop(_k, None)                      # 3.2.8 additive fields: absent while empty
         if isinstance(obj, SetupState) and not doc.get("cli_team"):
             doc.pop("cli_team", None)                      # additive field: absent until the CLI mode is chosen
         if isinstance(obj, SetupState) and not doc.get("cli_team_api"):

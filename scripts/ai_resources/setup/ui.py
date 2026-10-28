@@ -89,6 +89,73 @@ def is_auto() -> bool:
     return _AUTO
 
 
+# --- gates, skipped changes, verbosity, remembered decisions (3.2.8, ADR-0023) ----------------------------------
+_ACCEPT_GATES = False
+_VERBOSE = False
+_SKIPPED_CHANGES: list[tuple[str, str, str]] = []
+_DECISIONS: dict[str, str] = {}
+
+
+def set_accept_gates(enabled: bool = True) -> None:
+    """Record `setup --accept-gates`: every NON-restarting gate is answered yes (restart-required ones never are)."""
+    global _ACCEPT_GATES
+    _ACCEPT_GATES = enabled
+
+
+def accept_gates() -> bool:
+    return _ACCEPT_GATES
+
+
+def set_verbose(enabled: bool = True) -> None:
+    global _VERBOSE
+    _VERBOSE = enabled
+
+
+def is_verbose() -> bool:
+    return _VERBOSE
+
+
+def record_skipped(what: str, why: str, how_to_finish: str) -> None:
+    """Remember a change setup did not make, so the end of the run lists it once (what, why, the exact way to finish)."""
+    entry = (" ".join(str(what).split()), " ".join(str(why).split()), " ".join(str(how_to_finish).split()))
+    if entry not in _SKIPPED_CHANGES:
+        _SKIPPED_CHANGES.append(entry)
+
+
+def skipped() -> list[tuple[str, str, str]]:
+    return list(_SKIPPED_CHANGES)
+
+
+def clear_skipped() -> None:
+    _SKIPPED_CHANGES.clear()
+
+
+def print_skipped_summary() -> bool:
+    """One block at the end of setup: every skipped change, why, and the command that finishes it. True if printed."""
+    if not _SKIPPED_CHANGES:
+        return False
+    warn(f"{len(_SKIPPED_CHANGES)} change(s) were not made:")
+    for what, why, how in _SKIPPED_CHANGES:
+        detail(f"- {what}: {why}")
+        if how:
+            detail(f"    to finish: {how}")
+    return True
+
+
+def bind_decisions(store: dict[str, str] | None) -> None:
+    """Bind the persisted `decisions` mapping (OpenClawState.decisions) so `remember` writes through to the state."""
+    global _DECISIONS
+    _DECISIONS = store if store is not None else {}
+
+
+def remembered(key: str) -> str | None:
+    return _DECISIONS.get(key)
+
+
+def remember(key: str, value: str) -> None:
+    _DECISIONS[str(key)] = str(value)
+
+
 def _decided(message: str, answer: Any) -> None:
     label = answer if isinstance(answer, str) else ("yes" if answer is True else "no" if answer is False else
                                                     ", ".join(map(str, answer)) if isinstance(answer, list) else

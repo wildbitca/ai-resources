@@ -179,3 +179,110 @@ def test_the_real_runner_turns_a_timeout_or_an_os_error_into_a_failed_status(mon
     assert rc == 1 and "timed out" in text
     _stub_process(monkeypatch, raises=OSError("exec format error"))
     assert REAL_DEFAULT_RUNNER(["x"]) == (1, "exec format error")
+
+
+# --- robust OpenClaw reader (3.2.8 item 3) ---------------------------------------------------------------------------
+
+LIVE = FIX / "openclaw_live"
+LIVE_STATUS = (LIVE / "models_status_live_2026_10_7.json").read_text(encoding="utf-8")
+LIVE_LIST = (LIVE / "auth_list_live_main.json").read_text(encoding="utf-8")
+MAINTENANCE = (LIVE / "maintenance_rejection.txt").read_text(encoding="utf-8")
+BANNER = (LIVE / "banner_stderr.txt").read_text(encoding="utf-8")
+CONFIG_PROFILES = {"anthropic:default": {"provider": "anthropic", "mode": "api_key"},
+                   "google:default": {"provider": "google", "mode": "api_key"}}
+
+
+def _scripted(status, listing):
+    """A runner answering `models status` with `status` and `models auth list` with `listing`, each a (rc, text) or a
+    list of them consumed one per call (the last repeats)."""
+    seqs = {"status": list(status) if isinstance(status, list) else [status],
+            "list": list(listing) if isinstance(listing, list) else [listing]}
+    calls = []
+
+    def run(argv):
+        key = "status" if "status" in argv else "list"
+        calls.append(key)
+        seq = seqs[key]
+        return seq.pop(0) if len(seq) > 1 else seq[0]
+    run.calls = calls
+    return run
+
+
+def _no_sleep(slept=None):
+    return (lambda s: slept.append(s)) if slept is not None else (lambda s: None)
+
+
+def test_the_real_shaped_output_reads_anthropic_google_and_the_agy_lane_for_every_agent():
+    run = _scripted((0, LIVE_STATUS), (0, LIVE_LIST))
+    agents = ["main", "ai", "claude", "devops", "elinvo", "security", "snoutzone"]
+    live = la.read_openclaw(run, agents, sleep=_no_sleep())
+    assert live.readable and not live.reason
+    for a in agents:
+        assert {"anthropic", "google", "agy-cli-lane"} <= set(live[a])
+
+
+def test_banner_text_around_the_json_does_not_hide_the_providers():
+    run = _scripted((0, BANNER + LIVE_STATUS + "\n" + BANNER), (0, BANNER + LIVE_LIST))
+    live = la.read_openclaw(run, ["main"], sleep=_no_sleep())
+    assert live.readable and {"anthropic", "google"} <= set(live["main"])
+
+
+def test_extract_json_prefers_the_object_with_the_expected_keys():
+    text = 'warn {"level": "info"} then ' + LIVE_LIST
+    assert la.extract_json(text, ("profiles",))["agentId"] == "main"
+    assert la.extract_json("no json here", ("profiles",)) is None
+    assert la.extract_json('{"a": 1}', ("profiles",)) == {"a": 1}
+
+
+def test_a_maintenance_rejection_is_unreadable_not_empty_and_is_retried_with_backoff():
+    slept: list = []
+    run = _scripted((1, MAINTENANCE), (1, MAINTENANCE))
+    live = la.read_openclaw(run, ["main"], sleep=_no_sleep(slept))
+    assert live.readable is False and "maintenance" in live.reason
+    assert slept[:3] == [1, 3, 8]
+    assert la.usable_providers(live) == set()
+
+
+def test_a_maintenance_window_that_ends_is_waited_out():
+    slept: list = []
+    run = _scripted([(1, MAINTENANCE), (0, LIVE_STATUS)], [(1, MAINTENANCE), (0, LIVE_LIST)])
+    live = la.read_openclaw(run, ["main"], sleep=_no_sleep(slept))
+    assert live.readable and "anthropic" in live["main"] and slept
+
+
+def test_exit_zero_with_unparseable_output_is_unreadable_not_empty():
+    live = la.read_openclaw(_scripted((0, BANNER), (0, BANNER)), ["main"], sleep=_no_sleep())
+    assert live.readable is False and live.reason
+
+
+def test_a_timeout_is_unreadable():
+    live = la.read_openclaw(_scripted((1, "timed out after 60 seconds"), (1, "timed out after 60 seconds")), ["main"],
+                            sleep=_no_sleep())
+    assert live.readable is False
+
+
+def test_empty_providers_with_a_parsed_answer_is_readable_and_empty():
+    empty = (FIX / "openclaw_models_status" / "empty.json").read_text(encoding="utf-8")
+    live = la.read_openclaw(_scripted((0, empty), (0, json.dumps({"agentId": "main", "profiles": []}))), ["main"],
+                            sleep=_no_sleep())
+    assert live.readable is True and la.usable_providers(live) == set()
+
+
+def test_config_auth_profiles_corroborate_an_unreadable_cli():
+    run = _scripted((1, MAINTENANCE), (1, MAINTENANCE))
+    live = la.read_openclaw(run, ["main", "ai"], sleep=_no_sleep(), config_profiles=CONFIG_PROFILES)
+    assert live.readable is False
+    assert set(live["main"]) == {"anthropic", "google"} and set(live["ai"]) == {"anthropic", "google"}
+    assert live.config_providers == {"anthropic", "google"}
+
+
+def test_config_auth_profiles_fill_a_provider_the_cli_reports_nothing_for():
+    empty = (FIX / "openclaw_models_status" / "empty.json").read_text(encoding="utf-8")
+    run = _scripted((0, empty), (0, json.dumps({"agentId": "main", "profiles": []})))
+    live = la.read_openclaw(run, ["main"], sleep=_no_sleep(), config_profiles=CONFIG_PROFILES)
+    assert live.readable and set(live["main"]) == {"anthropic", "google"}
+
+
+def test_config_profiles_of_an_unknown_mode_do_not_corroborate():
+    assert la.config_providers({"x:default": {"provider": "x", "mode": "bogus"}, "y": "nope"}) == set()
+    assert la.config_providers(CONFIG_PROFILES) == {"anthropic", "google"}

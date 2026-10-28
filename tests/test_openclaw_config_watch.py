@@ -1363,3 +1363,15 @@ def test_a_failed_systemd_run_leaves_a_corrupt_state_file_alone_and_clears_the_r
     assert section.start_config_watch(s, [dict(HOT)]) is False
     assert saves == [1, 1] and s.openclaw.config_watch is None
     assert any("post-setup watch not started" in m for m in script.messages("warn"))
+
+
+# --- FIX2: the watch starts after the drained window of _reconcile_gateway has closed ----------------------------------
+
+def test_the_config_watch_starts_after_the_gateway_reconcile(sim, script, monkeypatch):
+    order: list[str] = []
+    real_reconcile = openclaw._reconcile_gateway
+    monkeypatch.setattr(openclaw, "_reconcile_gateway",
+                        lambda *a, **k: order.append("reconcile") or real_reconcile(*a, **k))
+    monkeypatch.setattr(section, "start_config_watch", lambda *a, **k: order.append("watch"))
+    _run_wizard(_state())
+    assert order == ["reconcile", "watch"]

@@ -104,6 +104,25 @@ def set_none_usable(s: Any, flag: bool) -> None:
         slot.pop("none_usable", None)
 
 
+def set_read_status(s: Any, status: str, reason: str = "") -> None:
+    """How the last live read of OpenClaw's auth ended: "ok", "empty" (readable, nothing usable) or "unreadable"."""
+    slot = _slot(s, "openclaw")
+    slot["read_status"] = status
+    if status == "unreadable" and reason:
+        slot["read_reason"] = reason
+    else:
+        slot.pop("read_reason", None)
+
+
+def read_status(s: Any) -> str:
+    """"" when the live auth was never read."""
+    return str(entry(s, "openclaw").get("read_status") or "")
+
+
+def read_reason(s: Any) -> str:
+    return str(entry(s, "openclaw").get("read_reason") or "")
+
+
 def none_usable(s: Any) -> bool:
     return bool(entry(s, "openclaw").get("none_usable"))
 

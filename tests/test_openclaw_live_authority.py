@@ -3,6 +3,7 @@ routing to nothing; an unreadable one changes nothing; usability is read per age
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ai_resources.setup import cockpit_auth, live_auth, state, ui
 from ai_resources.setup.cockpits import _openclaw_image as img
@@ -106,3 +107,98 @@ def test_the_engine_patch_writes_no_fallbacks_when_nothing_is_usable(monkeypatch
     assert patches
     assert "fallbacks" not in patches[0]["agents"]["defaults"]["model"]
     assert all("fallbacks" not in e.get("model", {}) for e in patches[0]["agents"].get("entries", {}).values())
+
+
+# --- 3.2.8 item 3: unreadable is not empty; config corroboration; auto reads the live auth ---------------------------
+
+def _unreadable(reason="OpenClaw state is in an offline maintenance window", config=()):
+    live = live_auth.LiveReading({"main": {p: live_auth.LiveAuth(live_auth.API_KEY, live_auth.B_API, "API key")
+                                           for p in config}})
+    live.readable, live.reason, live.config_providers = False, reason, set(config)
+    return live
+
+
+def test_an_unreadable_reading_clears_a_none_usable_left_by_an_earlier_run():
+    s = state.SetupState()
+    cockpit_auth.set_none_usable(s, True)
+    oc._record_openclaw_auth(s, _unreadable())
+    assert not cockpit_auth.none_usable(s) and oc.enabled_providers(s) is None
+    assert cockpit_auth.read_status(s) == "unreadable" and "maintenance" in cockpit_auth.read_reason(s)
+
+
+def test_an_unreadable_reading_with_config_profiles_records_them():
+    s = state.SetupState()
+    oc._record_openclaw_auth(s, _unreadable(config=("anthropic", "google")))
+    assert oc.enabled_providers(s, "main") == ["anthropic", "google"]
+
+
+def test_a_readable_empty_reading_with_config_corroboration_is_not_none_usable():
+    s = state.SetupState()
+    live = _reading({"main": []})
+    live.config_providers = {"anthropic"}
+    oc._record_openclaw_auth(s, live)
+    assert not cockpit_auth.none_usable(s)
+
+
+def test_the_unreadable_message_names_the_reason_and_keeps_the_saved_providers():
+    shown = []
+
+    class U:
+        def warn(self, m): shown.append(m)
+        def info(self, m): shown.append(m)
+    oc._show_live_auth(U(), _unreadable())
+    assert shown == ["could not read OpenClaw auth (OpenClaw state is in an offline maintenance window); "
+                     "keeping the saved providers"]
+
+
+def test_kit_role_note_distinguishes_never_read_from_unreadable():
+    s = state.SetupState()
+    assert "never read" in oc._no_providers_note("Kit-role agents", s)
+    oc._record_openclaw_auth(s, _unreadable())
+    assert "could not be read" in oc._no_providers_note("Kit-role agents", s)
+
+
+def _real_shaped_cli(monkeypatch, tmp_path, status_rc=0, status_text=None, banner=""):
+    live = Path(__file__).parent / "fixtures" / "openclaw_live"
+    status = status_text if status_text is not None else (live / "models_status_live_2026_10_7.json").read_text()
+    listing = (live / "auth_list_live_main.json").read_text()
+    cfg = tmp_path / "openclaw.json"
+    cfg.write_text(json.dumps({"agents": {"entries": {"main": {}, "ai": {}}},
+                               "auth": {"profiles": {"anthropic:default": {"provider": "anthropic", "mode": "api_key"}}}}),
+                   encoding="utf-8")
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(cfg))
+    calls = []
+
+    def runner(argv, stdin=None, timeout=120):
+        calls.append(list(argv))
+        if argv[:2] == ["models", "status"]:
+            return status_rc, banner + status
+        if argv[:3] == ["models", "auth", "list"]:
+            return 0, banner + listing
+        return 1, "refused"
+    monkeypatch.setattr(oc, "_openclaw", runner)
+    return calls
+
+
+def test_an_auto_run_reads_and_records_the_live_auth_without_asking(monkeypatch, tmp_path):
+    calls = _real_shaped_cli(monkeypatch, tmp_path)
+    Script().install(monkeypatch, non_interactive=True)
+    s = state.SetupState()
+    assert oc.ask_auth(ui, s, None, False) == 0
+    for agent in ("main", "ai"):
+        assert {"agy-cli-lane", "anthropic", "google"} <= set(oc.enabled_providers(s, agent))
+    assert all(c[0] == "models" for c in calls)                         # read-only: no configure, no write
+
+
+def test_an_auto_run_on_a_maintenance_window_keeps_saved_providers_and_says_why(monkeypatch, tmp_path):
+    from ai_resources.setup import live_auth as la
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    _real_shaped_cli(monkeypatch, tmp_path, status_rc=1,
+                     status_text="OpenClaw state is undergoing offline maintenance; retry when it finishes")
+    script = Script()
+    script.install(monkeypatch, non_interactive=True)
+    s = state.SetupState()
+    cockpit_auth.set_providers(s, {"anthropic": "cli"})
+    cockpit_auth.set_none_usable(s, True)
+    assert oc.ask_auth(ui, s, None, False) == 0
+    assert not cockpit_auth.none_usable(s) and "anthropic" in (oc.enabled_providers(s) or [])

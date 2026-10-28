@@ -293,6 +293,10 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # live unit whether agent turns are running, and a busy host would defer a restart a test
     # expects to happen. The guard's own tests pass a fake probe explicitly.
     monkeypatch.setattr(openclaw_cockpit, "_gateway_busy", lambda: (0, []))
+    # The live-auth reader uses the stdout-only variant of `_openclaw`; here it follows whatever fake a test installs on
+    # `_openclaw` (looked up at call time), so no test reaches the real binary through it.
+    monkeypatch.setattr(openclaw_cockpit, "_openclaw_stdout",
+                        lambda args, timeout=60: openclaw_cockpit._openclaw(args, timeout=timeout), raising=False)
     # And the restart-required gate (ADR-0003): it asks `openclaw --version` and the cgroup. Unstubbed, a fake
     # `_openclaw` would answer no version (so every key reads restart-required) and a real probe would read the
     # live gateway. test_openclaw_restart_gate.py sets both itself.
@@ -494,6 +498,13 @@ def _ui_auto_off():
     # Auto mode is a module global: a test that reaches the wizard's run-mode question without its `finally`
     # would leave it on, and every later prompt in that worker would take its default instead of asking.
     from ai_resources.setup import ui
-    ui.set_auto(False)
+
+    def reset():
+        ui.set_auto(False)
+        ui.set_non_interactive(False)
+        ui.set_assume_yes(False)
+        ui.set_accept_gates(False)
+        ui.set_verbose(False)
+    reset()
     yield
-    ui.set_auto(False)
+    reset()

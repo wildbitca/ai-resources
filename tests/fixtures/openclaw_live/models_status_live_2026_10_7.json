@@ -1,0 +1,230 @@
+{
+ "configPath": "~/.openclaw/openclaw.json",
+ "agentDir": "~/.openclaw/agents/main/agent",
+ "defaultModel": "anthropic/claude-sonnet-5-5",
+ "resolvedDefault": "anthropic/claude-sonnet-5-5",
+ "fallbacks": [
+  "anthropic/claude-haiku-5-5"
+ ],
+ "imageModel": null,
+ "imageFallbacks": [],
+ "utilityModel": {
+  "ref": "google/gemini-3.8-flash",
+  "source": "config"
+ },
+ "aliases": {
+  "opus": "anthropic/claude-opus-5-5",
+  "sonnet": "anthropic/claude-sonnet-5-5",
+  "flash": "google/gemini-3.8-flash"
+ },
+ "allowed": [],
+ "auth": {
+  "storePath": "~/.openclaw/agents/main/agent/openclaw-agent.sqlite",
+  "shellEnvFallback": {
+   "enabled": false,
+   "appliedKeys": []
+  },
+  "providersWithOAuth": [],
+  "missingProvidersInUse": [],
+  "modelRouteIssues": [],
+  "runtimeAuthRoutes": [],
+  "providers": [
+   {
+    "provider": "agy-cli-lane",
+    "effective": {
+     "kind": "profiles",
+     "detail": "~/.openclaw/state/openclaw.sqlite"
+    },
+    "profiles": {
+     "count": 1,
+     "oauth": 0,
+     "token": 0,
+     "apiKey": 1,
+     "labels": [
+      "agy-cli-lane:default=REDACTED"
+     ]
+    },
+    "modelsJson": {
+     "value": "REDACTED",
+     "source": "models.json: ~/.openclaw/agents/main/agent/models.json"
+    }
+   },
+   {
+    "provider": "anthropic",
+    "effective": {
+     "kind": "profiles",
+     "detail": "~/.openclaw/state/openclaw.sqlite"
+    },
+    "profiles": {
+     "count": 1,
+     "oauth": 0,
+     "token": 0,
+     "apiKey": 1,
+     "labels": [
+      "anthropic:default=REDACTED"
+     ]
+    }
+   },
+   {
+    "provider": "google",
+    "effective": {
+     "kind": "profiles",
+     "detail": "~/.openclaw/state/openclaw.sqlite"
+    },
+    "profiles": {
+     "count": 1,
+     "oauth": 0,
+     "token": 0,
+     "apiKey": 1,
+     "labels": [
+      "google:default=REDACTED"
+     ]
+    },
+    "env": {
+     "value": "REDACTED",
+     "source": "env: GEMINI_API_KEY"
+    }
+   },
+   {
+    "provider": "openrouter",
+    "effective": {
+     "kind": "env",
+     "detail": "REDACTED"
+    },
+    "profiles": {
+     "count": 0,
+     "oauth": 0,
+     "token": 0,
+     "apiKey": 0,
+     "labels": []
+    },
+    "env": {
+     "value": "REDACTED",
+     "source": "env: OPENROUTER_API_KEY"
+    }
+   },
+   {
+    "provider": "perplexity",
+    "effective": {
+     "kind": "env",
+     "detail": "REDACTED"
+    },
+    "profiles": {
+     "count": 0,
+     "oauth": 0,
+     "token": 0,
+     "apiKey": 0,
+     "labels": []
+    },
+    "env": {
+     "value": "REDACTED",
+     "source": "env: OPENROUTER_API_KEY"
+    }
+   }
+  ],
+  "unusableProfiles": [],
+  "oauth": {
+   "warnAfterMs": 86400000,
+   "profiles": [
+    {
+     "profileId": "agy-cli-lane:default",
+     "provider": "agy-cli-lane",
+     "type": "api_key",
+     "source": "store",
+     "label": "agy-cli-lane:default",
+     "status": "static"
+    },
+    {
+     "profileId": "anthropic:default",
+     "provider": "anthropic",
+     "type": "api_key",
+     "source": "store",
+     "label": "anthropic:default",
+     "status": "static"
+    },
+    {
+     "profileId": "google:default",
+     "provider": "google",
+     "type": "api_key",
+     "source": "store",
+     "label": "google:default",
+     "status": "static"
+    }
+   ],
+   "providers": [
+    {
+     "provider": "agy-cli-lane",
+     "status": "static",
+     "profiles": [
+      {
+       "profileId": "agy-cli-lane:default",
+       "provider": "agy-cli-lane",
+       "type": "api_key",
+       "source": "store",
+       "label": "agy-cli-lane:default",
+       "status": "static"
+      }
+     ],
+     "effectiveProfiles": [
+      {
+       "profileId": "agy-cli-lane:default",
+       "provider": "agy-cli-lane",
+       "type": "api_key",
+       "source": "store",
+       "label": "agy-cli-lane:default",
+       "status": "static"
+      }
+     ]
+    },
+    {
+     "provider": "anthropic",
+     "status": "static",
+     "profiles": [
+      {
+       "profileId": "anthropic:default",
+       "provider": "anthropic",
+       "type": "api_key",
+       "source": "store",
+       "label": "anthropic:default",
+       "status": "static"
+      }
+     ],
+     "effectiveProfiles": [
+      {
+       "profileId": "anthropic:default",
+       "provider": "anthropic",
+       "type": "api_key",
+       "source": "store",
+       "label": "anthropic:default",
+       "status": "static"
+      }
+     ]
+    },
+    {
+     "provider": "google",
+     "status": "static",
+     "profiles": [
+      {
+       "profileId": "google:default",
+       "provider": "google",
+       "type": "api_key",
+       "source": "store",
+       "label": "google:default",
+       "status": "static"
+      }
+     ],
+     "effectiveProfiles": [
+      {
+       "profileId": "google:default",
+       "provider": "google",
+       "type": "api_key",
+       "source": "store",
+       "label": "google:default",
+       "status": "static"
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

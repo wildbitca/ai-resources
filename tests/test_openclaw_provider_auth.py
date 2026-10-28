@@ -95,13 +95,14 @@ def test_a_missing_openclaw_changes_nothing_and_asks_only_keep_or_change(host, m
     assert [m for m in script.asked if m.startswith("select")] == ["select: OpenClaw sign-in:"]
 
 
-def test_a_non_interactive_run_keeps_the_saved_providers_and_runs_no_command(host, monkeypatch):
+def test_a_non_interactive_run_reads_the_live_auth_read_only_and_never_signs_in(host, monkeypatch):
     quiet = _s()
     cockpit_auth.set_providers(quiet, {"anthropic": "cli"})
     Script().install(monkeypatch, non_interactive=True)
     log = fake_openclaw(monkeypatch)
     assert oc.ask_auth(ui, quiet, None, False) == 0
-    assert log == [] and cockpit_auth.providers(quiet) == {"anthropic": "cli"} and host.handed == []
+    assert log and all(argv[0] == "models" for argv in log) and host.handed == []
+    assert set(cockpit_auth.providers(quiet)) == {"anthropic", "openai"}       # the live reading is recorded
 
 
 def test_cancelling_the_question_is_a_cancel(host, monkeypatch):

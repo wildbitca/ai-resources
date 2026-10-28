@@ -67,6 +67,10 @@ Unattended and preview runs:
   --ask               ask every question; --fresh also starts from empty answers
   --non-interactive   use saved answers, never prompt (a prompt with no default aborts)
   --dry-run           render the targets and print a masked unified diff; nothing is written
+  --accept-gates      yes to kit-owned non-restarting changes plus bindings and the off-box identity (CI); never a
+                      restart-required one (workboard plugin) nor the operator-owned image changes
+  --verbose           list the informational lines setup otherwise counts
+  --patch-wait SECONDS  wait budget for OpenClaw's offline maintenance (default 180, max 900, one budget per run); exit 75 = a patch is pending
 Routing record (the role matrix, ADR-0019): on by default under the recommended run; --lanes records it, --no-lanes clears
 it. --dry-run prints the OpenClaw changes (agents added/changed, allowAgents, limits, kit-lane migration).
 
@@ -115,6 +119,17 @@ def cmd_scorecard(args: argparse.Namespace) -> int:
 def cmd_version(args: argparse.Namespace) -> int:
     print(f"ai-resources {__version__}")
     return 0
+
+
+def _patch_wait(value: str) -> float:
+    """`--patch-wait`: seconds, 0..900 (larger values are capped by the retry module); negatives are an error."""
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a number of seconds")
+    if seconds < 0:
+        raise argparse.ArgumentTypeError("the wait budget cannot be negative")
+    return seconds
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -182,6 +197,18 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Ask every question, starting from empty answers")
     p_st.add_argument("--non-interactive", action="store_true",
                       help="Use saved answers without prompting (for CI)")
+    p_st.add_argument("--accept-gates", dest="accept_gates", action="store_true",
+                      help="Answer yes to the gates that do NOT restart the gateway (kit units, hot config patch, cost "
+                           "values, group bindings, off-box identity), for CI and --non-interactive runs. Never answered: "
+                           "restart-required changes such as the workboard plugin (ADR-0003; they stay pending for "
+                           "`ai-resources openclaw apply-pending`) and the operator-owned image changes (global "
+                           "image_generate deny, replacing your image model)")
+    p_st.add_argument("--verbose", action="store_true",
+                      help="Also list the informational lines setup otherwise counts (keys not sent, channels already routed)")
+    p_st.add_argument("--patch-wait", dest="patch_wait", type=_patch_wait, default=None, metavar="SECONDS",
+                      help="How long setup waits for OpenClaw's state to leave offline maintenance before it records a "
+                           "config patch as pending (default 180, maximum 900; env AI_RESOURCES_PATCH_WAIT_S). One budget for the whole run. A patch still refused "
+                           "makes the run INCOMPLETE and exit 75")
     p_st.add_argument("--profile", default="",
                       help="Skip prompts and use this profile")
     p_st.add_argument("--yes", action="store_true",

@@ -40,12 +40,13 @@ import errno
 import hashlib
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from .. import state, ui
+from .. import patch_retry, state, ui
 from ... import openclaw_host as host
 from ... import openclaw_cost_migrations as cost_migrations
 from ... import openclaw_reload_rules as rr
@@ -76,14 +77,42 @@ def _runner() -> Callable[..., tuple[int, str]]:
     return host.default_runner
 
 
-def _gate(message: str, detail: str = "") -> bool:
-    """Consent for a change to the running gateway: interactive, explicit, default no."""
+GATE_FLAG_HINT = "ai-resources setup --accept-gates (non-restarting changes) or ai-resources setup --ask"
+
+
+def _gate(message: str, detail: str = "", *, kit_owned: bool = False, restart: bool = False,
+          operator_owned: bool = False, how: str = GATE_FLAG_HINT) -> bool:
+    """Consent for a change to the running gateway (ADR-0023).
+
+    Applied without a question when the change is kit-owned (the kit wrote it or it is a kit artifact), reversible
+    (teardown or the state records it) and non-restarting (`kit_owned=True`, the caller classified it hot) and the run
+    is the recommended one (--auto). `--accept-gates` answers yes to every NON-restarting gate; `restart=True` gates
+    are never answered for the operator (ADR-0003), and neither are `operator_owned=True` gates (global effects the
+    operator alone decides: the image tool deny, replacing their image model). --ask: asked, the kit-owned ones default to yes. Anything not
+    applied is recorded with `ui.record_skipped` and listed once at the end of the run."""
+    can_default = kit_owned and not restart
+    if ui.accept_gates() and not restart and not operator_owned:
+        ui.info(f"{' '.join(message.split())[:110]} -> yes (--accept-gates)")
+        return True
     if ui.is_non_interactive():
-        ui.info(f"Skipped (needs an interactive confirm): {message}")
+        answers = "" if restart or operator_owned else " (--accept-gates answers it)"
+        ui.info(f"Skipped (needs an interactive confirm): {message}{answers}")
+        ui.record_skipped(message, "non-interactive run: this change needs a confirm" +
+                          (" (a gateway restart is involved)" if restart else ""), how)
         return False
     if detail:
         ui.detail(detail)
-    return bool(ui.confirm(message, default=False))
+    if ui.is_auto():
+        if can_default:
+            ui.info(f"Applying (kit-owned, reversible, no restart): {message}")
+            return True
+        ui.info(f"Not applied (operator-owned or risky; the recommended run does not decide it): {message}")
+        ui.record_skipped(message, "operator-owned or risky change, not applied in the recommended run", how)
+        return False
+    answer = bool(ui.confirm(message, default=can_default))
+    if not answer:
+        ui.record_skipped(message, "declined", how)
+    return answer
 
 
 def _values(o: state.OpenClawState) -> dict[str, str]:
@@ -291,6 +320,11 @@ def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path],
               config_path: Path, run_changes: list[dict] | None = None) -> bool:
     """Apply what the user chose. True when openclaw.json changed."""
     o = s.openclaw
+    if o.config_patch_pending and not dry_run:
+        # A patch an earlier run could not apply (OpenClaw state in offline maintenance): applied first, same writer.
+        ui.info(f"{len(o.config_patch_pending)} config patch(es) from an earlier run were pending: applying.")
+        if patch_retry.apply_pending_patches(o, apply_patch):
+            ui.ok("the pending config patches were applied")
     if not o.host:
         if applied_any(o) and not dry_run and ui.confirm(
                 "The kit configured this OpenClaw host earlier. Remove what it added and restore what it "
@@ -425,7 +459,7 @@ def _configure_offbox_identity(o: state.OpenClawState, *, dry_run: bool) -> None
     ui.detail(host.OFFBOX_INFRA_NOTE.format(sa=plan["sa"], name=plan["name"]))
     if dry_run:
         return
-    if not _gate("Create the gcloud configuration for the off-box uploader?"):
+    if not _gate("Create the gcloud configuration for the off-box uploader?"):    # identity: operator-owned
         return
     progress: dict = dict(record)
     record = host.offbox_identity_apply(runner, plan, out=ui.error, progress=progress)
@@ -498,8 +532,10 @@ def _configure_units(o: state.OpenClawState, *, dry_run: bool) -> None:
     if hand and ui.is_non_interactive():
         ui.info("A hand-installed openclaw-health-restart timer is present: run setup interactively to adopt it "
                 "(the kit's version never forces a restart over live runs).")
+    # Kit artifacts the kit wrote before (recorded in host_units_previous, removed by teardown), no gateway restart.
     if not _gate("Install the openclaw-* systemd units and enable their timers?",
-                 detail=summary + ": " + ", ".join(changed)):
+                 detail=summary + ": " + ", ".join(changed), kit_owned=True,
+                 how="ai-resources setup --accept-gates, or ai-resources openclaw units install"):
         return
     # Every unit file this run writes is recorded, also the ones `units_state` leaves out while a hand copy of
     # the health-restart pair is present: adoption writes the kit's timer next to a hand `.service`, and
@@ -731,6 +767,32 @@ def _record_route_pending(o: state.OpenClawState, channels: list[str]) -> None:
                                    "source": "setup", "at": _now()})
 
 
+_ALREADY_ROUTED = re.compile(r"^(\S+): already routed to agent (\S+?);")
+
+
+def _report_route_notes(notes: list[str]) -> None:
+    """5(d): a channel that is already routed to some agent is news once. The decision is remembered per
+    (channel, agent) in the setup state; later runs print one compact count line (`--verbose` lists them)."""
+    quiet: list[str] = []
+    for note in notes:
+        m = _ALREADY_ROUTED.match(note)
+        if not m:
+            ui.detail("Haiku notification route: " + note)
+            continue
+        key = f"route:{m.group(1)}:{m.group(2)}"
+        if ui.remembered(key):
+            quiet.append(note)
+        else:
+            ui.detail("Haiku notification route: " + note)
+            ui.remember(key, "already-routed")
+    if quiet:
+        ui.detail(f"Haiku notification route: {len(quiet)} channel(s) already routed to an agent, left as they are"
+                  + ("" if ui.is_verbose() else "; --verbose lists them"))
+        if ui.is_verbose():
+            for note in quiet:
+                ui.detail("  " + note)
+
+
 def _offer_notification_route(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
                               apply_patch: Callable[..., tuple[bool, str]],
                               oc: Callable[..., tuple[int, str]] | None = None) -> bool:
@@ -745,9 +807,7 @@ def _offer_notification_route(o: state.OpenClawState, doc: dict, path: Path, wri
                if isinstance(r, dict) and r.get("kind") == "binding"}
     probe = notif_route.build_plan(doc, sorted(labels), _haiku_ref())
     candidates = [c for c in probe.channels if c not in already]
-    for note in probe.skipped:
-        if note.split(":", 1)[0] not in already:           # a channel the kit routed earlier is not news
-            ui.detail("Haiku notification route: " + note)
+    _report_route_notes([n for n in probe.skipped if n.split(":", 1)[0] not in already])
     if not candidates:
         return False
     if dry_run or ui.is_non_interactive():
@@ -886,16 +946,28 @@ def _offer_cost_migrations(o: state.OpenClawState, doc: dict, path: Path, writte
     ui.info("Lean cost values that differ from what this host has set (nothing is replaced without your confirm):")
     for p in props:
         ui.detail(f"{p.dotted}: {json.dumps(p.old)} -> {json.dumps(p.new)}  ({p.why})")
-    if dry_run or ui.is_non_interactive():
-        ui.info("Not applied (needs an interactive confirm). To apply by hand:")
+    if dry_run:
+        ui.info("Not applied (dry run). To apply by hand:")
         for p in props:
             ui.detail(p.snippet)
         return False
-    accepted = [p for p in props if ui.confirm(
-        f"Replace {p.dotted} ({json.dumps(p.old)} -> {json.dumps(p.new)})? {p.why}.", default=False)]
+    if ui.is_non_interactive() and not ui.accept_gates():
+        ui.info("Not applied (needs an interactive confirm). To apply by hand (or pass --accept-gates):")
+        for p in props:
+            ui.detail(p.snippet)
+    written = [".".join(c["path"]) for c in o.host_config_changes if isinstance(c, dict) and c.get("path")]
+    values = {".".join(c["path"]): c["written"] for c in o.host_config_changes
+              if isinstance(c, dict) and c.get("path") and "written" in c}
+    owned = {p.id for p in props if cost_migrations.kit_owned(p, written_paths=written, written_values=values,
+                                                              role_agents=o.role_agents_applied)}
+    accepted = [p for p in props if _cost_decision(p, p.id in owned)]
     for p in props:
         if p not in accepted:
             ui.detail(f"Kept your value for {p.dotted}. To apply later: {p.snippet}")
+            if ui.is_auto() or ui.is_non_interactive():
+                ui.record_skipped(f"{p.dotted}: {json.dumps(p.old)} -> {json.dumps(p.new)}",
+                                  "operator-set value; a proposal the recommended run does not decide for you",
+                                  p.snippet + " (or ai-resources setup --accept-gates)")
     if not accepted:
         return False
     patch, replace_paths = cost_migrations.build_patch(accepted)
@@ -931,6 +1003,24 @@ def _offer_cost_migrations(o: state.OpenClawState, doc: dict, path: Path, writte
     return True
 
 
+def _cost_decision(p, kit_owned: bool) -> bool:
+    """Whether one cost proposal is applied now (ADR-0023). `--accept-gates` says yes to all of them (the caller still
+    classifies the patch and sends restart-required keys to the pending list). The recommended run applies the
+    kit-owned ones (a value or Opus fallback the kit itself added) and keeps the operator's own; --ask asks, with the
+    kit-owned ones defaulting to yes; --non-interactive asks nothing."""
+    label = f"Replace {p.dotted} ({json.dumps(p.old)} -> {json.dumps(p.new)})? {p.why}."
+    if ui.accept_gates():
+        ui.detail(f"{label} -> yes (--accept-gates)")
+        return True
+    if ui.is_non_interactive():
+        return False
+    if ui.is_auto():
+        if kit_owned:
+            ui.info(f"Applying (kit-owned, reversible, no restart): {label}")
+        return kit_owned
+    return bool(ui.confirm(label, default=kit_owned))
+
+
 def _configure_config_fill(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
                            apply_patch: Callable[..., tuple[bool, str]],
                            oc: Callable[..., tuple[int, str]] | None = None,
@@ -948,8 +1038,11 @@ def _configure_config_fill(o: state.OpenClawState, doc: dict, path: Path, writte
     if built["kept"]:
         ui.info("kept your value: " + ", ".join(built["kept"])
                 + f" (opt back in with `force` in {host.host_overrides_path()})")
-    for note in built["skipped"]:
-        ui.detail(f"Not sent: {note}")
+    if ui.is_verbose():
+        for note in built["skipped"]:
+            ui.detail(f"Not sent: {note}")
+    elif built["skipped"]:
+        ui.detail(f"{len(built['skipped'])} key(s) not sent (not for this host); --verbose lists them")
     for name in host.mcp_latest_findings(doc):
         ui.warn(f"mcp.servers.{name} runs an unpinned package (@latest). The kit will not rewrite it: pin the version by hand.")
     ruleset = rr.current_ruleset(_oc_runner(oc), refresh=True) if oc else None
@@ -981,16 +1074,35 @@ def _configure_config_fill(o: state.OpenClawState, doc: dict, path: Path, writte
         return reverted
 
     applied = False
-    if hot_patch and _gate("Apply this patch to the running gateway's config?",
-                           detail=f"{len(hot_changes)} key(s) change; none of them restarts the gateway. "
-                                  "OpenClaw validated it with --dry-run."):
-        ok, out = apply_patch(hot_patch, replace_paths=hot_rp)
+    # Kit-owned unless the patch REPLACES a value the operator holds (`forced`: their overrides, or the profile's
+    # haiku-primary policy): fills and the removal of retired kit-written values are recorded in host_config_changes
+    # and undone by teardown. When both are present the retired removals go first, as their own kit-owned patch, so a
+    # gated forced value never keeps a harmful kit value in place (ADR-0023).
+    parts: list[tuple[dict, list[str], list[dict], bool, str]] = []
+    retired_paths = list(built.get("retired") or [])
+    if hot_patch and built["forced"] and retired_paths:
+        hot_patch, ret_patch = rr.split_patch(hot_patch, retired_paths)
+        hot_rp, ret_rp = rr.split_replace_paths(hot_rp, retired_paths)
+        hot_changes, ret_changes = rr.split_changes(hot_changes, retired_paths)
+        if ret_patch:
+            parts.append((ret_patch, ret_rp, ret_changes, True,
+                          "Remove the retired kit value(s) from the running gateway's config?"))
+    if hot_patch:
+        parts.append((hot_patch, hot_rp, hot_changes, not built["forced"],
+                      "Apply this patch to the running gateway's config?"))
+    for part_patch, part_rp, part_changes, owned, question in parts:
+        if not _gate(question,
+                     detail=f"{len(part_changes)} key(s) change; none of them restarts the gateway. "
+                            "OpenClaw validated it with --dry-run.",
+                     kit_owned=owned, how="ai-resources setup --accept-gates"):
+            continue
+        ok, out = apply_patch(part_patch, replace_paths=part_rp)
         if not ok:
             ui.error(f"OpenClaw rejected the config patch: {ui.safe_excerpt(out, 400, tail=True)}")
         else:
-            _record_changes(o, hot_changes, run_changes)
+            _record_changes(o, part_changes, run_changes)
             applied = True
-            ui.ok(f"OpenClaw config: {len(hot_changes)} key(s) applied")
+            ui.ok(f"OpenClaw config: {len(part_changes)} key(s) applied")
     if restart_patch and _handle_restart_part(o, restart_patch, restart_rp, restart_changes, source="setup",
                                               apply_patch=apply_patch):
         _record_changes(o, restart_changes, run_changes)
@@ -1085,9 +1197,17 @@ def apply_pending(s: state.SetupState, *, assume_yes: bool = False) -> int:
     from . import openclaw as cockpit
 
     o = s.openclaw
+    patches_ok = True
+    if o.config_patch_pending:
+        # Hot patches OpenClaw refused during offline maintenance (patch_retry): no drained window, same retrying writer.
+        ui.info(f"{len(o.config_patch_pending)} config patch(es) refused earlier during OpenClaw maintenance: applying.")
+        patches_ok = patch_retry.apply_pending_patches(o, cockpit.apply_patch)
+        if patch_retry.exhausted():
+            patch_retry.clear_exhausted()          # they are already in config_patch_pending; do not record them twice
     if not o.host_restart_pending:
-        ui.ok("No restart-required config is pending.")
-        return 0
+        if patches_ok:
+            ui.ok("No restart-required config is pending.")
+        return 0 if patches_ok else patch_retry.EXIT_PATCH_PENDING
     pending = list(o.host_restart_pending)
     leftover: list[dict] = []
     ui.info("Pending restart-required keys: " + ", ".join(sorted({e["path"] for e in pending})))
@@ -1370,7 +1490,9 @@ def _configure_workboard(o: state.OpenClawState, doc: dict, *, dry_run: bool,
     if dry_run:
         ui.detail("Would run `openclaw plugins enable workboard`.")
         return False
-    if not _gate("Enable the workboard plugin (`openclaw plugins enable workboard`)?"):
+    # An operator-visible plugin, and enabling it may reload the gateway (RESTART_NOTE): stays gated.
+    if not _gate("Enable the workboard plugin (`openclaw plugins enable workboard`)?", restart=True,
+                 how="openclaw plugins enable workboard"):
         return False
     rc, out = oc(["plugins", "enable", "workboard"])
     if rc != 0:
@@ -1415,6 +1537,7 @@ def _configure_bindings(o: state.OpenClawState, doc: dict, path: Path, written: 
     if dry_run:
         ui.detail("Dry run accepted by OpenClaw; nothing applied.")
         return False
+    # Bindings decide who may talk to which agent: operator-owned, stays gated.
     if not _gate("Apply the group bindings to the running gateway's config?",
                  detail=f"{len(notes)} binding(s) change. OpenClaw validated it with --dry-run."):
         return False

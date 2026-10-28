@@ -2969,3 +2969,170 @@ def test_host_env_problem_names_an_unwritable_parent(tmp_path):
         assert host.host_env_problem(env) == f"{parent} is not writable, so {env} cannot be replaced"
     finally:
         parent.chmod(0o755)
+
+
+# --- ADR-0023: kit-owned, reversible, non-restarting changes are applied by default in auto mode -----------------------
+
+@pytest.fixture
+def clean_ui(monkeypatch):
+    ui.clear_skipped()
+    ui.set_accept_gates(False)
+    ui.set_verbose(False)
+    ui.bind_decisions(None)
+    yield
+    ui.clear_skipped()
+    ui.set_accept_gates(False)
+    ui.set_verbose(False)
+    ui.bind_decisions(None)
+
+
+def _no_gate_answers(script):
+    for gate in GATES:
+        script.answers.pop(gate, None)          # a gate that is asked now fails the test: "unscripted question"
+    script.answers["Apply in a drained window"] = False   # restart-required: its own prompt, never decided for the operator
+
+
+def test_auto_installs_the_kit_units_without_asking_and_records_what_it_skipped(sim, script, monkeypatch, clean_ui):
+    _no_gate_answers(script)
+    monkeypatch.setattr(ui, "is_auto", lambda: True)
+    s = _state()
+    _run_wizard(s)
+    assert sorted(p.name for p in sim.units.iterdir()) == sorted(host.UNIT_NAMES)
+    assert sim.systemd.enabled == set(host.TIMER_NAMES) and s.openclaw.host_units_applied is True
+    skipped = {what: (why, how) for what, why, how in ui.skipped()}
+    # The workboard plugin and the bindings are operator-owned: not applied in auto, listed with how to finish.
+    wb = [k for k in skipped if "workboard plugin" in k]
+    assert wb and "operator-owned" in skipped[wb[0]][0] and "plugins enable workboard" in skipped[wb[0]][1]
+    assert not any(a[:2] == ["plugins", "enable"] for a, _ in sim.oc.calls)
+
+
+def test_auto_removes_the_retired_kit_value_but_not_a_patch_that_replaces_an_operator_value(sim, script, monkeypatch,
+                                                                                          clean_ui):
+    _no_gate_answers(script)
+    monkeypatch.setattr(ui, "is_auto", lambda: True)
+    from ai_resources import model_pins
+    retired = f"anthropic/{model_pins.effective()['sonnet']}"
+
+    def plant():
+        doc = json.loads(sim.cfg.read_text(encoding="utf-8"))
+        doc["agents"]["defaults"].setdefault("subagents", {})["model"] = retired
+        sim.cfg.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    plant()
+    s = _state()
+    _run_wizard(s)               # force:* fixture: the rest of the patch replaces operator values -> stays gated ...
+    assert any("Apply this patch to the running gateway's config" in w for w, _y, _h in ui.skipped())
+    assert not any("Remove the retired" in w for w, _y, _h in ui.skipped())
+    # ... but the harmful kit-written value is gone, as its own kit-owned patch, and recorded so teardown can undo it
+    assert "model" not in (json.loads(sim.cfg.read_text(encoding="utf-8"))["agents"]["defaults"].get("subagents") or {})
+    assert any(c["action"] == "retired" for c in s.openclaw.host_config_changes)
+    ui.clear_skipped()
+    sim.overrides_file.unlink()                      # fill-only: the same removal, nothing of the operator's replaced
+    plant()
+    _run_wizard(_state())
+    assert "model" not in (json.loads(sim.cfg.read_text(encoding="utf-8"))["agents"]["defaults"].get("subagents") or {})
+
+
+def test_non_interactive_skips_with_a_reason_and_accept_gates_applies_the_non_restarting_ones(sim, script, clean_ui):
+    _no_gate_answers(script)
+    script.non_interactive = True
+    _run_wizard(_state())
+    assert not sim.units.exists() or not list(sim.units.iterdir())
+    assert any("Install the openclaw-*" in w and "--accept-gates" in h for w, _y, h in ui.skipped())
+    ui.clear_skipped()
+    ui.set_accept_gates(True)
+    s = _state()
+    _run_wizard(s)
+    assert sorted(p.name for p in sim.units.iterdir()) == sorted(host.UNIT_NAMES)
+    # gateway.bind is restart-required: --accept-gates never answers it; it stays pending (ADR-0003)
+    assert not any(a == ["config", "patch", "--stdin"] and p and "gateway" in p and "bind" in (p["gateway"] or {})
+                   for a, p in sim.oc.real_patches())
+    assert any(e.get("path") == "gateway.bind" for e in s.openclaw.host_restart_pending)
+
+
+def test_gate_never_answers_a_restart_gate(monkeypatch, clean_ui):
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "is_auto", lambda: True)
+    ui.set_accept_gates(True)
+    assert section._gate("restart the gateway?", kit_owned=True, restart=True) is False
+    assert any("restart the gateway?" in w for w, _y, _h in ui.skipped())
+    assert section._gate("hot change", kit_owned=False) is True          # --accept-gates: every non-restarting gate
+
+
+def test_ask_mode_defaults_kit_owned_gates_to_yes(monkeypatch, clean_ui):
+    seen = []
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "is_auto", lambda: False)
+    monkeypatch.setattr(ui, "confirm", lambda m, default=True, recommended=None: seen.append(default) or default)
+    assert section._gate("kit thing", kit_owned=True) is True
+    assert section._gate("operator thing", kit_owned=False) is False
+    assert seen == [True, False]
+
+
+def test_kit_owned_cost_migrations_apply_in_auto_and_operator_values_stay_proposals(sim, script, monkeypatch, clean_ui):
+    from ai_resources import openclaw_cost_migrations as cm
+    doc = {"agents": {"entries": {
+        "kit-role-verifier": {"model": {"primary": "anthropic/claude-sonnet-5-5",
+                                        "fallbacks": ["anthropic/claude-opus-5-5"]}},
+        "app": {"model": {"primary": "anthropic/claude-sonnet-5-5", "fallbacks": ["anthropic/claude-opus-5-5"]}}}}}
+    props = {p.id: p for p in cm.proposals(doc)}
+    verifier, app = props["cost-fallbacks-no-opus:kit-role-verifier"], props["cost-fallbacks-no-opus:app"]
+    ours = {"created_agent_ids": ["kit-role-verifier"],
+            "fallbacks": {"kit-role-verifier": ["anthropic/claude-opus-5-5"]}}
+    assert cm.kit_owned(verifier, role_agents=ours) is True
+    assert cm.kit_owned(app, role_agents=ours) is False                     # the operator's own escalation
+    assert cm.kit_owned(verifier, role_agents={"created_agent_ids": ["kit-role-verifier"],
+                                               "fallbacks": {"kit-role-verifier": []}}) is False   # not kit-written
+    monkeypatch.setattr(ui, "is_auto", lambda: True)
+    assert section._cost_decision(verifier, True) is True
+    assert section._cost_decision(app, False) is False
+    ui.set_accept_gates(True)
+    assert section._cost_decision(app, False) is True
+
+
+def test_route_notes_are_printed_once_then_counted(monkeypatch, clean_ui):
+    lines = []
+    monkeypatch.setattr(ui, "detail", lines.append)
+    store: dict[str, str] = {}
+    ui.bind_decisions(store)
+    notes = [f"C0{i}: already routed to agent main; change that binding by hand to use it" for i in range(9)]
+    section._report_route_notes(notes)
+    assert len([l for l in lines if "already routed to agent main" in l]) == 9 and len(store) == 9
+    lines.clear()
+    section._report_route_notes(notes)                      # a second run: one compact line, no per-channel lines
+    assert len(lines) == 1 and "9 channel(s) already routed" in lines[0] and "--verbose" in lines[0]
+    lines.clear()
+    ui.set_verbose(True)
+    section._report_route_notes(notes)
+    assert len(lines) == 1 + 9
+
+
+def test_accept_gates_never_enables_the_workboard_plugin(sim, script, clean_ui, monkeypatch):
+    """B3: `plugins enable workboard` may reload the gateway; the real call site marks its gate restart=True."""
+    _no_gate_answers(script)
+    script.non_interactive = True
+    ui.set_accept_gates(True)
+    seen = []
+    real = section._gate
+
+    def spy(message, *a, **kw):
+        seen.append((message, kw))
+        return real(message, *a, **kw)
+    monkeypatch.setattr(section, "_gate", spy)
+    _run_wizard(_state())
+    wb = [kw for m, kw in seen if "workboard plugin" in m]
+    assert wb and all(kw.get("restart") is True for kw in wb)
+    assert not any(a[:2] == ["plugins", "enable"] for a, _ in sim.oc.calls)
+
+
+def test_accept_gates_never_answers_the_operator_owned_image_gates(monkeypatch, clean_ui):
+    """B3: turning image_generate off for ALL agents / replacing the image model are the operator's call."""
+    monkeypatch.setattr(ui, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(ui, "is_assume_yes", lambda: False)
+    monkeypatch.setattr(ui, "stdin_is_a_terminal", lambda: True)
+    monkeypatch.setattr(ui, "is_auto", lambda: True)
+    ui.set_accept_gates(True)
+    assert openclaw._confirm_image_deny() is False
+    assert openclaw._confirm_replace_image({"primary": "x/y"}, "google/z") is False
+    assert any("image_generate" in w for w, _y, _h in ui.skipped())
+    assert section._gate("a hot change", kit_owned=False) is True              # bindings/identity: still answered
+    assert section._gate("operator thing", operator_owned=True) is False

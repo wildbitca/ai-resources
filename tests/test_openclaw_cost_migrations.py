@@ -317,5 +317,81 @@ def test_pending_entries_carry_no_secret_and_the_expected_shape():
     assert e == {"op": "migration", "id": "x", "path": "a.b", "value": "new", "previous": "old", "had": True,
                  "replace": True, "source": "setup", "at": "T"}
     q = cm.Proposal("y", ("a",), None, "0m", "why", had=False)
-    assert cm.change_records([q]) == [{"path": ["a"], "previous": None, "had": False, "action": "filled"}]
-    assert cm.change_records([p]) == [{"path": ["a", "b"], "previous": "old", "had": True, "action": "forced"}]
+    assert cm.change_records([q]) == [{"path": ["a"], "previous": None, "had": False, "action": "filled", "written": "0m"}]
+    assert cm.change_records([p]) == [{"path": ["a", "b"], "previous": "old", "had": True, "action": "forced",
+                                         "written": "new"}]
+
+
+def test_an_operator_edit_after_the_kit_wrote_the_key_is_not_kit_owned():
+    """B4: the path alone no longer decides; the value the kit wrote is recorded and must still be there."""
+    p = cm.Proposal("cost-thinking-default-low", ("agents", "defaults", "thinkingDefault"), "high", "low", "why")
+    path = "agents.defaults.thinkingDefault"
+    assert cm.kit_owned(p, written_paths=[path], written_values={path: "high"}) is True
+    assert cm.kit_owned(p, written_paths=[path], written_values={path: "medium"}) is False   # operator edited it since
+    assert cm.kit_owned(p, written_paths=[path]) is False                      # old record without the value
+    assert cm.kit_owned(p, written_paths=[]) is False
+
+
+def test_an_old_record_is_kit_owned_only_when_the_live_value_is_a_known_kit_value(monkeypatch):
+    path = "agents.defaults.thinkingDefault"
+    monkeypatch.setitem(cm.KNOWN_KIT_VALUES, path, ("high",))
+    p = cm.Proposal("cost-thinking-default-low", ("agents", "defaults", "thinkingDefault"), "high", "low", "why")
+    assert cm.kit_owned(p, written_paths=[path]) is True
+    q = cm.Proposal("cost-thinking-default-low", ("agents", "defaults", "thinkingDefault"), "xhigh", "low", "why")
+    assert cm.kit_owned(q, written_paths=[path]) is False
+
+
+def test_change_records_carry_the_written_value():
+    p = cm.Proposal("cost-thinking-default-low", ("agents", "defaults", "thinkingDefault"), "high", "low", "why")
+    [rec] = cm.change_records([p])
+    assert rec["written"] == "low"
+
+
+# --- FIX2 (verifier findings) -----------------------------------------------------------------------------------------
+
+def test_not_sent_lines_are_listed_only_in_verbose_mode(sim, script):
+    from ai_resources.setup import ui
+    _run_wizard(_state())
+    quiet = script.messages("detail")
+    assert not any(m.startswith("Not sent:") for m in quiet)
+    assert any("key(s) not sent (not for this host); --verbose lists them" in m for m in quiet)
+    script.log.clear()
+    ui.set_verbose(True)
+    sim.cfg.write_bytes(sim.original_config)
+    _run_wizard(_state())
+    loud = script.messages("detail")
+    assert any(m.startswith("Not sent:") for m in loud)
+    assert not any("--verbose lists them" in m for m in loud)
+
+
+def _fallback_patches(sim):
+    """(agent id, fallbacks sent) for every real patch that sets `agents.entries.<id>.model.fallbacks`."""
+    out = []
+    for _a, patch in sim.oc.real_patches():
+        for name, entry in (((patch or {}).get("agents") or {}).get("entries") or {}).items():
+            model = (entry or {}).get("model") or {}
+            if "fallbacks" in model:
+                out.append((name, model["fallbacks"]))
+    return out
+
+
+def test_auto_run_removes_the_opus_fallback_of_a_recorded_kit_role_agent_and_keeps_the_operators(sim, script):
+    from ai_resources.setup import ui
+    shape = {"model": {"primary": "anthropic/claude-sonnet-5-5",
+                       "fallbacks": ["anthropic/claude-opus-5-5", "anthropic/claude-haiku-5-5"]}}
+    doc = _live(sim)
+    doc["agents"]["entries"]["kit-role-verifier"] = json.loads(json.dumps(shape))
+    doc["agents"]["entries"]["operator-agent"] = json.loads(json.dumps(shape))
+    sim.cfg.write_text(json.dumps(doc), encoding="utf-8")
+    s = _state()
+    # what openclaw_roles.py records after it wrote the role agents: created ids and the fallbacks it set
+    s.openclaw.role_agents_applied = {"created_agent_ids": ["kit-role-verifier"],
+                                      "fallbacks": {"kit-role-verifier": list(shape["model"]["fallbacks"])}}
+    ui.set_auto(True)
+    _run_wizard(s)
+    sent = dict(_fallback_patches(sim))
+    assert sent.get("kit-role-verifier") == ["anthropic/claude-haiku-5-5"]
+    assert "operator-agent" not in sent
+    live = _cfg(sim)["agents"]["entries"]
+    assert live["kit-role-verifier"]["model"]["fallbacks"] == ["anthropic/claude-haiku-5-5"]
+    assert live["operator-agent"]["model"]["fallbacks"] == shape["model"]["fallbacks"]

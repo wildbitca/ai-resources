@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.8] — 2026-10-28 — One setup run leaves the host correct
+
+See ADR-0022 (kit-lane adoption), ADR-0023 (auto gates) and docs/runbooks/setup-incomplete-and-skipped.md.
+
+- feat(setup): in `--auto` a change that is kit-owned, reversible and non-restarting is applied by default (the `openclaw-*` units and timers, the retired `agents.defaults.subagents.model`, kit-owned cost values, the `kit-role-verifier` Opus escalation the kit added). `--accept-gates` answers yes to every non-restarting gate for CI; it never answers a restart-required one (ADR-0003). Every skipped gate is listed at the end of the run with its reason and the command to finish.
+- fix(setup): a config patch rejected for "offline maintenance" is retried with short backoff (2, 4, 8, 15, 30 s; 180 s total, `--patch-wait` / `AI_RESOURCES_PATCH_WAIT_S`), then stored as a pending patch (`apply-pending` and the next setup apply it). An unapplied patch ends the run INCOMPLETE with exit code 75 and the one-line command to finish; "Setup complete" is no longer printed. The post-setup watch now starts after the drained reconcile, so it no longer opens a window the next patch meets.
+- fix(auth): the OpenClaw sign-in reader parses stdout only, extracts the JSON object that has the expected keys, retries a maintenance rejection, tells unreadable from empty, and corroborates with the config's `auth.profiles`. A failed read no longer persists "no usable provider", which had blocked kit-role agents, routing, fallbacks and image changes. `--auto` reads the live auth too.
+- fix(lanes): setup adopts the `kit-lane-*` agents whose config has the legacy writer's shape (fill-only: the lane's own `subagents.model`, runtime pin, catalog slug, orchestrator `allowAgents`), records it and tears it down safely. A spawn override that still beats a lane's own model is named once.
+- fix(warnings): no stale Telegram routing warning when Telegram is retired (an `--ask` cleanup of the stale lines is offered once); "Restore the engine it replaced?" and each "already routed to agent X" decision are asked once and remembered; `Not sent:` lines only with `--verbose`; the utility-model probe parses the real reply and names its failure cause.
+- fix(doctor): every issue has a stable name and a `fixed by: setup | operator (command)` label; the banner counts open issues only and says "re-run setup" only when one is setup-fixable; the litellm key check runs only in multi-model mode.
+- fix(setup): setup never writes into the kit repo checkout (an agent workspace that is the checkout is skipped), so a run no longer dirties the repo's `AGENTS.md`.
+
 ## [3.2.7] — 2026-10-28 — Lane agents keep their own model
 
 - fix(host): the profile no longer writes `agents.defaults.subagents.model`. OpenClaw resolves a spawn's model as the target's `subagents.model`, then `defaults.subagents.model`, then the target's primary, so the Sonnet default overrode the target on every cross-agent `sessions_spawn` (`kit-lane-agy-*` and `kit-lane-cli-*` all ran `claude-cli/claude-sonnet-5-5`).

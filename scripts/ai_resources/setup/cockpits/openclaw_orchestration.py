@@ -12,7 +12,11 @@ What it writes, and only this, always through the validated `openclaw config pat
   memory), not by a hard agent count. Collisions between teams are prevented where the work happens
   (per-run ids and directories, `scope_guard` claims), not by limiting how many run;
 * the retirement of the old by-model `kit-lane-*` agents (`migrate_kit_lanes`): only an agent setup created, that nothing
-  references, is removed; anything else is kept and reported with the reason.
+  references, is removed; anything else is kept and reported with the reason;
+* the ADOPTION of the by-model lanes an earlier setup wrote and whose record is gone (`adoptable_lanes`, ADR-0022): a
+  `kit-lane-*` agent in the old writer's exact shape is managed, never retired, and only filled: the spawn model pin
+  (`subagents.model` = its own model), the `claude-cli` pin of its Anthropic refs, the catalog slug of an agy ref and the
+  orchestrators' `allowAgents` entry. Nothing an operator set is changed.
 
 Setup never spawns a session and never calls the live gateway. Teardown removes only what `role_agents_applied` records.
 """
@@ -27,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from .. import ui
+from . import openclaw_agy
 
 LANE_PREFIX = "kit-lane-"
 ROLE_PREFIX = "kit-role-"
@@ -187,13 +192,107 @@ def live_referenced(doc: Mapping[str, Any], recorded: Mapping[str, Any], *, stat
     return check
 
 
+LANE_DIR = "kit-lanes"
+CLI_RUNTIME = "claude-cli"
+
+
+def _primary(model: Any) -> str:
+    if isinstance(model, Mapping):
+        model = model.get("primary")
+    return model if isinstance(model, str) else ""
+
+
+def _chain(model: Any) -> list[str]:
+    fb = model.get("fallbacks") if isinstance(model, Mapping) else None
+    return [r for r in [_primary(model), *(fb if isinstance(fb, list) else [])] if isinstance(r, str) and r]
+
+
+def is_legacy_lane(aid: str, entry: Any) -> bool:
+    """A `kit-lane-*` entry in the exact shape the old by-model writer produced: the name and identity are the id, the
+    workspace is `<...>/kit-lanes/<id>` and the entry has a primary model. An agent the operator made by hand, or one
+    that was edited away from that shape, does not match and stays unmanaged."""
+    if not (isinstance(aid, str) and aid.startswith(LANE_PREFIX) and isinstance(entry, Mapping)):
+        return False
+    ws = entry.get("workspace")
+    ident = entry.get("identity")
+    return (entry.get("name") == aid and isinstance(ws, str) and Path(ws).name == aid
+            and Path(ws).parent.name == LANE_DIR and _primary(entry.get("model")) != ""
+            and (not isinstance(ident, Mapping) or ident.get("name") in (None, aid)))
+
+
+def adoptable_lanes(doc: Mapping[str, Any], recorded: Mapping[str, Any]) -> list[str]:
+    """Lanes setup manages without having created them: in the old writer's shape and not in `created_agent_ids` (those
+    follow the retirement path)."""
+    created = set(recorded.get("created_agent_ids") or [])
+    return sorted(a for a, e in _entries(doc).items() if a not in created and is_legacy_lane(a, e))
+
+
+def adoption_patch(doc: Mapping[str, Any], adopted: Iterable[str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(fill-only patch, {id: what it added}) for the adopted lanes.
+
+    * `subagents.model` = the lane's own model when absent: OpenClaw resolves a spawn as `<target>.subagents.model`, then
+      `agents.defaults.subagents.model`, then the target's own model (and a requester's model when the spawn inherits
+      one), so the pin makes the lane land on its own model whatever the defaults say;
+    * the `claude-cli` runtime pin of an Anthropic ref of the chain that lacks it, only when a sibling ref already pins
+      it (the lane is a CLI lane); a lane with no pin at all is left alone;
+    * the `agy-cli-lane` catalog slug of an agy ref (a spawn is refused `Unknown model` without it)."""
+    entries = _entries(doc)
+    patch: dict[str, Any] = {}
+    filled: dict[str, Any] = {}
+    slugs: list[str] = []
+    for aid in sorted(set(adopted)):
+        ent = entries.get(aid)
+        if not isinstance(ent, Mapping):
+            continue
+        add: dict[str, Any] = {}
+        model = ent.get("model")
+        if _get(ent, "subagents", "model") is None and model is not None:
+            patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {}).setdefault(
+                "subagents", {})["model"] = copy.deepcopy(model)
+            add["subagents_model"] = copy.deepcopy(model)
+        own = ent.get("models") if isinstance(ent.get("models"), Mapping) else {}
+        if any(_get(v, "agentRuntime", "id") == CLI_RUNTIME for v in own.values()):
+            for ref in _chain(model):
+                if ref.startswith("anthropic/") and not _get(own.get(ref), "agentRuntime", "id"):
+                    patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {}).setdefault(
+                        "models", {})[ref] = {"agentRuntime": {"id": CLI_RUNTIME}}
+                    add.setdefault("pins", []).append(ref)
+        slugs += [r.split("/", 1)[1] for r in _chain(model) if openclaw_agy.is_agy_ref(r)]
+        if add:
+            filled[aid] = add
+    stub = openclaw_agy.stub_patch_for_slugs(slugs, doc)
+    if stub:
+        patch.setdefault("models", {}).setdefault("providers", {})[openclaw_agy.STUB_PROVIDER] = stub
+    return patch, filled
+
+
+def audit_spawn_models(doc: Mapping[str, Any], ids: Iterable[str]) -> dict[str, tuple[str, str]]:
+    """{id: (layer, model)}: the model a `sessions_spawn` to each id resolves to and the config layer it comes from, in
+    OpenClaw's order: the target's `subagents.model`, `agents.defaults.subagents.model`, the target's own model."""
+    entries = _entries(doc)
+    out: dict[str, tuple[str, str]] = {}
+    for aid in sorted(set(ids)):
+        ent = entries.get(aid) or {}
+        if (m := _primary(_get(ent, "subagents", "model"))):
+            out[aid] = ("agent subagents.model", m)
+        elif (m := _primary(_get(doc, "agents", "defaults", "subagents", "model"))):
+            out[aid] = ("agents.defaults.subagents.model", m)
+        else:
+            out[aid] = ("own model", _primary(ent.get("model")))
+    return out
+
+
 def plan_kit_lanes(doc: Mapping[str, Any], recorded: Mapping[str, Any], referenced: Referenced
                    ) -> tuple[list[str], dict[str, str]]:
-    """(removable ids, {kept id: reason}). Removable = created by setup (recorded) AND referenced by nothing."""
+    """(removable ids, {kept id: reason}). Removable = created by setup (recorded) AND referenced by nothing.
+    An adoptable lane is managed, neither removed nor reported."""
     created = set(recorded.get("created_agent_ids") or [])
+    adoptable = set(adoptable_lanes(doc, recorded))
     removable: list[str] = []
     kept: dict[str, str] = {}
     for aid in sorted(a for a in _entries(doc) if isinstance(a, str) and a.startswith(LANE_PREFIX)):
+        if aid in adoptable:
+            continue
         if aid not in created:
             kept[aid] = "not created by setup"
         elif why := referenced(aid):
@@ -278,6 +377,8 @@ def migrate_kit_lanes(s: Any, doc: Mapping[str, Any], *, referenced: Referenced,
     added = {o_: [a for a in ids if a not in gone] for o_, ids in (recorded.get("allow_agents_added") or {}).items()}
     left["allow_agents_added"] = {k: v for k, v in added.items() if v}
     o.lanes_applied = {} if not left["created_agent_ids"] else {k: v for k, v in left.items() if v}
+    if recorded.get("adopted_agent_ids"):
+        o.lanes_applied = {**o.lanes_applied, "adopted_agent_ids": list(recorded["adopted_agent_ids"])}
     if removed:
         info("kit-lane agents removed: " + ", ".join(removed))
     return removed, kept
@@ -299,9 +400,12 @@ def configure(s: Any, doc: Mapping[str, Any], *, kit_ids: Iterable[str], referen
     o = s.openclaw
     lanes = s.profile.lanes if isinstance(getattr(s.profile, "lanes", None), dict) else {}
     orchestrators = orchestrator_ids(doc, lanes.get("orchestrators") or [], lanes.get("orchestrators_exclude") or [])
-    ids = kit_role_ids(doc, kit_ids)
+    adopted = adoptable_lanes(doc, o.lanes_applied or {})
+    ids = sorted(set(kit_role_ids(doc, kit_ids)) | set(adopted))
     plan = plan_changes(doc, ids, orchestrators, o.lanes_applied or {}, referenced)
     if dry_run:
+        if adopted:
+            info("Orchestration (dry run): kit-lane agents adopted: " + ", ".join(adopted))
         for line in plan.lines():
             info("Orchestration (dry run): " + line)
         return False
@@ -311,6 +415,9 @@ def configure(s: Any, doc: Mapping[str, Any], *, kit_ids: Iterable[str], referen
     lim = limits_patch(doc)
     if lim:
         patch = _merge(patch, lim)
+    adopt_patch, filled = adoption_patch(doc, adopted)
+    if adopt_patch:
+        patch = _merge(patch, adopt_patch)
     if patch:
         ok, out = apply_patch(patch, dry_run=True)
         if not ok:
@@ -334,6 +441,8 @@ def configure(s: Any, doc: Mapping[str, Any], *, kit_ids: Iterable[str], referen
             if _get(_entries(doc).get(orch), "subagents", "allowAgents") is None:
                 absent.add(orch)
             added[orch] = sorted(set(added.get(orch, [])) | set(ids_))
+        if filled:
+            recorded["adopted_lanes"] = _merge(recorded.get("adopted_lanes") or {}, filled)
         prev = dict(recorded.get("limits_prev") or {})
         for key, (old, _new) in plan.limits.items():
             prev.setdefault(key, old)
@@ -344,6 +453,20 @@ def configure(s: Any, doc: Mapping[str, Any], *, kit_ids: Iterable[str], referen
         info("Orchestration applied: " + "; ".join(plan.lines()))
     # the migration works on the config after the wiring above (the ids are still listed where setup added them)
     after = _merge(doc, patch) if patch else doc
+    if adopted:
+        o.lanes_applied = {**(o.lanes_applied or {}),
+                           "adopted_agent_ids": sorted(set((o.lanes_applied or {}).get("adopted_agent_ids") or []) | set(adopted))}
+        agy_lanes = [a for a in adopted if any(openclaw_agy.is_agy_ref(r) for r in _chain(_get(_entries(after), a, "model")))]
+        agy_bin = _get(after, "plugins", "entries", "ai-resources", "config", "agyBin")
+        if agy_lanes and not (isinstance(agy_bin, str) and agy_bin.startswith("/")):
+            warn("kit-lane agy agents (" + ", ".join(agy_lanes) + ") would reach the catalog stub "
+                 f"{openclaw_agy.STUB_BASE_URL} and be refused: plugins.entries.ai-resources.config.agyBin is not an "
+                 "absolute path, so the agy-cli-lane backend is not registered")
+        for aid, (layer, model) in audit_spawn_models(after, adopted).items():
+            own = _primary(_get(_entries(after).get(aid), "model"))
+            if layer != "own model" and model != own:
+                warn(f"kit-lane agent {aid}: a spawn runs on {model}, not on its own model {own}: {layer} overrides it "
+                     f"(operator-owned, left as it is)")
     removed, _kept = migrate_kit_lanes(s, after, referenced=referenced, apply_patch=apply_patch,
                                        delete_agent=delete_agent, remove_dir=remove_dir, info=info, warn=warn,
                                        error=error)
@@ -371,6 +494,20 @@ def restore_fragment(applied: Mapping[str, Any], doc: Mapping[str, Any]) -> dict
         if kept != live:
             patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(orch, {}) \
                 .setdefault("subagents", {})["allowAgents"] = kept if (kept or orch not in absent) else None
+    for aid, rec in sorted((applied.get("adopted_lanes") or {}).items()):
+        live = _entries(doc).get(aid)
+        if not isinstance(live, Mapping):
+            continue
+        ent = patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})
+        if rec.get("subagents_model") is not None and _get(live, "subagents", "model") == rec["subagents_model"]:
+            ent.setdefault("subagents", {})["model"] = None
+        for ref in rec.get("pins") or []:
+            if _get(_get(live, "models", ref), "agentRuntime", "id") == CLI_RUNTIME:
+                ent.setdefault("models", {})[ref] = None
+        if not ent:
+            patch["agents"]["entries"].pop(aid)
+    if patch.get("agents", {}).get("entries") == {}:
+        patch.pop("agents")
     sub = _get(doc, "agents", "defaults", "subagents") or {}
     for key, was in (applied.get("limits_prev") or {}).items():
         if sub.get(key) == (applied.get("limits_set") or {}).get(key):

@@ -317,7 +317,7 @@ def real_setup(sim, monkeypatch):
     monkeypatch.setattr(wizard, "_step10_verify", lambda s, t: 0)    # read-only doctor: it would probe the real systemd
     # The host section's consent gates (config patch, systemd units, drained window) refuse in a non-interactive run
     # by design; the operator's "yes" is stubbed so the whole section is exercised (nothing else is made interactive).
-    monkeypatch.setattr(section, "_gate", lambda message, detail="": True)
+    monkeypatch.setattr(section, "_gate", lambda message, detail="", **_k: True)
     spawned: list = []
 
     def refuse(argv, *a, **k):                    # a read-only probe of the fake binary path: recorded, never executed
