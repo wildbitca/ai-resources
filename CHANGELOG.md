@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.2] — 2026-10-28 — Retired-components dry run and auth logout
+
+Patch release: the 3.2.1 tag predated these two commits, so an installed 3.2.1 did not list or log out retired components.
+
 - fix(setup): the retired-components reconciler also logs out the retired provider's saved auth profile (`openclaw models auth logout openrouter:default --yes`): that profile lives in OpenClaw's auth store, not in openclaw.json, and its missing env key (`Secret store entry "OPENROUTER_API_KEY" was not found`) failed every Gemini agent turn.
 - feat(setup): `setup --dry-run` lists what the retired-components reconciler would remove (`retired components: would remove ...`).
 
