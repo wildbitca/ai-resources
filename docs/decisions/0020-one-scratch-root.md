@@ -32,7 +32,10 @@ to the same logs-only state by the next prune, after a 2-minute grace.
 
 ### 3. Pruning decides by meta and pid, never by mtime
 Fixtures with future-dated mtimes (2027, 2286) already broke mtime guards. A run's age is `created_at` from its meta (else the
-UTC stamp in its name); liveness is `owner_pid` plus its start ticks from `/proc` (a recycled pid is not alive). Live runs are never removed.
+UTC stamp in its name); liveness is `owner_pid` plus its start ticks from `/proc` (a recycled pid, pid 1 or a non-integer is not an owner) **or** an unexpired `lease_epoch`. A
+process that exits long before its work does (the `orchestrate` CLI, an agent's per-call shell) creates its run with a lease instead of a pid (`scratch new --lease 6h`, the default
+when no `--owner-pid` is given; the engine leases 2x the role timeout + 15 min); a script that lives as long as its work passes its own `$$`. Live runs are never removed. A meta
+field that is not a finite number, or a run that cannot be read, is skipped for that run only and never stops the prune.
 Order: dead and older than 7 days, failed past its TTL, then a global 5 GiB cap, oldest first. `flock` on `.prune.lock` serialises pruners.
 A directory with neither meta nor a stamp is left alone. Pruning runs opportunistically on every `scratch new`, and daily from the
 `openclaw-scratch-prune.timer` user unit (`openclaw-scratch-prune.service` runs `scripts/openclaw/openclaw-scratch-prune.sh`),
@@ -40,7 +43,7 @@ which `ai-resources setup` installs with the other host units (merge, never repl
 
 ### 4. Shared virtualenvs
 `~/.cache/ai-resources/venvs/<python version>-<lockfile hash>/`, built under `flock` on first use
-(`ai-resources scratch venv --lock <file>`; falls back to `uv venv` when the distro python has no ensurepip), pruned after 30 days
+(`ai-resources scratch venv --lock <file>`; the key hashes the lockfile's name and content, not its location, so worktrees share one venv; falls back to `uv venv` when the distro python has no ensurepip), pruned after 30 days
 without use (a `last_used` stamp in the venv, not its mtime). `tests/requirements.txt` is the suite's lockfile.
 
 ### 5. Every entry point uses it
@@ -60,7 +63,7 @@ without use (a `last_used` stamp in the venv, not its mtime). `tests/requirement
 ### 6. Doctor and legacy cleanup
 `ai-resources doctor` warns about legacy top-level `~/.cache` names that match the patterns above. `--fix` removes one only when
 nothing inside it changed for 24 h (future mtimes count as "just written") and no process has its cwd or an open file in it.
-An allowlist of real tool caches (go-build, gomod, uv, pnpm, pip, claude, openclaw, p10k-*, gitstatus, Unity, Homebrew, ...) is never touched.
+A loose `*.sh` is reported but never removed (the 2026-10-28 pass found an operator's one-time GCP bootstrap script among them). An allowlist of real tool caches (go-build, gomod, uv, pnpm, pip, claude, openclaw, p10k-*, gitstatus, Unity, Homebrew, ...) is never touched.
 
 ### 7. security-scan-results retention
 The writer, `~/.openclaw/workspace/scripts/security/security-scan-daily-basic.py`, lives outside this repo and is not edited by the kit.

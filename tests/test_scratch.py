@@ -32,7 +32,8 @@ def _age(run: Path, *, days: float, owner: int | None = None, status: str | None
     """Rewrite meta as a run created `days` ago whose owner is `owner` (default: a dead pid)."""
     meta = scratch.read_meta(run)
     created = time.time() - days * DAY
-    meta.update(created_epoch=created, owner_pid=owner or _dead_pid(), owner_start=None)
+    pid = owner or _dead_pid()
+    meta.update(created_epoch=created, owner_pid=pid, owner_start=scratch._start_ticks(pid), lease_epoch=0)
     if status:
         meta["status"] = status
     if failed_days_ago is not None:
@@ -195,6 +196,86 @@ def test_live_pid_is_never_pruned_even_when_ancient_and_over_cap(env):
     assert run.is_dir() and r["skipped_live"] == 1 and not r["removed"]
 
 
+def test_a_lease_keeps_a_run_live_without_an_owner_pid(env):
+    run = scratch.new("impl", "orch", env=env, prune_first=False, lease_s=3600)
+    meta = scratch.read_meta(run)
+    assert meta["owner_pid"] == 0 and meta["lease_epoch"] > time.time()
+    meta["created_epoch"] = time.time() - 3 * DAY                  # old, owner gone, but the lease holds
+    scratch._write_meta(run, meta)
+    r = scratch.prune(env=env)
+    assert run.is_dir() and r["skipped_live"] == 1 and not r["converted"]
+    meta["lease_epoch"] = time.time() - 1                           # lease over: now a crash
+    scratch._write_meta(run, meta)
+    assert str(run) in scratch.prune(env=env)["converted"]
+    assert scratch.read_meta(run)["status"] == "failed"
+
+
+def test_cli_new_without_a_pid_takes_a_lease(env, tmp_path):
+    full = {**os.environ, **env, "PYTHONPATH": str(SCRIPTS)}
+    full.pop(scratch.ENV_SCRATCH, None)
+    out = subprocess.run([sys.executable, "-m", "ai_resources.scratch", "new", "--role", "x", "--slug", "y"],
+                         env=full, capture_output=True, text=True, timeout=60)
+    meta = scratch.read_meta(Path(out.stdout.strip()))
+    assert meta["owner_pid"] == 0 and meta["lease_epoch"] - meta["created_epoch"] == scratch.DEFAULT_LEASE_S
+
+
+def test_hostile_meta_cannot_make_a_run_permanent_or_stop_the_prune(env):
+    fake_owner = scratch.new("a", "pid1", env=env, prune_first=False)
+    bool_owner = scratch.new("a", "bool", env=env, prune_first=False)
+    bad_epoch = scratch.new("a", "badnum", env=env, prune_first=False)
+    logs_file = scratch.new("a", "logsfile", env=env, prune_first=False)
+    for run, patch in ((fake_owner, {"owner_pid": 1, "owner_start": None}), (bool_owner, {"owner_pid": True, "owner_start": 1}),
+                       (bad_epoch, {"status": "failed", "failed_epoch": "x", "owner_pid": 0}),
+                       (logs_file, {"owner_pid": 0})):
+        meta = scratch.read_meta(run)
+        meta.update(patch, created_epoch=time.time() - 30 * DAY, lease_epoch=0)
+        scratch._write_meta(run, meta)
+    import shutil
+    shutil.rmtree(logs_file / "logs")
+    (logs_file / "logs").write_text("not a directory")
+    meta = scratch.read_meta(logs_file)
+    meta["created_epoch"] = time.time() - 0.5 * DAY
+    scratch._write_meta(logs_file, meta)
+    r = scratch.prune(env=env)
+    assert not fake_owner.exists() and not bool_owner.exists() and not bad_epoch.exists()   # all reaped, none stuck "live"
+    assert logs_file.is_dir() and (logs_file / "logs").is_dir()                              # converted despite the file
+
+
+def test_a_symlink_logs_dir_is_replaced_not_followed(env, tmp_path):
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "keep").write_text("x")
+    run = scratch.new("a", "link", env=env, prune_first=False)
+    (run / "logs").rmdir()
+    (run / "logs").symlink_to(victim)
+    scratch.finish(run, False, env=env)
+    assert (victim / "keep").is_file() and (run / "logs").is_dir() and not (run / "logs").is_symlink()
+
+
+def test_the_same_lockfile_in_two_worktrees_shares_one_venv(tmp_path):
+    a, b = tmp_path / "wt1" / "requirements.txt", tmp_path / "wt2" / "requirements.txt"
+    for f in (a, b):
+        f.parent.mkdir()
+        f.write_text("pyyaml\n")
+    assert scratch.venv_key([a]) == scratch.venv_key([b])
+
+
+def test_done_and_rm_refuse_a_path_outside_the_root_without_a_traceback(env, tmp_path):
+    full = {**os.environ, **env, "PYTHONPATH": str(SCRIPTS)}
+    out = subprocess.run([sys.executable, "-m", "ai_resources.scratch", "done", str(tmp_path)], env=full, capture_output=True, text=True, timeout=60)
+    assert out.returncode == 2 and "Traceback" not in out.stderr
+
+
+def test_a_planted_module_in_the_cwd_does_not_run_from_scratch_sh(tmp_path):
+    kit = Path(__file__).resolve().parents[1]
+    (tmp_path / "json.py").write_text("raise SystemExit('PLANTED')\n")
+    script = tmp_path / "t.sh"
+    script.write_text(f'. "{kit}/scripts/scratch.sh"\n_scratch_py ls\n')
+    out = subprocess.run(["bash", str(script)], cwd=tmp_path, env={**os.environ, "AGENT_KIT": str(kit),
+                         "AI_RESOURCES_CACHE_DIR": str(tmp_path / "c")}, capture_output=True, text=True, timeout=60)
+    assert "PLANTED" not in out.stdout + out.stderr and out.returncode == 0
+
+
 def test_recycled_pid_is_not_alive(env):
     me = os.getpid()
     ticks = scratch._start_ticks(me)
@@ -230,7 +311,7 @@ def test_size_cap_removes_oldest_first(env):
         scratch.finish(run, False, env=env) if False else None
         _age(run, days=age, status="failed", failed_days_ago=0.1)
         runs.append(run)
-    r = scratch.prune(cap_bytes=4500, env=env)
+    r = scratch.prune(cap_bytes=5400, env=env)
     assert [Path(p).name for p, why, _ in r["removed"] if why == "over-cap"] == [runs[0].name]
     assert not runs[0].exists() and runs[1].is_dir() and runs[2].is_dir()
 
@@ -360,9 +441,9 @@ def test_fix_removes_only_old_unused_legacy_entries(tmp_path):
         proc.wait()
     assert rows["cr"]["in_use"] and (root / "cr").exists()
     assert (root / "pt-A1").exists() and (root / "verifier-3").exists()
-    gone = set(LEGACY) - {"cr", "pt-A1", "verifier-3"}
+    gone = set(LEGACY) - {"cr", "pt-A1", "verifier-3", "run.sh"}     # a loose .sh may be the operator's own: report only
     assert all(not (root / n).exists() for n in gone)
-    assert all((root / n).exists() for n in REAL)
+    assert all((root / n).exists() for n in REAL) and (root / "run.sh").exists()
 
 
 # --- security-scan-results retention ---------------------------------------------------------------------------------
@@ -434,3 +515,28 @@ def test_doctor_check_warns_when_scan_results_exceed_500_mb(tmp_path, monkeypatc
     monkeypatch.setenv("OPENCLAW_SCAN_RESULTS_DIR", str(scans))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "empty"))
     assert doctor._check_scratch(SimpleNamespace(fix=False), tmp_path / "empty") == 1
+
+
+def test_scan_names_with_impossible_dates_are_left_alone(tmp_path):
+    root = tmp_path / "scans"
+    root.mkdir()
+    for n in ("2026-13-45-basic", "2026-02-30-basic"):
+        (root / n).mkdir()
+    for d in range(1, 9):
+        (root / f"2026-10-{d:02d}-basic").mkdir()
+    scratch.prune_scan_results(root, keep=7)
+    assert (root / "2026-13-45-basic").exists() and (root / "2026-02-30-basic").exists()
+    assert not (root / "2026-10-01-basic").exists()
+
+
+def test_ls_survives_a_null_status(env, capsys):
+    run = scratch.new("a", "n", env=env, prune_first=False)
+    meta = scratch.read_meta(run)
+    meta["status"] = None
+    scratch._write_meta(run, meta)
+    os.environ["AI_RESOURCES_CACHE_DIR"] = str(scratch.base_dir(env))
+    try:
+        assert scratch._cmd_ls(None) == 0
+    finally:
+        del os.environ["AI_RESOURCES_CACHE_DIR"]
+    assert "unknown" in capsys.readouterr().out

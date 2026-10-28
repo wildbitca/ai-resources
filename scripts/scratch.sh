@@ -11,7 +11,8 @@
 
 _SCRATCH_KIT="${AGENT_KIT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-_scratch_py() { PYTHONPATH="$_SCRATCH_KIT/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 -m ai_resources.scratch "$@"; }
+# PYTHONSAFEPATH (3.11+): do not put the current directory on sys.path, or a json.py planted in a repo would run.
+_scratch_py() { PYTHONSAFEPATH=1 PYTHONPATH="$_SCRATCH_KIT/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 -m ai_resources.scratch "$@"; }
 
 scratch_begin() {
   local out role="${1:-script}" slug="${2:-}"

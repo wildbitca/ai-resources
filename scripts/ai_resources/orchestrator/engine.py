@@ -119,7 +119,7 @@ def scratch_paragraph(step: Step, run_id: str, scratch_dir: str = "") -> str:
                  f"TMPDIR={scratch_dir}/tmp if they are not set already).")
     else:
         where = ("Scratch: your scratch dir is $AI_RESOURCES_SCRATCH. If it is unset, make one first: "
-                 f"eval \"$(ai-resources scratch new --role {step.role} --slug {run_id} --owner-pid $$ --shell)\" and "
+                 f"eval \"$(ai-resources scratch new --role {step.role} --slug {run_id} --lease 6h --shell)\" and "
                  "finish it with `ai-resources scratch done \"$AI_RESOURCES_SCRATCH\" --status <exit code>`.")
     return (f"{where} Subdirectories: tmp/ pytest/ logs/ out/ clone/. {SCRATCH_RULE} It is removed when your step succeeds; "
             "after a failure only logs/ stays, for 3 days. Reuse the shared venvs (`ai-resources scratch venv --lock <file>`), "
@@ -490,7 +490,9 @@ class Engine:
         if scratch.current() is not None:
             return ""
         try:
-            st["scratch"] = str(scratch.new(step.role, f"{run['id']}-{step.id}"))
+            # a lease, not a pid: this process exits right after dispatch while the child works for as long as its timeout
+            lease = 2 * limits.role_timeout(step.role, run.get("role_timeouts")) + 900
+            st["scratch"] = str(scratch.new(step.role, f"{run['id']}-{step.id}", lease_s=lease))
         except OSError:
             return ""
         return st["scratch"]

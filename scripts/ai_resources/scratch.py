@@ -46,6 +46,7 @@ FAILED_TTL_S = 3 * 86400
 DEFAULT_OLDER_THAN_S = 7 * 86400
 VENV_MAX_IDLE_S = 30 * 86400
 DEFAULT_CAP_BYTES = 5 * 1024 ** 3
+DEFAULT_LEASE_S = 6 * 3600
 CRASH_GRACE_S = 120                      # a run younger than this whose pid is unknown is not judged
 SYSTEM_TMP = ("/tmp", "/var/tmp")
 RULE = "Never write directly under ~/.cache or /tmp; use $AI_RESOURCES_SCRATCH (tmp/ pytest/ logs/ out/ clone/)."
@@ -97,7 +98,11 @@ def _start_ticks(pid: int) -> int | None:
 
 
 def pid_alive(pid: int, start_ticks: int | None = None) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
+    """The owner is alive when its pid exists AND its start time matches the one recorded: a recycled pid, or a
+    hostile meta naming pid 1, is not the owner. Without /proc (not Linux) the pid check stands alone."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 1:
+        return False
+    if _start_ticks(os.getpid()) is not None and not isinstance(start_ticks, int):
         return False
     try:
         os.kill(pid, 0)
@@ -130,10 +135,18 @@ def _write_meta(run: Path, meta: dict) -> None:
     os.replace(tmp, run / META_NAME)
 
 
+def _num(value) -> float | None:
+    """A finite number from meta, else None: a corrupt or hostile field must never raise inside a prune."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if value == value and abs(value) != float("inf") else None
+
+
 def _created_at(run: Path, meta: dict | None) -> float | None:
     """When the run began: meta first, then the UTC stamp in its name. Never the mtime."""
-    if meta and isinstance(meta.get("created_epoch"), (int, float)):
-        return float(meta["created_epoch"])
+    if meta and _num(meta.get("created_epoch")) is not None:
+        return _num(meta["created_epoch"])
     m = _NAME_STAMP.search(run.name)
     if m:
         try:
@@ -155,7 +168,7 @@ def _safe_run(path: Path | str, env=None) -> Path:
 
 
 def new(role: str, slug: str = "", *, keep_on_fail: bool = True, env=None, now: float | None = None,
-        prune_first: bool = True, owner_pid: int | None = None) -> Path:
+        prune_first: bool = True, owner_pid: int | None = None, lease_s: float | None = None) -> Path:
     """Create a run directory with its subdirectories and meta. Prunes opportunistically first."""
     now = time.time() if now is None else now
     root = runs_dir(env)
@@ -163,7 +176,9 @@ def new(role: str, slug: str = "", *, keep_on_fail: bool = True, env=None, now: 
     if prune_first:
         with contextlib.suppress(Exception):
             prune(env=env, now=now, quiet_lock=True)
-    owner = owner_pid or os.getpid()
+    # A run held by a short-lived process (the orchestrator CLI, an agent's per-call shell) is owned by a lease, not a
+    # pid: it is live until `lease_epoch`, whatever happens to the process that created it.
+    owner = owner_pid if owner_pid else (0 if lease_s is not None else os.getpid())
     name = f"{_slug(role, 'run')}-{_slug(slug, 'job')}-{_stamp(now)}-{os.getpid()}-{secrets.token_hex(2)}"
     run = root / name
     run.mkdir(mode=0o700)
@@ -173,6 +188,7 @@ def new(role: str, slug: str = "", *, keep_on_fail: bool = True, env=None, now: 
         "owner_pid": owner, "owner_start": _start_ticks(owner),
         "created_at": _iso(now), "created_epoch": now, "role": role, "slug": slug,
         "keep_on_fail": bool(keep_on_fail), "status": "running",
+        **({"lease_epoch": now + lease_s} if lease_s is not None else {}),
     })
     return run
 
@@ -199,7 +215,11 @@ def finish(run: Path | str, ok: bool, *, env=None, now: float | None = None) -> 
         else:
             with contextlib.suppress(OSError):
                 child.unlink()
-    (run / "logs").mkdir(exist_ok=True)
+    logs = run / "logs"
+    if logs.is_symlink() or (logs.exists() and not logs.is_dir()):
+        with contextlib.suppress(OSError):
+            logs.unlink()
+    logs.mkdir(exist_ok=True)
     meta.update(status="failed", failed_at=_iso(now), failed_epoch=now)
     _write_meta(run, meta)
     return "kept-logs"
@@ -312,7 +332,7 @@ def dir_size(path: Path) -> int:
     return total
 
 
-def entries(env=None) -> list[dict]:
+def entries(env=None, now: float | None = None) -> list[dict]:
     root = runs_dir(env)
     out = []
     if not root.is_dir():
@@ -323,8 +343,9 @@ def entries(env=None) -> list[dict]:
         meta = read_meta(child)
         out.append({
             "path": child, "meta": meta, "created": _created_at(child, meta),
-            "status": (meta or {}).get("status", "unknown"),
-            "alive": bool(meta) and pid_alive(meta.get("owner_pid"), meta.get("owner_start")),
+            "status": str((meta or {}).get("status") or "unknown"),
+            "alive": bool(meta) and (pid_alive(meta.get("owner_pid"), meta.get("owner_start"))
+                                     or (_num(meta.get("lease_epoch")) or 0) > (time.time() if now is None else now)),
             "size": dir_size(child),
         })
     return out
@@ -361,41 +382,46 @@ def prune(*, older_than: float = DEFAULT_OLDER_THAN_S, cap_bytes: int = DEFAULT_
     now = time.time() if now is None else now
     result = {"removed": [], "kept": 0, "skipped_live": 0, "converted": [], "locked": False,
               "venvs_removed": [], "dry_run": dry_run}
+    if dry_run and not base_dir(env).is_dir():
+        return result                            # a dry run creates nothing, not even the lock file
     with _lock(env, blocking=not quiet_lock) as got:
         if not got:
             result["locked"] = True
             return result
         doomed: dict[Path, str] = {}
         kept = []
-        every = entries(env)
+        every = entries(env, now)
         for e in every:
             path, meta, created = e["path"], e["meta"], e["created"]
-            if e["alive"]:
-                result["skipped_live"] += 1
-                continue
-            if created is None:
-                result["kept"] += 1          # no meta and no stamp in the name: not ours to judge
-                continue
-            status = (meta or {}).get("status", "running")
-            if now - created >= older_than:
-                doomed[path] = "older-than"
-            elif status == "failed":
-                failed = (meta or {}).get("failed_epoch", created)
-                if now - failed >= FAILED_TTL_S:
-                    doomed[path] = "failed-ttl"
-                else:
+            try:
+                if e["alive"]:
+                    result["skipped_live"] += 1
+                    continue
+                if created is None:
+                    result["kept"] += 1          # no meta and no stamp in the name: not ours to judge
+                    continue
+                status = (meta or {}).get("status", "running")
+                if now - created >= older_than:
+                    doomed[path] = "older-than"
+                elif status == "failed":
+                    failed = _num((meta or {}).get("failed_epoch"))
+                    if now - (failed if failed is not None else created) >= FAILED_TTL_S:
+                        doomed[path] = "failed-ttl"
+                    else:
+                        kept.append(e)
+                elif now - created < CRASH_GRACE_S or not meta:
+                    kept.append(e)               # a run with no readable meta is kept until `older_than`
+                elif meta.get("keep_on_fail", True):
+                    # the owner (and its lease) is gone without finishing: a crash is a failure; keep logs for the TTL
+                    result["converted"].append(str(path))
+                    if not dry_run:
+                        finish(path, False, env=env, now=now)
+                        e["size"] = dir_size(path)
                     kept.append(e)
-            elif now - created < CRASH_GRACE_S:
-                kept.append(e)
-            elif meta and meta.get("keep_on_fail", True):
-                # the owner died without finishing: a crash is a failure; keep its logs for the TTL
-                result["converted"].append(str(path))
-                if not dry_run:
-                    finish(path, False, env=env, now=now)
-                    e["size"] = dir_size(path)
-                kept.append(e)
-            else:
-                doomed[path] = "crashed"
+                else:
+                    doomed[path] = "crashed"
+            except OSError:
+                result["kept"] += 1              # one unreadable run never stops the prune of the others
         # global cap: oldest first; live runs count toward the total but are never removed
         total = sum(e["size"] for e in every if e["path"] not in doomed)
         for e in sorted(kept, key=lambda x: x["created"] or 0):
@@ -418,6 +444,13 @@ def _prune_venvs(env, now: float, dry_run: bool) -> list[str]:
     removed = []
     if not root.is_dir():
         return removed
+    with open(root / ".venv.lock", "a+") as lockfh:       # the lock ensure_venv holds: no prune between build and use
+        fcntl.flock(lockfh, fcntl.LOCK_EX)
+        return _prune_venvs_locked(root, now, dry_run)
+
+
+def _prune_venvs_locked(root: Path, now: float, dry_run: bool) -> list[str]:
+    removed = []
     for child in sorted(root.iterdir()):
         if child.is_symlink() or not child.is_dir() or child.name.startswith("."):
             continue
@@ -437,7 +470,7 @@ def _prune_venvs(env, now: float, dry_run: bool) -> list[str]:
 def venv_key(lockfiles: list[Path | str], python: str | None = None) -> str:
     h = hashlib.sha256()
     for f in sorted(str(x) for x in lockfiles):
-        h.update(f.encode() + b"\0" + Path(f).read_bytes() + b"\0")
+        h.update(Path(f).name.encode() + b"\0" + Path(f).read_bytes() + b"\0")     # content, not location: worktrees share
     ver = f"py{sys.version_info.major}.{sys.version_info.minor}" if python is None else _py_version(python)
     return f"{ver}-{h.hexdigest()[:12]}"
 
@@ -487,7 +520,8 @@ def ensure_venv(lockfiles: list[Path | str], python: str | None = None, env=None
             except (subprocess.SubprocessError, OSError):
                 shutil.rmtree(target, ignore_errors=True)    # never leave a half-built venv under a valid key
                 raise
-        touch_venv(target)
+        if install:                                           # a --no-install venv is not "complete": the next install builds it
+            touch_venv(target)
     return target
 
 
@@ -513,6 +547,9 @@ LEGACY_PATTERNS = tuple(re.compile(p) for p in (
     r"^ci-[\w.]+\.(out|log)$", r"^ci-[A-Z]\d*\.log$", r"^full[\w.-]*\.log$", r"^brew-[\w.-]*\.log$",
     r"^ai-resources-.*-venv$", r"^kit-venv$", r"^airvenv$", r".*_fixed\.py$", r"^[\w.-]+\.sh$",
 ))
+# Reported by doctor but never removed by --fix: a loose shell script may be the operator's own (a one-time GCP
+# bootstrap script sat among them on 2026-10-28), unlike the scratch directories above.
+REPORT_ONLY = (re.compile(r"^[\w.-]+\.sh$"),)
 
 
 def legacy_candidates(cache_root: Path) -> list[Path]:
@@ -551,6 +588,8 @@ def _newest_epoch(path: Path) -> float:
     newest = 0.0
     try:
         newest = min(os.lstat(path).st_mtime, now)
+        if path.is_symlink():
+            return newest                      # a link is judged by itself, never by what it points at
         for root, dirs, files in os.walk(path):
             for n in dirs + files:
                 with contextlib.suppress(OSError):
@@ -567,8 +606,9 @@ def legacy_report(cache_root: Path, *, fix: bool = False, min_age_s: float = 864
         size = dir_size(p) if p.is_dir() and not p.is_symlink() else (p.lstat().st_size if p.exists() or p.is_symlink() else 0)
         age = now - _newest_epoch(p)
         busy = _in_use(p) if p.is_dir() else False
-        row = {"path": str(p), "bytes": size, "age_s": age, "in_use": busy, "removed": False}
-        if fix and age >= min_age_s and not busy:
+        keep = any(rx.search(p.name) for rx in REPORT_ONLY)
+        row = {"path": str(p), "bytes": size, "age_s": age, "in_use": busy, "removed": False, "report_only": keep}
+        if fix and age >= min_age_s and not busy and not keep:
             if p.is_dir() and not p.is_symlink():
                 shutil.rmtree(p, ignore_errors=True)
             else:
@@ -597,6 +637,10 @@ def _scan_key(name: str):
     if not m:
         return None
     date, hh, mm, ss, kind, out = m.groups()
+    try:
+        _dt.datetime.strptime(f"{date} {hh or '00'}:{mm or '00'}:{ss or '00'}", "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None                            # 2026-13-45-basic is not a dated run: left alone, never sorted as one
     run = name[:-4] if out else name
     return run, (date, hh or "00", mm or "00", ss or "00", kind or "")
 
@@ -647,7 +691,11 @@ def _fmt(n: int) -> str:
 
 
 def _cmd_new(a) -> int:
-    run_dir = new(a.role, a.slug, keep_on_fail=not a.no_keep_on_fail, owner_pid=a.owner_pid or os.getppid())
+    # A pid bounds the run only when the caller names a long-lived one (a script passes its own $$). Otherwise a lease:
+    # an agent's per-call shell or this very CLI exits long before the work does.
+    lease = parse_duration(a.lease) if a.lease else (None if a.owner_pid else DEFAULT_LEASE_S)
+    run_dir = new(a.role, a.slug, keep_on_fail=not a.no_keep_on_fail, owner_pid=a.owner_pid or None,
+                  lease_s=lease)
     if a.shell:
         # eval-able: the caller's trap runs `scratch done`.
         print(f"export {ENV_SCRATCH}={_q(str(run_dir))}\nexport TMPDIR={_q(str(run_dir / 'tmp'))}")
@@ -661,7 +709,11 @@ def _q(s: str) -> str:
 
 
 def _cmd_done(a) -> int:
-    print(finish(a.path, a.status == 0))
+    try:
+        print(finish(a.path, a.status == 0))
+    except ValueError as exc:
+        print(f"scratch done: {exc}", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -725,7 +777,8 @@ def add_subparser(sub) -> None:
     n.add_argument("--slug", default="")
     n.add_argument("--no-keep-on-fail", action="store_true", help="a failure removes the whole run, logs too")
     n.add_argument("--shell", action="store_true", help="print export lines for eval")
-    n.add_argument("--owner-pid", type=int, default=0, help="pid whose life bounds the run (default: the caller)")
+    n.add_argument("--owner-pid", type=int, default=0, help="a long-lived pid (your script's $$) whose life bounds the run")
+    n.add_argument("--lease", default="", help="keep the run live this long without an owner pid (default 6h when no --owner-pid)")
     n.set_defaults(func=_cmd_new)
     d = s.add_parser("done", help="Finish a run: status 0 removes it, anything else keeps logs/ for 3 days")
     d.add_argument("path")
