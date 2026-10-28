@@ -63,11 +63,26 @@ def _atomic_write(path: Path, text: str) -> None:
     write_file_atomically(path, text, mode=0o600)
 
 
+MULTI_PROVIDER = "multi-provider"
+
+
+def team_mode(s: "state.SetupState") -> str:
+    """The label `lanes.yaml` carries for `mode`.
+
+    `state.mode` only says whether a LiteLLM/OpenRouter gateway fronts the models: `single-model` means "no gateway", not
+    "one model". A host whose team runs through the CLIs and APIs (`cli_team`, the default since ADR-0015) spreads the
+    roles over Claude Code, Antigravity, the Anthropic API and the Gemini API, so its file says `multi-provider`. A host
+    that really runs a gateway keeps `multi-model`; a host with neither keeps `single-model`."""
+    if s.mode == "multi-model":
+        return "multi-model"
+    return MULTI_PROVIDER if (getattr(s, "cli_team", False) or getattr(s, "cli_team_api", False)) else s.mode
+
+
 def expected_text(s: "state.SetupState") -> str | None:
     """The `lanes.yaml` text for this state, or None when there are no lanes."""
     if not state.lanes_enabled(s):
         return None
-    return dumps(render_doc(s.profile.lanes, s.mode))
+    return dumps(render_doc(s.profile.lanes, team_mode(s)))
 
 
 def backup(path: Path, backup_dir: Path | None) -> dict[str, Any]:

@@ -78,6 +78,7 @@ from . import openclaw_orchestration
 from . import openclaw_roles
 from . import _agy_quota
 from ... import model_pins, openclaw_host, openclaw_reconcile, openclaw_reload_rules, openclaw_slack_cost, openclaw_tool_policy
+from ... import retired as retired_components
 
 
 NAME = "OpenClaw"
@@ -627,13 +628,18 @@ def _patch_changes_a_leaf(patch: dict, replace_paths: list[str] | None) -> bool:
 
 def apply_patch(patch: dict, *, dry_run: bool = False,
                 replace_paths: list[str] | None = None, allow_restart: bool = False,
-                reload_mode: str | None = None, slack_cost: bool = False) -> tuple[bool, str]:
+                reload_mode: str | None = None, slack_cost: bool = False,
+                retired: bool = False) -> tuple[bool, str]:
     global _before_first_write
     # The Telegram allowlist is the only gate in front of the unrestricted claude-kit backend:
     # no patch may carry an allowlist or a topic binding, and no --replace-path may name channels.
     # The one exception is the Slack cost writer (ADR-0013): its own guard admits exactly its two keys (set or deleted).
     if slack_cost:
         openclaw_slack_cost.assert_slack_patch_safe(patch, replace_paths)
+    elif retired:
+        # The retired-components reconciler (retired.py) removes a retired channel's own section and routes; its guard
+        # admits only the leaves its declarative list names.
+        retired_components.assert_patch_safe(patch, replace_paths)
     else:
         openclaw_host.assert_channels_safe(patch, replace_paths)
     # The global tools.deny has its own shape guard (ADR-0011); lanes, voice and host patches never trigger it.
@@ -1465,6 +1471,9 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     # the wiring below is computed from the live config, not the snapshot.
     if not dry_run:
         doc = read_config(path)
+    retired_changed = _reconcile_retired(s, doc, dry_run=dry_run)
+    if not dry_run and retired_changed:
+        doc = read_config(path)
     skills_changed = _configure_skills(s, doc if dry_run else read_config(path), path, written, ak_path,
                                        dry_run=dry_run, run_changes=run_changes)
     roles_changed = _configure_roles(ctx, s, doc if dry_run else read_config(path), ak_path, dry_run=dry_run,
@@ -1478,7 +1487,7 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
                                      include=mcp.include_list(s), dry_run=dry_run)
     worker_changed = _configure_worker_runtime(s, doc if dry_run else read_config(path), dry_run=dry_run,
                                                run_changes=run_changes)
-    changed = (engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
+    changed = (retired_changed or engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
                or roles_changed or orchestration_changed or worker_changed or skills_changed
                or plugin_changed or scope_changed)
     if not dry_run and run_changes:
@@ -1498,6 +1507,23 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     cs.last_configured_at = datetime.now(timezone.utc).isoformat()
     s.cockpits[ID] = cs
     return written
+
+
+def _retired_apply(patch: dict, *, dry_run: bool = False,
+                   replace_paths: list[str] | None = None) -> tuple[bool, str]:
+    return apply_patch(patch, dry_run=dry_run, replace_paths=replace_paths, retired=True)
+
+
+def _reconcile_retired(s: state.SetupState, doc: dict, *, dry_run: bool) -> bool:
+    """Remove the artifacts of components no longer installed or used (OpenRouter, LiteLLM, Telegram): the declarative
+    list and the guards are in `retired.py`. Idempotent; backs up first; True when openclaw.json changed."""
+    p = retired_components.plan(doc, s)
+    if p.empty:
+        return False
+    res = retired_components.apply(p, s, apply_patch=_retired_apply, dry_run=dry_run, restart_error=RestartRequired)
+    for line in retired_components.report(res):
+        (ui.warn if line.startswith(("Failed", "Pending")) else ui.info)(line)
+    return bool(p.patch) and not res.dry_run and not res.failed and not res.pending
 
 
 def _lanes_apply(patch: dict, *, dry_run: bool = False,

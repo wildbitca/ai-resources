@@ -238,6 +238,10 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # creates watchdog.off, and both paths are resolved from the real HOME at import time.
     from ai_resources import openclaw_host
     monkeypatch.setattr(openclaw_host, "HOST_ENV_PATH", root / "openclaw" / "kit-host.env", raising=False)
+    # The off-box uploader credential is derived at ~/.config/ai-resources/offbox-wif-cred.json and a teardown unlinks it
+    # when kit-host.env names none. Unredirected, every full run deleted the operator's real file and the next
+    # off-box upload failed with "not readable" (root cause of the 2026-10-27/28 uploader failures).
+    monkeypatch.setattr(openclaw_host, "OFFBOX_WIF_CRED_PATH", root / "config" / "offbox-wif-cred.json", raising=False)
     # 2.8.0: the shared-MCP token step looks for sentry/figma in the real ~/.claude.json and ~/.openclaw/openclaw.json
     # (and the token in ~/.openclaw/.env); a test that wants either passes it in.
     from ai_resources import shared_mcp

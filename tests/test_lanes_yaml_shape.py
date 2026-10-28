@@ -71,3 +71,22 @@ def test_the_digest_covers_everything_but_itself_and_is_deterministic():
 def test_rendering_is_stable_text():
     assert _text() == _text()
     assert _text().startswith("# Generated from scoring.routing")
+
+
+def _mode(**attrs):
+    s = state.SetupState()
+    s.profile.lanes = lanes_render.lanes_state(profiles.load_profile("balanced", "single-model"), orchestrators=["main"])
+    for key, value in attrs.items():
+        setattr(s, key, value)
+    return yaml.safe_load(lanes_render.expected_text(s))["mode"]
+
+
+def test_a_cli_team_host_says_multi_provider_not_single_model():
+    # `single-model` only ever meant "no LiteLLM/OpenRouter gateway"; the team still spans CLIs and APIs.
+    assert _mode(mode="single-model", cli_team=True) == "multi-provider"
+    assert _mode(mode="single-model", cli_team=False, cli_team_api=True) == "multi-provider"
+
+
+def test_gateway_and_bare_hosts_keep_their_own_label():
+    assert _mode(mode="multi-model", cli_team=True) == "multi-model"
+    assert _mode(mode="single-model", cli_team=False) == "single-model"
