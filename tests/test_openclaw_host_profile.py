@@ -614,3 +614,19 @@ def test_a_kit_lane_runs_haiku_by_design_and_is_never_moved_off_it(doc):
     built = _fill_only(doc)
     assert "kit-lane-cli-haiku55" not in (built["patch"].get("agents", {}).get("entries") or {})
     assert "agents.entries.kit-lane-cli-haiku55.model.primary" not in built["forced"] + built["filled"]
+
+
+@pytest.mark.parametrize("channels", [{}, {"telegram": {"enabled": True}}])
+def test_no_telegram_streaming_fill_for_an_unconfigured_telegram(doc, channels):
+    bare = {k: v for k, v in doc.items() if k != "channels"}
+    bare["channels"] = channels
+    result = build(bare)
+    assert "telegram" not in (result["patch"].get("channels") or {})
+    assert any("Telegram is not configured" in s for s in result["skipped"])
+
+
+def test_auth_logout_names_the_agent(monkeypatch):
+    seen = []
+    monkeypatch.setattr(openclaw, "_openclaw", lambda argv, timeout=0: (seen.append(argv) or 0, ""))
+    assert openclaw._auth_logout("openrouter:default")[0] is True
+    assert seen == [["models", "auth", "logout", "openrouter:default", "--agent", "main", "--yes"]]

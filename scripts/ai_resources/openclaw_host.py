@@ -2524,6 +2524,13 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
             if not _get_path(doc, path[:3])[1]:
                 skipped.append(f"{dotted}: plugin {path[2]} is not configured")
                 continue
+        # Telegram streaming defaults are only written for a configured Telegram: a bare stub (or no entry) is what
+        # the retired-components reconciler removes, so filling it would recreate the stub every run.
+        if path[:2] == ["channels", "telegram"]:
+            tg = ((doc.get("channels") or {}).get("telegram")) or {}
+            if not (isinstance(tg, dict) and set(tg) - {"enabled", "streaming"}):
+                skipped.append(f"{dotted}: Telegram is not configured")
+                continue
         # The profile binds the gateway to the tailnet (T04). Without Tailscale that bind cannot be honoured, so
         # the value is left as the operator has it. `TAILNET` is "0" only when the caller detected no tailnet;
         # absent means "unknown", which keeps the profile's value (the golden fixtures rely on that).

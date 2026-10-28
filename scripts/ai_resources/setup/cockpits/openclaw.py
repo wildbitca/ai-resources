@@ -1522,7 +1522,7 @@ def _auth_store_profiles() -> list[str]:
 
 
 def _auth_logout(profile_id: str) -> tuple[bool, str]:
-    rc, out = _openclaw(["models", "auth", "logout", profile_id, "--yes"], timeout=60)
+    rc, out = _openclaw(["models", "auth", "logout", profile_id, "--agent", MAIN_AGENT, "--yes"], timeout=60)
     return rc == 0, out
 
 

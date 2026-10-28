@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.3] — 2026-10-28 — Retired-components follow-ups
+
+- fix(setup): the retired-provider auth logout passes `--agent main` (OpenClaw refuses it with several agents configured).
+- fix(host): the host profile no longer fills `channels.telegram.streaming` for a Telegram that is not configured, so setup stops recreating the stub the retired-components reconciler removes.
+
 ## [3.2.2] — 2026-10-28 — Retired-components dry run and auth logout
 
 Patch release: the 3.2.1 tag predated these two commits, so an installed 3.2.1 did not list or log out retired components.
