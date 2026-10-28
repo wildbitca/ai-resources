@@ -309,27 +309,51 @@ def role_model(role):
     return None
 
 
+def channel_of(chat):
+    """The delivery channel of a target: a Slack destination is `channel:<id>` or `user:<id>`, a Telegram chat is a
+    bare id. One rule, shared with the watcher and the sender."""
+    return "slack" if str(chat).startswith(("channel:", "user:")) else "telegram"
+
+
+def _narration_override():
+    """`OPENCLAW_NARRATION_TARGET` in the host env file (a Slack `channel:<id>` or `user:<id>`): one place for every
+    agent's narration, for a host that does not want it in each agent's own channel."""
+    try:
+        with open(KIT_HOST_ENV) as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("OPENCLAW_NARRATION_TARGET="):
+                    value = line.split("=", 1)[1].strip().strip("'\"")
+                    if re.fullmatch(r"(?:channel|user):[A-Z0-9]{5,20}", value):
+                        return value
+    except Exception:
+        pass
+    return None
+
+
 def _binding_target(cfg, agent):
-    """(chatId, None) from the root `bindings` array for this agent's own Telegram group, or
-    None. Filters on `match.peer.kind == "group"`, NEVER on `type`: main's catch-all binding has
+    """(chatId, None) from the root `bindings` array for this agent's own Telegram group, else
+    (`channel:<id>`, None) for its own Slack channel, or None. Filters on `match.peer.kind == "group"`, NEVER on `type`: main's catch-all binding has
     no `type` at all and, critically, no `peer` -- it carries no chat id, so it must never be
     mistaken for a target."""
     bindings = cfg.get("bindings")
     if not isinstance(bindings, list):
         return None
+    slack = None
     for b in bindings:
         if not isinstance(b, dict) or b.get("agentId") != agent:
             continue
         match = b.get("match")
-        if not isinstance(match, dict) or match.get("channel") != "telegram":
+        if not isinstance(match, dict):
             continue
         peer = match.get("peer")
-        if not isinstance(peer, dict) or peer.get("kind") != "group":
+        if not isinstance(peer, dict) or not peer.get("id"):
             continue
-        chat_id = peer.get("id")
-        if chat_id:
-            return str(chat_id), None
-    return None
+        if match.get("channel") == "telegram" and peer.get("kind") == "group":
+            return str(peer["id"]), None
+        if match.get("channel") == "slack" and peer.get("kind") == "channel" and slack is None:
+            slack = (f"channel:{peer['id']}", None)      # the first one: a Slack agent may own several channels
+    return slack
 
 
 def _topic_target(cfg, agent):
@@ -372,6 +396,9 @@ def resolve_target(cwd):
     if not agent:
         return None
     try:
+        override = _narration_override()
+        if override:
+            return override, None
         return _binding_target(cfg, agent) or _topic_target(cfg, agent)
     except Exception:
         return None
@@ -648,7 +675,7 @@ def _send(target, text):
     try:
         sender = sender_path()
         head = ["python3", sender, "send"] if sender else [openclaw_bin(), "message", "send"]
-        argv = head + ["--channel", "telegram", "--target", target[0]]
+        argv = head + ["--channel", channel_of(target[0]), "--target", target[0]]
         if target[1]:  # no `None`/"" ever reaches argv: Popen would raise TypeError
             argv += ["--thread-id", target[1]]
         argv += ["--message", text]

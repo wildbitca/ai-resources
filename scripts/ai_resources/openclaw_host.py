@@ -315,7 +315,7 @@ _ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*\Z")   # \Z, never `$`: `$` also matches
 # write `LD_PRELOAD=` or `BASH_ENV=` (the file is sourced by bash), nor a knob the operator owns such as
 # `OPENCLAW_OFFBOX_LIST_CMD` (a command line).
 KIT_ENV_KEYS = frozenset({
-    "OPENCLAW_OWNER_TELEGRAM_ID", "OPENCLAW_BACKUP_DIR", "OPENCLAW_PUBLIC_DOMAIN", "OPENCLAW_POD_CIDR",
+    "OPENCLAW_OWNER_TELEGRAM_ID", "OPENCLAW_NOTIFY_CHANNEL", "OPENCLAW_NOTIFY_TARGET", "OPENCLAW_BACKUP_DIR", "OPENCLAW_PUBLIC_DOMAIN", "OPENCLAW_POD_CIDR",
     "OPENCLAW_NARRATION", "OPENCLAW_GUARD", "OPENCLAW_GRACEFUL_RESTART", "OPENCLAW_RESOURCE_GUARDS",
     "OPENCLAW_OFFBOX_GCLOUD_CONFIG", "OPENCLAW_OFFBOX_IMPERSONATE_SA", "OPENCLAW_OFFBOX_CRED_FILE"})
 # No space: the file is sourced by bash, so `KEY=a /path/cmd` would run /path/cmd.
@@ -1415,12 +1415,41 @@ def _with_unit_path() -> "Callable[[], None]":
     return restore
 
 
+_NOTIFY_TARGET = re.compile(r"^(?:(?:user|channel):[A-Z0-9]{5,20}|-?\d{5,15}|@[A-Za-z0-9_]{3,32})\Z")
+
+
+def notify_route(env: "dict[str, str] | None" = None) -> "tuple[str, str] | None":
+    """(channel, target) alerts go to, or None. The same rule as `notify_route` in scripts/openclaw/_common.sh:
+    `OPENCLAW_NOTIFY_CHANNEL` (slack | telegram) with `OPENCLAW_NOTIFY_TARGET`; with no channel, Slack when a target is
+    set, else Telegram when the owner id is set."""
+    env = read_host_env() if env is None else env
+    channel, target = env.get("OPENCLAW_NOTIFY_CHANNEL", ""), env.get("OPENCLAW_NOTIFY_TARGET", "")
+    if not channel:
+        if target:
+            channel = "slack"
+        elif env.get("OPENCLAW_OWNER_TELEGRAM_ID"):
+            channel, target = "telegram", env["OPENCLAW_OWNER_TELEGRAM_ID"]
+    elif channel == "telegram" and not target:
+        target = env.get("OPENCLAW_OWNER_TELEGRAM_ID", "")
+    return (channel, target) if channel and target else None
+
+
+def owner_notify_target(doc: dict) -> str:
+    """The Slack DM target for the owner, from `commands.ownerAllowFrom` (`slack:<id>` -> `user:<id>`), or ''."""
+    owners = ((doc or {}).get("commands") or {}).get("ownerAllowFrom") or []
+    for entry in owners:
+        if isinstance(entry, str) and entry.startswith("slack:") and entry[6:]:
+            return "user:" + entry[6:]
+    return ""
+
+
 def notify_owner(message: str, runner: Runner = default_runner) -> bool:
-    """Telegram to the operator, as the kit's shell scripts do (`openclaw message send`). Best effort."""
-    target = read_host_env().get("OPENCLAW_OWNER_TELEGRAM_ID", "")
-    if not target:
+    """An alert to the operator on the live channel (Slack; Telegram only when configured), as the kit's shell scripts
+    do (`openclaw message send`). Best effort."""
+    route = notify_route()
+    if route is None:
         return False
-    rc, _out = runner([resolve_openclaw_bin(), "message", "send", "--channel", "telegram", "--target", target,
+    rc, _out = runner([resolve_openclaw_bin(), "message", "send", "--channel", route[0], "--target", route[1],
                        "--message", message], timeout=30)
     return rc == 0
 
@@ -2229,6 +2258,9 @@ def validate_host_values(values: dict[str, str]) -> list[str]:
             ipaddress.ip_network(cidr, strict=False)
         except ValueError:
             problems.append(f"{cidr!r} is not a CIDR such as 10.42.0.0/24")
+    notify_target = values.get("NOTIFY_TARGET", "")
+    if notify_target and not _NOTIFY_TARGET.match(notify_target):
+        problems.append("the alert target must be user:<id> or channel:<id> (Slack), or a numeric Telegram id")
     owner = values.get("OWNER_TELEGRAM_ID", "")
     if owner and not re.fullmatch(r"-?\d{5,15}", owner):
         problems.append("the operator id must be the numeric Telegram user id")

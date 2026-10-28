@@ -64,7 +64,7 @@ for p in d.get("proposals", []):
         target = p["cls"] if slot.startswith("anthropic:") or ":" not in slot else "--slot " + slot
         print("ai-resources models approve %s %s   # %s" % (target, p["new"], "; ".join(p.get("reasons", []))))' <<<"$out" 2>/dev/null; }
 
-say(){ notify "$1" || log "note: could not notify over Telegram"; }
+say(){ notify "$1" || log "note: could not notify"; }
 
 case "$rc" in
   0)

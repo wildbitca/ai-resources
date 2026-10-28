@@ -211,15 +211,21 @@ def classify(rc, output):
 
 
 def _message_id(output):
-    m = re.search(r"Message ID:\s*(\d+)", output or "")
+    # A Telegram id is digits; a Slack one is a timestamp such as 1792957966.781689.
+    m = re.search(r"Message ID:\s*([\d.]+)", output or "")
     if m:
         return m.group(1)
-    m = re.search(r'"message_?[iI]d"\s*:\s*"?(\d+)', output or "")
+    m = re.search(r'"(?:message_?[iI]d|ts)"\s*:\s*"?([\d.]+)', output or "")
     return m.group(1) if m else ""
 
 
+def _channel_of(chat):
+    """A Slack destination is `channel:<id>` or `user:<id>`; a bare id is a Telegram chat."""
+    return "slack" if str(chat).startswith(("channel:", "user:")) else "telegram"
+
+
 def _argv(kind, chat, thread, text, mid):
-    argv = [OPENCLAW, "message", kind, "--channel", "telegram", "--target", str(chat)]
+    argv = [OPENCLAW, "message", kind, "--channel", _channel_of(chat), "--target", str(chat)]
     if thread not in (None, ""):
         argv += ["--thread-id", str(thread)]
     if kind == "edit":

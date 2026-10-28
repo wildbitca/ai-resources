@@ -79,10 +79,36 @@ watchdog_marker_is_stale() {
   return 0
 }
 
+# Where alerts go (watchdog, maintenance, verify, backup guard, health restart). The live channel is Slack:
+#   OPENCLAW_NOTIFY_CHANNEL  slack | telegram. Empty: slack when OPENCLAW_NOTIFY_TARGET is set, else telegram when
+#                            OPENCLAW_OWNER_TELEGRAM_ID is set (hosts that still run Telegram), else nowhere.
+#   OPENCLAW_NOTIFY_TARGET   slack: user:<U...> (a DM) or channel:<C...>; telegram: the chat id.
+# `ai-resources setup` fills both from commands.ownerAllowFrom when they are unset.
+: "${OPENCLAW_NOTIFY_CHANNEL:=}"
+: "${OPENCLAW_NOTIFY_TARGET:=}"
+
+# notify_route — prints "<channel> <target>" for the configured route, or nothing.
+notify_route() {
+  local ch="$OPENCLAW_NOTIFY_CHANNEL" tgt="$OPENCLAW_NOTIFY_TARGET"
+  if [ -z "$ch" ]; then
+    if [ -n "$tgt" ]; then ch=slack
+    elif [ -n "${OPENCLAW_OWNER_TELEGRAM_ID:-}" ]; then ch=telegram; tgt="$OPENCLAW_OWNER_TELEGRAM_ID"
+    fi
+  elif [ "$ch" = telegram ] && [ -z "$tgt" ]; then
+    tgt="${OPENCLAW_OWNER_TELEGRAM_ID:-}"
+  fi
+  [ -n "$ch" ] && [ -n "$tgt" ] && printf '%s %s\n' "$ch" "$tgt"
+}
+
+# notify_configured — success when there is somewhere to send an alert.
+notify_configured() { [ -n "$(notify_route)" ]; }
+
 # notify <message> — best effort. Returns non-zero when there is nowhere to send it or the send
 # failed, so callers decide whether that matters (`notify "..." || log "could not notify"`).
 notify() {
-  [ -n "${OPENCLAW_OWNER_TELEGRAM_ID:-}" ] || return 1
-  timeout 30 openclaw message send --channel telegram --target "$OPENCLAW_OWNER_TELEGRAM_ID" \
-    --message "$1" >/dev/null 2>&1
+  local route ch tgt
+  route="$(notify_route)" || return 1
+  [ -n "$route" ] || return 1
+  ch="${route%% *}"; tgt="${route#* }"
+  timeout 30 openclaw message send --channel "$ch" --target "$tgt" --message "$1" >/dev/null 2>&1
 }

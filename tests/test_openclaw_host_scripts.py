@@ -1368,3 +1368,49 @@ def test_models_update_stands_down_for_a_marker_that_is_a_link(host, tmp_path):
     target.write_text(_signature(_dead_pid(), 1), encoding="utf-8")
     (host.home / ".openclaw" / "watchdog.off").symlink_to(target)
     assert host.run("openclaw-models-update.sh").returncode == 0 and _models_calls(host) == []
+
+
+# --- alerts go to the live channel (Slack), Telegram only when configured -----------------------------------
+
+def _sent(host):
+    return [c for c in host.calls() if c.startswith("openclaw message send")]
+
+
+def test_watchdog_alert_goes_to_slack_when_a_notify_target_is_set(host):
+    host.set_active("inactive")
+    host.write_env(OPENCLAW_NOTIFY_CHANNEL="slack", OPENCLAW_NOTIFY_TARGET="user:U0567PW9D6W")
+    assert host.run("openclaw-watchdog.sh").returncode == 0
+    sent = _sent(host)
+    assert len(sent) == 1 and "--channel slack" in sent[0] and "--target user:U0567PW9D6W" in sent[0]
+
+
+def test_a_notify_target_alone_means_slack(host):
+    host.set_active("inactive")
+    host.write_env(OPENCLAW_NOTIFY_TARGET="channel:C0C6G43NZRS", OPENCLAW_OWNER_TELEGRAM_ID="42")
+    assert host.run("openclaw-watchdog.sh").returncode == 0
+    sent = _sent(host)
+    assert len(sent) == 1 and "--channel slack" in sent[0] and "--target channel:C0C6G43NZRS" in sent[0]
+
+
+def test_telegram_is_used_only_when_it_is_the_only_route(host):
+    host.set_active("inactive")
+    host.write_env(OPENCLAW_OWNER_TELEGRAM_ID="42")
+    assert host.run("openclaw-watchdog.sh").returncode == 0
+    sent = _sent(host)
+    assert len(sent) == 1 and "--channel telegram" in sent[0] and "--target 42" in sent[0]
+
+
+def test_no_route_means_no_send_and_no_failure(host):
+    host.set_active("inactive")
+    assert host.run("openclaw-watchdog.sh").returncode == 0
+    assert _sent(host) == []
+
+
+def test_the_python_side_resolves_the_same_route():
+    from ai_resources import openclaw_host as h
+    assert h.notify_route({"OPENCLAW_NOTIFY_TARGET": "user:U1ABCDE"}) == ("slack", "user:U1ABCDE")
+    assert h.notify_route({"OPENCLAW_OWNER_TELEGRAM_ID": "42"}) == ("telegram", "42")
+    assert h.notify_route({"OPENCLAW_NOTIFY_CHANNEL": "telegram", "OPENCLAW_OWNER_TELEGRAM_ID": "42"}) == ("telegram", "42")
+    assert h.notify_route({}) is None
+    assert h.owner_notify_target({"commands": {"ownerAllowFrom": ["telegram:1", "slack:U0567PW9D6W"]}}) == "user:U0567PW9D6W"
+    assert h.owner_notify_target({}) == ""

@@ -69,7 +69,7 @@ body="$(cat "$REPORT")"
 log "summary: $(tr '\n' ' ' <<<"$body")"
 if [ "$rc" -ne 0 ] || [ "$skipped" -ne 0 ] || grep -q "^UPDATE:" <<<"$body"; then
   notify "OpenClaw weekly maintenance:
-$body" || log "note: could not notify over Telegram"
+$body" || log "note: could not notify"
 fi
 log "=== end (rc=$rc) ==="
 exit "$rc"

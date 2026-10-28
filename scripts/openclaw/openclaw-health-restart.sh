@@ -56,16 +56,16 @@ sys.stdout.write(sys.argv[2] if v is None else str(v))
 ' "$2" "${3:-}"
 }
 
-# notify_once <episode key> <message>: one Telegram per episode, not one per tick. The episode is marked only
+# notify_once <episode key> <message>: one alert per episode, not one per tick. The episode is marked only
 # AFTER a send succeeded, so a notice that could not be delivered (a frozen gateway cannot deliver) is retried
-# on the next tick. With no Telegram target there is nothing to retry: the episode is marked and logged.
+# on the next tick. With no alert target there is nothing to retry: the episode is marked and logged.
 notify_once() {
   if [ "$DRY" = 1 ]; then log "DRY RUN: would notify: $2"; return 0; fi
   [ "$(cat "$NOTIFIED" 2>/dev/null)" = "$1" ] && return 0
-  if [ -z "${OPENCLAW_OWNER_TELEGRAM_ID:-}" ]; then
-    echo "$1" > "$NOTIFIED"; log "note: no Telegram target configured; notice only in this log: $2"; return 0
+  if ! notify_configured; then
+    echo "$1" > "$NOTIFIED"; log "note: no alert target configured; notice only in this log: $2"; return 0
   fi
-  if notify "$2"; then echo "$1" > "$NOTIFIED"; else log "note: could not notify over Telegram; will retry next tick"; fi
+  if notify "$2"; then echo "$1" > "$NOTIFIED"; else log "note: could not notify; will retry next tick"; fi
 }
 
 # send_result <message>: the merged restart result. Retried a few times (the gateway has only just come back).
@@ -76,7 +76,7 @@ send_result() {
     notify "$1" && return 0
     sleep 20
   done
-  log "note: could not notify over Telegram"
+  log "note: could not notify"
 }
 
 if [ -e "$OPENCLAW_WATCHDOG_OFF" ]; then
@@ -198,9 +198,9 @@ out="$(ai-resources openclaw doctor --yes 2>&1)"
 drc=$?
 log "doctor rc=$drc $(tr '\n' ' ' <<<"$out" | cut -c1-300)"
 if [ "$drc" -eq 0 ]; then
-  notify "OpenClaw health check ran the drained doctor: $reason. The gateway answers again. Log: ~/.openclaw/logs/health-restart.log" || log "note: could not notify over Telegram"
+  notify "OpenClaw health check ran the drained doctor: $reason. The gateway answers again. Log: ~/.openclaw/logs/health-restart.log" || log "note: could not notify"
   rm -f "$NOTIFIED"
 else
-  notify "OpenClaw health check: $reason; the drained doctor exited $drc. Check \`ai-resources openclaw status\`." || log "note: could not notify over Telegram"
+  notify "OpenClaw health check: $reason; the drained doctor exited $drc. Check \`ai-resources openclaw status\`." || log "note: could not notify"
   exit 1
 fi

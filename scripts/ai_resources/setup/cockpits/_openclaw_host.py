@@ -301,7 +301,7 @@ def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path],
         ui.error("OpenClaw host: " + "; ".join(problems) + " — nothing applied.")
         return False
 
-    _configure_env(o, dry_run=dry_run)
+    _configure_env(o, dry_run=dry_run, doc=doc)
     if not _configure_offbox_wif(o, dry_run=dry_run):
         _configure_offbox_identity(o, dry_run=dry_run)
     _configure_hooks(s, ak_path, dry_run=dry_run)
@@ -315,7 +315,7 @@ def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path],
     return changed
 
 
-def _configure_env(o: state.OpenClawState, *, dry_run: bool) -> None:
+def _configure_env(o: state.OpenClawState, *, dry_run: bool, doc: dict | None = None) -> None:
     """~/.openclaw/kit-host.env: the host values the scripts and the narration hook read."""
     wanted: dict[str, str | None] = {
         "OPENCLAW_OWNER_TELEGRAM_ID": o.host_operator_id or None,
@@ -328,6 +328,11 @@ def _configure_env(o: state.OpenClawState, *, dry_run: bool) -> None:
         "OPENCLAW_RESOURCE_GUARDS": (o.host_resource_guards if o.host_config else "") or None,
     }
     current = host.read_host_env()
+    # Alerts go to Slack: fill the route from the owner when the operator has not set one (never overwritten).
+    target = host.owner_notify_target(doc or {})
+    if target and not current.get("OPENCLAW_NOTIFY_TARGET") and not current.get("OPENCLAW_NOTIFY_CHANNEL"):
+        wanted["OPENCLAW_NOTIFY_CHANNEL"] = "slack"
+        wanted["OPENCLAW_NOTIFY_TARGET"] = target
     todo = {k: v for k, v in wanted.items() if current.get(k) != v}
     if not todo:
         return

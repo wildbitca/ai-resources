@@ -107,15 +107,20 @@ def sh(args, capture=False):
         return None
 
 
+def channel_of(chat):
+    """A Slack destination is `channel:<id>` or `user:<id>`; a bare id is a Telegram chat."""
+    return "slack" if str(chat).startswith(("channel:", "user:")) else "telegram"
+
+
 def send(chat, thread, text):
     if BUS is not None:
         _, mid = BUS.deliver("send", chat, thread, text=text)
         return mid or None
-    argv = [OPENCLAW, "message", "send", "--channel", "telegram", "--target", chat]
+    argv = [OPENCLAW, "message", "send", "--channel", channel_of(chat), "--target", chat]
     if thread:  # group-mode targets carry no thread; the flag must be omitted, not empty
         argv += ["--thread-id", thread]
     out = sh(argv + ["--message", text], capture=True) or ""
-    m = re.search(r"Message ID:\s*(\d+)", out)
+    m = re.search(r"Message ID:\s*([\d.]+)", out)
     return m.group(1) if m else None
 
 
@@ -125,7 +130,7 @@ def edit(chat, thread, mid, text):
         BUS.deliver("edit", chat, thread, mid=mid, text=None if callable(text) else text,
                     text_fn=text if callable(text) else None)
         return
-    argv = [OPENCLAW, "message", "edit", "--channel", "telegram", "--target", chat]
+    argv = [OPENCLAW, "message", "edit", "--channel", channel_of(chat), "--target", chat]
     if thread:  # group-mode targets carry no thread; the flag must be omitted, not empty
         argv += ["--thread-id", thread]
     sh(argv + ["--message-id", mid, "--message", text() if callable(text) else text])
