@@ -106,7 +106,9 @@ def is_telegram_active(s: state.SetupState | state.OpenClawState, doc: dict | No
     ch = (doc or {}).get("channels") or {}
     tg = ch.get("telegram")
     if isinstance(tg, dict):
-        return tg.get("enabled", True) is not False
+        # A bare `{enabled: true}` stub (OpenClaw re-creates it) is not a configured channel: it needs a credential,
+        # groups or accounts, or a wanted channel in the setup state, to count (see retired.py).
+        return tg.get("enabled", True) is not False and bool(set(tg) - {"enabled", "streaming"})
     return False
 
 
@@ -131,7 +133,8 @@ def prompt(s: state.SetupState, doc: dict | None = None) -> None:
         o.host_backup_dir = env.get("OPENCLAW_BACKUP_DIR") or "/srv/openclaw-backups"
         o.host_domain = env.get("OPENCLAW_PUBLIC_DOMAIN") or "iai.wildbit.dev"
         o.host_pod_cidr = env.get("OPENCLAW_POD_CIDR") or ""
-        o.host_operator_id = env.get("OPENCLAW_OWNER_TELEGRAM_ID") or ""
+        # Telegram is retired unless something configured it (retired.py): its owner id is not carried forward.
+        o.host_operator_id = (env.get("OPENCLAW_OWNER_TELEGRAM_ID") or "") if is_telegram_active(s, doc) else ""
         if env.get("OPENCLAW_OFFBOX_BUCKET"):
             o.host_offbox_identity = True
         ui.ok("OpenClaw host: applying recommended configuration (units, guards, backup, workboard).")
@@ -306,6 +309,7 @@ def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path],
         _configure_offbox_identity(o, dry_run=dry_run)
     _configure_hooks(s, ak_path, dry_run=dry_run)
     _configure_units(o, dry_run=dry_run)
+    _configure_memory_high(o, dry_run=dry_run)
     changed = _configure_config(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
                                 run_changes=run_changes)
     changed = _configure_workboard(o, doc, dry_run=dry_run, oc=oc) or changed
@@ -1502,6 +1506,24 @@ def teardown_workspace_blocks(o: state.OpenClawState) -> list[str]:
     return done
 
 
+def _configure_memory_high(o: state.OpenClawState, *, dry_run: bool) -> None:
+    """The gateway cgroup cap, applied by setup itself with no question (it is a live cgroup property: no restart, no
+    drop-in doctor inspects, T27). It only ever RAISES the cap, so a value the operator sized higher stays. Sizing:
+    node's heap (--max-old-space-size=8192) + about 95 MiB per MCP child + the claude/agy workers a role run starts;
+    16 GiB is the floor for a team host and 20 GiB (`OPENCLAW_MEMORY_HIGH=20G`) for a heavy one. Without it the
+    gateway sits at the throttle and its own event loop stalls (T41)."""
+    results, _ctx = host.bootstrap(_runner(), dry_run=True, only="memory-high", out=lambda _line: None)
+    pending = [r for r in results if r.status == "would-change"]
+    if not pending:
+        return
+    if dry_run:
+        ui.detail(f"Would set the gateway MemoryHigh to {host.wanted_memory_high()} (raise only)")
+        return
+    for r in host.bootstrap(_runner(), dry_run=False, only="memory-high", out=ui.detail,
+                            confirm=lambda step, what: True)[0]:
+        (ui.ok if r.status in ("changed", "satisfied") else ui.warn)(f"Gateway MemoryHigh: {r.status} {r.detail}".rstrip())
+
+
 def _configure_check(o: state.OpenClawState, *, dry_run: bool) -> None:
     if not o.host_check:
         return
@@ -1513,7 +1535,9 @@ def _configure_check(o: state.OpenClawState, *, dry_run: bool) -> None:
         ui.warn("OpenClaw host check: " + ", ".join(f"{r.step} ({r.status})" for r in pending))
     else:
         ui.ok("OpenClaw host check: everything matches the documented setup")
-    if dry_run or not fixable:
+    if dry_run:
+        return
+    if not fixable:
         return
     if ui.is_non_interactive() or not ui.confirm(
             f"Apply the {len(fixable)} change(s) the check found? Each one asks again.", default=False):

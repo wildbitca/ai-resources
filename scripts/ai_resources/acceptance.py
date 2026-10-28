@@ -652,14 +652,22 @@ def _mcp(env: Env) -> Result:
 def _offbox(env: Env) -> Result:
     from . import openclaw_host as host
     cfg = host.read_host_env()
-    cred = cfg.get("OPENCLAW_OFFBOX_CRED_FILE")
-    if not (cfg.get("OPENCLAW_OFFBOX_BUCKET") and cred):
+    if not cfg.get("OPENCLAW_OFFBOX_BUCKET"):
         return skip("no off-box backup is configured on this host")
+    # Self-healing: the kit-derived file has no secret in it and is regenerated from the host federation when it is gone
+    # (a missing file made the uploader fail with "not readable" on 2026-10-27 and 10-28).
+    status, detail = host.offbox_cred_repair(cfg)
+    if status == "failed":
+        return bad(detail)
+    cred = cfg.get("OPENCLAW_OFFBOX_CRED_FILE") or str(host.OFFBOX_WIF_CRED_PATH)
     try:
         mode = os.stat(cred).st_mode & 0o777
     except OSError:
         return bad("the off-box credential file named by OPENCLAW_OFFBOX_CRED_FILE is missing")
-    return ok("the off-box credential file exists (0600)") if mode == 0o600 else bad(f"the off-box credential file has mode {mode:o}, not 600")
+    if mode != 0o600:
+        return bad(f"the off-box credential file has mode {mode:o}, not 600")
+    return ok("the off-box credential file was missing and was regenerated (0600)") if status == "repaired" \
+        else ok("the off-box credential file exists (0600)")
 
 
 @case("setup.offbox-regenerate", "setup-live")

@@ -49,6 +49,12 @@ state="$(systemctl --user is-active "$UNIT" 2>/dev/null || true)"
 DEACT_MARK="$OPENCLAW_LOG_DIR/watchdog.deactivating-alerted"
 if [ "$state" = active ]; then
   rm -f "$DEACT_MARK"
+  # A gateway that answers can still have an agent SQLite database stuck ("reclamation commit checkpoint expired"),
+  # which silently stops that agent's Slack lane. One alert per fault; read-only (the fix is the drained doctor).
+  if command -v ai-resources >/dev/null 2>&1; then
+    timeout 90 ai-resources openclaw db-fault --notify >/dev/null 2>&1 \
+      || echo "$(date '+%F %T') agent database fault detected or probe failed (see: ai-resources openclaw db-fault)" >> "$LOG"
+  fi
   exit 0
 fi
 

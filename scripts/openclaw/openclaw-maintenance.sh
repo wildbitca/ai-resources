@@ -9,6 +9,12 @@
 #   - the backup-age check and the disk report;
 #   - telling the operator ONLY when something is off or a new version is out.
 #
+# A week that finds agent runs in flight is NOT lost: the timer fires again every day at 04:30 and 08:30 (UTC, the
+# operator's night) and this script runs the window on the first try whose probe finds the gateway idle. The state
+# file `maintenance.week` records "<ISO week> <skipped tries> <done|open>": a week already done exits at once, only the
+# first skip of a week is announced (and every sixth, so a week that never finds a quiet slot still escalates), and the
+# report that finally runs says how many tries it took.
+#
 # It never deletes transcripts or job artifacts: it reports their size and lets the operator
 # decide.
 set -uo pipefail
@@ -26,16 +32,30 @@ say(){ echo "$*" >> "$REPORT"; }
 finish(){ rm -f "$REPORT"; }
 trap finish EXIT
 
-log "=== maintenance window ==="
+# A maintenance week starts on Sunday (the first slot, after the Sunday backup): tomorrow's ISO week on a Sunday.
+WEEK="$(date -d tomorrow +%G-W%V)"
+WEEK_FILE="$OPENCLAW_LOG_DIR/maintenance.week"
+read -r wk_id wk_skips wk_state < "$WEEK_FILE" 2>/dev/null || true
+if [ "${wk_id:-}" != "$WEEK" ]; then wk_skips=0; wk_state=open; fi
+wk_skips="${wk_skips:-0}"
+if [ "${wk_state:-open}" = done ]; then
+  log "=== maintenance already done for $WEEK; nothing to do ==="
+  exit 0
+fi
+save_week(){ printf '%s %s %s\n' "$WEEK" "$1" "$2" > "$WEEK_FILE"; }
+
+log "=== maintenance window ($WEEK, previous skipped tries: $wk_skips) ==="
 
 out="$(ai-resources openclaw doctor --cleanup-sessions --yes 2>&1)"
 drc=$?
 echo "$out" >> "$LOG"
 case "$drc" in
   0)
+    after=""; [ "$wk_skips" -gt 0 ] && after="after $wk_skips skipped tries this week"
     rep="$(grep -oE "Repaired legacy bindings[^|]*" <<<"$out" | head -1 | tr -s ' ')"
-    say "doctor: ok${rep:+ -- $rep}"
-    say "gateway: active and healthy" ;;
+    say "doctor: ok${rep:+ -- $rep}${after:+ ($after)}"
+    say "gateway: active and healthy"
+    save_week 0 done ;;
   2) say "WARNING: another maintenance window is open (watchdog.off exists): nothing was done"; rc=1 ;;
   3) say "WARNING: the cgroup did not drain in 90 s: doctor --fix skipped"; rc=1 ;;
   4) say "WARNING: doctor did not complete the maintenance (see maintenance.log)"; rc=1 ;;
@@ -43,7 +63,10 @@ case "$drc" in
   # 6 = the drained doctor refused because agent runs are in flight (or the busy probe could not tell).
   # Nothing was stopped, so this is a skipped week and not a failure: the unit stays green and the report
   # says so once.
-  6) say "WARNING: skipped: agent runs are in flight (or the busy probe could not tell); doctor was not run and nothing was stopped"; skipped=1 ;;
+  6) wk_skips=$((wk_skips + 1)); save_week "$wk_skips" open
+     say "WARNING: skipped: agent runs are in flight (or the busy probe could not tell); doctor was not run and nothing was stopped; the timer retries in the next quiet slot (try $wk_skips this week)"
+     # Announce the first skip of the week, then every sixth: a retry that will succeed needs no extra noise.
+     if [ "$wk_skips" -eq 1 ] || [ $((wk_skips % 6)) -eq 0 ]; then skipped=1; fi ;;
   *) say "ALERT: ai-resources openclaw doctor failed unexpectedly (exit $drc)"; rc=1 ;;
 esac
 

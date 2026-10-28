@@ -3283,6 +3283,9 @@ def _step_memory_high(c: _Ctx) -> StepResult:
         return StepResult("memory-high", "refused", "the gateway unit is not installed yet")
     if cur.strip() == str(want):
         return StepResult("memory-high", "satisfied", c.memory_high)
+    # Raise, never lower: an operator who sized the cap higher (the heavy 20G case) keeps it. "infinity" is unset.
+    if cur.strip().isdigit() and want < int(cur.strip()) < 2 ** 62:
+        return StepResult("memory-high", "satisfied", f"{int(cur.strip()) / GIB:.0f}G, above the recommended {c.memory_high}")
     argv = ["systemctl", "--user", "set-property", GATEWAY_UNIT, f"MemoryHigh={c.memory_high}"]
     r = c.mutate("memory-high", argv, "cap the gateway's memory without a drop-in")
     if r is None:
@@ -4771,6 +4774,91 @@ def cmd_restart_report(args: argparse.Namespace, runner: Runner | None = None) -
     return 0 if report["available"] else 1
 
 
+# --- the agent SQLite fault (2026-10-28) ----------------------------------------------------------------------------
+#
+# An agent's session database (snoutzone, security, kit-lane-*) can get stuck with "SQLite session reclamation commit
+# checkpoint expired / Sessions remain unavailable ... run openclaw doctor --fix". Its Slack lane then stops taking
+# messages while the gateway itself still answers `openclaw health`, so nothing else notices. This reads the journal for
+# that line and `openclaw health --json` for ingress pressure and failed delivery queues (dead letters), read-only.
+
+_DB_FAULT_RE = re.compile(r"Agent (?P<agent>[\w.-]+) \([^)]*\): SQLite session reclamation commit checkpoint expired")
+DEAD_LETTER_WARN = 1
+
+
+def _walk_pressure(node, found: list) -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if "ingresspressure" in key.lower().replace("_", "") and value not in (None, False, 0, "", "none", "ok"):
+                found.append(f"{key}={json.dumps(value)[:60]}")
+            _walk_pressure(value, found)
+    elif isinstance(node, list):
+        for item in node:
+            _walk_pressure(item, found)
+
+
+def agent_db_fault(journal_text: str, health: "dict | None") -> dict:
+    """{fault, agents, ingress_pressure, dead_letters}: `fault` is True for a checkpoint-expired line (the DB is stuck) or
+    for ingress pressure; dead letters are reported next to it, not on their own (old ones sit there for weeks)."""
+    agents = sorted({m.group("agent") for m in _DB_FAULT_RE.finditer(journal_text or "")})
+    pressure: list[str] = []
+    dead = 0
+    if isinstance(health, dict):
+        _walk_pressure(health, pressure)
+        failed = ((health.get("deliveryQueues") or {}).get("failed")) or []
+        dead = sum(int(q.get("count") or 0) for q in failed if isinstance(q, dict))
+    return {"fault": bool(agents or pressure), "agents": agents, "ingress_pressure": pressure, "dead_letters": dead}
+
+
+def agent_db_fault_probe(runner: Runner = default_runner, *, since: str = "-45min") -> dict:
+    """Run the two reads and return `agent_db_fault`'s answer plus `probe_ok` (False when neither source answered)."""
+    rc, journal = runner(["journalctl", "--user", "-u", GATEWAY_UNIT, f"--since={since}", "--no-pager", "-g",
+                          "checkpoint expired"], env=systemd_env(), timeout=30)
+    rc2, health_text = runner([resolve_openclaw_bin(), "health", "--json"], timeout=60)
+    health = None
+    if rc2 == 0:
+        try:
+            health = json.loads(health_text[health_text.index("{"):])
+        except (ValueError, json.JSONDecodeError):
+            health = None
+    out = agent_db_fault(journal if rc == 0 else "", health)
+    out["probe_ok"] = rc == 0 or health is not None
+    return out
+
+
+def agent_db_fault_message(result: dict) -> str:
+    parts = []
+    if result["agents"]:
+        parts.append("agent session databases stuck (SQLite reclamation checkpoint expired): " + ", ".join(result["agents"]))
+    if result["ingress_pressure"]:
+        parts.append("ingress pressure: " + "; ".join(result["ingress_pressure"]))
+    if result["dead_letters"]:
+        parts.append(f"{result['dead_letters']} failed delivery queue entries (dead letters)")
+    return ("; ".join(parts) + ". Its Slack lane stops answering. Do NOT improvise: stop the gateway only in a "
+            "drained window and run `ai-resources openclaw doctor --cleanup-sessions`.")
+
+
+def cmd_db_fault(args: argparse.Namespace, runner: Runner | None = None) -> int:
+    """`ai-resources openclaw db-fault [--json] [--notify]`: exit 0 healthy, 1 fault, 2 the probe could not tell.
+    `--notify` sends one alert per set of stuck agents (a marker under ~/.openclaw/logs; marked only after a send worked)."""
+    result = agent_db_fault_probe(runner or default_runner)
+    marker = Path.home() / ".openclaw" / "logs" / "db-fault.notified"
+    key = ",".join(result["agents"]) + "|" + ";".join(result["ingress_pressure"])
+    if args.notify:
+        if not result["fault"]:
+            marker.unlink(missing_ok=True)
+        elif not marker.exists() or marker.read_text(encoding="utf-8").strip() != key:
+            if notify_owner("OpenClaw: " + agent_db_fault_message(result), runner or default_runner):
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text(key + "\n", encoding="utf-8")
+    if args.json:
+        print(json.dumps(result, sort_keys=True))
+    elif result["fault"]:
+        print(agent_db_fault_message(result))
+    else:
+        print("no agent database fault" + (f" ({result['dead_letters']} old dead letters)" if result["dead_letters"] else ""))
+    return 1 if result["fault"] else (0 if result["probe_ok"] else 2)
+
+
 def cmd_busy(args: argparse.Namespace) -> int:
     """Exit 0 idle, 1 busy, 2 the probe could not tell (callers treat 2 as busy)."""
     n = gateway_busy_strict()
@@ -4842,6 +4930,38 @@ def offbox_wif_cred(sa: str, *, env: "dict[str, str] | None" = None, source: Pat
         target.parent.mkdir(parents=True, exist_ok=True)
         write_file_atomically(target, text, mode=0o600)
     return "written", target
+
+
+def offbox_cred_repair(env: "dict[str, str] | None" = None, *, dry_run: bool = False) -> "tuple[str, str]":
+    """Make the uploader's credential file exist when the kit derived it: ("ok" | "repaired" | "skipped" | "failed", detail).
+
+    Only the kit-derived file (`OFFBOX_WIF_CRED_PATH`) is regenerated; a path the operator named in
+    `OPENCLAW_OFFBOX_CRED_FILE` is theirs, so a missing one is reported, never recreated. The file holds no secret: it is
+    derived from the host's federation config on every call, and it has disappeared before (a test teardown unlinked it)."""
+    cfg = read_host_env() if env is None else env
+    if not cfg.get("OPENCLAW_OFFBOX_BUCKET"):
+        return "skipped", "no off-box backup is configured on this host"
+    named = cfg.get("OPENCLAW_OFFBOX_CRED_FILE") or ""
+    if named and named != str(OFFBOX_WIF_CRED_PATH):
+        return ("ok", f"{named} (the operator's own file)") if Path(named).is_file() \
+            else ("failed", f"{named} is missing and is the operator's own file; the kit does not recreate it")
+    sa = cfg.get("OPENCLAW_OFFBOX_IMPERSONATE_SA") or OFFBOX_SA_DEFAULT
+    outcome, path = offbox_wif_cred(sa, dry_run=dry_run)
+    if outcome == "absent":
+        return "failed", ("no workload identity federation config on this host "
+                          f"({_WIF_DEFAULT_SOURCE}); the uploader needs a named gcloud configuration instead")
+    if outcome == "same":
+        return "ok", f"{path} is present and current"
+    if not named and not dry_run:
+        write_host_env({"OPENCLAW_OFFBOX_CRED_FILE": str(OFFBOX_WIF_CRED_PATH)})
+    return "repaired", f"{path} regenerated from the host federation" + (" (dry run)" if dry_run else "")
+
+
+def cmd_offbox_cred(args: argparse.Namespace) -> int:
+    """`ai-resources openclaw offbox-cred [--repair]`: exit 0 present (or repaired), 1 missing/unrepairable."""
+    status, detail = offbox_cred_repair(dry_run=not args.repair)
+    print(detail if args.repair or status != "repaired" else detail.replace("regenerated", "is missing or stale; --repair regenerates it").replace(" (dry run)", ""))
+    return 0 if status in ("ok", "skipped") or (status == "repaired" and args.repair) else 1
 
 
 OFFBOX_UPLOADER_UNIT = "openclaw-backup-uploader.service"
@@ -5460,6 +5580,17 @@ def add_subparser(sub: "argparse._SubParsersAction") -> None:
                            "window; confirm it with `ai-resources openclaw pressure --json` first")
     p_gr.add_argument("--json", action="store_true", help="Print the summary as JSON")
     p_gr.set_defaults(func=cmd_graceful_restart)
+
+    p_oc = verbs.add_parser("offbox-cred", help="Check the off-box uploader's credential file; --repair regenerates the "
+                                                "kit-derived one from the host federation")
+    p_oc.add_argument("--repair", action="store_true", help="Regenerate a missing or stale kit-derived file")
+    p_oc.set_defaults(func=cmd_offbox_cred)
+
+    p_dbf = verbs.add_parser("db-fault", help="Detect stuck agent SQLite databases and ingress pressure (read-only; "
+                                              "exit 0 healthy, 1 fault, 2 unknown)")
+    p_dbf.add_argument("--json", action="store_true", help="Print the result as JSON")
+    p_dbf.add_argument("--notify", action="store_true", help="Alert the operator once per fault (Slack by default)")
+    p_dbf.set_defaults(func=cmd_db_fault)
 
     p_busy = verbs.add_parser("busy", help="How many agent runs are in flight (exit 0 idle, 1 busy, 2 unknown)")
     p_busy.add_argument("--json", action="store_true", help="Print {busy, probe_ok} as JSON")

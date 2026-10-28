@@ -1414,3 +1414,58 @@ def test_the_python_side_resolves_the_same_route():
     assert h.notify_route({}) is None
     assert h.owner_notify_target({"commands": {"ownerAllowFrom": ["telegram:1", "slack:U0567PW9D6W"]}}) == "user:U0567PW9D6W"
     assert h.owner_notify_target({}) == ""
+
+
+# --- the maintenance window retries instead of silently skipping a week -------------------------------------
+
+def _week_file(host):
+    return host.home / ".openclaw" / "logs" / "maintenance.week"
+
+
+def test_a_busy_skip_is_recorded_announced_once_and_retried(host):
+    host.fresh_backup()
+    host.write_env(OPENCLAW_NOTIFY_TARGET="user:U0567PW9D6W")
+    host.set_doctor_rc(6)
+    assert host.run("openclaw-maintenance.sh").returncode == 0
+    assert _week_file(host).read_text().split()[1:] == ["1", "open"]
+    assert len(_sent(host)) == 1
+    assert host.run("openclaw-maintenance.sh").returncode == 0           # the next slot is busy too: quiet
+    assert _week_file(host).read_text().split()[1:] == ["2", "open"]
+    assert len(_sent(host)) == 1
+
+
+def test_the_next_quiet_slot_runs_the_window_and_says_how_many_tries_it_took(host):
+    host.fresh_backup()
+    host.write_env(OPENCLAW_NOTIFY_TARGET="user:U0567PW9D6W")
+    host.set_doctor_rc(6)
+    host.run("openclaw-maintenance.sh")
+    host.set_doctor_rc(0)
+    assert host.run("openclaw-maintenance.sh").returncode == 0
+    assert _week_file(host).read_text().split()[1:] == ["0", "done"]
+    assert "after 1 skipped tries this week" in (host.home / ".openclaw" / "logs" / "maintenance.log").read_text()
+
+
+def test_a_week_already_done_does_nothing_on_the_later_slots(host):
+    host.fresh_backup()
+    host.run("openclaw-maintenance.sh")
+    before = len([c for c in host.calls() if c.startswith("ai-resources openclaw doctor")])
+    assert host.run("openclaw-maintenance.sh").returncode == 0
+    assert len([c for c in host.calls() if c.startswith("ai-resources openclaw doctor")]) == before == 1
+
+
+def test_the_timer_fires_in_more_than_one_quiet_slot():
+    timer = (REPO / "templates" / "systemd" / "openclaw-maintenance.timer.template").read_text()
+    assert timer.count("OnCalendar=") >= 2 and "Persistent=true" in timer
+
+
+# --- the stuck agent database is detected by the watchdog and by verify ------------------------------------
+
+def test_watchdog_asks_for_the_database_check_while_the_gateway_is_active(host):
+    host.set_active("active")
+    assert host.run("openclaw-watchdog.sh").returncode == 0
+    assert any(c.startswith("ai-resources openclaw db-fault --notify") for c in host.calls())
+
+
+def test_verify_runs_the_database_and_credential_checks():
+    code = _text("openclaw-verify.sh")
+    assert "ai-resources openclaw db-fault" in code and "ai-resources openclaw offbox-cred --repair" in code

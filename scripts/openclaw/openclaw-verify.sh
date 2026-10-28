@@ -125,6 +125,26 @@ PY
       ok "credit ledger" "refreshed, no pool at 80%"
     fi
   fi
+
+  # 11. The off-box credential file (derived from the host federation; it must exist when the uploader is configured).
+  #     `ai-resources openclaw offbox-cred --repair` regenerates it and says what it did.
+  if [ -n "${OPENCLAW_OFFBOX_BUCKET:-}" ] && [ -n "${OPENCLAW_OFFBOX_CRED_FILE:-}" ] \
+     && command -v ai-resources >/dev/null 2>&1; then
+    cred_out="$(timeout 60 ai-resources openclaw offbox-cred --repair 2>&1)"; cred_rc=$?
+    [ "$cred_rc" -eq 0 ] && ok "off-box credential" "$(printf "%s" "$cred_out" | head -c 120)" \
+      || bad "off-box credential" "$(printf "%s" "$cred_out" | head -c 200)"
+  fi
+
+  # 12. Agent session databases: a journal line "SQLite session reclamation commit checkpoint expired" or ingress
+  #     pressure means an agent's lane is stuck while `openclaw health` still answers. Exit 1 = fault, 2 = unknown.
+  if command -v ai-resources >/dev/null 2>&1; then
+    dbf_out="$(timeout 120 ai-resources openclaw db-fault 2>&1)"; dbf_rc=$?
+    case "$dbf_rc" in
+      0) ok "agent databases" "no checkpoint-expired fault" ;;
+      1) bad "agent databases" "$(printf "%s" "$dbf_out" | head -c 300)" ;;
+      *) ok "agent databases" "could not tell (journal and health unreadable)" ;;
+    esac
+  fi
 }
 
 if [ "$notify_mode" = yes ]; then

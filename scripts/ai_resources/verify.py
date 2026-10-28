@@ -3,7 +3,8 @@
 One implementation, three doors: the last wizard step, `ai-resources doctor` (section 4) and this
 module's own `verify` subcommand all call `run_all` and print with `print_findings`.
 
-Nothing here writes, and nothing here needs the network: the wizard runs it on every setup.
+Nothing here writes and nothing here needs the network, with one exception: `repair_findings` regenerates the off-box
+uploader's credential file (derived from the host federation, no secret in it) when it is missing.
 Cockpit modules are imported inside the functions that need them, because a cockpit module imports
 `Finding` from here and the other direction at import time would be a cycle.
 """
@@ -82,6 +83,22 @@ def lanes_findings(s: state.SetupState) -> list[Finding]:
         return [Finding("warn", "lanes", f"{path} is out of date with the setup state",
                         "re-run `ai-resources setup --lanes`")]
     return [Finding("ok", "lanes", f"lanes.yaml matches the setup state ({path})")]
+
+
+def repair_findings() -> list[Finding]:
+    """Self-heal what the kit derives and a stray process can delete: the off-box credential file. [] when no off-box
+    backup is configured. A path the operator named themselves is only checked, never recreated."""
+    try:
+        from . import openclaw_host as host
+        status, detail = host.offbox_cred_repair()
+    except Exception:  # noqa: BLE001 - self-healing must not take verify down
+        return []
+    if status == "skipped":
+        return []
+    level = {"ok": "ok", "repaired": "ok", "failed": "error"}[status]
+    return [Finding(level, "openclaw", ("repaired: " if status == "repaired" else "off-box credential: ") + detail,
+                    "run on the host that has the federation (`~/.config/gcloud/agent-wif`), then `ai-resources setup`"
+                    if status == "failed" else "")]
 
 
 def credit_findings() -> list[Finding]:
@@ -241,6 +258,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         ids.append("lanes")
     findings = run_all(s, ids)
     findings += credit_findings()
+    findings += repair_findings()
     if getattr(args, "live", False):
         findings += live_findings(s)
         findings += key_findings()
