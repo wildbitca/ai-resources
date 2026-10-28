@@ -30,7 +30,8 @@ if [ -e "$OPENCLAW_WATCHDOG_OFF" ]; then
 fi
 
 # stdout carries the JSON report; stderr (warnings, stray log lines) goes to the log, never into the parse.
-errf="$(mktemp)"
+scratch_begin openclaw models-update
+errf="$(scratch_tmpfile)"
 out="$(ai-resources models update --unattended --json 2>"$errf")"
 rc=$?
 log "rc=$rc $(tr '\n' ' ' <<<"$out" | cut -c1-600)"

@@ -28,6 +28,9 @@ def _scratch_roots():
 
 
 def _is_operators_tree(p) -> bool:
+    resolved = Path(p).resolve()
+    if (REAL_HOME / ".cache" / "ai-resources" / "runs") in resolved.parents:
+        return False                       # a scratch run (ADR-0020): where the suite's own basetemp lives
     return any(Path(p).resolve() == r or r in Path(p).resolve().parents for r in _scratch_roots())
 
 

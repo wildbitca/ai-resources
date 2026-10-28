@@ -22,14 +22,15 @@ set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 LOG="$OPENCLAW_LOG_DIR/maintenance.log"
-REPORT="$(mktemp)"
+scratch_begin openclaw maintenance --no-trap
+REPORT="$(scratch_tmpfile)"
 rc=0
 skipped=0
 
 mkdir -p "$(dirname "$LOG")"
 log(){ echo "$(date '+%F %T') $*" | tee -a "$LOG" >&2; }
 say(){ echo "$*" >> "$REPORT"; }
-finish(){ rm -f "$REPORT"; }
+finish(){ local rc=$?; rm -f "$REPORT"; scratch_end "$rc"; }
 trap finish EXIT
 
 # A maintenance week starts on Sunday (the first slot, after the Sunday backup): tomorrow's ISO week on a Sunday.

@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
+from . import scratch as _scratch
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -452,7 +452,7 @@ def _sync_source(src: dict, skills_root: Path, dry_run: bool, force: bool) -> li
 
     pinned = str(src.get("sha", "") or "")
 
-    with tempfile.TemporaryDirectory(prefix=f"skill-src-{sid}-") as tmp:
+    with _scratch.tempdir(prefix=f"skill-src-{sid}-") as tmp:
         clone = Path(tmp) / "src"
         try:
             _git_clone(url, ref, depth, clone, pinned)

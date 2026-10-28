@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import re
 import stat
-import tempfile
+from .. import scratch as _scratch
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -87,7 +87,7 @@ def write_shell_managed_block(rc_path: Path, env_vars: Dict[str, str], *, dry_ru
     except OSError:
         mode = 0o644
 
-    fd, tmp = tempfile.mkstemp(prefix=f".{rc_path.name}.", suffix=".tmp", dir=rc_path.parent)
+    fd, tmp = _scratch.atomic_tmp(prefix=f".{rc_path.name}.", suffix=".tmp", dir=rc_path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(new_content)
@@ -157,7 +157,7 @@ def sync_openclaw_systemd_env(
     except OSError:
         pass
 
-    fd, tmp = tempfile.mkstemp(prefix=".gateway.systemd.env.", suffix=".tmp", dir=env_path.parent)
+    fd, tmp = _scratch.atomic_tmp(prefix=".gateway.systemd.env.", suffix=".tmp", dir=env_path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(content)

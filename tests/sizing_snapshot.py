@@ -13,8 +13,12 @@ import io
 import itertools
 import json
 import subprocess
-import tempfile
 from pathlib import Path
+
+def _tempdir():
+    from ai_resources import scratch
+    return scratch.tempdir("sizing-")
+
 
 REPO = Path(__file__).resolve().parents[1]
 HARNESS = REPO / "tests" / "kit_script_harness.mjs"
@@ -71,7 +75,7 @@ def _clean(card):
 def _cli(argv, files=None):
     from ai_resources import scorecard
     out, err = io.StringIO(), io.StringIO()
-    with tempfile.TemporaryDirectory() as td, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    with _tempdir() as td, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         argv = [a.replace("@TMP", td) for a in argv]
         for name, text in (files or {}).items():
             (Path(td) / name).write_text(text, encoding="utf-8")
@@ -159,7 +163,7 @@ def cli_snapshot():
 # --- node surface -----------------------------------------------------------------------------------------------
 
 def run_js(script, args, responses, raw=False):
-    with tempfile.TemporaryDirectory() as td:
+    with _tempdir() as td:
         cfg = Path(td) / "cfg.json"
         cfg.write_text(json.dumps({"args": args, "responses": responses}))
         p = subprocess.run(["node", str(HARNESS), str(script), str(cfg)], capture_output=True, text=True, timeout=120)

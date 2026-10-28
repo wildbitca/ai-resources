@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.5] — 2026-10-28 — One scratch root
+
+Runs no longer litter `~/.cache`: 336 stray top-level entries (about 10 GB) came from verifier, implementer, reviewer and security-auditor runs that each invented their own scratch path. See ADR-0020.
+
+- feat(scratch): `ai-resources scratch new|done|rm|ls|prune|prune-scans|venv`. One directory per run, `~/.cache/ai-resources/runs/<role>-<slug>-<UTCstamp>-<pid>-<rand>/` (`tmp/ pytest/ logs/ out/ clone/` and `.scratch-meta.json`), exported as `AI_RESOURCES_SCRATCH` and `TMPDIR`. Success removes it; failure keeps only `logs/` for 3 days. Python `scratch.run()` and bash `scratch_begin` (trap on EXIT INT TERM) in `scripts/scratch.sh`.
+- feat(scratch): pruning decides by meta `created_at` and owner-pid liveness (start ticks), never by mtime; live runs are skipped, `flock` serialises pruners, a 5 GiB global cap removes the oldest first. Runs on every `scratch new` and daily from the new `openclaw-scratch-prune.timer` user unit that `ai-resources setup` installs with the other host units.
+- feat(scratch): shared virtualenvs under `~/.cache/ai-resources/venvs/<python>-<lockhash>/`, pruned after 30 idle days (`tests/requirements.txt` is the suite's lockfile).
+- feat(doctor): warns about legacy top-level `~/.cache` scratch names and about `security-scan-results` above 500 MB; `doctor --fix` removes a legacy entry only when it is older than 24 h and no process has its cwd or an open file inside. Real tool caches are allowlisted.
+- feat(scratch): `scratch prune-scans` keeps the newest 7 `security-scan-results` runs, ordered by the timestamp in the directory name; the host writer calls it at the end of every run.
+- feat(orchestration): every dispatched child gets a scratch directory and the rule "never write directly under ~/.cache or /tmp" in its prompt; the engine finishes it when the step is judged. Role prompts, `kit-implement.js`, `WORKFLOW_CONTRACT.md`, the generated AGENTS block and the `kit-orchestration` skill name `$AI_RESOURCES_SCRATCH`; `validate_kit.py` rejects `/tmp`, `mktemp`, `--basetemp` and bare `~/.cache` paths in role, persona and workflow prompts.
+- fix(tests): a bare pytest run keeps its basetemp in a scratch run and removes it on green (the old `ai-resources-pytest-runs` pruning by mtime is gone); the host shell scripts and every library temp directory use the scratch helpers.
+
 ## [3.2.4] — 2026-10-28 — Spawn pin for operator-owned roles
 
 - fix(orchestration): a kit-role agent whose model the operator owns still gets `subagents.model` (its own model) when the host sets a default subagent model, so a `sessions_spawn` lands on the role's model instead of the default.

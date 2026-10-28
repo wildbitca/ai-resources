@@ -11,7 +11,7 @@ import json
 import os
 import re
 import secrets
-import tempfile
+from .. import scratch as _scratch
 import time
 from pathlib import Path
 from typing import Any, Iterator
@@ -108,7 +108,7 @@ class RunStore:
 
     def _atomic(self, target: Path, text: str) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+        fd, tmp = _scratch.atomic_tmp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(text)

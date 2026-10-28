@@ -2825,7 +2825,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
     import os
     import shutil
     import subprocess
-    import tempfile
+    from .. import scratch as _scratch
 
     from .. import repo_root as _repo_root
     from .cockpits import claude as _claude_cockpit
@@ -2876,7 +2876,7 @@ def _step9_dry_run(s: state.SetupState) -> int:
     # Role table
     ui.role_table(profiles.role_table(executors_doc), title=f"Profile: {profiles.saved_or_recommended(s.profile.name, s.backend)}")
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="ai-resources-dryrun-"))
+    tmp_dir = Path(_scratch.new_tmpdir("ai-resources-dryrun-"))
     tmp_litellm_yaml = tmp_dir / "litellm.yaml"
     tmp_compose_yaml = tmp_dir / "docker-compose.yaml"
     proc = None

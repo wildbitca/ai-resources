@@ -32,7 +32,7 @@ import secrets
 import shutil
 import stat
 import subprocess
-import tempfile
+from . import scratch as _scratch
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -160,7 +160,7 @@ def sandbox(cache: Path) -> Iterator[Path]:
     under the cache dir, not /tmp: the run ledger refuses a volatile root."""
     base = cache / "acceptance-scratch"
     base.mkdir(parents=True, exist_ok=True)
-    root = Path(tempfile.mkdtemp(prefix="sandbox-", dir=base))
+    root = Path(_scratch.new_tmpdir("sandbox-"))
     (root / "bin").mkdir()
     if shutil.which("sleep"):
         (root / "bin" / "sleep").symlink_to(shutil.which("sleep"))
@@ -249,7 +249,7 @@ def _call_infer(cell: str, env: Env) -> dict:
 
 def _call_agy(role: str, env: Env) -> dict:
     from . import agy_run
-    scratch = env.cache / "acceptance-scratch" / "route"
+    scratch = _scratch.tmp_root() / "acceptance-scratch" / "route"
     scratch.mkdir(parents=True, exist_ok=True)
     ns = argparse.Namespace(role=role, prompt=AGY_PROMPT, prompt_file=None, cwd=str(scratch), scope=None, timeout=300.0,
                             run=None, step="acceptance:route", usage_file=env.usage_file, json=True)
@@ -637,9 +637,9 @@ def _team_run(env: Env) -> Result:
     from .orchestrator import engine as eng, workflow_loader as wl
     from .orchestrator.state import RunStore
     from .setup import detection
-    base = env.cache / "acceptance-scratch"
+    base = _scratch.tmp_root() / "acceptance-scratch"
     base.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="team-", dir=str(base)) as d:
+    with _scratch.tempdir("team-") as d:
         root = Path(d)
         (root / "ws").mkdir()
         wf = wl.load(str(Path(env.kit()) / "workflows" / "feature-cross-provider.workflow.yaml"))
@@ -768,7 +768,7 @@ def _gemini_tools(env: Env) -> Result:
     oc = env.which("openclaw")
     model = "google/gemini-3.8-flash"
     if routes["gemini-api"] and oc:
-        scratch = env.cache / "acceptance-scratch" / "gemini-tools"
+        scratch = _scratch.tmp_root() / "acceptance-scratch" / "gemini-tools"
         scratch.mkdir(parents=True, exist_ok=True)
         token = secrets.token_hex(6)
         (scratch / "token.txt").write_text(token + "\n")
@@ -810,7 +810,7 @@ def _agy_write(env: Env) -> Result:
     from . import agy_run
     if not agy_run.agy_bin():
         return skip("agy is not installed (no agy on PATH or in ~/.local/bin)")
-    scratch = env.cache / "acceptance-scratch" / "agy-write"
+    scratch = _scratch.tmp_root() / "acceptance-scratch" / "agy-write"
     shutil.rmtree(scratch, ignore_errors=True)
     scratch.mkdir(parents=True)
     subprocess.run(["git", "-C", str(scratch), "init", "-q"], capture_output=True)
@@ -924,7 +924,7 @@ def _offbox(env: Env) -> Result:
 @case("setup.offbox-regenerate", "setup-live")
 def _offbox_regen(env: Env) -> Result:
     from . import openclaw_host as host
-    with tempfile.TemporaryDirectory(prefix="ai-resources-acc-") as d:
+    with _scratch.tempdir("ai-resources-acc-") as d:
         src, target = Path(d, "src.json"), Path(d, "cred.json")
         src.write_text(json.dumps({"type": "external_account", "audience": "x", "credential_source": {"executable": {"command": "/bin/true"}}}))
         first = host.offbox_wif_cred(host.OFFBOX_SA_DEFAULT, env={}, source=src, target=target)[0]
@@ -967,7 +967,7 @@ def _window(d: Path, *, busy: int | None = 0, cgroup: str = "0::/user.slice/othe
 @case("setup.marker-guard", "setup-live")
 def _marker_guard(env: Env) -> Result:
     from . import openclaw_host as host
-    with tempfile.TemporaryDirectory(prefix="ai-resources-acc-") as d:
+    with _scratch.tempdir("ai-resources-acc-") as d:
         a, b = host.Marker(Path(d, "a.off")), host.Marker(Path(d, "a.off"))
         first, second = a.acquire(), b.acquire()
         code, runner, mk = _window(Path(d, "window"), marker=True)
@@ -980,7 +980,7 @@ def _marker_guard(env: Env) -> Result:
 @case("setup.restart-lock", "setup-live")
 def _restart_lock(env: Env) -> Result:
     from . import openclaw_host as host
-    with tempfile.TemporaryDirectory(prefix="ai-resources-acc-") as d:
+    with _scratch.tempdir("ai-resources-acc-") as d:
         path = Path(d, "lock")
         one, two = host.acquire_restart_lock(path), None
         try:
@@ -997,7 +997,7 @@ def _restart_lock(env: Env) -> Result:
 @case("setup.active-turns-defer", "setup-live")
 def _defer(env: Env) -> Result:
     from . import openclaw_host as host
-    with tempfile.TemporaryDirectory(prefix="ai-resources-acc-") as d:
+    with _scratch.tempdir("ai-resources-acc-") as d:
         busy, r1, m1 = _window(Path(d, "busy"), busy=2)
         blind, r2, m2 = _window(Path(d, "blind"), busy=None)
     if busy == blind == host.EXIT_REFUSED_BUSY and not (r1.argv or r2.argv) and not (m1.exists() or m2.exists()):
@@ -1008,7 +1008,7 @@ def _defer(env: Env) -> Result:
 @case("setup.cgroup-t29", "setup-live")
 def _t29(env: Env) -> Result:
     from . import openclaw_host as host
-    with tempfile.TemporaryDirectory(prefix="ai-resources-acc-") as d:
+    with _scratch.tempdir("ai-resources-acc-") as d:
         inside, r1, _ = _window(Path(d, "inside"), cgroup=f"0::/user.slice/{host.GATEWAY_UNIT}\n")
         unknown, r2, _ = _window(Path(d, "unreadable"), make_cgroup=False)
     if inside == unknown == host.EXIT_REFUSED_SELF and not (r1.argv or r2.argv):
@@ -1019,7 +1019,7 @@ def _t29(env: Env) -> Result:
 @case("setup.reload-rules", "setup-live", severity="warn")
 def _reload_rules(env: Env) -> Result:
     from . import openclaw_host as host, openclaw_reload_rules as rules
-    with tempfile.TemporaryDirectory(prefix="ai-resources-acc-") as d:
+    with _scratch.tempdir("ai-resources-acc-") as d:
         shim = Path(d, ".openclaw", "tmp", "agent-cli", "openclaw")
         shim.parent.mkdir(parents=True)
         shim.write_text("#!/bin/sh\nexec node x\n")

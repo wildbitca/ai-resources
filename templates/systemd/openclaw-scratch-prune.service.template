@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily prune of the ai-resources scratch root, idle shared venvs and old security-scan results
+Documentation=file://@LIBEXEC@/scripts/openclaw/openclaw-scratch-prune.sh
+
+[Service]
+Type=oneshot
+TimeoutStartSec=10min
+ExecStart=/bin/bash @LIBEXEC@/scripts/openclaw/openclaw-scratch-prune.sh

@@ -22,7 +22,7 @@ import json
 import os
 import re
 import sqlite3
-import tempfile
+from . import scratch as _scratch
 import time
 import urllib.error
 import urllib.request
@@ -211,7 +211,7 @@ def rewrite_env_entry(name: str, value: str, path: Path | None = None, *, now: f
         lines.append(line)
     if not replaced:
         lines.append(f"{name}={value}")
-    fd, tmp = tempfile.mkstemp(prefix=f".{p.name}.", suffix=".tmp", dir=str(p.parent))
+    fd, tmp = _scratch.atomic_tmp(prefix=f".{p.name}.", suffix=".tmp", dir=str(p.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")

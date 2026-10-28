@@ -39,7 +39,7 @@ steps:
 
       If CI logs not accessible via CLI, read them from:
         - .github/workflows/*.yml (to understand what steps run)
-        - Any cached log files in .agent-output/ or /tmp/
+        - Any cached log files in .agent-output/ or $AI_RESOURCES_SCRATCH/logs/
 
       Also read the local code that the CI job runs:
         - The failing step's command (e.g. npm test, cargo build, docker build)

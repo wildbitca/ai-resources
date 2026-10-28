@@ -410,7 +410,7 @@ const impl = await spawn(
   `You are the only writer in this run. Work step by step:\n` +
   `- RED per requested rule: one failing test per rule or criterion, watched failing before the fix, and no other cases.\n` +
   `- PRESERVE: for each existing command, function or output you touch, one test that pins its current behaviour and passes before and after (skip it when a test already covers it, and name that test).\n` +
-  `- Differential check: for behaviour that already shipped, run the same input on the base revision and on your change in a scratch copy made with mktemp -d, outside the workspace, and remove it after; an unrequested difference is a defect or a deviation.\n` +
+  `- Differential check: for behaviour that already shipped, run the same input on the base revision and on your change in a scratch copy under $AI_RESOURCES_SCRATCH/clone, outside the workspace (never directly under ~/.cache or /tmp); an unrequested difference is a defect or a deviation.\n` +
   `- One commit per logical unit (about 400 changed lines at most); a unit that touches a named risk item (${riskItems.length ? riskItems.join('; ') : 'none'}) gets its own commit. Record the commit ids and, when a ledger exists, put them on its tasks. Never push or merge.\n` +
   `- Keep each step small; run the project's lint/typecheck and the tests for the area as you go. Do not run the full suite ` +
   `after each step: the Test phase runs it once.\n` +
@@ -579,7 +579,7 @@ const signoff = !runSignoff ? null : await spawn(
   (criteria.length ? `Acceptance criteria:\n- ${criteria.join('\n- ')}\n` : '') +
   (tasksPath ? `Ledger: ${tasksPath}${specIds.length ? ` - ${specIds.join(', ')}` : ''}; read its Specs section.\n` : '') +
   `\nCheck the work against those criteria using evidence you can produce yourself: read the diff and run the commands ` +
-  `the plan or spec names as examples (not the whole suite: the test gate ran it), in a scratch copy made with mktemp -d, ` +
+  `the plan or spec names as examples (not the whole suite: the test gate ran it), in a scratch copy under $AI_RESOURCES_SCRATCH/clone, ` +
   `outside the workspace, leaving no new file in it${riskItems.length ? ` (a risk item is named, so run every authorized example)` : ''}. ` +
   `Compare with the base revision before calling a failure a regression: a defect that also exists at the base, or an out-of-domain value, ` +
   `is an advisory; one that reproduces with realistic input and not at the base, a silently ignored explicit option, or an unrequested output change is a blocker. ` +

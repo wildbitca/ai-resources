@@ -140,7 +140,7 @@ write_state() {
   local outcome="$1" reason="$2" dir tmp
   dir=$(dirname "$STATE_FILE")
   mkdir -p "$dir" 2>/dev/null || return 0
-  tmp=$(mktemp "$dir/.offbox-last.XXXXXX" 2>/dev/null) || return 0
+  tmp=$(scratch_tmp_beside "$dir" ".offbox-last.XXXXXX" 2>/dev/null) || return 0
   {
     printf '{"at": "%s", "identity": "%s", "outcome": "%s", "reason": "%s", ' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_esc "$IDENTITY")" "$outcome" "$(json_esc "$reason")"

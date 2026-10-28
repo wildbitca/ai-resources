@@ -31,7 +31,7 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
+from . import scratch as _scratch
 import time
 from pathlib import Path
 from typing import Callable, NamedTuple
@@ -340,7 +340,7 @@ def write_file_atomically(path: Path, text: str, *, mode: int | None = None) -> 
             mode = stat.S_IMODE(os.stat(path).st_mode)
         except OSError:
             mode = 0o644
-    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    fd, tmp = _scratch.atomic_tmp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -400,7 +400,7 @@ def write_host_env(values: dict[str, str | None], path: Path | None = None) -> b
         mode = stat.S_IMODE(os.stat(path).st_mode)
     except OSError:
         mode = 0o644
-    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    fd, tmp = _scratch.atomic_tmp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(new)
@@ -439,6 +439,8 @@ UNIT_NAMES = (
     "openclaw-models-update.timer",
     "openclaw-health-restart.service",
     "openclaw-health-restart.timer",
+    "openclaw-scratch-prune.service",
+    "openclaw-scratch-prune.timer",
 )
 TIMER_NAMES = tuple(n for n in UNIT_NAMES if n.endswith(".timer"))
 _MARKER = re.compile(r"@([A-Z][A-Z0-9_]*)@")

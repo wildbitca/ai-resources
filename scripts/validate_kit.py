@@ -343,6 +343,22 @@ def check_workflow_scripts() -> None:
             fail("scripts", f"{rel}: phase('{title}') has no entry in meta.phases")
 
 
+_SCRATCH_BAD = re.compile(r"\bmktemp\b|--basetemp\b|(?<![\w.-])/tmp/|~/\.cache/(?!ai-resources/(runs|venvs)\b)|\$HOME/\.cache/(?!ai-resources/(runs|venvs)\b)")
+
+
+def check_scratch_paths() -> None:
+    """ADR-0020: role prompts, personas and workflow prompts name `$AI_RESOURCES_SCRATCH`, never /tmp, mktemp, --basetemp
+    or a path directly under ~/.cache."""
+    files = [*sorted((ROOT / "agents").rglob("*.md")), *sorted((ROOT / "workflows").glob("*.workflow.yaml")),
+             *sorted((ROOT / "workflows" / "scripts").glob("*.js")), ROOT / "workflows" / "WORKFLOW_CONTRACT.md"]
+    for path in files:
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "never" in line.lower() and "/tmp" in line:
+                continue                                            # the rule itself
+            if _SCRATCH_BAD.search(line):
+                fail("scratch", f"{path.relative_to(ROOT)}:{n}: write scratch under $AI_RESOURCES_SCRATCH, not /tmp, mktemp, --basetemp or ~/.cache")
+
+
 def check_plan_sizing() -> None:
     """The shipped Sizing examples (tasks template, planner role) must pass the plan-sizing checker."""
     from ai_resources import plan_sizing
@@ -498,6 +514,7 @@ def main() -> int:
     check_haiku_budget()
     check_role_effort(role_names)
     check_workflow_scripts()
+    check_scratch_paths()
     check_plan_sizing()
     check_hooks()
     check_references()

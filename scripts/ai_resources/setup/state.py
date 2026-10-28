@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import stat
-import tempfile
+from .. import scratch as _scratch
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -712,7 +712,7 @@ def save(state: SetupState) -> None:
     # window where it is world-readable) and moved over the old one with os.replace: a concurrent reader gets
     # the previous file or the new one, never an empty or half-written file, and an interrupted save leaves
     # the previous file as it was.
-    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    fd, tmp = _scratch.atomic_tmp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -747,7 +747,7 @@ def write_watch_marker(info: dict) -> bool:
     keep["at"] = datetime.now(timezone.utc).isoformat()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        fd, tmp = _scratch.atomic_tmp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(json.dumps(keep))

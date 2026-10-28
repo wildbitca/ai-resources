@@ -12,7 +12,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -32,6 +31,13 @@ LOCAL_MODULE_RE = re.compile(
 )
 
 SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-[a-zA-Z0-9.-]+)?$")
+
+
+def _report_dir() -> Path:
+    """Where the upgrade report goes: the run's out/ dir ($AI_RESOURCES_SCRATCH), else the working directory.
+    Never /tmp or ~/.cache."""
+    scratch = os.environ.get("AI_RESOURCES_SCRATCH")
+    return Path(scratch) / "out" if scratch else Path.cwd()
 
 
 def run(cmd: list[str], cwd: Path | None = None, capture: bool = True) -> tuple[int, str]:
@@ -1283,7 +1289,7 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 return 1
-            report_path = Path(tempfile.gettempdir()) / "tf-version-commit-upgrade-report.txt"
+            report_path = _report_dir() / "tf-version-commit-upgrade-report.txt"
             dependent_projects = get_dependent_projects(parent, args.dependent_projects_list)
             iteration = 0
             while True:
@@ -1358,7 +1364,7 @@ def main() -> int:
 
         # Non-recursive (single pass): upgrade and release only repos that need release (bottom-up / dependency order)
         upgrade_script = get_upgrade_providers_script_path()
-        report_path = Path(tempfile.gettempdir()) / "tf-version-commit-upgrade-report.txt"
+        report_path = _report_dir() / "tf-version-commit-upgrade-report.txt"
         dependent_projects = get_dependent_projects(
             parent, args.dependent_projects_list if args.dependent_projects_list else None
         )

@@ -5,7 +5,7 @@ import json
 import os
 import re
 import stat
-import tempfile
+from ... import scratch as _scratch
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -259,7 +259,7 @@ LEGACY_KIT_HEADINGS = frozenset({
 # same name under another H1 is kept.
 CURRENT_KIT_HEADINGS = frozenset({
     "Using the kit", "Delegation", "Waiting", "Waiting without polling", "Multi-model routing", "Kit workflow", "Worktrees",
-    "Long-running commands never block a tool call", "Memory", "Voice notes", "Orchestration", "Voice",
+    "Long-running commands never block a tool call", "Scratch space", "Memory", "Voice notes", "Orchestration", "Voice",
 })
 
 
@@ -384,7 +384,7 @@ def _replace_atomically(target: Path, text: str) -> None:
         mode = stat.S_IMODE(os.stat(target).st_mode)
     except OSError:
         mode = 0o644
-    fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    fd, tmp = _scratch.atomic_tmp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
@@ -679,6 +679,22 @@ OPENCLAW_POLLING_MD = (
 )
 
 
+OPENCLAW_SCRATCH_HEADING = "## Scratch space"
+OPENCLAW_SCRATCH_MD = (
+    f"\n{OPENCLAW_SCRATCH_HEADING}\n\n"
+    "- Never write directly under `~/.cache` or `/tmp`. Every clone, venv build, log, `mktemp` and pytest basetemp "
+    "goes under `$AI_RESOURCES_SCRATCH` (`tmp/ pytest/ logs/ out/ clone/`), one directory per run: "
+    "`~/.cache/ai-resources/runs/<role>-<slug>-<UTCstamp>-<pid>-<rand>/` (ADR-0020).\n"
+    "- Dispatch exports it for you. Without it: `eval \"$(ai-resources scratch new --role <role> --slug <task> "
+    "--owner-pid $$ --shell)\"`, and finish with `ai-resources scratch done \"$AI_RESOURCES_SCRATCH\" --status $?`. "
+    "In a shell script, source `scripts/scratch.sh` and call `scratch_begin <role> <slug>` (it traps EXIT INT TERM).\n"
+    "- Success removes the run. Failure keeps only `logs/`, for 3 days. A daily timer and every `scratch new` prune by "
+    "`.scratch-meta.json` and owner-pid liveness, never by mtime.\n"
+    "- Virtualenvs are shared, not per run: `ai-resources scratch venv --lock <requirements file>` (keyed by python "
+    "version and lockfile hash, pruned after 30 idle days).\n"
+)
+
+
 def _squash(text: str) -> str:
     return " ".join(text.split())
 
@@ -757,7 +773,7 @@ def dedupe_long_running(path: Path, *, apply: bool, now: "str | None" = None) ->
     tmp_name = ""
     try:
         mode = stat.S_IMODE(path.stat().st_mode)
-        tfd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+        tfd, tmp_name = _scratch.atomic_tmp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
         with os.fdopen(tfd, "w", encoding="utf-8") as fh:
             fh.write(new)
         os.chmod(tmp_name, mode)
@@ -801,6 +817,7 @@ def openclaw_agent_kit_md(ak_path: str, *, delegates: bool = True) -> str:
     )
     text += OPENCLAW_LONG_RUNNING_MD
     text += OPENCLAW_POLLING_MD
+    text += OPENCLAW_SCRATCH_MD
     text += (
         "\n## Worktrees\n\n"
         "- Do a task's work on its own branch in a managed worktree, not in the shared checkout: "
@@ -832,6 +849,8 @@ def kit_context_block(ak_path: str) -> str:
         f"- **In a workflow step:** read the skills named in your prompt, update the handoff file "
         f"(unless your step runs in a parallel group), and end with the return block from the "
         f"`kit-orchestration` skill.\n"
+        f"- **Scratch:** use `$AI_RESOURCES_SCRATCH` (`tmp/ pytest/ logs/ out/ clone/`) for every clone, venv, log and "
+        f"temp file. Never write directly under `~/.cache` or `/tmp` (ADR-0020).\n"
     )
 
 

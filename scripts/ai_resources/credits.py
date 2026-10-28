@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import tempfile
+from . import scratch as _scratch
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -76,7 +76,7 @@ def write_ledger(doc: Mapping[str, Any], path: Path | None = None) -> Path:
     """Atomic 0600 write: a reader sees the old file or the new one, never half."""
     p = Path(path or ledger_path())
     p.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".credits.", suffix=".tmp", dir=str(p.parent))
+    fd, tmp = _scratch.atomic_tmp(prefix=".credits.", suffix=".tmp", dir=str(p.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(doc, fh, indent=2, sort_keys=True)

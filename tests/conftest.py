@@ -28,6 +28,18 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "node_scripts: runs node on a repo workflow script through tests/kit_script_harness.mjs; the guard lets through only that harness invocation (see _allow_node_harness)")
 
 
+def pytest_sessionfinish(session, exitstatus):
+    session.config._ai_exit = int(exitstatus)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    # The run this process created (a bare invocation) is removed on green, trimmed to logs/ on red.
+    if not hasattr(config, "workerinput"):
+        from basetemp_default import finish_default
+        finish_default(config)
+
+
 # Host binaries no test may run. One unstubbed configure path ran `npm install -g openclaw@latest` and
 # `systemctl --user enable --now` on the operator's machine on every full run; under xdist the concurrent
 # installs swapped the live gateway's files mid-start and left it down (2026-10-23). A stub script under the

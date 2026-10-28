@@ -8,6 +8,9 @@
 # Host-specific values are never written into a script. They come from
 # ~/.openclaw/kit-host.env (see openclaw-host.env.example), which `ai-resources setup` writes.
 
+# shellcheck source=../scratch.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../scratch.sh"
+
 OPENCLAW_HOST_ENV="${OPENCLAW_HOST_ENV:-$HOME/.openclaw/kit-host.env}"
 if [ -r "$OPENCLAW_HOST_ENV" ]; then
   set -a

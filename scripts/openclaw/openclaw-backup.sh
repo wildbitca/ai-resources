@@ -46,7 +46,7 @@ LOCK="$XDG_RUNTIME_DIR/openclaw-backup.lock"
 MIN_BYTES=1000000            # under 1 MB it is not a backup of this setup
 
 mkdir -p "$DEST" "$(dirname "$LOG")"
-STAGE="$(mktemp -d -p "$BASE" "stage.XXXXXXXX")"
+STAGE="$(scratch_tmp_beside -d "$BASE" "stage.XXXXXXXX")"
 
 log(){ echo "$(date '+%F %T') [$TIER] $*" | tee -a "$LOG" >&2; }
 cleanup(){ rm -rf "$STAGE"; }

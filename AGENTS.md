@@ -28,6 +28,13 @@ Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upg
 - No `process(poll)`, `sleep` or `sessions_yield` loops at short intervals; `process(poll)` with `timeout` is the one allowed wait, at most once per phase, then one short read of the output file.
 - Where hooks run, `kit_sleep_guard` refuses a `sleep` above 30 s, sleeps that add up above 30 s and any `while`/`until` wait loop.
 
+## Scratch space
+
+- Never write directly under `~/.cache` or `/tmp`. Every clone, venv build, log, `mktemp` and pytest basetemp goes under `$AI_RESOURCES_SCRATCH` (`tmp/ pytest/ logs/ out/ clone/`), one directory per run: `~/.cache/ai-resources/runs/<role>-<slug>-<UTCstamp>-<pid>-<rand>/` (ADR-0020).
+- Dispatch exports it for you. Without it: `eval "$(ai-resources scratch new --role <role> --slug <task> --owner-pid $$ --shell)"`, and finish with `ai-resources scratch done "$AI_RESOURCES_SCRATCH" --status $?`. In a shell script, source `scripts/scratch.sh` and call `scratch_begin <role> <slug>` (it traps EXIT INT TERM).
+- Success removes the run. Failure keeps only `logs/`, for 3 days. A daily timer and every `scratch new` prune by `.scratch-meta.json` and owner-pid liveness, never by mtime.
+- Virtualenvs are shared, not per run: `ai-resources scratch venv --lock <requirements file>` (keyed by python version and lockfile hash, pruned after 30 idle days).
+
 ## Worktrees
 
 - Do a task's work on its own branch in a managed worktree, not in the shared checkout: `openclaw worktrees create <repoRoot> --name <agent>-<task> [--base-ref <ref>]` prints the path and the branch (`openclaw/<name>`); work only there. The kit does not create, snapshot or clean worktrees: it delegates to `openclaw worktrees`.

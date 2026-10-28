@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily prune of the ai-resources scratch root
+
+[Timer]
+# Once a day. The prune also runs opportunistically on every `ai-resources scratch new`, so this only catches a
+# host where nothing has started a run for a while.
+OnCalendar=*-*-* 05:15:00
+Persistent=true
+RandomizedDelaySec=10min
+Unit=openclaw-scratch-prune.service
+
+[Install]
+WantedBy=timers.target

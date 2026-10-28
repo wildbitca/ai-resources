@@ -37,7 +37,7 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
+from .. import scratch as _scratch
 import time
 import urllib.error
 import urllib.request
@@ -325,7 +325,7 @@ def transcribe(src: str, mode: str, language: str, correct_text: bool = True) ->
         # reply non-empty so a note is never silently dropped.
         text = agy(src, language)
         return (text, "agy") if plausible(text) else (FAILURE_MARKER, "agy-failed")
-    with tempfile.TemporaryDirectory() as tmp:
+    with _scratch.tempdir("transcribe-") as tmp:
         work = Path(tmp)
         if mode == "cloud":
             text = audio_native(src, work, language)

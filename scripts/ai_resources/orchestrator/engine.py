@@ -24,7 +24,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 import yaml
 
-from .. import dispatch_ledger, domains, ledger, model_pins, repo_root, roles_policy, scope_guard
+from .. import dispatch_ledger, domains, ledger, model_pins, repo_root, roles_policy, scope_guard, scratch
 from ..scoring import routing
 from ..setup.cockpits import openclaw_roles
 from . import limits, reply as reply_mod, untrusted
@@ -108,7 +108,26 @@ def run_dir_of(run_id: str) -> str:
     return f".agent-output/{run_id}"
 
 
-def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Path, handoff_file: str) -> str:
+SCRATCH_RULE = "Never write directly under ~/.cache or /tmp; every scratch file, clone, venv build, log and pytest basetemp goes under $AI_RESOURCES_SCRATCH."
+
+
+def scratch_paragraph(step: Step, run_id: str, scratch_dir: str = "") -> str:
+    """The scratch contract of every dispatched child (ADR-0020). `scratch_dir` is set only when the orchestrator
+    created a run for this step; an inherited run (or none) is named by its variable so the prompt stays stable."""
+    if scratch_dir:
+        where = (f"Scratch: your scratch dir is {scratch_dir} (export AI_RESOURCES_SCRATCH={scratch_dir} and "
+                 f"TMPDIR={scratch_dir}/tmp if they are not set already).")
+    else:
+        where = ("Scratch: your scratch dir is $AI_RESOURCES_SCRATCH. If it is unset, make one first: "
+                 f"eval \"$(ai-resources scratch new --role {step.role} --slug {run_id} --owner-pid $$ --shell)\" and "
+                 "finish it with `ai-resources scratch done \"$AI_RESOURCES_SCRATCH\" --status <exit code>`.")
+    return (f"{where} Subdirectories: tmp/ pytest/ logs/ out/ clone/. {SCRATCH_RULE} It is removed when your step succeeds; "
+            "after a failure only logs/ stays, for 3 days. Reuse the shared venvs (`ai-resources scratch venv --lock <file>`), "
+            "never build one per run.\n")
+
+
+def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Path, handoff_file: str,
+                 scratch_dir: str = "") -> str:
     """Everything the child needs: it has no chat context, no subagent definitions and does not write the handoff."""
     cwd = str(run.get("cwd") or run.get("workspace"))
     domain = str(run.get("domain") or "")
@@ -129,8 +148,9 @@ def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Pat
         f"You are the {step.role} of an orchestrated team run ({run['id']}, step {step.id}, attempt {attempt}).\n"
         f"Working directory (stay inside it): {cwd}\n"
         f"Handoff file (read it; the orchestrator owns writes to it - do NOT edit it): {handoff_file}\n"
-        f"Reports and scratch files of this run go under {run_dir}/{step.role}/ (the run's own directory: another team on "
+        f"Reports of this run go under {run_dir}/{step.role}/ (the run's own directory: another team on "
         "the same repository writes to its own, so never write to a sibling run's directory).\n"
+        f"{scratch_paragraph(step, run['id'], scratch_dir)}"
         "Read these first:\n" + "\n".join(reads) + "\n"
         "Rules: one writer per run; only the verifier signs a run off; never call the native AskUserQuestion; never sleep "
         "or poll in a loop (run long work in the background and read its output with short calls).\n"
@@ -451,13 +471,39 @@ class Engine:
         st = run["steps"][step.id]
         handoff = str(self.store.handoff_path(run["id"]))
         model = self._checker_model(run, step)
+        scratch_dir = self._open_scratch(run, step)
         return {"type": "dispatch", "run": run["id"], "step": step.id, "role": step.role, "agent": st["agent"],
                 **({"model": model} if model else {}),
                 "attempt": st["attempt"], "cwd": str(run.get("cwd") or run["workspace"]),
                 "timeout_s": limits.role_timeout(step.role, run.get("role_timeouts")),
                 "parallel": bool(step.group), "handoff_file": handoff, "run_dir": run_dir_of(run["id"]),
                 "label": f"{run['id']}-{step.id}-a{st['attempt']}",       # unique per run, step and attempt (C1)
-                "prompt": build_prompt(run, step, st["attempt"], self.kit_root, handoff)}
+                "env": ({"AI_RESOURCES_SCRATCH": scratch_dir, "TMPDIR": f"{scratch_dir}/tmp"} if scratch_dir else {}),
+                "prompt": build_prompt(run, step, st["attempt"], self.kit_root, handoff, scratch_dir)}
+
+    def _open_scratch(self, run: dict[str, Any], step: Step) -> str:
+        """A scratch run for this dispatch, unless the caller already owns one ($AI_RESOURCES_SCRATCH: the children share
+        it and its owner cleans up). Returns '' when inherited or when the scratch root cannot be written."""
+        st = run["steps"][step.id]
+        if st.get("scratch") and Path(st["scratch"]).is_dir():
+            return st["scratch"]
+        if scratch.current() is not None:
+            return ""
+        try:
+            st["scratch"] = str(scratch.new(step.role, f"{run['id']}-{step.id}"))
+        except OSError:
+            return ""
+        return st["scratch"]
+
+    @staticmethod
+    def _close_scratch(st: dict[str, Any], ok: bool) -> None:
+        """Success removes the step's scratch run; a failure keeps its logs/ for 3 days (the prune reaps them)."""
+        path = st.pop("scratch", None)
+        if path:
+            try:
+                scratch.finish(path, ok)
+            except (ValueError, OSError):
+                pass
 
     def _checker_model(self, run: Mapping[str, Any], step: Step) -> str:
         """The OpenClaw model ref a checker must run on for THIS run (`routing.resolve` against the writer families). The
@@ -596,6 +642,7 @@ class Engine:
         st = run["steps"][step.id]
         st["finished_at"] = now
         st["result"] = outcome["result"]
+        self._close_scratch(st, bool(outcome.get("ok")))
         # A reason the agent wrote is shown wrapped everywhere it is stored (status, events, handoff).
         shown = untrusted.wrap(outcome["reason"], step.id) if outcome.get("untrusted") else outcome["reason"]
         st["reason"] = shown

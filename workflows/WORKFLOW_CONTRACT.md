@@ -58,6 +58,10 @@ Validation rules (`scripts/validate_kit.py`):
 
 The dispatch procedure, the child prompt, waiting and retries are in the **`kit-orchestration`** skill; the design is in `docs/decisions/0005-cross-provider-role-dispatch.md`.
 
+## Scratch space (ADR-0020)
+
+Every dispatched step gets one scratch directory, `~/.cache/ai-resources/runs/<role>-<slug>-<UTCstamp>-<pid>-<rand>/` (`tmp/ pytest/ logs/ out/ clone/`), exported as `AI_RESOURCES_SCRATCH` (and `TMPDIR=$AI_RESOURCES_SCRATCH/tmp`). A `prompt_template` never names a path under `~/.cache` or `/tmp` and never calls `mktemp`/`--basetemp` itself: it says `$AI_RESOURCES_SCRATCH/<sub>`. The orchestrator injects the variable and the rule "never write directly under ~/.cache or /tmp" into every child prompt, removes the directory when the step succeeds and keeps only `logs/` (3 days) when it fails. `scripts/validate_kit.py` rejects a template that writes to `/tmp` or `~/.cache`.
+
 ## Execution hints (optional)
 
 Steps may include an `execution_hints` block with **optional** metadata that runtimes can use to optimize execution. Runtimes that don't support a hint silently ignore it and execute sequentially.

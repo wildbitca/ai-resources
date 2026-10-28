@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
-import tempfile
+from .. import scratch as _scratch
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -99,7 +99,7 @@ def record(path: str | Path, pool_id: str, block: Mapping[str, Any], now: int) -
     blocks = {k: v for k, v in load(p).items() if isinstance(v.get("resets_at"), int) and v["resets_at"] > now}
     blocks[pool_id] = dict(block)
     p.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".quota-blocks.", suffix=".tmp")
+    fd, tmp = _scratch.atomic_tmp(dir=p.parent, prefix=".quota-blocks.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump({"version": FORMAT_VERSION, "blocks": blocks}, fh, indent=2)

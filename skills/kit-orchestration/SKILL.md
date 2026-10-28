@@ -67,6 +67,7 @@ Run the steps of the workflow YAML in order. For each step:
    - the work **by reference**: the `tasks.md` or plan path with the task ids (`T2`) and spec ids (`S3`, `RULE-…`, `TS-…`) it covers, "read until `## Log`", and ask it to report which ids it covered. Do not paraphrase the requirement; with no document, pass the user's request verbatim and the goal, constraints and spec paths;
    - the domain's commands from `$AGENT_KIT/workflows/_domain-commands.yaml` when the step tests, lints or builds;
    - when Engram is available: save decisions and gotchas that are not in code or specs;
+   - the scratch contract: `AI_RESOURCES_SCRATCH` and the rule "never write directly under `~/.cache` or `/tmp`" (`references/scratch.md`);
    - the return format below.
 4. **After it returns:** read the handoff file and the return block, not the subagent's full output. If `Blocked: true`, re-run `Return_to_step` — at most 3 attempts per step, then stop and end with one **Needs your decision** message that names the blocker and the options. Otherwise continue with `handoff_to`.
 5. A step whose prompt says it does not apply (e.g. `Requires_tests: no`) records that in the handoff and the workflow moves on.

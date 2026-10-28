@@ -191,7 +191,7 @@ def test_implement_hands_work_over_by_reference_not_by_paraphrase(tmp_path):
     p = prompts["implement"]
     assert "Work by reference: specs/features/x/tasks.md and .agent-output/planner/x-plan.md - T1, T2, S1, S2" in p
     assert '"## Log"' in p and "Report the ids you covered" in p
-    assert "RED per requested rule" in p and "PRESERVE" in p and "mktemp -d" in p and "Never push or merge" in p
+    assert "RED per requested rule" in p and "PRESERVE" in p and "$AI_RESOURCES_SCRATCH/clone" in p and "Never push or merge" in p
     assert result["tasks_path"] == "specs/features/x/tasks.md"
 
 
@@ -203,7 +203,7 @@ def test_implement_without_a_plan_passes_the_request_verbatim(tmp_path):
 def test_signoff_runs_authorized_examples_in_a_scratch_copy_with_a_verdict_per_id(tmp_path):
     prompts, _, _ = run_calls(IMPL_JS, tmp_path, {**LEDGER_ARGS, "risk_items": ["3: contract"]}, IMPL_RESPONSES)
     p = prompts["sign-off"]
-    assert "mktemp -d" in p and "every authorized example" in p and "one verdict per criterion or S# id" in p
+    assert "$AI_RESOURCES_SCRATCH/clone" in p and "every authorized example" in p and "one verdict per criterion or S# id" in p
     assert "Ledger: specs/features/x/tasks.md - S1, S2" in p
 
 

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from . import billing, verify
+from . import billing, scratch, verify
 from .setup import state, detection, credentials, litellm, providers, smoke, ui
 
 WEEK_S = 7 * 86400
@@ -299,6 +299,47 @@ def _check_openclaw_cost(s: state.SetupState, args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_scratch(args: argparse.Namespace, cache_root: Path | None = None) -> int:
+    """Scratch hygiene (ADR-0020): legacy top-level ~/.cache names, the runs root, security-scan-results size.
+
+    `--fix` removes a legacy entry only when nothing inside it changed for 24 h and no process has its cwd or an open
+    file there. The allowlist of real tool caches (go-build, uv, pnpm, claude, Homebrew ...) is never touched."""
+    import os
+    fix = bool(getattr(args, "fix", False))
+    cache_root = cache_root or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    ui.detail("Scratch root and legacy ~/.cache scratch")
+    issues = 0
+    rows = scratch.legacy_report(cache_root, fix=fix)
+    if not rows:
+        ui.ok("no legacy scratch entries directly under ~/.cache")
+    else:
+        total = sum(r["bytes"] for r in rows)
+        ui.warn(f"{len(rows)} legacy scratch entr{'y' if len(rows) == 1 else 'ies'} under {cache_root} "
+                f"({scratch._fmt(total)}); the scratch root is {scratch.runs_dir()}")
+        for r in rows[:15]:
+            state_ = ("removed" if r["removed"] else "in use" if r["in_use"]
+                      else f"{r['age_s'] / 3600:.0f}h old" if r["age_s"] < 86400 else "removable")
+            ui.detail(f"{Path(r['path']).name}  {scratch._fmt(r['bytes'])}  [{state_}]")
+        if len(rows) > 15:
+            ui.detail(f"... and {len(rows) - 15} more")
+        left = [r for r in rows if not r["removed"]]
+        if left:
+            ui.detail("Run `ai-resources doctor --fix` to remove the ones older than 24 h and not in use.")
+            issues += 1
+    runs = scratch.entries()
+    run_bytes = sum(e["size"] for e in runs)
+    if run_bytes > scratch.DEFAULT_CAP_BYTES:
+        ui.warn(f"scratch runs weigh {scratch._fmt(run_bytes)} (cap {scratch._fmt(scratch.DEFAULT_CAP_BYTES)})")
+        ui.detail("Run `ai-resources scratch prune`.")
+        issues += 1
+    scans = scratch.scan_results_bytes()
+    if scans > scratch.SCAN_WARN_BYTES:
+        ui.warn(f"security-scan-results weighs {scratch._fmt(scans)} (warn above {scratch._fmt(scratch.SCAN_WARN_BYTES)})")
+        ui.detail("Run `ai-resources scratch prune-scans` (keeps the newest 7 runs); the writer should call it at the end of every run.")
+        issues += 1
+    return issues
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     ui.require_deps()
     ui.banner("ai-resources doctor", subtitle="Health check across all components")
@@ -509,6 +550,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     issues += _check_poll_share()
     issues += _check_vendor_pins()
     issues += _check_openclaw_cost(s, args)
+    issues += _check_scratch(args)
 
     # 5. Executors mapping
     ui.section(5, 6, "Role → model mapping")
@@ -572,6 +614,8 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
                    help="Only report a rejected gateway-env key; do not rewrite it from the working profile key")
     p.add_argument("--no-collect", dest="no_collect", action="store_true",
                    help="Do not refresh the credit ledger (credits.json) from the local usage records")
+    p.add_argument("--fix", action="store_true",
+                   help="Remove legacy scratch entries directly under ~/.cache (older than 24 h, not in use; real tool caches are never touched)")
     p.add_argument("--skip-smoke", action="store_true",
                    help="Don't run live API round-trips (saves a few tokens)")
     p.set_defaults(func=cmd_doctor)

@@ -546,7 +546,7 @@ def test_backup_writes_the_checksum_strictly_after_the_size_and_listing_assertio
 
 def test_backup_stages_on_disk_never_in_tmp():
     text = _text("openclaw-backup.sh")
-    assert 'mktemp -d -p "$BASE"' in text
+    assert 'scratch_tmp_beside -d "$BASE"' in text
     assert not re.search(r"mktemp[^\n]*/tmp", text) and "TMPDIR" not in text
 
 
