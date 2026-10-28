@@ -243,3 +243,14 @@ def test_an_identity_the_operator_set_keeps_the_entry_theirs(tmp_path):
     _, kept = openclaw_roles.build_patch([_role(SONNET, "medium")], doc, {"kit-role-reviewer": tmp_path},
                                          {}, {"anthropic": "api_key"}, ("claude-cli",))
     assert kept == ["kit-role-reviewer"]
+
+
+def test_an_operator_owned_role_gets_a_spawn_pin_that_follows_its_own_model(tmp_path):
+    doc = {"agents": {"defaults": {"subagents": {"model": SONNET}},
+                      "entries": {"kit-role-reviewer": {"model": {"primary": SONNET}, "workspace": str(tmp_path),
+                                                        "tools": {"deny": ["bundle-mcp"]}, "models": {SONNET: CLI}}}}}
+    recorded = {"created_agent_ids": ["kit-role-reviewer"], "models": {}, "thinking": {}}
+    patch, kept = openclaw_roles.build_patch([_role(OPUS)], doc, {"kit-role-reviewer": tmp_path}, recorded,
+                                             {"anthropic": "api_key"}, ("claude-cli",))
+    assert kept == ["kit-role-reviewer"]
+    assert patch["agents"]["entries"]["kit-role-reviewer"]["subagents"] == {"model": {"primary": SONNET}}

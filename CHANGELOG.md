@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.4] — 2026-10-28 — Spawn pin for operator-owned roles
+
+- fix(orchestration): a kit-role agent whose model the operator owns still gets `subagents.model` (its own model) when the host sets a default subagent model, so a `sessions_spawn` lands on the role's model instead of the default.
+
 ## [3.2.3] — 2026-10-28 — Retired-components follow-ups
 
 - fix(setup): the retired-provider auth logout passes `--agent main` (OpenClaw refuses it with several agents configured).

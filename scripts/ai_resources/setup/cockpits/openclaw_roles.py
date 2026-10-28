@@ -322,12 +322,12 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
         deny = _tools_patch(live, agent) if isinstance(live, Mapping) else None
         if deny is not None:
             patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})["tools"] = {"deny": deny}
-    _subagent_models(agents, entries, recorded, kept, patch)
+    _subagent_models(agents, entries, recorded, kept, patch, _get(doc, "agents", "defaults", "subagents", "model"))
     return patch, kept
 
 
 def _subagent_models(agents: list[RoleAgent], entries: Any, recorded: Mapping[str, Any], kept: list[str],
-                     patch: dict[str, Any]) -> None:
+                     patch: dict[str, Any], default_model: Any = None) -> None:
     """`agents.entries.<kit-role>.subagents.model` = the role's own matrix chain.
 
     OpenClaw resolves the model of a spawned subagent as `<target>.subagents.model`, then
@@ -339,10 +339,16 @@ def _subagent_models(agents: list[RoleAgent], entries: Any, recorded: Mapping[st
     for agent in agents:
         aid = agent.id
         live = entries.get(aid) if isinstance(entries, Mapping) else None
-        if not isinstance(live, Mapping) or aid in kept:
-            continue                      # a new entry already carries it; an operator-owned one is left alone
-        want = _model_value(agent)
+        if not isinstance(live, Mapping):
+            continue                      # a new entry already carries it
         have = _get(live, "subagents", "model")
+        if aid in kept:
+            # The operator owns this agent's model, so the spawn pin follows that model (never the matrix's). Only when
+            # the host's default subagent model would otherwise outrank it, and only when absent.
+            if have is None and default_model is not None and live.get("model") is not None:
+                patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {}).setdefault("subagents", {})["model"] = live["model"]
+            continue
+        want = _model_value(agent)
         mine = have is None or (_primary(have) == last.get(aid) and _fallbacks_of(have) == list(last_fb.get(aid) or []))
         if have != want and mine:
             patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {}).setdefault("subagents", {})["model"] = want
