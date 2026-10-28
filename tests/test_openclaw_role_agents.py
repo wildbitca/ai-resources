@@ -351,3 +351,31 @@ def test_an_agent_the_kit_wrote_without_fallbacks_gains_them_and_an_operator_cha
     run(s, host, tmp_path)
     assert entries["kit-role-planner"]["model"]["fallbacks"] == ["agy-cli-lane/gemini-4-argon-high"]
     assert entries["kit-role-reviewer"]["model"]["fallbacks"] == ["anthropic/claude-opus-5-5"]
+
+
+# --- the "kept" note: silent when nothing differs, actionable when it does ---------------------------------------------------
+
+def _agent(model="anthropic/claude-haiku-5-5", thinking="low"):
+    return R.RoleAgent(id="kit-role-explore", model=model, thinking=thinking, fallbacks=[])
+
+
+def test_kept_note_is_silent_when_the_live_values_equal_what_the_kit_would_write():
+    live = {"model": {"primary": "anthropic/claude-haiku-5-5"}, "thinkingDefault": "low"}
+    assert R.kept_note("kit-role-explore", live, _agent()) == ""
+    assert R.kept_note("kit-role-explore", {"model": "anthropic/claude-haiku-5-5", "thinkingDefault": "low"}, _agent()) == ""
+
+
+def test_kept_note_names_both_values_the_spawn_model_and_the_commands():
+    live = {"model": {"primary": "anthropic/claude-sonnet-5-5"}, "thinkingDefault": "low",
+            "subagents": {"model": {"primary": "anthropic/claude-opus-5-5"}}}
+    note = R.kept_note("kit-role-explore", live, _agent())
+    assert "claude-sonnet-5-5" in note and "claude-haiku-5-5" in note
+    assert "a spawn of it runs on anthropic/claude-opus-5-5" in note
+    assert "openclaw config set agents.entries.kit-role-explore.model.primary anthropic/claude-haiku-5-5" in note
+    assert "thinking" not in note.split("; to follow")[0].replace("(the kit changes only values it wrote)", "")
+
+
+def test_kept_note_covers_a_thinking_only_difference():
+    live = {"model": {"primary": "anthropic/claude-haiku-5-5"}, "thinkingDefault": "high"}
+    note = R.kept_note("kit-role-explore", live, _agent())
+    assert "thinking high (matrix row: low)" in note and "thinkingDefault low" in note and "model.primary" not in note

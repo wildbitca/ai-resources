@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.9] — 2026-10-28 — Spawn acceptance judges the right session
+
+See ADR-0024.
+
+- fix(acceptance): `spawn.landed-on-role-agent` took "the newest session" by `updatedAt`. An old spawn (13:21, before the 3.2.4 pin of `subagents.model`) had been touched later (17:03) and outranked the Haiku spawn (14:41) that proved the fix, so the case reported `kit-role-explore ran claude-sonnet-5-5` on a host whose roles all resolve correctly. It now orders by `sessionStartedAt`, treats a session that began before the live config last changed as unproven (not a failure), and proves the config directly: OpenClaw's spawn order (`<target>.subagents.model`, `agents.defaults.subagents.model`, the target's primary) must give a model of the role's own chain, with the exact `openclaw config set` command when it does not.
+- fix(setup): the "your model or thinking setting is kept" warning is silent when the live values already equal what the kit would write, and otherwise names the live and matrix values, the model a spawn of that agent runs on, and the commands to follow the matrix.
+
 ## [3.2.8] — 2026-10-28 — One setup run leaves the host correct
 
 See ADR-0022 (kit-lane adoption), ADR-0023 (auto gates) and docs/runbooks/setup-incomplete-and-skipped.md.

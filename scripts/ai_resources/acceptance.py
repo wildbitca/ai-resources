@@ -96,6 +96,7 @@ class Env:
     run_id: str = field(default_factory=lambda: f"acceptance-{os.getpid()}")
     memo: dict = field(default_factory=dict)
     doc: Callable[[], dict] | None = None        # the live openclaw.json (a seam for tests); None = read it through the cockpit
+    config_mtime_ms: Callable[[], float] | None = None   # when that config last changed (a seam for tests); None = stat the file
 
     def openclaw_doc(self) -> dict:
         if self.doc is not None:
@@ -515,11 +516,25 @@ def _spawn_memory(env: Env) -> Result:
 
 
 def _kit_role_sessions(env: Env, agent: str, limit: int = 20) -> list[dict]:
-    """The sessions of `agent` that another session spawned (`spawnedBy`), newest first. Read-only (`openclaw sessions`)."""
+    """The sessions of `agent` that another session spawned (`spawnedBy`), newest STARTED first. Read-only (`openclaw sessions`).
+
+    Ordered by `sessionStartedAt`, not `updatedAt`: any later touch of an old session (archive, cleanup, a status write)
+    bumps `updatedAt`, which put a spawn from before a config fix ahead of the newer spawns that proved the fix."""
     rc, out = _oc(env, ["openclaw", "sessions", "--agent", agent, "--json", "--limit", str(limit)], 60)
     doc = _json_from(out) if rc == 0 else {}
     rows = [x for x in (doc.get("sessions") or []) if isinstance(x, dict) and x.get("spawnedBy")]
-    return sorted(rows, key=lambda x: x.get("updatedAt") or 0, reverse=True)
+    return sorted(rows, key=lambda x: x.get("sessionStartedAt") or x.get("updatedAt") or 0, reverse=True)
+
+
+def _config_mtime_ms(env: Env) -> float:
+    """When the live OpenClaw config last changed (ms); 0 when unknown (every session then counts)."""
+    if env.config_mtime_ms is not None:
+        return float(env.config_mtime_ms())
+    try:
+        from .setup.cockpits import openclaw as cockpit
+        return Path(cockpit.config_path()).stat().st_mtime * 1000
+    except OSError:
+        return 0.0
 
 
 @case("spawn.explore-run", "spawn", offline=False, cap="one `openclaw agent --agent <kit-role explore> -m pong` turn (the role's own model); "
@@ -555,37 +570,58 @@ def _spawn_explore(env: Env) -> Result:
 
 @case("spawn.landed-on-role-agent", "spawn", severity="warn", remedy="re-run `ai-resources setup` (it rewrites the kit-role agents from the matrix)")
 def _spawn_landed(env: Env) -> Result:
-    """A subagent main spawned on a kit-role agent runs on that agent's own model chain: the gateway's session row names the
-    agent in its key, who spawned it, and the provider/model it used; both must be in the chain the matrix gives the role."""
+    """A subagent main spawned on a kit-role agent runs on that agent's own model chain. Two proofs:
+
+    * the config: OpenClaw resolves a spawn as `<target>.subagents.model`, then `agents.defaults.subagents.model`, then the
+      target's own model; the model that order gives must be in the chain the agent is configured with (always checkable);
+    * the newest spawned session (by start time) that began after the config last changed: the gateway's row names the
+      agent in its key and the provider/model it ran. A session from before the last config change says nothing about
+      today's config, so it is reported as unproven, never as a failure."""
     from .setup.cockpits import openclaw_orchestration as orch, openclaw_roles
     doc = env.openclaw_doc()
     ids = orch.kit_role_ids(doc)
     if not ids:
         return skip("no kit-role agents in the OpenClaw config")
     by_agent = {openclaw_roles.agent_id_for(r): r for r in routing.ROLES}
-    checked, wrong, unproven = [], [], []
+    resolved = orch.audit_spawn_models(doc, [a for a in ids if a in by_agent])
+    since = _config_mtime_ms(env)
+    checked, wrong, unproven, stale = [], [], [], []
     for aid in ids:
         role = by_agent.get(aid)
+        entry = orch._get(doc, "agents", "entries", aid, "model") or {}
+        chain = [entry] if isinstance(entry, str) else [entry.get("primary"), *(entry.get("fallbacks") or [])]
+        families = {routing.writer_family(str(c)) for c in chain if c}
+
+        def in_chain(ref: str) -> bool:
+            return ref in chain or routing.writer_family(ref) in families
+        if aid in resolved and not in_chain(resolved[aid][1]):
+            layer, model = resolved[aid]
+            wrong.append(f"{aid}: a spawn resolves to {model} ({layer}), the agent's chain is {', '.join(map(str, chain))}; "
+                         f"fix: openclaw config set agents.entries.{aid}.subagents.model.primary {chain[0]}")
+            continue
         rows = _kit_role_sessions(env, aid, 5) if role else []
         if not rows:
             unproven.append(aid)
             continue
         row = rows[0]
+        if (row.get("sessionStartedAt") or 0) < since:
+            stale.append(aid)                  # ran before the config last changed: the config proof above is the evidence
+            continue
         key_agent = str(row.get("key", "")).split(":")[1:2]
         ref = f"{row.get('modelProvider')}/{row.get('model')}"
-        entry = orch._get(doc, "agents", "entries", aid, "model") or {}
-        chain = [entry] if isinstance(entry, str) else [entry.get("primary"), *(entry.get("fallbacks") or [])]
-        families = {routing.writer_family(str(c)) for c in chain if c}
-        if key_agent != [aid] or (routing.writer_family(ref) not in families and ref not in chain):
+        if key_agent != [aid] or not in_chain(ref):
             wrong.append(f"{aid}: session {row.get('key', '')[:40]} ran {ref}, the agent's chain is {', '.join(map(str, chain))}")
         else:
             checked.append(aid)
     if wrong:
         return bad("; ".join(wrong[:3]), wrong=wrong)
-    if not checked:
+    cfg_ok = [a for a in resolved]
+    if not checked and not cfg_ok:
         return skip("no kit-role agent has a spawned session yet; have main call sessions_spawn on one (the check reads the gateway's sessions)")
-    return ok(f"{len(checked)} kit-role agent(s) ran spawned subagents on the right agent and a model of their chain" +
-              (f" ({len(unproven)} not spawned yet)" if unproven else ""), proven=checked, unproven=unproven)
+    return ok(f"{len(cfg_ok)} kit-role agent(s) resolve a spawn to a model of their own chain; {len(checked)} spawned session(s) confirm it"
+              + (f"; {len(stale)} last spawn(s) predate the current config and prove nothing" if stale else "")
+              + (f" ({len(unproven)} not spawned yet)" if unproven else ""),
+              proven=checked, unproven=unproven, stale=stale, resolved={a: v[1] for a, v in resolved.items()})
 
 
 # --- team: main assumes the roles, a mixed-provider run, CLI and API together -----------------------------------------------

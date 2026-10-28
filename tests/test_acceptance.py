@@ -418,3 +418,51 @@ def test_cli_and_api_providers_answer_in_the_same_run(env, tmp_path, monkeypatch
     assert r.status == acc.PASS, r.reason
     assert {"agy", "claude-code", "anthropic-api", "gemini-api"} <= set(r.evidence["backends"])
     assert {r["pool"] for r in dispatch_ledger.load(env.run_id)} >= {routing.POOL_GEMINI_API, routing.POOL_ANTHROPIC_API}
+
+
+# --- spawn.landed-on-role-agent: the config proof and the newest spawn --------------------------------------------------
+
+def _landed(env, doc, rows, mtime=0):
+    env.doc = lambda: doc
+    env.config_mtime_ms = lambda: mtime
+    env.runner = lambda argv, **kw: (0, json.dumps({"sessions": rows}))
+    return acc.run_case(next(c for c in acc.CASES if c.id == "spawn.landed-on-role-agent"), env)
+
+
+def _explore_doc(sub=None, default=None, primary="anthropic/claude-haiku-5-5"):
+    ent = {"model": {"primary": primary}}
+    if sub:
+        ent["subagents"] = {"model": {"primary": sub}}
+    agents = {"entries": {"kit-role-explore": ent}}
+    if default:
+        agents["defaults"] = {"subagents": {"model": default}}
+    return {"agents": agents}
+
+
+def _row(started, updated, model, key="agent:kit-role-explore:subagent:x"):
+    return {"key": key, "sessionStartedAt": started, "updatedAt": updated, "model": model, "modelProvider": "anthropic",
+            "spawnedBy": "agent:claude:subagent:y", "status": "done"}
+
+
+def test_landed_judges_the_newest_started_session_not_the_last_touched_one(env):
+    """Regression (3.2.9): an old Sonnet spawn from before the fix had a later `updatedAt` than the Haiku spawn that proved it."""
+    rows = [_row(100, 900, "claude-sonnet-5-5"), _row(500, 600, "claude-haiku-5-5")]
+    r = _landed(env, _explore_doc(sub="anthropic/claude-haiku-5-5"), rows, mtime=50)
+    assert r.status == acc.PASS, r.reason
+
+
+def test_landed_fails_when_the_newest_spawn_after_the_config_change_ran_on_the_wrong_model(env):
+    rows = [_row(500, 600, "claude-sonnet-5-5")]
+    r = _landed(env, _explore_doc(sub="anthropic/claude-haiku-5-5"), rows, mtime=50)
+    assert r.status == acc.FAIL and "claude-sonnet-5-5" in r.reason
+
+
+def test_landed_a_spawn_from_before_the_config_change_is_unproven_not_a_failure(env):
+    rows = [_row(100, 900, "claude-sonnet-5-5")]
+    r = _landed(env, _explore_doc(sub="anthropic/claude-haiku-5-5"), rows, mtime=400)
+    assert r.status == acc.PASS and "predate" in r.reason
+
+
+def test_landed_fails_from_the_config_alone_when_a_default_subagent_model_outranks_the_role(env):
+    r = _landed(env, _explore_doc(default="anthropic/claude-sonnet-5-5"), [], mtime=0)
+    assert r.status == acc.FAIL and "agents.defaults.subagents.model" in r.reason and "openclaw config set" in r.reason

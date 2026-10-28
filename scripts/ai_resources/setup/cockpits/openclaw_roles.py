@@ -326,6 +326,35 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
     return patch, kept
 
 
+def kept_note(aid: str, live: Any, agent: "RoleAgent | None") -> str:
+    """The warning for a kit-role agent whose model or thinking the kit leaves alone, or "" when there is nothing to say.
+
+    Silent when the live primary and thinking already equal what the kit would write (nothing differs). Otherwise it names
+    both values and the two ways out: keep the value (nothing to do) or move the agent to the matrix row (the exact
+    commands). A spawn of this agent lands on its own `subagents.model`, else the default, else its primary, so the note
+    also says which model that is."""
+    if not isinstance(live, Mapping) or agent is None:
+        return ""
+    have, have_think = _primary(live.get("model")), live.get("thinkingDefault") or ""
+    want, want_think = agent["model"], agent["thinking"] or ""
+    if have == want and have_think == want_think:
+        return ""
+    spawn = _primary(_get(live, "subagents", "model")) or have
+    parts = []
+    if have != want:
+        parts.append(f"model {have} (matrix row: {want})")
+    if have_think != want_think:
+        parts.append(f"thinking {have_think or 'unset'} (matrix row: {want_think or 'unset'})")
+    cmds = []
+    if have != want:
+        cmds.append(f"openclaw config set agents.entries.{aid}.model.primary {want}")
+    if have_think != want_think and want_think:
+        cmds.append(f"openclaw config set agents.entries.{aid}.thinkingDefault {want_think}")
+    follow = ("; to follow the matrix run: " + " && ".join(cmds) + ", then `ai-resources setup`") if cmds else ""
+    return (f"kit-role agent {aid}: kept your {'; '.join(parts)}; a spawn of it runs on {spawn}{follow} "
+            f"(the kit changes only values it wrote)")
+
+
 def _subagent_models(agents: list[RoleAgent], entries: Any, recorded: Mapping[str, Any], kept: list[str],
                      patch: dict[str, Any], default_model: Any = None) -> None:
     """`agents.entries.<kit-role>.subagents.model` = the role's own matrix chain.
@@ -432,7 +461,9 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     if stub:
         patch.setdefault("models", {}).setdefault("providers", {})[openclaw_agy.STUB_PROVIDER] = stub
     for aid in kept:
-        warn(f"kit-role agent {aid}: your model or thinking setting is kept (the kit changes only values it wrote)")
+        note = kept_note(aid, _get(doc, "agents", "entries", aid), {a.id: a for a in agents}.get(aid))
+        if note:
+            warn(note)
     entries = _get(doc, "agents", "entries") or {}
     new_ids = [a.id for a in agents if a.id not in entries]
     if dry_run:
