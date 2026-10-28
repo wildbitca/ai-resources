@@ -961,6 +961,8 @@ def _configure_config_fill(o: state.OpenClawState, doc: dict, path: Path, writte
         ui.info("filled: " + ", ".join(built["filled"]))
     if built["forced"]:
         ui.info("replaced (forced by the profile or your overrides): " + ", ".join(built["forced"]))
+    if built.get("retired"):
+        ui.info("removed (a value an earlier kit release wrote, now harmful): " + ", ".join(built["retired"]))
     ui.info("Canonical config patch (sent with `openclaw config patch --stdin`):")
     ui.detail(json.dumps(built["patch"], indent=2))
     ok, out = apply_patch(built["patch"], dry_run=True, replace_paths=built["replace_paths"])

@@ -25,7 +25,6 @@
         "maxChildrenPerAgent": 3,
         "maxConcurrent": 3,
         "maxSpawnDepth": 2,
-        "model": "anthropic/claude-sonnet-5-5",
         "runTimeoutSeconds": 7200
       },
       "thinkingDefault": "low",

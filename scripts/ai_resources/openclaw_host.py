@@ -2485,6 +2485,14 @@ def resource_guards_off(values: dict[str, str] | None = None, env: dict[str, str
     return raw.strip().lower() == "off"
 
 
+# Keys an earlier kit release filled with a value that is now harmful. A live value equal to the one the kit wrote is the
+# kit's, not the operator's choice, so it is deleted; any other value is the operator's and stays. `keep` blocks it.
+# agents.defaults.subagents.model (3.1.x..3.2.6): beats the target agent's own model on a cross-agent spawn.
+RETIRED_KIT_VALUES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("agents", "defaults", "subagents", "model"), "anthropic/@MODEL_SONNET@"),
+)
+
+
 def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
                      overrides: dict | None = None) -> dict:
     """The minimal patch that FILLS the keys `doc` lacks (ADR-0003: the profile never overwrites).
@@ -2494,7 +2502,7 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
     exists to fix.
 
     Returns {"patch": {...}, "changes": [{"path": [...], "previous": v, "had": bool, "action":
-             "filled"|"forced"}], "replace_paths": [...], "skipped": [str],
+             "filled"|"forced"|"retired"}], "replace_paths": [...], "skipped": [str],
              "kept": [dotted], "filled": [dotted], "forced": [dotted]}.
     """
     overrides = overrides or {}
@@ -2587,12 +2595,26 @@ def build_host_patch(profile: dict, doc: dict, values: dict[str, str], *,
         changes.append(change)
         if _is_atomic(wanted) and had and isinstance(current, dict):
             replace_paths.append(dotted)
+    for path_t, kit_value in RETIRED_KIT_VALUES:
+        path = list(path_t)
+        wanted_old = _substitute(kit_value, values, set())
+        current, had = _get_path(doc, path)
+        if not had or not _strict_equal(current, wanted_old) or _override_hit(path, keep_set):
+            continue
+        if _get_path(tree, path)[1]:
+            continue                   # a profile that sets the key again wins over the retirement
+        cur = patch
+        for k in path[:-1]:
+            cur = cur.setdefault(k, {})
+        cur[path[-1]] = None
+        changes.append({"path": path, "previous": current, "had": True, "action": "retired"})
     assert_channels_safe(patch, replace_paths)
     assert_tools_deny_safe(patch, replace_paths)
     return {"patch": patch, "changes": changes, "replace_paths": replace_paths, "skipped": skipped,
             "kept": kept,
             "filled": [".".join(c["path"]) for c in changes if c["action"] == "filled"],
-            "forced": [".".join(c["path"]) for c in changes if c["action"] == "forced"]}
+            "forced": [".".join(c["path"]) for c in changes if c["action"] == "forced"],
+            "retired": [".".join(c["path"]) for c in changes if c["action"] == "retired"]}
 
 
 def _strict_equal(a, b) -> bool:

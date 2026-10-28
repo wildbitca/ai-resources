@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.7] — 2026-10-28 — Lane agents keep their own model
+
+- fix(host): the profile no longer writes `agents.defaults.subagents.model`. OpenClaw resolves a spawn's model as the target's `subagents.model`, then `defaults.subagents.model`, then the target's primary, so the Sonnet default overrode the target on every cross-agent `sessions_spawn` (`kit-lane-agy-*` and `kit-lane-cli-*` all ran `claude-cli/claude-sonnet-5-5`).
+- fix(host): `setup` removes that key from a live config when it still holds the value the kit wrote (the current Sonnet pin); any other value is the operator's and stays, and `keep` in `kit-host-overrides.json5` blocks the removal. The change is recorded so a restore puts it back.
+
 ## [3.2.6] — 2026-10-28 — No residue in ~/.cache or ~/.openclaw
 
 See ADR-0021 and docs/runbooks/scratch-and-residue.md.

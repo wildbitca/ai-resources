@@ -104,3 +104,44 @@ def test_the_host_section_applies_the_limits_without_any_restart(monkeypatch):
 def test_the_profile_text_documents_why():
     text = (host.Path(__file__).resolve().parents[1] / "profiles" / "openclaw-host.json5").read_text()
     assert "ADR-0015" in text and "maxSpawnDepth" in text and "runTimeoutSeconds" in text
+
+
+# --- 3.2.7: no default subagent model (it overrode the target agent's own model on a cross-agent spawn) -------------
+
+SONNET = "anthropic/" + host.model_pins.effective()["sonnet"]
+
+
+def test_the_profile_sets_no_default_subagent_model():
+    assert "model" not in host.load_host_profile()["agents"]["defaults"]["subagents"]
+    built = host.build_host_patch(host.load_host_profile(), {}, VALUES)
+    assert "model" not in built["patch"]["agents"]["defaults"]["subagents"]
+
+
+def test_the_sonnet_default_an_earlier_release_wrote_is_retired():
+    doc = {"agents": {"defaults": {"subagents": {"model": SONNET, "maxConcurrent": 3}}}}
+    built = host.build_host_patch(host.load_host_profile(), doc, VALUES)
+    assert built["patch"]["agents"]["defaults"]["subagents"]["model"] is None
+    assert built["retired"] == ["agents.defaults.subagents.model"]
+    change = next(c for c in built["changes"] if c["action"] == "retired")
+    assert change["previous"] == SONNET and change["had"] is True
+    patch, _ = host.restore_patch([change])
+    assert patch["agents"]["defaults"]["subagents"]["model"] == SONNET        # the undo puts it back
+
+
+def test_an_operator_chosen_default_subagent_model_is_kept():
+    doc = {"agents": {"defaults": {"subagents": {"model": "google/gemini-3.8-flash"}}}}
+    built = host.build_host_patch(host.load_host_profile(), doc, VALUES)
+    assert "model" not in built["patch"].get("agents", {}).get("defaults", {}).get("subagents", {})
+    assert built["retired"] == []
+
+
+def test_keep_blocks_the_retirement():
+    doc = {"agents": {"defaults": {"subagents": {"model": SONNET}}}}
+    ov = {"keep": frozenset({"agents.defaults.subagents.model"}), "force": frozenset()}
+    built = host.build_host_patch(host.load_host_profile(), doc, VALUES, overrides=ov)
+    assert built["retired"] == []
+
+
+def test_a_second_run_after_the_retirement_sends_nothing():
+    doc = {"agents": {"defaults": {"subagents": {"maxConcurrent": 3}}}}
+    assert host.build_host_patch(host.load_host_profile(), doc, VALUES)["retired"] == []

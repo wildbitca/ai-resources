@@ -43,7 +43,7 @@ CANONICAL = {
     "agents.defaults.models.anthropic/claude-opus-5-5.params.anthropicServerCompaction",
     "agents.defaults.models.anthropic/claude-opus-5-5.params.anthropicCompactThreshold",
     "agents.defaults.thinkingDefault", "agents.defaults.utilityModel",
-    "agents.defaults.subagents.model", "agents.defaults.subagents.maxConcurrent",
+    "agents.defaults.subagents.maxConcurrent",
     "agents.defaults.subagents.maxChildrenPerAgent",
     "agents.defaults.subagents.maxSpawnDepth", "agents.defaults.subagents.runTimeoutSeconds",   # ADR-0015 S10
     "agents.entries.main.heartbeat.isolatedSession", "agents.entries.main.heartbeat.lightContext",
