@@ -42,7 +42,7 @@ def _relocate(lines: list[str]) -> list[str]:
 
 def test_there_is_one_template_per_unit_and_nothing_else():
     on_disk = {p.name[: -len(".template")] for p in TEMPLATES.glob("*.template")}
-    assert on_disk == set(host.UNIT_NAMES) and len(host.UNIT_NAMES) == 20
+    assert on_disk == set(host.UNIT_NAMES) and len(host.UNIT_NAMES) == 22
 
 
 def test_the_gateway_unit_is_never_templated():
@@ -175,7 +175,7 @@ def test_install_replaces_a_stale_unit_and_leaves_the_gateway_unit_alone(tmp_pat
 def test_dry_run_writes_and_reloads_nothing(tmp_path):
     rec = _Systemctl()
     res = host.install_units(tmp_path, markers=host.unit_markers(LIBEXEC), dry_run=True, runner=rec, home=NO_HAND_COPY)
-    assert len(res["changed"]) == 20 and list(tmp_path.iterdir()) == [] and rec.calls == []
+    assert len(res["changed"]) == 22 and list(tmp_path.iterdir()) == [] and rec.calls == []
 
 
 def test_enable_starts_only_the_timers_and_never_the_gateway(tmp_path):

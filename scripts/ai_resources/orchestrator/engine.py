@@ -123,7 +123,8 @@ def scratch_paragraph(step: Step, run_id: str, scratch_dir: str = "") -> str:
                  "finish it with `ai-resources scratch done \"$AI_RESOURCES_SCRATCH\" --status <exit code>`.")
     return (f"{where} Subdirectories: tmp/ pytest/ logs/ out/ clone/. {SCRATCH_RULE} It is removed when your step succeeds; "
             "after a failure only logs/ stays, for 3 days. Reuse the shared venvs (`ai-resources scratch venv --lock <file>`), "
-            "never build one per run.\n")
+            "never build one per run. Go, npm, pnpm, pip, pub and gradle caches are shared (GOCACHE etc. are already exported): never set a cache "
+            "dir of your own.\n")
 
 
 def build_prompt(run: Mapping[str, Any], step: Step, attempt: int, kit_root: Path, handoff_file: str,
@@ -478,7 +479,7 @@ class Engine:
                 "timeout_s": limits.role_timeout(step.role, run.get("role_timeouts")),
                 "parallel": bool(step.group), "handoff_file": handoff, "run_dir": run_dir_of(run["id"]),
                 "label": f"{run['id']}-{step.id}-a{st['attempt']}",       # unique per run, step and attempt (C1)
-                "env": ({"AI_RESOURCES_SCRATCH": scratch_dir, "TMPDIR": f"{scratch_dir}/tmp"} if scratch_dir else {}),
+                "env": (scratch.env_for(Path(scratch_dir)) if scratch_dir else {}),
                 "prompt": build_prompt(run, step, st["attempt"], self.kit_root, handoff, scratch_dir)}
 
     def _open_scratch(self, run: dict[str, Any], step: Step) -> str:
@@ -492,7 +493,8 @@ class Engine:
         try:
             # a lease, not a pid: this process exits right after dispatch while the child works for as long as its timeout
             lease = 2 * limits.role_timeout(step.role, run.get("role_timeouts")) + 900
-            st["scratch"] = str(scratch.new(step.role, f"{run['id']}-{step.id}", lease_s=lease))
+            # keep_on_fail is explicit: a failed step's logs/ are the evidence the retry needs (3 days, counted in the cap)
+            st["scratch"] = str(scratch.new(step.role, f"{run['id']}-{step.id}", lease_s=lease, keep_on_fail=True))
         except OSError:
             return ""
         return st["scratch"]

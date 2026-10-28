@@ -33,7 +33,8 @@ Kit root: `/home/linuxbrew/.linuxbrew/opt/ai-resources/libexec`. After `brew upg
 - Never write directly under `~/.cache` or `/tmp`. Every clone, venv build, log, `mktemp` and pytest basetemp goes under `$AI_RESOURCES_SCRATCH` (`tmp/ pytest/ logs/ out/ clone/`), one directory per run: `~/.cache/ai-resources/runs/<role>-<slug>-<UTCstamp>-<pid>-<rand>/` (ADR-0020).
 - Dispatch exports it for you. Without it: `eval "$(ai-resources scratch new --role <role> --slug <task> --owner-pid $$ --shell)"`, and finish with `ai-resources scratch done "$AI_RESOURCES_SCRATCH" --status $?`. In a shell script, source `scripts/scratch.sh` and call `scratch_begin <role> <slug>` (it traps EXIT INT TERM).
 - Success removes the run. Failure keeps only `logs/`, for 3 days. A daily timer and every `scratch new` prune by `.scratch-meta.json` and owner-pid liveness, never by mtime.
-- Virtualenvs are shared, not per run: `ai-resources scratch venv --lock <requirements file>` (keyed by python version and lockfile hash, pruned after 30 idle days).
+- Virtualenvs are shared, not per run: `ai-resources scratch venv --lock <requirements file>` (keyed by python version and lockfile hash, pruned after 30 idle days). Package and build caches (Go, npm, pnpm, pip, pub, gradle) are shared under `~/.cache/ai-resources/shared/<tool>`: `eval "$(ai-resources scratch shared-env)"`; never create a cache dir of your own.
+- Scans read the existing checkout under `~/Development` (`ai-resources scratch scan-checkout <repo>`), never a clone or build under `~/.openclaw`. A finished workflow removes its worktree with `ai-resources scratch worktree-done <path>` (refuses with unpushed commits). Kit backups go to `ai-resources scratch backup-dir <name>` (14-day expiry).
 
 ## Worktrees
 

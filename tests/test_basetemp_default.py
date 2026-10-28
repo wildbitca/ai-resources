@@ -26,17 +26,13 @@ def test_default_goes_into_a_scratch_run(tmp_path):
     bt.finish_default(config, ok=True)
 
 
-def test_green_run_removes_everything_red_keeps_logs(tmp_path):
-    green = _config()
-    run = bt.apply_default(green, _env(tmp_path)).parent
-    assert bt.finish_default(green, ok=True) == "removed" and not run.exists()
-    red = _config()
-    run = bt.apply_default(red, _env(tmp_path)).parent
-    red._ai_exit = 1
-    (run / "pytest" / "junk").mkdir()
-    assert bt.finish_default(red) == "kept-logs"
-    assert not (run / "pytest").exists() and (run / "logs" / "pytest-exit.txt").is_file()
-    assert bt.finish_default(red) is None          # idempotent
+def test_green_and_red_runs_both_leave_nothing(tmp_path):
+    for status in (None, 1):
+        config = _config()
+        run = bt.apply_default(config, _env(tmp_path)).parent
+        config._ai_exit = status
+        assert bt.finish_default(config, ok=status is None) == "removed" and not run.exists()
+        assert bt.finish_default(config) is None          # idempotent
 
 
 def test_home_cache_used_without_xdg(tmp_path):

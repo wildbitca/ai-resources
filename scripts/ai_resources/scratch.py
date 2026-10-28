@@ -45,7 +45,7 @@ SUBDIRS = ("tmp", "pytest", "logs", "out", "clone")
 FAILED_TTL_S = 3 * 86400
 DEFAULT_OLDER_THAN_S = 7 * 86400
 VENV_MAX_IDLE_S = 30 * 86400
-DEFAULT_CAP_BYTES = 5 * 1024 ** 3
+DEFAULT_CAP_BYTES = 2 * 1024 ** 3        # AI_RESOURCES_SCRATCH_CAP_GB or --cap-gib overrides
 DEFAULT_LEASE_S = 6 * 3600
 CRASH_GRACE_S = 120                      # a run younger than this whose pid is unknown is not judged
 SYSTEM_TMP = ("/tmp", "/var/tmp")
@@ -63,6 +63,15 @@ def base_dir(env=None) -> Path:
         return Path(env[ENV_BASE])
     cache = env.get("XDG_CACHE_HOME") or str(Path(env.get("HOME") or Path.home()) / ".cache")
     return Path(cache) / "ai-resources"
+
+
+def cap_bytes(env=None, var: str = "AI_RESOURCES_SCRATCH_CAP_GB", default: int = DEFAULT_CAP_BYTES) -> int:
+    env = os.environ if env is None else env
+    try:
+        gib = float(env.get(var, ""))
+        return int(gib * 1024 ** 3) if gib > 0 else default
+    except ValueError:
+        return default
 
 
 def runs_dir(env=None) -> Path:
@@ -167,7 +176,7 @@ def _safe_run(path: Path | str, env=None) -> Path:
     return p
 
 
-def new(role: str, slug: str = "", *, keep_on_fail: bool = True, env=None, now: float | None = None,
+def new(role: str, slug: str = "", *, keep_on_fail: bool = False, env=None, now: float | None = None,
         prune_first: bool = True, owner_pid: int | None = None, lease_s: float | None = None) -> Path:
     """Create a run directory with its subdirectories and meta. Prunes opportunistically first."""
     now = time.time() if now is None else now
@@ -193,8 +202,9 @@ def new(role: str, slug: str = "", *, keep_on_fail: bool = True, env=None, now: 
     return run
 
 
-def env_for(run: Path) -> dict[str, str]:
-    return {ENV_SCRATCH: str(run), "TMPDIR": str(run / "tmp")}
+def env_for(run: Path, env=None) -> dict[str, str]:
+    from . import residue
+    return {ENV_SCRATCH: str(run), "TMPDIR": str(run / "tmp"), **residue.shared_env(env)}
 
 
 def finish(run: Path | str, ok: bool, *, env=None, now: float | None = None) -> str:
@@ -204,7 +214,7 @@ def finish(run: Path | str, ok: bool, *, env=None, now: float | None = None) -> 
     if not run.is_dir():
         return "removed"
     meta = read_meta(run) or {}
-    if ok or not meta.get("keep_on_fail", True):
+    if ok or not meta.get("keep_on_fail", False):
         shutil.rmtree(run, ignore_errors=True)
         return "removed"
     for child in run.iterdir():
@@ -234,7 +244,7 @@ def rm(run: Path | str, *, env=None) -> bool:
 
 
 @contextlib.contextmanager
-def run(role: str, slug: str = "", *, keep_on_fail: bool = True, env=None) -> Iterator[Path]:
+def run(role: str, slug: str = "", *, keep_on_fail: bool = False, env=None) -> Iterator[Path]:
     """Create a run, export AI_RESOURCES_SCRATCH + TMPDIR, clean up on exit.
 
     An exception (or SIGTERM / SIGINT, turned into SystemExit while inside) marks the run failed."""
@@ -376,10 +386,11 @@ def _lock(env=None, blocking: bool = True) -> Iterator[bool]:
         fh.close()
 
 
-def prune(*, older_than: float = DEFAULT_OLDER_THAN_S, cap_bytes: int = DEFAULT_CAP_BYTES, dry_run: bool = False,
+def prune(*, older_than: float = DEFAULT_OLDER_THAN_S, cap_bytes: int | None = None, dry_run: bool = False,
           env=None, now: float | None = None, quiet_lock: bool = False) -> dict:
     """Remove what is expired. Returns {'removed': [(path, reason, bytes)], 'kept': n, 'skipped_live': n, ...}."""
     now = time.time() if now is None else now
+    cap_bytes = globals()["cap_bytes"](env) if cap_bytes is None else cap_bytes
     result = {"removed": [], "kept": 0, "skipped_live": 0, "converted": [], "locked": False,
               "venvs_removed": [], "dry_run": dry_run}
     if dry_run and not base_dir(env).is_dir():
@@ -411,7 +422,7 @@ def prune(*, older_than: float = DEFAULT_OLDER_THAN_S, cap_bytes: int = DEFAULT_
                         kept.append(e)
                 elif now - created < CRASH_GRACE_S or not meta:
                     kept.append(e)               # a run with no readable meta is kept until `older_than`
-                elif meta.get("keep_on_fail", True):
+                elif meta.get("keep_on_fail", False):
                     # the owner (and its lease) is gone without finishing: a crash is a failure; keep logs for the TTL
                     result["converted"].append(str(path))
                     if not dry_run:
@@ -436,7 +447,27 @@ def prune(*, older_than: float = DEFAULT_OLDER_THAN_S, cap_bytes: int = DEFAULT_
             result["removed"].append((str(path), reason, sizes.get(path, 0)))
         result["kept"] += sum(1 for e in kept if e["path"] not in doomed)
         result["venvs_removed"] = _prune_venvs(env, now, dry_run)
+        try:
+            from . import residue
+            result["backups_removed"] = residue.prune_backups(env, now, dry_run)
+        except ImportError:
+            result["backups_removed"] = []
+        _log_prune(env, now, result)
     return result
+
+
+def _log_prune(env, now: float, result: dict) -> None:
+    """One line per removal in <base>/prune.log (paths, reasons and sizes only; never contents)."""
+    if result["dry_run"] or not (result["removed"] or result["venvs_removed"] or result["converted"]
+                                 or result.get("backups_removed")):
+        return
+    lines = [f"{_iso(now)} removed {p} ({why}, {size}B)" for p, why, size in result["removed"]]
+    lines += [f"{_iso(now)} removed venv {v} (idle)" for v in result["venvs_removed"]]
+    lines += [f"{_iso(now)} removed backup {b} (expired)" for b in result.get("backups_removed", [])]
+    lines += [f"{_iso(now)} converted {c} to logs-only" for c in result["converted"]]
+    with contextlib.suppress(OSError):
+        with open(base_dir(env) / "prune.log", "a") as fh:
+            fh.write("\n".join(lines) + "\n")
 
 
 def _prune_venvs(env, now: float, dry_run: bool) -> list[str]:
@@ -645,9 +676,13 @@ def _scan_key(name: str):
     return run, (date, hh or "00", mm or "00", ss or "00", kind or "")
 
 
-def prune_scan_results(root: Path | None = None, keep: int = SCAN_KEEP, dry_run: bool = False, env=None) -> dict:
-    """Keep the newest `keep` runs (ordered by the timestamp in the name, not by mtime); remove the rest and their
-    `.out` sidecars. Entries whose name carries no timestamp are left alone."""
+SCAN_KEEP_BY_KIND = {"basic": 7, "weekly": 2}
+
+
+def prune_scan_results(root: Path | None = None, keep: int | None = None, dry_run: bool = False, env=None) -> dict:
+    """Keep the newest 7 `basic` and the newest 2 `weekly` runs (ordered by the timestamp in the name, never by
+    mtime); remove the rest and their `.out` sidecars. `keep` overrides the count for every kind. Entries whose name
+    carries no valid timestamp are left alone."""
     root = root or scan_results_dir(env)
     groups: dict[str, tuple] = {}
     members: dict[str, list[Path]] = {}
@@ -660,7 +695,12 @@ def prune_scan_results(root: Path | None = None, keep: int = SCAN_KEEP, dry_run:
             groups[run_name] = order
             members.setdefault(run_name, []).append(child)
     ordered = sorted(groups, key=lambda r: groups[r], reverse=True)
-    drop = ordered[keep:]
+    kept, drop, seen = [], [], {}
+    for r in ordered:
+        kind = groups[r][4] or "basic"
+        limit = keep if keep is not None else SCAN_KEEP_BY_KIND.get(kind, SCAN_KEEP)
+        seen[kind] = seen.get(kind, 0) + 1
+        (kept if seen[kind] <= limit else drop).append(r)
     removed = []
     for r in drop:
         for p in members[r]:
@@ -672,7 +712,7 @@ def prune_scan_results(root: Path | None = None, keep: int = SCAN_KEEP, dry_run:
                     with contextlib.suppress(OSError):
                         p.unlink()
             removed.append((str(p), size))
-    return {"kept": ordered[:keep], "removed": removed, "dry_run": dry_run, "root": str(root)}
+    return {"kept": kept, "removed": removed, "dry_run": dry_run, "root": str(root)}
 
 
 def scan_results_bytes(root: Path | None = None, env=None) -> int:
@@ -694,11 +734,11 @@ def _cmd_new(a) -> int:
     # A pid bounds the run only when the caller names a long-lived one (a script passes its own $$). Otherwise a lease:
     # an agent's per-call shell or this very CLI exits long before the work does.
     lease = parse_duration(a.lease) if a.lease else (None if a.owner_pid else DEFAULT_LEASE_S)
-    run_dir = new(a.role, a.slug, keep_on_fail=not a.no_keep_on_fail, owner_pid=a.owner_pid or None,
+    run_dir = new(a.role, a.slug, keep_on_fail=a.keep_on_fail, owner_pid=a.owner_pid or None,
                   lease_s=lease)
     if a.shell:
         # eval-able: the caller's trap runs `scratch done`.
-        print(f"export {ENV_SCRATCH}={_q(str(run_dir))}\nexport TMPDIR={_q(str(run_dir / 'tmp'))}")
+        print("\n".join(f"export {k}={_q(v)}" for k, v in env_for(run_dir).items()))
     else:
         print(run_dir)
     return 0
@@ -739,7 +779,14 @@ def _cmd_ls(a) -> int:
 
 
 def _cmd_prune(a) -> int:
-    r = prune(older_than=parse_duration(a.older_than), cap_bytes=int(a.cap_gib * 1024 ** 3), dry_run=a.dry_run)
+    if a.shared:
+        from . import residue
+        res = residue.prune_shared(cap=int(a.cap_gib * 1024 ** 3) if a.cap_gib else None, dry_run=a.dry_run)
+        for path, size in res["removed"]:
+            print(f"{'would remove' if a.dry_run else 'removed'} {path}  ({_fmt(size)})")
+        print(f"shared caches: {_fmt(res['before'])} -> {_fmt(res['after'])} (cap {_fmt(res['cap'])})" + (" [dry-run]" if a.dry_run else ""))
+        return 0
+    r = prune(older_than=parse_duration(a.older_than), cap_bytes=int(a.cap_gib * 1024 ** 3) if a.cap_gib else None, dry_run=a.dry_run)
     verb = "would remove" if a.dry_run else "removed"
     if r["locked"]:
         print("another prune holds the lock; nothing done")
@@ -775,7 +822,7 @@ def add_subparser(sub) -> None:
     n = s.add_parser("new", help="Create a run dir; prints its path (or export lines with --shell)")
     n.add_argument("--role", required=True)
     n.add_argument("--slug", default="")
-    n.add_argument("--no-keep-on-fail", action="store_true", help="a failure removes the whole run, logs too")
+    n.add_argument("--keep-on-fail", action="store_true", help="a failure keeps logs/ for 3 days (default: a failure removes everything)")
     n.add_argument("--shell", action="store_true", help="print export lines for eval")
     n.add_argument("--owner-pid", type=int, default=0, help="a long-lived pid (your script's $$) whose life bounds the run")
     n.add_argument("--lease", default="", help="keep the run live this long without an owner pid (default 6h when no --owner-pid)")
@@ -790,14 +837,17 @@ def add_subparser(sub) -> None:
     s.add_parser("ls", help="List runs with status, liveness, age and size").set_defaults(func=_cmd_ls)
     pr = s.add_parser("prune", help="Remove expired runs and idle venvs")
     pr.add_argument("--older-than", default="7d", help="age after which a dead run goes (default 7d)")
-    pr.add_argument("--cap-gib", type=float, default=DEFAULT_CAP_BYTES / 1024 ** 3, help="global size cap (default 5)")
+    pr.add_argument("--cap-gib", type=float, default=0, help="size cap in GiB (runs: AI_RESOURCES_SCRATCH_CAP_GB, default 2; --shared: AI_RESOURCES_SHARED_CAP_GB, default 6)")
+    pr.add_argument("--shared", action="store_true", help="trim the shared tool caches (go, npm, pnpm, pip, pub, gradle) to their cap, oldest files first")
     pr.add_argument("--dry-run", action="store_true")
     pr.set_defaults(func=_cmd_prune)
     ps = s.add_parser("prune-scans", help="Keep the newest 7 security-scan-results runs")
     ps.add_argument("--root", default="")
-    ps.add_argument("--keep", type=int, default=SCAN_KEEP)
+    ps.add_argument("--keep", type=int, default=None, help="override: keep this many of every kind (default 7 basic + 2 weekly)")
     ps.add_argument("--dry-run", action="store_true")
     ps.set_defaults(func=_cmd_prune_scans)
+    from . import residue
+    residue.add_cli(s)
     v = s.add_parser("venv", help="Print (creating on first use) the shared venv for a python + lockfile hash")
     v.add_argument("--lock", action="append", required=True, help="lockfile or requirements file (repeatable)")
     v.add_argument("--python", default=None)

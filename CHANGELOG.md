@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.6] — 2026-10-28 — No residue in ~/.cache or ~/.openclaw
+
+See ADR-0021 and docs/runbooks/scratch-and-residue.md.
+
+- feat(scratch): `keep-on-failure` is explicit (`--keep-on-fail`); the default failure removes the run. The root cap is 2 GiB by default (`AI_RESOURCES_SCRATCH_CAP_GB`) and every removal is logged to `~/.cache/ai-resources/prune.log`.
+- feat(caches): GOCACHE, GOMODCACHE, npm, pnpm, pip, pub and gradle share `~/.cache/ai-resources/shared/<tool>` (`scratch shared-env`, exported by `scratch new --shell`, `scan-env` and dispatch); `scratch prune --shared` trims them to 6 GiB.
+- feat(scans): `scratch scan-env` and `scratch scan-checkout` for scans that read existing checkouts; security-scan-results keeps 7 basic + 2 weekly.
+- feat(backups): `scratch backup-dir` puts kit backups under `~/.cache/ai-resources/backups/<name>-<date>` with a 14-day expiry pruned by the daily timer.
+- feat(worktrees): `scratch worktree-done` removes a managed worktree only when clean and pushed; weekly `openclaw-worktrees-gc.timer` runs `openclaw worktrees gc`.
+- feat(doctor): sizes of `~/.cache/ai-resources` and the legacy `~/.openclaw` dirs; `doctor --fix` is a dry run, `--fix --apply` deletes (legacy `~/.openclaw` children after 7 days).
+
 ## [3.2.5] — 2026-10-28 — One scratch root
 
 Runs no longer litter `~/.cache`: 336 stray top-level entries (about 10 GB) came from verifier, implementer, reviewer and security-auditor runs that each invented their own scratch path. See ADR-0020.

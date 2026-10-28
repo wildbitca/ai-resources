@@ -1,0 +1,8 @@
+[Unit]
+Description=Weekly cleanup of OpenClaw managed worktrees (openclaw worktrees gc)
+Documentation=file:///LIVE/bin/openclaw-worktrees-gc.sh
+
+[Service]
+Type=oneshot
+TimeoutStartSec=10min
+ExecStart=/LIVE/bin/openclaw-worktrees-gc.sh

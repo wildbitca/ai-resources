@@ -691,7 +691,11 @@ OPENCLAW_SCRATCH_MD = (
     "- Success removes the run. Failure keeps only `logs/`, for 3 days. A daily timer and every `scratch new` prune by "
     "`.scratch-meta.json` and owner-pid liveness, never by mtime.\n"
     "- Virtualenvs are shared, not per run: `ai-resources scratch venv --lock <requirements file>` (keyed by python "
-    "version and lockfile hash, pruned after 30 idle days).\n"
+    "version and lockfile hash, pruned after 30 idle days). Package and build caches (Go, npm, pnpm, pip, pub, gradle) are shared "
+    "under `~/.cache/ai-resources/shared/<tool>`: `eval \"$(ai-resources scratch shared-env)\"`; never create a cache dir of your own.\n"
+    "- Scans read the existing checkout under `~/Development` (`ai-resources scratch scan-checkout <repo>`), never a clone or "
+    "build under `~/.openclaw`. A finished workflow removes its worktree with `ai-resources scratch worktree-done <path>` "
+    "(refuses with unpushed commits). Kit backups go to `ai-resources scratch backup-dir <name>` (14-day expiry).\n"
 )
 
 

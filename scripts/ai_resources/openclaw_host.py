@@ -441,6 +441,8 @@ UNIT_NAMES = (
     "openclaw-health-restart.timer",
     "openclaw-scratch-prune.service",
     "openclaw-scratch-prune.timer",
+    "openclaw-worktrees-gc.service",
+    "openclaw-worktrees-gc.timer",
 )
 TIMER_NAMES = tuple(n for n in UNIT_NAMES if n.endswith(".timer"))
 _MARKER = re.compile(r"@([A-Z][A-Z0-9_]*)@")

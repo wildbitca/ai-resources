@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from . import billing, scratch, verify
+from . import billing, residue, scratch, verify
 from .setup import state, detection, credentials, litellm, providers, smoke, ui
 
 WEEK_S = 7 * 86400
@@ -302,13 +302,30 @@ def _check_openclaw_cost(s: state.SetupState, args: argparse.Namespace) -> int:
 def _check_scratch(args: argparse.Namespace, cache_root: Path | None = None) -> int:
     """Scratch hygiene (ADR-0020): legacy top-level ~/.cache names, the runs root, security-scan-results size.
 
-    `--fix` removes a legacy entry only when nothing inside it changed for 24 h and no process has its cwd or an open
-    file there. The allowlist of real tool caches (go-build, uv, pnpm, claude, Homebrew ...) is never touched."""
+    `--fix` only LISTS what it would delete; `--apply` with it deletes: a legacy ~/.cache entry only when nothing inside it
+    changed for 24 h and no process has its cwd or an open file there, a legacy ~/.openclaw entry only after 7 days. The
+    allowlist of real tool caches (go-build, uv, pnpm, claude, Homebrew ...) and credential-shaped names are never touched."""
     import os
-    fix = bool(getattr(args, "fix", False))
+    apply = bool(getattr(args, "fix", False)) and bool(getattr(args, "apply", False))
+    fix = apply
+    issues = 0
+    ui.detail("Sizes: " + "; ".join(f"{k} {scratch._fmt(v)}" for k, v in residue.sizes().items()))
+    for r in residue.openclaw_legacy_report(apply=apply):
+        if r["removed"]:
+            ui.detail(f"removed {r['path']} ({scratch._fmt(r['bytes'])})")
+    oc_rows = [r for r in residue.openclaw_legacy_report(apply=False)]
+    if oc_rows:
+        total = sum(r["bytes"] for r in oc_rows)
+        ui.warn(f"{len(oc_rows)} entr{'y' if len(oc_rows) == 1 else 'ies'} in legacy ~/.openclaw scratch dirs ({scratch._fmt(total)}); "
+                "the kit writes scratch to ~/.cache/ai-resources/runs only")
+        for r in oc_rows[:10]:
+            why = ("protected" if r["protected"] else "in use" if r["in_use"]
+                   else "would remove" if r["age_s"] >= residue.LEGACY_MIN_AGE_S else f"{r['age_s'] / 86400:.0f}d old, kept until 7d")
+            ui.detail(f"{Path(r['path']).name}  {scratch._fmt(r['bytes'])}  [{why}]")
+        ui.detail("`ai-resources doctor --fix` lists what it would delete; add `--apply` to delete.")
+        issues += 1
     cache_root = cache_root or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
     ui.detail("Scratch root and legacy ~/.cache scratch")
-    issues = 0
     rows = scratch.legacy_report(cache_root, fix=fix)
     if not rows:
         ui.ok("no legacy scratch entries directly under ~/.cache")
@@ -324,7 +341,7 @@ def _check_scratch(args: argparse.Namespace, cache_root: Path | None = None) -> 
             ui.detail(f"... and {len(rows) - 15} more")
         left = [r for r in rows if not r["removed"]]
         if left:
-            ui.detail("Run `ai-resources doctor --fix` to remove the ones older than 24 h and not in use.")
+            ui.detail("`ai-resources doctor --fix` lists the removable ones (older than 24 h, not in use); add `--apply` to delete.")
             issues += 1
     runs = scratch.entries()
     run_bytes = sum(e["size"] for e in runs)
@@ -615,7 +632,8 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--no-collect", dest="no_collect", action="store_true",
                    help="Do not refresh the credit ledger (credits.json) from the local usage records")
     p.add_argument("--fix", action="store_true",
-                   help="Remove legacy scratch entries directly under ~/.cache (older than 24 h, not in use; real tool caches are never touched)")
+                   help="List the legacy scratch entries under ~/.cache (>24 h, not in use) and ~/.openclaw (>7 d) that would be deleted; dry run unless --apply")
+    p.add_argument("--apply", action="store_true", help="With --fix: really delete them (real tool caches and credential-shaped names are never touched)")
     p.add_argument("--skip-smoke", action="store_true",
                    help="Don't run live API round-trips (saves a few tokens)")
     p.set_defaults(func=cmd_doctor)

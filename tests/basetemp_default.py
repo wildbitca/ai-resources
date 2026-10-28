@@ -4,7 +4,7 @@ A bare `pytest tests/` writes its temp tree (hundreds of MiB per run) to /tmp/py
 already broke OpenClaw once. When nothing chose a location, the run gets a scratch run (`pytest-t-<stamp>-<pid>-<rand>`
 under `~/.cache/ai-resources/runs`), its `pytest/` subdirectory is the basetemp, `AI_RESOURCES_SCRATCH` and `TMPDIR`
 point into it for the process and its children, and the whole run is removed when the session ends green. A red or
-interrupted session keeps only `logs/` for 3 days. Stale runs are pruned by `ai-resources scratch prune` (meta + pid
+interrupted session removes it too (keeping logs needs an explicit flag). Stale runs are pruned by `ai-resources scratch prune` (meta + pid
 liveness, never mtime).
 
 A caller that already owns a run (a role agent with `$AI_RESOURCES_SCRATCH`) gets `$AI_RESOURCES_SCRATCH/pytest` and
@@ -77,7 +77,7 @@ def _main_thread() -> bool:
 
 
 def finish_default(config, ok: bool | None = None) -> str | None:
-    """Close the run this process created: green removes it, anything else keeps logs/ (3-day TTL). Idempotent."""
+    """Close the run this process created: green or red, the run goes. Idempotent."""
     run = getattr(config, "_ai_scratch_run", None)
     if run is None:
         return None
@@ -86,11 +86,6 @@ def finish_default(config, ok: bool | None = None) -> str | None:
     good = bool(ok) or (status in _OK_EXIT)
     config._ai_scratch_run = None
     scratch = _scratch()
-    if not good and Path(run).is_dir():
-        try:
-            (Path(run) / "logs" / "pytest-exit.txt").write_text(f"pytest exit status: {status}\n")
-        except OSError:
-            pass
     try:
         return scratch.finish(run, good, env=env)
     except (ValueError, OSError):

@@ -1,0 +1,13 @@
+[Unit]
+Description=Weekly cleanup of OpenClaw managed worktrees
+
+[Timer]
+# Sunday 05:45, after the scratch prune (05:15). `openclaw worktrees gc` only queues OpenClaw's own cleanup of worktrees
+# it already considers removable; a worktree with unpublished work is deferred, never deleted.
+OnCalendar=Sun *-*-* 05:45:00
+Persistent=true
+RandomizedDelaySec=10min
+Unit=openclaw-worktrees-gc.service
+
+[Install]
+WantedBy=timers.target

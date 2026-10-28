@@ -14,6 +14,11 @@ import pytest
 from ai_resources import scratch
 
 DAY = 86400
+_real_new = scratch.new
+def _new_keep(*a, **k):
+    k.setdefault("keep_on_fail", True)
+    return _real_new(*a, **k)
+
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 
@@ -42,12 +47,12 @@ def _age(run: Path, *, days: float, owner: int | None = None, status: str | None
 
 
 def test_new_creates_layout_and_meta(env):
-    run = scratch.new("verifier", "My Task!", env=env)
+    run = _real_new("verifier", "My Task!", env=env)
     assert run.parent == Path(env["XDG_CACHE_HOME"]) / "ai-resources" / "runs"
     assert run.name.startswith("verifier-my-task-") and str(os.getpid()) in run.name
     assert {p.name for p in run.iterdir() if p.is_dir()} == set(scratch.SUBDIRS)
     meta = scratch.read_meta(run)
-    assert meta["owner_pid"] == os.getpid() and meta["role"] == "verifier" and meta["keep_on_fail"] is True
+    assert meta["owner_pid"] == os.getpid() and meta["role"] == "verifier" and meta["keep_on_fail"] is False
     assert meta["created_at"].endswith("Z") and meta["status"] == "running"
 
 
@@ -66,7 +71,7 @@ def test_context_manager_keeps_only_logs_on_failure(env, monkeypatch):
     monkeypatch.delenv(scratch.ENV_SCRATCH, raising=False)
     monkeypatch.setenv("XDG_CACHE_HOME", env["XDG_CACHE_HOME"])
     with pytest.raises(RuntimeError):
-        with scratch.run("tester", "x") as run:
+        with scratch.run("tester", "x", keep_on_fail=True) as run:
             (run / "logs" / "a.log").write_text("boom")
             (run / "clone" / "big").write_text("x" * 100)
             raise RuntimeError("fail")
@@ -77,12 +82,12 @@ def test_context_manager_keeps_only_logs_on_failure(env, monkeypatch):
 
 
 def test_no_keep_on_fail_removes_everything(env):
-    run = scratch.new("r", "s", keep_on_fail=False, env=env)
+    run = _new_keep("r", "s", keep_on_fail=False, env=env)
     assert scratch.finish(run, False, env=env) == "removed" and not run.exists()
 
 
 def test_rm_refuses_paths_outside_the_runs_root(env, tmp_path):
-    scratch.new("r", "s", env=env)
+    _new_keep("r", "s", env=env)
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     with pytest.raises(ValueError):
@@ -95,10 +100,10 @@ def test_rm_refuses_paths_outside_the_runs_root(env, tmp_path):
     assert outside.is_dir()
 
 
-def _bash_script(tmp_path, env, body):
+def _bash_script(tmp_path, env, body, flags='--keep-on-fail'):
     kit = Path(__file__).resolve().parents[1]
     script = tmp_path / "t.sh"
-    script.write_text(f'. "{kit}/scripts/scratch.sh"\nscratch_begin tester trap\n{body}\n')
+    script.write_text(f'. "{kit}/scripts/scratch.sh"\nscratch_begin tester trap {flags}\n{body}\n')
     full = {**os.environ, **env, "AGENT_KIT": str(kit)}
     full.pop(scratch.ENV_SCRATCH, None)
     return script, full
@@ -141,7 +146,7 @@ def test_python_sigterm_inside_context_marks_failure(tmp_path, env):
         "import os, signal, sys, time\n"
         f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
         "from ai_resources import scratch\n"
-        "with scratch.run('impl', 'sig') as run:\n"
+        "with scratch.run('impl', 'sig', keep_on_fail=True) as run:\n"
         "    open(os.environ['READY'], 'w').write(str(run))\n"
         "    time.sleep(60)\n")
     full = {**os.environ, **env, "READY": str(tmp_path / "ready")}
@@ -158,8 +163,8 @@ def test_python_sigterm_inside_context_marks_failure(tmp_path, env):
 
 
 def test_failed_run_expires_after_three_days(env):
-    fresh = scratch.new("a", "fresh", env=env)
-    old = scratch.new("a", "old", env=env)
+    fresh = _new_keep("a", "fresh", env=env)
+    old = _new_keep("a", "old", env=env)
     for run in (fresh, old):
         scratch.finish(run, False, env=env)
     _age(old, days=4, status="failed", failed_days_ago=3.1)
@@ -171,15 +176,15 @@ def test_failed_run_expires_after_three_days(env):
 
 def test_prune_ignores_future_dated_mtimes(env):
     """Created by meta, not mtime: a 2286 mtime must not keep an old run alive, a 1970 one must not kill a young one."""
-    old = scratch.new("a", "old", env=env, prune_first=False)
-    young = scratch.new("a", "young", env=env, prune_first=False)
+    old = _new_keep("a", "old", env=env, prune_first=False)
+    young = _new_keep("a", "young", env=env, prune_first=False)
     _age(old, days=9)
     _age(young, days=0.2, owner=os.getpid())
     for run, ts in ((old, 10_000_000_000), (young, 1_800_000_000)):
         os.utime(run, (ts, ts))
         for sub in run.iterdir():
             os.utime(sub, (ts, ts))
-    far = scratch.new("a", "far", env=env, prune_first=False)
+    far = _new_keep("a", "far", env=env, prune_first=False)
     _age(far, days=9)
     os.utime(far / "logs", (2_000_000_000, 2_000_000_000))      # 2033; the fixture class that broke mtime guards
     r = scratch.prune(env=env)
@@ -189,7 +194,7 @@ def test_prune_ignores_future_dated_mtimes(env):
 
 
 def test_live_pid_is_never_pruned_even_when_ancient_and_over_cap(env):
-    run = scratch.new("a", "live", env=env)
+    run = _new_keep("a", "live", env=env)
     (run / "out" / "big").write_bytes(b"x" * 4096)
     _age(run, days=30, owner=os.getpid())
     r = scratch.prune(cap_bytes=1, env=env)
@@ -197,7 +202,7 @@ def test_live_pid_is_never_pruned_even_when_ancient_and_over_cap(env):
 
 
 def test_a_lease_keeps_a_run_live_without_an_owner_pid(env):
-    run = scratch.new("impl", "orch", env=env, prune_first=False, lease_s=3600)
+    run = _new_keep("impl", "orch", env=env, prune_first=False, lease_s=3600)
     meta = scratch.read_meta(run)
     assert meta["owner_pid"] == 0 and meta["lease_epoch"] > time.time()
     meta["created_epoch"] = time.time() - 3 * DAY                  # old, owner gone, but the lease holds
@@ -220,10 +225,10 @@ def test_cli_new_without_a_pid_takes_a_lease(env, tmp_path):
 
 
 def test_hostile_meta_cannot_make_a_run_permanent_or_stop_the_prune(env):
-    fake_owner = scratch.new("a", "pid1", env=env, prune_first=False)
-    bool_owner = scratch.new("a", "bool", env=env, prune_first=False)
-    bad_epoch = scratch.new("a", "badnum", env=env, prune_first=False)
-    logs_file = scratch.new("a", "logsfile", env=env, prune_first=False)
+    fake_owner = _new_keep("a", "pid1", env=env, prune_first=False)
+    bool_owner = _new_keep("a", "bool", env=env, prune_first=False)
+    bad_epoch = _new_keep("a", "badnum", env=env, prune_first=False)
+    logs_file = _new_keep("a", "logsfile", env=env, prune_first=False)
     for run, patch in ((fake_owner, {"owner_pid": 1, "owner_start": None}), (bool_owner, {"owner_pid": True, "owner_start": 1}),
                        (bad_epoch, {"status": "failed", "failed_epoch": "x", "owner_pid": 0}),
                        (logs_file, {"owner_pid": 0})):
@@ -245,7 +250,7 @@ def test_a_symlink_logs_dir_is_replaced_not_followed(env, tmp_path):
     victim = tmp_path / "victim"
     victim.mkdir()
     (victim / "keep").write_text("x")
-    run = scratch.new("a", "link", env=env, prune_first=False)
+    run = _new_keep("a", "link", env=env, prune_first=False)
     (run / "logs").rmdir()
     (run / "logs").symlink_to(victim)
     scratch.finish(run, False, env=env)
@@ -286,7 +291,7 @@ def test_recycled_pid_is_not_alive(env):
 
 
 def test_crashed_run_is_converted_to_logs_only_then_expires(env):
-    run = scratch.new("a", "crash", env=env, prune_first=False)
+    run = _new_keep("a", "crash", env=env, prune_first=False)
     (run / "logs" / "l").write_text("x")
     (run / "clone" / "c").write_text("x" * 10)
     _age(run, days=0.5)                                          # owner dead, status still running
@@ -297,7 +302,7 @@ def test_crashed_run_is_converted_to_logs_only_then_expires(env):
 
 
 def test_young_unknown_owner_gets_a_grace_period(env):
-    run = scratch.new("a", "young", env=env, prune_first=False)
+    run = _new_keep("a", "young", env=env, prune_first=False)
     _age(run, days=0)                                            # created now, owner pid already gone
     r = scratch.prune(env=env)
     assert run.is_dir() and not r["converted"]
@@ -306,7 +311,7 @@ def test_young_unknown_owner_gets_a_grace_period(env):
 def test_size_cap_removes_oldest_first(env):
     runs = []
     for i, age in enumerate((3, 2, 1)):
-        run = scratch.new("a", f"s{i}", env=env, prune_first=False)
+        run = _new_keep("a", f"s{i}", env=env, prune_first=False)
         (run / "out" / "blob").write_bytes(b"x" * 2000)
         scratch.finish(run, False, env=env) if False else None
         _age(run, days=age, status="failed", failed_days_ago=0.1)
@@ -317,10 +322,10 @@ def test_size_cap_removes_oldest_first(env):
 
 
 def test_dry_run_changes_nothing_and_reports(env):
-    old = scratch.new("a", "old", env=env, prune_first=False)
+    old = _new_keep("a", "old", env=env, prune_first=False)
     (old / "out" / "b").write_bytes(b"x" * 100)
     _age(old, days=9)
-    crashed = scratch.new("a", "crashed", env=env, prune_first=False)
+    crashed = _new_keep("a", "crashed", env=env, prune_first=False)
     (crashed / "clone" / "c").write_text("x")
     _age(crashed, days=0.5)
     before = sorted(str(p) for p in scratch.runs_dir(env).rglob("*"))
@@ -357,9 +362,9 @@ def test_concurrent_prune_is_skipped_by_flock(env):
 
 
 def test_new_prunes_opportunistically(env):
-    old = scratch.new("a", "old", env=env, prune_first=False)
+    old = _new_keep("a", "old", env=env, prune_first=False)
     _age(old, days=9)
-    scratch.new("a", "next", env=env)
+    _new_keep("a", "next", env=env)
     assert not old.exists()
 
 
@@ -448,7 +453,7 @@ def test_fix_removes_only_old_unused_legacy_entries(tmp_path):
 
 # --- security-scan-results retention ---------------------------------------------------------------------------------
 
-def test_scan_retention_keeps_the_newest_seven_by_name(tmp_path):
+def test_scan_retention_keeps_seven_basic_and_two_weekly(tmp_path):
     root = tmp_path / "scans"
     root.mkdir()
     names = [f"2026-10-{d:02d}-basic" for d in range(1, 13)] + ["2026-10-05-weekly", "2026-10-05-weekly.out", "2026-10-13-weekly.out", "2026-10-13-weekly", "notes.txt"]
@@ -461,11 +466,16 @@ def test_scan_retention_keeps_the_newest_seven_by_name(tmp_path):
             (p / "r.json").write_text("{}")
         ts = 10_000_000_000 - len(n) if n.startswith("2026-10-01") else 1_000_000   # mtimes must not drive the order
         os.utime(p, (ts, ts))
-    r = scratch.prune_scan_results(root, keep=7)
+    r = scratch.prune_scan_results(root)
     left = sorted(p.name for p in root.iterdir())
-    assert len(r["kept"]) == 7
-    assert left == sorted(["2026-10-13-weekly", "2026-10-13-weekly.out", "2026-10-12-basic", "2026-10-11-basic",
-                           "2026-10-10-basic", "2026-10-09-basic", "2026-10-08-basic", "2026-10-07-basic", "notes.txt"])
+    assert len(r["kept"]) == 9                                   # 7 basic + 2 weekly
+    basics = [f"2026-10-{d:02d}-basic" for d in range(6, 13)]
+    assert left == sorted(basics + ["2026-10-05-weekly", "2026-10-05-weekly.out", "2026-10-13-weekly", "2026-10-13-weekly.out", "notes.txt"])
+    # a third weekly pushes the oldest weekly (and its .out sidecar) out
+    (root / "2026-10-20-weekly").mkdir()
+    scratch.prune_scan_results(root)
+    assert not (root / "2026-10-05-weekly").exists() and not (root / "2026-10-05-weekly.out").exists()
+    assert (root / "2026-10-13-weekly").exists() and (root / "2026-10-20-weekly").exists()
 
 
 def test_scan_retention_dry_run_and_cli(tmp_path):
@@ -490,8 +500,10 @@ def test_doctor_check_warns_on_legacy_and_fix_removes_only_safe(tmp_path, monkey
     from types import SimpleNamespace
     from ai_resources import doctor
     root = _cache(tmp_path)
+    monkeypatch.setenv("OPENCLAW_HOME", str(tmp_path / "ochome"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(root))
     monkeypatch.setenv("OPENCLAW_SCAN_RESULTS_DIR", str(tmp_path / "scans"))
+    monkeypatch.setenv("OPENCLAW_HOME", str(tmp_path / "ochome"))
     old = time.time() - 2 * DAY
     for n in LEGACY:
         os.utime(root / n, (old, old))
@@ -499,7 +511,7 @@ def test_doctor_check_warns_on_legacy_and_fix_removes_only_safe(tmp_path, monkey
     os.utime(root / "pt-A1" / "f", None)                         # just written: survives --fix
     assert doctor._check_scratch(SimpleNamespace(fix=False), root) == 1
     assert all((root / n).exists() for n in LEGACY)
-    assert doctor._check_scratch(SimpleNamespace(fix=True), root) == 1   # pt-A1 is left, so still one issue
+    assert doctor._check_scratch(SimpleNamespace(fix=True, apply=True), root) == 1   # pt-A1 is left, so still one issue
     assert (root / "pt-A1").exists() and not (root / "vtmp").exists()
     assert all((root / n).exists() for n in REAL)
 
@@ -514,6 +526,7 @@ def test_doctor_check_warns_when_scan_results_exceed_500_mb(tmp_path, monkeypatc
     (scans / "2026-10-01-basic" / "big").write_bytes(b"x" * 10)
     monkeypatch.setenv("OPENCLAW_SCAN_RESULTS_DIR", str(scans))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "empty"))
+    monkeypatch.setenv("OPENCLAW_HOME", str(tmp_path / "ochome"))
     assert doctor._check_scratch(SimpleNamespace(fix=False), tmp_path / "empty") == 1
 
 
@@ -530,7 +543,7 @@ def test_scan_names_with_impossible_dates_are_left_alone(tmp_path):
 
 
 def test_ls_survives_a_null_status(env, capsys):
-    run = scratch.new("a", "n", env=env, prune_first=False)
+    run = _new_keep("a", "n", env=env, prune_first=False)
     meta = scratch.read_meta(run)
     meta["status"] = None
     scratch._write_meta(run, meta)
