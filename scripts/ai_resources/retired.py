@@ -38,6 +38,7 @@ class Retired:
     config_delete: tuple[tuple[str, ...], ...] = ()      # openclaw.json leaves removed whole (null in a patch)
     binding_channels: tuple[str, ...] = ()               # bindings[] entries whose match.channel is one of these
     owner_prefixes: tuple[str, ...] = ()                 # commands.ownerAllowFrom entries "<prefix>:<id>"
+    store_profiles: tuple[str, ...] = ()                 # saved auth profiles in OpenClaw's auth store (`models auth logout`)
     env_keys: tuple[str, ...] = ()                       # KEY lines removed from the kit-owned env files
     files: tuple[str, ...] = ()                          # paths relative to $HOME, moved into the backup
     state_fields: tuple[str, ...] = ()                   # what the setup-state normaliser fixes (see _normalise_state)
@@ -47,10 +48,12 @@ RETIRED: tuple[Retired, ...] = (
     Retired(
         id="openrouter", label="OpenRouter",
         config_delete=(("auth", "profiles", "openrouter:default"), ("plugins", "entries", "openrouter")),
+        store_profiles=("openrouter:default",),
         env_keys=("OPENROUTER_API_KEY",)),
     Retired(
         id="litellm", label="LiteLLM",
         config_delete=(("plugins", "entries", "litellm"), ("auth", "profiles", "litellm:default")),
+        store_profiles=("litellm:default",),
         env_keys=("LITELLM_MASTER_KEY",),
         state_fields=("backend",)),
     Retired(
@@ -130,6 +133,7 @@ class Plan:
     removed_config: dict = field(default_factory=dict)       # dotted path -> removed fragment (for the backup)
     env: dict[Path, list[str]] = field(default_factory=dict)  # file -> keys present
     files: list[Path] = field(default_factory=list)
+    store_logout: list[str] = field(default_factory=list)    # auth-store profile ids to log out
     kept: list[str] = field(default_factory=list)            # components skipped because they are in use
     state_changes: dict[str, Any] = field(default_factory=dict)
 
@@ -178,7 +182,11 @@ def _env_has(path: Path, key: str) -> bool:
         return False
 
 
-def plan(doc: dict, s: Any, *, home: Path | None = None, components: Iterable[Retired] = RETIRED) -> Plan:
+def plan(doc: dict, s: Any, *, home: Path | None = None, components: Iterable[Retired] = RETIRED,
+         store_profiles: Iterable[str] = ()) -> Plan:
+    """`store_profiles` are the ids `openclaw models auth list` reports (read by the caller): a retired component's profile
+    still saved there is a dangling credential (its SecretRef makes every agent turn fail on the missing env key)."""
+    saved = set(store_profiles)
     home = home or Path.home()
     out = Plan()
     bindings = doc.get("bindings") if isinstance(doc.get("bindings"), list) else None
@@ -210,6 +218,10 @@ def plan(doc: dict, s: Any, *, home: Path | None = None, components: Iterable[Re
                 out.actions.append(Action(comp.id, "owner", "commands.ownerAllowFrom", f"{len(drop_o)} entry"))
                 out.removed_config.setdefault("commands.ownerAllowFrom", []).extend(drop_o)
                 new_owners = [o for o in new_owners if o not in drop_o]
+        for pid in comp.store_profiles:
+            if pid in saved:
+                out.store_logout.append(pid)
+                out.actions.append(Action(comp.id, "auth-store", pid, "saved auth profile logged out"))
         for file in _env_files(home):
             present = [k for k in comp.env_keys if _env_has(file, k)]
             if present:
@@ -306,7 +318,8 @@ class Result:
 
 
 def apply(p: Plan, s: Any, *, apply_patch: Callable[..., tuple[bool, str]], dry_run: bool = False,
-          home: Path | None = None, stamp: str | None = None, restart_error: type = RuntimeError) -> Result:
+          home: Path | None = None, stamp: str | None = None, restart_error: type = RuntimeError,
+          logout: "Callable[[str], tuple[bool, str]] | None" = None) -> Result:
     """Carry out `p`. With `dry_run` nothing is written and `removed` lists what would be. Backup first, then the config
     patch, the env lines, the files and the state field. A failed step is reported and never stops the others."""
     res = Result(dry_run=dry_run)
@@ -336,6 +349,12 @@ def apply(p: Plan, s: Any, *, apply_patch: Callable[..., tuple[bool, str]], dry_
                     res.removed += [a.line() for a in config_actions]
                 else:
                     res.failed.append(f"config patch failed: {out[-200:]}")
+    for pid in p.store_logout:
+        if logout is None:
+            res.failed.append(f"auth profile {pid}: no logout available")
+            continue
+        ok_, out_ = logout(pid)
+        (res.removed if ok_ else res.failed).append(f"auth profile {pid} logged out" if ok_ else f"auth profile {pid}: {out_[-120:]}")
     for file, keys in p.env.items():
         try:
             text, removed = _strip_env_keys(file, keys)

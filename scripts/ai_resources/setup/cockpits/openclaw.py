@@ -1509,6 +1509,23 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
     return written
 
 
+def _auth_store_profiles() -> list[str]:
+    """Ids of the auth profiles saved in OpenClaw's auth store (`openclaw models auth list --json`); [] when unreadable."""
+    rc, out = _openclaw(["models", "auth", "list", "--json"], timeout=60)
+    if rc != 0 or "{" not in out:
+        return []
+    try:
+        doc = json.loads(out[out.index("{"):])
+    except ValueError:
+        return []
+    return [str(x.get("id")) for x in (doc.get("profiles") or []) if isinstance(x, dict) and x.get("id")]
+
+
+def _auth_logout(profile_id: str) -> tuple[bool, str]:
+    rc, out = _openclaw(["models", "auth", "logout", profile_id, "--yes"], timeout=60)
+    return rc == 0, out
+
+
 def _retired_apply(patch: dict, *, dry_run: bool = False,
                    replace_paths: list[str] | None = None) -> tuple[bool, str]:
     return apply_patch(patch, dry_run=dry_run, replace_paths=replace_paths, retired=True)
@@ -1517,10 +1534,11 @@ def _retired_apply(patch: dict, *, dry_run: bool = False,
 def _reconcile_retired(s: state.SetupState, doc: dict, *, dry_run: bool) -> bool:
     """Remove the artifacts of components no longer installed or used (OpenRouter, LiteLLM, Telegram): the declarative
     list and the guards are in `retired.py`. Idempotent; backs up first; True when openclaw.json changed."""
-    p = retired_components.plan(doc, s)
+    p = retired_components.plan(doc, s, store_profiles=_auth_store_profiles())
     if p.empty:
         return False
-    res = retired_components.apply(p, s, apply_patch=_retired_apply, dry_run=dry_run, restart_error=RestartRequired)
+    res = retired_components.apply(p, s, apply_patch=_retired_apply, dry_run=dry_run, restart_error=RestartRequired,
+                                   logout=lambda pid: _auth_logout(pid))
     for line in retired_components.report(res):
         (ui.warn if line.startswith(("Failed", "Pending")) else ui.info)(line)
     return bool(p.patch) and not res.dry_run and not res.failed and not res.pending
@@ -2238,7 +2256,8 @@ def _reconcile_gateway(s: state.SetupState, ak_path: str, *, dry_run: bool) -> N
 
 def retired_dry_run_lines(s: state.SetupState, doc: dict) -> list[str]:
     """What the retired-components reconciler would remove (OpenRouter, LiteLLM, Telegram leftovers), in words. Reads only."""
-    return [f"retired components: would remove {a.line()}" for a in retired_components.plan(doc, s).actions]
+    plan = retired_components.plan(doc, s, store_profiles=_auth_store_profiles())
+    return [f"retired components: would remove {a.line()}" for a in plan.actions]
 
 
 def hardening_dry_run_lines(s: state.SetupState, ak_path: str) -> list[str]:

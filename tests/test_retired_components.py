@@ -155,3 +155,15 @@ def test_the_dry_run_preview_lists_what_setup_would_remove(home):
     assert any("telegram: bindings" in ln for ln in lines) and all(ln.startswith("retired components: would remove") for ln in lines)
     slack_only = cockpit.retired_dry_run_lines(_s(mode="multi-model", backend="litellm"), {"channels": {"slack": {"enabled": True}}})
     assert not any(" config " in ln or " bindings " in ln for ln in slack_only)
+
+
+def test_a_saved_auth_profile_of_a_retired_provider_is_logged_out(home):
+    s = _s()
+    p = retired.plan(_doc(), s, home=home, store_profiles=["anthropic:default", "openrouter:default"])
+    assert p.store_logout == ["openrouter:default"] and ("openrouter", "auth-store") in {(a.component, a.kind) for a in p.actions}
+    out = []
+    res = retired.apply(p, s, apply_patch=Patcher(_doc()), home=home, stamp="t3", logout=lambda pid: (out.append(pid) or True, ""))
+    assert out == ["openrouter:default"] and "auth profile openrouter:default logged out" in res.removed
+    failed = retired.apply(p, s, apply_patch=Patcher(_doc()), home=home, stamp="t4", logout=lambda pid: (False, "boom"))
+    assert any("boom" in f for f in failed.failed)
+    assert retired.plan(_doc(), _s(), home=home, store_profiles=["anthropic:default"]).store_logout == []
