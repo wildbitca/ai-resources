@@ -3,9 +3,10 @@ Description=Weekly OpenClaw maintenance window
 
 [Timer]
 # Sunday 04:30, after the weekly backup (03:45) so the window starts from a fresh copy. When agent runs are in flight
-# the script skips (nothing is stopped) and the next slot tries again: 04:30 and 08:30 UTC every day until the
+# the script skips (nothing is stopped) and the next slot tries again: 04:30 and 08:30 UTC on every later day until the
 # week's window has run (openclaw-maintenance.sh records it and exits at once on a week already done).
-OnCalendar=*-*-* 04:30:00
+OnCalendar=Sun *-*-* 04:30:00
+OnCalendar=Mon..Sat *-*-* 04:30:00
 OnCalendar=*-*-* 08:30:00
 Persistent=true
 RandomizedDelaySec=10min

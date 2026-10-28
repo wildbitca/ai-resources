@@ -1521,7 +1521,7 @@ def _configure_memory_high(o: state.OpenClawState, *, dry_run: bool) -> None:
         return
     for r in host.bootstrap(_runner(), dry_run=False, only="memory-high", out=ui.detail,
                             confirm=lambda step, what: True)[0]:
-        (ui.ok if r.status in ("changed", "satisfied") else ui.warn)(f"Gateway MemoryHigh: {r.status} {r.detail}".rstrip())
+        (ui.ok if r.status in ("changed", "satisfied") else ui.warn)(f"Gateway MemoryHigh: {r.status} {getattr(r, 'detail', '')}".rstrip())
 
 
 def _configure_check(o: state.OpenClawState, *, dry_run: bool) -> None:

@@ -52,7 +52,9 @@ def test_the_gateway_unit_is_never_templated():
 
 # Directives the kit's template adds on purpose and the reference host's hand-written unit does not have (kit 2.2, E2).
 # Everything else must still agree line for line.
-DELIBERATE = {"openclaw-models-update.service": ["SuccessExitStatus=75"]}
+DELIBERATE = {"openclaw-models-update.service": ["SuccessExitStatus=75"],
+              # 3.2.1: a maintenance week that finds agent runs in flight is retried in the next quiet slot
+              "openclaw-maintenance.timer": ["OnCalendar=Mon..Sat *-*-* 04:30:00", "OnCalendar=*-*-* 08:30:00"]}
 
 
 @pytest.mark.parametrize("name", [n for n in host.UNIT_NAMES if n != "openclaw-verify.service"])

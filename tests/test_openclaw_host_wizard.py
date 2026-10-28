@@ -861,6 +861,8 @@ def _stub_bootstrap(monkeypatch, results):
     calls = []
 
     def fake(runner=None, **kw):
+        if kw.get("only") == "memory-high":        # setup applies MemoryHigh on its own (3.2.1), outside the host check
+            return [], None
         calls.append(kw)
         return results, None
 

@@ -37,7 +37,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator, NamedTuple
+from typing import Any, Callable, Iterable, Iterator, NamedTuple
 
 from . import dispatch_ledger
 from . import scrub as _scrub
@@ -672,16 +672,17 @@ def _team_run(env: Env) -> Result:
         final = engine.store.load(run["id"])["status"]
     if final != "completed":
         return bad(f"the mixed-provider run ended {final}, not completed", status=final)
-    return _judge_team(seen)
+    return _judge_team(seen, detection.inactive_backends())
 
 
-def _judge_team(seen: "dict[str, routing.Route]") -> Result:
+def _judge_team(seen: "dict[str, routing.Route]", inactive: "Iterable[str]" = ()) -> Result:
     backends = {role: _backend_of(r) for role, r in seen.items()}
     kinds = sorted(set(backends.values()))
     impl, checker = seen.get("implementer"), seen.get("verifier")
     problems = []
     if len(kinds) < 2:
-        problems.append(f"only {kinds} appeared; a mixed team needs at least two providers")
+        return skip(f"only {kinds} appeared: a mixed team needs a second provider signed in here "
+                    f"(inactive: {', '.join(sorted(inactive)) or 'none'})", backends=backends)
     if impl and checker and (_backend_of(impl) == _backend_of(checker) and routing.writer_family(impl.model) == routing.writer_family(checker.model)):
         problems.append("the checker shares the implementer's provider and model family")
     if impl and checker and routing.writer_family(impl.model) == routing.writer_family(checker.model):
@@ -908,7 +909,7 @@ def _offbox(env: Env) -> Result:
     # (a missing file made the uploader fail with "not readable" on 2026-10-27 and 10-28).
     status, detail = host.offbox_cred_repair(cfg)
     if status == "failed":
-        return bad(detail)
+        return bad(("the off-box credential file named by OPENCLAW_OFFBOX_CRED_FILE is missing (" + detail + ")") if "missing" in detail else detail)
     cred = cfg.get("OPENCLAW_OFFBOX_CRED_FILE") or str(host.OFFBOX_WIF_CRED_PATH)
     try:
         mode = os.stat(cred).st_mode & 0o777
