@@ -146,3 +146,12 @@ def test_a_restart_required_leaf_is_pending_not_failed(home):
                         restart_error=NeedsRestart)
     assert res.pending and not res.failed
     assert any("telegram" in line for line in retired.report(res))
+
+
+def test_the_dry_run_preview_lists_what_setup_would_remove(home):
+    from ai_resources.setup.cockpits import openclaw as cockpit
+    lines = cockpit.retired_dry_run_lines(_s(), _doc())
+    assert any("openrouter: config auth.profiles.openrouter:default" in ln for ln in lines)
+    assert any("telegram: bindings" in ln for ln in lines) and all(ln.startswith("retired components: would remove") for ln in lines)
+    slack_only = cockpit.retired_dry_run_lines(_s(mode="multi-model", backend="litellm"), {"channels": {"slack": {"enabled": True}}})
+    assert not any(" config " in ln or " bindings " in ln for ln in slack_only)

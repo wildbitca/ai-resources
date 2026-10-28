@@ -2236,6 +2236,11 @@ def _reconcile_gateway(s: state.SetupState, ak_path: str, *, dry_run: bool) -> N
         (ui.ok if f.level == "ok" else ui.warn if f.level == "warn" else ui.error)(f.message)
 
 
+def retired_dry_run_lines(s: state.SetupState, doc: dict) -> list[str]:
+    """What the retired-components reconciler would remove (OpenRouter, LiteLLM, Telegram leftovers), in words. Reads only."""
+    return [f"retired components: would remove {a.line()}" for a in retired_components.plan(doc, s).actions]
+
+
 def hardening_dry_run_lines(s: state.SetupState, ak_path: str) -> list[str]:
     """What a real run would do about the hooks, the off-box credential, MemoryHigh and the gateway restart, in words.
     Reads only (a file, `systemctl show`, `openclaw plugins inspect`); a clean host returns []."""
@@ -2256,6 +2261,10 @@ def hardening_dry_run_lines(s: state.SetupState, ak_path: str) -> list[str]:
                              f"{openclaw_host.OFFBOX_UPLOADER_UNIT}")
         lines.append(f"gateway MemoryHigh: {openclaw_host.wanted_memory_high(env)} "
                      f"(room for {openclaw_host.lane_headroom(openclaw_host.wanted_memory_high(env))} lane runs)")
+    try:
+        lines += retired_dry_run_lines(s, read_config(config_path()))
+    except Exception:  # noqa: BLE001 - a preview line must never take the dry run down
+        pass
     stable = str(Path(ak_path) / "openclaw-plugin" / "ai-resources")
     lines += openclaw_reconcile.reconcile(openclaw_host.default_runner, plugin_dir=stable,
                                           stale_reason=stale_reason, dry_run=True, check_env=True).lines

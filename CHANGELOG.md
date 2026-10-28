@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+- feat(setup): `setup --dry-run` lists what the retired-components reconciler would remove (`retired components: would remove ...`).
+
 ## [3.2.1] — 2026-10-28 — Self-maintaining OpenClaw host, Slack alerts, cross-provider proof
 
 Fixes from the 2026-10-28 audit of a live OpenClaw host. `ai-resources setup` on a fresh or drifted host now leaves a clean setup and keeps it clean.
