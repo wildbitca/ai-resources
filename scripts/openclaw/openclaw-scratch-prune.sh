@@ -2,8 +2,8 @@
 # openclaw-scratch-prune.sh - the daily prune (ADR-0020).
 #
 #   - `scratch prune`: expired run dirs under ~/.cache/ai-resources/runs and venvs idle for 30 days, decided by
-#     .scratch-meta.json and owner-pid liveness, never by mtime; live runs are skipped; 5 GiB global cap.
-#   - `scratch prune-scans`: keep the newest 7 runs of ~/.openclaw/security-scan-results.
+#     .scratch-meta.json and owner-pid liveness, never by mtime; live runs are skipped; 2 GiB global cap (AI_RESOURCES_SCRATCH_CAP_GB), plus expired kit backups.
+#   - `scratch prune-scans`: keep the newest 7 basic + 2 weekly runs of ~/.openclaw/security-scan-results.
 #
 # Both are best effort: a failure of one never skips the other, and neither touches anything outside its own root.
 set -uo pipefail
