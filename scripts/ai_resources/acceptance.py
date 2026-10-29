@@ -280,8 +280,22 @@ def _dispatch_once(route: routing.Route, role: str, env: Env) -> dict:
     return env.memo[key]
 
 
+@contextmanager
+def _private_ledger() -> Iterator[Path]:
+    """Point the run/dispatch ledgers at a throwaway XDG_STATE_HOME for one route probe, so an acceptance row never lands in the
+    live `dispatches.jsonl`. HOME and PATH stay real: the probe needs the signed-in CLIs."""
+    root = Path(_scratch.new_tmpdir("route-ledger-"))
+    old = os.environ.get("XDG_STATE_HOME")
+    os.environ["XDG_STATE_HOME"] = str(root / "state")
+    try:
+        yield root
+    finally:
+        os.environ.pop("XDG_STATE_HOME", None) if old is None else os.environ.__setitem__("XDG_STATE_HOME", old)
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _route_case(role: str) -> Callable[[Env], Result]:
-    def run(env: Env) -> Result:
+    def probe(env: Env) -> Result:
         from .setup import detection
         route = routing.resolve(role, _usage(env), [], detection.inactive_backends())
         if route.blocked:
@@ -306,6 +320,9 @@ def _route_case(role: str) -> Callable[[Env], Result]:
                                    fallback_cause=route.cause or "")
         return ok(f"{route.cell} [{route.pool}] answered as the matrix says" + (f" (fallback, cause {route.cause})" if route.cause else ""),
                   cell=route.cell, used=got, tokens_in=res.get("tokens_in", 0), tokens_out=res.get("tokens_out", 0))
+    def run(env: Env) -> Result:
+        with _private_ledger():
+            return probe(env)
     return run
 
 
