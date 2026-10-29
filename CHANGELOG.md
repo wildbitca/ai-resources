@@ -40,10 +40,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 - **Track 4 (routing & orchestration)**:
   - refactor(routing): `CLASS_POOLS["chat"]` updated to `(gemini-api, anthropic-api)`; `main` and channel agents configured with primary `google/gemini-3.8-flash` and fallback `anthropic/claude-sonnet-5-5`; heartbeat defaults to `google/gemini-3.8-flash` with `anthropic/claude-haiku-5-5` fallback.
-  - docs(orchestration): delegation guidelines updated across `docs/orchestration.md`, `references/backends.md`, and `skills/kit-orchestration/SKILL.md` to establish `kit-role-<role>` agents as the default delegation target without model overrides, reserving the `claude` worker strictly for long tightly coupled coding sessions.
+  - docs(orchestration): delegation guidelines updated across `docs/orchestration.md` and `references/backends.md` to establish `kit-role-<role>` agents as the default delegation target without model overrides, reserving the `claude` worker strictly for long tightly coupled coding sessions.
   - docs(adr): ADR-0017, ADR-0018, and ADR-0019 amended to reflect Gemini-first chat plane routing and advisory daily caps.
-- **Track 3 (CI workflows)**:
-  - ci: removed unused `integration.yml` workflow; integration tests remain opt-in locally via `INTEGRATION=1 scripts/run-tests.sh`.
 
 ### Fixed
 
