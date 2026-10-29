@@ -97,6 +97,9 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }} # the merge commit this push produced
+          token: ${{ github.token }} # authenticates `git ls-remote` below
 
       - name: Check version consistency and extract release notes
         id: check
@@ -107,11 +110,17 @@ jobs:
         env:
           TAG: ${{ steps.check.outputs.tag }}
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+          # ls-remote --exit-code: 0 = tag found, 2 = no match, anything else (128: network, auth, 5xx) is a failure.
+          rc=0
+          git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null || rc=$?
+          if [ "$rc" -eq 0 ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Tag ${TAG} already exists; nothing to publish."
-          else
+          elif [ "$rc" -eq 2 ]; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "git ls-remote failed with exit code ${rc}; not assuming the tag is missing." >&2
+            exit "$rc"
           fi
 
       - name: Create tag and GitHub Release

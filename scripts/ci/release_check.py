@@ -86,10 +86,10 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root)
     try:
         version, notes, errors = check(
-            (root / "scripts/ai_resources/__init__.py").read_text(),
-            (root / ".claude-plugin/plugin.json").read_text(),
-            (root / "Formula/ai-resources.rb").read_text(),
-            (root / "CHANGELOG.md").read_text(),
+            (root / "scripts/ai_resources/__init__.py").read_text(encoding="utf-8"),
+            (root / ".claude-plugin/plugin.json").read_text(encoding="utf-8"),
+            (root / "Formula/ai-resources.rb").read_text(encoding="utf-8"),
+            (root / "CHANGELOG.md").read_text(encoding="utf-8"),
         )
     except OSError as exc:
         print(f"release_check: {exc}", file=sys.stderr)
@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         for e in errors:
             print(f"release_check: {e}", file=sys.stderr)
         return 1
-    Path(args.notes_file).write_text((notes or "") + "\n")
+    Path(args.notes_file).write_text((notes or "") + "\n", encoding="utf-8")
     print(f"version={version}")
     print(f"tag=v{version}")
     return 0

@@ -20,9 +20,13 @@ permissions:
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          token: ${{ github.token }}
 
       - name: Check version consistency and extract release notes
         env:
@@ -33,6 +37,37 @@ jobs:
           if [ "$CHECKED_TAG" != "$INPUT_TAG" ]; then
             echo "Input tag ${INPUT_TAG} does not match the version files (${CHECKED_TAG}); run this workflow on the right ref." >&2
             exit 1
+          fi
+
+      - name: Refuse an existing Release or a tag on another commit
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rc=0
+          gh release view "$INPUT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>"${RUNNER_TEMP}/gh.err" || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "GitHub Release ${INPUT_TAG} already exists; refusing to overwrite it." >&2
+            exit 1
+          elif ! grep -qi 'release not found' "${RUNNER_TEMP}/gh.err"; then
+            echo "gh release view failed (exit ${rc}); not assuming the Release is missing:" >&2
+            cat "${RUNNER_TEMP}/gh.err" >&2
+            exit 1
+          fi
+          rc=0
+          refs=$(git ls-remote --tags origin "refs/tags/${INPUT_TAG}" "refs/tags/${INPUT_TAG}^{}") || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "git ls-remote failed with exit code ${rc}" >&2
+            exit "$rc"
+          fi
+          if [ -n "$refs" ]; then
+            # An annotated tag lists the tag object and, peeled (^{}), its commit; a lightweight tag lists the commit.
+            target=$(printf '%s\n' "$refs" | awk '/\^\{\}$/ {print $1; found=1} END {if (!found) exit 1}') \
+              || target=$(printf '%s\n' "$refs" | awk 'NR==1 {print $1}')
+            if [ "$target" != "$GITHUB_SHA" ]; then
+              echo "Tag ${INPUT_TAG} already points at ${target}, not at ${GITHUB_SHA}; refusing." >&2
+              exit 1
+            fi
           fi
 
       - name: Create GitHub Release

@@ -56,15 +56,66 @@ def test_main_writes_notes_and_prints_outputs(tmp_path, capsys):
     (root / "scripts/ai_resources").mkdir(parents=True)
     (root / ".claude-plugin").mkdir()
     (root / "Formula").mkdir()
-    (root / "scripts/ai_resources/__init__.py").write_text(PKG)
-    (root / ".claude-plugin/plugin.json").write_text(PLUGIN)
-    (root / "Formula/ai-resources.rb").write_text(FORMULA)
-    (root / "CHANGELOG.md").write_text(CHANGELOG)
+    (root / "scripts/ai_resources/__init__.py").write_text(PKG, encoding="utf-8")
+    (root / ".claude-plugin/plugin.json").write_text(PLUGIN, encoding="utf-8")
+    (root / "Formula/ai-resources.rb").write_text(FORMULA, encoding="utf-8")
+    (root / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
     notes = tmp_path / "notes.md"
     assert rc.main(["--root", str(root), "--notes-file", str(notes)]) == 0
     assert capsys.readouterr().out.split() == ["version=1.2.3", "tag=v1.2.3"]
-    assert "### Fixed" in notes.read_text()
+    assert "### Fixed" in notes.read_text(encoding="utf-8")
 
 
 def test_main_fails_on_missing_file(tmp_path):
     assert rc.main(["--root", str(tmp_path), "--notes-file", str(tmp_path / "n")]) == 2
+
+
+# Extraction an operator would write in a workflow shell step; it must agree with extract_notes.
+AWK_NOTES = (
+    'index($0, "## [" v "]") == 1 {f=1; next} '
+    'f && index($0, "## [") == 1 {exit} '
+    "f {print}"
+)
+
+
+def _awk_notes(changelog: str, version: str) -> str:
+    import shutil
+    import subprocess
+
+    import pytest
+
+    awk = shutil.which("awk")
+    if not awk:
+        pytest.skip("awk not available")
+    out = subprocess.run(
+        [awk, "-v", f"v={version}", AWK_NOTES], input=changelog.encode("utf-8"), capture_output=True, check=True
+    ).stdout.decode("utf-8")
+    return out.strip("\n")
+
+
+def test_em_dash_header_is_matched_exactly_as_in_the_real_changelog():
+    changelog = "## [Unreleased]\n\n## [3.2.11] — 2026-10-29 — Backup stage cleanup\n\n### Fixed\n- é ü — x\n\n## [3.2.10] — 2026-10-01\n- old\n"
+    notes = rc.extract_notes(changelog, "3.2.11")
+    assert notes == "### Fixed\n- é ü — x"
+    assert rc.extract_notes(changelog, "3.2.1") is None  # no prefix match on a longer version
+
+
+def test_awk_extraction_gives_the_same_notes_as_extract_notes():
+    changelog = "## [3.2.11] — 2026-10-29 — Backup stage cleanup\n\n### Fixed\n- é — x\n\n## [3.2.10] — 2026-10-01\n- old\n"
+    assert _awk_notes(changelog, "3.2.11") == rc.extract_notes(changelog, "3.2.11")
+    real = (Path(__file__).resolve().parents[1] / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert _awk_notes(real, "3.2.11") == rc.extract_notes(real, "3.2.11")
+
+
+def test_main_writes_utf8_notes_regardless_of_locale(tmp_path, monkeypatch):
+    root = tmp_path
+    (root / "scripts/ai_resources").mkdir(parents=True)
+    (root / ".claude-plugin").mkdir()
+    (root / "Formula").mkdir()
+    (root / "scripts/ai_resources/__init__.py").write_text(PKG, encoding="utf-8")
+    (root / ".claude-plugin/plugin.json").write_text(PLUGIN, encoding="utf-8")
+    (root / "Formula/ai-resources.rb").write_text(FORMULA, encoding="utf-8")
+    (root / "CHANGELOG.md").write_text(CHANGELOG.replace("- a", "- a — é"), encoding="utf-8")
+    notes = tmp_path / "notes.md"
+    assert rc.main(["--root", str(root), "--notes-file", str(notes)]) == 0
+    assert "a — é" in notes.read_bytes().decode("utf-8")
