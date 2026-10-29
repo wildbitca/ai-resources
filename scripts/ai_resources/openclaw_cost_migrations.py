@@ -50,8 +50,9 @@ UTILITY_MODEL_ID = "cost-utility-model"
 UTILITY_MODEL_PATH = ("agents", "defaults", "utilityModel")
 
 
-# Balanced credit policy (docs/decisions/0017-balanced-credit-policy.md): the SAFE subset. Heartbeat stays on Haiku until a
-# Gemini tool-calling run is verified. Proposed only on a host that already uses Google models, one confirm per path.
+# Balanced credit policy (docs/decisions/0017-balanced-credit-policy.md): the SAFE subset. Proposed only on a host that
+# already uses Google models, one confirm per path. The chat agents and the heartbeat move to Gemini through
+# `chat_gemini_proposals` (routing matrix D1-D3), which is gated on the operator having enabled the Google provider.
 BALANCED_UTILITY_ID = "credit-utility-gemini-flash"
 BALANCED_ALIAS_ID = "credit-gemini-flash-alias"
 GEMINI_FLASH_ALIAS_PATH = ("agents", "defaults", "models", "google/gemini-3.8-flash")
@@ -83,6 +84,45 @@ def balanced_credit_proposals(doc: dict, *, applied=(), keep=frozenset(), force=
         out.append(Proposal(BALANCED_ALIAS_ID, GEMINI_FLASH_ALIAS_PATH, None, {"alias": "flash"},
                             "registers the Gemini route under a short alias", had=False,
                             snippet='openclaw config patch with {"agents":{"defaults":{"models":{"google/gemini-3.8-flash":{"alias":"flash"}}}}}'))
+    return out
+
+
+CHAT_GEMINI_ID = "chat-gemini-primary"
+CHAT_AGENT_ORDER = ("ai", "snoutzone", "main", "devops")        # one confirm each, safest first
+CHAT_PRIMARY = "google/gemini-3.8-flash"
+CHAT_FALLBACKS = ["anthropic/claude-sonnet-5-5"]
+HEARTBEAT_MODEL_ID = "chat-gemini-heartbeat"
+HEARTBEAT_MODEL_PATH = ("agents", "defaults", "heartbeat", "model")
+
+
+def chat_gemini_proposals(doc: dict, *, applied=(), keep=frozenset(), force=frozenset()) -> list[Proposal]:
+    """Move the chat agents to Gemini (matrix D1/D2) and the heartbeat to Gemini (D3). The caller only asks for these
+    when the Gemini API provider is enabled and a Google key is present. One proposal per agent that exists in the live
+    config and whose primary differs; the primary and the fallbacks are applied together (fallbacks replace the list).
+    The kit-role agents are not touched here: their model is owned by the role writer."""
+    done = set(applied or ())
+    out: list[Proposal] = []
+    entries = (doc.get("agents") or {}).get("entries") or {}
+    for name in CHAT_AGENT_ORDER:
+        entry = entries.get(name)
+        mid = f"{CHAT_GEMINI_ID}:{name}"
+        path = ("agents", "entries", name, "model")
+        if not isinstance(entry, dict) or mid in done or _covered(path, keep) or _covered(path, force):
+            continue
+        old = entry.get("model")
+        want = {"primary": CHAT_PRIMARY, "fallbacks": list(CHAT_FALLBACKS)}
+        if isinstance(old, dict) and old.get("primary") == CHAT_PRIMARY and old.get("fallbacks") == want["fallbacks"]:
+            continue
+        out.append(Proposal(mid, path, old, want,
+                            "chat turns run on the Gemini API pool first; Sonnet answers when it is exhausted",
+                            replace=True, had="model" in entry,
+                            snippet=f"openclaw config set {'.'.join(path)} '{json.dumps(want)}'"))
+    old, had = _get(doc, HEARTBEAT_MODEL_PATH)
+    if HEARTBEAT_MODEL_ID not in done and not _covered(HEARTBEAT_MODEL_PATH, keep) \
+            and not _covered(HEARTBEAT_MODEL_PATH, force) and old != CHAT_PRIMARY:
+        out.append(Proposal(HEARTBEAT_MODEL_ID, HEARTBEAT_MODEL_PATH, old if had else None, CHAT_PRIMARY,
+                            "the heartbeat is a tool-light turn: the Gemini API pool pays for it", had=had,
+                            snippet=f"openclaw config set {'.'.join(HEARTBEAT_MODEL_PATH)} {CHAT_PRIMARY}"))
     return out
 
 
@@ -132,18 +172,22 @@ def _covered(path: tuple[str, ...], entries) -> bool:
 
 
 def proposals(doc: dict, *, applied=(), keep=frozenset(), force=frozenset(), heartbeat_off: bool = False,
-              utility_model: str = "", balanced_credit: bool = False) -> list[Proposal]:
+              utility_model: str = "", balanced_credit: bool = False,
+              chat_gemini: bool = False) -> list[Proposal]:
     """The migrations still worth proposing for `doc`. A path in `keep` is skipped; one already in `force` is left to
     the normal forced fill (it is applied without a second question).
 
     `heartbeat_off` is the operator's answer to the wizard question (default No: the 2h isolated light heartbeat stays);
     `utility_model` is a model ref a probe VERIFIED works with this host's key (never a guessed id): it is proposed only
     when the configured utilityModel is set, differs, and a verified replacement exists. `balanced_credit` adds the
-    balanced credit policy's safe subset (see `balanced_credit_proposals`)."""
+    balanced credit policy's safe subset (see `balanced_credit_proposals`). `chat_gemini` adds the chat-agent and
+    heartbeat moves to Gemini (see `chat_gemini_proposals`); the caller sets it only when Gemini is enabled with a key."""
     done = set(applied or ())
     out: list[Proposal] = []
     if balanced_credit:
         out.extend(balanced_credit_proposals(doc, applied=applied, keep=keep, force=force))
+    if chat_gemini:
+        out.extend(chat_gemini_proposals(doc, applied=applied, keep=keep, force=force))
     for mid, path, new, why in VALUE_MIGRATIONS:
         old, had = _get(doc, path)
         if mid in done or not had or old == new or _covered(path, keep) or _covered(path, force):
@@ -164,7 +208,10 @@ def proposals(doc: dict, *, applied=(), keep=frozenset(), force=frozenset(), hea
             out.append(Proposal(UTILITY_MODEL_ID, UTILITY_MODEL_PATH, old, utility_model,
                                 "titles and progress notes run on a model the probe verified with your key",
                                 snippet=f"openclaw config set agents.defaults.utilityModel {utility_model}"))
+    moved = {p.id.split(":", 1)[1] for p in out if p.id.startswith(CHAT_GEMINI_ID + ":")}
     for name in opus_fallback_agents(doc):
+        if name in moved:            # the chat proposal already replaces that agent's whole model, fallbacks included
+            continue
         path = ("agents", "defaults", "model", "fallbacks") if name == "defaults" else \
                ("agents", "entries", name, "model", "fallbacks")
         mid = f"cost-fallbacks-no-opus:{name}"

@@ -395,3 +395,77 @@ def test_auto_run_removes_the_opus_fallback_of_a_recorded_kit_role_agent_and_kee
     live = _cfg(sim)["agents"]["entries"]
     assert live["kit-role-verifier"]["model"]["fallbacks"] == ["anthropic/claude-haiku-5-5"]
     assert live["operator-agent"]["model"]["fallbacks"] == shape["model"]["fallbacks"]
+
+
+# --- chat agents and heartbeat on Gemini (routing matrix D1-D3) ------------------------------------------------
+
+CHAT_LIVE = {"agents": {"defaults": {"model": {"primary": "anthropic/claude-sonnet-5-5"}}, "entries": {
+    "ai": {"model": {"primary": "anthropic/claude-sonnet-5-5", "fallbacks": ["anthropic/claude-opus-5-5"]}},
+    "snoutzone": {"model": "anthropic/claude-sonnet-5-5"},
+    "main": {"model": {"primary": "google/gemini-3.8-flash", "fallbacks": ["anthropic/claude-sonnet-5-5"]}},
+    "devops": {},
+    "kit-role-planner": {"model": {"primary": "anthropic/claude-sonnet-5-5"}},
+}}}
+
+
+def test_chat_gemini_is_proposed_only_when_the_caller_says_gemini_is_enabled():
+    assert not [p for p in cm.proposals(CHAT_LIVE) if p.id.startswith("chat-gemini")]
+    ids = [p.id for p in cm.proposals(CHAT_LIVE, chat_gemini=True) if p.id.startswith("chat-gemini")]
+    assert ids == ["chat-gemini-primary:ai", "chat-gemini-primary:snoutzone", "chat-gemini-primary:devops",
+                   "chat-gemini-heartbeat"]                                   # order ai, snoutzone, (main done), devops
+
+
+def test_the_chat_proposal_replaces_the_whole_model_and_never_touches_kit_role_agents():
+    got = {p.id: p for p in cm.proposals(CHAT_LIVE, chat_gemini=True)}
+    ai = got["chat-gemini-primary:ai"]
+    assert ai.new == {"primary": "google/gemini-3.8-flash", "fallbacks": ["anthropic/claude-sonnet-5-5"]}
+    assert ai.replace is True and ai.path == ("agents", "entries", "ai", "model")
+    assert not any("kit-role" in p.id for p in got.values())
+    assert got["chat-gemini-primary:devops"].had is False          # absent model: a fill, teardown deletes it
+    hb = got["chat-gemini-heartbeat"]
+    assert hb.path == ("agents", "defaults", "heartbeat", "model") and hb.new == "google/gemini-3.8-flash" and not hb.had
+
+
+def test_the_opus_fallback_proposal_yields_to_the_chat_proposal_for_the_same_agent():
+    ids = {p.id for p in cm.proposals(CHAT_LIVE, chat_gemini=True)}
+    assert "cost-fallbacks-no-opus:ai" not in ids and "chat-gemini-primary:ai" in ids
+    # declined/applied: without the flag the opus proposal is back (pre-existing behavior is unchanged)
+    assert "cost-fallbacks-no-opus:ai" in {p.id for p in cm.proposals(CHAT_LIVE)}
+
+
+def test_chat_gemini_respects_applied_ids_keep_and_force_and_a_patch_has_no_shared_mutation():
+    done = ["chat-gemini-primary:ai", "chat-gemini-heartbeat"]
+    ids = {p.id for p in cm.proposals(CHAT_LIVE, chat_gemini=True, applied=done)}
+    assert "chat-gemini-primary:ai" not in ids and "chat-gemini-heartbeat" not in ids
+    keep = frozenset({"agents.entries.snoutzone"})
+    assert "chat-gemini-primary:snoutzone" not in {p.id for p in cm.proposals(CHAT_LIVE, chat_gemini=True, keep=keep)}
+    props = [p for p in cm.proposals(CHAT_LIVE, chat_gemini=True) if p.id.startswith("chat-gemini")]
+    patch, replace = cm.build_patch(props)
+    assert patch["agents"]["entries"]["ai"]["model"]["fallbacks"] == ["anthropic/claude-sonnet-5-5"]
+    assert patch["agents"]["defaults"]["heartbeat"]["model"] == "google/gemini-3.8-flash"
+    assert "agents.entries.ai.model" in replace
+
+
+def test_the_profile_comment_no_longer_says_heartbeat_stays_on_haiku():
+    src = open(cm.__file__, encoding="utf-8").read()
+    assert "stays on Haiku" not in src
+
+
+def _with_chat_agent(sim):
+    doc = _live(sim)
+    doc["agents"]["entries"]["ai"] = {"model": {"primary": "anthropic/claude-sonnet-5-5"}}
+    sim.cfg.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_through_the_wizard_the_chat_agent_moves_to_gemini_only_with_the_google_provider(sim, script):
+    from ai_resources.setup import cockpit_auth
+    _with_chat_agent(sim)
+    _ask_all(script, True)
+    s = _state()
+    _run_wizard(s)                                            # no google provider: nothing about the chat agent
+    assert _cfg(sim)["agents"]["entries"]["ai"]["model"] == {"primary": "anthropic/claude-sonnet-5-5"}
+    cockpit_auth.set_providers(s, {"anthropic": "api_key", "google": "api_key"})
+    _run_wizard(s)
+    ai = _cfg(sim)["agents"]["entries"]["ai"]["model"]
+    assert ai == {"primary": "google/gemini-3.8-flash", "fallbacks": ["anthropic/claude-sonnet-5-5"]}
+    assert "chat-gemini-primary:ai" in s.openclaw.cost_migrations_applied

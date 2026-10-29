@@ -115,11 +115,75 @@ def test_a_dry_run_writes_nothing(fake):
     assert fake.cli == [] and fake.patches == [] and s.openclaw.host_restart_pending == []
 
 
-def test_an_antigravity_engine_keeps_its_own_guarded_path_and_only_remembers_the_version(fake):
+def test_an_antigravity_engine_keeps_its_own_link_and_restart_path_and_remembers_the_version(fake):
     s = chosen()
     s.openclaw.antigravity_applied = True
-    assert run(s, fake) is False
+    run(s, fake)
     assert fake.cli == [] and s.openclaw.host_restart_pending == [] and s.openclaw.plugin_version_seen == "1.1.0"
+
+
+def test_an_antigravity_host_with_engine_keep_still_gets_enable_orchestrator_filled(fake):
+    """The fill-only write ran after the antigravity early return, so engine=keep hosts never got it."""
+    s = chosen()
+    s.openclaw.antigravity_applied = True
+    s.openclaw.engine = "keep"
+    assert run(s, fake) is True
+    cfg = fake.doc["plugins"]["entries"][oc.PLUGIN_ID]["config"]
+    assert cfg["enableOrchestrator"] is True and cfg["maxTeams"] == 16
+    assert fake.cli == [] and s.openclaw.host_restart_pending == []             # still no link, no restart
+    assert run(s, fake) is False                                                 # idempotent
+
+
+def test_an_operator_false_is_kept_and_warned_about_on_both_paths(fake, monkeypatch):
+    warns: list[str] = []
+    monkeypatch.setattr(ui, "warn", warns.append)
+    for agy in (False, True):
+        fake.doc = {"plugins": {"entries": {oc.PLUGIN_ID: {"config": {"enableOrchestrator": False}}}}}
+        fake.patches.clear()
+        warns.clear()
+        s = chosen()
+        s.openclaw.antigravity_applied = agy
+        s.openclaw.plugin_linked = True
+        run(s, fake)
+        cfg = fake.doc["plugins"]["entries"][oc.PLUGIN_ID]["config"]
+        assert cfg["enableOrchestrator"] is False
+        assert any("enableOrchestrator is false" in w for w in warns)
+
+
+def test_a_dry_run_on_an_antigravity_host_writes_nothing(fake):
+    s = chosen()
+    s.openclaw.antigravity_applied = True
+    assert run(s, fake, dry_run=True) is False
+    assert fake.patches == []
+
+
+def test_the_orchestrator_fill_is_fill_only():
+    live = {"plugins": {"entries": {oc.PLUGIN_ID: {"config": {"enableOrchestrator": False, "maxTeams": 5}}}}}
+    got = oc._orchestrator_fill(live, "/kit")
+    assert "enableOrchestrator" not in got and "maxTeams" not in got and got["kitRoot"] == "/kit"
+    assert oc._orchestrator_fill({}, "/kit")["enableOrchestrator"] is True
+
+
+def test_memory_dreaming_model_is_filled_only_with_google_enabled_and_never_over_an_operator_value():
+    g = state.SetupState()
+    cockpit_auth.set_providers(g, {"google": "api_key"})
+    patch = oc._dreaming_fill({}, g)
+    assert patch == {"plugins": {"entries": {"memory-core": {"config": {"dreaming": {"model": "google/gemini-3.8-flash"}}}}}}
+    assert "agy-cli-lane" not in json.dumps(patch)
+    mine = {"plugins": {"entries": {"memory-core": {"config": {"dreaming": {"model": "anthropic/claude-haiku-5-5"}}}}}}
+    assert oc._dreaming_fill(mine, g) is None
+    assert oc._dreaming_fill({}, chosen()) is None                              # google not enabled: nothing is written
+    assert oc._dreaming_fill({}, state.SetupState()) is None
+
+
+def test_memory_dreaming_configure_applies_once_and_a_dry_run_applies_nothing(fake, monkeypatch):
+    applied: list[dict] = []
+    monkeypatch.setattr(oc, "_apply_hot", lambda patch, **k: (applied.append(patch), (True, "ok"))[1])
+    g = state.SetupState()
+    cockpit_auth.set_providers(g, {"google": "api_key"})
+    assert oc._configure_memory_dreaming(g, {}, dry_run=True, run_changes=[]) is False and applied == []
+    assert oc._configure_memory_dreaming(g, {}, dry_run=False, run_changes=[]) is True and len(applied) == 1
+    assert oc._configure_memory_dreaming(g, applied[0], dry_run=False, run_changes=[]) is False and len(applied) == 1
 
 
 def test_a_failed_link_is_reported_and_records_nothing(fake, monkeypatch):
