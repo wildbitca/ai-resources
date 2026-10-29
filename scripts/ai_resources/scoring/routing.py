@@ -4,8 +4,8 @@ Pure data and pure functions: no I/O, no clock, no credential. Two planes use fo
 
 * `team` plane: kit roles (planner, implementer, explore, ...) run on Claude Code (Max subscription) or on
   Antigravity (Google AI Pro quota). These are PRIMARY routes, not fallbacks.
-* `chat` plane: OpenClaw chat agents and utility work run on the Anthropic API credits (primary) and the Gemini API
-  credits (cheap, tool-light work).
+* `chat` plane: OpenClaw chat agents, heartbeat and utility work run on the Gemini API credits (primary) and fall back
+  to the Anthropic API credits (capped, advisory, at `ANTHROPIC_DAILY_CAP_USD` a day).
 
 `render_section()` is what `lanes.yaml` carries under `routing:`; `choose_pool()` is the balancing rule the doctor
 and any dispatcher can apply to live pool usage. A profile may override single matrix cells with a top-level
@@ -13,6 +13,7 @@ and any dispatcher can apply to live pool usage. A profile may override single m
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
@@ -43,6 +44,20 @@ _BACKEND_POOL = {"claude-code": POOL_MAX, "claude-cli": POOL_MAX, "anthropic-api
 BACKENDS = ("claude-code", "claude-cli", "agy", "anthropic-api", "gemini-api", "codex")
 
 SPILL_AT = 0.85            # a pool at or above this used fraction hands the class to the next pool
+ALERT_AT = 0.80            # a pool at or above this used fraction is flagged (pool_usage, credits)
+ANTHROPIC_DAILY_CAP_USD = 10.0     # advisory daily ceiling for the Anthropic API fallback; nothing enforces it
+DAILY_CAP_ENV = "AI_RESOURCES_ANTHROPIC_DAILY_CAP_USD"
+
+
+def anthropic_daily_cap_usd(env: Mapping[str, str] | None = None) -> float:
+    """The advisory Anthropic API daily cap in USD: `AI_RESOURCES_ANTHROPIC_DAILY_CAP_USD` when it is a positive number,
+    else `ANTHROPIC_DAILY_CAP_USD`. Display only: no code path blocks a call on it."""
+    raw = (os.environ if env is None else env).get(DAILY_CAP_ENV)
+    try:
+        value = float(raw) if raw not in (None, "") else ANTHROPIC_DAILY_CAP_USD
+    except ValueError:
+        return ANTHROPIC_DAILY_CAP_USD
+    return value if value > 0 else ANTHROPIC_DAILY_CAP_USD
 
 
 def pool_of(cell: str) -> str:
@@ -133,18 +148,17 @@ ROLES: dict[str, Role] = dict([
     _team("verifier", "team-check", None, (), checker=True),
     _team("security-auditor", "team-check", None, (), checker=True),
     # Chat plane: OpenClaw agents and utility work (ADR-0017 workload map).
-    _chat("main", "chat", _API_SONNET, _API_HAIKU),
-    _chat("channel-agents", "chat", _API_SONNET, _API_HAIKU),
+    _chat("main", "chat", _GEMINI_API, _API_SONNET),
+    _chat("channel-agents", "chat", _GEMINI_API, _API_SONNET),
     _chat("utility", "chat-light", _GEMINI_API, _API_HAIKU),
     _chat("summarization", "chat-light", _GEMINI_API, _API_HAIKU),
     _chat("explore-bulk", "chat-light", _GEMINI_API, _API_HAIKU),
-    _chat("heartbeat", "chat-light", _API_HAIKU, _GEMINI_API,
-          "Gemini tool-calling through OpenClaw is unproven; heartbeat stays on Haiku"),
+    _chat("heartbeat", "chat-light", _GEMINI_API, _API_HAIKU),
 ])
 
 # Which pools each class of work drains, in order. The first pool under `spill_at` serves the class.
 CLASS_POOLS: dict[str, tuple[str, ...]] = {
-    "chat":       (POOL_ANTHROPIC_API,),
+    "chat":       (POOL_GEMINI_API, POOL_ANTHROPIC_API),
     "chat-light": (POOL_GEMINI_API, POOL_ANTHROPIC_API),
     "team-read":  (POOL_AGY_GEMINI, POOL_MAX),
     "team-plan":  (POOL_MAX, POOL_AGY_GEMINI),

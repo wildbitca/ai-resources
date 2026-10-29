@@ -87,7 +87,7 @@ def read_counters(path: Path | None, pool: str) -> Reading:
 CREDIT_ENV = {routing.POOL_ANTHROPIC_API: ("ANTHROPIC_API_CREDITS_USD", 200.0),
               routing.POOL_GEMINI_API: ("GOOGLE_API_CREDITS_USD", 10.0)}
 KEY_ENV = {routing.POOL_ANTHROPIC_API: "ANTHROPIC_API_KEY", routing.POOL_GEMINI_API: "GEMINI_API_KEY"}
-ALERT_AT = 0.80
+ALERT_AT = routing.ALERT_AT
 
 
 def spend_path(home: str | Path | None = None) -> Path:
@@ -150,6 +150,8 @@ def snapshot(now_epoch: int | None = None, env: Mapping[str, str] | None = None,
             if pool in CREDIT_ENV:
                 entry.update(_credit(pool, env, home))
                 entry["key_present"] = bool(env.get(KEY_ENV[pool]))
+                if pool == routing.POOL_ANTHROPIC_API:       # advisory ceiling of the fallback pool, never enforced
+                    entry["daily_cap_usd"] = routing.anthropic_daily_cap_usd(env)
             else:
                 if pool == routing.POOL_MAX:        # a hit limit beats a percentage written earlier
                     used, source = read_quota_block(deps["quota_blocks_path"], pool, now)
@@ -182,7 +184,8 @@ def lines(snap: Mapping[str, Mapping[str, Any]]) -> list[str]:
         key = ""
         if "key_present" in v:
             key = "; env key set" if v["key_present"] else "; no env key (the OpenClaw profile may hold it)"
-        out.append(f"{pool:<20} {v['label']}: {v['detail']}{key}{flag}")
+        cap = f"; advisory daily cap ${v['daily_cap_usd']:,.2f}" if v.get("daily_cap_usd") else ""
+        out.append(f"{pool:<20} {v['label']}: {v['detail']}{key}{cap}{flag}")
     use = usage_map(snap)
     for cls in sorted(routing.CLASS_POOLS):
         pool, why = routing.choose_pool(cls, use)

@@ -127,3 +127,14 @@ def test_sync_caches_never_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(pool_usage, "_probe", boom)
     out = pool_usage.sync_caches(tmp_path)
     assert out["updated"] == [] and set(out["errors"]) == {"claude", "agy"}
+
+
+def test_anthropic_pool_shows_the_advisory_daily_cap_and_it_follows_the_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("AI_RESOURCES_API_SPEND", raising=False)
+    snap = pool_usage.snapshot(now_epoch=1_000, env={}, home=tmp_path)
+    assert snap[routing.POOL_ANTHROPIC_API]["daily_cap_usd"] == 10.0
+    assert "daily_cap_usd" not in snap[routing.POOL_GEMINI_API]
+    assert "advisory daily cap $10.00" in "\n".join(pool_usage.lines(snap))
+    snap = pool_usage.snapshot(now_epoch=1_000, env={"AI_RESOURCES_ANTHROPIC_DAILY_CAP_USD": "4"}, home=tmp_path)
+    assert snap[routing.POOL_ANTHROPIC_API]["daily_cap_usd"] == 4.0
+    assert pool_usage.ALERT_AT == routing.ALERT_AT
