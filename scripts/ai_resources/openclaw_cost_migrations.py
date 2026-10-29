@@ -110,19 +110,22 @@ def chat_gemini_proposals(doc: dict, *, applied=(), keep=frozenset(), force=froz
         if not isinstance(entry, dict) or mid in done or _covered(path, keep) or _covered(path, force):
             continue
         old = entry.get("model")
-        want = {"primary": CHAT_PRIMARY, "fallbacks": list(CHAT_FALLBACKS)}
+        want = {**(old if isinstance(old, dict) else {}), "primary": CHAT_PRIMARY, "fallbacks": list(CHAT_FALLBACKS)}  # keep extra keys (timeouts...)
         if isinstance(old, dict) and old.get("primary") == CHAT_PRIMARY and old.get("fallbacks") == want["fallbacks"]:
             continue
         out.append(Proposal(mid, path, old, want,
-                            "chat turns run on the Gemini API pool first; Sonnet answers when it is exhausted",
+                            "chat turns run on the Gemini API pool first; Sonnet answers when it is exhausted "
+                            "(only 'Google provider enabled' was checked, confirm a Google API key is present)",
                             replace=True, had="model" in entry,
                             snippet=f"openclaw config set {'.'.join(path)} '{json.dumps(want)}'"))
     old, had = _get(doc, HEARTBEAT_MODEL_PATH)
     if HEARTBEAT_MODEL_ID not in done and not _covered(HEARTBEAT_MODEL_PATH, keep) \
-            and not _covered(HEARTBEAT_MODEL_PATH, force) and old != CHAT_PRIMARY:
-        out.append(Proposal(HEARTBEAT_MODEL_ID, HEARTBEAT_MODEL_PATH, old if had else None, CHAT_PRIMARY,
-                            "the heartbeat is a tool-light turn: the Gemini API pool pays for it", had=had,
-                            snippet=f"openclaw config set {'.'.join(HEARTBEAT_MODEL_PATH)} {CHAT_PRIMARY}"))
+            and not _covered(HEARTBEAT_MODEL_PATH, force) and _primary(old) != CHAT_PRIMARY:
+        new = {**old, "primary": CHAT_PRIMARY} if isinstance(old, dict) else CHAT_PRIMARY
+        out.append(Proposal(HEARTBEAT_MODEL_ID, HEARTBEAT_MODEL_PATH, old if had else None, new,
+                            "the heartbeat is a tool-light turn: the Gemini API pool pays for it "
+                            "(only 'Google provider enabled' was checked, confirm a Google API key is present)", had=had,
+                            snippet=f"openclaw config set {'.'.join(HEARTBEAT_MODEL_PATH)} {new if isinstance(new, str) else repr(json.dumps(new))}"))
     return out
 
 
