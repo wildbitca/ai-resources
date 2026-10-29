@@ -426,6 +426,20 @@ def test_the_chat_proposal_replaces_the_whole_model_and_never_touches_kit_role_a
     assert hb.path == ("agents", "defaults", "heartbeat", "model") and hb.new == "google/gemini-3.8-flash" and not hb.had
 
 
+def test_the_chat_proposal_keeps_the_extra_keys_of_an_agent_model_object():
+    live = {"agents": {"entries": {"ai": {"model": {"primary": "anthropic/claude-sonnet-5-5", "timeoutMs": 90000}}}}}
+    ai = {p.id: p for p in cm.proposals(live, chat_gemini=True)}["chat-gemini-primary:ai"]
+    assert ai.new == {"primary": "google/gemini-3.8-flash", "fallbacks": ["anthropic/claude-sonnet-5-5"], "timeoutMs": 90000}
+
+
+def test_a_heartbeat_already_on_gemini_as_an_object_is_not_proposed_again_and_other_keys_survive():
+    done = {"agents": {"defaults": {"heartbeat": {"model": {"primary": "google/gemini-3.8-flash"}}}}}
+    assert "chat-gemini-heartbeat" not in {p.id for p in cm.proposals(done, chat_gemini=True)}
+    old = {"agents": {"defaults": {"heartbeat": {"model": {"primary": "anthropic/claude-haiku-5-5", "timeoutMs": 5}}}}}
+    hb = {p.id: p for p in cm.proposals(old, chat_gemini=True)}["chat-gemini-heartbeat"]
+    assert hb.new == {"primary": "google/gemini-3.8-flash", "timeoutMs": 5}
+
+
 def test_the_opus_fallback_proposal_yields_to_the_chat_proposal_for_the_same_agent():
     ids = {p.id for p in cm.proposals(CHAT_LIVE, chat_gemini=True)}
     assert "cost-fallbacks-no-opus:ai" not in ids and "chat-gemini-primary:ai" in ids
