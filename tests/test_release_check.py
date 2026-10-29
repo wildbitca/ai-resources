@@ -47,6 +47,14 @@ def test_non_semver_version_rejected():
     assert errors and "X.Y.Z" in errors[0]
 
 
+def test_a_version_with_a_trailing_newline_or_non_ascii_digits_is_rejected():
+    assert rc.read_package_version('__version__ = "4.0.0\n"\n') is None
+    for bad in ('__version__ = "4.0.0\n"\n', '__version__ = "4.0.\u0663"\n', '__version__ = "4.0.0 "\n'):
+        _, _, errors = rc.check(bad, PLUGIN, FORMULA, CHANGELOG)
+        assert errors and "X.Y.Z" in errors[0], bad
+    assert not rc.SEMVER.fullmatch("4.0.0\n")
+
+
 def test_last_section_runs_to_end_of_file():
     assert rc.extract_notes("## [1.0.0] — d\n- only\n", "1.0.0") == "- only"
 

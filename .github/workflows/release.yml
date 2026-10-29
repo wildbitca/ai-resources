@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
-          token: ${{ github.token }}
+          persist-credentials: false # the token never lands in .git/config while repo scripts run
 
       - name: Check version consistency and extract release notes
         env:
@@ -54,8 +54,9 @@ jobs:
             cat "${RUNNER_TEMP}/gh.err" >&2
             exit 1
           fi
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           rc=0
-          refs=$(git ls-remote --tags origin "refs/tags/${INPUT_TAG}" "refs/tags/${INPUT_TAG}^{}") || rc=$?
+          refs=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" ls-remote --tags origin "refs/tags/${INPUT_TAG}" "refs/tags/${INPUT_TAG}^{}") || rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "git ls-remote failed with exit code ${rc}" >&2
             exit "$rc"

@@ -14,11 +14,11 @@ import re
 import sys
 from pathlib import Path
 
-SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")      # used with fullmatch: no trailing newline, no Unicode digits
 
 
 def read_package_version(text: str) -> str | None:
-    m = re.search(r'^__version__\s*=\s*"([^"]+)"', text, re.M)
+    m = re.search(r'^__version__[ \t]*=[ \t]*"([^"\n]+)"', text, re.M)
     return m.group(1) if m else None
 
 
@@ -60,7 +60,7 @@ def check(package: str, plugin: str, formula: str, changelog: str) -> tuple[str 
     """Return (version, notes, errors)."""
     errors: list[str] = []
     version = read_package_version(package)
-    if not version or not SEMVER.match(version):
+    if not version or not SEMVER.fullmatch(version):
         return None, None, [f"scripts/ai_resources/__init__.py: no X.Y.Z __version__ (got {version!r})"]
     plugin_v = read_plugin_version(plugin)
     if plugin_v != version:
