@@ -36,10 +36,32 @@ def test_matrix_values_follow_the_role_class_split():
               "terraform-maintainer", "crossplane-upjet-maintainer"):
         assert roles[r].primary == "claude-code:sonnet", r
     assert roles["verifier"].checker and roles["security-auditor"].checker
-    assert routing.pool_of(roles["main"].primary) == routing.POOL_ANTHROPIC_API
-    for r in ("utility", "summarization", "explore-bulk"):
+    for r in ("main", "channel-agents", "utility", "summarization", "explore-bulk", "heartbeat"):
+        assert roles[r].primary == "gemini-api:gemini-3.8-flash", r
         assert routing.pool_of(roles[r].primary) == routing.POOL_GEMINI_API
-    assert roles["heartbeat"].note            # stays on Haiku until Gemini tool-calling is proven
+    for r in ("main", "channel-agents"):
+        assert roles[r].fallback == ("anthropic-api:claude-sonnet-5-5",), r
+    assert roles["heartbeat"].fallback == ("anthropic-api:claude-haiku-5-5",)
+    assert not roles["heartbeat"].note        # the "unproven" gate is gone
+    assert routing.CLASS_POOLS["chat"] == (routing.POOL_GEMINI_API, routing.POOL_ANTHROPIC_API)
+
+
+def test_chat_class_spills_from_gemini_to_anthropic_at_the_shared_threshold():
+    assert routing.choose_pool("chat", {routing.POOL_GEMINI_API: 0.5})[0] == routing.POOL_GEMINI_API
+    pool, why = routing.choose_pool("chat", {routing.POOL_GEMINI_API: routing.SPILL_AT, routing.POOL_ANTHROPIC_API: 0.1})
+    assert pool == routing.POOL_ANTHROPIC_API and "spill" in why
+
+
+def test_thresholds_and_daily_cap_have_one_source(monkeypatch):
+    from ai_resources import credits, pool_usage
+    assert routing.SPILL_AT == 0.85 and routing.ALERT_AT == 0.80
+    assert pool_usage.ALERT_AT is routing.ALERT_AT or pool_usage.ALERT_AT == routing.ALERT_AT
+    assert routing.anthropic_daily_cap_usd({}) == 10.0
+    assert routing.anthropic_daily_cap_usd({routing.DAILY_CAP_ENV: "25.5"}) == 25.5
+    for bad in ("x", "0", "-3", ""):
+        assert routing.anthropic_daily_cap_usd({routing.DAILY_CAP_ENV: bad}) == 10.0
+    monkeypatch.setenv(routing.DAILY_CAP_ENV, "7")
+    assert routing.anthropic_daily_cap_usd() == 7.0
 
 
 def test_team_fallbacks_never_land_on_an_api_credit_pool():
@@ -73,8 +95,11 @@ def test_choose_pool_spills_to_the_next_pool_and_unknown_is_available():
 
 
 def test_balancing_distributes_work_across_all_four_pools():
+    # Anthropic API is the chat plane's fallback now: it serves a class only once Gemini API is hot.
     drained = {routing.choose_pool(c, {})[0] for c in routing.CLASS_POOLS}
-    assert drained == {routing.POOL_MAX, routing.POOL_AGY_GEMINI, routing.POOL_ANTHROPIC_API, routing.POOL_GEMINI_API}
+    assert drained == {routing.POOL_MAX, routing.POOL_AGY_GEMINI, routing.POOL_GEMINI_API}
+    hot = {routing.POOL_GEMINI_API: routing.SPILL_AT}
+    assert {routing.choose_pool(c, hot)[0] for c in ("chat", "chat-light")} == {routing.POOL_ANTHROPIC_API}
 
 
 # --- resolver --------------------------------------------------------------------------------------------

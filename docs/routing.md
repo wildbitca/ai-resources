@@ -8,8 +8,8 @@ The decision is [ADR-0018](decisions/0018-routing-matrix-and-pool-balancing.md);
 |---|---|
 | `claude-subscription` | Claude Code on Max: writers, planners, checkers |
 | `agy-gemini`, `agy-claude-gpt` | Antigravity on AI Pro: explore, code review, doc, test and upgrade work, checker-ladder fallback |
-| `anthropic-api` | OpenClaw chat agents (`main`, channel agents) and the Haiku fallback |
-| `gemini-api` | utility, summarization, bulk explore on `google/gemini-3.8-flash` |
+| `anthropic-api` | the chat-plane fallback: `claude-sonnet-5-5` for `main` and the channel agents, `claude-haiku-5-5` for heartbeat and the light roles. Advisory cap USD 10/day |
+| `gemini-api` | primary of the whole chat plane on `google/gemini-3.8-flash`: `main`, channel agents, heartbeat, utility, summarization, bulk explore |
 
 ## The matrix
 
@@ -71,8 +71,17 @@ kill turns with the exact command (never run). `ai-resources verify --live` runs
 
 ## Balancing
 
-`routing.choose_pool(class, usage)`: the first pool of the class under 85% used serves it; unknown counts as available; if all
-are hot, the least used. `ai-resources doctor` prints each pool's usage and where every class would run now.
+`routing.choose_pool(class, usage)`: the first pool of the class under 85% used (`routing.SPILL_AT`) serves it; unknown counts
+as available; if all are hot, the least used. `chat` and `chat-light` both drain `gemini-api` first and spill to `anthropic-api`.
+A pool at or above 80% (`routing.ALERT_AT`) is flagged. `routing.py` is the single source of both thresholds; `pool_usage` and
+`credits` import them.
+
+The Anthropic fallback has an **advisory** daily cap of USD 10 (`routing.ANTHROPIC_DAILY_CAP_USD`, override with the env var
+`AI_RESOURCES_ANTHROPIC_DAILY_CAP_USD`). `ai-resources doctor` prints it next to the pool; nothing blocks a call on it.
+
+The chat agents' live models are OpenClaw config, not matrix output: the matrix states the target (primary `google/gemini-3.8-flash`,
+fallback `anthropic/claude-sonnet-5-5`; heartbeat falls back to Haiku) and `setup` proposes the config move interactively.
+`ai-resources doctor` prints each pool's usage and where every class would run now.
 
 ## Feeding the credit pools
 

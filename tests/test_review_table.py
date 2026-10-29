@@ -39,15 +39,16 @@ def test_each_cell_names_its_backend_model_and_pool():
     rows = {r: (p, f) for r, p, f in routing.table_rows()}
     assert rows["implementer"][0] == "claude-code:sonnet [claude-subscription]"
     assert rows["explore"][0] == "agy:gemini-3.8-flash-high [agy-gemini]"
-    assert rows["main"][0] == "anthropic-api:claude-sonnet-5-5 [anthropic-api]"
+    assert rows["main"][0] == "gemini-api:gemini-3.8-flash [gemini-api]"
+    assert rows["main"][1] == "anthropic-api:claude-sonnet-5-5 [anthropic-api]"
     assert rows["utility"][0] == "gemini-api:gemini-3.8-flash [gemini-api]"
     assert rows["implementer"][1] == "agy:gemini-4-argon-high [agy-gemini]"
 
 
-def test_heartbeat_shows_its_gate_and_the_other_chat_rows_do_not():
+def test_no_row_carries_a_gate_note_since_heartbeat_moved_to_gemini():
     rows = {r: f for r, _p, f in routing.table_rows()}
-    assert "gated" in rows["heartbeat"] and "unproven" in rows["heartbeat"]
-    assert all("gated" not in f for r, f in rows.items() if r != "heartbeat")
+    assert rows["heartbeat"] == "anthropic-api:claude-haiku-5-5 [anthropic-api]"
+    assert all("gated" not in f for f in rows.values())
 
 
 def test_a_skipped_tool_shows_the_fallback_that_runs_with_its_cause():
