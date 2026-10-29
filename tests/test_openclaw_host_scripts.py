@@ -538,49 +538,45 @@ def test_the_verify_script_expects_ten_timers():
 def test_backup_writes_the_checksum_strictly_after_the_size_and_listing_assertions():
     text = _text("openclaw-backup.sh")
     size = text.index('[ "$BYTES" -ge "$MIN_BYTES" ]')
-    listing = text.index('tar tzf "$DEST/$NAME.tar.gz"')
+    listing = text.index('tar -tzf "$PART"')
+    publish = text.index('mv "$PART" "$DEST/$NAME.tar.gz"')
     checksum = text.index('sha256sum "$NAME.tar.gz" >')
     verify = text.index("sha256sum -c")
-    assert size < listing < checksum < verify
+    assert size < listing < publish < checksum < verify
 
 
 def test_backup_stages_on_disk_never_in_tmp():
     text = _text("openclaw-backup.sh")
-    assert 'scratch_tmp_beside -d "$BASE"' in text
+    assert 'scratch_tmp_beside -d "$BASE"' in text and 'chmod 700 "$STAGE"' in text
     assert not re.search(r"mktemp[^\n]*/tmp", text) and "TMPDIR" not in text
 
 
 def test_backup_has_no_or_true_on_a_critical_line():
-    critical = ("sha256sum", "tar czf", "tar tzf", "openclaw backup create", "VACUUM", "mv ", "stat -c")
-    for n, line in enumerate(_text("openclaw-backup.sh").splitlines(), 1):
-        code = line.split("#", 1)[0]
-        if any(k in code for k in critical):
-            assert "|| true" not in code, f"openclaw-backup.sh:{n}"
+    critical = ("sha256sum", "tar czf", "tar -tzf", "tar -C", "openclaw backup", "VACUUM", "mv ", "stat -c")
+    for name in ("openclaw-backup.sh", "_backup_lib.sh"):
+        for n, line in enumerate(_text(name).splitlines(), 1):
+            code = line.split("#", 1)[0]
+            if any(k in code for k in critical):
+                assert "|| true" not in code, f"{name}:{n}"
 
 
-def test_backup_uses_strict_mode_and_a_lock():
+def test_backup_uses_strict_mode_and_a_waiting_lock():
     text = _text("openclaw-backup.sh")
-    assert "set -euo pipefail" in text and "flock -n" in text
+    assert "set -euo pipefail" in text and "flock -w" in text
 
 
 # --- AC-4.2: nothing the host needs is left out of the backup -----------------------------------------------------------
 
-def test_backup_lists_all_six_scripts_all_ten_units_and_the_host_env():
-    text = _text("openclaw-backup.sh")
-    for script in ("openclaw-backup.sh", "openclaw-maintenance.sh", "openclaw-watchdog.sh",
-                   "openclaw-verify.sh", "openclaw-team-watch.py", "openclaw-team-send.py"):
-        assert f".local/bin/{script}" in text
-    for unit in ("openclaw-backup@.service", "openclaw-backup-daily.timer", "openclaw-backup-weekly.timer",
-                 "openclaw-backup-monthly.timer", "openclaw-maintenance.service", "openclaw-maintenance.timer",
-                 "openclaw-watchdog.service", "openclaw-watchdog.timer", "openclaw-verify.service",
-                 "openclaw-verify.timer"):
-        assert f".config/systemd/user/{unit}" in text
-    assert ".openclaw/kit-host.env" in text and ".openclaw/bin" in text
+def test_backup_allowlist_covers_the_host_env_the_units_and_every_openclaw_script():
+    lib = _text("_backup_lib.sh")
+    assert ".config/systemd/user" in lib                       # every unit and drop-in, not a hand-kept list
+    assert ".local/bin/openclaw-*" in lib and ".openclaw/kit-host.env" in lib and ".openclaw/bin" in lib
+    assert ".config/ai-resources/model-pins.json" in lib
 
 
-def test_backup_reads_workspaces_from_the_config_not_from_a_literal_list():
+def test_backup_reads_workspaces_from_the_agent_list_not_from_a_literal_list():
     text = _text("openclaw-backup.sh")
-    assert "workspaces()" in text and "OPENCLAW_BACKUP_EXTRA" in text
+    assert "backup_agents_tsv" in text and "OPENCLAW_BACKUP_EXTRA" in text
 
 
 # --- maintenance keeps what is its own (AC-6.5) ----------------------------------------------------------------
@@ -728,10 +724,10 @@ def test_models_update_logs_every_run(host):
 
 
 def test_backup_enumerates_the_models_update_script_units_and_overlay():
-    text = _text("openclaw-backup.sh")
-    for needle in (".local/bin/openclaw-models-update.sh", ".config/systemd/user/openclaw-models-update.service",
-                   ".config/systemd/user/openclaw-models-update.timer", ".config/ai-resources/model-pins.json"):
-        assert needle in text
+    lib = _text("_backup_lib.sh")
+    # the script is covered by the openclaw-* glob, the units by the whole user unit directory
+    assert ".local/bin/openclaw-*" in lib and ".config/systemd/user" in lib
+    assert ".config/ai-resources/model-pins.json" in lib
 
 
 def test_models_update_unit_gives_the_restart_and_health_poll_time():

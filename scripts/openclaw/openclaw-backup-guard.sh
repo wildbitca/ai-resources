@@ -23,7 +23,9 @@ set -uo pipefail
 MIN_BYTES=5000000   # 5 MB: under this it is not a backup of this setup.
 
 declare -A LIMIT_HOURS=([daily]=36 [weekly]=216 [monthly]=780)
-SOFT_TIERS="monthly"
+# Tiers whose absence is reported but never fails the run. Weekly is optional once a host keeps dailies and
+# monthlies: an operator who disables its timer adds it here (OPENCLAW_BACKUP_SOFT_TIERS="weekly monthly").
+SOFT_TIERS="${OPENCLAW_BACKUP_SOFT_TIERS:-monthly}"
 
 failures=()
 soft_failures=()
