@@ -4843,6 +4843,22 @@ def agent_db_fault(journal_text: str, health: "dict | None") -> dict:
     return {"fault": bool(agents or pressure), "agents": agents, "ingress_pressure": pressure, "dead_letters": dead}
 
 
+def _first_json_object(text: str) -> "dict | None":
+    """The first JSON object in `text`, ignoring text before it and after it: the runner merges stderr into stdout, so a
+    warning line after `openclaw health --json`'s document made `json.loads` fail with "Extra data"."""
+    decoder = json.JSONDecoder()
+    pos = text.find("{")
+    while pos != -1:
+        try:
+            value, _end = decoder.raw_decode(text, pos)
+        except ValueError:
+            value = None
+        if isinstance(value, dict):
+            return value
+        pos = text.find("{", pos + 1)
+    return None
+
+
 def agent_db_fault_probe(runner: Runner = default_runner, *, since: str = "-45min") -> dict:
     """Run the two reads and return `agent_db_fault`'s answer plus `probe_ok` (False when neither source answered)."""
     # Only lines newer than the unit's latest start count: a repair plus restart leaves the old ones inside the window
@@ -4853,14 +4869,12 @@ def agent_db_fault_probe(runner: Runner = default_runner, *, since: str = "-45mi
     rc, journal = runner(["journalctl", "--user", "-u", GATEWAY_UNIT, f"--since={since}", "--no-pager", "-g",
                           "checkpoint expired"], env=systemd_env(), timeout=30)
     rc2, health_text = runner([resolve_openclaw_bin(), "health", "--json"], timeout=60)
-    health = None
-    if rc2 == 0:
-        try:
-            health = json.loads(health_text[health_text.index("{"):])
-        except (ValueError, json.JSONDecodeError):
-            health = None
+    health = _first_json_object(health_text) if rc2 == 0 else None
+    # journalctl -g exits 1 with no output when nothing matched: it answered, there is no fault line. Any other
+    # failure (exit > 1, journalctl missing -> 127) leaves the journal unread.
+    journal_answered = rc == 0 or (rc == 1 and not (journal or "").strip())
     out = agent_db_fault(journal if rc == 0 else "", health)
-    out["probe_ok"] = rc == 0 or health is not None
+    out["probe_ok"] = journal_answered or health is not None
     return out
 
 
