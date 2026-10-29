@@ -336,6 +336,8 @@ def lines(path: Path | None = None) -> list[str]:
             out.append(f"{pool}: declared ${declared:,.2f} on {e.get('declared_on')}, measured ${used or 0:,.2f} "
                        f"(window since {e.get('since') or 'n/a'}), "
                        f"remaining ${rem if rem is not None else declared - (used or 0):,.2f} (estimate)")
+        if pool == routing.POOL_ANTHROPIC_API:       # fallback pool: advisory ceiling only, never enforced
+            out.append(f"{pool}: advisory daily cap ${routing.anthropic_daily_cap_usd():,.2f}")
         if e.get("unpriced_models"):
             out.append(f"{pool}: unpriced models (not counted): {', '.join(e['unpriced_models'])}")
     mx = pools.get(MAX_POOL)

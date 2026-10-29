@@ -147,6 +147,16 @@ def test_credits_lines_print_the_window_start(tmp_path):
     assert "window since 2026-10-01" in text and "claude-max" in text and "window since 2026-10-20" in text
 
 
+def test_credits_lines_print_the_advisory_daily_cap_next_to_the_anthropic_pool(tmp_path, monkeypatch):
+    monkeypatch.delenv("AI_RESOURCES_ANTHROPIC_DAILY_CAP_USD", raising=False)
+    ledger = tmp_path / "credits.json"
+    credits.declare("anthropic-api", 50, on=datetime(2026, 10, 1).date(), path=ledger)
+    credits.collect(path=ledger, now=datetime(2026, 10, 27, tzinfo=timezone.utc), agents=tmp_path / "none", claude_roots=[])
+    assert "anthropic-api: advisory daily cap $10.00" in "\n".join(credits.lines(ledger))
+    monkeypatch.setenv("AI_RESOURCES_ANTHROPIC_DAILY_CAP_USD", "25")
+    assert "advisory daily cap $25.00" in "\n".join(credits.lines(ledger))
+
+
 def test_credits_alert_threshold_is_the_routing_constant():
     from ai_resources.scoring import routing
     assert credits.ALERT_AT == routing.ALERT_AT
