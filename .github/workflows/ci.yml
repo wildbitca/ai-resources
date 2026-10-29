@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }} # a push to main is never cancelled: the release job publishes from it
 
 permissions:
   contents: read
@@ -28,6 +28,8 @@ jobs:
             pins: "rich==15.0.0 questionary==2.1.1 prompt_toolkit==3.0.53"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -76,12 +78,14 @@ jobs:
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Check version consistency and release notes
+        # The notes come from the pull request's CHANGELOG: only counts reach the log, never the text (no workflow commands).
         run: |
           python3 scripts/ci/release_check.py --notes-file "${RUNNER_TEMP}/notes.md"
-          echo "--- release notes preview ---"
-          cat "${RUNNER_TEMP}/notes.md"
+          echo "release notes: $(wc -l < "${RUNNER_TEMP}/notes.md") lines, $(wc -c < "${RUNNER_TEMP}/notes.md") bytes"
 
   # Publishes the release when CI is green on main. Skips quietly when the version already has a tag.
   # Manual fallback: .github/workflows/release.yml (workflow_dispatch).
@@ -99,7 +103,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }} # the merge commit this push produced
-          token: ${{ github.token }} # authenticates `git ls-remote` below
+          persist-credentials: false # the token never lands in .git/config while repo scripts run
 
       - name: Check version consistency and extract release notes
         id: check
@@ -109,10 +113,13 @@ jobs:
         id: tag
         env:
           TAG: ${{ steps.check.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # ls-remote --exit-code: 0 = tag found, 2 = no match, anything else (128: network, auth, 5xx) is a failure.
+          # The token is passed to this one command only (what actions/checkout would have persisted).
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           rc=0
-          git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null || rc=$?
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null || rc=$?
           if [ "$rc" -eq 0 ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Tag ${TAG} already exists; nothing to publish."
