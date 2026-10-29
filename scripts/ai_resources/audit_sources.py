@@ -236,31 +236,66 @@ def load_claude_jsonl(roots: Iterable[Path], since: datetime | None = None, incl
 Decoder = Callable[[bytes], "str | None"]
 
 
+MAX_DECODED_BYTES = 256 * 1024 * 1024    # an archived transcript larger than this is reported as undecoded, never inflated
+
+
 def decode_zstd(blob: bytes) -> str | None:
-    """Decode an event_zstd blob: compression.zstd (3.14+), the zstandard module, then the zstd CLI."""
+    """Decode an event_zstd blob: compression.zstd (3.14+), the zstandard module, then the zstd CLI.
+
+    The output is capped at MAX_DECODED_BYTES on every path; a blob that would inflate beyond it returns None."""
+    cap = MAX_DECODED_BYTES
     try:
         from compression import zstd  # type: ignore[import-not-found]
-        return zstd.decompress(blob).decode("utf-8", "replace")
+        d = zstd.ZstdDecompressor()
+        out = d.decompress(blob, cap + 1)
+        return out.decode("utf-8", "replace") if len(out) <= cap and d.eof else None
     except ImportError:
         pass
     except Exception:  # noqa: BLE001 - corrupt blob: fall through to the next decoder
         pass
     try:
         import zstandard  # type: ignore[import-not-found]
-        return zstandard.ZstdDecompressor().decompress(blob).decode("utf-8", "replace")
+        return zstandard.ZstdDecompressor().decompress(blob, max_output_size=cap).decode("utf-8", "replace")
     except ImportError:
         pass
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - corrupt blob or output over the cap
         pass
     exe = shutil.which("zstd")
     if exe:
         try:
-            r = subprocess.run([exe, "-dc"], input=blob, capture_output=True, timeout=15, check=False)
-            if r.returncode == 0:
-                return r.stdout.decode("utf-8", "replace")
+            proc = subprocess.Popen([exe, "-dc"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            try:
+                out = _read_capped(proc, blob, cap)
+                if out is None:
+                    proc.kill()
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                return None
+            if out is not None and proc.returncode == 0:
+                return out.decode("utf-8", "replace")
         except (OSError, subprocess.SubprocessError):
             pass
     return None
+
+
+def _read_capped(proc: "subprocess.Popen[bytes]", blob: bytes, cap: int) -> bytes | None:
+    """Feed `blob` to `proc` and read at most `cap` bytes of stdout; None when there is more (the caller kills it)."""
+    import threading
+    feeder = threading.Thread(target=lambda: _feed(proc, blob), daemon=True)
+    feeder.start()
+    out = proc.stdout.read(cap + 1) if proc.stdout else b""
+    return out if len(out) <= cap else None
+
+
+def _feed(proc: "subprocess.Popen[bytes]", blob: bytes) -> None:
+    try:
+        if proc.stdin:
+            proc.stdin.write(blob)
+            proc.stdin.close()
+    except (OSError, ValueError):
+        pass
 
 
 UNMETERED_PROVIDERS = ("claude-cli", "claude-kit")   # their turns can carry a zero usage block: tokens were spent, not recorded
@@ -276,9 +311,13 @@ def _openclaw_usage(ej: str, agent: str, sid, seq, ts: datetime, providers: tupl
         u = m.get("usage") or {}
     except (json.JSONDecodeError, AttributeError):
         return None
-    if not isinstance(m, dict) or m.get("role") != "assistant" or not isinstance(u, dict) or not u:
+    if not isinstance(m, dict) or m.get("role") != "assistant" or not isinstance(u, dict):
         return None
     if providers is not None and m.get("provider") not in providers:
+        return None
+    if not u:
+        if m.get("provider") in UNMETERED_PROVIDERS:
+            stats.undecoded += 1          # `usage: {}` on a CLI turn is the same gap as an all-zero block
         return None
     w1 = u.get("cacheWrite1h") or 0
     w5 = max((u.get("cacheWrite") or 0) - w1, 0)
