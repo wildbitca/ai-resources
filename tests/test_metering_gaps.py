@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
 
 from ai_resources import acceptance as acc
 from ai_resources import audit_snapshot, audit_sources, credits, dispatch_ledger
@@ -91,6 +94,38 @@ def test_zero_usage_claude_cli_turns_are_counted_as_undecoded(tmp_path):
     _db(tmp_path, "main", live=[_zero("claude-cli"), _zero("claude-kit")])
     usages, stats = audit_sources.load_openclaw_events(tmp_path)
     assert usages == [] and stats.undecoded == 2
+
+
+def test_an_empty_usage_object_on_a_claude_cli_turn_is_counted_as_undecoded(tmp_path):
+    ev = json.dumps({"timestamp": "2026-10-20T12:00:00Z", "message": {"role": "assistant", "provider": "claude-cli",
+                                                                        "model": "claude-sonnet-5-5", "usage": {}}})
+    _db(tmp_path, "main", live=[ev])
+    usages, stats = audit_sources.load_openclaw_events(tmp_path)
+    assert usages == [] and stats.undecoded == 1
+
+
+def test_decode_zstd_refuses_output_over_the_cap(monkeypatch):
+    zstandard = pytest.importorskip("zstandard")
+    blob = zstandard.ZstdCompressor().compress(b"a" * 5000)
+    assert audit_sources.decode_zstd(blob) == "a" * 5000
+    monkeypatch.setattr(audit_sources, "MAX_DECODED_BYTES", 1000)
+    monkeypatch.setattr(audit_sources.shutil, "which", lambda _n: None)
+    assert audit_sources.decode_zstd(blob) is None
+
+
+@pytest.mark.integration
+def test_decode_zstd_cli_refuses_output_over_the_cap(monkeypatch):
+    import shutil
+    import subprocess
+    exe = shutil.which("zstd")
+    if not exe:
+        pytest.skip("zstd CLI not installed")
+    blob = subprocess.run([exe, "-c"], input=b"a" * 5000, capture_output=True, check=True).stdout
+    monkeypatch.setitem(sys.modules, "zstandard", None)
+    monkeypatch.setitem(sys.modules, "compression", None)
+    assert audit_sources.decode_zstd(blob) == "a" * 5000
+    monkeypatch.setattr(audit_sources, "MAX_DECODED_BYTES", 1000)
+    assert audit_sources.decode_zstd(blob) is None
 
 
 def test_zero_usage_marker_of_another_provider_is_not_counted(tmp_path):      # PRESERVE: mirrors/markers stay silent
