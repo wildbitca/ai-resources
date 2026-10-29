@@ -36,6 +36,9 @@ CHAT = "-1001"
 # (`-5xxxxxxxxx`), never `-100...` (that shape is a supergroup and kills the binding).
 from fixtures.openclaw_bindings import GROUP_CHATS, live_bindings  # noqa: E402  (shared with the cockpit tests)
 
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 
 def _bindings_config(root):
     """A host on the live shape: five basic-group bindings plus main's peer-less catch-all last.

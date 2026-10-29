@@ -13,6 +13,9 @@ import pytest
 
 from ai_resources import scratch
 
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 DAY = 86400
 _real_new = scratch.new
 def _new_keep(*a, **k):

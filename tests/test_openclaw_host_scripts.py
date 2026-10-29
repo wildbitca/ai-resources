@@ -24,7 +24,7 @@ SH = sorted(SCRIPTS.glob("*.sh"))
 ALL_FILES = SH + [SCRIPTS / "openclaw-team-watch.py", SCRIPTS / "openclaw-team-send.py",
                   SCRIPTS / "openclaw-host.env.example"]
 
-pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
+pytestmark = [pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required"), pytest.mark.integration]
 
 
 def _text(name: str) -> str:

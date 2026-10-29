@@ -27,6 +27,9 @@ FIX = REPO / "tests" / "fixtures"
 JOURNAL = FIX / "journal" / "gateway-restart-recovery-2026-10-10.txt"
 # 2026-10-11 08:00 UTC is 03:00 in America/Guayaquil: inside the 02:00-05:00 window.
 import datetime as _dt
+
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
 IN_WINDOW = _dt.datetime(2026, 10, 11, 8, 0, tzinfo=_dt.timezone.utc).timestamp()
 OUT_OF_WINDOW = _dt.datetime(2026, 10, 11, 18, 0, tzinfo=_dt.timezone.utc).timestamp()   # 13:00 local
 CG = "/openclaw-gateway.service"

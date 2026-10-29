@@ -21,6 +21,9 @@ from ai_resources import openclaw_host as host  # noqa: E402
 from ai_resources.setup import state, ui  # noqa: E402
 from ai_resources.setup.cockpits import openclaw  # noqa: E402
 
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 CGROUP = "/user.slice/user-1000.slice/user@1000.service/app.slice/openclaw-gateway.service"
 CLK = os.sysconf("SC_CLK_TCK")
 UPTIME = 5000.0

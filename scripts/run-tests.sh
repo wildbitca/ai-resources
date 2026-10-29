@@ -8,6 +8,9 @@
 # REAL_AGENT=1 also runs the tests marked `real_agent` (they need a live provider). One that cannot run is reported
 # UNVERIFIED, never green, and fails that run (tests/real_agent_gate.py).
 #
+# INTEGRATION=1 also runs the tests marked `integration` (real processes, /proc, locks, host tooling). They are kept for
+# history and skipped by default: the suite proves the configs and files the kit generates, not third-party behaviour.
+#
 # Without pytest-xdist installed the parallel pass runs in one process; the result is the same, only slower.
 set -euo pipefail
 
@@ -16,6 +19,7 @@ PY="${PYTHON:-python3}"
 ARGS=("$@")
 [ ${#ARGS[@]} -eq 0 ] && ARGS=(tests/)
 [ -n "${REAL_AGENT:-}" ] && ARGS+=(--real-agent)
+[ -n "${INTEGRATION:-}" ] && ARGS+=(--integration)
 
 PARALLEL=()
 if "$PY" -c "import xdist" 2>/dev/null; then

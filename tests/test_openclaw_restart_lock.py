@@ -22,6 +22,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 from ai_resources import openclaw_host as host  # noqa: E402
 from ai_resources.setup.cockpits import openclaw  # noqa: E402
 
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 REAL_GATEWAY_BUSY = openclaw._gateway_busy      # conftest replaces the attribute; this is the real reader
 
 

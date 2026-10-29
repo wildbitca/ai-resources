@@ -23,6 +23,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources import openclaw_host as host  # noqa: E402
 
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 
 def _dead_pid() -> int:
     p = subprocess.Popen(["true"])

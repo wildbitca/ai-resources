@@ -8,6 +8,9 @@ import pytest
 
 from ai_resources.setup import live_auth as la
 
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 FIX = Path(__file__).parent / "fixtures"
 REAL_DEFAULT_RUNNER = la.default_runner            # captured at import, before conftest replaces it for every test
 

@@ -24,6 +24,9 @@ import time
 
 import pytest
 
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 _REAL_POPEN = subprocess.Popen  # the hook fixture replaces subprocess.Popen for the whole process
 
 REPO = pathlib.Path(__file__).resolve().parents[1]

@@ -6,6 +6,10 @@ import sys
 import threading
 
 from ai_resources import scope_guard as sg
+import pytest
+
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
 
 ALIVE: set[str] = set()
 

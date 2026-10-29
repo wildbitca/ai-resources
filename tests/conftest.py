@@ -25,7 +25,23 @@ def pytest_configure(config):
     from basetemp_default import apply_default
     apply_default(config)
     config.addinivalue_line("markers", "timing: asserts on wall-clock time; runs in the serial pass of scripts/run-tests.sh")
+    config.addinivalue_line("markers", "integration: exercises real processes, /proc, locks, signals or host tooling instead of our generated output; skipped unless --integration or INTEGRATION=1")
     config.addinivalue_line("markers", "node_scripts: runs node on a repo workflow script through tests/kit_script_harness.mjs; the guard lets through only that harness invocation (see _allow_node_harness)")
+
+
+def pytest_addoption(parser):
+    parser.addoption("--integration", action="store_true", default=False,
+                     help="also run the tests marked integration (real processes / host behaviour); off by default")
+
+
+def pytest_collection_modifyitems(config, items):
+    import os
+    if config.getoption("--integration") or os.environ.get("INTEGRATION"):
+        return
+    skip = pytest.mark.skip(reason="integration test: run with --integration or INTEGRATION=1")
+    for item in items:
+        if item.get_closest_marker("integration") is not None:
+            item.add_marker(skip)
 
 
 def pytest_sessionfinish(session, exitstatus):

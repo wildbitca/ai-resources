@@ -17,6 +17,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources import openclaw_host as host  # noqa: E402
 
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 
 class Runner:
     def __init__(self, on_show=None, on_health=None):

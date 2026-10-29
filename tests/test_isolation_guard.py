@@ -8,6 +8,10 @@ from __future__ import annotations
 import os
 import pwd
 from pathlib import Path
+import pytest
+
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
 
 REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
 

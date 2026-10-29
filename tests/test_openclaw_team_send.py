@@ -18,12 +18,16 @@ import time
 
 import pytest
 
+# Integration: real processes / host behaviour; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 SEND = REPO / "scripts" / "openclaw" / "openclaw-team-send.py"
 CHAT = "-1001"
 
 STUB = """#!{python}
 import json, os, sys, time
+
 calls = os.environ["STUB_CALLS"]
 plan = json.load(open(os.environ["STUB_PLAN"])) if os.path.exists(os.environ["STUB_PLAN"]) else []
 n = sum(1 for _ in open(calls)) if os.path.exists(calls) else 0
