@@ -1233,6 +1233,29 @@ systemctl --user start openclaw-gateway.service
 Without the pause file the watchdog brings it up within 2 min in the middle of your
 manoeuvre. And the other way round: leave the file behind and nobody is watching.
 
+## Upgrading node or openclaw (T57)
+
+`brew upgrade` of `node` or `openclaw` deletes the previous Cellar version while the gateway keeps running from it. Do the
+upgrade inside a drained window, operator only, never from a gateway child session:
+
+```bash
+ai-resources openclaw status              # check first: busy? an existing WARN about a deleted runtime?
+touch ~/.openclaw/watchdog.off
+systemctl --user stop openclaw-gateway.service
+while [ "$(systemctl --user show openclaw-gateway.service -p TasksCurrent --value)" != "[not set]" ]; do sleep 3; done
+brew upgrade node                         # and/or openclaw
+rm -f ~/.openclaw/watchdog.off
+systemctl --user start openclaw-gateway.service
+ai-resources openclaw status              # no deleted-runtime warning; then `ai-resources openclaw db-fault`
+```
+
+(Run the wait loop in the background or in short reads; the stop itself can take ~5 min.) If the upgrade already happened with
+the gateway running, `ai-resources openclaw status` and `ai-resources verify` print a WARN naming the deleted binary; run
+`ai-resources openclaw doctor` in a window you own. The kit has no pre-upgrade hook or brew wrapper.
+
+An agent that has no shell (for example `main`) must not restart the gateway through its `openclaw` tool as a substitute: that
+path skips the busy check and the drain (T56). It reports "restart needed" and the owner runs the commands above.
+
 ## Hardening: one drained restart, live checks, MCP children (3.1.0)
 
 What `ai-resources setup` now does about a gateway that runs stale code or carries too many MCP children:
@@ -1253,7 +1276,7 @@ What `ai-resources setup` now does about a gateway that runs stale code or carri
 |---|---|
 | Where alerts go | Slack. `OPENCLAW_NOTIFY_CHANNEL` (`slack`) and `OPENCLAW_NOTIFY_TARGET` (`user:<Slack user id>` or `channel:<id>`) in `kit-host.env`; setup fills them from `commands.ownerAllowFrom` when unset and never overwrites yours. Telegram is used only when it is the only configured route (`OPENCLAW_OWNER_TELEGRAM_ID`). The watchdog, maintenance, verify, backup guard, health restart and `db-fault` all call the same `notify()` (`scripts/openclaw/_common.sh`). The team narration hook, sender and watcher deliver to a `channel:<id>` target the same way (`OPENCLAW_NARRATION_TARGET` sends every agent's narration to one place). |
 | Retired components | `scripts/ai_resources/retired.py` lists what the kit no longer uses (OpenRouter, LiteLLM, Telegram). On every `ai-resources setup` (and `--dry-run`) it removes the leftovers of a component nothing uses: auth profile, plugin entries, `channels.telegram`, telegram `bindings[]` and `commands.ownerAllowFrom` entries, the env keys, `~/.openclaw/telegram.token`. A component with a credential, a model reference or a deployment is kept. It backs up first under `~/.config/ai-resources/backups/retired-<stamp>/` (0600; env values are never copied; a retired file is moved there) and keeps catch-all `bindings[]` entries last. Add a component by adding one `Retired(...)` entry. OpenClaw itself can re-create a bare `channels.telegram: {enabled: true}`; the next setup removes it again. |
-| Stuck agent database | `ai-resources openclaw db-fault [--json] [--notify]` (exit 0 healthy, 1 fault, 2 unknown) reads the gateway journal for "SQLite session reclamation commit checkpoint expired" and `openclaw health --json` for ingress pressure and failed delivery queues. The watchdog runs it with `--notify` on every tick while the gateway is active (one alert per fault) and `openclaw-verify.sh` fails on it. The fix is the drained `ai-resources openclaw doctor --cleanup-sessions`, never `doctor --fix` by hand. |
+| Stuck agent database | `ai-resources openclaw db-fault [--json] [--notify]` (exit 0 healthy, 1 fault, 2 unknown) reads the gateway journal for "SQLite session reclamation commit checkpoint expired" and `openclaw health --json` for ingress pressure and failed delivery queues. The watchdog runs it with `--notify` on every tick while the gateway is active (one alert per fault) and `openclaw-verify.sh` fails on it. The fix is the drained `ai-resources openclaw doctor --cleanup-sessions`, never `doctor --fix` by hand. Only lines newer than the unit's last start count, so a fault disappears from `db-fault` once the repair has restarted the gateway and no new line follows (T57). |
 | Weekly maintenance | A week whose first window finds agent runs in flight is retried: the timer fires daily at 04:30 and 08:30 UTC, `~/.openclaw/logs/maintenance.week` records `<week> <skipped tries> <open\|done>`, only the first skip (and every sixth) is announced, and a finished week exits at once. |
 | Off-box credential | `ai-resources openclaw offbox-cred [--repair]`; `verify` and `openclaw-verify.sh` regenerate the kit-derived `offbox-wif-cred.json` when it is gone. |
 

@@ -73,6 +73,9 @@ work.
   itself (a credentials refresh rewrites it), so an ambient context is never trusted. Read
   before you write, and confirm the target before any `apply`, `delete`, `patch` or `reconcile`.
 - **Secrets never go into a file, a commit or a message.** Point at where they live.
+- **Never restart or stop the gateway, not even through the `openclaw` tool (T56).** A `gateway.restart` requested by an
+  agent skips the kit's busy check, the watchdog pause and the cgroup drain, and has closed agent session databases
+  mid-lease. Report "restart needed" to the owner; the owner runs `ai-resources openclaw doctor` in a drained window.
 - **Ask before anything irreversible** (force-push, delete, drop, rotate) unless this file
   says otherwise.
 
