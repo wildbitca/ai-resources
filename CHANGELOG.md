@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.11] — 2026-10-29 — Integration tests are opt-in
+
+- test: every test that starts, fakes or checks an external tool (openclaw, Claude Code, agy, node, git, installers, systemd) or drives real processes, locks and signals carries `pytest.mark.integration` (64 files). They are skipped by default and kept for history; run them with `pytest --integration` or `INTEGRATION=1 scripts/run-tests.sh`. The default suite covers only what the kit generates.
+- ci: `.github/workflows/integration.yml` runs the full suite with `INTEGRATION=1` on demand and every Monday 06:00 UTC. It never blocks a merge.
+- fix(ci): `main` was red since 2026-10-28 because of the flaky watcher-pool test (real processes and `/proc`); it no longer runs by default.
+
 ## [3.2.10] — 2026-10-29 — Minimal allowlist backup
 
 See ADR-0025.
