@@ -280,18 +280,30 @@ def _dispatch_once(route: routing.Route, role: str, env: Env) -> dict:
     return env.memo[key]
 
 
+def route_state_dir(env: Env) -> Path:
+    """The XDG_STATE_HOME of this Env's route probes (created once, reused by every probe of the run)."""
+    if "route-ledger" not in env.memo:
+        env.memo["route-ledger"] = Path(_scratch.new_tmpdir("route-ledger-")) / "state"
+    return env.memo["route-ledger"]
+
+
+def route_rows(env: Env, run_id: str = "") -> list[dict]:
+    """The dispatch rows the route probes of `env` recorded (they live in the private ledger, never in the live one)."""
+    with _route_ledger(env):
+        return dispatch_ledger.load(run_id)
+
+
 @contextmanager
-def _private_ledger() -> Iterator[Path]:
-    """Point the run/dispatch ledgers at a throwaway XDG_STATE_HOME for one route probe, so an acceptance row never lands in the
-    live `dispatches.jsonl`. HOME and PATH stay real: the probe needs the signed-in CLIs."""
-    root = Path(_scratch.new_tmpdir("route-ledger-"))
+def _route_ledger(env: Env) -> Iterator[Path]:
+    """Point the run/dispatch ledgers at the Env's private state dir for a route probe, so an acceptance row never lands in
+    the live `dispatches.jsonl`. HOME and PATH stay real: the probe needs the signed-in CLIs."""
+    root = route_state_dir(env)
     old = os.environ.get("XDG_STATE_HOME")
-    os.environ["XDG_STATE_HOME"] = str(root / "state")
+    os.environ["XDG_STATE_HOME"] = str(root)
     try:
         yield root
     finally:
         os.environ.pop("XDG_STATE_HOME", None) if old is None else os.environ.__setitem__("XDG_STATE_HOME", old)
-        shutil.rmtree(root, ignore_errors=True)
 
 
 def _route_case(role: str) -> Callable[[Env], Result]:
@@ -321,7 +333,7 @@ def _route_case(role: str) -> Callable[[Env], Result]:
         return ok(f"{route.cell} [{route.pool}] answered as the matrix says" + (f" (fallback, cause {route.cause})" if route.cause else ""),
                   cell=route.cell, used=got, tokens_in=res.get("tokens_in", 0), tokens_out=res.get("tokens_out", 0))
     def run(env: Env) -> Result:
-        with _private_ledger():
+        with _route_ledger(env):
             return probe(env)
     return run
 

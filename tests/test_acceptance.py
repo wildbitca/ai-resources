@@ -142,7 +142,7 @@ def test_one_call_per_cell_one_row_per_role_and_the_model_used_is_asserted(env, 
     res = acc.run_cases([c for c in acc.CASES if c.id in {f"route.{r}" for r in sonnet_roles}], env)
     assert set(_statuses(res).values()) == {acc.PASS}, [r.reason for _c, r in res]
     assert _calls(claude) == 1, "roles sharing a (backend, model) cell share one call"
-    rows = dispatch_ledger.load(env.run_id)
+    rows = acc.route_rows(env, env.run_id)
     assert sorted(r["role"] for r in rows) == sorted(sonnet_roles) and {r["model"] for r in rows} == {"sonnet"}
 
 
@@ -159,7 +159,7 @@ def test_infer_cells_are_checked_by_provider_model_and_share_their_call(env, tmp
     oc = env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("google-generative-ai", "google", "gemini-3.8-flash"))
     res = acc.run_cases([c for c in acc.CASES if c.id in ("route.utility", "route.summarization", "route.explore-bulk")], env)
     assert set(_statuses(res).values()) == {acc.PASS} and _calls(oc) == 1
-    assert {r["pool"] for r in dispatch_ledger.load(env.run_id)} == {routing.POOL_GEMINI_API}
+    assert {r["pool"] for r in acc.route_rows(env, env.run_id)} == {routing.POOL_GEMINI_API}
 
 
 def test_agy_cells_run_through_agy_run_and_assert_the_ledger_row(env, tmp_path, monkeypatch):
@@ -167,7 +167,7 @@ def test_agy_cells_run_through_agy_run_and_assert_the_ledger_row(env, tmp_path, 
     monkeypatch.setenv("AI_RESOURCES_AGY_BIN", agy)
     r = acc.run_case(next(c for c in acc.CASES if c.id == "route.explore"), env)
     assert r.status == acc.PASS, r.reason
-    row = [x for x in dispatch_ledger.load() if x["role"] == "explore"][-1]
+    row = [x for x in acc.route_rows(env) if x["role"] == "explore"][-1]
     assert (row["backend"], row["model"], row["pool"], row["outcome"]) == ("agy", "gemini-3.8-flash-high", routing.POOL_AGY_GEMINI, "ok")
 
 
@@ -418,7 +418,7 @@ def test_cli_and_api_providers_answer_in_the_same_run(env, tmp_path, monkeypatch
     r = acc.run_case(next(c for c in acc.CASES if c.id == "team.cli-and-api-one-run"), env)
     assert r.status == acc.PASS, r.reason
     assert {"agy", "claude-code", "anthropic-api", "gemini-api"} <= set(r.evidence["backends"])
-    assert {r["pool"] for r in dispatch_ledger.load(env.run_id)} >= {routing.POOL_GEMINI_API, routing.POOL_ANTHROPIC_API}
+    assert {r["pool"] for r in acc.route_rows(env, env.run_id)} >= {routing.POOL_GEMINI_API, routing.POOL_ANTHROPIC_API}
 
 
 # --- spawn.landed-on-role-agent: the config proof and the newest spawn --------------------------------------------------
