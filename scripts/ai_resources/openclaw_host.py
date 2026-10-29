@@ -36,7 +36,7 @@ import time
 from pathlib import Path
 from typing import Callable, NamedTuple
 
-from . import model_pins, openclaw_pressure, openclaw_reload_rules, repo_root
+from . import model_pins, openclaw_pressure, openclaw_runtime, openclaw_reload_rules, repo_root
 
 # (return code, combined output). 127 means the binary is missing.
 Runner = Callable[..., "tuple[int, str]"]
@@ -4816,6 +4816,7 @@ def cmd_restart_report(args: argparse.Namespace, runner: Runner | None = None) -
 
 _DB_FAULT_RE = re.compile(r"Agent (?P<agent>[\w.-]+) \([^)]*\): SQLite session reclamation commit checkpoint expired")
 DEAD_LETTER_WARN = 1
+DB_FAULT_WINDOW_S = 45 * 60   # matches the default `since="-45min"` of agent_db_fault_probe
 
 
 def _walk_pressure(node, found: list) -> None:
@@ -4844,6 +4845,11 @@ def agent_db_fault(journal_text: str, health: "dict | None") -> dict:
 
 def agent_db_fault_probe(runner: Runner = default_runner, *, since: str = "-45min") -> dict:
     """Run the two reads and return `agent_db_fault`'s answer plus `probe_ok` (False when neither source answered)."""
+    # Only lines newer than the unit's latest start count: a repair plus restart leaves the old ones inside the window
+    # (2026-10-29: the watchdog kept alerting for ~30 min after the fix). The cap stays as the upper bound.
+    started = gateway_started_at(runner)
+    if started is not None and time.time() - started < DB_FAULT_WINDOW_S:
+        since = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(started))
     rc, journal = runner(["journalctl", "--user", "-u", GATEWAY_UNIT, f"--since={since}", "--no-pager", "-g",
                           "checkpoint expired"], env=systemd_env(), timeout=30)
     rc2, health_text = runner([resolve_openclaw_bin(), "health", "--json"], timeout=60)
@@ -5511,7 +5517,9 @@ def cmd_status(args: argparse.Namespace, runner: Runner | None = None) -> int:
     # Journal findings (egress TLS refusals, a failed close that lost completions): outside the sections too.
     # Only for a real report, so a stubbed status never reads the host journal.
     if report.get("unit"):
-        for level, message, remedy in journal_findings(runner or default_runner, report.get("stability")):
+        for level, message, remedy in (journal_findings(runner or default_runner, report.get("stability"))
+                                       + openclaw_runtime.runtime_findings(runner or default_runner, GATEWAY_UNIT,
+                                                                           systemd_env())):
             print(f"{level.upper()}  {message}\n      -> {remedy}")
     # Outside the ten sections on purpose: it is not host state but a gap setup named and left.
     try:
