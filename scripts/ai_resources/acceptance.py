@@ -1130,6 +1130,96 @@ def _role_billing_pool(env: Env) -> Result:
     return ok("no Max-primary kit-role agent runs on the Anthropic API pool")
 
 
+def _live_doc(env: Env) -> "dict | None":
+    """The live OpenClaw config, or None when the host has none (the checks below then SKIP)."""
+    try:
+        doc = env.openclaw_doc()
+    except Exception:  # noqa: BLE001 - an unreadable config is 'absent' for a read-only check
+        return None
+    return doc if isinstance(doc, dict) and doc else None
+
+
+def _at(doc: Any, *path: str) -> Any:
+    for key in path:
+        doc = doc.get(key) if isinstance(doc, dict) else None
+    return doc
+
+
+_NO_CONFIG = "no OpenClaw config on this host"
+
+
+@case("setup.orchestrator-enabled", "setup-live", severity="warn",
+      remedy="re-run `ai-resources setup` (it fills plugins.entries.ai-resources.config.enableOrchestrator when it is absent)")
+def _orchestrator_enabled(env: Env) -> Result:
+    doc = _live_doc(env)
+    if doc is None:
+        return skip(_NO_CONFIG)
+    if _at(doc, "plugins", "entries", "ai-resources", "config", "enableOrchestrator") is True:
+        return ok("the ai-resources plugin has enableOrchestrator=true")
+    return bad("plugins.entries.ai-resources.config.enableOrchestrator is not true: the plugin does not dispatch workflow steps")
+
+
+@case("setup.cli-backend-model-provider", "setup-live",
+      remedy="set agents.defaults.cliBackends.<id>.modelProvider to the provider the CLI serves, then re-run `ai-resources setup`")
+def _cli_backend_model_provider(env: Env) -> Result:
+    doc = _live_doc(env)
+    if doc is None:
+        return skip(_NO_CONFIG)
+    backends = _at(doc, "agents", "defaults", "cliBackends")
+    if not isinstance(backends, dict) or not backends:
+        return skip("no CLI backend is configured in agents.defaults.cliBackends")
+    missing = sorted(k for k, v in backends.items()
+                     if not (isinstance(v, dict) and isinstance(v.get("modelProvider"), str) and v["modelProvider"].strip()))
+    if missing:
+        return bad(f"CLI backend(s) without a modelProvider (no provider-to-runtime binding): {', '.join(missing)}", backends=missing)
+    return ok(f"every configured CLI backend declares a modelProvider ({', '.join(sorted(backends))})")
+
+
+def _agy_ref(value: Any) -> bool:
+    """True for an `agy-cli-lane/...` or `agy-cli/...` model ref (a string, or a {primary, fallbacks} object)."""
+    refs = [value] if isinstance(value, str) else ([value.get("primary")] + list(value.get("fallbacks") or [])
+                                                  if isinstance(value, dict) else [])
+    return any(isinstance(r, str) and r.startswith(("agy-cli-lane/", "agy-cli/")) for r in refs)
+
+
+@case("setup.dreaming-not-agy", "setup-live",
+      remedy="set plugins.entries.memory-core.config.dreaming.model to a Gemini API or Anthropic ref (`ai-resources setup` fills it)")
+def _dreaming_not_agy(env: Env) -> Result:
+    doc = _live_doc(env)
+    if doc is None:
+        return skip(_NO_CONFIG)
+    model = _at(doc, "plugins", "entries", "memory-core", "config", "dreaming", "model")
+    if model is None:
+        return skip("memory-core dreaming.model is not set")
+    if _agy_ref(model):
+        return bad(f"memory-core dreaming.model is an agy lane ref ({model}); a background job would spend the Antigravity quota", model=model)
+    return ok(f"memory-core dreaming.model is {model}, not an agy lane")
+
+
+@case("setup.executors-present", "setup-live", severity="warn", remedy="run `ai-resources setup`")
+def _executors_present(env: Env) -> Result:
+    if _live_doc(env) is None:
+        return skip(_NO_CONFIG)
+    from .setup import state
+    path = state.executors_path()
+    return ok(f"executors.yaml is present ({path})") if path.is_file() else bad(f"executors.yaml is missing ({path})")
+
+
+@case("isolated.no-agy-ref", "setup-live",
+      remedy="point utilityModel, heartbeat.model and dreaming.model at a Gemini API or Anthropic ref, then re-run `ai-resources setup`")
+def _isolated_no_agy_ref(env: Env) -> Result:
+    doc = _live_doc(env)
+    if doc is None:
+        return skip(_NO_CONFIG)
+    paths = {"agents.defaults.utilityModel": ("agents", "defaults", "utilityModel"),
+             "agents.defaults.heartbeat.model": ("agents", "defaults", "heartbeat", "model"),
+             "memory-core dreaming.model": ("plugins", "entries", "memory-core", "config", "dreaming", "model")}
+    hit = {name: _at(doc, *p) for name, p in paths.items() if _agy_ref(_at(doc, *p))}
+    if hit:
+        return bad("isolated (non-interactive) paths point at an agy lane ref: " + "; ".join(f"{k}={v}" for k, v in hit.items()), refs=hit)
+    return ok("utilityModel, heartbeat.model and dreaming.model hold no agy lane ref")
+
+
 @case("setup.idempotent-rerun", "setup-live")
 def _idempotent(env: Env) -> Result:
     from .setup.cockpits import openclaw_orchestration as orch
