@@ -217,6 +217,27 @@ def test_the_wire_api_decides_the_pool_of_an_infer_call(env, tmp_path):
     assert acc.run_case(next(c for c in acc.CASES if c.id == "route.main"), env).status == acc.PASS
 
 
+def _fallback_case():
+    return next(c for c in acc.CASES if c.id == "route.anthropic-fallback")
+
+
+def test_the_anthropic_fallback_cell_is_probed_once_and_is_a_warning(env, tmp_path):
+    case = _fallback_case()
+    assert case.severity == "warn" and not case.offline
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("anthropic-messages", "anthropic", "claude-sonnet-5-5"))
+    r = acc.run_case(case, env)
+    assert r.status == acc.PASS and "anthropic-api:claude-sonnet-5-5" in r.reason
+
+
+def test_the_anthropic_fallback_probe_fails_on_another_model_and_skips_without_a_key(env, tmp_path):
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("anthropic-messages", "anthropic", "claude-haiku-5-5"))
+    r = acc.run_case(_fallback_case(), env)
+    assert r.status == acc.FAIL and "anthropic/claude-haiku-5-5" in r.reason
+    env.memo.clear()
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", "#!/bin/sh\necho 'Error: no API key for provider anthropic'\nexit 1\n")
+    assert acc.run_case(_fallback_case(), env).status == acc.SKIP
+
+
 def test_agy_write_inside_the_scratch_dir_is_scope_checked(env, tmp_path, monkeypatch):
     writer = AGY.replace("echo '{", 'echo pong > hello.txt\necho \'{', 1)
     monkeypatch.setenv("AI_RESOURCES_AGY_BIN", _bin(tmp_path, "agy", writer))

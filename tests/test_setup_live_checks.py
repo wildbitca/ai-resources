@@ -54,7 +54,7 @@ def executors(tmp_path, monkeypatch):
 
 
 CHECKS = {
-    "setup.orchestrator-enabled": "warn", "setup.cli-backend-model-provider": "error", "setup.dreaming-not-agy": "error",
+    "setup.orchestrator-enabled": "warn", "setup.cli-backend-model-provider": "warn", "setup.dreaming-not-agy": "error",
     "setup.executors-present": "warn", "isolated.no-agy-ref": "error",
 }
 

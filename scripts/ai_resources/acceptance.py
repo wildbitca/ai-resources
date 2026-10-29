@@ -312,30 +312,49 @@ def _route_case(role: str) -> Callable[[Env], Result]:
         route = routing.resolve(role, _usage(env), [], detection.inactive_backends())
         if route.blocked:
             return bad(f"{role} is blocked: {route.reason}")
-        res = _dispatch_once(route, role, env)
-        if res.get("skip"):
-            return skip(res["skip"], cell=route.cell)
-        if res.get("error"):
-            return (skip(f"{route.cell} is not signed in: {res['error'][:120]}", cell=route.cell) if res.get("unauth") or res.get("missing")
-                    else bad(f"the call on {route.cell} failed: {res['error'][:160]}", cell=route.cell))
-        got = res["model"]
-        if res["kind"] == "claude":
-            model_ok = any(m.startswith(f"claude-{routing.claude_alias(route.cell)}") for m in res.get("models", []))
-        else:
-            model_ok = got == (route.cell if res["kind"] == "agy" else routing.cell_to_openclaw_ref(route.cell))
-        if not (model_ok and res.get("pool") == route.pool):
-            return bad(f"{role}: matrix says {route.cell} [{route.pool}], the call used {got} [{res.get('pool')}]", cell=route.cell, used=got)
-        if res.get("role") != role:             # one dispatch row per role; agy_run already wrote the representative's own
-            dispatch_ledger.record(role, "ok", run_id=env.run_id, step="acceptance:route", cell=route.cell, pool=route.pool,
-                                   tokens_in=res.get("tokens_in", 0), tokens_out=res.get("tokens_out", 0),
-                                   duration_s=res.get("duration_s", 0), fallback_from=(routing.merged()[role].chain[0] if route.cause else ""),
-                                   fallback_cause=route.cause or "")
-        return ok(f"{route.cell} [{route.pool}] answered as the matrix says" + (f" (fallback, cause {route.cause})" if route.cause else ""),
-                  cell=route.cell, used=got, tokens_in=res.get("tokens_in", 0), tokens_out=res.get("tokens_out", 0))
+        return _judge_probe(route, role, env)
     def run(env: Env) -> Result:
         with _route_ledger(env):
             return probe(env)
     return run
+
+
+def _judge_probe(route: routing.Route, role: str, env: Env) -> Result:
+    res = _dispatch_once(route, role, env)
+    if res.get("skip"):
+        return skip(res["skip"], cell=route.cell)
+    if res.get("error"):
+        return (skip(f"{route.cell} is not signed in: {res['error'][:120]}", cell=route.cell) if res.get("unauth") or res.get("missing")
+                else bad(f"the call on {route.cell} failed: {res['error'][:160]}", cell=route.cell))
+    got = res["model"]
+    if res["kind"] == "claude":
+        model_ok = any(m.startswith(f"claude-{routing.claude_alias(route.cell)}") for m in res.get("models", []))
+    else:
+        model_ok = got == (route.cell if res["kind"] == "agy" else routing.cell_to_openclaw_ref(route.cell))
+    if not (model_ok and res.get("pool") == route.pool):
+        return bad(f"{role}: matrix says {route.cell} [{route.pool}], the call used {got} [{res.get('pool')}]", cell=route.cell, used=got)
+    if res.get("role") != role:             # one dispatch row per role; agy_run already wrote the representative's own
+        dispatch_ledger.record(role, "ok", run_id=env.run_id, step="acceptance:route", cell=route.cell, pool=route.pool,
+                               tokens_in=res.get("tokens_in", 0), tokens_out=res.get("tokens_out", 0),
+                               duration_s=res.get("duration_s", 0), fallback_from=(routing.merged()[role].chain[0] if route.cause else ""),
+                               fallback_cause=route.cause or "")
+    return ok(f"{route.cell} [{route.pool}] answered as the matrix says" + (f" (fallback, cause {route.cause})" if route.cause else ""),
+              cell=route.cell, used=got, tokens_in=res.get("tokens_in", 0), tokens_out=res.get("tokens_out", 0))
+
+
+ANTHROPIC_FALLBACK_CELL = "anthropic-api:claude-sonnet-5-5"
+
+
+def _anthropic_fallback(env: Env) -> Result:
+    """The D1 safety net: no role has anthropic-api as primary, so the fallback chat cell gets its own minimal call."""
+    cell = ANTHROPIC_FALLBACK_CELL
+    route = routing.Route(role="main", cell=cell, pool=routing.pool_of(cell), fallbacks=(), reason="fallback probe")
+    with _route_ledger(env):
+        return _judge_probe(route, "main", env)
+
+
+CASES.append(Case("route.anthropic-fallback", "route", _anthropic_fallback, offline=False, severity="warn",
+                  cap="one minimal call on anthropic-api:claude-sonnet-5-5 (the chat fallback, no role has it as primary); SKIP without a key"))
 
 
 for _role, _r in routing.ROLES.items():
@@ -1171,7 +1190,7 @@ def _orchestrator_enabled(env: Env) -> Result:
     return bad("plugins.entries.ai-resources.config.enableOrchestrator is not true: the plugin does not dispatch workflow steps")
 
 
-@case("setup.cli-backend-model-provider", "setup-live",
+@case("setup.cli-backend-model-provider", "setup-live", severity="warn",     # error once Track 6 proves the shape on a live gateway
       remedy="set agents.defaults.cliBackends.<id>.modelProvider to the provider the CLI serves, then re-run `ai-resources setup`")
 def _cli_backend_model_provider(env: Env) -> Result:
     doc = _live_doc(env)
