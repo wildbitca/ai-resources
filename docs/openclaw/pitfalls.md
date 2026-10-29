@@ -1873,6 +1873,84 @@ interactive shells hit the notice.
 **How to catch it.** `openclaw config file 2>&1 >/dev/null` prints the notice; compare a setup run's view of a key with
 `openclaw config get <key>`.
 
+## T56 — An agent-initiated `gateway.restart` skips the kit's busy check, watchdog pause and drain *(added 2026-10-29; documented, not enforceable)*
+
+**Timeline (2026-10-29, host `bithome`, UTC; verified from the journal and gateway log).**
+
+1. 14:52 `brew upgrade` moved Node 26.12.1 to 26.13.0 and deleted `Cellar/node/26.12.1_1` (see T57). 15:06-16:21 the gateway
+   logged six `SQLite read-only worker runtime binary not executable: .../node/26.12.1_1/bin/node (ENOENT)` errors.
+2. 16:21 the owner approved a restart in the `main` agent's Slack thread. That agent has no shell, so at 16:23:30 it called
+   `gateway.restart` through its `openclaw` tool, "defer until idle".
+3. 16:28:30 the gateway received `SIGUSR2 gateway.restart.safe` and drained. 28 agent databases closed with receipt
+   `active-leases` (not `written`) and archive-publish workers were `revoked` mid-operation. The old process had run 22 h
+   (16 GB peak memory, 12 GB swap peak). 16:29:08 systemd SIGKILLed a leftover `engram` child; the unit restarted on 26.13.0.
+4. From 16:30 validation of the `main` and `snoutzone` agent databases took more than 10 s and failed with `SQLite session
+   reclamation commit checkpoint expired`; their Slack lanes stopped answering while `openclaw health` still said the gateway
+   was up. `ai-resources openclaw doctor --yes` (stop, drain, `doctor --fix`, start at 17:42:26) fixed it: no such line after 17:44.
+
+**Why the kit's guards did not apply.** The restart never went through `ai-resources openclaw doctor` or `reconcile`, which
+check `busy`, pause the watchdog and wait for the cgroup to drain (T01). The guard hook (T24, T46) only sees Bash calls.
+
+**What the OpenClaw docs say (read 2026-10-29, `docs/` of the installed package).**
+
+- The agent-facing `gateway` tool is read-only (`config.get`, `config.schema.lookup`, `update.run`); agents request a restart
+  through the `openclaw` delegation tool (`cli/gateway/running.md`, `gateway/security/tool-permissions.md`). Effective Full
+  Access authorizes the delegated change without an approval prompt; a restricted run needs a human approval.
+- A safe restart (`--safe`) "asks the running Gateway to preflight active work and schedule one coalesced restart after that
+  work drains. The wait is bounded to 5 minutes; when the budget expires the restart is forced"
+  (`cli/gateway/restart-and-supervision.md`). So "defer until idle" waits for the gateway's own tracked active work, for at
+  most 5 minutes, and then proceeds anyway. It does not look at the kit's cgroup (child `claude`, `engram`, `npx`), the
+  watchdog marker or the host's memory pressure.
+- `gateway/restart-recovery.md` says clean database restart proof is published only after writer leases, checkpointing and
+  native connection closure settle, and that a deadline exit still lets the unit restart. Nothing documents that leases are
+  released before the signal: the `active-leases` receipts above are the evidence that they are not guaranteed.
+- The only documented switch is `commands.restart=false`, which "disables `/restart` and external `SIGUSR2` restart
+  requests" (`gateway/security/tool-permissions.md`). The docs do not say whether the `openclaw` delegation tool's restart is
+  gated by it, and the same key is what config-reload restarts and `/update` depend on.
+
+**What the kit does.** Nothing enforceable: denying the `openclaw` tool would also remove the agent's config delegation, the
+kit's `tools.deny` handling is deliberately limited to one tool (ADR-0011), and no per-action policy for `gateway.restart`
+is documented, so none is invented here. The kit adds a red line to the `AGENTS.md` workspace templates ("report restart
+needed; the owner runs `ai-resources openclaw doctor`"), which is advice to the model, not a control, and a stale session
+only sees it after `/new` (T19). A restart that already happened is detected afterwards by `ai-resources openclaw db-fault`,
+which since this entry ignores errors older than the unit's last start.
+
+**Not proven (do not state as fact).** Why only `main` and `snoutzone` stayed stuck while the other agents recovered; whether
+the deleted Node binary made the damage worse or only motivated the restart; whether it will recur on the next restart; whether
+`commands.restart=false` would have stopped this call.
+
+**How to catch it.** `journalctl --user -u openclaw-gateway.service -g 'gateway.restart'` shows the request and its origin;
+`ai-resources openclaw db-fault` after any unscheduled restart.
+
+## T57 — `brew upgrade` of `node` or `openclaw` leaves the running gateway on a deleted runtime; `db-fault` reported stale errors afterwards *(added 2026-10-29)*
+
+**Symptom.** After `brew upgrade` the gateway keeps answering, but its worker spawns fail with `SQLite read-only worker runtime
+binary not executable: <old Cellar path>/bin/node (ENOENT)` and `readlink /proc/<MainPID>/exe` ends in ` (deleted)`.
+
+**Cause.** Homebrew deletes the previous Cellar version; the running process keeps the unlinked inode and any later child
+launched by path fails. Seen on 2026-10-29: Node 26.12.1 to 26.13.0 at 14:52, first error at 15:06, six in total.
+
+**What the kit does.**
+
+- `ai-resources openclaw status` and `ai-resources verify` run a read-only check (`scripts/ai_resources/openclaw_runtime.py`):
+  the unit's `MainPID`, `readlink /proc/<pid>/exe`; a ` (deleted)` suffix or a path that no longer exists is a **warning**
+  that names `ai-resources openclaw doctor`. No `MainPID` or an unreadable link is silent. It never restarts anything.
+- `agent_db_fault_probe` (used by `db-fault` and the watchdog) only counts `checkpoint expired` lines newer than the unit's
+  latest `ActiveEnterTimestamp`, keeping the 45 min cap as the upper bound. Before this, the old lines stayed inside the window
+  after a successful repair and the watchdog alerted every ~2 min until 18:14 and told the operator to repair again.
+
+**Order for an upgrade.** Stop in a drained window (pause the watchdog, stop the unit, wait for the cgroup to empty), upgrade,
+then start. `ai-resources openclaw doctor` performs stop, drain, `doctor --fix` and start in one go and has no stop-only mode,
+so when the upgrade must happen between stop and start use the manual sequence in the runbook ("Upgrading node or openclaw");
+when the upgrade already happened, `ai-resources openclaw doctor` is the drained way onto the new runtime. The kit has no pre-upgrade hook or brew wrapper, and no
+evidence was found in this repository or in `Formula/ai-resources.rb` that Homebrew offers a supported pre-upgrade hook for
+another formula, so none is proposed.
+
+**Not proven.** Whether the deleted binary only motivated the 16:23 restart or also made its outcome worse (see T56).
+
+**How to catch it.** `ai-resources openclaw status` (WARN line); `readlink /proc/$(systemctl --user show -p MainPID --value
+openclaw-gateway.service)/exe`.
+
 
 ---
 
