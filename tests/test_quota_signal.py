@@ -12,6 +12,10 @@ from pathlib import Path
 
 from ai_resources import pool_usage
 from ai_resources.scoring import quota_signal as qs
+import pytest
+
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
 
 REPO = Path(__file__).resolve().parents[1]
 NOW = 1_790_000_000

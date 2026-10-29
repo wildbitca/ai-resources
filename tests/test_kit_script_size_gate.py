@@ -17,7 +17,8 @@ HARNESS = REPO / "tests" / "kit_script_harness.mjs"
 PLAN_JS = REPO / "workflows" / "scripts" / "kit-plan.js"
 IMPL_JS = REPO / "workflows" / "scripts" / "kit-implement.js"
 
-pytestmark = [pytest.mark.node_scripts, pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")]
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = [pytest.mark.integration, pytest.mark.node_scripts, pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")]
 
 UNDERSTAND = {"summary": "s", "files": ["a.py"], "notes": ["n"]}
 DRAFT = {"approach": "a", "steps": ["1"], "files": ["a.py"], "risks": []}

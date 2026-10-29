@@ -13,6 +13,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 from ai_resources import openclaw_host as host  # noqa: E402
 from ai_resources import openclaw_pressure as pr  # noqa: E402
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 TLS = ("2026-10-11T19:38:10+00:00 box node[1]: [secrets/egress-proxy] secret egress TLS certificate unavailable; "
        "check OpenSSL and the system clock, then retry kind={kind} host={host} substituted=false")
 

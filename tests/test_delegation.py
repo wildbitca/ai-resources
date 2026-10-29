@@ -15,6 +15,9 @@ from ai_resources import cli, scorecard
 
 import sizing_snapshot as snap
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 REPO = Path(__file__).resolve().parents[1]
 REASONS = scorecard.load_rules()["delegation"]["reasons"]
 W, E, V = "parallel-writers-on-disjoint-units", "explore-without-polluting-main-context", "independent-verification"

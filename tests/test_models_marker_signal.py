@@ -23,6 +23,9 @@ from ai_resources import models, openclaw_host as host  # noqa: E402
 from ai_resources.setup.cockpits import openclaw  # noqa: E402
 from test_models_update import Env  # noqa: E402
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 
 def _dead_pid() -> int:
     p = subprocess.Popen(["true"])

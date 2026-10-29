@@ -12,6 +12,10 @@ sys.path.insert(0, str(REPO / "scripts"))
 from ai_resources import openclaw_host as host  # noqa: E402
 from ai_resources.setup import state  # noqa: E402
 from ai_resources.setup.cockpits import _openclaw_host as section  # noqa: E402
+import pytest
+
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
 
 VALUES = {"DOMAIN": "ai.example.org", "POD_CIDR": "10.42.0.0/24"}
 

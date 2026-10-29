@@ -10,6 +10,9 @@ import pytest
 
 import real_agent_gate as gate
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 REPO = Path(__file__).resolve().parents[1]
 TESTS = REPO / "tests"
 

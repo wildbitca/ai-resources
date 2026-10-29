@@ -23,6 +23,9 @@ from ai_resources import openclaw_host as host  # noqa: E402
 from ai_resources.setup import state, wizard  # noqa: E402
 from ai_resources.setup.cockpits import _shared, claude, openclaw  # noqa: E402
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def xdg(monkeypatch, tmp_path):

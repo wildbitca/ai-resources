@@ -9,6 +9,9 @@ import sys
 
 import pytest
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 HOOK = REPO / "hooks" / "kit_sleep_guard.py"
 

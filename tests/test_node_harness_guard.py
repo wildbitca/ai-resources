@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 REPO = Path(__file__).resolve().parents[1]
 HARNESS = str(REPO / "tests" / "kit_script_harness.mjs")
 PLAN_JS = str(REPO / "workflows" / "scripts" / "kit-plan.js")

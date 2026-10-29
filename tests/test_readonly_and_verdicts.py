@@ -11,6 +11,9 @@ import pytest
 from ai_resources import cli, ledger, readonly
 from orchestrator_fakes import OK, dispatches, drive_to, finish, make, reply
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 REPO = Path(__file__).resolve().parents[1]
 
 

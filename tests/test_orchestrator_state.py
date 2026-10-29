@@ -12,6 +12,9 @@ import pytest
 from ai_resources.orchestrator import state
 from ai_resources.orchestrator.state import RunStore, StateError
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 
 def run(rid="r-1", **kw):
     return {"id": rid, "status": "running", "events": [], **kw}

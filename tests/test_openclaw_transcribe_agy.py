@@ -15,6 +15,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 
 from ai_resources.voice import openclaw_transcribe as transcriber  # noqa: E402
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture(autouse=True)
 def _quiet_logs_and_no_glossary(monkeypatch, tmp_path):

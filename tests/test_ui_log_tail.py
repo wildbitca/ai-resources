@@ -7,6 +7,9 @@ import pytest
 
 from ai_resources.setup import ui
 
+# Integration: drives a real external tool, process or lock; skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 TOKEN = "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 
