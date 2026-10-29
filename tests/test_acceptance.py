@@ -196,7 +196,7 @@ def test_gemini_tool_call_writes_the_verdict_doctor_reads(env, tmp_path):
     assert "PASSED" in acc.gemini_verdict_line(env.cache) and "never edits openclaw config" in acc.gemini_verdict_line(env.cache)
     env.bins["openclaw"] = _bin(tmp_path, "openclaw", "#!/bin/sh\necho no token\n")
     assert acc.run_case(next(c for c in acc.CASES if c.id == "gemini.tool-call"), env).status == acc.FAIL
-    assert "FAILED" in acc.gemini_verdict_line(env.cache) and "stays on Haiku" in acc.gemini_verdict_line(env.cache)
+    assert "FAILED" in acc.gemini_verdict_line(env.cache) and "Haiku fallback" in acc.gemini_verdict_line(env.cache)
     assert doctor._check_gemini_tools.__doc__
 
 

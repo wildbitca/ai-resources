@@ -268,7 +268,7 @@ def _check_gemini_tools() -> int:
     from . import acceptance
     line = acceptance.gemini_verdict_line()
     (ui.ok if "PASSED" in line else ui.info)(line or "Gemini tool-calling is unproven (`ai-resources acceptance --group gemini-tools`); "
-                                              "the heartbeat stays on Haiku")
+                                              "the matrix heartbeat is Gemini with a Haiku fallback")
     return 0
 
 

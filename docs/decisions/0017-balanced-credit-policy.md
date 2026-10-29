@@ -8,6 +8,11 @@ Companion patch: [0017-balanced-credit-policy.patch.json5](0017-balanced-credit-
 
 > **Superseded by ADR-0019:** the `kit-lane-agy-*` fallback entry in the companion patch and the 'Workload map: Gemini candidates' (candidates are not a concept any more); the order of spend and the verified facts stand.
 
+> **Amended by Track 4 (2026-10-29)**: the chat plane moved to Gemini API. `main`, `channel-agents` and `heartbeat` are
+> `gemini-api:gemini-3.8-flash` with the Anthropic API as fallback (`claude-sonnet-5-5`; `claude-haiku-5-5` for heartbeat). The
+> heartbeat no longer stays on Haiku, and Anthropic API carries an advisory USD 10/day cap. The current matrix is
+> `docs/routing.md`; statements below about the chat plane on Anthropic, or the heartbeat staying on Haiku, are historical.
+
 ## Goal
 
 Spend each paid resource in the right order so no prepaid credit is wasted and out-of-pocket

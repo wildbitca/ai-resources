@@ -537,7 +537,7 @@ most of the consumption goes.
 
 ```bash
 openclaw config set agents.defaults.heartbeat.every 0m
-openclaw config set agents.defaults.heartbeat.model anthropic/claude-haiku-5-5
+openclaw config set agents.defaults.heartbeat.model google/gemini-3.8-flash
 openclaw config set agents.entries.main.heartbeat.every 2h
 ```
 

@@ -190,7 +190,7 @@ model (titles, small internal calls), not an agent's model.
 |---|---|---|
 | `openclaw config set agents.defaults.heartbeat.every 0m` | `0m` | five heartbeats every 30 min (~240 agent turns/day) with `target: none`, i.e. delivering to nobody — pure quota burn |
 | `openclaw config set agents.entries.main.heartbeat.every 2h` | `2h` | keep one, on the orchestrator only |
-| `openclaw config set agents.defaults.heartbeat.model anthropic/claude-haiku-4-5` | haiku | a heartbeat does not need sonnet |
+| `openclaw config set agents.defaults.heartbeat.model google/gemini-3.8-flash` | gemini flash | a heartbeat does not need sonnet; the matrix heartbeat is Gemini with a Haiku fallback |
 
 Effect confirmed by the scheduler: the five `Heartbeat (agent)` cron jobs collapsed to one,
 `heartbeat:main`, every 2h `SESSION`.
