@@ -124,6 +124,32 @@ def test_cli_events_covered_by_claude_code_records_are_dropped_uncovered_kept():
     assert kept == [far, other]
 
 
+def test_an_interactive_claude_code_session_does_not_cover_a_cli_event():
+    interactive = [_use("claude-sonnet-5-5", T0, origin="claude-code")]
+    event = _use("claude-sonnet-5-5", T0.replace(minute=1))
+    assert credits.drop_covered_cli_events([event], interactive) == [event]
+
+
+def test_a_date_suffixed_model_id_still_dedupes_against_the_plain_id():
+    jsonl = [_use("claude-sonnet-5-5-20261001", T0)]
+    event = _use("anthropic/claude-sonnet-5-5", T0.replace(minute=1))
+    assert credits.drop_covered_cli_events([event], jsonl) == []
+
+
+def test_max_pool_reports_how_many_events_the_dedupe_dropped(tmp_path):
+    proj = tmp_path / "proj" / "-p"
+    proj.mkdir(parents=True)
+    line = {"timestamp": "2026-10-20T12:00:00Z", "sessionId": "s", "entrypoint": "sdk-cli",
+            "message": {"id": "msg_1", "model": "claude-sonnet-5-5", "usage": {"input_tokens": 1000, "output_tokens": 100}}}
+    (proj / "s.jsonl").write_text(json.dumps(line) + "\n")
+    _db(tmp_path / "agents", "main", live=[_event("cli-assistant:u", provider="claude-cli", inp=1000, out=100)])
+    out = credits.measure({}, now=datetime(2026, 10, 21, tzinfo=timezone.utc), agents=tmp_path / "agents", claude_roots=[proj])
+    assert out["claude-max"]["dedupe_dropped"] == 1
+    ledger = tmp_path / "credits.json"
+    ledger.write_text(json.dumps({"pools": {"claude-max": {"tokens": {"input": 5}, "since": "2026-10-14", "dedupe_dropped": 1}}}))
+    assert any("1 claude-cli event(s)" in l for l in credits.lines(ledger))
+
+
 def test_max_pool_does_not_double_count_a_turn_present_in_both_sources(tmp_path):
     proj = tmp_path / "proj" / "-p"
     proj.mkdir(parents=True)
