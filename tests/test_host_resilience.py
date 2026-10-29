@@ -130,3 +130,50 @@ def test_memory_high_is_raised_but_never_lowered():
     assert host._step_memory_high(higher).status == "satisfied" and not higher.commands
     unset = _Ctx("infinity")
     assert host._step_memory_high(unset).status == "changed"
+
+
+# --- db-fault ignores errors older than the last unit start (2026-10-29) ---------------------------------------------
+
+def _since_probe(journal_by_since, started):
+    seen = {}
+
+    def runner(argv, **_kw):
+        if argv[0] == "journalctl":
+            since = next(a for a in argv if a.startswith("--since="))[len("--since="):]
+            seen["since"] = since
+            return 0, journal_by_since(since)
+        if argv[0] == "systemctl":
+            return (0, f"@{int(started)}\n") if started is not None else (1, "")
+        return 0, "{}"
+    return runner, seen
+
+
+def test_db_fault_since_is_the_unit_start_when_it_is_newer_than_the_cap(monkeypatch):
+    import time
+    monkeypatch.setattr(time, "time", lambda: 1_000_000.0)
+    # started 10 min ago: only lines after it count; a journal honouring --since returns nothing for the old error
+    runner, seen = _since_probe(lambda since: "" if since.startswith("1970-01-12 13:") else LINE, 1_000_000 - 600)
+    out = host.agent_db_fault_probe(runner)
+    assert seen["since"] == "1970-01-12 13:36:40 UTC" and not out["fault"] and out["agents"] == []
+
+
+def test_db_fault_error_newer_than_the_unit_start_is_still_reported(monkeypatch):
+    import time
+    monkeypatch.setattr(time, "time", lambda: 1_000_000.0)
+    runner, seen = _since_probe(lambda since: LINE, 1_000_000 - 600)
+    out = host.agent_db_fault_probe(runner)
+    assert out["fault"] and out["agents"] == ["snoutzone"]
+
+
+def test_db_fault_without_a_start_timestamp_keeps_the_45_minute_window():
+    runner, seen = _since_probe(lambda since: LINE, None)
+    out = host.agent_db_fault_probe(runner)
+    assert seen["since"] == "-45min" and out["agents"] == ["snoutzone"]
+
+
+def test_db_fault_start_older_than_the_cap_keeps_the_cap(monkeypatch):
+    import time
+    monkeypatch.setattr(time, "time", lambda: 1_000_000.0)
+    runner, seen = _since_probe(lambda since: LINE, 1_000_000 - 7200)
+    host.agent_db_fault_probe(runner)
+    assert seen["since"] == "-45min"
