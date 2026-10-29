@@ -59,3 +59,7 @@ Teams share the checkout: a run that writes holds a write-scope claim (`scope_gu
 ## Writers the dispatch ledger did not see
 
 A native Claude Code subagent that writes (the `Task` tool, no `sessions_spawn`, no `agy run`) leaves no dispatch row, so a checker cannot tell what wrote the run. Record it yourself right after it returns: `ai-resources dispatch record --run <run> --role <role> --outcome ok --cell claude-code:<alias>` (add `--cause <cause>` if it ran off its primary). A checker resolved for a run that has a write step but no recorded writer is blocked (`no-independent-checker`), never assumed independent.
+
+## Where delegated work goes
+
+Role work runs on its `kit-role-<role>` agent (`sessions_spawn agentId=kit-role-<role> cwd=<checkout>`; never pass `model`, the agent's pin carries the matrix chain). The `claude` worker agent is only for long, tightly coupled coding in one checkout. An `agy` task is bounded, writes its result to a physical file and returns only the path.
