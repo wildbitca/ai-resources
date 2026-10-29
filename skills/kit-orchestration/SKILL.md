@@ -32,8 +32,6 @@ Default is no subagent; every step pays its token cost with a named reason. Laye
 | Writer | two or more independent units, disjoint edit surfaces, each over ~100 changed lines, launched together; or the parent is near its context limit | one bounded writer per unit |
 | Verifier | the change names a risk item, or the mode is `full` | one independent verifier at the end |
 
-Where delegated work goes: role work runs on its `kit-role-<role>` agent (`sessions_spawn agentId=kit-role-<role> cwd=<checkout>`; never pass `model`, the agent's pin carries the matrix chain). The `claude` worker agent is only for long, tightly coupled coding in one checkout. An `agy` task is bounded, writes its result to a physical file and returns only the path.
-
 Never delegate for size or file count alone, split one behavior across test, docs and code writers, or spawn the same `(step, goal)` twice in a turn. Pass skill and spec **paths**, never summaries. Risk decides whether a checker runs; the checker's family must still differ from the writers' of this run (`route --run` resolves it).
 
 ## Tasks live with the spec
