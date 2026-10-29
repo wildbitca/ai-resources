@@ -1905,8 +1905,11 @@ check `busy`, pause the watchdog and wait for the cgroup to drain (T01). The gua
   native connection closure settle, and that a deadline exit still lets the unit restart. Nothing documents that leases are
   released before the signal: the `active-leases` receipts above are the evidence that they are not guaranteed.
 - The only documented switch is `commands.restart=false`, which "disables `/restart` and external `SIGUSR2` restart
-  requests" (`gateway/security/tool-permissions.md`). The docs do not say whether the `openclaw` delegation tool's restart is
-  gated by it, and the same key is what config-reload restarts and `/update` depend on.
+  requests" (`gateway/security/tool-permissions.md`). `/update` from chat depends on the same key
+  (`tools/slash-commands.md`). The docs do not say whether the `openclaw` delegation tool's restart is gated by it. In the
+  installed `dist/` (read 2026-10-29) the `SIGUSR2` handler (`run-DyKyGSKx.mjs`) only consults the switch when the signal
+  carries neither a restart authorization nor a durable intent, and config reloads (`server-reload-managed-*.mjs`) only
+  refresh that switch's policy flag; neither shows that a delegated restart is blocked or allowed by it.
 
 **What the kit does.** Nothing enforceable: denying the `openclaw` tool would also remove the agent's config delegation, the
 kit's `tools.deny` handling is deliberately limited to one tool (ADR-0011), and no per-action policy for `gateway.restart`
@@ -1917,7 +1920,8 @@ which since this entry ignores errors older than the unit's last start.
 
 **Not proven (do not state as fact).** Why only `main` and `snoutzone` stayed stuck while the other agents recovered; whether
 the deleted Node binary made the damage worse or only motivated the restart; whether it will recur on the next restart; whether
-`commands.restart=false` would have stopped this call.
+`commands.restart=false` would have stopped this call (whether the delegated restart sets the authorization the handler checks was not
+verified).
 
 **How to catch it.** `journalctl --user -u openclaw-gateway.service -g 'gateway.restart'` shows the request and its origin;
 `ai-resources openclaw db-fault` after any unscheduled restart.
