@@ -6,7 +6,67 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
-- ci: the `integration.yml` workflow added in 3.2.11 is removed; the integration tests are not run anywhere for now (`INTEGRATION=1 scripts/run-tests.sh` still runs them locally).
+## [4.0.0] — 2026-10-29 — Unified AI routing, automated releases, and OpenClaw resilience
+
+### Breaking Changes
+
+- **Routing matrix moves chat plane to Gemini API**: `main`, channel agents (`ai`, `snoutzone`, `devops`), and heartbeat now run on `gemini-api:gemini-3.8-flash` as primary with Anthropic fallbacks (`anthropic-api:claude-sonnet-5-5` for chat, `anthropic-api:claude-haiku-5-5` for heartbeat).
+- **Interactive chat-agent model migration**: `ai-resources setup` proposes updating existing chat agents (`ai`, `snoutzone`, `main`, `devops`) and `agents.defaults.heartbeat.model` to Gemini 3.8 Flash with Anthropic fallbacks only when the Google provider is enabled; migrations are applied interactively or via `--accept-gates`.
+- **New setup-live checks**: `acceptance.py` and `verify --live` add checks for `setup.orchestrator-enabled`, `setup.cli-backend-model-provider`, `setup.dreaming-not-agy`, `setup.executors-present`, `isolated.no-agy-ref`, and `route.anthropic-fallback`.
+- **Metering & credits accounting**: OpenClaw transcript archives (`session_transcript_archives`, identity/zstd) are now ingested for event accounting; zero-usage CLI turns increment `undecoded` stats; Claude Code Max deduplication against OpenClaw `openclaw-cli` (`sdk-cli`) events uses normalized model IDs and time-proximity filtering; route probes run in isolated private ledgers to prevent contaminating live dispatch ledgers.
+- **Shared budget alerts & advisory daily cap**: Shared `ALERT_AT = 0.80`, `SPILL_AT = 0.95`, and an advisory `ANTHROPIC_DAILY_CAP_USD = 10.0` (configurable via `AI_RESOURCES_ANTHROPIC_DAILY_CAP_USD`). Pool usage and credits display the advisory Anthropic daily cap (informational, not enforced at runtime).
+- **CI pipeline release publishing**: Releases are published automatically by GitHub Actions when CI passes on `main` instead of manual tag-driven pushes; manual fallback workflow is guarded to `main` and refuses to overwrite existing releases.
+
+### Added
+
+- **Track 2 (db-fault hardening & runtime checks)**:
+  - feat(openclaw): `openclaw_runtime.py` checks `/proc/<pid>/exe` to detect if the gateway runs on a deleted or unlinked binary (e.g. after Homebrew Node upgrades) and surfaces a non-blocking warning with a drained `doctor` remediation command.
+  - docs(openclaw): documented T56 (agent-initiated restart pitfalls and safe-restart bounds) and T57 (runtime upgrade hazards) in `docs/openclaw/pitfalls.md` and upgrade runbook procedures in `docs/openclaw/runbook.md`.
+  - docs(templates): workspace AGENTS templates explicitly forbid restarting the gateway via the `openclaw` tool.
+- **Track 3 (release automation)**:
+  - ci(release): `.github/workflows/ci.yml` introduces automated release publishing on merge to `main` when `validate` passes, using `scripts/ci/release_check.py` to assert consistency across package, formula, plugin manifest, and changelog.
+  - ci(release): manual fallback workflow `.github/workflows/release.yml` with `workflow_dispatch` restricted to `refs/heads/main` that validates the tag against version files and prevents overwriting existing releases.
+  - docs(release): release flow, CI guarantees, and operator fallback procedures documented in `docs/release-flow.md`.
+- **Track 4 (routing, orchestrator, dreaming, metering, and checks)**:
+  - feat(routing): shared budget constants `ALERT_AT = 0.80`, `SPILL_AT = 0.95`, and `ANTHROPIC_DAILY_CAP_USD = 10.0` across `scoring/routing.py`, `pool_usage.py`, and `credits.py`.
+  - feat(openclaw): `_orchestrator_fill` ensures `plugins.entries.ai-resources.config.enableOrchestrator` is filled even when retaining Antigravity (`engine=keep`).
+  - feat(openclaw): `_dreaming_fill` sets `plugins.entries.memory-core.config.dreaming.model = "google/gemini-3.8-flash"` when the Google provider is enabled, keeping operator values intact and preventing `agy-cli-lane/` references.
+  - feat(acceptance): five new `setup-live` acceptance checks in `acceptance.py` covering orchestrator status, CLI backend modelProvider declarations, dreaming model configuration, executor state existence, and rejection of legacy agy refs in defaults.
+  - feat(metering): `audit_sources.load_openclaw_events` ingests `session_transcript_archives` (supporting identity and zstd compression); `credits.py` Max pool deduplication drops covered `openclaw-cli` events based on normalized model IDs and a time-proximity window.
+  - feat(acceptance): route probes execute under isolated `XDG_STATE_HOME` temporary environments with private ledger tracking, leaving live dispatch history intact.
+  - feat(openclaw): role matrix reconciler identifies unrecorded kit-role agents with string model specifications and updates them to full primary and fallback mappings.
+
+### Changed
+
+- **Track 4 (routing & orchestration)**:
+  - refactor(routing): `CLASS_POOLS["chat"]` updated to `(gemini-api, anthropic-api)`; `main` and channel agents configured with primary `google/gemini-3.8-flash` and fallback `anthropic/claude-sonnet-5-5`; heartbeat defaults to `google/gemini-3.8-flash` with `anthropic/claude-haiku-5-5` fallback.
+  - docs(orchestration): delegation guidelines updated across `docs/orchestration.md`, `references/backends.md`, and `skills/kit-orchestration/SKILL.md` to establish `kit-role-<role>` agents as the default delegation target without model overrides, reserving the `claude` worker strictly for long tightly coupled coding sessions.
+  - docs(adr): ADR-0017, ADR-0018, and ADR-0019 amended to reflect Gemini-first chat plane routing and advisory daily caps.
+- **Track 3 (CI workflows)**:
+  - ci: removed unused `integration.yml` workflow; integration tests remain opt-in locally via `INTEGRATION=1 scripts/run-tests.sh`.
+
+### Fixed
+
+- **Track 1 (backup stage cleanup)**:
+  - fix(backup): `openclaw-backup.sh` sweeps and purges stale stage directories (`stage.*` older than 60 minutes) left by aborted or killed backup runs, executing under the existing exclusive `openclaw-backup.lock`.
+  - fix(backup): addressed symlinked backup roots (`find "$BASE/"`) and logged removal failures while maintaining accurate stale directory counts.
+- **Track 2 (db-fault detection resilience)**:
+  - fix(openclaw): `agent_db_fault_probe` constrains the `journalctl` query window to the gateway's `ActiveEnterTimestamp` (up to 45 minutes) to eliminate false positives from older incidents.
+  - fix(openclaw): `agent_db_fault_probe` passes `-q` to `journalctl` and accepts exit code 1 with empty or `-- No entries --` output as a clean probe response rather than an indeterminate probe error.
+  - fix(openclaw): parsed `openclaw health --json` output using `_first_json_object` to tolerate trailing or leading stderr messages in runner output.
+- **Track 4 (metering & setup fixes)**:
+  - fix(metering): zero-usage `claude-cli` and `claude-kit` assistant turns are tracked as undecoded turns in stats.
+  - fix(metering): Max pool event deduplication restricted to `openclaw-cli` (`sdk-cli`) records and reports `dedupe_dropped` metrics in credit summaries.
+  - fix(acceptance): probed `gemini-api` cells for `main` and `utility`, added `route.anthropic-fallback` probe for the Anthropic fallback cell, and scoped CLI backend modelProvider checks as warnings pending live verification.
+  - fix(cost-migrations): preserved unrecognized keys on model dictionary migrations and compared heartbeat configuration by primary model to prevent redundant proposals.
+  - fix(setup): ensured Antigravity setup returns boolean status and only registers plugin version markers upon successful completion.
+- **Security & Workflow Hardening**:
+  - fix(security): CI workflow `concurrency.cancel-in-progress` scoped strictly to pull requests (`${{ github.event_name == 'pull_request' }}`), preventing concurrent pushes to `main` from cancelling active release jobs.
+  - fix(security): `journalctl` db-fault parsing anchored to gateway log prefixes using structured JSON format (`-o json`) with exact MESSAGE prefix matching to prevent log spoofing via agent outputs or prompt injection (M2).
+  - fix(security): GitHub Actions workflows configured with `persist-credentials: false` on checkouts, passing short-lived credentials only to explicit remote commands (L1).
+  - fix(security): `scripts/ci/release_check.py` enforces strict semantic versioning matching with `SEMVER.fullmatch` and rejects trailing newlines (L5).
+  - fix(security): transcript archive decompression capped at 256 MiB (`MAX_DECODED_BYTES`) to prevent potential archive bombs during metering runs (L6).
+  - fix(ci): PR release dry run outputs note byte and line counts instead of writing unescaped changelog contents directly into workflow logs (L4).
 
 ## [3.2.11] — 2026-10-29 — Integration tests are opt-in
 
