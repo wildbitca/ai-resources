@@ -2,7 +2,7 @@
 Description=weekly backup of the OpenClaw setup
 
 [Timer]
-OnCalendar=Sun *-*-* 03:45:00
+OnCalendar=Sun *-*-* 05:00:00
 Persistent=true
 RandomizedDelaySec=5min
 Unit=openclaw-backup@weekly.service

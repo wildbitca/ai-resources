@@ -144,7 +144,7 @@ and `openclaw-tui`, both with operator scopes, both survived the auth-mode switc
 | `openclaw-gateway.service` | enabled | active | — |
 | `openclaw-watchdog.timer` | enabled | active | every 2 min |
 | `openclaw-backup-daily.timer` | enabled | active | Sat 03:32 (03:30 + jitter) |
-| `openclaw-backup-weekly.timer` | enabled | active | Sun 03:45 |
+| `openclaw-backup-weekly.timer` | enabled | active | Sun 05:00 |
 | `openclaw-backup-monthly.timer` | enabled | active | Oct 1, 04:03 |
 | `openclaw-maintenance.timer` | enabled | active | Sun 04:33 |
 

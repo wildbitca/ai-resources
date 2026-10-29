@@ -14,15 +14,23 @@ whose primary path is `ai-resources setup`.
 
 ## 1. What a tarball contains, and what it deliberately omits
 
-One tarball per run, `openclaw-<timestamp>.tar.gz`, with its `.sha256` written last (a tarball
-without the checksum is not closed and is never uploaded). Inside:
+One tarball per run, `openclaw-<timestamp>.tar.gz` (UTC), with its `.sha256` written last (a tarball
+without the checksum is not closed and is never uploaded). From this change on (unreleased) the default is the **minimal**
+backup (`OPENCLAW_BACKUP_MODE=minimal`): only state that is not reproducible and not provided by
+ai-resources, about 0.3 GB and 80 s on the reference host (the legacy `full` archive was 3.7-11 GB
+and 6-30 min). Inside:
 
 | Member | What it is |
 |---|---|
-| `openclaw-state.tar.gz` | OpenClaw's own verified backup: config, state, per-agent databases, secret store |
-| `ai-config.tar.gz` | The hand-written config that lives in no repo: `~/.claude/CLAUDE.md`, `settings.json`, `hooks/`, `~/.config/shell/`, **`~/.openclaw/kit-host.env`**, the gateway unit, the systemd units and host scripts that existed, and the `AGENTS.md`, `MEMORY.md`, `USER.md`, `memory/` of every agent workspace |
-| `engram.db` | A consistent SQLite snapshot of `~/.engram/engram.db` |
-| `INVENTORY.txt` | Versions (openclaw, node, claude, ai-resources), the agents and their models, and the six restore steps |
+| `db/openclaw-global/<snapshot>/` | `openclaw backup sqlite create --global`: a compact, verified snapshot of the shared state database. **The global snapshot sanitizes the delivery queue**: queued outbound deliveries are not carried over, so a restore does not replay messages that were pending at backup time |
+| `db/agent-<id>/<snapshot>/` | One snapshot per configured agent that has `agents/<id>/agent/openclaw-agent.sqlite` (an unconfigured directory such as `agents/openclaw` has none and is skipped) |
+| `engram/engram.db` | A consistent `VACUUM INTO` snapshot of `~/.engram/engram.db` (engram is not OpenClaw-owned, so the native command does not apply) |
+| `files.tar` | The allowlist, relative to `$HOME`: `.openclaw/{openclaw.json,.env,credentials,gateway.systemd.env,kit-host.env,kit-host-overrides.json5,config-journal-fingerprint.key,telegram.token,extensions,bin}`, `.openclaw/agents/main/agent/workshop-skills`, `.openclaw/agents/*/sessions`, the `AGENTS.md MEMORY.md USER.md SOUL.md IDENTITY.md TOOLS.md DREAMS.md DOCS.md memory/ monitors/` of every agent workspace that exists, `.claude/{CLAUDE.md,settings.json,hooks}`, `.config/shell`, `.config/ai-resources/{model-pins.json,operator-rules.md,lanes.yaml,offbox-wif-cred.json,setup-state.yaml}`, `.config/systemd/user` (units and drop-ins), and only `~/.local/bin/openclaw-*`. Excluded inside it: `*.bak`, `*.bak-*`, `*.bak.*`, `*.reconcile-*`, `*.lock`, `*-wal`, `*-shm` |
+| `INVENTORY.txt` | Versions (openclaw, node, claude, ai-resources), the mode, the agents and their models, and the restore steps |
+
+A live `.sqlite`, `-wal` or `-shm` is never copied: the OpenClaw docs forbid it, and the snapshots
+above are the only database content. In `full` mode the members are the legacy ones instead:
+`openclaw-state.tar.gz` (all of `~/.openclaw`), `ai-config.tar.gz`, `engram.db`, `INVENTORY.txt`.
 
 **Treat every tarball as secret material.** The secret store and the bot token travel inside it.
 
@@ -32,6 +40,9 @@ Omitted on purpose, and why:
 |---|---|---|
 | `~/.claude` skills and subagents | Regenerable | `ai-resources setup` |
 | `~/.claude/projects` transcripts (~1.2 GB) | History, not configuration | Not restored |
+| `~/.openclaw` tmp, gocache, npm, venvs, worktrees, security-scan, browser, media, logs, `*.bak*` copies | Caches and reproducible or disposable data; they were most of the old 3.7-11 GB | Recreated on use |
+| Kit roles, lanes, skills, subagents | `ai-resources setup` regenerates them | `ai-resources setup` |
+| `~/.local/bin` other than `openclaw-*` | 559 MB of binaries that are installed, not written by hand | Reinstall |
 | Project workspaces | They are git checkouts | `git clone` |
 | The ten `openclaw-*` units and the host scripts | Templates and scripts now live in the kit | `ai-resources openclaw install-units --enable` |
 
@@ -49,7 +60,8 @@ step 9. From 1.9.0 on the list is complete.
    `.sha256` (quote the glob: `gcloud storage ls "gs://<bucket>/daily/**"`).
 2. Check it: `sha256sum -c <name>.tar.gz.sha256`, then `tar tzf <name>.tar.gz >/dev/null`.
 3. Unpack to a staging directory on disk, **not `/tmp`** (a tmpfs sized in RAM):
-   `mkdir -p /srv/restore && tar xzf <name>.tar.gz -C /srv/restore`.
+   `mkdir -p /srv/restore && tar xzf <name>.tar.gz -C /srv/restore`. Keep the parent of the
+   directory not group-writable: `openclaw backup sqlite verify` refuses a snapshot under one.
 4. Read `INVENTORY.txt`. Do not delete the tarball until step 10 passes.
 
 ## 3. Restore, in this order
@@ -57,7 +69,8 @@ step 9. From 1.9.0 on the list is complete.
 Run as the user that will own the gateway. Nothing here is run by an agent.
 
 1. **Restore `~/.openclaw/kit-host.env` first.**
-   `tar xzf /srv/restore/ai-config.tar.gz -C "$HOME" .openclaw/kit-host.env`
+   `tar xpf /srv/restore/files.tar -C "$HOME" .openclaw/kit-host.env` (a `full`-mode tarball keeps it
+   in `ai-config.tar.gz`: `tar xzf /srv/restore/ai-config.tar.gz -C "$HOME" .openclaw/kit-host.env`)
    With no version pin (the kit installs the latest openclaw), this file is the only record of
    which version was running: read `OPENCLAW_INSTALLED_VERSION` from it (`OPENCLAW_PREVIOUS_VERSION`
    is the one before). `INVENTORY.txt` prints the openclaw version the tarball was taken from: use it
@@ -72,12 +85,20 @@ Run as the user that will own the gateway. Nothing here is run by an agent.
    when none is present, and a restore should come back on the version the state was written by.
    Confirm the native `.node` files exist and `openclaw --version` matches.
 3. **Install the kit.** `brew install ai-resources`.
-4. **State.** `openclaw backup restore /srv/restore/openclaw-state.tar.gz` (or unpack it over
-   `~/.openclaw`, the alternative `INVENTORY.txt` gives). Do not edit `openclaw.json` by hand
+4. **State.** First verify every snapshot, one per timestamped subdirectory (the command takes the
+   snapshot directory, not the repository):
+   `for s in /srv/restore/db/*/*/; do openclaw backup sqlite verify "$s"; done`. Then restore each
+   to a fresh path with `openclaw backup sqlite restore <snapshot> --target <new path>` (the
+   `openclaw-global` snapshot is the shared state database, `agent-<id>` is that agent's) and place
+   them where the gateway expects them. A `full`-mode tarball instead:
+   `openclaw backup restore /srv/restore/openclaw-state.tar.gz`. Do not edit `openclaw.json` by hand
    afterwards.
-5. **Memory.** `mkdir -p ~/.engram && cp /srv/restore/engram.db ~/.engram/engram.db`.
-6. **The rest of the hand-written config.** `tar xzf /srv/restore/ai-config.tar.gz -C "$HOME"`.
-   This puts back `CLAUDE.md`, `settings.json`, `hooks/`, the workspaces' `AGENTS.md` and memory,
+5. **Memory.** `mkdir -p ~/.engram && cp /srv/restore/engram/engram.db ~/.engram/engram.db` (a `full`
+   tarball has `engram.db` at the top level). Check it: `sqlite3 ~/.engram/engram.db "PRAGMA integrity_check"`.
+6. **The rest of the hand-written config.** `tar xpf /srv/restore/files.tar -C "$HOME"` (`full`:
+   `tar xzf /srv/restore/ai-config.tar.gz -C "$HOME"`). This puts back config, secrets, credentials,
+   extensions, sessions, the workspaces' notes, the systemd units with their drop-ins and the `openclaw-*`
+   host scripts, besides `CLAUDE.md`, `settings.json`, `hooks/`, the workspaces' `AGENTS.md` and memory,
    and the gateway unit. It overwrites `~/.claude/settings.json`; step 7 re-registers the kit's hooks.
 7. **Regenerate the rest with the kit.** `ai-resources setup`: rebuilds `~/.claude` skills and
    subagents and, in its OpenClaw section, asks again about team narration, the gateway guard, the

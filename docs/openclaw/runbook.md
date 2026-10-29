@@ -827,7 +827,7 @@ historical.)
 
 | Script | What it does |
 |---|---|
-| `openclaw-backup.sh <daily\|weekly\|monthly\|manual>` | `openclaw backup create --no-include-workspace --verify` + engram `VACUUM INTO` + tar of the hand-written config + `INVENTORY.txt`; one tarball and its `.sha256` **written last**; rotates 7/4/3; notifies on Telegram on failure |
+| `openclaw-backup.sh <daily\|weekly\|monthly\|manual>` | minimal mode (default): `openclaw backup sqlite create` for the shared database and every agent database + engram `VACUUM INTO` + an allowlist of non-reproducible files (`_backup_lib.sh`) + `INVENTORY.txt`; one tarball and its `.sha256` **written last**; rotates 7/4/3 (`OPENCLAW_BACKUP_KEEP_*`); a held lock is waited for (`OPENCLAW_BACKUP_LOCK_WAIT`, 3600 s) and then fails with exit 75; notifies on failure. `OPENCLAW_BACKUP_MODE=full` is the legacy whole-`~/.openclaw` archive (rollback). See `docs/runbooks/openclaw-host-dr.md` |
 | `openclaw-maintenance.sh` | pauses the watchdog, stops, **waits for the drain**, `doctor --fix`, `sessions cleanup --all-agents`, starts, polls health up to 2 min, checks backup age and new versions |
 | `openclaw-watchdog.sh` | if the gateway is not active it starts it and **says so on Telegram**; paused with `~/.openclaw/watchdog.off` |
 | `openclaw-verify.sh` | one-pass read-only check that the setup is as expected (checks 1-4 and 9 everywhere; the ingress, OTLP, Alloy and Flux checks are opt-in through `OPENCLAW_VERIFY_*`); `--notify`, from the daily timer, messages the operator only when something fails |
@@ -838,7 +838,7 @@ Invariants that must survive any port of these scripts:
 - The `.sha256` is written **after** the tarball: it is the only witness that the tarball is
   closed, and the uploader skips those without it.
 - No `|| true` on anything that matters.
-- The result is **asserted**: size ≥ 1 MB, `tar tzf` listable, `sha256sum -c`.
+- The result is **asserted**: size between 5 MB and 4 GiB, `tar tzf` listable, every expected snapshot and `engram.db` present, `sha256sum -c`. A run that did not produce a backup never exits 0 (a held lock is waited for, then fails).
 - `sessions cleanup` **requires `--all-agents`** with several agents, or it fails with
   "Multiple agents are configured, but session-store selection has no explicit owner."
 - Poll health **for up to 2 minutes**: 12 s is not enough on a cold start.
@@ -854,8 +854,8 @@ recipe below is what it does.
 ```
 ~/.config/systemd/user/openclaw-backup@.service          Type=oneshot, ExecStart=…openclaw-backup.sh %i
 ~/.config/systemd/user/openclaw-backup-daily.timer       OnCalendar=*-*-* 03:30:00
-~/.config/systemd/user/openclaw-backup-weekly.timer      OnCalendar=Sun *-*-* 03:45:00
-~/.config/systemd/user/openclaw-backup-monthly.timer     OnCalendar=*-*-01 04:00:00
+~/.config/systemd/user/openclaw-backup-weekly.timer      OnCalendar=Sun *-*-* 05:00:00
+~/.config/systemd/user/openclaw-backup-monthly.timer     OnCalendar=*-*-01 05:30:00
 ~/.config/systemd/user/openclaw-backup-guard.{service,timer}     OnCalendar=*-*-* 00,06,12,18:20:00
 ~/.config/systemd/user/openclaw-backup-uploader.{service,timer}  OnCalendar=*-*-* 04:40:00
 ~/.config/systemd/user/openclaw-maintenance.{service,timer}  OnCalendar=Sun *-*-* 04:30:00
