@@ -20,7 +20,7 @@ SCRIPT = REPO / "scripts" / "openclaw" / "openclaw-backup.sh"
 def test_stale_stage_cleanup_sits_between_the_lock_and_the_new_stage():
     text = SCRIPT.read_text(encoding="utf-8")
     lock = text.index("flock -w")
-    cleanup = re.search(r"""find "\$BASE" -maxdepth 1 -type d -name 'stage\.\*' -mmin \+60 -print0""", text)
+    cleanup = re.search(r"""find "\$BASE/" -maxdepth 1 -type d -name 'stage\.\*' -mmin \+60 -print0""", text)
     assert cleanup, "the stale stage cleanup line is missing"
     stage = text.index('STAGE="$(scratch_tmp_beside')
     assert lock < cleanup.start() < stage
@@ -76,3 +76,37 @@ def test_the_logged_count_is_the_number_removed(tmp_path):
     r = fx.run("manual")
     assert r.returncode == 0, r.stderr
     assert "removed 3 stale stage dir(s)" in r.stderr
+
+
+@pytest.mark.integration
+def test_stale_stages_are_removed_when_the_backup_root_is_a_symlink(tmp_path):
+    fx = Fixture(tmp_path)
+    old = time.time() - 7200
+    stale = fx.backups / "stage.AAAAAAAA"
+    stale.mkdir()
+    os.utime(stale, (old, old))
+    link = tmp_path / "linked-backups"
+    link.symlink_to(fx.backups)
+    r = fx.run("manual", OPENCLAW_BACKUP_DIR=str(link))
+    assert r.returncode == 0, r.stderr
+    assert not stale.exists()
+    assert "removed 1 stale stage dir(s)" in r.stderr
+
+
+@pytest.mark.integration
+def test_a_stage_that_cannot_be_removed_is_logged_not_counted(tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
+    fx = Fixture(tmp_path)
+    old = time.time() - 7200
+    stale = fx.backups / "stage.AAAAAAAA"
+    (stale / "sub").mkdir(parents=True)
+    (stale / "sub" / "f").write_text("x")
+    (stale / "sub").chmod(0o500)               # rm -rf cannot unlink f inside it
+    os.utime(stale, (old, old))
+    try:
+        r = fx.run("manual")
+        assert r.returncode == 0, r.stderr
+        assert "could not remove stale stage" in r.stderr and "removed 1 stale stage" not in r.stderr
+    finally:
+        (stale / "sub").chmod(0o700)
