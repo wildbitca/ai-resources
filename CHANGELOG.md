@@ -6,12 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [3.2.10] — 2026-10-29 — Minimal allowlist backup
+
 See ADR-0025.
 
-- feat(backup): `openclaw-backup.sh` defaults to a minimal allowlist backup (`OPENCLAW_BACKUP_MODE=minimal`): `openclaw backup sqlite create` snapshots of the shared database and every agent database, engram through `VACUUM INTO`, and only non-reproducible files (`_backup_lib.sh`). 311 MB and 78 s on the reference host, against 3.7-11 GB and 6-30 min. `OPENCLAW_BACKUP_MODE=full` keeps the legacy whole-`~/.openclaw` archive as a rollback. The global snapshot sanitizes the delivery queue.
+- feat(backup): `openclaw-backup.sh` takes a minimal allowlist backup: `openclaw backup sqlite create` snapshots of the shared database and every agent database, engram through `VACUUM INTO`, and only non-reproducible files (`_backup_lib.sh`). 311 MB and 78 s on the reference host, against 3.7-11 GB and 6-30 min. The legacy whole-`~/.openclaw` archive (`OPENCLAW_BACKUP_MODE=full`) is removed: there is one backup layout. The global snapshot sanitizes the delivery queue.
 - fix(backup): a run that finds the lock held waits (`OPENCLAW_BACKUP_LOCK_WAIT`, 3600 s) and then fails with exit 75 and a notice; it no longer logs "skipping" and exits 0, which let the weekly backup go 17 days stale. The archive is built as `.part`, asserted (size bounds, listable, every snapshot, engram, checksum) and only then published; the `.sha256` is still written last.
 - feat(backup): retention per tier (`OPENCLAW_BACKUP_KEEP_{DAILY,WEEKLY,MONTHLY,MANUAL}`, defaults 7/4/3/3) and `OPENCLAW_BACKUP_SOFT_TIERS` for the guard.
 - fix(units): the weekly backup timer moves to Sun 05:00 and the monthly one to the 1st at 05:30, clear of the daily 03:30 run and of each other. After `ai-resources setup`, the local `openclaw-backup-weekly.timer.d/override.conf` (Sun 05:00) is redundant and can be removed.
+- test: an `integration` marker (`tests/conftest.py`) labels the tests that drive real processes, signals, locks, `/proc` or other tooling instead of the files the kit generates. They are skipped by default and run with `pytest --integration` or `INTEGRATION=1 scripts/run-tests.sh`; 18 test files carry it, kept for history. This takes the flaky `test_the_pool_counts_live_watchers_only_and_a_slot_frees_when_one_dies` (red CI on `main` since 2026-10-28) out of the default run.
 
 ## [3.2.9] — 2026-10-28 — Spawn acceptance judges the right session
 
