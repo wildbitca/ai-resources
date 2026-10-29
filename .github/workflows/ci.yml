@@ -68,3 +68,59 @@ jobs:
       # every declared path exists and that the agents list matches agents/roles/. Running
       # `claude plugin validate` here as well would mean installing and authenticating the CLI
       # in CI; it is part of the release checklist instead.
+
+  # Dry run on pull requests: the same consistency check the release job runs, without publishing.
+  release-check:
+    name: Release dry run (version files and CHANGELOG notes)
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check version consistency and release notes
+        run: |
+          python3 scripts/ci/release_check.py --notes-file "${RUNNER_TEMP}/notes.md"
+          echo "--- release notes preview ---"
+          cat "${RUNNER_TEMP}/notes.md"
+
+  # Publishes the release when CI is green on main. Skips quietly when the version already has a tag.
+  # Manual fallback: .github/workflows/release.yml (workflow_dispatch).
+  release:
+    name: Publish release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate # all matrix legs must pass
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check version consistency and extract release notes
+        id: check
+        run: python3 scripts/ci/release_check.py --notes-file "${RUNNER_TEMP}/notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Look for an existing tag
+        id: tag
+        env:
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} already exists; nothing to publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag and GitHub Release
+        if: steps.tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ steps.check.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.check.outputs.tag }}
+          body_path: ${{ runner.temp }}/notes.md
+          draft: false
+          prerelease: false

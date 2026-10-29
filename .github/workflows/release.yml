@@ -1,13 +1,19 @@
-name: Release
+name: Release (manual fallback)
 
+# The release is normally published by the `release` job in ci.yml when CI is green on main.
+# This workflow is the manual fallback: run it from the Actions tab with the tag to publish.
+# It no longer triggers on tag pushes, so a tag created by ci.yml cannot produce a second release.
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release, vX.Y.Z (must match the version files on the selected ref)"
+        required: true
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -18,23 +24,23 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Extract release notes from CHANGELOG.md
-        id: notes
+      - name: Check version consistency and extract release notes
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          # Grab the block between the pushed tag's version header and the next version header
-          VERSION="${GITHUB_REF_NAME#v}"
-          NOTES=$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
-          {
-            echo "notes<<RELEASE_NOTES_EOF"
-            echo "$NOTES"
-            echo "RELEASE_NOTES_EOF"
-          } >> "$GITHUB_OUTPUT"
+          python3 scripts/ci/release_check.py --notes-file "${RUNNER_TEMP}/notes.md" | tee "${RUNNER_TEMP}/check.out"
+          CHECKED_TAG=$(sed -n 's/^tag=//p' "${RUNNER_TEMP}/check.out")
+          if [ "$CHECKED_TAG" != "$INPUT_TAG" ]; then
+            echo "Input tag ${INPUT_TAG} does not match the version files (${CHECKED_TAG}); run this workflow on the right ref." >&2
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          body: ${{ steps.notes.outputs.notes }}
+          tag_name: ${{ inputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ inputs.tag }}
+          body_path: ${{ runner.temp }}/notes.md
           draft: false
           prerelease: false
