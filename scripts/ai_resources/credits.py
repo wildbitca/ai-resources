@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from . import scratch as _scratch
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -205,6 +206,12 @@ def _since(entry: Mapping[str, Any], now: datetime) -> datetime:
 
 COVER_BEFORE_S = 300.0     # an OpenClaw claude-cli event summarises work Claude Code logged up to this long before it
 COVER_AFTER_S = 60.0
+_DATE_SUFFIX = re.compile(r"-\d{8}$")
+
+
+def _model_key(model: str) -> str:
+    """A model id without provider prefix or date suffix, so `claude-sonnet-5-5-20261001` matches `claude-sonnet-5-5`."""
+    return _DATE_SUFFIX.sub("", (model or "").lower().rsplit("/", 1)[-1])
 
 
 def drop_covered_cli_events(events: list, claude_records: list) -> list:
@@ -213,17 +220,20 @@ def drop_covered_cli_events(events: list, claude_records: list) -> list:
     The claude-cli provider runs `claude -p` (entrypoint sdk-cli), so every such turn is written TWICE: per API message
     in ~/.claude/projects/*.jsonl and once per turn in the OpenClaw DB. The ids never match (OpenClaw's responseId is
     `cli-assistant:<uuid>`, Claude Code's is the API `msg_...`), so a shared-id dedupe is impossible. An event is covered
-    when a Claude Code record of the same model sits in [event - 300 s, event + 60 s]; on the 2026-10-29 host copy all 279
+    when an sdk-cli Claude Code record (origin `openclaw-cli`, i.e. `claude -p`; an interactive session never covers an
+    event) of the same normalised model sits in [event - 300 s, event + 60 s]; on the 2026-10-29 host copy all 279
     events in 7 days were covered. An uncovered event (no Claude Code transcript, e.g. pruned) still counts."""
     import bisect
     by_model: dict[str, list[float]] = {}
     for r in claude_records:
-        by_model.setdefault(r.model, []).append(r.ts.timestamp())
+        if not str(getattr(r, "origin", "")).startswith("openclaw-cli"):
+            continue
+        by_model.setdefault(_model_key(r.model), []).append(r.ts.timestamp())
     for stamps in by_model.values():
         stamps.sort()
     kept = []
     for e in events:
-        stamps, t = by_model.get(e.model, []), e.ts.timestamp()
+        stamps, t = by_model.get(_model_key(e.model), []), e.ts.timestamp()
         i = bisect.bisect_left(stamps, t - COVER_BEFORE_S)
         if not (i < len(stamps) and stamps[i] <= t + COVER_AFTER_S):
             kept.append(e)
@@ -262,7 +272,8 @@ def measure(doc: Mapping[str, Any], *, now: datetime | None = None, agents: Path
     recs = audit_sources.load_claude_jsonl(roots, since=since, include_subagents=True, until=now + timedelta(days=1)) if roots else []
     cli, cli_stats = audit_sources.load_openclaw_events(adir, since=since, until=now + timedelta(days=1),
                                                         providers=("claude-cli", "claude-kit"))
-    cli = drop_covered_cli_events(cli, recs)
+    kept_cli = drop_covered_cli_events(cli, recs)
+    dedupe_dropped, cli = len(cli) - len(kept_cli), kept_cli
     tok = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     for r in [*recs, *cli]:                  # Claude Code transcripts and the OpenClaw claude-cli provider: both Max
         tok["input"] += r.input
@@ -271,7 +282,7 @@ def measure(doc: Mapping[str, Any], *, now: datetime | None = None, agents: Path
         tok["cache_write"] += r.cache_write
     out[MAX_POOL] = {"measured_usd": None, "calls": len(recs) + len(cli), "tokens": tok, "since": since.date().isoformat(),
                      "source": "claude-code-transcripts+claude-cli", "unpriced_models": [],
-                     "undecoded": cli_stats.undecoded}
+                     "undecoded": cli_stats.undecoded, "dedupe_dropped": dedupe_dropped}
     return out
 
 
@@ -295,7 +306,8 @@ def collect(*, path: Path | None = None, now: datetime | None = None, agents: Pa
         pools[pool] = entry
     pools[MAX_POOL] = {"measured_usd": None, "usd": None, "tokens": measured[MAX_POOL]["tokens"],
                        "calls": measured[MAX_POOL]["calls"], "since": measured[MAX_POOL]["since"],
-                       "source": measured[MAX_POOL]["source"], "note": "flat subscription: tokens only, no USD"}
+                       "source": measured[MAX_POOL]["source"],
+                       "dedupe_dropped": measured[MAX_POOL].get("dedupe_dropped", 0), "note": "flat subscription: tokens only, no USD"}
     doc.update(version=LEDGER_VERSION, pools=pools, updated=now.date().isoformat(),
                updated_at=now.replace(microsecond=0).isoformat(), note=NO_BALANCE_API)
     if write:
@@ -343,7 +355,9 @@ def lines(path: Path | None = None) -> list[str]:
     mx = pools.get(MAX_POOL)
     if mx:
         t = mx.get("tokens") or {}
-        out.append(f"{MAX_POOL}: {sum(t.values()):,} tokens in the last {MAX_WINDOW_DAYS} days, window since {mx.get('since') or 'n/a'} (subscription: tokens only, no USD)")
+        out.append(f"{MAX_POOL}: {sum(t.values()):,} tokens in the last {MAX_WINDOW_DAYS} days, window since {mx.get('since') or 'n/a'} (subscription: tokens only, no USD)"
+                   + (f"; {mx['dedupe_dropped']} claude-cli event(s) already in Claude Code transcripts were not counted twice"
+                      if mx.get("dedupe_dropped") else ""))
     out.append(f"ledger updated: {doc.get('updated', 'n/a')}; {NO_BALANCE_API}")
     return out
 
