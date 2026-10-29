@@ -23,6 +23,9 @@ from ai_resources.setup.cockpits import _openclaw_host as section, openclaw
 
 from ai_resources.setup import ui as _ui
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 _REAL_CONFIRM = _ui.confirm
 _REAL_STDIN_IS_A_TERMINAL = _ui.stdin_is_a_terminal
 

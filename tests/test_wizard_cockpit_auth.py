@@ -11,6 +11,9 @@ from ai_resources.setup import cockpit_auth, detection, model_selection as ms, s
 from ai_resources.setup.cockpits import ALL
 from wizard_fakes import Script, fake_openclaw, host_env
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 ASKED_BY = {"claude": "claude", "openclaw": "openclaw", "agy": "gemini", "cursor": "cursor"}
 FIVE = ("claude", "openclaw", "agy", "cursor", "codex")
 SUBSETS = [c for n in range(1, 5) for c in itertools.combinations(FIVE, n)]

@@ -26,7 +26,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources import openclaw_host as host  # noqa: E402
 
-pytestmark = pytest.mark.usefixtures("extra_tools_present")   # the selector now knows more CLIs
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("extra_tools_present")]   # the selector now knows more CLIs
 from ai_resources.setup import detection, litellm, state, tools, ui, wizard  # noqa: E402
 from ai_resources.setup.cockpits import _openclaw_voice as voice  # noqa: E402
 

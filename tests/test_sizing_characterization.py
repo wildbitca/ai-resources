@@ -17,6 +17,9 @@ import pytest
 
 import sizing_snapshot
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 GOLDEN = Path(__file__).resolve().parent / "golden" / "sizing_snapshot.json"
 
 

@@ -18,6 +18,9 @@ from test_openclaw_host_wizard import (  # noqa: F401  (fixtures are used by nam
 from ai_resources.setup import state
 from ai_resources.setup.cockpits import _shared, openclaw
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 BEGIN = "<!-- BEGIN ai-resources"
 HAND_SHAPED = "# Jarvis\n\nMy own rule.\n\n## Voice notes\n\nKeep it short.\n"
 

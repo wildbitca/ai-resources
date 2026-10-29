@@ -12,6 +12,9 @@ from ai_resources import scorecard
 from ai_resources.orchestrator import untrusted
 from orchestrator_fakes import OK, dispatches, drive_to, finish, make, reply
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 RULES = scorecard.load_rules()["untrusted"]
 
 

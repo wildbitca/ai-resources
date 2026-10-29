@@ -19,6 +19,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 from ai_resources.setup import state, ui  # noqa: E402
 from ai_resources.setup.cockpits import ALL, openclaw  # noqa: E402
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 _REAL_LIVE_RELOAD_MODE = openclaw._live_reload_mode      # the suite-wide fixture stubs the attribute per test
 
 KIT_SKILLS = "/kit/skills"

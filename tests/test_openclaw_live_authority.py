@@ -10,6 +10,10 @@ from ai_resources.setup.cockpits import _openclaw_image as img
 from ai_resources.setup.cockpits import openclaw as oc
 from ai_resources.setup.cockpits import openclaw_roles
 from wizard_fakes import Script, fake_openclaw
+import pytest
+
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
 
 
 def _reading(per_agent, readable=True):

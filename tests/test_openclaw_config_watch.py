@@ -450,6 +450,9 @@ def test_the_wizard_stores_the_baseline_health_it_measured_before_writing(sim, s
 import datetime as _dt
 from pathlib import Path as _Path
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 FIXTURES = _Path(__file__).parent / "fixtures" / "openclaw" / "watch-2026-10-10"
 WALL0 = _dt.datetime(2026, 10, 10, 15, 33, 47, tzinfo=_dt.timezone.utc).timestamp()
 NODE_MISSING = "env: 'node': No such file or directory\nenv: use -[v]S to pass options in shebang lines"

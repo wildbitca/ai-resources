@@ -20,6 +20,9 @@ from ai_resources import verify  # noqa: E402
 from ai_resources.setup import state  # noqa: E402
 from ai_resources.setup.cockpits import claude, openclaw  # noqa: E402
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 AK = str(REPO)
 
 

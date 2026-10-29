@@ -12,6 +12,9 @@ import pytest
 
 from ai_resources import doctor, residue, scratch
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 DAY = 86400
 
 

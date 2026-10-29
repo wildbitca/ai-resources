@@ -15,6 +15,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources.setup import detection, state, tools, ui, wizard  # noqa: E402
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 INSTALL = "Select the tools to install"
 DETECTORS = {"claude": "detect_claude_code", "agy": "detect_agy", "openclaw": "detect_openclaw",
              "cursor": "detect_cursor_agent", "codex": "detect_codex",

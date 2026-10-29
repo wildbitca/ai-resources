@@ -14,6 +14,9 @@ import pytest
 from ai_resources.setup import detection, state, tools, ui, wizard
 from wizard_fakes import Script, host_env
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 DETECTORS = {"claude": "detect_claude_code", "agy": "detect_agy", "openclaw": "detect_openclaw",
              "cursor": "detect_cursor_agent", "codex": "detect_codex",
              "aider": "detect_aider", "copilot": "detect_copilot", "continue": "detect_continue",

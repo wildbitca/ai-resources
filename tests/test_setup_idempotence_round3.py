@@ -19,6 +19,9 @@ from ai_resources.setup.cockpits import _shared, claude, codex, cursor, gemini, 
 from ai_resources.setup.cockpits import _openclaw_host as section
 from test_openclaw_host_wizard import sim  # noqa: F401  (fixture)
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 TOKEN_LIKE = re.compile(r"sk-[A-Za-z0-9_-]{8,}|AIza[0-9A-Za-z_-]{20,}|ya29\.[0-9A-Za-z_-]+|ghp_[A-Za-z0-9]{20,}|[A-Za-z0-9_-]{40,}")
 SENTINEL = "sk-ant-api03-SCRATCH-SENTINEL-KEY-0123456789"
 TIMESTAMP = re.compile(r"\d{4}-\d\d-\d\dT[0-9:.+]+")      # last_configured_at and friends: stamped on every run, kept in memory

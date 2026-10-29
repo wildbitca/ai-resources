@@ -18,6 +18,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from ai_resources import openclaw_host as host  # noqa: E402
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 TEMPLATES = {k: REPO / "templates" / v for k, v in host.AGENTS_TEMPLATES.items()}
 
 

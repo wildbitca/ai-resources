@@ -13,6 +13,9 @@ import pytest
 import sizing_snapshot as snap
 from ai_resources import scorecard
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 # bare mode -> size, with no scores: the same answer in Python and in both scripts
 EXPECTED = {"inline": "inline", "lite": "inline", "light": "light", "standard": "light", "full": "full", "bogus": "light", "": "light"}
 

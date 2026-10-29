@@ -122,6 +122,9 @@ import shutil  # noqa: E402
 
 from test_kit_script_size_gate import IMPL_JS, IMPL_RESPONSES, PLAN_JS, PLAN_RESPONSES, TEST_OK, run  # noqa: E402
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 SIZE_OF = {"lite": "inline", "standard": "light", "full": "full"}
 

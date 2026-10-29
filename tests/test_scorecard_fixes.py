@@ -12,6 +12,9 @@ from ai_resources import cli, scorecard
 
 from test_kit_script_size_gate import IMPL_JS, IMPL_RESPONSES, PLAN_JS, PLAN_RESPONSES, TEST_OK, run
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 REPO = Path(__file__).resolve().parents[1]
 RULES = scorecard.load_rules()
 CASES = json.loads((REPO / "evals" / "scorecard" / "cases.json").read_text(encoding="utf-8"))

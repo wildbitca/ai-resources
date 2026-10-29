@@ -14,6 +14,9 @@ from ai_resources.setup import flow, model_selection as ms, state, ui, wizard
 from ai_resources.setup.cockpits import openclaw as openclaw_cockpit
 from wizard_fakes import Script, Seq, fake_openclaw, host_env
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 SUB = "subscription-claude-55"
 
 

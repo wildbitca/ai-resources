@@ -21,6 +21,9 @@ import time
 
 import pytest
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 HOOK = REPO / "hooks" / "openclaw_gateway_guard.py"
 KC = "kube" + "ctl"           # keeps the harness's own context rule out of the file

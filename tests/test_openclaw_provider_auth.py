@@ -15,6 +15,9 @@ from ai_resources.setup import cockpit_auth, live_auth, state, ui
 from ai_resources.setup.cockpits import openclaw as oc
 from wizard_fakes import Script, fake_openclaw
 
+# Integration: touches or fakes an external tool (openclaw, node, git, installers...); skipped unless --integration (see tests/conftest.py).
+pytestmark = pytest.mark.integration
+
 SENTINEL = "sk-test-SENTINEL-KEY-0123456789abcdef"
 FIX = Path(__file__).parent / "fixtures" / "openclaw_live"
 
