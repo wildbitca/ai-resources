@@ -213,7 +213,8 @@ def collect(since: datetime, until: datetime, home: Path | None = None) -> tuple
     roots = sorted(p for p in (home / ".claude" / "projects").glob("*") if p.is_dir()) \
         if (home / ".claude" / "projects").is_dir() else []
     cc = audit_sources.load_claude_jsonl(roots, since, include_subagents=True, until=until)
-    oc, stats = audit_sources.load_openclaw_events(home / ".openclaw" / "agents", since, until, providers=("anthropic",))
+    oc, stats = audit_sources.load_openclaw_events(home / ".openclaw" / "agents", since, until,
+                                                  providers=("anthropic", "google"))
     return cc + oc, stats
 
 
