@@ -555,8 +555,10 @@ Telegram → OpenClaw → agy (agy-cli backend) → sessions_spawn → claude-ki
   (`--strict-mcp-config`, `--setting-sources user`) apply. It runs with
   `--dangerously-skip-permissions` and the user's full tooling, workspace
   `~/Development`, no `operator.admin`.
-- **Delegation**: agy calls `sessions_spawn agentId=claude cwd=<project>
-  thread=true` (directly, or through the kit's `/claude` and `/equipo` shortcut
+- **Delegation**: role work goes to the kit-role agents
+  (`sessions_spawn agentId=kit-role-<role> cwd=<project>`); agy calls
+  `sessions_spawn agentId=claude cwd=<project> thread=true` only for long, tightly
+  coupled coding (directly, or through the kit's `/claude` and `/equipo` shortcut
   commands — see `openclaw-plugin/ai-resources/`), which keeps the reply bound to
   the Telegram thread it started from.
 - **The kit plugin** (`openclaw-plugin/ai-resources/`, linked by setup with

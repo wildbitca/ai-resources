@@ -262,6 +262,10 @@ def test_antigravity_engine_writes_the_kit_block_into_the_workspace_agents_md(ja
     assert "You (agy) are the orchestrator" in text and "# Jarvis rules" in text
     assert "Engram is the memory of record" in text
     assert "sessions_spawn agentId=claude" in text
+    assert "sessions_spawn agentId=kit-role-<role> cwd=<project>" in text
+    assert text.index("agentId=kit-role-<role>") < text.index("agentId=claude")
+    assert "long, tightly coupled coding" in text and "returns only the path" in text
+    assert "Hand code and team work" not in text
     assert "--context" in text
 
 
