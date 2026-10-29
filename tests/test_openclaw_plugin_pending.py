@@ -118,8 +118,15 @@ def test_a_dry_run_writes_nothing(fake):
 def test_an_antigravity_engine_keeps_its_own_link_and_restart_path_and_remembers_the_version(fake):
     s = chosen()
     s.openclaw.antigravity_applied = True
-    run(s, fake)
+    assert run(s, fake) is True                          # the fill-only orchestrator config was written (empty fixture doc)
     assert fake.cli == [] and s.openclaw.host_restart_pending == [] and s.openclaw.plugin_version_seen == "1.1.0"
+
+
+def test_a_rejected_orchestrator_patch_on_an_antigravity_host_returns_false_and_forgets_no_version(fake, monkeypatch):
+    monkeypatch.setattr(oc, "_apply_hot", lambda *a, **k: (False, "rejected"))
+    s = chosen()
+    s.openclaw.antigravity_applied = True
+    assert run(s, fake) is False and s.openclaw.plugin_version_seen in (None, "")
 
 
 def test_an_antigravity_host_with_engine_keep_still_gets_enable_orchestrator_filled(fake):
