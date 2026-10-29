@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+- ci: the `integration.yml` workflow added in 3.2.11 is removed; the integration tests are not run anywhere for now (`INTEGRATION=1 scripts/run-tests.sh` still runs them locally).
+
 ## [3.2.11] — 2026-10-29 — Integration tests are opt-in
 
 - test: every test that starts, fakes or checks an external tool (openclaw, Claude Code, agy, node, git, installers, systemd) or drives real processes, locks and signals carries `pytest.mark.integration` (64 files). They are skipped by default and kept for history; run them with `pytest --integration` or `INTEGRATION=1 scripts/run-tests.sh`. The default suite covers only what the kit generates.
