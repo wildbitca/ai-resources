@@ -14,6 +14,11 @@ the Gemini key drift below is reported, and fixed by an operator-run change that
 
 > **Superseded by ADR-0019:** the 'Operator waiver' section, the Google/Anthropic acknowledgements, `--lanes-antigravity`, 'Writers stay on Claude Code', the secondary-per-cell matrix (now one primary + one fallback chain, dynamic checkers), static role-count weights and class pools as the only balancing (primaries are assigned by role class, spill at 0.85 stays).
 
+> **Amended by Track 4 (2026-10-29)**: the chat plane moved to Gemini API. `main`, `channel-agents` and `heartbeat` are
+> `gemini-api:gemini-3.8-flash` with the Anthropic API as fallback (`claude-sonnet-5-5`; `claude-haiku-5-5` for heartbeat). The
+> heartbeat no longer stays on Haiku, and Anthropic API carries an advisory USD 10/day cap. The current matrix is
+> `docs/routing.md`; statements below about the chat plane on Anthropic, or the heartbeat staying on Haiku, are historical.
+
 ## Context
 
 The operator pays for four resources and wants all four used, in proportion, without losing performance:

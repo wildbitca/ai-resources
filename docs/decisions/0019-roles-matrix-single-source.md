@@ -9,6 +9,11 @@
 [ADR-0017](0017-balanced-credit-policy.md) and [ADR-0018](0018-routing-matrix-and-pool-balancing.md) (waiver, acknowledgements, static weights).
 **Constraint, not amended**: [ADR-0003](0003-setup-never-triggers-a-live-gateway-restart.md).
 
+> **Amended by Track 4 (2026-10-29)**: the chat plane moved to Gemini API. `main`, `channel-agents` and `heartbeat` are
+> `gemini-api:gemini-3.8-flash` with the Anthropic API as fallback (`claude-sonnet-5-5`; `claude-haiku-5-5` for heartbeat). The
+> heartbeat no longer stays on Haiku, and Anthropic API carries an advisory USD 10/day cap. The current matrix is
+> `docs/routing.md`; statements below about the chat plane on Anthropic, or the heartbeat staying on Haiku, are historical.
+
 ## Context
 
 3.1.0 left three overlapping systems: a scoring engine that composed teams, a worktree "lanes" ledger with eight evidence gates and

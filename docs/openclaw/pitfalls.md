@@ -650,7 +650,7 @@ regardless**. That is ~240 turns/day of cost (quota, on the Max plan) producing 
 ```bash
 openclaw config set agents.defaults.heartbeat.every 0m
 openclaw config set agents.entries.main.heartbeat.every 2h
-openclaw config set agents.defaults.heartbeat.model anthropic/claude-haiku-4-5
+openclaw config set agents.defaults.heartbeat.model google/gemini-3.8-flash
 ```
 
 Confirmed live by the scheduler:

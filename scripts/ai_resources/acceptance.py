@@ -797,8 +797,8 @@ def gemini_verdict_line(cache: Path | None = None) -> str:
         v = json.loads(gemini_verdict_path(cache).read_text("utf-8"))
         passed = v["verdict"] == "pass"
         return (f"Gemini tool-calling through OpenClaw {'PASSED' if passed else 'FAILED'} on {v['at'][:10]} ({v['model']}): "
-                + ("the heartbeat may move to Gemini (set a `routing:` override; the kit never edits openclaw config)" if passed
-                   else "the heartbeat stays on Haiku"))
+                + ("the matrix heartbeat on Gemini is proven (the kit never edits openclaw config)" if passed
+                   else "the heartbeat should use its Haiku fallback until this passes (set a `routing:` override)"))
     except (OSError, ValueError, KeyError, TypeError):
         return ""
 
@@ -849,7 +849,7 @@ def _gemini_tools(env: Env) -> Result:
                            "leftovers of retired components)")
             if routes["agy"]:
                 return _agy_tool_proof(env, f"the Gemini API turn could not run here ({why[:80]})")
-            return skip(f"OpenClaw could not run the agent turn here ({why}); Gemini tool-calling stays unproven and the heartbeat on Haiku")
+            return skip(f"OpenClaw could not run the agent turn here ({why}); Gemini tool-calling stays unproven here; the matrix heartbeat is Gemini with a Haiku fallback")
         passed = rc == 0 and token in out
         env.cache.mkdir(parents=True, exist_ok=True)
         gemini_verdict_path(env.cache).write_text(json.dumps(
