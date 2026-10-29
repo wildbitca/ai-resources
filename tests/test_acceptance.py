@@ -209,11 +209,11 @@ def test_a_turn_that_cannot_run_is_skip_and_writes_no_verdict(env, tmp_path, mon
 
 
 def test_the_wire_api_decides_the_pool_of_an_infer_call(env, tmp_path):
-    env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("anthropic-cli-runtime", "anthropic", "claude-sonnet-5-5"))
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("google-cli-runtime", "google", "gemini-3.8-flash"))
     r = acc.run_case(next(c for c in acc.CASES if c.id == "route.main"), env)
-    assert r.status == acc.FAIL and "[anthropic-api]" in r.reason
+    assert r.status == acc.FAIL and "the call used google/gemini-3.8-flash []" in r.reason
     env.memo.clear()
-    env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("anthropic-messages", "anthropic", "claude-sonnet-5-5"))
+    env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("google-generative-ai", "google", "gemini-3.8-flash"))
     assert acc.run_case(next(c for c in acc.CASES if c.id == "route.main"), env).status == acc.PASS
 
 
@@ -392,12 +392,12 @@ def test_cli_and_api_routes_in_one_run_use_one_ledger_run_id(env, tmp_path, monk
     env.bins["claude"] = _bin(tmp_path, "claude", CLAUDE % "claude-sonnet-5-5")
     env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("anthropic-messages", "anthropic", "claude-sonnet-5-5"))
     r = acc.run_case(next(c for c in acc.CASES if c.id == "team.cli-and-api-one-run"), env)
-    # the stub answers every infer call as Anthropic, so the Gemini API cell fails its own model check: that is a FAIL naming it
-    assert r.status == acc.FAIL and "utility" in r.reason
+    # the stub answers every infer call as Anthropic, but main is a gemini-api cell: that is a FAIL naming main
+    assert r.status == acc.FAIL and "main on gemini-api failed" in r.reason
     env.memo.clear()
     env.bins["openclaw"] = _bin(tmp_path, "openclaw", OPENCLAW % ("google-generative-ai", "google", "gemini-3.8-flash"))
     r = acc.run_case(next(c for c in acc.CASES if c.id == "team.cli-and-api-one-run"), env)
-    assert r.status == acc.FAIL and "main" in r.reason
+    assert r.status == acc.PASS, r.reason
 
 
 DUAL = """#!/bin/sh
@@ -417,8 +417,8 @@ def test_cli_and_api_providers_answer_in_the_same_run(env, tmp_path, monkeypatch
     env.bins["openclaw"] = _bin(tmp_path, "openclaw", DUAL)
     r = acc.run_case(next(c for c in acc.CASES if c.id == "team.cli-and-api-one-run"), env)
     assert r.status == acc.PASS, r.reason
-    assert {"agy", "claude-code", "anthropic-api", "gemini-api"} <= set(r.evidence["backends"])
-    assert {r["pool"] for r in acc.route_rows(env, env.run_id)} >= {routing.POOL_GEMINI_API, routing.POOL_ANTHROPIC_API}
+    assert {"agy", "claude-code", "gemini-api"} <= set(r.evidence["backends"])
+    assert routing.POOL_GEMINI_API in {r["pool"] for r in acc.route_rows(env, env.run_id)}
 
 
 # --- spawn.landed-on-role-agent: the config proof and the newest spawn --------------------------------------------------

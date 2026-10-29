@@ -758,11 +758,11 @@ def _judge_team(seen: "dict[str, routing.Route]", inactive: "Iterable[str]" = ()
 
 
 @case("team.cli-and-api-one-run", "team", offline=False, severity="warn",
-      cap="one minimal call on each of agy, claude-code, anthropic-api and gemini-api (the same calls route.* makes, reused when they ran)")
+      cap="one minimal call on each of agy, claude-code and gemini-api (the same calls route.* makes, reused when they ran); anthropic-api is a fallback cell, no role has it as primary")
 def _team_cli_and_api(env: Env) -> Result:
-    """CLI routes (agy, claude-code) and API routes (anthropic-api, gemini-api) in the same run id: each provider that is signed in
+    """CLI routes (agy, claude-code) and the API route (gemini-api; anthropic-api is only a fallback since the chat plane moved) in the same run id: each provider that is signed in
     here answered a minimal call whose model and pool matched the matrix (and was recorded in the dispatch ledger of the run)."""
-    probes = {"planner": "claude-code", "explore": "agy", "main": "anthropic-api", "utility": "gemini-api"}
+    probes = {"planner": "claude-code", "explore": "agy", "main": "gemini-api", "utility": "gemini-api"}
     answered, absent = {}, {}
     for role, backend in probes.items():
         r = _route_case(role)(env)
