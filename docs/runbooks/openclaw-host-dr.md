@@ -52,6 +52,18 @@ only `openclaw.json`, `gateway.systemd.env`, the gateway and watchdog units, and
 maintenance scripts). Do not look for them in an older tarball: regenerate them from the kit in
 step 9. From 1.9.0 on the list is complete.
 
+### Tiers, retention and locking
+
+- Schedule: daily 03:30, weekly Sunday 05:00, monthly on the 1st at 05:30 (UTC, each with up to 5 min of random delay), clear of
+  the daily run and of each other. The local `openclaw-backup-weekly.timer.d/override.conf` is now redundant.
+- Retention per tier is `OPENCLAW_BACKUP_KEEP_DAILY/WEEKLY/MONTHLY/MANUAL` in `kit-host.env` (defaults 7 / 4 / 3 / 3). Weekly is
+  optional: disable its timer and add `weekly` to `OPENCLAW_BACKUP_SOFT_TIERS` so the guard stops failing on it.
+- All tiers share one lock. A run that finds it held waits up to `OPENCLAW_BACKUP_LOCK_WAIT` (3600 s), then exits 75 and notifies.
+  It never exits 0 without having produced a backup. A tarball with no non-empty `.sha256` is never a valid backup.
+- `OPENCLAW_BACKUP_MODE=full` returns to the legacy whole-`~/.openclaw` archive.
+- The archive now includes `offbox-wif-cred.json` and `~/.openclaw/credentials`, and the uploader ships the archive off-box: the
+  bucket access policy must be one you are willing to have hold them.
+
 ## 2. Before you start
 
 1. Get the newest tarball. Local: the backup directory (default `/srv/openclaw-backups/<tier>/`),

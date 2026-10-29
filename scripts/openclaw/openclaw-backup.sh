@@ -70,9 +70,10 @@ on_exit(){
   trap - EXIT
   [ -z "$STAGE" ] || rm -rf "$STAGE"
   if [ "$rc" -ne 0 ]; then
-    rm -f "$DEST/$NAME.tar.gz.part"
-    # A tarball without its checksum is not a backup: never leave one for the uploader or the guard to find.
-    [ -f "$DEST/$NAME.tar.gz.sha256" ] || rm -f "$DEST/$NAME.tar.gz"
+    rm -f "$DEST/$NAME.tar.gz.part" "$DEST/$NAME.tar.gz.sha256.part"
+    # An empty checksum is no witness; a tarball without a valid one is not a backup: never leave either for the
+    # uploader or the guard to find.
+    [ -s "$DEST/$NAME.tar.gz.sha256" ] || rm -f "$DEST/$NAME.tar.gz.sha256" "$DEST/$NAME.tar.gz"
     log "FAILED (rc=$rc) -- see $LOG"
     notify "openclaw-backup ($TIER) failed on $(hostname) (rc=$rc). Log: ~/.openclaw/logs/backup.log" || true
   fi
@@ -90,6 +91,9 @@ if ! flock -n 9; then
   log "another run holds the lock -- waiting up to ${LOCK_WAIT}s"
   flock -w "$LOCK_WAIT" 9 || fail 75 "could not take $LOCK within ${LOCK_WAIT}s; no backup was made"
 fi
+
+# A SIGKILL or reboot mid-run leaves a .part behind; nothing else would ever remove it.
+find "$DEST" -maxdepth 1 \( -name '*.tar.gz.part' -o -name '*.sha256.part' \) -mmin +60 -delete
 
 # The name is taken now, not before the wait: after an hour in the queue the timestamp would be an hour stale.
 TS="$(date -u +%Y%m%d-%H%M%S)"
@@ -169,7 +173,12 @@ build_minimal(){
   [ -s "$STAGE/files.list" ] || fail 1 "the allowlist matched no file under $HOME"
   local excl=() pat
   for pat in "${BACKUP_TAR_EXCLUDES[@]}"; do excl+=("--exclude=$pat"); done
-  tar -C "$HOME" "${excl[@]}" -T "$STAGE/files.list" -cf "$STAGE/files.tar"
+  # Sessions and memory files are appended to while the gateway runs: tar exits 1 for "file changed as we read it",
+  # which is not a failed backup. Exit 2 or more (a real error) still fails the run.
+  local tar_rc=0
+  tar -C "$HOME" "${excl[@]}" --warning=no-file-changed --verbatim-files-from -T "$STAGE/files.list" \
+    -cf "$STAGE/files.tar" || tar_rc=$?
+  [ "$tar_rc" -le 1 ] || fail 1 "tar of the allowlist failed (rc=$tar_rc)"
 
   # 3. Inventory with the restore steps of this layout.
   local steps="$STAGE/restore.txt"
@@ -206,7 +215,7 @@ build_full(){
 
   # 3. The config that lives in no repo, plus the legacy per-workspace notes.
   local tsv ws id wss=()
-  tsv="$(backup_agents_tsv 2>/dev/null || true)"
+  tsv="$(backup_agents_tsv)" || { log "WARNING: agent list unavailable, workspaces taken only from OPENCLAW_BACKUP_EXTRA"; tsv=""; }
   while IFS=$'\t' read -r id ws; do [ -z "$ws" ] || wss+=("$ws"); done <<<"$tsv"
   # shellcheck disable=SC2086
   backup_allowlist "$HOME" "${wss[@]}" ${OPENCLAW_BACKUP_EXTRA:-} > "$STAGE/ai-config.list"
@@ -265,12 +274,14 @@ fi
 
 mv "$PART" "$DEST/$NAME.tar.gz"
 # The checksum LAST: it is the completeness witness. It is then checked against the file it names.
-( cd "$DEST" && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
-( cd "$DEST" && sha256sum -c "$NAME.tar.gz.sha256" >/dev/null ) || {
-  rm -f "$DEST/$NAME.tar.gz.sha256"; fail 1 "checksum does not match"; }
+# Written beside, checked, then renamed: the final name never exists empty or wrong.
+( cd "$DEST" && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256.part" )
+( cd "$DEST" && sha256sum -c "$NAME.tar.gz.sha256.part" >/dev/null ) || fail 1 "checksum does not match"
+mv "$DEST/$NAME.tar.gz.sha256.part" "$DEST/$NAME.tar.gz.sha256"
 
 # Rotation: keep the newest $KEEP complete pairs.
-mapfile -t OLD < <(ls -1t "$DEST"/*.tar.gz 2>/dev/null | tail -n +$((KEEP+1)) || true)
-for f in "${OLD[@]:-}"; do [ -n "$f" ] || continue; rm -f "$f" "$f.sha256"; log "rotated out $(basename "$f")"; done
+# Ordered by name (the timestamp is in it), so a skewed mtime cannot push the fresh archive out.
+mapfile -t OLD < <(ls -1r "$DEST"/*.tar.gz 2>/dev/null | tail -n +$((KEEP+1)) || true)
+for f in "${OLD[@]:-}"; do [ -n "$f" ] || continue; [ "$f" != "$DEST/$NAME.tar.gz" ] || continue; rm -f "$f" "$f.sha256"; log "rotated out $(basename "$f")"; done
 
 log "OK $NAME.tar.gz ($MODE, $(du -h "$DEST/$NAME.tar.gz" | cut -f1)) -- $(ls -1 "$DEST"/*.tar.gz 2>/dev/null | wc -l) left in $TIER"

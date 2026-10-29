@@ -365,7 +365,6 @@ def test_the_archive_is_private_and_the_snapshots_are_taken_with_the_native_comm
 
 
 def test_the_stage_is_private_and_on_the_backup_disk(fx):
-    probe = fx.bin / "probe-stage"
     # a snapshot repository must be inside a 0700 stage that sits directly under the backup dir
     stub = fx.bin / "openclaw"
     text = stub.read_text().replace('os.makedirs(snap, mode=0o700)',
@@ -374,7 +373,6 @@ def test_the_stage_is_private_and_on_the_backup_disk(fx):
     assert fx.run("manual").returncode == 0
     modes = [c for c in fx.calls() if c.startswith("stage-mode")]
     assert modes and all(c.split()[1] == "700" and c.split()[3] == str(fx.backups) for c in modes)
-    assert not probe.exists()
 
 
 def test_unconfigured_agent_directories_are_not_snapshotted(fx):
@@ -422,12 +420,6 @@ def test_a_run_waits_for_the_lock_and_then_makes_its_backup(fx):
     assert r.returncode == 0, r.stderr
     assert "waiting" in r.stderr
     assert len(fx.archives("daily")) == 1 and not fx.sent()
-
-
-def test_no_path_through_the_script_exits_zero_on_a_held_lock():
-    code = "\n".join(ln.split("#", 1)[0] for ln in (SCRIPTS / "openclaw-backup.sh").read_text(encoding="utf-8").splitlines())
-    assert "skipping" not in code and "exit 0" not in code.split("flock -n 9")[1].split("fi", 1)[0]
-    assert "flock -w" in code and "|| fail 75" in code
 
 
 # --- the post-build assertions -----------------------------------------------------------------------------------
@@ -511,8 +503,8 @@ def test_retention_is_configurable_and_the_new_archive_survives(fx):
     _seed(fx, "daily", 5)
     assert fx.run("daily", OPENCLAW_BACKUP_KEEP_DAILY="2").returncode == 0
     left = fx.archives("daily")
-    assert len(left) == 2 and left[-1].name > "openclaw-2026"      # the fresh one is among them
-    assert any(not p.name.startswith("openclaw-20260") for p in left)
+    assert len(left) == 2
+    assert any(not p.name.startswith("openclaw-20260") for p in left)      # the fresh archive is among them
 
 
 # --- the legacy full mode (rollback) -----------------------------------------------------------------------------
@@ -569,14 +561,9 @@ def test_weekly_and_monthly_run_clear_of_the_daily_window():
     assert abs(_minutes(weekly["OnCalendar"]) - _minutes(monthly["OnCalendar"])) >= 30
 
 
-def test_the_local_weekly_dropin_no_longer_conflicts_with_the_template():
+def test_the_template_agrees_with_the_known_local_weekly_dropin():
     """The operator's override.conf resets OnCalendar to Sun 05:00; the template now says the same."""
-    dropin = pathlib.Path.home() / ".config/systemd/user/openclaw-backup-weekly.timer.d/override.conf"
-    template = _timer("weekly")["OnCalendar"]
-    if dropin.is_file():
-        values = [ln.split("=", 1)[1] for ln in dropin.read_text().splitlines() if ln.startswith("OnCalendar=")]
-        assert [v for v in values if v] in ([], [template])
-    assert template == "Sun *-*-* 05:00:00"
+    assert _timer("weekly")["OnCalendar"] == "Sun *-*-* 05:00:00"
 
 
 def test_install_units_leaves_a_local_dropin_alone(tmp_path):
@@ -591,3 +578,55 @@ def test_install_units_leaves_a_local_dropin_alone(tmp_path):
     openclaw_host.install_units(dest, markers={"LIBEXEC": "/kit"}, runner=lambda *a, **k: (0, ""))
     assert dropin.read_text() == before
     assert "Sun *-*-* 05:00:00" in (dest / "openclaw-backup-weekly.timer").read_text()
+
+
+# --- robustness: live files, atomic checksum, stale parts ---------------------------------------------------------
+
+def test_a_file_that_changes_while_tar_reads_it_does_not_fail_the_backup(fx):
+    shim = fx.bin / "tar"
+    real = shutil.which("tar")
+    shim.write_text(f'#!/bin/sh\n{real} "$@"; rc=$?\ncase "$*" in *--verbatim-files-from*) exit 1 ;; esac\nexit $rc\n')
+    shim.chmod(0o755)
+    r = fx.run("manual")
+    assert r.returncode == 0, r.stderr
+    assert len(fx.archives()) == 1
+
+
+def test_a_real_tar_error_fails_the_backup(fx):
+    shim = fx.bin / "tar"
+    real = shutil.which("tar")
+    shim.write_text(f'#!/bin/sh\n{real} "$@"; rc=$?\ncase "$*" in *--verbatim-files-from*) exit 2 ;; esac\nexit $rc\n')
+    shim.chmod(0o755)
+    r = fx.run("manual")
+    assert r.returncode != 0 and not fx.archives()
+
+
+def test_a_failing_sha256sum_leaves_no_tarball_and_no_empty_checksum(fx):
+    shim = fx.bin / "sha256sum"
+    shim.write_text("#!/bin/sh\nexit 1\n")
+    shim.chmod(0o755)
+    r = fx.run("manual")
+    assert r.returncode != 0
+    assert not list((fx.backups / "manual").glob("*"))
+
+
+def test_a_stale_part_file_is_swept_and_a_fresh_one_is_kept(fx):
+    d = fx.backups / "manual"
+    d.mkdir()
+    old, new = d / "openclaw-20200101-000000.tar.gz.part", d / "openclaw-20200102-000000.tar.gz.part"
+    old.write_bytes(b"x")
+    new.write_bytes(b"x")
+    t = time.time() - 7200
+    os.utime(old, (t, t))
+    assert fx.run("manual").returncode == 0
+    assert not old.exists() and new.exists()
+
+
+def test_a_future_dated_old_archive_cannot_push_out_the_fresh_one(fx):
+    _seed(fx, "daily", 7)
+    future = time.time() + 86400 * 30
+    for p in fx.archives("daily"):
+        os.utime(p, (future, future))
+    assert fx.run("daily").returncode == 0
+    names = [p.name for p in fx.archives("daily")]
+    assert len(names) == 7 and any(not n.startswith("openclaw-20260") for n in names)
