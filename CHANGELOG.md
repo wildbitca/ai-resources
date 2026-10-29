@@ -11,10 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 ### Breaking Changes
 
 - **Routing matrix moves chat plane to Gemini API**: `main`, channel agents (`ai`, `snoutzone`, `devops`), and heartbeat now run on `gemini-api:gemini-3.8-flash` as primary with Anthropic fallbacks (`anthropic-api:claude-sonnet-5-5` for chat, `anthropic-api:claude-haiku-5-5` for heartbeat).
-- **Interactive chat-agent model migration**: `ai-resources setup` proposes updating existing chat agents (`ai`, `snoutzone`, `main`, `devops`) and `agents.defaults.heartbeat.model` to Gemini 3.8 Flash with Anthropic fallbacks only when the Google provider is enabled; migrations are applied interactively or via `--accept-gates`.
+- **Interactive chat-agent model migration**: `ai-resources setup` proposes updating existing chat agents (`ai`, `snoutzone`, `main`, `devops`) and `agents.defaults.heartbeat.model` to Gemini 3.8 Flash with Anthropic fallbacks only when the Google provider is enabled; each move is a separate confirmation, nothing is written without it.
 - **New setup-live checks**: `acceptance.py` and `verify --live` add checks for `setup.orchestrator-enabled`, `setup.cli-backend-model-provider`, `setup.dreaming-not-agy`, `setup.executors-present`, `isolated.no-agy-ref`, and `route.anthropic-fallback`.
 - **Metering & credits accounting**: OpenClaw transcript archives (`session_transcript_archives`, identity/zstd) are now ingested for event accounting; zero-usage CLI turns increment `undecoded` stats; Claude Code Max deduplication against OpenClaw `openclaw-cli` (`sdk-cli`) events uses normalized model IDs and time-proximity filtering; route probes run in isolated private ledgers to prevent contaminating live dispatch ledgers.
-- **Shared budget alerts & advisory daily cap**: Shared `ALERT_AT = 0.80`, `SPILL_AT = 0.95`, and an advisory `ANTHROPIC_DAILY_CAP_USD = 10.0` (configurable via `AI_RESOURCES_ANTHROPIC_DAILY_CAP_USD`). Pool usage and credits display the advisory Anthropic daily cap (informational, not enforced at runtime).
+- **Shared budget alerts & advisory daily cap**: Shared `ALERT_AT = 0.80`, `SPILL_AT = 0.85`, and an advisory `ANTHROPIC_DAILY_CAP_USD = 10.0` (configurable via `AI_RESOURCES_ANTHROPIC_DAILY_CAP_USD`). Pool usage and credits display the advisory Anthropic daily cap (informational, not enforced at runtime).
 - **CI pipeline release publishing**: Releases are published automatically by GitHub Actions when CI passes on `main` instead of manual tag-driven pushes; manual fallback workflow is guarded to `main` and refuses to overwrite existing releases.
 
 ### Added
@@ -28,7 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
   - ci(release): manual fallback workflow `.github/workflows/release.yml` with `workflow_dispatch` restricted to `refs/heads/main` that validates the tag against version files and prevents overwriting existing releases.
   - docs(release): release flow, CI guarantees, and operator fallback procedures documented in `docs/release-flow.md`.
 - **Track 4 (routing, orchestrator, dreaming, metering, and checks)**:
-  - feat(routing): shared budget constants `ALERT_AT = 0.80`, `SPILL_AT = 0.95`, and `ANTHROPIC_DAILY_CAP_USD = 10.0` across `scoring/routing.py`, `pool_usage.py`, and `credits.py`.
+  - feat(routing): shared budget constants `ALERT_AT = 0.80`, `SPILL_AT = 0.85`, and `ANTHROPIC_DAILY_CAP_USD = 10.0` across `scoring/routing.py`, `pool_usage.py`, and `credits.py`.
   - feat(openclaw): `_orchestrator_fill` ensures `plugins.entries.ai-resources.config.enableOrchestrator` is filled even when retaining Antigravity (`engine=keep`).
   - feat(openclaw): `_dreaming_fill` sets `plugins.entries.memory-core.config.dreaming.model = "google/gemini-3.8-flash"` when the Google provider is enabled, keeping operator values intact and preventing `agy-cli-lane/` references.
   - feat(acceptance): five new `setup-live` acceptance checks in `acceptance.py` covering orchestrator status, CLI backend modelProvider declarations, dreaming model configuration, executor state existence, and rejection of legacy agy refs in defaults.
