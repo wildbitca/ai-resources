@@ -16,8 +16,8 @@ whose primary path is `ai-resources setup`.
 
 One tarball per run, `openclaw-<timestamp>.tar.gz` (UTC), with its `.sha256` written last (a tarball
 without the checksum is not closed and is never uploaded). From this change on (unreleased) the default is the **minimal**
-backup (`OPENCLAW_BACKUP_MODE=minimal`): only state that is not reproducible and not provided by
-ai-resources, about 0.3 GB and 80 s on the reference host (the legacy `full` archive was 3.7-11 GB
+backup: only state that is not reproducible and not provided by
+ai-resources, about 0.3 GB and 80 s on the reference host (the previous whole-`~/.openclaw` archive was 3.7-11 GB
 and 6-30 min). Inside:
 
 | Member | What it is |
@@ -60,7 +60,6 @@ step 9. From 1.9.0 on the list is complete.
   optional: disable its timer and add `weekly` to `OPENCLAW_BACKUP_SOFT_TIERS` so the guard stops failing on it.
 - All tiers share one lock. A run that finds it held waits up to `OPENCLAW_BACKUP_LOCK_WAIT` (3600 s), then exits 75 and notifies.
   It never exits 0 without having produced a backup. A tarball with no non-empty `.sha256` is never a valid backup.
-- `OPENCLAW_BACKUP_MODE=full` returns to the legacy whole-`~/.openclaw` archive.
 - The archive now includes `offbox-wif-cred.json` and `~/.openclaw/credentials`, and the uploader ships the archive off-box: the
   bucket access policy must be one you are willing to have hold them.
 

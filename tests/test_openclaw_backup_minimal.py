@@ -7,7 +7,7 @@ it with PRAGMA integrity_check. Nothing touches the host's state, units, gateway
   * allowlist and exclude rules, against a fixture home;
   * an end-to-end restore: build, check the sha256, extract, verify EVERY snapshot, check engram and key files;
   * lock contention: a second run waits, then fails loudly; it never exits 0 without a backup;
-  * the failure assertions, the legacy `full` mode, retention, and the timer schedule.
+  * the failure assertions, retention, and the timer schedule.
 """
 from __future__ import annotations
 
@@ -27,9 +27,13 @@ SCRIPTS = REPO / "scripts" / "openclaw"
 LIB = SCRIPTS / "_backup_lib.sh"
 TEMPLATES = REPO / "templates" / "systemd"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("bash") is None or shutil.which("sqlite3") is None or shutil.which("flock") is None,
-    reason="bash, sqlite3 and flock are required")
+# Integration: runs the real backup script, tar and flock; skipped unless --integration (see tests/conftest.py).
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        shutil.which("bash") is None or shutil.which("sqlite3") is None or shutil.which("flock") is None,
+        reason="bash, sqlite3 and flock are required"),
+]
 
 FAKE_OPENCLAW = r'''#!/usr/bin/env python3
 import json, os, sqlite3, sys, time, uuid
@@ -67,13 +71,6 @@ if a[:3] == ["backup", "sqlite", "verify"]:
     if ok != "ok":
         print(ok, file=sys.stderr); sys.exit(1)
     print("SQLite snapshot verified: " + snap); sys.exit(0)
-if a[:2] == ["backup", "create"]:                        # the legacy full archive
-    out = a[a.index("--output") + 1]
-    import tarfile
-    p = os.path.join(out, "2026-01-01T00-00-00.000Z-openclaw-backup.tar.gz")
-    with tarfile.open(p, "w:gz") as t:
-        t.add(os.path.join(home, ".openclaw", "openclaw.json"), arcname="openclaw.json")
-    print("Archive verification: passed"); sys.exit(0)
 sys.exit(0)
 '''
 
@@ -352,7 +349,7 @@ def test_end_to_end_build_checksum_extract_verify_every_snapshot(fx):
     for left_out in (".openclaw/kit-roles", ".openclaw/kit-lanes", ".local/bin/bigbinary", ".claude/skills", ".claude/projects", ".openclaw/tmp",
                      ".openclaw/openclaw.json.bak"):
         assert not (home2 / left_out).exists(), left_out
-    assert (restore / "INVENTORY.txt").read_text().count("mode:        minimal") == 1
+    assert (restore / "INVENTORY.txt").read_text().count("tier:        manual") == 1
 
 
 def test_the_archive_is_private_and_the_snapshots_are_taken_with_the_native_command(fx):
@@ -469,9 +466,8 @@ def test_a_broken_agent_list_fails_the_run(fx):
     assert r.returncode != 0 and not fx.archives()
 
 
-def test_a_bad_tier_mode_or_retention_is_a_usage_error(fx):
+def test_a_bad_tier_or_retention_is_a_usage_error(fx):
     assert fx.run("hourly").returncode == 2
-    assert fx.run("manual", OPENCLAW_BACKUP_MODE="huge").returncode == 2
     assert fx.run("manual", OPENCLAW_BACKUP_KEEP_MANUAL="0").returncode == 2
     assert fx.run("manual", OPENCLAW_BACKUP_KEEP_MANUAL="x").returncode == 2
 
@@ -507,24 +503,10 @@ def test_retention_is_configurable_and_the_new_archive_survives(fx):
     assert any(not p.name.startswith("openclaw-20260") for p in left)      # the fresh archive is among them
 
 
-# --- the legacy full mode (rollback) -----------------------------------------------------------------------------
-
-def test_full_mode_keeps_the_legacy_layout(fx):
-    r = fx.run("manual", OPENCLAW_BACKUP_MODE="full")
-    assert r.returncode == 0, r.stderr
-    [archive] = fx.archives()
-    names = set(tarfile.open(archive).getnames())
-    assert {"openclaw-state.tar.gz", "ai-config.tar.gz", "INVENTORY.txt", "engram.db"} <= names
-    assert not any(n.startswith("db/") for n in names)
-    assert any("backup create" in c for c in fx.calls()) and not any("sqlite create" in c for c in fx.calls())
-    cfg = tarfile.open(fileobj=tarfile.open(archive).extractfile("ai-config.tar.gz"), mode="r:gz").getnames()
-    assert ".openclaw/openclaw.json" in cfg and ".openclaw/openclaw.json.bak" not in cfg
-
-
-def test_minimal_is_the_default_mode(fx):
+def test_the_backup_is_the_minimal_snapshot_layout(fx):
     assert fx.run("manual").returncode == 0
     assert any("sqlite create" in c for c in fx.calls())
-    assert 'MODE="${OPENCLAW_BACKUP_MODE:-minimal}"' in (SCRIPTS / "openclaw-backup.sh").read_text()
+    assert not any("backup create" in c for c in fx.calls())
 
 
 # --- the schedule ------------------------------------------------------------------------------------------------

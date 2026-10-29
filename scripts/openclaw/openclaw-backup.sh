@@ -3,17 +3,14 @@
 #
 # Usage: openclaw-backup.sh <daily|weekly|monthly|manual>
 #
-# Mode (OPENCLAW_BACKUP_MODE, default minimal):
-#   minimal  An allowlist of state that is not reproducible and not provided by ai-resources:
-#              1. SQLite snapshots made by `openclaw backup sqlite create` (the shared database and one per
-#                 agent that has its own database), plus engram through `VACUUM INTO`. A live .sqlite/-wal/-shm is
-#                 never copied: the OpenClaw docs forbid it.
-#              2. The files listed by _backup_lib.sh: config, secrets, credentials, extensions, sessions, workspace
-#                 notes, the AI config that lives in no repo, the systemd units and the openclaw-* host scripts.
-#              3. An inventory (versions, agents, models, restore steps).
-#            Measured on the reference host: 323 MB and about 73 s, against 3.7-11 GB and 6-30 min for `full`.
-#   full     The legacy path, kept as a rollback: `openclaw backup create` (all of ~/.openclaw, no exclude options)
-#            plus engram plus the AI-config tar. Set OPENCLAW_BACKUP_MODE=full in kit-host.env to use it.
+# What it captures: an allowlist of state that is not reproducible and not provided by ai-resources:
+#   1. SQLite snapshots made by `openclaw backup sqlite create` (the shared database and one per agent that has its
+#      own database), plus engram through `VACUUM INTO`. A live .sqlite/-wal/-shm is never copied: the OpenClaw docs
+#      forbid it.
+#   2. The files listed by _backup_lib.sh: config, secrets, credentials, extensions, sessions, workspace notes, the AI
+#      config that lives in no repo, the systemd units and the openclaw-* host scripts.
+#   3. An inventory (versions, agents, models, restore steps).
+# Measured on the reference host: 323 MB and about 73 s. There is one backup layout; it has no mode switch.
 #
 # It deliberately does NOT capture what `ai-resources setup` regenerates (kit roles and lanes, skills, subagents),
 # ~/.claude/projects transcripts, project workspaces (git checkouts), or caches, venvs, worktrees and logs.
@@ -42,8 +39,6 @@ case "$TIER" in
 esac
 case "$KEEP" in ''|*[!0-9]*|0) echo "$(basename "$0"): the retention for $TIER must be an integer >= 1 (got '$KEEP')" >&2; exit 2 ;; esac
 
-MODE="${OPENCLAW_BACKUP_MODE:-minimal}"
-case "$MODE" in minimal|full) ;; *) echo "$(basename "$0"): OPENCLAW_BACKUP_MODE must be minimal or full (got '$MODE')" >&2; exit 2 ;; esac
 
 BASE="$OPENCLAW_BACKUP_DIR"
 DEST="$BASE/$TIER"
@@ -55,7 +50,6 @@ LOCK_WAIT="${OPENCLAW_BACKUP_LOCK_WAIT:-3600}"       # seconds to wait for anoth
 # The guard calls under 5 MB "not a backup of this setup"; the ceiling catches an allowlist that swallowed a tree.
 MIN_BYTES="${OPENCLAW_BACKUP_MIN_BYTES:-5000000}"
 MAX_BYTES="${OPENCLAW_BACKUP_MAX_BYTES:-4294967296}"
-[ "$MODE" = full ] && MAX_BYTES="${OPENCLAW_BACKUP_MAX_BYTES:-34359738368}"
 STAGE=""
 
 umask 077                                              # the archive carries secrets
@@ -100,7 +94,7 @@ TS="$(date -u +%Y%m%d-%H%M%S)"
 NAME="openclaw-$TS"
 STAGE="$(scratch_tmp_beside -d "$BASE" "stage.XXXXXXXX")"
 chmod 700 "$STAGE"
-log "start ($MODE) -> $DEST/$NAME.tar.gz"
+log "start -> $DEST/$NAME.tar.gz"
 
 # ---- shared pieces -----------------------------------------------------------------------------------------
 
@@ -118,8 +112,7 @@ inventory(){ # $1 = restore steps file
     echo "host:        $(hostname)"
     echo "taken:       $(date -Is)"
     echo "tier:        $TIER"
-    echo "mode:        $MODE"
-    echo "openclaw:    $(openclaw --version 2>/dev/null | head -1)"
+        echo "openclaw:    $(openclaw --version 2>/dev/null | head -1)"
     echo "node:        $(node -v 2>/dev/null)"
     echo "claude:      $(readlink -f "$HOME/.local/bin/claude" 2>/dev/null | xargs -r basename)"
     echo "ai-resources:$(brew list --versions ai-resources 2>/dev/null | head -1)"
@@ -198,52 +191,10 @@ EOF
   return 0
 }
 
-# ---- full mode (legacy rollback) ---------------------------------------------------------------------------
-
-build_full(){
-  # 1. openclaw's own backup (config, state, agent databases, secret store).
-  openclaw backup create --no-include-workspace --verify --output "$STAGE" >"$STAGE/openclaw-backup.out" 2>&1
-  local oc_archive
-  oc_archive="$(find "$STAGE" -maxdepth 1 -name '*-openclaw-backup.tar.gz' -print -quit)"
-  [ -n "$oc_archive" ] || { cat "$STAGE/openclaw-backup.out" >&2; fail 1 "openclaw backup create left no archive"; }
-  grep -q "Archive verification: passed" "$STAGE/openclaw-backup.out" || {
-    cat "$STAGE/openclaw-backup.out" >&2; fail 1 "openclaw backup create did not verify the archive"; }
-  mv "$oc_archive" "$STAGE/openclaw-state.tar.gz"
-
-  # 2. engram.
-  engram_snapshot "$STAGE/engram.db"
-
-  # 3. The config that lives in no repo, plus the legacy per-workspace notes.
-  local tsv ws id wss=()
-  tsv="$(backup_agents_tsv)" || { log "WARNING: agent list unavailable, workspaces taken only from OPENCLAW_BACKUP_EXTRA"; tsv=""; }
-  while IFS=$'\t' read -r id ws; do [ -z "$ws" ] || wss+=("$ws"); done <<<"$tsv"
-  # shellcheck disable=SC2086
-  backup_allowlist "$HOME" "${wss[@]}" ${OPENCLAW_BACKUP_EXTRA:-} > "$STAGE/ai-config.list"
-  local excl=() pat
-  for pat in "${BACKUP_TAR_EXCLUDES[@]}"; do excl+=("--exclude=$pat"); done
-  tar czf "$STAGE/ai-config.tar.gz" "${excl[@]}" -C "$HOME" -T "$STAGE/ai-config.list"
-
-  # 4. Inventory.
-  local steps="$STAGE/restore.txt"
-  cat > "$steps" <<EOF
-1. tar xzf $NAME.tar.gz
-2. openclaw backup restore openclaw-state.tar.gz   (or unpack it over ~/.openclaw)
-3. cp engram.db ~/.engram/engram.db
-4. tar xzf ai-config.tar.gz -C \$HOME
-5. brew install ai-resources && ai-resources setup   (rebuilds ~/.claude skills + subagents)
-6. openclaw gateway install --force && systemctl --user enable --now openclaw-gateway.service
-EOF
-  inventory "$steps" > "$STAGE/INVENTORY.txt"
-
-  ARCHIVE_MEMBERS=(openclaw-state.tar.gz ai-config.tar.gz INVENTORY.txt)
-  [ -f "$STAGE/engram.db" ] && ARCHIVE_MEMBERS+=(engram.db)
-  return 0
-}
-
 # ---- build, assert, publish --------------------------------------------------------------------------------
 
 ARCHIVE_MEMBERS=()
-if [ "$MODE" = minimal ]; then build_minimal; else build_full; fi
+build_minimal
 
 PART="$DEST/$NAME.tar.gz.part"
 tar -C "$STAGE" -cf - "${ARCHIVE_MEMBERS[@]}" | backup_gzip > "$PART"
@@ -255,21 +206,17 @@ BYTES=$(stat -c %s "$PART")
 tar -tzf "$PART" > "$STAGE/archive.list" || fail 1 "$NAME.tar.gz is not listable"
 [ -s "$STAGE/archive.list" ] || fail 1 "$NAME.tar.gz lists no member"
 
-if [ "$MODE" = minimal ]; then
-  # Every snapshot that was created must be in the archive, with its database and manifest.
-  sed -n 's#^\(db/[^/]*\)/[^/]*/database\.sqlite$#\1#p' "$STAGE/archive.list" > "$STAGE/archive.dbs"
-  sed -n 's#^\(db/[^/]*\)/[^/]*/manifest\.json$#\1#p' "$STAGE/archive.list" > "$STAGE/archive.manifests"
-  for r in "${EXPECTED_DBS[@]}"; do
-    grep -qxF "db/$r" "$STAGE/archive.dbs" || fail 1 "the archive has no database snapshot for $r"
-    grep -qxF "db/$r" "$STAGE/archive.manifests" || fail 1 "the archive has no manifest for the $r snapshot"
-  done
-  [ -f "$HOME/.engram/engram.db" ] && { grep -qxF "engram/engram.db" "$STAGE/archive.list" || fail 1 "the archive has no engram.db"; }
-  tar -tf "$STAGE/files.tar" > "$STAGE/files.list.archived"
-  if [ -f "$HOME/.openclaw/openclaw.json" ]; then
-    grep -qxF ".openclaw/openclaw.json" "$STAGE/files.list.archived" || fail 1 "files.tar has no .openclaw/openclaw.json"
-  fi
-else
-  grep -qxF "openclaw-state.tar.gz" "$STAGE/archive.list" || fail 1 "the archive has no openclaw-state.tar.gz"
+# Every snapshot that was created must be in the archive, with its database and manifest.
+sed -n 's#^\(db/[^/]*\)/[^/]*/database\.sqlite$#\1#p' "$STAGE/archive.list" > "$STAGE/archive.dbs"
+sed -n 's#^\(db/[^/]*\)/[^/]*/manifest\.json$#\1#p' "$STAGE/archive.list" > "$STAGE/archive.manifests"
+for r in "${EXPECTED_DBS[@]}"; do
+  grep -qxF "db/$r" "$STAGE/archive.dbs" || fail 1 "the archive has no database snapshot for $r"
+  grep -qxF "db/$r" "$STAGE/archive.manifests" || fail 1 "the archive has no manifest for the $r snapshot"
+done
+[ -f "$HOME/.engram/engram.db" ] && { grep -qxF "engram/engram.db" "$STAGE/archive.list" || fail 1 "the archive has no engram.db"; }
+tar -tf "$STAGE/files.tar" > "$STAGE/files.list.archived"
+if [ -f "$HOME/.openclaw/openclaw.json" ]; then
+  grep -qxF ".openclaw/openclaw.json" "$STAGE/files.list.archived" || fail 1 "files.tar has no .openclaw/openclaw.json"
 fi
 
 mv "$PART" "$DEST/$NAME.tar.gz"
@@ -284,4 +231,4 @@ mv "$DEST/$NAME.tar.gz.sha256.part" "$DEST/$NAME.tar.gz.sha256"
 mapfile -t OLD < <(ls -1r "$DEST"/*.tar.gz 2>/dev/null | tail -n +$((KEEP+1)) || true)
 for f in "${OLD[@]:-}"; do [ -n "$f" ] || continue; [ "$f" != "$DEST/$NAME.tar.gz" ] || continue; rm -f "$f" "$f.sha256"; log "rotated out $(basename "$f")"; done
 
-log "OK $NAME.tar.gz ($MODE, $(du -h "$DEST/$NAME.tar.gz" | cut -f1)) -- $(ls -1 "$DEST"/*.tar.gz 2>/dev/null | wc -l) left in $TIER"
+log "OK $NAME.tar.gz ($(du -h "$DEST/$NAME.tar.gz" | cut -f1)) -- $(ls -1 "$DEST"/*.tar.gz 2>/dev/null | wc -l) left in $TIER"

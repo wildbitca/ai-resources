@@ -13,7 +13,7 @@ The weekly backup also went stale for 17 days. The daily (03:30) and weekly (03:
 
 ## Decision
 
-1. **Default mode `minimal`** (`OPENCLAW_BACKUP_MODE`). The archive holds:
+1. **The backup is the minimal allowlist.** The archive holds:
    - SQLite snapshots from `openclaw backup sqlite create`: `--global`, and one `--agent <id>` per agent from
      `openclaw agents list --json` that has `agents/<id>/agent/openclaw-agent.sqlite` (three at a time). The stage is a `0700` directory
      directly under the backup dir, because the command refuses a repository under a group-writable parent. engram is not OpenClaw-owned
@@ -23,10 +23,10 @@ The weekly backup also went stale for 17 days. The daily (03:30) and weekly (03:
    - `INVENTORY.txt`.
    Not captured: anything `ai-resources setup` regenerates (kit roles and lanes and their workspaces, skills, subagents), `~/.local/bin`
    except `openclaw-*`, caches, venvs, worktrees, logs, media, browser state, transcripts.
-2. **`full` mode stays as a rollback** (`OPENCLAW_BACKUP_MODE=full`): the legacy layout, the legacy restore steps. Both modes share the
-   lock, the assertions, the naming, the `.sha256`-last rule and rotation, so the uploader and the guard are unchanged.
+2. **There is one backup layout.** The legacy whole-`~/.openclaw` archive (`full` mode) was removed rather than kept as a rollback: the
+   lock, the assertions, the naming, the `.sha256`-last rule and rotation are unchanged, so the uploader and the guard are unchanged.
 3. **The archive is built as `<name>.tar.gz.part` and published only after the assertions pass**: size between `OPENCLAW_BACKUP_MIN_BYTES`
-   (5 MB, the guard's floor) and `OPENCLAW_BACKUP_MAX_BYTES` (4 GiB; 32 GiB in `full`), listable, every expected snapshot with database and
+   (5 MB, the guard's floor) and `OPENCLAW_BACKUP_MAX_BYTES` (4 GiB), listable, every expected snapshot with database and
    manifest, `engram/engram.db`, `.openclaw/openclaw.json` inside `files.tar`. The checksum is written last and checked. Any failure removes
    the partial file and notifies once.
 4. **A held lock is waited for, then fails.** `flock -n`, then `flock -w ${OPENCLAW_BACKUP_LOCK_WAIT:-3600}`; on timeout the run exits 75

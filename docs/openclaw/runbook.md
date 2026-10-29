@@ -827,7 +827,7 @@ historical.)
 
 | Script | What it does |
 |---|---|
-| `openclaw-backup.sh <daily\|weekly\|monthly\|manual>` | minimal mode (default): `openclaw backup sqlite create` for the shared database and every agent database + engram `VACUUM INTO` + an allowlist of non-reproducible files (`_backup_lib.sh`) + `INVENTORY.txt`; one tarball and its `.sha256` **written last**; rotates 7/4/3 (`OPENCLAW_BACKUP_KEEP_*`); a held lock is waited for (`OPENCLAW_BACKUP_LOCK_WAIT`, 3600 s) and then fails with exit 75; notifies on failure. `OPENCLAW_BACKUP_MODE=full` is the legacy whole-`~/.openclaw` archive (rollback). See `docs/runbooks/openclaw-host-dr.md` |
+| `openclaw-backup.sh <daily\|weekly\|monthly\|manual>` | `openclaw backup sqlite create` for the shared database and every agent database + engram `VACUUM INTO` + an allowlist of non-reproducible files (`_backup_lib.sh`) + `INVENTORY.txt`; one tarball and its `.sha256` **written last**; rotates 7/4/3 (`OPENCLAW_BACKUP_KEEP_*`); a held lock is waited for (`OPENCLAW_BACKUP_LOCK_WAIT`, 3600 s) and then fails with exit 75; notifies on failure. See `docs/runbooks/openclaw-host-dr.md` |
 | `openclaw-maintenance.sh` | pauses the watchdog, stops, **waits for the drain**, `doctor --fix`, `sessions cleanup --all-agents`, starts, polls health up to 2 min, checks backup age and new versions |
 | `openclaw-watchdog.sh` | if the gateway is not active it starts it and **says so on Telegram**; paused with `~/.openclaw/watchdog.off` |
 | `openclaw-verify.sh` | one-pass read-only check that the setup is as expected (checks 1-4 and 9 everywhere; the ingress, OTLP, Alloy and Flux checks are opt-in through `OPENCLAW_VERIFY_*`); `--notify`, from the daily timer, messages the operator only when something fails |
