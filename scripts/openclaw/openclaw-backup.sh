@@ -89,6 +89,12 @@ fi
 # A SIGKILL or reboot mid-run leaves a .part behind; nothing else would ever remove it.
 find "$DEST" -maxdepth 1 \( -name '*.tar.gz.part' -o -name '*.sha256.part' \) -mmin +60 -delete
 
+# The same kill leaves a stage.* directory (a full copy of the state) under $BASE; the EXIT trap never ran. The lock
+# is held, so no other run owns a stage: anything older than an hour is orphaned. No symlink is followed.
+stale_stages="$(find "$BASE" -maxdepth 1 -type d -name 'stage.*' -mmin +60 | wc -l)"
+find "$BASE" -maxdepth 1 -type d -name 'stage.*' -mmin +60 -exec rm -rf {} +
+[ "$stale_stages" -eq 0 ] || log "removed $stale_stages stale stage dir(s)"
+
 # The name is taken now, not before the wait: after an hour in the queue the timestamp would be an hour stale.
 TS="$(date -u +%Y%m%d-%H%M%S)"
 NAME="openclaw-$TS"
