@@ -1685,10 +1685,10 @@ def _configure_orchestrator_plugin(ctx: dict, s: state.SetupState, doc: dict, pa
         # The antigravity engine owns the link and the restart (`_register_plugin_and_backends`), but its patch is only
         # built when the engine is chosen in THIS run: with engine=keep nothing wrote enableOrchestrator, and the
         # native orchestrator stayed off. The fill-only write therefore runs here, before the return.
-        changed = False if dry_run else _fill_orchestrator_config(doc, ak_path, run_changes)
-        if not dry_run and version:
+        filled = False if dry_run else _fill_orchestrator_config(doc, ak_path, run_changes)       # None: the patch was rejected
+        if not dry_run and version and filled is not None:
             o.plugin_version_seen = version
-        return changed
+        return bool(filled)
     if dry_run:
         ui.info(f"OpenClaw orchestrator (dry run): plugin {version or '?'} would be linked and its config filled; "
                 f"a gateway reload would be recorded as pending ({host_pending_command()}).")
