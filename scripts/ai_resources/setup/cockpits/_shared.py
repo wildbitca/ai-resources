@@ -853,9 +853,14 @@ def openclaw_agent_kit_md(ak_path: str, *, delegates: bool = True) -> str:
     if delegates:
         text += (
             "\n## Delegation\n\n"
-            "- Hand code and team work to the `claude` worker agent: "
+            "- Role work (planning, design, implementation, tests, review, verification, docs) goes to the "
+            "matching kit-role agent: `sessions_spawn agentId=kit-role-<role> cwd=<project>`. The agent "
+            "carries the matrix model and fallbacks; do not pass `model`.\n"
+            "- The `claude` worker is only for long, tightly coupled coding in one checkout: "
             "`sessions_spawn agentId=claude cwd=<project> thread=true`, so the reply lands back "
             "in the same Telegram thread.\n"
+            "- An `agy` task is bounded: it writes its result to a physical file and returns only "
+            "the path, never the content.\n"
             "- Do not do a project's coding in this workspace; delegate it, then report.\n"
         )
     return text

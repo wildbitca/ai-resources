@@ -334,8 +334,10 @@ On an OpenClaw host every agent has a workspace, and OpenClaw injects that works
 into the agent's turns. `ai-resources setup` keeps one **kit block** (between the `ai-resources`
 markers) in each of them, so the agents know the kit exists: load `kit-orchestration` before
 multi-step work, pick a `workflow-*` skill, work through the kit roles without self sign-off, pass
-work between roles in the handoff file, and delegate code to the `claude` worker with
-`sessions_spawn agentId=claude cwd=<project> thread=true`.
+work between roles in the handoff file, and send role work to the matching `kit-role-<role>` agent with
+`sessions_spawn agentId=kit-role-<role> cwd=<project>` (no `model` argument: the agent's pin carries the matrix chain). The
+`claude` worker (`sessions_spawn agentId=claude cwd=<project> thread=true`) is only for long, tightly coupled coding in one
+checkout. An `agy` task is bounded: its result goes to a physical file and only the path comes back.
 
 A workflow step can also run its role on another OpenClaw agent with `backend: openclaw-agent` and an
 `agentId`; only an OpenClaw-run orchestrator that has `sessions_spawn` can dispatch it, and anywhere else the

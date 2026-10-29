@@ -50,6 +50,14 @@ def test_the_block_teaches_the_orchestration_loop_and_the_delegation():
     assert "topic" not in text.lower()
 
 
+def test_the_delegation_defaults_to_kit_roles_and_keeps_the_worker_for_long_coupled_coding():
+    section = _shared.openclaw_agent_kit_md("/kit").split("## Delegation", 1)[1]
+    assert section.index("sessions_spawn agentId=kit-role-<role> cwd=<project>") < section.index("sessions_spawn agentId=claude")
+    assert "do not pass `model`" in section
+    assert "long, tightly coupled coding" in section
+    assert "physical file" in section and "only the path" in section
+
+
 @pytest.mark.parametrize("delegates", [True, False])
 def test_the_long_running_rule_is_in_both_forms_once_and_before_the_worktrees(delegates):
     text = _shared.openclaw_agent_kit_md("/kit", delegates=delegates)
