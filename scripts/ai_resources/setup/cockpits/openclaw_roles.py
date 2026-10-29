@@ -289,7 +289,7 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
             ours = aid in set(recorded.get("created_agent_ids") or [])
             if not ours and is_kit_role_id(aid) and aid == agent_id_for(agent.get("role", ""), agent.get("domain", "")) \
                     and not _registration_shell(live, agent, workspaces[aid]) \
-                    and (live_model != agent["model"] or (isinstance(live.get("model"), Mapping) and live_fb != want_fb)):
+                    and (live_model != agent["model"] or live_fb != want_fb):   # a bare string has no fallbacks: it differs too
                 ent = patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})
                 ent["model"] = _model_value(agent)
                 have_spawn = _get(live, "subagents", "model")

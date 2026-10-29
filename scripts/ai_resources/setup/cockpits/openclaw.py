@@ -1506,6 +1506,8 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
                                                      run_changes=run_changes)
     plugin_changed = _configure_orchestrator_plugin(ctx, s, doc if dry_run else read_config(path), path, ak_path,
                                                     dry_run=dry_run, run_changes=run_changes)
+    dreaming_changed = _configure_memory_dreaming(s, doc if dry_run else read_config(path), dry_run=dry_run,
+                                                  run_changes=run_changes)
     # The role agents exist only now: scope their stdio MCP servers in the same run (a second run is a no-op).
     scope_changed = mcp.scope_agents(s, doc if dry_run else read_config(path), _lanes_apply,
                                      include=mcp.include_list(s), dry_run=dry_run)
@@ -1513,7 +1515,7 @@ def _configure(ctx: dict, s: state.SetupState, cs, dry_run: bool, written: list[
                                                run_changes=run_changes)
     changed = (retired_changed or engine_changed or mcp_changed or voice_changed or image_changed or workshop_changed or host_changed
                or roles_changed or orchestration_changed or worker_changed or skills_changed
-               or plugin_changed or scope_changed)
+               or plugin_changed or scope_changed or dreaming_changed)
     # After every writer: one drained restart clears a stale plugin and an MCP-child overflow together (R5/R7).
     _reconcile_gateway(s, ak_path, dry_run=dry_run)
     # 3.2.8 (item 2): the post-setup watch starts AFTER that drained window has closed. Started before it, the watch's
@@ -1635,6 +1637,35 @@ def _note_plugin_pending(s: state.SetupState, version: str) -> None:
                                        if not (e.get("op") == "plugin" and e.get("source") == "setup")] + [entry]
 
 
+def _orchestrator_fill(live_cfg: dict, ak_path: str) -> dict:
+    """The orchestrator plugin config keys still missing from `live_cfg` (fill-only: an operator value, `false`
+    included, is never in the result; `maxTeams` is replaced only while it holds the old kit default)."""
+    live = (_get(live_cfg, "plugins", "entries", PLUGIN_ID, "config") or {})
+    wanted = {"kitRoot": ak_path, "python3Bin": shutil.which("python3") or "", **ORCHESTRATOR_PLUGIN_KEYS}
+    return {k: v for k, v in wanted.items() if v not in ("", None)
+            and (k not in live or (k == "maxTeams" and live[k] == openclaw_orchestration.OLD_MAX_TEAMS))}
+
+
+def _fill_orchestrator_config(doc: dict, ak_path: str, run_changes: list[dict]) -> "bool | None":
+    """Write `_orchestrator_fill` and warn when the operator has the orchestrator off. True when written, False when
+    nothing was missing, None when OpenClaw rejected the patch."""
+    live = (_get(doc, "plugins", "entries", PLUGIN_ID, "config") or {})
+    if live.get("enableOrchestrator") is False:
+        ui.warn("OpenClaw: plugins.entries.ai-resources.config.enableOrchestrator is false (your value is kept), so the "
+                "kit-role agents are not orchestrated. Set it to true to turn the native orchestrator on.")
+    fill = _orchestrator_fill(doc, ak_path)
+    if not fill:
+        return False
+    patch = {"plugins": {"entries": {PLUGIN_ID: {"config": fill}}}}
+    ok, out = _apply_hot(patch)
+    if not ok:
+        ui.error(f"OpenClaw rejected the orchestrator plugin config: {ui.safe_excerpt(out, 300, tail=True)}")
+        return None
+    run_changes.extend(openclaw_host.change_records(doc, patch, None, "orchestrator-plugin"))
+    ui.info("OpenClaw orchestrator plugin config filled: " + ", ".join(sorted(fill)) + " (your values are kept)")
+    return True
+
+
 def _configure_orchestrator_plugin(ctx: dict, s: state.SetupState, doc: dict, path: Path, ak_path: str, *,
                                    dry_run: bool, run_changes: list[dict]) -> bool:
     """The native orchestrator needs the kit plugin loaded (ADR-0015 D3). Link it, fill its config keys (fill-only), and
@@ -1646,9 +1677,13 @@ def _configure_orchestrator_plugin(ctx: dict, s: state.SetupState, doc: dict, pa
     version = plugin_version(ak_path)
     o = s.openclaw
     if o.antigravity_applied:
+        # The antigravity engine owns the link and the restart (`_register_plugin_and_backends`), but its patch is only
+        # built when the engine is chosen in THIS run: with engine=keep nothing wrote enableOrchestrator, and the
+        # native orchestrator stayed off. The fill-only write therefore runs here, before the return.
+        changed = False if dry_run else _fill_orchestrator_config(doc, ak_path, run_changes)
         if not dry_run and version:
             o.plugin_version_seen = version
-        return False
+        return changed
     if dry_run:
         ui.info(f"OpenClaw orchestrator (dry run): plugin {version or '?'} would be linked and its config filled; "
                 f"a gateway reload would be recorded as pending ({host_pending_command()}).")
@@ -1663,19 +1698,10 @@ def _configure_orchestrator_plugin(ctx: dict, s: state.SetupState, doc: dict, pa
         else:
             ui.warn(f"OpenClaw: could not link the ai-resources plugin ({ui.safe_text((out or '')[-200:])})")
             return False
-    live = (_get(doc, "plugins", "entries", PLUGIN_ID, "config") or {})
-    wanted = {"kitRoot": ak_path, "python3Bin": shutil.which("python3") or "", **ORCHESTRATOR_PLUGIN_KEYS}
-    fill = {k: v for k, v in wanted.items() if v not in ("", None)
-            and (k not in live or (k == "maxTeams" and live[k] == openclaw_orchestration.OLD_MAX_TEAMS))}
-    if fill:
-        patch = {"plugins": {"entries": {PLUGIN_ID: {"config": fill}}}}
-        ok, out = _apply_hot(patch)
-        if not ok:
-            ui.error(f"OpenClaw rejected the orchestrator plugin config: {ui.safe_excerpt(out, 300, tail=True)}")
-            return False
-        run_changes.extend(openclaw_host.change_records(doc, patch, None, "orchestrator-plugin"))
-        ui.info("OpenClaw orchestrator plugin config filled: " + ", ".join(sorted(fill)) + " (your values are kept)")
-        changed = True
+    fill_changed = _fill_orchestrator_config(doc, ak_path, run_changes)
+    if fill_changed is None:
+        return False
+    changed = fill_changed
     owed = bool(version) and (newly_linked or version != o.plugin_version_seen)
     if owed:
         _note_plugin_pending(s, version)
@@ -1684,6 +1710,43 @@ def _configure_orchestrator_plugin(ctx: dict, s: state.SetupState, doc: dict, pa
                 f"pending: run `{host_pending_command()}` from a terminal when the gateway is idle.")
         changed = True
     return changed
+
+
+DREAMING_MODEL = "google/gemini-3.8-flash"
+DREAMING_PATH = ("plugins", "entries", "memory-core", "config", "dreaming", "model")
+
+
+def _dreaming_fill(live_cfg: dict, s: state.SetupState) -> "dict | None":
+    """The fill-only memory-core dreaming patch, or None when nothing is owed. Only when the Google provider is
+    enabled (its key answered the sign-in read), and never over an operator value. The ref is a plain API model, never
+    an `agy-cli-lane/` ref: dreaming is a background batch, and a CLI lane would bill the subscription."""
+    from .. import cockpit_auth
+    if "google" not in (cockpit_auth.providers(s) or {}):
+        return None
+    if _get(live_cfg, *DREAMING_PATH) not in (None, ""):
+        return None
+    node: dict[str, Any] = DREAMING_MODEL        # type: ignore[assignment]
+    for k in reversed(DREAMING_PATH):
+        node = {k: node}
+    return node
+
+
+def _configure_memory_dreaming(s: state.SetupState, doc: dict, *, dry_run: bool, run_changes: list[dict]) -> bool:
+    if enabled_providers(s) is None:
+        return False
+    patch = _dreaming_fill(doc, s)
+    if patch is None:
+        return False
+    if dry_run:
+        ui.info(f"OpenClaw memory-core (dry run): dreaming.model would be filled with {DREAMING_MODEL}.")
+        return False
+    ok, out = _apply_hot(patch)
+    if not ok:
+        ui.error(f"OpenClaw rejected the memory-core dreaming model: {ui.safe_excerpt(out, 300, tail=True)}")
+        return False
+    run_changes.extend(openclaw_host.change_records(doc, patch, None, "memory-dreaming"))
+    ui.info(f"OpenClaw memory-core dreaming model filled: {DREAMING_MODEL} (your value is kept when set)")
+    return True
 
 
 def host_pending_command() -> str:

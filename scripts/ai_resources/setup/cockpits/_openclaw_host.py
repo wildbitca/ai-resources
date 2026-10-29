@@ -46,7 +46,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from .. import patch_retry, state, ui
+from .. import cockpit_auth, patch_retry, state, ui
 from ... import openclaw_host as host
 from ... import openclaw_cost_migrations as cost_migrations
 from ... import openclaw_reload_rules as rr
@@ -344,8 +344,11 @@ def configure(s: state.SetupState, doc: dict, ak_path: str, written: list[Path],
     _configure_hooks(s, ak_path, dry_run=dry_run)
     _configure_units(o, dry_run=dry_run)
     _configure_memory_high(o, dry_run=dry_run)
+    # The chat agents and the heartbeat move to Gemini only when the operator enabled the Google provider (its key
+    # answered OpenClaw's sign-in read): routing matrix D1-D3. Proposals only; each is confirmed per path.
+    chat_gemini = "google" in (cockpit_auth.providers(s) or {})
     changed = _configure_config(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
-                                run_changes=run_changes)
+                                run_changes=run_changes, chat_gemini=chat_gemini)
     changed = _configure_workboard(o, doc, dry_run=dry_run, oc=oc) or changed
     changed = _configure_bindings(o, doc, config_path, written, dry_run=dry_run, apply_patch=apply_patch) or changed
     _configure_agents_md(o, doc, dry_run=dry_run)
@@ -676,7 +679,7 @@ def _handle_restart_part(o: state.OpenClawState, patch: dict, replace_paths: lis
 def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
                       apply_patch: Callable[..., tuple[bool, str]],
                       oc: Callable[..., tuple[int, str]] | None = None,
-                      run_changes: list[dict] | None = None) -> bool:
+                      run_changes: list[dict] | None = None, chat_gemini: bool = False) -> bool:
     """The fill-only canonical patch, then the confirmed cost migrations for values this host already sets."""
     applied = _configure_config_fill(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
                                      run_changes=run_changes)
@@ -685,7 +688,7 @@ def _configure_config(o: state.OpenClawState, doc: dict, path: Path, written: li
             ui.warn(f"{name}: an Opus fallback sits behind a non-Opus primary, so a failed turn escalates to the most "
                     "expensive model. The cost migration below offers to remove it.")
         applied = _offer_cost_migrations(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch, oc=oc,
-                                         run_changes=run_changes) or applied
+                                         run_changes=run_changes, chat_gemini=chat_gemini) or applied
         applied = _offer_slack_cost(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch) or applied
         applied = _offer_notification_route(o, doc, path, written, dry_run=dry_run, apply_patch=apply_patch,
                                             oc=oc) or applied
@@ -926,7 +929,7 @@ def _probe_utility_model(o: state.OpenClawState, doc: dict, oc: Callable[..., tu
 def _offer_cost_migrations(o: state.OpenClawState, doc: dict, path: Path, written: list[Path], *, dry_run: bool,
                            apply_patch: Callable[..., tuple[bool, str]],
                            oc: Callable[..., tuple[int, str]] | None = None,
-                           run_changes: list[dict] | None = None) -> bool:
+                           run_changes: list[dict] | None = None, chat_gemini: bool = False) -> bool:
     """Show each lean value this host holds differently as `old -> new`, ask per path, apply the confirmed hot ones.
 
     Non-interactive and dry runs apply nothing and print the exact snippet instead. A declined path stays proposed on
@@ -940,7 +943,8 @@ def _offer_cost_migrations(o: state.OpenClawState, doc: dict, path: Path, writte
     verified = "" if dry_run else _probe_utility_model(o, doc, oc)
     props = cost_migrations.proposals(doc, applied=o.cost_migrations_applied, keep=overrides["keep"],
                                       force=overrides["force"], heartbeat_off=bool(getattr(o, "host_heartbeat_off", False)),
-                                      utility_model=verified, balanced_credit=True)
+                                      utility_model=verified, balanced_credit=True,
+                                      chat_gemini=chat_gemini)
     if not props:
         return False
     ui.info("Lean cost values that differ from what this host has set (nothing is replaced without your confirm):")

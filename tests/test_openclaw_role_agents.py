@@ -391,3 +391,19 @@ def test_configure_reconciles_an_unrecorded_kit_role_agent_and_shows_the_diff(tm
     run(_balanced_state(), host, tmp_path)
     ent = host.doc["agents"]["entries"]["kit-role-explore"]
     assert ent["model"]["primary"] != "anthropic/claude-sonnet-5-5" and ent["thinkingDefault"] == "xhigh"
+
+
+def test_a_bare_string_model_with_the_right_primary_but_missing_fallbacks_is_rewritten_on_an_unrecorded_agent(tmp_path):
+    """An unrecorded kit-role agent whose model is the bare string `agents add` writes (right primary, no fallbacks)
+    still gets the matrix chain: the primary alone is not the whole row."""
+    host = Host({"agents": {"entries": {"kit-role-planner": {"model": "anthropic/claude-sonnet-5-5"}}}})
+    run(_balanced_state(), host, tmp_path)
+    assert host.doc["agents"]["entries"]["kit-role-planner"]["model"] == {
+        "primary": "anthropic/claude-sonnet-5-5", "fallbacks": ["agy-cli-lane/gemini-4-argon-high"]}
+
+
+def test_an_unrecorded_agent_already_on_the_matrix_chain_is_left_alone(tmp_path):
+    chain = {"primary": "anthropic/claude-sonnet-5-5", "fallbacks": ["agy-cli-lane/gemini-4-argon-high"]}
+    host = Host({"agents": {"entries": {"kit-role-planner": {"model": copy.deepcopy(chain), "thinkingDefault": "high"}}}})
+    run(_balanced_state(), host, tmp_path)
+    assert host.doc["agents"]["entries"]["kit-role-planner"]["model"] == chain
