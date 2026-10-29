@@ -177,3 +177,51 @@ def test_db_fault_start_older_than_the_cap_keeps_the_cap(monkeypatch):
     runner, seen = _since_probe(lambda since: LINE, 1_000_000 - 7200)
     host.agent_db_fault_probe(runner)
     assert seen["since"] == "-45min"
+
+
+# --- db-fault probe_ok: an empty journal match is an answer (2026-10-29) ---------------------------------------------
+
+def _probe_runner(journal_rc, journal_text, health_rc=1, health_text=""):
+    def runner(argv, **_kw):
+        if argv[0] == "journalctl":
+            return journal_rc, journal_text
+        if argv[0] == "systemctl":
+            return 1, ""
+        return health_rc, health_text
+    return runner
+
+
+def test_db_fault_journal_exit_1_empty_is_an_answered_probe():
+    out = host.agent_db_fault_probe(_probe_runner(1, ""))
+    assert out["probe_ok"] is True and not out["fault"] and out["agents"] == []
+
+
+def test_db_fault_journal_exit_0_with_a_match_reports_the_fault():
+    out = host.agent_db_fault_probe(_probe_runner(0, LINE))
+    assert out["probe_ok"] is True and out["fault"] and out["agents"] == ["snoutzone"]
+
+
+def test_db_fault_journal_exit_2_with_no_health_could_not_tell():
+    out = host.agent_db_fault_probe(_probe_runner(2, "journalctl: boom"))
+    assert out["probe_ok"] is False and not out["fault"]
+
+
+def test_db_fault_journal_missing_with_no_health_could_not_tell():
+    out = host.agent_db_fault_probe(_probe_runner(127, "journalctl: not found"))
+    assert out["probe_ok"] is False
+
+
+def test_db_fault_journal_exit_1_with_output_is_an_error_not_an_answer():
+    out = host.agent_db_fault_probe(_probe_runner(1, "Failed to connect to bus"))
+    assert out["probe_ok"] is False
+
+
+def test_db_fault_health_json_followed_by_stderr_text_still_parses():
+    health = '{"ok": true, "deliveryQueues": {"failed": [{"count": 2}]}}\n[warn] something on stderr {not json}\n'
+    out = host.agent_db_fault_probe(_probe_runner(2, "", 0, health))
+    assert out["probe_ok"] is True and out["dead_letters"] == 2
+
+
+def test_db_fault_health_json_after_a_leading_warning_still_parses():
+    out = host.agent_db_fault_probe(_probe_runner(2, "", 0, 'warn {x\n{"ok": true}\n'))
+    assert out["probe_ok"] is True
