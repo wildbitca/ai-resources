@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 
 from ai_resources import openclaw_runtime as rt
+from test_openclaw_host_wizard import script, sim  # noqa: F401  (fixtures by name)
+from test_openclaw_cockpit import jarvis  # noqa: F401  (fixture by name)
 
 UNIT = "openclaw-gateway.service"
 
@@ -50,3 +52,56 @@ def test_no_main_pid_reports_nothing(tmp_path):
 
 def test_an_unreadable_link_is_unknown_not_a_fault(tmp_path):
     assert rt.runtime_findings(_runner(42), UNIT, {}, proc_root=str(tmp_path)) == []
+
+
+# --- wiring: status and verify render the warning; a fake runner never reaches the host's /proc ----------------------------
+
+def _fake_proc(tmp_path, monkeypatch, pid, target):
+    root = tmp_path / "proc"
+    root.mkdir()
+    _proc(root, pid, target)
+    monkeypatch.setattr(rt, "PROC_ROOT", str(root))
+
+
+def test_the_default_proc_root_is_the_module_constant_not_the_host(tmp_path, monkeypatch):
+    _fake_proc(tmp_path, monkeypatch, 77, "/opt/node/old/bin/node (deleted)")
+    assert rt.gateway_exe_state(_runner(77), UNIT, {})["state"] == "deleted"
+    monkeypatch.setattr(rt, "PROC_ROOT", str(tmp_path / "empty"))
+    assert rt.gateway_exe_state(_runner(77), UNIT, {})["state"] == "unknown"
+
+
+def test_cmd_status_prints_the_deleted_runtime_warning(tmp_path, monkeypatch, capsys):
+    import argparse
+    from ai_resources import openclaw_host as host
+    _fake_proc(tmp_path, monkeypatch, 4242, "/opt/node/old/bin/node (deleted)")
+    monkeypatch.setattr(host, "collect_status", lambda *a, **k: {"unit": UNIT})
+    monkeypatch.setattr(host, "render_status", lambda r: "REPORT")
+    monkeypatch.setattr(host, "recorded_selection", lambda: None)
+    monkeypatch.setattr(host, "recorded_pending", lambda: {"paths": [], "watch": None})
+    monkeypatch.setattr(host, "journal_findings", lambda *a, **k: [])
+
+    def runner(argv, **_kw):
+        return (0, "4242\n") if "MainPID" in argv else (1, "")
+
+    assert host.cmd_status(argparse.Namespace(no_doctor=True), runner=runner) == 0
+    out = capsys.readouterr().out
+    assert "WARN  the gateway (pid 4242) runs on a runtime that was deleted: /opt/node/old/bin/node" in out
+    assert "ai-resources openclaw doctor" in out
+
+
+def test_verify_returns_the_deleted_runtime_warning(tmp_path, monkeypatch, sim, script):
+    from test_openclaw_host_wizard import _configure, _state
+    from test_verify_openclaw_host import HostRunner
+    from ai_resources.setup.cockpits import openclaw
+    _fake_proc(tmp_path, monkeypatch, 4242, "/opt/node/old/bin/node (deleted)")
+    s = _state()
+    _configure(s)
+    base = HostRunner()
+
+    def runner(argv, **kw):
+        if argv[-3:] == ["-p", "MainPID", "--value"]:
+            return 0, "4242"
+        return base(argv, **kw)
+
+    found = openclaw.verify({"state": s, "runner": runner})
+    assert [f.level for f in found if "runs on a runtime that was deleted" in f.message] == ["warn"]

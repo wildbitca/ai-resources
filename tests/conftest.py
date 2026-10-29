@@ -337,6 +337,9 @@ def _isolate_claude_settings(tmp_path_factory, monkeypatch):
     # And the start-time read behind `plugin_is_stale`'s time rule: a tmp plugin dir is always newer
     # than the live gateway, so an unstubbed call would make every staleness test report stale.
     monkeypatch.setattr(openclaw_cockpit, "_gateway_started_at", lambda: None)
+    # T57: the deleted-runtime check reads /proc/<MainPID>/exe; a fake runner's pid must never hit the host's /proc.
+    from ai_resources import openclaw_runtime
+    monkeypatch.setattr(openclaw_runtime, "PROC_ROOT", str(root / "no-proc"))
 
 
 @pytest.fixture

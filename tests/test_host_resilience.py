@@ -8,7 +8,7 @@ import pytest
 from ai_resources import openclaw_host as host
 from ai_resources import verify
 
-LINE = ('Oct 28 12:36:28 bithome node[1]: [cron/maintenance] Cron maintenance failed error="Agent snoutzone '
+LINE = ('Oct 28 12:36:28 bithome node[1]: 2026-10-28T12:36:28.088+00:00 [cron/maintenance] Cron maintenance failed error="Agent snoutzone '
         '(/home/u/.openclaw/agents/snoutzone/agent/openclaw-agent.sqlite): SQLite session reclamation commit checkpoint '
         'expired\\nSessions remain unavailable. Stop the gateway and run openclaw doctor --fix"')
 
@@ -191,9 +191,22 @@ def _probe_runner(journal_rc, journal_text, health_rc=1, health_text=""):
     return runner
 
 
-def test_db_fault_journal_exit_1_empty_is_an_answered_probe():
-    out = host.agent_db_fault_probe(_probe_runner(1, ""))
+@pytest.mark.parametrize("text", ["", "-- No entries --", "-- No entries --\n"])
+def test_db_fault_journal_exit_1_empty_is_an_answered_probe(text):
+    out = host.agent_db_fault_probe(_probe_runner(1, text))
     assert out["probe_ok"] is True and not out["fault"] and out["agents"] == []
+
+
+def test_db_fault_journalctl_is_quiet_and_greps_the_full_phrase():
+    seen = []
+
+    def runner(argv, **_kw):
+        seen.append(list(argv))
+        return (1, "") if argv[0] == "journalctl" else (1, "")
+
+    host.agent_db_fault_probe(runner)
+    argv = next(a for a in seen if a[0] == "journalctl")
+    assert "-q" in argv and argv[argv.index("-g") + 1] == "SQLite session reclamation commit checkpoint expired"
 
 
 def test_db_fault_journal_exit_0_with_a_match_reports_the_fault():
@@ -225,3 +238,42 @@ def test_db_fault_health_json_followed_by_stderr_text_still_parses():
 def test_db_fault_health_json_after_a_leading_warning_still_parses():
     out = host.agent_db_fault_probe(_probe_runner(2, "", 0, 'warn {x\n{"ok": true}\n'))
     assert out["probe_ok"] is True
+
+
+# --- only genuine gateway fault lines count (2026-10-29: the journal quotes the agent's own text) -----------------------
+
+ADMISSION = ('Oct 29 16:30:15 bithome node[3233088]: 2026-10-29T16:30:15.209+00:00 [state/agent-admission] agent database '
+             'remains degraded agentId=main paths=["/home/u/.openclaw/agents/main/agent/openclaw-agent.sqlite"] '
+             'reason="SQLite session reclamation commit checkpoint expired" repairHint="Sessions remain unavailable"')
+PLUGIN = ('Oct 29 16:30:16 bithome node[3233088]: 2026-10-29T16:30:16.477+00:00 [plugins] memory-core: dreaming startup '
+          'cleanup failed for agent snoutzone: Agent snoutzone (/home/u/.openclaw/agents/snoutzone/agent/openclaw-agent.sqlite): '
+          'SQLite session reclamation commit checkpoint expired')
+ECHO = ('Oct 29 19:40:01 bithome node[3233088]: 2026-10-29T19:40:01.000+00:00 [agent/embedded] assistant: the line said '
+        'Agent snoutzone (/x/y.sqlite): SQLite session reclamation commit checkpoint expired, so I looked at it')
+ECHO2 = ('Oct 29 19:41:01 bithome node[3233088]: checkpoint expired agentId=ghost: Agent ghost (/x): '
+         'SQLite session reclamation commit checkpoint expired')
+
+
+def test_real_gateway_fault_lines_are_recognised():
+    out = host.agent_db_fault(ADMISSION + "\n" + PLUGIN, None)
+    assert out["fault"] and out["agents"] == ["main", "snoutzone"]
+
+
+def test_echoed_agent_text_is_not_a_fault():
+    out = host.agent_db_fault(ECHO + "\n" + ECHO2, None)
+    assert not out["fault"] and out["agents"] == []
+
+
+def test_a_caller_passed_since_is_not_overridden_by_a_recent_gateway_start(monkeypatch):
+    monkeypatch.setattr(host, "gateway_started_at", lambda runner: __import__("time").time() - 60)
+    seen = []
+
+    def runner(argv, **_kw):
+        seen.append(list(argv))
+        return 1, ""
+
+    host.agent_db_fault_probe(runner, since="-2h")
+    assert "--since=-2h" in next(a for a in seen if a[0] == "journalctl")
+    seen.clear()
+    host.agent_db_fault_probe(runner)
+    assert "--since=-45min" not in next(a for a in seen if a[0] == "journalctl")

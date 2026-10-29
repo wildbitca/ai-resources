@@ -4814,8 +4814,21 @@ def cmd_restart_report(args: argparse.Namespace, runner: Runner | None = None) -
 # messages while the gateway itself still answers `openclaw health`, so nothing else notices. This reads the journal for
 # that line and `openclaw health --json` for ingress pressure and failed delivery queues (dead letters), read-only.
 
-_DB_FAULT_RE = re.compile(r"Agent (?P<agent>[\w.-]+) \([^)]*\): SQLite session reclamation commit checkpoint expired")
+# Anchored on genuine gateway lines, not on any text containing the phrase: the journal also holds the gateway relaying an
+# agent's own output (`node[pid]: ... ` lines that quote "checkpoint expired"), which made a healthy host look faulty.
+# Real shapes (2026-10-29 16:30):
+#   node[N]: <iso> [state/agent-admission] agent database remains degraded agentId=<id> paths=[...] reason="SQLite session reclamation commit checkpoint expired" ...
+#   node[N]: <iso> [cron/maintenance] Cron maintenance failed error="Agent <id> (<path>): SQLite ... checkpoint expired ..."
+#   node[N]: <iso> [plugins] memory-core: dreaming startup cleanup failed for agent <id>: Agent <id> (<path>): SQLite session reclamation commit checkpoint expired
+_GW_PREFIX = r"node\[\d+\]: \d{4}-\d\d-\d\dT[\d:.]+[+-]\d\d:\d\d \[%s\] "
+_DB_FAULT_RES = (
+    re.compile(_GW_PREFIX % r"state/agent-admission" + r"agent database remains degraded agentId=(?P<agent>[\w.-]+) .*?"
+               r'reason="SQLite session reclamation commit checkpoint expired'),
+    re.compile(_GW_PREFIX % r"(?:plugins|cron/maintenance)" + r".*?Agent (?P<agent>[\w.-]+) \([^)]*\): SQLite session reclamation commit checkpoint expired"),
+)
+DB_FAULT_GREP = "SQLite session reclamation commit checkpoint expired"
 DEAD_LETTER_WARN = 1
+DB_FAULT_DEFAULT_SINCE = "-45min"
 DB_FAULT_WINDOW_S = 45 * 60   # matches the default `since="-45min"` of agent_db_fault_probe
 
 
@@ -4833,7 +4846,8 @@ def _walk_pressure(node, found: list) -> None:
 def agent_db_fault(journal_text: str, health: "dict | None") -> dict:
     """{fault, agents, ingress_pressure, dead_letters}: `fault` is True for a checkpoint-expired line (the DB is stuck) or
     for ingress pressure; dead letters are reported next to it, not on their own (old ones sit there for weeks)."""
-    agents = sorted({m.group("agent") for m in _DB_FAULT_RE.finditer(journal_text or "")})
+    agents = sorted({m.group("agent") for line in (journal_text or "").splitlines() for rx in _DB_FAULT_RES
+                     for m in [rx.search(line)] if m})
     pressure: list[str] = []
     dead = 0
     if isinstance(health, dict):
@@ -4859,20 +4873,20 @@ def _first_json_object(text: str) -> "dict | None":
     return None
 
 
-def agent_db_fault_probe(runner: Runner = default_runner, *, since: str = "-45min") -> dict:
+def agent_db_fault_probe(runner: Runner = default_runner, *, since: str = DB_FAULT_DEFAULT_SINCE) -> dict:
     """Run the two reads and return `agent_db_fault`'s answer plus `probe_ok` (False when neither source answered)."""
     # Only lines newer than the unit's latest start count: a repair plus restart leaves the old ones inside the window
     # (2026-10-29: the watchdog kept alerting for ~30 min after the fix). The cap stays as the upper bound.
     started = gateway_started_at(runner)
-    if started is not None and time.time() - started < DB_FAULT_WINDOW_S:
+    if since == DB_FAULT_DEFAULT_SINCE and started is not None and time.time() - started < DB_FAULT_WINDOW_S:
         since = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(started))
-    rc, journal = runner(["journalctl", "--user", "-u", GATEWAY_UNIT, f"--since={since}", "--no-pager", "-g",
-                          "checkpoint expired"], env=systemd_env(), timeout=30)
+    rc, journal = runner(["journalctl", "--user", "-u", GATEWAY_UNIT, f"--since={since}", "--no-pager", "-q", "-g",
+                          DB_FAULT_GREP], env=systemd_env(), timeout=30)
     rc2, health_text = runner([resolve_openclaw_bin(), "health", "--json"], timeout=60)
     health = _first_json_object(health_text) if rc2 == 0 else None
-    # journalctl -g exits 1 with no output when nothing matched: it answered, there is no fault line. Any other
-    # failure (exit > 1, journalctl missing -> 127) leaves the journal unread.
-    journal_answered = rc == 0 or (rc == 1 and not (journal or "").strip())
+    # journalctl -g exits 1 when nothing matched (empty with -q, "-- No entries --" without): it answered, there is no
+    # fault line. Any other failure (exit > 1, journalctl missing -> 127) leaves the journal unread.
+    journal_answered = rc == 0 or (rc == 1 and (journal or "").strip() in ("", "-- No entries --"))
     out = agent_db_fault(journal if rc == 0 else "", health)
     out["probe_ok"] = journal_answered or health is not None
     return out
