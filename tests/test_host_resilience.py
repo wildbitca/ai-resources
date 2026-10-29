@@ -8,7 +8,13 @@ import pytest
 from ai_resources import openclaw_host as host
 from ai_resources import verify
 
-LINE = ('Oct 28 12:36:28 bithome node[1]: 2026-10-28T12:36:28.088+00:00 [cron/maintenance] Cron maintenance failed error="Agent snoutzone '
+
+def J(message: str) -> str:
+    """One `journalctl -o json` line: the gateway's stdout line is the MESSAGE field."""
+    return json.dumps({"MESSAGE": message, "_PID": "1", "SYSLOG_IDENTIFIER": "node"})
+
+
+LINE = J('2026-10-28T12:36:28.088+00:00 [cron/maintenance] Cron maintenance failed error="Agent snoutzone '
         '(/home/u/.openclaw/agents/snoutzone/agent/openclaw-agent.sqlite): SQLite session reclamation commit checkpoint '
         'expired\\nSessions remain unavailable. Stop the gateway and run openclaw doctor --fix"')
 
@@ -242,15 +248,15 @@ def test_db_fault_health_json_after_a_leading_warning_still_parses():
 
 # --- only genuine gateway fault lines count (2026-10-29: the journal quotes the agent's own text) -----------------------
 
-ADMISSION = ('Oct 29 16:30:15 bithome node[3233088]: 2026-10-29T16:30:15.209+00:00 [state/agent-admission] agent database '
+ADMISSION = J('2026-10-29T16:30:15.209+00:00 [state/agent-admission] agent database '
              'remains degraded agentId=main paths=["/home/u/.openclaw/agents/main/agent/openclaw-agent.sqlite"] '
              'reason="SQLite session reclamation commit checkpoint expired" repairHint="Sessions remain unavailable"')
-PLUGIN = ('Oct 29 16:30:16 bithome node[3233088]: 2026-10-29T16:30:16.477+00:00 [plugins] memory-core: dreaming startup '
+PLUGIN = J('2026-10-29T16:30:16.477+00:00 [plugins] memory-core: dreaming startup '
           'cleanup failed for agent snoutzone: Agent snoutzone (/home/u/.openclaw/agents/snoutzone/agent/openclaw-agent.sqlite): '
           'SQLite session reclamation commit checkpoint expired')
-ECHO = ('Oct 29 19:40:01 bithome node[3233088]: 2026-10-29T19:40:01.000+00:00 [agent/embedded] assistant: the line said '
+ECHO = J('2026-10-29T19:40:01.000+00:00 [agent/embedded] assistant: the line said '
         'Agent snoutzone (/x/y.sqlite): SQLite session reclamation commit checkpoint expired, so I looked at it')
-ECHO2 = ('Oct 29 19:41:01 bithome node[3233088]: checkpoint expired agentId=ghost: Agent ghost (/x): '
+ECHO2 = J('checkpoint expired agentId=ghost: Agent ghost (/x): '
          'SQLite session reclamation commit checkpoint expired')
 
 
@@ -262,6 +268,49 @@ def test_real_gateway_fault_lines_are_recognised():
 def test_echoed_agent_text_is_not_a_fault():
     out = host.agent_db_fault(ECHO + "\n" + ECHO2, None)
     assert not out["fault"] and out["agents"] == []
+
+
+FORGED = [
+    # the gateway relaying an agent's output that quotes a real-looking line
+    "2026-10-29T19:50:00.000+00:00 [agent/main] relayed output: node[1]: 2026-10-29T19:49:00.000+00:00 [plugins] Agent main (x): "
+    "SQLite session reclamation commit checkpoint expired",
+    # a stored note that quotes the phrase after the plugins prefix
+    '2026-10-29T19:50:00.000+00:00 [plugins] memory-core: stored note "Agent devops (y): SQLite session reclamation commit checkpoint expired"',
+    # the plugins prefix with a free-text gap before the agent clause
+    "2026-10-29T19:50:00.000+00:00 [plugins] anything at all Agent devops (y): SQLite session reclamation commit checkpoint expired",
+    # a different agent named in the outer and inner clause
+    "2026-10-29T19:50:00.000+00:00 [plugins] memory-core: dreaming startup cleanup failed for agent a: Agent b (y): "
+    "SQLite session reclamation commit checkpoint expired",
+    # text before the timestamp
+    "user said: 2026-10-29T19:50:00.000+00:00 [cron/maintenance] Cron maintenance failed error=\"Agent x (y): "
+    "SQLite session reclamation commit checkpoint expired",
+    # the admission prefix followed by a gap instead of the path list
+    "2026-10-29T19:50:00.000+00:00 [state/agent-admission] agent database remains degraded agentId=x blah reason=\""
+    "SQLite session reclamation commit checkpoint expired",
+]
+
+
+@pytest.mark.parametrize("message", FORGED)
+def test_forged_or_echoed_lines_never_raise_the_fault(message):
+    out = host.agent_db_fault(J(message), None)
+    assert not out["fault"] and out["agents"] == [], message
+
+
+def test_a_short_format_journal_line_is_not_accepted_any_more():
+    plain = "Oct 28 12:36:28 bithome node[1]: " + json.loads(LINE)["MESSAGE"]
+    assert not host.agent_db_fault(plain, None)["fault"]
+
+
+def test_the_probe_asks_journalctl_for_json():
+    seen = []
+
+    def runner(argv, **_kw):
+        seen.append(list(argv))
+        return 1, ""
+
+    host.agent_db_fault_probe(runner)
+    argv = next(a for a in seen if a[0] == "journalctl")
+    assert argv[argv.index("-o") + 1] == "json"
 
 
 def test_a_caller_passed_since_is_not_overridden_by_a_recent_gateway_start(monkeypatch):

@@ -4814,19 +4814,24 @@ def cmd_restart_report(args: argparse.Namespace, runner: Runner | None = None) -
 # messages while the gateway itself still answers `openclaw health`, so nothing else notices. This reads the journal for
 # that line and `openclaw health --json` for ingress pressure and failed delivery queues (dead letters), read-only.
 
-# Anchored on genuine gateway lines, not on any text containing the phrase: the journal also holds the gateway relaying an
-# agent's own output (`node[pid]: ... ` lines that quote "checkpoint expired"), which made a healthy host look faulty.
-# Real shapes (2026-10-29 16:30):
-#   node[N]: <iso> [state/agent-admission] agent database remains degraded agentId=<id> paths=[...] reason="SQLite session reclamation commit checkpoint expired" ...
-#   node[N]: <iso> [cron/maintenance] Cron maintenance failed error="Agent <id> (<path>): SQLite ... checkpoint expired ..."
-#   node[N]: <iso> [plugins] memory-core: dreaming startup cleanup failed for agent <id>: Agent <id> (<path>): SQLite session reclamation commit checkpoint expired
-_GW_PREFIX = r"node\[\d+\]: \d{4}-\d\d-\d\dT[\d:.]+[+-]\d\d:\d\d \[%s\] "
+# Matched on the journal's own MESSAGE field (`journalctl -o json`), anchored at its start, with the fixed text of each
+# gateway line and no free-text gap: the journal also holds the gateway relaying an agent's own output, and text an
+# agent or a user can make it echo (`... relayed output: <iso> [plugins] Agent x (y): ...`, a stored note quoting the
+# phrase) must never read as a fault. With the short format that anchor did not exist (any `search` hit counted).
+# Real MESSAGE shapes (2026-10-29 16:30):
+#   <iso> [state/agent-admission] agent database remains degraded agentId=<id> paths=[...] reason="SQLite ... checkpoint expired" ...
+#   <iso> [cron/maintenance] Cron maintenance failed error="Agent <id> (<path>): SQLite ... checkpoint expired ..."
+#   <iso> [plugins] memory-core: dreaming startup cleanup failed for agent <id>: Agent <id> (<path>): SQLite ... checkpoint expired
+_FAULT_TEXT = "SQLite session reclamation commit checkpoint expired"
+_GW_PREFIX = r"\d{4}-\d\d-\d\dT[\d:.]+[+-]\d\d:\d\d \[%s\] "
 _DB_FAULT_RES = (
-    re.compile(_GW_PREFIX % r"state/agent-admission" + r"agent database remains degraded agentId=(?P<agent>[\w.-]+) .*?"
-               r'reason="SQLite session reclamation commit checkpoint expired'),
-    re.compile(_GW_PREFIX % r"(?:plugins|cron/maintenance)" + r".*?Agent (?P<agent>[\w.-]+) \([^)]*\): SQLite session reclamation commit checkpoint expired"),
+    re.compile(_GW_PREFIX % r"state/agent-admission" + r"agent database remains degraded agentId=(?P<agent>[\w.-]+) "
+               r'paths=\[[^\]]*\] reason="' + _FAULT_TEXT),
+    re.compile(_GW_PREFIX % r"cron/maintenance" + r'Cron maintenance failed error="Agent (?P<agent>[\w.-]+) \([^)]*\): ' + _FAULT_TEXT),
+    re.compile(_GW_PREFIX % r"plugins" + r"memory-core: dreaming startup cleanup failed for agent (?P<agent>[\w.-]+): "
+               r"Agent (?P=agent) \([^)]*\): " + _FAULT_TEXT),
 )
-DB_FAULT_GREP = "SQLite session reclamation commit checkpoint expired"
+DB_FAULT_GREP = _FAULT_TEXT
 DEAD_LETTER_WARN = 1
 DB_FAULT_DEFAULT_SINCE = "-45min"
 DB_FAULT_WINDOW_S = 45 * 60   # matches the default `since="-45min"` of agent_db_fault_probe
@@ -4843,11 +4848,23 @@ def _walk_pressure(node, found: list) -> None:
             _walk_pressure(item, found)
 
 
+def _journal_messages(journal_text: str):
+    """The MESSAGE strings of `journalctl -o json` output (one JSON object per line); anything else is ignored."""
+    for line in (journal_text or "").splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        msg = entry.get("MESSAGE") if isinstance(entry, dict) else None
+        if isinstance(msg, str):
+            yield msg
+
+
 def agent_db_fault(journal_text: str, health: "dict | None") -> dict:
     """{fault, agents, ingress_pressure, dead_letters}: `fault` is True for a checkpoint-expired line (the DB is stuck) or
     for ingress pressure; dead letters are reported next to it, not on their own (old ones sit there for weeks)."""
-    agents = sorted({m.group("agent") for line in (journal_text or "").splitlines() for rx in _DB_FAULT_RES
-                     for m in [rx.search(line)] if m})
+    agents = sorted({m.group("agent") for msg in _journal_messages(journal_text) for rx in _DB_FAULT_RES
+                     for m in [rx.match(msg)] if m})
     pressure: list[str] = []
     dead = 0
     if isinstance(health, dict):
@@ -4880,7 +4897,7 @@ def agent_db_fault_probe(runner: Runner = default_runner, *, since: str = DB_FAU
     started = gateway_started_at(runner)
     if since == DB_FAULT_DEFAULT_SINCE and started is not None and time.time() - started < DB_FAULT_WINDOW_S:
         since = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(started))
-    rc, journal = runner(["journalctl", "--user", "-u", GATEWAY_UNIT, f"--since={since}", "--no-pager", "-q", "-g",
+    rc, journal = runner(["journalctl", "--user", "-u", GATEWAY_UNIT, f"--since={since}", "--no-pager", "-q", "-o", "json", "-g",
                           DB_FAULT_GREP], env=systemd_env(), timeout=30)
     rc2, health_text = runner([resolve_openclaw_bin(), "health", "--json"], timeout=60)
     health = _first_json_object(health_text) if rc2 == 0 else None
