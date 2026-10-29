@@ -256,8 +256,13 @@ def _registration_shell(live: Mapping[str, Any], agent: RoleAgent, workspace: Pa
 
 def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Mapping[str, Path],
                 recorded: Mapping[str, Any], methods: Mapping[str, str],
-                cli_runtimes: Iterable[str] = ()) -> tuple[dict[str, Any], list[str]]:
+                cli_runtimes: Iterable[str] = (),
+                reconciled: "list[str] | None" = None) -> tuple[dict[str, Any], list[str]]:
     """(fill-only patch, ids kept because the operator changed them). Empty patch when nothing is missing.
+
+    A `kit-role-*` agent the kit did not record as created (`created_agent_ids`) is still moved to its matrix row, but
+    ONLY its `model` (primary and fallbacks) and `subagents.model`; every other field stays the operator's. Those ids are
+    appended to `reconciled` (when given) so the caller can show the diff before anything is written.
 
     A new id gets its whole entry. An existing id is updated only when it is a recorded kit id whose live model,
     fallbacks and thinking still equal what the kit last wrote (so a matrix or profile change moves it); otherwise it is
@@ -282,6 +287,17 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
             live_fb = _fallbacks_of(live.get("model"))
             live_think = live.get("thinkingDefault", "")
             ours = aid in set(recorded.get("created_agent_ids") or [])
+            if not ours and is_kit_role_id(aid) and aid == agent_id_for(agent.get("role", ""), agent.get("domain", "")) \
+                    and not _registration_shell(live, agent, workspaces[aid]) \
+                    and (live_model != agent["model"] or (isinstance(live.get("model"), Mapping) and live_fb != want_fb)):
+                ent = patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})
+                ent["model"] = _model_value(agent)
+                have_spawn = _get(live, "subagents", "model")
+                if have_spawn is not None and have_spawn != _model_value(agent):
+                    ent.setdefault("subagents", {})["model"] = _model_value(agent)
+                if reconciled is not None:
+                    reconciled.append(aid)
+                continue
             if _registration_shell(live, agent, workspaces[aid]):
                 # `agents add` ran but the run stopped before the kit's fields landed: finish the kit's own entry
                 # (the model too: `agents add` spells it as a bare string, which `verify` warns about)
@@ -324,6 +340,21 @@ def build_patch(agents: list[RoleAgent], doc: Mapping[str, Any], workspaces: Map
             patch.setdefault("agents", {}).setdefault("entries", {}).setdefault(aid, {})["tools"] = {"deny": deny}
     _subagent_models(agents, entries, recorded, kept, patch, _get(doc, "agents", "defaults", "subagents", "model"))
     return patch, kept
+
+
+def reconcile_diff(aid: str, live: Any, agent: RoleAgent) -> list[str]:
+    """Human-readable lines for what a reconcile of `aid` changes: model.primary, model.fallbacks, subagents.model."""
+    lines: list[str] = []
+    have, want = _primary(_get(live, "model")), agent["model"]
+    if have != want:
+        lines.append(f"  {aid}: model.primary {have or '(unset)'} -> {want}")
+    have_fb, want_fb = _fallbacks_of(_get(live, "model")), list(agent.get("fallbacks") or [])
+    if have_fb != want_fb:
+        lines.append(f"  {aid}: model.fallbacks [{', '.join(have_fb)}] -> [{', '.join(want_fb)}]")
+    spawn = _get(live, "subagents", "model")
+    if spawn is not None and spawn != _model_value(agent):
+        lines.append(f"  {aid}: subagents.model {_primary(spawn) or '(unset)'} -> {want}")
+    return lines
 
 
 def kept_note(aid: str, live: Any, agent: "RoleAgent | None") -> str:
@@ -456,7 +487,15 @@ def configure(s: "state.SetupState", doc: Mapping[str, Any], *, config_root: Pat
     recorded = copy.deepcopy(o.role_agents_applied) if o.role_agents_applied else {}
     workspaces = {a.id: root / a.id for a in agents}
     cli_runtimes = tuple(cli_runtimes)
-    patch, kept = build_patch(agents, doc, workspaces, recorded, methods, cli_runtimes)
+    reconciled: list[str] = []
+    patch, kept = build_patch(agents, doc, workspaces, recorded, methods, cli_runtimes, reconciled)
+    if reconciled:
+        by_id = {a.id: a for a in agents}
+        info("Kit-role agents not created by setup but moved to their routing matrix row (model fields only):"
+             + ("" if not dry_run else " (dry run, nothing written)"))
+        for aid in reconciled:
+            for line in reconcile_diff(aid, _get(doc, "agents", "entries", aid), by_id[aid]):
+                info(line)
     stub = agy_stub_patch(agents, doc)
     if stub:
         patch.setdefault("models", {}).setdefault("providers", {})[openclaw_agy.STUB_PROVIDER] = stub

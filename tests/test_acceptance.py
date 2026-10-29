@@ -73,7 +73,8 @@ def test_registry_has_a_case_for_every_d8_bullet_and_every_role():
     assert {"spawn.landed-on-role-agent", "team.main-assumes-21-roles", "team.cross-provider-run", "team.cli-and-api-one-run"} <= ids
     assert {"setup.marker-guard", "setup.restart-lock", "setup.active-turns-defer", "setup.cgroup-t29", "setup.reload-rules",
             "setup.plugin-fresh", "setup.mcp-child-cap", "setup.sigterm-window", "setup.idempotent-rerun", "setup.offbox-regenerate",
-            "setup.offbox-cred", "setup.stopfailure-hook", "setup.credits-ledger", "setup.real-restart", "setup.watchdog"} <= ids
+            "setup.offbox-cred", "setup.stopfailure-hook", "setup.credits-ledger", "setup.real-restart", "setup.watchdog",
+            "setup.role-matrix-drift", "setup.role-billing-pool"} <= ids
     assert {c.group for c in acc.CASES} == set(acc.GROUPS)
 
 

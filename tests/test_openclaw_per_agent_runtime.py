@@ -229,11 +229,13 @@ def test_the_bare_entry_agents_add_left_behind_gets_the_kits_fields(tmp_path):
 
 
 def test_an_entry_the_operator_shaped_is_not_a_shell(tmp_path):
+    # not a registration shell, not recorded as created: only its model fields move to the matrix row, nothing else
     live = {"name": "kit-role-reviewer", "workspace": str(tmp_path), "model": OPUS}
     doc = {"agents": {"entries": {"kit-role-reviewer": live}}}
     patch, kept = openclaw_roles.build_patch([_role(SONNET, "medium")], doc, {"kit-role-reviewer": tmp_path},
                                              {}, {"anthropic": "api_key"}, ("claude-cli",))
-    assert kept == ["kit-role-reviewer"] and patch == {}
+    assert kept == [] and patch == {"agents": {"entries": {"kit-role-reviewer": {
+        "model": {"primary": SONNET}, "subagents": {"model": {"primary": SONNET}}}}}}
 
 
 def test_an_identity_the_operator_set_keeps_the_entry_theirs(tmp_path):
