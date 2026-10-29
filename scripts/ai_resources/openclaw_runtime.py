@@ -11,6 +11,7 @@ from typing import Callable
 
 Runner = Callable[..., "tuple[int, str]"]
 
+PROC_ROOT = "/proc"   # module-level so a test can point every caller at a fake tree
 DELETED_SUFFIX = " (deleted)"
 REMEDY = ("a drained restart is needed: run `ai-resources openclaw doctor` (it pauses the watchdog, drains the cgroup, "
           "repairs and restarts); never a bare `systemctl --user restart` (pitfall T57)")
@@ -22,14 +23,14 @@ def _main_pid(runner: Runner, unit: str, env: dict) -> str:
     return pid if pid.isdigit() and int(pid) > 0 else ""
 
 
-def gateway_exe_state(runner: Runner, unit: str, env: dict, *, proc_root: str = "/proc") -> dict:
+def gateway_exe_state(runner: Runner, unit: str, env: dict, *, proc_root: "str | None" = None) -> dict:
     """{state, pid, exe}: `state` is one of `ok`, `deleted`, `missing`, `no-pid` (unit not running) or `unknown`
     (the link could not be read, for example a permission error: never reported as a fault)."""
     pid = _main_pid(runner, unit, env)
     if not pid:
         return {"state": "no-pid", "pid": "", "exe": ""}
     try:
-        exe = os.readlink(os.path.join(proc_root, pid, "exe"))
+        exe = os.readlink(os.path.join(proc_root or PROC_ROOT, pid, "exe"))
     except OSError:
         return {"state": "unknown", "pid": pid, "exe": ""}
     if exe.endswith(DELETED_SUFFIX):
@@ -39,7 +40,7 @@ def gateway_exe_state(runner: Runner, unit: str, env: dict, *, proc_root: str = 
     return {"state": "ok", "pid": pid, "exe": exe}
 
 
-def runtime_findings(runner: Runner, unit: str, env: dict, *, proc_root: str = "/proc") -> list[tuple[str, str, str]]:
+def runtime_findings(runner: Runner, unit: str, env: dict, *, proc_root: "str | None" = None) -> list[tuple[str, str, str]]:
     """(level, message, remedy) for `status` and `verify`: one warning when the gateway runs on a deleted binary, else []."""
     try:
         res = gateway_exe_state(runner, unit, env, proc_root=proc_root)
