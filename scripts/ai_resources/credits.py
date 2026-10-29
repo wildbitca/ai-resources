@@ -38,7 +38,7 @@ MAX_POOL = "claude-max"
 ENV_DECLARED = {routing.POOL_ANTHROPIC_API: "AI_RESOURCES_CREDIT_ANTHROPIC_USD",
                 routing.POOL_GEMINI_API: "AI_RESOURCES_CREDIT_GEMINI_USD"}
 OPENCLAW_PROVIDER = {routing.POOL_ANTHROPIC_API: "anthropic", routing.POOL_GEMINI_API: "google"}
-ALERT_AT = 0.80
+ALERT_AT = routing.ALERT_AT
 DEFAULT_WINDOW_DAYS = 30           # measured window of a pool that has no declared date
 MAX_WINDOW_DAYS = 7                # token window of the Max pool
 NO_BALANCE_API = ("no provider balance API is readable with an API key; remaining = declared - measured spend "
@@ -203,6 +203,33 @@ def _since(entry: Mapping[str, Any], now: datetime) -> datetime:
     return now - timedelta(days=DEFAULT_WINDOW_DAYS)
 
 
+COVER_BEFORE_S = 300.0     # an OpenClaw claude-cli event summarises work Claude Code logged up to this long before it
+COVER_AFTER_S = 60.0
+
+
+def drop_covered_cli_events(events: list, claude_records: list) -> list:
+    """The OpenClaw `claude-cli` events whose spend Claude Code's own transcripts already hold.
+
+    The claude-cli provider runs `claude -p` (entrypoint sdk-cli), so every such turn is written TWICE: per API message
+    in ~/.claude/projects/*.jsonl and once per turn in the OpenClaw DB. The ids never match (OpenClaw's responseId is
+    `cli-assistant:<uuid>`, Claude Code's is the API `msg_...`), so a shared-id dedupe is impossible. An event is covered
+    when a Claude Code record of the same model sits in [event - 300 s, event + 60 s]; on the 2026-10-29 host copy all 279
+    events in 7 days were covered. An uncovered event (no Claude Code transcript, e.g. pruned) still counts."""
+    import bisect
+    by_model: dict[str, list[float]] = {}
+    for r in claude_records:
+        by_model.setdefault(r.model, []).append(r.ts.timestamp())
+    for stamps in by_model.values():
+        stamps.sort()
+    kept = []
+    for e in events:
+        stamps, t = by_model.get(e.model, []), e.ts.timestamp()
+        i = bisect.bisect_left(stamps, t - COVER_BEFORE_S)
+        if not (i < len(stamps) and stamps[i] <= t + COVER_AFTER_S):
+            kept.append(e)
+    return kept
+
+
 def measure(doc: Mapping[str, Any], *, now: datetime | None = None, agents: Path | None = None,
             claude_roots: list[Path] | None = None) -> dict[str, dict]:
     """Per pool: {measured_usd, calls, tokens, unpriced, source} from the machine's own usage records. Read-only."""
@@ -233,7 +260,9 @@ def measure(doc: Mapping[str, Any], *, now: datetime | None = None, agents: Path
     since = now - timedelta(days=MAX_WINDOW_DAYS)
     roots = claude_roots if claude_roots is not None else claude_project_roots()
     recs = audit_sources.load_claude_jsonl(roots, since=since, include_subagents=True, until=now + timedelta(days=1)) if roots else []
-    cli, _ = audit_sources.load_openclaw_events(adir, since=since, until=now + timedelta(days=1), providers=("claude-cli",))
+    cli, cli_stats = audit_sources.load_openclaw_events(adir, since=since, until=now + timedelta(days=1),
+                                                        providers=("claude-cli", "claude-kit"))
+    cli = drop_covered_cli_events(cli, recs)
     tok = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     for r in [*recs, *cli]:                  # Claude Code transcripts and the OpenClaw claude-cli provider: both Max
         tok["input"] += r.input
@@ -241,7 +270,8 @@ def measure(doc: Mapping[str, Any], *, now: datetime | None = None, agents: Path
         tok["cache_read"] += r.cache_read
         tok["cache_write"] += r.cache_write
     out[MAX_POOL] = {"measured_usd": None, "calls": len(recs) + len(cli), "tokens": tok, "since": since.date().isoformat(),
-                     "source": "claude-code-transcripts+claude-cli", "unpriced_models": []}
+                     "source": "claude-code-transcripts+claude-cli", "unpriced_models": [],
+                     "undecoded": cli_stats.undecoded}
     return out
 
 
@@ -303,14 +333,15 @@ def lines(path: Path | None = None) -> list[str]:
             out.append(f"{pool}: declared: unknown; measured ${used or 0:,.2f} since {e.get('since') or 'n/a'} "
                        f"(estimate; set the opening credit with `ai-resources credits set {pool} <usd>`)")
         else:
-            out.append(f"{pool}: declared ${declared:,.2f} on {e.get('declared_on')}, measured ${used or 0:,.2f}, "
+            out.append(f"{pool}: declared ${declared:,.2f} on {e.get('declared_on')}, measured ${used or 0:,.2f} "
+                       f"(window since {e.get('since') or 'n/a'}), "
                        f"remaining ${rem if rem is not None else declared - (used or 0):,.2f} (estimate)")
         if e.get("unpriced_models"):
             out.append(f"{pool}: unpriced models (not counted): {', '.join(e['unpriced_models'])}")
     mx = pools.get(MAX_POOL)
     if mx:
         t = mx.get("tokens") or {}
-        out.append(f"{MAX_POOL}: {sum(t.values()):,} tokens in the last {MAX_WINDOW_DAYS} days (subscription: tokens only, no USD)")
+        out.append(f"{MAX_POOL}: {sum(t.values()):,} tokens in the last {MAX_WINDOW_DAYS} days, window since {mx.get('since') or 'n/a'} (subscription: tokens only, no USD)")
     out.append(f"ledger updated: {doc.get('updated', 'n/a')}; {NO_BALANCE_API}")
     return out
 

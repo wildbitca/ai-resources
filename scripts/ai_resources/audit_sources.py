@@ -7,9 +7,9 @@ Claude Code: ~/.claude/projects/<slug>/*.jsonl plus <slug>/<session>/subagents/*
 assistant messages are written several times with cumulative usage, so records are deduplicated by
 `message.id` (fallback `requestId`); the last record wins.
 
-OpenClaw: per-agent SQLite DBs at <agents_dir>/<agent>/agent/openclaw-agent.sqlite, table
-`transcript_events` (event_json, or event_zstd when compressed). Opened with mode=ro; the shared
-state/openclaw.sqlite is never touched.
+OpenClaw: per-agent SQLite DBs at <agents_dir>/<agent>/agent/openclaw-agent.sqlite, tables `transcript_events` and
+`session_transcript_archives` (deleted/reset sessions). Live rows are event_json or event_zstd when compressed.
+Opened with mode=ro; the shared state/openclaw.sqlite is never touched.
 """
 from __future__ import annotations
 
@@ -263,10 +263,54 @@ def decode_zstd(blob: bytes) -> str | None:
     return None
 
 
+UNMETERED_PROVIDERS = ("claude-cli", "claude-kit")   # their turns can carry a zero usage block: tokens were spent, not recorded
+
+
+def _openclaw_usage(ej: str, agent: str, sid, seq, ts: datetime, providers: tuple[str, ...] | None,
+                    stats: LoadStats) -> tuple[str, Usage] | None:
+    """One transcript event (live row or archived line) as `(dedupe key, Usage)`; None when it is not metered usage."""
+    if '"usage"' not in ej:
+        return None
+    try:
+        m = json.loads(ej).get("message") or {}
+        u = m.get("usage") or {}
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    if not isinstance(m, dict) or m.get("role") != "assistant" or not isinstance(u, dict) or not u:
+        return None
+    if providers is not None and m.get("provider") not in providers:
+        return None
+    w1 = u.get("cacheWrite1h") or 0
+    w5 = max((u.get("cacheWrite") or 0) - w1, 0)
+    if not ((u.get("input") or 0) + (u.get("output") or 0) + (u.get("cacheRead") or 0) + w1 + w5):
+        if m.get("provider") in UNMETERED_PROVIDERS:
+            stats.undecoded += 1          # a real CLI turn whose usage was never recorded: report it, do not hide it
+        return None                       # delivery mirrors and automation markers carry a usage block of zeros
+    polls = any(is_poll(c.get("name", ""), c.get("arguments")) for c in (m.get("content") or [])
+                if isinstance(c, dict) and c.get("type") == "toolCall")
+    key = m.get("responseId") or m.get("idempotencyKey") or f"{agent}:{sid}:{seq}"
+    return f"{agent}:{key}", Usage(
+        ts=ts, source="openclaw", project="", agent=agent, model=m.get("model", ""), input=u.get("input") or 0,
+        output=u.get("output") or 0, cache_read=u.get("cacheRead") or 0, cache_write_5m=w5, cache_write_1h=w1,
+        msg_id=str(key), session=str(sid),
+        origin="openclaw-api" if m.get("provider") == "anthropic" else "openclaw-" + str(m.get("provider")),
+        poll=polls, provider=str(m.get("provider") or provider_of_model(m.get("model", ""))), role=openclaw_role(agent))
+
+
+def _archive_text(encoding: str, blob: bytes, decode: Decoder) -> str | None:
+    if encoding == "identity":
+        return bytes(blob).decode("utf-8", "replace")
+    return decode(bytes(blob))
+
+
 def load_openclaw_events(agents_dir: Path, since: datetime | None = None, until: datetime | None = None,
                          decoder: Decoder | None = None, providers: tuple[str, ...] | None = None,
                          ) -> tuple[list[Usage], LoadStats]:
-    """Assistant usage from every per-agent transcript DB; never writes, never opens state/openclaw.sqlite."""
+    """Assistant usage from every per-agent transcript DB; never writes, never opens state/openclaw.sqlite.
+
+    Two sources per DB: `transcript_events` (live sessions) and `session_transcript_archives` (sessions OpenClaw deleted
+    or reset: one zstd/identity JSONL blob each, with the same event shape). Archived usage is real spend, so a cron
+    run that was archived still counts; a response seen in both places is counted once."""
     decode = decoder or decode_zstd
     stats = LoadStats()
     agents_dir = Path(agents_dir)
@@ -293,6 +337,12 @@ def load_openclaw_events(agents_dir: Path, since: datetime | None = None, until:
             stats.notes.append(f"{agent}: unreadable ({e})")
             con.close()
             continue
+        try:
+            archives = con.execute(
+                "select session_id, encoding, archive_blob, created_at from session_transcript_archives "
+                "where created_at >= ?", (lo,)).fetchall()      # archived AFTER the window start; events are filtered below
+        except sqlite3.Error:
+            archives = []                                       # an older DB has no archive table: not an error
         con.close()
         for sid, seq, ej, ez, created in rows:
             if ej is None:
@@ -301,29 +351,25 @@ def load_openclaw_events(agents_dir: Path, since: datetime | None = None, until:
                     stats.undecoded += 1
                     continue
                 ej = text
-            if '"usage"' not in ej:
+            got = _openclaw_usage(ej, agent, sid, seq, datetime.fromtimestamp(created / 1000, timezone.utc), providers, stats)
+            if got:
+                records[got[0]] = got[1]
+        for sid, encoding, blob, archived_at in archives:
+            text = _archive_text(encoding, blob, decode) if blob is not None else None
+            if text is None:
+                stats.undecoded += 1
                 continue
-            try:
-                m = json.loads(ej).get("message") or {}
-                u = m.get("usage") or {}
-            except (json.JSONDecodeError, AttributeError):
-                continue
-            if m.get("role") != "assistant" or not isinstance(u, dict) or not u:
-                continue
-            if providers is not None and m.get("provider") not in providers:
-                continue
-            w1 = u.get("cacheWrite1h") or 0
-            w5 = max((u.get("cacheWrite") or 0) - w1, 0)
-            if not ((u.get("input") or 0) + (u.get("output") or 0) + (u.get("cacheRead") or 0) + w1 + w5):
-                continue                  # delivery mirrors and automation markers carry a usage block of zeros
-            polls = any(is_poll(c.get("name", ""), c.get("arguments")) for c in (m.get("content") or [])
-                        if isinstance(c, dict) and c.get("type") == "toolCall")
-            key = m.get("responseId") or m.get("idempotencyKey") or f"{agent}:{sid}:{seq}"
-            records[f"{agent}:{key}"] = Usage(
-                ts=datetime.fromtimestamp(created / 1000, timezone.utc), source="openclaw", project="",
-                agent=agent, model=m.get("model", ""), input=u.get("input") or 0, output=u.get("output") or 0,
-                cache_read=u.get("cacheRead") or 0, cache_write_5m=w5, cache_write_1h=w1, msg_id=str(key),
-                session=str(sid), origin="openclaw-api" if m.get("provider") == "anthropic" else "openclaw-" + str(m.get("provider")),
-                poll=polls, provider=str(m.get("provider") or provider_of_model(m.get("model", ""))),
-                role=openclaw_role(agent))
+            for seq, line in enumerate(text.splitlines()):
+                if '"usage"' not in line:
+                    continue
+                try:
+                    ts = _parse_ts(json.loads(line).get("timestamp"))
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+                ts = ts or datetime.fromtimestamp(archived_at / 1000, timezone.utc)
+                if not lo <= int(ts.timestamp() * 1000) < hi:
+                    continue
+                got = _openclaw_usage(line, agent, sid, seq, ts, providers, stats)
+                if got:
+                    records.setdefault(got[0], got[1])           # a live copy of the same response wins
     return list(records.values()), stats
