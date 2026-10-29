@@ -91,8 +91,12 @@ find "$DEST" -maxdepth 1 \( -name '*.tar.gz.part' -o -name '*.sha256.part' \) -m
 
 # The same kill leaves a stage.* directory (a full copy of the state) under $BASE; the EXIT trap never ran. The lock
 # is held, so no other run owns a stage: anything older than an hour is orphaned. No symlink is followed.
-stale_stages="$(find "$BASE" -maxdepth 1 -type d -name 'stage.*' -mmin +60 | wc -l)"
-find "$BASE" -maxdepth 1 -type d -name 'stage.*' -mmin +60 -exec rm -rf {} +
+# One pass: the listing that is counted is the listing that is removed (a dir crossing the 60 minute mark between two
+# finds skewed the count). find -type d never matches a symlink and rm -rf on a path never follows one.
+stale_stages=0
+while IFS= read -r -d '' stale; do
+  rm -rf -- "$stale" && stale_stages=$((stale_stages + 1))
+done < <(find "$BASE" -maxdepth 1 -type d -name 'stage.*' -mmin +60 -print0)
 [ "$stale_stages" -eq 0 ] || log "removed $stale_stages stale stage dir(s)"
 
 # The name is taken now, not before the wait: after an hour in the queue the timestamp would be an hour stale.
