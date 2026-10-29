@@ -56,6 +56,16 @@ def test_forward_patch_repoints_only_the_old_ref(doc):
     assert "channels" not in built["patch"] and "bindings" not in json.dumps(built["patch"])
 
 
+def test_a_gemini_heartbeat_is_left_untouched_while_the_haiku_fallbacks_still_upgrade_within_their_class(doc):
+    doc["agents"]["defaults"]["heartbeat"]["model"] = "google/gemini-3.8-flash"
+    built = models.build_forward_patch(doc, dict([SONNET, HAIKU]))
+    after = models.apply_in_memory(doc, built["patch"])
+    assert after["agents"]["defaults"]["heartbeat"]["model"] == "google/gemini-3.8-flash"
+    assert "heartbeat" not in json.dumps(built["patch"])
+    assert after["agents"]["entries"]["elinvo"]["model"]["fallbacks"] == [HAIKU[1]]
+    assert after["agents"]["defaults"]["model"]["primary"] == HAIKU[1]
+
+
 def test_inverse_restores_the_original(doc):
     built = models.build_forward_patch(doc, dict([SONNET, HAIKU]))
     forward = models.apply_in_memory(doc, built["patch"])

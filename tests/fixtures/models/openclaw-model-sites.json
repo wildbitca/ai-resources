@@ -1,4 +1,5 @@
 {
+  "_comment": "Generic old-host shape. The Haiku heartbeat is the legacy value: the Gemini-first matrix puts the heartbeat on google/gemini-3.8-flash, which the model update leaves untouched.",
   "channels": {
     "telegram": {
       "allowFrom": [
