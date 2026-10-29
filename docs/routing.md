@@ -37,6 +37,22 @@ override) and `tests/test_matrix_equality.py` fails when one of them drifts:
 
 Never edit a generated block by hand.
 
+## Drift between the matrix and the live agents
+
+`ai-resources verify --live` (acceptance group `setup-live`) compares each role's matrix row with the live `kit-role-*` agent
+(`model.primary`, `model.fallbacks`, `subagents.model` or the host's default spawn model):
+
+| Case | Severity | Reports |
+|---|---|---|
+| `setup.role-matrix-drift` | error | every field that differs, naming role, expected and actual |
+| `setup.role-billing-pool` | warn | a role whose matrix primary is a Max (`claude-code`) cell but whose live primary is an Anthropic model not pinned to `claude-cli`: it bills the API pool |
+
+Run just these: `ai-resources acceptance --case setup.role-matrix-drift --case setup.role-billing-pool`.
+
+`setup` reconciles an existing `kit-role-*` agent that it did not create (not in `created_agent_ids`) to its matrix row, but
+only `model` (primary, fallbacks) and `subagents.model`; the diff is printed before anything is written, and `--dry-run` shows
+it without writing. Thinking, tools, skills and every other field stay the operator's.
+
 ## Dispatch
 
 Every workflow step resolves its role here before it runs (D6, ADR-0019):

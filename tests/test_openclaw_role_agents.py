@@ -379,3 +379,15 @@ def test_kept_note_covers_a_thinking_only_difference():
     live = {"model": {"primary": "anthropic/claude-haiku-5-5"}, "thinkingDefault": "high"}
     note = R.kept_note("kit-role-explore", live, _agent())
     assert "thinking high (matrix row: low)" in note and "thinkingDefault low" in note and "model.primary" not in note
+
+
+def test_configure_reconciles_an_unrecorded_kit_role_agent_and_shows_the_diff(tmp_path):
+    """An agent setup did not create is moved to its matrix row (model fields only); a dry run shows the diff, writes nothing."""
+    host = Host({"agents": {"entries": {"kit-role-explore": {"model": {"primary": "anthropic/claude-sonnet-5-5"},
+                                                             "thinkingDefault": "xhigh"}}}})
+    infos: list[str] = []
+    run(_balanced_state(), host, tmp_path, dry_run=True, infos=infos)
+    assert host.patches == [] and any("kit-role-explore: model.primary anthropic/claude-sonnet-5-5 ->" in m for m in infos)
+    run(_balanced_state(), host, tmp_path)
+    ent = host.doc["agents"]["entries"]["kit-role-explore"]
+    assert ent["model"]["primary"] != "anthropic/claude-sonnet-5-5" and ent["thinkingDefault"] == "xhigh"

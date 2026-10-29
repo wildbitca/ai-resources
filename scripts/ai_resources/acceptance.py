@@ -1071,6 +1071,48 @@ def _reload_rules(env: Env) -> Result:
     return ok(f"shims are skipped and the installed reload table ({rs.installed_count} rules, openclaw {rs.version}) parses")
 
 
+def _role_drift(env: Env) -> "list | None":
+    """The drifts between the matrix and the live kit-role agents, or None when the host has no kit-role agent."""
+    from . import role_drift
+    from .setup import lanes_render
+    doc = env.openclaw_doc()
+    if not any(a.startswith("kit-role-") for a in role_drift.live._entries(doc)):
+        return None
+    try:
+        profile_doc = lanes_render.routing_doc(env.setup_state())
+    except Exception:  # noqa: BLE001 - an unreadable profile means the default matrix
+        profile_doc = {}
+    return role_drift.check(doc, profile_doc)
+
+
+@case("setup.role-matrix-drift", "setup-live",
+      remedy="`ai-resources setup --dry-run` shows the model/fallbacks it would reconcile; then re-run `ai-resources setup`")
+def _role_matrix_drift(env: Env) -> Result:
+    from . import role_drift
+    drifts = _role_drift(env)
+    if drifts is None:
+        return skip("no kit-role-* agent in the live OpenClaw config")
+    bad_ones = role_drift.mismatches(drifts)
+    if bad_ones:
+        return bad(f"{len(bad_ones)} kit-role field(s) differ from the routing matrix: " + "; ".join(d.line() for d in bad_ones),
+                   drift=[d.line() for d in bad_ones])
+    return ok("every kit-role agent's model, fallbacks and spawn model equal its routing matrix row")
+
+
+@case("setup.role-billing-pool", "setup-live", severity="warn",
+      remedy="pin the Max cell to the claude-cli runtime (`ai-resources setup` does it for kit-role agents it owns)")
+def _role_billing_pool(env: Env) -> Result:
+    from . import role_drift
+    drifts = _role_drift(env)
+    if drifts is None:
+        return skip("no kit-role-* agent in the live OpenClaw config")
+    pool = role_drift.billing(drifts)
+    if pool:
+        return bad(f"{len(pool)} Max-subscription role(s) would bill the Anthropic API: " + "; ".join(d.line() for d in pool),
+                   drift=[d.line() for d in pool])
+    return ok("no Max-primary kit-role agent runs on the Anthropic API pool")
+
+
 @case("setup.idempotent-rerun", "setup-live")
 def _idempotent(env: Env) -> Result:
     from .setup.cockpits import openclaw_orchestration as orch
