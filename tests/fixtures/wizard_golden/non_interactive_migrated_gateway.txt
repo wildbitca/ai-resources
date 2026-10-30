@@ -62,20 +62,20 @@ rc=0
 +-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 | Role | Primary (backend:model, pool) | Fallback |
 |-----------------------------+------------------------------------------+----------------------------------------------------------------------------------------------------------------------------|
-| code-reviewer | claude-code:sonnet [claude-subscription] | agy-missing: agy:gemini-4-argon-high skipped |
-| crashlytics-fixer | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
-| crossplane-upjet-maintainer | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
+| code-reviewer | claude-code:sonnet [claude-subscription] | agy-missing: agy:gemini-3.8-flash-high skipped |
+| crashlytics-fixer | claude-code:sonnet [claude-subscription] | agy:gemini-3.8-flash-high [agy-gemini] |
+| crossplane-upjet-maintainer | claude-code:sonnet [claude-subscription] | agy:gemini-3.8-flash-high [agy-gemini] |
 | doc-writer | claude-code:haiku [claude-subscription] | agy-missing: agy:gemini-3.8-flash-high skipped |
 | explore | claude-code:haiku [claude-subscription] | agy-missing: agy:gemini-3.8-flash-high skipped |
-| generalPurpose | claude-code:sonnet [claude-subscription] | agy-missing: agy:gemini-4-argon-high skipped |
-| implementer | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
+| generalPurpose | claude-code:sonnet [claude-subscription] | agy-missing: agy:gemini-3.8-flash-high skipped |
+| implementer | claude-code:sonnet [claude-subscription] | agy:gemini-3.8-flash-high [agy-gemini] |
 | package-upgrade | claude-code:haiku [claude-subscription] | agy-missing: agy:gemini-3.8-flash-high skipped |
-| planner | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
+| planner | claude-code:sonnet [claude-subscription] | agy:gemini-3.8-flash-high [agy-gemini] |
 | security-auditor | per-run checker ladder | claude-code:sonnet [claude-subscription] -> claude-code:opus [claude-subscription] -> agy:claude-opus-5-5 [agy-claude-gpt] |
-| sentry-fixer | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
-| software-architect | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
-| terraform-maintainer | claude-code:sonnet [claude-subscription] | agy:gemini-4-argon-high [agy-gemini] |
-| tester | claude-code:sonnet [claude-subscription] | agy-missing: agy:gemini-4-argon-high skipped |
+| sentry-fixer | claude-code:sonnet [claude-subscription] | agy:gemini-3.8-flash-high [agy-gemini] |
+| software-architect | claude-code:sonnet [claude-subscription] | agy:gemini-3.8-flash-high [agy-gemini] |
+| terraform-maintainer | claude-code:sonnet [claude-subscription] | agy:gemini-3.8-flash-high [agy-gemini] |
+| tester | claude-code:sonnet [claude-subscription] | agy-missing: agy:gemini-3.8-flash-high skipped |
 | verifier | per-run checker ladder | claude-code:sonnet [claude-subscription] -> claude-code:opus [claude-subscription] -> agy:claude-opus-5-5 [agy-claude-gpt] |
 +-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 
