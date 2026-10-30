@@ -4,7 +4,7 @@ role: terraform-maintainer
 description: Use when the user wants to maintain tf-modules, release modules, upgrade providers, sync dependents, or apply the full Terraform maintenance workflow. Long-running; may timeout.
 model: inherit
 # ai-resources:routing begin (generated from scoring/routing.py; do not edit)
-# route: claude-code:sonnet [claude-subscription] -> agy:gemini-4-argon-high [agy-gemini]
+# route: claude-code:sonnet [claude-subscription] -> agy:gemini-3.8-flash-high [agy-gemini]
 model: sonnet
 # ai-resources:routing end
 ---

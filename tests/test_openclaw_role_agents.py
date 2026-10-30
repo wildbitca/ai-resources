@@ -83,14 +83,14 @@ def test_fifteen_role_agents_carry_the_matrix_primary_and_fallbacks_and_the_mapp
     assert len(agents) == 15 and fell == []
     by = {a["role"]: a for a in agents}
     assert by["planner"]["model"] == "anthropic/claude-sonnet-5-5" and by["planner"]["thinking"] == "high"
-    assert by["planner"]["fallbacks"] == ["agy-cli-lane/gemini-4-argon-high"]
+    assert by["planner"]["fallbacks"] == ["agy-cli-lane/gemini-3.8-flash-high"]
     # checkers: the dispatcher picks per run; the agent starts at the cheapest rung and keeps the rest as fallbacks
     assert by["verifier"]["model"] == "anthropic/claude-sonnet-5-5" and by["verifier"]["thinking"] == "high"
     assert by["verifier"]["fallbacks"] == ["anthropic/claude-opus-5-5", "agy-cli-lane/claude-opus-5-5"]
     # agy primaries (D4): the Antigravity slug first, the Max cell as the recorded fallback
     assert by["explore"]["model"] == "agy-cli-lane/gemini-3.8-flash-high" and by["explore"]["thinking"] == "low"
     assert by["explore"]["fallbacks"] == ["anthropic/claude-haiku-5-5"]
-    assert by["tester"]["model"] == "agy-cli-lane/gemini-4-argon-high" and by["tester"]["thinking"] == "low"
+    assert by["tester"]["model"] == "agy-cli-lane/gemini-3.8-flash-high" and by["tester"]["thinking"] == "low"
     assert by["implementer"]["thinking"] == "medium"
     assert by["implementer"]["model"] == "anthropic/claude-sonnet-5-5"
 
@@ -334,9 +334,9 @@ def test_the_written_entry_has_the_native_model_object_with_fallbacks(tmp_path):
     assert entries["kit-role-explore"]["model"] == {"primary": "agy-cli-lane/gemini-3.8-flash-high",
                                                     "fallbacks": ["anthropic/claude-haiku-5-5"]}
     assert entries["kit-role-implementer"]["model"] == {"primary": "anthropic/claude-sonnet-5-5",
-                                                        "fallbacks": ["agy-cli-lane/gemini-4-argon-high"]}
+                                                        "fallbacks": ["agy-cli-lane/gemini-3.8-flash-high"]}
     stub = host.doc["models"]["providers"]["agy-cli-lane"]
-    assert {m["id"] for m in stub["models"]} == {"gemini-3.8-flash-high", "gemini-4-argon-high", "claude-opus-5-5"}
+    assert {m["id"] for m in stub["models"]} == {"gemini-3.8-flash-high", "claude-opus-5-5"}
 
 
 def test_an_agent_the_kit_wrote_without_fallbacks_gains_them_and_an_operator_chain_is_kept(tmp_path):
@@ -349,7 +349,7 @@ def test_an_agent_the_kit_wrote_without_fallbacks_gains_them_and_an_operator_cha
     last["fallbacks"].pop("kit-role-planner")
     entries["kit-role-reviewer"]["model"]["fallbacks"] = ["anthropic/claude-opus-5-5"]         # the operator's chain
     run(s, host, tmp_path)
-    assert entries["kit-role-planner"]["model"]["fallbacks"] == ["agy-cli-lane/gemini-4-argon-high"]
+    assert entries["kit-role-planner"]["model"]["fallbacks"] == ["agy-cli-lane/gemini-3.8-flash-high"]
     assert entries["kit-role-reviewer"]["model"]["fallbacks"] == ["anthropic/claude-opus-5-5"]
 
 
@@ -399,11 +399,11 @@ def test_a_bare_string_model_with_the_right_primary_but_missing_fallbacks_is_rew
     host = Host({"agents": {"entries": {"kit-role-planner": {"model": "anthropic/claude-sonnet-5-5"}}}})
     run(_balanced_state(), host, tmp_path)
     assert host.doc["agents"]["entries"]["kit-role-planner"]["model"] == {
-        "primary": "anthropic/claude-sonnet-5-5", "fallbacks": ["agy-cli-lane/gemini-4-argon-high"]}
+        "primary": "anthropic/claude-sonnet-5-5", "fallbacks": ["agy-cli-lane/gemini-3.8-flash-high"]}
 
 
 def test_an_unrecorded_agent_already_on_the_matrix_chain_is_left_alone(tmp_path):
-    chain = {"primary": "anthropic/claude-sonnet-5-5", "fallbacks": ["agy-cli-lane/gemini-4-argon-high"]}
+    chain = {"primary": "anthropic/claude-sonnet-5-5", "fallbacks": ["agy-cli-lane/gemini-3.8-flash-high"]}
     host = Host({"agents": {"entries": {"kit-role-planner": {"model": copy.deepcopy(chain), "thinkingDefault": "high"}}}})
     run(_balanced_state(), host, tmp_path)
     assert host.doc["agents"]["entries"]["kit-role-planner"]["model"] == chain

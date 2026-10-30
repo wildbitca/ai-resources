@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). **R
 
 ## [Unreleased]
 
+## [4.0.1] — 2026-10-30 — Retire gemini-4-argon from routing matrix in favor of gemini-3.8-flash-high
+
+### Changed
+
+- **Routing matrix replaces Argon with Gemini 3.8 Flash High**: `gemini-4-argon-high` is replaced by `gemini-3.8-flash-high` across all Antigravity roles (`code-reviewer`, `tester`, `generalPurpose`) and team fallback chains (`planner`, `software-architect`, `implementer`, fixers) due to restricted quotas on the Argon model family.
+- **Role definitions & test fixtures synchronized**: `agents/roles/*.md` and test fixtures updated to reflect the new routes.
+
 ## [4.0.0] — 2026-10-29 — Unified AI routing, automated releases, and OpenClaw resilience
 
 ### Breaking Changes

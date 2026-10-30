@@ -3,7 +3,7 @@ name: generalPurpose
 description: General-purpose agent for research, multi-step reasoning, and tasks when no specialist fits.
 model: inherit
 # ai-resources:routing begin (generated from scoring/routing.py; do not edit)
-# route: agy:gemini-4-argon-high [agy-gemini] -> claude-code:sonnet [claude-subscription]
+# route: agy:gemini-3.8-flash-high [agy-gemini] -> claude-code:sonnet [claude-subscription]
 model: sonnet
 # ai-resources:routing end
 ---

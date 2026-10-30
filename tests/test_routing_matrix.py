@@ -107,14 +107,14 @@ def test_balancing_distributes_work_across_all_four_pools():
 def test_resolve_takes_the_primary_with_no_cause_when_the_pool_is_available():
     r = routing.resolve("implementer", {HOT: 0.2})
     assert (r.cell, r.cause, r.blocked, r.backend, r.model) == ("claude-code:sonnet", None, False, "claude-code", "sonnet")
-    assert r.fallbacks == ("agy:gemini-4-argon-high",)
+    assert r.fallbacks == ("agy:gemini-3.8-flash-high",)
     assert routing.resolve("implementer", {}).cause is None          # unknown usage is not exhaustion
 
 
 @pytest.mark.parametrize("used,cause", [(0.85, "pool-hot"), (0.99, "pool-hot"), (1.0, "pool-exhausted")])
 def test_resolve_spills_to_the_fallback_when_the_pool_is_hot(used, cause):
     r = routing.resolve("implementer", {HOT: used})
-    assert r.cell == "agy:gemini-4-argon-high" and r.cause == cause and cause in routing.FALLBACK_CAUSES
+    assert r.cell == "agy:gemini-3.8-flash-high" and r.cause == cause and cause in routing.FALLBACK_CAUSES
 
 
 @pytest.mark.parametrize("cause", sorted(CAUSES))
@@ -129,7 +129,7 @@ def test_resolve_blocks_instead_of_silently_falling_back_past_the_chain():
 
 
 def test_cell_level_unavailability_skips_only_that_cell():
-    r = routing.resolve("tester", unavailable={"agy:gemini-4-argon-high": "timeout"})
+    r = routing.resolve("tester", unavailable={"agy:gemini-3.8-flash-high": "timeout"})
     assert r.cell == "claude-code:sonnet" and r.cause == "timeout"
 
 
@@ -191,7 +191,7 @@ def test_table_rows_cover_every_role_once_with_pools():
 
 @pytest.mark.parametrize("cell,ref", [("claude-code:sonnet", "anthropic/claude-sonnet-5-5"),
                                       ("claude-cli:haiku", "anthropic/claude-haiku-5-5"),
-                                      ("agy:gemini-4-argon-high", "agy-cli-lane/gemini-4-argon-high"),
+                                      ("agy:gemini-3.8-flash-high", "agy-cli-lane/gemini-3.8-flash-high"),
                                       ("gemini-api:gemini-3.8-flash", "google/gemini-3.8-flash"),
                                       ("anthropic-api:claude-haiku-5-5", "anthropic/claude-haiku-5-5")])
 def test_cell_to_openclaw_ref(cell, ref):

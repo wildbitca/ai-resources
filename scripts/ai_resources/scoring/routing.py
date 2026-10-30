@@ -116,7 +116,7 @@ class Role:
 # Checker ladder, cheapest adequate first. The checker must be of a family that wrote none of the run's work.
 CHECKER_LADDER = ("claude-code:sonnet", "claude-code:opus", "agy:claude-opus-5-5")
 
-_FLASH, _ARGON = "agy:gemini-3.8-flash-high", "agy:gemini-4-argon-high"
+_FLASH, _ARGON = "agy:gemini-3.8-flash-high", "agy:gemini-3.8-flash-high"
 _SONNET, _HAIKU = "claude-code:sonnet", "claude-code:haiku"
 _API_SONNET, _API_HAIKU, _GEMINI_API = ("anthropic-api:claude-sonnet-5-5", "anthropic-api:claude-haiku-5-5",
                                          "gemini-api:gemini-3.8-flash")

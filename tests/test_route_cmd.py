@@ -31,12 +31,12 @@ def test_json_output_for_the_primary(tmp_path, capsys):
     rc, out = _run(capsys, "implementer", "--usage-file", _usage(tmp_path, claude_subscription=0.2), "--json")
     doc = json.loads(out.out)
     assert rc == 0 and doc["cell"] == "claude-code:sonnet" and doc["pool"] == routing.POOL_MAX
-    assert doc["cause"] is None and doc["blocked"] is False and doc["fallbacks"] == ["agy:gemini-4-argon-high"]
+    assert doc["cause"] is None and doc["blocked"] is False and doc["fallbacks"] == ["agy:gemini-3.8-flash-high"]
 
 
 def test_a_pool_at_85_percent_spills_with_a_cause(tmp_path, capsys):
     rc, out = _run(capsys, "implementer", "--usage-file", _usage(tmp_path, claude_subscription=0.85))
-    assert rc == 0 and "agy:gemini-4-argon-high" in out.out and "cause: pool-hot" in out.out
+    assert rc == 0 and "agy:gemini-3.8-flash-high" in out.out and "cause: pool-hot" in out.out
 
 
 def test_writers_steer_the_checker(tmp_path, capsys):
@@ -49,7 +49,7 @@ def test_writers_steer_the_checker(tmp_path, capsys):
 
 def test_writers_given_as_matrix_cells_resolve_their_family(tmp_path, capsys):
     f = _usage(tmp_path)
-    rc, out = _run(capsys, "verifier", "--usage-file", f, "--writers", "agy:gemini-4-argon-high", "--json")
+    rc, out = _run(capsys, "verifier", "--usage-file", f, "--writers", "agy:gemini-3.8-flash-high", "--json")
     assert rc == 0 and json.loads(out.out)["cell"] == "claude-code:sonnet"
     rc, out = _run(capsys, "verifier", "--usage-file", f, "--writers", "claude-code:sonnet", "--json")
     assert rc == 0 and json.loads(out.out)["cell"] == "claude-code:opus"

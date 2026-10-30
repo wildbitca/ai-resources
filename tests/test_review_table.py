@@ -42,7 +42,7 @@ def test_each_cell_names_its_backend_model_and_pool():
     assert rows["main"][0] == "gemini-api:gemini-3.8-flash [gemini-api]"
     assert rows["main"][1] == "anthropic-api:claude-sonnet-5-5 [anthropic-api]"
     assert rows["utility"][0] == "gemini-api:gemini-3.8-flash [gemini-api]"
-    assert rows["implementer"][1] == "agy:gemini-4-argon-high [agy-gemini]"
+    assert rows["implementer"][1] == "agy:gemini-3.8-flash-high [agy-gemini]"
 
 
 def test_no_row_carries_a_gate_note_since_heartbeat_moved_to_gemini():

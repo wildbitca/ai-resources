@@ -4,7 +4,7 @@ role: sentry-fixer
 description: Use when the user wants to fix Sentry unresolved issues, triage production errors, or clear the Sentry inbox. Runs the full triage-and-fix workflow in isolation.
 model: inherit
 # ai-resources:routing begin (generated from scoring/routing.py; do not edit)
-# route: claude-code:sonnet [claude-subscription] -> agy:gemini-4-argon-high [agy-gemini]
+# route: claude-code:sonnet [claude-subscription] -> agy:gemini-3.8-flash-high [agy-gemini]
 model: sonnet
 # ai-resources:routing end
 ---

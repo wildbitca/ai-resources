@@ -4,7 +4,7 @@ role: crashlytics-fixer
 description: Triage and fix Firebase Crashlytics issues using dynamic project/app resolution; returns concise summary to parent.
 model: inherit
 # ai-resources:routing begin (generated from scoring/routing.py; do not edit)
-# route: claude-code:sonnet [claude-subscription] -> agy:gemini-4-argon-high [agy-gemini]
+# route: claude-code:sonnet [claude-subscription] -> agy:gemini-3.8-flash-high [agy-gemini]
 model: sonnet
 # ai-resources:routing end
 ---

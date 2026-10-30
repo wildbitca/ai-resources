@@ -155,7 +155,7 @@ def test_the_d4_assignments():
         assert routing.ROLES[r].primary.startswith("agy:"), r
     for r in on_claude:
         assert routing.ROLES[r].primary.startswith("claude-code:"), r
-    assert routing.ROLES["tester"].primary == routing.ROLES["generalPurpose"].primary == "agy:gemini-4-argon-high"
+    assert routing.ROLES["tester"].primary == routing.ROLES["generalPurpose"].primary == "agy:gemini-3.8-flash-high"
     assert all(routing.ROLES[r].checker and routing.ROLES[r].primary is None for r in ("verifier", "security-auditor"))
 
 

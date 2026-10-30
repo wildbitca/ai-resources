@@ -4,7 +4,7 @@ name: planner
 description: Decomposes work into PLAN.md steps, acceptance criteria, and explicit Tester/Verifier handoff points. No code.
 focus: requirements decomposition, PLAN.md, task breakdown, acceptance criteria
 # ai-resources:routing begin (generated from scoring/routing.py; do not edit)
-# route: claude-code:sonnet [claude-subscription] -> agy:gemini-4-argon-high [agy-gemini]
+# route: claude-code:sonnet [claude-subscription] -> agy:gemini-3.8-flash-high [agy-gemini]
 model: sonnet
 # ai-resources:routing end
 ---
